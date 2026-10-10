@@ -893,6 +893,66 @@
       "result": "pass",
       "limitations": "no full rerun; the Deep campaign on the frozen candidate exercises the invariant change again",
       "invalidated": null
+    },
+    "E-DEEP-1e2c4b3": {
+      "claim": "the 7 Deep invariant suites pass on the frozen candidate: 64 runs at depth 200, every invariant_01 to invariant_20 clean, 0 failures",
+      "kind": "test",
+      "sourceRevision": "1e2c4b38eee6dfb26180c77fb6020f85d8f28f3a",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 7
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000",
+      "method": "CANDIDATE_RUN=1 INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 forge test --match-contract '^<Suite>Deep$' -j 8, one suite at a time, 17:21 to 18:27",
+      "author": "director, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "runs on the fork pin; the stand in exitModule only",
+      "invalidated": null,
+      "report": {
+        "path": "docs/DEEP-RUN-1e2c4b3.log",
+        "sha256": "1b7d4898578b63465c01ce6183773e0110cfd8f67cdc30dbbc34abc635a72ae1",
+        "revision": "566d7d5d4e845a101d0c74743df3c7ab38ca3257"
+      }
+    },
+    "E-REVIEW-SECURITY-1e2c4b3": {
+      "claim": "independent security review of the frozen candidate: no critical or high finding; two medium findings in launch verification, three low, three info",
+      "kind": "review",
+      "sourceRevision": "1e2c4b38eee6dfb26180c77fb6020f85d8f28f3a",
+      "scope": [
+        "src/**",
+        "script/*.sol",
+        "script/config/**"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 7,
+        "A-OWNER-DELEGATE": 1
+      },
+      "dependsOn": [],
+      "inputs": "frozen candidate 1e2c4b3, prior reviews, live reads at block 26164762",
+      "method": "read only review subagent in its own clone; targeted fork tests and probe tests",
+      "author": "implementers and director",
+      "reviewer": "independent security review subagent, 2026-10-10",
+      "result": "findings",
+      "limitations": "exitModule stand in only; full suite and deep campaign not run by the reviewer",
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-security.md",
+        "sha256": "9e0d4d5f300dda779c0f7721841b452e3b60454fa5eb3515e75d1b31eb6845f3",
+        "revision": "566d7d5d4e845a101d0c74743df3c7ab38ca3257"
+      }
     }
   }
 }
