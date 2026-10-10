@@ -444,6 +444,112 @@ class Structure(RepoCase):
         self.assertEqual(code, 0, out)
 
 
+class CarryClosure(RepoCase):
+    """A review reached through a chain of carries is checked like a direct carry."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.state["gates"]["productRules"]["kinds"] = ["acceptance", "review", "test"]
+        self.state["requiredFreezeGates"] = ["productRules"]
+
+    def chain(self, review_kind="review", mid=None, top=None, change=True) -> str:
+        """R (review at the initial commit) <- A1 <- A2 <- TOP; src changes before TOP."""
+        base = self.head
+        self.add_evidence("R", base, kind=review_kind, reviewer="Alice")
+        self.add_evidence("A1", base, kind="analysis", carries=["R"], **(mid or {}))
+        self.add_evidence("A2", base, kind="analysis", carries=["A1"], **(mid or {}))
+        self.commit("review and carries")
+        revision = base
+        if change:
+            self.write("src/Core.sol", "v2\n")
+            revision = self.commit("change reviewed code")
+        fields = {"kind": "analysis", "carries": ["A2"], "carriedChanges": ["src/Core.sol"] if change else []}
+        fields.update(top or {})
+        self.add_evidence("TOP", revision, **fields)
+        return self.commit("top")
+
+    def freeze(self) -> tuple[int, str]:
+        self.state["candidate"] = self.sh("rev-parse", "HEAD")
+        self.state["gates"]["productRules"]["evidence"] = ["TOP"]
+        self.save()
+        self.commit("gate")
+        return self.check("freeze")
+
+    def assertBlocked(self, fragment: str = "carried review R: reviewed scope changed: src/Core.sol") -> None:
+        code, out = self.freeze()
+        self.assertEqual(code, 1, out)
+        self.assertIn(fragment, out)
+
+    def test_unchanged_chain_is_valid(self) -> None:
+        self.chain(change=False)
+        code, out = self.freeze()
+        self.assertEqual(code, 0, out)
+
+    def test_review_reached_through_two_analysis_levels(self) -> None:
+        self.chain()
+        self.assertBlocked()
+
+    def test_wide_scope_on_intermediate_and_top_records(self) -> None:
+        self.chain(mid={"scope": ["*"]}, top={"scope": ["*"]})
+        self.assertBlocked()
+
+    def test_review_kind_carrier_over_a_review(self) -> None:
+        self.chain(top={"kind": "review", "reviewer": "Bob", "carriedChanges": []})
+        self.assertBlocked()
+
+    def test_acceptance_reached_through_a_chain(self) -> None:
+        self.chain(review_kind="acceptance")
+        self.assertBlocked("carried acceptance R: reviewed scope changed: src/Core.sol")
+
+    def test_test_kind_carrier_over_a_review_chain(self) -> None:
+        self.chain(top={"kind": "test", "carriedChanges": []})
+        self.assertBlocked()
+
+    def test_closure_changes_for_non_independent_kinds_are_enumerated(self) -> None:
+        self.chain(review_kind="test")
+        self.assertEqual(self.freeze()[0], 0)
+        self.ledger["evidence"]["TOP"]["carriedChanges"] = []
+        self.save()
+        self.commit("drop enumeration")
+        self.assertIn("missing src/Core.sol", self.validity("TOP")[1])
+
+    def test_reviewer_identity_is_normalized(self) -> None:
+        for author, reviewer in [
+            ("dir ector", "dir\u00a0ector"),
+            ("dir ector", "dir  ector"),
+            ("director", "director\u200b"),
+            ("director", "dir\ufeffector"),
+            ("Strasse", "Stra\u00dfe"),
+            ("Director", " DIRECTOR\t"),
+            ("director", "\uff44irector"),
+        ]:
+            errors: list[str] = []
+            director.validate_record("R", base_record(self.head, kind="review", author=author, reviewer=reviewer), errors)
+            self.assertTrue(any("reviewer must differ" in e for e in errors), (author, reviewer))
+        errors = []
+        director.validate_record("R", base_record(self.head, kind="review", author="director", reviewer="Alice"), errors)
+        self.assertEqual(errors, [])
+
+    def test_evidence_output_prints_reviewer(self) -> None:
+        self.add_evidence("R", kind="review", reviewer="Alice")
+        self.commit("review")
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            director.evidence_report()
+        self.assertIn("reviewer Alice", buffer.getvalue())
+
+    def test_state_only_path_cannot_hide_a_deleted_reviewed_file(self) -> None:
+        self.add_evidence("R", kind="review", reviewer="Alice", scope=["src/Core.sol"])
+        self.commit("review")
+        self.sh("rm", "-q", "src/Core.sol")
+        self.state["stateOnlyPaths"] = STATE_ONLY + ["src/Core.sol"]
+        self.save()
+        self.commit("delete and hide")
+        code, out = self.check("working")
+        self.assertEqual(code, 1, out)
+        self.assertIn("stateOnlyPaths entry src/Core.sol hides src/Core.sol", out)
+
+
 class DeployGate(RepoCase):
     def setUp(self) -> None:
         super().setUp()

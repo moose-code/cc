@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
@@ -36,6 +37,7 @@ ASSUMPTION_KINDS = {"fact", "assumption", "projection", "owner-decision"}
 EVIDENCE_KINDS = {"test", "build", "review", "simulation", "rehearsal", "analysis", "acceptance"}
 EVIDENCE_RESULTS = {"pass", "fail", "findings"}
 INDEPENDENT_KINDS = {"review", "acceptance"}
+ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"))
 EVIDENCE_TEXT_FIELDS = ("claim", "inputs", "method", "author", "limitations")
 
 OK_WORKING = (
@@ -94,23 +96,48 @@ def current() -> tuple[str, str, bool]:
     return git("rev-parse", "--abbrev-ref", "HEAD"), head, dirty
 
 
+_CACHE: dict[tuple, object] = {}
+
+
+def _cached(key: tuple, full_hashes: tuple[str, ...], compute):
+    """Memoize git answers about full commit hashes, which are immutable."""
+    if not all(SHA_RE.match(h) for h in full_hashes):
+        return compute()
+    key = (str(ROOT),) + key
+    if key not in _CACHE:
+        _CACHE[key] = compute()
+    return _CACHE[key]
+
+
 def resolve_commit(rev: str) -> str | None:
     if not rev or rev.startswith("-"):
         return None
-    return git("rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}", check=False) or None
+    result = _cached(
+        ("resolve", rev),
+        (rev,),
+        lambda: git("rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}", check=False) or None,
+    )
+    if result is None:
+        _CACHE.pop((str(ROOT), "resolve", rev), None)
+    return result
 
 
 def is_ancestor(older: str, newer: str) -> bool:
-    return subprocess.run(
-        ["git", "merge-base", "--is-ancestor", older, newer],
-        cwd=ROOT,
-        capture_output=True,
-    ).returncode == 0
+    return _cached(
+        ("ancestor", older, newer),
+        (older, newer),
+        lambda: subprocess.run(
+            ["git", "merge-base", "--is-ancestor", older, newer], cwd=ROOT, capture_output=True
+        ).returncode == 0,
+    )
 
 
 def changed_paths(older: str, newer: str) -> list[str]:
-    output = git_raw("diff", "--name-only", "-z", "--no-renames", f"{older}..{newer}")
-    return [path for path in output.split("\0") if path]
+    def compute() -> list[str]:
+        output = git_raw("diff", "--name-only", "-z", "--no-renames", f"{older}..{newer}")
+        return [path for path in output.split("\0") if path]
+
+    return list(_cached(("diff", older, newer), (older, newer), compute))
 
 
 def short(sha: str) -> str:
@@ -397,6 +424,12 @@ def validate_ledger(ledger: dict, errors: list[str]) -> None:
         validate_record(eid, rec, errors)
 
 
+def identity(name: object) -> str:
+    """Comparison form of an author or reviewer name."""
+    text = unicodedata.normalize("NFKC", str(name).translate(ZERO_WIDTH))
+    return " ".join(unicodedata.normalize("NFKC", text.casefold()).split())
+
+
 def is_version(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 1
 
@@ -456,7 +489,7 @@ def validate_record(eid: str, rec: object, errors: list[str]) -> None:
         reviewer = rec.get("reviewer")
         if not isinstance(reviewer, str) or not reviewer.strip():
             errors.append(f"{where}: {kind} evidence requires a reviewer")
-        elif reviewer.strip().lower() == str(rec.get("author", "")).strip().lower():
+        elif identity(reviewer) == identity(rec.get("author", "")):
             errors.append(f"{where}: reviewer must differ from author")
 
 
@@ -541,10 +574,14 @@ def validate_links(state: dict, ledger: dict, errors: list[str]) -> None:
 def validate_state_only_scopes(state: dict, records: dict, errors: list[str]) -> None:
     """A stateOnlyPaths entry must not match a tracked file that an evidence scope names."""
     state_only = state.get("stateOnlyPaths")
-    head = resolve_commit("HEAD")
-    if not isinstance(state_only, list) or not head:
+    if not isinstance(state_only, list):
         return
-    files = tracked_files(head)
+    revisions = {resolve_commit("HEAD")}
+    for rec in records.values():
+        revision = rec.get("sourceRevision") if isinstance(rec, dict) else None
+        if isinstance(revision, str) and SHA_RE.match(revision):
+            revisions.add(resolve_commit(revision))
+    files = sorted({f for rev in revisions if rev for f in tracked_files(rev)})
     for entry in state_only:
         if not isinstance(entry, str):
             continue
@@ -667,13 +704,12 @@ def _assumption_reasons(rec: dict, ledger: dict, prefix: str = "") -> list[str]:
 def _carry_reasons(
     rec: dict, state: dict, ledger: dict, memo: dict, stack: list
 ) -> list[str]:
-    """Reasons a carried record no longer supports `rec`.
+    """Reasons the carried records no longer support `rec`.
 
-    A carried review or acceptance stays valid only if nothing in its scope changed
-    up to the carrier's revision. Other carried kinds may span such changes if the
-    carrier lists them exactly in `carriedChanges`."""
+    Every review or acceptance record in the carried closure stays valid only if
+    nothing in its scope changed up to the carrier's revision. Changes in the
+    scope of other carried kinds must equal the carrier's `carriedChanges`."""
     reasons = []
-    enumerated: set[str] = set()
     for cid in rec.get("carries", []):
         carried = ledger["evidence"].get(cid)
         label = f"carried {cid}"
@@ -687,20 +723,20 @@ def _carry_reasons(
                 f"{label} sourceRevision {short(carried['sourceRevision'])} "
                 f"is not an ancestor of {short(rec['sourceRevision'])}"
             )
-        else:
-            changed = carried_changes(rec, ledger, state)[cid]
-            if carried["kind"] in INDEPENDENT_KINDS:
-                if changed:
-                    reasons.append(
-                        f"carried {carried['kind']} {cid}: reviewed scope changed: " + ", ".join(changed[:5])
-                        + (", ..." if len(changed) > 5 else "")
-                    )
-            else:
-                enumerated.update(changed)
         reasons += _assumption_reasons(carried, ledger, f"{label}: ")
         for dep in carried["dependsOn"] + carried.get("carries", []):
             if not _validity(dep, carried["sourceRevision"], state, ledger, memo, stack)[0]:
                 reasons.append(f"{label} depends on invalid {dep}")
+    enumerated: set[str] = set()
+    for cid, paths in carried_changes(rec, ledger, state).items():
+        kind = ledger["evidence"][cid]["kind"]
+        if kind not in INDEPENDENT_KINDS:
+            enumerated.update(paths)
+        elif paths:
+            reasons.append(
+                f"carried {kind} {cid}: reviewed scope changed: " + ", ".join(paths[:5])
+                + (", ..." if len(paths) > 5 else "")
+            )
     listed = set(rec.get("carriedChanges", []))
     missing, extra = sorted(enumerated - listed), sorted(listed - enumerated)
     if missing or extra:
@@ -769,15 +805,20 @@ def effective_kinds(eid: str, ledger: dict, seen: tuple = ()) -> set[str]:
     return held
 
 
-def carried_closure(eid: str, ledger: dict) -> list[str]:
+def closure_from(start: list[str], ledger: dict) -> list[str]:
+    """Records reachable through `carries`, starting from the ids in `start`."""
     seen: list[str] = []
-    pending = list(ledger["evidence"][eid].get("carries", []))
+    pending = list(start)
     while pending:
         cid = pending.pop()
         if cid not in seen and cid in ledger["evidence"]:
             seen.append(cid)
             pending += ledger["evidence"][cid].get("carries", [])
     return seen
+
+
+def carried_closure(eid: str, ledger: dict) -> list[str]:
+    return closure_from(ledger["evidence"][eid].get("carries", []), ledger)
 
 
 def evidence_usable(eid: str, target: str, state: dict, ledger: dict, memo: dict) -> tuple[bool, str]:
@@ -795,10 +836,11 @@ def evidence_usable(eid: str, target: str, state: dict, ledger: dict, memo: dict
 
 
 def carried_changes(rec: dict, ledger: dict, state: dict) -> dict[str, list[str]]:
-    """Per carried record, paths in its scope that changed up to the carrier's revision."""
+    """Per record in the carried closure, paths in its scope that changed between its
+    own revision and the carrier's revision."""
     out: dict[str, list[str]] = {}
     state_only = state.get("stateOnlyPaths", [])
-    for cid in rec.get("carries", []):
+    for cid in closure_from(rec.get("carries", []), ledger):
         carried = ledger["evidence"][cid]
         try:
             changed = changed_paths(carried["sourceRevision"], rec["sourceRevision"])
@@ -967,7 +1009,8 @@ def evidence_report() -> int:
         else:
             ok, reason = _validity(eid, head, state, ledger, memo, [])
         claim = rec["claim"] if len(rec["claim"]) <= 70 else rec["claim"][:67] + "..."
-        carries = f"  carries {','.join(rec['carries'])}" if rec.get("carries") else ""
+        carries = f"  reviewer {rec['reviewer']}" if rec["kind"] in INDEPENDENT_KINDS else ""
+        carries += f"  carries {','.join(rec['carries'])}" if rec.get("carries") else ""
         carries += "".join(
             f"  changed under {cid} scope: {', '.join(paths[:5])}{', ...' if len(paths) > 5 else ''}"
             for cid, paths in carried_changes(rec, ledger, state).items()

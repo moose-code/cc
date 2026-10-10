@@ -318,7 +318,7 @@
       "author": "director, 2026-10-10",
       "reviewer": "independent review subagent, 2026-10-10",
       "result": "findings",
-      "limitations": "no forge run; Solidity read only for the migrate doors and invariants 11 and 16. the fixes made after it are not yet re-reviewed",
+      "limitations": "no forge run; Solidity read only for the migrate doors and invariants 11 and 16. the fixes made after it are not yet re-reviewed. re-reviewed at 5c02f64 and the two remaining fixes checked adversarially at 16249c1 and 2645c00 (reports in the director session of 2026-10-10)",
       "invalidated": null
     },
     "E-FOCUSED-2645c00": {
@@ -341,6 +341,32 @@
       "dependsOn": [],
       "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000, warm build cache",
       "method": "forge test --match-path test/Config.t.sol (29 pass); forge test --match-path test/ReviewMatrix.t.sol (11 pass)",
+      "author": "implementer subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "focused tests only. Rehearsal, Resume, ReviewDeploy and GasCap last ran at fb6c26c (78 pass); 2645c00 changes only the detail string of the ratio row in script/Checks.sol. the full suite was not run",
+      "invalidated": null
+    },
+    "E-FOCUSED-f1fd139": {
+      "claim": "preflight rate rows: the 10x ratio row, the rate bounds row and the settings bounds row each fail on their own cases; the review matrix asserts the exact failed rows for every rate mutation, 285 mutations, a rateStart above rateCap mutation included, 0 slips",
+      "kind": "test",
+      "sourceRevision": "f1fd1391f9100ea108b4ed808393610a98d3393a",
+      "scope": [
+        "script/*.sol",
+        "script/config/**",
+        "test/Config.t.sol",
+        "test/ReviewMatrix.t.sol",
+        "test/utils/**"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 1
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000, warm build cache",
+      "method": "forge test --match-path test/Config.t.sol (29 pass); forge test --match-path test/ReviewMatrix.t.sol (11 pass); the start-at-most-cap clause removed by hand makes the matrix fail",
       "author": "implementer subagent, 2026-10-10",
       "reviewer": "",
       "result": "pass",
