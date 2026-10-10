@@ -1019,7 +1019,6 @@
         "script/Preflight.s.sol",
         "script/Resume.s.sol",
         "script/SystemDeployer.sol",
-        "script/tools/check-preflight.sh",
         "test/BuildIdentity.t.sol",
         "test/Config.t.sol",
         "test/PostflightSlots.t.sol",
