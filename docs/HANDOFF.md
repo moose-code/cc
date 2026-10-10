@@ -49,6 +49,8 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 **OD-4, decided 2026-10-10 (FLOW 52).** `xToBuyback` stays in the old engine on `migrate`. built after NEXT item 26 as NEXT item 27.
 
+**metadata, decided 2026-10-10 (FLOW 53, 54).** the name `CC` is final. `image` and `description` become launch config parameters, built as NEXT item 28 after NEXT item 26. the owner supplies the image url and the description text before launch.
+
 **OD-2, open, does not block the launch.** when to call `coin.lockAllowlist()` and `router.lock()` (NEXT item 19, after launch). after `lockAllowlist`, `rescueCoin` reaches only addresses already listed.
 
 **intent gap, decision 47.** what "ready for when burn router and $balance drop" requires of the engine is not written down. the director drafts it from the v2 burn router source and brings the owner one question if a real choice remains.
