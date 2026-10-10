@@ -136,7 +136,7 @@
       }
     ]
   },
-  "candidate": null,
+  "candidate": "1e2c4b38eee6dfb26180c77fb6020f85d8f28f3a",
   "activeChange": null,
   "openBlockers": [],
   "ownerDecisions": [
@@ -258,5 +258,6 @@
         "rehearsal"
       ]
     }
-  }
+  },
+  "candidatePolicy": "3c374e530c9ab5d371a0d6bd66ece58dd1012f0f1acfcfd63d8f7e54856b3504"
 }
