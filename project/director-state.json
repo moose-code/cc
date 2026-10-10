@@ -179,7 +179,7 @@
       ]
     }
   ],
-  "nextAction": "When NEXT 26 lands: NEXT 27 (FLOW 52, migrate leaves xToBuyback) and NEXT 28 (FLOW 54, metadata launch parameters), then ARCHITECTURE section 1 rows for 50 to 54, then freeze. Owner supplies image url and description before launch.",
+  "nextAction": "When NEXT 26 lands: NEXT 27 (FLOW 52) and NEXT 28 (FLOW 54), then NEXT 29 (FLOW 55, remove credit scores everywhere) with its own full suite and independent review, then ARCHITECTURE section 1 rows for 50 to 55, then freeze.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
