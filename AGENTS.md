@@ -18,7 +18,7 @@ The active objective, its required paths and deliverables, and the open owner de
 ## Working rules
 
 - One active director. Implementers get bounded packets. Reviewers inspect an immutable commit, challenge the director's reasoning, and do not fix their own findings.
-- During an edit, run the smallest test that covers it. Full suites, deep invariants and the rehearsal belong to a frozen candidate or to a gate whose evidence was invalidated. Before a command over 30 seconds, say what it must establish.
+- Each change gets `forge build` and `forge test --match-path` for the test files it touched. Nothing more. The full suite, the deep invariants and the rehearsal run once, on the frozen candidate. A builder packet never asks for a full suite on a work item. Before a command over 30 seconds, say what it must establish.
 - No mainnet broadcast, deploy, push, merge or private key without the owner's explicit instruction.
 - Phase 2 contracts are named only `exitModule` and `exitToken`.
 - Toolchain, timings and test rules: `docs/HANDOFF.md` section 7.
