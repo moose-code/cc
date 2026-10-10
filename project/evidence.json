@@ -51,10 +51,10 @@
       "checked": "2026-10-10"
     },
     "A-OWNER-DECISIONS": {
-      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 51. v4: decision 51 changes the launch buybackSlice and its upper bound",
+      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 52. v5: decision 52 keeps xToBuyback in the old engine on migrate",
       "kind": "owner-decision",
       "source": "docs/FLOW.md",
-      "version": 4,
+      "version": 5,
       "checked": "2026-10-10"
     },
     "A-OWNER-DELEGATE": {

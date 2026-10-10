@@ -47,7 +47,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 **OD-5, decided 2026-10-10 (FLOW 51).** buyback slice 0.5 eth at launch, upper bound 1 eth. being built with decision 50 as NEXT item 26.
 
-**OD-4, open, blocks nothing now.** should `xToBuyback` stay in the old engine on `migrate`, like `ethToBuyback`? recommendation: yes.
+**OD-4, decided 2026-10-10 (FLOW 52).** `xToBuyback` stays in the old engine on `migrate`. built after NEXT item 26 as NEXT item 27.
 
 **OD-2, open, does not block the launch.** when to call `coin.lockAllowlist()` and `router.lock()` (NEXT item 19, after launch). after `lockAllowlist`, `rescueCoin` reaches only addresses already listed.
 

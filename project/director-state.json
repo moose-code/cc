@@ -165,8 +165,8 @@
     },
     {
       "id": "OD-4",
-      "question": "Should xToBuyback stay in the old engine on migrate, like ethToBuyback? Recommended: yes.",
-      "status": "open",
+      "question": "Should xToBuyback stay in the old engine on migrate, like ethToBuyback? Recommended: yes. Decided 2026-10-10: FLOW 52.",
+      "status": "decided",
       "blocks": []
     },
     {
@@ -179,7 +179,7 @@
       ]
     }
   ],
-  "nextAction": "When NEXT 24 lands: build NEXT 26 (decision 50: idleLoosenBps 2000 at launch, lower bound 1; decision 51: buybackSlice 0.5 eth at launch, upper bound 1 eth; runbook line for lowering the slice after a collapse; the 7702 delegate preflight rows), then a combined full suite. OD-4 still open.",
+  "nextAction": "When NEXT 26 lands: build NEXT 27 (FLOW 52: migrate leaves xToBuyback), then record the ARCHITECTURE section 1 rows for decisions 50 to 52, then freeze.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
