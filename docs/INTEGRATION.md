@@ -140,7 +140,7 @@ the cost basis is `core.ethPrice() * score / 1e4`, at least 1 wei: the price sta
 
 the basis is booked and the eth pile grows. eth, the rate state, the hourly room and the pots keep their values apart from the fee pull. the order of the pile is the order of the ids. a statement composed from adopted credits costs the sum of their bases.
 
-a successor Core (section 9) receives credits without records and adopts them the same way. a credit that left through `migrate` and returned can be adopted again.
+a successor Core (section 9) receives credits without records and adopts them the same way. `adopt` reverts `Retired` on a Core that has run `migrate`, so a credit that left through `migrate` is adopted by the successor.
 
 ## 9. migrate and rescue (owner only)
 
@@ -148,11 +148,11 @@ a successor Core (section 9) receives credits without records and adopts them th
 |---|---|---|
 | `setSuccessor(address)` | names the contract that `migrate` sends to. zero or an address with code other than the Core, the exit module, the exit token, the house, the fee source, the coin, Credits or Statements | `OnlyOwner`, `Locked("successor")`, `NoCode`, `BadSuccessor` |
 | `lockSuccessor()` | closes `setSuccessor` permanently. allowed while the successor is zero, which disables `migrate` | `OnlyOwner` |
-| `migrate(maxCredits)` | moves in batches: `ethPot + ethToBuyback` by one plain call, `xPot + xToBuyback` by `transfer`, up to `maxCredits` from the head of each pile by `transferFrom`. the held statements, their listings and their records stay in the Core | `OnlyOwner`, `NoSuccessor`, `Reentrancy`, `CallFailed` |
+| `migrate(maxCredits)` | the first call sets `retired` (view `retired()`, event `EngineRetired`). moves in batches: `ethPot` by one plain call, `xPot + xToBuyback` by `transfer`, up to `maxCredits` from the head of each pile by `transferFrom`. `ethToBuyback` stays in the Core. the held statements, their listings and their records stay in the Core | `OnlyOwner`, `NoSuccessor`, `Reentrancy`, `CallFailed` |
 | `rescueCoin(to, amount)` | sends coin the Core holds to `to`. coin an allowlisted holder sent to the Core is the only coin it holds | `OnlyOwner`, `ZeroAddress` |
 | `rescueNft(token, id, to)` | sends an ERC721 the Core holds to `to`: a credit only while it is outside both piles, a statement only while the Core has no record of it, any other ERC721 freely | `OnlyOwner`, `ZeroAddress`, `InPile`, `Held`, `NotHolder` |
 
-what a successor has to implement: a `receive()` that accepts a plain eth call, and an exit token and Credits that it accepts by `transfer` and `transferFrom`, so the `onERC721Received` of the successor is skipped. `migrate` transfers eth, exit token and credits. the old Core keeps its statements and sells them out itself, so call `collectSales` and `syncStatement` there and call `migrate` again to move the proceeds, until it moves nothing. `maxCredits` applies to each pile, and 0 moves the pots only. the successor builds its pile with `adopt`.
+what a successor has to implement: a `receive()` that accepts a plain eth call, and an exit token and Credits that it accepts by `transfer` and `transferFrom`, so the `onERC721Received` of the successor is skipped. `migrate` transfers eth, exit token and credits. the old Core is retired by the first `migrate`; an integrator that sells credits to a Core reads `core.retired()` first. `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`, `compose` and `composeExit` revert `Retired`, and `retired()` reads true. it keeps its statements and sells them out itself, so call `collectSales` and `syncStatement` there and call `migrate` again to move the proceeds, until it moves nothing. it keeps `exitStatement`, `overprint`, `repriceStatement`, `skim`, `buyback` and `buybackExit`, and books the fees that still arrive. `maxCredits` applies to each pile, and 0 moves the pots only. the successor builds its pile with `adopt`.
 
 ## 10. the lens
 
@@ -212,7 +212,8 @@ the Core (`src/interfaces/ICore.sol`):
 | `ExitRateFill` | `uint256 rate, uint256 pot` | phase 2 spend of the exit pot by `sellForExitToken`: the exit rate and the pot after |
 | `FeesAdded` | `uint256 amount` | `receive()` booked a flush of the fee router: `feeToBuybackBps` of it to the coin buyback pot, the rest to `ethPot` |
 | `ListingBought` | `uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 tip, uint256 rate` | `buyListing`. `cost` is the eth the target took, `tip` the caller tip, `rate` the price state after the fill. the cost basis of the credit is `cost + tip` |
-| `Migrated` | `address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits` | `migrate`: eth moved (pots and buyback pot), exit token moved, credits moved |
+| `EngineRetired` | `address indexed successor` | the first `migrate`, once. the Core refuses the six doors from then on |
+| `Migrated` | `address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits` | `migrate`: eth moved (`ethPot`), exit token moved (`xPot + xToBuyback`), credits moved |
 | `CoinRescued` | `address indexed to, uint256 amount` | `rescueCoin` |
 | `NftRescued` | `address indexed token, uint256 indexed id, address indexed to` | `rescueNft` |
 | `Overprinted` | `uint256 indexed baseId, uint256 indexed topId, uint256 cost` | `overprint` merged `topId` into `baseId`. `cost` is the summed cost basis |
@@ -301,6 +302,7 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `NoCredit()` | `buyListing` | the target call did not deliver exactly the credit `id` to the Core |
 | `NoExitModule()` | phase 2 functions | no exit module is set |
 | `NoSuccessor()` | `migrate` | the successor is zero |
+| `Retired()` | `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`, `compose`, `composeExit` | the Core ran `migrate` |
 | `NotHeld()` | `compose`, `exitStatement` | the Core does not hold the credit of the page, or has no record of the statement |
 | `NotHolder()` | `adopt`, `rescueNft` | the Core is not the holder of the token |
 | `NotInPile(uint256 id)` | `compose` | the controller named a credit that is not in the lane pile (`id`) |

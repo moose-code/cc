@@ -813,6 +813,8 @@ abstract contract HandlerOwner is HandlerHouse {
         uint256[] credits;
         uint256[] statements;
         uint256 maxCredits;
+        uint256 buyback;
+        bool wasRetired;
     }
 
     /// the owner's successor doors and `migrate`. by mode: set the successor (refused after the lock), a stranger on the
@@ -903,6 +905,8 @@ abstract contract HandlerOwner is HandlerHouse {
             vm.prank(owner);
             core.setSuccessor(address(sink));
         }
+        // a migrate retires the core for the rest of the run, so the first one is rare
+        if (!gRetired && (seed >> 16) % 6 != 0) return _skip(a);
         address to = core.successor();
         MigPre memory q = _migPre(seed, to);
         vm.recordLogs();
@@ -916,7 +920,9 @@ abstract contract HandlerOwner is HandlerHouse {
     }
 
     function _migPre(uint256 seed, address to) internal returns (MigPre memory q) {
-        q.eth = core.ethPot() + core.ethToBuyback();
+        q.eth = core.ethPot();
+        q.buyback = core.ethToBuyback();
+        q.wasRetired = gRetired;
         q.balance = address(core).balance;
         q.x = core.xPot() + core.xToBuyback();
         q.xBalance = _xBal(address(core));
@@ -938,6 +944,8 @@ abstract contract HandlerOwner is HandlerHouse {
     }
 
     function _migPost(MigPre memory q, address to) internal {
+        gRetired = true;
+        if (!core.retired()) _flag(V_RETIRED, "migrate did not set retired");
         // eth and exit token: the trackers went to the successor whole
         // a migration that moved eth closed the hourly spend window, so the ghost window opens on the next spend
         if (q.eth != 0) {
@@ -945,13 +953,15 @@ abstract contract HandlerOwner is HandlerHouse {
             gWinPot = 0;
             gWinSpent = 0;
         }
+        // the pot goes to the successor, the buyback pot stays
         _eth(q.balance, q.eth, 0, "migrate");
         _x(q.xBalance, q.x, 0, "migrate");
         if (to.balance != q.sinkEth + q.eth) _flag(V_OWNER, "the successor did not get the eth pots");
         if (_xBal(to) != q.sinkX + q.x) _flag(V_OWNER, "the successor did not get the exit token pots");
-        if (core.ethPot() != 0 || core.ethToBuyback() != 0 || core.xPot() != 0 || core.xToBuyback() != 0) {
+        if (core.ethPot() != 0 || core.xPot() != 0 || core.xToBuyback() != 0) {
             _flag(V_OWNER, "a tracker is not zero after a migration");
         }
+        if (core.ethToBuyback() != q.buyback) _flag(V_OWNER, "migrate moved the eth buyback pot");
         // credits: the first of each pile
         for (uint256 i; i < q.credits.length; ++i) {
             uint256 id = q.credits[i];
@@ -979,7 +989,9 @@ abstract contract HandlerOwner is HandlerHouse {
     function _migEvent(MigPre memory q, address to) internal {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bool seen;
+        uint256 retiredLogs;
         for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == address(core) && logs[i].topics[0] == ICore.EngineRetired.selector) ++retiredLogs;
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.Migrated.selector) continue;
             seen = true;
             if (address(uint160(uint256(logs[i].topics[1]))) != to) _flag(V_OWNER, "Migrated names another successor");
@@ -987,5 +999,6 @@ abstract contract HandlerOwner is HandlerHouse {
             if (eth != q.eth || x != q.x || credits != q.credits.length) _flag(V_OWNER, "Migrated differs from the model");
         }
         if (!seen) _flag(V_OWNER, "migrate emitted no Migrated");
+        if (retiredLogs != (q.wasRetired ? 0 : 1)) _flag(V_RETIRED, "EngineRetired is not logged exactly by the first migrate");
     }
 }

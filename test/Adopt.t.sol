@@ -298,9 +298,9 @@ contract AdoptTest is Fixture {
         assertEq(succ.pileSize(Lane.Eth), 0);
     }
 
-    /// a credit that left through `migrate` keeps its old record with the pile flag cleared. it can come back and be
-    /// adopted again, which writes a new record
-    function test_OK_aMigratedCreditThatComesBackCanBeAdoptedAgain() public {
+    /// a credit that left through `migrate` keeps its old record with the pile flag cleared. the Core is retired by the
+    /// migrate, so the credit cannot be adopted there again (a successor adopts it, see the test above)
+    function test_REVERT_aMigratedCreditThatComesBackIsNotAdoptedByTheRetiredCore() public {
         uint256[] memory ids = _fillEthPile(3);
         (,, uint256 oldCost,) = core.creditInfo(ids[0]);
         assertGt(oldCost, 0);
@@ -316,13 +316,11 @@ contract AdoptTest is Fixture {
         vm.prank(sink);
         CREDITS.transferFrom(sink, address(core), ids[0]);
         _warp(1 days);
-        uint256[] memory one = _one(ids[0]);
-        _adopt(one);
-        (bool p,, uint256 fresh, uint64 at) = core.creditInfo(ids[0]);
-        assertTrue(p);
-        assertEq(fresh, core.ethPrice() * core.scoreOf(ids[0]) / 1e4);
-        assertEq(at, block.timestamp);
-        assertEq(core.pileSize(Lane.Eth), 1);
+        vm.expectRevert(ICore.Retired.selector);
+        core.adopt(_one(ids[0]));
+        (bool p,,,) = core.creditInfo(ids[0]);
+        assertFalse(p, "a refused adopt booked the credit");
+        assertEq(core.pileSize(Lane.Eth), 0);
     }
 
     /// inside a guarded call (a listing target mid buy) `adopt` is refused, so a credit being bought cannot be put in

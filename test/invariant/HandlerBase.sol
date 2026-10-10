@@ -154,7 +154,8 @@ abstract contract HandlerBase is Test {
     uint256 internal constant V_SALE_PATH = 29; // a sellTo or buy sale outside the rules: price, booking, holder or record
     uint256 internal constant V_LOCK = 30; // a one way lock came undone, or a handover left a power behind
     uint256 internal constant V_ROUTER = 31; // router eth went somewhere but the engine set at that time, or a flush broke its rule
-    uint256 internal constant N_VIOL = 32;
+    uint256 internal constant V_RETIRED = 32; // a retired core took a call at one of the six doors, or the retired flag disagrees with the ghost
+    uint256 internal constant N_VIOL = 33;
 
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
     IStatements internal constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
@@ -235,6 +236,8 @@ abstract contract HandlerBase is Test {
     string[N_ACTIONS] internal names;
 
     uint256[N_VIOL] public viol;
+    /// set by the first successful `migrate`. from then on the six doors must refuse with `Retired`
+    bool public gRetired;
     string[N_VIOL] public violMsg;
 
     // coin supply ghost. the expected supply falls by the coin the eth buyback bought and burned, and by the coin
@@ -564,6 +567,35 @@ abstract contract HandlerBase is Test {
             vm.setEnv(string.concat("INV_", tag, "_", names[a], "_lastsel"), vm.toString(bytes32(bytes4(why))));
         }
         _bump(a, "unexpected");
+    }
+
+    /// the `buyListing` call of a listing action on a retired core
+    function _retiredListing(uint8 a, address target) internal returns (bool) {
+        return _retiredRefusal(a, keeper, abi.encodeCall(ICore.buyListing, (1, "", 1, target)));
+    }
+
+    /// the credits an actor holds, at most the first one: the argument of a call a retired core refuses
+    function _firstOf(address who) internal view returns (uint256[] memory ids) {
+        ids = new uint256[](inventory[who].length == 0 ? 0 : 1);
+        if (ids.length == 1) ids[0] = inventory[who][0];
+    }
+
+    /// after a migrate the core is retired and `sellForEth`, `buyListing`, `adopt`, `compose`, `composeExit` and
+    /// `sellForExitToken` revert `Retired`. the action sends its call instead of its own body, checks the selector and
+    /// that the books stayed, and ends. returns false while the core is not retired
+    function _retiredRefusal(uint8 a, address who, bytes memory data) internal returns (bool) {
+        if (!gRetired) return false;
+        uint256 bal = address(core).balance;
+        uint256 pot = core.ethPot();
+        uint256 rate = core.ethRate();
+        _att(a);
+        vm.prank(who);
+        (bool ok, bytes memory out) = address(core).call(data);
+        if (ok) _flag(V_RETIRED, "a retired core took a call at a door it must refuse");
+        else if (bytes4(out) != ICore.Retired.selector) _unexpected(a, out);
+        else _ok(a);
+        _failed(bal, pot, rate, "a retired door");
+        return true;
     }
 
     function _flag(uint256 code, string memory what) internal {
@@ -1272,6 +1304,7 @@ abstract contract HandlerBase is Test {
     function sellForEth(uint256 aSeed, uint256 nSeed, uint256 pick, uint256 mode) external checked {
         uint8 a = A_SELL_FOR_ETH;
         address who = _actor(aSeed);
+        if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForEth(uint256[])", _firstOf(who)))) return;
         uint256 len = inventory[who].length;
         if (len == 0) return _skip(a);
         uint256 want = bound(nSeed, 1, 10);
@@ -1365,6 +1398,7 @@ abstract contract HandlerBase is Test {
     /// with a wrong value or wrong calldata or above the ceiling, and must revert without moving eth.
     function listingStrategy(uint256 pick, uint256 mode) external checked {
         uint8 a = A_LISTING_STRATEGY;
+        if (_retiredListing(a, STRATEGY)) return;
         uint256 id;
         uint256 price;
         bool allowed;
@@ -1398,6 +1432,7 @@ abstract contract HandlerBase is Test {
     /// the core's eth where it was.
     function listingHostile(uint256 pick, uint256 modeSeed) external checked {
         uint8 a = A_LISTING_HOSTILE;
+        if (_retiredListing(a, address(probe))) return;
         uint256 n = probeIds.length;
         if (n < 2 || !core.allowedTarget(address(probe))) return _skip(a);
         uint256 id = probeIds[pick % n];
@@ -1588,6 +1623,8 @@ abstract contract HandlerBase is Test {
 
     function _compose(uint8 a, Lane lane, uint256 gate, uint256 feeSeed) internal {
         if (lane == Lane.Exit && !phase2()) return _skip(a);
+        bytes4 sel = lane == Lane.Eth ? ICore.compose.selector : ICore.composeExit.selector;
+        if (_retiredRefusal(a, keeper, abi.encodeWithSelector(sel))) return;
         (bool ready, uint256[] memory ids, uint256 format) = _peekPage(lane);
         // a pile of 80 is composed on one gate in two. a short pile only now and then, to see NotReady
         if (ready ? gate % 2 != 0 : gate % 13 != 0) return _skip(a);
@@ -2038,6 +2075,7 @@ abstract contract HandlerBase is Test {
     function adopt(uint256 aSeed, uint256 nSeed, uint256 mode) external checked {
         uint8 a = A_ADOPT;
         address who = _actor(aSeed);
+        if (_retiredRefusal(a, who, abi.encodeCall(ICore.adopt, (_firstOf(who))))) return;
         uint256 m = mode % 9;
         uint256[] memory ids;
         bytes4 want;
@@ -2364,6 +2402,7 @@ abstract contract HandlerBase is Test {
         uint8 a = A_SELL_FOR_EXIT;
         if (!phase2()) return _skip(a);
         address who = _actor(aSeed);
+        if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForExitToken(uint256[])", _firstOf(who)))) return;
         uint256 len = inventory[who].length;
         if (len == 0) return _skip(a);
         uint256 unit = _unitOf();

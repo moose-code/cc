@@ -54,6 +54,7 @@ struct CoreState {
     uint64 xStartTime;
     address successor;
     bool successorLocked;
+    bool retired;
 }
 
 /// the one linked library of the Core: the settings write (validation, storage, event), the eth rate (the climb with its
@@ -127,6 +128,8 @@ library CoreLib {
     error Locked(bytes32 what);
     error NoCode(address who);
     error NoSuccessor();
+    /// the Core ran `migrate`, which retired it
+    error Retired();
     /// the successor is the Core or a contract the Core works with
     error BadSuccessor(address who);
     error CallFailed();
@@ -134,6 +137,7 @@ library CoreLib {
     event SuccessorLocked();
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
+    event EngineRetired(address indexed successor);
 
     /// @notice validates the settings, stores them and logs them. the Core forwards its own `setSettings` call here
     /// untouched (same selector), after it checkpointed both rates. the constructor calls it too
@@ -403,9 +407,12 @@ library CoreLib {
         emit SuccessorLocked();
     }
 
-    /// @notice moves the eth, the exit token and the credits the Core tracks to the successor, in batches. the Core forwards its call
-    /// here untouched, the owner check and the reentrancy guard are here.
-    /// eth: `ethPot + ethToBuyback`, by one plain call, the trackers zeroed. eth above the trackers stays.
+    /// @notice moves the eth pot, the exit token pots and the credits the Core tracks to the successor, in batches. the Core
+    /// forwards its call here untouched, the owner check and the reentrancy guard are here.
+    /// the first call sets `retired`, which stays set: `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`,
+    /// `compose` and `composeExit` then revert `Retired`. logs `EngineRetired` once.
+    /// eth: `ethPot`, by one plain call, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
+    /// trackers stays.
     /// exit token: `xPot + xToBuyback`, by `transfer`, the trackers zeroed. the coin stays.
     /// credits: up to `maxCredits` from the head of each pile, by `transferFrom`, the pile membership cleared (the
     /// cost, lane and arrival time of the record stay). zero moves the pots only.
@@ -418,6 +425,10 @@ library CoreLib {
         address to = c.successor;
         if (to == address(0)) revert NoSuccessor();
         _enter();
+        if (!c.retired) {
+            c.retired = true;
+            emit EngineRetired(to);
+        }
         uint256 eth = _moveEth(c, to);
         uint256 credits = _moveCredits(c, to, maxCredits);
         uint256 exitTokens = _moveExitToken(c, to);
@@ -426,12 +437,11 @@ library CoreLib {
     }
 
     function _moveEth(CoreState storage c, address to) private returns (uint256 eth) {
-        eth = c.ethPot + c.ethToBuyback;
+        eth = c.ethPot;
         if (eth == 0) return 0;
-        (c.rateAtCheckpoint,) = _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
+        (c.rateAtCheckpoint,) = _climb(c.rateAtCheckpoint, eth, c.lastFillTime, c.checkpointTime, block.timestamp);
         c.checkpointTime = uint64(block.timestamp);
         c.ethPot = 0;
-        c.ethToBuyback = 0;
         // the hourly spend window of the old pot is closed: the next spend opens one on the pot it finds
         c.windowStart = 0;
         c.windowPot = 0;
@@ -585,6 +595,7 @@ library CoreLib {
 
     function _sellForExitToken(uint256[] calldata ids, uint256 minOut) private {
         CoreState storage c = state();
+        if (c.retired) revert Retired();
         Settings storage s = SettingsStore.load();
         if (ids.length == 0) revert Empty();
         if (c.exitModule == address(0)) revert NoExitModule();

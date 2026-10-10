@@ -202,7 +202,7 @@ contract WindowTest is CoreBase {
         assertEq(core.hourlyRoom(), pot * _cap() / BPS - s2, "the next window opened on the pot with both inflows once");
     }
 
-    /// after `migrate` the window start is zero: an inflow is not added and the next spend opens on the pot it finds
+    /// after `migrate` the window start is zero: an inflow is not added and the room reads the live pot
     function test_inflowAfterMigrate() public {
         MigrationSink sink = new MigrationSink();
         _fund(1 ether - core.ethPot());
@@ -215,8 +215,6 @@ contract WindowTest is CoreBase {
         assertEq(core.ethPot(), 0);
         _skim(2 ether);
         assertEq(core.hourlyRoom(), 2 ether * _cap() / BPS, "the live pot");
-        (, uint256 s) = _sell(_credits(seller, 1));
-        assertEq(core.hourlyRoom(), 2 ether * _cap() / BPS - s, "opened on the pot found");
     }
 
     /// an inflow before the opening spend of the same timestamp is read once in the window pot, and one after it is

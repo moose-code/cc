@@ -86,6 +86,13 @@ contract CoreLayoutTest is Fixture {
         assertEq(core.successor(), address(this), "successor value");
         assertTrue(core.successorLocked(), "successorLocked value");
         assertTrue(core.controllerLocked() && core.exitModuleLocked() && core.targetsLocked(), "locks");
+        // the first migrate sets retired. the call moves the pots, so it comes after the pot words are compared
+        assertEq(_field(25, 29, 1), 0, "retired is false before a migrate");
+        assertFalse(core.retired(), "retired value before");
+        vm.prank(owner);
+        core.migrate(0);
+        assertEq(_field(25, 29, 1), 1, "retired");
+        assertTrue(core.retired(), "retired value");
     }
 
     function test_OK_exitRateWordsSitWhereTheMirrorSays() public {

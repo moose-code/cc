@@ -472,6 +472,7 @@ abstract contract HandlerSale is HandlerOwner {
             if (!core.targetsLocked()) _flag(V_LOCK, "the targets lock came undone");
             _setterShut(2);
         }
+        if (core.retired() != gRetired) _flag(V_RETIRED, "the retired flag differs from the ghost");
         if (gLockedS) {
             if (!core.successorLocked()) _flag(V_LOCK, "the successor lock came undone");
             if (core.successor() != gSuccessorAtLock) _flag(V_LOCK, "the locked successor changed");

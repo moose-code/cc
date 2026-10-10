@@ -53,7 +53,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// sales through sellTo and buy, and the departures of statements
     uint256[] internal g11 = [7, 8, 29];
     /// locks and handovers
-    uint256[] internal g12 = [30];
+    uint256[] internal g12 = [30, 32];
     /// the fee router: its eth goes only to the engine set at that time, by the flush rule
     uint256[] internal g13 = [31];
 
@@ -339,7 +339,8 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// 11. model check: no action the ghost model expected to succeed reverted, and every action it expected to
     /// revert did so with the selector it expected. a core that started refusing calls it used to accept, or refusing
-    /// for another reason, would show up here and nowhere else.
+    /// for another reason, would show up here and nowhere else. after a migrate the model expects the six doors to
+    /// revert `Retired`; any other outcome there is counted.
     function invariant_11_noUnexpectedReverts() public view {
         uint256 n = handler.actionCount();
         for (uint256 a; a < n; ++a) {
@@ -378,9 +379,11 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 13. the four one way locks (controller, exit module, targets, successor) never come undone and the setter of a
-    /// locked door always refuses. every former owner has no power over the core or over the controller's sale
-    /// settings, and the core's owner is the one the handler last saw accept. the handler checks each of these again on
-    /// every call to `lockCheck` and `formerOwnersCheck`.
+    /// locked door always refuses. the retired flag set by the first `migrate` never clears, and from then on the six
+    /// doors (`sellForEth`, `buyListing`, `adopt`, `compose`, `composeExit`, `sellForExitToken`) revert `Retired`. every
+    /// former owner has no power over the core or over the controller's sale settings, and the core's owner is the one
+    /// the handler last saw accept. the handler checks each of these again on every call to `lockCheck` and
+    /// `formerOwnersCheck`.
     function invariant_13_locksAndHandoversNeverComeUndone() public {
         handler.lockCheck();
         handler.formerOwnersCheck();
@@ -411,13 +414,14 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// 16. the eth bid stays open. when a credit held by an actor has a price (`ceilingOf`) that the eth pot and the
-    /// hourly room both cover, a one credit `sellForEth` by its holder succeeds. the check runs after every action
+    /// 16. the eth bid stays open while the core has not migrated. when a credit held by an actor has a price
+    /// (`ceilingOf`) that the eth pot and the hourly room both cover, a one credit `sellForEth` by its holder succeeds.
+    /// the check runs after every action
     /// under a snapshot that is reverted, so the state is unchanged. it starts with the flush of the fee router that
     /// every `sellForEth` makes first, so the price is the one the sale itself reads. a hostile controller answers
     /// `wants` differently from call to call and is left out.
     function invariant_16_theBidNeverCloses() public {
-        if (_hostileController()) return;
+        if (_hostileController() || core.retired()) return;
         uint256 snap = vm.snapshotState();
         vm.prank(address(core));
         try feeRouter.flush{gas: 1_000_000}() {} catch {}
@@ -496,7 +500,7 @@ abstract contract InvariantsBase is InvariantFixture {
             loose[looseCount++] = owned[i];
         }
         assertEq(owned.length, eth.length + exitIds.length + looseCount, "an owned credit is counted twice or missed");
-        _adoptable(loose, looseCount);
+        if (!core.retired()) _adoptable(loose, looseCount);
         uint256 piled = handler.everPiledCount();
         for (uint256 i; i < piled; ++i) {
             uint256 id = handler.everPiled(i);
@@ -880,6 +884,30 @@ abstract contract InvariantsBase is InvariantFixture {
             assertEq(handler.viol(i), 0, handler.violMsg(i));
         }
         _summary();
+    }
+
+    /// the first successful `migrate` of the handler retires the core. every action that calls one of the six doors
+    /// then sends its call, which must revert `Retired` with the books untouched, and no violation or unexpected revert
+    /// is recorded
+    function test_aRetiredCoreRefusesTheSixDoorActions() public virtual {
+        for (uint256 i; i < 300 && !handler.gRetired(); ++i) {
+            uint256 s = uint256(keccak256(abi.encode("retire", i)));
+            _act(43, s, s >> 8, 0, 0);
+        }
+        assertTrue(handler.gRetired(), "the handler never migrated");
+        assertTrue(core.retired(), "the core is not retired");
+        // sellForEth, listingStrategy, listingHostile, compose, adopt, then sellForExit and composeExit in phase 2
+        uint8[7] memory doors = [2, 3, 4, 7, 44, 16, 17];
+        for (uint256 k; k < doors.length; ++k) {
+            if (!_available(doors[k])) continue;
+            assertTrue(_try(doors[k], 40), string.concat("no refusal checked: ", handler.actionName(doors[k])));
+        }
+        for (uint256 i = 1; i < handler.violationCount(); ++i) {
+            assertEq(handler.viol(i), 0, handler.violMsg(i));
+        }
+        for (uint256 a; a < handler.actionCount(); ++a) {
+            assertEq(handler.unexpectedFails(a), 0, handler.actionName(a));
+        }
     }
 
     /// the sale and owner actions of `HandlerSale` run only in the suites that list them

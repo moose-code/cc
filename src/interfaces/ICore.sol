@@ -61,6 +61,7 @@ interface ICore {
     error OnlyPoolManager();
     error PotTooSmall();
     error Reentrancy();
+    error Retired();
     error Slippage();
     error TargetNotAllowed();
     error TooEarly();
@@ -77,6 +78,7 @@ interface ICore {
     event ControllerSet(address controller);
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, Lane lane, uint256 cost);
+    event EngineRetired(address indexed successor);
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     event ExitBuyback(address indexed caller, uint256 slice, uint256 coinIn);
     event ExitModuleLocked();
@@ -173,6 +175,7 @@ interface ICore {
     function repriceStatement(uint256 sid) external;
     function rescueCoin(address, uint256) external;
     function rescueNft(address, uint256, address) external;
+    function retired() external view returns (bool);
     function scoreOf(uint256 id) external view returns (uint256);
     function sellForEth(uint256[] memory ids, uint256 minOut) external;
     function sellForEth(uint256[] memory ids) external;

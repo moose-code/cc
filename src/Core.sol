@@ -127,6 +127,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error NotHolder();
     /// `migrate` with no successor set
     error NoSuccessor();
+    /// `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`, `compose` or `composeExit` after `migrate`
+    error Retired();
     /// `setSuccessor` with the core or a contract the core works with
     error BadSuccessor(address who);
 
@@ -177,6 +179,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event CreditAdopted(uint256 indexed id, uint256 cost);
     /// `migrate` moved eth, exit token and credits to the successor
     event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
+    /// the first `migrate` set `retired`
+    event EngineRetired(address indexed successor);
 
     /*//////////////////////////////////////////////////////////////
                               PARAMETERS
@@ -279,6 +283,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the contract `migrate` sends the assets to, and whether `setSuccessor` is closed
     address public successor;
     bool public successorLocked;
+    /// set by the first `migrate`, one way. a retired core refuses `sellForEth`, `buyListing`, `sellForExitToken`,
+    /// `adopt`, `compose` and `composeExit` with `Retired`
+    bool public retired;
 
     modifier onlyOwner() {
         _onlyOwner();
@@ -555,10 +562,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         delete _credits[id];
     }
 
-    /// the first action of the eth pot entry points (`sellForEth`, `buyListing`, `compose`, `composeExit`): the fee
-    /// router flushes its balance into `receive`, which books it, before any rate read, checkpoint or measurement of the
-    /// entry point. a failing router does not fail the entry point (docs/FLOW.md 10.8)
-    function _pullFees() private {
+    /// the first action of the entry points that buy credits or compose (`sellForEth`, `buyListing`, `adopt`, `compose`,
+    /// `composeExit`): reverts `Retired` after `migrate`. then the fee router flushes its balance into `receive`, which
+    /// books it, before any rate read, checkpoint or measurement of the entry point. a failing router does not fail the
+    /// entry point (docs/FLOW.md 10.8)
+    function _openDoor() private {
+        if (retired) revert Retired();
         CoreLib.pullFees(FEE_SOURCE);
     }
 
@@ -566,7 +575,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                  DOORS
     //////////////////////////////////////////////////////////////*/
 
-    /// sell credits into the eth bid at the current ceiling. caller must have approved the core.
+    /// sell credits into the eth bid at the current ceiling. caller must have approved the core. reverts `Retired` after
+    /// `migrate`
     function sellForEth(uint256[] calldata ids) external nonReentrant {
         _sellForEth(ids, 0);
     }
@@ -577,7 +587,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     function _sellForEth(uint256[] calldata ids, uint256 minOut) private {
-        _pullFees();
+        _openDoor();
         if (ids.length == 0) revert Empty();
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
@@ -594,8 +604,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// buy credit id through an allowed target. the caller supplies the complete calldata and earns a tip from the savings.
+    /// reverts `Retired` after `migrate`
     function buyListing(uint256 value, bytes calldata data, uint256 id, address target) external nonReentrant {
-        _pullFees();
+        _openDoor();
         if (!allowedTarget[target] || _forbidden(target)) revert TargetNotAllowed();
         if (id == 0) revert ZeroId();
         if (CREDITS.ownerOf(id) == address(this)) revert AlreadyOwned();
@@ -626,8 +637,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (tip != 0) SafeTransferLib.safeTransferETH(msg.sender, tip);
     }
 
-    /// sell credits into the exit token bid. phase 2 only. the body is `CoreLib.sellForExitToken`, called with the
-    /// calldata untouched
+    /// sell credits into the exit token bid. phase 2 only. reverts `Retired` after `migrate`. the body is
+    /// `CoreLib.sellForExitToken`, called with the calldata untouched
     function sellForExitToken(uint256[] calldata ids) external nonReentrant {
         _toLib();
     }
@@ -665,20 +676,20 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// composes the controller's page of eth lane credits into a statement and lists it on the house. anyone may call.
-    /// the caller pays the gas, which includes the fee router flush
+    /// the caller pays the gas, which includes the fee router flush. reverts `Retired` after `migrate`
     function compose() external nonReentrant {
         _compose();
     }
 
     /// composes the controller's page of exit lane credits into a statement. anyone may call. the caller pays the gas,
-    /// which includes the fee router flush
+    /// which includes the fee router flush. reverts `Retired` after `migrate`
     function composeExit() external nonReentrant {
         _compose();
     }
 
     /// one body for both lanes, told apart by the selector of the call, so the code is not duplicated
     function _compose() private {
-        _pullFees();
+        _openDoor();
         Lane lane = msg.sig == this.composeExit.selector ? Lane.Exit : Lane.Eth;
         (bool ready, uint256[80] memory ids, uint256 format) = _nextPage(lane);
         if (!ready) revert NotReady();
@@ -1131,10 +1142,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _toLib();
     }
 
-    /// moves the eth pots, the exit token pots and up to `maxCredits` credits from the head of each pile to the
-    /// successor, in batches. callable again until nothing is left. the held statements, their listings and their
-    /// records stay with the core. the hourly spend window closes with the eth pot. owner only and guarded, both checked
-    /// by the library, to which the call is handed untouched. reverts `NoSuccessor` while the successor is zero
+    /// moves `ethPot`, the exit token pots and up to `maxCredits` credits from the head of each pile to the successor,
+    /// in batches. callable again until nothing is left. `ethToBuyback` stays for the coin buyback. the held
+    /// statements, their listings and their records stay with the core. the hourly spend window closes with the eth
+    /// pot. the first call sets `retired` and logs `EngineRetired`. owner only and guarded, both checked by the
+    /// library, to which the call is handed untouched. reverts `NoSuccessor` while the successor is zero
     function migrate(uint256) external {
         _toLib();
     }
@@ -1159,10 +1171,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// state is the figure the engine pays with a funded pot, so a statement built from adopted credits is priced at
     /// that level; the clamp of a thin pot would book a basis of 1 wei. the basis is booked and the eth pile grows: eth,
     /// the rate state, the hourly room and the pots keep their values. a donor who inflates the basis of a statement
-    /// gives credits away. reverts `InPile`, `NotHolder`, `ZeroId` and `Empty`. logs `CreditAdopted`. the body is
+    /// gives credits away. reverts `Retired` after `migrate`, `InPile`, `NotHolder`, `ZeroId` and `Empty`. logs `CreditAdopted`. the body is
     /// `CoreLib.adopt`, called with the calldata untouched
     function adopt(uint256[] calldata) external nonReentrant {
-        _pullFees();
+        _openDoor();
         _toLib();
     }
 

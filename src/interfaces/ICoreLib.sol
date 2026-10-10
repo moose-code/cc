@@ -21,6 +21,7 @@ interface ICoreLib {
     error NotOwner();
     error OnlyOwner();
     error PotTooSmall();
+    error Retired();
     error Slippage();
     error ZeroAddress();
     error ZeroAmount();
@@ -29,6 +30,7 @@ interface ICoreLib {
     event CoinRescued(address indexed to, uint256 amount);
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, Lane lane, uint256 cost);
+    event EngineRetired(address indexed successor);
     event ExitRateFill(uint256 rate, uint256 pot);
     event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
