@@ -1,6 +1,6 @@
 # architecture
 
-this file is the current reading of the owner's intent and of the system that implements it. docs/FLOW.md is the dated decision log. SPEC.md is history. docs/HANDOFF.md holds the objective, the open owner decisions and the state of the evidence. precedence between sources: AGENTS.md. where this file and the code differ, the difference is listed in section 1 or in docs/HANDOFF.md, and neither side is assumed right.
+this file is the current reading of the owner's intent and of the system that implements it. docs/FLOW.md is the dated decision log. docs/archive/SPEC.md is history. docs/HANDOFF.md holds the objective, the open owner decisions and the state of the evidence. precedence between sources: AGENTS.md. where this file and the code differ, the difference is listed in section 1 or in docs/HANDOFF.md, and neither side is assumed right.
 
 naming rule: only `exitModule` and `exitToken`. never name or describe them anywhere.
 
@@ -54,7 +54,7 @@ live and external, used as deployed.
 | the Core's house | an auction house the Core creates through the factory in its constructor. non upgradeable, owned by the Core forever, one per address, fee fixed at the factory default (0 at the pin). the Core approves it for all on Statements. the Core lists statements on it and never bids |
 | Credits, Statements, CreditScore, CreditStrategy, Seaport 1.6 | constants in `src/interfaces/Interfaces.sol`: Credits 0x97630aA70AB14ed9883B41dAfccBc11349723043, Statements 0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b, CreditScore 0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7, CreditStrategy 0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6, Seaport 0x0000000000000068F116a894984e2DB1123eB395. Permit2, the position manager and the universal router are constants too |
 
-the artcoins v2 stack is a config input: every v2 address is a field of the `stack` block of `script/config/mainnet.json`, and nothing in `src/` hardcodes one. the live stack is recorded in `script/config/v2-mainnet.json` (launcher commit fbe07c7, contract sources of d4aa46b) and the tests attach to it. the pnd auction factory (0x77aB853543286C9Cdd7dd6c01222A7cC4Ac93d63) and the pool manager (0x000000000004444c5dc75cB358380D2e3dE08A90) are live. the v1 addresses and notes are the record in docs/reference/artcoins-notes.md only.
+the artcoins v2 stack is a config input: every v2 address is a field of the `stack` block of `script/config/mainnet.json`, and nothing in `src/` hardcodes one. the live stack is recorded in `script/config/v2-mainnet.json` (launcher commit fbe07c7, contract sources of d4aa46b) and the tests attach to it. the pnd auction factory (0x77aB853543286C9Cdd7dd6c01222A7cC4Ac93d63) and the pool manager (0x000000000004444c5dc75cB358380D2e3dE08A90) are live. the v1 addresses and notes are the record in docs/archive/reference/artcoins-notes.md only.
 
 the coin is an `ArtCoinsTokenV2` launched through the v2 factory, restricted, not our code. toolchain: solc 0.8.30, cancun, via_ir, optimizer 200, solady, v4 core and periphery pinned in `lib/`. every runtime contract must stay under 24,576 bytes (`forge build --sizes`). the Core is 24,141 bytes (435 bytes of headroom, measured) and `CoreLib` 17,204, which is why settings validation, the math and the owner asset functions live in `CoreLib`.
 
@@ -307,7 +307,7 @@ everything in SPEC sections 10 and 11 still needs coverage, adapted to this file
 
 ## 14. accepted properties and risks for the owner to confirm
 
-none of these is a code change in this repo. each is a deliberate departure from SPEC.md or a property of the live stack we accept.
+none of these is a code change in this repo. each is a deliberate departure from docs/archive/SPEC.md or a property of the live stack we accept.
 
 | # | item | what it means |
 |---|---|---|

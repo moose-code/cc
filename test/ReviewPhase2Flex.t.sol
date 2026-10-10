@@ -151,7 +151,7 @@ contract PackHarness {
     }
 }
 
-/// @notice independent review of commit a970943 (docs/REVIEW-phase2flex.md). test_FINDING_ tests pass today and assert
+/// @notice independent review of commit a970943 (docs/archive/REVIEW-phase2flex.md). test_FINDING_ tests pass today and assert
 /// the behavior the review reports as a finding. test_OK_ tests confirm a property that holds
 contract ReviewPhase2FlexTest is Fixture {
     using FixedPointMathLib for uint256;

@@ -6,7 +6,7 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {Lane, Settings, Mainnet, IStatements} from "../src/interfaces/Interfaces.sol";
 import {IAuctionHouse} from "../src/interfaces/AuctionHouse.sol";
 
-/// @notice independent review of the Core against the live pnd auction house (docs/REVIEW-flow-house.md)
+/// @notice independent review of the Core against the live pnd auction house (docs/archive/REVIEW-flow-house.md)
 contract ReviewFlowHouseTest is Fixture {
     address internal alice = makeAddr("fh_alice");
     address internal bob = makeAddr("fh_bob");

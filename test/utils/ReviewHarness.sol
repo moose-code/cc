@@ -14,7 +14,7 @@ import {SystemDeployer, Deployed} from "../../script/SystemDeployer.sol";
 import {LaunchConfig, ConfigReader} from "../../script/LaunchConfig.sol";
 import {Report} from "../../script/Report.sol";
 
-/// @notice independent review of the deploy package (docs/REVIEW-deploy.md), ported to the v2 stack: the config mutation
+/// @notice independent review of the deploy package (docs/archive/REVIEW-deploy.md), ported to the v2 stack: the config mutation
 /// matrix, the state mutations (factory, house, library, deployer), proofs of the readbacks and a fuzz of the funded
 /// rule. forks mainnet at FORK_BLOCK and attaches to the live v2 stack. the deployer is the factory owner and the
 /// config owner (the only path into a deprecated v2 factory)

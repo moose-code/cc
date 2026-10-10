@@ -97,7 +97,7 @@ contract TupleProbe is SetSettings {
     }
 }
 
-/// independent review of the sale controller, the owner doors and the fee share (docs/REVIEW-sale.md). test_FIXED asserts
+/// independent review of the sale controller, the owner doors and the fee share (docs/archive/REVIEW-sale.md). test_FIXED asserts
 /// the behavior after the fix of a finding, test_ACCEPTED pins a finding that was accepted or documented, every test_OK
 /// confirms a safety property
 contract ReviewSaleTest is Fixture {

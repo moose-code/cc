@@ -105,14 +105,14 @@ the full runbook is docs/DEPLOY.md.
 
 | file | what |
 |---|---|
-| SPEC.md | the original handoff spec |
+| docs/archive/ | history: the original handoff spec, the v2 port plan, the bid study, the reviews written before the rework, the reference notes and the simulator studies. see docs/archive/README.md |
 | docs/FLOW.md | the director brief for this branch and the owner's decisions |
 | docs/ARCHITECTURE.md | the system as built on this branch: settings, rules, owner powers, accepted risks |
 | docs/SIMULATION.md | what the simulator says, against the owner's goal, with recommended launch settings |
 | sim/index.html | the interactive simulator, one file, runs offline |
 | docs/DEPLOY.md | the launch runbook, parameter sign off table and the artcoins v2 re check list |
-| docs/REVIEW-core.md, REVIEW-econ.md, REVIEW-deploy.md, REVIEW-port.md, REVIEW-hook.md | independent reviews, written before the rework |
-| docs/reference/ | artcoins notes, the verified pnd auction house source, tokenworks reference code under MIT |
+| docs/REVIEW-decisions.md, REVIEW-director-repair.md, REVIEW-retire.md, REVIEW-sandwich-delegate.md, REVIEW-system-audit.md | the current independent reviews |
+| docs/reference/ | the verified pnd auction house source |
 
 ## license
 

@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
-import { simulate, summary, W } from './engine.js';
+import { simulate, summary, W } from '../../../sim/engine.js';
 // the sim defaults before the launch values became the defaults, so the recorded csv rows stay reproducible
 const PRE = { bidRule: 'built', rateStart: 1.54e13, climbPerMin: 1, clampCredits: 1, idleLoosenPct: 0, reimburseBps: 11000, bountyBps: 9000, routerPayeePpm: 161031 };
 

@@ -21,7 +21,7 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 
 /// independent review of the artcoins port. `test_POC_*` prove a finding on the pinned fork, `test_held_*` are
-/// attacks that failed. every number quoted in docs/REVIEW-port.md comes from a log line in this file.
+/// attacks that failed. every number quoted in docs/archive/REVIEW-port.md comes from a log line in this file.
 /// a plain receive only bounty recipient, which the hook's `streamForward` probe survives
 contract Sink {
     receive() external payable {}

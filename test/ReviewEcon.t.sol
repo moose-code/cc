@@ -9,7 +9,7 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {Lane, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 
-/// @notice independent review of the economics (docs/REVIEW-econ.md), on the real stack, after the flow rework. what
+/// @notice independent review of the economics (docs/archive/REVIEW-econ.md), on the real stack, after the flow rework. what
 /// survives: the `pilePage` fuzz against a reference walk, exact numbers at the launch settings (they replace the
 /// golden test of the old defaults), the reimbursement cap with the sale at the reserve, a statement sent to the core
 /// from outside, and a model of the rate written independently of the Core loop. the dutch price curve, the gate
