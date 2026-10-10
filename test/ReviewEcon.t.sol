@@ -28,7 +28,7 @@ abstract contract ReviewEconBase is Fixture {
     }
 }
 
-/// @notice `pilePage` was rewritten in the commit. a reference walk over `pileHead` and `pileNext` must agree
+/// @notice `pilePage` against a reference slice of the eth pile in the order the test filled it
 contract PilePageEquivalence is ReviewEconBase {
     uint256[] internal pile;
 
@@ -41,17 +41,23 @@ contract PilePageEquivalence is ReviewEconBase {
         }
     }
 
-    /// the old behaviour: walk `next` from the start and stop at n or at the end, whatever the lane
-    function _ref(Lane lane, uint256 startAfter, uint256 n) internal view returns (uint256[] memory out) {
-        uint256 first = startAfter == 0 ? core.pileHead(lane) : core.pileNext(startAfter);
-        uint256 c;
-        for (uint256 id = first; id != 0 && c < n; id = core.pileNext(id)) {
-            ++c;
+    /// the position after `id` in the eth pile: its index plus one, or zero when `id` is not in the pile
+    function _pos(uint256 id) internal view returns (uint256) {
+        for (uint256 i; i < pile.length; ++i) {
+            if (pile[i] == id) return i + 1;
         }
+        return 0;
+    }
+
+    /// the credits after `startAfter` in the pile of `lane`, at most n. the exit pile is empty
+    function _ref(Lane lane, uint256 startAfter, uint256 n) internal view returns (uint256[] memory out) {
+        if (lane == Lane.Exit) return new uint256[](0);
+        uint256 first = startAfter == 0 ? 0 : _pos(startAfter);
+        if (startAfter != 0 && first == 0) return new uint256[](0);
+        uint256 c = pile.length - first < n ? pile.length - first : n;
         out = new uint256[](c);
-        c = 0;
-        for (uint256 id = first; id != 0 && c < out.length; id = core.pileNext(id)) {
-            out[c++] = id;
+        for (uint256 i; i < c; ++i) {
+            out[i] = pile[first + i];
         }
     }
 
@@ -62,7 +68,7 @@ contract PilePageEquivalence is ReviewEconBase {
         uint256 startAfter = mode == 0 ? 0 : mode == 1 ? pile[(pick >> 8) % pile.length] : mode == 2 ? junk : pile[0];
         // a start id of the other lane is not a valid input, see test_pilePageCrossLaneStartDiffers
         // a junk id can collide with a member of the eth pile, which is the same cross lane input
-        if (lane == Lane.Exit && (mode == 1 || mode == 3 || core.pileNext(startAfter) != 0)) startAfter = 0;
+        if (lane == Lane.Exit && (mode == 1 || mode == 3 || _pos(startAfter) != 0)) startAfter = 0;
         n = (pick >> 40) % 3 == 0 ? n : n % 90;
         uint256[] memory got = core.pilePage(lane, startAfter, n);
         uint256[] memory want = _ref(lane, startAfter, n);
@@ -81,32 +87,29 @@ contract PilePageEquivalence is ReviewEconBase {
         assertEq(core.pilePage(Lane.Eth, 0, 80).length, 37, "page of 80 over a pile of 37");
     }
 
-    /// the one input the rewrite answers differently: a start id taken from the other lane. the old code walked the
-    /// credit chain of that id, the new one cuts at the size of the lane asked about. no valid use is affected
-    function test_pilePageCrossLaneStartDiffers() public view {
-        assertEq(_ref(Lane.Exit, pile[0], 10).length, 10, "old behaviour walked the eth chain");
-        assertEq(core.pilePage(Lane.Exit, pile[0], 10).length, 0, "new behaviour: empty lane, empty page");
+    /// a start id taken from the other lane cuts at the size of the lane asked about
+    function test_pilePageCrossLaneStart() public view {
+        assertEq(core.pilePage(Lane.Exit, pile[0], 10).length, 0, "empty lane, empty page");
     }
 }
 
-/// @notice exact numbers at the launch settings (flat bid, hourly cap 100 percent of the pot, drop 0.5 percent per credit with an
+/// @notice exact numbers at the launch settings (drop 0.5 percent per credit with an
 /// 80 percent minute floor, climb 0.5 percent a minute, ceiling 125 percent of the rate paid plus 20 percent per 10 idle
-/// minutes, clamp at one average credit, average credit 4.33M). the pot is booked by donation so every number is a closed form
+/// minutes, clamp at the pot). the pot is booked by donation so every number is a closed form
 contract LaunchSettingsExactNumbers is ReviewEconBase {
     function test_scenarioAtTheLaunchSettings() public {
         vm.deal(address(core), 10 ether);
         core.skim();
         assertEq(core.ethPot(), 10 ether);
-        assertEq(core.ethRate(), 4e12);
-        // ten minutes at 0.5 percent a minute from the opening rate, 4e12 * 1.005^10
+        assertEq(core.ethRate(), OPEN_RATE);
+        // ten minutes at 0.5 percent a minute from the opening rate, OPEN_RATE * 1.005^10
         _warp(10 minutes);
         uint256 r1 = core.ethRate();
-        assertApproxEqAbs(r1, 4_204_560_528_163, 10);
-        // three credits of three different scores sell in one call at the flat price: 4.33e6 * rate / 1e4, and the
-        // rate drops by 0.5 percent after each
+        assertApproxEqRel(r1, OPEN_RATE * 1_051_140_132_040_790_000 / 1e18, 1e9);
+        // three credits sell in one call at the rate, which drops by 0.5 percent after each
         uint256 r2 = r1 * 9_950 / 10_000;
         uint256 r3 = r2 * 9_950 / 10_000;
-        uint256[3] memory prices = [4_330_000 * r1 / 1e4, 4_330_000 * r2 / 1e4, 4_330_000 * r3 / 1e4];
+        uint256[3] memory prices = [r1, r2, r3];
         uint256[] memory ids = _credits(seller, 3);
         uint256 before = seller.balance;
         vm.prank(seller);
@@ -114,7 +117,7 @@ contract LaunchSettingsExactNumbers is ReviewEconBase {
         assertEq(seller.balance - before, prices[0] + prices[1] + prices[2], "the three prices paid");
         for (uint256 i; i < 3; ++i) {
             (,, uint256 cost,) = core.creditInfo(ids[i]);
-            assertEq(cost, prices[i], "cost basis is the flat price");
+            assertEq(cost, prices[i], "cost basis is the price paid");
         }
         assertEq(core.rateAtCheckpoint(), r3 * 9_950 / 10_000);
         assertEq(core.ethPot(), 10 ether - prices[0] - prices[1] - prices[2]);
@@ -125,13 +128,12 @@ contract LaunchSettingsExactNumbers is ReviewEconBase {
         // forty hours later the ceiling, 125 percent of the anchor loosened by 240 intervals of 20 percent, is above the
         // rate cap, so the read sits at the cap
         _warp(40 hours);
-        assertGt(r3 * (10_000 + 2_000 * 240) * 12_500 / 1e8, 205_540_000_000_000, "the loosened ceiling is above the cap");
-        assertEq(core.ethRate(), 205_540_000_000_000);
-        // the funded clamp of the hourly cap is the pot over one credit of 4.33M, above the rate cap, so after a
-        // long climb the rate sits at the rate cap
+        assertGt(r3 * (10_000 + 2_000 * 240) * 12_500 / 1e8, core.settings().rateCap, "the loosened ceiling is above the cap");
+        assertEq(core.ethRate(), core.settings().rateCap);
+        // the pot is above the rate cap, so after a long climb the rate sits at the rate cap
         _warp(10_000 hours);
-        assertEq(core.ethRate(), 205_540_000_000_000);
-        assertGt(core.ethPot() * core.settings().spendCapBps / 4_330_000, core.ethRate());
+        assertEq(core.ethRate(), core.settings().rateCap);
+        assertGt(core.ethPot(), core.ethRate());
         _solvent();
     }
 }
@@ -163,7 +165,7 @@ contract ReserveSaleAndOutsiders is ReviewEconBase {
     }
 
     /// a statement sent to the core from outside is accepted by the receiver hook and never counted: it is not in the
-    /// held list, cannot be listed, repriced, exited or overprinted. sent back before the sale is settled on the
+    /// held list, cannot be listed, repriced or exited. sent back before the sale is settled on the
     /// record, it is a returned statement and `syncStatement` lists it again at the current reserve
     function test_statementSentFromOutsideIsNotCounted() public {
         (uint256 sid,) = _composeOne();
@@ -190,14 +192,6 @@ contract ReserveSaleAndOutsiders is ReviewEconBase {
         _enterPhase2();
         vm.expectRevert(ICore.NotHeld.selector);
         core.exitStatement(sid);
-        ScriptedController sc = new ScriptedController();
-        _setController(address(sc));
-        sc.setOverprint(true, sid + 1_000, sid);
-        vm.expectRevert(ICore.BadOverprint.selector);
-        core.overprint();
-        sc.setOverprint(true, sid, sid + 1_000);
-        vm.expectRevert(ICore.BadOverprint.selector);
-        core.overprint();
         _solvent();
 
         // sent back before the record is settled: the record is still live and the statement returned
@@ -259,8 +253,7 @@ contract RateModelFuzz is ReviewEconBase {
     }
 
     function _syncFunded() internal {
-        Settings memory s = core.settings();
-        mFunded = core.ethPot() * s.spendCapBps >= uint256(s.avgScore) * mRate;
+        mFunded = core.ethPot() >= mRate;
     }
 
     function _sell(uint256 seed) internal {
@@ -287,11 +280,9 @@ contract RateModelFuzz is ReviewEconBase {
         s.climbPerMinBps = uint16(1 + seed % 1_000);
         s.ceilBps = uint16(10_000 + (seed >> 10) % 20_001);
         s.idleLoosenBps = uint16(1 + (seed >> 25) % 2_000);
-        s.avgScore = uint32(800_000 + (seed >> 48) % 5_200_001);
-        s.spendCapBps = uint16(100 + (seed >> 72) % 4_901);
         s.dropPerCreditBps = uint16(1 + (seed >> 96) % 1_000);
         s.dropFloorBps = uint16(5_000 + (seed >> 108) % 5_001);
-        s.rateCap = uint64(1e13 + (seed >> 120) % (1e15 - 1e13 + 1));
+        s.rateCap = uint64(1e15 + (seed >> 120) % (1e17 - 1e15 + 1));
         // forge-lint: disable-end(unsafe-typecast)
         _setSettings(s);
         _syncFunded();
@@ -344,6 +335,6 @@ contract RateModelFuzz is ReviewEconBase {
             _step(seed);
             assertApproxEqRel(core.ethRate(), _modelAt(block.timestamp), 1e10, "rate equals the model");
         }
-        assertTrue(core.ethRate() != 4e12, "and the rate moved");
+        assertTrue(core.ethRate() != OPEN_RATE, "and the rate moved");
     }
 }

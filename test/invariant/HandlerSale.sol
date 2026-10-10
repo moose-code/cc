@@ -114,7 +114,6 @@ abstract contract HandlerSale is HandlerOwner {
             _flag(V_SALE_PATH, "the sale payment was not booked exactly, split by saleToBuybackBps");
         }
         _booked(paid);
-        _potIn(paid - toBb);
         if (_ownerOf(sid) != p.buyer) _flag(V_SALE_PATH, "the buyer does not hold the statement");
         (bool held,,,) = core.statementInfo(sid);
         if (held || core.heldStatements().length != p.held - 1) _flag(V_SALE_PATH, "the core record was not cleared");
@@ -402,7 +401,7 @@ abstract contract HandlerSale is HandlerOwner {
             if (okM) {
                 module = next;
                 modulesEver.push(next);
-                if (core.unitPerPoint() != next.currentUnit()) _flag(V_OWNER, "the unit was not read from the new module");
+                if (core.unitPerCredit() != next.currentUnit()) _flag(V_OWNER, "the unit was not read from the new module");
             }
         }
         _opost(pre, "hostileOwner");

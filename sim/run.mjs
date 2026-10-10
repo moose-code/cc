@@ -5,8 +5,8 @@ import { simulate, summary, WTP_Q, interp, W } from './engine.js';
 const OUT = new URL('./results/', import.meta.url).pathname;
 fs.mkdirSync(OUT, { recursive: true });
 const SEEDS5 = [1, 2, 3, 4, 5], SEEDS3 = [1, 2, 3];
-// rateStart as a share of the market price of a credit (0.0089 eth, 433 average points): 1.0 gives the launch default 2.06e13
-export const rateAt = (share, price = 0.0089) => (share * price * W) / 433;
+// rateStart as a share of the market price of a credit (0.0089 eth): 1.0 gives the launch default 8.9e15
+export const rateAt = (share, price = 0.0089) => share * price * W;
 
 // flat numeric metrics of one run
 export function metrics(res) {
@@ -26,7 +26,7 @@ export function metrics(res) {
     steadyStatements: s.steadyStatements == null ? NaN : s.steadyStatements, steadySold: s.steadySold == null ? NaN : s.steadySold,
     steadyBurnEth: s.steadyBurnEth == null ? NaN : s.steadyBurnEth,
     firstFillHour: st.firstFillHour, costVsMarket: st.costVsMarket, costPerPointVsMarket: st.costPerPointVsMarket, costVsAsk: st.costVsAsk,
-    avgScoreBought: st.avgScoreBought, capSteps: st.capSteps, clampSteps: st.clampSteps, rateMaxBidRatio: st.rateMaxBidRatio,
+    avgScoreBought: st.avgScoreBought, clampSteps: st.clampSteps, rateMaxBidRatio: st.rateMaxBidRatio,
     saleOverCost: st.saleOverCost, saleOverFloor: st.saleOverFloor, saleAgeH: st.saleAgeHours, saleAtFloor: st.saleAtFloorShare, soldInstant: T.soldInstant, bidsPerSale: st.bidsPerSale, contestedShare: st.contestedShare,
     stmtArrivals: st.stmtArrivals, stmtMiss: st.stmtMiss, rebids: T.rebids, extended: T.extended,
     xFills: st.xFills, xMedianIntervalH: st.xMedianIntervalH, xMeanDiscount: st.xMeanDiscount,
@@ -93,21 +93,6 @@ batches.q2 = () => {
   return out;
 };
 
-// ---- q3: flat, blended and per point bids, and a switch on day 30
-batches.q3 = () => {
-  const out = { flat: {}, switch: {}, bins: {} };
-  for (const v of ['comparable', 'sustained17']) {
-    out.flat[v] = sweep('flatBps', [10000, 7500, 5000, 2500, 0], { volPreset: v }, SEEDS5);
-    out.switch[v] = [5000, 0].map((f) => Object.assign({ to: f }, many({ volPreset: v, schedule: [{ day: 30, patch: { flatBps: f } }] }, SEEDS5)));
-  }
-  for (const f of [10000, 5000, 0]) {
-    const bins = new Array(10).fill(0), cost = new Array(10).fill(0);
-    for (const s of SEEDS5) { const r = simulate({ seed: s, flatBps: f }); r.histPts.forEach((x, i) => { bins[i] += x / 5; cost[i] += r.histCost[i] / 5; }); }
-    out.bins[f] = bins.map((c, i) => ({ lo: 80 + i * 72, credits: c, avgCost: c ? cost[i] / c : 0 }));
-  }
-  return out;
-};
-
 // ---- q4: the statement sale: start price, step length, floor, mode, fee share, the waiting buyer, and the auction rules that stay
 // a row is the mean over seeds; `both` lowers the curve floor and the hard floor together (the Core's hard floor wins over a lower curve floor)
 const designRows = (base, seeds) => {
@@ -153,7 +138,6 @@ batches.q6 = () => {
   S.climbPerMin = sweep('climbPerMin', [0.25, 0.5, 1, 2], {}, SEEDS5);
   S.ceilPct = sweep('ceilPct', [110, 125, 150, 200], {}, SEEDS5);
   S.idleLoosenPct = sweep('idleLoosenPct', [0, 1, 2, 5], {}, SEEDS5);
-  S.spendCapBps = sweep('spendCapBps', [500, 1000, 2000, 4000, 10000], {}, SEEDS5);
   // hard cases: a low opening limit in a recovering market and a declining market
   const hard = { rateStart: rateAt(0.4), pricePath: 'recovery' }, dec = { pricePath: 'decline' };
   const pick = { dropPerCreditPct: [0.25, 0.5, 2], climbPerMin: [0.25, 0.5, 2], ceilPct: [110, 125, 200] };
@@ -206,9 +190,9 @@ batches.q9 = () => {
   const tests = [
     ['volScale', 0.25, 4], ['priceP0', 0.0045, 0.018], ['pricePath', 'decline', 'recovery'], ['askSigma', 0.15, 0.4], ['impactElast', 0, 0.3],
     ['offersPerHour', 60, 400], ['supplyElast', 0.5, 3], ['bookChurn', 0.02, 0.15], ['stmtPerDay', 3, 20], ['wtpMult', 0.7, 1.3],
-    ['buyShareLate', 0.42, 0.52], ['rateStart', rateAt(0.25), rateAt(1.25)], ['flatBps', 0, 10000], ['startBps', 9000, 13000], ['stepEvery', 3600, 6 * 3600], ['floor, both floors', { floorBps: 5000, saleFloorBps: 5000 }, { floorBps: 7500, saleFloorBps: 7500 }],
+    ['buyShareLate', 0.42, 0.52], ['rateStart', rateAt(0.25), rateAt(1.25)], ['startBps', 9000, 13000], ['stepEvery', 3600, 6 * 3600], ['floor, both floors', { floorBps: 5000, saleFloorBps: 5000 }, { floorBps: 7500, saleFloorBps: 7500 }],
     ['buyOnly', false, true], ['feeToBuybackBps', 0, 2500], ['buyerWaits', 'no', 'floor'], ['auctionDuration', 6 * 3600, 72 * 3600],
-    ['saleToBuybackBps', 0, 10000], ['dropPerCreditPct', 0.25, 2], ['climbPerMin', 0.25, 2], ['ceilPct', 110, 200], ['idleLoosenPct', 0, 5], ['spendCapBps', 1000, 10000],
+    ['saleToBuybackBps', 0, 10000], ['dropPerCreditPct', 0.25, 2], ['climbPerMin', 0.25, 2], ['ceilPct', 110, 200], ['idleLoosenPct', 0, 5],
     ['listedShare', 0, 0.5], ['sniperVolShare', 0.2, 0.6], ['h1Share', 0.45, 0.7], ['exitAfter', 24 * 3600, 7 * 86400], ['stmtPick', 'cheapest', 'random'],
   ];
   const out = { base, rows: [] };
@@ -231,7 +215,6 @@ batches.q11 = () => {
 // ---- q10: named scenarios (the page presets) and the owner adapts later cases, three volume presets
 export const COMBOS = {
   asLaunched: {},
-  flat5000at30: { schedule: [{ day: 30, patch: { flatBps: 5000 } }] },
   floor6000at14: { schedule: [{ day: 14, patch: { floorBps: 6000, saleFloorBps: 6000 } }] },
   floor6000: { floorBps: 6000, saleFloorBps: 6000 },
   floor5000: { floorBps: 5000, saleFloorBps: 5000 },
@@ -243,8 +226,6 @@ export const COMBOS = {
   split10000: { saleToBuybackBps: 10000 },
   open50: { rateStart: rateAt(0.5) },
   open75: { rateStart: rateAt(0.75) },
-  blend5000: { flatBps: 5000 },
-  perPoint: { flatBps: 0 },
   drop2pct: { dropPerCreditPct: 2 },
 };
 batches.q10 = () => {

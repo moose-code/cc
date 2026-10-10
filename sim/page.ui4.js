@@ -4,8 +4,6 @@ const SCENARIOS = [
   { id: 'sc-base', label: 'as launched', set: {} },
   { id: 'sc-open75', label: 'opening limit 75%', set: { openPct: 75 } },
   { id: 'sc-open40', label: 'opening limit 40%', set: { openPct: 40 } },
-  { id: 'sc-flat30', label: 'blend half per point on day 30', set: { chgOn: true, chgDay: 30, chgKey: 'flatBps', chgValue: 5000 } },
-  { id: 'sc-perpoint', label: 'per point bid from day 0', set: { flatBps: 0 } },
   { id: 'sc-buyonly', label: 'buy only sale', set: { saleMode: 'buyOnly' } },
   { id: 'sc-start130', label: 'start price 130%', set: { startBps: 13000 } },
   { id: 'sc-floor14', label: 'floor 60% on day 14', set: { chgOn: true, chgDay: 14, chgKey: 'floorBps', chgValue: 6000 } },
@@ -17,7 +15,7 @@ const SCENARIOS = [
   { id: 'sc-s17', label: 'sustained 17 eth a day', set: { volPreset: 'sustained17' } },
   { id: 'sc-dead', label: 'dead after week one', set: { volPreset: 'deadWeek1' } },
   { id: 'sc-recov', label: 'credit price recovery', set: { pricePath: 'recovery' } },
-  { id: 'sc-p2', label: 'phase 2 on day 30', set: { phase2On: true, phase2Day: 30, xp: 2e-5 } },
+  { id: 'sc-p2', label: 'phase 2 on day 30', set: { phase2On: true, phase2Day: 30, xp: 0.0087 } },
   { id: 'sc-noimp', label: 'engine never moves the market', set: { impactElast: 0 } },
 ];
 function applyScenario(sc) { state = Object.assign({}, BASE_STATE, sc.set); syncControls(); run(); }

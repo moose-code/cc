@@ -47,8 +47,10 @@ abstract contract Fixture is Test, ProdDeployer {
     uint256 internal constant LISTED_B = 28352;
     uint256 internal constant LISTED_C = 18683;
 
-    /// @dev exit token base units per 1e4 scaled score point reported by the stand in exit module
-    uint256 internal constant UNIT = 1e10;
+    /// @dev the opening bid of the fixture core, wei per credit
+    uint256 internal constant OPEN_RATE = 1_732_000_000_000_000;
+    /// @dev exit token base units per credit reported by the stand in exit module
+    uint256 internal constant UNIT = 43_300_000_000_000_000;
     /// @dev the real house is called with at least this gas by `_endAuction` (it needs 580k to honor its delivery stipend)
     uint256 internal constant END_GAS = 2_000_000;
     /// @dev the sniper window of the launch, seconds
@@ -172,7 +174,7 @@ abstract contract Fixture is Test, ProdDeployer {
 
         lc = defaultConfig();
         // the core tests are written against this opening bid, whatever the launch default is
-        lc.rateStart = 4e12;
+        lc.rateStart = OPEN_RATE;
         lc.settings = _settings();
         lc.owner = owner;
         lc.creator = creator;
@@ -344,21 +346,20 @@ abstract contract Fixture is Test, ProdDeployer {
     function _warpUntilCeiling(uint256 id, uint256 price) internal {
         _liftRateCap();
         for (uint256 i; i < 400; ++i) {
-            if (core.ceilingOf(id) >= price) return;
+            if (core.ethRate() >= price) return;
             vm.warp(block.timestamp + 1 hours);
         }
         revert("ceiling never cleared");
     }
 
     /// @notice the smallest pot at which the clamp of the eth rate is not below the stored rate:
-    /// `rate * avgScore / spendCapBps`
+    /// the stored rate
     function _unclampedPot() internal view returns (uint256) {
-        Settings memory s = core.settings();
-        return core.rateAtCheckpoint() * s.avgScore / s.spendCapBps;
+        return core.rateAtCheckpoint();
     }
 
     /// @notice sells `n` fresh credits into the eth bid, which puts them in the eth pile in the order returned.
-    /// funds the pot first when it cannot carry the sale, and moves past the hourly cap window if it must
+    /// funds the pot first when it cannot carry the sale
     function _fillEthPile(uint256 n) internal returns (uint256[] memory ids) {
         ids = _credits(seller, n);
         // a price state that idle time loosened above the opening rate is restated to the opening rate
@@ -369,18 +370,10 @@ abstract contract Fixture is Test, ProdDeployer {
         }
         uint256 room = _unclampedPot();
         if (core.ethPot() < room) _fundPot(room);
-        uint256 total;
-        for (uint256 i; i < n; ++i) {
-            total += core.ceilingOf(ids[i]);
-        }
+        uint256 total = core.ethRate() * n;
         if (core.ethPot() < total * 6) _fundPot(total * 6);
         vm.prank(seller);
-        try core.sellForEth(ids) {}
-        catch {
-            vm.warp(block.timestamp + 1 hours + 1);
-            vm.prank(seller);
-            core.sellForEth(ids);
-        }
+        core.sellForEth(ids);
     }
 
     /// @notice composes the eth pile through the real controller, once per state lineage. fills the pile to 80
@@ -475,8 +468,8 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @notice the owner lifts `rateCap` to its upper bound, for suites that climb past the launch cap
     function _liftRateCap() internal {
         Settings memory s = core.settings();
-        if (s.rateCap < 1e15) {
-            s.rateCap = 1e15;
+        if (s.rateCap < 1e18) {
+            s.rateCap = 1e18;
             _setSettings(s);
         }
     }
@@ -561,10 +554,16 @@ abstract contract Fixture is Test, ProdDeployer {
         ids[0] = id;
     }
 
-    function _sumScores(uint256[] memory ids) internal view returns (uint256 t) {
-        for (uint256 i; i < ids.length; ++i) {
-            t += core.scoreOf(ids[i]);
-        }
+    /// @dev sets the exit rate as the stored word with the checkpoint time at now and the funded flag its definition
+    /// gives (slots 12 and 13 of the Core, test/CoreLayout.t.sol pins them)
+    function _storeXRate(uint256 rate) internal {
+        uint256 w = uint256(vm.load(address(core), bytes32(uint256(13))));
+        w = (w & ~uint256(type(uint64).max)) | block.timestamp;
+        uint256 unit = core.unitPerCredit();
+        bool funded = unit != 0 && core.xPot() * 1e4 >= rate * unit;
+        w = funded ? w | (uint256(1) << 64) : w & ~(uint256(0xff) << 64);
+        vm.store(address(core), bytes32(uint256(12)), bytes32(rate));
+        vm.store(address(core), bytes32(uint256(13)), bytes32(w));
     }
 
     function _warp(uint256 secs) internal {

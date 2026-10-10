@@ -8,8 +8,6 @@ interface ICoreLens {
     struct Snapshot {
         uint256 ethRate;
         uint256 ethPrice;
-        uint256 averageBid;
-        uint256 hourlyRoom;
         uint256 ethPileSize;
         uint256 ethPileHead;
         uint256 exitPileSize;
@@ -52,7 +50,6 @@ interface ICoreLens {
     function HOUSE() external view returns (address);
     function ROUTER() external view returns (address);
     function STATEMENTS() external view returns (address);
-    function bidFor(uint256 id) external view returns (uint256);
     function controller() external view returns (address);
     function snapshot() external view returns (Snapshot memory s);
     function statementsPage(uint256 start, uint256 n) external view returns (StatementView[] memory);

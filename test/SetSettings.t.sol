@@ -94,7 +94,7 @@ contract SetSettingsTest is Fixture {
         Settings memory out = probe.applyTo(live);
         (uint256 n, uint256 first) = _diff(live, out);
         assertEq(n, 1);
-        assertEq(first, 13, "saleFloorBps is the 14th field");
+        assertEq(first, 9, "saleFloorBps is the 10th field");
         assertEq(out.saleFloorBps, 8_000);
     }
 
@@ -144,8 +144,8 @@ contract SetSettingsTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(SetSettings.UnknownField.selector, "saleFloorBpz"));
         probe.applyTo(live);
         probe.configure(address(core), "");
-        probe.single("flatBps", 65_536);
-        vm.expectRevert(abi.encodeWithSelector(SetSettings.ValueTooWide.selector, "flatBps"));
+        probe.single("dropPerCreditBps", 65_536);
+        vm.expectRevert(abi.encodeWithSelector(SetSettings.ValueTooWide.selector, "dropPerCreditBps"));
         probe.applyTo(live);
     }
 

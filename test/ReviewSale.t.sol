@@ -78,14 +78,14 @@ contract BurnModule is IExitModule {
         burn = burn_;
     }
 
-    function unitPerPoint() external view returns (uint256) {
+    function unitPerCredit() external view returns (uint256) {
         return unit;
     }
 
     function exit(uint256 sid) external returns (uint256 out) {
         uint256 stop = gasleft() - burn;
         while (gasleft() > stop) {}
-        out = IStatements(Mainnet.STATEMENTS).creditScoreOf(sid) * unit;
+        out = IStatements(Mainnet.STATEMENTS).creditsOf(sid) * unit;
         MockExitToken(exitToken).mint(msg.sender, out);
     }
 }
@@ -551,7 +551,7 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_everyOwnerDoorIsOwnerOnly() public {
-        bytes[11] memory calls = [
+        bytes[10] memory calls = [
             abi.encodeCall(ICore.transferOwnership, (bob)),
             abi.encodeCall(ICore.setController, (bob)),
             abi.encodeCall(ICore.setExitModule, (bob)),
@@ -561,8 +561,7 @@ contract ReviewSaleTest is Fixture {
             abi.encodeCall(ICore.lockExitModule, ()),
             abi.encodeCall(ICore.lockTargets, ()),
             abi.encodeCall(ICore.setSettings, (core.settings())),
-            abi.encodeCall(ICore.setRate, (4e12)),
-            abi.encodeCall(ICore.setXRate, (5_000))
+            abi.encodeCall(ICore.setRate, (OPEN_RATE))
         ];
         for (uint256 i; i < calls.length; ++i) {
             vm.prank(bob);
@@ -591,13 +590,13 @@ contract ReviewSaleTest is Fixture {
         MockExitModule zero = new MockExitModule(address(xt), 0);
         vm.expectRevert(ICore.BadModule.selector);
         core.setExitModule(address(zero));
-        MockExitModule other = new MockExitModule(address(new MockExitToken("O", "O")), 1e10);
+        MockExitModule other = new MockExitModule(address(new MockExitToken("O", "O")), 1 * UNIT);
         vm.expectRevert(ICore.ExitTokenChanged.selector);
         core.setExitModule(address(other));
         vm.expectRevert(ICore.BadModule.selector);
         core.setExitModule(address(core));
         // a target flag set before a module is named is cleared when it becomes the module
-        MockExitModule m2 = new MockExitModule(address(xt), 2e10);
+        MockExitModule m2 = new MockExitModule(address(xt), 2 * UNIT);
         core.addTarget(address(m2));
         assertTrue(core.allowedTarget(address(m2)));
         core.setExitModule(address(m2));
@@ -616,7 +615,7 @@ contract ReviewSaleTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("controller")));
         core.setController(address(0xC0DE));
         // everything else stays open
-        core.setExitModule(address(new MockExitModule(address(xt), 3e10)));
+        core.setExitModule(address(new MockExitModule(address(xt), 3 * UNIT)));
         core.addTarget(address(0x7A9));
         core.removeTarget(address(0x7A9));
         core.transferOwnership(alice);
@@ -640,7 +639,7 @@ contract ReviewSaleTest is Fixture {
         core.lockExitModule();
         vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("exitModule")));
         core.setExitModule(address(mod));
-        address fresh = address(new MockExitModule(address(xt), 3e10));
+        address fresh = address(new MockExitModule(address(xt), 3 * UNIT));
         vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("exitModule")));
         core.setExitModule(fresh);
         core.setController(address(new SellProbe(core)));
@@ -676,8 +675,7 @@ contract ReviewSaleTest is Fixture {
         s.saleFloorBps = 8_000;
         _setSettings(s);
         vm.startPrank(owner);
-        core.setRate(5e12);
-        core.setXRate(5_000);
+        core.setRate(2e15);
         ctl.setFloorBps(8_000);
         ctl.setBuyOnly(true);
         vm.stopPrank();
@@ -956,7 +954,7 @@ contract ReviewSaleTest is Fixture {
         vm.fee(500 gwei);
         (uint256 got,,) = _exitAndMeasure(sid);
         Settings memory s = core.settings();
-        uint256 notional = 80 * uint256(s.avgScore) * lc.rateStart / 1e4;
+        uint256 notional = 80 * lc.rateStart;
         assertEq(got, notional * s.reimburseCapBps / 10_000);
     }
 
@@ -980,7 +978,7 @@ contract ReviewSaleTest is Fixture {
     // ------------------------------------------------------------------ settings, config, scripts
 
     function _withAll(bool high) internal view returns (Settings memory s) {
-        uint256[30] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
+        uint256[26] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
         for (uint256 i; i < SettingsFields.N; ++i) {
             SettingsFields.set(s, i, v[i]);
         }
@@ -1000,9 +998,9 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_settings_everyFieldBoundMatchesTheScriptTable() public {
-        bytes32[30] memory names = SettingsFields.names();
-        uint256[30] memory lo = SettingsFields.lo();
-        uint256[30] memory hi = SettingsFields.hi();
+        bytes32[26] memory names = SettingsFields.names();
+        uint256[26] memory lo = SettingsFields.lo();
+        uint256[26] memory hi = SettingsFields.hi();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = core.settings();
             SettingsFields.set(s, i, hi[i] + 1);
@@ -1048,7 +1046,7 @@ contract ReviewSaleTest is Fixture {
     function test_OK_config_jsonCarriesEveryFieldAndTheSaleBlock() public view {
         string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
         string[] memory keys = vm.parseJsonKeys(j, ".settings");
-        bytes32[30] memory names = SettingsFields.names();
+        bytes32[26] memory names = SettingsFields.names();
         assertEq(keys.length, SettingsFields.N, "the settings block has exactly the fields of the struct");
         for (uint256 i; i < SettingsFields.N; ++i) {
             assertTrue(_has(keys, _nm(names[i])), _nm(names[i]));

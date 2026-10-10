@@ -134,7 +134,7 @@ contract HostileModule is IExitModule {
         unit = unit_;
     }
 
-    function unitPerPoint() external view returns (uint256) {
+    function unitPerCredit() external view returns (uint256) {
         return unit;
     }
 
@@ -152,7 +152,7 @@ contract HostileModule is IExitModule {
     }
 
     function exit(uint256 sid) external returns (uint256 out) {
-        uint256 rating = IStatements(Mainnet.STATEMENTS).creditScoreOf(sid);
+        uint256 rating = IStatements(Mainnet.STATEMENTS).creditsOf(sid);
         out = rating * unit * payBps / 10_000;
         MockExitToken(exitToken).mint(msg.sender, out);
         if (target != address(0)) {
@@ -201,7 +201,6 @@ contract RepaidCaller {
         _try(abi.encodeCall(ICore.skim, ()));
         _try(abi.encodeCall(ICore.collectSales, ()));
         _try(abi.encodeCall(ICore.buyback, ()));
-        _try(abi.encodeCall(ICore.overprint, ()));
         _try(abi.encodeCall(ICore.repriceStatement, (other)));
         _try(abi.encodeCall(ICore.syncStatement, (other)));
     }

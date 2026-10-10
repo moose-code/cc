@@ -44,7 +44,7 @@ contract GateTest is Fixture {
         _warp(30 days);
         _sellOne();
         assertEq(core.heldStatements().length, 2, "still unsold");
-        // the climb is clamped by the hourly cap the pot affords, so give the pot room for ten more minutes of it. a v2 buy
+        // the climb is clamped by the pot, so give the pot room for ten more minutes of it. a v2 buy
         // lands about 5.87 points in the pot, not the 9.5 of v1, so the one sale above left less of it
         _fundPot(core.ethPot() + 5 ether);
         uint256 r0 = core.rateAtCheckpoint();
@@ -53,8 +53,8 @@ contract GateTest is Fixture {
         // forge-lint: disable-next-line(unsafe-typecast)
         uint256 want =
             r0.mulWad(uint256(FixedPointMathLib.powWad(1.005e18, int256((block.timestamp - t0) * 1e18 / 1 minutes))));
-        // the read is the climb, lowered to the clamp: the price of one average credit that the room of the pot affords
-        uint256 clamp = core.ethPot() * 10_000 / 4_330_000;
+        // the read is the climb, lowered to the clamp: the price of one credit that the pot affords
+        uint256 clamp = core.ethPot();
         if (want > clamp) want = clamp;
         // the 30 day gap lifts the ceiling (20 percent per 10 idle minutes) to the rate cap, which bounds the read too
         uint256 cap = core.settings().rateCap;
@@ -89,10 +89,10 @@ contract GateFuzzTest is Fixture {
         Settings memory s = core.settings();
         uint256 pick = seed >> 8;
         // forge-lint: disable-start(unsafe-typecast)
-        if (pick % 4 == 0) s.avgScore = uint32(800_000 + (seed >> 16) % 5_200_001);
-        if (pick % 4 == 1) s.spendCapBps = uint16(100 + (seed >> 16) % 9_901);
-        if (pick % 4 == 2) s.flatBps = uint16((seed >> 16) % 10_001);
-        if (pick % 4 == 3) {
+        if (pick % 2 == 0) {
+            s.dropPerCreditBps = uint16(1 + (seed >> 16) % 1_000);
+            s.dropFloorBps = uint16(5_000 + (seed >> 32) % 5_001);
+        } else {
             s.climbPerMinBps = uint16(1 + (seed >> 16) % 1_000);
             s.ceilBps = uint16(10_000 + (seed >> 32) % 20_001);
             s.idleLoosenBps = uint16(1 + (seed >> 48) % 2_000);
@@ -141,9 +141,8 @@ contract GateFuzzTest is Fixture {
         for (uint256 i; i < 14; ++i) {
             seed = uint256(keccak256(abi.encode(seed, i)));
             uint256 op = seed % 9;
-            Settings memory st = core.settings();
             uint256 r0 = core.rateAtCheckpoint();
-            bool starved = core.ethPot() * st.spendCapBps / uint256(st.avgScore) < r0;
+            bool starved = core.ethPot() < r0;
             if (op < 3) _warp(bound(seed >> 8, 1 minutes, 3 days));
             else _try(op, seed);
             if (starved) {

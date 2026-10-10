@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Interfaces.sol";
 
-/// first policy module. no bonus for any credit, composes the oldest 80 of a lane with format 0, never overprints.
+/// first policy module. composes the oldest 80 credits of a lane with format 0.
 /// it prices and sells statements: the asking price starts at `startBps` of the statement cost and falls `stepBps` every
 /// `stepEvery` down to `floorBps`. in auction mode the core uses it as the house reserve, so the first bid at the asking
 /// price opens the english auction. in buy only mode `buy` sells the statement at once at the asking price.
@@ -134,11 +134,6 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ credit picking, unchanged
 
-    /// returns zero for every credit.
-    function wants(uint256) external pure returns (uint16) {
-        return 0;
-    }
-
     /// ready when the lane pile holds a full page. the page is the 80 oldest credits with format 0.
     function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format) {
         if (CORE.pileSize(lane) < PAGE) return (false, ids, 0);
@@ -147,10 +142,5 @@ contract ControllerV1 is IController {
             ids[i] = page[i];
         }
         return (true, ids, 0);
-    }
-
-    /// never ready.
-    function nextOverprint() external pure returns (bool, uint256, uint256) {
-        return (false, 0, 0);
     }
 }

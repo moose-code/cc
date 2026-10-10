@@ -8,7 +8,7 @@ import {InvariantsBase} from "./Invariants.t.sol";
 /// @notice the invariant suites of the sale controller and the owner as an adversary. same real system, same invariants as
 /// `InvariantsBase` (pots never above balances, every statement in one place, the owner and the controllers never gain)
 /// plus 12, 13 and 14: a statement leaves only by an auction or a `sellTo` sale at or above the hard floor, an exit that
-/// paid in full or an overprint; locks and handovers never come undone; no call from inside an exit ever goes through.
+/// paid in full; locks and handovers never come undone; no call from inside an exit ever goes through.
 /// the fuzzer lists reprice then bid, `buy` in buy only mode, the selling controller, the sale settings, mode flips, the
 /// owner replacing the controller and the exit module in one go, locks and the handover chain.
 /// forge-config: default.invariant.runs = 16
@@ -25,15 +25,15 @@ abstract contract SaleSuite is InvariantsBase {
 
     /// the base actions as before, then the eight of `HandlerSale`
     function _act(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) internal override {
-        a = a % 45;
-        if (a < 32 || a >= 40) return super._act(a, w, x, y, z);
-        if (a == 32) handler.buyOnlyBuy(w, x, y, z);
-        else if (a == 33) handler.ownerSell(w, x, y, z);
-        else if (a == 34) handler.repriceBid(w, x, y, z);
-        else if (a == 35) handler.saleSettings(w, x);
-        else if (a == 36) handler.flipMode(w, x);
-        else if (a == 37) handler.hostileOwner(w, x);
-        else if (a == 38) handler.lockDoor(w, x);
+        a = a % 43;
+        if (a < 30 || a >= 38) return super._act(a, w, x, y, z);
+        if (a == 30) handler.buyOnlyBuy(w, x, y, z);
+        else if (a == 31) handler.ownerSell(w, x, y, z);
+        else if (a == 32) handler.repriceBid(w, x, y, z);
+        else if (a == 33) handler.saleSettings(w, x);
+        else if (a == 34) handler.flipMode(w, x);
+        else if (a == 35) handler.hostileOwner(w, x);
+        else if (a == 36) handler.lockDoor(w, x);
         else handler.handover(w, x);
     }
 
@@ -59,26 +59,26 @@ abstract contract SaleSuite is InvariantsBase {
     function test_saleActionsEverySucceed() public {
         _ownerSets(address(ctl));
         _buyOnly(true);
-        assertTrue(_try(32, 120), "no buy in buy only mode");
-        assertTrue(_try(34, 120), "no reprice then bid");
+        assertTrue(_try(30, 120), "no buy in buy only mode");
+        assertTrue(_try(32, 120), "no reprice then bid");
         // credits in, a compose: one more listing for the selling controller
         _try(2, 40);
         _try(2, 40);
         _try(2, 40);
         assertTrue(_try(7, 80), "compose never succeeded");
         _ownerSets(address(handler.selling()));
-        assertTrue(_try(33, 160), "no sale through the selling controller");
+        assertTrue(_try(31, 160), "no sale through the selling controller");
         _ownerSets(address(ctl));
-        assertTrue(_try(35, 20), "no sale setting");
-        assertTrue(_try(36, 20), "no mode flip");
-        assertTrue(_try(37, 40), "no owner swap");
-        assertTrue(_try(39, 160), "no handover");
-        assertTrue(_try(38, 160), "no lock");
+        assertTrue(_try(33, 20), "no sale setting");
+        assertTrue(_try(34, 20), "no mode flip");
+        assertTrue(_try(35, 40), "no owner swap");
+        assertTrue(_try(37, 160), "no handover");
+        assertTrue(_try(36, 160), "no lock");
         assertGt(handler.gSoldTo(), 0, "no statement was sold at once");
         for (uint256 i = 1; i < handler.violationCount(); ++i) {
             assertEq(handler.viol(i), 0, handler.violMsg(i));
         }
-        for (uint256 a = 32; a < 40; ++a) {
+        for (uint256 a = 30; a < 38; ++a) {
             assertEq(handler.unexpectedFails(a), 0, handler.actionName(a));
         }
     }
@@ -86,7 +86,7 @@ abstract contract SaleSuite is InvariantsBase {
     /// the seeds at the top of the range must not overflow inside a handler action
     function test_saleActionsSurviveMaxSeeds() public {
         uint256 m = type(uint256).max;
-        for (uint256 a = 32; a < 40; ++a) {
+        for (uint256 a = 30; a < 38; ++a) {
             _act(a, m, m, m, m);
             _act(a, 0, m, m - 1, m - 2);
         }
@@ -98,7 +98,7 @@ abstract contract SaleSuite is InvariantsBase {
     /// the hostile owner path with every sale action in a long fixed sequence of mixed calls: nothing reverts, no violation
     /// forge-config: default.gas_limit = 9223372036854775807
     function testFuzz_saleActionsNeverRevert(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) public {
-        _act(32 + a % 8, w, x, y, z);
+        _act(30 + a % 8, w, x, y, z);
         for (uint256 i = 1; i < handler.violationCount(); ++i) {
             assertEq(handler.viol(i), 0, handler.violMsg(i));
         }

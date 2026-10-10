@@ -212,7 +212,6 @@ contract MigrateTest is Fixture {
             assertEq(CREDITS.ownerOf(ethIds[i]), address(sink), "an eth lane credit did not move");
             (bool inPile,,,) = core.creditInfo(ethIds[i]);
             assertFalse(inPile, "a moved credit is still in the pile");
-            assertEq(core.pileNext(ethIds[i]), 0, "a moved credit still points to a next one");
         }
         for (uint256 i; i < exitIds.length; ++i) {
             assertEq(CREDITS.ownerOf(exitIds[i]), address(sink), "an exit lane credit did not move");
@@ -221,8 +220,8 @@ contract MigrateTest is Fixture {
         }
         assertEq(core.pileSize(Lane.Eth), 0, "eth pile size");
         assertEq(core.pileSize(Lane.Exit), 0, "exit pile size");
-        assertEq(core.pileHead(Lane.Eth), 0, "eth pile head");
-        assertEq(core.pileHead(Lane.Exit), 0, "exit pile head");
+        assertEq(core.pilePage(Lane.Eth, 0, 1).length, 0, "eth pile head");
+        assertEq(core.pilePage(Lane.Exit, 0, 1).length, 0, "exit pile head");
         _solvent();
     }
 
@@ -753,20 +752,6 @@ contract MigrateTest is Fixture {
         _solvent();
     }
 
-    function test_OK_aRetiredCoreStillOverprints() public {
-        uint256 base = _listedStatement();
-        uint256 top = _listedStatement();
-        _setSuccessor();
-        _migrate(1000);
-        ScriptedController sc = new ScriptedController();
-        _setController(address(sc));
-        sc.setOverprint(true, base, top);
-        core.overprint();
-        (bool held,,,) = core.statementInfo(top);
-        assertFalse(held, "the top statement is still on the books");
-        assertEq(STATEMENTS.overprintsOf(base), 1, "the statements were not merged");
-    }
-
     /// the exit buyback pot that existed at the migration stays in the retired engine and `buybackExit` sells it
     function test_OK_xToBuybackStaysAndBuybackExitSellsItAfterMigrate() public {
         _world();
@@ -838,7 +823,6 @@ contract MigrateTest is Fixture {
         _migrate(1000);
         vm.startPrank(owner);
         core.setRate(core.RATE_START());
-        core.setXRate(4321);
         core.addTarget(address(0xA110C));
         core.removeTarget(address(0xA110C));
         vm.stopPrank();
@@ -891,29 +875,6 @@ contract MigrateTest is Fixture {
             core.setSuccessor(bad[i]);
         }
         assertEq(core.successor(), address(0), "a refused address was stored");
-    }
-
-    // ------------------------------------------------------------------ the hourly window
-
-    function _word(uint256 slot) internal view returns (uint256) {
-        return uint256(vm.load(address(core), bytes32(slot)));
-    }
-
-    function test_OK_aMigrationClosesTheHourlyWindow() public {
-        _fundPot(3 ether);
-        uint256[] memory first = _credits(seller, 2);
-        vm.prank(seller);
-        core.sellForEth(first);
-        assertGt(_word(12), 0, "setup: the window has a pot");
-        assertGt(_word(13), 0, "setup: the window has spending");
-        _setSuccessor();
-        _migrate(10);
-        assertEq(_word(11) >> 128, 0, "windowStart");
-        assertEq(_word(12), 0, "windowPot");
-        assertEq(_word(13), 0, "windowSpent");
-        // an inflow after the migrate is not added to the closed window
-        _fundPot(1 ether);
-        assertEq(_word(12), 0, "windowPot after an inflow");
     }
 
     // ------------------------------------------------------------------ gas

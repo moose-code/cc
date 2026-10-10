@@ -12,7 +12,7 @@ import {MigrationSink} from "../standins/MigrationSink.sol";
 import {CountingEngine, RefusingEngine} from "../attackers/FlushEngines.sol";
 
 /// @notice the owner as an adversarial actor. the owner calls `setSettings` with random valid settings across the
-/// whole allowed bounds, extreme corners included, `setRate` and `setXRate` anywhere in their bounds, and invalid
+/// whole allowed bounds, extreme corners included, `setRate` anywhere in its bounds, and invalid
 /// settings, rates and callers that must revert. the bounds are written out again here, independently of the
 /// library under test. after every owner call the settings are what was set, the rate is what it should be, and the
 /// core's eth, pots and exit token did not move: the owner has no path to the assets.
@@ -20,8 +20,6 @@ abstract contract HandlerOwner is HandlerHouse {
     /// owner calls that went through, and the ones the model expected to revert and did
     uint256 public gOwnerCalls;
     uint256 public gOwnerRefused;
-    /// settings changes while a spend window was open that moved its cap
-    uint256 public gCapChanges;
 
     /*//////////////////////////////////////////////////////////////
                               GENERATOR
@@ -45,15 +43,11 @@ abstract contract HandlerOwner is HandlerHouse {
     /// random valid settings over the whole bounds, from `seed`. `corner` picks an extreme to force on top
     function _genSettings(uint256 seed, uint256 corner, Settings memory c) internal pure returns (Settings memory s) {
         // forge-lint: disable-start(unsafe-typecast)
-        s.flatBps = uint16(_f(_r(seed, 0), 0, 10_000, c.flatBps));
-        s.avgScore = uint32(_f(_r(seed, 1), 800_000, 6_000_000, c.avgScore));
         s.dropPerCreditBps = uint16(_f(_r(seed, 2), 1, 1_000, c.dropPerCreditBps));
         s.dropFloorBps = uint16(_f(_r(seed, 3), 5_000, 10_000, c.dropFloorBps));
         s.climbPerMinBps = uint16(_f(_r(seed, 4), 1, 1_000, c.climbPerMinBps));
         s.ceilBps = uint16(_f(_r(seed, 5), 10_000, 30_000, c.ceilBps));
         s.idleLoosenBps = uint16(_f(_r(seed, 29), 1, 2_000, c.idleLoosenBps));
-        s.spendCapBps = uint16(_f(_r(seed, 6), 100, 10_000, c.spendCapBps));
-        s.bonusCapBps = uint16(_f(_r(seed, 7), 0, 5_000, c.bonusCapBps));
         s.tipSavingsBps = uint16(_f(_r(seed, 8), 0, 2_500, c.tipSavingsBps));
         s.tipCapBps = uint16(_f(_r(seed, 9), 0, 500, c.tipCapBps));
         s.reimburseBps = uint16(_f(_r(seed, 10), 0, 15_000, c.reimburseBps));
@@ -72,7 +66,7 @@ abstract contract HandlerOwner is HandlerHouse {
         s.xRateDropPerCredit = uint16(_f(_r(seed, 23), 0, 1_000, c.xRateDropPerCredit));
         s.xAuctionHalfLife = uint32(_f(_r(seed, 24), 10 minutes, 30 days, c.xAuctionHalfLife));
         s.exitSliceCredits = uint16(_f(_r(seed, 25), 1, 1_000, c.exitSliceCredits));
-        s.rateCap = uint64(_f(_r(seed, 26), 1e11, 1e15, c.rateCap));
+        s.rateCap = uint64(_f(_r(seed, 26), RATE_START_MIN_WEI, RATE_START_MAX_WEI, c.rateCap));
         s.exitLaneToBuybackBps = uint16(_f(_r(seed, 27), 0, 10_000, c.exitLaneToBuybackBps));
         s.feeToBuybackBps = uint16(_f(_r(seed, 28), 0, 10_000, c.feeToBuybackBps));
         _corner(s, corner);
@@ -84,11 +78,12 @@ abstract contract HandlerOwner is HandlerHouse {
         // forge-lint: disable-start(unsafe-typecast)
         k = k % 20;
         if (k == 1) {
-            s.flatBps = 0;
+            s.rateCap = uint64(RATE_START_MAX_WEI);
         } else if (k == 2) {
-            s.flatBps = 10_000;
+            s.dropPerCreditBps = 1;
+            s.dropFloorBps = 10_000;
         } else if (k == 3) {
-            s.spendCapBps = 10_000;
+            s.climbPerMinBps = 1;
         } else if (k == 4) {
             s.saleFloorBps = 1_000;
         } else if (k == 5) {
@@ -109,7 +104,8 @@ abstract contract HandlerOwner is HandlerHouse {
         } else if (k == 12) {
             s.exitAfter = 1 hours;
         } else if (k == 13) {
-            s.spendCapBps = 100;
+            s.xRateCap = 0;
+            s.xRateFloor = 0;
         } else if (k == 14) {
             // every tip, reimbursement and keeper reward at zero
             s.tipSavingsBps = 0;
@@ -117,7 +113,6 @@ abstract contract HandlerOwner is HandlerHouse {
             s.reimburseBps = 0;
             s.reimburseCapBps = 0;
             s.keeperTipBps = 0;
-            s.bonusCapBps = 0;
         } else if (k == 15) {
             // every tip, reimbursement and keeper reward at its ceiling
             s.tipSavingsBps = 2_500;
@@ -125,7 +120,6 @@ abstract contract HandlerOwner is HandlerHouse {
             s.reimburseBps = 15_000;
             s.reimburseCapBps = 1_000;
             s.keeperTipBps = 500;
-            s.bonusCapBps = 5_000;
         } else if (k == 16) {
             // the shortest clocks and the most aggressive climb
             s.climbPerMinBps = 1_000;
@@ -135,7 +129,7 @@ abstract contract HandlerOwner is HandlerHouse {
             s.xAuctionHalfLife = 10 minutes;
         } else if (k == 17) {
             // the lowest rate cap: it pulls the eth rate down to it at the checkpoint
-            s.rateCap = 1e11;
+            s.rateCap = uint64(RATE_START_MIN_WEI);
         } else if (k == 18) {
             // every exit goes to the bid pot, and every exit lane exit goes to the buyback
             s.exitToBuybackBps = 0;
@@ -212,14 +206,14 @@ abstract contract HandlerOwner is HandlerHouse {
             if (keccak256(abi.encode(core.settings())) != gSettingsHash) {
                 _flag(V_SETTINGS, "the settings read back differ from the ones set");
             }
-            _afterSettings(ns, cur, p);
+            _afterSettings(ns, p);
         } catch (bytes memory why) {
             _failed(p.bal, p.pot, p.rate, "setSettings");
             _unexpected(a, why);
         }
     }
 
-    function _afterSettings(Settings memory ns, Settings memory cur, OPre memory p) internal {
+    function _afterSettings(Settings memory ns, OPre memory p) internal {
         _opost(p, "setSettings");
         // invariant 6 across a settings call: the call checkpoints under the old settings, so it stores the price state it
         // found. the read under the new settings is that price state, bounded by the new ceiling and rate cap and, while
@@ -246,25 +240,15 @@ abstract contract HandlerOwner is HandlerHouse {
         if (price != p.xPrice && !(p.xPrice == 0 && price == 1)) {
             _flag(V_AUCTION, "a settings call moved the exit auction price");
         }
-        // a change of the spend cap while a window is open is applied to the window's pot from the next spend on
-        if (block.timestamp < gWinStart + 1 hours && ns.spendCapBps != gWinCap) {
-            if (ns.spendCapBps != cur.spendCapBps) gCapChanges++;
-            gWinCapChanged = true;
-            if (gWinSpent * 10_000 > gWinPot * ns.spendCapBps) gOverNowCap++;
-        }
     }
 
     /// the bounds of docs/FLOW.md section 2, written out again. the name of the first field out of bounds, or zero
     function _firstViolation(Settings memory s) internal pure returns (bytes32) {
-        if (s.flatBps > 10_000) return "flatBps";
-        if (s.avgScore < 800_000 || s.avgScore > 6_000_000) return "avgScore";
         if (s.dropPerCreditBps < 1 || s.dropPerCreditBps > 1_000) return "dropPerCreditBps";
         if (s.dropFloorBps < 5_000 || s.dropFloorBps > 10_000) return "dropFloorBps";
         if (s.climbPerMinBps < 1 || s.climbPerMinBps > 1_000) return "climbPerMinBps";
         if (s.ceilBps < 10_000 || s.ceilBps > 30_000) return "ceilBps";
         if (s.idleLoosenBps < 1 || s.idleLoosenBps > 2_000) return "idleLoosenBps";
-        if (s.spendCapBps < 100 || s.spendCapBps > 10_000) return "spendCapBps";
-        if (s.bonusCapBps > 5_000) return "bonusCapBps";
         if (s.tipSavingsBps > 2_500) return "tipSavingsBps";
         if (s.tipCapBps > 500) return "tipCapBps";
         if (s.reimburseBps > 15_000) return "reimburseBps";
@@ -283,7 +267,7 @@ abstract contract HandlerOwner is HandlerHouse {
         if (s.xRateDropPerCredit > 1_000) return "xRateDropPerCredit";
         if (s.xAuctionHalfLife < 10 minutes || s.xAuctionHalfLife > 30 days) return "xAuctionHalfLife";
         if (s.exitSliceCredits < 1 || s.exitSliceCredits > 1_000) return "exitSliceCredits";
-        if (s.rateCap < 1e11 || s.rateCap > 1e15) return "rateCap";
+        if (s.rateCap < RATE_START_MIN_WEI || s.rateCap > RATE_START_MAX_WEI) return "rateCap";
         if (s.exitLaneToBuybackBps > 10_000) return "exitLaneToBuybackBps";
         if (s.feeToBuybackBps > 10_000) return "feeToBuybackBps";
         return bytes32(0);
@@ -296,94 +280,82 @@ abstract contract HandlerOwner is HandlerHouse {
     /// breaks exactly one field of valid settings, `which` picks it. returns the name the library must report
     function _break(Settings memory s, uint256 which) internal pure returns (bytes32 name) {
         // forge-lint: disable-start(unsafe-typecast)
-        which = which % 45;
+        which = which % 39;
         if (which == 0) {
-            (s.flatBps, name) = (10_001, "flatBps");
-        } else if (which == 1) {
-            (s.avgScore, name) = (799_999, "avgScore");
-        } else if (which == 2) {
-            (s.avgScore, name) = (6_000_001, "avgScore");
-        } else if (which == 3) {
             (s.dropPerCreditBps, name) = (1_001, "dropPerCreditBps");
-        } else if (which == 4) {
+        } else if (which == 1) {
             (s.dropPerCreditBps, name) = (0, "dropPerCreditBps");
-        } else if (which == 5) {
+        } else if (which == 2) {
             (s.dropFloorBps, name) = (4_999, "dropFloorBps");
-        } else if (which == 6) {
+        } else if (which == 3) {
             (s.dropFloorBps, name) = (10_001, "dropFloorBps");
-        } else if (which == 7) {
+        } else if (which == 4) {
             (s.climbPerMinBps, name) = (0, "climbPerMinBps");
-        } else if (which == 8) {
+        } else if (which == 5) {
             (s.climbPerMinBps, name) = (1_001, "climbPerMinBps");
-        } else if (which == 9) {
-            (s.spendCapBps, name) = (99, "spendCapBps");
-        } else if (which == 10) {
-            (s.spendCapBps, name) = (10_001, "spendCapBps");
-        } else if (which == 11) {
-            (s.bonusCapBps, name) = (5_001, "bonusCapBps");
-        } else if (which == 12) {
+        } else if (which == 6) {
             (s.tipSavingsBps, name) = (2_501, "tipSavingsBps");
-        } else if (which == 13) {
+        } else if (which == 7) {
             (s.tipCapBps, name) = (501, "tipCapBps");
-        } else if (which == 14) {
+        } else if (which == 8) {
             (s.reimburseBps, name) = (15_001, "reimburseBps");
-        } else if (which == 15) {
+        } else if (which == 9) {
             (s.reimburseCapBps, name) = (1_001, "reimburseCapBps");
-        } else if (which == 16) {
+        } else if (which == 10) {
             (s.saleFloorBps, name) = (999, "saleFloorBps");
-        } else if (which == 17) {
+        } else if (which == 11) {
             (s.saleFloorBps, name) = (40_001, "saleFloorBps");
-        } else if (which == 18) {
+        } else if (which == 12) {
             (s.auctionDuration, name) = (6 hours - 1, "auctionDuration");
-        } else if (which == 19) {
+        } else if (which == 13) {
             (s.auctionDuration, name) = (uint32(30 days) + 1, "auctionDuration");
-        } else if (which == 20) {
+        } else if (which == 14) {
             (s.exitAfter, name) = (uint32(365 days) + 1, "exitAfter");
-        } else if (which == 21) {
+        } else if (which == 15) {
             (s.saleToBuybackBps, name) = (10_001, "saleToBuybackBps");
-        } else if (which == 22) {
+        } else if (which == 16) {
             (s.exitToBuybackBps, name) = (10_001, "exitToBuybackBps");
-        } else if (which == 23) {
+        } else if (which == 17) {
             (s.buybackSlice, name) = (0.01 ether - 1, "buybackSlice");
-        } else if (which == 24) {
+        } else if (which == 18) {
             (s.buybackSlice, name) = (1 ether + 1, "buybackSlice");
-        } else if (which == 25) {
+        } else if (which == 19) {
             (s.buybackDelay, name) = (0, "buybackDelay");
-        } else if (which == 26) {
+        } else if (which == 20) {
             (s.buybackDelay, name) = (7_201, "buybackDelay");
-        } else if (which == 27) {
+        } else if (which == 21) {
             (s.keeperTipBps, name) = (501, "keeperTipBps");
-        } else if (which == 28) {
+        } else if (which == 22) {
             (s.xRateCap, name) = (10_001, "xRateCap");
-        } else if (which == 29) {
+        } else if (which == 23) {
             (s.xRateCap, s.xRateFloor, name) = (5_000, 5_001, "xRateFloor");
-        } else if (which == 30) {
+        } else if (which == 24) {
             (s.xRateClimbPerHour, name) = (1_001, "xRateClimbPerHour");
-        } else if (which == 31) {
+        } else if (which == 25) {
             (s.xRateDropPerCredit, name) = (1_001, "xRateDropPerCredit");
-        } else if (which == 32) {
+        } else if (which == 26) {
             (s.xAuctionHalfLife, name) = (10 minutes - 1, "xAuctionHalfLife");
-        } else if (which == 33) {
+        } else if (which == 27) {
             (s.xAuctionHalfLife, name) = (uint32(30 days) + 1, "xAuctionHalfLife");
-        } else if (which == 34) {
+        } else if (which == 28) {
             (s.exitSliceCredits, name) = (0, "exitSliceCredits");
-        } else if (which == 35) {
+        } else if (which == 29) {
             (s.exitSliceCredits, name) = (1_001, "exitSliceCredits");
-        } else if (which == 36) {
+        } else if (which == 30) {
             (s.ceilBps, name) = (9_999, "ceilBps");
-        } else if (which == 37) {
+        } else if (which == 31) {
             (s.exitAfter, name) = (1 hours - 1, "exitAfter");
-        } else if (which == 38) {
-            (s.rateCap, name) = (1e11 - 1, "rateCap");
-        } else if (which == 39) {
-            (s.rateCap, name) = (1e15 + 1, "rateCap");
-        } else if (which == 40) {
+        } else if (which == 32) {
+            (s.rateCap, name) = (1e13 - 1, "rateCap");
+        } else if (which == 33) {
+            (s.rateCap, name) = (1e18 + 1, "rateCap");
+        } else if (which == 34) {
             (s.exitLaneToBuybackBps, name) = (10_001, "exitLaneToBuybackBps");
-        } else if (which == 41) {
+        } else if (which == 35) {
             (s.feeToBuybackBps, name) = (10_001, "feeToBuybackBps");
-        } else if (which == 42) {
+        } else if (which == 36) {
             (s.ceilBps, name) = (30_001, "ceilBps");
-        } else if (which == 43) {
+        } else if (which == 37) {
             (s.idleLoosenBps, name) = (2_001, "idleLoosenBps");
         } else {
             (s.idleLoosenBps, name) = (0, "idleLoosenBps");
@@ -481,38 +453,6 @@ abstract contract HandlerOwner is HandlerHouse {
         }
     }
 
-    /// the owner resets the exit rate within the floor and the cap of the settings, edges included, or outside them
-    /// (BadRate), or a stranger tries (OnlyOwner)
-    function setXRate(uint256 seed, uint256 mode) external checked {
-        uint8 a = A_SET_XRATE;
-        Settings memory st = core.settings();
-        uint256 m = mode % 8;
-        uint256 rate;
-        if (m == 0) rate = st.xRateFloor;
-        else if (m == 1) rate = st.xRateCap;
-        else if (m == 2) rate = core.xRate();
-        else if (m == 3) rate = st.xRateFloor > 0 ? st.xRateFloor - 1 : uint256(st.xRateCap) + 1;
-        else if (m == 4) rate = uint256(st.xRateCap) + 1;
-        else rate = uint256(st.xRateFloor) + seed % (uint256(st.xRateCap) - st.xRateFloor + 1);
-        bool stranger = mode % 11 == 3;
-        bool good = rate >= st.xRateFloor && rate <= st.xRateCap;
-        OPre memory p = _opre();
-        _att(a);
-        vm.prank(stranger ? _actor(seed) : owner);
-        try core.setXRate(rate) {
-            _ok(a);
-            if (stranger || !good) _flag(V_SETTINGS, "setXRate accepted a stranger or a rate out of the band");
-            _opost(p, "setXRate");
-            if (core.xRate() != rate) _flag(V_RATE_BOUND, "setXRate did not land on the rate");
-            if (core.exitAuctionPrice() != p.xPrice) _flag(V_AUCTION, "setXRate moved the exit auction price");
-        } catch (bytes memory why) {
-            _failed(p.bal, p.pot, p.rate, "setXRate");
-            if (good && !stranger) _unexpected(a, why);
-            else if (bytes4(why) != (stranger ? ICore.OnlyOwner.selector : ICore.BadRate.selector)) _unexpected(a, why);
-            else _ok(a);
-        }
-    }
-
     /*//////////////////////////////////////////////////////////////
                               THE REST OF THE OWNER
     //////////////////////////////////////////////////////////////*/
@@ -585,7 +525,7 @@ abstract contract HandlerOwner is HandlerHouse {
         if (!phase2()) return _skip(a);
         address token = core.exitToken();
         address oldModule = core.exitModule();
-        uint256 oldUnit = core.unitPerPoint();
+        uint256 oldUnit = core.unitPerCredit();
         (MockExitModule next, bytes4 want) = _nextModule(seed, mode % 8, token);
         // a locked module door refuses every set, whatever the module
         if (core.exitModuleLocked()) want = ICore.Locked.selector;
@@ -604,7 +544,7 @@ abstract contract HandlerOwner is HandlerHouse {
             _opost(p, "replaceModule");
             if (want == 0 || bytes4(why) != want) _unexpected(a, why);
             else _ok(a);
-            if (core.exitModule() != oldModule || core.unitPerPoint() != oldUnit || core.exitToken() != token) {
+            if (core.exitModule() != oldModule || core.unitPerCredit() != oldUnit || core.exitToken() != token) {
                 _flag(V_OWNER, "a refused module set changed the module, the unit or the token");
             }
         }
@@ -617,7 +557,7 @@ abstract contract HandlerOwner is HandlerHouse {
         } else if (m <= 3) {
             // the same module again: its unit changed (m 2) or did not (m 3), and it answers the unit read
             module.setRevertUnit(false);
-            if (m == 2) module.setUnitPerPoint(_logBound(seed >> 8, 2e9, 5e10));
+            if (m == 2) module.setUnitPerCredit(_logBound(seed >> 8, 2e9, 5e10));
             next = module;
         } else if (m == 4) {
             next = new MockExitModule(address(new MockExitToken("Other", "OTH")), 1e10);
@@ -626,9 +566,9 @@ abstract contract HandlerOwner is HandlerHouse {
             next = new MockExitModule(token, seed % 2 == 0 ? 0 : uint256(type(uint128).max) + 1);
             want = ICore.BadModule.selector;
         } else if (m == 6) {
-            // the opening price asks the supply for one slice (exitSliceCredits * avgScore * unit, at least 8e5 times the
-            // unit): above 1.25e27 per point it falls under 1e12 under any setting
-            next = new MockExitModule(token, 1e28);
+            // the opening price asks the supply for one slice (exitSliceCredits * unit, at least the unit): above
+            // 1e33 per credit it falls under 1e12 under any setting
+            next = new MockExitModule(token, 1e34);
             want = ICore.BadModule.selector;
         } else {
             next = MockExitModule(address(uint160(uint256(keccak256(abi.encode("nocode", seed))))));
@@ -640,7 +580,7 @@ abstract contract HandlerOwner is HandlerHouse {
         _opost(p, "replaceModule");
         if (core.exitModule() != address(next)) _flag(V_OWNER, "the module set did not install the module");
         if (core.exitToken() != token) _flag(V_OWNER, "a module set changed the exit token");
-        if (core.unitPerPoint() != next.currentUnit()) _flag(V_OWNER, "a module set did not read the unit again");
+        if (core.unitPerCredit() != next.currentUnit()) _flag(V_OWNER, "a module set did not read the unit again");
         // the climb so far was credited under the old unit
         if (core.xRate() != p.xRate) _flag(V_RATE_BOUND, "a module set lost or invented exit rate climb");
         _xFundedCheck();
@@ -744,6 +684,12 @@ abstract contract HandlerOwner is HandlerHouse {
         bytes4 want;
     }
 
+    /// the oldest credit of the pile of `lane`, zero when it is empty
+    function _head(Lane lane) internal view returns (uint256) {
+        uint256[] memory page = core.pilePage(lane, 0, 1);
+        return page.length == 0 ? 0 : page[0];
+    }
+
     function _rescueBooks() internal view returns (uint256) {
         return uint256(keccak256(abi.encode(core.pileSize(Lane.Eth), core.pileSize(Lane.Exit), core.heldStatements())));
     }
@@ -753,8 +699,8 @@ abstract contract HandlerOwner is HandlerHouse {
         r.who = owner;
         if (m == 0) {
             r.token = address(CREDITS);
-            r.id = core.pileHead(seed % 2 == 0 ? Lane.Eth : Lane.Exit);
-            if (r.id == 0) r.id = core.pileHead(seed % 2 == 0 ? Lane.Exit : Lane.Eth);
+            r.id = _head(seed % 2 == 0 ? Lane.Eth : Lane.Exit);
+            if (r.id == 0) r.id = _head(seed % 2 == 0 ? Lane.Exit : Lane.Eth);
             r.ok = r.id != 0;
             r.want = ICore.InPile.selector;
         } else if (m == 1) {
@@ -784,7 +730,7 @@ abstract contract HandlerOwner is HandlerHouse {
             r.want = ICore.NotHolder.selector;
         } else if (m == 4) {
             r.token = address(CREDITS);
-            r.id = core.pileHead(Lane.Eth);
+            r.id = _head(Lane.Eth);
             r.ok = r.id != 0;
             r.who = _actor(seed >> 16);
             r.want = ICore.OnlyOwner.selector;
@@ -951,12 +897,6 @@ abstract contract HandlerOwner is HandlerHouse {
         gRetired = true;
         if (!core.retired()) _flag(V_RETIRED, "migrate did not set retired");
         // eth and exit token: the trackers went to the successor whole
-        // a migration that moved eth closed the hourly spend window, so the ghost window opens on the next spend
-        if (q.eth != 0) {
-            gWinStart = 0;
-            gWinPot = 0;
-            gWinSpent = 0;
-        }
         // the pot goes to the successor, the buyback pot stays
         _eth(q.balance, q.eth, 0, "migrate");
         _x(q.xBalance, q.x, 0, "migrate");

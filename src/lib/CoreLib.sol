@@ -10,7 +10,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {Lane, ICredits, ICreditScore, IStatements, Settings, Mainnet} from "../interfaces/Interfaces.sol";
+import {Lane, ICredits, IStatements, Settings, Mainnet} from "../interfaces/Interfaces.sol";
 import {IAuctionHouse} from "../interfaces/AuctionHouse.sol";
 import {SettingsBounds} from "./SettingsBounds.sol";
 import {SettingsStore} from "./SettingsStore.sol";
@@ -36,20 +36,15 @@ struct CoreState {
     uint256 rateAtCheckpoint;
     uint64 checkpointTime;
     uint64 lastFillTime;
-    uint64 windowStart;
-    uint256 windowPot;
-    uint256 windowSpent;
     uint256 xRateAtCheckpoint;
     uint64 xCheckpointTime;
     bool xFunded;
     uint256 lastBuybackBlock;
-    uint256 overprintDay;
-    uint256 overprintCount;
     mapping(Lane => CoreLib.Pile) piles;
     mapping(uint256 => CoreLib.Credit) credits;
     mapping(uint256 => CoreLib.Statement) statements;
     uint256[] heldIds;
-    uint256 unitPerPoint;
+    uint256 unitPerCredit;
     uint256 xStartPrice;
     uint64 xStartTime;
     address successor;
@@ -146,15 +141,11 @@ library CoreLib {
         bytes32 bad = SettingsBounds.firstViolation(ns);
         if (bad != 0) revert BadSetting(bad);
         Settings storage s = SettingsStore.load();
-        s.flatBps = ns.flatBps;
-        s.avgScore = ns.avgScore;
         s.dropPerCreditBps = ns.dropPerCreditBps;
         s.dropFloorBps = ns.dropFloorBps;
         s.climbPerMinBps = ns.climbPerMinBps;
         s.ceilBps = ns.ceilBps;
         s.idleLoosenBps = ns.idleLoosenBps;
-        s.spendCapBps = ns.spendCapBps;
-        s.bonusCapBps = ns.bonusCapBps;
         s.tipSavingsBps = ns.tipSavingsBps;
         s.tipCapBps = ns.tipCapBps;
         s.reimburseBps = ns.reimburseBps;
@@ -184,44 +175,40 @@ library CoreLib {
     /// checks against a write and a read
     function unpack(uint256 a, uint256 b, uint256 c) external pure returns (Settings memory s) {
         // forge-lint: disable-start(unsafe-typecast)
-        s.flatBps = uint16(a);
-        s.avgScore = uint32(a >> 16);
-        s.dropPerCreditBps = uint16(a >> 48);
-        s.dropFloorBps = uint16(a >> 64);
-        s.climbPerMinBps = uint16(a >> 80);
-        s.ceilBps = uint16(a >> 96);
-        s.idleLoosenBps = uint16(a >> 112);
-        s.spendCapBps = uint16(a >> 128);
-        s.bonusCapBps = uint16(a >> 144);
-        s.tipSavingsBps = uint16(a >> 160);
-        s.tipCapBps = uint16(a >> 176);
-        s.reimburseBps = uint16(a >> 192);
-        s.reimburseCapBps = uint16(a >> 208);
-        s.saleFloorBps = uint16(a >> 224);
-        s.auctionDuration = uint32(b);
-        s.exitAfter = uint32(b >> 32);
-        s.saleToBuybackBps = uint16(b >> 64);
-        s.exitToBuybackBps = uint16(b >> 80);
-        s.buybackSlice = uint128(b >> 96);
-        s.buybackDelay = uint16(b >> 224);
-        s.keeperTipBps = uint16(b >> 240);
-        s.xRateCap = uint16(c);
-        s.xRateFloor = uint16(c >> 16);
-        s.xRateClimbPerHour = uint16(c >> 32);
-        s.xRateDropPerCredit = uint16(c >> 48);
-        s.xAuctionHalfLife = uint32(c >> 64);
-        s.exitSliceCredits = uint16(c >> 96);
-        s.rateCap = uint64(c >> 112);
-        s.exitLaneToBuybackBps = uint16(c >> 176);
-        s.feeToBuybackBps = uint16(c >> 192);
+        s.dropPerCreditBps = uint16(a);
+        s.dropFloorBps = uint16(a >> 16);
+        s.climbPerMinBps = uint16(a >> 32);
+        s.ceilBps = uint16(a >> 48);
+        s.idleLoosenBps = uint16(a >> 64);
+        s.tipSavingsBps = uint16(a >> 80);
+        s.tipCapBps = uint16(a >> 96);
+        s.reimburseBps = uint16(a >> 112);
+        s.reimburseCapBps = uint16(a >> 128);
+        s.saleFloorBps = uint16(a >> 144);
+        s.auctionDuration = uint32(a >> 160);
+        s.exitAfter = uint32(a >> 192);
+        s.saleToBuybackBps = uint16(a >> 224);
+        s.exitToBuybackBps = uint16(a >> 240);
+        s.buybackSlice = uint128(b);
+        s.buybackDelay = uint16(b >> 128);
+        s.keeperTipBps = uint16(b >> 144);
+        s.xRateCap = uint16(b >> 160);
+        s.xRateFloor = uint16(b >> 176);
+        s.xRateClimbPerHour = uint16(b >> 192);
+        s.xRateDropPerCredit = uint16(b >> 208);
+        s.xAuctionHalfLife = uint32(b >> 224);
+        s.exitSliceCredits = uint16(c);
+        s.rateCap = uint64(c >> 16);
+        s.exitLaneToBuybackBps = uint16(c >> 80);
+        s.feeToBuybackBps = uint16(c >> 96);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
-    /// @notice the price state and the read of the eth rate (wei per whole point) at `nowTs`, from the stored rate `r` of
-    /// checkpoint time `t`. The price state compounds `climbPerMinBps` per minute up to min(`rateCap`, ceiling, clamp)
+    /// @notice the price state and the read of the eth rate (wei per credit) at `nowTs`, from the stored rate `r` of
+    /// checkpoint time `t`. The price state compounds `climbPerMinBps` per minute up to min(`rateCap`, ceiling, pot)
     /// and holds a value above that bound. The ceiling is `ceilBps` of the last fill rate grown by `idleLoosenBps` per
-    /// full 10 minutes since `anchorTime`. The clamp is `pot * spendCapBps / avgScore`, the price of one average credit
-    /// that the pot affords. The read is min(price state, clamp). Never reverts: the Core calls it from `receive()`
+    /// full 10 minutes since `anchorTime`. The clamp is `pot`, the price of one credit that the pot affords. The read is
+    /// min(price state, pot). Never reverts: the Core calls it from `receive()`
     function climb(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
         external
         view
@@ -236,16 +223,14 @@ library CoreLib {
         returns (uint256 price, uint256 read)
     {
         Settings storage s = SettingsStore.load();
-        uint256 room = pot * s.spendCapBps;
-        uint256 clamp = room / s.avgScore;
         uint256 loosened = 10_000 + uint256(s.idleLoosenBps) * (nowTs.zeroFloorSub(anchorTime) / 10 minutes);
         uint256 cap = RateStore.load().lastFillRate * loosened * s.ceilBps / 1e8;
         cap = cap.min(s.rateCap);
         price = r;
         if (r >= cap) {
             price = cap;
-        } else if (nowTs > t && r != 0 && r < cap.min(clamp)) {
-            uint256 target = cap.min(clamp);
+        } else if (nowTs > t && r != 0 && r < cap.min(pot)) {
+            uint256 target = cap.min(pot);
             // forge-lint: disable-start(unsafe-typecast)
             int256 x = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.climbPerMinBps) * 1e14))
                 * int256((nowTs - t) * 1e18 / 1 minutes) / 1e18;
@@ -255,7 +240,7 @@ library CoreLib {
                 : r.mulWad(uint256(FixedPointMathLib.expWad(x))).min(target);
             // forge-lint: disable-end(unsafe-typecast)
         }
-        read = price.min(clamp);
+        read = price.min(pot);
     }
 
     /// @notice the rate after one credit is bought with the price state `price` at the fill, and the anchor update of
@@ -358,11 +343,11 @@ library CoreLib {
     }
 
     /// @notice puts credits the Core holds without a record into the eth pile, anyone may call. The cost basis of a
-    /// credit is the price state per whole point at `block.timestamp` (`climb`, before the clamp, no checkpoint is
-    /// written) times the score of the credit, at least 1 wei. The price state is what the engine pays with a funded
+    /// credit is the price state per credit at `block.timestamp` (`climb`, before the clamp, no checkpoint is
+    /// written), at least 1 wei. The price state is what the engine pays with a funded
     /// pot, so statements built from adopted credits are priced at that level; the clamp of a thin pot would book a
     /// basis of 1 wei. A donor who inflates the basis of a statement gives credits away. The basis is booked and the
-    /// eth pile grows: the rate state, the hourly window and the pots keep their values. `acquiredAt` is the current
+    /// eth pile grows: the rate state and the pots keep their values. `acquiredAt` is the current
     /// time. Reverts `Empty` for an empty list, `ZeroId` for id zero, `InPile` for a credit that is in a pile (the same
     /// id twice included), and `NotHolder` for a credit the Core does not hold. The Core pulls the fee router, then
     /// forwards its call here untouched, under its own reentrancy guard
@@ -375,7 +360,7 @@ library CoreLib {
             if (id == 0) revert ZeroId();
             if (c.credits[id].inPile) revert InPile();
             if (CREDITS.ownerOf(id) != address(this)) revert NotHolder();
-            uint256 cost = (price * scoreOf(id) / 1e4).max(1);
+            uint256 cost = price.max(1);
             push(c.piles[Lane.Eth], c.credits, Lane.Eth, id, cost);
             emit CreditAdopted(id, cost);
         }
@@ -420,8 +405,7 @@ library CoreLib {
     /// credits: up to `maxCredits` from the head of each pile, by `transferFrom`, the pile membership cleared (the
     /// cost, lane and arrival time of the record stay). zero moves the pots only.
     /// the held statements, their listings and their records stay with the Core, which sells them out itself.
-    /// the rates are checkpointed before a pot is zeroed. the hourly spend window is closed with the eth pot. a call with
-    /// nothing left to move logs zeros
+    /// the rates are checkpointed before a pot is zeroed. a call with nothing left to move logs zeros
     function migrate(uint256 maxCredits) external {
         _onlyOwner();
         CoreState storage c = state();
@@ -445,10 +429,6 @@ library CoreLib {
         (c.rateAtCheckpoint,) = _climb(c.rateAtCheckpoint, eth, c.lastFillTime, c.checkpointTime, block.timestamp);
         c.checkpointTime = uint64(block.timestamp);
         c.ethPot = 0;
-        // the hourly spend window of the old pot is closed: the next spend opens one on the pot it finds
-        c.windowStart = 0;
-        c.windowPot = 0;
-        c.windowSpent = 0;
         (bool ok,) = to.call{value: eth}("");
         if (!ok) revert CallFailed();
     }
@@ -475,11 +455,11 @@ library CoreLib {
             return 0;
         }
         Settings storage s = SettingsStore.load();
-        uint256 unit = c.unitPerPoint;
+        uint256 unit = c.unitPerCredit;
         c.xRateAtCheckpoint = xRateOf(c.xRateAtCheckpoint, c.xFunded, c.xPot, unit, c.xCheckpointTime, s);
         c.xCheckpointTime = uint64(block.timestamp);
         c.xPot = 0;
-        c.xFunded = xFundedOf(0, c.xRateAtCheckpoint, unit, s);
+        c.xFunded = xFundedOf(0, c.xRateAtCheckpoint, unit);
     }
 
     /// pops up to `max` credits from the head of each pile
@@ -578,27 +558,23 @@ library CoreLib {
         return id;
     }
 
-    /// score of a credit in 1e4 scale, read from the score contract
-    function scoreOf(uint256 id) internal view returns (uint256) {
-        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
-    }
-
-    /// the exit token bid in bps of score: the stored rate `r` climbs `xRateClimbPerHour` per hour since `since`, up to
-    /// the cap `min(xRateCap, pot * BPS / (avgScore * unit))`, while the pot funds the bid (`funded`)
+    /// the exit token bid in bps of one credit's exit value (`unit`, exit token base units per credit): the stored rate
+    /// `r` climbs `xRateClimbPerHour` per hour since `since`, up to the cap `min(xRateCap, pot * BPS / unit)`, while the
+    /// pot funds the bid (`funded`)
     function xRateOf(uint256 r, bool funded, uint256 pot, uint256 unit, uint256 since, Settings storage s)
         internal
         view
         returns (uint256)
     {
         if (!funded) return r;
-        uint256 cap = uint256(s.xRateCap).min(pot * BPS / (uint256(s.avgScore) * unit));
+        uint256 cap = uint256(s.xRateCap).min(pot * BPS / unit);
         if (cap <= r) return r;
         return (r + uint256(s.xRateClimbPerHour) * (block.timestamp - since) / 1 hours).min(cap);
     }
 
-    /// whether the exit pot `pot` pays one average credit at the exit rate `r`
-    function xFundedOf(uint256 pot, uint256 r, uint256 unit, Settings storage s) internal view returns (bool) {
-        return pot * BPS >= uint256(s.avgScore) * r * unit;
+    /// whether the exit pot `pot` pays one credit at the exit rate `r`
+    function xFundedOf(uint256 pot, uint256 r, uint256 unit) internal pure returns (bool) {
+        return pot * BPS >= r * unit;
     }
 
     /// @notice sells the credits `ids` of the caller into the exit token bid. the Core's `sellForExitToken` forwards its
@@ -618,7 +594,7 @@ library CoreLib {
         Settings storage s = SettingsStore.load();
         if (ids.length == 0) revert Empty();
         if (c.exitModule == address(0)) revert NoExitModule();
-        uint256 unit = c.unitPerPoint;
+        uint256 unit = c.unitPerCredit;
         uint256 dropBps = s.xRateDropPerCredit;
         uint256 floor = s.xRateFloor;
         c.xRateAtCheckpoint = xRateOf(c.xRateAtCheckpoint, c.xFunded, c.xPot, unit, c.xCheckpointTime, s);
@@ -628,7 +604,7 @@ library CoreLib {
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = owned(ids[i]);
-            uint256 price = scoreOf(id) * r * unit / BPS;
+            uint256 price = r * unit / BPS;
             if (price == 0) revert ZeroAmount();
             if (price > pot) revert PotTooSmall();
             pot -= price;
@@ -640,7 +616,7 @@ library CoreLib {
         }
         c.xPot = pot;
         c.xRateAtCheckpoint = r;
-        c.xFunded = xFundedOf(pot, r, unit, s);
+        c.xFunded = xFundedOf(pot, r, unit);
         emit ExitRateFill(r, pot);
         if (total < minOut) revert Slippage();
         SafeTransferLib.safeTransfer(c.exitToken, msg.sender, total);

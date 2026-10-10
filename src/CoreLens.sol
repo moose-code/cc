@@ -34,17 +34,14 @@ contract CoreLens {
         uint64 endTime;
     }
 
-    /// `ethRate` is wei per whole point as the Core reads it for a sale. `ethPrice` is the price state before the
-    /// clamp, the figure an adopted credit is priced with. `averageBid` is the payout for one credit of average
-    /// score now. `hourlyRoom` is the eth the spend cap still allows in this hour. `unbookedEth` is the Core balance
+    /// `ethRate` is the wei the Core pays for one credit now. `ethPrice` is the price state before the
+    /// clamp, the figure an adopted credit is priced with. `unbookedEth` is the Core balance
     /// above the booked pots (`skim` books it). `salesOwed` is the sale proceeds waiting in the house
     /// (`collectSales` books them). the flush fields are what `FeeRouter.flush()` would send
     /// now: to the Core and to the payees
     struct Snapshot {
         uint256 ethRate;
         uint256 ethPrice;
-        uint256 averageBid;
-        uint256 hourlyRoom;
         uint256 ethPileSize;
         uint256 ethPileHead;
         uint256 exitPileSize;
@@ -93,11 +90,6 @@ contract CoreLens {
         return CORE.controller();
     }
 
-    /// the eth the Core pays for credit `id` now, bonus included
-    function bidFor(uint256 id) external view returns (uint256) {
-        return CORE.ceilingOf(id);
-    }
-
     /// the state of the engine in one call, with every held statement
     function snapshot() external view returns (Snapshot memory s) {
         s = _snapshot();
@@ -113,12 +105,10 @@ contract CoreLens {
         ICore core = CORE;
         s.ethRate = core.ethRate();
         s.ethPrice = core.ethPrice();
-        s.averageBid = uint256(core.settings().avgScore) * s.ethRate / 1e4;
-        s.hourlyRoom = core.hourlyRoom();
         s.ethPileSize = core.pileSize(Lane.Eth);
-        s.ethPileHead = core.pileHead(Lane.Eth);
+        s.ethPileHead = _head(Lane.Eth);
         s.exitPileSize = core.pileSize(Lane.Exit);
-        s.exitPileHead = core.pileHead(Lane.Exit);
+        s.exitPileHead = _head(Lane.Exit);
         s.controller = controller();
         s.ethPageReady = _pageReady(s.controller, Lane.Eth);
         s.exitPageReady = _pageReady(s.controller, Lane.Exit);
@@ -136,6 +126,12 @@ contract CoreLens {
         s.exitModuleLocked = core.exitModuleLocked();
         s.targetsLocked = core.targetsLocked();
         s.successorLocked = core.successorLocked();
+    }
+
+    /// the oldest credit of the pile of `lane`, zero when the pile is empty
+    function _head(Lane lane) private view returns (uint256) {
+        uint256[] memory ids = CORE.pilePage(lane, 0, 1);
+        return ids.length == 0 ? 0 : ids[0];
     }
 
     /// the split of `FeeRouter.flush`, from the router balance, the debts to payees and the split state now. zero while

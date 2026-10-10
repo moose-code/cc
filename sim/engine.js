@@ -1,5 +1,5 @@
 // credits engine economic simulator. plain es module, no dependencies, runs in node 22 and in a browser.
-// core rules are ported from src/Core.sol on branch flow. units: eth for pots and prices, wei per whole point for the rate,
+// core rules are ported from src/Core.sol on branch flow. units: eth for pots and prices, wei per credit for the rate,
 // seconds for time, whole coins for coin amounts. exitModule and exitToken are the only names for phase 2.
 
 export const W = 1e18;
@@ -8,14 +8,10 @@ export const BPS = 10000;
 // the Core's Settings struct, same field names, launch values from script/config/mainnet.json.
 // durations in seconds, buybackSlice in eth (the Core holds wei). every one can change mid run through `schedule`
 export const SETTINGS = {
-  flatBps: 10000, // share of the bid priced flat per credit as avgScore, the rest by the credit's own score
-  avgScore: 4330000, // 1e4 scale, 433 points
   climbBaseBps: 100, // per hour
   climbDoubleEvery: 24 * 3600,
   climbMaxBps: 800, // per hour
   dropBps: 2000,
-  spendCapBps: 10000, // per hour window
-  bonusCapBps: 2500, // the controller pays no bonus, so no effect
   tipSavingsBps: 1000,
   tipCapBps: 200,
   reimburseBps: 8000, // governs exitStatement gas repay; the simulator does not model exit gas
@@ -34,7 +30,7 @@ export const SETTINGS = {
   xRateDropPerCredit: 20,
   xAuctionHalfLife: 6 * 3600,
   exitSliceCredits: 20,
-  rateCap: 205540000000000, // wei per whole point, 10 times rateStart: the eth rate never passes it (climb clamp, setRate)
+  rateCap: 89000000000000000, // wei per credit, 10 times rateStart: the eth rate never passes it (climb clamp, setRate)
   exitLaneToBuybackBps: 0, // share of exitToken from exit lane exits to the coin buyback, rest to the exit bid pot
   feeToBuybackBps: 0, // share of swap fee eth booked in receive() that goes to the buyback instead of the pot
 };
@@ -63,14 +59,10 @@ export function controllerViolation(c) {
 // src/lib/SettingsBounds.sol: the name of the first field out of bounds, or null
 export function firstViolation(s) {
   const h = 3600, d = 86400;
-  if (s.flatBps > 10000) return 'flatBps';
-  if (s.avgScore < 800000 || s.avgScore > 6000000) return 'avgScore';
   if (s.climbBaseBps > 1000) return 'climbBaseBps';
   if (s.climbDoubleEvery < h || s.climbDoubleEvery > 30 * d) return 'climbDoubleEvery';
   if (s.climbMaxBps < s.climbBaseBps || s.climbMaxBps > 2000) return 'climbMaxBps';
   if (s.dropBps < 500 || s.dropBps > 5000) return 'dropBps';
-  if (s.spendCapBps < 100 || s.spendCapBps > 10000) return 'spendCapBps';
-  if (s.bonusCapBps > 5000) return 'bonusCapBps';
   if (s.tipSavingsBps > 2500) return 'tipSavingsBps';
   if (s.tipCapBps > 500) return 'tipCapBps';
   if (s.reimburseBps > 15000) return 'reimburseBps';
@@ -94,8 +86,8 @@ export function firstViolation(s) {
   if (s.feeToBuybackBps > 10000) return 'feeToBuybackBps';
   return null;
 }
-// the eth rate bounds of setRate, rateStart and rateCap, wei per whole point (Interfaces.sol)
-export const RATE_MIN = 1e11, RATE_MAX = 1e15;
+// the eth rate bounds of setRate, rateStart and rateCap, wei per credit (Interfaces.sol)
+export const RATE_MIN = 1e13, RATE_MAX = 1e18;
 
 // constants of the Core and of the pool that are not settings
 export const CORE_PARAMS = {
@@ -111,7 +103,7 @@ export const SIM_DEFAULTS = {
   seed: 7,
   days: 90,
   stepSec: 60, // time step after the first hour, seconds. a divisor of 3600. 60 matches the minute bucket of the contract's drop floor and climb; hourly steps distort the stepped rule (bid up to 3x market). rates quoted per hour or per day, the hourly cap and arrival counts scale with the step
-  rateStart: 20554000000000, // launch opening rate (script/config/mainnet.json rateStart): 100 percent of the market price over avgScore, 0.0089e18 / 433
+  rateStart: 8900000000000000, // launch opening rate (script/config/mainnet.json rateStart): 100 percent of the market price of one credit, 0.0089e18
   // bid rule. 'stepped' is the launch rule (src/lib/CoreLib.sol climb and drop) and the default. 'built' is the earlier rule, kept for the
   // comparison in docs/BID-STUDY.md: climbs per hour (doubling per idle day), drops dropBps times the share of the pot spent.
   // 'dropToLast': after a fill the bid is dropToPct of the rate that fill paid, then climbs climbPerMin percent per minute, no ceiling.
@@ -134,12 +126,10 @@ export const SIM_DEFAULTS = {
   gapHour: 6,
   forceFillHour: null, // one forced fill at forceFillFrac of the market price at this hour: the bid is set to that level first (test hook)
   forceFillFrac: 0.5,
-  botDrain: false, // test hook: at the first step of every hour a bot sells into the bid until the hourly cap room is used
   holdPot: 0, // test hook: eth. the pot is topped up to this level after every step (accounting checks do not hold)
   gateAt: 20, // counterfactual only: hours with at least this many unsold statements held are counted in gateClosedHours
   whipsawStartDay: 2, // pricePath 'whipsaw': day the fall starts
-  fundedRule: 'built', // 'built' = the hourly cap affords one average credit, 'old' = the pot affords one (counterfactual)
-  schedule: [], // [{ day, patch }]: owner changes settings on that day. patch may hold any setting and `rate` (setRate, wei per point)
+  schedule: [], // [{ day, patch }]: owner changes settings on that day. patch may hold any setting and `rate` (setRate, wei per credit)
   baselineSkimBps: 690, // bps of volume: 6.9 points (script/config/mainnet.json launch.baselineSkimBps)
   bountyBps: 9638, // of the baseline skim, to the fee router. the other 362 of 10000 is the protocol leg, not the engine's
   sniperStartBps: 9000,
@@ -187,9 +177,9 @@ export const SIM_DEFAULTS = {
   keeperCollectHours: 1, // collectSales runs this often
   // phase 2 (exitModule and exitToken)
   phase2Day: null,
-  xp: 2.5e-5, // eth value of the exitToken paid per point of rating
+  xp: 0.0108, // eth value of the exitToken paid per credit
   takerThreshold: 0.15,
-  exitMinRatio: 0, // a keeper exits only when rating * xp is at least this times the asking price
+  exitMinRatio: 0, // a keeper exits only when the credit count * xp is at least this times the asking price
   keeperBuyback: true,
 };
 
@@ -250,25 +240,16 @@ export class Core {
     this.feeToBuyback = 0; // cumulative swap fee eth sent to the buyback pot by feeToBuybackBps
     this.ethPot = 0; this.ethToBuyback = 0; this.xPot = 0; this.xToBuyback = 0;
     this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0; this.funded = false;
-    this.windowStart = -1e12; this.windowPot = 0; this.windowSpent = 0;
     this.xRateAtCheckpoint = Math.max(Math.min(p.XRATE_START, this.s.xRateCap), this.s.xRateFloor); this.xCheckpointTime = t0; this.xFunded = false;
     this.xp = 0; this.moduleSet = false; this.xStartPrice = 0; this.xStartTime = 0;
     this.lastBuybackTime = -1e12;
     this.houseOwed = 0; // sale proceeds credited to the Core in the auction house, not in the pots until collectSales
-    this.capHits = 0; this.clampTime = 0;
+    this.clampTime = 0;
     this.lastPaidRate = p.rateStart; this.burstTime = -1; this.burstBase = 0; // bidRule stepped
   }
-  // the points a credit is priced as: the flat share as an average credit, the rest by its own score (no controller bonus)
-  epts(pts) {
-    const f = this.s.flatBps;
-    return (f * (this.s.avgScore / 1e4) + (BPS - f) * pts) / BPS;
-  }
-  // the climb stops where the hourly cap no longer buys one average credit (the funded rule as built) or at rateCap,
-  // whichever is lower; the old rule is a counterfactual with no clamp
+  // the climb stops where the pot no longer affords one credit at the rate, or at rateCap, whichever is lower
   clamp() {
-    const s = this.s;
-    if (this.p.fundedRule === 'old') return Infinity;
-    return Math.min((this.ethPot * W * s.spendCapBps) / s.avgScore, s.rateCap);
+    return Math.min(this.ethPot * W, this.s.rateCap);
   }
   // stepped rule: the ceiling in rate terms, ceilPct of the anchor (the last rate paid), the anchor loosened while idle
   stepCeil(now) {
@@ -288,7 +269,7 @@ export class Core {
     if (r >= target) return r;
     return Math.min(r * Math.pow(1 + this.p.climbPerMin / 100, (now - this.checkpointTime) / 60), target);
   }
-  // the bid read by a seller. stepped: the price state bid, lowered to the clamp (the hourly cap / avgScore). the clamp bounds
+  // the bid read by a seller. stepped: the price state bid, lowered to the clamp (the pot). the clamp bounds
   // what is paid and is never stored: checkpoint, the drop and the anchor all use the price state rate
   ethRate(now) {
     const s = this.s;
@@ -316,9 +297,7 @@ export class Core {
   }
   checkpoint(now) { this.rateAtCheckpoint = this.p.bidRule === 'stepped' ? this.priceRate(now) : this.ethRate(now); this.checkpointTime = now; }
   syncFunded() {
-    const s = this.s;
-    if (this.p.fundedRule === 'old') this.funded = this.ethPot * W >= (s.avgScore * this.rateAtCheckpoint) / 1e4;
-    else this.funded = this.ethPot * W * s.spendCapBps >= s.avgScore * this.rateAtCheckpoint;
+    this.funded = this.ethPot * W >= this.rateAtCheckpoint;
   }
   // owner: setSettings. validates, checkpoints both rates first, then applies at once. patch.rate is setRate.
   // the patch may also hold controller settings (buyOnly, startBps, stepBps, stepEvery, floorBps): the controller reads them live
@@ -340,20 +319,11 @@ export class Core {
     this.syncFunded();
     if (this.moduleSet) this.syncXFunded();
   }
-  // hourly window cap: the pot at open plus inflows since open (addFees, bookSale), minus spent. returns the window state it would use, without committing
-  room(x, now) {
-    let ws = this.windowStart, wp = this.windowPot, wsp = this.windowSpent;
-    if (now >= ws + 3600) { ws = now; wp = this.ethPot; wsp = 0; }
-    return { ok: wsp + x <= (wp * this.s.spendCapBps) / BPS + 1e-18, ws, wp, wsp };
-  }
-  // _spend: checkpoint, hourly cap, drop on fill. false means the Core would revert
+  // _spend: checkpoint, drop on fill. false means the Core would revert
   spend(x, now) {
     this.checkpoint(now);
     const pot = this.ethPot;
     if (!(x > 0) || x > pot + 1e-18) return false;
-    const rm = this.room(x, now);
-    if (!rm.ok) { this.capHits++; return false; }
-    this.windowStart = rm.ws; this.windowPot = rm.wp; this.windowSpent = rm.wsp + x;
     const paid = this.rateAtCheckpoint, rule = this.p.bidRule;
     let r = paid;
     if (rule === 'dropToLast') r = (paid * this.p.dropToPct) / 100;
@@ -376,23 +346,20 @@ export class Core {
     this.ethToBuyback += toBuyback;
     this.checkpoint(now);
     this.ethPot += amount - toBuyback;
-    if (now < this.windowStart + 3600) this.windowPot += amount - toBuyback; // the room of an open hour follows inflows
     this.syncFunded();
     return { toBuyback, toPot: amount - toBuyback };
   }
-  ceiling(pts, rate) { return (this.epts(pts) * rate) / W; }
-  // door one: sell into the bid at the ceiling. returns the price paid or 0
-  sellForEth(pts, now) {
-    const price = this.ceiling(pts, this.ethRate(now));
+  // door one: sell into the bid at the rate. every credit is paid the same. returns the price paid or 0
+  sellForEth(now) {
+    const price = this.ethRate(now) / W;
     return this.spend(price, now) ? price : 0;
   }
   // door two: buy a listing at its ask. returns {cost, tip} or null
-  buyListing(pts, ask, now) {
+  buyListing(ask, now) {
     const s = this.s;
     this.checkpoint(now);
-    const ceil = this.ceiling(pts, this.ethRate(now));
+    const ceil = this.ethRate(now) / W;
     if (ask > this.ethPot || ask > ceil) return null;
-    if (!this.room(ask, now).ok) { this.capHits++; return null; }
     const tip = Math.min((s.tipSavingsBps * (ceil - ask)) / BPS, (s.tipCapBps * ask) / BPS);
     if (!this.spend(ask + tip, now)) return null;
     return { cost: ask, tip };
@@ -440,7 +407,6 @@ export class Core {
     this.ethToBuyback += toBuyback;
     this.checkpoint(now);
     this.ethPot += amount - toBuyback;
-    if (now < this.windowStart + 3600) this.windowPot += amount - toBuyback; // the room of an open hour follows inflows
     this.syncFunded();
     return { toBuyback, toPot: amount - toBuyback };
   }
@@ -460,34 +426,34 @@ export class Core {
     return this.bookSale(value, now);
   }
 
-  // ---- phase 2: exitModule pays rating * unitPerPoint of exitToken. pots here hold the eth value of exitToken at xp per point
+  // ---- phase 2: exitModule pays credits * unitPerCredit of exitToken. pots here hold the eth value of exitToken at xp per credit
   setExitModule(now, xp) {
     const p = this.p, s = this.s;
     this.moduleSet = true; this.xp = xp; this.xCheckpointTime = now;
-    this.xStartPrice = p.SUPPLY / (s.exitSliceCredits * (s.avgScore / 1e4) * xp); // coin per eth of exitToken, asks the whole supply for a full slice
+    this.xStartPrice = p.SUPPLY / (s.exitSliceCredits * xp); // coin per eth of exitToken, asks the whole supply for a full slice
     this.xStartTime = now;
   }
   xRate(now) {
     const s = this.s;
     const r = this.xRateAtCheckpoint;
     if (!this.xFunded) return r;
-    const cap = Math.min(s.xRateCap, (this.xPot * BPS) / ((s.avgScore / 1e4) * this.xp));
+    const cap = Math.min(s.xRateCap, (this.xPot * BPS) / this.xp);
     if (cap <= r) return r;
     return Math.min(r + (s.xRateClimbPerHour * (now - this.xCheckpointTime)) / 3600, cap);
   }
   xCheckpoint(now) { this.xRateAtCheckpoint = this.xRate(now); this.xCheckpointTime = now; }
   syncXFunded() {
     const s = this.s;
-    this.xFunded = this.xPot * BPS >= (s.avgScore / 1e4) * this.xRateAtCheckpoint * this.xp;
+    this.xFunded = this.xPot * BPS >= this.xRateAtCheckpoint * this.xp;
   }
   // price in exitToken value for one credit at the current exit bid (without moving state)
-  xPrice(pts, now) { return (pts * this.xRate(now)) / BPS * this.xp; }
-  // sellForExitToken: pays pts * xRate of the credit's score in exitToken, drops xRate per credit. the exit bid stays per point
-  xBuy(pts, now) {
+  xPrice(now) { return (this.xRate(now) / BPS) * this.xp; }
+  // sellForExitToken: pays xRate of one credit's exit value in exitToken, drops xRate per credit
+  xBuy(now) {
     const s = this.s;
     this.xCheckpoint(now);
     const r = this.xRateAtCheckpoint;
-    const price = (pts * r * this.xp) / BPS;
+    const price = (r * this.xp) / BPS;
     if (!(price > 0) || price > this.xPot + 1e-18) return 0;
     this.xPot -= price;
     this.xRateAtCheckpoint = Math.max(Math.max(r - s.xRateDropPerCredit, 0), s.xRateFloor);
@@ -498,10 +464,10 @@ export class Core {
   exitReady(st, now) {
     return this.moduleSet && (st.lane === 'exit' || (!st.bid && now >= st.t0 + this.s.exitAfter));
   }
-  // the module hands back rating * unitPerPoint. eth lane splits exitToBuybackBps, exit lane splits exitLaneToBuybackBps (launch 0: keeps all)
-  exitStatement(st, rating, now) {
+  // the module hands back credits * unitPerCredit. eth lane splits exitToBuybackBps, exit lane splits exitLaneToBuybackBps (launch 0: keeps all)
+  exitStatement(st, credits, now) {
     const s = this.s;
-    const received = rating * this.xp;
+    const received = credits * this.xp;
     const toBuyback = (received * (st.lane === 'eth' ? s.exitToBuybackBps : s.exitLaneToBuybackBps)) / BPS;
     this.xCheckpoint(now);
     if (toBuyback > 0) {
@@ -520,7 +486,7 @@ export class Core {
     if (el / this.s.xAuctionHalfLife >= 256) return 0;
     return this.xStartPrice * Math.pow(0.5, el / this.s.xAuctionHalfLife);
   }
-  xSlice() { return Math.min(this.xToBuyback, this.s.exitSliceCredits * (this.s.avgScore / 1e4) * this.xp); }
+  xSlice() { return Math.min(this.xToBuyback, this.s.exitSliceCredits * this.xp); }
   // buybackExit: a taker burns coinIn coin and takes the slice. restart at max(2 * clearing, start / 4)
   xFill(now) {
     const slice = this.xSlice();
@@ -700,7 +666,7 @@ export function simulate(userParams = {}) {
     bought: 0, boughtX: 0, pts: 0, cost: 0, mkt: 0, ask: 0, sumM: 0, composed: 0, composedX: 0, sold: 0, exited: 0, exitedX: 0,
     soldPrice: 0, soldCost: 0, soldPts: 0, soldFloor: 0, soldAge: 0, soldAtFloor: 0, soldInstant: 0, bidsOnSold: 0, contested: 0, rebids: 0, extended: 0, buybackSpent: 0, buybackTips: 0, burned: 0, burnedX: 0,
     listBought: 0, stratBought: 0, xFills: 0, xCoin: 0, xValue: 0, xGross: 0, xDiscSum: 0, xRecv: 0, xSpent: 0, firstFill: -1,
-    capStepHits: 0, clampSteps: 0, capBindSteps: 0, capBindRich: 0, potBindSteps: 0, vol: 0, stCost: 0, stRating: 0, stmtArrivals: 0, stmtMiss: 0,
+    clampSteps: 0, potBindSteps: 0, vol: 0, stCost: 0, stRating: 0, stmtArrivals: 0, stmtMiss: 0,
     throttled: 0, maxPaidRatio: 0,
     first80cost: 0, first80mkt: 0, first80pts: 0, first80n: 0, first80t: -1, exitedValue: 0, exitedCost: 0, exitedAge: 0, settingsChanges: 0,
   };
@@ -713,13 +679,12 @@ export function simulate(userParams = {}) {
     'volume', 'poolEth', 'spent'];
   for (const n of names) S[n] = new Array(H + 1);
 
-  // initial resting book at steady state, and the CreditStrategy inventory. a key is the ask as a multiple of the flat price over the points
-  // the engine prices the credit at, so a change of flatBps or avgScore re keys everything
+  // initial resting book at steady state, and the CreditStrategy inventory. a key is the ask as a multiple of the market price of a credit
   const newOffer = () => {
     const pts = 80 + 720 * rng();
     const m = Math.max(Math.exp(p.askSigma * normal(rng)), p.askFloor);
     const prem = pts >= 790 ? 2.0 : pts >= 740 ? 1.12 : 1.0;
-    return { pts, m, prem, key: (m * prem) / core.epts(pts), listed: rng() < p.listedShare };
+    return { pts, m, prem, key: m * prem, listed: rng() < p.listedShare };
   };
   const nBook0 = Math.round(p.offersPerHour / Math.max(p.bookChurn, 1e-3));
   for (let i = 0; i < nBook0; i++) book.push(newOffer());
@@ -728,20 +693,14 @@ export function simulate(userParams = {}) {
     for (const [price, count] of STRAT_LISTINGS) {
       for (let i = 0; i < count; i++) {
         const pts = interp(STRAT_SCORE_Q, rng());
-        strat.push({ pts, price, need: (price * W) / core.epts(pts) });
+        strat.push({ pts, price, need: price * W });
       }
     }
     strat.sort((a, b) => b.need - a.need);
   }
-  const rekey = () => {
-    for (const it of book) it.key = (it.m * it.prem) / core.epts(it.pts);
-    for (const it of strat) it.need = (it.price * W) / core.epts(it.pts);
-    book.sort((a, b) => b.key - a.key); strat.sort((a, b) => b.need - a.need);
-  };
-
   const peff = (t) => pathPrice(p, t) * Math.exp(lnM);
   let stepW = 1, peffNow = 0; // weight of the current step in hours, market price in the step
-  let idle = 0, idleMax = 0, forceDone = false, botNow = false;
+  let idle = 0, idleMax = 0, forceDone = false;
   let stallRun = 0, stallTotal = 0, stallMax = 0, gapRun = 0, gapMax = 0, gateClosed = 0, rateCapSec = 0;
   const stallRuns = [];
   let runCause = {}; const stallCause = {};
@@ -749,39 +708,26 @@ export function simulate(userParams = {}) {
 
   // ---- the engine buys: market offers through the bid or a listing, CreditStrategy listings, exitToken bid in phase 2.
   // nothing here looks at unsold statements: the engine never stops buying because statements are unsold.
-  // a seller whose credit does not fit the hourly cap or the pot waits, and another credit that fits sells instead
-  function pickFrom(arr, isStrat, r, xPerPt, Pw, Pe, afford, xAfford) {
+  // a seller whose credit does not fit the pot waits, and another credit that fits sells instead
+  function pickFrom(arr, isStrat, r, xPerCredit, Pw, Pe, afford, xAfford) {
     const lim = Math.max(0, arr.length - 400);
-    // the exitToken bid pays by the credit's own score, so with a flat eth bid its need is up to ep/pts (5.4 at most) times the eth need
-    const top = Math.max(r, xPerPt * 6);
+    const top = Math.max(r, xPerCredit);
     for (let i = arr.length - 1; i >= lim; i--) {
       const it = arr[i];
       const need = isStrat ? it.need : it.key * Pw;
       if (need > top) return null;
-      const ep = core.epts(it.pts);
       const listing = isStrat || it.listed;
       const ask = isStrat ? it.price : it.m * it.prem * Pe;
-      const ethOk = need <= r, xOk = !isStrat && (ask * W) / it.pts <= xPerPt;
-      const ethFits = ethOk && (listing ? ask * (1 + core.s.tipCapBps / BPS) <= afford : (ep * r) / W <= afford);
-      const xFits = xOk && (it.pts * xPerPt) / W <= xAfford;
+      const ethOk = need <= r, xOk = !isStrat && ask * W <= xPerCredit;
+      const ethFits = ethOk && (listing ? ask * (1 + core.s.tipCapBps / BPS) <= afford : r / W <= afford);
+      const xFits = xOk && xPerCredit / W <= xAfford;
       if (ethFits || xFits) return { i, need, ethFits, xFits, isStrat, it, ask, listing };
     }
     return null;
   }
-  // a sale that clears the bid but is blocked. cap bound: it would fit the pot but not the hourly cap room. pot bound: it exceeds the pot
-  function noteBind(r, xPerPt, Pw, roomLeft) {
-    let minPrice = Infinity;
-    for (const [arr, isS] of [[book, false], [strat, true]]) {
-      for (let i = arr.length - 1, n = 0; i >= 0 && n < 100; i--, n++) {
-        const it = arr[i], need = isS ? it.need : it.key * Pw;
-        if (need > Math.max(r, isS ? 0 : xPerPt) || (isS && need > r)) break;
-        const ep = core.epts(it.pts);
-        minPrice = Math.min(minPrice, isS || it.listed ? (isS ? it.price : it.key * ep * peffNow) : (ep * r) / W);
-      }
-    }
-    if (!isFinite(minPrice)) return;
-    if (minPrice <= core.ethPot && minPrice > roomLeft) { T.capBindSteps += stepW; if (core.ethPot > 5) T.capBindRich += stepW; }
-    else T.potBindSteps += stepW;
+  // a sale that clears the bid but is blocked: the pot cannot pay the cheapest ask
+  function noteBind() {
+    T.potBindSteps += stepW;
   }
   function engineBuys(now, Pe) {
     let spentEth = 0, thrDone = !p.throttler;
@@ -791,51 +737,49 @@ export function simulate(userParams = {}) {
     for (let guard = 0; guard < 200000; guard++) {
       const r = core.ethRate(now);
       const p2 = core.moduleSet;
-      const xPerPt = p2 ? (core.xRate(now) / BPS) * core.xp * W : 0;
-      const rm = core.room(0, now);
-      const roomLeft = (rm.wp * core.s.spendCapBps) / BPS - rm.wsp;
-      const afford = Math.min(core.ethPot, roomLeft);
+      const xPerCredit = p2 ? (core.xRate(now) / BPS) * core.xp * W : 0;
+      const afford = core.ethPot;
       const xAfford = p2 ? core.xPot : 0;
-      if (afford <= 1e-15 && xAfford <= 0) { noteBind(r, xPerPt, Pw, roomLeft); break; }
-      const a = pickFrom(book, false, r, xPerPt, Pw, Pe, afford, xAfford);
+      if (afford <= 1e-15 && xAfford <= 0) { noteBind(); break; }
+      const a = pickFrom(book, false, r, xPerCredit, Pw, Pe, afford, xAfford);
       const b = strat.length ? pickFrom(strat, true, r, 0, Pw, Pe, afford, 0) : null;
       let c = a && b ? (b.need < a.need ? b : a) : a || b;
       // the throttler sells first, one credit a step, at the bid, once the bid has reached throttleFrac of the market price
       if (!thrDone) {
         thrDone = true;
         const tp = 80 + 720 * rngThr();
-        if ((core.epts(tp) * r) / W >= p.throttleFrac * Pe && (core.epts(tp) * r) / W <= afford) {
+        if (r / W >= p.throttleFrac * Pe && r / W <= afford) {
           c = { i: -1, need: r, ethFits: true, xFits: false, isStrat: false, it: { pts: tp, m: p.throttleFrac, prem: 1, listed: false }, ask: p.throttleFrac * Pe, listing: false, thr: true };
         }
       }
       let inj = null;
       if (forceNow) {
         forceNow = false;
-        core.checkpoint(now); core.rateAtCheckpoint = (p.forceFillFrac * Pe * W) / core.epts(440); core.syncFunded();
+        core.checkpoint(now); core.rateAtCheckpoint = p.forceFillFrac * Pe * W; core.syncFunded();
         inj = { forced: true };
-      } else if (botNow) inj = { bot: true };
+      }
       if (inj) c = Object.assign(inj, { i: -1, need: r, ethFits: true, xFits: false, isStrat: false, it: { pts: 440, m: 1, prem: 1, listed: false }, ask: Pe, listing: false, thr: true });
-      if (!c) { noteBind(r, xPerPt, Pw, roomLeft); break; }
-      const it = c.it, useS = c.isStrat, ep = core.epts(it.pts);
-      let door = c.ethFits && c.xFits ? (r >= xPerPt ? 'eth' : 'x') : c.ethFits ? 'eth' : 'x';
+      if (!c) { noteBind(); break; }
+      const it = c.it, useS = c.isStrat;
+      let door = c.ethFits && c.xFits ? (r >= xPerCredit ? 'eth' : 'x') : c.ethFits ? 'eth' : 'x';
       let cost = 0, tip = 0, viaListing = false, ok = false;
       if (door === 'x') {
-        // the exitToken bid pays by the credit's own score (phase 2 pays by rating)
-        cost = core.xBuy(it.pts, now);
+        // the exitToken bid pays the same for every credit
+        cost = core.xBuy(now);
         ok = cost > 0;
         if (!ok && c.ethFits) door = 'eth';
       }
       if (door === 'eth') {
         if (c.listing) {
-          const res = core.buyListing(it.pts, c.ask, now);
+          const res = core.buyListing(c.ask, now);
           if (res) { cost = res.cost; tip = res.tip; ok = true; viaListing = true; }
         } else {
-          cost = core.sellForEth(it.pts, now);
+          cost = core.sellForEth(now);
           ok = cost > 0;
         }
       }
-      if (!ok) { if (c.bot) { botNow = false; continue; } break; }
-      if (!c.thr) { if (useS) strat.splice(c.i, 1); else book.splice(c.i, 1); holdPool -= 1; } else if (c.thr && !c.bot && !c.forced) T.throttled++;
+      if (!ok) break;
+      if (!c.thr) { if (useS) strat.splice(c.i, 1); else book.splice(c.i, 1); holdPool -= 1; } else if (c.thr && !c.forced) T.throttled++;
       if (door === 'x') {
         T.boughtX++; T.xSpent += cost; xPile.push({ pts: it.pts });
       } else {
@@ -871,11 +815,9 @@ export function simulate(userParams = {}) {
     }
     while (xPile.length >= p.PAGE && core.moduleSet) {
       const page = xPile.splice(0, p.PAGE);
-      let rating = 0;
-      for (const c of page) rating += c.pts;
       const st = core.compose(0, 'exit', now);
       T.composedX++;
-      const res = core.exitStatement(st, rating, now);
+      const res = core.exitStatement(st, p.PAGE, now);
       T.exitedX++; T.xRecv += res.received;
     }
   }
@@ -947,8 +889,8 @@ export function simulate(userParams = {}) {
     if (!core.moduleSet || !unbid.length) return;
     const keep = [];
     for (const st of unbid) {
-      if (core.exitReady(st, now) && st.rating * core.xp >= p.exitMinRatio * core.askingPrice(st, now)) {
-        const res = core.exitStatement(st, st.rating, now);
+      if (core.exitReady(st, now) && p.PAGE * core.xp >= p.exitMinRatio * core.askingPrice(st, now)) {
+        const res = core.exitStatement(st, p.PAGE, now);
         T.exited++; T.xRecv += res.received; T.exitedValue += res.received; T.exitedCost += st.cost; T.exitedAge += now - st.t0;
       } else keep.push(st);
     }
@@ -1008,7 +950,7 @@ export function simulate(userParams = {}) {
     S.pot[h] = core.ethPot; S.toBuyback[h] = core.ethToBuyback;
     S.cumFees[h] = T.fees + T.feesBuyback + T.feesTaker;
     S.rate[h] = r; S.mktPerPoint[h] = (Pe * W) / 440;
-    S.bidRatio[h] = (core.epts(440) * r) / (Pe * W);
+    S.bidRatio[h] = r / (Pe * W);
     S.bought[h] = T.bought; S.cumPts[h] = T.pts; S.cumCost[h] = T.cost; S.cumMkt[h] = T.mkt;
     S.credits[h] = T.bought + T.boughtX;
     S.creditsDay[h] = S.credits[h] - S.credits[Math.max(0, h - 24)];
@@ -1035,7 +977,6 @@ export function simulate(userParams = {}) {
       if (e.done || e.at > t0) continue;
       e.done = true; T.settingsChanges++;
       core.setSettings(e.patch, t0);
-      if ('flatBps' in e.patch || 'avgScore' in e.patch) rekey();
     }
   }
 
@@ -1062,7 +1003,7 @@ export function simulate(userParams = {}) {
     lnM *= Math.pow(0.5, dt / (p.impactHalfLifeHours * 3600));
     const Pe = peff(t1), r0 = core.ethRate(t1);
     const xPay = core.moduleSet ? (core.xRate(t1) / BPS) * core.xp * W : 0;
-    const boost = Math.pow(Math.max(1, Math.max(core.epts(440) * r0, xPay * 440) / (Pe * W)), p.supplyElast);
+    const boost = Math.pow(Math.max(1, Math.max(r0, xPay) / (Pe * W)), p.supplyElast);
     const nOff = Math.min(poisson(rng, (p.offersPerHour * dt * boost) / 3600), 1500, Math.floor(Math.max(holdPool, 0) * 0.05));
     if (p.bookChurn > 0) {
       const keepP = Math.pow(1 - p.bookChurn, dt / 3600);
@@ -1076,12 +1017,9 @@ export function simulate(userParams = {}) {
       if (book.length > 6000) book = book.slice(book.length - 6000); // keep the cheapest to clear
     }
     // the engine acts. there is no inventory gate: unsold statements never close the bid
-    const capBefore = core.capHits;
     peffNow = Pe;
     const filledBefore = T.bought + T.boughtX;
-    botNow = p.botDrain && t0 % 3600 === 0;
     const spentEth = engineBuys(t1, Pe);
-    botNow = false;
     if (p.holdPot > 0 && core.ethPot < p.holdPot) core.addFees(p.holdPot - core.ethPot, t1);
     // stall: the pot affords the cheapest ask, no purchase for a stretch; a run longer than 2 hours counts. gap: the same run, any length
     {
@@ -1090,14 +1028,12 @@ export function simulate(userParams = {}) {
       if (T.bought + T.boughtX === filledBefore && cheapest < Infinity && core.ethPot >= cheapest) {
         stallRun += dt; gapRun += dt;
         // cause of this step: why the bid cannot buy the cheapest ask. low_*: the bid sits under the ask and the named limit is the lowest of the climb limits
-        const rr2 = core.ethRate(t1), bidPrice = (core.epts(440) * rr2) / W, rm = core.room(0, t1);
-        const afford = Math.min(core.ethPot, (rm.wp * core.s.spendCapBps) / BPS - rm.wsp);
+        const rr2 = core.ethRate(t1), bidPrice = rr2 / W;
         let cause;
-        if (bidPrice >= cheapest * (1 - 1e-9)) cause = bidPrice > afford ? 'room' : 'other';
+        if (bidPrice >= cheapest * (1 - 1e-9)) cause = bidPrice > core.ethPot ? 'room' : 'other';
         else {
           // the lowest of the climb limits names the cause: the pot (the clamp), the rateCap or the stepped ceiling
-          const pc = (core.epts(440) * (core.ethPot * W * core.s.spendCapBps) / core.s.avgScore) / W;
-          const lim = { clamp: pc, rateCap: (core.epts(440) * core.s.rateCap) / W, ceiling: p.bidRule === 'stepped' ? (core.epts(440) * core.stepCeil(t1)) / W : Infinity };
+          const lim = { clamp: core.ethPot, rateCap: core.s.rateCap / W, ceiling: p.bidRule === 'stepped' ? core.stepCeil(t1) / W : Infinity };
           cause = 'low_climbing';
           let lo = cheapest * (1 - 1e-9);
           for (const k of Object.keys(lim)) if (lim[k] < lo) { lo = lim[k]; cause = 'low_' + k; }
@@ -1113,8 +1049,7 @@ export function simulate(userParams = {}) {
     }
     // idle: time since the last purchase that the pot held at least one bid
     if (T.bought + T.boughtX > filledBefore) idle = 0;
-    else if (core.ethPot >= (core.epts(440) * core.ethRate(t1)) / W) { idle += dt; idleMax = Math.max(idleMax, idle); } else idle = 0;
-    if (core.capHits > capBefore) T.capStepHits++;
+    else if (core.ethPot >= core.ethRate(t1) / W) { idle += dt; idleMax = Math.max(idleMax, idle); } else idle = 0;
     if (core.funded && core.clamp() < Infinity && core.ethRate(t1) >= core.clamp() * (1 - 1e-9)) T.clampSteps++;
     lnM = Math.min(lnM + (p.impactElast * spentEth) / p.marketDailyEth, Math.log(p.impactCap));
     // statements already listed meet buyers during the step, then the engine composes and lists new ones
@@ -1134,7 +1069,7 @@ export function simulate(userParams = {}) {
       if (dir !== 0) { if (lastDir !== 0 && dir !== lastDir) signChanges++; lastDir = dir; }
     }
     prevRate = rr;
-    rateMaxRatio = Math.max(rateMaxRatio, (core.epts(440) * rr) / (peff(t1) * W));
+    rateMaxRatio = Math.max(rateMaxRatio, rr / (peff(t1) * W));
     if (p.onStep) p.onStep(t1, core, Pe, rr, T);
     if (t1 % 3600 === 0) record(t1 / 3600, t1);
   }
@@ -1159,7 +1094,7 @@ export function simulate(userParams = {}) {
     costVsMarket: T.mkt ? T.cost / T.mkt : 0, // eth paid per credit over the flat market price at the time
     costPerPointVsMarket: T.bought ? (T.cost / T.pts) / (T.mkt / T.bought / 440) : 0,
     costVsAsk: T.ask ? T.cost / T.ask : 0,
-    capSteps: T.capBindSteps, capStepsRich: T.capBindRich, potBlockedSteps: T.potBindSteps, clampSteps: T.clampSteps,
+    potBlockedSteps: T.potBindSteps, clampSteps: T.clampSteps,
     rateMaxBidRatio: rateMaxRatio, rateSignChanges: signChanges, rateMeanAbsMove: rateMoves ? rateAbsMove / rateMoves : 0,
     saleOverCost: T.soldCost ? T.soldPrice / T.soldCost : 0, saleOverFloor: T.soldFloor ? T.soldPrice / T.soldFloor : 0,
     saleAgeHours: T.sold ? T.soldAge / T.sold / 3600 : 0, saleAtFloorShare: T.sold ? T.soldAtFloor / T.sold : 0,

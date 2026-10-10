@@ -27,9 +27,9 @@ contract InvariantsPhase2Deep is InvariantsPhase2 {
 }
 
 /// invariant 8 under attack. the controller is the fuzz controller in hostile mode for the whole run, in phase 2.
-/// it answers `wants` out of range, reverts, returns short data or burns gas. it answers `nextPage` with ids that
+/// it reverts, returns short data or burns gas. it answers `nextPage` with ids that
 /// are not in the pile, duplicates, zero ids, the other lane's pile, bad formats, a flag other than one, short
-/// and long return data. it names overprints between statements the core does not hold, equal ids, mixed lanes.
+/// and long return data.
 /// every time it is asked it tries state changing calls into the core, the credits, the statements, the coin and the
 /// pool manager. the core reads it with staticcall, so those calls cannot succeed. the handler also makes the
 /// controller run its whole attack list outside a staticcall, as the controller's own account, and none may
@@ -52,10 +52,10 @@ contract InvariantsHostileControllerDeep is InvariantsHostileController {
 }
 
 /// invariant 8 as the hard rule, under an adversarial owner. the exit module is set and the owner's calls are as
-/// frequent as any: `setSettings` with random valid settings over the whole bounds (every corner: flat bid at 0 and
-/// 10_000, a spend cap of 100 and 10_000, the reserve at both ends, the sale split at 0 and 10_000, a zero climb, the
+/// frequent as any: `setSettings` with random valid settings over the whole bounds (every corner: the lowest and the highest rate cap,
+/// the reserve at both ends, the sale split at 0 and 10_000, a zero climb, the
 /// largest drop, the smallest and the largest buyback slice, no wait before an exit, every tip at zero and at its
-/// ceiling), `setRate` and `setXRate` anywhere in their bounds, invalid settings that must revert, and strangers
+/// ceiling), `setRate` anywhere in its bounds, invalid settings that must revert, and strangers
 /// trying the owner's doors. the public actions keep running under whatever the owner chose. neither the owner nor
 /// any controller may end the campaign holding more eth, coin, credits, statements or exit token than it began with,
 /// and every other invariant holds under every setting.

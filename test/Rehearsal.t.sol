@@ -315,7 +315,7 @@ contract RehearsalTest is Test, ProdDeployer {
         // the price state starts at the config rate. the read is clamped by a thin pot
         assertGe(core.ethPrice(), c.rateStart, "the price state never starts below the config start");
         ICredits credits = ICredits(Mainnet.CREDITS);
-        uint256 cap = core.ethPot() * core.settings().spendCapBps / 10_000;
+        uint256 cap = core.ethPot();
         for (uint256 id = 1; id < 2000; ++id) {
             address who;
             try credits.ownerOf(id) returns (address o) {
@@ -323,8 +323,8 @@ contract RehearsalTest is Test, ProdDeployer {
             } catch {
                 continue;
             }
-            if (who.code.length != 0 || core.ceilingOf(id) > cap) continue;
-            uint256 price = core.ceilingOf(id);
+            if (who.code.length != 0 || core.ethRate() > cap) continue;
+            uint256 price = core.ethRate();
             uint256 pot = core.ethPot();
             uint256 before = who.balance;
             vm.startPrank(who);

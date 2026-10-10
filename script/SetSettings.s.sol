@@ -14,8 +14,6 @@ interface ICoreOwner {
     function ethRate() external view returns (uint256);
     function ethPrice() external view returns (uint256);
     function setRate(uint256 rate) external;
-    function xRate() external view returns (uint256);
-    function setXRate(uint256 rate) external;
     function heldStatements() external view returns (uint256[] memory);
     function statementStatus(uint256 sid)
         external
@@ -38,7 +36,7 @@ interface IPriceController {
 /// overrides, both may be used, the patch is applied first and the single variables win:
 /// * `SET_<field>=<value>`, one variable per field of `Settings`, for example `SET_saleFloorBps=8000`
 /// * `SETTINGS_PATCH`, a json object as text or the path of a json file, for example `{"saleFloorBps":8000}`
-/// `SET_RATE=<wei per point>` also prepares `setRate`, `SET_XRATE=<bps>` also prepares `setXRate`.
+/// `SET_RATE=<wei per credit>` also prepares `setRate`.
 /// `REPRICE=1` also reprices the open listings after the settings call (docs/DEPLOY.md section 4). raising `saleFloorBps`
 /// is NOT atomic for an EOA owner: a listing keeps its old reserve until it is repriced, and a bid that lands at the old
 /// reserve before its reprice does wins the statement at that price. what the script does: it reads `heldStatements()`
@@ -66,7 +64,7 @@ contract SetSettings is Script {
     error FloorNotRaised(uint256 count);
 
     string internal constant TUPLE =
-        "(uint16,uint32,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16)";
+        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16)";
 
     function run() external {
         ICoreOwner core = ICoreOwner(_core());
@@ -90,21 +88,12 @@ contract SetSettings is Script {
         _warnRateCap(core, next.rateCap);
 
         uint256 rate = vm.envOr("SET_RATE", uint256(0));
-        uint256 xRate = vm.envOr("SET_XRATE", uint256(0));
         if (rate != 0) {
             console.log("ethRate now", core.ethRate());
             console.log("setRate calldata");
             console.logBytes(abi.encodeCall(ICoreOwner.setRate, (rate)));
             console.log(
                 string.concat("cast send ", vm.toString(address(core)), " \"setRate(uint256)\" ", vm.toString(rate))
-            );
-        }
-        if (xRate != 0) {
-            console.log("xRate now", core.xRate());
-            console.log("setXRate calldata");
-            console.logBytes(abi.encodeCall(ICoreOwner.setXRate, (xRate)));
-            console.log(
-                string.concat("cast send ", vm.toString(address(core)), " \"setXRate(uint256)\" ", vm.toString(xRate))
             );
         }
 
@@ -126,7 +115,6 @@ contract SetSettings is Script {
         if (signer != core.owner()) revert NotOwner(core.owner(), signer);
         if (settingsChanged) core.setSettings(next);
         if (rate != 0) core.setRate(rate);
-        if (xRate != 0) core.setXRate(xRate);
         // the second read: after setSettings, listings that were not in the first read are found and repriced too
         if (reprice) _finish(_sweep(core, next.saleFloorBps, first, true), true);
         vm.stopBroadcast();
@@ -327,7 +315,7 @@ contract SetSettings is Script {
                 _set(s, keys[k], vm.parseJsonUint(json, string.concat(".", keys[k])));
             }
         }
-        bytes32[30] memory names = SettingsFields.names();
+        bytes32[26] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             string memory name = _name(names[i]);
             (bool has, uint256 v) = _single(name);
@@ -336,7 +324,7 @@ contract SetSettings is Script {
     }
 
     function _set(Settings memory s, string memory name, uint256 v) internal pure {
-        bytes32[30] memory names = SettingsFields.names();
+        bytes32[26] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             if (keccak256(bytes(_name(names[i]))) != keccak256(bytes(name))) continue;
             SettingsFields.set(s, i, v);
@@ -360,9 +348,9 @@ contract SetSettings is Script {
     /// @dev one line per field: name, live value, new value, a mark when it changes, the bounds
     function _table(Settings memory a, Settings memory b) internal pure {
         console.log("settings: field | live | new | bounds (a * marks a change; xRateFloor <= xRateCap)");
-        uint256[30] memory lo = SettingsFields.lo();
-        uint256[30] memory hi = SettingsFields.hi();
-        bytes32[30] memory names = SettingsFields.names();
+        uint256[26] memory lo = SettingsFields.lo();
+        uint256[26] memory hi = SettingsFields.hi();
+        bytes32[26] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             uint256 x = SettingsFields.get(a, i);
             uint256 y = SettingsFields.get(b, i);

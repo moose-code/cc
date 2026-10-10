@@ -14,12 +14,12 @@ import {MockExitToken} from "./standins/MockExitToken.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 
 /// @notice the flow rework (docs/FLOW.md) on the real stack: settings, the flat bid, statement sales on the live pnd
-/// auction house, collection of proceeds, sync and reprice, the phase 2 exit by cancel, overprint, forbidden targets,
+/// auction house, collection of proceeds, sync and reprice, the phase 2 exit by cancel, forbidden targets,
 /// and the hard rule that the owner can never move assets out under any settings
 contract FlowTest is Fixture {
     using FixedPointMathLib for uint256;
 
-    uint256 internal constant N = 30;
+    uint256 internal constant N = 26;
 
     // ------------------------------------------------------------------ helpers
 
@@ -40,7 +40,7 @@ contract FlowTest is Fixture {
         return keccak256(abi.encode(s));
     }
 
-    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 30 fields in declaration order
+    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 26 fields in declaration order
     function _get(Settings memory s, uint256 i) internal pure returns (uint256) {
         return SettingsFields.get(s, i);
     }
@@ -49,27 +49,27 @@ contract FlowTest is Fixture {
         SettingsFields.set(s, i, v);
     }
 
-    function _lo() internal pure returns (uint256[30] memory) {
+    function _lo() internal pure returns (uint256[26] memory) {
         return SettingsFields.lo();
     }
 
-    function _hi() internal pure returns (uint256[30] memory) {
+    function _hi() internal pure returns (uint256[26] memory) {
         return SettingsFields.hi();
     }
 
-    function _names() internal pure returns (bytes32[30] memory) {
+    function _names() internal pure returns (bytes32[26] memory) {
         return SettingsFields.names();
     }
 
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
-        uint256[30] memory lo = _lo();
-        uint256[30] memory hi = _hi();
+        uint256[26] memory lo = _lo();
+        uint256[26] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
             uint256 b = hi[i];
-            if (i == 22) b = s.xRateCap;
+            if (i == 18) b = s.xRateCap;
             _set(s, i, a + (b > a ? x % (b - a + 1) : 0));
         }
     }
@@ -79,15 +79,11 @@ contract FlowTest is Fixture {
     function test_settings_launchValues() public view {
         assertEq(_hash(core.settings()), _hash(Mainnet.defaultSettings()), "launch values");
         Settings memory s = core.settings();
-        assertEq(s.flatBps, 10_000);
-        assertEq(s.avgScore, 4_330_000);
         assertEq(s.dropPerCreditBps, 50);
         assertEq(s.dropFloorBps, 8_000);
         assertEq(s.climbPerMinBps, 50);
         assertEq(s.ceilBps, 12_500);
         assertEq(s.idleLoosenBps, 2_000);
-        assertEq(s.spendCapBps, 10_000);
-        assertEq(s.bonusCapBps, 2_500);
         assertEq(s.tipSavingsBps, 1_000);
         assertEq(s.tipCapBps, 200);
         assertEq(s.reimburseBps, 8_000);
@@ -106,7 +102,7 @@ contract FlowTest is Fixture {
         assertEq(s.xRateDropPerCredit, 20);
         assertEq(s.xAuctionHalfLife, 6 hours);
         assertEq(s.exitSliceCredits, 20);
-        assertEq(s.rateCap, 205_540_000_000_000);
+        assertEq(s.rateCap, 89_000_000_000_000_000);
         assertEq(s.exitLaneToBuybackBps, 0);
         assertEq(s.feeToBuybackBps, 0);
     }
@@ -121,15 +117,15 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundEdgeIsAccepted() public {
-        uint256[30] memory lo = _lo();
-        uint256[30] memory hi = _hi();
+        uint256[26] memory lo = _lo();
+        uint256[26] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             for (uint256 k; k < 2; ++k) {
                 Settings memory s = Mainnet.defaultSettings();
                 uint256 v = k == 0 ? lo[i] : hi[i];
                 // the two fields bounded by another field
-                if (i == 21 && k == 0) s.xRateFloor = 0;
-                if (i == 22 && k == 1) v = s.xRateCap;
+                if (i == 17 && k == 0) s.xRateFloor = 0;
+                if (i == 18 && k == 1) v = s.xRateCap;
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -138,9 +134,9 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundViolationReverts() public {
-        uint256[30] memory lo = _lo();
-        uint256[30] memory hi = _hi();
-        bytes32[30] memory names = _names();
+        uint256[26] memory lo = _lo();
+        uint256[26] memory hi = _hi();
+        bytes32[26] memory names = _names();
         for (uint256 i; i < N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // above the top
@@ -150,11 +146,11 @@ contract FlowTest is Fixture {
             vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, names[i]));
             core.setSettings(s);
             // below the bottom (fields whose bottom is zero have none)
-            if (lo[i] == 0 && i != 22) continue;
+            if (lo[i] == 0 && i != 18) continue;
             s = Mainnet.defaultSettings();
-            if (i == 22) {
+            if (i == 18) {
                 // the floor is bounded by the cap, so a cap below the floor is the violation, and it names the floor
-                _set(s, 21, s.xRateFloor - 1);
+                _set(s, 17, s.xRateFloor - 1);
                 names[i] = "xRateFloor";
             } else {
                 _set(s, i, lo[i] - 1);
@@ -183,9 +179,7 @@ contract FlowTest is Fixture {
             vm.expectRevert(ICore.OnlyOwner.selector);
             core.setSettings(s);
             vm.expectRevert(ICore.OnlyOwner.selector);
-            core.setRate(5e12);
-            vm.expectRevert(ICore.OnlyOwner.selector);
-            core.setXRate(5_000);
+            core.setRate(OPEN_RATE);
             vm.stopPrank();
         }
     }
@@ -194,7 +188,7 @@ contract FlowTest is Fixture {
         uint256 cap = core.settings().rateCap;
         vm.startPrank(owner);
         vm.expectRevert(ICore.BadRate.selector);
-        core.setRate(1e11 - 1);
+        core.setRate(1e13 - 1);
         vm.expectRevert(ICore.BadRate.selector);
         core.setRate(cap + 1);
         vm.expectEmit(address(core));
@@ -202,61 +196,34 @@ contract FlowTest is Fixture {
         core.setRate(2e13);
         assertEq(core.rateAtCheckpoint(), 2e13);
         assertEq(core.checkpointTime(), block.timestamp);
-        core.setRate(1e11);
+        core.setRate(1e13);
         core.setRate(cap);
         vm.stopPrank();
         // the top of the rate bounds needs the rate cap raised to it, and nothing passes the bounds
         Settings memory s = core.settings();
-        s.rateCap = 1e15;
+        s.rateCap = 1e18;
         _owner(s);
         vm.startPrank(owner);
         vm.expectRevert(ICore.BadRate.selector);
-        core.setRate(1e15 + 1);
-        core.setRate(1e15);
+        core.setRate(1e18 + 1);
+        core.setRate(1e18);
         vm.stopPrank();
     }
 
     function test_setRate_readStaysAtTheClampOfThePot() public {
         _potTo(1e14);
-        uint256 clamp = uint256(1e14) * 10_000 / 4_330_000;
+        uint256 clamp = 1e14;
         Settings memory cs = core.settings();
-        cs.rateCap = 1e15;
+        cs.rateCap = 1e18;
         _owner(cs);
         vm.prank(owner);
-        core.setRate(1e15);
-        assertEq(core.rateAtCheckpoint(), 1e15);
-        assertEq(core.ethRate(), clamp, "a pot of 1e14 reads its clamp under a stored rate of 1e15");
+        core.setRate(1e18);
+        assertEq(core.rateAtCheckpoint(), 1e18);
+        assertEq(core.ethRate(), clamp, "a pot of 1e14 reads its clamp under a stored rate of 1e18");
         vm.prank(owner);
-        core.setRate(4e12);
-        assertEq(core.rateAtCheckpoint(), 4e12);
+        core.setRate(OPEN_RATE);
+        assertEq(core.rateAtCheckpoint(), OPEN_RATE);
         assertEq(core.ethRate(), clamp, "and under the opening rate");
-    }
-
-    function test_setXRate_boundsAndEvent() public {
-        vm.startPrank(owner);
-        vm.expectRevert(ICore.BadRate.selector);
-        core.setXRate(2_999);
-        vm.expectRevert(ICore.BadRate.selector);
-        core.setXRate(9_701);
-        vm.expectEmit(address(core));
-        emit ICore.XRateSet(8_000);
-        core.setXRate(8_000);
-        assertEq(core.xRate(), 8_000);
-        core.setXRate(3_000);
-        core.setXRate(9_700);
-        vm.stopPrank();
-    }
-
-    function test_setXRate_followsTheSettingsBand() public {
-        Settings memory s = Mainnet.defaultSettings();
-        s.xRateFloor = 1_000;
-        s.xRateCap = 4_000;
-        _owner(s);
-        vm.startPrank(owner);
-        vm.expectRevert(ICore.BadRate.selector);
-        core.setXRate(4_001);
-        core.setXRate(1_000);
-        vm.stopPrank();
     }
 
     // ------------------------------------------------------------------ a settings change checkpoints
@@ -268,9 +235,9 @@ contract FlowTest is Fixture {
 
     function test_checkpoint_ethRateKeepsOldClimb() public {
         _potTo(20 ether);
-        assertEq(core.ethRate(), 4e12);
+        assertEq(core.ethRate(), OPEN_RATE);
         _warp(10 minutes);
-        uint256 old = _climbed(4e12, 50, 10);
+        uint256 old = _climbed(OPEN_RATE, 50, 10);
         assertEq(core.ethRate(), old, "10 minutes at 50 bps");
         Settings memory s = core.settings();
         s.climbPerMinBps = 200;
@@ -282,13 +249,13 @@ contract FlowTest is Fixture {
         _warp(3 minutes);
         assertEq(core.ethRate(), _climbed(old, 200, 3), "3 minutes at 200 bps");
         // without the checkpoint the whole 13 minutes would have been priced at the new climb
-        assertTrue(core.ethRate() != _climbed(4e12, 200, 13));
+        assertTrue(core.ethRate() != _climbed(OPEN_RATE, 200, 13));
     }
 
     function test_checkpoint_slowestClimbCreditsOnlyAfterTheChange() public {
         _potTo(20 ether);
         _warp(10 minutes);
-        uint256 old = _climbed(4e12, 50, 10);
+        uint256 old = _climbed(OPEN_RATE, 50, 10);
         Settings memory s = core.settings();
         s.climbPerMinBps = 1;
         _owner(s);
@@ -300,20 +267,15 @@ contract FlowTest is Fixture {
     function test_checkpoint_clampFollowsTheNewNumbers() public {
         _potTo(1e14);
         _warp(5 hours);
-        // a pot of 1e14 affords one average credit below the opening rate: the read is the clamp
-        uint256 held = uint256(1e14) * 10_000 / 4_330_000;
+        // a pot of 1e14 affords less than one credit at the opening rate: the read is the clamp
+        uint256 held = 1e14;
         assertEq(core.ethRate(), held, "bounded by the clamp");
         Settings memory s = core.settings();
-        s.avgScore = 6_000_000;
-        s.spendCapBps = 100;
+        s.climbPerMinBps = 1_000;
         _owner(s);
         _warp(100 hours);
-        assertEq(core.ethRate(), uint256(1e14) * 100 / 6_000_000, "the clamp of the new numbers");
-        assertEq(core.rateAtCheckpoint(), 4e12, "the price state the change stored");
-        s.avgScore = 4_330_000;
-        s.spendCapBps = 10_000;
-        _owner(s);
-        assertEq(core.ethRate(), held, "and back on the old numbers");
+        assertEq(core.ethRate(), held, "the clamp is the pot under the new numbers");
+        assertEq(core.rateAtCheckpoint(), OPEN_RATE, "the price state the change stored");
     }
 
     function test_checkpoint_exitRateKeepsOldClimb() public {
@@ -358,20 +320,7 @@ contract FlowTest is Fixture {
         assertApproxEqAbs(core.exitAuctionPrice(), price / 2, price / 1e6, "now halves every hour");
     }
 
-    // ------------------------------------------------------------------ the flat bid
-
-    function _flat(uint256 bps) internal {
-        Settings memory s = core.settings();
-        s.flatBps = uint16(bps);
-        _owner(s);
-    }
-
-    /// @dev the Core price of a credit by the brief: rate * (flat * avg + (10000 - flat) * score) / 10000 / 1e4 then
-    /// the bonus, as one division
-    function _price(uint256 id, uint256 rate, uint256 flat, uint256 bonus) internal view returns (uint256) {
-        uint256 blend = flat * 4_330_000 + (10_000 - flat) * core.scoreOf(id);
-        return blend * rate * (10_000 + bonus) / (10_000 * 10_000 * 1e4);
-    }
+    // ------------------------------------------------------------------ the price of a credit
 
     function _sellOne(uint256 id) internal returns (uint256 paid) {
         uint256 before = seller.balance;
@@ -380,94 +329,16 @@ contract FlowTest is Fixture {
         paid = seller.balance - before;
     }
 
-    function test_flat_10000_everyCreditPaysTheAverage() public {
+    /// every credit is paid the rate, whatever it is
+    function test_price_everyCreditPaysTheRate() public {
         _potTo(1 ether);
         uint256[] memory ids = _credits(seller, 3);
-        _flat(10_000);
-        assertEq(core.ceilingOf(ids[0]), 1_732_000_000_000_000, "avg score 4.33M at 4e12");
-        assertEq(core.ceilingOf(ids[1]), core.ceilingOf(ids[0]));
-        assertEq(core.ceilingOf(ids[2]), core.ceilingOf(ids[0]));
-        assertTrue(core.scoreOf(ids[0]) != core.scoreOf(ids[1]) || core.scoreOf(ids[1]) != core.scoreOf(ids[2]));
-        // the score contract is not read at all on the eth doors
-        vm.expectCall(Mainnet.CREDIT_SCORE, abi.encodeWithSelector(bytes4(keccak256("scoreOf(bytes21,uint64)"))), 0);
-        uint256 expect = core.ceilingOf(ids[0]);
-        assertEq(_sellOne(ids[0]), expect, "paid the ceiling");
-    }
-
-    function test_flat_0_isPerScorePoint() public {
-        _potTo(1 ether);
-        uint256[] memory ids = _credits(seller, 3);
-        _flat(0);
-        for (uint256 i; i < 3; ++i) {
-            assertEq(core.ceilingOf(ids[i]), core.scoreOf(ids[i]) * 4e12 / 1e4, "score times rate");
-            assertEq(core.ceilingOf(ids[i]), _price(ids[i], 4e12, 0, 0));
-        }
-        uint256 expect = core.ceilingOf(ids[1]);
-        assertEq(_sellOne(ids[1]), expect);
-    }
-
-    function test_flat_5000_isHalfAndHalf() public {
-        _potTo(1 ether);
-        uint256[] memory ids = _credits(seller, 3);
-        _flat(5_000);
-        for (uint256 i; i < 3; ++i) {
-            uint256 sc = core.scoreOf(ids[i]);
-            assertEq(core.ceilingOf(ids[i]), (5_000 * 4_330_000 + 5_000 * sc) * 4e12 / 1e8, "half flat, half score");
-            assertEq(core.ceilingOf(ids[i]), _price(ids[i], 4e12, 5_000, 0));
-        }
-        uint256 expect = core.ceilingOf(ids[2]);
-        assertEq(_sellOne(ids[2]), expect);
-    }
-
-    function testFuzz_flat_anyShareMatchesTheFormula(uint256 flat, uint256 seed) public {
-        flat = bound(flat, 0, 10_000);
-        _potTo(1 ether);
-        uint256[] memory ids = _credits(seller, 2);
-        _flat(flat);
-        uint256 id = ids[seed % 2];
-        assertEq(core.ceilingOf(id), _price(id, 4e12, flat, 0));
-        uint256 expect = core.ceilingOf(id);
-        assertEq(_sellOne(id), expect);
-    }
-
-    function test_flat_controllerBonusStillApplies() public {
-        _potTo(1 ether);
-        ScriptedController sc = new ScriptedController();
-        _setController(address(sc));
-        vm.prank(owner);
-        core.setRate(4e12);
-        uint256[] memory ids = _credits(seller, 3);
-        sc.setWants(ids[0], 1_000);
-        sc.setWants(ids[1], 6_000);
-        uint256[3] memory flats = [uint256(10_000), 5_000, 0];
-        for (uint256 k; k < 3; ++k) {
-            _flat(flats[k]);
-            assertEq(core.ceilingOf(ids[0]), _price(ids[0], 4e12, flats[k], 1_000), "ten percent bonus");
-            assertEq(core.ceilingOf(ids[1]), _price(ids[1], 4e12, flats[k], 2_500), "capped at the setting");
-            assertEq(core.ceilingOf(ids[2]), _price(ids[2], 4e12, flats[k], 0), "no bonus");
-        }
-        _flat(10_000);
-        assertEq(core.ceilingOf(ids[0]), 4_330_000 * 4e12 * 11_000 / (1e4 * 1e4), "1.9052e15");
-        uint256 expect = core.ceilingOf(ids[0]);
-        assertEq(_sellOne(ids[0]), expect, "the bonus is paid");
-    }
-
-    function test_flat_bonusCapIsASetting() public {
-        _potTo(1 ether);
-        ScriptedController sc = new ScriptedController();
-        _setController(address(sc));
-        vm.prank(owner);
-        core.setRate(4e12);
-        uint256[] memory ids = _credits(seller, 1);
-        sc.setWants(ids[0], 3_000);
-        assertEq(core.ceilingOf(ids[0]), _price(ids[0], 4e12, 10_000, 2_500));
-        Settings memory s = core.settings();
-        s.bonusCapBps = 5_000;
-        _owner(s);
-        assertEq(core.ceilingOf(ids[0]), _price(ids[0], 4e12, 10_000, 3_000), "cap raised, full bonus");
-        s.bonusCapBps = 0;
-        _owner(s);
-        assertEq(core.ceilingOf(ids[0]), _price(ids[0], 4e12, 10_000, 0), "cap zero, no bonus");
+        assertEq(core.ethRate(), OPEN_RATE);
+        uint256 expect = core.ethRate();
+        assertEq(_sellOne(ids[0]), expect, "paid the rate");
+        expect = core.ethRate();
+        assertEq(_sellOne(ids[1]), expect, "the next credit is paid the dropped rate");
+        assertEq(expect, OPEN_RATE * 9_950 / 10_000);
     }
 
     // ------------------------------------------------------------------ compose lists on the real house
@@ -1017,7 +888,7 @@ contract FlowTest is Fixture {
         vm.expectRevert(ICore.TooEarly.selector);
         core.exitStatement(c.sid);
         vm.warp(listedAt + 105 hours);
-        uint256 rating = STATEMENTS.creditScoreOf(c.sid);
+        uint256 rating = STATEMENTS.creditsOf(c.sid);
         uint256 before = xt.balanceOf(address(core));
         uint256 pot = core.xPot();
         vm.expectEmit(address(core));
@@ -1122,7 +993,7 @@ contract FlowTest is Fixture {
         vm.fee(composeBasefee);
         core.composeExit();
         uint256 sid = STATEMENTS.supply();
-        uint256 rating = STATEMENTS.creditScoreOf(sid);
+        uint256 rating = STATEMENTS.creditsOf(sid);
         uint256 before = xt.balanceOf(address(core));
         uint256 buyback = core.xToBuyback();
         // at once, never listed, no cancel
@@ -1135,80 +1006,6 @@ contract FlowTest is Fixture {
         assertEq(xt.balanceOf(address(core)) - before, rating * UNIT);
         assertEq(core.xToBuyback(), buyback, "an exit lane exit adds nothing to the buyback");
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
-    }
-
-    // ------------------------------------------------------------------ overprint
-
-    ScriptedController internal ovc;
-
-    function _composeFresh() internal returns (uint256) {
-        uint256 size = core.pileSize(Lane.Eth);
-        if (size < 80) _fillEthPile(80 - size);
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.compose();
-        return STATEMENTS.supply();
-    }
-
-    /// @dev two listed statements and a scripted controller that asks for their overprint
-    function _twoStatements() internal returns (uint256 a, uint256 b) {
-        a = _composeFresh();
-        b = _composeFresh();
-        ovc = new ScriptedController();
-        _setController(address(ovc));
-        ovc.setOverprint(true, a, b);
-    }
-
-    function test_overprint_cancelsBothListingsAndRelistsTheBase() public {
-        (uint256 a, uint256 b) = _twoStatements();
-        (,, uint256 costA,) = core.statementInfo(a);
-        (,, uint256 costB,) = core.statementInfo(b);
-        uint256 aidA = _live(a).auctionId;
-        uint256 aidB = _live(b).auctionId;
-        uint256 sum = STATEMENTS.creditScoreOf(a) + STATEMENTS.creditScoreOf(b);
-        vm.expectEmit(address(core));
-        emit ICore.Overprinted(a, b, costA + costB);
-        core.overprint();
-        assertEq(house.getAuction(aidA).tokenOwner, address(0), "the base listing was cancelled");
-        assertEq(house.getAuction(aidB).tokenOwner, address(0), "the top listing was cancelled");
-        vm.expectRevert();
-        STATEMENTS.ownerOf(b);
-        assertEq(STATEMENTS.creditScoreOf(a), sum, "the rating is the sum");
-        (bool held,, uint256 cost, uint64 listedAt) = core.statementInfo(a);
-        assertTrue(held);
-        assertEq(cost, costA + costB, "costs add");
-        assertEq(listedAt, block.timestamp);
-        Live memory l = _live(a);
-        assertEq(uint256(l.status), uint256(ICore.StatementStatus.Listed));
-        assertTrue(l.auctionId != aidA && l.auctionId != aidB, "a new auction");
-        assertEq(l.reserve, (costA + costB) * 11_000 / 10_000, "reserve on the summed cost");
-        assertEq(_auctionOf(a).duration, 24 hours);
-        assertEq(STATEMENTS.ownerOf(a), address(house));
-        assertEq(core.heldStatements().length, 1);
-        (bool heldTop,,,) = core.statementInfo(b);
-        assertFalse(heldTop);
-    }
-
-    function test_overprint_refusedWhenEitherListingHasABid() public {
-        (uint256 a, uint256 b) = _twoStatements();
-        uint256 snap = vm.snapshotState();
-        _bid(alice, b, _live(b).reserve);
-        vm.expectRevert(ICore.HasBid.selector);
-        core.overprint();
-        vm.revertToState(snap);
-        _bid(alice, a, _live(a).reserve);
-        vm.expectRevert(ICore.HasBid.selector);
-        core.overprint();
-        assertEq(STATEMENTS.ownerOf(b), address(house), "atomic: the other listing is untouched");
-    }
-
-    function test_overprint_refusedWhenOneWasSoldAndNotSynced() public {
-        (uint256 a, uint256 b) = _twoStatements();
-        _bid(alice, b, _live(b).reserve);
-        _endAuction(b);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.overprint();
-        assertEq(STATEMENTS.ownerOf(a), address(house));
     }
 
     // ------------------------------------------------------------------ forbidden targets and the constructor
@@ -1226,7 +1023,7 @@ contract FlowTest is Fixture {
     }
 
     function _newCore(Settings memory s, address factory) internal returns (ICore) {
-        return Prod.newCore(owner, address(coin), address(ctl), _stack(factory), 4e12, s);
+        return Prod.newCore(owner, address(coin), address(ctl), _stack(factory), OPEN_RATE, s);
     }
 
     function _stack(address factory) internal view returns (Stack memory st) {
@@ -1246,12 +1043,12 @@ contract FlowTest is Fixture {
 
     function test_constructor_refusesBadInputs() public {
         Settings memory s = Mainnet.defaultSettings();
-        s.avgScore = 799_999;
-        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("avgScore")));
+        s.dropPerCreditBps = 0;
+        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("dropPerCreditBps")));
         this.newCoreExternal(s, Mainnet.AUCTION_FACTORY);
-        // the opening rate (4e12) may not sit above the rate cap
+        // the opening rate (OPEN_RATE) may not sit above the rate cap
         Settings memory capped = Mainnet.defaultSettings();
-        capped.rateCap = 3.9e12;
+        capped.rateCap = uint64(OPEN_RATE - 1);
         vm.expectRevert(ICore.BadRate.selector);
         this.newCoreExternal(capped, Mainnet.AUCTION_FACTORY);
         vm.expectRevert(ICore.ZeroAddress.selector);
@@ -1277,7 +1074,7 @@ contract FlowTest is Fixture {
         uint256 g = gasleft();
         uint256 r = core.ethRate();
         assertLt(g - gasleft(), 400_000, "bounded work");
-        assertLe(r, uint256(1 ether) * 10_000 / 4_330_000, "clamped at the hourly room of one average credit");
+        assertLe(r, uint256(1 ether), "clamped at the pot");
         vm.deal(core.FEE_SOURCE(), 1 ether);
         uint256 pot = core.ethPot();
         vm.prank(core.FEE_SOURCE());
@@ -1330,9 +1127,6 @@ contract FlowTest is Fixture {
         ScriptedController hostile = new ScriptedController();
         _setController(address(hostile));
         uint256[] memory ids = _credits(seller, 6);
-        for (uint256 i; i < 6; ++i) {
-            hostile.setWants(ids[i], uint16(uint256(keccak256(abi.encode(seed, i)))));
-        }
         address[3] memory watched = [owner, address(hostile), address(ctl)];
         uint256[5][3] memory base;
         for (uint256 i; i < 3; ++i) {
@@ -1410,10 +1204,10 @@ contract FlowTest is Fixture {
         if (kind == 0) {
             core.setSettings(_valid(r));
         } else if (kind == 1) {
-            core.setRate(bound(r >> 8, 1e11, core.settings().rateCap));
+            core.setRate(bound(r >> 8, 1e13, core.settings().rateCap));
         } else if (kind == 2) {
             Settings memory s = core.settings();
-            core.setXRate(bound(r >> 8, s.xRateFloor, s.xRateCap));
+            _storeXRate(bound(r >> 8, s.xRateFloor, s.xRateCap));
         } else if (kind == 3) {
             address t = address(uint160(r >> 8));
             try core.addTarget(t) {} catch {}
@@ -1445,7 +1239,7 @@ contract FlowTest is Fixture {
         } else if (pick == 4) {
             try core.buyback() {} catch {}
         } else {
-            try core.overprint() {} catch {}
+            try core.syncStatement(sid) {} catch {}
         }
         vm.stopPrank();
         if (address(core).balance < before) {
@@ -1460,7 +1254,7 @@ contract FlowTest is Fixture {
     function _sellMaybe(uint256 id) internal {
         if (CREDITS.ownerOf(id) != seller) return;
         _flush();
-        uint256 quote = core.ceilingOf(id);
+        uint256 quote = core.ethRate();
         uint256 coreBefore = address(core).balance;
         uint256 sellerBefore = seller.balance;
         vm.prank(seller);

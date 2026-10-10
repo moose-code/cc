@@ -88,14 +88,12 @@ contract LensTest is Fixture {
         assertEq(s.ethRate, core.ethRate(), "ethRate");
         assertEq(s.ethPrice, core.ethPrice(), "ethPrice");
         assertGe(s.ethPrice, s.ethRate, "the read is the price state or the clamp below it");
-        assertEq(s.averageBid, uint256(core.settings().avgScore) * core.ethRate() / 1e4, "averageBid");
-        assertEq(s.hourlyRoom, core.hourlyRoom(), "hourlyRoom");
         assertEq(s.ethPileSize, 7, "eth pile size");
         assertEq(s.ethPileSize, core.pileSize(Lane.Eth));
-        assertEq(s.ethPileHead, core.pileHead(Lane.Eth));
+        assertEq(s.ethPileHead, core.pilePage(Lane.Eth, 0, 1)[0]);
         assertEq(s.exitPileSize, 5, "exit pile size");
         assertEq(s.exitPileSize, core.pileSize(Lane.Exit));
-        assertEq(s.exitPileHead, core.pileHead(Lane.Exit));
+        assertEq(s.exitPileHead, core.pilePage(Lane.Exit, 0, 1)[0]);
         assertTrue(s.ethPileHead != 0 && s.exitPileHead != 0, "heads");
         assertFalse(s.ethPageReady, "7 credits are not a page");
         assertFalse(s.exitPageReady, "5 credits are not a page");
@@ -170,40 +168,15 @@ contract LensTest is Fixture {
         assertEq(s.routerOwed, 0);
     }
 
-    function test_OK_hourlyRoomFollowsTheSpendAndTheWindow() public {
-        _fundPot(2 ether);
-        _warp(1 hours + 1);
-        uint256 pot = core.ethPot();
-        uint256 cap = core.settings().spendCapBps;
-        assertEq(lens.snapshot().hourlyRoom, pot * cap / 10_000, "a closed window offers the cap on the pot");
-        uint256[] memory ids = _credits(seller, 3);
-        uint256 before = lens.snapshot().hourlyRoom;
-        uint256 balance = seller.balance;
-        vm.prank(seller);
-        core.sellForEth(ids);
-        // the rate falls after each credit, so the payout is read from the seller
-        uint256 total = seller.balance - balance;
-        // the window opened with the pot before the spend
-        assertEq(lens.snapshot().hourlyRoom, pot * cap / 10_000 - total, "room after the spend");
-        assertEq(before - lens.snapshot().hourlyRoom, total, "room fell by the payout");
-        _warp(1 hours);
-        assertEq(lens.snapshot().hourlyRoom, core.ethPot() * cap / 10_000, "a new hour opens on the pot of that moment");
-    }
-
-    function test_OK_bidForIsTheCeilingAndTheAverageBidPricesTheAverageScore() public {
+    function test_OK_theRateIsThePayoutOfOneCredit() public {
         _fundPot(1 ether);
         uint256[] memory ids = _credits(seller, 4);
-        for (uint256 i; i < ids.length; ++i) {
-            assertEq(lens.bidFor(ids[i]), core.ceilingOf(ids[i]), "bidFor");
-        }
-        // a seller receives bidFor for a single credit
+        uint256 quoted = lens.snapshot().ethRate;
+        assertEq(quoted, core.ethRate());
         uint256 before = seller.balance;
-        uint256 quoted = lens.bidFor(ids[0]);
         vm.prank(seller);
         core.sellForEth(_one(ids[0]));
         assertEq(seller.balance - before, quoted, "the payout equals the quote");
-        ICoreLens.Snapshot memory s = lens.snapshot();
-        assertEq(s.averageBid, uint256(core.settings().avgScore) * s.ethRate / 1e4);
     }
 
     function test_OK_aFullPageIsReady() public {

@@ -232,7 +232,7 @@ abstract contract SeaportBase is Fixture {
     /// calls the door as the keeper and checks everything a successful buy must leave behind.
     /// `cost` is the exact net eth the order takes from the core.
     function _buy(uint256 id, uint256 value, bytes memory data, uint256 cost) internal returns (uint256 tip) {
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         tip = _tip(ceiling, cost);
         Snap memory before = _snap();
         uint256 rate = core.ethRate();
@@ -270,21 +270,19 @@ abstract contract SeaportBase is Fixture {
     }
 }
 
-/// every door case against genuine Seaport 1.6 orders, with the pot filled by real swaps. the launch settings: the
-/// eth bid is flat per credit (`flatBps` 10_000). `SeaportPerScoreTest` runs every case again with `flatBps` 0
+/// every door case against genuine Seaport 1.6 orders, with the pot filled by real swaps. the launch settings
 contract SeaportTest is SeaportBase {
     using FixedPointMathLib for uint256;
 
-    /// the pot is large enough that the hourly cap clears every ceiling the tests use
+    /// the pot is large enough to clear every ceiling the tests use
     uint256 internal constant POT = 30 ether;
-    /// wei per whole point, the top of the rate bounds. a flat credit then costs 0.433 ether, the highest scoring one at
-    /// flat 0 near 0.75 ether
-    uint256 internal constant TARGET_RATE = 1e15;
+    /// wei per credit the cases run at: a credit costs 0.433 ether
+    uint256 internal constant TARGET_RATE = 4.33e17;
 
     function setUp() public override {
         super.setUp();
         // the launch rate cap (10 times the opening rate) is far below the rate the cases need: raise it to the bounds,
-        // with the clamp at one credit of hourly room and the ceiling at its loosest so the bid reaches it in days
+        // with the clamp at one credit of pot and the ceiling at its loosest so the bid reaches it in days
         Settings memory cs = core.settings();
         cs.rateCap = uint64(TARGET_RATE);
         cs.ceilBps = 30_000;
@@ -304,7 +302,7 @@ contract SeaportTest is SeaportBase {
 
     function test_basic_singleConsiderationToSeller() public {
         uint256 id = _list();
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         uint256 price = ceiling * 9 / 10;
         // at 90 percent of the ceiling the savings bound is the active one.
         assertLt((ceiling - price) / 10, price * 200 / 10_000);
@@ -320,7 +318,7 @@ contract SeaportTest is SeaportBase {
 
     function test_basic_tipIsCappedAtTwoPercentOfCost() public {
         uint256 id = _list();
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         uint256 price = ceiling / 2;
         OrderComponents memory c = _open(id, price, 0);
 
@@ -330,7 +328,7 @@ contract SeaportTest is SeaportBase {
 
     function test_basic_additionalRecipient() public {
         uint256 id = _list();
-        uint256 total = core.ceilingOf(id) * 7 / 10;
+        uint256 total = core.ethRate() * 7 / 10;
         uint256 fee = total / 100;
         OrderComponents memory c = _open(id, total - fee, fee);
         assertEq(c.consideration.length, 2);
@@ -352,7 +350,7 @@ contract SeaportTest is SeaportBase {
 
     function test_fulfillOrder_recipientDefaultsToCaller() public {
         uint256 id = _list();
-        uint256 total = core.ceilingOf(id) * 6 / 10;
+        uint256 total = core.ethRate() * 6 / 10;
         uint256 fee = total / 50;
         OrderComponents memory c = _open(id, total - fee, fee);
 
@@ -373,7 +371,7 @@ contract SeaportTest is SeaportBase {
 
     function test_fulfillAdvancedOrder_explicitRecipientIsCore() public {
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id) * 8 / 10;
+        uint256 price = core.ethRate() * 8 / 10;
         OrderComponents memory c = _open(id, price, 0);
 
         uint256 makerBefore = maker.balance;
@@ -389,7 +387,7 @@ contract SeaportTest is SeaportBase {
 
     function _overpay(uint256 path) internal {
         uint256 id = _list();
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         uint256 total = ceiling * 6 / 10;
         uint256 fee = total / 100;
         OrderComponents memory c = _open(id, total - fee, fee);
@@ -439,7 +437,7 @@ contract SeaportTest is SeaportBase {
         uint256 asked = CreditIds.at(300);
         assertTrue(asked != LISTED_A && asked != LISTED_B && asked != LISTED_C);
         assertEq(CREDITS.ownerOf(asked), STRATEGY);
-        uint256 price = core.ceilingOf(asked).min(core.ceilingOf(listed)) / 2;
+        uint256 price = core.ethRate().min(core.ethRate()) / 2;
         OrderComponents memory c = _open(listed, price, 0);
         // the call delivers a credit, just not the one the caller asked for.
         _expectFail(asked, price, _basicData(c), ICore.NoCredit.selector);
@@ -449,7 +447,7 @@ contract SeaportTest is SeaportBase {
 
     function test_fail_recipientIsNotTheCore() public {
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id) / 2;
+        uint256 price = core.ethRate() / 2;
         OrderComponents memory c = _open(id, price, 0);
         // the order fills, the credit goes to the keeper, the core gets nothing and the whole buy unwinds.
         _expectFail(id, price, _advancedData(c, "", keeper), ICore.NoCredit.selector);
@@ -457,7 +455,7 @@ contract SeaportTest is SeaportBase {
 
     function test_fail_cancelledOrder() public {
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id) / 2;
+        uint256 price = core.ethRate() / 2;
         OrderComponents memory c = _open(id, price, 0);
         bytes memory data = _basicData(c);
 
@@ -477,7 +475,7 @@ contract SeaportTest is SeaportBase {
 
     function test_fail_badSignature() public {
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id) / 2;
+        uint256 price = core.ethRate() / 2;
         OrderComponents memory c = _open(id, price, 0);
         (, uint256 otherKey) = makeAddrAndKey("creditsengine.seaport.impostor");
         _expectFail(id, price, _basicData(c, _sign(c, otherKey)), ICore.CallFailed.selector);
@@ -492,7 +490,7 @@ contract SeaportTest is SeaportBase {
 
     function test_fail_valueAboveCeiling() public {
         uint256 id = _list();
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         OrderComponents memory c = _open(id, ceiling, 0);
         // the order itself is fine at exactly the ceiling.
         _expectFail(id, ceiling + 1, _basicData(c), ICore.AboveCeiling.selector);
@@ -503,7 +501,7 @@ contract SeaportTest is SeaportBase {
 
     function test_fail_orderPaysOutMoreThanValue() public {
         uint256 id = _list();
-        uint256 total = core.ceilingOf(id) / 2;
+        uint256 total = core.ethRate() / 2;
         uint256 fee = total / 100;
         OrderComponents memory c = _open(id, total - fee, fee);
         // seaport needs the full sum of every payout in msg.value. one wei short reverts the whole fill.
@@ -518,7 +516,7 @@ contract SeaportTest is SeaportBase {
     function test_fail_extraConsiderationCannotBeFundedFromThePot() public {
         // the core only ever sends `value`. an order whose payouts exceed it cannot reach into the rest of the pot.
         uint256 id = _list();
-        uint256 value = core.ceilingOf(id) / 4;
+        uint256 value = core.ethRate() / 4;
         OrderComponents memory c = _open(id, value, value);
         assertEq(_total(c), value * 2);
         // control: the same order fills when value covers every payout.
@@ -531,7 +529,7 @@ contract SeaportTest is SeaportBase {
 
     function test_fail_targetGuards() public {
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id) / 2;
+        uint256 price = core.ethRate() / 2;
         bytes memory data = _basicData(_open(id, price, 0));
         vm.prank(keeper);
         vm.expectRevert(ICore.TargetNotAllowed.selector);
@@ -547,7 +545,7 @@ contract SeaportTest is SeaportBase {
 
     function test_restricted_eoaZoneReverts() public {
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id) / 2;
+        uint256 price = core.ethRate() / 2;
         address zone = makeAddr("creditsengine.seaport.zone");
         assertEq(zone.code.length, 0);
         OrderComponents memory c = _components(id, price, 0, zone, OrderType.FULL_RESTRICTED);
@@ -566,7 +564,7 @@ contract SeaportTest is SeaportBase {
 
     function test_restricted_zoneNeedsTheCallersExtraData() public {
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id) / 2;
+        uint256 price = core.ethRate() / 2;
         ExtraDataZone zone = new ExtraDataZone();
         OrderComponents memory c = _components(id, price, 0, address(zone), OrderType.FULL_RESTRICTED);
 
@@ -585,8 +583,8 @@ contract SeaportTest is SeaportBase {
 
     function testFuzz_priceFromOneWeiToCeiling(uint256 price) public {
         uint256 id = _list();
-        uint256 ceiling = core.ceilingOf(id);
-        assertLe(ceiling, core.ethPot() * core.settings().spendCapBps / 10_000, "the hourly cap clears every ceiling here");
+        uint256 ceiling = core.ethRate();
+        assertLe(ceiling, core.ethPot(), "the pot clears every ceiling here");
         price = bound(price, 1, ceiling);
         OrderComponents memory c = _open(id, price, 0);
 
@@ -634,8 +632,8 @@ contract SeaportTest is SeaportBase {
     function testFuzz_selfDealingTipNeverPays(uint256 priceSeed, uint256 sideSeed, uint256 warpHours) public {
         _warp(bound(warpHours, 0, 12) * 1 hours);
         uint256 id = _list();
-        uint256 ceiling = core.ceilingOf(id);
-        assertLe(ceiling, core.ethPot() * core.settings().spendCapBps / 10_000, "the hourly cap clears every ceiling here");
+        uint256 ceiling = core.ethRate();
+        assertLe(ceiling, core.ethPot(), "the pot clears every ceiling here");
         uint256 price = bound(priceSeed, 1, ceiling);
         uint256 side = bound(sideSeed, 0, price - 1) % (price / 2 + 1);
         uint256 snap = vm.snapshotState();
@@ -660,7 +658,7 @@ contract SeaportTest is SeaportBase {
     function test_selfDealing_edges() public {
         _warp(8 hours);
         uint256 id = _list();
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         uint256[3] memory prices = [uint256(1), ceiling - 1, ceiling];
         uint256 snap = vm.snapshotState();
         for (uint256 i; i < 3; ++i) {
@@ -679,31 +677,19 @@ contract SeaportTest is SeaportBase {
                   10. settings reach the door at once
     //////////////////////////////////////////////////////////////*/
 
-    function _setFlat(uint256 bps) internal {
+    /// a settings change moves the ceiling the door enforces, in the same block
+    function test_rateCapChangeMovesTheDoorCeiling() public {
+        uint256 id = _list();
+        uint256 before = core.ethRate();
         Settings memory s = core.settings();
         // forge-lint: disable-next-line(unsafe-typecast)
-        s.flatBps = uint16(bps);
+        s.rateCap = uint64(before * 8 / 10);
         _setSettings(s);
-    }
-
-    /// a settings change moves the ceiling the door enforces, in the same block
-    function test_flatBpsChangeMovesTheDoorCeiling() public {
-        uint256 id = _list();
-        uint256 rate = core.ethRate();
-        uint256[3] memory bps = [uint256(10_000), 5_000, 0];
-        uint256[3] memory ceilings;
-        for (uint256 k; k < 3; ++k) {
-            _setFlat(bps[k]);
-            ceilings[k] = core.ceilingOf(id);
-            assertEq(ceilings[k], (bps[k] * 4_330_000 + (10_000 - bps[k]) * core.scoreOf(id)) * rate / 1e8);
-            bytes memory data = _basicData(_open(id, ceilings[k], 0));
-            _expectFail(id, ceilings[k] + 1, data, ICore.AboveCeiling.selector);
-        }
-        // the middle setting prices between the two ends, and the door fills at exactly its ceiling
-        assertGe(ceilings[1], ceilings[0].min(ceilings[2]));
-        assertLe(ceilings[1], ceilings[0].max(ceilings[2]));
-        _setFlat(5_000);
-        _buy(id, ceilings[1], _basicData(_open(id, ceilings[1], 0)), ceilings[1]);
+        uint256 ceiling = core.ethRate();
+        assertEq(ceiling, before * 8 / 10);
+        bytes memory data = _basicData(_open(id, ceiling, 0));
+        _expectFail(id, ceiling + 1, data, ICore.AboveCeiling.selector);
+        _buy(id, ceiling, data, ceiling);
     }
 
     /// the tip rules are settings: raised to their bounds the door pays the larger tip and still never exceeds the ceiling
@@ -713,7 +699,7 @@ contract SeaportTest is SeaportBase {
         s.tipCapBps = 500;
         _setSettings(s);
         uint256 id = _list();
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         uint256 price = ceiling * 6 / 10;
         uint256 before = keeper.balance;
         bytes memory data = _basicData(_open(id, price, 0));
@@ -733,8 +719,8 @@ contract SeaportTest is SeaportBase {
     }
 }
 
-/// the two pot bound refusals, on a core whose pot real swaps have not filled, or filled only a little. the launch
-/// settings, `SeaportColdPerScoreTest` runs them again with `flatBps` 0
+/// the pot bound refusal, on a core whose pot real swaps have not filled, or filled only a little. the launch
+/// settings
 contract SeaportColdTest is SeaportBase {
     function test_fail_valueAbovePot() public {
         uint256 id = _list();
@@ -742,54 +728,5 @@ contract SeaportColdTest is SeaportBase {
         OrderComponents memory c = _open(id, price, 0);
         assertEq(core.ethPot(), 0);
         _expectFail(id, price, _basicData(c), ICore.PotTooSmall.selector);
-    }
-
-    function test_fail_hourlyCap() public {
-        uint256 id = _list();
-        // the cap is lowered to 1 percent of a funded pot and single credits are sold in one hour until the room left
-        // is below the ceiling of the listed credit
-        _fundPot(1 ether);
-        Settings memory st = core.settings();
-        st.spendCapBps = 100;
-        _setSettings(st);
-        uint256 i;
-        for (; i < 80 && core.hourlyRoom() >= core.ceilingOf(id); ++i) {
-            uint256[] memory sold = _credits(seller, 1);
-            // a credit priced above the room left cannot sell in this hour
-            if (core.ceilingOf(sold[0]) > core.hourlyRoom()) continue;
-            vm.prank(seller);
-            core.sellForEth(sold);
-        }
-        emit log_named_uint("loop sales", i);
-        assertLt(i, 80, "the loop ended on the room, not on its bound");
-        uint256 price = core.ceilingOf(id);
-        assertLt(core.hourlyRoom(), price, "the room is below the ceiling");
-        assertEq(address(feeRouter).balance, 0, "no fee eth is waiting for the pull of the buy");
-        OrderComponents memory c = _open(id, price, 0);
-        bytes memory data = _basicData(c);
-        _expectFail(id, price, data, ICore.HourlyCap.selector);
-    }
-}
-
-/// every case of `SeaportTest` with the bid priced per score point, so the ceilings differ by credit
-contract SeaportPerScoreTest is SeaportTest {
-    function _settings() internal view override returns (Settings memory s) {
-        s = super._settings();
-        s.flatBps = 0;
-    }
-
-    function test_perScore_ceilingsFollowTheScore() public {
-        uint256 a = _list();
-        uint256 b = _list();
-        assertEq(core.ceilingOf(a), core.scoreOf(a) * core.ethRate() / 1e4);
-        assertEq(core.ceilingOf(b), core.scoreOf(b) * core.ethRate() / 1e4);
-        assertTrue(core.scoreOf(a) != core.scoreOf(b), "two credits of different score");
-    }
-}
-
-contract SeaportColdPerScoreTest is SeaportColdTest {
-    function _settings() internal view override returns (Settings memory s) {
-        s = super._settings();
-        s.flatBps = 0;
     }
 }

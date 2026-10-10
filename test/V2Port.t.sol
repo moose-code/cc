@@ -116,7 +116,7 @@ contract V2PortFeeTest is FeeBase {
         _stock();
         _fundPot(1 ether);
         uint256 id = _credits(address(t), 1)[0];
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         uint256 e = ceiling / 3;
         _creditCore(e);
         t.arm(id);
@@ -139,7 +139,7 @@ contract V2PortFeeTest is FeeBase {
         _stock();
         _fundPot(1 ether);
         uint256 id = _credits(address(t), 1)[0];
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         _creditCore(ceiling);
         t.arm(id);
         uint256 pot = core.ethPot();

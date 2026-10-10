@@ -90,13 +90,12 @@ contract GasCapTest is SeaportBase {
     /// @dev marks every account the system touches as cold, with its slots, then warms only the account of `target`
     /// (a transaction starts with its target warm). the sender is not cooled
     function _cool(address target) internal {
-        address[18] memory a = [
+        address[17] memory a = [
             address(core),
             address(ctl),
             address(house),
             address(STATEMENTS),
             address(CREDITS),
-            Mainnet.CREDIT_SCORE,
             STRATEGY,
             Mainnet.SEAPORT,
             address(PM),
@@ -274,7 +273,7 @@ contract GasCapTest is SeaportBase {
         _row("rescueCoin", g, data);
     }
 
-    // ------------------------------------------------------------------ compose, exit, overprint
+    // ------------------------------------------------------------------ compose and exit
 
     function _measureCompose(string memory name) internal returns (uint256 g) {
         uint256 held = core.heldStatements().length;
@@ -432,46 +431,6 @@ contract GasCapTest is SeaportBase {
         sid = STATEMENTS.supply();
     }
 
-    /// @dev ControllerV1.nextOverprint never answers ready, so the shipped controller cannot trigger an overprint. the
-    /// scripted controller of the tests does. the base grows by 80 credits per merge: the cost is measured as it grows
-    function test_gas_overprint_scriptedController_andGrowth() public {
-        uint256[] memory sids = new uint256[](7);
-        sids[0] = _composeOnce().sid;
-        for (uint256 i = 1; i < 7; ++i) {
-            sids[i] = _composeMore();
-        }
-        ScriptedController sc = new ScriptedController();
-        _setController(address(sc));
-        for (uint256 i = 1; i < 7; ++i) {
-            sc.setOverprint(true, sids[0], sids[i]);
-            _cool(address(core));
-            vm.prank(stranger);
-            uint256 g = gasleft();
-            core.overprint();
-            g -= gasleft();
-            string memory n = string.concat(
-                "overprint merge ",
-                vm.toString(i),
-                ", base now ",
-                vm.toString(STATEMENTS.creditsOf(sids[0])),
-                " credits, cold"
-            );
-            _row(n, g, abi.encodeCall(core.overprint, ()));
-        }
-        _enterPhase2();
-        _warp(core.settings().exitAfter);
-        _cool(address(core));
-        vm.prank(keeper);
-        uint256 e = gasleft();
-        core.exitStatement(sids[0]);
-        e -= gasleft();
-        _row(
-            "exitStatement of the merged base (480 credits), eth lane, cold",
-            e,
-            abi.encodeCall(core.exitStatement, (sids[0]))
-        );
-    }
-
     // ------------------------------------------------------------------ the sell doors, batch size
 
     /// @dev a sell of `n` fresh credits by `seller`, measured, then the state is rolled back. returns the exec gas and
@@ -541,17 +500,7 @@ contract GasCapTest is SeaportBase {
     function test_gas_sellForEth_batch_launchSettings() public {
         _fundPot(30 ether);
         _warp(1 hours + 1);
-        _searchBatch("sellForEth flat bid (launch)", false);
-    }
-
-    /// @dev the owner can set `flatBps` below 10,000, then the score contract is read for every credit
-    function test_gas_sellForEth_batch_perPointBid() public {
-        Settings memory s = core.settings();
-        s.flatBps = 0;
-        _setSettings(s);
-        _fundPot(30 ether);
-        _warp(1 hours + 1);
-        _searchBatch("sellForEth score bid (flatBps 0)", false);
+        _searchBatch("sellForEth (launch)", false);
     }
 
     function test_gas_sellForExitToken_batch() public {
@@ -582,7 +531,7 @@ contract GasCapTest is SeaportBase {
     function _seaportBuy(string memory name, uint256 mode) internal {
         _fundPot(10 ether);
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id) * 9 / 10;
+        uint256 price = core.ethRate() * 9 / 10;
         OrderComponents memory c = mode == 1 ? _open(id, price - price / 100, price / 100) : _open(id, price, 0);
         bytes memory order = mode == 2 ? _advancedData(c, "", address(core)) : _basicData(c);
         bytes memory data = abi.encodeCall(core.buyListing, (price, order, id, Mainnet.SEAPORT));
@@ -776,8 +725,6 @@ contract GasCapTest is SeaportBase {
         _enterPhase2();
         _fillExitBuyback();
         Settings memory s = core.settings();
-        s.flatBps = 9_000;
-        s.avgScore = 4_000_000;
         s.climbPerMinBps = 90;
         s.dropPerCreditBps = 150;
         s.saleFloorBps = 8_000;

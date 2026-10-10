@@ -106,7 +106,7 @@ abstract contract ConfigReader is CommonBase {
     function defaultConfig() internal pure returns (LaunchConfig memory c) {
         c.stack = Mainnet.defaultStack();
         c.symbol = "CC";
-        c.rateStart = 20_554_000_000_000;
+        c.rateStart = 8_900_000_000_000_000;
         c.settings = Mainnet.defaultSettings();
         c.sale = Mainnet.defaultSale();
         c.supply = 1_000_000_000e18;
@@ -162,15 +162,11 @@ abstract contract ConfigReader is CommonBase {
 
     function _loadSettings(LaunchConfig memory c, string memory j) private pure {
         Settings memory s = c.settings;
-        s.flatBps = _u16(j, ".settings.flatBps");
-        s.avgScore = _u32(j, ".settings.avgScore");
         s.dropPerCreditBps = _u16(j, ".settings.dropPerCreditBps");
         s.dropFloorBps = _u16(j, ".settings.dropFloorBps");
         s.climbPerMinBps = _u16(j, ".settings.climbPerMinBps");
         s.ceilBps = _u16(j, ".settings.ceilBps");
         s.idleLoosenBps = _u16(j, ".settings.idleLoosenBps");
-        s.spendCapBps = _u16(j, ".settings.spendCapBps");
-        s.bonusCapBps = _u16(j, ".settings.bonusCapBps");
         s.tipSavingsBps = _u16(j, ".settings.tipSavingsBps");
         s.tipCapBps = _u16(j, ".settings.tipCapBps");
         s.reimburseBps = _u16(j, ".settings.reimburseBps");

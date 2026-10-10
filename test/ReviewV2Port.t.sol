@@ -101,7 +101,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
     function test_FIXED_strangerFlushInsideBuyListingRevertsAndTheCostIsExact() public {
         uint256 held = _queueFees(1.5 ether);
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id);
+        uint256 price = core.ethRate();
         assertGt(held, 0.05 ether);
         FlushingPayee atk = new FlushingPayee(address(feeRouter));
         vm.deal(address(atk), held);
@@ -134,7 +134,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
         // the fees go back into the router: the door finds them there
         vm.deal(address(feeRouter), held);
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id);
+        uint256 price = core.ethRate();
         FlushingPayee atk = new FlushingPayee(address(feeRouter));
         vm.deal(address(atk), held);
         atk.arm(true, held);
@@ -170,7 +170,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
     function test_FIXED_anUncaughtMidCallFlushFailsTheWholePurchase() public {
         uint256 held = _queueFees(1.5 ether);
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id);
+        uint256 price = core.ethRate();
         FlushingPayee atk = new FlushingPayee(address(feeRouter));
         vm.deal(address(atk), held);
         atk.arm(false, held);
@@ -190,7 +190,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
         _setSettings(cs);
         uint256 held = _queueFees(1.5 ether);
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id);
+        uint256 price = core.ethRate();
         FlushingPayee atk = new FlushingPayee(address(feeRouter));
         vm.deal(address(atk), held);
         atk.arm(true, held);
@@ -217,7 +217,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
         for (uint256 round; round < 3; ++round) {
             uint256 held = _queueFees(1 ether);
             uint256 id = _list();
-            uint256 price = core.ceilingOf(id);
+            uint256 price = core.ethRate();
             FlushingPayee atk = new FlushingPayee(address(feeRouter));
             vm.deal(address(atk), held);
             atk.arm(round != 1, held);
@@ -243,7 +243,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
 
     function test_OK_theSameOrderWithAnEmptyRouterPaysNoTip() public {
         uint256 id = _list();
-        uint256 price = core.ceilingOf(id);
+        uint256 price = core.ethRate();
         FlushingPayee atk = new FlushingPayee(address(feeRouter));
         atk.arm(true, 0);
         bytes memory data = _order(id, price, atk);
@@ -277,15 +277,15 @@ contract ReviewSandwichTest is FeeBase {
         vm.revertToState(snap);
     }
 
-    /// writes `buybackSlice` (bits 96 to 223 of the second settings word) and `buybackDelay` 1 straight into storage, so
+    /// writes `buybackSlice` (bits 0 to 127 of the second settings word) and `buybackDelay` 1 straight into storage, so
     /// a slice above the bound can be simulated
     function _forceSlice(uint256 slice) internal {
         bytes32 at = bytes32(uint256(keccak256("credits.core.settings.v1")) + 1);
         uint256 w = uint256(vm.load(address(core), at));
         uint256 m128 = type(uint128).max;
-        w = (w & ~(m128 << 96)) | (slice << 96);
+        w = (w & ~m128) | slice;
         // buybackDelay: the 16 bits above the slice
-        w = (w & ~(uint256(type(uint16).max) << 224)) | (uint256(1) << 224);
+        w = (w & ~(uint256(type(uint16).max) << 128)) | (uint256(1) << 128);
         vm.store(address(core), at, bytes32(w));
         assertEq(core.settings().buybackSlice, slice, "slice written");
         assertEq(core.settings().buybackDelay, 1, "delay written");
@@ -491,7 +491,7 @@ contract ReviewFlushInPayoutTest is FeeBase {
 
 /// F5. the carried question: can the Core pay more than `reimburseCapBps` of the statement cost (or of the notional cap on
 /// the exit lane), even by 1 wei. `_repay` pays `min(floor(gas * basefee * reimburseBps / BPS), floor(cap * reimburseCapBps / BPS),
-/// ethPot)` with `cap` the stored cost (exit of an eth lane statement) or `floor(80 * avgScore * RATE_START / 1e4)`
+/// ethPot)` with `cap` the stored cost (exit of an eth lane statement) or `80 * RATE_START`
 /// (exit lane). every term is a floor, so the payment is at most
 /// the exact quotient. only a mirror that rounds up (or divides once instead of twice) can see 1 wei more
 contract ReviewReimburseTest is Fixture {
@@ -538,13 +538,13 @@ contract ReviewReimburseTest is Fixture {
         core.composeExit();
         uint256 xsid = STATEMENTS.supply();
         uint256 snap2 = vm.snapshotState();
-        uint256 notional = 80 * uint256(core.settings().avgScore) * core.RATE_START() / 1e4;
+        uint256 notional = 80 * core.RATE_START();
         uint256 differs;
         for (uint256 i; i < caps.length; ++i) {
             uint256 r = _exitLane(caps[i], xsid, snap2);
             assertEq(r, notional * caps[i] / 10_000, "the cap binds");
             assertLe(r * 10_000, notional * caps[i]);
-            uint256 single = 80 * uint256(core.settings().avgScore) * core.RATE_START() * caps[i] / (1e4 * 1e4);
+            uint256 single = 80 * core.RATE_START() * caps[i] / 1e4;
             assertGe(single, r, "one division can only be bigger, never smaller");
             if (single != r) ++differs;
         }

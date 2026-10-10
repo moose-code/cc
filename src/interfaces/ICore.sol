@@ -22,7 +22,6 @@ interface ICore {
     error BadCost();
     error BadFormat();
     error BadModule();
-    error BadOverprint();
     error BadPrice();
     error BadRate();
     error BadSender();
@@ -33,13 +32,11 @@ interface ICore {
     error BadSwap();
     error BelowFloor();
     error CallFailed();
-    error DailyCap();
     error Empty();
     error ExitTokenChanged();
     error ForbiddenTarget();
     error HasBid();
     error Held();
-    error HourlyCap();
     error InPile();
     error Locked(bytes32 what);
     error Measuring();
@@ -82,7 +79,7 @@ interface ICore {
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     event ExitBuyback(address indexed caller, uint256 slice, uint256 coinIn);
     event ExitModuleLocked();
-    event ExitModuleSet(address exitModule, address exitToken, uint256 unitPerPoint);
+    event ExitModuleSet(address exitModule, address exitToken, uint256 unitPerCredit);
     event ExitRateFill(uint256 rate, uint256 pot);
     event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
     event FeesAdded(uint256 amount);
@@ -91,7 +88,6 @@ interface ICore {
     );
     event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
-    event Overprinted(uint256 indexed baseId, uint256 indexed topId, uint256 cost);
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
     event OwnershipTransferred(address indexed from, address indexed to);
     event RateSet(uint256 rate);
@@ -108,7 +104,6 @@ interface ICore {
     event TargetAdded(address target);
     event TargetRemoved(address target);
     event TargetsLocked();
-    event XRateSet(uint256 rate);
 
     receive() external payable;
 
@@ -121,7 +116,6 @@ interface ICore {
     function HOUSE() external view returns (address);
     function LOCKER() external view returns (address);
     function MANAGER() external view returns (address);
-    function OVERPRINT_CAP_PER_DAY() external view returns (uint256);
     function POOL_FEE() external view returns (uint24);
     function RATE_START() external view returns (uint256);
     function SUPPLY() external view returns (uint256);
@@ -134,7 +128,6 @@ interface ICore {
     function buyListing(uint256 value, bytes memory data, uint256 id, address target) external;
     function buyback() external;
     function buybackExit(uint256 maxCoinIn) external;
-    function ceilingOf(uint256 id) external view returns (uint256);
     function checkpointTime() external view returns (uint64);
     function collectSales() external;
     function compose() external;
@@ -153,7 +146,6 @@ interface ICore {
     function exitStatement(uint256 sid) external;
     function exitToken() external view returns (address);
     function heldStatements() external view returns (uint256[] memory sids);
-    function hourlyRoom() external view returns (uint256);
     function lastBuybackBlock() external view returns (uint256);
     function lastFillTime() external view returns (uint64);
     function lockController() external;
@@ -162,13 +154,8 @@ interface ICore {
     function lockTargets() external;
     function migrate(uint256) external;
     function onERC721Received(address, address, uint256, bytes memory) external view returns (bytes4);
-    function overprint() external;
-    function overprintCount() external view returns (uint256);
-    function overprintDay() external view returns (uint256);
     function owner() external view returns (address);
     function pendingOwner() external view returns (address);
-    function pileHead(Lane lane) external view returns (uint256);
-    function pileNext(uint256 id) external view returns (uint256);
     function pilePage(Lane lane, uint256 startAfter, uint256 n) external view returns (uint256[] memory ids);
     function pileSize(Lane lane) external view returns (uint256);
     function rateAtCheckpoint() external view returns (uint256);
@@ -177,7 +164,6 @@ interface ICore {
     function rescueCoin(address, uint256) external;
     function rescueNft(address, uint256, address) external;
     function retired() external view returns (bool);
-    function scoreOf(uint256 id) external view returns (uint256);
     function sellForEth(uint256[] memory ids, uint256 minOut) external;
     function sellForEth(uint256[] memory ids) external;
     function sellForExitToken(uint256[] memory ids) external;
@@ -188,7 +174,6 @@ interface ICore {
     function setRate(uint256 rate) external;
     function setSettings(Settings memory) external;
     function setSuccessor(address) external;
-    function setXRate(uint256 rate) external;
     function settings() external view returns (Settings memory);
     function skim() external;
     function statementInfo(uint256 sid) external view returns (bool held, Lane lane, uint256 cost, uint64 clockStart);
@@ -201,7 +186,7 @@ interface ICore {
     function syncStatement(uint256 sid) external;
     function targetsLocked() external view returns (bool);
     function transferOwnership(address to) external;
-    function unitPerPoint() external view returns (uint256);
+    function unitPerCredit() external view returns (uint256);
     function unlockCallback(bytes memory data) external returns (bytes memory);
     function xPot() external view returns (uint256);
     function xRate() external view returns (uint256 r);

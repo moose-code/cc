@@ -8,10 +8,10 @@ import {Lane} from "../src/interfaces/Interfaces.sol";
 /// reaches the Core's storage through it. every field with a public getter is compared with the raw storage word the
 /// mirror assumes, the mappings and the held list by the slot arithmetic the compiler uses
 contract CoreLayoutTest is Fixture {
-    uint256 internal constant S_PILES = 19;
-    uint256 internal constant S_CREDITS = 20;
-    uint256 internal constant S_STATEMENTS = 21;
-    uint256 internal constant S_HELD = 22;
+    uint256 internal constant S_PILES = 15;
+    uint256 internal constant S_CREDITS = 16;
+    uint256 internal constant S_STATEMENTS = 17;
+    uint256 internal constant S_HELD = 18;
 
     /// the bytes `[offset, offset + size)` of storage slot `slot` of the core
     function _field(uint256 slot, uint256 offset, uint256 size) internal view returns (uint256) {
@@ -26,17 +26,10 @@ contract CoreLayoutTest is Fixture {
 
     function test_OK_scalarFieldsSitWhereTheMirrorSays() public {
         _enterPhase2();
-        // the sale opens the hourly window on the pot it finds and spends the cost bases of the three credits in it
         _fundPot(3 ether);
         uint256[] memory sold = _credits(seller, 3);
-        uint256 potBefore = core.ethPot();
         vm.prank(seller);
         core.sellForEth(sold);
-        uint256 spent;
-        for (uint256 i; i < 3; ++i) {
-            (,, uint256 cost,) = core.creditInfo(sold[i]);
-            spent += cost;
-        }
         // xFunded is true: a large exit token balance is booked into the exit pot, which funds the bid
         xt.mint(address(core), 1_000_000_000e18);
         core.skim();
@@ -71,45 +64,46 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(10, 0, 32), core.rateAtCheckpoint(), "rateAtCheckpoint");
         assertEq(_field(11, 0, 8), core.checkpointTime(), "checkpointTime");
         assertEq(_field(11, 8, 8), core.lastFillTime(), "lastFillTime");
-        assertEq(_field(11, 16, 8), block.timestamp, "windowStart");
-        assertEq(_field(12, 0, 32), potBefore, "windowPot");
-        assertEq(_field(13, 0, 32), spent, "windowSpent");
-        assertEq(_field(15, 8, 1), 1, "xFunded is true");
-        assertEq(_field(16, 0, 32), core.lastBuybackBlock(), "lastBuybackBlock");
-        assertEq(_field(17, 0, 32), core.overprintDay(), "overprintDay");
-        assertEq(_field(18, 0, 32), core.overprintCount(), "overprintCount");
-        assertEq(_field(23, 0, 32), core.unitPerPoint(), "unitPerPoint");
-        assertEq(_field(24, 0, 32), core.xStartPrice(), "xStartPrice");
-        assertEq(_field(25, 0, 8), core.xStartTime(), "xStartTime");
-        assertEq(_field(25, 8, 20), uint256(uint160(core.successor())), "successor");
-        assertEq(_field(25, 28, 1), core.successorLocked() ? 1 : 0, "successorLocked");
+        assertEq(_field(13, 8, 1), 1, "xFunded is true");
+        assertEq(_field(14, 0, 32), core.lastBuybackBlock(), "lastBuybackBlock");
+        assertEq(_field(19, 0, 32), core.unitPerCredit(), "unitPerCredit");
+        assertEq(_field(20, 0, 32), core.xStartPrice(), "xStartPrice");
+        assertEq(_field(21, 0, 8), core.xStartTime(), "xStartTime");
+        assertEq(_field(21, 8, 20), uint256(uint160(core.successor())), "successor");
+        assertEq(_field(21, 28, 1), core.successorLocked() ? 1 : 0, "successorLocked");
         assertEq(core.successor(), address(this), "successor value");
         assertTrue(core.successorLocked(), "successorLocked value");
         assertTrue(core.controllerLocked() && core.exitModuleLocked() && core.targetsLocked(), "locks");
         // the first migrate sets retired. the call moves the pots, so it comes after the pot words are compared
-        assertEq(_field(25, 29, 1), 0, "retired is false before a migrate");
+        assertEq(_field(21, 29, 1), 0, "retired is false before a migrate");
         assertFalse(core.retired(), "retired value before");
         vm.prank(owner);
         core.migrate(0);
-        assertEq(_field(25, 29, 1), 1, "retired");
+        assertEq(_field(21, 29, 1), 1, "retired");
         assertTrue(core.retired(), "retired value");
     }
 
     function test_OK_exitRateWordsSitWhereTheMirrorSays() public {
         _enterPhase2();
-        // a fresh exit rate is stored by `setXRate`; the exit pot funds it, so `xRate()` reads the stored word
-        vm.prank(owner);
-        core.setXRate(4321);
-        assertEq(_field(14, 0, 32), 4321, "xRateAtCheckpoint");
-        assertEq(_field(15, 0, 8), block.timestamp, "xCheckpointTime");
-        assertEq(_field(15, 8, 1), 0, "xFunded is false with an empty exit pot");
+        // an exit sale stores the rate after its drops. with an empty exit pot the rate is not funded and `xRate()` reads the stored word
+        assertEq(_field(12, 0, 32), core.XRATE_START(), "xRateAtCheckpoint at the start");
+        assertEq(_field(13, 8, 1), 0, "xFunded is false with an empty exit pot");
+        xt.mint(address(core), 1_000e18);
+        core.skim();
+        uint256[] memory ids = _credits(seller, 2);
+        vm.prank(seller);
+        core.sellForExitToken(ids);
+        assertEq(_field(12, 0, 32), core.xRate(), "xRateAtCheckpoint is the rate after the drops");
+        assertEq(_field(12, 0, 32), core.XRATE_START() - 2 * core.settings().xRateDropPerCredit, "two drops");
+        assertEq(_field(13, 0, 8), block.timestamp, "xCheckpointTime");
+        assertEq(_field(13, 8, 1), 1, "xFunded after the sale");
     }
 
     function test_OK_pilesCreditsAndStatementsSitWhereTheMirrorSays() public {
         uint256[] memory ids = _fillEthPile(5);
         // pile: head, tail, size
         uint256 pile = _mapSlot(uint256(uint8(Lane.Eth)), S_PILES);
-        assertEq(uint256(vm.load(address(core), bytes32(pile))), core.pileHead(Lane.Eth), "pile head");
+        assertEq(uint256(vm.load(address(core), bytes32(pile))), core.pilePage(Lane.Eth, 0, 1)[0], "pile head");
         assertEq(uint256(vm.load(address(core), bytes32(pile + 1))), ids[4], "pile tail");
         assertEq(uint256(vm.load(address(core), bytes32(pile + 2))), core.pileSize(Lane.Eth), "pile size");
         // credit: cost, prev, next, then acquiredAt | lane | inPile
@@ -118,7 +112,7 @@ contract CoreLayoutTest is Fixture {
             (bool inPile, Lane lane, uint256 cost, uint64 at) = core.creditInfo(ids[i]);
             assertEq(uint256(vm.load(address(core), bytes32(base))), cost, "credit cost");
             assertEq(uint256(vm.load(address(core), bytes32(base + 1))), i == 0 ? 0 : ids[i - 1], "credit prev");
-            assertEq(uint256(vm.load(address(core), bytes32(base + 2))), core.pileNext(ids[i]), "credit next");
+            assertEq(uint256(vm.load(address(core), bytes32(base + 2))), i == 4 ? 0 : ids[i + 1], "credit next");
             uint256 word = uint256(vm.load(address(core), bytes32(base + 3)));
             assertEq(word & type(uint64).max, at, "credit acquiredAt");
             assertEq((word >> 64) & 0xff, uint256(uint8(lane)), "credit lane");

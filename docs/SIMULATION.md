@@ -6,6 +6,8 @@ sim/engine.js is a deterministic model of the engine in src/Core.sol, src/lib/Co
 
 the simulator defaults are the launch values of FLOW decisions 50 and 51 (`idleLoosenBps` 2000, `buybackSlice` 0.5 eth); the tables in this file were run with `idleLoosenBps` 200 and `buybackSlice` 1 eth and are not rerun.
 
+the figures in this file predate FLOW decision 55 (every credit has the same price, no hourly window, no overprint) and are not rerun; `sim/engine.js` follows the contract after it.
+
 the bid rule is `bidRule: 'stepped'`. the earlier rule stays available as `bidRule: 'built'` for the comparison in docs/BID-STUDY.md.
 
 ## base case, before and after

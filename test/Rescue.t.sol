@@ -164,7 +164,7 @@ contract RescueTest is Fixture {
         CREDITS.transferFrom(seller, address(core), stray[0]);
         _rescue(address(CREDITS), stray[0], dest);
         assertEq(core.pileSize(Lane.Eth), 5, "the pile changed");
-        assertEq(core.pileHead(Lane.Eth), ids[0], "the pile head changed");
+        assertEq(core.pilePage(Lane.Eth, 0, 1)[0], ids[0], "the pile head changed");
         _fillEthPile(75);
         assertEq(core.pileSize(Lane.Eth), 80, "the pile did not fill");
         _composeOnce();

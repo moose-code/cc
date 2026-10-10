@@ -1121,34 +1121,6 @@ contract SaleRelistTest is SaleBase {
         core.repriceStatement(sid);
         assertEq(_live(sid).reserve, _cost(sid) * 2, "a repaired controller prices it again");
     }
-
-    /// the overprint relist: the base keeps its id, sums the cost, restarts the clock and lists at the start price of
-    /// the summed cost
-    function test_relist_overprintRestartsTheBaseClock() public {
-        _enterPhase2();
-        uint256 a = _composeOnce().sid;
-        uint256 b = _another();
-        ScriptedController sc = new ScriptedController();
-        sc.setOverprint(true, a, b);
-        _setController(address(sc));
-        uint256 sum = _cost(a) + _cost(b);
-        uint64 first = _listedAt(a);
-        vm.warp(uint256(first) + 100 hours);
-        vm.prank(keeper);
-        core.overprint();
-        assertEq(_cost(a), sum, "the cost is summed");
-        assertEq(_listedAt(a), block.timestamp, "the base clock restarted");
-        assertEq(_live(a).reserve, sum * 11_000 / 10_000, "listed at age zero on the summed cost");
-        (bool held,,,) = core.statementInfo(b);
-        assertFalse(held, "the top is gone");
-        // the base was listed 100 hours ago but may not exit for 105 hours from the relist
-        _warp(104 hours);
-        vm.expectRevert(ICore.TooEarly.selector);
-        core.exitStatement(a);
-        _warp(1 hours);
-        core.exitStatement(a);
-        assertEq(STATEMENTS.ownerOf(a), address(mod));
-    }
 }
 
 contract SaleSettingsTest is SaleBase {

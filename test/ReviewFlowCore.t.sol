@@ -21,77 +21,14 @@ contract ReviewFlowCoreTest is Fixture {
     /// @dev what one credit costs on the open market at the pin, used only to price what an accomplice paid
     uint256 internal constant MARKET = 0.0089 ether;
 
-    function _hot(uint256 spendCap, uint256 avg) internal view returns (Settings memory h) {
-        h = core.settings();
-        h.spendCapBps = uint16(spendCap);
-        h.dropPerCreditBps = 1;
-        h.dropFloorBps = 10_000;
-        h.avgScore = uint32(avg);
-    }
-
-    /// the owner raises the rate cap and sets the hot (but in bounds) settings: spend cap, score and the rate drop at
-    /// their loosest (a floor of 100 percent holds the rate through a batch). the rate is then set to the top of the rate bounds
-    function _hotSettings() internal view returns (Settings memory h) {
-        h = _hot(10_000, 6_000_000);
-        h.rateCap = uint64(RATE_START_MAX_WEI);
-    }
-
     /// FC-1 (accepted by the owner): the owner sets the price the engine pays, so an accomplice seller can be overpaid.
-    /// the bounds limit the speed, not the price per credit. this measures the worst case under the bounds in
-    /// docs/FLOW.md: per transaction (one block) and per day, as a share of the pot. the numbers in docs/ARCHITECTURE.md
-    /// and docs/REVIEW-flow-core.md are these
+    /// the pot is the only limit: with the rate at the launch `rateCap` the credits of one transaction take the whole
+    /// pot, as many as the pot pays, the last at the clamp
     function test_ACCEPTED_ownerCanOverpayAnAccompliceSeller() public {
         _skipSniperWindow();
         _fundPot(10 ether);
         uint256 pot = core.ethPot();
         vm.warp(block.timestamp + 2 hours);
-
-        // per transaction: every lever at its loosest, in one block, then everything put back
-        Settings memory launch = core.settings();
-        uint256 rate0 = core.ethRate();
-        vm.startPrank(owner);
-        core.setSettings(_hotSettings());
-        core.setRate(RATE_START_MAX_WEI);
-        vm.stopPrank();
-        uint256 price = core.ceilingOf(_credits(seller, 1)[0]);
-        uint256 room = pot * 10_000 / 10_000;
-        assertEq(price, uint256(RATE_START_MAX_WEI) * 6_000_000 / 1e4, "the rate cap at its bound sets the price of a credit");
-        // the clamp falls as the pot is spent: credit after credit until the next one would pass the room
-        uint256 got;
-        uint256 n;
-        for (uint256 j; j < 300; ++j) {
-            uint256[] memory one = _credits(seller, 1);
-            uint256 p = core.ceilingOf(one[0]);
-            if (p == 0 || got + p > room) break;
-            uint256 b = seller.balance;
-            vm.prank(seller);
-            core.sellForEth(one);
-            got += seller.balance - b;
-            ++n;
-        }
-        vm.startPrank(owner);
-        core.setSettings(launch);
-        core.setRate(rate0);
-        vm.stopPrank();
-        emit log_named_uint("per tx: pot before (wei)", pot);
-        emit log_named_uint("per tx: paid to the accomplice (wei)", got);
-        emit log_named_uint("per tx: share of the pot, bps", got * 10_000 / pot);
-        emit log_named_uint("per tx: market value of the credits (wei)", n * MARKET);
-        assertApproxEqAbs(got * 10_000 / pot, 9_999, 10, "99.99 percent of the pot in one block, the figure in docs/FLOW.md");
-        assertLe(got, pot, "never above the spend cap of 100 percent");
-        assertGe(got, pot * 99 / 100, "at least 99 percent in one block");
-        assertGt(got, n * MARKET * 25, "paid 25x market");
-        _solvent();
-    }
-
-    /// FC-1 per transaction at the launch settings: no `setSettings`, only `setRate` to the launch `rateCap`. the owner
-    /// sells credits it controls into the bid in one block until the hourly room is spent
-    function test_ACCEPTED_ownerPerTransactionAtLaunchSettings() public {
-        _skipSniperWindow();
-        _fundPot(10 ether);
-        uint256 pot = core.ethPot();
-        vm.warp(block.timestamp + 2 hours);
-        uint256 room = pot * core.settings().spendCapBps / 10_000;
         uint256 launchCap = core.settings().rateCap;
         vm.prank(owner);
         core.setRate(launchCap);
@@ -99,84 +36,20 @@ contract ReviewFlowCoreTest is Fixture {
         uint256 n;
         for (uint256 j; j < 300; ++j) {
             uint256[] memory one = _credits(seller, 1);
-            uint256 p = core.ceilingOf(one[0]);
-            if (p == 0 || got + p > room) break;
+            uint256 p = core.ethRate();
+            if (p == 0) break;
             uint256 b = seller.balance;
             vm.prank(seller);
             core.sellForEth(one);
             got += seller.balance - b;
             ++n;
         }
-        emit log_named_uint("per tx at launch settings: pot before (wei)", pot);
-        emit log_named_uint("per tx at launch settings: paid (wei)", got);
-        emit log_named_uint("per tx at launch settings: share of the pot, bps", got * 10_000 / pot);
-        emit log_named_uint("per tx at launch settings: market value of the credits (wei)", n * MARKET);
-        assertApproxEqAbs(got * 10_000 / pot, 9_999, 10, "99.99 percent of the pot in one block at the launch settings");
-        assertLe(got, room, "never above the hourly room");
+        emit log_named_uint("pot before (wei)", pot);
+        emit log_named_uint("paid to the accomplice (wei)", got);
+        emit log_named_uint("market value of the credits (wei)", n * MARKET);
+        assertEq(got, pot, "the whole pot in one block");
+        assertGt(got, n * MARKET * 5, "paid several times the market");
         _solvent();
-    }
-
-    /// FC-1 per day: the owner acts every hour for 24 hours, at the loosest settings and at the launch settings
-    function test_ACCEPTED_ownerPerDayWorstCase() public {
-        _skipSniperWindow();
-        _fundPot(10 ether);
-        uint256 pot0 = core.ethPot();
-        uint256 snap = vm.snapshotState();
-        for (uint256 mode; mode < 2; ++mode) {
-            if (mode == 1) {
-                vm.revertToState(snap);
-            } else {
-                Settings memory hot = _hotSettings();
-                vm.prank(owner);
-                core.setSettings(hot);
-            }
-            Settings memory cur = core.settings();
-            uint256 total;
-            uint256 credits;
-            for (uint256 h; h < 24; ++h) {
-                vm.warp(block.timestamp + 1 hours + 1);
-                uint256 room = core.ethPot() * cur.spendCapBps / 10_000;
-                uint256 r = room * 1e4 / cur.avgScore;
-                if (r > cur.rateCap) r = cur.rateCap;
-                if (r < RATE_START_MIN_WEI) break;
-                vm.prank(owner);
-                core.setRate(r);
-                // the read is bounded by the clamp: a credit costs the rate cap and the clamp falls as the
-                // pot is spent, so the seller sells credit after credit until the next one would pass the room
-                uint256 spent;
-                for (uint256 j; j < 300; ++j) {
-                    uint256[] memory one = _credits(seller, 1);
-                    uint256 p = core.ceilingOf(one[0]);
-                    if (p == 0 || spent + p > room) break;
-                    uint256 b = seller.balance;
-                    vm.prank(seller);
-                    core.sellForEth(one);
-                    spent += seller.balance - b;
-                    ++credits;
-                }
-                total += spent;
-                if (h == 0) {
-                    emit log_named_uint(
-                        mode == 0
-                            ? "first window, loosest: share of the pot, bps"
-                            : "first window, launch: share of the pot, bps",
-                        total * 10_000 / pot0
-                    );
-                }
-            }
-            emit log_named_uint(
-                mode == 0 ? "per day, loosest settings: paid (wei)" : "per day, launch settings: paid (wei)", total
-            );
-            emit log_named_uint("per day: share of the pot, bps", total * 10_000 / pot0);
-            emit log_named_uint("per day: market value of the credits (wei)", credits * MARKET);
-            assertApproxEqAbs(
-                total * 10_000 / pot0,
-                9_999,
-                10,
-                "99.99 percent per day at the loosest and at the launch settings, the figures in docs/FLOW.md"
-            );
-            _solvent();
-        }
     }
 
     function _expectBad(Settings memory s, bytes32 field) internal {
@@ -243,13 +116,13 @@ contract ReviewFlowCoreTest is Fixture {
         assertTrue(lib != address(0), "library found");
         // control: the same construction works while the library has code
         ICore ok = Prod.newCore(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings);
-        assertEq(ok.settings().avgScore, lc.settings.avgScore, "control builds");
+        assertEq(ok.settings().dropPerCreditBps, lc.settings.dropPerCreditBps, "control builds");
         vm.etch(lib, "");
         bool built;
         try this.buildCore() returns (ICore c2) {
             built = true;
             emit log("constructed against an empty library");
-            emit log_named_uint("avgScore stored", c2.settings().avgScore);
+            emit log_named_uint("dropPerCreditBps stored", c2.settings().dropPerCreditBps);
         } catch {
             emit log("constructor reverted");
         }
@@ -262,13 +135,11 @@ contract ReviewFlowCoreTest is Fixture {
     }
 
     function _allMin() internal pure returns (Settings memory m) {
-        m.avgScore = 800_000;
         m.dropPerCreditBps = 1;
         m.dropFloorBps = 5_000;
         m.climbPerMinBps = 1;
         m.ceilBps = 10_000;
         m.idleLoosenBps = 1;
-        m.spendCapBps = 100;
         m.saleFloorBps = 1_000;
         m.auctionDuration = 6 hours;
         m.exitAfter = 1 hours;
@@ -281,15 +152,11 @@ contract ReviewFlowCoreTest is Fixture {
 
     function _allMax() internal pure returns (Settings memory m) {
         m = Settings(
-            10_000,
-            6_000_000,
             1_000,
             10_000,
             1_000,
             30_000,
             2_000,
-            10_000,
-            5_000,
             2_500,
             500,
             15_000,
@@ -333,20 +200,18 @@ contract ReviewFlowCoreTest is Fixture {
             // the three raw words hold exactly the values and nothing else
             bytes32 slot = 0xb5805f89ef62cd999f965a45fb6f4c11141caa04e5c4acba9c2552ef76902804;
             uint256 w0 = uint256(vm.load(address(core), slot));
-            assertEq(uint16(w0 >> 224), two[i].saleFloorBps, "the sale floor sits at bits 224 to 239");
-            assertEq(w0 >> 240, 0, "slot 0 top bits clear");
-            assertEq(uint16(w0 >> 128), two[i].spendCapBps, "the spend cap sits at bits 128 to 143");
+            assertEq(uint16(w0 >> 144), two[i].saleFloorBps, "the sale floor sits at bits 144 to 159");
+            assertEq(uint16(w0 >> 240), two[i].exitToBuybackBps, "the exit eth lane share sits at bits 240 to 255");
             uint256 w2 = uint256(vm.load(address(core), bytes32(uint256(slot) + 2)));
-            assertEq(w2 >> 208, 0, "slot 2 top bits clear");
-            assertEq(uint16(w2 >> 192), two[i].feeToBuybackBps, "the fee share sits at bits 192 to 207");
-            assertEq(uint64(w2 >> 112), two[i].rateCap, "the rate cap sits at bits 112 to 175");
-            assertEq(uint16(w2 >> 176), two[i].exitLaneToBuybackBps, "the exit lane share sits at bits 176 to 191");
+            assertEq(w2 >> 112, 0, "slot 2 top bits clear");
+            assertEq(uint16(w2 >> 96), two[i].feeToBuybackBps, "the fee share sits at bits 96 to 111");
+            assertEq(uint64(w2 >> 16), two[i].rateCap, "the rate cap sits at bits 16 to 79");
+            assertEq(uint16(w2 >> 80), two[i].exitLaneToBuybackBps, "the exit lane share sits at bits 80 to 95");
         }
     }
 
     function _hostileMix() internal pure returns (Settings memory m) {
         m = _allMax();
-        m.avgScore = 800_000;
         m.xAuctionHalfLife = 10 minutes;
         m.xRateFloor = 0;
         m.xRateCap = 0;
@@ -399,7 +264,7 @@ contract ReviewFlowCoreTest is Fixture {
         uint256[] memory ids = _credits(seller, 1);
         uint256 last;
         for (; hrs < 24 * 40; ++hrs) {
-            price = core.ceilingOf(ids[0]);
+            price = core.ethRate();
             if (price == last) break;
             last = price;
             vm.warp(block.timestamp + 1 hours);
@@ -415,17 +280,17 @@ contract ReviewFlowCoreTest is Fixture {
     /// so what one seller can take stays at the cap price however long the market is dead
     function test_FIXED_idleClimbStopsAtTheRateCap() public {
         uint256[3] memory pots = [uint256(1 ether), 5 ether, 20 ether];
-        uint256 capPrice = uint256(core.settings().rateCap) * core.settings().avgScore / 1e4;
+        uint256 capPrice = uint256(core.settings().rateCap);
         for (uint256 i; i < 3; ++i) {
             uint256 snap = vm.snapshotState();
             (uint256 hrs, uint256 took, uint256 pot) = _idle(pots[i]);
             emit log_named_uint("pot (wei)", pot);
             emit log_named_uint("hours until the limit stops climbing", hrs);
             emit log_named_uint("one seller took (wei)", took);
-            emit log_named_uint("cap price of one average credit (wei)", capPrice);
+            emit log_named_uint("cap price of one credit (wei)", capPrice);
             assertEq(core.ethRate() <= core.settings().rateCap, true, "the rate never passes the cap");
             assertLe(took, capPrice, "one credit never pays more than the cap price");
-            assertLe(took, pot * core.settings().spendCapBps / 10_000, "never above the hourly cap");
+            assertLe(took, pot, "never above the pot");
             vm.revertToState(snap);
         }
     }
@@ -437,7 +302,7 @@ contract ReviewFlowCoreTest is Fixture {
         vm.deal(address(core), address(core).balance + 100 ether);
         core.skim();
         Settings memory s = core.settings();
-        assertEq(s.rateCap, 205_540_000_000_000, "launch value");
+        assertEq(s.rateCap, 89_000_000_000_000_000, "launch value");
         vm.prank(owner);
         vm.expectRevert(ICore.BadRate.selector);
         core.setRate(uint256(s.rateCap) + 1);
@@ -473,10 +338,10 @@ contract ReviewFlowCoreTest is Fixture {
         _warp(60 days);
         assertEq(core.ethRate(), core.settings().rateCap, "clamped by the cap, not by the pot");
         Settings memory s = core.settings();
-        s.rateCap = 5e14;
+        s.rateCap = 2 * s.rateCap;
         _setSettings(s);
         _warp(60 days);
-        assertEq(core.ethRate(), 5e14, "a higher cap lets the climb continue to it");
+        assertEq(core.ethRate(), s.rateCap, "a higher cap lets the climb continue to it");
     }
 
     /// FC-3 (fixed by bounds, tightened by V2R-2): the buyback slice tops out at 1 eth. a sandwich around a slice at the
@@ -518,8 +383,8 @@ contract ReviewFlowCoreTest is Fixture {
     function test_dirtyCalldataWordsAreRefused() public {
         Settings memory base = core.settings();
         bytes memory good = abi.encodeCall(ICore.setSettings, (base));
-        assertEq(good.length, 4 + 30 * 32);
-        for (uint256 i; i < 30; ++i) {
+        assertEq(good.length, 4 + 26 * 32);
+        for (uint256 i; i < 26; ++i) {
             bytes memory bad = bytes.concat(good);
             uint256 off = 32 + 4 + i * 32;
             uint256 w;
@@ -623,35 +488,6 @@ contract ReviewFlowCoreTest is Fixture {
         assertEq(STATEMENTS.supply(), supply + 1, "the page under the cut composes");
     }
 
-    /// held: at the clamp the flat ceiling equals the hourly cap, so a bonus on top makes the credit unsellable
-    /// (HourlyCap). the cap is never passed
-    function test_bonusAtTheClampCannotPassTheHourlyCap() public {
-        _skipSniperWindow();
-        // the launch rate cap (10 times the opening rate) sits below the funded clamp: raise it to the bounds, with
-        // the clamp at one credit of hourly room, a spend cap of 20 percent and the ceiling at its loosest
-        Settings memory cs = core.settings();
-        cs.rateCap = uint64(RATE_START_MAX_WEI);
-        cs.ceilBps = 30_000;
-        cs.idleLoosenBps = 2_000;
-        cs.spendCapBps = 2_000;
-        _setSettings(cs);
-        _fundPotNear(2 ether);
-        ScriptedController sc = new ScriptedController();
-        _setController(address(sc));
-        // the eth rate climbs lazily: a week at the climb settings reaches the clamp
-        _warp(7 days);
-        uint256[] memory ids = _credits(seller, 2);
-        sc.setWants(ids[0], 2_500);
-        uint256 flat = core.ceilingOf(ids[1]);
-        assertApproxEqRel(flat, core.ethPot() * 2_000 / 10_000, 1e9, "at the clamp the flat ceiling is the hourly cap");
-        assertApproxEqRel(core.ceilingOf(ids[0]), flat * 12_500 / 10_000, 1e9, "bonus on top");
-        vm.prank(seller);
-        vm.expectRevert(ICore.HourlyCap.selector);
-        core.sellForEth(_one(ids[0]));
-        vm.prank(seller);
-        core.sellForEth(_one(ids[1]));
-    }
-
     /// held: the exit bid at 100 percent of score pays exactly what the module pays back for the same credits, so
     /// selling credits for exit token and exiting them leaves the exit pot whole
     function test_exitBidAtParIsAWash() public {
@@ -663,8 +499,6 @@ contract ReviewFlowCoreTest is Fixture {
         s.xRateFloor = 10_000;
         s.xRateDropPerCredit = 0;
         _setSettings(s);
-        vm.prank(owner);
-        core.setXRate(10_000);
         xt.mint(address(core), 1e20);
         core.skim();
         uint256 xBefore = core.xPot();
@@ -694,10 +528,6 @@ contract BurnController {
         BURN = burn_;
     }
 
-    function wants(uint256) external pure returns (uint16) {
-        return 0;
-    }
-
     function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format) {
         uint256 stop = gasleft() - BURN;
         uint256 h;
@@ -710,10 +540,6 @@ contract BurnController {
             ids[i] = page[i];
         }
         return (true, ids, 0);
-    }
-
-    function nextOverprint() external pure returns (bool, uint256, uint256) {
-        return (false, 0, 0);
     }
 
     function statementPrice(uint256, uint256 cost, uint64) external pure returns (uint256) {

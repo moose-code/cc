@@ -385,7 +385,6 @@ contract FeeFlowTest is FeeBase {
             s.saleToBuybackBps = uint16(share[i]);
             s.exitToBuybackBps = s.saleToBuybackBps;
             s.saleFloorBps = 40_000;
-            s.flatBps = 0;
             _setSettings(s);
             Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
             (, uint256 toEngine) = _routerSplit(f.routerRise);
@@ -467,7 +466,7 @@ contract ReceiveTest is FeeBase {
         assertTrue(ok);
         emit log_named_uint("receive gas, 20 years, rate 1, pot 1e8 eth", g);
         assertLt(g, 400_000);
-        uint256 clamp = (core.ethPot() - 1 ether) * core.settings().spendCapBps / uint256(core.settings().avgScore);
+        uint256 clamp = core.ethPot() - 1 ether;
         assertEq(core.rateAtCheckpoint(), clamp < core.settings().rateCap ? clamp : core.settings().rateCap, "cap");
     }
 
@@ -569,7 +568,7 @@ contract ReceiveTest is FeeBase {
         _stock();
         _fundPot(1 ether);
         uint256 id = _credits(address(t), 1)[0];
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         uint256 swapEth = ceiling * 5;
         vm.deal(address(t), swapEth);
         t.arm(id, swapEth);
@@ -632,16 +631,13 @@ contract ReceiveSettingsTest is FeeBase {
     function _randomSettings(uint256 seed) internal view returns (Settings memory s) {
         s = core.settings();
         // forge-lint: disable-start(unsafe-typecast)
-        s.flatBps = uint16(_pick(seed, 0, 0, 10_000));
-        s.avgScore = uint32(_pick(seed, 1, 800_000, 6_000_000));
         s.dropPerCreditBps = uint16(_pick(seed, 2, 1, 1_000));
         s.dropFloorBps = uint16(_pick(seed, 3, 5_000, 10_000));
         s.climbPerMinBps = uint16(_pick(seed, 4, 1, 1_000));
         s.ceilBps = uint16(_pick(seed, 5, 10_000, 30_000));
         s.idleLoosenBps = uint16(_pick(seed, 9, 1, 2_000));
-        s.spendCapBps = uint16(_pick(seed, 6, 100, 10_000));
         s.saleToBuybackBps = uint16(_pick(seed, 7, 0, 10_000));
-        s.rateCap = uint64(_pick(seed, 8, 1e11, 1e15));
+        s.rateCap = uint64(_pick(seed, 8, 1e13, 1e18));
         // forge-lint: disable-end(unsafe-typecast)
     }
 
@@ -657,7 +653,7 @@ contract ReceiveSettingsTest is FeeBase {
         for (uint256 i; i < 3; ++i) {
             _setSettings(_randomSettings(uint256(keccak256(abi.encode(seed, i)))));
             if (i == 1) {
-                uint256 newRate = _pick(seed, 99, 1e11, core.settings().rateCap);
+                uint256 newRate = _pick(seed, 99, 1e13, core.settings().rateCap);
                 vm.prank(owner);
                 core.setRate(newRate);
             }
@@ -677,19 +673,17 @@ contract ReceiveSettingsTest is FeeBase {
     function test_receiveAfterTheSteepestSettingsAndTheLongestGap() public {
         assertTrue(_hookSend(100_000_000 ether));
         vm.prank(owner);
-        core.setRate(1e11);
+        core.setRate(1e13);
         Settings memory s = core.settings();
         s.climbPerMinBps = 1_000;
         s.ceilBps = 30_000;
         s.idleLoosenBps = 2_000;
-        s.spendCapBps = 10_000;
-        s.avgScore = 800_000;
         _setSettings(s);
         _warp(100 * 365 days);
         uint256 g = gasleft();
         assertTrue(_hookSend(1 ether));
         assertLt(g - gasleft(), 400_000, "bounded work");
-        assertLe(core.rateAtCheckpoint(), (core.ethPot() - 1 ether) * core.settings().spendCapBps / 800_000, "clamped at the cap");
+        assertLe(core.rateAtCheckpoint(), core.ethPot() - 1 ether, "clamped at the cap");
     }
 
     /// the hook pushes its skim into the core in the middle of `buyback`, under changed settings. the push is booked
@@ -700,7 +694,6 @@ contract ReceiveSettingsTest is FeeBase {
         uint256[3] memory tips = [uint256(0), 200, 500];
         for (uint256 i; i < 3; ++i) {
             Settings memory s = core.settings();
-            s.flatBps = uint16(i * 5_000 > 10_000 ? 10_000 : i * 5_000);
             s.dropPerCreditBps = uint16(50 * (i + 1));
             s.saleToBuybackBps = 10_000;
             s.buybackDelay = 1;
@@ -734,7 +727,7 @@ contract ReceiveSettingsTest is FeeBase {
         }
     }
 
-    /// the push inside `buyListing`'s measurement under changed settings (flat share, tip rules). nothing is booked
+    /// the push inside `buyListing`'s measurement under changed settings (tip rules). nothing is booked
     /// then, the push only lowers the measured cost, and the tip follows the settings
     function test_receiveMidBuyListingAcrossSettings() public {
         SwapMidListing t = new SwapMidListing(router, address(core), launchKey);
@@ -743,28 +736,26 @@ contract ReceiveSettingsTest is FeeBase {
         _stock();
         _fundPot(1 ether);
         uint256 snap = vm.snapshotState();
-        uint256[3] memory flat = [uint256(10_000), 5_000, 0];
         uint256[3] memory tipSav = [uint256(1_000), 2_500, 0];
         uint256[3] memory tipCap = [uint256(200), 500, 100];
         for (uint256 i; i < 3; ++i) {
             vm.revertToState(snap);
-            _midListingCase(t, flat[i], tipSav[i], tipCap[i]);
+            _midListingCase(t, tipSav[i], tipCap[i]);
         }
     }
 
     /// @dev one setting row of `test_receiveMidBuyListingAcrossSettings` (a helper so the locals fit the stack)
-    function _midListingCase(SwapMidListing t, uint256 flat, uint256 tipSav, uint256 tipCap) internal {
+    function _midListingCase(SwapMidListing t, uint256 tipSav, uint256 tipCap) internal {
         {
             Settings memory s = core.settings();
             // forge-lint: disable-start(unsafe-typecast)
-            s.flatBps = uint16(flat);
             s.tipSavingsBps = uint16(tipSav);
             s.tipCapBps = uint16(tipCap);
             // forge-lint: disable-end(unsafe-typecast)
             _setSettings(s);
         }
         uint256 id = _credits(address(t), 1)[0];
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         uint256 swapEth = ceiling * 5;
         vm.deal(address(t), swapEth);
         t.arm(id, swapEth);
@@ -807,7 +798,7 @@ contract ReceiveSettingsTest is FeeBase {
         assertEq(core.ethPot(), pot - (address(this).balance - gas0), "nothing booked mid exit");
         assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), 0);
         assertEq(core.xPot(), 0);
-        assertEq(core.xToBuyback(), STATEMENTS.creditScoreOf(c.sid) * UNIT, "the whole exit went to the buyback");
+        assertEq(core.xToBuyback(), STATEMENTS.creditsOf(c.sid) * UNIT, "the whole exit went to the buyback");
         core.skim();
         assertEq(core.ethPot() + core.ethToBuyback(), address(core).balance);
     }
@@ -888,7 +879,7 @@ contract ReceiveSettingsTest is FeeBase {
                 vm.prank(trader);
                 router.swap{value: 1 ether}(launchKey, true, -1 ether, trader);
             } else {
-                uint256 newRate = _pick(r, 5, 1e11, core.settings().rateCap);
+                uint256 newRate = _pick(r, 5, 1e13, core.settings().rateCap);
                 vm.prank(owner);
                 core.setRate(newRate);
             }
@@ -1150,7 +1141,7 @@ contract AuctionTest is FeeBase {
     }
 
     function _fullSlice() internal view returns (uint256) {
-        return uint256(core.settings().exitSliceCredits) * core.settings().avgScore * UNIT;
+        return uint256(core.settings().exitSliceCredits) * UNIT;
     }
 
     /// @dev the taker buys coin in the real pool and approves the core
@@ -1592,12 +1583,12 @@ contract AuctionTest is FeeBase {
         assertEq(core.exitAuctionPrice(), start >> 1, "one hour per halving now");
     }
 
-    /// the slice is `exitSliceCredits` average credits, or what is left. the opening price asks the whole supply for
+    /// the slice is `exitSliceCredits` credits, or what is left. the opening price asks the whole supply for
     /// one full slice at the credits in force when the module is set
     function _sliceCase(uint256 credits) internal {
         _auctionSettings(6 hours, credits);
         _auction();
-        uint256 full = credits * core.settings().avgScore * UNIT;
+        uint256 full = credits * UNIT;
         assertEq(core.xStartPrice(), 1_000_000_000e18 * 1e18 / full, "opening price of the slice in force");
         (uint256 slice, uint256 coinIn) = core.exitAuctionQuote();
         assertEq(slice, full.min(core.xToBuyback()));
@@ -1626,18 +1617,12 @@ contract AuctionTest is FeeBase {
         _auctionSettings(6 hours, 3);
         assertEq(core.exitAuctionPrice(), price, "the price is not touched");
         (uint256 slice,) = core.exitAuctionQuote();
-        assertEq(slice, 3 * uint256(core.settings().avgScore) * UNIT);
-        // the average credit is a setting too
-        Settings memory s = core.settings();
-        s.avgScore = 6_000_000;
-        _setSettings(s);
-        (slice,) = core.exitAuctionQuote();
-        assertEq(slice, 3 * 6_000_000 * UNIT);
+        assertEq(slice, 3 * UNIT);
         (, uint256 coinIn) = _waitUntilAffordable();
         uint256 pool = core.xToBuyback();
         _fill(coinIn);
-        assertEq(core.xToBuyback(), pool - 3 * 6_000_000 * UNIT);
-        assertEq(xt.balanceOf(taker), 3 * 6_000_000 * UNIT);
+        assertEq(core.xToBuyback(), pool - 3 * UNIT);
+        assertEq(xt.balanceOf(taker), 3 * UNIT);
         _solvent();
     }
 

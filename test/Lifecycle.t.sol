@@ -38,31 +38,30 @@ contract LifecycleSwapsTest is Fixture {
         _solvent();
     }
 
-    /// the rate does not climb while the pot cannot afford one average credit, and does not climb retroactively
+    /// the rate does not climb while the pot cannot afford one credit, and does not climb retroactively
     function test_swaps_priceStateWaitsForTheClamp() public {
         _skipSniperWindow();
         assertEq(core.rateAtCheckpoint(), core.RATE_START());
         assertEq(core.ethRate(), 0, "an empty pot reads zero");
 
-        // one average credit costs 1.732e15 wei at the start rate (4e12). a small buy leaves less than one average credit
-        // in the pot
+        // one credit costs 1.732e15 wei at the start rate. a small buy leaves less than one credit in the pot
         _buyCoin(trader, 0.01 ether);
         assertLt(core.ethPot(), 1.7e15);
         _warp(200 hours);
-        assertEq(core.ethRate(), core.ethPot() * 10_000 / core.settings().avgScore, "a small pot reads the clamp");
+        assertEq(core.ethRate(), core.ethPot(), "a small pot reads the clamp");
 
         // the pot grows
         _buyCoin(trader, 0.2 ether);
         assertLe(core.ethRate(), core.RATE_START(), "no retroactive climb");
         assertEq(core.rateAtCheckpoint(), core.RATE_START(), "the price state waited at the opening rate");
-        // a pot that affords an average credit above the opening rate lets the climb start
+        // a pot that affords a credit above the opening rate lets the climb start
         _buyCoin(trader, 10 ether);
         _warp(10 hours);
         assertGt(core.ethRate(), core.RATE_START());
 
         // the climb stops at the clamp of the pot or at the rate cap, whichever is lower
         _warp(2000 hours);
-        uint256 clamp = core.ethPot() * 10_000 / core.settings().avgScore;
+        uint256 clamp = core.ethPot();
         assertEq(core.ethRate(), clamp < core.settings().rateCap ? clamp : core.settings().rateCap);
     }
 
@@ -99,9 +98,6 @@ contract LifecycleDoorsTest is Fixture {
         _fundPot(20 ether);
     }
 
-    /// the average credit of the flat bid, the score every credit is priced as at the launch settings
-    uint256 internal constant AVG = 4_330_000;
-
     /// @dev the rate after one credit bought at `r`, where `start` is the rate of the first fill of the same minute
     function _dropped(uint256 r, uint256 start) internal view returns (uint256) {
         return BidModel.dropOnce(core.settings(), r, start);
@@ -115,17 +111,13 @@ contract LifecycleDoorsTest is Fixture {
         uint256 pot = core.ethPot();
         uint256 rate = core.ethRate();
         assertGt(rate, core.RATE_START(), "funded, so the rate climbed");
-        // flat: every credit is priced as the average one, whatever its own score
-        assertEq(core.ceilingOf(ids[0]), AVG * rate / 1e4);
-        assertEq(core.ceilingOf(ids[1]), core.ceilingOf(ids[0]));
-        assertEq(core.ceilingOf(ids[2]), core.ceilingOf(ids[0]));
 
         uint256[3] memory prices;
         uint256 total;
         uint256 r = rate;
         uint256 p = pot;
         for (uint256 i; i < 3; ++i) {
-            prices[i] = AVG * r / 1e4;
+            prices[i] = r;
             total += prices[i];
             r = _dropped(r, rate);
             p -= prices[i];
@@ -161,8 +153,8 @@ contract LifecycleDoorsTest is Fixture {
     function test_sellForEth_minOutProtectsTheSeller() public {
         uint256[] memory ids = _credits(seller, 2);
         _warp(10 hours);
-        uint256 first = core.ceilingOf(ids[0]);
-        uint256 sum = first + AVG * _dropped(core.ethRate(), core.ethRate()) / 1e4;
+        uint256 first = core.ethRate();
+        uint256 sum = first + _dropped(core.ethRate(), core.ethRate());
         vm.prank(seller);
         vm.expectRevert(ICore.Slippage.selector);
         core.sellForEth(ids, sum + 1);
@@ -208,7 +200,7 @@ contract LifecycleDoorsTest is Fixture {
     }
 
     function _checkListingBuy(uint256 id, uint256 price, bool tipCapBinds) internal {
-        uint256 ceiling = core.ceilingOf(id);
+        uint256 ceiling = core.ethRate();
         uint256 rate = core.ethRate();
         uint256 pot = core.ethPot();
         uint256 balance = address(core).balance;
@@ -240,7 +232,7 @@ contract LifecycleDoorsTest is Fixture {
     function test_buyListing_realStrategy_savingsBoundTip() public {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         assertEq(price, 0.036 ether);
-        assertGt(price, core.ceilingOf(LISTED_A), "the start rate is far below the listing");
+        assertGt(price, core.ethRate(), "the start rate is far below the listing");
         vm.prank(keeper);
         vm.expectRevert(ICore.AboveCeiling.selector);
         core.buyListing(price, _buyData(LISTED_A), LISTED_A, STRATEGY);
@@ -373,8 +365,8 @@ contract LifecycleComposeTest is Fixture {
         _skipSniperWindow();
     }
 
-    /// a funded pot, then 90 hours so the rate climbs to about 21 times the start. a flat credit then costs about
-    /// 0.036 eth and a page of 80 about 2.9 eth, against the hourly cap of 4 eth
+    /// a funded pot, then 90 hours so the rate climbs to about 21 times the start. a credit then costs about
+    /// 0.036 eth and a page of 80 about 2.9 eth
     function _prepare() internal {
         _fundPot(20 ether);
         _warp(90 hours);
@@ -397,11 +389,6 @@ contract LifecycleComposeTest is Fixture {
         assertEq(c.sid, c.supplyBefore + 1);
         assertEq(STATEMENTS.ownerOf(c.sid), address(house), "listed: the house holds it for the auction");
         assertEq(STATEMENTS.creditsOf(c.sid), 80);
-        uint256[] memory page = new uint256[](80);
-        for (uint256 i; i < 80; ++i) {
-            page[i] = c.ids[i];
-        }
-        assertEq(STATEMENTS.creditScoreOf(c.sid), _sumScores(page));
 
         // cost basis is the sum of the credits' cost bases, and the reserve is 110 percent of it (the opening ask)
         (bool held, Lane lane, uint256 basis, uint64 listedAt) = core.statementInfo(c.sid);
@@ -419,7 +406,7 @@ contract LifecycleComposeTest is Fixture {
 
         // the five newest credits are still in the pile and in the core, the 80 are gone into the statement
         assertEq(core.pileSize(Lane.Eth), 5);
-        assertEq(core.pileHead(Lane.Eth), sold[80]);
+        assertEq(core.pilePage(Lane.Eth, 0, 1)[0], sold[80]);
         assertEq(CREDITS.balanceOf(address(core)), 5);
         for (uint256 i; i < 80; ++i) {
             (bool inPile,,,) = core.creditInfo(c.ids[i]);
@@ -645,7 +632,7 @@ contract LifecyclePhase2Test is Fixture {
     }
 
     function _fullSlice() internal view returns (uint256) {
-        return uint256(core.settings().exitSliceCredits) * core.settings().avgScore * UNIT;
+        return uint256(core.settings().exitSliceCredits) * UNIT;
     }
 
     /// an eth lane statement exits only after it was listed without a bid for `exitAfter`: its listing is cancelled and
@@ -662,7 +649,7 @@ contract LifecyclePhase2Test is Fixture {
         core.exitStatement(c.sid);
         vm.warp(c.at + 105 hours);
 
-        required = STATEMENTS.creditScoreOf(c.sid) * UNIT;
+        required = STATEMENTS.creditsOf(c.sid) * UNIT;
         assertEq(core.xPot() + core.xToBuyback(), 0);
         core.exitStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "the module has the statement");
@@ -760,7 +747,7 @@ contract LifecyclePhase2Test is Fixture {
         uint256 total;
         uint256[] memory prices = new uint256[](80);
         for (uint256 i; i < 80; ++i) {
-            prices[i] = core.scoreOf(ids[i]) * r * UNIT / 10_000;
+            prices[i] = r * UNIT / 10_000;
             total += prices[i];
             r = r.zeroFloorSub(core.settings().xRateDropPerCredit).max(core.settings().xRateFloor);
         }
@@ -814,7 +801,7 @@ contract LifecyclePhase2Test is Fixture {
         }
 
         // immediate exit, everything to xPot, nothing to the buyback
-        uint256 required = STATEMENTS.creditScoreOf(sid) * UNIT;
+        uint256 required = STATEMENTS.creditsOf(sid) * UNIT;
         uint256 xPot1 = core.xPot();
         uint256 toBuyback1 = core.xToBuyback();
         core.exitStatement(sid);
@@ -854,7 +841,7 @@ contract LifecyclePhase2Test is Fixture {
 
         // a module that lowers the unit it pays by after it was set. the core holds the unit from set time
         mod.setShortfallBps(0);
-        mod.setUnitPerPoint(1);
+        mod.setUnitPerCredit(1);
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(c.sid);
 
@@ -866,7 +853,7 @@ contract LifecyclePhase2Test is Fixture {
         vm.revertToState(snap);
 
         // an honest module goes through afterwards
-        mod.setUnitPerPoint(UNIT);
+        mod.setUnitPerCredit(UNIT);
         core.exitStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod));
         _solvent();
@@ -910,15 +897,14 @@ contract LifecycleNarrativeTest is Fixture {
         ++steps;
     }
 
-    /// credits sold through the eth door at the flat limit: every credit is paid the same
-    function _sellAtTheFlatLimit(uint256 n) internal {
+    /// credits sold through the eth door at the rate: every credit is paid the same price, which falls with each credit
+    function _sellAtTheRate(uint256 n) internal {
         uint256[] memory ids = _credits(seller, n);
-        uint256 each = core.ceilingOf(ids[0]);
-        assertEq(each, uint256(core.settings().avgScore) * core.ethRate() / 1e4, "the flat limit");
+        uint256 each = core.ethRate();
         uint256 before = seller.balance;
         vm.prank(seller);
         core.sellForEth(ids);
-        // every credit of the batch is paid the flat price at its own point of the falling rate, never above the first
+        // every credit of the batch is paid the rate at its own point of the falling rate, never above the first
         assertLe(seller.balance - before, each * n);
         assertGt(seller.balance - before, each * n * 8 / 10);
         _check();
@@ -984,7 +970,7 @@ contract LifecycleNarrativeTest is Fixture {
     function _exit(uint256 sid, uint64 at) internal {
         assertEq(uint8(_live(sid).status), uint8(ICore.StatementStatus.Listed), "no bid, so still listed");
         vm.warp(at + core.settings().exitAfter);
-        uint256 required = STATEMENTS.creditScoreOf(sid) * UNIT;
+        uint256 required = STATEMENTS.creditsOf(sid) * UNIT;
         uint256 back0 = core.xToBuyback();
         uint256 pot0 = core.xPot();
         core.exitStatement(sid);
@@ -1043,7 +1029,7 @@ contract LifecycleNarrativeTest is Fixture {
                 _check();
             }
             // buys at the flat limit through both doors: the bid, then the strategy listing
-            _sellAtTheFlatLimit(10);
+            _sellAtTheRate(10);
             _buyListing(listed[round]);
             // two statements, both listed: one gets bidders, one gets none
             (uint256 sold,) = _composeNow();
@@ -1065,7 +1051,7 @@ contract LifecycleNarrativeTest is Fixture {
     }
 }
 
-/// the owner adapts the system live: the flat share of the bid, the auction reserve and the sale split change in the
+/// the owner adapts the system live: the drop per credit, the auction reserve and the sale split change in the
 /// middle of a run. old listings are repriced by anyone, and old and new statements behave by the new numbers
 contract LifecycleOwnerAdaptsTest is Fixture {
     address internal alice;
@@ -1091,23 +1077,15 @@ contract LifecycleOwnerAdaptsTest is Fixture {
         _solvent();
     }
 
-    /// what the door pays for credit id at the flat share `flat` and the rate now, no bonus
-    function _blend(uint256 id, uint256 flat) internal view returns (uint256) {
-        return (flat * core.settings().avgScore + (10_000 - flat) * core.scoreOf(id)) * core.ethRate() / 1e8;
-    }
-
     function test_narrative_theOwnerAdaptsTheSystemLive() public {
         _fundPot(20 ether);
         _warp(90 hours);
 
-        // old numbers: a flat bid, a 75 percent floor and a 110 percent ask, an even split of the sale
+        // old numbers: a drop of 0.5 percent, a 75 percent floor and a 110 percent ask, an even split of the sale
         Settings memory old = core.settings();
-        assertEq(old.flatBps, 10_000);
+        assertEq(old.dropPerCreditBps, 50);
         assertEq(old.saleFloorBps, 7_500);
         assertEq(old.saleToBuybackBps, 5_000);
-        uint256[] memory first = _credits(seller, 2);
-        assertEq(core.ceilingOf(first[0]), core.ceilingOf(first[1]), "flat: both credits are worth the same");
-        assertEq(core.ceilingOf(first[0]), _blend(first[0], 10_000));
 
         // two statements listed under the old numbers
         (uint256 s1, uint256 cost1) = _composeFresh();
@@ -1120,7 +1098,7 @@ contract LifecycleOwnerAdaptsTest is Fixture {
 
         // the owner changes three numbers in one call, effective at once
         Settings memory s = core.settings();
-        s.flatBps = 5_000;
+        s.dropPerCreditBps = 100;
         s.saleFloorBps = 12_000;
         s.saleToBuybackBps = 8_000;
         vm.expectEmit(address(core));
@@ -1128,17 +1106,15 @@ contract LifecycleOwnerAdaptsTest is Fixture {
         _setSettings(s);
         _solvent();
 
-        // the bid now follows the score by half, for old and new credits alike
+        // the next fill drops the rate by the new number
         uint256[] memory fresh = _credits(seller, 2);
-        for (uint256 i; i < 2; ++i) {
-            assertEq(core.ceilingOf(fresh[i]), _blend(fresh[i], 5_000), "half flat, half score");
-        }
         {
-            uint256 quote = core.ceilingOf(fresh[0]);
+            uint256 quote = core.ethRate();
             uint256 before = seller.balance;
             vm.prank(seller);
             core.sellForEth(_one(fresh[0]));
             assertEq(seller.balance - before, quote, "paid by the new numbers");
+            assertLe(core.rateAtCheckpoint(), quote, "dropped by the new number or held at the minute floor");
         }
 
         // the old listings are untouched until someone reprices them. a listing with a bid cannot be repriced at all

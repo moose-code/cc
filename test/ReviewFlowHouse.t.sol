@@ -52,17 +52,18 @@ contract ReviewFlowHouseTest is Fixture {
         uint256 a = _composeOnce().sid;
         uint256 b = _composeSecond();
         // both sit in the house, owned by the house
+        bytes memory call = abi.encodeWithSignature("overprint(uint256,uint256)", a, b);
         vm.prank(bob);
-        vm.expectRevert();
-        STATEMENTS.overprint(a, b);
-        // cancel both as the core (what an exit or overprint does) and try again while the core holds them
+        (bool ok,) = address(STATEMENTS).call(call);
+        assertFalse(ok);
+        // cancel both as the core (what an exit does) and try again while the core holds them
         vm.startPrank(address(core));
         house.cancelAuction(_live(a).auctionId);
         house.cancelAuction(_live(b).auctionId);
         vm.stopPrank();
         vm.prank(bob);
-        vm.expectRevert();
-        STATEMENTS.overprint(a, b);
+        (ok,) = address(STATEMENTS).call(call);
+        assertFalse(ok);
         assertEq(STATEMENTS.ownerOf(b), address(core));
     }
 

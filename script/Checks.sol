@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {VmSafe} from "forge-std/Vm.sol";
-import {Stack, Mainnet, ICredits, ICreditScore, IStatements} from "../src/interfaces/Interfaces.sol";
+import {Stack, Mainnet, IStatements} from "../src/interfaces/Interfaces.sol";
 import {IAuctionFactory} from "../src/interfaces/AuctionHouse.sol";
 import {
     IArtCoinsFactoryV2,
@@ -54,13 +54,10 @@ abstract contract LaunchChecks is PostflightChecks {
     uint256 internal constant DEPLOY_GAS_ESTIMATE = 19_200_000;
     /// @dev the Core SUPPLY constant, the coin supply its exit auction is priced against. test/Config.t.sol checks it
     uint256 internal constant CORE_SUPPLY = 1_000_000_000e18;
-    /// @dev credit 1 exists and its score is a pure function of its seed and timestamp
-    uint256 internal constant KNOWN_CREDIT = 1;
     /// @dev the byte caps of the coin's `image` and `description` (`ArtCoinsTokenV2.MAX_IMAGE_BYTES` and
     /// `MAX_DESCRIPTION_BYTES`, the factory reverts above them)
     uint256 internal constant MAX_IMAGE_BYTES = 2048;
     uint256 internal constant MAX_DESCRIPTION_BYTES = 4096;
-    uint256 internal constant KNOWN_SCORE = 1_324_012;
     // the pinned launch rules (docs/DEPLOY.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
     uint24 internal constant PIN_BASELINE_SKIM = 690;
@@ -338,7 +335,6 @@ abstract contract LaunchChecks is PostflightChecks {
         _code("code: mev module", c.mevModule);
         _code("code: Credits", Mainnet.CREDITS);
         _code("code: Statements", Mainnet.STATEMENTS);
-        _code("code: CreditScore", Mainnet.CREDIT_SCORE);
         _code("code: CreditStrategy", Mainnet.CREDIT_STRATEGY);
         _code("code: Seaport", Mainnet.SEAPORT);
         _code("code: Permit2", Mainnet.PERMIT2);
@@ -682,11 +678,6 @@ abstract contract LaunchChecks is PostflightChecks {
         _check("Credits supply", ok1 && cs >= CREDITS_SUPPLY_MIN, vm.toString(cs));
         (bool ok2, uint256 ss) = _word(Mainnet.STATEMENTS, abi.encodeCall(IStatements.supply, ()));
         _check("Statements supply", ok2 && ss >= STATEMENTS_SUPPLY_MIN, vm.toString(ss));
-        if (Mainnet.CREDITS.code.length == 0 || Mainnet.CREDIT_SCORE.code.length == 0) return;
-        ICredits credits = ICredits(Mainnet.CREDITS);
-        uint256 score =
-            ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(credits.seedOf(KNOWN_CREDIT), credits.timestampOf(KNOWN_CREDIT));
-        _eq("CreditScore of credit 1", score, KNOWN_SCORE);
     }
 
     /// @dev the table the owner signs. every row restates one launch input in the words of what it does, then the hash
@@ -711,9 +702,7 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat(
                 "rateStart ",
                 vm.toString(c.rateStart),
-                " wei per point, a flat credit opens at about ",
-                vm.toString(c.rateStart * c.settings.avgScore / 1e4),
-                " wei (launch day rule: the market price of a credit)"
+                " wei per credit (launch day rule: the market price of a credit)"
             )
         );
         _info(
@@ -746,13 +735,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _info(
             "signoff: bid",
             string.concat(
-                "flatBps ",
-                vm.toString(c.settings.flatBps),
-                " avgScore ",
-                vm.toString(c.settings.avgScore),
-                " spendCapBps ",
-                vm.toString(c.settings.spendCapBps),
-                " rateCap ",
+                "rateCap ",
                 vm.toString(c.settings.rateCap)
             )
         );

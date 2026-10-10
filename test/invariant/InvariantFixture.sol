@@ -5,7 +5,7 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {Lane, ICreditScore, ICreditStrategy, Mainnet} from "../../src/interfaces/Interfaces.sol";
+import {Lane, ICreditStrategy, Mainnet} from "../../src/interfaces/Interfaces.sol";
 import {IAuctionHouse} from "../../src/interfaces/AuctionHouse.sol";
 import {Fixture} from "../utils/Fixture.sol";
 import {CreditIds} from "../utils/CreditIds.sol";
@@ -22,7 +22,7 @@ import {HandlerSale} from "./HandlerSale.sol";
 
 /// @notice builds the real system on the fork for the invariant suites on top of the single real stack `Fixture`:
 /// the real Core and ControllerV1 deployed through the deploy path, the coin launched through the live artcoins
-/// factory, the live skim hook, locker, mev module and pool manager, and the live Credits, CreditScore, Statements
+/// factory, the live skim hook, locker, mev module and pool manager, and the live Credits, Statements
 /// and CreditStrategy. the only stand ins are the exit module and exit token of phase 2. the attack contracts are
 /// the fuzz controller and the hostile listing target. the owner adds the hostile target, the fuzz controller and,
 /// in phase 2, the exit module at once. the eth pot is funded by real swap fees, the piles are
@@ -175,7 +175,7 @@ abstract contract InvariantFixture is Fixture {
     uint256 internal price1;
     uint256 internal price2;
 
-    /// real credits sold into the piles, four composes so statements exist for the auction, the exit and the overprint,
+    /// real credits sold into the piles, four composes so statements exist for the auction and the exit,
     /// all listed on the house. outside the sniper window two of them are sold: the whale bids the reserve, the
     /// auction runs out and is settled by a stranger, the first is collected so the buyback pot is not empty when the
     /// run starts, the second is left owed by the house. in phase 2 the exit token bid is funded and 80 more credits are
@@ -240,8 +240,7 @@ abstract contract InvariantFixture is Fixture {
         vm.deal(address(probeTarget), 100 ether);
     }
 
-    /// the cheapest real listings, so the ceiling reaches them first. the bid is flat per credit by default, so the
-    /// price alone decides, whatever the score
+    /// the cheapest real listings, so the bid reaches them first
     function _candidates() internal {
         uint256 n = 40;
         uint256[] memory ids = new uint256[](n);
@@ -250,9 +249,8 @@ abstract contract InvariantFixture is Fixture {
             uint256 id = CreditIds.at(CANDIDATE_START + i);
             ids[i] = id;
             uint256 price = ICreditStrategy(Mainnet.CREDIT_STRATEGY).nftForSale(id);
-            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
-            // the price, larger is worse. unlisted ids sort last. the score is read to keep the candidate real
-            key[i] = price == 0 || score == 0 ? type(uint256).max : price;
+            // the price, larger is worse. unlisted ids sort last
+            key[i] = price == 0 ? type(uint256).max : price;
         }
         // keep the best 12 by selection
         uint256 keep = 12;
@@ -282,7 +280,6 @@ abstract contract InvariantFixture is Fixture {
             else if (held[i] == sold2 && sold2 != 0) handler.seedGhostStatement(held[i], whale, price2, false);
             else handler.seedGhostStatement(held[i], address(0), 0, false);
         }
-        handler.seedGhostWindow(_windowStart(), _windowPot(), _windowSpent());
         handler.seedEthBooks();
     }
 
@@ -292,20 +289,6 @@ abstract contract InvariantFixture is Fixture {
             (,, uint256 cost,) = core.creditInfo(ids[i]);
             handler.seedGhostPile(ids[i], uint8(lane), cost);
         }
-    }
-
-    // the hourly window slots of the core, from `forge inspect Core storage-layout`: windowStart is the uint64 at
-    // byte 16 of slot 11, windowPot is slot 12 and windowSpent is slot 13
-    function _windowStart() internal view returns (uint256) {
-        return (uint256(vm.load(address(core), bytes32(uint256(11)))) >> 128) & type(uint64).max;
-    }
-
-    function _windowPot() internal view returns (uint256) {
-        return uint256(vm.load(address(core), bytes32(uint256(12))));
-    }
-
-    function _windowSpent() internal view returns (uint256) {
-        return uint256(vm.load(address(core), bytes32(uint256(13))));
     }
 
     /// how many times each owner action appears in the fuzzer's list. the hostile owner suite raises it
@@ -342,7 +325,6 @@ abstract contract InvariantFixture is Fixture {
         s[n++] = HandlerBase.adopt.selector;
         s[n++] = HandlerBase.controllerSeed.selector;
         s[n++] = HandlerBase.controllerSwap.selector;
-        s[n++] = HandlerBase.overprint.selector;
         s[n++] = HandlerBase.probeController.selector;
         // the fee router: a flush by anyone (the router owner repointing the engine is in the owner list below)
         s[n++] = HandlerBase.flush.selector;
@@ -374,7 +356,6 @@ abstract contract InvariantFixture is Fixture {
             s[n++] = HandlerOwner.setSettings.selector;
             s[n++] = HandlerOwner.setSettingsInvalid.selector;
             s[n++] = HandlerOwner.setRate.selector;
-            s[n++] = HandlerOwner.setXRate.selector;
             s[n++] = HandlerOwner.ownerMisc.selector;
             s[n++] = HandlerOwner.repoint.selector;
             s[n++] = HandlerOwner.rescueNft.selector;

@@ -9,15 +9,11 @@ import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../interfaces/In
 library SettingsBounds {
     /// @notice the name of the first field out of bounds, or zero when every field is inside its bounds
     function firstViolation(Settings memory s) internal pure returns (bytes32) {
-        if (s.flatBps > 10_000) return "flatBps";
-        if (s.avgScore < 800_000 || s.avgScore > 6_000_000) return "avgScore";
         if (s.dropPerCreditBps < 1 || s.dropPerCreditBps > 1_000) return "dropPerCreditBps";
         if (s.dropFloorBps < 5_000 || s.dropFloorBps > 10_000) return "dropFloorBps";
         if (s.climbPerMinBps < 1 || s.climbPerMinBps > 1_000) return "climbPerMinBps";
         if (s.ceilBps < 10_000 || s.ceilBps > 30_000) return "ceilBps";
         if (s.idleLoosenBps < 1 || s.idleLoosenBps > 2_000) return "idleLoosenBps";
-        if (s.spendCapBps < 100 || s.spendCapBps > 10_000) return "spendCapBps";
-        if (s.bonusCapBps > 5_000) return "bonusCapBps";
         if (s.tipSavingsBps > 2_500) return "tipSavingsBps";
         if (s.tipCapBps > 500) return "tipCapBps";
         if (s.reimburseBps > 15_000) return "reimburseBps";
@@ -42,7 +38,7 @@ library SettingsBounds {
         return bytes32(0);
     }
 
-    /// @notice the bounds of the eth rate, wei per whole point. `setRate` and the constructor argument `rateStart`
+    /// @notice the bounds of the eth rate, wei per credit. `setRate` and the constructor argument `rateStart`
     function rateInBounds(uint256 r) internal pure returns (bool) {
         return r >= RATE_START_MIN_WEI && r <= RATE_START_MAX_WEI;
     }

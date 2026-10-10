@@ -39,9 +39,8 @@ abstract contract OwnerBase is Fixture {
     uint256 internal constant D_TARGETS = 2;
     uint256 internal constant D_SETTINGS = 3;
     uint256 internal constant D_RATE = 4;
-    uint256 internal constant D_XRATE = 5;
-    uint256 internal constant D_REMOVE = 6;
-    uint256 internal constant N_DOORS = 8;
+    uint256 internal constant D_REMOVE = 5;
+    uint256 internal constant N_DOORS = 7;
 
     function _doorData(uint256 i) internal returns (bytes memory) {
         if (i == D_CONTROLLER) return abi.encodeCall(ICore.setController, (address(_scripted())));
@@ -54,7 +53,6 @@ abstract contract OwnerBase is Fixture {
         }
         if (i == D_SETTINGS) return abi.encodeCall(ICore.setSettings, (core.settings()));
         if (i == D_RATE) return abi.encodeCall(ICore.setRate, (core.rateAtCheckpoint()));
-        if (i == D_XRATE) return abi.encodeCall(ICore.setXRate, (core.xRate()));
         if (i == D_REMOVE) return abi.encodeCall(ICore.removeTarget, (address(0xDEAD1)));
         return abi.encodeCall(ICore.transferOwnership, (address(0)));
     }
@@ -101,10 +99,7 @@ contract OwnerFormerQueueTest is OwnerBase {
     // ------------------------------------------------------------------ setController
 
     function test_controller_takesEffectInTheSameBlock() public {
-        uint256[] memory ids = _credits(seller, 1);
-        uint256 base = core.ceilingOf(ids[0]);
         ScriptedController sc = _scripted();
-        sc.setWants(ids[0], 1_000);
         uint256 t = block.timestamp;
         uint256 n = block.number;
         vm.expectEmit(address(core));
@@ -113,9 +108,9 @@ contract OwnerFormerQueueTest is OwnerBase {
         assertEq(core.controller(), address(sc));
         assertEq(block.timestamp, t);
         assertEq(block.number, n);
-        assertApproxEqAbs(core.ceilingOf(ids[0]), base * 11_000 / 10_000, 2, "the new bonus applies at once");
-        sc.setWants(ids[0], 0);
-        assertEq(core.ceilingOf(ids[0]), base, "and the controller is read live");
+        // the new controller is read at once: it answers that no page is ready
+        vm.expectRevert(ICore.NotReady.selector);
+        core.compose();
     }
 
     function test_controller_zeroRevertsAndStrangerRevertsAndASecondSetWorks() public {
@@ -158,7 +153,7 @@ contract OwnerFormerQueueTest is OwnerBase {
         _setExitModule(address(spareMod));
         assertEq(core.exitModule(), address(spareMod));
         assertEq(core.exitToken(), address(spareToken));
-        assertEq(core.unitPerPoint(), UNIT);
+        assertEq(core.unitPerCredit(), UNIT);
         assertEq(core.xStartTime(), block.timestamp, "the exit auction opens now");
         assertGt(core.xStartPrice(), 0);
         // the exit side is live in the same block
@@ -199,13 +194,13 @@ contract OwnerFormerQueueTest is OwnerBase {
         m.setRevertUnit(true);
         vm.expectRevert(ICore.BadModule.selector);
         core.setExitModule(address(m));
-        m = new MockExitModule(address(spareToken), 1e28);
+        m = new MockExitModule(address(spareToken), 1e34);
         vm.expectRevert(ICore.BadModule.selector);
         core.setExitModule(address(m));
         vm.stopPrank();
         assertEq(core.exitModule(), address(0), "every refused set changed nothing");
         assertEq(core.exitToken(), address(0));
-        assertEq(core.unitPerPoint(), 0);
+        assertEq(core.unitPerCredit(), 0);
         vm.prank(stranger);
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setExitModule(address(spareMod));
@@ -213,21 +208,21 @@ contract OwnerFormerQueueTest is OwnerBase {
 
     function test_module_replaceKeepsTheTokenAndReadsTheUnitAgain() public {
         _setExitModule(address(spareMod));
-        MockExitModule second = new MockExitModule(address(spareToken), 3e10);
+        MockExitModule second = new MockExitModule(address(spareToken), 3 * UNIT);
         _setExitModule(address(second));
         assertEq(core.exitModule(), address(second));
-        assertEq(core.unitPerPoint(), 3e10, "the unit of the new module");
+        assertEq(core.unitPerCredit(), 3 * UNIT, "the unit of the new module");
         // the same module again after its unit changed
-        second.setUnitPerPoint(4e10);
+        second.setUnitPerCredit(4 * UNIT);
         _setExitModule(address(second));
-        assertEq(core.unitPerPoint(), 4e10, "the unit is read again");
+        assertEq(core.unitPerCredit(), 4 * UNIT, "the unit is read again");
         // another exit token is refused
         MockExitModule other = new MockExitModule(address(new MockExitToken("Other", "OTH")), UNIT);
         vm.prank(owner);
         vm.expectRevert(ICore.ExitTokenChanged.selector);
         core.setExitModule(address(other));
         assertEq(core.exitModule(), address(second));
-        assertEq(core.unitPerPoint(), 4e10);
+        assertEq(core.unitPerCredit(), 4 * UNIT);
     }
 
     // ------------------------------------------------------------------ addTarget
@@ -390,7 +385,7 @@ contract OwnerLocksTest is OwnerBase {
         assertFalse(core.controllerLocked());
         assertFalse(core.targetsLocked());
         address m = core.exitModule();
-        mod.setUnitPerPoint(9e10);
+        mod.setUnitPerCredit(9 * UNIT);
         vm.startPrank(owner);
         vm.expectRevert(_lockedErr("exitModule"));
         core.setExitModule(address(spareMod));
@@ -402,7 +397,7 @@ contract OwnerLocksTest is OwnerBase {
         core.setExitModule(address(0xBEEF));
         vm.stopPrank();
         assertEq(core.exitModule(), m);
-        assertEq(core.unitPerPoint(), UNIT, "the unit cannot be updated any more");
+        assertEq(core.unitPerCredit(), UNIT, "the unit cannot be updated any more");
         _openExcept(D_MODULE, owner);
     }
 

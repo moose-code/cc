@@ -76,7 +76,7 @@ abstract contract RedeemBase is Fixture {
 
     function _notionalCap() internal view returns (uint256) {
         Settings memory s = core.settings();
-        uint256 base = NOTIONAL_COUNT * uint256(s.avgScore) * core.RATE_START() / 1e4;
+        uint256 base = NOTIONAL_COUNT * core.RATE_START();
         return base * s.reimburseCapBps / 10_000;
     }
 
@@ -108,7 +108,7 @@ contract RedeemTimingTest is RedeemBase {
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
         (bool held,,,) = core.statementInfo(sid);
         assertFalse(held);
-        assertEq(core.xPot() + core.xToBuyback(), STATEMENTS.creditScoreOf(sid) * UNIT);
+        assertEq(core.xPot() + core.xToBuyback(), STATEMENTS.creditsOf(sid) * UNIT);
         _solvent();
     }
 
@@ -227,7 +227,6 @@ contract RedeemTimingTest is RedeemBase {
         ScriptedController sc = new ScriptedController();
         sc.setRevertPrice(true);
         sc.setRevertPage(true);
-        sc.setRevertWants(true);
         _setController(address(sc));
         vm.prank(owner);
         core.lockController();
@@ -320,7 +319,7 @@ contract RedeemRepayTest is RedeemBase {
         uint256 sid = _exitLaneStatement();
         hm.setBurn(4_000_000);
         uint256 cap = _notionalCap();
-        assertEq(cap, uint256(80) * core.settings().avgScore * 4e12 / 1e4 * 500 / 10_000);
+        assertEq(cap, uint256(80) * OPEN_RATE * 500 / 10_000);
         assertGt(_gasPart(EXIT_GAS, HIGH), cap);
         (uint256 repaid, uint256 potLost) = _exit(sid, HIGH);
         assertEq(repaid, cap, "a page at the opening rate and the average score, reimburseCapBps of it");
@@ -444,7 +443,7 @@ contract RedeemRepayTest is RedeemBase {
         uint256 bal = address(core).balance;
         uint256 xp = core.xPot();
         uint256 xb = core.xToBuyback();
-        uint256 owed = STATEMENTS.creditScoreOf(sid) * UNIT;
+        uint256 owed = STATEMENTS.creditsOf(sid) * UNIT;
         (uint256 repaid,) = _exit(sid, LOW);
         assertGt(repaid, 0);
         assertEq(core.ethPot(), pot - repaid);
@@ -469,7 +468,7 @@ contract RedeemRepayTest is RedeemBase {
         uint256 bal = address(rc).balance;
         rc.exit(a, b);
         assertEq(rc.hits(), 1, "it was repaid once");
-        assertEq(rc.blocked(), 9, "all nine doors refused it");
+        assertEq(rc.blocked(), 8, "all eight doors refused it");
         assertEq(rc.ok(), 0);
         assertGt(address(rc).balance - bal, 0);
         assertEq(core.ethPot(), pot - rc.repaid(), "the pot paid it once");

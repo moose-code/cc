@@ -24,7 +24,6 @@ interface IControllerV1 {
     function buy(uint256 sid) external payable;
     function buyOnly() external view returns (bool);
     function floorBps() external view returns (uint16);
-    function nextOverprint() external pure returns (bool, uint256, uint256);
     function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format);
     function priceOf(uint256 sid) external view returns (uint256);
     function setBuyOnly(bool on) external;
@@ -36,5 +35,4 @@ interface IControllerV1 {
     function statementPrice(uint256, uint256 cost, uint64 listedAt) external view returns (uint256);
     function stepBps() external view returns (uint16);
     function stepEvery() external view returns (uint32);
-    function wants(uint256) external pure returns (uint16);
 }

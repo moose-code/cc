@@ -9,9 +9,7 @@ enum Lane {
 }
 
 interface IController {
-    function wants(uint256 creditId) external view returns (uint16 bonusBps);
     function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format);
-    function nextOverprint() external view returns (bool ready, uint256 baseId, uint256 topId);
     /// the asking price in wei of the eth lane statement `sid` (cost basis `cost`, listed at `listedAt`) right now. the
     /// core calls it with a fixed gas cap and floors the answer at the hard floor `cost * saleFloorBps / 10_000`
     function statementPrice(uint256 sid, uint256 cost, uint64 listedAt) external view returns (uint256 priceWei);
@@ -19,8 +17,8 @@ interface IController {
 
 interface IExitModule {
     function exitToken() external view returns (address);
-    /// exit token base units per one unit of 1e4 scaled score
-    function unitPerPoint() external view returns (uint256);
+    /// exit token base units per credit
+    function unitPerCredit() external view returns (uint256);
     /// called by the core after it transfers the statement to the module
     function exit(uint256 statementId) external returns (uint256 out);
 }
@@ -28,11 +26,8 @@ interface IExitModule {
 /// the surface controllers rely on. piles are insertion ordered linked lists, oldest first
 interface ICoreViews {
     function pileSize(Lane lane) external view returns (uint256);
-    function pileHead(Lane lane) external view returns (uint256 id); // oldest. 0 if empty
-    function pileNext(uint256 id) external view returns (uint256); // 0 at the end
     function pilePage(Lane lane, uint256 startAfter, uint256 n) external view returns (uint256[] memory ids); // startAfter 0 starts at head
     function creditInfo(uint256 id) external view returns (bool inPile, Lane lane, uint256 cost, uint64 acquiredAt);
-    function scoreOf(uint256 id) external view returns (uint256); // 1e4 scale
     function statementInfo(uint256 sid) external view returns (bool held, Lane lane, uint256 cost, uint64 clockStart);
     function heldStatements() external view returns (uint256[] memory sids);
 }
@@ -62,17 +57,10 @@ interface ICredits {
     function transferFrom(address from, address to, uint256 id) external;
 }
 
-interface ICreditScore {
-    function scoreOf(bytes21 seed, uint64 paidAt) external pure returns (uint256);
-}
-
 interface IStatements {
     function compose(uint256[80] calldata creditIds, uint8 format) external returns (uint256 statementId);
-    function overprint(uint256 baseId, uint256 topId) external;
-    function creditScoreOf(uint256 statementId) external view returns (uint256);
     function creditsOf(uint256 statementId) external view returns (uint256);
     function balanceOf(address owner) external view returns (uint256);
-    function overprintsOf(uint256 statementId) external view returns (uint256);
     function supply() external view returns (uint256);
     function ownerOf(uint256 id) external view returns (address);
     function setApprovalForAll(address operator, bool approved) external;
@@ -86,18 +74,14 @@ interface ICreditStrategy {
     function sellTargetNFT(uint256 tokenId) external payable;
 }
 
-// bounds of the Core constructor argument `rateStart`, wei per whole point. one definition for the Core and the scripts
-uint256 constant RATE_START_MIN_WEI = 1e11;
-uint256 constant RATE_START_MAX_WEI = 1e15;
+// bounds of the Core constructor argument `rateStart` and of `rateCap`, wei per credit. one definition for the Core and the scripts
+uint256 constant RATE_START_MIN_WEI = 1e13;
+uint256 constant RATE_START_MAX_WEI = 1e18;
 
 /// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`, bounds
 /// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into three storage slots
 /// (a hot path reads it with a handful of loads). docs/FLOW.md section 2 has the meaning of every field
 struct Settings {
-    /// share of a bid priced flat per credit, bps. 10_000 is flat, 0 is per score point
-    uint16 flatBps;
-    /// the score a flat credit is priced as and the average credit of the clamp, 1e4 scale
-    uint32 avgScore;
     /// fall of the eth rate per credit bought, bps of the rate before that credit
     uint16 dropPerCreditBps;
     /// within one minute the rate falls no lower than this share of the rate at the first fill of that minute, bps
@@ -108,9 +92,6 @@ struct Settings {
     uint16 ceilBps;
     /// growth of the ceiling anchor per full 10 minutes since the last fill, bps of the anchor
     uint16 idleLoosenBps;
-    /// share of the pot that may be spent per hour window, bps
-    uint16 spendCapBps;
-    uint16 bonusCapBps;
     uint16 tipSavingsBps;
     uint16 tipCapBps;
     /// gas reimbursement of `exitStatement`, bps of gas cost
@@ -132,16 +113,16 @@ struct Settings {
     /// blocks between two coin buybacks
     uint16 buybackDelay;
     uint16 keeperTipBps;
-    /// exit rate cap and floor, bps of score
+    /// exit rate cap and floor, bps of one credit's exit value
     uint16 xRateCap;
     uint16 xRateFloor;
     uint16 xRateClimbPerHour;
     uint16 xRateDropPerCredit;
     /// seconds
     uint32 xAuctionHalfLife;
-    /// credits worth of exit token per exit buyback slice
+    /// credits per exit buyback slice, each worth `unitPerCredit` of exit token
     uint16 exitSliceCredits;
-    /// the most the eth rate can be, wei per whole point. the price state and the read stay at or below it, `setRate`
+    /// the most the eth rate can be, wei per credit. the price state and the read stay at or below it, `setRate`
     /// refuses above it, and the rate bounds apply to it
     uint64 rateCap;
     /// share of exit token from EXIT lane exits that goes to the coin buyback, bps, the rest to the exit bid pot
@@ -186,7 +167,6 @@ struct Stack {
 library Mainnet {
     address internal constant CREDITS = 0x97630aA70AB14ed9883B41dAfccBc11349723043;
     address internal constant STATEMENTS = 0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b;
-    address internal constant CREDIT_SCORE = 0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7;
     address internal constant CREDIT_STRATEGY = 0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6;
     address internal constant SEAPORT = 0x0000000000000068F116a894984e2DB1123eB395;
     address internal constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
@@ -209,15 +189,11 @@ library Mainnet {
     /// the launch values of docs/FLOW.md section 2
     function defaultSettings() internal pure returns (Settings memory) {
         return Settings({
-            flatBps: 10_000,
-            avgScore: 4_330_000,
             dropPerCreditBps: 50,
             dropFloorBps: 8_000,
             climbPerMinBps: 50,
             ceilBps: 12_500,
             idleLoosenBps: 2_000,
-            spendCapBps: 10_000,
-            bonusCapBps: 2_500,
             tipSavingsBps: 1_000,
             tipCapBps: 200,
             // the Core meters gross gas. the EIP-3529 refund cap returns up to 20 percent of it to the caller, and an exit
@@ -238,7 +214,7 @@ library Mainnet {
             xRateDropPerCredit: 20,
             xAuctionHalfLife: 6 hours,
             exitSliceCredits: 20,
-            rateCap: 205_540_000_000_000,
+            rateCap: 89_000_000_000_000_000,
             exitLaneToBuybackBps: 0,
             feeToBuybackBps: 0
         });

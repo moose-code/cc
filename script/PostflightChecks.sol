@@ -327,15 +327,7 @@ abstract contract PostflightChecks is PostflightPool {
             );
         }
         _info(
-            "core: flat share and average score",
-            string.concat(
-                "flatBps ",
-                vm.toString(live.flatBps),
-                " avgScore ",
-                vm.toString(live.avgScore),
-                " rateCap ",
-                vm.toString(live.rateCap)
-            )
+            "core: rate cap", string.concat("rateCap ", vm.toString(live.rateCap))
         );
         _check("core: ethRate at most rateCap", core.ethRate() <= live.rateCap, vm.toString(core.ethRate()));
         _info(

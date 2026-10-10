@@ -209,6 +209,10 @@ contract ReviewPort is Fixture {
     /// restarts the clock, so the two arms price the injected slice the same
     function test_FIXED_staleClockNoLongerPricesInjectedFunds() public {
         _enterPhase2();
+        // an exit pays 80 units and half of it goes to the buyback: a slice of 30 credits leaves a remainder after a take
+        Settings memory sl = core.settings();
+        sl.exitSliceCredits = 30;
+        _setSettings(sl);
         _stockPool();
         Composed memory c1 = _composeOnce();
         uint256 sid2 = _composeNext();
@@ -216,7 +220,7 @@ contract ReviewPort is Fixture {
         _buyCoin(taker, 5 ether);
         vm.warp(block.timestamp + 105 hours);
         core.exitStatement(c1.sid);
-        uint256 full = uint256(core.settings().exitSliceCredits) * core.settings().avgScore * core.unitPerPoint();
+        uint256 full = uint256(core.settings().exitSliceCredits) * core.unitPerCredit();
         emit log_named_uint("xToBuyback after first exit, in slices x1000", core.xToBuyback() * 1000 / full);
         // the taker takes one full slice at an honest decayed price and the remainder stays unsold
         vm.warp(block.timestamp + 200 hours);
@@ -290,11 +294,11 @@ contract ReviewPort is Fixture {
         Settings memory s = core.settings();
         s.exitSliceCredits = 1000;
         _setSettings(s);
-        // 1e45 / (1000 * 4.33e6 * 1e24) is 2.3e11, below 1e12
-        _setExitModuleReverts(1e24);
+        // 1e45 / (1000 * 1e31) is 1e11, below 1e12
+        _setExitModuleReverts(1e31);
         s.exitSliceCredits = 1;
         _setSettings(s);
-        _phase2With(1e24);
+        _phase2With(1e31);
         assertGe(core.xStartPrice(), 1e12);
     }
 

@@ -49,13 +49,13 @@ contract ClaimMidExit is IExitModule {
         return address(token);
     }
 
-    function unitPerPoint() external view returns (uint256) {
+    function unitPerCredit() external view returns (uint256) {
         return unit;
     }
 
     function exit(uint256 statementId) external returns (uint256 out) {
         ESCROW.claim(CORE, address(0));
-        out = IStatements(Mainnet.STATEMENTS).creditScoreOf(statementId) * unit;
+        out = IStatements(Mainnet.STATEMENTS).creditsOf(statementId) * unit;
         token.mint(msg.sender, out);
     }
 

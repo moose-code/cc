@@ -25,7 +25,7 @@ contract ReviewCoreTest is Fixture {
         attacker = _user("attacker");
     }
 
-    // ------------------------------------------------------------------ R3 unitPerPoint is fixed at set time
+    // ------------------------------------------------------------------ R3 unitPerCredit is fixed at set time
 
     /// R3 regression: the module lowers its own unit before the exit. the core requires the unit it stored when the
     /// module was set, so the underpaid exit reverts and the statement stays
@@ -34,12 +34,12 @@ contract ReviewCoreTest is Fixture {
         Composed memory c = _composeOnce();
         vm.warp(c.at + 105 hours);
 
-        mod.setUnitPerPoint(1);
+        mod.setUnitPerCredit(1);
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(house), "the statement never left: its listing is intact");
         assertEq(uint256(_live(c.sid).status), uint256(ICore.StatementStatus.Listed));
-        assertEq(core.unitPerPoint(), UNIT, "the stored unit did not move");
+        assertEq(core.unitPerCredit(), UNIT, "the stored unit did not move");
         _solvent();
     }
 
@@ -54,8 +54,8 @@ contract ReviewCoreTest is Fixture {
         assertGt(pot, 0);
 
         uint256[] memory ids = _credits(rseller, 1);
-        uint256 fair = core.scoreOf(ids[0]) * core.xRate() * UNIT / 10_000;
-        mod.setUnitPerPoint(UNIT * 100);
+        uint256 fair = core.xRate() * UNIT / 10_000;
+        mod.setUnitPerCredit(UNIT * 100);
         vm.prank(rseller);
         core.sellForExitToken(ids);
 
@@ -85,7 +85,7 @@ contract ReviewCoreTest is Fixture {
 
     function _fullSlice() internal view returns (uint256) {
         Settings memory s = core.settings();
-        return uint256(s.exitSliceCredits) * s.avgScore * UNIT;
+        return uint256(s.exitSliceCredits) * UNIT;
     }
 
     /// @dev `who` buys coin in the real pool and approves the core
@@ -335,7 +335,7 @@ contract ReviewCoreTest is Fixture {
         s.xAuctionHalfLife = 2 hours;
         _setSettings(s);
         (uint256 slice,) = core.exitAuctionQuote();
-        assertEq(slice, 5 * s.avgScore * UNIT, "five average credits");
+        assertEq(slice, 5 * UNIT, "five credits");
         uint256 price = core.exitAuctionPrice();
         vm.warp(block.timestamp + 2 hours);
         assertEq(core.exitAuctionPrice(), price >> 1, "halves at the new half life");
@@ -345,7 +345,7 @@ contract ReviewCoreTest is Fixture {
         _equip(attacker, 30 ether);
         uint256 coinIn;
         (slice, coinIn) = _waitUntilCheap(attacker, 8);
-        assertEq(slice, 5 * s.avgScore * UNIT);
+        assertEq(slice, 5 * UNIT);
         uint256 supply = coin.totalSupply();
         vm.prank(attacker);
         core.buybackExit(coinIn);
@@ -383,7 +383,7 @@ contract ReviewCoreTest is Fixture {
         uint256 g = gasleft();
         uint256 r = core.ethRate();
         g -= gasleft();
-        uint256 clamp = pot * core.settings().spendCapBps / core.settings().avgScore;
+        uint256 clamp = pot;
         uint256 cap = core.settings().rateCap;
         assertEq(r, clamp < cap ? clamp : cap, "clamped at the clamp or the rate cap");
         assertLt(g, 400_000, "gas of the read");

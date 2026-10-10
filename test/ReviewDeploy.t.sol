@@ -366,26 +366,26 @@ contract ReviewDeployTest is ReviewHarness {
         Settings memory s = Mainnet.defaultSettings();
         Stack memory st = base.stack;
         st.feeSource = address(new TestSwapRouter());
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), st, 4e12, s);
+        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), st, 4e13, s);
         Stack memory bad = st;
         bad.hook = makeAddr("hook");
         vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, bad.hook));
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e12, s);
+        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e13, s);
         bad = st;
         bad.escrow = makeAddr("escrow");
         vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, bad.escrow));
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e12, s);
+        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e13, s);
         bad = st;
         bad.feeSource = makeAddr("router");
         vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, bad.feeSource));
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e12, s);
+        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e13, s);
         bad = st;
         bad.auctionFactory = makeAddr("auction factory");
         vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, bad.auctionFactory));
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e12, s);
+        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e13, s);
         bad.auctionFactory = Mainnet.PERMIT2;
         vm.expectRevert();
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e12, s);
+        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e13, s);
     }
 
     function parse(string memory j) external view returns (LaunchConfig memory) {
@@ -410,8 +410,8 @@ contract ReviewDeployTest is ReviewHarness {
             '"startTick": -175000',
             '"positionUpper": 887200',
             '"poolFee": 8388608',
-            '"flatBps": 10000',
-            '"avgScore": 4330000',
+            '"dropPerCreditBps": 50',
+            '"auctionDuration": 86400',
             '"dropFloorBps": 8000',
             '"buybackSlice": 500000000000000000'
         ];
@@ -423,8 +423,8 @@ contract ReviewDeployTest is ReviewHarness {
             '"startTick": -8388609',
             '"positionUpper": 8388608',
             '"poolFee": 16777216',
-            '"flatBps": 65536',
-            '"avgScore": 4294967296',
+            '"dropPerCreditBps": 65536',
+            '"auctionDuration": 4294967296',
             '"dropFloorBps": 65536',
             '"buybackSlice": 340282366920938463463374607431768211456'
         ];
@@ -436,8 +436,8 @@ contract ReviewDeployTest is ReviewHarness {
             ".launch.startTick",
             ".launch.positionUpper",
             ".stack.poolFee",
-            ".settings.flatBps",
-            ".settings.avgScore",
+            ".settings.dropPerCreditBps",
+            ".settings.auctionDuration",
             ".settings.dropFloorBps",
             ".settings.buybackSlice"
         ];
@@ -555,7 +555,6 @@ contract ReviewDeployTest is ReviewHarness {
 /// @notice the funded rule and the climb clamp, fuzzed on standalone cores with any rateStart in bounds, plus the
 /// sign off table rows that need a live pool to check
 contract ReviewFundedTest is Fixture {
-    uint256 internal constant AVG = 4_330_000;
     uint256 internal cursor;
 
     function _newCore(uint256 rate) internal returns (ICore c) {
@@ -563,7 +562,7 @@ contract ReviewFundedTest is Fixture {
         IControllerV1 ctl2 = Prod.newController(predicted, Mainnet.defaultSale());
         Settings memory s = Mainnet.defaultSettings();
         // any opening rate in the bounds needs a rate cap at or above it
-        s.rateCap = uint64(1e15);
+        s.rateCap = uint64(1e18);
         c = _make(rate, address(ctl2), s);
         assertEq(address(c), predicted);
     }
@@ -584,17 +583,16 @@ contract ReviewFundedTest is Fixture {
         uint256 pot = c.ethPot();
         uint256 stored = c.rateAtCheckpoint();
         uint256 r = c.ethRate();
-        uint256 capBps = c.settings().spendCapBps;
-        assertLe(AVG * r, pot * capBps, "the hourly cap affords an average credit at the live rate");
-        // the price state never climbs while the cap cannot afford an average credit, and the read is the clamp
-        if (pot * capBps < AVG * stored) {
-            assertEq(r, pot * capBps / AVG, "the read is the clamp while unaffordable");
+        assertLe(r, pot, "the pot affords a credit at the live rate");
+        // the price state never climbs while the pot cannot afford a credit, and the read is the clamp
+        if (pot < stored) {
+            assertEq(r, pot, "the read is the clamp while unaffordable");
         }
     }
 
     /// forge-config: default.fuzz.runs = 400
     function testFuzz_fundedRuleAndClamp(uint256 rateSeed, uint256[10] memory ops) public {
-        uint256 rate = bound(rateSeed, 1e11, 1e15);
+        uint256 rate = bound(rateSeed, 1e13, 1e18);
         ICore c = _newCore(rate);
         address who = makeAddr("fuzz.seller");
         for (uint256 i; i < ops.length; ++i) {
@@ -608,8 +606,7 @@ contract ReviewFundedTest is Fixture {
                 vm.warp(block.timestamp + bound(arg, 1, 400 hours));
                 uint256 r1 = c.ethRate();
                 assertGe(r1, r0, "the read fell without a fill");
-                uint256 cap = pot * c.settings().spendCapBps / AVG;
-                assertLe(r1, r0 > cap ? r0 : cap, "climbed above the clamp");
+                assertLe(r1, r0 > pot ? r0 : pot, "climbed above the clamp");
             } else if (op == 2) {
                 uint256 id = CreditIds.at(cursor++);
                 vm.prank(Mainnet.CREDIT_STRATEGY);
@@ -622,8 +619,7 @@ contract ReviewFundedTest is Fixture {
                 catch (bytes memory why) {
                     bytes4 sel = bytes4(why);
                     assertTrue(
-                        sel == ICore.HourlyCap.selector || sel == ICore.PotTooSmall.selector
-                            || sel == ICore.ZeroAmount.selector,
+                        sel == ICore.PotTooSmall.selector || sel == ICore.ZeroAmount.selector,
                         "unexpected revert"
                     );
                 }
@@ -640,26 +636,26 @@ contract ReviewFundedTest is Fixture {
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
         Stack memory st = lc.stack;
         vm.expectRevert(ICore.BadRate.selector);
-        Prod.newCore(owner, address(coin), predicted, st, 1e11 - 1, Mainnet.defaultSettings());
+        Prod.newCore(owner, address(coin), predicted, st, 1e13 - 1, Mainnet.defaultSettings());
         vm.expectRevert(ICore.BadRate.selector);
-        Prod.newCore(owner, address(coin), predicted, st, 1e15 + 1, Mainnet.defaultSettings());
-        // the opening rate may not sit above the rate cap (1.232e14 at the launch values)
+        Prod.newCore(owner, address(coin), predicted, st, 1e18 + 1, Mainnet.defaultSettings());
+        // the opening rate may not sit above the rate cap (8.9e16 at the launch values)
         vm.expectRevert(ICore.BadRate.selector);
-        Prod.newCore(owner, address(coin), predicted, st, 1.233e14, Mainnet.defaultSettings());
+        Prod.newCore(owner, address(coin), predicted, st, 8.9e16 + 1, Mainnet.defaultSettings());
         Settings memory top = Mainnet.defaultSettings();
-        top.rateCap = uint64(1e15);
-        ICore lo = Prod.newCore(owner, address(coin), predicted, st, 1e11, top);
-        ICore hi = Prod.newCore(owner, address(coin), address(1), st, 1e15, top);
-        assertEq(lo.rateAtCheckpoint(), 1e11);
-        assertEq(hi.rateAtCheckpoint(), 1e15);
-        // the pot at which the clamp equals the rate: 100 average credits at the rate
-        _fees(lo, 4.33e15 - 1);
-        assertEq(lo.ethRate(), 1e11 - 1);
+        top.rateCap = uint64(1e18);
+        ICore lo = Prod.newCore(owner, address(coin), predicted, st, 1e13, top);
+        ICore hi = Prod.newCore(owner, address(coin), address(1), st, 1e18, top);
+        assertEq(lo.rateAtCheckpoint(), 1e13);
+        assertEq(hi.rateAtCheckpoint(), 1e18);
+        // the pot at which the clamp equals the rate: one credit at the rate
+        _fees(lo, 1e13 - 1);
+        assertEq(lo.ethRate(), 1e13 - 1);
         _fees(lo, 1);
-        assertEq(lo.ethRate(), 1e11);
-        _fees(hi, 4.33e19 - 1);
-        assertEq(hi.ethRate(), 1e15 - 1);
+        assertEq(lo.ethRate(), 1e13);
+        _fees(hi, 1e18 - 1);
+        assertEq(hi.ethRate(), 1e18 - 1);
         _fees(hi, 1);
-        assertEq(hi.ethRate(), 1e15);
+        assertEq(hi.ethRate(), 1e18);
     }
 }

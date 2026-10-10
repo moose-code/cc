@@ -10,7 +10,7 @@ import {HandlerBase} from "./HandlerBase.sol";
 /// @notice the statement sale actions on the real pnd auction house the core owns: bids from random bidders around
 /// the reserve and the five percent rule, settling an ended auction, collecting the proceeds, and the two lazy
 /// permissionless calls of the core, `syncStatement` and `repriceStatement`. the ghost keeps, per statement, where
-/// it is (listed, held, sold, exited, overprinted), the reserve the core set at the listing or the latest reprice,
+/// it is (listed, held, sold, exited), the reserve the core set at the listing or the latest reprice,
 /// the top bid, the winner and the winning bid, and the sum of the winning bids against the sum collected.
 abstract contract HandlerHouse is HandlerBase {
     /// the gas `endAuction` needs to honor the house's delivery stipend, as the fixture gives it
@@ -258,7 +258,6 @@ abstract contract HandlerHouse is HandlerBase {
             }
             if (core.ethPot() != pot0 + owed - toBuyback) _flag(V_POT, "collected pot share is not the rest");
             _booked(owed);
-            _potIn(owed - toBuyback);
             if (house.pendingRefunds(address(core)) != 0) _flag(V_HOUSE, "the house owes the core after collectSales");
             gCollected += owed;
         } catch (bytes memory why) {

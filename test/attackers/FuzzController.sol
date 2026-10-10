@@ -7,13 +7,13 @@ import {Lane, ICoreViews, Mainnet} from "../../src/interfaces/Interfaces.sol";
 /// ask the same question the core asks and get the same answer. the core reads it with staticcall, so none of the
 /// attacks it tries while answering can change state. benign mode answers within the rules. hostile mode answers
 /// out of range, with pages that are not in the pile, duplicate ids, bad formats, short or long return data,
-/// overprints that name statements the core does not hold, and it attacks the core while it is asked.
+/// and it attacks the core while it is asked.
 /// the functions are not marked view on purpose, so they may attempt state changing calls.
 contract FuzzController {
     uint256 internal constant PAGE = 80;
     uint256 internal constant ATTACKS = 20;
-    /// the most pile entries the page walk passes before the 80 it returns. each `pileNext` call reads a cold slot
-    /// (about 4,100 gas), so 100 calls stay under the 500,000 gas the core gives the read of a page
+    /// the most pile entries the page walk passes before the 80 it returns. the walk reads one cold slot per entry
+    /// (about 4,100 gas), so 100 entries stay under the 500,000 gas the core gives the read of a page
     uint256 internal constant MAX_SKIP = 20;
 
     address public immutable core;
@@ -34,40 +34,6 @@ contract FuzzController {
 
     function _r(bytes32 tag, uint256 x) internal view returns (uint256) {
         return uint256(keccak256(abi.encode(seed, tag, x)));
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                                  wants
-    //////////////////////////////////////////////////////////////*/
-
-    function wants(uint256 id) external returns (uint256) {
-        uint256 r = _r("wants", id);
-        if (!hostile) {
-            uint256 k = r % 5;
-            if (k == 0) return 0;
-            if (k == 1) return 2500;
-            return (r >> 8) % 2501;
-        }
-        _attack(r);
-        uint256 m = (r >> 16) % 10;
-        if (m == 0) revert("hostile wants");
-        if (m == 1) return type(uint256).max;
-        if (m == 2) return 2501;
-        if (m == 3) return 65_535;
-        if (m == 4) return 25_000;
-        if (m == 5) {
-            _burn(150_000);
-            return 2500;
-        }
-        if (m == 6) {
-            // short answer, fewer than 32 bytes
-            assembly {
-                mstore(0, 1)
-                return(0, 31)
-            }
-        }
-        if (m == 7) return 0;
-        return (r >> 32) % 3000;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -125,13 +91,9 @@ contract FuzzController {
         if (size < PAGE) return (false, ids);
         uint256 span = size - PAGE < MAX_SKIP ? size - PAGE : MAX_SKIP;
         uint256 skip = (r >> 100) % (span + 1);
-        uint256 id = ICoreViews(core).pileHead(lane);
-        for (uint256 i; i < skip; ++i) {
-            id = ICoreViews(core).pileNext(id);
-        }
+        uint256[] memory walk = ICoreViews(core).pilePage(lane, 0, skip + PAGE);
         for (uint256 i; i < PAGE; ++i) {
-            ids[i] = id;
-            id = ICoreViews(core).pileNext(id);
+            ids[i] = walk[skip + i];
         }
         return (true, ids);
     }
@@ -164,60 +126,6 @@ contract FuzzController {
         }
         if (m == 6) _short(2);
         return fair;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                              nextOverprint
-    //////////////////////////////////////////////////////////////*/
-
-    function nextOverprint() external returns (uint256 ready, uint256 baseId, uint256 topId) {
-        uint256 r = _r("overprint", 0);
-        uint256[] memory held = ICoreViews(core).heldStatements();
-        if (!hostile) {
-            if (held.length < 2 || r % 3 == 0) return (0, 0, 0);
-            return _pair(held, r, true);
-        }
-        _attack(r);
-        uint256 m = (r >> 16) % 10;
-        if (m == 0) return (0, 0, 0);
-        if (m <= 3) {
-            if (held.length < 2) return (0, 0, 0);
-            return _pair(held, r, true);
-        }
-        if (m == 4) {
-            if (held.length == 0) return (1, 1, 1);
-            uint256 x = held[(r >> 24) % held.length];
-            return (1, x, x);
-        }
-        if (m == 5) return (1, (r >> 24) % 12, (r >> 48) % 12);
-        if (m == 6) {
-            if (held.length == 0) return (1, 7, 8);
-            return (1, held[(r >> 24) % held.length], (r >> 48) % 12);
-        }
-        if (m == 7) {
-            if (held.length < 2) return (0, 0, 0);
-            return _pair(held, r, false);
-        }
-        if (m == 8) return (2, held.length > 1 ? held[0] : 1, held.length > 1 ? held[1] : 2);
-        if (m == 9) _short(3);
-        revert("hostile overprint");
-    }
-
-    /// two distinct held statements, from the same lane when `sameLane` and from any lane otherwise.
-    function _pair(uint256[] memory held, uint256 r, bool sameLane) internal view returns (uint256, uint256, uint256) {
-        uint256 n = held.length;
-        uint256 a = (r >> 24) % n;
-        for (uint256 i; i < n; ++i) {
-            for (uint256 j; j < n; ++j) {
-                uint256 x = held[(a + i) % n];
-                uint256 y = held[(a + i + 1 + j) % n];
-                if (x == y) continue;
-                (, Lane lx,,) = ICoreViews(core).statementInfo(x);
-                (, Lane ly,,) = ICoreViews(core).statementInfo(y);
-                if (sameLane == (lx == ly)) return (1, x, y);
-            }
-        }
-        return (0, 0, 0);
     }
 
     /*//////////////////////////////////////////////////////////////

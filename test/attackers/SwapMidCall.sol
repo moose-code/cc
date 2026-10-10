@@ -81,14 +81,14 @@ contract SwapMidExit is IExitModule, Flushes {
         return address(token);
     }
 
-    function unitPerPoint() external view returns (uint256) {
+    function unitPerCredit() external view returns (uint256) {
         return unit;
     }
 
     function exit(uint256 statementId) external returns (uint256 out) {
         router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
         _flush();
-        out = IStatements(Mainnet.STATEMENTS).creditScoreOf(statementId) * unit;
+        out = IStatements(Mainnet.STATEMENTS).creditsOf(statementId) * unit;
         token.mint(msg.sender, out);
     }
 
