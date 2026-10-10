@@ -51,10 +51,10 @@
       "checked": "2026-10-10"
     },
     "A-OWNER-DECISIONS": {
-      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 55. v6: decision 55 removes credit scores from the engine",
+      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 56. v7: decision 56 removes the hourly window, overprint, setXRate and duplicate views",
       "kind": "owner-decision",
       "source": "docs/FLOW.md",
-      "version": 6,
+      "version": 7,
       "checked": "2026-10-10"
     },
     "A-OWNER-DELEGATE": {

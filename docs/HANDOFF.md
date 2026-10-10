@@ -53,6 +53,8 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 **scores, decided 2026-10-10 (FLOW 55).** the engine stops using credit scores everywhere, phase 2 included: per credit rates and a per credit exit unit. built as NEXT item 29 after items 26 to 28. it changes the Settings struct, the rate units, the exitModule interface, the config, the scripts, the simulator and most tests, so it gets its own full suite, deep invariants and independent review before the freeze.
 
+**removals, decided 2026-10-10 (FLOW 56).** built with NEXT item 29. **OD-6, open:** keep, remove or retune `buyListing` (FLOW 56 note).
+
 **OD-2, open, does not block the launch.** when to call `coin.lockAllowlist()` and `router.lock()` (NEXT item 19, after launch). after `lockAllowlist`, `rescueCoin` reaches only addresses already listed.
 
 **intent gap, decision 47.** what "ready for when burn router and $balance drop" requires of the engine is not written down. the director drafts it from the v2 burn router source and brings the owner one question if a real choice remains.
