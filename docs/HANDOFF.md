@@ -6,7 +6,7 @@ the baton for the session that directs this project next. read this file, then r
 
 | source | role |
 |---|---|
-| the owner's latest explicit instruction | overrides every file below until the director records it, in the same turn |
+| AGENTS.md | precedence between the sources below |
 | docs/ARCHITECTURE.md | the current reading of intent and of the system. section 1 "current intent at a glance" lists guarantees, behavior, parameters and accepted risks with their decision numbers and status |
 | docs/FLOW.md | the dated owner decision log, decisions 1 to 47. a later dated decision supersedes an earlier one |
 | docs/NEXT.md | the change list: decided, built, reviewed |
@@ -36,7 +36,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 | phase | implementation. no candidate is frozen. NEXT item 21 (preflight `rateCap` row) is built at fb6c26c, awaiting review |
 | source | Core 24,064 bytes runtime (512 bytes of headroom), CoreLib 16,967, ControllerV1 4,445, FeeRouter 4,446, CoreLens 8,702, measured on 382b967 |
 | tests | recorded on 06009bd: 1059 pass, 0 fail, 8 skipped (the Deep suites), REHEARSAL=1, foundry 1.8.1, fork block 26158000, on 06009bd. the 7 Deep suites with 20 invariants each are clean at 64 runs and depth 200 on 06009bd (NEXT item 7) |
-| reviews | none is valid for the current source: every docs/REVIEW-*.md predates 45 or more source commits, and docs/AUDIT-codex.md (commit 32ff35b) is on a branch outside main |
+| reviews | none is valid for the current source: every docs/REVIEW-*.md predates 34 or more source commits, and docs/AUDIT-codex.md (commit 32ff35b) is on a branch outside main |
 | owner steps before launch | fund the owner address 0xCB43 (0.068 eth at block 26158000, the launch needs about 0.1), run `setMinProtocolSkimShareBps(362)` on the v2 factory, then docs/DEPLOY.md with `--slow` (the owner address is an EIP 7702 delegated account) |
 
 ## 4. owner decisions
@@ -47,9 +47,9 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 * the owner's words (2026-10-09): "migrate only credits and eth and let v1 sell out its own statements". FLOW 33: "a later migrate moves" the proceeds. neither says whether the old engine may keep buying.
 * option A, keep as built: no code change. the wind down lasts as long as proceeds arrive, and the old engine bids against the new one meanwhile.
 * option B, retire: every `migrate` call sets a one way flag. the six buying and composing doors refuse after it: `sellForEth`, `buyListing`, `adopt`, `compose`, `composeExit` (all five reach `_pullFees` first) and `sellForExitToken` (src/Core.sol 631, needs its own check). settling, exits, overprint, `collectSales`, `syncStatement`, the buyback and fee booking keep working, and proceeds wait in the pot for the next `migrate`. guarantee 42 and invariants 11 and 16 then hold for an engine that has not migrated, which the invariant handler must model. cost: the flag and two checks in the Core (512 bytes of headroom), the migration tests, the handler, and a review of the path.
-* recommendation: B. it matches the stated purpose, ends the wind down when the last statement sells, and keeps one engine buying at a time. answer in the same reply whether the exit token pots move with the eth (as built) or stay.
+* recommendation: B. it matches the stated purpose, ends the wind down when the last statement sells, and keeps one engine buying at a time. answer in the same reply two parts of what moves: `migrate` sends `ethToBuyback` (the buyback share of sale proceeds, earmarked to buy and burn the coin) to the successor with the pot, where it is no longer earmarked, and it sends the exit token pots. your words named credits and eth. recommendation: keep `ethToBuyback` in the old engine so its buyback burns it as decided, and move the exit token pots (phase 2 belongs to the engine that holds the exit module).
 
-**OD-3, open, does not block the freeze.** a market above `rateCap` stops the engine buying until you raise `rateCap` with `setSettings`, and a rising market is followed at 0.5 percent a minute (about 45 minutes to recover 20 percent). your words on 2026-10-09 were "we should never get locked anywhere". recommendation: accept it as a known risk with your `setSettings` as the recovery, because `rateCap` is the overpay guard you chose ("let's make this 10x to start").
+**OD-3, open, does not block the freeze.** a market above `rateCap` stops the engine buying until you raise `rateCap` with `setSettings`, and a rising market is followed at 0.5 percent a minute (about 45 minutes, compounded, to climb from 20 percent below the market). your words on 2026-10-09 were "we should never get locked anywhere". recommendation: accept it as a known risk with your `setSettings` as the recovery, because `rateCap` is the overpay guard you chose ("let's make this 10x to start").
 
 **OD-2, open, does not block the launch.** when to call `coin.lockAllowlist()` and `router.lock()` (NEXT item 19, after launch).
 
@@ -59,7 +59,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 `python3 script/director.py evidence` lists every record with its validity. what a new session must know:
 
-* valid: the full suite and the deep invariants on 06009bd, carried to this branch by a record that shows the later diff under their scope is one comment line in test/utils/Fixture.sol.
+* valid: the focused tests of NEXT item 21 at fb6c26c. the full suite and the deep invariants recorded on 06009bd are invalid at HEAD, because fb6c26c changed script/Checks.sol and two test files under their scope. they are rerun on the frozen candidate.
 * invalid: every independent review (source changed), the codex audit (outside main), the simulator's statement flow figures (they assume a paid composer, decision 41 removed the payment).
 * migration gaps: no test migrates into a real second Core and runs `adopt` there, and `adopt` gives a migrated credit the successor's bid as its cost basis (the old basis is dropped).
 * unproved assumptions: a composer exists for every full page at no cost to the engine, the 90 day volume projection (1,961 eth, fitted to 13 measured days), the credit market price of 0.0089 eth, the seller book and the absence of competing bidders in the simulator.

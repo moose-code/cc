@@ -167,7 +167,7 @@
       "author": "director session of 2026-10-06",
       "reviewer": "review subagent of 2026-10-06",
       "result": "findings",
-      "limitations": "one of about ten review documents in docs/REVIEW-*.md, all pinned to commits that 44 or more later src commits changed (the latest, REVIEW-v2port.md, covered 0a44fdf..HEAD on 2026-10-07)",
+      "limitations": "one of ten review documents in docs/REVIEW-*.md. this one predates 45 later src commits. the latest, docs/REVIEW-v2port.md (added at a1331e5, dated 2026-10-08), predates 34",
       "invalidated": null
     },
     "E-AUDIT-CODEX-32ff35b": {
@@ -271,8 +271,12 @@
         "src/**",
         "test/Migrate.t.sol",
         "test/GasCap.t.sol",
+        "test/V2PortRestriction.t.sol",
+        "test/Window.t.sol",
+        "test/ReviewFlowCore.t.sol",
         "sim/engine.js",
         "script/Checks.sol",
+        "script/Lock.s.sol",
         "script/config/mainnet.json"
       ],
       "assumptions": {
