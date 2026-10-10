@@ -25,7 +25,7 @@ each line cites the decision in docs/FLOW.md that records the owner's words. kin
 | behavior | a pot is spent as sellers come, never dripped over hours | 37, 45 | built (`spendCapBps` 10_000) |
 | behavior | the keeper is not overpaid: payments to callers are bounded by `tipCapBps`, `keeperTipBps` and `reimburseCapBps`, and compose pays its caller nothing | 41, 46 | built |
 | behavior | compose and composeExit repay nothing. holders compose, the owner composes when nobody does | 41 | built. the composer and the owner's backstop cost are unproved assumptions (docs/REVIEW-decisions.md path A) |
-| behavior | the first `migrate` retires the old engine: it stops buying, adopting and composing, keeps settling and selling out its statements and burning its `ethToBuyback`. `migrate` moves `ethPot`, the exit token pots and credits | 33, 48 | decided 2026-10-10, being built (NEXT item 22) |
+| behavior | the first `migrate` retires the old engine: it stops buying, adopting and composing, keeps settling and selling out its statements and burning its `ethToBuyback`. `migrate` moves `ethPot`, the exit token pots and credits | 33, 48 | built at 74d1cbe, independently reviewed (docs/REVIEW-retire.md): no defect, runbook follow ups in NEXT item 23 |
 | parameter | every economic number is an owner setting, effective at once, no timelock | 3, 15 | built |
 | parameter | opening bid at the market price of a credit on launch day, `rateCap` 10 times the opening bid | NEXT 11, 46 | the launch day rule sets both (docs/DEPLOY.md section 1), preflight fails unless the ratio is 10 (NEXT item 21) |
 | parameter | payee 0.75 points of volume to the owner address, protocol 0.25 points, engine the rest | 31 | built |

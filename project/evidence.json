@@ -455,6 +455,34 @@
       "result": "pass",
       "limitations": "verifies the implementation against its own assertions. the Deep suites were not run. the invariant handler retires the Core on about one seed in six, so retired paths are fuzzed on a share of runs. no independent review of 74d1cbe yet",
       "invalidated": null
+    },
+    "E-REVIEW-RETIRE-74d1cbe": {
+      "claim": "independent review of 74d1cbe (FLOW 48): no correctness or security defect; six operational, intent, evidence and cleanup findings",
+      "kind": "review",
+      "sourceRevision": "74d1cbe6fce496ce9ae8d6f1c735b12f7bb07ca9",
+      "scope": [
+        "src/**",
+        "test/Migrate.t.sol",
+        "test/Adopt.t.sol",
+        "test/CoreLayout.t.sol",
+        "test/invariant/**"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 2
+      },
+      "dependsOn": [],
+      "inputs": "git show 74d1cbe, FLOW 33 42 48",
+      "method": "read only review subagent in a fresh context; Migrate tests run in a throwaway copy; each Retired check deleted in turn",
+      "author": "implementer subagent of 74d1cbe; director",
+      "reviewer": "independent review subagent, 2026-10-10",
+      "result": "findings",
+      "limitations": "full suite, invariant suites, deploy and sim scripts not run by the reviewer",
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-retire.md",
+        "sha256": "36a1cd0f3ab1229a24e231ba71e547b60e6ca818493d486b266315a0ed688571",
+        "revision": "86b6e4ddf49fa8f45132d65fb1e4e333258a2584"
+      }
     }
   }
 }
