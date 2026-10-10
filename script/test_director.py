@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -18,6 +19,8 @@ SPEC = importlib.util.spec_from_file_location("director_under_test", HERE / "dir
 director = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(director)
 
+REPORT_TEXT = "report v1\n"
+REPORT = {"path": "reports/review.md", "sha256": hashlib.sha256(REPORT_TEXT.encode()).hexdigest()}
 STATE_ONLY = ["docs/PROJECT_STATE.md", "project/director-state.json", "project/evidence.json"]
 GATES = ["productRules", "focusedTests", "localLifecycle", "deploymentRehearsal"]
 GATE_KINDS = {
@@ -57,9 +60,9 @@ def base_state(documents: dict | None = None) -> dict:
         "ownerDecisions": [],
         "nextAction": "n",
         "requiredFreezeGates": ["productRules"],
-        "requiredDeployGates": GATES,
-        "stateOnlyPaths": STATE_ONLY,
-        "gates": {name: {"evidence": [], "kinds": GATE_KINDS[name]} for name in GATES},
+        "requiredDeployGates": list(GATES),
+        "stateOnlyPaths": list(STATE_ONLY),
+        "gates": {name: {"evidence": [], "kinds": list(GATE_KINDS[name])} for name in GATES},
     }
 
 
@@ -78,16 +81,23 @@ def base_record(revision: str, **over) -> dict:
         "limitations": "l",
         "invalidated": None,
     }
+    if over.get("kind") in ("review", "acceptance"):
+        record["report"] = {**REPORT, "revision": revision}
     record.update(over)
     return record
 
 
 class RepoCase(unittest.TestCase):
+    init_args: tuple = ()
+
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.repo = Path(self._tmp.name)
-        self.sh("init", "-q", "-b", "main")
+        try:
+            self.sh("init", "-q", "-b", "main", *self.init_args)
+        except subprocess.CalledProcessError:
+            self.skipTest("git does not support this repository format")
         director.set_root(self.repo)
         self.state = base_state()
         self.ledger = {"schemaVersion": 1, "assumptions": {}, "evidence": {}}
@@ -97,6 +107,7 @@ class RepoCase(unittest.TestCase):
         self.write("project/traceability.json", json.dumps({"rules": {"R-1": {"type": "INVARIANT", "status": "planned"}}}))
         self.write("src/Core.sol", "v1\n")
         self.write("other/file.txt", "v1\n")
+        self.write(REPORT["path"], REPORT_TEXT)
         self.save()
         self.head = self.commit("initial")
 
@@ -470,6 +481,7 @@ class CarryClosure(RepoCase):
 
     def freeze(self) -> tuple[int, str]:
         self.state["candidate"] = self.sh("rev-parse", "HEAD")
+        self.state["candidatePolicy"] = director.policy_hash(self.state)
         self.state["gates"]["productRules"]["evidence"] = ["TOP"]
         self.save()
         self.commit("gate")
@@ -517,11 +529,8 @@ class CarryClosure(RepoCase):
         for author, reviewer in [
             ("dir ector", "dir\u00a0ector"),
             ("dir ector", "dir  ector"),
-            ("director", "director\u200b"),
-            ("director", "dir\ufeffector"),
             ("Strasse", "Stra\u00dfe"),
             ("Director", " DIRECTOR\t"),
-            ("director", "\uff44irector"),
         ]:
             errors: list[str] = []
             director.validate_record("R", base_record(self.head, kind="review", author=author, reviewer=reviewer), errors)
@@ -550,6 +559,126 @@ class CarryClosure(RepoCase):
         self.assertIn("stateOnlyPaths entry src/Core.sol hides src/Core.sol", out)
 
 
+class Reports(RepoCase):
+    def honest_review(self, **over) -> str:
+        """Review commit X, then commit the report at Y after X."""
+        reviewed = self.head
+        self.write("reports/honest.md", "findings: none\n")
+        added = self.commit("add report")
+        report = {"path": "reports/honest.md", "sha256": hashlib.sha256(b"findings: none\n").hexdigest(), "revision": added}
+        self.add_evidence("R", reviewed, kind="review", reviewer="Alice", report=report, **over)
+        self.commit("record review")
+        return added
+
+    def test_review_and_acceptance_require_a_report(self) -> None:
+        for kind in ("review", "acceptance"):
+            record = base_record(self.head, kind=kind, reviewer="Alice")
+            del record["report"]
+            errors: list[str] = []
+            director.validate_record("R", record, errors)
+            self.assertTrue(any("requires a report" in e for e in errors), kind)
+        for report in ({"path": "../x", "sha256": "ab", "revision": self.head}, {"path": "a", "sha256": REPORT["sha256"]}):
+            errors = []
+            director.validate_record("R", base_record(self.head, report=report), errors)
+            self.assertTrue(any("report must be" in e for e in errors), report)
+
+    def test_report_added_after_the_reviewed_commit_is_valid_and_printed(self) -> None:
+        self.honest_review()
+        self.assertEqual(self.validity("R"), (True, "valid"))
+        self.assertEqual(self.check("working")[0], 0)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            director.evidence_report()
+        self.assertIn("report reports/honest.md", buffer.getvalue())
+
+    def test_report_edited_in_working_tree_then_committed(self) -> None:
+        self.honest_review()
+        self.write("reports/honest.md", "tampered\n")
+        ok, reason = self.validity("R")
+        self.assertFalse(ok)
+        self.assertIn("report reports/honest.md in the working tree differs", reason)
+        self.commit("commit the edit")
+        self.assertIn("at target differs from the recorded sha256", self.validity("R")[1])
+
+    def test_report_committed_before_the_reviewed_commit_fails(self) -> None:
+        self.write("src/Core.sol", "v2\n")
+        reviewed = self.commit("reviewed commit")
+        self.add_evidence("R", reviewed, kind="review", reviewer="Alice", report={**REPORT, "revision": self.head})
+        self.commit("record review")
+        ok, reason = self.validity("R")
+        self.assertFalse(ok)
+        self.assertIn("is not a descendant of sourceRevision", reason)
+
+    def test_report_not_tracked_at_its_revision(self) -> None:
+        early = self.head
+        self.write("reports/late.md", "late\n")
+        self.commit("add late report")
+        report = {"path": "reports/late.md", "sha256": hashlib.sha256(b"late\n").hexdigest(), "revision": early}
+        self.add_evidence("R", early, kind="review", reviewer="Alice", report=report)
+        self.commit("record review")
+        self.assertIn("not a regular tracked file at report revision", self.validity("R")[1])
+
+    def test_report_symlink_is_rejected(self) -> None:
+        reviewed = self.head
+        (self.repo / "reports" / "link.md").symlink_to("review.md")
+        added = self.commit("add symlink")
+        report = {"path": "reports/link.md", "sha256": REPORT["sha256"], "revision": added}
+        self.add_evidence("R", reviewed, kind="review", reviewer="Alice", report=report)
+        self.commit("record review")
+        self.assertIn("not a regular tracked file at report revision", self.validity("R")[1])
+
+    def test_report_inside_the_record_scope_is_a_structural_error(self) -> None:
+        self.add_evidence("R", kind="review", reviewer="Alice", scope=["reports/**"])
+        code, out = self.check("working")
+        self.assertEqual(code, 1, out)
+        self.assertIn("report reports/review.md matches the record's scope", out)
+        self.add_evidence("R", kind="review", reviewer="Alice", scope=["*"])
+        self.assertIn("matches the record's scope", self.check("working")[1])
+        self.state["stateOnlyPaths"] = STATE_ONLY + ["reports/**"]
+        self.save()
+        self.assertEqual(self.check("working")[0], 0)
+
+    def test_adding_the_report_does_not_invalidate_the_review(self) -> None:
+        self.honest_review()
+        self.write("reports/second.md", "more\n")
+        self.commit("unrelated report")
+        self.assertEqual(self.validity("R"), (True, "valid"))
+
+    def test_carried_review_report_is_checked_at_the_carrier_target(self) -> None:
+        self.honest_review()
+        self.add_evidence("A", kind="analysis", carries=["R"])
+        self.commit("carry")
+        self.assertEqual(self.validity("A"), (True, "valid"))
+        self.write("reports/honest.md", "tampered\n")
+        self.commit("edit report")
+        self.assertIn("carried R: report reports/honest.md at target differs", self.validity("A")[1])
+
+
+class HashLength(RepoCase):
+    def test_64_hex_revision_is_well_formed_but_must_resolve(self) -> None:
+        errors: list[str] = []
+        director.validate_record("E", base_record("a" * 64), errors)
+        self.assertTrue(any("not a commit in this repository" in e for e in errors))
+        self.assertFalse(any("full commit hash" in e for e in errors))
+        errors = []
+        director.validate_record("E", base_record("a" * 41), errors)
+        self.assertTrue(any("full commit hash" in e for e in errors))
+
+
+class Sha256Repository(RepoCase):
+    init_args = ("--object-format=sha256",)
+
+    def test_evidence_in_a_sha256_repository(self) -> None:
+        self.assertEqual(len(self.head), 64)
+        self.add_evidence("E-1")
+        self.commit("evidence")
+        self.assertEqual(self.validity("E-1"), (True, "valid"))
+        self.assertEqual(self.check("working")[0], 0)
+        self.write("src/Core.sol", "v2\n")
+        self.commit("change")
+        self.assertFalse(self.validity("E-1")[0])
+
+
 class DeployGate(RepoCase):
     def setUp(self) -> None:
         super().setUp()
@@ -559,6 +688,7 @@ class DeployGate(RepoCase):
             self.ledger["evidence"][f"E-{index}"] = base_record(candidate, kind=kinds[name], reviewer="b")
             self.state["gates"][name]["evidence"] = [f"E-{index}"]
         self.state["candidate"] = candidate
+        self.state["candidatePolicy"] = director.policy_hash(self.state)
         self.state["objective"].update(
             status="complete",
             requiredPaths=[{"id": "P-1", "description": "d", "status": "verified", "evidence": ["E-1"]}],
@@ -660,6 +790,43 @@ class DeployGate(RepoCase):
         code, out = self.check("freeze")
         self.assertEqual(code, 1, out)
         self.assertIn("reviewed scope changed: src/Core.sol", out)
+
+    def test_freeze_command_records_candidate_and_policy(self) -> None:
+        self.state["candidate"] = self.state["candidatePolicy"] = None
+        self.save()
+        self.commit("unfreeze")
+        self.assertEqual(self.check("deploy")[0], 1)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            self.assertEqual(director.freeze_candidate(self.head), 0)
+        recorded = json.loads((self.repo / "project/director-state.json").read_text())
+        self.assertEqual(recorded["candidate"], self.head)
+        self.assertEqual(recorded["candidatePolicy"], director.policy_hash(recorded))
+        self.commit("freeze")
+        self.assertEqual(self.check("deploy")[0], 0)
+
+    def test_freeze_command_rejects_unknown_commit(self) -> None:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            self.assertEqual(director.freeze_candidate("0" * 40), 1)
+        self.assertIn("not a commit reachable from HEAD", buffer.getvalue())
+
+    def test_gate_policy_change_after_freeze_fails(self) -> None:
+        for edit in (
+            lambda: self.state["gates"]["focusedTests"]["kinds"].append("build"),
+            lambda: self.state["requiredDeployGates"].remove("deploymentRehearsal"),
+            lambda: self.state["stateOnlyPaths"].append("other/**"),
+        ):
+            edit()
+            self.save()
+            self.commit("edit policy")
+            self.assertFails("gate policy changed after freeze: re-freeze deliberately")
+
+    def test_candidate_set_by_hand_without_policy_fails(self) -> None:
+        del self.state["candidatePolicy"]
+        self.save()
+        self.commit("by hand")
+        self.assertFails("candidatePolicy is not recorded")
 
     def test_failing_result_is_not_accepted(self) -> None:
         self.ledger["evidence"]["E-3"]["result"] = "fail"

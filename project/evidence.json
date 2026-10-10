@@ -171,7 +171,12 @@
       "reviewer": "review subagent of 2026-10-06",
       "result": "findings",
       "limitations": "one of ten review documents in docs/REVIEW-*.md. this one predates 45 later src commits. the latest, docs/REVIEW-v2port.md (added at a1331e5, dated 2026-10-08), predates 34",
-      "invalidated": null
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-sale.md",
+        "sha256": "764bfe52ab699f4e449cfc2645d05a6d765872dee461b18a9bdf52ed40c9a7fd",
+        "revision": "532b700d497d165971c672e149de9c7817a992cc"
+      }
     },
     "E-AUDIT-CODEX-32ff35b": {
       "claim": "independent solidity security audit (docs/AUDIT-codex.md on branch codex/independent-security-audit)",
@@ -189,7 +194,12 @@
       "reviewer": "codex session",
       "result": "findings",
       "limitations": "the commit is outside main. its findings A01 and A02 are fixed in the scripts on main",
-      "invalidated": null
+      "invalidated": null,
+      "report": {
+        "path": "docs/AUDIT-codex.md",
+        "sha256": "e8b1e560f43a707a989489de16a84a76e0b8c76d2cf954dff32e3b8251d9d689",
+        "revision": "32ff35b473912c386dde5582aab7d300b297f679"
+      }
     },
     "E-SIM-HEADLINE": {
       "claim": "simulator headline: day one 1,994 credits, day 90 31,495, paid 0.87 of market, highest bid 0.95 of market, statement flow per day (docs/SIMULATION.md, docs/NEXT.md 10 and 14)",
@@ -319,7 +329,12 @@
       "reviewer": "independent review subagent, 2026-10-10",
       "result": "findings",
       "limitations": "no forge run; Solidity read only for the migrate doors and invariants 11 and 16. the fixes made after it are not yet re-reviewed. re-reviewed at 5c02f64 and the two remaining fixes checked adversarially at 16249c1 and 2645c00 (reports in the director session of 2026-10-10)",
-      "invalidated": null
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-director-repair.md",
+        "sha256": "d5d0e2e531a7354a8be72ecf0fd7a7b18b3b1a14509a97cb7b982ca62053286b",
+        "revision": "19182bdf97fbea558de2e6e8df1725447177c085"
+      }
     },
     "E-FOCUSED-2645c00": {
       "claim": "preflight rate rows: the 10x ratio row, the rate bounds row and the settings bounds row each fail on their own cases; the review matrix asserts the exact failed rows for every rate mutation, 284 mutations, 0 slips",
