@@ -372,6 +372,44 @@
       "result": "pass",
       "limitations": "focused tests only. Rehearsal, Resume, ReviewDeploy and GasCap last ran at fb6c26c (78 pass); 2645c00 changes only the detail string of the ratio row in script/Checks.sol. the full suite was not run",
       "invalidated": null
+    },
+    "E-AUDIT-CARRY-f1fd139": {
+      "claim": "the findings of E-AUDIT-DECISIONS-fb6c26c hold at f1fd139",
+      "kind": "analysis",
+      "sourceRevision": "f1fd1391f9100ea108b4ed808393610a98d3393a",
+      "scope": [
+        "src/**",
+        "test/Migrate.t.sol",
+        "test/GasCap.t.sol",
+        "test/V2PortRestriction.t.sol",
+        "test/Window.t.sol",
+        "test/ReviewFlowCore.t.sol",
+        "sim/engine.js",
+        "script/Checks.sol",
+        "script/Lock.s.sol",
+        "script/config/mainnet.json"
+      ],
+      "assumptions": {
+        "A-COMPOSER": 2,
+        "A-VOLUME": 1,
+        "A-GAS-PRICE": 1,
+        "A-CREDIT-MARKET": 1,
+        "A-OWNER-DECISIONS": 1
+      },
+      "dependsOn": [],
+      "carries": [
+        "E-AUDIT-DECISIONS-fb6c26c"
+      ],
+      "carriedChanges": [
+        "script/Checks.sol"
+      ],
+      "inputs": "git diff fb6c26c f1fd139 -- <audit scope>",
+      "method": "the only change under the audit scope is script/Checks.sol at 2645c00: the detail string of the ratio row computes in uint256. finding 3 rests on the row existing and failing, which is unchanged",
+      "author": "director, 2026-10-10",
+      "reviewer": "",
+      "result": "findings",
+      "limitations": "reasoned carry, no new audit",
+      "invalidated": null
     }
   }
 }

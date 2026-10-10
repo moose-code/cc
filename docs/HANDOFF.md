@@ -33,7 +33,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 | item | state |
 |---|---|
 | branch | `main` is the working branch on github ripe0x/cc. the director repair of 2026-10-10 is on the local branch `claude/repair-project-director-1366be`, not pushed |
-| phase | implementation. no candidate is frozen. NEXT item 21 (preflight `rateCap` row) is built at fb6c26c, awaiting review |
+| phase | implementation. no candidate is frozen. NEXT item 21 (preflight `rateCap` row) is built at fb6c26c, with the review matrix isolating each rate bounds row at 2645c00 and f1fd139. focused tests pass, independent review of the change done in the director session of 2026-10-10 |
 | source | Core 24,064 bytes runtime (512 bytes of headroom), CoreLib 16,967, ControllerV1 4,445, FeeRouter 4,446, CoreLens 8,702, measured on 382b967 |
 | tests | recorded on 06009bd: 1059 pass, 0 fail, 8 skipped (the Deep suites), REHEARSAL=1, foundry 1.8.1, fork block 26158000, on 06009bd. the 7 Deep suites with 20 invariants each are clean at 64 runs and depth 200 on 06009bd (NEXT item 7) |
 | reviews | none is valid for the current source: every docs/REVIEW-*.md predates 34 or more source commits, and docs/AUDIT-codex.md (commit 32ff35b) is on a branch outside main |
@@ -59,7 +59,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 `python3 script/director.py evidence` lists every record with its validity. what a new session must know:
 
-* valid: the focused tests of NEXT item 21 at fb6c26c. the full suite and the deep invariants recorded on 06009bd are invalid at HEAD, because fb6c26c changed script/Checks.sol and two test files under their scope. they are rerun on the frozen candidate.
+* valid: the focused tests of the rate rows at f1fd139 (E-FOCUSED-f1fd139) and the decision audit carried to f1fd139. the full suite and the deep invariants recorded on 06009bd are invalid at HEAD, because fb6c26c changed script/Checks.sol and two test files under their scope. they are rerun on the frozen candidate.
 * invalid: every independent review (source changed), the codex audit (outside main), the simulator's statement flow figures (they assume a paid composer, decision 41 removed the payment).
 * migration gaps: no test migrates into a real second Core and runs `adopt` there, and `adopt` gives a migrated credit the successor's bid as its cost basis (the old basis is dropped).
 * unproved assumptions: a composer exists for every full page at no cost to the engine, the 90 day volume projection (1,961 eth, fitted to 13 measured days), the credit market price of 0.0089 eth, the seller book and the absence of competing bidders in the simulator.
