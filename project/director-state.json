@@ -137,7 +137,7 @@
     ]
   },
   "candidate": null,
-  "activeChange": "NEXT-24: audit fixes within current intent",
+  "activeChange": null,
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -208,7 +208,7 @@
     },
     "focusedTests": {
       "evidence": [
-        "E-SUITE-CARRY-eff3051"
+        "E-SUITE-da95832"
       ],
       "kinds": [
         "test"
@@ -223,7 +223,7 @@
     },
     "localLifecycle": {
       "evidence": [
-        "E-SUITE-CARRY-eff3051"
+        "E-SUITE-da95832"
       ],
       "kinds": [
         "test",
@@ -232,7 +232,7 @@
     },
     "fullSuite": {
       "evidence": [
-        "E-SUITE-CARRY-eff3051"
+        "E-SUITE-da95832"
       ],
       "kinds": [
         "test"

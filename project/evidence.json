@@ -615,6 +615,36 @@
         "sha256": "dc3cd3d3a73924532e1a12d9de52f9c840ebe5141ca2967ecf0f18fd8ae0a326",
         "revision": "b2374d27c7a2db63b2b1ed6086041cb16571ac8c"
       }
+    },
+    "E-SUITE-da95832": {
+      "claim": "full suite passes after the audit fixes of NEXT 24: 1089 pass, 0 fail, 8 skipped (the Deep suites)",
+      "kind": "test",
+      "sourceRevision": "da958321c6e552d1b78dbe032ce4fd1f74902392",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 2
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000",
+      "method": "REHEARSAL=1 forge test -j 6 (217 s)",
+      "author": "implementer subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "recorded against decisions through 48; decisions 50 and 51 change settings and are not built yet, so this record is invalid until they are. Deep suites not run",
+      "invalidated": null
     }
   }
 }
