@@ -328,12 +328,12 @@ contract ReviewMatrixConfigTest is ReviewHarness {
 
     // ------------------------------------------------------------------ group D: rate and people
 
-    uint256 internal constant N_MISC = 36;
+    uint256 internal constant N_MISC = 37;
 
     function _mutMisc(uint256 i) internal returns (Mut memory m) {
-        if (i < 8) return _miscRate(i);
-        if (i < 20) return _peopleA(i - 8);
-        return _peopleB(i - 20);
+        if (i < 9) return _miscRate(i);
+        if (i < 21) return _peopleA(i - 9);
+        return _peopleB(i - 21);
     }
 
     function _miscRate(uint256 i) private view returns (Mut memory m) {
@@ -375,6 +375,13 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("rateStart 1e11 (the lowest edge, rateCap 1e12)", Class.Hash);
             m.c.rateStart = 1e11;
             m.c.settings.rateCap = 1e12;
+        } else if (i == 8) {
+            // rateStart above rateCap, both inside their bounds: the start-at-most-cap clause of the bounds row fails,
+            // and 1e12 is not 10 times 2e12, so the ratio row fails with it
+            m = _m("rateStart 2e12 above rateCap 1e12", Class.Pre);
+            m.c.rateStart = 2e12;
+            m.c.settings.rateCap = 1e12;
+            m.pre = string.concat(ROW_RATE_BOUNDS, ", ", ROW_RATE_RATIO);
         } else {
             m = _m("rateStart 1e15 (the highest edge, rateCap 1e15 is not 10 times)", Class.Pre);
             m.c.rateStart = 1e15;
