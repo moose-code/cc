@@ -645,6 +645,37 @@
       "result": "pass",
       "limitations": "recorded against decisions through 48; decisions 50 and 51 change settings and are not built yet, so this record is invalid until they are. Deep suites not run",
       "invalidated": null
+    },
+    "E-SUITE-dfd6001": {
+      "claim": "full suite passes with decisions 50 and 51 and the owner delegate pins: 1092 pass, 0 fail, 8 skipped (the Deep suites)",
+      "kind": "test",
+      "sourceRevision": "dfd60019e6332f3f3126173135c7c7a446e5e7e7",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 4,
+        "A-OWNER-DELEGATE": 1
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000",
+      "method": "REHEARSAL=1 forge test -j 6",
+      "author": "implementer subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "recorded against decisions through 51; decisions 52 to 55 are not built. the preflight script itself fails on a fork (NEXT 27): the tests reach the checks through another path",
+      "invalidated": null
     }
   }
 }
