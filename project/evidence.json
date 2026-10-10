@@ -320,6 +320,32 @@
       "result": "findings",
       "limitations": "no forge run; Solidity read only for the migrate doors and invariants 11 and 16. the fixes made after it are not yet re-reviewed",
       "invalidated": null
+    },
+    "E-FOCUSED-2645c00": {
+      "claim": "preflight rate rows: the 10x ratio row, the rate bounds row and the settings bounds row each fail on their own cases; the review matrix asserts the exact failed rows for every rate mutation, 284 mutations, 0 slips",
+      "kind": "test",
+      "sourceRevision": "2645c00095e9c2c510fcdd50696c6a06e74fbdf1",
+      "scope": [
+        "script/*.sol",
+        "script/config/**",
+        "test/Config.t.sol",
+        "test/ReviewMatrix.t.sol",
+        "test/utils/**"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 1
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000, warm build cache",
+      "method": "forge test --match-path test/Config.t.sol (29 pass); forge test --match-path test/ReviewMatrix.t.sol (11 pass)",
+      "author": "implementer subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "focused tests only. Rehearsal, Resume, ReviewDeploy and GasCap last ran at fb6c26c (78 pass); 2645c00 changes only the detail string of the ratio row in script/Checks.sol. the full suite was not run",
+      "invalidated": null
     }
   }
 }
