@@ -137,7 +137,7 @@
     ]
   },
   "candidate": null,
-  "activeChange": null,
+  "activeChange": "NEXT-29: remove credit scores and the approved removals (FLOW 55, 56)",
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -187,7 +187,7 @@
       ]
     }
   ],
-  "nextAction": "When NEXT 26 lands: NEXT 27 (FLOW 52) and NEXT 28 (FLOW 54), then NEXT 29 (FLOW 55, remove credit scores everywhere) with its own full suite and independent review, then ARCHITECTURE section 1 rows for 50 to 55, then freeze.",
+  "nextAction": "NEXT 29 in four phases, then its full suite and an independent review; then freeze.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
@@ -216,7 +216,7 @@
     },
     "focusedTests": {
       "evidence": [
-        "E-SUITE-dfd6001"
+        "E-SUITE-70d88be"
       ],
       "kinds": [
         "test"
@@ -231,7 +231,7 @@
     },
     "localLifecycle": {
       "evidence": [
-        "E-SUITE-dfd6001"
+        "E-SUITE-70d88be"
       ],
       "kinds": [
         "test",
@@ -240,7 +240,7 @@
     },
     "fullSuite": {
       "evidence": [
-        "E-SUITE-dfd6001"
+        "E-SUITE-70d88be"
       ],
       "kinds": [
         "test"

@@ -25,11 +25,14 @@ each line cites the decision in docs/FLOW.md that records the owner's words. kin
 | behavior | a pot is spent as sellers come, never dripped over hours | 37, 45 | built (`spendCapBps` 10_000) |
 | behavior | the keeper is not overpaid: payments to callers are bounded by `tipCapBps`, `keeperTipBps` and `reimburseCapBps`, and compose pays its caller nothing | 41, 46 | built |
 | behavior | compose and composeExit repay nothing. holders compose, the owner composes when nobody does | 41 | built. the composer and the owner's backstop cost are unproved assumptions (docs/REVIEW-decisions.md path A) |
-| behavior | the first `migrate` retires the old engine: it stops buying, adopting and composing, keeps settling and selling out its statements and burning its `ethToBuyback`. `migrate` moves `ethPot`, the exit token pots and credits | 33, 48 | built at 74d1cbe, independently reviewed (docs/REVIEW-retire.md): no defect, runbook follow ups in NEXT item 23 |
+| behavior | the first `migrate` retires the old engine: it stops buying, adopting and composing, keeps settling and selling out its statements and burning both buyback pots (`ethToBuyback`, `xToBuyback`). `migrate` moves `ethPot`, `xPot` and credits | 33, 48, 52 | built at 74d1cbe and b2118fd, reviewed (docs/REVIEW-retire.md) |
 | parameter | every economic number is an owner setting, effective at once, no timelock | 3, 15 | built |
 | parameter | opening bid at the market price of a credit on launch day, `rateCap` 10 times the opening bid | NEXT 11, 46 | the launch day rule sets both (docs/DEPLOY.md section 1), preflight fails unless the ratio is 10 (NEXT item 21) |
 | parameter | buyback slice 0.5 eth at launch, at most 1 eth: unprofitable to sandwich down to about a quarter of launch pool depth. below that a bot takes a share of each buyback until the owner lowers the slice | 51 | decided, being built (NEXT item 26) |
 | parameter | payee 0.75 points of volume to the owner address, protocol 0.25 points, engine the rest | 31 | built |
+| parameter | the coin's name is `CC`; its `image` and `description` are launch parameters, a renderer is set after launch by the coin admin | 53, 54 | built at 70d88be |
+| behavior | every credit is worth the same: no credit scores anywhere, phase 2 included | 55 | decided, being built (NEXT item 29) |
+| behavior | `buyListing` stays; the owner's keeper is a fallback outside the contract | 57 | built |
 | risk | holders trust the owner key fully: the owner can overpay a seller it controls and move everything to a successor at once | 8, section 10 | accepted by the owner (FLOW decision 8) |
 
 we own five contracts. everything else is live, the v2 stack included, and is used as deployed.

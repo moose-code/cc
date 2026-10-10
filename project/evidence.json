@@ -676,6 +676,37 @@
       "result": "pass",
       "limitations": "recorded against decisions through 51; decisions 52 to 55 are not built. the preflight script itself fails on a fork (NEXT 27): the tests reach the checks through another path",
       "invalidated": null
+    },
+    "E-SUITE-70d88be": {
+      "claim": "full suite passes with decisions through 54 built: 1096 pass, 0 fail, 8 skipped (the Deep suites); the real preflight script on a fork: 115 rows, 112 pass, failures are the owner balance and the two factory owner step rows",
+      "kind": "test",
+      "sourceRevision": "70d88be545b927a9a4aaa0fc02308f3a096f1291",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 5,
+        "A-OWNER-DELEGATE": 1
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000; empty image and description",
+      "method": "REHEARSAL=1 forge test -j 6 (212 s); script/tools/check-preflight.sh",
+      "author": "implementer subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "recorded against decisions through 54 (owner-decision assumption v5); decisions 55 to 57 are not all built. Deep suites not run",
+      "invalidated": null
     }
   }
 }
