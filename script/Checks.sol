@@ -154,7 +154,7 @@ abstract contract LaunchChecks is PostflightChecks {
                 " rateCap ",
                 vm.toString(c.settings.rateCap),
                 " ratio x10000 ",
-                c.rateStart == 0 ? "n/a" : vm.toString(c.settings.rateCap * 10_000 / c.rateStart)
+                c.rateStart == 0 ? "n/a" : vm.toString(uint256(c.settings.rateCap) * 10_000 / c.rateStart)
             )
         );
         bytes32 bad = settingsViolation(c);

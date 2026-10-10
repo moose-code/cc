@@ -674,6 +674,27 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), row);
     }
 
+    /// the rate bounds rows fail on their own: a 10 times pair keeps the ratio row passing while rateStart or rateCap is
+    /// out of its bounds. rateStart bounds are 1e11 to 1e15 and the settings accept the same range for rateCap, so a
+    /// 10 times pair has a rateStart inside its bounds only up to 1e14
+    function test_preflightRateBoundsFailWithoutTheRatioRow() public {
+        address d2 = _funded();
+        LaunchConfig memory c = lc;
+        // rateStart 1e10 is below the minimum, rateCap 1e11 is the lowest cap the settings accept
+        c.rateStart = 1e10;
+        c.settings.rateCap = 1e11;
+        preflight(c, d2);
+        assertEq(_failedNames(), "rateStart in bounds and at most rateCap");
+        assertTrue(_warnClean("rateCap is 10 times rateStart"), "the ratio row passes");
+        // rateStart 1e14 + 1 is inside its bounds, 10 times it is 1e15 + 10, above the settings bound for rateCap
+        c.rateStart = 1e14 + 1;
+        c.settings.rateCap = uint64(10 * c.rateStart);
+        assertTrue(rateInBounds(c), "rateStart bounds row passes");
+        preflight(c, d2);
+        assertEq(_failedNames(), "settings inside the bounds");
+        assertTrue(_warnClean("rateCap is 10 times rateStart"), "the ratio row passes");
+    }
+
     /// @dev preflight of a config whose opening bid is the fixture's: the fixture opens at 4e12 under the launch cap, a
     /// ratio of about 51, so the start is read as a tenth of the cap while the row is not under test. a start that a test
     /// sets itself is passed through

@@ -117,12 +117,20 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         Slip // launches, every check passes and the hash is the signed one
     }
 
+    /// the names of the preflight rows on the rate (script/Checks.sol)
+    string internal constant ROW_RATE_BOUNDS = "rateStart in bounds and at most rateCap";
+    string internal constant ROW_RATE_RATIO = "rateCap is 10 times rateStart";
+    string internal constant ROW_SETTINGS_BOUNDS = "settings inside the bounds";
+
     struct Mut {
         string label;
         LaunchConfig c;
         Class want;
         /// the signer of the run, zero for the deployer
         address who;
+        /// the exact failed preflight rows (names joined by ", ") when the mutation must be caught by those rows, empty
+        /// when only the class is asserted. a class alone cannot tell which check caught a Pre mutation
+        string pre;
     }
 
     function _className(Class k) internal pure returns (string memory) {
@@ -144,13 +152,18 @@ abstract contract ReviewHarness is Test, ProdDeployer {
     bytes internal lateEtchCode;
 
     /// @dev runs preflight, then the deploy, on a snapshot, as `Deploy.run` does: the hash gate first (a stale hash
-    /// stops everything), then preflight, then the deploy. logs one matrix row. `signed` is the hash of the base config
-    function _run(string memory label, LaunchConfig memory c, bytes32 signed, address who) internal returns (Class k) {
+    /// stops everything), then preflight, then the deploy. logs one matrix row. `signed` is the hash of the base config.
+    /// a non-empty `pre` is the exact list of failed preflight rows
+    function _run(string memory label, LaunchConfig memory c, bytes32 signed, address who, string memory pre)
+        internal
+        returns (Class k)
+    {
         uint256 snap = vm.snapshotState();
         this.stopPrankExt();
         string memory detail;
         bool hashSame = configHash(c) == signed;
         detail = this.runPre(c, who);
+        if (bytes(pre).length != 0) assertEq(detail, pre, string.concat("failed preflight rows: ", label));
         if (bytes(detail).length != 0) {
             k = Class.Pre;
         } else {
@@ -240,7 +253,7 @@ abstract contract ReviewHarness is Test, ProdDeployer {
             uint256 snap = vm.snapshotState();
             (label, want) = _state(i);
             console.log(string.concat("STATE ", vm.toString(i), " ", label));
-            k = _run(label, base, signed, deployer);
+            k = _run(label, base, signed, deployer, "");
             vm.revertToState(snap);
             vm.clearMockedCalls();
             return (k, label, want);
@@ -248,7 +261,7 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         Mut memory m = _mut(g, i);
         if (bytes(m.label).length == 0) return (Class.Slip, "", Class.Slip);
         assertTrue(configHash(m.c) != signed || m.who != address(0), string.concat("the hash must change: ", m.label));
-        return (_run(m.label, m.c, signed, m.who == address(0) ? deployer : m.who), m.label, m.want);
+        return (_run(m.label, m.c, signed, m.who == address(0) ? deployer : m.who, m.pre), m.label, m.want);
     }
 
     /// the mutation matrix on the fixed package. every mutation is caught by a preflight rule, reverts safely at
