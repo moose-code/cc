@@ -123,13 +123,13 @@
     ]
   },
   "candidate": null,
-  "activeChange": null,
+  "activeChange": "NEXT-22: retire the old engine on the first migrate (FLOW 48)",
   "openBlockers": [],
   "ownerDecisions": [
     {
       "id": "OD-1",
-      "question": "After the first migrate, should the old engine stop buying and composing (retire) or keep every door open (as built)? docs/HANDOFF.md section 4.",
-      "status": "open",
+      "question": "After the first migrate, should the old engine stop buying and composing (retire) or keep every door open (as built)? docs/HANDOFF.md section 4. Decided 2026-10-10: FLOW 48.",
+      "status": "decided",
       "blocks": [
         "freeze",
         "deploy"
@@ -143,14 +143,14 @@
     },
     {
       "id": "OD-3",
-      "question": "A market above rateCap stops buying until the owner raises rateCap; a rising market is followed at 0.5 percent a minute. Accept as a known risk with setSettings as the recovery? docs/HANDOFF.md section 4.",
-      "status": "open",
+      "question": "A market above rateCap stops buying until the owner raises rateCap; a rising market is followed at 0.5 percent a minute. Accept as a known risk with setSettings as the recovery? docs/HANDOFF.md section 4. Decided 2026-10-10: FLOW 49.",
+      "status": "decided",
       "blocks": [
         "deploy"
       ]
     }
   ],
-  "nextAction": "Ask the owner OD-1 and OD-3 in one message. While waiting, run the read-only system audit of the seven untraced required paths.",
+  "nextAction": "Build NEXT item 22 with focused tests, then one full suite at the batch boundary; then the read-only system audit of the seven untraced paths.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",

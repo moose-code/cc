@@ -14,8 +14,8 @@ each line cites the decision in docs/FLOW.md that records the owner's words. kin
 
 | kind | intent | decision | status |
 |---|---|---|---|
-| guarantee | while the market price is at or below `rateCap`, a credit priced at the engine's bid that the pot and the hourly room cover can always be sold to it, whether the market rises or falls | 42 | built, verified by invariants 11 and 16 on 06009bd. invariant 16 skips under a hostile controller |
-| risk | a market above `rateCap` stops buying until the owner raises `rateCap`, and the bid follows a rising market at 0.5 percent a minute (about 45 minutes, compounded, to climb from 20 percent below the market) | 42, 46 | not yet acknowledged by the owner: OD-3 in docs/HANDOFF.md |
+| guarantee | while the engine has not migrated and the market price is at or below `rateCap`, a credit priced at the engine's bid that the pot and the hourly room cover can always be sold to it, whether the market rises or falls | 42, 48 | built, verified by invariants 11 and 16 on 06009bd. invariant 16 skips under a hostile controller |
+| risk | a market above `rateCap` stops buying until the owner raises `rateCap`, and the bid follows a rising market at 0.5 percent a minute (about 45 minutes, compounded, to climb from 20 percent below the market) | 42, 46, 49 | accepted by the owner (decision 49) |
 | guarantee | eth, credits and exitToken leave the Core at the owner's call only through `migrate` to the successor, coin only through `rescueCoin`, NFTs off the books only through `rescueNft` (section 10) | 8, 28, 32, 33 | built, verified by invariants 1 and 8 on 06009bd |
 | guarantee | a statement leaves the Core only by a sale at or above its reserve, an exit, or as the top of an overprint | section 4 of FLOW | built, verified by invariants 4 and 12 on 06009bd |
 | guarantee | the four Core locks and the router lock are one way | 9.6, 10.2 | built, verified by invariants 13 and 15 on 06009bd |
@@ -25,7 +25,7 @@ each line cites the decision in docs/FLOW.md that records the owner's words. kin
 | behavior | a pot is spent as sellers come, never dripped over hours | 37, 45 | built (`spendCapBps` 10_000) |
 | behavior | the keeper is not overpaid: payments to callers are bounded by `tipCapBps`, `keeperTipBps` and `reimburseCapBps`, and compose pays its caller nothing | 41, 46 | built |
 | behavior | compose and composeExit repay nothing. holders compose, the owner composes when nobody does | 41 | built. the composer and the owner's backstop cost are unproved assumptions (docs/REVIEW-decisions.md path A) |
-| behavior | migrate moves eth, exit token and credits, and the old engine sells out its own statements | 33 | built: after a migrate the old engine keeps buying and composing with later inflows, and `migrate` also moves `ethToBuyback` (earmarked for the buyback) and the exit token pots. whether that serves the owner's purpose is OD-1 in docs/HANDOFF.md |
+| behavior | the first `migrate` retires the old engine: it stops buying, adopting and composing, keeps settling and selling out its statements and burning its `ethToBuyback`. `migrate` moves `ethPot`, the exit token pots and credits | 33, 48 | decided 2026-10-10, being built (NEXT item 22) |
 | parameter | every economic number is an owner setting, effective at once, no timelock | 3, 15 | built |
 | parameter | opening bid at the market price of a credit on launch day, `rateCap` 10 times the opening bid | NEXT 11, 46 | the launch day rule sets both (docs/DEPLOY.md section 1), preflight fails unless the ratio is 10 (NEXT item 21) |
 | parameter | payee 0.75 points of volume to the owner address, protocol 0.25 points, engine the rest | 31 | built |

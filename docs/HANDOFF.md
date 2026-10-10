@@ -41,15 +41,9 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 ## 4. owner decisions
 
-**OD-1, open, blocks the freeze.** after the first `migrate`, should the old engine stop buying and composing?
+**OD-1, decided 2026-10-10 (FLOW 48).** the first `migrate` retires the old engine. `ethToBuyback` stays in it and its buyback burns it. the exit token pots move. being built as NEXT item 22.
 
-* as built: every door of the old engine stays open. sale proceeds and any fees still routed to it are spent on credits, and full pages can be composed into new statements that only the old engine can sell. the owner calls `migrate` again as proceeds arrive. `migrate` also moves the exit token pots. `test_OK_theEngineKeepsWorkingAfterAMigration` asserts the doors stay open.
-* the owner's words (2026-10-09): "migrate only credits and eth and let v1 sell out its own statements". FLOW 33: "a later migrate moves" the proceeds. neither says whether the old engine may keep buying.
-* option A, keep as built: no code change. the wind down lasts as long as proceeds arrive, and the old engine bids against the new one meanwhile.
-* option B, retire: every `migrate` call sets a one way flag. the six buying and composing doors refuse after it: `sellForEth`, `buyListing`, `adopt`, `compose`, `composeExit` (all five reach `_pullFees` first) and `sellForExitToken` (src/Core.sol 631, needs its own check). settling, exits, overprint, `collectSales`, `syncStatement`, the buyback and fee booking keep working, and proceeds wait in the pot for the next `migrate`. guarantee 42 and invariants 11 and 16 then hold for an engine that has not migrated, which the invariant handler must model. cost: the flag and two checks in the Core (512 bytes of headroom), the migration tests, the handler, and a review of the path.
-* recommendation: B. it matches the stated purpose, ends the wind down when the last statement sells, and keeps one engine buying at a time. answer in the same reply two parts of what moves: `migrate` sends `ethToBuyback` (the buyback share of sale proceeds, earmarked to buy and burn the coin) to the successor with the pot, where it is no longer earmarked, and it sends the exit token pots. your words named credits and eth. recommendation: keep `ethToBuyback` in the old engine so its buyback burns it as decided, and move the exit token pots (phase 2 belongs to the engine that holds the exit module).
-
-**OD-3, open, does not block the freeze.** a market above `rateCap` stops the engine buying until you raise `rateCap` with `setSettings`, and a rising market is followed at 0.5 percent a minute (about 45 minutes, compounded, to climb from 20 percent below the market). your words on 2026-10-09 were "we should never get locked anywhere". recommendation: accept it as a known risk with your `setSettings` as the recovery, because `rateCap` is the overpay guard you chose ("let's make this 10x to start").
+**OD-3, decided 2026-10-10 (FLOW 49).** a market above `rateCap` is an accepted risk, with `setSettings` as the recovery.
 
 **OD-2, open, does not block the launch.** when to call `coin.lockAllowlist()` and `router.lock()` (NEXT item 19, after launch).
 
@@ -66,9 +60,9 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 ## 6. next action
 
-ask the owner OD-1 and OD-3 in one message. while waiting, run the system audit of the seven untraced required paths (docs/REVIEW-decisions.md section 3 is the method), read only, because a finding there can change code.
+build NEXT item 22 (FLOW 48) with focused tests, then one full suite at the batch boundary. then the read-only system audit of the seven untraced required paths, before the freeze.
 
-after that, in order: implement the OD-1 answer, freeze the candidate, run the full suite and the deep invariants on it, an independent security review of the candidate by a fresh reviewer, the rehearsal from a clean checkout, `python3 script/director.py check --gate deploy`, the owner's launch steps.
+after that, in order: freeze the candidate, the deep invariants on it, an independent security review of the candidate by a fresh reviewer, the rehearsal from a clean checkout, `python3 script/director.py check --gate deploy`, the owner's launch steps.
 
 ## 7. how to work in this repo
 
