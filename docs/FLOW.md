@@ -193,7 +193,7 @@ these replace the old `frozen` flag and the Freeze action. the setters revert wi
 
 ## 10. port to the artcoins v2 stack (owner confirmed 2026-10-07)
 
-the coin launches on the artcoins v2 factory, not the v1 stack the launch package was built on. reference: the v2 repo, branch v2-legibility, commit d4aa46b (deployed on mainnet from launcher commit fbe07c7, script/config/v2-mainnet.json). the analysis is docs/V2-PORT.md: it is the working reference for every detail below, this section is the binding decision list. where V2-PORT.md and this section differ, this section wins. the v2 audit is pending and the stack is live, so every v2 address stays a config input and preflight pins the live code hashes.
+the coin launches on the artcoins v2 factory, not the v1 stack the launch package was built on. reference: the v2 repo, branch v2-legibility, commit d4aa46b (deployed on mainnet from launcher commit fbe07c7, script/config/v2-mainnet.json). the analysis is docs/archive/V2-PORT.md: it is the working reference for every detail below, this section is the binding decision list. where V2-PORT.md and this section differ, this section wins. the v2 audit is pending and the stack is live, so every v2 address stays a config input and preflight pins the live code hashes.
 
 ### 10.1 decisions
 
@@ -217,7 +217,7 @@ the coin launches on the artcoins v2 factory, not the v1 stack the launch packag
 ### 10.3 Core change (the only one)
 
 * `Stack` gains `feeSource`. `receive()` books eth as fees (checkpoint, `feeToBuybackBps` split, resync) when `msg.sender == FEE_SOURCE` and no measurement is in flight (while one is, the fee source reverts `Measuring` and the router flush fails whole, V2R-1). eth from any other sender, the hook and the escrow included, is accepted and left for `skim()` as today.
-* the forbidden target list takes the v2 addresses of V2-PORT.md section 7 plus the router.
+* the forbidden target list takes the v2 addresses of docs/archive/V2-PORT.md section 7 plus the router.
 * eth the v2 escrow holds for the Core (partial fill refunds of the Core's own buyback) is claimed by anyone with the escrow's claim and then booked by `skim()` to the pot. document it, no code.
 * size: the Core must keep at least 60 bytes of headroom. if the change does not fit, move code to `CoreLib`, never drop a check.
 

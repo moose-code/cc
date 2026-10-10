@@ -13,7 +13,7 @@ the baton for the session that directs this project next. read this file, then r
 | project/director-state.json | the objective, open owner decisions, gates. `python3 script/director.py status` |
 | project/evidence.json | the evidence ledger with the assumptions each record used. `python3 script/director.py evidence` |
 | docs/REVIEW-*.md, docs/SIMULATION.md | evidence, each pinned to the commit it examined |
-| SPEC.md, docs/V2-PORT.md, docs/BID-STUDY.md, docs/V2-REQUESTS.md | history |
+| docs/archive/ (SPEC, V2-PORT, BID-STUDY, V2-REQUESTS, the older reviews) | history, see docs/archive/README.md |
 
 rules for the director:
 

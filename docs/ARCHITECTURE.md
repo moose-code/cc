@@ -6,7 +6,7 @@ naming rule: only `exitModule` and `exitToken`. never name or describe them anyw
 
 ## 1. goal, what we own, what is live
 
-the engine exists to keep credits flowing into statements. statement sales do not need to profit. a statement that sells below the cost of its 80 credits is better than one that does not sell. unsold statements are fine: they stay listed and are redeemed through the exitModule in phase 2. the engine never stops buying because statements are unsold, there is no inventory gate. early on it should acquire as many credits as possible, score can matter later through `flatBps`.
+the engine exists to keep credits flowing into statements. statement sales do not need to profit. a statement that sells below the cost of its 80 credits is better than one that does not sell. unsold statements are fine: they stay listed and are redeemed through the exitModule in phase 2. the engine never stops buying because statements are unsold, there is no inventory gate. early on it should acquire as many credits as possible. every credit is worth the same (decision 55).
 
 ### current intent at a glance
 
