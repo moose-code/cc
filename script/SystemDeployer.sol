@@ -40,6 +40,11 @@ abstract contract SystemDeployer is LaunchChecks {
     /// @notice a transaction of the deploy would not fit under the per transaction gas cap
     error TxOverGasCap(uint256 step, uint256 gas);
 
+    /// @notice an environment flag that names an owner change after launch is set. only `Postflight` honors them
+    error ChangeFlagSet(string flag);
+    /// @notice CONTROLLER_NONCE is not the nonce the controller would be created at now. `want` is that nonce
+    error ControllerNonceMismatch(uint256 got, uint256 want);
+
     /// @dev what a transaction costs on top of the execution gas measured inside the call: the base 21_000 and the
     /// calldata of the largest creation (about 30 kb at 16 gas a byte, a bound)
     uint256 internal constant TX_OVERHEAD = 520_000;
@@ -165,6 +170,23 @@ abstract contract SystemDeployer is LaunchChecks {
     /// @notice reverts unless the signer is the deployer the operator named
     function _requireDeployer(address want, address got) internal pure {
         if (want == address(0) || want != got) revert DeployerMismatch(want, got);
+    }
+
+    /// @notice reverts when any of SETTINGS_CHANGED, LOCKS_CHANGED, OWNER_CHANGED, COIN_CHANGED or ROUTER_CHANGED is set.
+    /// `Deploy` and `Resume` send transactions that assume the launch state, and each flag turns failed rows into warnings
+    function _requireNoChangeFlags() internal view {
+        if (_settingsChanged()) revert ChangeFlagSet("SETTINGS_CHANGED");
+        if (_locksChanged()) revert ChangeFlagSet("LOCKS_CHANGED");
+        if (_ownerChanged()) revert ChangeFlagSet("OWNER_CHANGED");
+        if (_coinChanged()) revert ChangeFlagSet("COIN_CHANGED");
+        if (_routerChanged()) revert ChangeFlagSet("ROUTER_CHANGED");
+    }
+
+    /// @notice reverts unless `given` is the nonce the controller is created at: the nonce preflight printed. any owner
+    /// transaction after preflight moves the predicted controller, router and core addresses
+    function _requireControllerNonce(address deployer, uint256 given) internal view {
+        uint256 want = _controllerNonce(deployer);
+        if (given != want) revert ControllerNonceMismatch(given, want);
     }
 
     /// @notice the sign off value: reverts unless `given` is the hash of this config

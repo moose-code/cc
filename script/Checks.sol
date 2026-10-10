@@ -65,6 +65,17 @@ abstract contract LaunchChecks is PostflightChecks {
     uint16 internal constant PIN_PROTOCOL_BPS = 2000;
     /// @dev the most the launch pays the factory. a fee above it is a factory state change the signed config never saw
     uint256 internal constant PIN_DEPLOY_FEE_MAX = 0.1 ether;
+    /// @dev the pinned build: the keccak256 of the runtime code of each production artifact in `out/`, the immutable slots
+    /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
+    /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
+    /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
+    bytes32 internal constant BUILD_HASH_CORE = 0x16b1d237386c477deb585d2807057803c7d17bbb2f8f0daac67c26226eb6dae8;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x7dfc4db44c2aaca677e22a22dd803782a971fa2a2db9cd5a2bf5399042aeeb79;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x95b20fcfaaafc11df13abbd28b21c75874e393106c985c1fe0d04835618d1a38;
+    bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
+    bytes32 internal constant BUILD_HASH_LENS = 0x4ff989feabca4e9387b32b7f3ea71b38dc0ff330f81e0cf853130082079ffb63;
+    bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
+        0x7da9b204e0ffd9eb166aa65ba2058a878e88f80e4f3600f9ddd8d4a0fd6ca49e;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -118,6 +129,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _preConfig(c);
         _preRules(c, deployer);
         _preCode(c);
+        _preBuild();
         _preLibrary();
         _preStack(c);
         _preFactory(c, deployer);
@@ -135,6 +147,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _preConfig(c);
         _preRules(c, deployer);
         _preCode(c);
+        _preBuild();
         _preStack(c);
         if (launching) _preFactory(c, deployer);
         _preLive();
@@ -340,6 +353,31 @@ abstract contract LaunchChecks is PostflightChecks {
         _code("code: Permit2", Mainnet.PERMIT2);
         _code("code: position manager", Mainnet.POSITION_MANAGER);
         _code("code: universal router", Mainnet.UNIVERSAL_ROUTER);
+    }
+
+    /// @dev the local `out/` artifacts against the pinned build. the system is created from the compiled tree and the
+    /// postflight compares the chain with `out/`, so a modified tree or a stale `out/` fails here before anything is sent
+    function _preBuild() private {
+        _pinBuild("Core", BUILD_HASH_CORE);
+        _pinBuild("CoreLib", BUILD_HASH_CORELIB);
+        _pinBuild("ControllerV1", BUILD_HASH_CONTROLLER);
+        _pinBuild("FeeRouter", BUILD_HASH_ROUTER);
+        _pinBuild("CoreLens", BUILD_HASH_LENS);
+        bytes32 got = keccak256(vm.getCode("CoreLib.sol:CoreLib"));
+        _check(
+            "build: CoreLib creation code hash equals the pinned build",
+            got == BUILD_CREATION_HASH_CORELIB,
+            vm.toString(got)
+        );
+    }
+
+    function _pinBuild(string memory name, bytes32 want) private {
+        bytes32 got = artifactHash(name);
+        _check(
+            string.concat("build: ", name, " runtime code hash equals the pinned build"),
+            got == want,
+            string.concat("out/ ", vm.toString(got))
+        );
     }
 
     /// @dev the linked library. a deployed copy at the create2 address is the compiled code by construction (the address
@@ -727,7 +765,16 @@ abstract contract LaunchChecks is PostflightChecks {
             "the protocol leg (362 of 10_000 of the baseline skim, 0.24978 points of volume) and the protocol locker slot belong to the launcher protocol, a separate business from this engine and its owner"
         );
         _preSettingsRows(c);
+        _info(
+            "signoff: build (runtime code hashes of out/, slots masked)",
+            string.concat(
+                "Core ", vm.toString(BUILD_HASH_CORE), " CoreLib ", vm.toString(BUILD_HASH_CORELIB), " ControllerV1 ",
+                vm.toString(BUILD_HASH_CONTROLLER), " FeeRouter ", vm.toString(BUILD_HASH_ROUTER), " CoreLens ",
+                vm.toString(BUILD_HASH_LENS), " CoreLib creation ", vm.toString(BUILD_CREATION_HASH_CORELIB)
+            )
+        );
         _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));
+        _info("signoff: CONTROLLER_NONCE (the owner sends nothing else until the deploy ends)", vm.toString(uint256(nonce)));
     }
 
     /// @dev the settings are adjustable by the owner after launch, so these rows print them for sign off

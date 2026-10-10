@@ -118,7 +118,10 @@ contract ReviewDeployTest is ReviewHarness {
         vm.etch(_linked(), bytes.concat(_linked().code, hex"00"));
         // the postflight fails on the library row, the Core itself was created at the predicted address before that
         vm.expectRevert(
-            abi.encodeWithSelector(Report.ChecksFailed.selector, "core: linked library is the compiled CoreLib")
+            abi.encodeWithSelector(
+                Report.ChecksFailed.selector,
+                "core: linked library is the compiled CoreLib, core: every library call site and every immutable slot holds the library or the getter value"
+            )
         );
         this.tryDeploy(base, deployer);
     }

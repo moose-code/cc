@@ -6,11 +6,12 @@ import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemDeployer, Deployed} from "./SystemDeployer.sol";
 import {NewProd} from "./NewProd.sol";
 
-/// @notice `CONFIG_HASH=0x... DEPLOYER=0x... forge script script/Deploy.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow
+/// @notice `CONFIG_HASH=0x... CONTROLLER_NONCE=n DEPLOYER=0x... forge script script/Deploy.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow
 /// --private-key $KEY` (or `--account` or `--ledger`). the signer must be the v2 factory owner and the config owner, it
 /// comes from the flags only, DEPLOYER only has to agree with it. reads script/config/mainnet.json, or the file named by
-/// LAUNCH_CONFIG. refuses to run while owner, creator, name, symbol or salt is unset, unless CONFIG_HASH is the hash
-/// that preflight printed for this config, and unless the signer is the factory owner. the order of the transactions
+/// LAUNCH_CONFIG. refuses to run while owner, creator, name, symbol or salt is unset, while any of SETTINGS_CHANGED, LOCKS_CHANGED,
+/// OWNER_CHANGED, COIN_CHANGED or ROUTER_CHANGED is set, unless CONFIG_HASH is the hash that preflight printed for this
+/// config, unless CONTROLLER_NONCE is the owner nonce preflight printed, and unless the signer is the factory owner. the order of the transactions
 /// (docs/FLOW.md 10.4): the library, the controller, the router, the Core, the lens, the launch, then the router setup (engine,
 /// payees). the split start is NOT sent here: it is derived from the launch time as mined, so it is the one step of
 /// the Resume script (run it after this one, docs/DEPLOY.md). preflight runs first and postflight runs on the simulated result, both before anything is
@@ -18,6 +19,7 @@ import {NewProd} from "./NewProd.sol";
 contract Deploy is Script, NewProd {
     /// @notice runs the deploy as the broadcaster
     function run() external returns (Deployed memory d) {
+        _requireNoChangeFlags();
         LaunchConfig memory c = loadConfig(vm.envOr("LAUNCH_CONFIG", DEFAULT_CONFIG_FILE));
         _requireConfig(c);
         // nothing is signed or sent until the operator's sign off value equals the hash of this config
@@ -28,6 +30,8 @@ contract Deploy is Script, NewProd {
         vm.stopBroadcast();
         _requireDeployer(vm.envOr("DEPLOYER", address(0)), deployer);
         _requireOwner(c, deployer);
+        // the owner nonce preflight printed: a transaction since then moved the predicted addresses
+        _requireControllerNonce(deployer, vm.envOr("CONTROLLER_NONCE", type(uint256).max));
         // every preflight check runs first. a failed check reverts here, before anything is sent
         preflight(c, deployer);
         _print("preflight");

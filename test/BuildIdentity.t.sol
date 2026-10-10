@@ -14,7 +14,9 @@ import {ICore} from "../src/interfaces/ICore.sol";
 ///     metadata hash, solc 0.8.30. the artifact cannot claim that by accident: solc writes it from the settings it ran,
 ///  3. this very test contract was compiled WITHOUT viaIR, so the profile split is live. a config that put everything on
 ///     one profile fails here (all via_ir) or at 2 (none via_ir), and a split that deployed a different build fails at 1,
-///  4. the sizes are the shipped ones. update them in the same commit that changes a production contract on purpose.
+///  4. the sizes are the shipped ones, and the masked runtime code hashes of the five production artifacts and the creation
+///     code hash of CoreLib equal the constants of script/Checks.sol that preflight compares with `out/`. update the
+///     sizes and the constants in the same commit that changes a production contract on purpose.
 /// the generated interfaces are not part of the proof: `script/tools/gen-interfaces.sh --check` covers them, and the
 /// two library functions the abi does not list are pinned to the artifact selectors below.
 contract BuildIdentityTest is Fixture {
@@ -64,7 +66,9 @@ contract BuildIdentityTest is Fixture {
 
     /// @dev zeroes the immutable slots and the library address slots the artifact lists
     function _mask(bytes memory code, string memory j) internal view {
-        string[] memory ids = vm.parseJsonKeys(j, ".deployedBytecode.immutableReferences");
+        string[] memory ids = vm.keyExistsJson(j, ".deployedBytecode.immutableReferences")
+            ? vm.parseJsonKeys(j, ".deployedBytecode.immutableReferences")
+            : new string[](0);
         for (uint256 i; i < ids.length; ++i) {
             _zeroRefs(code, j, string.concat(".deployedBytecode.immutableReferences.", ids[i]));
         }
@@ -89,6 +93,26 @@ contract BuildIdentityTest is Fixture {
         _mask(live, j);
         _mask(built, j);
         assertEq(keccak256(live), keccak256(built), string.concat(name, ": deployed code is the via_ir artifact"));
+    }
+
+    /// @dev the masked runtime code hash of an artifact, computed here with `_mask` and not with the script routine
+    function _maskedHash(string memory name) internal view returns (bytes32) {
+        bytes memory built = vm.getDeployedCode(string.concat(name, ".sol:", name));
+        _mask(built, _json(name));
+        return keccak256(built);
+    }
+
+    /// @dev the build pins preflight checks (script/Checks.sol) are the artifacts of this tree, by two independent
+    /// computations of the masked hash
+    function test_pinnedBuildHashesEqualTheArtifacts() public {
+        string[5] memory names = ["Core", "CoreLib", "ControllerV1", "FeeRouter", "CoreLens"];
+        bytes32[5] memory pins =
+            [BUILD_HASH_CORE, BUILD_HASH_CORELIB, BUILD_HASH_CONTROLLER, BUILD_HASH_ROUTER, BUILD_HASH_LENS];
+        for (uint256 i; i < 5; ++i) {
+            assertEq(_maskedHash(names[i]), pins[i], string.concat(names[i], ": masked hash of the artifact"));
+            assertEq(artifactHash(names[i]), pins[i], string.concat(names[i], ": hash the preflight row reads"));
+        }
+        assertEq(keccak256(vm.getCode("CoreLib.sol:CoreLib")), BUILD_CREATION_HASH_CORELIB, "CoreLib creation code");
     }
 
     function test_theFixtureDeploysTheViaIrArtifacts() public view {

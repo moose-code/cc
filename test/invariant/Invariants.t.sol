@@ -82,11 +82,12 @@ abstract contract InvariantsBase is InvariantFixture {
         _zero(g2);
     }
 
-    /// 3. a statement leaves the core's control only through a house auction whose winning bid was at or above the
-    /// reserve the core set for it (tracked at the listing and at every reprice), an exit that returned at least
-    /// credits * unitPerCredit. here the first part: every sold statement sold at or above
-    /// its reserve, and the reserve was the one the core's rule gives (cost * saleFloorBps of the settings in force when
-    /// it was listed or repriced).
+    /// 3. a statement leaves the core's control only by a sale at or above the hard floor (cost * saleFloorBps of the
+    /// settings in force when it was listed or repriced) or by an exit that returned at least credits * unitPerCredit.
+    /// in auction mode the house auction clears at or above the reserve the core set for it (tracked at the listing and
+    /// at every reprice), which is at least the hard floor. in buy only mode `sellTo` is paid the decaying ask, at least
+    /// the hard floor. here the first part: every sold statement sold at or above the hard floor of its listing, and the
+    /// recorded reserve is the one the core's rule gives.
     function invariant_03_noStatementSoldBelowItsReserve() public view {
         _zero(g3);
         uint256 n = handler.everHeldCount();

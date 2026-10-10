@@ -17,18 +17,23 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         uint256 start;
     }
 
-    /// @dev the {start, length} pairs (packed start << 128 | length) of the immutable slots and the library address
-    /// slots of an artifact. the artifact json is large (a postflight runs hundreds of times in the mutation matrix, and
-    /// a snapshot revert would drop contract storage), so the masks, the length and the masked hash of the compiled
-    /// runtime code are read once and kept in the process environment, which a snapshot revert does not touch
-    function _idCollect(string memory j, string memory path, uint256[] memory acc) private view returns (uint256[] memory) {
+    /// @dev the {start, length} pairs (packed start << 128 | length) of an artifact's slots. an immutable slot carries
+    /// its group (the index of the immutable in ascending AST id order, which is declaration order) in the bits from 192.
+    /// the artifact json is large (a postflight runs hundreds of times in the mutation matrix, and a snapshot revert
+    /// would drop contract storage), so the slots, the length and the masked hash of the compiled runtime code are read
+    /// once and kept in the process environment, which a snapshot revert does not touch
+    function _idCollect(string memory j, string memory path, uint256[] memory acc, uint256 group)
+        private
+        view
+        returns (uint256[] memory)
+    {
         IdRef[] memory refs = abi.decode(vm.parseJson(j, path), (IdRef[]));
         uint256[] memory out = new uint256[](acc.length + refs.length);
         for (uint256 i; i < acc.length; ++i) {
             out[i] = acc[i];
         }
         for (uint256 i; i < refs.length; ++i) {
-            out[acc.length + i] = (refs[i].start << 128) | refs[i].length;
+            out[acc.length + i] = (group << 192) | (refs[i].start << 128) | refs[i].length;
         }
         return out;
     }
@@ -37,36 +42,66 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         return string.concat("POSTFLIGHT_CODE_", what, "_", name);
     }
 
-    /// @dev reads the artifact once: the slots to mask and the hash of the masked compiled runtime code
+    /// @dev reads the artifact once: the immutable slots, the library address slots and the hash of the masked compiled
+    /// runtime code
     function _idLoad(string memory name) private {
         string memory j = vm.readFile(string.concat("out/", name, ".sol/", name, ".json"));
-        uint256[] memory m = new uint256[](0);
-        string[] memory ids = vm.parseJsonKeys(j, ".deployedBytecode.immutableReferences");
+        uint256[] memory imm = new uint256[](0);
+        // an artifact without immutables (FeeRouter) has no such key
+        string[] memory ids = vm.keyExistsJson(j, ".deployedBytecode.immutableReferences")
+            ? vm.parseJsonKeys(j, ".deployedBytecode.immutableReferences")
+            : new string[](0);
         for (uint256 i; i < ids.length; ++i) {
-            m = _idCollect(j, string.concat(".deployedBytecode.immutableReferences.", ids[i]), m);
+            imm = _idCollect(j, string.concat(".deployedBytecode.immutableReferences.", ids[i]), imm, i);
         }
+        uint256[] memory lnk = new uint256[](0);
         string[] memory files = vm.parseJsonKeys(j, ".deployedBytecode.linkReferences");
         for (uint256 i; i < files.length; ++i) {
             string memory fp = string.concat(".deployedBytecode.linkReferences['", files[i], "']");
             string[] memory libs = vm.parseJsonKeys(j, fp);
             for (uint256 k; k < libs.length; ++k) {
-                m = _idCollect(j, string.concat(fp, ".", libs[k]), m);
+                lnk = _idCollect(j, string.concat(fp, ".", libs[k]), lnk, 0);
             }
         }
-        bytes memory built = vm.getDeployedCode(string.concat(name, ".sol:", name));
-        _idZero(built, m);
-        string memory list;
-        for (uint256 i; i < m.length; ++i) {
-            list = i == 0 ? vm.toString(m[i]) : string.concat(list, ",", vm.toString(m[i]));
-        }
+        bytes memory built = _idBuilt(j);
+        _idZero(built, imm);
+        _idZero(built, lnk);
         vm.setEnv(_idKey(name, "LEN"), vm.toString(built.length));
         vm.setEnv(_idKey(name, "HASH"), vm.toString(keccak256(built)));
-        vm.setEnv(_idKey(name, "MASK"), list);
+        vm.setEnv(_idKey(name, "SLOTS"), vm.toString(abi.encode(imm, lnk)));
+    }
+
+    /// @dev the runtime code of the artifact in `j` with every library placeholder replaced by zeros. `getDeployedCode`
+    /// refuses an artifact with unlinked libraries in a script that does not import the library's user (`Preflight`,
+    /// `Postflight`), and the link slots are masked anyway. the placeholder of a library is `__$` and the first 34 hex
+    /// characters of keccak256("<source file>:<library>") and `$__`
+    function _idBuilt(string memory j) private view returns (bytes memory) {
+        string memory o = vm.parseJsonString(j, ".deployedBytecode.object");
+        string[] memory files = vm.parseJsonKeys(j, ".deployedBytecode.linkReferences");
+        for (uint256 i; i < files.length; ++i) {
+            string[] memory libs =
+                vm.parseJsonKeys(j, string.concat(".deployedBytecode.linkReferences['", files[i], "']"));
+            for (uint256 k; k < libs.length; ++k) {
+                bytes memory h = bytes(vm.toString(keccak256(bytes(string.concat(files[i], ":", libs[k])))));
+                bytes memory ph = new bytes(40);
+                ph[0] = "_";
+                ph[1] = "_";
+                ph[2] = "$";
+                for (uint256 b; b < 34; ++b) {
+                    ph[3 + b] = h[2 + b];
+                }
+                ph[37] = "$";
+                ph[38] = "_";
+                ph[39] = "_";
+                o = vm.replace(o, string(ph), "0000000000000000000000000000000000000000");
+            }
+        }
+        return vm.parseBytes(o);
     }
 
     function _idZero(bytes memory code, uint256[] memory m) private pure {
         for (uint256 i; i < m.length; ++i) {
-            uint256 start = m[i] >> 128;
+            uint256 start = uint64(m[i] >> 128);
             uint256 len = uint128(m[i]);
             require(start + len <= code.length, "mask outside the code");
             // calldata past its end reads as zeros: one copy zeroes the whole range
@@ -76,14 +111,29 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         }
     }
 
+    function _idEnsure(string memory name) private {
+        if (!vm.envExists(_idKey(name, "HASH"))) _idLoad(name);
+    }
+
+    function _idSlots(string memory name) private returns (uint256[] memory imm, uint256[] memory lnk) {
+        _idEnsure(name);
+        (imm, lnk) = abi.decode(vm.envBytes(_idKey(name, "SLOTS")), (uint256[], uint256[]));
+    }
+
+    /// @notice the keccak256 of the runtime code of the compiled artifact `name` (`Core`, `CoreLib`, `ControllerV1`,
+    /// `FeeRouter`, `CoreLens`) with the immutable slots and the library address slots zeroed, as read from `out/`
+    function artifactHash(string memory name) internal returns (bytes32) {
+        _idEnsure(name);
+        return vm.envBytes32(_idKey(name, "HASH"));
+    }
+
     /// @notice whether the runtime code at `at` is the runtime code of the compiled artifact `name` (`Core`,
     /// `ControllerV1`), the immutable slots and the linked library address masked in both (the method of
     /// test/BuildIdentity.t.sol). false when `at` has no code. the artifact side is read once and kept, and the copy
     /// of the live code is released, so a run of hundreds of postflights stays cheap
     function runtimeMatchesArtifact(address at, string memory name) internal returns (bool ok) {
         if (at.code.length == 0) return false;
-        if (!vm.envExists(_idKey(name, "HASH"))) _idLoad(name);
-        uint256[] memory m = vm.envUint(_idKey(name, "MASK"), ",");
+        (uint256[] memory imm, uint256[] memory lnk) = _idSlots(name);
         bytes32 want = vm.envBytes32(_idKey(name, "HASH"));
         uint256 len = vm.envUint(_idKey(name, "LEN"));
         uint256 fmp;
@@ -92,11 +142,50 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         }
         bytes memory live = at.code;
         if (live.length == len) {
-            _idZero(live, m);
+            _idZero(live, imm);
+            _idZero(live, lnk);
             ok = keccak256(live) == want;
         }
         assembly {
             mstore(0x40, fmp)
+        }
+    }
+
+    /// @notice whether every masked slot of the runtime code at `at` holds the value the live contract reports: each
+    /// library address slot equals `lib`, and every site of the immutable with index g (declaration order) holds
+    /// `want[g]`. the runtime hash comparison masks these slots, so this is the check of their content. false when `at`
+    /// has no code or `want` does not have one entry per immutable
+    function runtimeSlotsMatch(address at, string memory name, address lib, uint256[] memory want)
+        internal
+        returns (bool ok)
+    {
+        if (at.code.length == 0) return false;
+        (uint256[] memory imm, uint256[] memory lnk) = _idSlots(name);
+        uint256 fmp;
+        assembly {
+            fmp := mload(0x40)
+        }
+        bytes memory live = at.code;
+        ok = true;
+        for (uint256 i; i < lnk.length && ok; ++i) {
+            ok = _slotWord(live, lnk[i]) == uint256(uint160(lib));
+        }
+        for (uint256 i; i < imm.length && ok; ++i) {
+            uint256 g = imm[i] >> 192;
+            ok = g < want.length && _slotWord(live, imm[i]) == want[g];
+        }
+        assembly {
+            mstore(0x40, fmp)
+        }
+    }
+
+    /// @dev the big endian value of a slot, at most 32 bytes. a slot outside the code reads as a mismatch
+    function _slotWord(bytes memory code, uint256 m) private pure returns (uint256 w) {
+        uint256 start = uint64(m >> 128);
+        uint256 len = uint128(m);
+        if (len > 32 || start + len > code.length) return type(uint256).max;
+        for (uint256 i; i < len; ++i) {
+            w = (w << 8) | uint8(code[start + i]);
         }
     }
 

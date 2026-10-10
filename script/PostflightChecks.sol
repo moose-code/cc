@@ -236,6 +236,13 @@ abstract contract PostflightChecks is PostflightPool {
             runtimeMatchesArtifact(ctl, "ControllerV1"),
             vm.toString(ctl)
         );
+        uint256[] memory ctlWant = new uint256[](1);
+        ctlWant[0] = uint256(uint160(address(core)));
+        _check(
+            "controller: every CORE slot of the runtime code is the Core",
+            runtimeSlotsMatch(ctl, "ControllerV1", address(0), ctlWant),
+            "the 9 immutable sites of the controller runtime code"
+        );
         // after launch the owner may lock or set the exit module: LOCKS_CHANGED=1 turns the row into a report line
         bool launchState = !core.controllerLocked() && !core.exitModuleLocked() && !core.targetsLocked()
             && core.exitModule() == address(0);
@@ -377,14 +384,34 @@ abstract contract PostflightChecks is PostflightPool {
         );
     }
 
-    /// @dev the Core is linked against `CoreLib`. its address sits in the Core runtime code as a push20. the row finds
-    /// a push20 operand whose code is the compiled library (its own address masked out)
+    /// @dev the Core is linked against `CoreLib`: its address is the operand of eight push20 sites in the Core runtime
+    /// code. the first row finds a push20 operand whose code is the compiled library (its own address masked out). the
+    /// second reads every library address slot and every immutable slot of the Core runtime code and requires each to
+    /// hold that library or the value the matching getter returns, because the identity hash masks all of them
     function _postLibrary(ICore core) private {
         address found = findLibrary(address(core).code);
         _check(
             "core: linked library is the compiled CoreLib",
             found != address(0),
             string.concat("library at ", vm.toString(found))
+        );
+        uint256[] memory want = new uint256[](12);
+        want[0] = uint256(uint160(core.COIN()));
+        want[1] = core.RATE_START();
+        want[2] = uint256(uint160(core.AUCTION_FACTORY()));
+        want[3] = uint256(uint160(address(core.HOUSE())));
+        want[4] = uint256(uint160(address(core.MANAGER())));
+        want[5] = uint256(uint160(core.HOOK()));
+        want[6] = uint256(uint160(core.FEE_SOURCE()));
+        want[7] = uint256(int256(core.TICK_SPACING()));
+        want[8] = uint256(core.POOL_FEE());
+        want[9] = uint256(uint160(core.FACTORY()));
+        want[10] = uint256(uint160(core.LOCKER()));
+        want[11] = uint256(uint160(core.ESCROW()));
+        _check(
+            "core: every library call site and every immutable slot holds the library or the getter value",
+            found != address(0) && runtimeSlotsMatch(address(core), "Core", found, want),
+            "the 8 CoreLib call sites and the 38 immutable sites of the Core runtime code"
         );
     }
 
