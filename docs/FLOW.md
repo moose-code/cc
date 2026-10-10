@@ -1,10 +1,10 @@
-# flow rework: director brief
+# owner decision log
 
-binding for branch `flow`. where it conflicts with SPEC.md or docs/ARCHITECTURE.md, this file wins. the owner's goal changed: the engine exists to keep credits flowing into statements. statement sales do not need to profit. unsold statements are fine: they wait for phase 2 and are redeemed through the exitModule.
+the dated record of the owner's decisions and the reasons behind them. the current reading of intent is docs/ARCHITECTURE.md, which cites the decision numbers here. a later dated decision supersedes an earlier one, and superseded text is marked in place. the owner's latest explicit instruction overrides both files until the director records it. the owner's goal: the engine exists to keep credits flowing into statements. statement sales do not need to profit. unsold statements are fine: they wait for phase 2 and are redeemed through the exitModule.
 
 naming rule: only `exitModule` and `exitToken`. never name or describe them.
 
-superseded in part by section 10 (the port to the artcoins v2 stack, with its amendments 10.6 and 10.7). every statement in sections 1 to 9 about the v1 launch is marked superseded below and no longer true: the skim hook pushing to the Core, the 9.5 and 0.5 skim split, the tax, the factory admin steps, `deployTokenWithProtocolBpsAndTax`. the economic rules of the Core (settings, the bid, the sale, the exit, the locks) are unchanged.
+superseded in part by section 10 (the port to the artcoins v2 stack, with its amendments 10.6 to 10.13). every statement in sections 1 to 9 about the v1 launch is marked superseded below and no longer true: the skim hook pushing to the Core, the 9.5 and 0.5 skim split, the tax, the factory admin steps, `deployTokenWithProtocolBpsAndTax`. the economic rules of the Core (settings, the bid, the sale, the exit, the locks) are unchanged.
 
 ## 1. owner decisions (all confirmed by the owner)
 
@@ -354,3 +354,16 @@ mechanism of 36:
 | 39 | the factory has no minimum lp fee. a launch needs an lp fee or a baseline skim above 0 (`ZeroFeeLaunch`), and the launch has the baseline skim. the only factory owner command of the launch is `setMinProtocolSkimShareBps(362)` |
 | 40 | the coin admin, which is the owner, repoints the hook bounty recipient (`setBountyRecipient(poolId, recipient)` on the hook) and a locker reward recipient (`setRewardRecipient(coin, index, recipient)`, the protocol slot excluded) until it calls `lockRecipients()` on the coin. renouncing the admin freezes both. the router lock closes the router setters only, the hook recipient needs `lockRecipients()`. the baseline skim, `bountyBps`, the protocol recipient and the ticks of a pool cannot change after the launch. postflight warns while the recipients are not locked |
 | 41 | `compose` and `composeExit` repay nothing and the cost basis of a statement is the sum of the cost bases of its credits (owner, 2026-10-10). the caller of a compose pays its own gas, including the fee router flush. holders of the coin and people in the project compose, and the owner composes when nobody does. there is no compose bounty and no compose keeper. `exitStatement` repays its caller's gas from `ethPot` under `reimburseBps` and `reimburseCapBps`. the `Composed` event carries `(sid, lane, format, cost, caller)` |
+
+### 10.13 owner instructions recorded from the sessions of 2026-10-08 to 2026-10-10
+
+the owner gave these in conversation. they were acted on and not written down. recorded by the director on 2026-10-10 with the owner's words.
+
+| # | decision |
+|---|---|
+| 42 | the engine never locks up while credits are listed. owner, 2026-10-09: "please confirm that the system will never brick as long as there are credits listed. like if the floor drops or rises slow/fast/etc. we should never get locked anywhere." a credit the pot and the hourly room cover can always be sold to the engine. evidence: invariants 11 `noUnexpectedReverts` and 16 `theBidNeverCloses` |
+| 43 | the engine must not push the credit floor down. owner, 2026-10-09: "if highest bid is 0.95x, are we bringing the collection floor down? that's the opposite of what we want to do here." a bid above the market floor is accepted: "sometimes our bid will go unnoticed and rise above opensea floor, right? and that's fine. someone will notice it then." the engine never sells credits. the simulator models no competing bidders, so the effect on the floor is unproved |
+| 44 | an empty pot never raises the price. owner, 2026-10-09: "we shouldn't be increasing the price just because we don't have enough eth to buy and that's why it's been idle." the price state holds while it is above the clamp, and `receive` checkpoints before it books eth. the ceiling anchor still loosens with time since the last fill |
+| 45 | a pot is spent as sellers come. owner, 2026-10-09: "if we have 10 eth in the pot we shouldnt slowly buy over 5 huours. that's how we get frontrun!" implemented by decision 37 |
+| 46 | nobody is overpaid, and the launch `rateCap` is 10 times the opening bid. owner, 2026-10-08: "don't overpay the keeper". owner, 2026-10-09, replying to "market above rateCap (6x launch)": "let's make this 10x to start", and every setting stays adjustable after deploy. the launch day rule of docs/DEPLOY.md sets `rateStart` and `rateCap` together |
+| 47 | the engine is ready for the protocol's burn router and the $balance drop. owner, 2026-10-09: "we still need to have this ready for when burn router and $balance drop". preflight pins the burn router code hash. what readiness requires of the engine is not written down: open item in docs/HANDOFF.md |

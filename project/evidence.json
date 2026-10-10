@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "assumptions": {
+    "A-FORK-BLOCK": {
+      "statement": "tests fork mainnet at block 26158000, after the last v2 stack deploy transaction (26157222)",
+      "kind": "fact",
+      "source": "test fixture FORK_BLOCK, docs/HANDOFF.md",
+      "version": 1,
+      "checked": "2026-10-10"
+    },
+    "A-V2-STACK": {
+      "statement": "the live artcoins v2 stack at the addresses of script/config/v2-mainnet.json, nine code hashes pinned by preflight, read at block 26158000",
+      "kind": "fact",
+      "source": "script/config/v2-mainnet.json, docs/DEPLOY.md",
+      "version": 1,
+      "checked": "2026-10-10"
+    },
+    "A-TOOLCHAIN": {
+      "statement": "foundry 1.8.1 with isolate on, solc 0.8.30",
+      "kind": "fact",
+      "source": "docs/HANDOFF.md section 7",
+      "version": 1,
+      "checked": "2026-10-10"
+    },
+    "A-CREDIT-MARKET": {
+      "statement": "market price of one credit 0.0089 eth (last 24h median at snapshot block 26130271, 2026-10-06); rateStart 2.0554e13 and rateCap 2.0554e14 derive from it",
+      "kind": "fact",
+      "source": "sim/data/notes.md line 56",
+      "version": 1,
+      "checked": "2026-10-06"
+    },
+    "A-VOLUME": {
+      "statement": "90 day coin volume 1,961 eth: 1,944 eth measured over 13 days of the comparable coin, extended by an exponential fit with a 0.5 eth a day floor",
+      "kind": "projection",
+      "source": "sim/engine.js COMPARABLE, sim/data/notes.md",
+      "version": 1,
+      "checked": "2026-10-10"
+    },
+    "A-COMPOSER": {
+      "statement": "v2 (2026-10-10, FLOW 41): compose pays its caller nothing; holders compose and the owner composes when nobody does. v1: compose repaid the caller's gas from the pot",
+      "kind": "owner-decision",
+      "source": "docs/FLOW.md decision 41",
+      "version": 2,
+      "checked": "2026-10-10"
+    },
+    "A-GAS-PRICE": {
+      "statement": "mainnet gas near 0.5 gwei, the owner's ballpark for compose cost",
+      "kind": "assumption",
+      "source": "owner, 2026-10-10 session",
+      "version": 1,
+      "checked": "2026-10-10"
+    }
+  },
+  "evidence": {
+    "E-SUITE-06009bd": {
+      "claim": "full suite passes: 1059 pass, 0 fail, 8 skipped (the Deep suites), REHEARSAL=1",
+      "kind": "test",
+      "sourceRevision": "06009bde2bb548ca6341622a3ea308211b5d13a4",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1
+      },
+      "dependsOn": [],
+      "inputs": "fork block 26158000; the rehearsal test forks the latest block at run time, not recorded",
+      "method": "set -a; source .env; set +a; REHEARSAL=1 forge test -j 6",
+      "author": "director session 75f67902, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "verifies the implementation against its own assertions. says nothing about whether the assertions match the owner's goal. the Deep suites are a separate record",
+      "invalidated": null
+    },
+    "E-DEEP-06009bd": {
+      "claim": "the 7 Deep invariant suites, 20 invariants each, 64 runs at depth 200: no invariant broke",
+      "kind": "test",
+      "sourceRevision": "06009bde2bb548ca6341622a3ea308211b5d13a4",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1
+      },
+      "dependsOn": [],
+      "inputs": "fork block 26158000",
+      "method": "INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 forge test --match-contract '^<Suite>Deep$' -j 8, one suite at a time",
+      "author": "director session 75f67902, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "the invariants encode the director's reading of intent. invariant definitions were reviewed with the owner on 2026-10-10, the handler models are not independently reviewed",
+      "invalidated": null
+    },
+    "E-SUITE-CARRY-5e69033": {
+      "claim": "the results of E-SUITE-06009bd and E-DEEP-06009bd hold at 5e69033",
+      "kind": "analysis",
+      "sourceRevision": "5e6903382c6556bfa4f923a3d97f1de486648dd6",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1
+      },
+      "dependsOn": [],
+      "inputs": "git diff 06009bd 5e69033 -- src test script lib foundry.toml remappings.txt foundry.lock",
+      "method": "git diff -U0 06009bd 5e69033 -- src test script lib foundry.toml remappings.txt foundry.lock: one /// NatSpec line in test/utils/Fixture.sol",
+      "author": "director, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "a comment change cannot change bytecode of a test helper. no recompile was run",
+      "invalidated": null,
+      "carries": [
+        "E-SUITE-06009bd",
+        "E-DEEP-06009bd"
+      ]
+    },
+    "E-REVIEW-SALE-a3e2fa3": {
+      "claim": "independent review of the sale path (docs/REVIEW-sale.md)",
+      "kind": "review",
+      "sourceRevision": "a3e2fa3956f45cf1f5a1a93e3c2b77cdd1e199b6",
+      "scope": [
+        "src/**"
+      ],
+      "assumptions": {},
+      "dependsOn": [],
+      "inputs": "docs/REVIEW-sale.md",
+      "method": "read only review subagent",
+      "author": "director session of 2026-10-06",
+      "reviewer": "review subagent of 2026-10-06",
+      "result": "findings",
+      "limitations": "the most recent pinned review of this repo. 45 later commits change src/",
+      "invalidated": null
+    },
+    "E-AUDIT-CODEX-32ff35b": {
+      "claim": "independent solidity security audit (docs/AUDIT-codex.md on branch codex/independent-security-audit)",
+      "kind": "review",
+      "sourceRevision": "32ff35b473912c386dde5582aab7d300b297f679",
+      "scope": [
+        "src/**",
+        "script/**"
+      ],
+      "assumptions": {},
+      "dependsOn": [],
+      "inputs": "docs/AUDIT-codex.md, test/audit/ on that branch",
+      "method": "codex audit session",
+      "author": "director",
+      "reviewer": "codex session",
+      "result": "findings",
+      "limitations": "the commit is outside main. its findings A01 and A02 are fixed in the scripts on main",
+      "invalidated": null
+    },
+    "E-SIM-HEADLINE": {
+      "claim": "simulator headline: day one 1,994 credits, day 90 31,495, paid 0.87 of market, highest bid 0.95 of market, statement flow per day (docs/SIMULATION.md, docs/NEXT.md 10 and 14)",
+      "kind": "simulation",
+      "sourceRevision": "cd7d404a8599e37ed2f465cc7d50b49462ba220d",
+      "scope": [
+        "sim/engine.js",
+        "sim/run.mjs"
+      ],
+      "assumptions": {
+        "A-VOLUME": 1,
+        "A-CREDIT-MARKET": 1,
+        "A-COMPOSER": 1
+      },
+      "dependsOn": [],
+      "inputs": "3 to 5 seeds, comparable volume, seller book of 150 offers an hour (assumed), no competing bidders",
+      "method": "node sim/run.mjs",
+      "author": "director sessions of 2026-10-08 and 2026-10-09",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "seller book and statement demand are assumed. compose happens at once and at no cost in the model",
+      "invalidated": null
+    },
+    "E-AUDIT-DECISIONS-2407087": {
+      "claim": "decision and path audit: findings 1 to 5, path A (compose) and path B (migration) in docs/REVIEW-decisions.md",
+      "kind": "analysis",
+      "sourceRevision": "24070870a50227efae59b9124342f4abf5edf054",
+      "scope": [
+        "src/**",
+        "test/Migrate.t.sol",
+        "sim/engine.js",
+        "script/config/mainnet.json"
+      ],
+      "assumptions": {
+        "A-COMPOSER": 2,
+        "A-VOLUME": 1,
+        "A-GAS-PRICE": 1,
+        "A-CREDIT-MARKET": 1
+      },
+      "dependsOn": [],
+      "inputs": "owner transcripts 2026-10-08 to 2026-10-10, docs/FLOW.md 1 to 41",
+      "method": "code reads and transcript reads, no forge run",
+      "author": "director, 2026-10-10",
+      "reviewer": "",
+      "result": "findings",
+      "limitations": "no new simulation, no fork reads, no security review",
+      "invalidated": null
+    }
+  }
+}

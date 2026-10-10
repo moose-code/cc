@@ -1,12 +1,34 @@
 # architecture
 
-this file describes the system as it is on branch `flow`, ported to the artcoins v2 stack (docs/FLOW.md section 10, docs/V2-PORT.md). SPEC.md is the original handoff spec and where the two differ this file wins. docs/FLOW.md is the director brief this branch was built from and stays for the reasons behind each decision. the last section lists what is accepted, for the owner to confirm.
+this file is the current reading of the owner's intent and of the system that implements it. the owner's latest explicit instruction overrides it, and the director updates it in the same turn. docs/FLOW.md is the dated decision log: who decided what, when and why. a later dated decision supersedes an earlier one. SPEC.md is the original handoff spec, kept as history. docs/HANDOFF.md holds the objective, the open owner decisions and the state of the evidence. where this file and the code differ, the difference is listed in section 1 or in docs/HANDOFF.md, and neither side is assumed right.
 
 naming rule: only `exitModule` and `exitToken`. never name or describe them anywhere.
 
 ## 1. goal, what we own, what is live
 
 the engine exists to keep credits flowing into statements. statement sales do not need to profit. a statement that sells below the cost of its 80 credits is better than one that does not sell. unsold statements are fine: they stay listed and are redeemed through the exitModule in phase 2. the engine never stops buying because statements are unsold, there is no inventory gate. early on it should acquire as many credits as possible, score can matter later through `flatBps`.
+
+### current intent at a glance
+
+each line cites the decision in docs/FLOW.md that records the owner's words. kind: guarantee (holds under every setting and every actor, a change breaks compatibility), behavior (approved, the owner may change it), parameter (owner setting, launch default in section 2), risk (accepted by the owner). status: built means the code does it, verified means valid evidence exists in project/evidence.json. verified is a statement about the code, not about the rule being right.
+
+| kind | intent | decision | status |
+|---|---|---|---|
+| guarantee | the engine never locks up while credits are listed: whether the market rises or falls, slowly or fast, a credit the pot and the hourly room cover can always be sold to it | 42 | built, verified by invariants 11 and 16 on 06009bd |
+| guarantee | eth, credits and exitToken leave the Core at the owner's call only through `migrate` to the successor, coin only through `rescueCoin`, NFTs off the books only through `rescueNft` (section 10) | 8, 28, 32, 33 | built, verified by invariants 1 and 8 on 06009bd |
+| guarantee | a statement leaves the Core only by a sale at or above its reserve, an exit, or as the top of an overprint | section 4 of FLOW | built, verified by invariants 4 and 12 on 06009bd |
+| guarantee | the four Core locks and the router lock are one way | 9.6, 10.2 | built, verified by invariants 13 and 15 on 06009bd |
+| behavior | the engine never stops buying because statements are unsold | 2 | built |
+| behavior | the engine must not push the credit floor down. a bid above the market floor is accepted: sellers notice it and sell into it | 43 | built. the simulator shows the highest bid at 0.95 of market with an assumed seller book and no competing bidders: unproved against competing collection offers |
+| behavior | an empty pot never raises the price: the price state holds while the pot cannot afford a credit | 44 | built (`CoreLib._climb`, `receive` checkpoints first) |
+| behavior | a pot is spent as sellers come, never dripped over hours | 37, 45 | built (`spendCapBps` 10_000) |
+| behavior | nobody is overpaid: callers, keepers, bots and sellers | 46 | built. caller tips are bounded by `tipCapBps`, `keeperTipBps`, `reimburseCapBps`. compose pays its caller nothing (41) |
+| behavior | compose and composeExit repay nothing. holders compose, the owner composes when nobody does | 41 | built. the composer and the owner's backstop cost are unproved assumptions (docs/REVIEW-decisions.md path A) |
+| behavior | migrate moves eth, exit token and credits, and the old engine sells out its own statements | 33 | built differently: after a migrate the old engine keeps buying and composing with later inflows. owner decision OD-1 in docs/HANDOFF.md |
+| parameter | every economic number is an owner setting, effective at once, no timelock | 3, 15 | built |
+| parameter | opening bid at the market price of a credit on launch day, `rateCap` 10 times the opening bid | NEXT 11, 46 | the launch day rule sets both (docs/DEPLOY.md section 1). a preflight check of the ratio is NEXT item 21 |
+| parameter | payee 0.75 points of volume to the owner address, protocol 0.25 points, engine the rest | 31 | built |
+| risk | holders trust the owner key fully: the owner can overpay a seller it controls and move everything to a successor at once | 8, section 10 | accepted by the owner |
 
 we own five contracts. everything else is live, the v2 stack included, and is used as deployed.
 
@@ -29,7 +51,7 @@ live and external, used as deployed.
 
 the artcoins v2 stack is a config input: every v2 address is a field of the `stack` block of `script/config/mainnet.json`, and nothing in `src/` hardcodes one. the live stack is recorded in `script/config/v2-mainnet.json` (launcher commit fbe07c7, contract sources of d4aa46b) and the tests attach to it. the pnd auction factory (0x77aB853543286C9Cdd7dd6c01222A7cC4Ac93d63) and the pool manager (0x000000000004444c5dc75cB358380D2e3dE08A90) are live. the v1 addresses and notes are the record in docs/reference/artcoins-notes.md only.
 
-the coin is an `ArtCoinsTokenV2` launched through the v2 factory, restricted, not our code. toolchain: solc 0.8.30, cancun, via_ir, optimizer 200, solady, v4 core and periphery pinned in `lib/`. every runtime contract must stay under 24,576 bytes (`forge build --sizes`). the Core is 24,203 bytes (373 bytes of headroom, measured) and `CoreLib` 18,487, which is why settings validation, the math and the owner asset functions live in `CoreLib`.
+the coin is an `ArtCoinsTokenV2` launched through the v2 factory, restricted, not our code. toolchain: solc 0.8.30, cancun, via_ir, optimizer 200, solady, v4 core and periphery pinned in `lib/`. every runtime contract must stay under 24,576 bytes (`forge build --sizes`). the Core is 24,064 bytes (512 bytes of headroom, measured) and `CoreLib` 16,967, which is why settings validation, the math and the owner asset functions live in `CoreLib`.
 
 storage. `CoreLib` runs by delegatecall in the storage of the Core. it addresses the Core's state variables by name through `CoreState` (`src/lib/CoreLib.sol`), a struct that repeats the declaration order of the Core's state variables and is read at slot 0, so its fields sit in the same slots as the variables. `successor` and `successorLocked` are the last two state variables of the Core. the settings and the bid anchor sit at fixed slots (`SettingsStore`, `RateStore`). `test/CoreLayout.t.sol` compares every field with a raw storage read. a new state variable of the Core is added at the end of the Core and of `CoreState` together.
 

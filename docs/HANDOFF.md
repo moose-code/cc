@@ -1,63 +1,89 @@
 # handoff: credits engine
 
-for a session that takes this work over. read this, then docs/NEXT.md (the open work list), then docs/FLOW.md sections 9 and 10 (binding decisions, 10.6 and 10.7 win), then docs/ARCHITECTURE.md and docs/DEPLOY.md.
+the baton for the session that directs this project next. read this file, then run `python3 script/director.py handoff` and read what it lists. the previous baton is `git show 2407087:docs/HANDOFF.md`.
 
-## 1. state of the repo
+## 1. where intent and evidence live
+
+| source | role |
+|---|---|
+| the owner's latest explicit instruction | overrides every file below until the director records it, in the same turn |
+| docs/ARCHITECTURE.md | the current reading of intent and of the system. section 1 "current intent at a glance" lists guarantees, behavior, parameters and accepted risks with their decision numbers and status |
+| docs/FLOW.md | the dated owner decision log, decisions 1 to 47. a later dated decision supersedes an earlier one |
+| docs/NEXT.md | the change list: decided, built, reviewed |
+| project/director-state.json | the objective, open owner decisions, gates. `python3 script/director.py status` |
+| project/evidence.json | the evidence ledger with the assumptions each record used. `python3 script/director.py evidence` |
+| docs/REVIEW-*.md, docs/SIMULATION.md | evidence, each pinned to the commit it examined |
+| SPEC.md, docs/V2-PORT.md, docs/BID-STUDY.md, docs/V2-REQUESTS.md | history |
+
+rules for the director:
+
+* a test, a document, a simulation or a checker run is evidence about the system, never authority over intent. a test that agrees with the code and conflicts with the owner's goal is a defect until the owner decides (docs/REVIEW-decisions.md path B is one).
+* when a premise changes (a live contract, a market price, a gas price, an owner decision, a removed incentive), bump the assumption's version in project/evidence.json and reopen every record the checker then marks invalid. a mechanism whose reason disappeared is a removal candidate.
+* record each owner instruction in docs/FLOW.md and docs/ARCHITECTURE.md section 1 in the turn it is given.
+* `python3 script/director.py check --gate working` checks the records' structure. it does not show that a rule or a test is right.
+
+## 2. objective
+
+OBJ-LAUNCH-1: bring the engine to a candidate the owner can launch on mainnet. current intent recorded, every material path traced against it, owner decisions settled, the current source independently reviewed, the full suite, the deep invariants and the rehearsal valid on the frozen candidate, the runbook exact. the owner sends every mainnet transaction.
+
+authority: reconstructed by the director on 2026-10-10 from the owner's launch preparation since 2026-10-08 and the owner's question of 2026-10-10, "ok, skip sepolia then. what else needs to be done here?". paths and deliverables with their status: `python3 script/director.py status`.
+
+## 3. state
 
 | item | state |
 |---|---|
-| branch | `main` is the only branch, local and on github ripe0x/cc. every commit is pushed there. work on `main` or on short lived branches merged back into it |
-| engine | ported to the artcoins v2 stack and tested: 1059 tests pass, 0 fail, 8 skipped (the Deep invariant suites), 20 invariants in each of the 9 invariant suites, full run with REHEARSAL=1 on foundry 1.8.1 with isolate on, against the live v2 stack at fork block 26158000. deep run (64 runs, depth 200) of the 7 Deep suites on 06009bd, 20 invariants each: all clean (docs/NEXT.md item 7) |
-| contracts | `src/Core.sol` 24,064 bytes runtime (512 bytes of headroom under 24,576), `src/lib/CoreLib.sol` 16,967 (linked library, 7,609 bytes of room), `src/ControllerV1.sol` 4,445, `src/FeeRouter.sol` 4,446, `src/CoreLens.sol` 8,702 |
-| v2 in tests | the live artcoins v2 stack (deployed 2026-10-09, blocks 26157195 to 26157222, from launcher commit fbe07c7 whose contract sources equal d4aa46b) at the addresses of script/config/v2-mainnet.json, attached by test/utils/V2Stack.sol on the fork at block 26158000. the factory owner 0xCB43 is the owner of every fixture, impersonated, and runs `setMinProtocolSkimShareBps(362)` in the fixture as step 3 of the runbook. no v2 contract is vendored |
-| reviews | docs/REVIEW-*.md. the latest, REVIEW-v2port.md: one medium (a router flush inside a measured purchase) and one low (buyback sandwich above 2 eth), both fixed. an external audit (A01, A02) is fixed in the scripts |
-| gas | every transaction fits the 16,777,216 mainnet cap (test/GasCap.t.sol). compose is the largest, 8.7 million. the caller of compose pays its own gas (the Core repays nothing, FLOW decision 41), so send it with a gas limit above 10 million |
-| launch package | 9 transactions (the lens is one of them), 18.1 million gas measured by the rehearsal, signed by the v2 factory owner key. one factory owner command first: `setMinProtocolSkimShareBps(362)`. preflight refuses until it is done. steps after the broadcast: `Resume` sets the split start, the postflight passes, `Lock.s.sol` sends `coin.lockRecipients()`. `coin.lockAllowlist()` and `router.lock()` are owner decisions (docs/DEPLOY.md section 1) |
-| simulator | sim/ models the v2 fee path. the headline table of docs/SIMULATION.md is current, the detail sections are labelled as the older run. published page: the owner's artifact "Credits Engine Simulator" |
+| branch | `main` is the working branch on github ripe0x/cc. the director repair of 2026-10-10 is on the local branch `claude/repair-project-director-1366be`, not pushed |
+| phase | implementation. no candidate is frozen |
+| source | Core 24,064 bytes runtime (512 bytes of headroom), CoreLib 16,967, ControllerV1 4,445, FeeRouter 4,446, CoreLens 8,702, measured on 382b967 |
+| tests | 1059 pass, 0 fail, 8 skipped (the Deep suites), REHEARSAL=1, foundry 1.8.1, fork block 26158000, on 06009bd. the 7 Deep suites with 20 invariants each are clean at 64 runs and depth 200 on 06009bd (NEXT item 7) |
+| reviews | none is valid for the current source: every docs/REVIEW-*.md predates 45 or more source commits, and docs/AUDIT-codex.md (commit 32ff35b) is on a branch outside main |
+| owner steps before launch | fund the owner address 0xCB43 (0.068 eth at block 26158000, the launch needs about 0.1), run `setMinProtocolSkimShareBps(362)` on the v2 factory, then docs/DEPLOY.md with `--slow` (the owner address is an EIP 7702 delegated account) |
 
-## 2. what is built (all decided by the owner)
+## 4. owner decisions
 
-| topic | as built |
-|---|---|
-| coin | name and symbol `CC`. launched on artcoins v2 as a `restricted` coin (no wallet to wallet transfers), no transfer tax, the Core off the coin's allowlist (coin an allowlisted holder sends it is taken out with `rescueCoin`) |
-| owner | 0xCB43078C32423F5348Cab5885911C3B5faE217F9: engine owner, creator, token admin, and the artcoins factory owner. the artcoins protocol is a separate business: never describe its revenue as the engine owner's income |
-| trading fee | 6.9 percent skim in eth, no lp fee. anti sniper: 90 points falling to 6.9 over 30 minutes |
-| fee path | pool, then `FeeRouter` (the pool's fee recipient: empty receive, `flush()` forwards), then the Core. the Core calls `flush` itself at the start of `sellForEth`, `buyListing`, `compose` and `composeExit` (FLOW 10.8), so no keeper is needed. the router pays one payee (the owner address, 0.75 points of volume, 112,778 ppm of the router inflow, to be repointed at the owner's own splitter), the rest to the engine. everything from the sniper window goes to the engine. the router's engine is owner settable until a one way lock, so a later engine can take over the fees |
-| credits | bought at a flat bid per credit through two doors (`sellForEth`, `buyListing` on allowlisted targets). 80 make a statement. bid rule at launch: opens at the market price, each credit bought lowers it 0.5 percent (at most 20 percent per minute), it climbs 0.5 percent a minute while nobody sells, never above 125 percent of the last price paid, that ceiling loosens 2 percent per 10 idle minutes, never above rateCap (10 times the opening rate) and never above what the pot affords for one average credit. spend cap 100 percent of the pot per hour. every value is an owner setting. the owner reconsidered faster climbs on 2026-10-09 and kept 0.5 (docs/NEXT.md item 10) |
-| statements | priced by the controller: 110 percent of cost falling one point every 3 hours to 75 percent. auction mode on the engine's own pnd auction house at launch, buy only mode is a controller switch. hard floor 75 percent in the Core |
-| sale proceeds | 50 percent back to the pot, 50 percent buys and burns the coin, both adjustable |
-| phase 2 | `exitModule` and `exitToken` placeholders. unsold statements redeem after 105 hours listed with no bid. module replaceable by the owner |
-| owner control | every setting, the controller, the exitModule, targets, the router: changed at once, no timelock. four one way locks on the Core (the fourth closes `setSuccessor`), one on the router, two step owner handover on both. `rescueCoin` and `rescueNft` move stuck coin and stuck NFTs, `migrate` moves everything the Core tracks to the successor. the owner refused extra hard limits |
+**OD-1, open, blocks the freeze.** after the first `migrate`, should the old engine stop buying and composing?
 
-## 3. open work
+* as built: the old engine keeps every door open. sale proceeds and any fees still routed to it are spent on credits, and full pages can be composed into new statements that only the old engine can sell. the owner then calls `migrate` again, as often as proceeds arrive. `test_OK_theEngineKeepsWorkingAfterAMigration` asserts this.
+* the owner's words (2026-10-09): "migrate only credits and eth and let v1 sell out its own statements". FLOW 33: "a later migrate moves" the proceeds.
+* option A, keep as built: no code change. the wind down lasts as long as proceeds arrive, and the old engine bids against the new one meanwhile.
+* option B, retire on the first migrate: the old engine stops `sellForEth`, `buyListing`, `adopt`, `compose` and `composeExit`, and keeps settling, exiting and overprinting its statements and running the buyback. proceeds wait in the pot for the next `migrate`. cost: one flag in the Core, checked once in `_pullFees`, which all five doors call first, then the migration tests, the invariant handler and a review of that path.
+* recommendation: B. it matches the stated purpose, ends the wind down when the last statement sells, and keeps one engine buying at a time.
 
-docs/NEXT.md is the list: what the owner decided but is not built, what waits for his answer, and what the director still owes. docs/V2-REQUESTS.md is the list of changes wanted in the artcoins v2 repo, to be turned into a prompt for that session.
+**OD-2, open, does not block the launch.** when to call `coin.lockAllowlist()` and `router.lock()` (NEXT item 19, after launch).
 
-## 4. how to work in this repo
+**intent gap, decision 47.** what "ready for when burn router and $balance drop" requires of the engine is not written down. the director drafts it from the v2 burn router source and brings the owner one question if a real choice remains.
+
+## 5. evidence
+
+`python3 script/director.py evidence` lists every record with its validity. what a new session must know:
+
+* valid: the full suite and the deep invariants on 06009bd, carried to this branch by a record that shows the later diff under their scope is one comment line in test/utils/Fixture.sol.
+* invalid: every independent review (source changed), the codex audit (outside main), the simulator's statement flow figures (they assume a paid composer, decision 41 removed the payment).
+* unproved assumptions: a composer exists for every full page at no cost to the engine, the 90 day volume projection (1,961 eth, fitted to 13 measured days), the credit market price of 0.0089 eth, the seller book and the absence of competing bidders in the simulator.
+
+## 6. next action
+
+ask the owner OD-1. while waiting, build NEXT item 21 (the preflight row for `rateCap`) with its config test, the smallest test that covers it.
+
+after that, in order: freeze the candidate (OD-1 settled, NEXT 21 built), run the full suite and the deep invariants on it, an independent security review of the candidate by a fresh reviewer, the system audit of the remaining required paths, the rehearsal from a clean checkout, the owner's launch steps.
+
+## 7. how to work in this repo
 
 | topic | rule |
 |---|---|
 | naming | the phase 2 contracts are referred to only as `exitModule` and `exitToken` in code, comments, tests, docs and commit messages. never name or describe them |
-| tests | mainnet fork tests pinned to a block, real contracts only (live ones, the v2 stack included). the only doubles are test/standins and attacker contracts |
-| toolchain | foundry 1.8.1 (isolate on, the default since 1.8.0), solc 0.8.30. the suite is green on it with REHEARSAL=1: 1054 pass, 0 fail, 8 skipped (the deep invariant suites). deep runs: `INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 forge test --match-contract '^<Suite>Deep$'`, 375 to 475 s per suite |
-| build | section 6. a clean build is about 4 minutes and 3 gb. the full suite is about 25 minutes: run it in the background and poll, or by path. after changing a production contract's external surface run `script/tools/gen-interfaces.sh` and repin test/BuildIdentity.t.sol |
-| small machines | never run two forge processes at once on 8 gb. a sandbox that reclaims idle sessions kills background work: keep a foreground loop alive while agents run |
-| rpc | public endpoints rate limit (429, 408). rerun a suite alone with `-j 1` before treating that as a failure |
-| safety | no mainnet broadcast and no private key without the owner's explicit instruction |
-| Core size | 512 bytes left, margin rule at least 60. new logic goes into `CoreLib`, which reads the Core's state through `CoreState` (docs/ARCHITECTURE.md section 1). never drop a check to make room |
+| tests | mainnet fork tests pinned to block 26158000 (`FORK_BLOCK`), real contracts only, the live v2 stack included. the only doubles are test/standins and attacker contracts |
+| toolchain | foundry 1.8.1 (isolate on), solc 0.8.30. forge 1.8.1 rewrites foundry.lock and bumps lib/solady on build: `git checkout foundry.lock lib/solady` before committing. a fresh worktree needs `git -C lib/v4-periphery submodule update --init lib/v4-core lib/permit2`. fork tests read `MAINNET_RPC_URL` and `FORK_BLOCK` from the environment: `set -a; source .env; set +a` |
+| timings | clean build about 3 to 4 minutes, a test file change about 3 seconds, a `src/Core.sol` change about 35 seconds. full suite with `REHEARSAL=1 forge test -j 6` about 2 minutes on a 16 core machine (rerun rpc failures with `-j 1`). a Deep suite 577 to 692 seconds: `INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 forge test --match-contract '^<Suite>Deep$'` |
+| verification | during an edit run the smallest test that covers it (`--match-path`). run one combined gate at a batch boundary. full suites, deep invariants and the rehearsal belong to a frozen candidate or to a gate whose evidence was invalidated. before a command over 30 seconds, say what it must establish |
+| interfaces | after changing a production contract's external surface run `script/tools/gen-interfaces.sh` and repin test/BuildIdentity.t.sol. never import `src/Core.sol` in a test |
+| Core size | 512 bytes left, margin rule at least 60. new logic goes into `CoreLib`. never drop a check to make room |
+| safety | no mainnet broadcast, deploy, push or private key without the owner's explicit instruction |
 
-## 5. things that are known and not fixed
+## 8. known and not fixed
 
 | item | detail |
 |---|---|
-| exitModule gas | `exitStatement` forwards gas to a contract that does not exist yet. measure against the gas cap when it does |
-| v2 live | the five stack addresses are in script/config/mainnet.json and preflight pins the `extcodehash` of nine live v2 contracts (read at block 26158000), `STACK_VERSION` 2 and the constants hash. the owner address 0xCB43 is an EIP 7702 delegated EOA with 0.068 eth at block 26158000: the launch needs 0.069 eth for the deploy fee plus gas, so preflight fails the balance row until it is funded. the v2 audit is pending |
-| owner step on the v2 factory before launch | lower the minimum protocol skim share to 362 (`setMinProtocolSkimShareBps(362)`). preflight names it. the factory accepts the launch lp fee of 0 because the baseline skim is above 0 |
-| owner power over the fee stream | two switches. the coin admin (the owner) repoints the hook bounty recipient and the creator reward slot recipient until `coin.lockRecipients()`, a launch step (`Lock.s.sol`, NEXT item 18), which freezes both. the router owner points the router at another engine with `setEngine` until `router.lock()`, an owner decision (NEXT item 19). postflight warns until the recipients are locked and fails after `RECIPIENTS_LOCKED=1` |
-| fees per 100 eth of volume as built | skim 6.9 eth. protocol 0.24978 (`bountyBps` 9,638 leaves it 362 of 10,000), router 6.65022, of which payee 0.7499985 (112,778 ppm), engine 5.9002215 (the three legs sum to 6.9). inside the anti sniper window the payee share is 0 and the engine receives the router inflow. at comparable volume (1,961 eth in 90 days, the first 30 minutes of fees to the engine) the payee receives about 12 eth |
-| owner powers over assets | `migrate` moves the eth pots, exit token pots and credits to the successor with no delay, until `lockSuccessor()` (the held statements stay in the Core and are sold out there); `rescueNft` takes stuck NFTs out; `rescueCoin` takes out coin that an allowlisted holder sent to the Core. the successor is unset at launch and the lock is a later decision. a stolen owner key can move the whole engine at once: use a multisig, watch `SuccessorSet` and `Migrated` (docs/ARCHITECTURE.md section 10, FLOW 10.10) |
-| pricing rule | the bid drops only in proportion to the share of the pot spent, so it follows a falling market badly. NEXT item 10 |
-
-## 6. the build loop (done)
-
-per path compiler profiles are in foundry.toml: the default profile has no via_ir, a second profile (via_ir, 200 runs, cancun, no metadata hash) is forced on `src/[A-Z]*.sol` and `src/lib/CoreLib.sol`, and foundry pulls any file that imports them onto it. tests and scripts therefore use the generated interfaces and deploy from artifacts (`test/utils/Prod.sol`); `dynamic_test_linking` is on and works on 1.5.1. measured: clean build 226 s and 2.9 gb, a test file change 3 s, a `src/Core.sol` change 34 s. the whole suite (except Rehearsal) still takes about 25 minutes (the four invariant suites alone are about 12), so run it by path in batches of under 10 minutes per call. a private archive rpc and a larger `-j` are the remaining levers; with more than 8 gb, independent work can use parallel git worktrees (each has its own cache and out directory).
+| exitModule gas | `exitStatement` forwards gas to a contract that does not exist yet. measure it against the gas cap when it does |
+| v2 audit | pending. preflight pins the code hash of nine live v2 contracts read at block 26158000. a changed stack means new addresses and pins |
+| owner key | a stolen owner key moves everything at once (docs/ARCHITECTURE.md section 10). a multisig owner and watching `SuccessorSet` and `Migrated` are the mitigations |

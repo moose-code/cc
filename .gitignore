@@ -1,6 +1,7 @@
 out/
 cache/
 broadcast/
-.env
+.env*
+!.env.example
 script/config/local.json
 script/config/*.local.json

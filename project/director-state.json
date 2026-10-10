@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 2,
+  "projectName": "Credits Engine",
+  "riskLevel": "high",
+  "phase": "implementation",
+  "documents": {
+    "rules": "docs/ARCHITECTURE.md",
+    "decisions": "docs/FLOW.md",
+    "state": "docs/HANDOFF.md",
+    "traceability": null,
+    "evidence": "project/evidence.json"
+  },
+  "objective": {
+    "id": "OBJ-LAUNCH-1",
+    "status": "active",
+    "statement": "Bring the credits engine to a candidate the owner can launch on mainnet: current intent recorded, every material path traced against it, owner decisions settled, the current source independently reviewed, the full suite, deep invariants and rehearsal valid on the frozen candidate, the runbook exact. The owner sends every mainnet transaction.",
+    "authority": "Reconstructed by the director on 2026-10-10 from the owner's launch preparation since 2026-10-08 (docs/NEXT.md) and the owner's question of 2026-10-10: 'ok, skip sepolia then. what else needs to be done here?'",
+    "boundaries": [
+      "No mainnet broadcast, deploy, push or merge without an explicit owner instruction.",
+      "No launch readiness claim from test counts or checker output.",
+      "Phase 2 contracts are named only exitModule and exitToken."
+    ],
+    "requiredPaths": [
+      {
+        "id": "fee-intake",
+        "description": "pool skim, FeeRouter flush, payee and protocol legs, Core receive and fee pulls at the five doors",
+        "status": "pending",
+        "evidence": []
+      },
+      {
+        "id": "credit-purchase",
+        "description": "bid rule (drop, climb, ceiling, clamp, rateCap), sellForEth, buyListing and its tip, hourly window, adopt",
+        "status": "pending",
+        "evidence": []
+      },
+      {
+        "id": "compose-and-listing",
+        "description": "compose and composeExit with no paid caller, statement cost basis, listing on the house, controller pricing",
+        "status": "in-progress",
+        "evidence": [
+          "E-AUDIT-DECISIONS-2407087"
+        ]
+      },
+      {
+        "id": "statement-sale-and-proceeds",
+        "description": "house auction, collectSales, syncStatement, repriceStatement, sellTo, proceeds split, buyback and burn",
+        "status": "pending",
+        "evidence": []
+      },
+      {
+        "id": "phase2-exit",
+        "description": "exitStatement and its gas repay, overprint, exit lane, exit token bid and auction, module replacement",
+        "status": "pending",
+        "evidence": []
+      },
+      {
+        "id": "owner-powers-and-locks",
+        "description": "settings, setRate, controller, targets, the four Core locks, router owner, handover, rescueCoin, rescueNft",
+        "status": "pending",
+        "evidence": []
+      },
+      {
+        "id": "migration-and-successor",
+        "description": "setSuccessor, migrate in batches, the old engine after migrate, successor adopt",
+        "status": "in-progress",
+        "evidence": [
+          "E-AUDIT-DECISIONS-2407087"
+        ]
+      },
+      {
+        "id": "launch-runbook",
+        "description": "config, preflight, deploy, resume, postflight, lock, settings changes after launch",
+        "status": "pending",
+        "evidence": []
+      },
+      {
+        "id": "participant-economics",
+        "description": "sellers, coin holders, statement buyers, owner payee and backstop composer, protocol, under matched demand and cost ranges",
+        "status": "pending",
+        "evidence": []
+      }
+    ],
+    "deliverables": [
+      {
+        "id": "intent-records",
+        "description": "one maintained reading of current intent with decision provenance",
+        "status": "in-progress",
+        "evidence": []
+      },
+      {
+        "id": "decision-audit",
+        "description": "material decisions classified supported, unproved, contradicted or superseded",
+        "status": "in-progress",
+        "evidence": [
+          "E-AUDIT-DECISIONS-2407087"
+        ]
+      },
+      {
+        "id": "owner-decisions-settled",
+        "description": "OD-1 decided and implemented if needed",
+        "status": "pending",
+        "evidence": []
+      },
+      {
+        "id": "independent-security-review",
+        "description": "fresh reviewer on the frozen candidate",
+        "status": "pending",
+        "evidence": []
+      },
+      {
+        "id": "candidate-suites",
+        "description": "full suite and the 7 Deep suites on the frozen candidate",
+        "status": "pending",
+        "evidence": []
+      },
+      {
+        "id": "rehearsal",
+        "description": "exact release path from a clean checkout of the candidate on the owner's host",
+        "status": "pending",
+        "evidence": []
+      }
+    ]
+  },
+  "candidate": null,
+  "activeChange": null,
+  "openBlockers": [
+    "OD-1 changes the Core if the owner picks retirement, so no candidate can be frozen before it is decided."
+  ],
+  "ownerDecisions": [
+    {
+      "id": "OD-1",
+      "question": "After the first migrate, should the old engine stop buying and composing (retire) or keep every door open (as built)? docs/HANDOFF.md section 4.",
+      "status": "open",
+      "blocks": [
+        "freeze",
+        "deploy"
+      ]
+    },
+    {
+      "id": "OD-2",
+      "question": "When to call coin.lockAllowlist() and router.lock() (NEXT item 19).",
+      "status": "open",
+      "blocks": []
+    }
+  ],
+  "nextAction": "Ask the owner OD-1. While waiting, build NEXT item 21 (preflight row: rateCap is 10 times rateStart) with its config test.",
+  "requiredFreezeGates": [
+    "productRules",
+    "focusedTests",
+    "localLifecycle"
+  ],
+  "requiredDeployGates": [
+    "productRules",
+    "focusedTests",
+    "localLifecycle",
+    "fullSuite",
+    "independentReview",
+    "deploymentRehearsal"
+  ],
+  "stateOnlyPaths": [
+    "docs/HANDOFF.md",
+    "project/director-state.json",
+    "project/evidence.json"
+  ],
+  "gates": {
+    "productRules": {
+      "evidence": []
+    },
+    "focusedTests": {
+      "evidence": [
+        "E-SUITE-CARRY-5e69033"
+      ]
+    },
+    "uiAcceptance": {
+      "evidence": []
+    },
+    "localLifecycle": {
+      "evidence": [
+        "E-SUITE-CARRY-5e69033"
+      ]
+    },
+    "fullSuite": {
+      "evidence": [
+        "E-SUITE-CARRY-5e69033"
+      ]
+    },
+    "independentReview": {
+      "evidence": []
+    },
+    "deploymentRehearsal": {
+      "evidence": []
+    }
+  }
+}
