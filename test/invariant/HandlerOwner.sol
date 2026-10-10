@@ -809,6 +809,7 @@ abstract contract HandlerOwner is HandlerHouse {
         uint256 eth;
         uint256 balance;
         uint256 x;
+        uint256 xBuyback;
         uint256 xBalance;
         uint256 sinkEth;
         uint256 sinkX;
@@ -821,7 +822,7 @@ abstract contract HandlerOwner is HandlerHouse {
 
     /// the owner's successor doors and `migrate`. by mode: set the successor (refused after the lock), a stranger on the
     /// three doors (refused), the lock (only with a successor set, rarely), and mostly `migrate` with random batch sizes.
-    /// a migration is modelled from the ghosts: the eth and exit token pots go to the sink whole, the first
+    /// a migration is modelled from the ghosts: `ethPot` and `xPot` go to the sink whole, `ethToBuyback` and `xToBuyback` stay, the first
     /// `maxCredits` of each pile go to the sink, and the held statements stay as they are. eth, exit token, credits,
     /// the held list, trackers and the event are compared with that model
     function migrate(uint256 seed, uint256 mode) external checked {
@@ -926,7 +927,8 @@ abstract contract HandlerOwner is HandlerHouse {
         q.buyback = core.ethToBuyback();
         q.wasRetired = gRetired;
         q.balance = address(core).balance;
-        q.x = core.xPot() + core.xToBuyback();
+        q.x = core.xPot();
+        q.xBuyback = core.xToBuyback();
         q.xBalance = _xBal(address(core));
         q.sinkEth = to.balance;
         q.sinkX = _xBal(to);
@@ -959,10 +961,9 @@ abstract contract HandlerOwner is HandlerHouse {
         _eth(q.balance, q.eth, 0, "migrate");
         _x(q.xBalance, q.x, 0, "migrate");
         if (to.balance != q.sinkEth + q.eth) _flag(V_OWNER, "the successor did not get the eth pots");
-        if (_xBal(to) != q.sinkX + q.x) _flag(V_OWNER, "the successor did not get the exit token pots");
-        if (core.ethPot() != 0 || core.xPot() != 0 || core.xToBuyback() != 0) {
-            _flag(V_OWNER, "a tracker is not zero after a migration");
-        }
+        if (_xBal(to) != q.sinkX + q.x) _flag(V_OWNER, "the successor did not get xPot");
+        if (core.ethPot() != 0 || core.xPot() != 0) _flag(V_OWNER, "a tracker is not zero after a migration");
+        if (core.xToBuyback() != q.xBuyback) _flag(V_OWNER, "migrate moved the exit buyback pot");
         if (core.ethToBuyback() != q.buyback) _flag(V_OWNER, "migrate moved the eth buyback pot");
         // credits: the first of each pile
         for (uint256 i; i < q.credits.length; ++i) {

@@ -286,8 +286,10 @@ abstract contract LaunchChecks is PostflightChecks {
     function _prePayee(LaunchConfig memory c) private {
         address payee = c.creatorPayee;
         if (payee == address(0)) return; // the placeholder row reports it
+        address probe = address(uint160(uint256(keccak256("credits.preflight.payee.probe"))));
         uint256 snap = vm.snapshotState();
-        vm.deal(address(this), address(this).balance + 0.001 ether);
+        vm.deal(probe, 0.001 ether);
+        vm.prank(probe);
         (bool ok,) = payee.call{value: 0.001 ether, gas: 100_000}("");
         vm.revertToState(snap);
         _check("payee: the launch payee accepts 0.001 eth with a 100000 gas call (simulated)", ok, vm.toString(payee));

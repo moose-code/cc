@@ -190,7 +190,7 @@ contract MigrateTest is Fixture {
         vm.expectEmit(true, false, false, true, address(core));
         emit ICore.EngineRetired(address(sink));
         vm.expectEmit(true, false, false, true, address(core));
-        emit ICore.Migrated(address(sink), pot, xPot + xBuyback, 12);
+        emit ICore.Migrated(address(sink), pot, xPot, 12);
         _migrate(1000);
 
         assertTrue(core.retired(), "the first migrate did not retire the core");
@@ -201,10 +201,10 @@ contract MigrateTest is Fixture {
         assertEq(core.ethToBuyback(), buyback, "ethToBuyback stays");
         assertEq(address(core).balance, balance - pot, "the core balance");
         // exit token
-        assertEq(xt.balanceOf(address(sink)), xPot + xBuyback, "the sink did not get the exit token");
+        assertEq(xt.balanceOf(address(sink)), xPot, "the sink did not get xPot");
         assertEq(core.xPot(), 0, "xPot");
-        assertEq(core.xToBuyback(), 0, "xToBuyback");
-        assertEq(xt.balanceOf(address(core)), xBalance - xPot - xBuyback, "the core exit token balance");
+        assertEq(core.xToBuyback(), xBuyback, "xToBuyback stays");
+        assertEq(xt.balanceOf(address(core)), xBalance - xPot, "the core exit token balance");
         // the coin stays
         assertEq(coin.balanceOf(address(core)), coinBalance, "the coin moved");
         // credits
@@ -280,16 +280,18 @@ contract MigrateTest is Fixture {
         uint256 buybackBefore = core.ethToBuyback();
         _collectSales();
         uint256 booked = core.ethPot();
-        uint256 xBooked = core.xPot() + core.xToBuyback();
+        uint256 xBooked = core.xPot();
         assertGt(booked, 0, "the proceeds were booked");
         assertGt(core.ethToBuyback(), buybackBefore, "the buyback share was booked");
         uint256 buybackStays = core.ethToBuyback();
+        uint256 xBuybackStays = core.xToBuyback();
         _migrate(1000);
         assertEq(sink.ethReceived(), ethBefore + booked, "the second call did not move the new eth");
         assertEq(xt.balanceOf(address(sink)), xBefore + xBooked, "the second call did not move the new exit token");
         assertEq(core.ethPot(), 0, "the pot is zero again");
         assertEq(core.ethToBuyback(), buybackStays, "the buyback pot stays");
-        assertEq(core.xPot() + core.xToBuyback(), 0, "exit pots are zero again");
+        assertEq(core.xPot(), 0, "xPot is zero again");
+        assertEq(core.xToBuyback(), xBuybackStays, "the exit buyback pot stays");
         assertEq(STATEMENTS.balanceOf(address(sink)), 0, "a statement reached the successor");
         // a call with nothing left to move does nothing
         uint256 sends = sink.sends();
@@ -362,6 +364,7 @@ contract MigrateTest is Fixture {
         _setSuccessor();
         uint256 pot = core.ethPot();
         uint256 buyback = core.ethToBuyback();
+        uint256 xBuyback = core.xToBuyback();
         uint256 eth0 = core.pileSize(Lane.Eth);
         uint256 exit0 = core.pileSize(Lane.Exit);
         uint256 held = _heldCount();
@@ -369,7 +372,8 @@ contract MigrateTest is Fixture {
         // eth and exit token are not batched: one call moves all of them
         assertEq(sink.ethReceived(), pot, "the first call moves all of the pot");
         assertEq(core.ethToBuyback(), buyback, "the first call leaves the buyback pot");
-        assertEq(core.xPot() + core.xToBuyback(), 0, "the first call moves all of the exit token");
+        assertEq(core.xPot(), 0, "the first call moves all of xPot");
+        assertEq(core.xToBuyback(), xBuyback, "the first call leaves the exit buyback pot");
         assertEq(core.pileSize(Lane.Eth), eth0 - 1, "one eth credit per call");
         assertEq(core.pileSize(Lane.Exit), exit0 - 1, "one exit credit per call");
         assertEq(CREDITS.balanceOf(address(sink)), 2, "one credit per pile reached the successor");
@@ -390,7 +394,7 @@ contract MigrateTest is Fixture {
         _world();
         _setSuccessor();
         uint256 eth = core.ethPot();
-        uint256 x = core.xPot() + core.xToBuyback();
+        uint256 x = core.xPot();
         uint256 held = _heldCount();
         uint256 ethPile = core.pileSize(Lane.Eth);
         uint256 exitPile = core.pileSize(Lane.Exit);
@@ -615,7 +619,7 @@ contract MigrateTest is Fixture {
     }
 
     /// an exit token whose transfer reverts (mode 1) or returns false (mode 2): the eth leg, the credit leg and the
-    /// retired flag go through, the exit token pots and the rate state stay, and a later migrate with a working token
+    /// retired flag go through, `xPot`, `xToBuyback` and the rate state stay, and a later migrate with a working token
     /// moves them
     function _exitTokenLegSkips(uint8 mode) internal {
         _world();
@@ -623,13 +627,13 @@ contract MigrateTest is Fixture {
         uint256 pot = core.ethPot();
         uint256 xPot = core.xPot();
         uint256 xBuyback = core.xToBuyback();
-        assertTrue(xPot > 0 && xBuyback > 0, "setup: exit token pots hold something");
+        assertTrue(xPot > 0 && xBuyback > 0, "setup: the exit token pots hold something");
         uint256 credits = core.pileSize(Lane.Eth) + core.pileSize(Lane.Exit);
         uint256 xBalance = xt.balanceOf(address(core));
         xt.setTransferMode(mode);
 
         vm.expectEmit(true, false, false, true, address(core));
-        emit ICore.ExitTokenMigrationSkipped(address(sink), xPot + xBuyback);
+        emit ICore.ExitTokenMigrationSkipped(address(sink), xPot);
         vm.expectEmit(true, false, false, true, address(core));
         emit ICore.Migrated(address(sink), pot, 0, credits);
         _migrate(1000);
@@ -646,11 +650,11 @@ contract MigrateTest is Fixture {
 
         xt.setTransferMode(0);
         vm.expectEmit(true, false, false, true, address(core));
-        emit ICore.Migrated(address(sink), 0, xPot + xBuyback, 0);
+        emit ICore.Migrated(address(sink), 0, xPot, 0);
         _migrate(1000);
         assertEq(core.xPot(), 0, "xPot after the working token");
-        assertEq(core.xToBuyback(), 0, "xToBuyback after the working token");
-        assertEq(xt.balanceOf(address(sink)), xPot + xBuyback, "the later migrate did not move the exit token");
+        assertEq(core.xToBuyback(), xBuyback, "xToBuyback after the working token");
+        assertEq(xt.balanceOf(address(sink)), xPot, "the later migrate did not move xPot");
         _solvent();
     }
 
@@ -738,14 +742,14 @@ contract MigrateTest is Fixture {
         core.exitStatement(w.exitLane);
         assertEq(_heldCount(), 0, "the exits left statements on the books");
         assertGt(core.xPot() + core.xToBuyback(), x, "the exit did not fill the exit pots");
-        // the next migrate moves the new pot and the new exit token pots
+        // the next migrate moves the new eth pot and the new xPot
         uint256 ethBefore = sink.ethReceived();
         uint256 xBefore = xt.balanceOf(address(sink));
         uint256 booked = core.ethPot();
-        uint256 xBooked = core.xPot() + core.xToBuyback();
+        uint256 xBooked = core.xPot();
         _migrate(0);
         assertEq(sink.ethReceived(), ethBefore + booked, "the new pot did not move");
-        assertEq(xt.balanceOf(address(sink)), xBefore + xBooked, "the new exit token pots did not move");
+        assertEq(xt.balanceOf(address(sink)), xBefore + xBooked, "the new xPot did not move");
         _solvent();
     }
 
@@ -761,6 +765,36 @@ contract MigrateTest is Fixture {
         (bool held,,,) = core.statementInfo(top);
         assertFalse(held, "the top statement is still on the books");
         assertEq(STATEMENTS.overprintsOf(base), 1, "the statements were not merged");
+    }
+
+    /// the exit buyback pot that existed at the migration stays in the retired engine and `buybackExit` sells it
+    function test_OK_xToBuybackStaysAndBuybackExitSellsItAfterMigrate() public {
+        _world();
+        uint256 xBuyback = core.xToBuyback();
+        assertGt(xBuyback, 0, "setup: the exit buyback pot holds exit token");
+        _setSuccessor();
+        _migrate(1000);
+        assertEq(core.xToBuyback(), xBuyback, "migrate moved xToBuyback");
+        assertEq(xt.balanceOf(address(core)), xBuyback, "the retired engine holds exactly the exit buyback pot");
+        address taker = _user("taker");
+        _buyCoin(taker, 20 ether);
+        vm.prank(taker);
+        coin.approve(address(core), type(uint256).max);
+        uint256 coinIn;
+        for (uint256 i; i < 2000; ++i) {
+            (, coinIn) = core.exitAuctionQuote();
+            if (coinIn <= coin.balanceOf(taker)) break;
+            _warp(1 hours);
+        }
+        assertLe(coinIn, coin.balanceOf(taker), "setup: affordable");
+        (uint256 slice,) = core.exitAuctionQuote();
+        assertGt(slice, 0, "setup: a slice is for sale");
+        uint256 supply = coin.totalSupply();
+        vm.prank(taker);
+        core.buybackExit(coinIn);
+        assertEq(xt.balanceOf(taker), slice, "buybackExit paid the slice");
+        assertEq(core.xToBuyback(), xBuyback - slice, "the exit buyback pot fell by the slice");
+        assertEq(coin.totalSupply(), supply - coinIn, "the coin was burned");
     }
 
     function test_OK_aRetiredCoreStillRunsBothBuybacks() public {

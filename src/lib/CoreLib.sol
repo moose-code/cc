@@ -408,15 +408,15 @@ library CoreLib {
         emit SuccessorLocked();
     }
 
-    /// @notice moves the eth pot, the exit token pots and the credits the Core tracks to the successor, in batches. the Core
+    /// @notice moves `ethPot`, `xPot` and the credits the Core tracks to the successor, in batches. the Core
     /// forwards its call here untouched, the owner check and the reentrancy guard are here.
     /// the first call sets `retired`, which stays set: `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`,
     /// `compose` and `composeExit` then revert `Retired`. logs `EngineRetired` once.
     /// eth: `ethPot`, by one plain call, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
     /// trackers stays.
-    /// exit token: `xPot + xToBuyback`, by `transfer`, the trackers zeroed. a transfer that reverts, returns false or
-    /// returns less than a word leaves the pots and rates as they are, logs `ExitTokenMigrationSkipped` and the
-    /// call goes on; a later `migrate` retries. the coin stays.
+    /// exit token: `xPot`, by `transfer`, the tracker zeroed. `xToBuyback` stays for the exit token burn auction. a
+    /// transfer that reverts, returns false or returns less than a word leaves the pot and rates as they are, logs
+    /// `ExitTokenMigrationSkipped` and the call goes on; a later `migrate` retries. the coin stays.
     /// credits: up to `maxCredits` from the head of each pile, by `transferFrom`, the pile membership cleared (the
     /// cost, lane and arrival time of the record stay). zero moves the pots only.
     /// the held statements, their listings and their records stay with the Core, which sells them out itself.
@@ -456,7 +456,7 @@ library CoreLib {
     /// the transfer is a low level call that accepts no return data or `true`. on failure the pots and the rate state
     /// stay as they are and `ExitTokenMigrationSkipped` is logged
     function _moveExitToken(CoreState storage c, address to) private returns (uint256 amount) {
-        amount = c.xPot + c.xToBuyback;
+        amount = c.xPot;
         if (amount == 0) return 0;
         address token = c.exitToken;
         bool ok;
@@ -479,7 +479,6 @@ library CoreLib {
         c.xRateAtCheckpoint = xRateOf(c.xRateAtCheckpoint, c.xFunded, c.xPot, unit, c.xCheckpointTime, s);
         c.xCheckpointTime = uint64(block.timestamp);
         c.xPot = 0;
-        c.xToBuyback = 0;
         c.xFunded = xFundedOf(0, c.xRateAtCheckpoint, unit, s);
     }
 
