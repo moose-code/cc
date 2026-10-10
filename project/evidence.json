@@ -410,6 +410,36 @@
       "result": "findings",
       "limitations": "reasoned carry, no new audit",
       "invalidated": null
+    },
+    "E-SUITE-74d1cbe": {
+      "claim": "full suite passes after the first migrate retires the old engine (FLOW 48): 1078 pass, 0 fail, 8 skipped (the Deep suites)",
+      "kind": "test",
+      "sourceRevision": "74d1cbe6fce496ce9ae8d6f1c735b12f7bb07ca9",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 2
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000; the rehearsal forks the latest block at run time",
+      "method": "REHEARSAL=1 forge test -j 6 (214 s)",
+      "author": "implementer subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "verifies the implementation against its own assertions. the Deep suites were not run. the invariant handler retires the Core on about one seed in six, so retired paths are fuzzed on a share of runs. no independent review of 74d1cbe yet",
+      "invalidated": null
     }
   }
 }

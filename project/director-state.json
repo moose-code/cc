@@ -123,7 +123,7 @@
     ]
   },
   "candidate": null,
-  "activeChange": "NEXT-22: retire the old engine on the first migrate (FLOW 48)",
+  "activeChange": null,
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -150,7 +150,7 @@
       ]
     }
   ],
-  "nextAction": "Build NEXT item 22 with focused tests, then one full suite at the batch boundary; then the read-only system audit of the seven untraced paths.",
+  "nextAction": "Read-only system audit of the seven untraced required paths, with an independent review of 74d1cbe (retire on migrate), before the freeze.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
@@ -179,7 +179,7 @@
     },
     "focusedTests": {
       "evidence": [
-        "E-FOCUSED-f1fd139"
+        "E-SUITE-74d1cbe"
       ],
       "kinds": [
         "test"
@@ -193,14 +193,18 @@
       ]
     },
     "localLifecycle": {
-      "evidence": [],
+      "evidence": [
+        "E-SUITE-74d1cbe"
+      ],
       "kinds": [
         "test",
         "rehearsal"
       ]
     },
     "fullSuite": {
-      "evidence": [],
+      "evidence": [
+        "E-SUITE-74d1cbe"
+      ],
       "kinds": [
         "test"
       ]
