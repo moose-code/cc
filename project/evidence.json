@@ -787,6 +787,33 @@
       "result": "pass",
       "limitations": "no rerun; NatSpec enters test contract metadata, which no test pins",
       "invalidated": null
+    },
+    "E-REVIEW-NEXT29-c8892a2": {
+      "claim": "independent review of c8892a2 (decisions 55 and 56): no unit error, no behavior change at launch settings; two runbook defects, stale docs, invariants 7 and 19 miss a removed pot clamp",
+      "kind": "review",
+      "sourceRevision": "c8892a221e580b715b77ad1e4830a762370850b6",
+      "scope": [
+        "src/**",
+        "script/*.sol",
+        "script/config/**",
+        "test/invariant/**"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 7
+      },
+      "dependsOn": [],
+      "inputs": "git diff 02453e1..c8892a2, the build packet",
+      "method": "read only review subagent in its own clone; targeted tests, preflight script, mutation of the pot clamp in a copy",
+      "author": "implementer subagent of c8892a2; director",
+      "reviewer": "independent review subagent, 2026-10-10",
+      "result": "findings",
+      "limitations": "full suite, Deep suites, rehearsal and the real exitModule not examined",
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-next29.md",
+        "sha256": "f4ea9ffb3cd20dd3fd2a02e6cf39492f8c79a612a0d9c1dda223c917b297e3f4",
+        "revision": "e7ab3b884ecb8e490a5a9e94fa660dd5b725608a"
+      }
     }
   }
 }
