@@ -37,8 +37,8 @@ abstract contract SystemBuilder is ConfigReader {
             name: l.name,
             symbol: l.symbol,
             salt: l.salt,
-            image: "",
-            description: "",
+            image: l.image,
+            description: l.description,
             totalSupply: l.supply,
             renderer: address(0)
         });

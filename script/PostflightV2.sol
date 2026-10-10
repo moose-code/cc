@@ -185,6 +185,10 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         else _check(name, ok, detail);
     }
 
+    function _same(string memory a, string memory b) private pure returns (bool) {
+        return keccak256(bytes(a)) == keccak256(bytes(b));
+    }
+
     // ------------------------------------------------------------------ the coin
 
     function _postCoin(LaunchConfig memory c, address core, address coin_, bytes32 poolId) internal {
@@ -208,13 +212,8 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         bool ch = _coinChanged();
         _soft(ch, "coin: admin is the config owner", t.admin() == c.owner, vm.toString(t.admin()), "COIN_CHANGED=1");
         _soft(ch, "coin: restricted as in the config", t.restricted() == c.restricted, "restricted()", "COIN_CHANGED=1");
-        _soft(
-            ch,
-            "coin: image and description are empty as launched",
-            bytes(t.imageUrl()).length == 0 && bytes(t.description()).length == 0,
-            string.concat("image ", t.imageUrl(), " description ", t.description()),
-            "COIN_CHANGED=1"
-        );
+        _soft(ch, "coin: image equals the config", _same(t.imageUrl(), c.image), t.imageUrl(), "COIN_CHANGED=1");
+        _soft(ch, "coin: description equals the config", _same(t.description(), c.description), t.description(), "COIN_CHANGED=1");
         _soft(ch, "coin: no metadata renderer", t.metadataRenderer() == address(0), vm.toString(t.metadataRenderer()), "COIN_CHANGED=1");
         _postAllowlist(c, core, t, ch);
         _warn("warn: coin allowlist is not locked", !t.allowlistLocked(), "allowlistLocked(): the admin can no longer change the allowlist");

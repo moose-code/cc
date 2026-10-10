@@ -284,7 +284,7 @@ recommendations:
 | locker rewards to creator | `locker.rewardRecipients`, `rewardBps` | frozen, no reward admins; recipients may not be factory, coin, PM, hook, locker, deployer, escrows, mev module | works |
 | tokenAdmin | `token.tokenAdmin` | set directly to the owner, no `lockPoolExtension`, no handover | simpler |
 | deployFee 0.069 | `msg.value` | paid even on the owner path; excess refunded | to teamFeeRecipient |
-| image, metadata, context, renderer | same names | strings in the config; the config hash folds them in | works |
+| image, description, renderer | `token.image`, `token.description`, `token.renderer` | `image` and `description` are strings in `script/config/mainnet.json` (caps 2048 and 4096 bytes), passed to the factory in the launch transaction, folded into the config hash and compared by postflight (FLOW decision 54). the renderer is zero at launch and the coin admin sets one after launch with `setMetadataRenderer` | works |
 
 the factory injects `protocolRecipient`, `referralPayout` (default the escrow, which must have code, hook L561), the protocol locker slot, the allowlist seeds, the D52 floor, `quoteToken` 0, and launcher = factory.
 

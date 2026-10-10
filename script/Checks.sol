@@ -56,6 +56,10 @@ abstract contract LaunchChecks is PostflightChecks {
     uint256 internal constant CORE_SUPPLY = 1_000_000_000e18;
     /// @dev credit 1 exists and its score is a pure function of its seed and timestamp
     uint256 internal constant KNOWN_CREDIT = 1;
+    /// @dev the byte caps of the coin's `image` and `description` (`ArtCoinsTokenV2.MAX_IMAGE_BYTES` and
+    /// `MAX_DESCRIPTION_BYTES`, the factory reverts above them)
+    uint256 internal constant MAX_IMAGE_BYTES = 2048;
+    uint256 internal constant MAX_DESCRIPTION_BYTES = 4096;
     uint256 internal constant KNOWN_SCORE = 1_324_012;
     // the pinned launch rules (docs/DEPLOY.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
@@ -276,6 +280,21 @@ abstract contract LaunchChecks is PostflightChecks {
                 || a == c.stack.locker || a == c.stack.escrow || a == c.stack.auctionFactory || a == c.mevModule;
         }
         _check("rule: owner, creator and payees are not dead or stack addresses", !bad, "dead, stack, mev module");
+        _check(
+            "rule: image at most 2048 bytes, description at most 4096 bytes",
+            bytes(c.image).length <= MAX_IMAGE_BYTES && bytes(c.description).length <= MAX_DESCRIPTION_BYTES,
+            string.concat(
+                "image ", vm.toString(bytes(c.image).length), " bytes description ", vm.toString(bytes(c.description).length), " bytes"
+            )
+        );
+        bool filled = bytes(c.image).length != 0 && bytes(c.description).length != 0;
+        _warn(
+            "warn: image and description are filled",
+            filled,
+            filled
+                ? "both set in the launch transaction"
+                : "empty at launch: fill both in the config before step 4, or the coin admin sets them with updateImage and updateDescription"
+        );
         bool set = c.owner != address(0) && c.creator != address(0);
         _warn("warn: owner differs from creator", !set || c.owner != c.creator, "one party takes both roles");
         deployer;

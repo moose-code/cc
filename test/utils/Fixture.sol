@@ -54,6 +54,10 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @dev the sniper window of the launch, seconds
     uint256 internal constant SNIPER_WINDOW = 1800;
     bytes32 internal constant FIXTURE_SALT = keccak256("credits-engine fixture coin");
+    /// @dev the fixture coin launches with both metadata fields set, so the launch, the preflight and the postflight
+    /// rows run on non empty values
+    string internal constant FIXTURE_IMAGE = "ipfs://fixture-image";
+    string internal constant FIXTURE_DESCRIPTION = "fixture coin description";
 
     // ------------------------------------------------------------------ swap attribution hook data (same encoding on v2)
 
@@ -175,6 +179,8 @@ abstract contract Fixture is Test, ProdDeployer {
         lc.creatorPayee = _user("creatorPayee");
         lc.name = "Fixture Coin";
         lc.symbol = "FIXT";
+        lc.image = FIXTURE_IMAGE;
+        lc.description = FIXTURE_DESCRIPTION;
         lc.salt = FIXTURE_SALT;
         lc.stack.hook = v2.hook;
         lc.stack.factory = v2.factory;

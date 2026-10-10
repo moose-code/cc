@@ -44,6 +44,11 @@ struct LaunchConfig {
     address creator;
     string name;
     string symbol;
+    /// the coin's image url and description, set in the launch transaction (docs/FLOW.md decision 54). bytes are capped
+    /// by the coin (`MAX_IMAGE_BYTES` 2048, `MAX_DESCRIPTION_BYTES` 4096). empty is allowed, the coin admin sets them
+    /// later with `updateImage` and `updateDescription`
+    string image;
+    string description;
     bytes32 salt;
     // core
     uint256 rateStart;
@@ -143,6 +148,8 @@ abstract contract ConfigReader is CommonBase {
         c.creator = vm.parseJsonAddress(j, ".creator");
         c.name = vm.parseJsonString(j, ".name");
         c.symbol = vm.parseJsonString(j, ".symbol");
+        c.image = vm.parseJsonString(j, ".image");
+        c.description = vm.parseJsonString(j, ".description");
         c.salt = vm.parseJsonBytes32(j, ".salt");
         c.rateStart = vm.parseJsonUint(j, ".rateStart");
         _loadSettings(c, j);

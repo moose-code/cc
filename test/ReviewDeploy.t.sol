@@ -481,6 +481,10 @@ contract ReviewDeployTest is ReviewHarness {
         s.creatorPayee = v2.owner;
         s.name = "CC";
         s.salt = keccak256("CC");
+        // launch day inputs (FLOW decision 54): empty or filled in the file
+        LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
+        s.image = f.image;
+        s.description = f.description;
     }
 
     function _hashRow() internal view returns (string memory) {

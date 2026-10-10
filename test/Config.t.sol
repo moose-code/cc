@@ -58,6 +58,11 @@ contract ConfigTest is Fixture {
         d.creatorPayee = v2.owner;
         d.name = "CC";
         d.salt = keccak256("CC");
+        // image and description are launch day inputs (FLOW decision 54): the file may hold them filled or empty
+        d.image = f.image;
+        d.description = f.description;
+        assertLe(bytes(f.image).length, MAX_IMAGE_BYTES, "image above the coin cap");
+        assertLe(bytes(f.description).length, MAX_DESCRIPTION_BYTES, "description above the coin cap");
         assertEq(abi.encode(f.stack), abi.encode(d.stack));
         assertTrue(_same(f, d), "script/config/mainnet.json drifted from the default config");
         assertEq(f.owner, v2.owner);
@@ -228,7 +233,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "");
         _print("preflight");
         // every launch input has a row: the count is part of the report
-        assertEq(rows.length, 113, "preflight rows: docs/DEPLOY.md step 4");
+        assertEq(rows.length, 115, "preflight rows: docs/DEPLOY.md step 4");
     }
 
     /// each pinned code hash has a row. appending one byte of code to a contract fails exactly its row
@@ -510,12 +515,25 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), ctlRow);
     }
 
-    /// V2R-5: the coin's image and description are read back. the admin changing them fails the row until the
-    /// operator names the change (COIN_CHANGED=1), then it is a warning
+    /// the coin's image and description are read back and compared with the config. the admin changing them fails the
+    /// rows until the operator names the change (COIN_CHANGED=1), then they are warnings
     function test_FIXED_postflightReadsTheCoinImageAndDescription() public {
-        string memory row = "coin: image and description are empty as launched";
+        string memory imageRow = "coin: image equals the config";
+        string memory descRow = "coin: description equals the config";
+        string memory row = string.concat(imageRow, ", ", descRow);
+        assertEq(coin.imageUrl(), lc.image, "the launch set the image");
+        assertEq(coin.description(), lc.description, "the launch set the description");
         postflightAs(lc, address(core), owner);
-        assertTrue(_warnClean(row), "empty at launch");
+        assertTrue(_warnClean(imageRow) && _warnClean(descRow), "as launched");
+        // a config that names other values than the coin holds fails exactly its row
+        LaunchConfig memory c = lc;
+        c.image = "ipfs://other";
+        postflightAs(c, address(core), owner);
+        assertEq(_failedNames(), imageRow);
+        c = lc;
+        c.description = "other";
+        postflightAs(c, address(core), owner);
+        assertEq(_failedNames(), descRow);
         vm.startPrank(owner);
         (bool ok1,) = address(coin).call(abi.encodeWithSignature("updateImage(string)", "ipfs://img"));
         (bool ok2,) = address(coin).call(abi.encodeWithSignature("updateDescription(string)", "{}"));
@@ -523,11 +541,70 @@ contract ConfigTest is Fixture {
         assertTrue(ok1 && ok2, "the admin updates the coin");
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), row);
-        assertFalse(_warnClean(row));
+        assertFalse(_warnClean(imageRow));
+        assertFalse(_warnClean(descRow));
         coinFlag = true;
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "");
-        assertFalse(_warnClean("warn: coin: image and description are empty as launched"));
+        assertFalse(_warnClean("warn: coin: image equals the config"));
+        assertFalse(_warnClean("warn: coin: description equals the config"));
+    }
+
+    /// preflight: both fields inside the coin caps (2048 and 4096 bytes), a warning while either is empty
+    function test_preflightImageAndDescription() public {
+        address d2 = _funded();
+        string memory cap = "rule: image at most 2048 bytes, description at most 4096 bytes";
+        string memory filled = "warn: image and description are filled";
+        // the factory enforces the same caps, so its simulated launch fails with the rule row
+        string memory both = string.concat(cap, ", factory: deployTokenAsOwner accepts the config (simulated)");
+        _pre(lc, d2);
+        assertTrue(_warnClean(cap) && _warnClean(filled), "filled and inside the caps");
+
+        LaunchConfig memory c = lc;
+        c.image = "";
+        _pre(c, d2);
+        assertEq(_failedNames(), "", "an empty image is not a failure");
+        assertFalse(_warnClean(filled), "an empty image warns");
+        c = lc;
+        c.description = "";
+        _pre(c, d2);
+        assertEq(_failedNames(), "");
+        assertFalse(_warnClean(filled), "an empty description warns");
+        c.image = "";
+        _pre(c, d2);
+        assertEq(_failedNames(), "");
+        assertTrue(_warnClean(cap));
+
+        c = lc;
+        c.image = _bytesOf(MAX_IMAGE_BYTES);
+        c.description = _bytesOf(MAX_DESCRIPTION_BYTES);
+        _pre(c, d2);
+        assertEq(_failedNames(), "", "both at the cap pass");
+        c.image = _bytesOf(MAX_IMAGE_BYTES + 1);
+        _pre(c, d2);
+        assertEq(_failedNames(), both, "an image above the cap fails");
+        c.image = lc.image;
+        c.description = _bytesOf(MAX_DESCRIPTION_BYTES + 1);
+        _pre(c, d2);
+        assertEq(_failedNames(), both, "a description above the cap fails");
+    }
+
+    function _bytesOf(uint256 n) internal pure returns (string memory) {
+        bytes memory b = new bytes(n);
+        for (uint256 i; i < n; ++i) {
+            b[i] = "a";
+        }
+        return string(b);
+    }
+
+    /// the config parser reads `image` and `description` as strings
+    function test_jsonParsesImageAndDescription() public view {
+        string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
+        j = vm.replace(j, '"image": ""', '"image": "ipfs://cid/cc.png"');
+        j = vm.replace(j, '"description": ""', '"description": "the CC coin"');
+        LaunchConfig memory c = parseConfig(j);
+        assertEq(c.image, "ipfs://cid/cc.png");
+        assertEq(c.description, "the CC coin");
     }
 
     function test_supplyConstantMatchesCore() public view {
@@ -589,6 +666,12 @@ contract ConfigTest is Fixture {
         LaunchConfig memory a = lc;
         a.stack.auctionFactory = address(0xA11CE);
         assertTrue(configHash(a) != h, "the auction factory is outside the hash");
+        a = lc;
+        a.image = string.concat(lc.image, "x");
+        assertTrue(configHash(a) != h, "the image is outside the hash");
+        a = lc;
+        a.description = string.concat(lc.description, "x");
+        assertTrue(configHash(a) != h, "the description is outside the hash");
     }
 
     // ------------------------------------------------------------------ settings
