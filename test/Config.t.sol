@@ -313,7 +313,30 @@ contract ConfigTest is Fixture {
         c = lc;
         c.creatorPayee = c.stack.escrow;
         _pre(c, d2);
-        assertEq(_failedNames(), "rule: owner, creator and payees are not dead or stack addresses");
+        assertEq(
+            _failedNames(),
+            "rule: owner, creator and payees are not dead or stack addresses, payee: the launch payee accepts 0.001 eth with a 100000 gas call (simulated)"
+        );
+    }
+
+    /// the launch payee takes 0.001 eth with a 100,000 gas call: a payee that reverts, or one that burns more gas, fails
+    function test_preflightPayeeAcceptsEth() public {
+        address d2 = _funded();
+        string memory row = "payee: the launch payee accepts 0.001 eth with a 100000 gas call (simulated)";
+        _pre(lc, d2);
+        assertTrue(_warnClean(row), "the launch payee accepts eth");
+        LaunchConfig memory c = lc;
+        c.creatorPayee = makeAddr("reverting payee");
+        vm.etch(c.creatorPayee, hex"60006000fd");
+        _pre(c, d2);
+        assertEq(_failedNames(), row, "a reverting payee fails");
+        c.creatorPayee = makeAddr("gas burning payee");
+        vm.etch(c.creatorPayee, hex"5b600056");
+        _pre(c, d2);
+        assertEq(_failedNames(), row, "a payee that burns the gas fails");
+        c.creatorPayee = makeAddr("plain account payee");
+        _pre(c, d2);
+        assertEq(_failedNames(), "", "an account without code accepts eth");
     }
 
     function test_preflightFailures() public {

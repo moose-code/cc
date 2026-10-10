@@ -105,7 +105,7 @@ auction mode:
 
 1. read the asking price and the auction id from the lens.
 2. optional: `core.repriceStatement(sid)` sets the reserve of a listing without a bid to the asking price now. anyone may call it, and the first bidder calls it before bidding.
-3. `house.createBid{value: amount}(auctionId)`. the first bid must reach the reserve (`BidBelowReserve`) and each later bid must exceed the top bid by 500 bps (`BidBelowMinimum`). the auction runs `auctionDuration` (86,400 seconds) from the first bid.
+3. `house.createBid{value: amount}(auctionId)`. the first bid must reach the reserve (`BidBelowReserve`) and each later bid must exceed the top bid by 500 bps (`BidBelowMinimum`). the auction runs `auctionDuration` (86,400 seconds at launch) from the first bid. the duration is the one the listing was created with: a later `setSettings` reaches new listings only, and `repriceStatement` sets the reserve of an old listing and leaves its duration.
 4. after the end time anyone calls `house.endAuction(auctionId)` with at least 2,000,000 gas (the house needs 580,000 for its delivery). the statement goes to the winner and the proceeds are credited to the Core on the house.
 5. `core.collectSales()` books the proceeds (`saleToBuybackBps` to the coin buyback pot, the rest to `ethPot`) and `core.syncStatement(sid)` deletes the record of the sold statement. both are permissionless and `buyback()` collects first.
 
@@ -148,7 +148,7 @@ a successor Core (section 9) receives credits without records and adopts them th
 |---|---|---|
 | `setSuccessor(address)` | names the contract that `migrate` sends to. zero or an address with code other than the Core, the exit module, the exit token, the house, the fee source, the coin, Credits or Statements | `OnlyOwner`, `Locked("successor")`, `NoCode`, `BadSuccessor` |
 | `lockSuccessor()` | closes `setSuccessor` permanently. allowed while the successor is zero, which disables `migrate` | `OnlyOwner` |
-| `migrate(maxCredits)` | the first call sets `retired` (view `retired()`, event `EngineRetired`). moves in batches: `ethPot` by one plain call, `xPot + xToBuyback` by `transfer`, up to `maxCredits` from the head of each pile by `transferFrom`. `ethToBuyback` stays in the Core and `xToBuyback` moves with `xPot`. the held statements, their listings and their records stay in the Core | `OnlyOwner`, `NoSuccessor`, `Reentrancy`, `CallFailed` |
+| `migrate(maxCredits)` | the first call sets `retired` (view `retired()`, event `EngineRetired`). moves in batches: `ethPot` by one plain call, `xPot + xToBuyback` by `transfer`, up to `maxCredits` from the head of each pile by `transferFrom`. `ethToBuyback` stays in the Core and `xToBuyback` moves with `xPot`. an exit token `transfer` that reverts or returns false leaves both exit token pots in the Core, logs `ExitTokenMigrationSkipped(successor, amount)` and the other legs go on (`Migrated` shows 0 exit tokens). the held statements, their listings and their records stay in the Core | `OnlyOwner`, `NoSuccessor`, `Reentrancy`, `CallFailed` |
 | `rescueCoin(to, amount)` | sends coin the Core holds to `to`. coin an allowlisted holder sent to the Core is the only coin it holds | `OnlyOwner`, `ZeroAddress` |
 | `rescueNft(token, id, to)` | sends an ERC721 the Core holds to `to`: a credit only while it is outside both piles, a statement only while the Core has no record of it, any other ERC721 freely | `OnlyOwner`, `ZeroAddress`, `InPile`, `Held`, `NotHolder` |
 
@@ -174,7 +174,7 @@ what a successor has to implement: a `receive()` that accepts a plain eth call, 
 | `hourlyRoom` | eth the hourly spend cap still allows (the cap on the pot at the first spend of the hour plus the eth booked since, less the spend) |
 | `ethPileSize`, `ethPileHead`, `exitPileSize`, `exitPileHead` | size and oldest credit of each pile |
 | `ethPageReady`, `exitPageReady` | the controller answers `nextPage` for the lane with a ready flag and the full answer size (82 words) that `compose` requires |
-| `ethPot`, `ethToBuyback`, `xPot`, `xToBuyback` | the four pots |
+| `ethPot`, `ethToBuyback`, `xPot`, `xToBuyback` | the four pots. `ethToBuyback` leaves only through a `buyback()` whose swap completes: a pool or hook failure reverts the call and the pot stays |
 | `unbookedEth` | Core balance above the booked pots. `skim()` books it |
 | `salesOwed` | sale proceeds waiting in the house. `collectSales()` books them |
 | `routerBalance`, `routerOwed` | eth in the router, and the part owed to payees |
@@ -214,6 +214,7 @@ the Core (`src/interfaces/ICore.sol`):
 | `ListingBought` | `uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 tip, uint256 rate` | `buyListing`. `cost` is the eth the target took, `tip` the caller tip, `rate` the price state after the fill. the cost basis of the credit is `cost + tip` |
 | `EngineRetired` | `address indexed successor` | the first `migrate`, once. the Core refuses the six doors from then on |
 | `Migrated` | `address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits` | `migrate`: eth moved (`ethPot`), exit token moved (`xPot + xToBuyback`), credits moved |
+| `ExitTokenMigrationSkipped` | `address indexed successor, uint256 amount` | `migrate`: the exit token `transfer` of `amount` (`xPot + xToBuyback`) reverted or returned false. the pots stay in the Core, the other legs went through |
 | `CoinRescued` | `address indexed to, uint256 amount` | `rescueCoin` |
 | `NftRescued` | `address indexed token, uint256 indexed id, address indexed to` | `rescueNft` |
 | `Overprinted` | `uint256 indexed baseId, uint256 indexed topId, uint256 cost` | `overprint` merged `topId` into `baseId`. `cost` is the summed cost basis |

@@ -48,6 +48,10 @@ contract SetSettingsProbe is SetSettings {
         return reprice_;
     }
 
+    function warnRateCap(uint256 rateCap) external view returns (bool) {
+        return _warnRateCap(ICoreOwner(core_), rateCap);
+    }
+
     function open() external view returns (uint256[] memory) {
         return _openListings(ICoreOwner(core_));
     }
@@ -150,6 +154,15 @@ contract SetSettingsTest is Fixture {
         probe.single("saleFloorBps", 999);
         vm.expectRevert(abi.encodeWithSelector(SetSettings.OutOfBounds.selector, bytes32("saleFloorBps")));
         probe.run();
+    }
+
+    /// the rateCap row warns when the new cap sits below the live bid read or the price state
+    function test_rateCapBelowTheLiveBidWarns() public {
+        uint256 price = core.ethPrice();
+        assertGt(price, 1, "setup: the price state is positive");
+        assertTrue(probe.warnRateCap(price - 1), "a cap below the price state warns");
+        assertFalse(probe.warnRateCap(price), "a cap at the price state is quiet");
+        assertFalse(probe.warnRateCap(core.settings().rateCap), "the live cap is quiet");
     }
 
     /// a dry run (no SEND) prints and changes nothing, the owner can send what it printed

@@ -32,6 +32,7 @@ interface ICoreLib {
     event CreditBought(uint256 indexed id, address indexed from, Lane lane, uint256 cost);
     event EngineRetired(address indexed successor);
     event ExitRateFill(uint256 rate, uint256 pot);
+    event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
     event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
     event SettingsSet(Settings settings);

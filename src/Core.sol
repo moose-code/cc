@@ -181,6 +181,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
     /// the first `migrate` set `retired`
     event EngineRetired(address indexed successor);
+    /// `migrate` could not transfer the exit token pots `amount` to the successor; the pots stay
+    event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
 
     /*//////////////////////////////////////////////////////////////
                               PARAMETERS
@@ -1145,7 +1147,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// moves `ethPot`, the exit token pots and up to `maxCredits` credits from the head of each pile to the successor,
     /// in batches. callable again until nothing is left. `ethToBuyback` stays for the coin buyback. the held
     /// statements, their listings and their records stay with the core. the hourly spend window closes with the eth
-    /// pot. the first call sets `retired` and logs `EngineRetired`. owner only and guarded, both checked by the
+    /// pot. an exit token transfer that fails leaves the exit token pots and logs `ExitTokenMigrationSkipped`, the
+    /// eth and credit legs go on. the first call sets `retired` and logs `EngineRetired`. owner only and guarded, both checked by the
     /// library, to which the call is handed untouched. reverts `NoSuccessor` while the successor is zero
     function migrate(uint256) external {
         _toLib();

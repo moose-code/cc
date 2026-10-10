@@ -614,6 +614,54 @@ contract MigrateTest is Fixture {
         _solvent();
     }
 
+    /// an exit token whose transfer reverts (mode 1) or returns false (mode 2): the eth leg, the credit leg and the
+    /// retired flag go through, the exit token pots and the rate state stay, and a later migrate with a working token
+    /// moves them
+    function _exitTokenLegSkips(uint8 mode) internal {
+        _world();
+        _setSuccessor();
+        uint256 pot = core.ethPot();
+        uint256 xPot = core.xPot();
+        uint256 xBuyback = core.xToBuyback();
+        assertTrue(xPot > 0 && xBuyback > 0, "setup: exit token pots hold something");
+        uint256 credits = core.pileSize(Lane.Eth) + core.pileSize(Lane.Exit);
+        uint256 xBalance = xt.balanceOf(address(core));
+        xt.setTransferMode(mode);
+
+        vm.expectEmit(true, false, false, true, address(core));
+        emit ICore.ExitTokenMigrationSkipped(address(sink), xPot + xBuyback);
+        vm.expectEmit(true, false, false, true, address(core));
+        emit ICore.Migrated(address(sink), pot, 0, credits);
+        _migrate(1000);
+
+        assertTrue(core.retired(), "the skipped leg blocked the retirement");
+        assertEq(sink.ethReceived(), pot, "the eth leg did not go through");
+        assertEq(core.ethPot(), 0, "ethPot");
+        assertEq(CREDITS.balanceOf(address(sink)), credits, "the credit leg did not go through");
+        assertEq(core.xPot(), xPot, "xPot changed");
+        assertEq(core.xToBuyback(), xBuyback, "xToBuyback changed");
+        assertEq(xt.balanceOf(address(core)), xBalance, "the exit token moved");
+        assertEq(xt.balanceOf(address(sink)), 0, "the successor got exit token");
+        _solvent();
+
+        xt.setTransferMode(0);
+        vm.expectEmit(true, false, false, true, address(core));
+        emit ICore.Migrated(address(sink), 0, xPot + xBuyback, 0);
+        _migrate(1000);
+        assertEq(core.xPot(), 0, "xPot after the working token");
+        assertEq(core.xToBuyback(), 0, "xToBuyback after the working token");
+        assertEq(xt.balanceOf(address(sink)), xPot + xBuyback, "the later migrate did not move the exit token");
+        _solvent();
+    }
+
+    function test_OK_aRevertingExitTokenSkipsItsLegAndTheEngineRetires() public {
+        _exitTokenLegSkips(1);
+    }
+
+    function test_OK_anExitTokenReturningFalseSkipsItsLegAndTheEngineRetires() public {
+        _exitTokenLegSkips(2);
+    }
+
     function test_REVERT_aNonOwnerMigrateLeavesTheCoreActive() public {
         _fundPot(1 ether);
         _setSuccessor();

@@ -138,6 +138,7 @@ library CoreLib {
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
     event EngineRetired(address indexed successor);
+    event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
 
     /// @notice validates the settings, stores them and logs them. the Core forwards its own `setSettings` call here
     /// untouched (same selector), after it checkpointed both rates. the constructor calls it too
@@ -413,7 +414,9 @@ library CoreLib {
     /// `compose` and `composeExit` then revert `Retired`. logs `EngineRetired` once.
     /// eth: `ethPot`, by one plain call, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
     /// trackers stays.
-    /// exit token: `xPot + xToBuyback`, by `transfer`, the trackers zeroed. the coin stays.
+    /// exit token: `xPot + xToBuyback`, by `transfer`, the trackers zeroed. a transfer that reverts, returns false or
+    /// returns less than a word leaves the pots and rates as they are, logs `ExitTokenMigrationSkipped` and the
+    /// call goes on; a later `migrate` retries. the coin stays.
     /// credits: up to `maxCredits` from the head of each pile, by `transferFrom`, the pile membership cleared (the
     /// cost, lane and arrival time of the record stay). zero moves the pots only.
     /// the held statements, their listings and their records stay with the Core, which sells them out itself.
@@ -450,9 +453,27 @@ library CoreLib {
         if (!ok) revert CallFailed();
     }
 
+    /// the transfer is a low level call that accepts no return data or `true`. on failure the pots and the rate state
+    /// stay as they are and `ExitTokenMigrationSkipped` is logged
     function _moveExitToken(CoreState storage c, address to) private returns (uint256 amount) {
         amount = c.xPot + c.xToBuyback;
         if (amount == 0) return 0;
+        address token = c.exitToken;
+        bool ok;
+        assembly ("memory-safe") {
+            let p := mload(0x40)
+            mstore(p, 0xa9059cbb00000000000000000000000000000000000000000000000000000000)
+            mstore(add(p, 4), to)
+            mstore(add(p, 36), amount)
+            ok := call(gas(), token, 0, p, 68, 0, 32)
+            switch returndatasize()
+            case 0 { ok := and(ok, gt(extcodesize(token), 0)) }
+            default { ok := and(ok, and(gt(returndatasize(), 31), eq(mload(0), 1))) }
+        }
+        if (!ok) {
+            emit ExitTokenMigrationSkipped(to, amount);
+            return 0;
+        }
         Settings storage s = SettingsStore.load();
         uint256 unit = c.unitPerPoint;
         c.xRateAtCheckpoint = xRateOf(c.xRateAtCheckpoint, c.xFunded, c.xPot, unit, c.xCheckpointTime, s);
@@ -460,7 +481,6 @@ library CoreLib {
         c.xPot = 0;
         c.xToBuyback = 0;
         c.xFunded = xFundedOf(0, c.xRateAtCheckpoint, unit, s);
-        SafeTransferLib.safeTransfer(c.exitToken, to, amount);
     }
 
     /// pops up to `max` credits from the head of each pile

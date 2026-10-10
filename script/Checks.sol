@@ -42,7 +42,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the per transaction gas cap of the target chain (EIP 7825, 2^24). the launch is simulated with what is left of
     /// it, so a launch that does not fit fails the simulation row, and a collision cannot burn more than that
     uint256 internal constant TX_GAS_CAP = 16_777_216;
-    /// @dev the gas of the nine deploy transactions as the launch rehearsal measures it (18,137,749), rounded up with margin.
+    /// @dev the gas of the nine deploy transactions as the launch rehearsal measures it (17,581,727), rounded up with margin.
     /// `test/Rehearsal.t.sol` asserts that the measured total stays under it
     uint256 internal constant DEPLOY_GAS_ESTIMATE = 19_200_000;
     /// @dev the Core SUPPLY constant, the coin supply its exit auction is priced against. test/Config.t.sol checks it
@@ -113,6 +113,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _preLibrary();
         _preStack(c);
         _preFactory(c, deployer);
+        _prePayee(c);
         _prePredictions(c, deployer);
         _preLive();
         _preSignoff(c, deployer);
@@ -270,6 +271,18 @@ abstract contract LaunchChecks is PostflightChecks {
         bool set = c.owner != address(0) && c.creator != address(0);
         _warn("warn: owner differs from creator", !set || c.owner != c.creator, "one party takes both roles");
         deployer;
+    }
+
+    /// @dev the router forwards the payee share with a plain call. a payee that reverts or needs more gas sends its share
+    /// to `owed`, which only a working payee can claim. the call runs on a snapshot, 0.001 eth with 100,000 gas
+    function _prePayee(LaunchConfig memory c) private {
+        address payee = c.creatorPayee;
+        if (payee == address(0)) return; // the placeholder row reports it
+        uint256 snap = vm.snapshotState();
+        vm.deal(address(this), address(this).balance + 0.001 ether);
+        (bool ok,) = payee.call{value: 0.001 ether, gas: 100_000}("");
+        vm.revertToState(snap);
+        _check("payee: the launch payee accepts 0.001 eth with a 100000 gas call (simulated)", ok, vm.toString(payee));
     }
 
     function _preCode(LaunchConfig memory c) private {

@@ -84,6 +84,7 @@ interface ICore {
     event ExitModuleLocked();
     event ExitModuleSet(address exitModule, address exitToken, uint256 unitPerPoint);
     event ExitRateFill(uint256 rate, uint256 pot);
+    event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
     event FeesAdded(uint256 amount);
     event ListingBought(
         uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 tip, uint256 rate

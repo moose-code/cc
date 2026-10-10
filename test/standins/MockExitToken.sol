@@ -21,6 +21,19 @@ contract MockExitToken is ERC20 {
         return _symbol;
     }
 
+    /// 0 transfers, 1 reverts, 2 returns false without moving anything
+    uint8 public transferMode;
+
+    function setTransferMode(uint8 mode) external {
+        transferMode = mode;
+    }
+
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        if (transferMode == 1) revert("transfer refused");
+        if (transferMode == 2) return false;
+        return super.transfer(to, amount);
+    }
+
     /// mints to any address.
     function mint(address to, uint256 amount) external {
         _mint(to, amount);

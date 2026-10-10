@@ -12,6 +12,7 @@ interface ICoreOwner {
     function settings() external view returns (Settings memory);
     function setSettings(Settings calldata s) external;
     function ethRate() external view returns (uint256);
+    function ethPrice() external view returns (uint256);
     function setRate(uint256 rate) external;
     function xRate() external view returns (uint256);
     function setXRate(uint256 rate) external;
@@ -86,6 +87,7 @@ contract SetSettings is Script {
             )
         );
         if (!settingsChanged) console.log("the settings are unchanged, setSettings is not needed");
+        _warnRateCap(core, next.rateCap);
 
         uint256 rate = vm.envOr("SET_RATE", uint256(0));
         uint256 xRate = vm.envOr("SET_XRATE", uint256(0));
@@ -129,6 +131,26 @@ contract SetSettings is Script {
         if (reprice) _finish(_sweep(core, next.saleFloorBps, first, true), true);
         vm.stopBroadcast();
         console.log("sent. read it back with settings(), ethRate() and the SettingsSet event");
+    }
+
+    /// @dev prints a warning row and returns true when `rateCap` is below the live bid read (`ethRate`) or the live price
+    /// state (`ethPrice`). `rateCap` bounds both, so the bid drops to the cap when `setSettings` lands
+    function _warnRateCap(ICoreOwner core, uint256 rateCap) internal view returns (bool below) {
+        uint256 read = core.ethRate();
+        uint256 price = core.ethPrice();
+        below = rateCap < read || rateCap < price;
+        if (!below) return false;
+        console.log(
+            string.concat(
+                "WARNING rateCap ",
+                vm.toString(rateCap),
+                " is below the live bid (ethRate ",
+                vm.toString(read),
+                ") or price state (ethPrice ",
+                vm.toString(price),
+                "): the bid falls to the cap when setSettings lands"
+            )
+        );
     }
 
     /// @dev one listing that is still below the new floor after the sweep, and why
