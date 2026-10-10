@@ -1,6 +1,6 @@
 # credits engine: agent entrypoint
 
-Read `docs/HANDOFF.md` first, then run `python3 script/director.py handoff` and read what it lists. `CLAUDE.md` points here.
+Read `docs/HANDOFF.md` first, then run `python3 script/director.py handoff` and read what it lists. `CLAUDE.md` points here. For directing, reviewing or handing over this project, use the `project-director` skill; these records are its adopted layout.
 
 ## Authority
 
