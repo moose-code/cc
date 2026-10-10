@@ -814,6 +814,85 @@
         "sha256": "f4ea9ffb3cd20dd3fd2a02e6cf39492f8c79a612a0d9c1dda223c917b297e3f4",
         "revision": "e7ab3b884ecb8e490a5a9e94fa660dd5b725608a"
       }
+    },
+    "E-TARGETED-ce6792b": {
+      "claim": "targeted suites after the review fixes: Invariants.t.sol 12 pass (all 20 invariants, both Phase1 suites), InvariantsPhase2 15, InvariantsSale 24, Redeem 24, ReviewPort 11, ReviewFlowCore 16, V2Stack 9; strengthened invariants 7 and 19 fail on a copy without the pot clamp",
+      "kind": "test",
+      "sourceRevision": "ce6792b6c8c739648cda30b34e0a949a6b3f68bd",
+      "scope": [
+        "src/**",
+        "test/invariant/**",
+        "test/Redeem.t.sol",
+        "test/ReviewPort.t.sol",
+        "test/ReviewFlowCore.t.sol",
+        "test/V2Stack.t.sol"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 7
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000, default invariant runs",
+      "method": "forge test --match-path for each listed file; mutation in a scratch copy",
+      "author": "implementer subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "default runs, not the Deep campaign",
+      "invalidated": null
+    },
+    "E-SUITE-CARRY-ce6792b": {
+      "claim": "the candidate run of E-SUITE-c8892a2 holds at ce6792b",
+      "kind": "analysis",
+      "sourceRevision": "ce6792b6c8c739648cda30b34e0a949a6b3f68bd",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 7,
+        "A-OWNER-DELEGATE": 1
+      },
+      "dependsOn": [
+        "E-TARGETED-ce6792b"
+      ],
+      "carries": [
+        "E-SUITE-c8892a2"
+      ],
+      "carriedChanges": [
+        "test/Redeem.t.sol",
+        "test/ReviewCore.t.sol",
+        "test/ReviewDeploy.t.sol",
+        "test/ReviewEcon.t.sol",
+        "test/ReviewFlowCore.t.sol",
+        "test/ReviewFlowHouse.t.sol",
+        "test/ReviewPhase2Flex.t.sol",
+        "test/ReviewPort.t.sol",
+        "test/ReviewSale.t.sol",
+        "test/ReviewV2Port.t.sol",
+        "test/V2Stack.t.sol",
+        "test/invariant/HandlerBase.sol",
+        "test/invariant/Invariants.t.sol",
+        "test/utils/ReviewHarness.sol"
+      ],
+      "inputs": "git diff c8892a2 ce6792b",
+      "method": "no src change. ten Review* files and ReviewHarness: NatSpec path lines (archive). Redeem, ReviewPort, ReviewFlowCore, V2Stack: comments only. HandlerBase and Invariants.t.sol: stronger checks for invariants 7 and 19, every suite sharing them rerun in E-TARGETED-ce6792b",
+      "author": "director, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "no full rerun; the Deep campaign on the frozen candidate exercises the invariant change again",
+      "invalidated": null
     }
   }
 }

@@ -187,7 +187,7 @@
       ]
     }
   ],
-  "nextAction": "Resolve the independent review of c8892a2, then freeze the candidate (python3 script/director.py freeze <commit>), run the 7 Deep suites once with CANDIDATE_RUN=1, then the security review and the rehearsal.",
+  "nextAction": "Deep invariant campaign on the frozen candidate (7 suites, CANDIDATE_RUN=1), independent security review of the candidate, then the rehearsal.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
@@ -216,7 +216,7 @@
     },
     "focusedTests": {
       "evidence": [
-        "E-SUITE-CARRY-b3f545c"
+        "E-SUITE-CARRY-ce6792b"
       ],
       "kinds": [
         "test"
@@ -231,7 +231,7 @@
     },
     "localLifecycle": {
       "evidence": [
-        "E-SUITE-CARRY-b3f545c"
+        "E-SUITE-CARRY-ce6792b"
       ],
       "kinds": [
         "test",
@@ -240,7 +240,7 @@
     },
     "fullSuite": {
       "evidence": [
-        "E-SUITE-CARRY-b3f545c"
+        "E-SUITE-CARRY-ce6792b"
       ],
       "kinds": [
         "test"
