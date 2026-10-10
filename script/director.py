@@ -1028,7 +1028,7 @@ def handoff() -> int:
     reads = [STATE_REL]
     docs = state.get("documents")
     if isinstance(docs, dict):
-        reads += [p for p in docs.values() if isinstance(p, str)]
+        reads += [p for k, p in docs.items() if k != "decisionIdPattern" and isinstance(p, str)]
     reads += [name for name in ("AGENTS.md", "CLAUDE.md") if (ROOT / name).is_file()]
     print("Resume as the sole active product director.\n")
     print("Read:")
