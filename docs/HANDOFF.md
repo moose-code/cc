@@ -34,8 +34,8 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 |---|---|
 | branch | `main` is the working branch on github ripe0x/cc. the director repair of 2026-10-10 is on the local branch `claude/repair-project-director-1366be`, not pushed |
 | phase | implementation. no candidate is frozen. NEXT item 21 (preflight `rateCap` row) is built at fb6c26c, with the review matrix isolating each rate bounds row at 2645c00 and f1fd139. focused tests pass, independent review of the change done in the director session of 2026-10-10 |
-| source | Core 24,064 bytes runtime (512 bytes of headroom), CoreLib 16,967, ControllerV1 4,445, FeeRouter 4,446, CoreLens 8,702, measured on 382b967 |
-| tests | 1078 pass, 0 fail, 8 skipped on 74d1cbe (REHEARSAL=1). previously recorded on 06009bd: 1059 pass, 0 fail, 8 skipped (the Deep suites), REHEARSAL=1, foundry 1.8.1, fork block 26158000, on 06009bd. the 7 Deep suites with 20 invariants each are clean at 64 runs and depth 200 on 06009bd (NEXT item 7) |
+| source | Core 21,285 bytes runtime (3,291 bytes of headroom), CoreLib 15,608, ControllerV1 4,282, CoreLens 7,479, measured at c8892a2 |
+| tests | candidate run at c8892a2: 1013 pass, 0 fail, 8 skipped (the Deep suites), REHEARSAL=1. the real preflight script on a fork: 113 rows, 110 pass, the three documented owner-side failures |
 | reviews | none is valid for the current source: every docs/REVIEW-*.md predates 34 or more source commits, and docs/AUDIT-codex.md (commit 32ff35b) is on a branch outside main |
 | owner steps before launch | fund the owner address 0xCB43 (0.068 eth at block 26158000, the launch needs about 0.1), run `setMinProtocolSkimShareBps(362)` on the v2 factory, then docs/DEPLOY.md with `--slow` (the owner address is an EIP 7702 delegated account) |
 
@@ -70,9 +70,9 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 ## 6. next action
 
-the read-only system audit of the seven untraced required paths (fee intake, credit purchase, statement sale and proceeds, phase 2 exit, owner powers and locks, launch runbook, participant economics), before the freeze. one owner question is open and blocks nothing now: whether `xToBuyback` stays in the old engine on `migrate` like `ethToBuyback` (recommended: yes).
+resolve the independent review of c8892a2 (decisions 55 and 56). then freeze the candidate with `python3 script/director.py freeze <commit>`, run the 7 Deep suites once (`CANDIDATE_RUN=1 INVARIANT_DEEP=1 ...`, the only sanctioned long run), an independent security review of the frozen candidate, the rehearsal from a clean checkout, `python3 script/director.py check --gate deploy`, then the owner's launch steps.
 
-after that, in order: freeze the candidate with `python3 script/director.py freeze <commit>`, the deep invariants on it, an independent security review of the candidate by a fresh reviewer, the rehearsal from a clean checkout, `python3 script/director.py check --gate deploy`, the owner's launch steps.
+owner inputs before launch: the coin's image url and description (config), funding the owner address (0.068 eth held, about 0.1 needed), `setMinProtocolSkimShareBps(362)` on the factory, the launch day `rateStart` and `rateCap` from the credit price.
 
 ## 7. how to work in this repo
 

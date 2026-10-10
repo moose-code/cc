@@ -707,6 +707,37 @@
       "result": "pass",
       "limitations": "recorded against decisions through 54 (owner-decision assumption v5); decisions 55 to 57 are not all built. Deep suites not run",
       "invalidated": null
+    },
+    "E-SUITE-c8892a2": {
+      "claim": "candidate full suite with decisions through 57 built: 1013 pass, 0 fail, 8 skipped (the Deep suites); preflight script on a fork: 113 rows, 110 pass, the three documented owner-side failures",
+      "kind": "test",
+      "sourceRevision": "c8892a221e580b715b77ad1e4830a762370850b6",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 7,
+        "A-OWNER-DELEGATE": 1
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000; empty image and description",
+      "method": "CANDIDATE_RUN=1 REHEARSAL=1 forge test -j 6; script/tools/check-preflight.sh",
+      "author": "implementer subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "the Deep suites run on the frozen candidate. the change is under independent review",
+      "invalidated": null
     }
   }
 }

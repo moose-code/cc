@@ -137,7 +137,7 @@
     ]
   },
   "candidate": null,
-  "activeChange": "NEXT-29: remove credit scores and the approved removals (FLOW 55, 56)",
+  "activeChange": null,
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -187,7 +187,7 @@
       ]
     }
   ],
-  "nextAction": "NEXT 29 in four phases, then its full suite and an independent review; then freeze.",
+  "nextAction": "Resolve the independent review of c8892a2, then freeze the candidate (python3 script/director.py freeze <commit>), run the 7 Deep suites once with CANDIDATE_RUN=1, then the security review and the rehearsal.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
@@ -216,7 +216,7 @@
     },
     "focusedTests": {
       "evidence": [
-        "E-SUITE-70d88be"
+        "E-SUITE-c8892a2"
       ],
       "kinds": [
         "test"
@@ -231,7 +231,7 @@
     },
     "localLifecycle": {
       "evidence": [
-        "E-SUITE-70d88be"
+        "E-SUITE-c8892a2"
       ],
       "kinds": [
         "test",
@@ -240,7 +240,7 @@
     },
     "fullSuite": {
       "evidence": [
-        "E-SUITE-70d88be"
+        "E-SUITE-c8892a2"
       ],
       "kinds": [
         "test"
