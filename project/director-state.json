@@ -180,8 +180,8 @@
     },
     {
       "id": "OD-6",
-      "question": "buyListing: its caller tip is below its gas at launch prices, so third parties will not call it. Keep it (owner keeper use), remove it (smallest attack surface), or raise the tip cap?",
-      "status": "open",
+      "question": "buyListing: its caller tip is below its gas at launch prices, so third parties will not call it. Keep it (owner keeper use), remove it (smallest attack surface), or raise the tip cap? Decided 2026-10-10: FLOW 57, keep.",
+      "status": "decided",
       "blocks": [
         "freeze"
       ]
