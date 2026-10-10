@@ -483,6 +483,69 @@
         "sha256": "36a1cd0f3ab1229a24e231ba71e547b60e6ca818493d486b266315a0ed688571",
         "revision": "86b6e4ddf49fa8f45132d65fb1e4e333258a2584"
       }
+    },
+    "E-MIGRATE-eff3051": {
+      "claim": "test/Migrate.t.sol passes 35 of 35: one test per refused door, relist by syncStatement after retirement, a non owner migrate leaves retired false",
+      "kind": "test",
+      "sourceRevision": "eff30510bbeb8c0340cfd995683fa27922fa815a",
+      "scope": [
+        "src/**",
+        "test/Migrate.t.sol",
+        "test/utils/**"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 2
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000",
+      "method": "forge test --match-path test/Migrate.t.sol; forge build --sizes (Core 24,141, CoreLib 17,085 unchanged)",
+      "author": "implementer subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "focused test only. the relist test mocks a failed delivery on the house",
+      "invalidated": null
+    },
+    "E-SUITE-CARRY-eff3051": {
+      "claim": "the full suite result of E-SUITE-74d1cbe holds at eff3051",
+      "kind": "analysis",
+      "sourceRevision": "eff30510bbeb8c0340cfd995683fa27922fa815a",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 2
+      },
+      "dependsOn": [
+        "E-MIGRATE-eff3051"
+      ],
+      "carries": [
+        "E-SUITE-74d1cbe"
+      ],
+      "carriedChanges": [
+        "src/Core.sol",
+        "test/Migrate.t.sol"
+      ],
+      "inputs": "git diff 74d1cbe eff3051 under the suite scope",
+      "method": "src/Core.sol: NatSpec only, Core runtime size unchanged at 24,141 bytes. test/Migrate.t.sol: tests split and added, all pass in E-MIGRATE-eff3051. no other file under the scope changed",
+      "author": "director, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "no full suite rerun at eff3051",
+      "invalidated": null
     }
   }
 }

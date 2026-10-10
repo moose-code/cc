@@ -123,7 +123,7 @@
     ]
   },
   "candidate": null,
-  "activeChange": "NEXT-23: follow ups of the review of 74d1cbe",
+  "activeChange": null,
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -150,7 +150,7 @@
       ]
     }
   ],
-  "nextAction": "Read-only system audit of the seven untraced required paths, with an independent review of 74d1cbe (retire on migrate), before the freeze.",
+  "nextAction": "Read-only system audit of the seven untraced required paths (fee intake, credit purchase, statement sale and proceeds, phase 2 exit, owner powers and locks, launch runbook, participant economics), before the freeze.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
@@ -179,7 +179,7 @@
     },
     "focusedTests": {
       "evidence": [
-        "E-SUITE-74d1cbe"
+        "E-SUITE-CARRY-eff3051"
       ],
       "kinds": [
         "test"
@@ -194,7 +194,7 @@
     },
     "localLifecycle": {
       "evidence": [
-        "E-SUITE-74d1cbe"
+        "E-SUITE-CARRY-eff3051"
       ],
       "kinds": [
         "test",
@@ -203,7 +203,7 @@
     },
     "fullSuite": {
       "evidence": [
-        "E-SUITE-74d1cbe"
+        "E-SUITE-CARRY-eff3051"
       ],
       "kinds": [
         "test"

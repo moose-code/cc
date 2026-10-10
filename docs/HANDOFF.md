@@ -41,7 +41,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 ## 4. owner decisions
 
-**OD-1, decided 2026-10-10 (FLOW 48).** the first `migrate` retires the old engine. `ethToBuyback` stays in it and its buyback burns it. the exit token pots move. built as NEXT item 22 at 74d1cbe, full suite 1078 pass, awaiting independent review.
+**OD-1, decided 2026-10-10 (FLOW 48).** the first `migrate` retires the old engine. `ethToBuyback` stays in it and its buyback burns it. the exit token pots move. built as NEXT item 22 at 74d1cbe, full suite 1078 pass, reviewed with no defect (docs/REVIEW-retire.md), follow ups built as NEXT item 23 at eff3051.
 
 **OD-3, decided 2026-10-10 (FLOW 49).** a market above `rateCap` is an accepted risk, with `setSettings` as the recovery.
 
@@ -60,7 +60,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 ## 6. next action
 
-the read-only system audit of the seven untraced required paths, together with an independent review of 74d1cbe (the first migrate retires the old engine), before the freeze.
+the read-only system audit of the seven untraced required paths (fee intake, credit purchase, statement sale and proceeds, phase 2 exit, owner powers and locks, launch runbook, participant economics), before the freeze. one owner question is open and blocks nothing now: whether `xToBuyback` stays in the old engine on `migrate` like `ethToBuyback` (recommended: yes).
 
 after that, in order: freeze the candidate with `python3 script/director.py freeze <commit>`, the deep invariants on it, an independent security review of the candidate by a fresh reviewer, the rehearsal from a clean checkout, `python3 script/director.py check --gate deploy`, the owner's launch steps.
 
