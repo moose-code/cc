@@ -45,7 +45,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 **OD-3, decided 2026-10-10 (FLOW 50).** `idleLoosenBps` 2_000 at launch and a lower bound of 1. being built as NEXT item 26 after NEXT item 24.
 
-**OD-5, open, blocks the freeze.** the buyback can be sandwiched once the pool thins: the largest unprofitable slice is about 2.06 eth at launch depth, 0.5 at a quarter, 0.2 at a tenth (measured on a fork). the launch slice of 1 eth is safe only above about half of launch depth. options: lower the slice setting (launch 0.5 eth, bound 1 eth, no code change, unsafe again below a quarter of launch depth), or cap each slice by the pool's current depth in the contract (keeps every buyback below break even at any depth). recommendation: the depth cap, with 1 eth as the upper limit.
+**OD-5, decided 2026-10-10 (FLOW 51).** buyback slice 0.5 eth at launch, upper bound 1 eth. being built with decision 50 as NEXT item 26.
 
 **OD-4, open, blocks nothing now.** should `xToBuyback` stay in the old engine on `migrate`, like `ethToBuyback`? recommendation: yes.
 

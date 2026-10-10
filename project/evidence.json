@@ -51,10 +51,10 @@
       "checked": "2026-10-10"
     },
     "A-OWNER-DECISIONS": {
-      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 50. v3: decision 50 changes the launch idleLoosenBps and its lower bound",
+      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 51. v4: decision 51 changes the launch buybackSlice and its upper bound",
       "kind": "owner-decision",
       "source": "docs/FLOW.md",
-      "version": 3,
+      "version": 4,
       "checked": "2026-10-10"
     },
     "A-OWNER-DELEGATE": {

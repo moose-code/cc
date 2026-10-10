@@ -171,15 +171,15 @@
     },
     {
       "id": "OD-5",
-      "question": "Buyback sandwich once the pool thins: lower the slice setting, or cap each slice by current pool depth in the contract (recommended)? docs/HANDOFF.md section 4.",
-      "status": "open",
+      "question": "Buyback sandwich once the pool thins: lower the slice setting, or cap each slice by current pool depth in the contract (recommended)? docs/HANDOFF.md section 4. Decided 2026-10-10: FLOW 51, option B.",
+      "status": "decided",
       "blocks": [
         "freeze",
         "deploy"
       ]
     }
   ],
-  "nextAction": "Build NEXT 24 (audit fixes within intent) and NEXT 25 (sandwich at lower depth, the 7702 delegate); ask the owner OD-3 (reopened) and OD-4.",
+  "nextAction": "When NEXT 24 lands: build NEXT 26 (decision 50: idleLoosenBps 2000 at launch, lower bound 1; decision 51: buybackSlice 0.5 eth at launch, upper bound 1 eth; runbook line for lowering the slice after a collapse; the 7702 delegate preflight rows), then a combined full suite. OD-4 still open.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
