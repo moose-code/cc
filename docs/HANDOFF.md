@@ -43,12 +43,9 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 **OD-1, decided 2026-10-10 (FLOW 48).** the first `migrate` retires the old engine. `ethToBuyback` stays in it and its buyback burns it. the exit token pots move. built as NEXT item 22 at 74d1cbe, full suite 1078 pass, reviewed with no defect (docs/REVIEW-retire.md), follow ups built as NEXT item 23 at eff3051.
 
-**OD-3, reopened.** you accepted the `rateCap` risk on my figure of about 45 minutes for the bid to follow a rising market. that figure holds only up to 1.25x of the last price paid. measured at launch settings: 46 minutes to 1.25x, 100 to 1.5x, 300 to 2x, 700 to 3x, 1,100 to 4x. a seller can drag the bid to 0.52 of the start with 135 credits in 3 minutes for about 0.3 eth of discount, and it recovers in 279 minutes. `idleLoosenBps` 0 with `ceilBps` 10_000 is a legal setting that parks the bid for good. `setRate` restores the bid at once in every case.
+**OD-3, decided 2026-10-10 (FLOW 50).** `idleLoosenBps` 2_000 at launch and a lower bound of 1. being built as NEXT item 26 after NEXT item 24.
 
-* option A: accept the current defaults with this table. the defaults came from your bid study, and a faster loosening also lets the bid climb blind faster when nobody sells (1.35x after an hour today).
-* option B: faster loosening, `idleLoosenBps` 500: about 2.3 hours to 2x and 7.3 hours to 4x, and a faster blind climb.
-* the bound: `idleLoosenBps` may be 0 today. a lower bound of 1 removes the parked setting in every option.
-* recommendation: A with the bound raised to at least 1, so no legal setting stops the bid following.
+**OD-5, open, blocks the freeze.** the buyback can be sandwiched once the pool thins: the largest unprofitable slice is about 2.06 eth at launch depth, 0.5 at a quarter, 0.2 at a tenth (measured on a fork). the launch slice of 1 eth is safe only above about half of launch depth. options: lower the slice setting (launch 0.5 eth, bound 1 eth, no code change, unsafe again below a quarter of launch depth), or cap each slice by the pool's current depth in the contract (keeps every buyback below break even at any depth). recommendation: the depth cap, with 1 eth as the upper limit.
 
 **OD-4, open, blocks nothing now.** should `xToBuyback` stay in the old engine on `migrate`, like `ethToBuyback`? recommendation: yes.
 

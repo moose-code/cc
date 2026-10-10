@@ -157,8 +157,8 @@
     },
     {
       "id": "OD-3",
-      "question": "Reopened 2026-10-10: the bid follows a rising market in 46 min to 1.25x, 300 min to 2x, 1,100 min to 4x (not 45 min); a seller can drag it down for about 0.3 eth; idleLoosenBps 0 with ceilBps 10_000 parks it. Accept with the corrected table, or change the defaults or bounds? docs/HANDOFF.md section 4.",
-      "status": "open",
+      "question": "Reopened 2026-10-10: the bid follows a rising market in 46 min to 1.25x, 300 min to 2x, 1,100 min to 4x (not 45 min); a seller can drag it down for about 0.3 eth; idleLoosenBps 0 with ceilBps 10_000 parks it. Accept with the corrected table, or change the defaults or bounds? docs/HANDOFF.md section 4. Decided 2026-10-10: FLOW 50, option C.",
+      "status": "decided",
       "blocks": [
         "deploy"
       ]
@@ -168,6 +168,15 @@
       "question": "Should xToBuyback stay in the old engine on migrate, like ethToBuyback? Recommended: yes.",
       "status": "open",
       "blocks": []
+    },
+    {
+      "id": "OD-5",
+      "question": "Buyback sandwich once the pool thins: lower the slice setting, or cap each slice by current pool depth in the contract (recommended)? docs/HANDOFF.md section 4.",
+      "status": "open",
+      "blocks": [
+        "freeze",
+        "deploy"
+      ]
     }
   ],
   "nextAction": "Build NEXT 24 (audit fixes within intent) and NEXT 25 (sandwich at lower depth, the 7702 delegate); ask the owner OD-3 (reopened) and OD-4.",

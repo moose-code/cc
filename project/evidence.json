@@ -51,10 +51,10 @@
       "checked": "2026-10-10"
     },
     "A-OWNER-DECISIONS": {
-      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 49. v2: decision 48 changes migrate and closes six doors after it",
+      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 50. v3: decision 50 changes the launch idleLoosenBps and its lower bound",
       "kind": "owner-decision",
       "source": "docs/FLOW.md",
-      "version": 2,
+      "version": 3,
       "checked": "2026-10-10"
     }
   },
