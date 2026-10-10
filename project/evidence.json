@@ -56,6 +56,13 @@
       "source": "docs/FLOW.md",
       "version": 3,
       "checked": "2026-10-10"
+    },
+    "A-OWNER-DELEGATE": {
+      "statement": "the owner 0xCB43 delegates to 0x612373d7003d694220f7800eeaf8e3924c0951d3 (Uniswap Calibur 1.0.0, code hash 0xff0357b5...d631) with no registered keys",
+      "kind": "fact",
+      "source": "chain read at block 26163823, Sourcify",
+      "version": 1,
+      "checked": "2026-10-10"
     }
   },
   "evidence": {
@@ -579,6 +586,34 @@
         "path": "docs/REVIEW-system-audit.md",
         "sha256": "28b84c3393ccc940f930b896363b52fc178884f9d5548586b0053a2dea9c706e",
         "revision": "a49cc2b4d79d4de71f1c134094e3030211d2a986"
+      }
+    },
+    "E-FACTS-NEXT25": {
+      "claim": "buyback sandwich break even slice about 2.06 / 0.515 / 0.205 eth at 1x / 0.25x / 0.1x launch depth; the owner's delegate is Uniswap Calibur with no registered keys",
+      "kind": "analysis",
+      "sourceRevision": "5146ebe2c0318a5689b9b4bef5a63cd0f4d9b942",
+      "scope": [
+        "src/Core.sol",
+        "src/lib/CoreLib.sol",
+        "script/config/**"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-OWNER-DELEGATE": 1
+      },
+      "dependsOn": [],
+      "inputs": "fork at block 26158000; chain reads at 26163820 to 26163823",
+      "method": "probe test sandwiching buyback() at reduced liquidity of the locked position; cast code, Sourcify, view calls, getLogs",
+      "author": "investigator subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "findings",
+      "limitations": "attacker gas and tips excluded; depth modelled at an unchanged price; the probe test is not in the repository",
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-sandwich-delegate.md",
+        "sha256": "dc3cd3d3a73924532e1a12d9de52f9c840ebe5141ca2967ecf0f18fd8ae0a326",
+        "revision": "b2374d27c7a2db63b2b1ed6086041cb16571ac8c"
       }
     }
   }
