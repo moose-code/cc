@@ -23,7 +23,7 @@ units. a rate is wei per whole point. a score is on a 1e4 scale, so the price of
 | lens | the `lens` line of the `Deploy` output, or the CREATE2 address derived from the Core | `CoreLens`. `lens.CORE()` names the Core it reads |
 | exitModule, exitToken | `core.exitModule()`, `core.exitToken()` | zero until the owner sets them |
 
-the record of a launch is the output of `script/Deploy.s.sol` (core, coin, controller, router, lens), the broadcast file `broadcast/Deploy.s.sol/1/run-latest.json`, and the table that `script/Postflight.s.sol` prints after reading every address back (docs/DEPLOY.md steps 6 and 8). a keeper needs the Core address and reads the rest from it. the lens address is a function of the Core (CREATE2 through the deterministic deployer, salt `keccak256("credits.core.lens.v1")`, the Core as constructor argument), which `Postflight` derives from `CORE`.
+the record of a launch is the output of `script/Deploy.s.sol` (core, coin, controller, router, lens), the broadcast file `broadcast/Deploy.s.sol/1/run-latest.json`, and the table that `script/Postflight.s.sol` prints after reading every address back (docs/DEPLOY.md steps 6 and 9). a keeper needs the Core address and reads the rest from it. the lens address is a function of the Core (CREATE2 through the deterministic deployer, salt `keccak256("credits.core.lens.v1")`, the Core as constructor argument), which `Postflight` derives from `CORE`.
 
 ## 2. quoting a credit
 
@@ -93,7 +93,7 @@ what the call does:
 4. the statement is booked with the sum of the cost bases of its 80 credits. the caller pays the gas of the call, including the fee pull. holders of the coin and people in the project compose, and the owner composes when nobody does.
 5. event `Composed(sid, lane, format, cost, caller)`. an eth lane statement is listed on the house in the same call (`StatementListed(sid, auctionId, reserve)`).
 
-send at least 10,000,000 gas: the live Statements contract needs about 8.5 million for 80 credits (section 13).
+send at least 10,000,000 gas: the live Statements contract needs about 8.71 million for 80 credits (section 13).
 
 ## 6. statements: buying through the house and the buy mode
 

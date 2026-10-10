@@ -2,7 +2,7 @@
 
 follows the contract at commit `cd7d404`. launch values are script/config/mainnet.json. the engine at commit `382b967` repays nothing to the compose caller and the statement cost is the sum of the 80 credit bases; the batches below were run with the earlier compose repay (under 1 percent of a statement's cost at 1.5 gwei), which is inside the seed noise of every figure, so they were not rerun. the simulator code follows `382b967`.
 
-sim/engine.js is a deterministic model of the engine in src/Core.sol, src/lib/CoreLib.sol and src/ControllerV1.sol on branch flow. it covers the stepped bid rule (drop per credit, drop floor, climb per minute, ceiling with idle loosening, the clamp at one average credit, `rateCap`), the blended bid (`flatBps`, `avgScore`), the funded flag, the hourly cap, both buy doors, compose, the statement asking price (controller settings `startBps`, `stepBps`, `stepEvery`, `floorBps`, `buyOnly`) with the Core's hard floor `saleFloorBps`, the english auction on the pnd auction house, instant sales in buy only mode, `collectSales`, the swap fee share `feeToBuybackBps`, the buyback, the exit lane, the exitToken bid, the exitToken dutch auction and settings changes mid run. rules and names are the contracts' (docs/FLOW.md section 9). launch values are script/config/mainnet.json and a test reads the file. the launch position is concentrated liquidity math. sellers, statement buyers and coin volume are calibrated on the 13 day data pull in sim/data/notes.md. the time step is 60 seconds after the first hour (the first hour runs in 120 second sub steps for the anti sniper window), which matches the minute bucket of the contract's drop floor and climb. every number below is a mean over 3 to 5 seeds of a 90 day run unless stated. raw rows are in sim/results/*.json (node run.mjs q1 to q11), the interactive page is sim/index.html. `exitModule` and `exitToken` are the only names used for phase 2. the owner sets the exitModule, the controller and the allowed targets at once, so every change applies at once in the model.
+sim/engine.js is a deterministic model of the engine in src/Core.sol, src/lib/CoreLib.sol and src/ControllerV1.sol on branch main. it covers the stepped bid rule (drop per credit, drop floor, climb per minute, ceiling with idle loosening, the clamp at one average credit, `rateCap`), the blended bid (`flatBps`, `avgScore`), the funded flag, the hourly cap, both buy doors, compose, the statement asking price (controller settings `startBps`, `stepBps`, `stepEvery`, `floorBps`, `buyOnly`) with the Core's hard floor `saleFloorBps`, the english auction on the pnd auction house, instant sales in buy only mode, `collectSales`, the swap fee share `feeToBuybackBps`, the buyback, the exit lane, the exitToken bid, the exitToken dutch auction and settings changes mid run. rules and names are the contracts' (docs/FLOW.md section 9). launch values are script/config/mainnet.json and a test reads the file. the launch position is concentrated liquidity math. sellers, statement buyers and coin volume are calibrated on the 13 day data pull in sim/data/notes.md. the time step is 60 seconds after the first hour (the first hour runs in 120 second sub steps for the anti sniper window), which matches the minute bucket of the contract's drop floor and climb. every number below is a mean over 3 to 5 seeds of a 90 day run unless stated. raw rows are in sim/results/*.json (node run.mjs q1 to q11), the interactive page is sim/index.html. `exitModule` and `exitToken` are the only names used for phase 2. the owner sets the exitModule, the controller and the allowed targets at once, so every change applies at once in the model.
 
 the bid rule is `bidRule: 'stepped'`. the earlier rule stays available as `bidRule: 'built'` for the comparison in docs/BID-STUDY.md.
 
@@ -136,6 +136,8 @@ port checks: node engine.test.mjs runs 564 numeric checks against hand computed 
 
 ## 1. the launch configuration as built
 
+status: older run, before decision 41 (compose repays nothing). numbers are not rerun.
+
 | preset | day | credits acquired | statements created | sold | avg sale price over cost | eth spent buying $CC | percent of supply burned | waiting for phase 2 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | comparable decay | 30 | 28,160 | 351 | 106 | 82% | 28.9 | 7.6% | 244 |
@@ -169,6 +171,8 @@ reading it:
 
 ## 2. the opening limit
 
+status: older run, before decision 41 (compose repays nothing). numbers are not rerun.
+
 `rateStart` as a share of the market price of a credit (0.0089 eth, so 100 percent is 2.06e13). the stepped bid starts at `rateStart` and climbs 0.5 percent a minute.
 
 | share | rateStart | hours to first buy | credits day 1 | day 3 | day 7 | day 14 | day 30 | day 90 | first 80 cost over market | all credits over market | peak bid over market |
@@ -192,6 +196,8 @@ reading it:
 
 ## 3. flat, blended or per point
 
+status: older run, before decision 41 (compose repays nothing). numbers are not rerun.
+
 `flatBps` 10000 prices every credit as an average one (433 points), 0 prices it by its own score. comparable volume, 90 days.
 
 | flatBps | credits acquired | price paid over market | price per point over market | average score bought | statements created | sold | credits day 7 |
@@ -210,6 +216,8 @@ sustained 17 eth a day: 43,660 / 41,820 / 38,610 / 26,360 / 21,960 credits at 10
 4. the switch on day 30 costs credits in proportion to the pot. flat to 5000 on day 30: credits 31,580 (31,510 unchanged), average score 448, steady flow 52 a day (56). flat to 0: 30,910, score 447, steady flow 36. in sustained 17 eth a day a switch to 5000 costs 4 percent of credits (42,000 against 43,660) and a switch to 0 costs 26 percent (32,300), with a steady flow of 36 a day against 228. if score matters later, 7500 is the cheap step.
 
 ## 4. the statement sale: asking price, floors, mode and the buyers
+
+status: older run, before decision 41 (compose repays nothing). numbers are not rerun.
 
 the sale design has five dials (`startBps`, `stepBps` with `stepEvery`, `floorBps`, `saleFloorBps`, `buyOnly`) and two inputs outside the owner's settings (the pick rule and the buyers' willingness to pay). the rows against launch are in the table at the top of this file. what they say, with the extra sweeps:
 
@@ -300,6 +308,8 @@ recommendation for the sale design: **keep the launch values** (11000, 3 hours, 
 
 ## 5. the proceeds split
 
+status: older run, before decision 41 (compose repays nothing). numbers are not rerun.
+
 `saleToBuybackBps` is the share of sale proceeds that goes to the coin buyback, the rest to the pot. it applies the same in auction mode (at `collectSales`) and in buy only mode (at the sale). the fee share is a separate setting (section 4, row 4).
 
 | saleToBuybackBps | credits day 7 | day 30 | day 90 | statements created | sold | eth spent buying $CC | percent of supply burned | steady credits a day |
@@ -319,6 +329,8 @@ sustained 17 eth a day: credits at day 90 49,200 / 46,490 / 43,660 / 40,700 / 37
 5. against the fee share: an extra eth of burn through `feeToBuybackBps` costs 73 to 96 credits (section 4, row 4), the sale share about 127, and fees come on day one, so the fee lever has to be set at launch while the sale split can be turned any week.
 
 ## 6. the bid rule: drop, climb, ceiling, hourly cap
+
+status: older run, before decision 41 (compose repays nothing). numbers are not rerun.
 
 comparable volume, 90 days, launch values `dropPerCreditBps` 50, `dropFloorBps` 8000, `climbPerMinBps` 50, `ceilBps` 12500, `idleLoosenBps` 200, `spendCapBps` 10000, `rateCap` 2.0554e14, 5 seeds. one setting changes per table.
 
@@ -378,6 +390,8 @@ recommendation: **keep the launch values.** they buy 1 credit a minute, 4,852 cr
 
 ## 7. after the launch pot: credits and statements per day against coin volume
 
+status: older run, before decision 41 (compose repays nothing). numbers are not rerun.
+
 coin volume that decays from day two to the stated constant by about day 10 (custom preset), last 30 days of a 90 day run, launch values.
 
 | coin volume, eth a day | fees a day, eth | launch pot spent on day | steady credits a day | steady statements a day | steady sold a day | eth a day buying $CC | credits acquired by day 90 | waiting for phase 2 at day 90 |
@@ -395,6 +409,8 @@ coin volume that decays from day two to the stated constant by about day 10 (cus
 5. the buyback spends 0.26 to 0.39 eth a day after the launch pot.
 
 ## 8. phase 2
+
+status: older run, before decision 41 (compose repays nothing). numbers are not rerun.
 
 the owner sets the exitModule at once, on day 14, 30 or 60. the keeper exits every eligible unbid listing (older than `exitAfter`, 105 hours) at once. an exit pays `rating * unitPerPoint` of exitToken, so the value in eth is the rating times the exitToken price per point (`xp`). a typical exited statement rates about 33,500 points and costs about 0.75 eth, so the break even exitToken price is about 2.25e-5 eth per point, and the price at which an exit returns the hard floor of 75 percent of cost is about 1.7e-5. the comparison without a module is 31,500 credits at day 90 (3 seeds).
 
@@ -421,6 +437,8 @@ the owner sets the exitModule at once, on day 14, 30 or 60. the keeper exits eve
 6. a keeper that exits only when the module pays at least the asking price (instead of at once) exits 0 statements at 1e-5 and sells 167 statements by day 90 against 123 when it exits at once, and credits end at 31,500 against 36,470. `exitStatement` is permissionless, so at a low exitToken price anyone can force the exit of listings that a buyer would still have bought. the owner controls this through `exitAfter` and the moment the exitModule is set.
 
 ## 9. sensitivity ranking
+
+status: older run, before decision 41 (compose repays nothing). numbers are not rerun. row 20 (gas price) varies the compose repay.
 
 low and high value of each input against the base case (31,510 credits and 394 statements at day 90, 168 sold at 85 percent of cost, 43.5 eth burned; the rows are 3 seed runs, base 3 seeds 31,500 credits and 167 sold). statements created move by the same share as credits, because 80 credits make one statement. ranked by the swing in credits.
 

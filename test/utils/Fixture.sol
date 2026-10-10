@@ -142,7 +142,7 @@ abstract contract Fixture is Test, ProdDeployer {
         return Mainnet.defaultSettings();
     }
 
-    /// @dev the test contract is a caller of the doors that repay gas (compose, exitStatement), so it takes eth
+    /// @dev the test contract is a caller of the doors that pay eth to their caller (the exitStatement reimbursement, the buyListing and buyback tips), so it takes eth
     receive() external payable {}
 
     function setUp() public virtual {

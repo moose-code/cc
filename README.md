@@ -1,16 +1,17 @@
 # credits engine
 
-an erc20 on ethereum mainnet whose swap fees buy Credits nfts at a bid, compose them into Statements, and list each statement on an english auction. the engine exists to keep credits flowing into statements: sales do not need to profit, and unsold statements wait for phase 2, when the exitModule redeems them for an exitToken. sale proceeds refill the buying and buy and burn the coin. the coin, pool, hook and fee flow run on the artcoins v2 stack (restricted coin, skim hook, lp locker, fee escrow), with a fee router between the hook and the engine. every economic number is a setting the owner can change at once. status: unaudited, not deployed. this is branch `flow`.
+an erc20 on ethereum mainnet whose swap fees buy Credits nfts at a bid, compose them into Statements, and list each statement on an english auction. the engine exists to keep credits flowing into statements: sales do not need to profit, and unsold statements wait for phase 2, when the exitModule redeems them for an exitToken. sale proceeds refill the buying and buy and burn the coin. the coin, pool, hook and fee flow run on the artcoins v2 stack (restricted coin, skim hook, lp locker, fee escrow), with a fee router between the hook and the engine. every economic number is a setting the owner can change at once. status: unaudited, not deployed. `main` is the working branch.
 
 ## contracts
 
-we own four contracts. everything else is live. the artcoins v2 stack is live on mainnet (`script/config/v2-mainnet.json`) and enters the engine as a config input: its five addresses are in `script/config/mainnet.json` and the Core takes the stack as a constructor argument.
+we own five contracts. everything else is live. the artcoins v2 stack is live on mainnet (`script/config/v2-mainnet.json`) and enters the engine as a config input: its five addresses are in `script/config/mainnet.json` and the Core takes the stack as a constructor argument.
 
 | name | role | address |
 |---|---|---|
 | Core | custody and every rule, books the router's flushes as fees, owner of its auction house | ours, predicted at deploy |
 | CoreLib | linked library of the Core: settings write, rate and auction math, the buyback swap, `rescueCoin`, `rescueNft` | ours, deployed before the Core |
 | ControllerV1 | first policy module, immutable | ours, predicted at deploy |
+| CoreLens | read only view of the Core, the controller, the fee router and the house in one call, no storage | ours, predicted at deploy |
 | FeeRouter | bounty recipient of the pool. empty `receive`, permissionless `flush()` (payees, engine), called by the Core at the start of its eth pot doors, owner setters closed by one way `lock` | ours, predicted at deploy |
 | Core's auction house | where statements are listed, created by the Core in its constructor, owned by it forever | created at deploy |
 | pnd auction factory | creates auction houses | 0x77aB853543286C9Cdd7dd6c01222A7cC4Ac93d63 |
@@ -23,7 +24,7 @@ we own four contracts. everything else is live. the artcoins v2 stack is live on
 graph LR
     swap["swap in the coin/eth pool"]
     hook["v2 skim hook<br/>6.9 points of volume"]
-    router["FeeRouter<br/>6.21 points, flush<br/>payee, engine"]
+    router["FeeRouter<br/>6.65022 points, flush<br/>payee, engine"]
     pot["Core.receive()<br/>eth pot"]
     buy["buy credits at the bid<br/>sellForEth or buyListing"]
     compose["compose 80 credits<br/>into a Statement"]
@@ -56,10 +57,9 @@ credits keep being bought whatever the statements do. the bid is flat per credit
 
 | branch | what it holds |
 |---|---|
-| `flow` | the current implementation. adjustable settings, flat or blended bid, statements sold on the pnd auction house, no inventory gate, no dutch statement auction. the brief is docs/FLOW.md |
-| `artcoin` | the earlier implementation on the artcoins launcher with a dutch statement auction and four deploy dials |
-| `econ-options` | the economics options as deploy config, with their independent review |
-| `main` | the original handoff and its first review fixes |
+| `main` | the working branch and the current implementation. adjustable settings, flat or blended bid, statements sold on the pnd auction house, no inventory gate, no dutch statement auction. the brief is docs/FLOW.md |
+| `bundle/artcoin` | historical: the earlier implementation on the artcoins launcher with a dutch statement auction and four deploy dials |
+| `bundle/econ-options` | historical: the economics options as deploy config, with their independent review |
 
 ## build and test
 
@@ -84,7 +84,7 @@ tests run on a mainnet fork pinned to block 26158000 (`FORK_BLOCK`). the fixture
 
 ## deploy
 
-warning: the owner confirmations in docs/ARCHITECTURE.md section 14 must be settled first.
+warning: the owner decisions listed in docs/HANDOFF.md must be settled first.
 
 the system launches on the artcoins v2 stack. everything a launch needs is in one config file, `script/config/mainnet.json`: the v2 stack (the five live addresses plus the pnd `auctionFactory`), `rateStart`, the `settings`, `sale`, `launch` and `router` blocks. copy it to the gitignored `script/config/local.json` and point `LAUNCH_CONFIG` at it. the deploy refuses to run while a stack address is zero, or unless `CONFIG_HASH` (printed by preflight) matches the file. one key, the v2 factory owner, signs everything (`deployTokenAsOwner` is owner only). secrets come from the command line (`--ledger`) or the environment (`ETHERSCAN_API_KEY`).
 
@@ -94,7 +94,7 @@ the system launches on the artcoins v2 stack. everything a launch needs is in on
 | 2 | rehearse: `REHEARSAL=1 forge test --match-path test/Rehearsal.t.sol -vv` |
 | 3 | owner command, once: `setMinProtocolSkimShareBps(362)` on the v2 factory (the factory minimum protocol share of the baseline skim, 1,000 on the v2 mainnet environment, must leave room for `bountyBps` 9,638) |
 | 4 | `forge script script/Preflight.s.sol --rpc-url $MAINNET_RPC_URL` (read only) |
-| 5 | `forge script script/Deploy.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger` through a private relay, with `CONFIG_HASH` set. nine transactions, the library first, the router setup last. a half finished deploy is finished with `script/Resume.s.sol` |
+| 5 | `forge script script/Deploy.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger` through a private relay, with `CONFIG_HASH` set. eight transactions, the library first. `Resume.s.sol` sends the split start as the ninth in step 6. a half finished deploy is finished with `script/Resume.s.sol` |
 | 6 | once the launch is mined, `CORE=0x... forge script script/Resume.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger` sets the split start. verify CoreLib, ControllerV1, FeeRouter and Core, then `CORE=0x... forge script script/Postflight.s.sol --rpc-url $MAINNET_RPC_URL` (read only) |
 | 7 | right after the postflight passes: `CORE=0x... SEND=1 forge script script/Lock.s.sol --rpc-url $MAINNET_RPC_URL --broadcast --ledger` sends `coin.lockRecipients()`. `coin.lockAllowlist()` and `router.lock()` are owner decisions |
 | 8 | after launch: the Core pulls the router fees at its doors (a keeper may call `flush()`), owner commands on the router (payees, split start, engine, lock) are in docs/DEPLOY.md section 4 |

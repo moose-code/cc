@@ -1,5 +1,7 @@
 # Bid rule study
 
+status: historical study. superseded settings: 20 percent hourly cap, clampCredits 20, rateCap 6x. launch settings: docs/NEXT.md items 10 to 14.
+
 Simulator study of three bid rules for the Credits engine at one minute resolution. Source: `sim/engine.js`, runner `sim/study-bid.mjs`, data in `sim/results/`. No contract code was changed.
 
 ## What was run

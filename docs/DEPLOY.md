@@ -1,6 +1,6 @@
 # deploy runbook
 
-this is the launch runbook for branch `flow`, on the artcoins v2 stack, live on mainnet since 2026-10-09 (contract sources of v2 repo commit d4aa46b, deployed from launcher commit fbe07c7). the stack is a config input: the `stack` block of `script/config/mainnet.json` holds the five v2 addresses the Core takes as a constructor argument, and nothing in `src/` hardcodes an artcoins address. `Deploy` refuses a file that leaves a stack address at zero.
+this is the launch runbook for branch `main`, on the artcoins v2 stack, live on mainnet since 2026-10-09 (contract sources of v2 repo commit d4aa46b, deployed from launcher commit fbe07c7). the stack is a config input: the `stack` block of `script/config/mainnet.json` holds the five v2 addresses the Core takes as a constructor argument, and nothing in `src/` hardcodes an artcoins address. `Deploy` refuses a file that leaves a stack address at zero.
 
 ### the live v2 stack
 
@@ -240,7 +240,7 @@ mainnet caps one transaction at 16,777,216 gas (EIP-7825). every transaction of 
 | `overprint()`, scripted controller, 160 to 560 credits | 1,694,385 to 1,807,186 | 10.0 to 10.7 percent |
 | every other call (doors, buybacks, flush, owner calls, the house) | under 500,000 | under 3 percent |
 
-`compose` and `composeExit` sit at about half the cap because the live Statements contract needs about 8 million gas for 80 credits (7.90 to 8.07 million across pages of real credits). a keeper must not hardcode a gas limit under 10 million for them. `sellForEth` and `sellForExitToken` take any number of credits: the cap stops a batch at about 112 credits (flat bid), 90 (score bid, `flatBps` 0) or 97 (exit bid); the eth figures include the pull of a router holding 1 eth, and a larger call simply reverts for its sender. the gas capped reads inside the Core use under half of their caps. `exitModule` is a stand in in these tests: what a real one spends inside `exit` is added to `exitStatement`, and the Core forwards it all the remaining gas.
+`compose` and `composeExit` sit at about half the cap because the live Statements contract needs 7.90 to 8.07 million gas for 80 credits across pages of real credits, and the measured `compose` is 8.71 million with the fee pull. a keeper must not hardcode a gas limit under 10 million for them. `sellForEth` and `sellForExitToken` take any number of credits: the cap stops a batch at about 112 credits (flat bid), 90 (score bid, `flatBps` 0) or 97 (exit bid); the eth figures include the pull of a router holding 1 eth, and a larger call simply reverts for its sender. the gas capped reads inside the Core use under half of their caps. `exitModule` is a stand in in these tests: what a real one spends inside `exit` is added to `exitStatement`, and the Core forwards it all the remaining gas.
 
 ## 3. verify on etherscan
 
@@ -257,7 +257,7 @@ export AUCTION_FACTORY=$(jq -r .stack.auctionFactory $LAUNCH_CONFIG)
 export RATE_START=$(jq -r .rateStart $LAUNCH_CONFIG)   # OWNER, FACTORY, CORE, COIN, ROUTER, CONTROLLER, LIB as in sections 0 and 1
 export SETTINGS="($(jq -r '.settings | [.flatBps,.avgScore,.dropPerCreditBps,.dropFloorBps,.climbPerMinBps,.ceilBps,.idleLoosenBps,.spendCapBps,.bonusCapBps,.tipSavingsBps,.tipCapBps,.reimburseBps,.reimburseCapBps,.saleFloorBps,.auctionDuration,.exitAfter,.saleToBuybackBps,.exitToBuybackBps,.buybackSlice,.buybackDelay,.keeperTipBps,.xRateCap,.xRateFloor,.xRateClimbPerHour,.xRateDropPerCredit,.xAuctionHalfLife,.exitSliceCredits,.rateCap,.exitLaneToBuybackBps,.feeToBuybackBps] | map(tostring) | join(",")' $LAUNCH_CONFIG))"
 ARGS=$(cast abi-encode \
-  "constructor(address,address,address,(address,address,int24,uint24,address,address,address,address,address),uint256,(uint16,uint32,uint16,uint32,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16))" \
+  "constructor(address,address,address,(address,address,int24,uint24,address,address,address,address,address),uint256,(uint16,uint32,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16))" \
   $OWNER $COIN $CONTROLLER \
   "($POOL_MANAGER,$HOOK,200,8388608,$FACTORY,$LOCKER,$ESCROW,$AUCTION_FACTORY,$ROUTER)" \
   $RATE_START "$SETTINGS")
@@ -301,7 +301,7 @@ all times are from the launch block. the anti sniper window is `launch.sniperSec
 
 ### the router, owner commands
 
-the router is the bounty recipient of the pool: the v2 hook pushes the bounty to it with a 2,300 gas stipend, so its `receive` does nothing and the eth sits there until `flush()` is called. the Core calls it at the start of its eth pot entry points (`sellForEth`, `buyListing`, `compose`, `composeExit`), so no keeper is needed. the router owner (the config owner) can change everything below until `lock()`. read first:
+the router is the bounty recipient of the pool: the v2 hook pushes the bounty to it with a 2,300 gas stipend, so its `receive` does nothing and the eth sits there until `flush()` is called. the Core calls it at the start of its eth pot entry points (`sellForEth`, `buyListing`, `compose`, `composeExit`, `adopt`), so no keeper is needed. the router owner (the config owner) can change everything below until `lock()`. read first:
 
 ```sh
 export ROUTER=0x...   # printed by Deploy
@@ -331,14 +331,14 @@ one lock is a launch step, two are owner decisions. all three are one way. `cast
 
 ### keeper duties
 
-anyone can run these. none is needed for safety, they keep the engine moving. no flush keeper is needed: the Core flushes the router at the start of `sellForEth`, `buyListing`, `compose` and `composeExit`.
+anyone can run these. none is needed for safety, they keep the engine moving. no flush keeper is needed: the Core flushes the router at the start of `sellForEth`, `buyListing`, `compose`, `composeExit` and `adopt`.
 
 | duty | call | note |
 |---|---|---|
 | move the fee eth (optional) | `router.flush()` | shares with payees once the split is on, sends the rest to the Core, which books it as fees. reverts only while the engine is unset or the engine call fails. an empty balance is a no op |
 | collect the creator slot | `locker.collectRewards(coin)` | pushes the recipient shares. the locker `keeperRewardBps` is 0, so the caller is paid nothing. at lp fee 0 there is no lp income, so this moves only dust |
 | book stray eth | `core.skim()` | books eth the Core received from anyone but the router (for example a partial fill refund from the escrow, claimed with the escrow's `claim`) |
-| compose statements | `core.compose()`, `core.composeExit()` | the caller pays the gas, about 8 million for 80 credits, including the flush of the fee router. holders compose, and the owner composes when nobody does. set the gas limit above 10 million (the cap is 16,777,216) |
+| compose statements | `core.compose()`, `core.composeExit()` | the caller pays the gas, 8.71 million measured for 80 credits, including the pull of the fee router. holders compose, and the owner composes when nobody does. set the gas limit above 10 million (the cap is 16,777,216) |
 | adopt credits | `core.adopt(ids)` | puts credits that were transferred to the Core outside its doors into the eth pile at the basis of the price state now. event `CreditAdopted` |
 | collect sales | `core.collectSales()` | moves statement sale proceeds into the pots. `buyback()` calls it first |
 | buyback | `core.buyback()` | burns coin bought with one slice of the buyback pot, caller tip `keeperTipBps` |
@@ -395,12 +395,12 @@ SET_saleFloorBps=12000 REPRICE=1 forge script script/SetSettings.s.sol --rpc-url
 
 `SET_<field>` and `SETTINGS_PATCH` name the fields of the table, the single variables win over the patch, `SET_RATE` and `SET_XRATE` add `setRate` and `setXRate`, `REPRICE=1` adds the reprices. checked on the anvil fork: the table showed the live value 9000 and the new one 8000, the broadcast from the impersonated owner changed `saleFloorBps` and the rate.
 
-the by hand way, with `cast`. the tuple type is the one of the constructor in section 3 (`T` below). field 13 is `saleFloorBps`, field 27 is `rateCap`, field 28 is `exitLaneToBuybackBps` and field 29 is `feeToBuybackBps`, count the fields in the order of the table:
+the by hand way, with `cast`. the tuple type is the one of the constructor in section 3 (`T` below). field 14 is `saleFloorBps`, field 28 is `rateCap`, field 29 is `exitLaneToBuybackBps` and field 30 is `feeToBuybackBps`, count the fields in the order of the table:
 
 ```sh
-T="(uint16,uint32,uint16,uint32,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16)"
+T="(uint16,uint32,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16)"
 S=$(cast call $CORE "settings()($T)" --rpc-url $MAINNET_RPC_URL | sed -E 's/ \[[^]]*\]//g')   # the live struct, plain numbers
-NEW=$(echo "$S" | tr -d '() ' | awk -F, -v OFS=, '{$13=8000; print "(" $0 ")"}')                # change field 13 only
+NEW=$(echo "$S" | tr -d '() ' | awk -F, -v OFS=, '{$14=8000; print "(" $0 ")"}')                # change field 14 only
 echo "$S"; echo "$NEW"                                                                          # read both before sending
 cast send $CORE "setSettings($T)" "$NEW" --rpc-url $PRIVATE_RPC --ledger                        # as the owner
 cast send $CORE "setRate(uint256)" 20000000000000 --rpc-url $PRIVATE_RPC --ledger               # the eth limit, wei per point, 1e11 to 1e15
@@ -506,7 +506,7 @@ cast call $ROUTER "splitStart()(uint64)" --rpc-url $MAINNET_RPC_URL   # zero mea
 | 0. only the library sent | the library on chain, stateless, the nonce moved by one | rerun `Deploy` (the one case where a rerun is right). preflight sees the library, forge skips it and the addresses are the ones preflight prints now |
 | 1. controller sent, no router | an orphan controller, inert | rerun `Deploy` (new controller, router and core). the old controller stays orphaned |
 | 2. controller and router sent, no core | an orphan router with no engine and an orphan controller. the coin does not exist | rerun `Deploy`. the old router never received anything |
-| 3. core sent, launch not sent (`cast code $COIN` empty) | the core, its empty auction house, the controller and the router. the core holds 0 | `Resume`, stage 1. it sends the launch and the router setup. needs the factory fee in the owner's balance and the factory minimum lp fee at 0 |
+| 3. core sent, launch not sent (`cast code $COIN` empty) | the core, its empty auction house, the controller and the router. the core holds 0 | `Resume`, stage 1. it sends the launch and the router setup. needs the factory fee in the owner's balance |
 | 4. launched, router engine not set (stage 2) | the pool is live and tradeable. fee eth collects in the router and waits, `flush` reverts `NoEngine`. nothing is lost | `Resume` sends the setup |
 | 5. engine set, payees or split start missing (stage 3). this is the normal state right after `Deploy`: the split start is always the missing one | fees reach the Core through `flush`, with no payee share. an unset split start means the split never starts | `Resume` sends the missing setters, the split start from the mined launch time |
 | 6. all done (stage 4) | as in the config | `Resume` is a no op |
@@ -531,6 +531,6 @@ cast send $ROUTER "setPayees(address[],uint32[])" "[$OWNER]" "[112778]" --rpc-ur
 cast send $ROUTER "setSplitStart(uint64)" $(( $(cast block --field timestamp --rpc-url $MAINNET_RPC_URL) + 1800 )) --rpc-url $PRIVATE_RPC --ledger   # by hand only: the launch time plus 1800, take the launch time from the factory record, not the block time of today
 ```
 
-then run step 8 (postflight). after a failed launch transaction the Core is still valid, so a retry of that one transaction is right. the broadcast file `broadcast/Deploy.s.sol/1/run-latest.json` is gitignored and holds the signed data, keep it private.
+then run step 9 (postflight). after a failed launch transaction the Core is still valid, so a retry of that one transaction is right. the broadcast file `broadcast/Deploy.s.sol/1/run-latest.json` is gitignored and holds the signed data, keep it private.
 
 a transaction pending or dropped in the relay: compare `cast nonce $DEPLOYER --rpc-url $MAINNET_RPC_URL` with `cast nonce $DEPLOYER --block pending --rpc-url $MAINNET_RPC_URL`. when they differ a transaction is still pending, wait for it. if the relay dropped it, the nonce does not move and the state is the one the table reads, resume from it. never rerun the whole script while one is pending.
