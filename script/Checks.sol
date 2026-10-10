@@ -145,6 +145,18 @@ abstract contract LaunchChecks is PostflightChecks {
             rateInBounds(c),
             string.concat("rateStart ", vm.toString(c.rateStart), " rateCap ", vm.toString(c.settings.rateCap))
         );
+        _check(
+            "rateCap is 10 times rateStart",
+            c.settings.rateCap == 10 * c.rateStart,
+            string.concat(
+                "rateStart ",
+                vm.toString(c.rateStart),
+                " rateCap ",
+                vm.toString(c.settings.rateCap),
+                " ratio x10000 ",
+                c.rateStart == 0 ? "n/a" : vm.toString(c.settings.rateCap * 10_000 / c.rateStart)
+            )
+        );
         bytes32 bad = settingsViolation(c);
         _check(
             "settings inside the bounds",

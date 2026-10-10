@@ -221,7 +221,7 @@ contract ConfigTest is Fixture {
 
     function test_preflightPasses() public {
         address d2 = _funded();
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(_failedNames(), "");
         _print("preflight");
         // every launch input has a row: the count is part of the report
@@ -247,11 +247,11 @@ contract ConfigTest is Fixture {
             assertEq(at[i].codehash, want[i], name[i]);
             uint256 snap = vm.snapshotState();
             vm.etch(at[i], abi.encodePacked(at[i].code, hex"00"));
-            preflight(lc, d2);
+            _pre(lc, d2);
             assertEq(_failedNames(), string.concat("code hash: ", name[i], " is the live v2 contract"), name[i]);
             vm.revertToState(snap);
         }
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(_failedNames(), "", "unchanged code passes");
     }
 
@@ -259,13 +259,13 @@ contract ConfigTest is Fixture {
     function test_preflightDeprecatedGateRow() public {
         address d2 = _funded();
         string memory row = "factory: deprecated, the owner launches and any other caller reverts Deprecated()";
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertTrue(bytes(_rowDetail(row)).length > 10, "row present while deprecated");
         vm.prank(owner);
         FACTORY.setDeprecated(false);
         LaunchConfig memory c = lc;
         c.allowOpenFactory = true;
-        preflight(c, d2);
+        _pre(c, d2);
         vm.expectRevert(bytes("row missing"));
         this.rowDetailExt(row);
         assertEq(_failedNames(), "", "an open factory passes with the override");
@@ -289,7 +289,7 @@ contract ConfigTest is Fixture {
         address d2 = _funded();
         uint256 nonce = vm.getNonce(d2);
         uint256 bal = d2.balance;
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(vm.getNonce(d2), nonce, "the simulation is reverted");
         assertEq(d2.balance, bal);
         assertTrue(bytes(_rowDetail("factory: deployTokenAsOwner accepts the config (simulated)")).length > 10);
@@ -299,20 +299,20 @@ contract ConfigTest is Fixture {
     function test_warnOwnerIsTheCreator() public {
         address d2 = _funded();
         string memory w = "warn: owner differs from creator";
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertTrue(_warnClean(w), "clean when they differ");
         LaunchConfig memory c = lc;
         c.creator = c.owner;
-        preflight(c, d2);
+        _pre(c, d2);
         assertFalse(_warnClean(w), "the warning fires");
         assertEq(_failedNames(), "", "owner = creator passes");
         c = lc;
         c.creator = c.stack.hook;
-        preflight(c, d2);
+        _pre(c, d2);
         assertEq(_failedNames(), "rule: owner, creator and payees are not dead or stack addresses, factory: deployTokenAsOwner accepts the config (simulated)");
         c = lc;
         c.creatorPayee = c.stack.escrow;
-        preflight(c, d2);
+        _pre(c, d2);
         assertEq(_failedNames(), "rule: owner, creator and payees are not dead or stack addresses");
     }
 
@@ -321,14 +321,14 @@ contract ConfigTest is Fixture {
         address d2 = _user("second deployer");
         vm.deal(d2, 5 ether);
         LaunchConfig memory c = defaultConfig();
-        preflight(c, d2);
+        _pre(c, d2);
         (string memory list, uint256 n) = _failed();
         assertGe(n, 8, list);
         // a poor deployer, an out of bounds rate and a wrong hook
         c = lc;
         c.rateStart = 5;
         c.stack.hook = address(0xBEEF);
-        preflight(c, _user("poor deployer"));
+        _pre(c, _user("poor deployer"));
         (list, n) = _failed();
         assertGe(n, 8, list);
         // the predicted addresses are already taken: rewind the fixture owner to the nonce it deployed at. the core of the
@@ -339,7 +339,7 @@ contract ConfigTest is Fixture {
         vm.resetNonce(owner);
         vm.setNonce(owner, uint64(coreNonce - 2));
         vm.deal(owner, 5 ether);
-        preflight(lc, owner);
+        _pre(lc, owner);
         assertEq(
             _failedNames(),
             "factory: deployTokenAsOwner accepts the config (simulated), predicted router is empty, predicted controller is empty, predicted core is empty, predicted coin is empty, auction factory: no house yet for the predicted core, auction factory: the house address of the core is free"
@@ -352,7 +352,7 @@ contract ConfigTest is Fixture {
         address d2 = _funded();
         vm.prank(owner);
         FACTORY.setMinProtocolSkimShareBps(1_500);
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(
             _failedNames(),
             "factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
@@ -364,14 +364,14 @@ contract ConfigTest is Fixture {
         // the floor of the launch bounty 9638 is 362
         vm.prank(owner);
         FACTORY.setMinProtocolSkimShareBps(363);
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(
             _failedNames(),
             "factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
         );
         vm.prank(owner);
         FACTORY.setMinProtocolSkimShareBps(362);
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(_failedNames(), "");
     }
 
@@ -379,17 +379,17 @@ contract ConfigTest is Fixture {
         address d2 = _funded();
         vm.prank(owner);
         FACTORY.setDeprecated(false);
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(_failedNames(), "factory: deprecated, only the owner can launch");
         LaunchConfig memory c = lc;
         c.allowOpenFactory = true;
-        preflight(c, d2);
+        _pre(c, d2);
         assertEq(_failedNames(), "", "the override opens exactly that rule");
         vm.prank(owner);
         FACTORY.setDeprecated(true);
         address other = _user("other signer");
         vm.deal(other, 5 ether);
-        preflight(lc, other);
+        _pre(lc, other);
         (string memory list,) = _failed();
         assertEq(list, "factory: owner is the deployer, factory: deployTokenAsOwner accepts the config (simulated)");
     }
@@ -399,19 +399,19 @@ contract ConfigTest is Fixture {
         vm.startPrank(owner);
         FACTORY.setHook(lc.stack.hook, false);
         vm.stopPrank();
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(_failedNames(), "factory: hook enabled, factory: deployTokenAsOwner accepts the config (simulated)");
         vm.startPrank(owner);
         FACTORY.setHook(lc.stack.hook, true);
         FACTORY.setLocker(lc.stack.locker, false);
         vm.stopPrank();
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(_failedNames(), "factory: locker enabled, factory: deployTokenAsOwner accepts the config (simulated)");
         vm.startPrank(owner);
         FACTORY.setLocker(lc.stack.locker, true);
         FACTORY.setMevModule(lc.mevModule, false);
         vm.stopPrank();
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(_failedNames(), "factory: mev module enabled, factory: deployTokenAsOwner accepts the config (simulated)");
     }
 
@@ -600,13 +600,13 @@ contract ConfigTest is Fixture {
         address d2 = _funded();
         LaunchConfig memory c = lc;
         c.settings.saleFloorBps = 999;
-        preflight(c, d2);
+        _pre(c, d2);
         assertEq(_failedNames(), "settings inside the bounds");
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "settings"));
         this.requireExt(c);
         c = lc;
         c.settings.xRateFloor = c.settings.xRateCap + 1;
-        preflight(c, d2);
+        _pre(c, d2);
         assertEq(_failedNames(), "settings inside the bounds");
         c = lc;
         c.settings.dropFloorBps = 4_999;
@@ -615,7 +615,7 @@ contract ConfigTest is Fixture {
         // the sale settings of the controller have their own row and guard
         c = lc;
         c.sale.floorBps = c.sale.startBps + 1;
-        preflight(c, d2);
+        _pre(c, d2);
         assertEq(_failedNames(), "sale settings inside the bounds");
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "sale"));
         this.requireExt(c);
@@ -643,16 +643,57 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "", "SETTINGS_CHANGED turns the row into a warning");
     }
 
+    /// FLOW decision 46: preflight fails unless `settings.rateCap` is 10 times `rateStart`. the Core and the deploy guard
+    /// accept other ratios, so only this row stops a `rateStart` edit that leaves the old cap
+    function test_preflightRateCapIsTenTimesRateStart() public {
+        string memory row = "rateCap is 10 times rateStart";
+        address d2 = _funded();
+        LaunchConfig memory shipped = _shipped();
+        assertEq(shipped.settings.rateCap, 10 * shipped.rateStart, "the shipped file holds the ratio");
+        // the fixture opens at 4e12 under the launch cap: the row passes once the start is the tenth of the cap
+        LaunchConfig memory c = lc;
+        c.rateStart = c.settings.rateCap / 10;
+        preflight(c, d2);
+        assertTrue(_warnClean(row), "10 times passes the row");
+        assertEq(_failedNames(), "");
+        // rateStart changed, rateCap unchanged: the bounds row still passes, only the ratio row fails
+        c.rateStart = c.rateStart / 2;
+        assertTrue(rateInBounds(c), "inside the rate bounds");
+        preflight(c, d2);
+        assertEq(_failedNames(), row);
+        assertEq(
+            _rowDetail(row),
+            string.concat(
+                "rateStart ", vm.toString(c.rateStart), " rateCap ", vm.toString(c.settings.rateCap), " ratio x10000 200000"
+            )
+        );
+        // rateCap changed, rateStart unchanged
+        c.rateStart = lc.settings.rateCap / 10;
+        c.settings.rateCap += 1;
+        preflight(c, d2);
+        assertEq(_failedNames(), row);
+    }
+
+    /// @dev preflight of a config whose opening bid is the fixture's: the fixture opens at 4e12 under the launch cap, a
+    /// ratio of about 51, so the start is read as a tenth of the cap while the row is not under test. a start that a test
+    /// sets itself is passed through
+    function _pre(LaunchConfig memory c, address who) internal {
+        uint256 start = c.rateStart;
+        if (start == lc.rateStart) c.rateStart = c.settings.rateCap / 10;
+        preflight(c, who);
+        c.rateStart = start;
+    }
+
     /// the auction factory rows of the preflight: the live factory is clean, a house for the core fails it
     function test_preflightAuctionFactoryRows() public {
         address d2 = _funded();
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(_failedNames(), "");
         // a house already exists for the predicted core
         address coreAt = vm.computeCreateAddress(d2, vm.getNonce(d2) + 2);
         vm.prank(coreAt);
         IAuctionFactoryProbe(Mainnet.AUCTION_FACTORY).createAuctionHouse();
-        preflight(lc, d2);
+        _pre(lc, d2);
         assertEq(
             _failedNames(),
             "auction factory: no house yet for the predicted core, auction factory: the house address of the core is free"

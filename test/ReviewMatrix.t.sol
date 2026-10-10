@@ -352,15 +352,17 @@ contract ReviewMatrixConfigTest is ReviewHarness {
         } else if (i == 4) {
             m = _m("rateStart 1e12 (in bounds, not the signed value)", Class.Hash);
             m.c.rateStart = 1e12;
+            m.c.settings.rateCap = 1e13;
         } else if (i == 5) {
-            m = _m("rateStart 1.54e14 (10x the launch day value, in bounds)", Class.Hash);
-            m.c.rateStart = 1.54e14;
-            m.c.settings.rateCap = 1.54e14;
+            m = _m("rateStart 1e14 (about 5x the launch day value, rateCap 1e15, in bounds)", Class.Hash);
+            m.c.rateStart = 1e14;
+            m.c.settings.rateCap = 1e15;
         } else if (i == 6) {
-            m = _m("rateStart 1e11 (the lowest edge)", Class.Hash);
+            m = _m("rateStart 1e11 (the lowest edge, rateCap 1e12)", Class.Hash);
             m.c.rateStart = 1e11;
+            m.c.settings.rateCap = 1e12;
         } else {
-            m = _m("rateStart 1e15 (the highest edge)", Class.Hash);
+            m = _m("rateStart 1e15 (the highest edge, rateCap 1e15 is not 10 times)", Class.Pre);
             m.c.rateStart = 1e15;
             m.c.settings.rateCap = 1e15;
         }
@@ -546,7 +548,8 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
         uint256[30] memory lo = SettingsFields.lo();
         uint256[30] memory hi = SettingsFields.hi();
         string memory nm = _trim(SettingsFields.names()[f]);
-        m = _m("", kind <= 1 ? Class.Pre : Class.Hash);
+        // a rateCap other than 10 times the launch rateStart is stopped by its own preflight row
+        m = _m("", kind <= 1 || f == 27 ? Class.Pre : Class.Hash);
         Settings memory s = m.c.settings;
         if (kind == 0) {
             SettingsFields.set(s, f, hi[f] + 1);
