@@ -546,6 +546,40 @@
       "result": "pass",
       "limitations": "no full suite rerun at eff3051",
       "invalidated": null
+    },
+    "E-AUDIT-SYSTEM-eff3051": {
+      "claim": "system audit of fee intake, credit purchase, statement sale and proceeds, phase 2 exit, owner powers and locks, launch runbook and participant economics: no path lets a non owner take value; findings in docs/REVIEW-system-audit.md",
+      "kind": "review",
+      "sourceRevision": "eff30510bbeb8c0340cfd995683fa27922fa815a",
+      "scope": [
+        "src/**",
+        "script/*.sol",
+        "script/config/**",
+        "sim/engine.js",
+        "test/BidRule.t.sol",
+        "test/Migrate.t.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 2,
+        "A-CREDIT-MARKET": 1,
+        "A-VOLUME": 1,
+        "A-COMPOSER": 2,
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1
+      },
+      "dependsOn": [],
+      "inputs": "four read only auditors in their own clones or copies; fork at block 26163771 for the runbook; simulator 3 seeds",
+      "method": "project-director system-audit method: acceptance cases, tests, counterexamples, probes in throwaway copies",
+      "author": "director, 2026-10-10 (dispatch and consolidation)",
+      "reviewer": "four independent auditor subagents, 2026-10-10",
+      "result": "findings",
+      "limitations": "the 7702 delegate source, the live v2 contracts beyond tests, the exitModule, a real broadcast and the deep invariants were not examined",
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-system-audit.md",
+        "sha256": "28b84c3393ccc940f930b896363b52fc178884f9d5548586b0053a2dea9c706e",
+        "revision": "a49cc2b4d79d4de71f1c134094e3030211d2a986"
+      }
     }
   }
 }

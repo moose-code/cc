@@ -43,9 +43,16 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 **OD-1, decided 2026-10-10 (FLOW 48).** the first `migrate` retires the old engine. `ethToBuyback` stays in it and its buyback burns it. the exit token pots move. built as NEXT item 22 at 74d1cbe, full suite 1078 pass, reviewed with no defect (docs/REVIEW-retire.md), follow ups built as NEXT item 23 at eff3051.
 
-**OD-3, decided 2026-10-10 (FLOW 49).** a market above `rateCap` is an accepted risk, with `setSettings` as the recovery.
+**OD-3, reopened.** you accepted the `rateCap` risk on my figure of about 45 minutes for the bid to follow a rising market. that figure holds only up to 1.25x of the last price paid. measured at launch settings: 46 minutes to 1.25x, 100 to 1.5x, 300 to 2x, 700 to 3x, 1,100 to 4x. a seller can drag the bid to 0.52 of the start with 135 credits in 3 minutes for about 0.3 eth of discount, and it recovers in 279 minutes. `idleLoosenBps` 0 with `ceilBps` 10_000 is a legal setting that parks the bid for good. `setRate` restores the bid at once in every case.
 
-**OD-2, open, does not block the launch.** when to call `coin.lockAllowlist()` and `router.lock()` (NEXT item 19, after launch).
+* option A: accept the current defaults with this table. the defaults came from your bid study, and a faster loosening also lets the bid climb blind faster when nobody sells (1.35x after an hour today).
+* option B: faster loosening, `idleLoosenBps` 500: about 2.3 hours to 2x and 7.3 hours to 4x, and a faster blind climb.
+* the bound: `idleLoosenBps` may be 0 today. a lower bound of 1 removes the parked setting in every option.
+* recommendation: A with the bound raised to at least 1, so no legal setting stops the bid following.
+
+**OD-4, open, blocks nothing now.** should `xToBuyback` stay in the old engine on `migrate`, like `ethToBuyback`? recommendation: yes.
+
+**OD-2, open, does not block the launch.** when to call `coin.lockAllowlist()` and `router.lock()` (NEXT item 19, after launch). after `lockAllowlist`, `rescueCoin` reaches only addresses already listed.
 
 **intent gap, decision 47.** what "ready for when burn router and $balance drop" requires of the engine is not written down. the director drafts it from the v2 burn router source and brings the owner one question if a real choice remains.
 

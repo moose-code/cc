@@ -15,7 +15,7 @@ each line cites the decision in docs/FLOW.md that records the owner's words. kin
 | kind | intent | decision | status |
 |---|---|---|---|
 | guarantee | while the engine has not migrated and the market price is at or below `rateCap`, a credit priced at the engine's bid that the pot and the hourly room cover can always be sold to it, whether the market rises or falls | 42, 48 | built, verified by invariants 11 and 16 on 06009bd. invariant 16 skips under a hostile controller |
-| risk | a market above `rateCap` stops buying until the owner raises `rateCap`, and the bid follows a rising market at 0.5 percent a minute (about 45 minutes, compounded, to climb from 20 percent below the market) | 42, 46, 49 | accepted by the owner (decision 49) |
+| risk | a market above `rateCap` stops buying until the owner raises `rateCap`, and the bid follows a rising market at 0.5 percent a minute (about 45 minutes, compounded, to climb from 20 percent below the market) | 42, 46, 49 | accepted on 2026-10-10 on a recovery time that holds only up to 1.25x. reopened as OD-3 with the measured table (docs/REVIEW-system-audit.md section 2) |
 | guarantee | eth, credits and exitToken leave the Core at the owner's call only through `migrate` to the successor, coin only through `rescueCoin`, NFTs off the books only through `rescueNft` (section 10) | 8, 28, 32, 33 | built, verified by invariants 1 and 8 on 06009bd |
 | guarantee | a statement leaves the Core only by a sale at or above its reserve, an exit, or as the top of an overprint | section 4 of FLOW | built, verified by invariants 4 and 12 on 06009bd |
 | guarantee | the four Core locks and the router lock are one way | 9.6, 10.2 | built, verified by invariants 13 and 15 on 06009bd |

@@ -25,14 +25,18 @@
       {
         "id": "fee-intake",
         "description": "pool skim, FeeRouter flush, payee and protocol legs, Core receive and fee pulls at the five doors",
-        "status": "pending",
-        "evidence": []
+        "status": "in-progress",
+        "evidence": [
+          "E-AUDIT-SYSTEM-eff3051"
+        ]
       },
       {
         "id": "credit-purchase",
         "description": "bid rule (drop, climb, ceiling, clamp, rateCap), sellForEth, buyListing and its tip, hourly window, adopt",
-        "status": "pending",
-        "evidence": []
+        "status": "in-progress",
+        "evidence": [
+          "E-AUDIT-SYSTEM-eff3051"
+        ]
       },
       {
         "id": "compose-and-listing",
@@ -45,20 +49,26 @@
       {
         "id": "statement-sale-and-proceeds",
         "description": "house auction, collectSales, syncStatement, repriceStatement, sellTo, proceeds split, buyback and burn",
-        "status": "pending",
-        "evidence": []
+        "status": "in-progress",
+        "evidence": [
+          "E-AUDIT-SYSTEM-eff3051"
+        ]
       },
       {
         "id": "phase2-exit",
         "description": "exitStatement and its gas repay, overprint, exit lane, exit token bid and auction, module replacement",
-        "status": "pending",
-        "evidence": []
+        "status": "in-progress",
+        "evidence": [
+          "E-AUDIT-SYSTEM-eff3051"
+        ]
       },
       {
         "id": "owner-powers-and-locks",
         "description": "settings, setRate, controller, targets, the four Core locks, router owner, handover, rescueCoin, rescueNft",
-        "status": "pending",
-        "evidence": []
+        "status": "in-progress",
+        "evidence": [
+          "E-AUDIT-SYSTEM-eff3051"
+        ]
       },
       {
         "id": "migration-and-successor",
@@ -71,14 +81,18 @@
       {
         "id": "launch-runbook",
         "description": "config, preflight, deploy, resume, postflight, lock, settings changes after launch",
-        "status": "pending",
-        "evidence": []
+        "status": "in-progress",
+        "evidence": [
+          "E-AUDIT-SYSTEM-eff3051"
+        ]
       },
       {
         "id": "participant-economics",
         "description": "sellers, coin holders, statement buyers, owner payee and backstop composer, protocol, under matched demand and cost ranges",
-        "status": "pending",
-        "evidence": []
+        "status": "in-progress",
+        "evidence": [
+          "E-AUDIT-SYSTEM-eff3051"
+        ]
       }
     ],
     "deliverables": [
@@ -123,7 +137,7 @@
     ]
   },
   "candidate": null,
-  "activeChange": null,
+  "activeChange": "NEXT-24: audit fixes within current intent",
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -143,14 +157,20 @@
     },
     {
       "id": "OD-3",
-      "question": "A market above rateCap stops buying until the owner raises rateCap; a rising market is followed at 0.5 percent a minute. Accept as a known risk with setSettings as the recovery? docs/HANDOFF.md section 4. Decided 2026-10-10: FLOW 49.",
-      "status": "decided",
+      "question": "Reopened 2026-10-10: the bid follows a rising market in 46 min to 1.25x, 300 min to 2x, 1,100 min to 4x (not 45 min); a seller can drag it down for about 0.3 eth; idleLoosenBps 0 with ceilBps 10_000 parks it. Accept with the corrected table, or change the defaults or bounds? docs/HANDOFF.md section 4.",
+      "status": "open",
       "blocks": [
         "deploy"
       ]
+    },
+    {
+      "id": "OD-4",
+      "question": "Should xToBuyback stay in the old engine on migrate, like ethToBuyback? Recommended: yes.",
+      "status": "open",
+      "blocks": []
     }
   ],
-  "nextAction": "Read-only system audit of the seven untraced required paths (fee intake, credit purchase, statement sale and proceeds, phase 2 exit, owner powers and locks, launch runbook, participant economics), before the freeze.",
+  "nextAction": "Build NEXT 24 (audit fixes within intent) and NEXT 25 (sandwich at lower depth, the 7702 delegate); ask the owner OD-3 (reopened) and OD-4.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
