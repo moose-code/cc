@@ -301,16 +301,16 @@ contract ReviewSandwichTest is FeeBase {
         }
     }
 
-    /// V2R-2 fixed: the bound is 2 eth, and a sandwich of a slice at the bound loses for every front run size
+    /// V2R-2 fixed: the bound is 1 eth (FLOW decision 51), and a sandwich of a slice at the bound loses for every front run size
     function test_FIXED_sandwichOfTheSliceAtTheBoundLosesAtTheLaunchSkim() public {
         _skipToSplitStart();
         Settings memory s = core.settings();
-        s.buybackSlice = 2 ether + 1;
+        s.buybackSlice = 1 ether + 1;
         vm.prank(core.owner());
         vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("buybackSlice")));
         core.setSettings(s);
-        assertLt(_best(1 ether), 0, "the 1 eth launch slice loses");
-        assertLt(_best(2 ether), 0, "the 2 eth slice at the bound loses");
+        assertLt(_best(0.5 ether), 0, "the 0.5 eth launch slice loses");
+        assertLt(_best(1 ether), 0, "the 1 eth slice at the bound loses");
     }
 
     /// why the bound is not higher: a 3 eth slice (inside the old 5 eth bound) profited at the same state

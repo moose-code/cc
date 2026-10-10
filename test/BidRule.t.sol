@@ -165,25 +165,50 @@ contract BidRuleTest is Fixture {
 
     // ------------------------------------------------------------------ ceiling
 
-    /// the rate stops at 125 percent of the rate paid at the last fill, with the loosening off
+    /// the rate stops at 125 percent of the anchor grown by the loosening (the minimum setting, 1 basis point per 10
+    /// idle minutes): the anchor is the rate paid at the last fill
     function test_ceilingHoldsAt125PercentOfTheAnchor() public {
-        _with(_noLoosening);
+        _with(_minLoosening);
         _potTo(20 ether);
         _warp(1 hours);
         uint256 r0 = core.ethRate();
-        assertEq(r0, START * 12_500 / 10_000, "before any fill the anchor is the opening rate");
+        assertGt(r0, START, "the climb took the rate above the opening rate");
         _sellOne();
         (uint256 anchor,,) = _anchor();
         assertEq(anchor, r0);
         _warp(3 hours);
-        assertEq(core.ethRate(), r0 * 12_500 / 10_000, "125 percent of the rate paid, the climb stopped there");
+        assertEq(core.ethRate(), r0 * (10_000 + 18) * 12_500 / 1e8, "125 percent of the rate paid, 18 intervals of 1 bp");
         _warp(30 days);
-        assertEq(core.ethRate(), r0 * 12_500 / 10_000);
+        assertEq(core.ethRate(), r0 * (10_000 + 4_338) * 12_500 / 1e8, "4,338 intervals after 30 days and 3 hours");
         assertEq(core.rateAtCheckpoint(), r0 * 9_950 / 10_000, "stored until the next checkpoint");
     }
 
-    function _noLoosening(Settings memory s) internal pure {
-        s.idleLoosenBps = 0;
+    function _minLoosening(Settings memory s) internal pure {
+        s.idleLoosenBps = 1;
+    }
+
+    /// the loosening the mechanics tests below are written against: 2 percent per 10 idle minutes
+    function _twoPercentLoosening(Settings memory s) internal pure {
+        s.idleLoosenBps = 200;
+    }
+
+    /// the launch setting: the anchor grows 20 percent per full 10 idle minutes
+    function test_anchorLoosensTwentyPercentPerTenIdleMinutesAtLaunch() public {
+        assertEq(core.settings().idleLoosenBps, 2_000);
+        _with(_fastClimbOnly);
+        _potTo(20 ether);
+        _sellOne();
+        (uint256 anchor,,) = _anchor();
+        _warp(9 minutes + 59);
+        assertEq(core.ethRate(), anchor * 12_500 / 10_000, "no loosening before 10 idle minutes");
+        _warp(1);
+        assertEq(core.ethRate(), anchor * 12_000 * 12_500 / 1e8, "20 percent after 10 minutes");
+        _warp(10 minutes);
+        assertEq(core.ethRate(), anchor * 14_000 * 12_500 / 1e8, "40 percent after 20 minutes");
+    }
+
+    function _fastClimbOnly(Settings memory s) internal pure {
+        s.climbPerMinBps = 1_000;
     }
 
     /// the anchor grows 2 percent per full 10 idle minutes: 2 percent after 10 minutes, 4 percent after 20
@@ -206,6 +231,7 @@ contract BidRuleTest is Fixture {
 
     function _fastClimb(Settings memory s) internal pure {
         s.climbPerMinBps = 1_000;
+        s.idleLoosenBps = 200;
     }
 
     /// a fill resets the idle clock: the anchor is the rate paid then
@@ -299,6 +325,9 @@ contract BidRuleTest is Fixture {
         s.ceilBps = 30_001;
         _expectBad(s, "ceilBps");
         s = Mainnet.defaultSettings();
+        s.idleLoosenBps = 0;
+        _expectBad(s, "idleLoosenBps");
+        s = Mainnet.defaultSettings();
         s.idleLoosenBps = 2_001;
         _expectBad(s, "idleLoosenBps");
         s = Mainnet.defaultSettings();
@@ -315,7 +344,7 @@ contract BidRuleTest is Fixture {
         s.dropFloorBps = 5_000;
         s.climbPerMinBps = 1;
         s.ceilBps = 10_000;
-        s.idleLoosenBps = 0;
+        s.idleLoosenBps = 1;
         s.spendCapBps = 100;
         _setSettings(s);
         assertEq(abi.encode(core.settings()), abi.encode(s));
@@ -671,6 +700,7 @@ contract BidRuleTest is Fixture {
     /// `setRate` restates the price: the stored rate and the ceiling anchor are both the new rate, the fill clock and
     /// the minute start stay
     function test_setRateRestatesTheRateAndTheAnchorAndKeepsTheFillClock() public {
+        _with(_twoPercentLoosening);
         _potTo(20 ether);
         _sellOne();
         uint64 fillTime = core.lastFillTime();
@@ -705,11 +735,10 @@ contract BidRuleTest is Fixture {
     // ------------------------------------------------------------------ gap in the market price
 
     /// @dev the first minute after a jump of the market at which the bid reaches the cheapest ask, `askMultiple` bps of
-    /// the rate paid at the last fill, with the loosening on (`loosen` true) or off. a 20 eth pot, one fill before the jump
-    function _minutesToFirstFill(uint256 askMultiple, bool loosen) internal returns (uint256 minutes_, uint256 anchor) {
-        if (!loosen) _with(_noLoosening);
+    /// the rate paid at the last fill, at the launch loosening. a 20 eth pot, one fill before the jump
+    function _minutesToFirstFill(uint256 askMultiple) internal returns (uint256 minutes_, uint256 anchor) {
         _potTo(20 ether);
-        _warp(30 hours);
+        _warp(1 hours);
         _sellOne();
         (anchor,,) = _anchor();
         uint256 ask = anchor * askMultiple / 10_000;
@@ -722,27 +751,41 @@ contract BidRuleTest is Fixture {
     /// the market price doubles between two fills. the cheapest seller asks 60 percent of the new price, 120 percent of
     /// the old one. the bid reaches it in 38 minutes, inside the 125 percent ceiling
     function test_gapUp100Percent_cheapestAskAt120PercentFillsWithinAnHour() public {
-        (uint256 m, uint256 anchor) = _minutesToFirstFill(12_000, true);
+        (uint256 m, uint256 anchor) = _minutesToFirstFill(12_000);
         emit log_named_uint("minutes to the first fill after a +100 percent gap", m);
         assertGt(m, 0, "filled");
         assertLe(m, 60, "within an hour");
-        assertLe(core.ethRate(), anchor * (10_000 + 200 * (m / 10)) * 12_500 / 1e8, "inside the ceiling");
+        assertLe(core.ethRate(), anchor * (10_000 + 2_000 * (m / 10)) * 12_500 / 1e8, "inside the ceiling");
         // 0.995 * 1.005^m >= 1.2 first at minute 38
         assertEq(m, 38);
     }
 
-    /// every seller asks the full new price, 200 percent of the old one: only the loosening of the ceiling lifts the
-    /// bid there, 125 percent * (1 + 2 percent * k) reaches 200 percent at k = 30, 300 idle minutes
-    function test_gapUp100Percent_everyAskAtTheNewPriceWaitsForTheLoosening() public {
-        (uint256 m,) = _minutesToFirstFill(20_000, true);
+    /// every seller asks the full new price, 200 percent of the old one: at the launch loosening the ceiling clears
+    /// 200 percent at 30 idle minutes (125 percent * (1 + 20 percent * 3)), so the climb of 0.5 percent a minute sets
+    /// the time, 0.995 * 1.005^m >= 2
+    function test_gapUp100Percent_everyAskAtTheNewPriceWaitsForTheClimb() public {
+        (uint256 m,) = _minutesToFirstFill(20_000);
         emit log_named_uint("minutes to the first fill, no cheap ask", m);
-        assertEq(m, 300);
+        assertEq(m, 140);
     }
 
-    /// with the loosening at zero the bid parks at 125 percent of the last rate paid for good
-    function test_gapUp100Percent_withoutLooseningTheBidParks() public {
-        (uint256 m, uint256 anchor) = _minutesToFirstFill(20_000, false);
-        assertEq(m, 0, "no fill in 600 minutes");
-        assertEq(core.ethRate(), anchor * 12_500 / 10_000);
+    /// the lowest loosening the bounds allow (1 basis point per 10 idle minutes) still lifts the ceiling to 200 percent
+    /// of the last rate paid: 125 percent * (1 + k / 10,000) reaches 200 percent at k = 6,000 intervals, 41.67 days
+    function test_gapUp100Percent_withTheMinimumLooseningTheBidReachesDouble() public {
+        _with(_minLoosening);
+        _potTo(20 ether);
+        _sellOne();
+        (uint256 anchor,,) = _anchor();
+        _warp(5_999 * 10 minutes);
+        assertLt(core.ethRate(), anchor * 2, "interval 5,999");
+        _warp(10 minutes);
+        assertEq(core.ethRate(), anchor * 2, "interval 6,000");
+    }
+
+    /// zero loosening is outside the bounds: the setting that parked the bid at 125 percent of the last rate paid
+    function test_zeroLooseningIsRefused() public {
+        Settings memory s = core.settings();
+        s.idleLoosenBps = 0;
+        _expectBad(s, "idleLoosenBps");
     }
 }

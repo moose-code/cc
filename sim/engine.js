@@ -25,7 +25,7 @@ export const SETTINGS = {
   exitAfter: 105 * 3600, // an unbid listing may exit through the exitModule after this long
   saleToBuybackBps: 5000, // share of collected sale proceeds to the coin buyback, rest to the pot
   exitToBuybackBps: 5000,
-  buybackSlice: 1,
+  buybackSlice: 0.5,
   buybackDelay: 25, // blocks, 12 s each
   keeperTipBps: 50,
   xRateCap: 9700,
@@ -80,7 +80,7 @@ export function firstViolation(s) {
   if (s.exitAfter < h || s.exitAfter > 365 * d) return 'exitAfter';
   if (s.saleToBuybackBps > 10000) return 'saleToBuybackBps';
   if (s.exitToBuybackBps > 10000) return 'exitToBuybackBps';
-  if (s.buybackSlice < 0.01 || s.buybackSlice > 2) return 'buybackSlice';
+  if (s.buybackSlice < 0.01 || s.buybackSlice > 1) return 'buybackSlice';
   if (s.buybackDelay < 1 || s.buybackDelay > 7200) return 'buybackDelay';
   if (s.keeperTipBps > 500) return 'keeperTipBps';
   if (s.xRateCap > 10000) return 'xRateCap';
@@ -125,7 +125,7 @@ export const SIM_DEFAULTS = {
   // seller model toggle: one seller with an unlimited supply sells one credit per step whenever the bid has reached throttleFrac of the market price
   throttler: false,
   throttleFrac: 0.95,
-  idleLoosenPct: 2, // stepped: percent added to the ceiling anchor every idleLoosenMin minutes while no fill happens (launch 2, linear), 0 = none
+  idleLoosenPct: 20, // stepped: percent added to the ceiling anchor every idleLoosenMin minutes while no fill happens (launch 20, linear), 0 = none
   idleLoosenMin: 10,
   ceilDecayHours: 0, // stepped: half life of the ceiling headroom since the last fill, 0 = none
   askFloor: 0, // lowest seller ask as a multiple of the market price (0: none, asks are lognormal around 1)

@@ -90,7 +90,7 @@ contract PilePageEquivalence is ReviewEconBase {
 }
 
 /// @notice exact numbers at the launch settings (flat bid, hourly cap 100 percent of the pot, drop 0.5 percent per credit with an
-/// 80 percent minute floor, climb 0.5 percent a minute, ceiling 125 percent of the rate paid plus 2 percent per 10 idle
+/// 80 percent minute floor, climb 0.5 percent a minute, ceiling 125 percent of the rate paid plus 20 percent per 10 idle
 /// minutes, clamp at one average credit, average credit 4.33M). the pot is booked by donation so every number is a closed form
 contract LaunchSettingsExactNumbers is ReviewEconBase {
     function test_scenarioAtTheLaunchSettings() public {
@@ -122,9 +122,11 @@ contract LaunchSettingsExactNumbers is ReviewEconBase {
         (uint256 anchor, uint256 minuteStart,) = _anchor();
         assertEq(anchor, r3, "the rate of the last fill is the anchor");
         assertEq(minuteStart, r1, "the minute started at the first rate paid");
-        // forty hours later the climb sits at the ceiling: 125 percent of the anchor loosened by 240 intervals of 2 percent
+        // forty hours later the ceiling, 125 percent of the anchor loosened by 240 intervals of 20 percent, is above the
+        // rate cap, so the read sits at the cap
         _warp(40 hours);
-        assertEq(core.ethRate(), r3 * (10_000 + 200 * 240) * 12_500 / 1e8);
+        assertGt(r3 * (10_000 + 2_000 * 240) * 12_500 / 1e8, 205_540_000_000_000, "the loosened ceiling is above the cap");
+        assertEq(core.ethRate(), 205_540_000_000_000);
         // the funded clamp of the hourly cap is the pot over one credit of 4.33M, above the rate cap, so after a
         // long climb the rate sits at the rate cap
         _warp(10_000 hours);
@@ -284,7 +286,7 @@ contract RateModelFuzz is ReviewEconBase {
         // forge-lint: disable-start(unsafe-typecast)
         s.climbPerMinBps = uint16(1 + seed % 1_000);
         s.ceilBps = uint16(10_000 + (seed >> 10) % 20_001);
-        s.idleLoosenBps = uint16((seed >> 25) % 2_001);
+        s.idleLoosenBps = uint16(1 + (seed >> 25) % 2_000);
         s.avgScore = uint32(800_000 + (seed >> 48) % 5_200_001);
         s.spendCapBps = uint16(100 + (seed >> 72) % 4_901);
         s.dropPerCreditBps = uint16(1 + (seed >> 96) % 1_000);

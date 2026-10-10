@@ -85,7 +85,7 @@ contract FlowTest is Fixture {
         assertEq(s.dropFloorBps, 8_000);
         assertEq(s.climbPerMinBps, 50);
         assertEq(s.ceilBps, 12_500);
-        assertEq(s.idleLoosenBps, 200);
+        assertEq(s.idleLoosenBps, 2_000);
         assertEq(s.spendCapBps, 10_000);
         assertEq(s.bonusCapBps, 2_500);
         assertEq(s.tipSavingsBps, 1_000);
@@ -97,7 +97,7 @@ contract FlowTest is Fixture {
         assertEq(s.exitAfter, 105 hours);
         assertEq(s.saleToBuybackBps, 5_000);
         assertEq(s.exitToBuybackBps, 5_000);
-        assertEq(s.buybackSlice, 1 ether);
+        assertEq(s.buybackSlice, 0.5 ether);
         assertEq(s.buybackDelay, 25);
         assertEq(s.keeperTipBps, 50);
         assertEq(s.xRateCap, 9_700);
@@ -1291,7 +1291,7 @@ contract FlowTest is Fixture {
     }
 
     function test_rate_slowestClimbOverACentury() public {
-        _longGap(1, 10_000, 0, 100 * 365 days);
+        _longGap(1, 10_000, 1, 100 * 365 days);
     }
 
     function test_rate_fastestClimbOverACentury() public {

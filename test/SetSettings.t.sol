@@ -127,14 +127,14 @@ contract SetSettingsTest is Fixture {
     function test_leavesTheOtherFieldsAtTheirLiveValue() public {
         Settings memory s = core.settings();
         s.saleToBuybackBps = 3_000;
-        s.buybackSlice = 2 ether;
+        s.buybackSlice = 1 ether;
         _setSettings(s);
         probe.single("keeperTipBps", 100);
         Settings memory out = probe.applyTo(core.settings());
         (uint256 n,) = _diff(s, out);
         assertEq(n, 1);
         assertEq(out.saleToBuybackBps, 3_000);
-        assertEq(out.buybackSlice, 2 ether);
+        assertEq(out.buybackSlice, 1 ether);
         assertEq(out.keeperTipBps, 100);
     }
 

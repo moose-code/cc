@@ -23,6 +23,13 @@ bytes32 constant V2_CODEHASH_ALLOWLIST = 0x7a98bacb16f0ec968f5d450c37e6a5a4ef213
 bytes32 constant V2_CODEHASH_FEE_CONTROLLER = 0x8c3e7bdfc124978e815095822a16b9f0c5fbd1f4925b99eaedeed542b5ca3feb;
 bytes32 constant V2_CODEHASH_BURN_ROUTER = 0x937f1a92e636aed39eb430bd3be2882201479768a84f5c253f3788114f4574fb;
 
+// the EIP 7702 delegation of the owner account, read at V2_PIN_BLOCK. the account runs the code of OWNER_DELEGATE
+// (Uniswap Calibur, 24,504 bytes, no proxy). preflight requires the account code, the delegate code hash and an empty
+// key registry (`keyCount()` 0), so no registered key can act as the owner. docs/REVIEW-sandwich-delegate.md section 2
+bytes constant OWNER_DELEGATION_CODE = hex"ef0100612373d7003d694220f7800eeaf8e3924c0951d3";
+address constant OWNER_DELEGATE = 0x612373D7003d694220f7800EeaF8E3924c0951D3;
+bytes32 constant OWNER_DELEGATE_CODEHASH = 0xff0357b543bbb94845b6791a8becac5e87d467814f86538a62649c877227d631;
+
 /// @notice everything a launch needs. one struct, loaded from script/config/mainnet.json by the scripts and built in
 /// memory by the tests. nothing here is read by `src/`: the Core takes `stack`, `rateStart` and `settings` as constructor
 /// arguments

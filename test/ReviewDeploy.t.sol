@@ -413,7 +413,7 @@ contract ReviewDeployTest is ReviewHarness {
             '"flatBps": 10000',
             '"avgScore": 4330000',
             '"dropFloorBps": 8000',
-            '"buybackSlice": 1000000000000000000'
+            '"buybackSlice": 500000000000000000'
         ];
         string[11] memory to = [
             '"bountyBps": 65536',

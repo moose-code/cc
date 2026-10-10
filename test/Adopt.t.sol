@@ -422,6 +422,7 @@ contract AdoptTest is Fixture {
         core.skim();
         Settings memory st = core.settings();
         st.ceilBps = 10_000;
+        st.idleLoosenBps = 1;
         _setSettings(st);
         (uint256 lastFill,,) = _anchor();
         uint256 loosened = 10_000 + uint256(st.idleLoosenBps) * ((block.timestamp - core.lastFillTime()) / 10 minutes);

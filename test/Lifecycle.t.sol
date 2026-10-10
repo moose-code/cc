@@ -554,7 +554,11 @@ contract LifecycleComposeTest is Fixture {
         assertGt(step, basis * 11_000 / 10_000, "sold above the reserve");
         _solvent();
 
-        // the buyback burns what the share buys: one slice of 1 eth, then the delay of 25 blocks, then the rest
+        // the buyback burns what the share buys: one slice of 1 eth (the upper bound of the slice, the launch value is
+        // 0.5 eth), then the delay of 25 blocks, then the rest
+        Settings memory sl = core.settings();
+        sl.buybackSlice = 1 ether;
+        _setSettings(sl);
         assertGt(core.ethToBuyback(), 1 ether, "a page sells for more than two slices of the share");
         vm.roll(block.number + 1);
         assertEq(_buybackAndCheck(buybacker), 1 ether);
@@ -566,7 +570,14 @@ contract LifecycleComposeTest is Fixture {
         vm.expectRevert(ICore.TooSoon.selector);
         core.buyback();
         vm.roll(block.number + 1);
-        assertEq(_buybackAndCheck(buybacker), step / 2 - 1 ether, "the last slice is what is left");
+        uint256 left = core.ethToBuyback();
+        assertEq(left, step / 2 - 1 ether, "the pool is the share less the first slice");
+        while (left > 1 ether) {
+            assertEq(_buybackAndCheck(buybacker), 1 ether, "a full slice");
+            left = core.ethToBuyback();
+            vm.roll(block.number + 25);
+        }
+        assertEq(_buybackAndCheck(buybacker), left, "the last slice is what is left");
         assertEq(core.ethToBuyback(), 0);
         vm.roll(block.number + 25);
         vm.expectRevert(ICore.NothingToBuy.selector);

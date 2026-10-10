@@ -267,6 +267,7 @@ contract ReviewFlowCoreTest is Fixture {
         m.dropFloorBps = 5_000;
         m.climbPerMinBps = 1;
         m.ceilBps = 10_000;
+        m.idleLoosenBps = 1;
         m.spendCapBps = 100;
         m.saleFloorBps = 1_000;
         m.auctionDuration = 6 hours;
@@ -298,7 +299,7 @@ contract ReviewFlowCoreTest is Fixture {
             365 days,
             10_000,
             10_000,
-            2 ether,
+            1 ether,
             7_200,
             500,
             10_000,
@@ -478,15 +479,15 @@ contract ReviewFlowCoreTest is Fixture {
         assertEq(core.ethRate(), 5e14, "a higher cap lets the climb continue to it");
     }
 
-    /// FC-3 (fixed by bounds, tightened by V2R-2): the buyback slice tops out at 2 eth. a sandwich around a slice at the
+    /// FC-3 (fixed by bounds, tightened by V2R-2): the buyback slice tops out at 1 eth. a sandwich around a slice at the
     /// cap loses money for the attacker after both skims at the 6.9 point v2 skim, for every front run size tried
     /// (the 100 eth slice that paid 46 eth is not reachable, and a 3 eth slice already profited)
     function test_FIXED_buybackSliceCapStopsTheSandwich() public {
         _skipSniperWindow();
         Settings memory big = core.settings();
-        big.buybackSlice = 2 ether + 1;
+        big.buybackSlice = 1 ether + 1;
         _expectBad(big, "buybackSlice");
-        uint256[2] memory slices = [uint256(1 ether), 2 ether];
+        uint256[2] memory slices = [uint256(0.5 ether), 1 ether];
         uint256[6] memory mult = [uint256(1), 2, 3, 4, 6, 8];
         for (uint256 i; i < 2; ++i) {
             for (uint256 k; k < 6; ++k) {

@@ -56,6 +56,9 @@ contract GateTest is Fixture {
         // the read is the climb, lowered to the clamp: the price of one average credit that the room of the pot affords
         uint256 clamp = core.ethPot() * 10_000 / 4_330_000;
         if (want > clamp) want = clamp;
+        // the 30 day gap lifts the ceiling (20 percent per 10 idle minutes) to the rate cap, which bounds the read too
+        uint256 cap = core.settings().rateCap;
+        if (want > cap) want = cap;
         assertApproxEqRel(core.ethRate(), want, 1e12, "0.5 percent a minute right after a fill, ten minutes");
         assertGt(core.ethRate(), 0, "the bid is open");
         // one of them sells on the house: nothing about the bid changes, and the other keeps waiting
@@ -92,7 +95,7 @@ contract GateFuzzTest is Fixture {
         if (pick % 4 == 3) {
             s.climbPerMinBps = uint16(1 + (seed >> 16) % 1_000);
             s.ceilBps = uint16(10_000 + (seed >> 32) % 20_001);
-            s.idleLoosenBps = uint16((seed >> 48) % 2_001);
+            s.idleLoosenBps = uint16(1 + (seed >> 48) % 2_000);
         }
         // forge-lint: disable-end(unsafe-typecast)
         _setSettings(s);

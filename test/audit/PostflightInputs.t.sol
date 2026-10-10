@@ -30,7 +30,7 @@ contract PostflightInputsTest is Fixture {
         // the owner changes the settings, the controller and hands the owner role over
         Settings memory s = core.settings();
         s.saleFloorBps = 8_000;
-        s.buybackSlice = 2 ether;
+        s.buybackSlice = 1 ether;
         _setSettings(s);
         _setController(address(new ScriptedController()));
         address next = _user("next owner");

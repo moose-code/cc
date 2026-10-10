@@ -28,7 +28,7 @@ const R0 = 1.54e13;
   const moved = cfg.settings.reserveBps !== undefined; // the config still on the old rules: the new fields are not there yet
   const newFields = ['saleFloorBps', 'feeToBuybackBps'];
   // the stepped bid rule fields of the Core are sim parameters of the bidRule stepped (setting B of docs/BID-STUDY.md), under other names. the built rule fields are sim only
-  const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 8000, climbPerMinBps: 50, ceilBps: 12500, idleLoosenBps: 200 };
+  const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 8000, climbPerMinBps: 50, ceilBps: 12500, idleLoosenBps: 2000 };
   const BUILT_ONLY = ['climbBaseBps', 'climbDoubleEvery', 'climbMaxBps', 'dropBps'];
   for (const [k, v] of Object.entries(STEPPED)) if (cfg.settings[k] !== undefined) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
   // the sim defaults are the launch bid rule: stepped, field for field with the config (bps to percent)
@@ -386,10 +386,10 @@ const R0 = 1.54e13;
   const bad = (patch, name) => { assert.equal(firstViolation(Object.assign({}, SETTINGS, patch)), name); n++; };
   bad({ spendCapBps: 10001 }, 'spendCapBps'); bad({ dropBps: 499 }, 'dropBps'); bad({ avgScore: 6000001 }, 'avgScore');
   bad({ saleFloorBps: 999 }, 'saleFloorBps'); bad({ saleFloorBps: 40001 }, 'saleFloorBps'); bad({ feeToBuybackBps: 10001 }, 'feeToBuybackBps'); bad({ auctionDuration: 6 * 3600 - 1 }, 'auctionDuration');
-  bad({ buybackSlice: 2.01 }, 'buybackSlice'); bad({ exitAfter: 3599 }, 'exitAfter');
+  bad({ buybackSlice: 1.01 }, 'buybackSlice'); bad({ exitAfter: 3599 }, 'exitAfter');
   bad({ rateCap: 1e11 - 1 }, 'rateCap'); bad({ rateCap: 1e15 + 1 }, 'rateCap');
   bad({ exitLaneToBuybackBps: 10001 }, 'exitLaneToBuybackBps');
-  assert.equal(firstViolation(Object.assign({}, SETTINGS, { spendCapBps: 10000, dropBps: 500, avgScore: 6000000, saleFloorBps: 1000, feeToBuybackBps: 10000, auctionDuration: 6 * 3600, buybackSlice: 2, exitAfter: 3600, rateCap: 1e15 })), null); n++;
+  assert.equal(firstViolation(Object.assign({}, SETTINGS, { spendCapBps: 10000, dropBps: 500, avgScore: 6000000, saleFloorBps: 1000, feeToBuybackBps: 10000, auctionDuration: 6 * 3600, buybackSlice: 1, exitAfter: 3600, rateCap: 1e15 })), null); n++;
   assert.equal(SETTINGS.rateCap, 205540000000000); n++;
   assert.equal(firstViolation(Object.assign({}, SETTINGS, { xRateFloor: 9800 })), 'xRateFloor'); n++;
 }
@@ -479,10 +479,10 @@ const R0 = 1.54e13;
 {
   const c = fresh(); c.ethToBuyback = 2.5;
   const a = c.takeBuybackSlice(1000);
-  near(a.slice, 1, 1e-12, 'slice is at most 1 eth'); near(a.tip, 0.005, 1e-12, 'tip 0.5 percent');
+  near(a.slice, 0.5, 1e-12, 'slice is at most 0.5 eth'); near(a.tip, 0.0025, 1e-12, 'tip 0.5 percent');
   assert.equal(c.takeBuybackSlice(1000 + 299), null); n++; // 25 blocks = 300 s
   ok(c.takeBuybackSlice(1000 + 300));
-  near(c.ethToBuyback, 0.5, 1e-12, 'pool after two slices');
+  near(c.ethToBuyback, 1.5, 1e-12, 'pool after two slices');
 }
 // launch position: whole supply single sided, price 2.513e-8 eth per coin at the start tick
 {

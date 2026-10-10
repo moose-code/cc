@@ -23,12 +23,19 @@ import {
     V2_CODEHASH_TOKEN_DEPLOYER,
     V2_CODEHASH_ALLOWLIST,
     V2_CODEHASH_FEE_CONTROLLER,
-    V2_CODEHASH_BURN_ROUTER
+    V2_CODEHASH_BURN_ROUTER,
+    OWNER_DELEGATION_CODE,
+    OWNER_DELEGATE,
+    OWNER_DELEGATE_CODEHASH
 } from "./LaunchConfig.sol";
 import {PostflightChecks} from "./PostflightChecks.sol";
 
 interface ISupply {
     function supply() external view returns (uint256);
+}
+
+interface IKeyRegistry {
+    function keyCount() external view returns (uint256);
 }
 
 interface IFeeControllerV2 {
@@ -114,6 +121,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _preStack(c);
         _preFactory(c, deployer);
         _prePayee(c);
+        _preOwner(c);
         _prePredictions(c, deployer);
         _preLive();
         _preSignoff(c, deployer);
@@ -283,6 +291,20 @@ abstract contract LaunchChecks is PostflightChecks {
         (bool ok,) = payee.call{value: 0.001 ether, gas: 100_000}("");
         vm.revertToState(snap);
         _check("payee: the launch payee accepts 0.001 eth with a 100000 gas call (simulated)", ok, vm.toString(payee));
+    }
+
+    /// @dev the owner account is an EIP 7702 delegation. the delegation code, the delegate code hash and an empty key
+    /// registry are pinned, so only the owner key acts as the owner. a redelegation after this run is not covered
+    function _preOwner(LaunchConfig memory c) private {
+        _check(
+            "owner: code is the pinned EIP 7702 delegation",
+            keccak256(c.owner.code) == keccak256(OWNER_DELEGATION_CODE),
+            string.concat(vm.toString(c.owner), " code ", vm.toString(c.owner.code))
+        );
+        bytes32 got = OWNER_DELEGATE.code.length == 0 ? bytes32(0) : OWNER_DELEGATE.codehash;
+        _eq("owner: delegate code hash is the pinned Calibur", got, OWNER_DELEGATE_CODEHASH);
+        (bool ok, uint256 n) = _word(c.owner, abi.encodeCall(IKeyRegistry.keyCount, ()));
+        _check("owner: no registered keys", ok && n == 0, string.concat("keyCount ", vm.toString(n)));
     }
 
     function _preCode(LaunchConfig memory c) private {

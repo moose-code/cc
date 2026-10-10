@@ -537,7 +537,7 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
             24 hours,
             8000,
             0,
-            2 ether,
+            0.2 ether,
             50,
             100,
             9000,

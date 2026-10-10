@@ -15,7 +15,7 @@ library SettingsBounds {
         if (s.dropFloorBps < 5_000 || s.dropFloorBps > 10_000) return "dropFloorBps";
         if (s.climbPerMinBps < 1 || s.climbPerMinBps > 1_000) return "climbPerMinBps";
         if (s.ceilBps < 10_000 || s.ceilBps > 30_000) return "ceilBps";
-        if (s.idleLoosenBps > 2_000) return "idleLoosenBps";
+        if (s.idleLoosenBps < 1 || s.idleLoosenBps > 2_000) return "idleLoosenBps";
         if (s.spendCapBps < 100 || s.spendCapBps > 10_000) return "spendCapBps";
         if (s.bonusCapBps > 5_000) return "bonusCapBps";
         if (s.tipSavingsBps > 2_500) return "tipSavingsBps";
@@ -27,7 +27,7 @@ library SettingsBounds {
         if (s.exitAfter < 1 hours || s.exitAfter > 365 days) return "exitAfter";
         if (s.saleToBuybackBps > 10_000) return "saleToBuybackBps";
         if (s.exitToBuybackBps > 10_000) return "exitToBuybackBps";
-        if (s.buybackSlice < 0.01 ether || s.buybackSlice > 2 ether) return "buybackSlice";
+        if (s.buybackSlice < 0.01 ether || s.buybackSlice > 1 ether) return "buybackSlice";
         if (s.buybackDelay < 1 || s.buybackDelay > 7_200) return "buybackDelay";
         if (s.keeperTipBps > 500) return "keeperTipBps";
         if (s.xRateCap > 10_000) return "xRateCap";

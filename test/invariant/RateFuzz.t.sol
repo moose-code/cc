@@ -94,7 +94,7 @@ contract RateFuzzTest is Fixture {
         if (!calm) {
             s.climbPerMinBps = uint16(bound(_r(seed, 4), 1, 1_000));
             s.ceilBps = uint16(bound(_r(seed, 5), 10_000, 30_000));
-            s.idleLoosenBps = uint16(bound(_r(seed, 6), 0, 2_000));
+            s.idleLoosenBps = uint16(bound(_r(seed, 6), 1, 2_000));
         }
         // forge-lint: disable-end(unsafe-typecast)
     }

@@ -535,6 +535,11 @@ contract CoreUnitTest is CoreBase {
     function _dropAndClockReset(bool flat) internal {
         _mode(flat);
         _fund(10 ether);
+        // the loosening the ceiling arithmetic below is written for: 2 percent per 10 idle minutes (the launch setting,
+        // 20 percent, lifts the ceiling above the rate cap within the 30 hour wait)
+        Settings memory loose = core.settings();
+        loose.idleLoosenBps = 200;
+        _setSettings(loose);
         _warp(30 hours);
         uint256 id = _credits(alice, 1)[0];
         uint256 rate = core.ethRate();

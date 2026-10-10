@@ -404,13 +404,15 @@ contract FeeFlowTest is FeeBase {
         assertGt(old, core.RATE_START());
         Settings memory s = core.settings();
         s.ceilBps = 10_000;
-        s.idleLoosenBps = 0;
+        s.idleLoosenBps = 1;
         _setSettings(s);
         assertEq(core.rateAtCheckpoint(), old);
         vm.warp(block.timestamp + 50 hours);
-        assertEq(core.ethRate(), core.RATE_START(), "the new ceiling bounds the rate at the anchor");
+        // the ceiling is the anchor grown by 1 basis point per full 10 idle minutes since the last fill
+        uint256 ceiling = core.RATE_START() * (10_000 + (block.timestamp - core.lastFillTime()) / 10 minutes) / 10_000;
+        assertEq(core.ethRate(), ceiling, "the new ceiling bounds the rate at the loosened anchor");
         _flow(Kind.BuyExactIn, 1 ether, "");
-        assertEq(core.rateAtCheckpoint(), core.RATE_START(), "the fee locked the bounded rate");
+        assertEq(core.rateAtCheckpoint(), ceiling, "the fee locked the bounded rate");
         assertEq(core.checkpointTime(), block.timestamp);
     }
 }
@@ -636,7 +638,7 @@ contract ReceiveSettingsTest is FeeBase {
         s.dropFloorBps = uint16(_pick(seed, 3, 5_000, 10_000));
         s.climbPerMinBps = uint16(_pick(seed, 4, 1, 1_000));
         s.ceilBps = uint16(_pick(seed, 5, 10_000, 30_000));
-        s.idleLoosenBps = uint16(_pick(seed, 9, 0, 2_000));
+        s.idleLoosenBps = uint16(_pick(seed, 9, 1, 2_000));
         s.spendCapBps = uint16(_pick(seed, 6, 100, 10_000));
         s.saleToBuybackBps = uint16(_pick(seed, 7, 0, 10_000));
         s.rateCap = uint64(_pick(seed, 8, 1e11, 1e15));
@@ -694,7 +696,7 @@ contract ReceiveSettingsTest is FeeBase {
     /// by the receive that runs inside the unlock, and the spend, the tip and the pot stay exact
     function test_receiveMidBuybackAcrossSettings() public {
         _stock();
-        uint256[3] memory slice = [uint256(0.02 ether), 0.05 ether, 2 ether];
+        uint256[3] memory slice = [uint256(0.02 ether), 0.05 ether, 1 ether];
         uint256[3] memory tips = [uint256(0), 200, 500];
         for (uint256 i; i < 3; ++i) {
             Settings memory s = core.settings();
@@ -1016,10 +1018,10 @@ contract BuybackTest is FeeBase {
         core.buyback();
         assertGt(b.supply - coin.totalSupply(), 0);
         assertEq(coin.balanceOf(DEAD), b.deadCoin);
-        // inside the window 90 points of the spend go to the router (the protocol leg is 0.24978 points of the baseline)
-        assertGt(address(feeRouter).balance, 0.8 ether);
+        // inside the window 90 points of the spend (the 0.5 eth slice) go to the router (the protocol leg is 0.24978 points of the baseline)
+        assertGt(address(feeRouter).balance, 0.4 ether);
         _flush();
-        assertGt(core.ethPot() - b.pot, 0.8 ether);
+        assertGt(core.ethPot() - b.pot, 0.4 ether);
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback());
     }
 }
@@ -1103,7 +1105,7 @@ contract BuybackSettingsTest is FeeBase {
         _buyback();
 
         // a slice above the pot takes the whole pot
-        _configure(2 ether, 7_200, 50);
+        _configure(1 ether, 7_200, 50);
         vm.roll(block.number + 7_200);
         uint256 rest = core.ethToBuyback();
         assertEq(_buyback(), rest);
@@ -1121,7 +1123,7 @@ contract BuybackSettingsTest is FeeBase {
     /// any slice, delay and tip inside the bounds: one buyback burns, tips and books exactly
     /// forge-config: default.fuzz.runs = 16
     function testFuzz_buybackAnySettings(uint256 slice, uint256 delay, uint256 tip) public {
-        _configure(bound(slice, 0.01 ether, 2 ether), bound(delay, 1, 7_200), bound(tip, 0, 500));
+        _configure(bound(slice, 0.01 ether, 1 ether), bound(delay, 1, 7_200), bound(tip, 0, 500));
         _fillEthBuyback();
         _buyback();
     }

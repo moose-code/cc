@@ -15,7 +15,10 @@ import {
     V2_CODEHASH_TOKEN_DEPLOYER,
     V2_CODEHASH_ALLOWLIST,
     V2_CODEHASH_FEE_CONTROLLER,
-    V2_CODEHASH_BURN_ROUTER
+    V2_CODEHASH_BURN_ROUTER,
+    OWNER_DELEGATION_CODE,
+    OWNER_DELEGATE,
+    OWNER_DELEGATE_CODEHASH
 } from "../script/LaunchConfig.sol";
 import {V2Stack} from "./utils/V2Stack.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
@@ -225,7 +228,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "");
         _print("preflight");
         // every launch input has a row: the count is part of the report
-        assertGe(rows.length, 90, "preflight rows");
+        assertEq(rows.length, 113, "preflight rows: docs/DEPLOY.md step 4");
     }
 
     /// each pinned code hash has a row. appending one byte of code to a contract fails exactly its row
@@ -664,6 +667,41 @@ contract ConfigTest is Fixture {
         changedFlag = true;
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "", "SETTINGS_CHANGED turns the row into a warning");
+    }
+
+    /// NEXT 26: the owner account is an EIP 7702 delegation to Calibur with an empty key registry. each of the three
+    /// rows fails alone for its own change of state
+    function test_preflightPinsTheOwnerDelegation() public {
+        address d2 = _funded();
+        string memory codeRow = "owner: code is the pinned EIP 7702 delegation";
+        string memory hashRow = "owner: delegate code hash is the pinned Calibur";
+        string memory keyRow = "owner: no registered keys";
+        assertEq(lc.owner.code, OWNER_DELEGATION_CODE, "the fork owner holds the pinned delegation");
+        assertEq(OWNER_DELEGATE.codehash, OWNER_DELEGATE_CODEHASH, "the fork delegate holds the pinned code");
+        _pre(lc, d2);
+        assertEq(_failedNames(), "");
+        assertTrue(_warnClean(codeRow) && _warnClean(hashRow) && _warnClean(keyRow), "the three rows exist and pass");
+        // the delegate code changes by one byte
+        uint256 snap = vm.snapshotState();
+        vm.etch(OWNER_DELEGATE, abi.encodePacked(OWNER_DELEGATE.code, hex"00"));
+        _pre(lc, d2);
+        assertEq(_failedNames(), hashRow);
+        vm.revertToState(snap);
+        // a key is registered on the owner
+        vm.mockCall(lc.owner, abi.encodeWithSignature("keyCount()"), abi.encode(uint256(1)));
+        _pre(lc, d2);
+        assertEq(_failedNames(), keyRow);
+        assertEq(_rowDetail(keyRow), "keyCount 1");
+        vm.clearMockedCalls();
+        // the owner delegates to another address: the code row fails, and the key registry of that address is empty
+        vm.etch(lc.owner, abi.encodePacked(hex"ef0100", address(0xBEEF)));
+        _pre(lc, d2);
+        assertEq(_failedNames(), string.concat(codeRow, ", ", keyRow));
+        vm.revertToState(snap);
+        // the owner is a plain account
+        vm.etch(lc.owner, "");
+        _pre(lc, d2);
+        assertEq(_failedNames(), string.concat(codeRow, ", ", keyRow));
     }
 
     /// FLOW decision 46: preflight fails unless `settings.rateCap` is 10 times `rateStart`. the Core and the deploy guard

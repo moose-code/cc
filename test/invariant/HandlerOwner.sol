@@ -51,7 +51,7 @@ abstract contract HandlerOwner is HandlerHouse {
         s.dropFloorBps = uint16(_f(_r(seed, 3), 5_000, 10_000, c.dropFloorBps));
         s.climbPerMinBps = uint16(_f(_r(seed, 4), 1, 1_000, c.climbPerMinBps));
         s.ceilBps = uint16(_f(_r(seed, 5), 10_000, 30_000, c.ceilBps));
-        s.idleLoosenBps = uint16(_f(_r(seed, 29), 0, 2_000, c.idleLoosenBps));
+        s.idleLoosenBps = uint16(_f(_r(seed, 29), 1, 2_000, c.idleLoosenBps));
         s.spendCapBps = uint16(_f(_r(seed, 6), 100, 10_000, c.spendCapBps));
         s.bonusCapBps = uint16(_f(_r(seed, 7), 0, 5_000, c.bonusCapBps));
         s.tipSavingsBps = uint16(_f(_r(seed, 8), 0, 2_500, c.tipSavingsBps));
@@ -63,7 +63,7 @@ abstract contract HandlerOwner is HandlerHouse {
         s.exitAfter = uint32(_f(_r(seed, 14), 1 hours, 365 days, c.exitAfter));
         s.saleToBuybackBps = uint16(_f(_r(seed, 15), 0, 10_000, c.saleToBuybackBps));
         s.exitToBuybackBps = uint16(_f(_r(seed, 16), 0, 10_000, c.exitToBuybackBps));
-        s.buybackSlice = uint128(_f(_r(seed, 17), 0.01 ether, 2 ether, c.buybackSlice));
+        s.buybackSlice = uint128(_f(_r(seed, 17), 0.01 ether, 1 ether, c.buybackSlice));
         s.buybackDelay = uint16(_f(_r(seed, 18), 1, 7_200, c.buybackDelay));
         s.keeperTipBps = uint16(_f(_r(seed, 19), 0, 500, c.keeperTipBps));
         s.xRateCap = uint16(_f(_r(seed, 20), 0, 10_000, c.xRateCap));
@@ -98,14 +98,14 @@ abstract contract HandlerOwner is HandlerHouse {
         } else if (k == 7) {
             s.saleToBuybackBps = 10_000;
         } else if (k == 8) {
-            s.idleLoosenBps = 0;
+            s.idleLoosenBps = 1;
         } else if (k == 9) {
             s.dropPerCreditBps = 1_000;
             s.dropFloorBps = 5_000;
         } else if (k == 10) {
             s.buybackSlice = 0.01 ether;
         } else if (k == 11) {
-            s.buybackSlice = 2 ether;
+            s.buybackSlice = 1 ether;
         } else if (k == 12) {
             s.exitAfter = 1 hours;
         } else if (k == 13) {
@@ -262,7 +262,7 @@ abstract contract HandlerOwner is HandlerHouse {
         if (s.dropFloorBps < 5_000 || s.dropFloorBps > 10_000) return "dropFloorBps";
         if (s.climbPerMinBps < 1 || s.climbPerMinBps > 1_000) return "climbPerMinBps";
         if (s.ceilBps < 10_000 || s.ceilBps > 30_000) return "ceilBps";
-        if (s.idleLoosenBps > 2_000) return "idleLoosenBps";
+        if (s.idleLoosenBps < 1 || s.idleLoosenBps > 2_000) return "idleLoosenBps";
         if (s.spendCapBps < 100 || s.spendCapBps > 10_000) return "spendCapBps";
         if (s.bonusCapBps > 5_000) return "bonusCapBps";
         if (s.tipSavingsBps > 2_500) return "tipSavingsBps";
@@ -274,7 +274,7 @@ abstract contract HandlerOwner is HandlerHouse {
         if (s.exitAfter < 1 hours || s.exitAfter > 365 days) return "exitAfter";
         if (s.saleToBuybackBps > 10_000) return "saleToBuybackBps";
         if (s.exitToBuybackBps > 10_000) return "exitToBuybackBps";
-        if (s.buybackSlice < 0.01 ether || s.buybackSlice > 2 ether) return "buybackSlice";
+        if (s.buybackSlice < 0.01 ether || s.buybackSlice > 1 ether) return "buybackSlice";
         if (s.buybackDelay < 1 || s.buybackDelay > 7_200) return "buybackDelay";
         if (s.keeperTipBps > 500) return "keeperTipBps";
         if (s.xRateCap > 10_000) return "xRateCap";
@@ -296,7 +296,7 @@ abstract contract HandlerOwner is HandlerHouse {
     /// breaks exactly one field of valid settings, `which` picks it. returns the name the library must report
     function _break(Settings memory s, uint256 which) internal pure returns (bytes32 name) {
         // forge-lint: disable-start(unsafe-typecast)
-        which = which % 44;
+        which = which % 45;
         if (which == 0) {
             (s.flatBps, name) = (10_001, "flatBps");
         } else if (which == 1) {
@@ -346,7 +346,7 @@ abstract contract HandlerOwner is HandlerHouse {
         } else if (which == 23) {
             (s.buybackSlice, name) = (0.01 ether - 1, "buybackSlice");
         } else if (which == 24) {
-            (s.buybackSlice, name) = (2 ether + 1, "buybackSlice");
+            (s.buybackSlice, name) = (1 ether + 1, "buybackSlice");
         } else if (which == 25) {
             (s.buybackDelay, name) = (0, "buybackDelay");
         } else if (which == 26) {
@@ -383,8 +383,10 @@ abstract contract HandlerOwner is HandlerHouse {
             (s.feeToBuybackBps, name) = (10_001, "feeToBuybackBps");
         } else if (which == 42) {
             (s.ceilBps, name) = (30_001, "ceilBps");
-        } else {
+        } else if (which == 43) {
             (s.idleLoosenBps, name) = (2_001, "idleLoosenBps");
+        } else {
+            (s.idleLoosenBps, name) = (0, "idleLoosenBps");
         }
         // forge-lint: disable-end(unsafe-typecast)
     }

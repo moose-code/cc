@@ -783,7 +783,7 @@ contract GasCapTest is SeaportBase {
         s.saleFloorBps = 8_000;
         s.auctionDuration = 2 days;
         s.saleToBuybackBps = 4_000;
-        s.buybackSlice = 2 ether;
+        s.buybackSlice = 1 ether;
         s.xAuctionHalfLife = 12 hours;
         s.xRateFloor = 3_500;
         bytes memory data = abi.encodeCall(core.setSettings, (s));
