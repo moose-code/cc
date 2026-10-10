@@ -103,8 +103,10 @@ the launch day rule for `rateStart`. `rateStart` is the market price of one cred
 
 ```sh
 H=$(cast block-number --rpc-url $MAINNET_RPC_URL); cast logs --rpc-url $PRIVATE_RPC --address 0x97630aA70AB14ed9883B41dAfccBc11349723043 --from-block $((H-7200)) "Transfer(address,address,uint256)" --json | jq -r '[.[].transactionHash] | unique | .[-60:] | .[]' | while read t; do cast tx $t value --rpc-url $PRIVATE_RPC; done | grep -v '^0$' | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}'
-M=10600000000000000; awk -v m=$M 'BEGIN{printf "rateStart %.0f rateCap %.0f\n", m, 10*m}'   # rateStart and rateCap, M the median in wei
+M=10600000000000000; echo "rateStart $M rateCap $((M*10))"   # M the median in wei, rateStart is M itself, rateCap is 10 times M
 ```
+
+`rateStart` is the median in wei. the shell computes `rateCap` in 64 bit integer arithmetic, exact below 9.2e18, so the cap is exactly 10 times `rateStart` for every value in the Core bounds. a floating point tool (awk `printf`, jq before 1.7) rounds integers above 2^53 (about 9.007e15) and writes a `rateCap` that is not 10 times `rateStart`, which preflight rejects. the `jq -r` reads of `.rateStart` and `.settings` in section 3 (the `RATE_START` and `SETTINGS` exports) need jq 1.7 or later: jq 1.6 rounds an integer above 2^53 to a double and the constructor arguments then differ from the config. check `jq --version` first, or read those values with a tool that keeps integers.
 
 the value only decides how soon the pot starts working. the owner can move it after the launch with `setRate` (section 4), so a wrong guess is cheap to fix.
 
@@ -421,13 +423,14 @@ SET_saleFloorBps=12000 REPRICE=1 forge script script/SetSettings.s.sol --rpc-url
 
 `SET_<field>` and `SETTINGS_PATCH` name the fields of the table, the single variables win over the patch, `SET_RATE` adds `setRate`, `REPRICE=1` adds the reprices. checked on the anvil fork: the table showed the live value 9000 and the new one 8000, the broadcast from the impersonated owner changed `saleFloorBps` and the rate.
 
-the by hand way, with `cast`. the tuple type is the one of the constructor in section 3 (`T` below). field 14 is `saleFloorBps`, field 28 is `rateCap`, field 29 is `exitLaneToBuybackBps` and field 30 is `feeToBuybackBps`, count the fields in the order of the table:
+the by hand way, with `cast`. the tuple type is the one of the constructor in section 3 (`T` below). the struct has 26 fields in the order of `Settings` in `src/interfaces/Interfaces.sol`: field 10 is `saleFloorBps`, field 24 is `rateCap`, field 25 is `exitLaneToBuybackBps` and field 26 is `feeToBuybackBps`. the `echo` line prints the field name with its value before and after the change: read it, and send only when the name and both values are the ones intended (a wrong index changes another setting, and the Core accepts any value inside its bounds):
 
 ```sh
 T="(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16)"
 S=$(cast call $CORE "settings()($T)" --rpc-url $MAINNET_RPC_URL | sed -E 's/ \[[^]]*\]//g')   # the live struct, plain numbers
-NEW=$(echo "$S" | tr -d '() ' | awk -F, -v OFS=, '{$14=8000; print "(" $0 ")"}')                # change field 14 only
+NEW=$(echo "$S" | tr -d '() ' | awk -F, -v OFS=, '{$10=8000; print "(" $0 ")"}')                # change field 10 (saleFloorBps) only
 echo "$S"; echo "$NEW"                                                                          # read both before sending
+echo "saleFloorBps before $(echo "$S" | tr -d '() ' | cut -d, -f10) after $(echo "$NEW" | tr -d '() ' | cut -d, -f10)"   # the name and the two values
 cast send $CORE "setSettings($T)" "$NEW" --rpc-url $PRIVATE_RPC --ledger                        # as the owner
 cast send $CORE "setRate(uint256)" 9000000000000000 --rpc-url $PRIVATE_RPC --ledger               # the eth limit, wei per credit, 1e13 to 1e18
 cast call $CORE "settings()($T)" --rpc-url $MAINNET_RPC_URL; cast call $CORE "ethRate()(uint256)" --rpc-url $MAINNET_RPC_URL
