@@ -562,10 +562,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         delete _credits[id];
     }
 
-    /// the first action of the entry points that buy credits or compose (`sellForEth`, `buyListing`, `adopt`, `compose`,
-    /// `composeExit`): reverts `Retired` after `migrate`. then the fee router flushes its balance into `receive`, which
-    /// books it, before any rate read, checkpoint or measurement of the entry point. a failing router does not fail the
-    /// entry point (docs/FLOW.md 10.8)
+    /// the first action of `sellForEth`, `buyListing`, `adopt`, `compose` and `composeExit`. two steps in order:
+    /// 1. reverts `Retired` once `migrate` has run. `sellForExitToken` checks the same flag in `CoreLib`.
+    /// 2. pulls the fee router: the router flushes its balance into `receive`, which books it, before the entry point
+    /// reads a rate, checkpoints or measures. a failing router does not fail the entry point (docs/FLOW.md 10.8)
     function _openDoor() private {
         if (retired) revert Retired();
         CoreLib.pullFees(FEE_SOURCE);
@@ -1171,8 +1171,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// state is the figure the engine pays with a funded pot, so a statement built from adopted credits is priced at
     /// that level; the clamp of a thin pot would book a basis of 1 wei. the basis is booked and the eth pile grows: eth,
     /// the rate state, the hourly room and the pots keep their values. a donor who inflates the basis of a statement
-    /// gives credits away. reverts `Retired` after `migrate`, `InPile`, `NotHolder`, `ZeroId` and `Empty`. logs `CreditAdopted`. the body is
-    /// `CoreLib.adopt`, called with the calldata untouched
+    /// gives credits away. reverts `Retired` after `migrate`, `InPile`, `NotHolder`, `ZeroId` and `Empty`. logs
+    /// `CreditAdopted`. the body is `CoreLib.adopt`, called with the calldata untouched
     function adopt(uint256[] calldata) external nonReentrant {
         _openDoor();
         _toLib();

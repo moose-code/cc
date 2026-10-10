@@ -321,13 +321,27 @@ cast call $ROUTER "locked()(bool)" --rpc-url $MAINNET_RPC_URL; cast call $ROUTER
 
 ### the lock table
 
-one lock is a launch step, two are owner decisions. all three are one way. `cast` lines run as the signer named in the row.
+one lock is a launch step, three are owner decisions. all four are one way. the other Core locks are in the section "owner doors, locks and the handover". `cast` lines run as the signer named in the row.
 
 | lock | kind | command | what it freezes |
 |---|---|---|---|
 | `coin.lockRecipients()` | launch step 10 | `cast send $COIN "lockRecipients()" --rpc-url $MAINNET_RPC_URL --ledger` (the coin admin, the owner) | the hook bounty recipient (the router) and the locker reward recipients. the pool points at the router from then on and engines change behind it through `router.setEngine` |
 | `coin.lockAllowlist()` | owner decision | `cast send $COIN "lockAllowlist()" --rpc-url $MAINNET_RPC_URL --ledger` (the coin admin, the owner) | `setAllowed` and `unrestrict`: the allowlist and the restriction. postflight warns once it is taken |
-| `router.lock()` | owner decision | `cast send $ROUTER "lock()" --rpc-url $MAINNET_RPC_URL --ledger` (the router owner) | the router engine, payees and split start. it ends `router.setEngine`, so engine migration is closed from then on |
+| `router.lock()` | owner decision | `cast send $ROUTER "lock()" --rpc-url $MAINNET_RPC_URL --ledger` (the router owner) | the router engine, payees and split start. it ends `router.setEngine`, so engine migration is closed from then on. before a migration it fixes the engine forever: a Core retired by `migrate` then receives every later fee, and no engine can take the stream over |
+| `core.lockSuccessor()` | owner decision | `cast send $CORE "lockSuccessor()" --rpc-url $MAINNET_RPC_URL --ledger` (the Core owner) | `setSuccessor`. with the successor still zero it disables `migrate`. before the old engine has sold out its statements it leaves the pots and credits that arrive later unmovable, because `migrate` can no longer be repointed. lock only a successor that was dry run, after the old engine has sold out |
+
+### moving to a successor engine
+
+the order, as the router owner and the Core owner (one key at launch):
+
+1. deploy and verify the successor Core (sections 1 and 3). it needs a `receive()` that takes eth and accepts the exit token and Credits by `transfer` and `transferFrom`.
+2. `cast send $ROUTER "setEngine(address)" $SUCCESSOR`. a retired Core calls no `flush`, so a router that still names it books every later fee there: `feeToBuybackBps` of it to `ethToBuyback`, the rest to `ethPot`, which only a later `migrate` moves. this step needs the router unlocked.
+3. `cast send $CORE "setSuccessor(address)" $SUCCESSOR`, then a dry run of `migrate` (the paragraph on the successor in "owner doors, locks and the handover").
+4. `cast send $CORE "migrate(uint256)" $BATCH` in batches until `ethPot`, `xPot` and both piles are 0. the first call retires the old Core.
+5. on the successor, `adopt(ids)` for the credits that arrived without records.
+6. while the old Core holds statements, call `collectSales` and `syncStatement` there as they sell, and `migrate` again after each: it moves the booked pot share.
+
+`router.lock()` before step 2 fixes the old engine for good, and the retired Core receives every fee. `lockSuccessor()` with the successor still zero, or before the old engine has sold out, leaves the pots and credits that arrive later unmovable.
 
 ### keeper duties
 

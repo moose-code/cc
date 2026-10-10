@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, Settings} from "../src/interfaces/Interfaces.sol";
+import {Lane, Settings, IStatements} from "../src/interfaces/Interfaces.sol";
 import {IAuctionHouse} from "../src/interfaces/AuctionHouse.sol";
 import {MigrationSink} from "./standins/MigrationSink.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
@@ -495,46 +495,135 @@ contract MigrateTest is Fixture {
         assertTrue(core.retired());
     }
 
-    function test_REVERT_aRetiredCoreRefusesTheSixDoors() public {
+    /// a retired core holding a credit that is outside the piles (for `adopt`), a seller credit, and a funded pot
+    function _retiredWithCredits() internal returns (uint256[] memory ids) {
         _enterPhase2();
         _fundPot(3 ether);
-        uint256[] memory ids = _credits(seller, 2);
+        ids = _credits(seller, 2);
         vm.prank(seller);
         CREDITS.transferFrom(seller, address(core), ids[1]);
         _setSuccessor();
         _migrate(1000);
+    }
+
+    /// the refused door left the credits, the pots and the piles as they were
+    function _assertRefusedDoorChangedNothing(uint256[] memory ids, uint256 pot, uint256 xPot) internal view {
+        assertEq(CREDITS.ownerOf(ids[0]), seller, "a refused call moved the credit");
+        (bool inPile,,,) = core.creditInfo(ids[1]);
+        assertFalse(inPile, "a refused call booked the credit");
+        assertEq(core.ethPot(), pot, "ethPot");
+        assertEq(core.xPot(), xPot, "xPot");
+        assertEq(core.pileSize(Lane.Eth), 0, "eth pile");
+        assertEq(core.pileSize(Lane.Exit), 0, "exit pile");
+    }
+
+    function test_REVERT_aRetiredCoreRefusesSellForEth() public {
+        uint256[] memory ids = _retiredWithCredits();
         uint256 pot = core.ethPot();
         uint256 xPot = core.xPot();
-
         vm.startPrank(seller);
         vm.expectRevert(ICore.Retired.selector);
         core.sellForEth(_one(ids[0]));
         vm.expectRevert(ICore.Retired.selector);
         core.sellForEth(_one(ids[0]), 0);
+        vm.stopPrank();
+        _assertRefusedDoorChangedNothing(ids, pot, xPot);
+    }
+
+    function test_REVERT_aRetiredCoreRefusesSellForExitToken() public {
+        uint256[] memory ids = _retiredWithCredits();
+        uint256 pot = core.ethPot();
+        uint256 xPot = core.xPot();
+        vm.startPrank(seller);
         vm.expectRevert(ICore.Retired.selector);
         core.sellForExitToken(_one(ids[0]));
         vm.expectRevert(ICore.Retired.selector);
         core.sellForExitToken(_one(ids[0]), 0);
         vm.stopPrank();
+        _assertRefusedDoorChangedNothing(ids, pot, xPot);
+    }
+
+    function test_REVERT_aRetiredCoreRefusesBuyListing() public {
+        uint256[] memory ids = _retiredWithCredits();
+        uint256 pot = core.ethPot();
+        uint256 xPot = core.xPot();
         vm.expectRevert(ICore.Retired.selector);
         core.buyListing(0, "", ids[0], address(0xA110C));
+        _assertRefusedDoorChangedNothing(ids, pot, xPot);
+    }
+
+    function test_REVERT_aRetiredCoreRefusesAdopt() public {
+        uint256[] memory ids = _retiredWithCredits();
+        uint256 pot = core.ethPot();
+        uint256 xPot = core.xPot();
         vm.expectRevert(ICore.Retired.selector);
         core.adopt(_one(ids[1]));
+        _assertRefusedDoorChangedNothing(ids, pot, xPot);
+    }
+
+    function test_REVERT_aRetiredCoreRefusesCompose() public {
+        uint256[] memory ids = _retiredWithCredits();
+        uint256 pot = core.ethPot();
+        uint256 xPot = core.xPot();
         vm.fee(composeBasefee);
         vm.expectRevert(ICore.Retired.selector);
         vm.prank(keeper);
         core.compose();
+        _assertRefusedDoorChangedNothing(ids, pot, xPot);
+    }
+
+    function test_REVERT_aRetiredCoreRefusesComposeExit() public {
+        uint256[] memory ids = _retiredWithCredits();
+        uint256 pot = core.ethPot();
+        uint256 xPot = core.xPot();
         vm.expectRevert(ICore.Retired.selector);
         vm.prank(keeper);
         core.composeExit();
+        _assertRefusedDoorChangedNothing(ids, pot, xPot);
+    }
 
-        assertEq(CREDITS.ownerOf(ids[0]), seller, "a refused sale moved the credit");
-        (bool inPile,,,) = core.creditInfo(ids[1]);
-        assertFalse(inPile, "a refused adopt booked the credit");
-        assertEq(core.ethPot(), pot, "ethPot");
-        assertEq(core.xPot(), xPot, "xPot");
-        assertEq(core.pileSize(Lane.Eth), 0, "eth pile");
-        assertEq(core.pileSize(Lane.Exit), 0, "exit pile");
+    /// a sale whose delivery to the winner fails on the house is unwound after 30 days and returns the statement to the
+    /// core. the retired core relists it through `syncStatement`
+    function test_OK_aRetiredCoreRelistsAnUnwoundSale() public {
+        uint256 sid = _listedStatement();
+        _setSuccessor();
+        _migrate(1000);
+        assertTrue(core.retired());
+
+        Live memory l = _live(sid);
+        address winner = address(0xA11CE);
+        _bid(winner, sid, l.reserve);
+        vm.mockCallRevert(
+            address(STATEMENTS),
+            abi.encodeWithSelector(IStatements.transferFrom.selector, address(house), winner, sid),
+            "cannot receive"
+        );
+        _endAuction(sid);
+        _warp(30 days + 1);
+        house.unwindStuckLot{gas: END_GAS}(l.auctionId);
+        vm.clearMockedCalls();
+        assertEq(STATEMENTS.ownerOf(sid), address(core), "the unwind did not return the statement");
+        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Returned));
+
+        core.syncStatement(sid);
+        Live memory relisted = _live(sid);
+        assertEq(uint256(relisted.status), uint256(ICore.StatementStatus.Listed), "not relisted");
+        assertEq(relisted.auctionId, l.auctionId + 1, "not a new auction");
+        assertEq(STATEMENTS.ownerOf(sid), address(house), "the statement is not on the house");
+        assertTrue(core.retired(), "the relist cleared the flag");
+        _solvent();
+    }
+
+    function test_REVERT_aNonOwnerMigrateLeavesTheCoreActive() public {
+        _fundPot(1 ether);
+        _setSuccessor();
+        uint256 pot = core.ethPot();
+        vm.prank(stranger);
+        vm.expectRevert(ICore.OnlyOwner.selector);
+        core.migrate(10);
+        assertFalse(core.retired(), "a refused migrate retired the core");
+        assertEq(core.ethPot(), pot, "a refused migrate moved the pot");
+        assertEq(sink.ethReceived(), 0, "the successor received eth");
     }
 
     /// a pile that a partial batch leaves behind can be migrated by later calls, and cannot be composed
