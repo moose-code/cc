@@ -272,8 +272,8 @@ contract ReviewPort is Fixture {
         core.setExitModule(address(mod));
     }
 
-    /// regressions for P-3. the opening price is `SUPPLY * 1e18 / (20 * AVG_SCORE * unit)`. it was zero above unit
-    /// 1.15e37 and 11 at 1e36. setting the module now reverts `BadModule` when it is below 1e12
+    /// the opening price is `SUPPLY * 1e18 / (exitSliceCredits * unit)`. setting the module reverts `BadModule`
+    /// when it is below 1e12
     function test_FIXED_hugeUnitIsRejectedAtSetTime() public {
         _setExitModuleReverts(2e37);
         assertEq(core.exitModule(), address(0));

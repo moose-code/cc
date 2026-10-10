@@ -259,8 +259,10 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 7. no spend exceeds the pot at that moment. every purchase of a credit (`sellForEth`, `buyListing`) is checked
-    /// against the pot the core held when the purchase began, one credit after the other inside a batch. the books
-    /// themselves are checked by invariants 5 and 6 and the pot bookkeeping of invariant 1.
+    /// against the pot the core held when the purchase began, one credit after the other inside a batch. the read after
+    /// every action is at most the pot, so the next fill cannot pay more than the pot. a sale refused above the pot
+    /// ends in `PotTooSmall`, an arithmetic panic fails the invariant. the books themselves are checked by invariants 5
+    /// and 6 and the pot bookkeeping of invariant 1.
     function invariant_07_noSpendAboveThePot() public view {
         _zero(g7);
     }
@@ -580,7 +582,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// 19. the price state and the read stay inside the bounds the settings and the state give, with no model of the
     /// climb. the read never exceeds the price state. the price state never exceeds `rateCap` and the ceiling, which is
     /// `ceilBps` of the last fill rate grown by `idleLoosenBps` per full 10 minutes since the last fill. the read is
-    /// either the price state or the clamp, the pot.
+    /// the price state lowered to the pot.
     function invariant_19_bidBounds() public view {
         Settings memory st = core.settings();
         uint256 rate = core.ethRate();
@@ -592,7 +594,9 @@ abstract contract InvariantsBase is InvariantFixture {
         uint256 ceiling = lastFillRate * (10_000 + uint256(st.idleLoosenBps) * (idle / 600)) * st.ceilBps / 1e8;
         uint256 cap = ceiling < st.rateCap ? ceiling : st.rateCap;
         assertLe(price, cap, "the price state is above the rate cap and the ceiling");
-        assertTrue(rate <= core.ethPot() || rate == price, "the read is below the price state yet above the pot");
+        uint256 pot = core.ethPot();
+        assertLe(rate, pot, "the read is above the pot");
+        assertEq(rate, price < pot ? price : pot, "the read is not the price state lowered to the pot");
     }
 
     /// 20. `CoreLens` reports what the Core, the fee router and the house report. every scalar of `snapshot` equals the

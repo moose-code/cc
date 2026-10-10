@@ -488,8 +488,8 @@ contract ReviewFlowCoreTest is Fixture {
         assertEq(STATEMENTS.supply(), supply + 1, "the page under the cut composes");
     }
 
-    /// held: the exit bid at 100 percent of score pays exactly what the module pays back for the same credits, so
-    /// selling credits for exit token and exiting them leaves the exit pot whole
+    /// held: the exit bid at 100 percent of one credit's exit value pays exactly what the module pays back for the
+    /// same credits, so selling credits for exit token and exiting them leaves the exit pot whole
     function test_exitBidAtParIsAWash() public {
         _skipSniperWindow();
         _enterPhase2();

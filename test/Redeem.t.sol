@@ -322,7 +322,7 @@ contract RedeemRepayTest is RedeemBase {
         assertEq(cap, uint256(80) * OPEN_RATE * 500 / 10_000);
         assertGt(_gasPart(EXIT_GAS, HIGH), cap);
         (uint256 repaid, uint256 potLost) = _exit(sid, HIGH);
-        assertEq(repaid, cap, "a page at the opening rate and the average score, reimburseCapBps of it");
+        assertEq(repaid, cap, "a page at the opening rate, reimburseCapBps of it");
         assertEq(potLost, cap);
     }
 

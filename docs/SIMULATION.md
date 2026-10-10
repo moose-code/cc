@@ -540,4 +540,4 @@ low and high value of each input against the base case (31,510 credits and 394 s
 
 ## files
 
-sim/engine.js (model, the single source), sim/engine.test.mjs (529 checks), sim/run.mjs (batches, `node run.mjs q1 to q11`), docs/archive/sim/results/*.json, sim/build.mjs and the page parts (page.css, page.body.html, page.ui1.js to page.ui4.js), sim/index.html (built, single file, 5 minute steps). a 90 day run takes 4.9 seconds at 60 second steps. the 11 batches run as parallel processes in 44 minutes on a 16 core machine (the longest, q4, takes 43 minutes alone).
+sim/engine.js (model, the single source), sim/engine.test.mjs (529 checks), sim/run.mjs (batches, `node run.mjs q1 to q11`, writes sim/results/*.json, a directory created on the first run; the earlier results are in docs/archive/sim/), sim/build.mjs and the page parts (page.css, page.body.html, page.ui1.js to page.ui4.js), sim/index.html (built, single file, 5 minute steps). a 90 day run takes 4.9 seconds at 60 second steps. the 11 batches run as parallel processes in 44 minutes on a 16 core machine (the longest, q4, takes 43 minutes alone).

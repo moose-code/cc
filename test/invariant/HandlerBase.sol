@@ -752,9 +752,17 @@ abstract contract HandlerBase is Test {
         gEthIn += amount;
     }
 
-    /// a spend of `x` eth from the pot, which held `potBefore` when it began. a spend above the pot is a violation
-    function _recordSpend(uint256 x, uint256 potBefore) internal {
+    /// a spend of `x` eth from the pot, which held `potBefore` when it began. a spend above the pot is a violation.
+    /// returns the pot left, floored at zero: a handler call that reverts after the flag drops the flag, so the
+    /// arithmetic that follows a recorded spend must not underflow
+    function _recordSpend(uint256 x, uint256 potBefore) internal returns (uint256 left) {
         if (x > potBefore) _flag(V_SPEND, "a spend above the pot at that moment");
+        left = potBefore > x ? potBefore - x : 0;
+    }
+
+    /// a refused sale above the pot ends in `PotTooSmall`. an arithmetic panic means the pot check is gone
+    function _refusedAbovePot(bytes memory why) internal {
+        if (why.length >= 4 && bytes4(why) == 0x4e487b71) _flag(V_SPEND, "a sale above the pot ended in a panic");
     }
 
     /// the stored price state and the read after the sells of one call at `costs`: each credit drops the price state, and the
@@ -770,7 +778,7 @@ abstract contract HandlerBase is Test {
         for (uint256 i; i < costs.length; ++i) {
             start = BidModel.startAfter(st, stored, start);
             stored = _dropped(st, stored, start);
-            pot -= costs[i];
+            pot = pot > costs[i] ? pot - costs[i] : 0;
         }
         r = _readAfterFill(st, stored, pot);
     }
@@ -956,6 +964,12 @@ abstract contract HandlerBase is Test {
         _coinCheck();
         _houseCheck();
         _settingsCheck();
+        _potCheck();
+    }
+
+    /// the next fill pays the read, so the read at the end of every action is at most the pot
+    function _potCheck() internal {
+        if (core.ethRate() > core.ethPot()) _flag(V_SPEND, "the read is above the pot, the next fill would overspend");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1223,6 +1237,7 @@ abstract contract HandlerBase is Test {
             _afterSell(who, ids, p, rs.st);
         } catch (bytes memory why) {
             _failed(p.pull.bal0, p.pull.pot0, p.pull.rate0, "sellForEth");
+            _refusedAbovePot(why);
             rs = p.pull.rs0;
             if (!overshoot && !dup) _unexpected(a, why);
         }
@@ -1254,17 +1269,18 @@ abstract contract HandlerBase is Test {
             count++;
         }
         if (count != ids.length) _flag(V_MODEL, "sellForEth bought a different number of credits");
+        uint256 potLeft = p.pot;
+        for (uint256 i; i < ids.length; ++i) {
+            potLeft = _recordSpend(costs[i], potLeft);
+        }
         uint256 paid = who.balance - p.sellerBal;
         if (paid != total) _flag(V_MODEL, "sellForEth paid differs from the sum of its events");
         if (paid > ceilSum) _flag(V_ABOVE_CAP, "sellForEth paid above the sum of the reads");
         _eth(p.bal, paid, 0, "sellForEth");
-        if (core.ethPot() != p.pot - total) _flag(V_POT, "sellForEth pot not reduced by the price");
+        if (core.ethPot() != potLeft) _flag(V_POT, "sellForEth pot not reduced by the price");
 
         // the drop on each fill, independently: dropPerCreditBps per credit, no lower than the minute floor
-        uint256 potLeft = p.pot;
         for (uint256 i; i < ids.length; ++i) {
-            _recordSpend(costs[i], potLeft);
-            potLeft -= costs[i];
             _addCredit(ids[i], 0, costs[i]);
             _removeFrom(inventory[who], ids[i]);
         }
@@ -1406,11 +1422,11 @@ abstract contract HandlerBase is Test {
         ) {
             _flag(V_TIP, "tip above min(tipSavingsBps of savings, tipCapBps of cost)");
         }
+        uint256 potLeft = _recordSpend(cost + tip, p.pot);
         _eth(p.bal, tip + expectCost, 0, "buyListing");
-        if (core.ethPot() != p.pot - cost - tip) _flag(V_POT, "listing pot not reduced by cost and tip");
-        _recordSpend(cost + tip, p.pot);
+        if (core.ethPot() != potLeft) _flag(V_POT, "listing pot not reduced by cost and tip");
         uint256 stored = _dropped(st, p.price, p.minuteStart);
-        if (core.rateAtCheckpoint() != stored || core.ethRate() != _readAfterFill(st, stored, p.pot - cost - tip)) {
+        if (core.rateAtCheckpoint() != stored || core.ethRate() != _readAfterFill(st, stored, potLeft)) {
             _flag(V_RATE_BOUND, "drop on fill differs from dropPerCreditBps with the minute floor");
         }
         if (CREDITS.ownerOf(id) != address(core)) _flag(V_MODEL, "listing did not deliver the credit");
