@@ -8,7 +8,8 @@
     "decisions": "docs/FLOW.md",
     "state": "docs/HANDOFF.md",
     "traceability": null,
-    "evidence": "project/evidence.json"
+    "evidence": "project/evidence.json",
+    "decisionIdPattern": "^\\| (\\d+) \\| "
   },
   "objective": {
     "id": "OBJ-LAUNCH-1",
@@ -38,7 +39,7 @@
         "description": "compose and composeExit with no paid caller, statement cost basis, listing on the house, controller pricing",
         "status": "in-progress",
         "evidence": [
-          "E-AUDIT-DECISIONS-2407087"
+          "E-AUDIT-DECISIONS-fb6c26c"
         ]
       },
       {
@@ -64,7 +65,7 @@
         "description": "setSuccessor, migrate in batches, the old engine after migrate, successor adopt",
         "status": "in-progress",
         "evidence": [
-          "E-AUDIT-DECISIONS-2407087"
+          "E-AUDIT-DECISIONS-fb6c26c"
         ]
       },
       {
@@ -92,7 +93,7 @@
         "description": "material decisions classified supported, unproved, contradicted or superseded",
         "status": "in-progress",
         "evidence": [
-          "E-AUDIT-DECISIONS-2407087"
+          "E-AUDIT-DECISIONS-fb6c26c"
         ]
       },
       {
@@ -123,9 +124,7 @@
   },
   "candidate": null,
   "activeChange": null,
-  "openBlockers": [
-    "OD-1 changes the Core if the owner picks retirement, so no candidate can be frozen before it is decided."
-  ],
+  "openBlockers": [],
   "ownerDecisions": [
     {
       "id": "OD-1",
@@ -141,9 +140,17 @@
       "question": "When to call coin.lockAllowlist() and router.lock() (NEXT item 19).",
       "status": "open",
       "blocks": []
+    },
+    {
+      "id": "OD-3",
+      "question": "A market above rateCap stops buying until the owner raises rateCap; a rising market is followed at 0.5 percent a minute. Accept as a known risk with setSettings as the recovery? docs/HANDOFF.md section 4.",
+      "status": "open",
+      "blocks": [
+        "deploy"
+      ]
     }
   ],
-  "nextAction": "Ask the owner OD-1. While waiting, build NEXT item 21 (preflight row: rateCap is 10 times rateStart) with its config test.",
+  "nextAction": "Ask the owner OD-1 and OD-3 in one message. While waiting, run the read-only system audit of the seven untraced required paths.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
@@ -164,31 +171,55 @@
   ],
   "gates": {
     "productRules": {
-      "evidence": []
+      "evidence": [],
+      "kinds": [
+        "acceptance",
+        "review"
+      ]
     },
     "focusedTests": {
       "evidence": [
         "E-SUITE-CARRY-5e69033"
+      ],
+      "kinds": [
+        "test"
       ]
     },
     "uiAcceptance": {
-      "evidence": []
+      "evidence": [],
+      "kinds": [
+        "acceptance",
+        "test"
+      ]
     },
     "localLifecycle": {
       "evidence": [
         "E-SUITE-CARRY-5e69033"
+      ],
+      "kinds": [
+        "test",
+        "rehearsal"
       ]
     },
     "fullSuite": {
       "evidence": [
         "E-SUITE-CARRY-5e69033"
+      ],
+      "kinds": [
+        "test"
       ]
     },
     "independentReview": {
-      "evidence": []
+      "evidence": [],
+      "kinds": [
+        "review"
+      ]
     },
     "deploymentRehearsal": {
-      "evidence": []
+      "evidence": [],
+      "kinds": [
+        "rehearsal"
+      ]
     }
   }
 }

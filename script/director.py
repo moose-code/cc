@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import functools
+import itertools
 import json
 import os
 import re
@@ -66,6 +68,24 @@ def git(*args: str, check: bool = True) -> str:
     return result.stdout.strip()
 
 
+def git_raw(*args: str) -> str:
+    result = subprocess.run(["git", *args], cwd=ROOT, text=True, capture_output=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "git command failed")
+    return result.stdout
+
+
+def tracked_files(revision: str) -> list[str]:
+    """Files tracked at a commit hash. Cached per repository root and hash."""
+    return list(_tracked(str(ROOT), revision))
+
+
+@functools.lru_cache(maxsize=None)
+def _tracked(root: str, revision: str) -> tuple[str, ...]:
+    out = git_raw("ls-tree", "-r", "--name-only", "-z", revision)
+    return tuple(p for p in out.split("\0") if p)
+
+
 def current() -> tuple[str, str, bool]:
     head = git("rev-parse", "--verify", "HEAD", check=False)
     dirty = bool(git("status", "--porcelain"))
@@ -89,22 +109,31 @@ def is_ancestor(older: str, newer: str) -> bool:
 
 
 def changed_paths(older: str, newer: str) -> list[str]:
-    output = git("diff", "--name-only", "--no-renames", f"{older}..{newer}")
-    return [line for line in output.splitlines() if line]
+    output = git_raw("diff", "--name-only", "-z", "--no-renames", f"{older}..{newer}")
+    return [path for path in output.split("\0") if path]
 
 
 def short(sha: str) -> str:
     return sha[:10]
 
 
+@functools.lru_cache(maxsize=None)
+def _variants(pattern: str) -> tuple[str, ...]:
+    """Expand each '**/' to both 'any directories' and 'zero directories'."""
+    parts = pattern.split("**/")
+    out = []
+    for joins in itertools.product(("**/", ""), repeat=len(parts) - 1):
+        out.append("".join(p + j for p, j in zip(parts, joins + ("",))))
+    return tuple(out)
+
+
 def matches(path: str, patterns: list[str]) -> bool:
     for pattern in patterns:
         if pattern == "*":
             return True
-        if pattern.endswith("/**"):
-            if path.startswith(pattern[:-2]):
-                return True
-        elif fnmatch.fnmatchcase(path, pattern):
+        if pattern.endswith("/**") and path.startswith(pattern[:-2]):
+            return True
+        if any(fnmatch.fnmatchcase(path, variant) for variant in _variants(pattern)):
             return True
     return False
 
@@ -162,6 +191,19 @@ def load() -> tuple[dict | None, dict | None, dict | None, list[str], dict]:
     state = read_json(STATE_REL, errors)
     ledger = trace = None
     paths: dict[str, str | None] = {}
+    if state is not None and (
+        state.get("schemaVersion") != 2 or "documents" not in state or "objective" not in state
+    ):
+        found = (
+            f"is schema {state.get('schemaVersion', 1)}"
+            if state.get("schemaVersion") != 2
+            else "lacks documents or objective"
+        )
+        errors.append(
+            f"director-state.json {found}; this checker needs schema 2: "
+            "migrate (see the skill's references/change-management.md)"
+        )
+        state = None
     if state is not None:
         docs = state.get("documents")
         if not isinstance(docs, dict):
@@ -281,8 +323,6 @@ def validate_owner_decisions(state: dict, errors: list[str]) -> None:
 
 
 def validate_state(state: dict, errors: list[str]) -> None:
-    if state.get("schemaVersion") != 2:
-        errors.append(f"{STATE_REL}: schemaVersion must be 2")
     for key in ("projectName", "riskLevel", "phase", "nextAction"):
         text_field(state, key, STATE_REL, errors)
     candidate = state.get("candidate")
@@ -295,6 +335,8 @@ def validate_state(state: dict, errors: list[str]) -> None:
     required = {}
     for key in ("requiredFreezeGates", "requiredDeployGates"):
         required[key] = str_list(state.get(key), key, errors)
+        if isinstance(state.get(key), list) and not state[key]:
+            errors.append(f"{key} must not be empty")
     validate_objective(state, errors)
     validate_owner_decisions(state, errors)
     gates = state.get("gates")
@@ -312,6 +354,14 @@ def validate_state(state: dict, errors: list[str]) -> None:
                     "record evidence in the ledger and list its ids instead"
                 )
         str_list(gate.get("evidence"), f"gate {name}.evidence", errors)
+        kinds: list[str] = []
+        if not isinstance(gate.get("kinds"), list) or not gate["kinds"]:
+            errors.append(f"gate {name} has no kinds; list the evidence kinds that can satisfy it")
+        else:
+            kinds = str_list(gate["kinds"], f"gate {name}.kinds", errors)
+        for kind in kinds:
+            if kind not in EVIDENCE_KINDS:
+                errors.append(f"gate {name}: unknown kind {kind}")
     for key, names in required.items():
         for name in names:
             if name not in gates:
@@ -369,6 +419,18 @@ def validate_record(eid: str, rec: object, errors: list[str]) -> None:
     scope = str_list(rec.get("scope"), f"{where}.scope", errors)
     if isinstance(rec.get("scope"), list) and not scope:
         errors.append(f"{where}: scope must not be empty (use [\"*\"] for the whole tree)")
+    if (
+        scope
+        and isinstance(revision, str)
+        and SHA_RE.match(revision)
+        and resolve_commit(revision)
+    ):
+        files = tracked_files(revision)
+        for pattern in scope:
+            if pattern != "*" and not any(matches(f, [pattern]) for f in files):
+                errors.append(
+                    f"{where}: scope pattern {pattern} matches no file tracked at {short(revision)}"
+                )
     refs = rec.get("assumptions")
     if not isinstance(refs, dict):
         errors.append(f"{where}: assumptions must be an object of id to version")
@@ -453,8 +515,47 @@ def validate_links(state: dict, ledger: dict, errors: list[str]) -> None:
                     errors.append(f"evidence {eid} carries unknown evidence: {cid}")
                 elif cid != eid:
                     graph.setdefault(eid, []).append(cid)
+    for eid, rec in records.items():
+        if not isinstance(rec, dict) or not isinstance(rec.get("carries"), list):
+            continue
+        scope = rec.get("scope") if isinstance(rec.get("scope"), list) else []
+        for cid in rec["carries"]:
+            carried = records.get(cid)
+            if cid == eid or not isinstance(carried, dict) or not isinstance(carried.get("scope"), list):
+                continue
+            if "*" in scope:
+                continue
+            for pattern in carried["scope"]:
+                if pattern not in scope:
+                    errors.append(
+                        f"evidence {eid}: scope does not cover carried {cid} pattern {pattern}"
+                    )
+    validate_state_only_scopes(state, records, errors)
     for cycle in find_cycles(graph):
         errors.append("dependsOn/carries cycle: " + " -> ".join(cycle))
+
+
+def validate_state_only_scopes(state: dict, records: dict, errors: list[str]) -> None:
+    """A stateOnlyPaths entry must not match a tracked file that an evidence scope names."""
+    state_only = state.get("stateOnlyPaths")
+    head = resolve_commit("HEAD")
+    if not isinstance(state_only, list) or not head:
+        return
+    files = tracked_files(head)
+    for entry in state_only:
+        if not isinstance(entry, str):
+            continue
+        hidden = [f for f in files if matches(f, [entry])]
+        for eid, rec in records.items():
+            scope = rec.get("scope") if isinstance(rec, dict) else None
+            if not isinstance(scope, list):
+                continue
+            patterns = [p for p in scope if isinstance(p, str) and p != "*"]
+            hit = next((f for f in hidden if matches(f, patterns)), None)
+            if hit:
+                errors.append(
+                    f"stateOnlyPaths entry {entry} hides {hit}, which evidence {eid} scope covers"
+                )
 
 
 def validate_documents(state: dict, trace: dict | None, paths: dict, errors: list[str]) -> None:
@@ -463,8 +564,19 @@ def validate_documents(state: dict, trace: dict | None, paths: dict, errors: lis
         if paths.get(key) and matches(paths[key], state_only):
             errors.append(f"documents.{key} is in stateOnlyPaths; a change to it changes the premises")
     if paths.get("decisions"):
-        text = (ROOT / paths["decisions"]).read_text()
-        report_duplicates(DECISION_RE.findall(text), "decision", errors)
+        pattern = DECISION_RE
+        custom = state["documents"].get("decisionIdPattern")
+        if custom is not None:
+            try:
+                pattern = re.compile(custom, re.MULTILINE)
+                if pattern.groups != 1:
+                    raise ValueError("expected exactly one capture group")
+            except (re.error, TypeError, ValueError) as exc:
+                errors.append(f"documents.decisionIdPattern is not a regex with one group: {exc}")
+                pattern = None
+        if pattern is not None:
+            text = (ROOT / paths["decisions"]).read_text()
+            report_duplicates(pattern.findall(text), "decision", errors)
     if trace is None:
         return
     rule_ids = RULE_RE.findall((ROOT / paths["rules"]).read_text())
@@ -607,6 +719,21 @@ def evidence_validity(eid: str, target: str) -> tuple[bool, str]:
     return _validity(eid, target, state, ledger, {}, [])
 
 
+def effective_kinds(eid: str, ledger: dict, seen: tuple = ()) -> set[str]:
+    """Kind a record counts as for a gate. An analysis record counts as the kinds of
+    the records it carries, or as analysis when it carries none."""
+    rec = ledger["evidence"][eid]
+    if rec["kind"] != "analysis":
+        return {rec["kind"]}
+    carried = [c for c in rec.get("carries", []) if c in ledger["evidence"] and c not in seen]
+    if not carried:
+        return {"analysis"}
+    held: set[str] = set()
+    for cid in carried:
+        held |= effective_kinds(cid, ledger, seen + (eid,))
+    return held
+
+
 def carried_closure(eid: str, ledger: dict) -> list[str]:
     seen: list[str] = []
     pending = list(ledger["evidence"][eid].get("carries", []))
@@ -630,6 +757,22 @@ def evidence_usable(eid: str, target: str, state: dict, ledger: dict, memo: dict
         if ledger["evidence"][cid]["result"] != "pass":
             return False, f"carried {cid} result is {ledger['evidence'][cid]['result']}"
     return True, "valid"
+
+
+def carried_changes(rec: dict, ledger: dict, state: dict) -> dict[str, list[str]]:
+    """Per carried record, paths in its scope that changed up to the carrier's revision."""
+    out: dict[str, list[str]] = {}
+    state_only = state.get("stateOnlyPaths", [])
+    for cid in rec.get("carries", []):
+        carried = ledger["evidence"][cid]
+        try:
+            changed = changed_paths(carried["sourceRevision"], rec["sourceRevision"])
+        except RuntimeError:
+            changed = []
+        out[cid] = [
+            p for p in changed if matches(p, carried["scope"]) and not matches(p, state_only)
+        ]
+    return out
 
 
 def invalid_evidence(state: dict, ledger: dict, target: str) -> list[tuple[str, str]]:
@@ -679,7 +822,7 @@ def gate_errors(state: dict, ledger: dict, level: str, head: str, dirty: bool) -
         errors.append("an active change remains open")
     if state.get("openBlockers"):
         errors.append("open blockers remain: " + "; ".join(state["openBlockers"]))
-    blocked = {level} if level == "freeze" else {"deploy"}
+    blocked = {"freeze"} if level == "freeze" else {"freeze", "deploy"}
     for entry in state.get("ownerDecisions", []):
         if entry.get("status") == "open" and blocked & set(entry.get("blocks", [])):
             errors.append(f"open owner decision {entry['id']} blocks {level}: {entry['question']}")
@@ -693,9 +836,16 @@ def gate_errors(state: dict, ledger: dict, level: str, head: str, dirty: bool) -
     key = "requiredFreezeGates" if level == "freeze" else "requiredDeployGates"
     for name in state.get(key, []):
         ids = state["gates"][name]["evidence"]
+        kinds = state["gates"][name]["kinds"]
         if not ids:
             errors.append(f"gate {name} has no evidence")
         for eid in ids:
+            held = effective_kinds(eid, ledger)
+            if not held <= set(kinds):
+                errors.append(
+                    f"gate {name}: evidence {eid} has kind {', '.join(sorted(held))}; "
+                    f"gate accepts {', '.join(kinds)}"
+                )
             ok, reason = evidence_usable(eid, target, state, ledger, memo)
             if not ok:
                 errors.append(f"gate {name}: evidence {eid} {reason}")
@@ -781,6 +931,11 @@ def evidence_report() -> int:
             ok, reason = _validity(eid, head, state, ledger, memo, [])
         claim = rec["claim"] if len(rec["claim"]) <= 70 else rec["claim"][:67] + "..."
         carries = f"  carries {','.join(rec['carries'])}" if rec.get("carries") else ""
+        carries += "".join(
+            f"  changed under {cid} scope: {', '.join(paths[:5])}{', ...' if len(paths) > 5 else ''}"
+            for cid, paths in carried_changes(rec, ledger, state).items()
+            if paths
+        )
         print(f"{eid}  {'valid' if ok else 'invalid'}  {rec['result']}  {reason}{carries}  | {claim}")
     return 0
 

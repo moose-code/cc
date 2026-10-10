@@ -1,6 +1,6 @@
 # architecture
 
-this file is the current reading of the owner's intent and of the system that implements it. the owner's latest explicit instruction overrides it, and the director updates it in the same turn. docs/FLOW.md is the dated decision log: who decided what, when and why. a later dated decision supersedes an earlier one. SPEC.md is the original handoff spec, kept as history. docs/HANDOFF.md holds the objective, the open owner decisions and the state of the evidence. where this file and the code differ, the difference is listed in section 1 or in docs/HANDOFF.md, and neither side is assumed right.
+this file is the current reading of the owner's intent and of the system that implements it. docs/FLOW.md is the dated decision log. SPEC.md is history. docs/HANDOFF.md holds the objective, the open owner decisions and the state of the evidence. precedence between sources: AGENTS.md. where this file and the code differ, the difference is listed in section 1 or in docs/HANDOFF.md, and neither side is assumed right.
 
 naming rule: only `exitModule` and `exitToken`. never name or describe them anywhere.
 
@@ -14,7 +14,8 @@ each line cites the decision in docs/FLOW.md that records the owner's words. kin
 
 | kind | intent | decision | status |
 |---|---|---|---|
-| guarantee | the engine never locks up while credits are listed: whether the market rises or falls, slowly or fast, a credit the pot and the hourly room cover can always be sold to it | 42 | built, verified by invariants 11 and 16 on 06009bd |
+| guarantee | while the market price is at or below `rateCap`, a credit priced at the engine's bid that the pot and the hourly room cover can always be sold to it, whether the market rises or falls | 42 | built, verified by invariants 11 and 16 on 06009bd. invariant 16 skips under a hostile controller |
+| risk | a market above `rateCap` stops buying until the owner raises `rateCap`, and the bid follows a rising market at 0.5 percent a minute (about 45 minutes to recover 20 percent) | 42, 46 | not yet acknowledged by the owner: OD-3 in docs/HANDOFF.md |
 | guarantee | eth, credits and exitToken leave the Core at the owner's call only through `migrate` to the successor, coin only through `rescueCoin`, NFTs off the books only through `rescueNft` (section 10) | 8, 28, 32, 33 | built, verified by invariants 1 and 8 on 06009bd |
 | guarantee | a statement leaves the Core only by a sale at or above its reserve, an exit, or as the top of an overprint | section 4 of FLOW | built, verified by invariants 4 and 12 on 06009bd |
 | guarantee | the four Core locks and the router lock are one way | 9.6, 10.2 | built, verified by invariants 13 and 15 on 06009bd |
@@ -22,13 +23,13 @@ each line cites the decision in docs/FLOW.md that records the owner's words. kin
 | behavior | the engine must not push the credit floor down. a bid above the market floor is accepted: sellers notice it and sell into it | 43 | built. the simulator shows the highest bid at 0.95 of market with an assumed seller book and no competing bidders: unproved against competing collection offers |
 | behavior | an empty pot never raises the price: the price state holds while the pot cannot afford a credit | 44 | built (`CoreLib._climb`, `receive` checkpoints first) |
 | behavior | a pot is spent as sellers come, never dripped over hours | 37, 45 | built (`spendCapBps` 10_000) |
-| behavior | nobody is overpaid: callers, keepers, bots and sellers | 46 | built. caller tips are bounded by `tipCapBps`, `keeperTipBps`, `reimburseCapBps`. compose pays its caller nothing (41) |
+| behavior | the keeper is not overpaid: payments to callers are bounded by `tipCapBps`, `keeperTipBps` and `reimburseCapBps`, and compose pays its caller nothing | 41, 46 | built |
 | behavior | compose and composeExit repay nothing. holders compose, the owner composes when nobody does | 41 | built. the composer and the owner's backstop cost are unproved assumptions (docs/REVIEW-decisions.md path A) |
-| behavior | migrate moves eth, exit token and credits, and the old engine sells out its own statements | 33 | built differently: after a migrate the old engine keeps buying and composing with later inflows. owner decision OD-1 in docs/HANDOFF.md |
+| behavior | migrate moves eth, exit token and credits, and the old engine sells out its own statements | 33 | built: after a migrate the old engine keeps buying and composing with later inflows, and `migrate` also moves the exit token pots. whether that serves the owner's purpose is OD-1 in docs/HANDOFF.md |
 | parameter | every economic number is an owner setting, effective at once, no timelock | 3, 15 | built |
-| parameter | opening bid at the market price of a credit on launch day, `rateCap` 10 times the opening bid | NEXT 11, 46 | the launch day rule sets both (docs/DEPLOY.md section 1). a preflight check of the ratio is NEXT item 21 |
+| parameter | opening bid at the market price of a credit on launch day, `rateCap` 10 times the opening bid | NEXT 11, 46 | the launch day rule sets both (docs/DEPLOY.md section 1), preflight fails unless the ratio is 10 (NEXT item 21) |
 | parameter | payee 0.75 points of volume to the owner address, protocol 0.25 points, engine the rest | 31 | built |
-| risk | holders trust the owner key fully: the owner can overpay a seller it controls and move everything to a successor at once | 8, section 10 | accepted by the owner |
+| risk | holders trust the owner key fully: the owner can overpay a seller it controls and move everything to a successor at once | 8, section 10 | accepted by the owner (FLOW decision 8) |
 
 we own five contracts. everything else is live, the v2 stack included, and is used as deployed.
 

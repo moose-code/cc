@@ -20,6 +20,12 @@ SPEC.loader.exec_module(director)
 
 STATE_ONLY = ["docs/PROJECT_STATE.md", "project/director-state.json", "project/evidence.json"]
 GATES = ["productRules", "focusedTests", "localLifecycle", "deploymentRehearsal"]
+GATE_KINDS = {
+    "productRules": ["acceptance", "review"],
+    "focusedTests": ["test"],
+    "localLifecycle": ["test", "rehearsal"],
+    "deploymentRehearsal": ["rehearsal"],
+}
 
 
 def base_state(documents: dict | None = None) -> dict:
@@ -53,7 +59,7 @@ def base_state(documents: dict | None = None) -> dict:
         "requiredFreezeGates": ["productRules"],
         "requiredDeployGates": GATES,
         "stateOnlyPaths": STATE_ONLY,
-        "gates": {name: {"evidence": []} for name in GATES},
+        "gates": {name: {"evidence": [], "kinds": GATE_KINDS[name]} for name in GATES},
     }
 
 
@@ -234,6 +240,29 @@ class EvidenceValidity(RepoCase):
         ok, reason = director.evidence_usable("E-2", self.sh("rev-parse", "HEAD"), state, ledger, {})
         self.assertEqual((ok, reason), (False, "carried E-1 result is findings"))
 
+    def test_glob_double_star_matches_zero_directories(self) -> None:
+        self.assertTrue(director.matches("test/A.t.sol", ["test/**/*.sol"]))
+        self.assertTrue(director.matches("test/a/b/A.t.sol", ["test/**/*.sol"]))
+        self.assertFalse(director.matches("test/A.t.txt", ["test/**/*.sol"]))
+        self.assertTrue(director.matches("src/a/b.sol", ["src/**"]))
+
+    def test_non_ascii_paths_are_reported_unquoted(self) -> None:
+        self.write("src/\u00e9.sol", "v1\n")
+        self.head = self.commit("add file")
+        self.add_evidence("E-1")
+        self.commit("evidence")
+        self.write("src/\u00e9.sol", "v2\n")
+        self.commit("change")
+        self.assertEqual(self.validity("E-1"), (False, "scope changed after verification: src/\u00e9.sol"))
+
+    def test_evidence_output_lists_changed_carried_scope(self) -> None:
+        self.carry_setup()
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            director.evidence_report()
+        line = next(l for l in buffer.getvalue().splitlines() if l.startswith("E-2"))
+        self.assertIn("src/Core.sol", line)
+
     def test_invalidated_record_is_invalid(self) -> None:
         self.add_evidence("E-1", invalidated={"reason": "flaky", "date": "2026-02-01"})
         self.commit("evidence")
@@ -284,6 +313,66 @@ class Structure(RepoCase):
         self.add_evidence("E-2", carries=["E-1"])
         self.assertTrue(any("cycle: E-1 -> E-2 -> E-1" in e for e in self.errors()))
 
+    def test_gate_without_kinds_and_empty_required_list_are_errors(self) -> None:
+        del self.state["gates"]["productRules"]["kinds"]
+        self.state["requiredFreezeGates"] = []
+        self.save()
+        errors = self.errors()
+        self.assertTrue(any("gate productRules has no kinds" in e for e in errors))
+        self.assertTrue(any("requiredFreezeGates must not be empty" in e for e in errors))
+
+    def test_carrier_scope_must_cover_carried_scope(self) -> None:
+        self.add_evidence("E-1", scope=["src/**"])
+        self.add_evidence("E-2", scope=["docs/**"], carries=["E-1"])
+        self.assertTrue(any("scope does not cover carried E-1 pattern src/**" in e for e in self.errors()))
+        self.add_evidence("E-2", scope=["*"], carries=["E-1"])
+        self.assertEqual(self.errors(), [])
+        self.add_evidence("E-2", scope=["other/**", "src/**"], carries=["E-1"])
+        self.assertEqual(self.errors(), [])
+
+    def test_scope_pattern_matching_no_tracked_file_is_error(self) -> None:
+        self.add_evidence("E-1", scope=["srcc/**", "*.nope"])
+        errors = self.errors()
+        self.assertTrue(any("scope pattern srcc/** matches no file" in e for e in errors))
+        self.assertTrue(any("scope pattern *.nope matches no file" in e for e in errors))
+        self.add_evidence("E-1", scope=["*"])
+        self.assertEqual(self.errors(), [])
+
+    def test_state_only_path_cannot_hide_evidence_scope(self) -> None:
+        self.add_evidence("E-1", scope=["docs/**"])
+        self.assertTrue(any("stateOnlyPaths entry docs/PROJECT_STATE.md hides" in e for e in self.errors()))
+        self.add_evidence("E-1", scope=["*"])
+        self.assertEqual(self.errors(), [])
+
+    def test_decision_id_pattern(self) -> None:
+        self.write("docs/DECISIONS.md", "## ADR-1\n## ADR-1\n\nDEC-001\nDEC-001\n")
+        self.assertEqual(self.errors(), [ "ERROR: duplicate decision id: DEC-001 (2 times)"])
+        self.state["documents"]["decisionIdPattern"] = r"^##\s+(ADR-\d+)"
+        self.save()
+        self.assertEqual(self.errors(), ["ERROR: duplicate decision id: ADR-1 (2 times)"])
+        self.state["documents"]["decisionIdPattern"] = "(("
+        self.save()
+        self.assertTrue(any("decisionIdPattern" in e for e in self.errors()))
+
+    def test_schema_1_state_gives_one_clear_error_for_every_command(self) -> None:
+        self.write("project/director-state.json", json.dumps({"schemaVersion": 1, "gates": {}, "openBlockers": []}))
+        for run in (
+            lambda: director.check_gate("working"),
+            lambda: director.check_gate("deploy"),
+            director.status,
+            director.handoff,
+            director.evidence_report,
+        ):
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = run()
+            self.assertEqual(code, 1)
+            self.assertEqual(
+                buffer.getvalue().strip(),
+                "ERROR: director-state.json is schema 1; this checker needs schema 2: "
+                "migrate (see the skill's references/change-management.md)",
+            )
+
     def test_working_success_line_is_labeled_structural(self) -> None:
         code, out = self.check("working")
         self.assertEqual(code, 0, out)
@@ -322,8 +411,9 @@ class DeployGate(RepoCase):
     def setUp(self) -> None:
         super().setUp()
         candidate = self.head
+        kinds = {"productRules": "review", "focusedTests": "test", "localLifecycle": "test", "deploymentRehearsal": "rehearsal"}
         for index, name in enumerate(GATES, start=1):
-            self.ledger["evidence"][f"E-{index}"] = base_record(candidate)
+            self.ledger["evidence"][f"E-{index}"] = base_record(candidate, kind=kinds[name], reviewer="b")
             self.state["gates"][name]["evidence"] = [f"E-{index}"]
         self.state["candidate"] = candidate
         self.state["objective"].update(
@@ -378,6 +468,34 @@ class DeployGate(RepoCase):
         self.save()
         self.commit("move candidate")
         self.assertFails("evidence E-1 invalid: scope changed after verification: src/Core.sol")
+
+    def test_analysis_record_in_every_gate_passes_neither_freeze_nor_deploy(self) -> None:
+        self.ledger["evidence"]["E-5"] = base_record(self.state["candidate"], kind="analysis")
+        for name in GATES:
+            self.state["gates"][name]["evidence"] = ["E-5"]
+        self.save()
+        self.commit("analysis everywhere")
+        for level in ("freeze", "deploy"):
+            code, out = self.check(level)
+            self.assertEqual(code, 1, out)
+            self.assertIn("gate productRules: evidence E-5 has kind analysis", out)
+
+    def test_analysis_counts_as_the_kinds_it_carries(self) -> None:
+        self.ledger["evidence"]["E-5"] = base_record(self.state["candidate"], kind="analysis", carries=["E-2"])
+        self.state["gates"]["focusedTests"]["evidence"] = ["E-5"]
+        self.save()
+        self.commit("carry a test")
+        self.assertEqual(self.check("deploy")[0], 0)
+        self.state["gates"]["productRules"]["evidence"] = ["E-5"]
+        self.save()
+        self.commit("carry used as review")
+        self.assertFails("gate productRules: evidence E-5 has kind test")
+
+    def test_deploy_respects_owner_decision_blocking_freeze(self) -> None:
+        self.state["ownerDecisions"] = [{"id": "OD-1", "question": "q", "status": "open", "blocks": ["freeze"]}]
+        self.save()
+        self.commit("decision")
+        self.assertFails("open owner decision OD-1 blocks")
 
     def test_failing_result_is_not_accepted(self) -> None:
         self.ledger["evidence"]["E-3"]["result"] = "fail"

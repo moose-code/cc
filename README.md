@@ -57,7 +57,7 @@ credits keep being bought whatever the statements do. the bid is flat per credit
 
 | branch | what it holds |
 |---|---|
-| `main` | the working branch and the current implementation. adjustable settings, flat or blended bid, statements sold on the pnd auction house, no inventory gate, no dutch statement auction. the brief is docs/FLOW.md |
+| `main` | the working branch and the current implementation. adjustable settings, flat or blended bid, statements sold on the pnd auction house, no inventory gate, no dutch statement auction. intent: docs/ARCHITECTURE.md, owner decisions: docs/FLOW.md |
 | `bundle/artcoin` | historical: the earlier implementation on the artcoins launcher with a dutch statement auction and four deploy dials |
 | `bundle/econ-options` | historical: the economics options as deploy config, with their independent review |
 

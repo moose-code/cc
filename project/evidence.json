@@ -49,6 +49,13 @@
       "source": "owner, 2026-10-10 session",
       "version": 1,
       "checked": "2026-10-10"
+    },
+    "A-OWNER-DECISIONS": {
+      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 47. bump the version when a decision changes behavior a test asserts",
+      "kind": "owner-decision",
+      "source": "docs/FLOW.md",
+      "version": 1,
+      "checked": "2026-10-10"
     }
   },
   "evidence": {
@@ -70,7 +77,8 @@
       "assumptions": {
         "A-FORK-BLOCK": 1,
         "A-V2-STACK": 1,
-        "A-TOOLCHAIN": 1
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 1
       },
       "dependsOn": [],
       "inputs": "fork block 26158000; the rehearsal test forks the latest block at run time, not recorded",
@@ -99,7 +107,8 @@
       "assumptions": {
         "A-FORK-BLOCK": 1,
         "A-V2-STACK": 1,
-        "A-TOOLCHAIN": 1
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 1
       },
       "dependsOn": [],
       "inputs": "fork block 26158000",
@@ -107,7 +116,7 @@
       "author": "director session 75f67902, 2026-10-10",
       "reviewer": "",
       "result": "pass",
-      "limitations": "the invariants encode the director's reading of intent. invariant definitions were reviewed with the owner on 2026-10-10, the handler models are not independently reviewed",
+      "limitations": "the invariants encode the director's reading of intent. the owner asked about and edited the invariant definitions on 2026-10-10 and then said 'Merge all to main'; there is no explicit owner acceptance of the definitions. the handler models are not independently reviewed",
       "invalidated": null
     },
     "E-SUITE-CARRY-5e69033": {
@@ -128,7 +137,8 @@
       "assumptions": {
         "A-FORK-BLOCK": 1,
         "A-V2-STACK": 1,
-        "A-TOOLCHAIN": 1
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 1
       },
       "dependsOn": [],
       "inputs": "git diff 06009bd 5e69033 -- src test script lib foundry.toml remappings.txt foundry.lock",
@@ -136,7 +146,7 @@
       "author": "director, 2026-10-10",
       "reviewer": "",
       "result": "pass",
-      "limitations": "a comment change cannot change bytecode of a test helper. no recompile was run",
+      "limitations": "no recompile was run. the changed line is NatSpec, which enters the metadata of the test contract, and no test pins the bytecode or metadata of a test contract",
       "invalidated": null,
       "carries": [
         "E-SUITE-06009bd",
@@ -157,7 +167,7 @@
       "author": "director session of 2026-10-06",
       "reviewer": "review subagent of 2026-10-06",
       "result": "findings",
-      "limitations": "the most recent pinned review of this repo. 45 later commits change src/",
+      "limitations": "one of about ten review documents in docs/REVIEW-*.md, all pinned to commits that 44 or more later src commits changed (the latest, REVIEW-v2port.md, covered 0a44fdf..HEAD on 2026-10-07)",
       "invalidated": null
     },
     "E-AUDIT-CODEX-32ff35b": {
@@ -207,7 +217,9 @@
       "scope": [
         "src/**",
         "test/Migrate.t.sol",
+        "test/GasCap.t.sol",
         "sim/engine.js",
+        "script/Checks.sol",
         "script/config/mainnet.json"
       ],
       "assumptions": {
@@ -223,6 +235,83 @@
       "reviewer": "",
       "result": "findings",
       "limitations": "no new simulation, no fork reads, no security review",
+      "invalidated": null
+    },
+    "E-NEXT21-fb6c26c": {
+      "claim": "preflight fails unless settings.rateCap is 10 times rateStart, the shipped config passes, a moved rateStart with the old cap fails, the review matrix classifies every mutation",
+      "kind": "test",
+      "sourceRevision": "fb6c26cf798148e2ed1fd0fd8a633c138a84f65c",
+      "scope": [
+        "script/*.sol",
+        "script/config/**",
+        "test/Config.t.sol",
+        "test/ReviewMatrix.t.sol",
+        "test/utils/**"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 1
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000",
+      "method": "forge test --match-path test/Config.t.sol (28 pass); forge test --match-path test/ReviewMatrix.t.sol (11 pass, 284 mutations, 0 slips); REHEARSAL=1 over Rehearsal, Resume, ReviewDeploy, GasCap (78 pass, 1 skipped)",
+      "author": "implementer subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "focused tests only. the test fixture opens at a ratio of about 51, so test/Config.t.sol wraps preflight to read the fixture start as a tenth of the cap. the full suite was not run",
+      "invalidated": null
+    },
+    "E-AUDIT-DECISIONS-fb6c26c": {
+      "claim": "decision and path audit as revised after the independent review: findings 1 to 5, paths A and B, dispositions in section 6 of docs/REVIEW-decisions.md",
+      "kind": "analysis",
+      "sourceRevision": "fb6c26cf798148e2ed1fd0fd8a633c138a84f65c",
+      "scope": [
+        "src/**",
+        "test/Migrate.t.sol",
+        "test/GasCap.t.sol",
+        "sim/engine.js",
+        "script/Checks.sol",
+        "script/config/mainnet.json"
+      ],
+      "assumptions": {
+        "A-COMPOSER": 2,
+        "A-VOLUME": 1,
+        "A-GAS-PRICE": 1,
+        "A-CREDIT-MARKET": 1,
+        "A-OWNER-DECISIONS": 1
+      },
+      "dependsOn": [],
+      "inputs": "owner transcripts 2026-10-08 to 2026-10-10, docs/FLOW.md 1 to 47, reviewer report of 2026-10-10",
+      "method": "code reads and transcript reads, no forge run; revisions follow the reviewer's findings 4, 6, 7, 8, 12 and 14",
+      "author": "director, 2026-10-10",
+      "reviewer": "",
+      "result": "findings",
+      "limitations": "no new simulation, no fork reads, no security review",
+      "invalidated": null
+    },
+    "E-REVIEW-REPAIR-01452dd": {
+      "claim": "independent review of the director records at 01452dd and of the project-director skill at 15653ff: 15 findings, 2 high (both in the skill's checker)",
+      "kind": "review",
+      "sourceRevision": "01452ddd6cfa5d61953e39100b258d8a8bf945ff",
+      "scope": [
+        "AGENTS.md",
+        "docs/ARCHITECTURE.md",
+        "docs/FLOW.md",
+        "docs/REVIEW-decisions.md",
+        "script/director.py"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 1
+      },
+      "dependsOn": [],
+      "inputs": "git diff 2407087 01452dd, the owner transcript 75f67902, the skill repo at 15653ff",
+      "method": "read only review subagent, fresh context, challenged claims C1 to C6, ran the checker functions on in-memory copies",
+      "author": "director, 2026-10-10",
+      "reviewer": "independent review subagent, 2026-10-10",
+      "result": "findings",
+      "limitations": "no forge run; Solidity read only for the migrate doors and invariants 11 and 16. the fixes made after it are not yet re-reviewed",
       "invalidated": null
     }
   }
