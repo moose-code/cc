@@ -206,7 +206,10 @@ class EvidenceValidity(RepoCase):
         self.write("src/Core.sol", "v2\n")
         revision = self.commit("scoped change covered by E-2 analysis")
         self.head = revision
-        self.add_evidence("E-2", revision, carries=["E-1"], method="diff review of src/Core.sol", limitations="l")
+        self.add_evidence(
+            "E-2", revision, carries=["E-1"], carriedChanges=["src/Core.sol"],
+            method="diff review of src/Core.sol", limitations="l",
+        )
         self.commit("carry")
 
     def test_carry_over_scoped_change_is_valid(self) -> None:
@@ -214,6 +217,27 @@ class EvidenceValidity(RepoCase):
         self.assertFalse(self.validity("E-1")[0])
         self.assertEqual(self.validity("E-2"), (True, "valid"))
         self.assertEqual(self.check("working")[0], 0)
+
+    def test_carry_must_enumerate_changed_carried_paths(self) -> None:
+        self.carry_setup()
+        self.ledger["evidence"]["E-2"]["carriedChanges"] = []
+        self.save()
+        self.commit("missing")
+        self.assertEqual(
+            self.validity("E-2"),
+            (False, "carriedChanges differs from changed carried scope: missing src/Core.sol"),
+        )
+        self.ledger["evidence"]["E-2"]["carriedChanges"] = ["src/Core.sol", "src/Other.sol"]
+        self.save()
+        self.commit("extra")
+        self.assertEqual(
+            self.validity("E-2"),
+            (False, "carriedChanges differs from changed carried scope: extra src/Other.sol"),
+        )
+        del self.ledger["evidence"]["E-2"]["carriedChanges"]
+        self.save()
+        self.commit("absent")
+        self.assertFalse(self.validity("E-2")[0])
 
     def test_carry_invalidated_by_carried_assumption_bump(self) -> None:
         self.carry_setup()
@@ -321,6 +345,19 @@ class Structure(RepoCase):
         self.assertTrue(any("gate productRules has no kinds" in e for e in errors))
         self.assertTrue(any("requiredFreezeGates must not be empty" in e for e in errors))
 
+    def test_analysis_is_never_a_gate_kind(self) -> None:
+        self.state["gates"]["productRules"]["kinds"] = ["review", "analysis"]
+        self.save()
+        self.assertTrue(any("gate productRules: analysis cannot be a gate kind" in e for e in self.errors()))
+
+    def test_zero_decision_ids_in_non_empty_document_warns(self) -> None:
+        self.write("docs/DECISIONS.md", "prose with no ids\n")
+        code, out = self.check("working")
+        self.assertEqual(code, 0, out)
+        self.assertIn("WARN: docs/DECISIONS.md is non-empty but matches no decision ids", out)
+        self.write("docs/DECISIONS.md", "DEC-001\n")
+        self.assertNotIn("WARN: docs/DECISIONS.md", self.check("working")[1])
+
     def test_carrier_scope_must_cover_carried_scope(self) -> None:
         self.add_evidence("E-1", scope=["src/**"])
         self.add_evidence("E-2", scope=["docs/**"], carries=["E-1"])
@@ -370,7 +407,7 @@ class Structure(RepoCase):
             self.assertEqual(
                 buffer.getvalue().strip(),
                 "ERROR: director-state.json is schema 1; this checker needs schema 2: "
-                "migrate (see the skill's references/change-management.md)",
+                "migrate: see the skill's SKILL.md (Start, older installed checker)",
             )
 
     def test_working_success_line_is_labeled_structural(self) -> None:
@@ -496,6 +533,27 @@ class DeployGate(RepoCase):
         self.save()
         self.commit("decision")
         self.assertFails("open owner decision OD-1 blocks")
+
+    def test_analysis_cannot_extend_a_review_over_changed_code(self) -> None:
+        review = self.state["candidate"]
+        self.ledger["evidence"]["A-1"] = base_record(review, kind="analysis", carries=["E-1"])
+        self.state["gates"]["productRules"]["evidence"] = ["A-1"]
+        self.save()
+        self.commit("carry unchanged review")
+        self.assertEqual(self.check("freeze")[0], 0)
+        self.write("src/Core.sol", "v2\n")
+        changed = self.commit("change reviewed code")
+        self.ledger["evidence"]["A-1"]["sourceRevision"] = changed
+        self.state["candidate"] = changed
+        self.save()
+        self.commit("carry across change")
+        self.assertEqual(
+            self.validity("A-1"),
+            (False, "carried review E-1: reviewed scope changed: src/Core.sol"),
+        )
+        code, out = self.check("freeze")
+        self.assertEqual(code, 1, out)
+        self.assertIn("reviewed scope changed: src/Core.sol", out)
 
     def test_failing_result_is_not_accepted(self) -> None:
         self.ledger["evidence"]["E-3"]["result"] = "fail"

@@ -151,6 +151,9 @@
       "carries": [
         "E-SUITE-06009bd",
         "E-DEEP-06009bd"
+      ],
+      "carriedChanges": [
+        "test/utils/Fixture.sol"
       ]
     },
     "E-REVIEW-SALE-a3e2fa3": {

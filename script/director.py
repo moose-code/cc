@@ -201,7 +201,7 @@ def load() -> tuple[dict | None, dict | None, dict | None, list[str], dict]:
         )
         errors.append(
             f"director-state.json {found}; this checker needs schema 2: "
-            "migrate (see the skill's references/change-management.md)"
+            "migrate: see the skill's SKILL.md (Start, older installed checker)"
         )
         state = None
     if state is not None:
@@ -360,7 +360,9 @@ def validate_state(state: dict, errors: list[str]) -> None:
         else:
             kinds = str_list(gate["kinds"], f"gate {name}.kinds", errors)
         for kind in kinds:
-            if kind not in EVIDENCE_KINDS:
+            if kind == "analysis":
+                errors.append(f"gate {name}: analysis cannot be a gate kind")
+            elif kind not in EVIDENCE_KINDS:
                 errors.append(f"gate {name}: unknown kind {kind}")
     for key, names in required.items():
         for name in names:
@@ -442,6 +444,7 @@ def validate_record(eid: str, rec: object, errors: list[str]) -> None:
     carries = str_list(rec.get("carries", []), f"{where}.carries", errors)
     if eid in carries:
         errors.append(f"{where}: carries itself")
+    str_list(rec.get("carriedChanges", []), f"{where}.carriedChanges", errors)
     invalidated = rec.get("invalidated")
     if invalidated is not None and not (
         isinstance(invalidated, dict)
@@ -558,23 +561,35 @@ def validate_state_only_scopes(state: dict, records: dict, errors: list[str]) ->
                 )
 
 
+def decision_pattern(state: dict) -> re.Pattern:
+    custom = state["documents"].get("decisionIdPattern")
+    if custom is None:
+        return DECISION_RE
+    pattern = re.compile(custom, re.MULTILINE)
+    if pattern.groups != 1:
+        raise ValueError("expected exactly one capture group")
+    return pattern
+
+
+def decision_warnings(state: dict) -> list[str]:
+    rel = state["documents"]["decisions"]
+    text = (ROOT / rel).read_text()
+    if text.strip() and not decision_pattern(state).findall(text):
+        return [f"{rel} is non-empty but matches no decision ids; check documents.decisionIdPattern"]
+    return []
+
+
 def validate_documents(state: dict, trace: dict | None, paths: dict, errors: list[str]) -> None:
     state_only = state.get("stateOnlyPaths") if isinstance(state.get("stateOnlyPaths"), list) else []
     for key in ("rules", "decisions"):
         if paths.get(key) and matches(paths[key], state_only):
             errors.append(f"documents.{key} is in stateOnlyPaths; a change to it changes the premises")
     if paths.get("decisions"):
-        pattern = DECISION_RE
-        custom = state["documents"].get("decisionIdPattern")
-        if custom is not None:
-            try:
-                pattern = re.compile(custom, re.MULTILINE)
-                if pattern.groups != 1:
-                    raise ValueError("expected exactly one capture group")
-            except (re.error, TypeError, ValueError) as exc:
-                errors.append(f"documents.decisionIdPattern is not a regex with one group: {exc}")
-                pattern = None
-        if pattern is not None:
+        try:
+            pattern = decision_pattern(state)
+        except (re.error, TypeError, ValueError) as exc:
+            errors.append(f"documents.decisionIdPattern is not a regex with one group: {exc}")
+        else:
             text = (ROOT / paths["decisions"]).read_text()
             report_duplicates(pattern.findall(text), "decision", errors)
     if trace is None:
@@ -652,10 +667,13 @@ def _assumption_reasons(rec: dict, ledger: dict, prefix: str = "") -> list[str]:
 def _carry_reasons(
     rec: dict, state: dict, ledger: dict, memo: dict, stack: list
 ) -> list[str]:
-    """Reasons a carried record no longer supports `rec`. Scope changes between
-    the carried and the carrying revision are not checked; the carrying record's
-    analysis covers that diff."""
+    """Reasons a carried record no longer supports `rec`.
+
+    A carried review or acceptance stays valid only if nothing in its scope changed
+    up to the carrier's revision. Other carried kinds may span such changes if the
+    carrier lists them exactly in `carriedChanges`."""
     reasons = []
+    enumerated: set[str] = set()
     for cid in rec.get("carries", []):
         carried = ledger["evidence"].get(cid)
         label = f"carried {cid}"
@@ -669,10 +687,27 @@ def _carry_reasons(
                 f"{label} sourceRevision {short(carried['sourceRevision'])} "
                 f"is not an ancestor of {short(rec['sourceRevision'])}"
             )
+        else:
+            changed = carried_changes(rec, ledger, state)[cid]
+            if carried["kind"] in INDEPENDENT_KINDS:
+                if changed:
+                    reasons.append(
+                        f"carried {carried['kind']} {cid}: reviewed scope changed: " + ", ".join(changed[:5])
+                        + (", ..." if len(changed) > 5 else "")
+                    )
+            else:
+                enumerated.update(changed)
         reasons += _assumption_reasons(carried, ledger, f"{label}: ")
         for dep in carried["dependsOn"] + carried.get("carries", []):
             if not _validity(dep, carried["sourceRevision"], state, ledger, memo, stack)[0]:
                 reasons.append(f"{label} depends on invalid {dep}")
+    listed = set(rec.get("carriedChanges", []))
+    missing, extra = sorted(enumerated - listed), sorted(listed - enumerated)
+    if missing or extra:
+        parts = ([f"missing {', '.join(missing)}"] if missing else []) + (
+            [f"extra {', '.join(extra)}"] if extra else []
+        )
+        reasons.append("carriedChanges differs from changed carried scope: " + "; ".join(parts))
     return reasons
 
 
@@ -863,6 +898,8 @@ def check_gate(level: str) -> int:
     if errors:
         return print_errors(errors)
     branch, head, dirty = current()
+    for warning in decision_warnings(state):
+        print(f"WARN: {warning}")
     if head != UNBORN:
         for eid, reason in invalid_evidence(state, ledger, head):
             print(f"WARN: evidence {eid} is invalid at {short(head)}: {reason}")
