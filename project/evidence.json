@@ -953,6 +953,149 @@
         "sha256": "9e0d4d5f300dda779c0f7721841b452e3b60454fa5eb3515e75d1b31eb6845f3",
         "revision": "566d7d5d4e845a101d0c74743df3c7ab38ca3257"
       }
+    },
+    "E-TARGETED-14c6306": {
+      "claim": "launch verification fixes: PostflightSlots 8, BuildIdentity 5, Config 33, ReviewDeploy 17, Resume 22, ScriptLint 1, Lock 8, ReviewSale 62 pass; the real preflight script on a fork: 121 rows, 118 pass, the three documented owner side failures; Deploy dry runs refuse a change flag and a wrong CONTROLLER_NONCE",
+      "kind": "test",
+      "sourceRevision": "14c6306f6ab7fc24b63fdbab5618f90c65274148",
+      "scope": [
+        "src/**",
+        "script/**",
+        "test/PostflightSlots.t.sol",
+        "test/BuildIdentity.t.sol",
+        "test/Config.t.sol",
+        "test/ReviewDeploy.t.sol",
+        "test/Resume.t.sol",
+        "test/ScriptLint.t.sol",
+        "test/Lock.t.sol",
+        "test/ReviewSale.t.sol"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 7,
+        "A-OWNER-DELEGATE": 1
+      },
+      "dependsOn": [],
+      "inputs": "MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co FORK_BLOCK=26158000",
+      "method": "forge test --match-path per file; script/tools/check-preflight.sh; forge script Deploy.s.sol dry run",
+      "author": "implementer subagent, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "targeted only",
+      "invalidated": null
+    },
+    "E-DEEP-CARRY-14c6306": {
+      "claim": "the result of E-DEEP-1e2c4b3 holds at 14c6306",
+      "kind": "analysis",
+      "sourceRevision": "14c6306f6ab7fc24b63fdbab5618f90c65274148",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 7
+      },
+      "dependsOn": [
+        "E-TARGETED-14c6306"
+      ],
+      "carries": [
+        "E-DEEP-1e2c4b3"
+      ],
+      "carriedChanges": [
+        "script/Checks.sol",
+        "script/Deploy.s.sol",
+        "script/PostflightChecks.sol",
+        "script/PostflightV2.sol",
+        "script/Preflight.s.sol",
+        "script/Resume.s.sol",
+        "script/SystemDeployer.sol",
+        "script/tools/check-preflight.sh",
+        "test/BuildIdentity.t.sol",
+        "test/Config.t.sol",
+        "test/PostflightSlots.t.sol",
+        "test/ReviewDeploy.t.sol",
+        "test/invariant/Invariants.t.sol"
+      ],
+      "inputs": "git diff 1e2c4b3 14c6306",
+      "method": "src unchanged (git diff 1e2c4b3 14c6306 -- src is empty). script/SystemDeployer.sol only adds _requireNoChangeFlags, _requireControllerNonce and two errors, called from Deploy.s.sol and Resume.s.sol, never from deploySystem, which the fixtures use. the other changed scripts are preflight and postflight checks the invariant fixtures do not call. test/invariant/Invariants.t.sol: invariant 3 comment only",
+      "author": "director, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "no rerun of the carried campaign",
+      "invalidated": null
+    },
+    "E-SUITE-CARRY-14c6306": {
+      "claim": "the result of E-SUITE-c8892a2 holds at 14c6306",
+      "kind": "analysis",
+      "sourceRevision": "14c6306f6ab7fc24b63fdbab5618f90c65274148",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 7,
+        "A-OWNER-DELEGATE": 1
+      },
+      "dependsOn": [
+        "E-TARGETED-14c6306"
+      ],
+      "carries": [
+        "E-SUITE-c8892a2"
+      ],
+      "carriedChanges": [
+        "script/Checks.sol",
+        "script/Deploy.s.sol",
+        "script/PostflightChecks.sol",
+        "script/PostflightV2.sol",
+        "script/Preflight.s.sol",
+        "script/Resume.s.sol",
+        "script/SystemDeployer.sol",
+        "script/tools/check-preflight.sh",
+        "test/BuildIdentity.t.sol",
+        "test/Config.t.sol",
+        "test/PostflightSlots.t.sol",
+        "test/Redeem.t.sol",
+        "test/ReviewCore.t.sol",
+        "test/ReviewDeploy.t.sol",
+        "test/ReviewEcon.t.sol",
+        "test/ReviewFlowCore.t.sol",
+        "test/ReviewFlowHouse.t.sol",
+        "test/ReviewPhase2Flex.t.sol",
+        "test/ReviewPort.t.sol",
+        "test/ReviewSale.t.sol",
+        "test/ReviewV2Port.t.sol",
+        "test/V2Stack.t.sol",
+        "test/invariant/HandlerBase.sol",
+        "test/invariant/Invariants.t.sol",
+        "test/utils/ReviewHarness.sol"
+      ],
+      "inputs": "git diff c8892a2 14c6306",
+      "method": "as E-SUITE-CARRY-ce6792b, plus the launch verification change: src unchanged, the touched script and test files rerun in E-TARGETED-14c6306",
+      "author": "director, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "no rerun of the carried campaign",
+      "invalidated": null
     }
   }
 }

@@ -187,7 +187,7 @@
       ]
     }
   ],
-  "nextAction": "Deep invariant campaign on the frozen candidate (7 suites, CANDIDATE_RUN=1), independent security review of the candidate, then the rehearsal.",
+  "nextAction": "Rehearsal of the frozen candidate from a clean checkout: check-preflight.sh, Deploy and Resume dry runs, the Rehearsal test at the latest block.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
@@ -216,7 +216,8 @@
     },
     "focusedTests": {
       "evidence": [
-        "E-SUITE-CARRY-ce6792b"
+        "E-SUITE-CARRY-14c6306",
+        "E-DEEP-CARRY-14c6306"
       ],
       "kinds": [
         "test"
@@ -231,7 +232,8 @@
     },
     "localLifecycle": {
       "evidence": [
-        "E-SUITE-CARRY-ce6792b"
+        "E-SUITE-CARRY-14c6306",
+        "E-DEEP-CARRY-14c6306"
       ],
       "kinds": [
         "test",
@@ -240,7 +242,8 @@
     },
     "fullSuite": {
       "evidence": [
-        "E-SUITE-CARRY-ce6792b"
+        "E-SUITE-CARRY-14c6306",
+        "E-DEEP-CARRY-14c6306"
       ],
       "kinds": [
         "test"
