@@ -738,6 +738,52 @@
       "result": "pass",
       "limitations": "the Deep suites run on the frozen candidate. the change is under independent review",
       "invalidated": null
+    },
+    "E-SUITE-CARRY-b3f545c": {
+      "claim": "the candidate run of E-SUITE-c8892a2 holds at b3f545c",
+      "kind": "analysis",
+      "sourceRevision": "b3f545cd095f38848c8297355a369fd72abd8115",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 7,
+        "A-OWNER-DELEGATE": 1
+      },
+      "dependsOn": [],
+      "carries": [
+        "E-SUITE-c8892a2"
+      ],
+      "carriedChanges": [
+        "test/ReviewCore.t.sol",
+        "test/ReviewDeploy.t.sol",
+        "test/ReviewEcon.t.sol",
+        "test/ReviewFlowCore.t.sol",
+        "test/ReviewFlowHouse.t.sol",
+        "test/ReviewPhase2Flex.t.sol",
+        "test/ReviewPort.t.sol",
+        "test/ReviewSale.t.sol",
+        "test/ReviewV2Port.t.sol",
+        "test/utils/ReviewHarness.sol"
+      ],
+      "inputs": "git diff -U0 c8892a2 b3f545c -- test",
+      "method": "each of the 10 changed lines is a /// NatSpec path from docs/REVIEW-*.md to docs/archive/REVIEW-*.md; no code line changed",
+      "author": "director, 2026-10-10",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "no rerun; NatSpec enters test contract metadata, which no test pins",
+      "invalidated": null
     }
   }
 }
