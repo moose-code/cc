@@ -13,10 +13,12 @@
 # the launch config fails this script until the owner fills both.
 # env:   MAINNET_RPC_URL (default: the Tenderly public gateway, archive state), FORK_BLOCK (default 26158000),
 #        DEPLOYER (default: the config owner), EXPECT_FAIL (comma separated failed rows; default: the two factory rows of
-#        DEPLOY step 3, which fail on the pin block before the factory owner step).
-#        IGNORE_BALANCE=1 leaves the row `deployer: balance covers the deploy fee and the gas` out of the comparison on
-#        both sides, for a rehearsal on a fork block where the owner's balance is not the launch day balance. the launch
-#        sign-off runs without it, so an underfunded deployer fails here.
+#        DEPLOY step 3, and the metadata row for a config holding PLACEHOLDER). the balance row
+#        `deployer: balance covers the deploy fee and the gas` is compared. the default pin block run fails on it
+#        because the owner held 0.068 eth at that block, below the need.
+#        IGNORE_BALANCE=1 leaves the balance row out of the comparison on both sides. a reproducible pin block run uses
+#        it. the launch day run uses FORK_BLOCK=<latest block> with the funded owner and no IGNORE_BALANCE, so an
+#        underfunded deployer fails here.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 cfg="${1:-script/config/mainnet.json}"
