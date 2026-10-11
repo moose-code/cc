@@ -57,7 +57,8 @@ abstract contract LaunchChecks is PostflightChecks {
     /// `MAX_DESCRIPTION_BYTES`, the factory reverts above them)
     uint256 internal constant MAX_IMAGE_BYTES = 2048;
     uint256 internal constant MAX_DESCRIPTION_BYTES = 4096;
-    /// @dev a config `image` or `description` containing this text is a rehearsal value. it fails preflight on chain id 1
+    /// @dev the text the rehearsal config holds in `image` and `description`. on chain id 1 the metadata row also fails for a
+    /// value that is empty after trimming spaces, or that contains `placeholder` in any letter case, or is `todo` or `tbd`
     string internal constant PLACEHOLDER_MARKER = "PLACEHOLDER";
     // the pinned launch rules (docs/DEPLOY.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
@@ -298,17 +299,33 @@ abstract contract LaunchChecks is PostflightChecks {
                 "image ", vm.toString(bytes(c.image).length), " bytes description ", vm.toString(bytes(c.description).length), " bytes"
             )
         );
-        bool filled = bytes(c.image).length != 0 && bytes(c.description).length != 0;
-        bool marked = vm.contains(c.image, PLACEHOLDER_MARKER) || vm.contains(c.description, PLACEHOLDER_MARKER);
+        bool filled = !_blank(c.image) && !_blank(c.description);
+        bool marked = _marked(c.image) || _marked(c.description);
         string memory filledName = "rule: image and description are filled and are not placeholders";
         string memory filledDetail = !filled
             ? "empty: fill both in the config before step 4"
-            : marked ? string.concat("a value contains ", PLACEHOLDER_MARKER) : "both set in the launch transaction";
+            : marked ? "a value contains placeholder or is todo or tbd" : "both set in the launch transaction";
         if (block.chainid == 1) _check(filledName, filled && !marked, filledDetail);
         else _warn(filledName, filled && !marked, filledDetail);
         bool set = c.owner != address(0) && c.creator != address(0);
         _warn("warn: owner differs from creator", !set || c.owner != c.creator, "one party takes both roles");
         deployer;
+    }
+
+    /// @dev true when `s` is empty or holds only spaces
+    function _blank(string memory s) private pure returns (bool) {
+        bytes memory b = bytes(s);
+        for (uint256 i; i < b.length; ++i) {
+            if (b[i] != 0x20) return false;
+        }
+        return true;
+    }
+
+    /// @dev true when `s` contains `placeholder` in any letter case, or is `todo` or `tbd` after trimming. the short
+    /// markers match the whole value, so a real ipfs cid that holds the letters is accepted
+    function _marked(string memory s) private view returns (bool) {
+        string memory l = vm.trim(vm.toLowercase(s));
+        return vm.contains(l, "placeholder") || keccak256(bytes(l)) == keccak256("todo") || keccak256(bytes(l)) == keccak256("tbd");
     }
 
     /// @dev the router forwards the payee share with a plain call. a payee that reverts or needs more gas sends its share

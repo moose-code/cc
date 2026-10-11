@@ -32,7 +32,7 @@
       },
       {
         "id": "credit-purchase",
-        "description": "bid rule (drop, climb, ceiling, clamp, rateCap), sellForEth, buyListing and its tip, hourly window, adopt",
+        "description": "bid rule (drop, climb, ceiling, clamp, rateCap), sellForEth, buyListing and its caller payment, adopt",
         "status": "in-progress",
         "evidence": [
           "E-AUDIT-SYSTEM-eff3051"
@@ -40,7 +40,7 @@
       },
       {
         "id": "compose-and-listing",
-        "description": "compose and composeExit with no paid caller, statement cost basis and compose time, controller pricing",
+        "description": "compose and composeExit with an optional caller payment (0 at launch), statement cost basis and compose time, controller pricing",
         "status": "in-progress",
         "evidence": [
           "E-AUDIT-CARRY-f1fd139"
@@ -56,7 +56,7 @@
       },
       {
         "id": "phase2-exit",
-        "description": "exitStatement and its gas repay, overprint, exit lane, exit token bid and auction, module replacement",
+        "description": "exitStatement and its optional caller payment, exit lane, exit token bid and auction, module replacement",
         "status": "in-progress",
         "evidence": [
           "E-AUDIT-SYSTEM-eff3051"

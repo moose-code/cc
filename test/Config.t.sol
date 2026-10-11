@@ -544,7 +544,7 @@ contract ConfigTest is Fixture {
         assertFalse(_warnClean("warn: coin: description equals the config"));
     }
 
-    /// preflight: both fields inside the coin caps (2048 and 4096 bytes), filled and free of the placeholder marker (a failure on chain id 1, a warning elsewhere)
+    /// preflight: both fields inside the coin caps (2048 and 4096 bytes), filled (not empty or spaces only) and free of `placeholder` in any letter case and not `todo` or `tbd` as the whole value (a failure on chain id 1, a warning elsewhere)
     function test_preflightImageAndDescription() public {
         address d2 = _funded();
         string memory cap = "rule: image at most 2048 bytes, description at most 4096 bytes";
@@ -554,7 +554,7 @@ contract ConfigTest is Fixture {
         _pre(lc, d2);
         assertTrue(_warnClean(cap) && _warnClean(filled), "filled and inside the caps");
 
-        // chain id 1: an empty value or the marker fails the row
+        // chain id 1: an empty value or a marker fails the row
         LaunchConfig memory c = lc;
         c.image = "";
         _pre(c, d2);
@@ -575,10 +575,39 @@ contract ConfigTest is Fixture {
         c.description = "a PLACEHOLDER description";
         _pre(c, d2);
         assertEq(_failedNames(), filled, "a placeholder description fails");
+        // spaces only counts as empty
         c = lc;
-        c.image = "ipfs://placeholder";
+        c.image = " ";
         _pre(c, d2);
-        assertEq(_failedNames(), "", "the marker is case sensitive");
+        assertEq(_failedNames(), filled, "a single space image fails");
+        c = lc;
+        c.description = "   ";
+        _pre(c, d2);
+        assertEq(_failedNames(), filled, "a spaces only description fails");
+        // `placeholder` matches inside a value in any letter case, `todo` and `tbd` match the whole trimmed value
+        string[6] memory marked = ["ipfs://placeholder", "ipfs://PlaceHolder-1", "TODO", " todo ", "tbd", "TBD"];
+        for (uint256 i; i < marked.length; ++i) {
+            c = lc;
+            c.image = marked[i];
+            _pre(c, d2);
+            assertEq(_failedNames(), filled, string.concat("a marked image fails: ", marked[i]));
+            c = lc;
+            c.description = marked[i];
+            _pre(c, d2);
+            assertEq(_failedNames(), filled, string.concat("a marked description fails: ", marked[i]));
+        }
+        // real looking values pass, with spaces inside the text
+        c = lc;
+        c.image = "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        c.description = "Credits engine coin. The pot buys credits at the bid.";
+        _pre(c, d2);
+        assertEq(_failedNames(), "", "real looking values pass");
+        // a cid or a description that holds the letters of a short marker passes
+        c = lc;
+        c.image = "ipfs://bafybeitbdtodoabcdefghijklmnopqrstuvwxyz234567abcdefghij";
+        c.description = "todo list of the engine: tbd later";
+        _pre(c, d2);
+        assertEq(_failedNames(), "", "short markers inside a value pass");
 
         // another chain id: the row warns and never fails (the chain id row fails there)
         vm.chainId(11155111);
@@ -591,6 +620,18 @@ contract ConfigTest is Fixture {
         c.description = "PLACEHOLDER";
         _pre(c, d2);
         assertFalse(_warnClean(filled), "a placeholder warns off mainnet");
+        c = lc;
+        c.image = " ";
+        _pre(c, d2);
+        assertFalse(_warnClean(filled), "a blank image warns off mainnet");
+        c = lc;
+        c.description = "todo";
+        _pre(c, d2);
+        assertFalse(_warnClean(filled), "a todo warns off mainnet");
+        c = lc;
+        c.image = "TBD";
+        _pre(c, d2);
+        assertFalse(_warnClean(filled), "a tbd warns off mainnet");
         (string memory list,) = _failed();
         assertFalse(vm.contains(list, filled), "the row is not a failure off mainnet");
         vm.chainId(1);

@@ -235,7 +235,7 @@ abstract contract PostflightChecks is PostflightPool {
         _check(
             "controller: every CORE slot of the runtime code is the Core",
             runtimeSlotsMatch(ctl, "ControllerV1", address(0), ctlWant),
-            "the 9 immutable sites of the controller runtime code"
+            "the 13 immutable sites of the controller runtime code"
         );
         // after launch the owner may lock or set the exit module: LOCKS_CHANGED=1 turns the row into a report line
         bool launchState = !core.controllerLocked() && !core.exitModuleLocked() && !core.targetsLocked()

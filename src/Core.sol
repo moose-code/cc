@@ -178,8 +178,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// gas of the work after the count in `buyListing` (the spend, the pile record, the event and the payment, about
     /// 200,000), the transaction base cost and typical calldata
     uint256 private constant BUYLISTING_OVERHEAD_GAS = 250_000;
-    /// gas the controller's `nextPage` may use, in both lanes. a full page of ControllerV1 costs about 73,000 (measured
-    /// in test/ReviewFlowCore.t.sol), so this is about 7 times that
+    /// gas the controller's `nextPage` may use, in both lanes. a full page of ControllerV1 costs 238,062 gas on a cold
+    /// read (test/GasCap.t.sol `test_gas_readCaps_nextPage`)
     uint256 private constant PAGE_GAS = 500_000;
     address private constant DEAD = Mainnet.DEAD;
     bytes32 private constant MEASURING_SLOT = keccak256("core.measuring");
@@ -419,12 +419,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                            CONTROLLER READS
     //////////////////////////////////////////////////////////////*/
 
-    /// bounded read of a module. any failure or short answer returns false and a long answer is cut off.
     /// the settings, four packed slots at a fixed location shared with the library
     function _st() private pure returns (Settings storage) {
         return SettingsStore.load();
     }
 
+    /// bounded read of a module. any failure or short answer returns false and a long answer is cut off
     function _ask(address module, bytes memory input, uint256 gasCap, uint256 outLen)
         private
         view
