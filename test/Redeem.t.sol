@@ -10,7 +10,7 @@ import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {SellingController, HostileModule, RepaidCaller} from "./attackers/SaleAttackers.sol";
 
 /// phase 2 redemption: when an eth lane statement may be exited, what stops it, and the payment to the caller from
-/// the eth pot. real Core, house, Statements. the stand in module and token, and the attacker modules
+/// the eth pot. real Core, Statements. the stand in module and token, and the attacker modules
 abstract contract RedeemBase is Fixture {
     using stdStorage for StdStorage;
 
@@ -23,7 +23,7 @@ abstract contract RedeemBase is Fixture {
         (,, cost,) = core.statementInfo(sid);
     }
 
-    function _listedAt(uint256 sid) internal view returns (uint64 at) {
+    function _composedAt(uint256 sid) internal view returns (uint64 at) {
         (,,, at) = core.statementInfo(sid);
     }
 
@@ -95,7 +95,7 @@ contract RedeemTimingTest is RedeemBase {
     function test_timing_revertsBeforeExitAfterAndWorksAtIt() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        uint64 at = _listedAt(sid);
+        uint64 at = _composedAt(sid);
         uint256 wait = core.settings().exitAfter;
         assertEq(wait, 105 hours);
         vm.warp(uint256(at));
@@ -104,7 +104,7 @@ contract RedeemTimingTest is RedeemBase {
         vm.warp(uint256(at) + wait - 1);
         vm.expectRevert(ICore.TooEarly.selector);
         core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(house), "still listed after the refused tries");
+        assertEq(STATEMENTS.ownerOf(sid), address(core), "still held after the refused tries");
         vm.warp(uint256(at) + wait);
         core.exitStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
@@ -117,7 +117,7 @@ contract RedeemTimingTest is RedeemBase {
     function test_timing_exitAfterIsReadLive() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        uint64 at = _listedAt(sid);
+        uint64 at = _composedAt(sid);
         Settings memory s = core.settings();
         s.exitAfter = 365 days;
         _setSettings(s);
@@ -153,53 +153,9 @@ contract RedeemTimingTest is RedeemBase {
         core.exitStatement(0);
     }
 
-    /// a bid before the exit wait ends makes the exit revert, and so does every later state until the sale is settled
-    function test_timing_aBidFirstMakesTheExitRevert() public {
+    function test_timing_aBuyFirstMakesTheExitRevert() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        uint64 at = _listedAt(sid);
-        vm.warp(uint256(at) + 100 hours);
-        address bidder = address(0xB1D1);
-        _bid(bidder, sid, _live(sid).reserve);
-        vm.warp(uint256(at) + 105 hours);
-        uint256 pot = core.ethPot();
-        uint256 bal = keeper.balance;
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        vm.expectRevert(ICore.HasBid.selector);
-        core.exitStatement(sid);
-        assertEq(core.ethPot(), pot, "nothing repaid");
-        assertEq(keeper.balance, bal);
-        // the auction has run its 24 hours: ended, not settled
-        vm.warp(uint256(at) + 125 hours);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Ended));
-        vm.expectRevert(ICore.HasBid.selector);
-        core.exitStatement(sid);
-        // settled: the record is stale, then gone
-        _endAuction(sid);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.exitStatement(sid);
-        core.syncStatement(sid);
-        vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), bidder);
-    }
-
-    function test_timing_aBidAfterTheWaitAlsoRevertsAndTheBidderKeepsTheAuction() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        _warp(105 hours);
-        _bid(address(0xB1D1), sid, _live(sid).reserve);
-        vm.expectRevert(ICore.HasBid.selector);
-        core.exitStatement(sid);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Bid));
-    }
-
-    function test_timing_aBuyOnlySaleFirstMakesTheExitRevert() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        vm.prank(owner);
-        ctl.setBuyOnly(true);
         _warp(105 hours);
         uint256 price = ctl.priceOf(sid);
         vm.deal(address(0xB0B), price);
@@ -227,7 +183,6 @@ contract RedeemTimingTest is RedeemBase {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         ScriptedController sc = new ScriptedController();
-        sc.setRevertPrice(true);
         sc.setRevertPage(true);
         _setController(address(sc));
         vm.prank(owner);
@@ -252,8 +207,8 @@ contract RedeemTimingTest is RedeemBase {
         assertEq(core.ethPot(), pot);
         assertEq(core.xPot(), xpot);
         assertEq(keeper.balance, bal);
-        assertEq(STATEMENTS.ownerOf(sid), address(house), "the listing is whole");
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Listed));
+        assertEq(STATEMENTS.ownerOf(sid), address(core), "the statement never left");
+        assertTrue(_isHeld(sid));
         hm.setPayBps(10_000);
         core.exitStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(hm));
@@ -478,19 +433,19 @@ contract RedeemRepayTest is RedeemBase {
         uint256 bal = address(rc).balance;
         rc.exit(a, b);
         assertEq(rc.hits(), 1, "it was repaid once");
-        assertEq(rc.blocked(), 8, "all eight doors refused it");
+        assertEq(rc.blocked(), 5, "all five doors refused it");
         assertEq(rc.ok(), 0);
         assertGt(address(rc).balance - bal, 0);
         assertEq(core.ethPot(), pot - rc.repaid(), "the pot paid it once");
         assertEq(STATEMENTS.ownerOf(a), address(mod));
-        assertEq(STATEMENTS.ownerOf(b), address(house), "the other statement is untouched");
+        assertEq(STATEMENTS.ownerOf(b), address(core), "the other statement is untouched");
         _solvent();
     }
 
     /// a module that calls the core while the core is inside the exit
     function test_reenter_aHostileModuleCannotUseAnyDoorMidExit() public {
         bytes4 guard = bytes4(0xab143c06);
-        for (uint256 k; k < 8; ++k) {
+        for (uint256 k; k < 5; ++k) {
             uint256 snap = vm.snapshotState();
             _phase2Hostile();
             uint256 a = _composeOnce().sid;
@@ -501,11 +456,8 @@ contract RedeemRepayTest is RedeemBase {
             address target = address(core);
             if (k == 0) data = abi.encodeCall(ICore.compose, ());
             else if (k == 1) data = abi.encodeCall(ICore.skim, ());
-            else if (k == 2) data = abi.encodeCall(ICore.collectSales, ());
-            else if (k == 3) data = abi.encodeCall(ICore.exitStatement, (b));
-            else if (k == 4) data = abi.encodeCall(ICore.repriceStatement, (b));
-            else if (k == 5) data = abi.encodeCall(ICore.syncStatement, (b));
-            else if (k == 6) data = abi.encodeCall(ICore.buyback, ());
+            else if (k == 2) data = abi.encodeCall(ICore.exitStatement, (b));
+            else if (k == 3) data = abi.encodeCall(ICore.buyback, ());
             else {
                 target = address(sc);
                 data = abi.encodeCall(SellingController.sell, (b, address(hm)));
@@ -518,7 +470,7 @@ contract RedeemRepayTest is RedeemBase {
             assertFalse(hm.calledOk(), "the call mid exit failed");
             assertEq(bytes4(hm.calledOut()), guard, "with the reentrancy guard");
             assertEq(STATEMENTS.ownerOf(a), address(hm));
-            assertEq(STATEMENTS.ownerOf(b), address(house));
+            assertEq(STATEMENTS.ownerOf(b), address(core));
             _solvent();
             vm.revertToState(snap);
         }

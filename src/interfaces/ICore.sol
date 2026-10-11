@@ -5,24 +5,12 @@ pragma solidity ^0.8.28;
 import {Lane, Settings} from "./Interfaces.sol";
 
 interface ICore {
-    enum StatementStatus {
-        None,
-        Held,
-        Listed,
-        Bid,
-        Ended,
-        Sold,
-        Returned
-    }
 
     error AboveCeiling();
     error AlreadyOwned();
-    error AuctionLive();
-    error BadAuction();
     error BadCost();
     error BadFormat();
     error BadModule();
-    error BadPrice();
     error BadRate();
     error BadSender();
     error BadSetting(bytes32 field);
@@ -35,7 +23,6 @@ interface ICore {
     error Empty();
     error ExitTokenChanged();
     error ForbiddenTarget();
-    error HasBid();
     error Held();
     error InPile();
     error Locked(bytes32 what);
@@ -44,10 +31,10 @@ interface ICore {
     error NoCredit();
     error NoExitModule();
     error NoSuccessor();
+    error NotForSale();
     error NotHeld();
     error NotHolder();
     error NotInPile(uint256 id);
-    error NotListed();
     error NotOwner();
     error NotReady();
     error NothingBought();
@@ -92,14 +79,10 @@ interface ICore {
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
     event OwnershipTransferred(address indexed from, address indexed to);
     event RateSet(uint256 rate);
-    event SalesCollected(uint256 amount, uint256 toBuyback);
     event SettingsSet(Settings settings);
     event Skimmed(uint256 eth, uint256 exitToken);
     event StatementExited(uint256 indexed sid, Lane lane, uint256 received);
-    event StatementListed(uint256 indexed sid, uint256 indexed auctionId, uint256 reserve);
-    event StatementRepriced(uint256 indexed sid, uint256 reserve);
-    event StatementSold(uint256 indexed sid, uint256 indexed auctionId, address indexed holder);
-    event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price);
+    event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback);
     event SuccessorLocked();
     event SuccessorSet(address successor);
     event TargetAdded(address target);
@@ -108,13 +91,11 @@ interface ICore {
 
     receive() external payable;
 
-    function AUCTION_FACTORY() external view returns (address);
     function COIN() external view returns (address);
     function ESCROW() external view returns (address);
     function FACTORY() external view returns (address);
     function FEE_SOURCE() external view returns (address);
     function HOOK() external view returns (address);
-    function HOUSE() external view returns (address);
     function LOCKER() external view returns (address);
     function MANAGER() external view returns (address);
     function POOL_FEE() external view returns (uint24);
@@ -130,7 +111,6 @@ interface ICore {
     function buyback() external;
     function buybackExit(uint256 maxCoinIn) external;
     function checkpointTime() external view returns (uint64);
-    function collectSales() external;
     function compose() external;
     function composeExit() external;
     function controller() external view returns (address);
@@ -161,7 +141,6 @@ interface ICore {
     function pileSize(Lane lane) external view returns (uint256);
     function rateAtCheckpoint() external view returns (uint256);
     function removeTarget(address target) external;
-    function repriceStatement(uint256 sid) external;
     function rescueCoin(address, uint256) external;
     function rescueNft(address, uint256, address) external;
     function retired() external view returns (bool);
@@ -177,14 +156,9 @@ interface ICore {
     function setSuccessor(address) external;
     function settings() external view returns (Settings memory);
     function skim() external;
-    function statementInfo(uint256 sid) external view returns (bool held, Lane lane, uint256 cost, uint64 clockStart);
-    function statementStatus(uint256 sid)
-        external
-        view
-        returns (StatementStatus status, uint256 auctionId, uint256 reserve, uint256 bid, uint64 endTime);
+    function statementInfo(uint256 sid) external view returns (bool held, Lane lane, uint256 cost, uint64 composedAt);
     function successor() external view returns (address);
     function successorLocked() external view returns (bool);
-    function syncStatement(uint256 sid) external;
     function targetsLocked() external view returns (bool);
     function transferOwnership(address to) external;
     function unitPerCredit() external view returns (uint256);

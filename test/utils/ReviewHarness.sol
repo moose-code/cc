@@ -9,13 +9,12 @@ import {IArtCoinsFactoryV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {SettingsFields} from "../../script/SettingsFields.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Mainnet, Stack, Settings} from "../../src/interfaces/Interfaces.sol";
-import {IAuctionFactory, IAuctionHouse} from "../../src/interfaces/AuctionHouse.sol";
 import {SystemDeployer, Deployed} from "../../script/SystemDeployer.sol";
 import {LaunchConfig, ConfigReader} from "../../script/LaunchConfig.sol";
 import {Report} from "../../script/Report.sol";
 
 /// @notice independent review of the deploy package (docs/archive/REVIEW-deploy.md), ported to the v2 stack: the config mutation
-/// matrix, the state mutations (factory, house, library, deployer), proofs of the readbacks and a fuzz of the funded
+/// matrix, the state mutations (factory, library, deployer), proofs of the readbacks and a fuzz of the funded
 /// rule. forks mainnet at FORK_BLOCK and attaches to the live v2 stack. the deployer is the factory owner and the
 /// config owner (the only path into a deprecated v2 factory)
 abstract contract ReviewHarness is Test, ProdDeployer {
@@ -212,32 +211,6 @@ abstract contract ReviewHarness is Test, ProdDeployer {
     function _linked() internal view returns (address lib) {
         lib = findLibrary(vm.getCode("Core.sol:Core"));
         assertTrue(lib != address(0), "no linked library found in the Core creation code");
-    }
-
-    /// @dev the live auction factory with a default fee: its runtime code with every all zero 32 byte immutable word
-    /// (PUSH32 of zero) set to `bps`. the default fee and the fee recipient are immutables of the factory and both are
-    /// zero today, so both read `bps` afterwards. no mock contract: the real code, one value changed
-    function _patchFactoryFee(address af, uint16 bps) internal {
-        bytes memory code = af.code;
-        uint256 patched;
-        for (uint256 pc; pc < code.length;) {
-            uint8 op = uint8(code[pc]);
-            if (op == 0x7f && pc + 33 <= code.length) {
-                bool zero = true;
-                for (uint256 j = 1; j <= 32; ++j) {
-                    if (code[pc + j] != 0) zero = false;
-                }
-                if (zero) {
-                    code[pc + 31] = bytes1(uint8(bps >> 8));
-                    code[pc + 32] = bytes1(uint8(bps));
-                    ++patched;
-                }
-            }
-            pc += op >= 0x60 && op <= 0x7f ? 2 + (op - 0x60) : 1;
-        }
-        assertGt(patched, 0, "no immutable word found");
-        vm.etch(af, code);
-        assertEq(IAuctionFactory(af).defaultProtocolFeeBps(), bps, "the patched default fee");
     }
 
     function _count(Class got, Class want, string memory label, uint256[5] memory counts) internal pure {

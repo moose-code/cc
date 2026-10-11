@@ -9,8 +9,7 @@ const CHART_SPECS = [
   { id: 'pot', title: 'eth pot, cumulative fees, eth in statements not yet sold', fmt: { l: fmtAx }, marks: markX, series: [
     { label: 'eth pot', short: 'pot', color: '--s1', f: (r, h) => r.S.pot[h] },
     { label: 'cumulative fees', short: 'fees', color: '--s4', dash: true, f: (r, h) => r.S.cumFees[h] },
-    { label: 'cost of statements not sold', short: 'unsold', color: '--s2', f: (r, h) => r.S.locked[h] },
-    { label: 'sale proceeds waiting in the house', short: 'house', color: '--s3', f: (r, h) => r.S.pending[h] } ] },
+    { label: 'cost of statements not sold', short: 'unsold', color: '--s2', f: (r, h) => r.S.locked[h] } ] },
   { id: 'rate', title: 'bid rate against market rate, wei per point, and the bid for a 440 point credit as percent of market', fmt: { l: fmtSci, r: (v) => v.toFixed(0) + '%' }, log: { l: true }, fixed: { r: [0, 200] }, marks: markX, series: [
     { label: 'bid rate', short: 'bid', color: '--s1', f: (r, h) => r.S.rate[h] },
     { label: 'market price over 440 points', short: 'market', color: '--s4', dash: true, f: (r, h) => r.S.mktPerPoint[h] },
@@ -51,7 +50,7 @@ function renderVerdict(res, ms) {
   $('verdict').className = 'verdict ' + (!flowing ? 'bad' : sm.steadyCredits != null && sm.steadyCredits < 50 ? 'warn' : 'good');
   $('v1').textContent = 'day ' + days + ': ' + fmtN(sm.credits) + ' credits acquired, ' + fmtN(sm.statements) + ' statements created, ' + fmtN(sm.sold) + ' sold at ' + (st.saleOverCost * 100).toFixed(0) + '% of cost on average, ' + fmtN(sm.waiting) + ' still waiting, ' + fmtN(sm.burnEth) + ' eth to buy and burn $CC (' + sm.burnPct.toFixed(1) + '% of supply), launch pot spent ' + (sm.potGoneDay == null ? 'not within ' + days + ' days' : 'by day ' + sm.potGoneDay.toFixed(1)) + '';
   const steady = sm.steadyCredits == null ? '' : ' after the pot ran out: ' + fmtN(sm.steadyCredits) + ' credits and ' + fmtN(sm.steadyStatements) + ' statements a day.';
-  $('v2').textContent = 'fees in ' + fmtN(res.S.cumFees[res.H]) + ' eth. credits cost ' + st.costVsMarket.toFixed(2) + 'x the flat market price, average score ' + st.avgScoreBought.toFixed(0) + '. ' + 'burn from sale proceeds ' + fmtN(sm.saleToBurn) + ' eth, from fees ' + fmtN(sm.feeToBurn) + ' eth.' + (res.T.sold && !res.params.buyOnly ? ' ' + (st.contestedShare * 100).toFixed(0) + '% of auctions got a second bidder.' : '') + (res.params.buyOnly ? ' the anchor ended at ' + (st.finalAnchorBps / 100).toFixed(0) + '% of cost.' : '') + steady + (!flowing ? ' no credit was bought in the last week.' : '');
+  $('v2').textContent = 'fees in ' + fmtN(res.S.cumFees[res.H]) + ' eth. credits cost ' + st.costVsMarket.toFixed(2) + 'x the flat market price, average score ' + st.avgScoreBought.toFixed(0) + '. ' + 'burn from sale proceeds ' + fmtN(sm.saleToBurn) + ' eth, from fees ' + fmtN(sm.feeToBurn) + ' eth.' + ' the anchor ended at ' + (st.finalAnchorBps / 100).toFixed(0) + '% of cost.' + steady + (!flowing ? ' no credit was bought in the last week.' : '');
   $('runinfo').textContent = 'ran ' + Math.round(ms) + ' ms, ' + res.H + ' hours, seed ' + p.seed;
 }
 function renderTable(res) {
@@ -74,7 +73,7 @@ function renderTable(res) {
   if (T.settingsChanges) notes.push('<b>setting change</b> applied on day ' + p0().schedule[0].day);
   if (T.xFills || T.boughtX || T.exited) notes.push('<b>phase 2</b> ' + fmtN(T.exited + T.exitedX) + ' statements exited, exit bid bought ' + fmtN(T.boughtX) + ' credits, ' + fmtN(T.xFills) + ' exitToken auction fills at ' + (st.xMeanDiscount * 100).toFixed(0) + '% all in discount, one every ' + st.xMedianIntervalH.toFixed(1) + ' h');
   $('notes').innerHTML = notes.join(' &nbsp; ');
-  $('tblnote').textContent = 'eth accounting closes to ' + Math.max(Math.abs(st.potCheck), Math.abs(st.houseCheck)).toExponential(1) + ' eth';
+  $('tblnote').textContent = 'eth accounting closes to ' + Math.max(Math.abs(st.potCheck), Math.abs(st.saleCheck)).toExponential(1) + ' eth';
 }
 const p0 = () => toParams(state);
 let rejected = null;

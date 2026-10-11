@@ -8,7 +8,6 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Lane, ICredits, IStatements, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
-import {IAuctionHouse, IAuctionFactory} from "../../src/interfaces/AuctionHouse.sol";
 import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
 import {ICoreLens} from "../../src/interfaces/ICoreLens.sol";
 import {
@@ -52,8 +51,6 @@ abstract contract Fixture is Test, ProdDeployer {
     uint256 internal constant OPEN_RATE = 1_732_000_000_000_000;
     /// @dev exit token base units per credit reported by the stand in exit module
     uint256 internal constant UNIT = 43_300_000_000_000_000;
-    /// @dev the real house is called with at least this gas by `_endAuction` (it needs 580k to honor its delivery stipend)
-    uint256 internal constant END_GAS = 2_000_000;
     /// @dev the sniper window of the launch, seconds
     uint256 internal constant SNIPER_WINDOW = 1800;
     bytes32 internal constant FIXTURE_SALT = keccak256("credits-engine fixture coin");
@@ -100,8 +97,6 @@ abstract contract Fixture is Test, ProdDeployer {
     IControllerV1 internal ctl;
     /// @dev the read only lens `deploySystem` created for the Core
     ICoreLens internal lens;
-    /// @dev the pnd auction house the core created in its constructor, through the real live factory
-    IAuctionHouse internal house;
     PoolKey internal launchKey;
     bytes32 internal poolId;
     TestSwapRouter internal router;
@@ -189,9 +184,6 @@ abstract contract Fixture is Test, ProdDeployer {
         lc = defaultConfig();
         // the core tests are written against this opening bid, whatever the launch default is
         lc.rateStart = OPEN_RATE;
-        // the sale tests start in auction mode, whatever the launch default is; the launch mode is covered by SaleAnchorTest
-        // and the config tests
-        lc.sale.buyOnly = false;
         lc.settings = _settings();
         lc.owner = owner;
         lc.creator = creator;
@@ -219,7 +211,6 @@ abstract contract Fixture is Test, ProdDeployer {
         ctl = IControllerV1(d.controller);
         lens = ICoreLens(d.lens);
         feeRouter = IFeeRouter(payable(d.router));
-        house = IAuctionHouse(core.HOUSE());
         launchKey = d.launchKey;
         poolId = d.poolId;
         launchTime = block.timestamp;
@@ -424,62 +415,20 @@ abstract contract Fixture is Test, ProdDeployer {
         isComposed = true;
     }
 
-    // ------------------------------------------------------------------ statement auctions on the real house
+    // ------------------------------------------------------------------ statement sales through the controller
 
-    /// @notice the live status of a statement as the core reads it from the house
-    struct Live {
-        ICore.StatementStatus status;
-        uint256 auctionId;
-        uint256 reserve;
-        uint256 bid;
-        uint64 endTime;
+    /// @notice the core holds statement `sid` (its record exists)
+    function _isHeld(uint256 sid) internal view returns (bool held) {
+        (held,,,) = core.statementInfo(sid);
     }
 
-    /// @notice the live status of a statement (see `Core.statementStatus`)
-    function _live(uint256 sid) internal view returns (Live memory l) {
-        (l.status, l.auctionId, l.reserve, l.bid, l.endTime) = core.statementStatus(sid);
-    }
-
-    /// @notice the raw auction record of a statement on the house, empty when there is none
-    function _auctionOf(uint256 sid) internal view returns (IAuctionHouse.Auction memory) {
-        return house.getAuction(_live(sid).auctionId);
-    }
-
-    /// @notice `who` bids `amount` eth on the auction of statement `sid`, directly on the house. `who` is funded for it
-    function _bid(address who, uint256 sid, uint256 amount) internal {
-        uint256 id = _live(sid).auctionId;
-        vm.deal(who, who.balance + amount);
+    /// @notice `who` buys statement `sid` through the controller at the asking price of this block. `who` is funded
+    /// for it. returns the price paid
+    function _buy(address who, uint256 sid) internal returns (uint256 price) {
+        price = ctl.priceOf(sid);
+        vm.deal(who, who.balance + price);
         vm.prank(who);
-        house.createBid{value: amount}(id);
-    }
-
-    /// @notice warps to the end of the auction of statement `sid` and settles it as a stranger on the house. the
-    /// statement goes to the winner, the proceeds are credited to the core on the house until `collectSales`
-    function _endAuction(uint256 sid) internal {
-        Live memory l = _live(sid);
-        vm.warp(l.endTime);
-        vm.prank(address(0xE4D));
-        house.endAuction{gas: END_GAS}(l.auctionId);
-    }
-
-    /// @notice the eth the house owes the core: sale proceeds not yet collected
-    function _owedByHouse() internal view returns (uint256) {
-        return house.pendingRefunds(address(core));
-    }
-
-    /// @notice a stranger collects the sale proceeds. returns the eth the house owed
-    function _collectSales() internal returns (uint256 owed) {
-        owed = _owedByHouse();
-        vm.prank(address(0xC011));
-        core.collectSales();
-    }
-
-    /// @notice the reserve a statement of `cost` gets when it is listed: the controller's start price, never below the
-    /// hard floor (the live controller start, which follows its anchor)
-    function _reserveFor(uint256 cost) internal view returns (uint256) {
-        uint256 floor = cost * core.settings().saleFloorBps / 10_000;
-        uint256 ask = cost * ctl.startBps() / 10_000;
-        return ask > floor ? ask : floor;
+        ctl.buy{value: price}(sid);
     }
 
     /// @notice the owner lifts `rateCap` to its upper bound, for suites that climb past the launch cap
@@ -518,13 +467,11 @@ abstract contract Fixture is Test, ProdDeployer {
         core.setSettings(s);
     }
 
-    /// @notice composes, bids the reserve with `bidder`, ends the auction and returns the statement id. the winner now
-    /// holds the statement, the proceeds sit in the house
-    function _sellStatement(address bidder) internal returns (uint256 sid, uint256 price) {
+    /// @notice composes and buys the statement with `buyer` at the asking price. the buyer now holds the statement and
+    /// the proceeds are booked
+    function _sellStatement(address buyer) internal returns (uint256 sid, uint256 price) {
         sid = _composeOnce().sid;
-        price = _live(sid).reserve;
-        _bid(bidder, sid, price);
-        _endAuction(sid);
+        price = _buy(buyer, sid);
     }
 
     // ------------------------------------------------------------------ owner actions
@@ -557,7 +504,7 @@ abstract contract Fixture is Test, ProdDeployer {
         _setExitModule(address(mod));
     }
 
-    /// @notice composes the eth pile, lets its auction run out and exits the statement, which puts half of the
+    /// @notice composes the eth pile, waits `exitAfter` and exits the statement, which puts half of the
     /// exit token into `xToBuyback`. needs phase 2. returns the exit token the core received
     function _fillExitBuyback() internal returns (uint256 received) {
         Composed memory c = _composeOnce();

@@ -6,14 +6,14 @@ import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Lane, Sale, Settings, Mainnet, IStatements} from "../src/interfaces/Interfaces.sol";
-import {IAuctionHouse} from "../src/interfaces/AuctionHouse.sol";
+import {Lane, Sale, Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {SellingController, ReentrantBuyer, RefundRefuser} from "./attackers/SaleAttackers.sol";
+import {StatementInfoStub} from "./standins/StatementInfoStub.sol";
 
-/// the sale controller on the live fork: the asking price curve, the hard floor of the core, a controller that cannot
-/// price, the auction path and the buy only path through `sellTo`, the mode flips, the controller's own settings.
-/// real Core, ControllerV1, house, Statements. the doubles are the scripted and the attacker controllers only
+/// the sale controller on the live fork: the asking price curve, the hard floor of the core, `buy` through `sellTo`,
+/// the controller's own settings and its anchor. real Core, ControllerV1, Statements. the doubles are the scripted and
+/// the attacker controllers only
 abstract contract SaleBase is Fixture {
     uint256 internal constant H = 1 hours;
 
@@ -21,23 +21,22 @@ abstract contract SaleBase is Fixture {
         (,, cost,) = core.statementInfo(sid);
     }
 
-    function _listedAt(uint256 sid) internal view returns (uint64 at) {
+    function _composedAt(uint256 sid) internal view returns (uint64 at) {
         (,,, at) = core.statementInfo(sid);
     }
 
-    /// the controller curve alone, below the hard floor too. `priceOf` is never below the hard floor
-    function _raw(uint256 sid) internal view returns (uint256) {
-        return ctl.statementPrice(sid, _cost(sid), _listedAt(sid));
+    /// the controller curve alone, below the hard floor too: `priceOf` read with the hard floor at its lowest bound,
+    /// then the state is rolled back. `priceOf` is never below the hard floor
+    function _raw(uint256 sid) internal returns (uint256 price) {
+        uint256 snap = vm.snapshotState();
+        _floorBps(1_000);
+        price = ctl.priceOf(sid);
+        vm.revertToState(snap);
     }
 
-    /// moves the clock to `secs` after the statement was listed
+    /// moves the clock to `secs` after the statement was composed
     function _age(uint256 sid, uint256 secs) internal {
-        vm.warp(_listedAt(sid) + secs);
-    }
-
-    function _buyOnly(bool on) internal {
-        vm.prank(owner);
-        ctl.setBuyOnly(on);
+        vm.warp(_composedAt(sid) + secs);
     }
 
     /// sets the six sale numbers in an order that keeps every intermediate state inside the bounds: the cap rises
@@ -104,7 +103,7 @@ abstract contract SaleBase is Fixture {
         _setSettings(s);
     }
 
-    /// a second statement, composed and listed after the first. returns its id
+    /// a second statement, composed after the first. returns its id
     function _another() internal returns (uint256 sid) {
         _fillEthPile(80);
         vm.fee(composeBasefee);
@@ -148,7 +147,7 @@ contract SaleCurveTest is SaleBase {
         for (uint256 i; i < t.length; ++i) {
             _age(sid, t[i]);
             assertEq(ctl.priceOf(sid), cost * bps[i] / 10_000, "ask");
-            assertEq(ctl.statementPrice(sid, cost, _listedAt(sid)), cost * bps[i] / 10_000, "controller price");
+            assertEq(_raw(sid), cost * bps[i] / 10_000, "controller curve");
         }
     }
 
@@ -188,23 +187,6 @@ contract SaleCurveTest is SaleBase {
         assertEq(ctl.priceOf(sid), cost * 75 / 100);
     }
 
-    /// the house reserve follows the line at each reprice, down to the hard floor and no further
-    function test_curve_repriceFollowsTheAskDownToTheFloor() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        assertEq(_live(sid).reserve, cost * 15_000 / 10_000);
-        uint256[5] memory t = [uint256(25 * H), 50 * H, 90 * H, 150 * H, 400 * H];
-        uint256[5] memory bps = [uint256(12_500), 10_000, 9_000, 7_500, 7_500];
-        for (uint256 i; i < t.length; ++i) {
-            _age(sid, t[i]);
-            vm.expectEmit(address(core));
-            emit ICore.StatementRepriced(sid, cost * bps[i] / 10_000);
-            core.repriceStatement(sid);
-            assertEq(_live(sid).reserve, cost * bps[i] / 10_000, "reserve");
-            assertEq(house.getAuction(_live(sid).auctionId).reservePrice, cost * bps[i] / 10_000, "house reserve");
-        }
-    }
-
     /// other settings, all at once: start 200 percent, 10 percent an hour to a knee of 150 percent, 5 percent an hour
     /// to a floor of 50 percent (below the core floor of 75)
     function test_curve_otherSettings() public {
@@ -220,16 +202,14 @@ contract SaleCurveTest is SaleBase {
         }
     }
 
-    /// the controller's floor below the core's hard floor: the line goes below, the quote and the reserve do not
-    function test_curve_controllerFloorBelowTheHardFloorIsLiftedOnTheReserve() public {
+    /// the controller's floor below the core's hard floor: the line goes below, the quote does not
+    function test_curve_controllerFloorBelowTheHardFloorIsLifted() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
         _saleSettings(15_000, 100_000, 100, 10_000, 25, 5_000);
         _age(sid, 300 * H);
         assertEq(_raw(sid), cost * 5_000 / 10_000, "the curve is at the controller floor");
         assertEq(ctl.priceOf(sid), cost * 7_500 / 10_000, "the quote is the hard floor");
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 7_500 / 10_000, "the reserve is the hard floor");
     }
 
     /// the quote is never below the hard floor of the core, whatever the age and the hard floor setting
@@ -324,7 +304,6 @@ contract SaleCurveTest is SaleBase {
         Prod.newController(
             address(core),
             Sale({
-                buyOnly: false,
                 markupBps: 15_000,
                 startCapBps: 14_999,
                 fastDecayBpsPerHour: 100,
@@ -334,19 +313,6 @@ contract SaleCurveTest is SaleBase {
                 anchorHalfLife: 7 days
             })
         );
-    }
-
-    /// the whole curve again with the mode flipped: buy only puts the house reserve at the cap while the ask in
-    /// `priceOf` falls
-    function test_curve_buyOnlyKeepsTheReserveAtTheCapAndTheAskFalls() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        _buyOnly(true);
-        _age(sid, 25 * H);
-        assertEq(ctl.priceOf(sid), cost * 12_500 / 10_000, "the ask falls");
-        assertEq(ctl.statementPrice(sid, cost, _listedAt(sid)), cost * 100_000 / 10_000, "the reserve price is the cap");
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 100_000 / 10_000);
     }
 
     function test_curve_priceOfRefusesWhatIsNotForSale() public {
@@ -369,342 +335,80 @@ contract SaleCurveTest is SaleBase {
 }
 
 contract SaleFloorTest is SaleBase {
-    ScriptedController internal sc;
-
-    /// installs a scripted controller that asks `bps` of cost and is ready to compose the whole eth pile
-    function _scripted(uint256 bps, bool ready) internal returns (ScriptedController s) {
-        s = new ScriptedController();
-        s.setPriceBps(bps);
-        if (ready) {
-            uint256[] memory page = core.pilePage(Lane.Eth, 0, 80);
-            s.setPage(Lane.Eth, true, _pages(page), 0);
-        }
-        _setController(address(s));
-    }
-
-    function test_floor_beatsAHigherCoreFloorAtListing() public {
+    function test_floor_beatsAHigherCoreFloor() public {
         _floorBps(20_000);
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        assertEq(_live(sid).reserve, cost * 20_000 / 10_000, "the hard floor lifts the 150 percent ask");
-        assertEq(_live(sid).reserve, _reserveFor(cost));
         assertEq(_raw(sid), cost * 15_000 / 10_000, "the controller asks the start price");
         assertEq(ctl.priceOf(sid), cost * 20_000 / 10_000, "the quote is lifted to the hard floor");
     }
 
-    function test_floor_beatsALowerControllerPriceAtListingAndReprice() public {
+    /// the hard floor is read live: a raised floor lifts the ask of a held statement at once, a lowered floor gives way
+    /// to the controller curve again, and the buy pays the lifted price
+    function test_floor_followsTheSettingAtOnce() public {
+        uint256 sid = _composeOnce().sid;
+        uint256 cost = _cost(sid);
+        assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000);
+        _floorBps(20_000);
+        assertEq(ctl.priceOf(sid), cost * 20_000 / 10_000, "a raised floor reaches the held statement");
+        _floorBps(1_000);
+        assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000, "a lowered floor gives way to the curve");
+        _floorBps(20_000);
+        address buyer = address(0xB0B);
+        vm.deal(buyer, 100 ether);
+        vm.prank(buyer);
+        vm.expectRevert(IControllerV1.Underpaid.selector);
+        ctl.buy{value: cost * 15_000 / 10_000}(sid);
+        assertEq(_buy(buyer, sid), cost * 20_000 / 10_000);
+        assertEq(STATEMENTS.ownerOf(sid), buyer);
+    }
+
+    /// a controller that cannot answer `nextPage` stops the compose and changes nothing, the statements already held
+    /// stay for sale through the original controller only while it is the controller of the core
+    function test_broken_nextPageStopsTheComposeAndKeepsEverything() public {
         _fillEthPile(80);
-        sc = _scripted(5_000, true);
+        ScriptedController sc = new ScriptedController();
+        sc.setPage(Lane.Eth, true, _pages(core.pilePage(Lane.Eth, 0, 80)), 0);
+        _setController(address(sc));
+        sc.setRevertPage(true);
         vm.fee(composeBasefee);
         uint256 supply = STATEMENTS.supply();
+        uint256 pot = core.ethPot();
+        vm.prank(keeper);
+        vm.expectRevert(ICore.NotReady.selector);
+        core.compose();
+        assertEq(STATEMENTS.supply(), supply, "nothing minted");
+        assertEq(core.pileSize(Lane.Eth), 80, "the pile is whole");
+        assertEq(core.ethPot(), pot, "no payment to the caller");
+        assertEq(core.heldStatements().length, 0);
+        // the same controller, repaired, composes
+        sc.setRevertPage(false);
         vm.prank(keeper);
         core.compose();
-        uint256 sid = supply + 1;
-        uint256 cost = _cost(sid);
-        assertEq(_live(sid).reserve, cost * 7_500 / 10_000, "listed at the floor, the controller said 50 percent");
-        // above the floor the controller wins, a raised floor wins again, a lowered floor gives way again
-        sc.setPriceBps(9_000);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 9_000 / 10_000);
-        _floorBps(20_000);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 20_000 / 10_000);
-        _floorBps(1_000);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 9_000 / 10_000);
-        sc.setPriceBps(0);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 1_000 / 10_000, "a zero answer is the floor");
-    }
-
-    function test_floor_aHugeControllerPriceIsTakenAndNoBidReachesIt() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        sc = _scripted(10_000_000, false);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 1000, "the reserve is the controller price, a thousand times the cost");
-        address b = address(0xB1D1);
-        vm.deal(b, 10 ether);
-        uint256 aid = _live(sid).auctionId;
-        vm.prank(b);
-        vm.expectRevert(IAuctionHouse.BidBelowReserve.selector);
-        house.createBid{value: cost * 2}(aid);
-    }
-
-    // ------------------------------------------------------------------ a controller that cannot price
-
-    function _brokenModes(uint256 m, ScriptedController s) internal {
-        if (m == 0) s.setRevertPrice(true);
-        else if (m == 1) s.setBurnPrice(true);
-        else s.setShortPrice(true);
-    }
-
-    function test_broken_composeRevertsAndKeepsEverything() public {
-        for (uint256 m; m < 3; ++m) {
-            uint256 snap = vm.snapshotState();
-            _fillEthPile(80);
-            sc = _scripted(11_000, true);
-            _brokenModes(m, sc);
-            vm.fee(composeBasefee);
-            uint256 supply = STATEMENTS.supply();
-            uint256 pot = core.ethPot();
-            vm.prank(keeper);
-            vm.expectRevert(ICore.BadPrice.selector);
-            core.compose();
-            assertEq(STATEMENTS.supply(), supply, "nothing minted");
-            assertEq(core.pileSize(Lane.Eth), 80, "the pile is whole");
-            assertEq(core.ethPot(), pot, "no payment to the caller");
-            assertEq(core.heldStatements().length, 0);
-            // the same controller, repaired, composes
-            sc.setRevertPrice(false);
-            sc.setBurnPrice(false);
-            sc.setShortPrice(false);
-            vm.prank(keeper);
-            core.compose();
-            assertEq(_live(supply + 1).reserve, _cost(supply + 1) * 11_000 / 10_000);
-            vm.revertToState(snap);
-        }
-    }
-
-    function test_broken_repriceRevertsAndKeepsTheStoredReserve() public {
-        for (uint256 m; m < 3; ++m) {
-            uint256 snap = vm.snapshotState();
-            uint256 sid = _composeOnce().sid;
-            uint256 reserve = _live(sid).reserve;
-            sc = _scripted(9_000, false);
-            _brokenModes(m, sc);
-            _age(sid, 30 * H);
-            vm.expectRevert(ICore.BadPrice.selector);
-            core.repriceStatement(sid);
-            assertEq(_live(sid).reserve, reserve, "the stored reserve stays");
-            assertEq(house.getAuction(_live(sid).auctionId).reservePrice, reserve);
-            sc.setRevertPrice(false);
-            sc.setBurnPrice(false);
-            sc.setShortPrice(false);
-            core.repriceStatement(sid);
-            assertEq(_live(sid).reserve, _cost(sid) * 9_000 / 10_000);
-            vm.revertToState(snap);
-        }
-    }
-
-    function test_broken_aControllerWithNoCodeCannotPriceEither() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 reserve = _live(sid).reserve;
-        _setController(address(0xBEEF));
-        vm.expectRevert(ICore.BadPrice.selector);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, reserve);
-    }
-
-    function test_broken_buyAndSellStayOpenWhilePricingIsBroken() public {
-        // a controller that cannot price does not freeze a bid that already sits on the house
-        uint256 sid = _composeOnce().sid;
-        _bid(address(0xB1D1), sid, _live(sid).reserve);
-        sc = _scripted(9_000, false);
-        sc.setRevertPrice(true);
-        _endAuction(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(0xB1D1));
-        _collectSales();
-        _solvent();
-    }
-
-    // ------------------------------------------------------------------ reprice with a live bid
-
-    /// coded behaviour: a reprice of a listing with a bid reverts HasBid. it is not a no op
-    function test_reprice_withALiveBidRevertsAndKeepsTheReserve() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 reserve = _live(sid).reserve;
-        _bid(address(0xB1D1), sid, reserve);
-        _age(sid, 6 * H);
-        vm.expectRevert(ICore.HasBid.selector);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, reserve);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Bid));
-        // also when the controller is broken: the bid is checked first
-        sc = _scripted(9_000, false);
-        sc.setRevertPrice(true);
-        vm.expectRevert(ICore.HasBid.selector);
-        core.repriceStatement(sid);
-        // and after the auction ended and before it is settled
-        _bid(address(0xB1D2), sid, reserve * 106 / 100);
-        Live memory l = _live(sid);
-        vm.warp(l.endTime);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Ended));
-        vm.expectRevert(ICore.HasBid.selector);
-        core.repriceStatement(sid);
-        // after the sale: the record is stale, not listed
-        vm.prank(address(0xE4D));
-        house.endAuction{gas: END_GAS}(l.auctionId);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.repriceStatement(sid);
-    }
-
-    function test_reprice_isPermissionlessAndRefusesWhatIsNotListed() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        _age(sid, 90 * H);
-        vm.prank(address(0x5757));
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, _cost(sid) * 9_000 / 10_000);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.repriceStatement(sid + 77);
-        uint256[] memory ids = _credits(seller, 80);
-        xt.mint(address(core), 5e19);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        vm.fee(composeBasefee);
-        core.composeExit();
-        uint256 xs = STATEMENTS.supply();
-        vm.expectRevert(ICore.NotListed.selector);
-        core.repriceStatement(xs);
+        assertEq(core.heldStatements().length, 1);
     }
 }
 
-contract SaleAuctionTest is SaleBase {
-    /// reprice at hour 50, first bid at that price on the real house, outbid by five percent, end, collect. the pot
-    /// split is exact at the given saleToBuybackBps
-    function _auctionPath(uint16 bps) internal {
-        _buybackBps(bps);
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        _age(sid, 50 * H);
-        core.repriceStatement(sid);
-        uint256 reserve = _live(sid).reserve;
-        assertEq(reserve, cost, "hour 50 asks 100 percent");
-        uint256 aid = _live(sid).auctionId;
-
-        address b1 = address(0xB1D1);
-        address b2 = address(0xB1D2);
-        vm.deal(b1, reserve);
-        vm.prank(b1);
-        vm.expectRevert(IAuctionHouse.BidBelowReserve.selector);
-        house.createBid{value: reserve - 1}(aid);
-        _bid(b1, sid, reserve);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Bid));
-        uint256 min2 = reserve + reserve * 500 / 10_000;
-        vm.deal(b2, min2);
-        vm.prank(b2);
-        vm.expectRevert(IAuctionHouse.BidBelowMinimum.selector);
-        house.createBid{value: min2 - 1}(aid);
-        uint256 b1Before = b1.balance;
-        _bid(b2, sid, min2);
-        assertEq(b1.balance - b1Before, reserve, "the first bidder is refunded in the same call");
-        assertEq(_live(sid).bid, min2);
-
-        (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
-        _endAuction(sid);
-        assertEq(STATEMENTS.ownerOf(sid), b2, "the winner holds the statement");
-        uint256 owed = _owedByHouse();
-        assertEq(owed, min2, "the house fee is zero: the core is owed the winning bid");
-        assertEq(core.ethPot(), pot0, "owed eth is not in the pot until collected");
-        assertEq(address(core).balance, bal0);
-        assertTrue(_held(sid), "the record is stale until synced");
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Sold));
-
-        vm.expectEmit(address(core));
-        emit ICore.SalesCollected(min2, min2 * bps / 10_000);
-        _collectSales();
-        assertEq(address(core).balance - bal0, min2, "the balance rose by the winning bid");
-        assertEq(core.ethToBuyback() - bb0, min2 * bps / 10_000, "buyback share");
-        assertEq(core.ethPot() - pot0, min2 - min2 * bps / 10_000, "pot share");
-        assertEq(_owedByHouse(), 0);
-        _solvent();
-
-        core.syncStatement(sid);
-        assertFalse(_held(sid));
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.None));
-        // a second collect books nothing more
-        (pot0, bb0, bal0) = _recordedBook();
-        core.collectSales();
-        (uint256 pot1, uint256 bb1, uint256 bal1) = _recordedBook();
-        assertEq(pot1, pot0);
-        assertEq(bb1, bb0);
-        assertEq(bal1, bal0);
-    }
-
-    function test_auction_pathSplitAtZero() public {
-        _auctionPath(0);
-    }
-
-    function test_auction_pathSplitAtHalf() public {
-        _auctionPath(5_000);
-    }
-
-    function test_auction_pathSplitAtAll() public {
-        _auctionPath(10_000);
-    }
-
-    function test_auction_pathSplitAtAnOddShare() public {
-        _auctionPath(3_333);
-    }
-
-    /// a bid below the old ask but above the repriced one opens the auction: the reprice is what a first bidder needs
-    function test_auction_repriceLowersTheBarForTheFirstBid() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        _age(sid, 90 * H);
-        uint256 aid = _live(sid).auctionId;
-        address b = address(0xB1D1);
-        vm.deal(b, 10 ether);
-        vm.prank(b);
-        vm.expectRevert(IAuctionHouse.BidBelowReserve.selector);
-        house.createBid{value: cost}(aid);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 9_000 / 10_000);
-        _bid(b, sid, cost * 9_000 / 10_000);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Bid));
-    }
-
-    /// the reserve of an auction that already has a bid stays: later decay does not touch it
-    function test_auction_aBidFreezesTheReserveWhileTheAskKeepsFalling() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        _bid(address(0xB1D1), sid, _live(sid).reserve);
-        _age(sid, 25 * H);
-        assertEq(ctl.priceOf(sid), cost * 12_500 / 10_000);
-        assertEq(_live(sid).reserve, cost * 15_000 / 10_000);
-        vm.expectRevert(ICore.HasBid.selector);
-        core.repriceStatement(sid);
-    }
-
-    /// no bid, no sale: the statement waits on the house and nothing is booked
-    function test_auction_noBidMeansNoSaleAndNoBooking() public {
-        uint256 sid = _composeOnce().sid;
-        (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
-        _age(sid, 400 * H);
-        core.collectSales();
-        (uint256 pot1, uint256 bb1, uint256 bal1) = _recordedBook();
-        assertEq(pot1, pot0);
-        assertEq(bb1, bb0);
-        assertEq(bal1, bal0);
-        assertEq(STATEMENTS.ownerOf(sid), address(house));
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Listed));
-    }
-}
-
-contract SaleBuyOnlyTest is SaleBase {
+contract SaleBuyTest is SaleBase {
     address internal buyer = address(0xB0B);
 
     function _buyAt(uint256 age) internal returns (uint256 sid, uint256 price) {
         sid = _composeOnce().sid;
-        _buyOnly(true);
         _age(sid, age);
         price = ctl.priceOf(sid);
     }
 
     function test_buy_exactPriceSplitAndOwnership() public {
-        uint16[3] memory shares = [uint16(0), 5_000, 10_000];
-        for (uint256 i; i < 3; ++i) {
+        uint16[4] memory shares = [uint16(0), 5_000, 10_000, 3_333];
+        for (uint256 i; i < 4; ++i) {
             uint256 snap = vm.snapshotState();
             _buybackBps(shares[i]);
             (uint256 sid, uint256 price) = _buyAt(90 * H);
             assertEq(price, _cost(sid) * 9_000 / 10_000, "90 hours down the curve: 90 percent");
             (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
             uint256 n = core.heldStatements().length;
-            uint256 aid = _live(sid).auctionId;
             vm.expectEmit(address(core));
-            emit ICore.StatementSoldTo(sid, buyer, price);
+            emit ICore.StatementSoldTo(sid, buyer, price, price * shares[i] / 10_000);
             vm.expectEmit(address(ctl));
             emit IControllerV1.Bought(sid, buyer, price);
             _pay(buyer, sid, price);
@@ -714,15 +418,10 @@ contract SaleBuyOnlyTest is SaleBase {
             assertEq(core.ethToBuyback() - bb0, price * shares[i] / 10_000);
             assertEq(core.ethPot() - pot0, price - price * shares[i] / 10_000);
             assertEq(address(ctl).balance, 0, "the controller holds nothing");
-            (bool exists,) = house.getAuctionFor(address(STATEMENTS), sid);
-            assertFalse(exists, "the house has no auction");
-            assertEq(house.getAuction(aid).tokenOwner, address(0), "the old auction is gone");
             (bool held,,,) = core.statementInfo(sid);
             assertFalse(held, "the core record is cleared");
             assertEq(core.heldStatements().length, n - 1);
             assertFalse(_held(sid));
-            assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.None));
-            assertEq(_owedByHouse(), 0, "the house owes nothing");
             _solvent();
             vm.revertToState(snap);
         }
@@ -749,11 +448,11 @@ contract SaleBuyOnlyTest is SaleBase {
         assertEq(pot1, pot0);
         assertEq(bb1, bb0);
         assertEq(bal1, bal0);
-        assertEq(STATEMENTS.ownerOf(sid), address(house));
+        assertEq(STATEMENTS.ownerOf(sid), address(core));
     }
 
     /// the price is read at the call: a buyer who pays the ask from before the anchor rose is refused, and pays the ask
-    /// now (an anchor change moves the start of an open listing)
+    /// now (an anchor change moves the start of a held statement)
     function test_buy_paysTheAskOfTheBlock() public {
         (uint256 sid, uint256 price) = _buyAt(25 * H);
         assertEq(price, _cost(sid) * 12_500 / 10_000);
@@ -780,43 +479,6 @@ contract SaleBuyOnlyTest is SaleBase {
         _pay(buyer, sid, cost * 7_500 / 10_000);
         assertEq(STATEMENTS.ownerOf(sid), buyer);
         assertFalse(_held(sid));
-    }
-
-    function test_buy_revertsInAuctionMode() public {
-        uint256 sid = _composeOnce().sid;
-        vm.deal(buyer, 100 ether);
-        vm.prank(buyer);
-        vm.expectRevert(IControllerV1.NotBuyOnly.selector);
-        ctl.buy{value: 100 ether}(sid);
-        _buyOnly(true);
-        _buyOnly(false);
-        vm.prank(buyer);
-        vm.expectRevert(IControllerV1.NotBuyOnly.selector);
-        ctl.buy{value: 100 ether}(sid);
-    }
-
-    function test_buy_withALiveBidRevertsAndTheBidderKeepsTheAuction() public {
-        (uint256 sid,) = _buyAt(0);
-        address bidder = address(0xB1D1);
-        uint256 reserve = _live(sid).reserve;
-        _bid(bidder, sid, reserve);
-        vm.deal(buyer, 100 ether);
-        vm.prank(buyer);
-        vm.expectRevert(ICore.HasBid.selector);
-        ctl.buy{value: 100 ether}(sid);
-        assertEq(buyer.balance, 100 ether);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Bid));
-        assertEq(_live(sid).bid, reserve);
-        assertEq(house.getAuction(_live(sid).auctionId).bidder, bidder);
-        // even a price far above the reserve does not buy it out of the auction
-        _age(sid, 1 * H);
-        vm.prank(buyer);
-        vm.expectRevert(ICore.HasBid.selector);
-        ctl.buy{value: 100 ether}(sid);
-        _endAuction(sid);
-        assertEq(STATEMENTS.ownerOf(sid), bidder, "the bidder wins the statement");
-        _collectSales();
-        _solvent();
     }
 
     function test_buy_aSecondBuyAndUnknownAndExitLaneRevert() public {
@@ -849,7 +511,6 @@ contract SaleBuyOnlyTest is SaleBase {
         uint256 a = _composeOnce().sid;
         uint256 b = _another();
         uint256 c = _another();
-        _buyOnly(true);
         uint256[] memory before_ = core.heldStatements();
         assertEq(before_.length, 3);
         _pay(buyer, a, ctl.priceOf(a));
@@ -867,91 +528,6 @@ contract SaleBuyOnlyTest is SaleBase {
         _pay(address(0xB0B3), b, ctl.priceOf(b));
         assertEq(core.heldStatements().length, 0);
         _solvent();
-    }
-}
-
-contract SaleModeFlipTest is SaleBase {
-    /// the owner flips to buy only with listings in every state: a live bid keeps its auction, an old listing is sold at
-    /// its decayed ask and a new listing opens at the start price
-    function test_flip_toBuyOnlyWithABidWithNoBidAndANewListing() public {
-        uint256 a = _composeOnce().sid;
-        address bidder = address(0xB1D1);
-        _bid(bidder, a, _live(a).reserve);
-        _buyOnly(true);
-        vm.deal(address(0xB0B), 100 ether);
-        vm.prank(address(0xB0B));
-        vm.expectRevert(ICore.HasBid.selector);
-        ctl.buy{value: 100 ether}(a);
-        _endAuction(a);
-        assertEq(STATEMENTS.ownerOf(a), bidder, "the auction ran on after the flip");
-        _collectSales();
-
-        // a listing without a bid, aged. the house reserve in buy only mode is the cap at listing and at every reprice,
-        // while the ask falls
-        uint256 b = _another();
-        uint256 cost = _cost(b);
-        _age(b, 90 * H);
-        assertEq(_live(b).reserve, cost * 100_000 / 10_000);
-        assertEq(ctl.priceOf(b), cost * 9_000 / 10_000);
-        core.repriceStatement(b);
-        assertEq(_live(b).reserve, cost * 100_000 / 10_000, "buy only reprices to the cap");
-        address buyer = address(0xB0B2);
-        _pay(buyer, b, ctl.priceOf(b));
-        assertEq(STATEMENTS.ownerOf(b), buyer);
-
-        // a new listing in buy only mode has the cap as its reserve and sells at the start price
-        uint256 c = _another();
-        assertEq(_live(c).reserve, _cost(c) * 100_000 / 10_000);
-        assertEq(ctl.priceOf(c), _cost(c) * 15_000 / 10_000);
-        _pay(address(0xB0B3), c, ctl.priceOf(c));
-        assertEq(STATEMENTS.ownerOf(c), address(0xB0B3));
-        _solvent();
-    }
-
-    /// back to auction mode: the old listing keeps its reserve until a reprice, then falls to the ask, and a bid at
-    /// the ask opens the auction. `buy` is shut again
-    function test_flip_backToAuctionWithAnAgedListing() public {
-        _buyOnly(true);
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        _age(sid, 90 * H);
-        _buyOnly(false);
-        assertEq(_live(sid).reserve, cost * 100_000 / 10_000);
-        vm.deal(address(0xB0B), 100 ether);
-        vm.prank(address(0xB0B));
-        vm.expectRevert(IControllerV1.NotBuyOnly.selector);
-        ctl.buy{value: 100 ether}(sid);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 9_000 / 10_000);
-        _bid(address(0xB1D1), sid, cost * 9_000 / 10_000);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Bid));
-    }
-
-    /// a listing repriced down in auction mode, then the flip: its reserve goes back UP to the cap at the next
-    /// reprice, while `buy` still sells at the decayed ask
-    function test_flip_repricedListingWalksBackUpInBuyOnly() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        _age(sid, 50 * H);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost);
-        _buyOnly(true);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 100_000 / 10_000, "the reserve went up");
-        assertEq(ctl.priceOf(sid), cost, "the ask is still 100 percent");
-        _pay(address(0xB0B), sid, cost);
-        assertEq(STATEMENTS.ownerOf(sid), address(0xB0B));
-    }
-
-    function test_flip_onlyTheOwnerFlips() public {
-        vm.prank(address(0x5757));
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setBuyOnly(true);
-        vm.prank(owner);
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.BuyOnlySet(true);
-        ctl.setBuyOnly(true);
-        assertTrue(ctl.buyOnly());
     }
 }
 
@@ -978,7 +554,6 @@ contract SaleSellToTest is SaleBase {
         vm.expectRevert(ICore.OnlyController.selector);
         core.sellTo{value: 10 ether}(sid, buyer);
         // the first controller has no way to call it except `buy`, and after it is replaced `buy` fails too
-        _buyOnly(true);
         _install();
         vm.deal(buyer, 100 ether);
         vm.prank(buyer);
@@ -997,11 +572,11 @@ contract SaleSellToTest is SaleBase {
         sc.sell{value: floor - 1}(sid, buyer);
         vm.expectRevert(ICore.BelowFloor.selector);
         sc.sell{value: 0}(sid, buyer);
-        assertEq(STATEMENTS.ownerOf(sid), address(house));
+        assertEq(STATEMENTS.ownerOf(sid), address(core));
         (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
         uint256 scBal = address(sc).balance;
         vm.expectEmit(address(core));
-        emit ICore.StatementSoldTo(sid, buyer, floor);
+        emit ICore.StatementSoldTo(sid, buyer, floor, floor * 5_000 / 10_000);
         sc.sell{value: floor}(sid, buyer);
         assertEq(STATEMENTS.ownerOf(sid), buyer);
         assertEq(address(core).balance - bal0, floor);
@@ -1038,7 +613,7 @@ contract SaleSellToTest is SaleBase {
         assertEq(core.ethPot() - pot0, pay - pay * 2_500 / 10_000);
     }
 
-    function test_sellTo_exitLaneUnknownAndNotListedRevert() public {
+    function test_sellTo_exitLaneUnknownAndSoldRevert() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         uint256[] memory ids = _credits(seller, 80);
@@ -1050,34 +625,15 @@ contract SaleSellToTest is SaleBase {
         core.composeExit();
         uint256 xs = STATEMENTS.supply();
         _install();
-        vm.expectRevert(ICore.NotListed.selector);
+        vm.expectRevert(ICore.NotForSale.selector);
         sc.sell{value: 100 ether}(xs, buyer);
-        vm.expectRevert(ICore.NotListed.selector);
+        vm.expectRevert(ICore.NotForSale.selector);
         sc.sell{value: 100 ether}(sid + 1000, buyer);
         assertEq(STATEMENTS.ownerOf(xs), address(core), "the exit lane statement stays");
-        // a statement that was sold and not synced: the record is stale and the house has no auction
-        _bid(address(0xB1D1), sid, _live(sid).reserve);
-        _endAuction(sid);
-        vm.expectRevert(ICore.NotListed.selector);
+        // a statement that was sold has no record any more
+        sc.sell{value: _floorOf(sid)}(sid, buyer);
+        vm.expectRevert(ICore.NotForSale.selector);
         sc.sell{value: 100 ether}(sid, buyer);
-    }
-
-    function test_sellTo_aLiveBidAlwaysWins() public {
-        uint256 sid = _composeOnce().sid;
-        _install();
-        address bidder = address(0xB1D1);
-        _bid(bidder, sid, _live(sid).reserve);
-        vm.expectRevert(ICore.HasBid.selector);
-        sc.sell{value: 1000 ether}(sid, buyer);
-        _bid(address(0xB1D2), sid, _live(sid).bid * 106 / 100);
-        Live memory l = _live(sid);
-        vm.warp(l.endTime);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Ended));
-        vm.expectRevert(ICore.HasBid.selector);
-        sc.sell{value: 1000 ether}(sid, buyer);
-        vm.prank(address(0xE4D));
-        house.endAuction{gas: END_GAS}(l.auctionId);
-        assertEq(STATEMENTS.ownerOf(sid), address(0xB1D2));
     }
 
     function test_sellTo_aSecondSaleOfTheSameStatementInOneTransactionFails() public {
@@ -1086,7 +642,7 @@ contract SaleSellToTest is SaleBase {
         uint256 floor = _floorOf(sid);
         sc.sellTwice{value: floor * 2}(sid, buyer, floor, floor);
         assertFalse(sc.lastOk());
-        assertEq(bytes4(sc.lastWhy()), ICore.NotListed.selector);
+        assertEq(bytes4(sc.lastWhy()), ICore.NotForSale.selector);
         assertEq(STATEMENTS.ownerOf(sid), buyer);
     }
 
@@ -1096,8 +652,8 @@ contract SaleSellToTest is SaleBase {
         uint256 floor = _floorOf(sid);
         vm.expectRevert();
         sc.sell{value: floor}(sid, address(0));
-        assertEq(STATEMENTS.ownerOf(sid), address(house));
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Listed));
+        assertEq(STATEMENTS.ownerOf(sid), address(core));
+        assertTrue(_isHeld(sid));
         // a buyer without a receiver hook still gets it: the core uses a plain transfer
         sc.sell{value: floor}(sid, address(ctl));
         assertEq(STATEMENTS.ownerOf(sid), address(ctl));
@@ -1126,9 +682,8 @@ contract SaleSellToTest is SaleBase {
     function test_reenter_theBuyersRefundCannotReachAnyDoorTwice() public {
         uint256 a = _composeOnce().sid;
         uint256 b = _another();
-        _buyOnly(true);
         ReentrantBuyer rb = new ReentrantBuyer(ctl, core);
-        rb.setOther(b, a);
+        rb.setOther(b);
         uint256 price = ctl.priceOf(a);
         (uint256 pot0, uint256 bb0,) = _recordedBook();
         vm.deal(address(this), price + 2 ether);
@@ -1140,17 +695,14 @@ contract SaleSellToTest is SaleBase {
         assertTrue(rb.buyBlocked(), "a second buy from the refund is refused");
         assertEq(rb.buySel(), IControllerV1.Reentrant.selector);
         assertTrue(rb.sellBlocked(), "sellTo is the controller's alone");
-        assertTrue(rb.repriceBlocked(), "the sold statement is not listed any more");
-        assertEq(rb.repriceSel(), ICore.NotListed.selector);
         assertTrue(rb.exitBlocked());
-        assertEq(STATEMENTS.ownerOf(b), address(house), "the other statement is untouched");
+        assertEq(STATEMENTS.ownerOf(b), address(core), "the other statement is untouched");
         assertEq(core.ethPot() - pot0 + core.ethToBuyback() - bb0, price, "booked exactly once");
         _solvent();
     }
 
     function test_reenter_aBuyerThatRefusesTheRefundCanOnlyPayExactly() public {
         uint256 sid = _composeOnce().sid;
-        _buyOnly(true);
         RefundRefuser rr = new RefundRefuser(ctl);
         uint256 price = ctl.priceOf(sid);
         vm.deal(address(rr), price + 1 ether);
@@ -1161,85 +713,15 @@ contract SaleSellToTest is SaleBase {
         assertEq(pot1, pot0);
         assertEq(bb1, bb0);
         assertEq(bal1, bal0);
-        assertEq(STATEMENTS.ownerOf(sid), address(house), "the failed buy changed nothing");
+        assertEq(STATEMENTS.ownerOf(sid), address(core), "the failed buy changed nothing");
         rr.buy{value: price}(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(rr));
-    }
-}
-
-contract SaleRelistTest is SaleBase {
-    address internal alice = address(0xA11CE);
-
-    /// a sale whose delivery to the winner fails on the house. the real Statements never refuses a transfer, so the
-    /// refusal is made by a mocked revert of exactly this transfer (the house is real, the unwind is real)
-    function _failedDelivery() internal returns (uint256 sid, uint256 aid, uint256 price) {
-        sid = _composeOnce().sid;
-        Live memory l = _live(sid);
-        price = l.reserve;
-        aid = l.auctionId;
-        _bid(alice, sid, price);
-        vm.mockCallRevert(
-            address(STATEMENTS),
-            abi.encodeWithSelector(IStatements.transferFrom.selector, address(house), alice, sid),
-            "cannot receive"
-        );
-        _endAuction(sid);
-        assertTrue(house.pendingDelivery(aid), "deferred");
-    }
-
-    /// the relist after an unwound sale is a fresh listing: the clock restarts, the price is the start price of the
-    /// controller (not the decayed one of the old listing), and the exit wait starts over
-    function test_relist_unwoundSaleRestartsTheClockAndThePrice() public {
-        _enterPhase2();
-        (uint256 sid, uint256 aid,) = _failedDelivery();
-        uint64 first = _listedAt(sid);
-        uint256 cost = _cost(sid);
-        _warp(30 days + 1);
-        house.unwindStuckLot{gas: END_GAS}(aid);
-        vm.clearMockedCalls();
-        assertEq(ctl.statementPrice(sid, cost, first), cost * 7_500 / 10_000, "the old listing would ask the floor");
-        core.syncStatement(sid);
-        assertEq(_listedAt(sid), block.timestamp, "the clock restarted");
-        assertEq(_live(sid).reserve, cost * 15_000 / 10_000, "the relist is priced at age zero");
-        assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000);
-        assertEq(_live(sid).auctionId, aid + 1);
-        // the exit wait counts from the relist
-        _warp(105 hours - 1);
-        vm.expectRevert(ICore.TooEarly.selector);
-        core.exitStatement(sid);
-        _warp(1);
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod));
-    }
-
-    /// the relist of a returned statement never needs the controller (review S-4, fixed): a broken one makes the sync
-    /// list at the hard floor, and a repaired controller prices it again at the next reprice
-    function test_relist_aBrokenControllerListsAtTheHardFloor() public {
-        (uint256 sid, uint256 aid,) = _failedDelivery();
-        _warp(30 days + 1);
-        house.unwindStuckLot{gas: END_GAS}(aid);
-        vm.clearMockedCalls();
-        ScriptedController sc = new ScriptedController();
-        sc.setRevertPrice(true);
-        _setController(address(sc));
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Returned));
-        assertEq(STATEMENTS.ownerOf(sid), address(core));
-        core.syncStatement(sid);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Listed));
-        assertEq(_live(sid).reserve, _cost(sid) * core.settings().saleFloorBps / 10_000, "listed at the hard floor");
-        vm.expectRevert(ICore.BadPrice.selector);
-        core.repriceStatement(sid);
-        sc.setRevertPrice(false);
-        sc.setPriceBps(20_000);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, _cost(sid) * 2, "a repaired controller prices it again");
     }
 }
 
 contract SaleSettingsTest is SaleBase {
     function _fresh() internal view returns (Sale memory) {
         return Sale({
-            buyOnly: lc.sale.buyOnly,
             markupBps: lc.sale.markupBps,
             startCapBps: lc.sale.startCapBps,
             fastDecayBpsPerHour: lc.sale.fastDecayBpsPerHour,
@@ -1262,7 +744,7 @@ contract SaleSettingsTest is SaleBase {
         assertEq(lc.sale.slowDecayBpsPerHour, 25);
         assertEq(lc.sale.floorBps, 7_500);
         assertEq(lc.sale.anchorHalfLife, 7 days);
-        assertTrue(Mainnet.defaultSale().buyOnly, "the launch sale is buy only");
+        assertEq(abi.encode(Mainnet.defaultSale()), abi.encode(lc.sale), "the launch sale");
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.startCapBps(), 100_000);
         assertEq(ctl.fastDecayBpsPerHour(), 100);
@@ -1417,9 +899,6 @@ contract SaleSettingsTest is SaleBase {
         vm.expectEmit(address(ctl));
         emit IControllerV1.AnchorHalfLifeSet(3 days);
         ctl.setAnchorHalfLife(3 days);
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.BuyOnlySet(false);
-        ctl.setBuyOnly(false);
         vm.stopPrank();
         assertEq(ctl.markupBps(), 12_000);
         assertEq(ctl.startCapBps(), 150_000);
@@ -1430,7 +909,6 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.anchorBps(), 11_000);
         assertEq(ctl.anchorHalfLife(), 3 days);
         assertEq(ctl.startBps(), 13_200);
-        assertFalse(ctl.buyOnly());
     }
 
     /// only the live owner of the core: not the deployer, not a keeper, not the controller itself
@@ -1438,8 +916,6 @@ contract SaleSettingsTest is SaleBase {
         address[4] memory who = [deployer, keeper, address(ctl), address(0x5757)];
         for (uint256 i; i < who.length; ++i) {
             vm.startPrank(who[i]);
-            vm.expectRevert(IControllerV1.OnlyOwner.selector);
-            ctl.setBuyOnly(true);
             vm.expectRevert(IControllerV1.OnlyOwner.selector);
             ctl.setMarkupBps(12_000);
             vm.expectRevert(IControllerV1.OnlyOwner.selector);
@@ -1461,7 +937,6 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.anchorHalfLife(), 7 days);
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.anchorBps(), 10_000);
-        assertFalse(ctl.buyOnly());
     }
 
     /// the setters follow `core.owner()`: after a handover the new owner sets, the old owner is refused
@@ -1538,9 +1013,7 @@ contract SaleSettingsTest is SaleBase {
         vm.expectRevert(_bad("anchorHalfLife"));
         Prod.newController(address(core), s);
         s = _fresh();
-        s.buyOnly = true;
         IControllerV1 c = Prod.newController(address(core), s);
-        assertTrue(c.buyOnly());
         assertEq(c.anchorBps(), 10_000);
         assertEq(c.anchorHalfLife(), 7 days);
     }
@@ -1550,8 +1023,8 @@ contract SaleSettingsTest is SaleBase {
         IControllerV1 c2 = Prod.newController(address(core), lc.sale);
         _setController(address(c2));
         vm.prank(owner);
-        c2.setBuyOnly(true);
-        assertTrue(c2.buyOnly());
+        c2.setFastDecayBpsPerHour(200);
+        assertEq(c2.fastDecayBpsPerHour(), 200);
         vm.prank(address(0x5757));
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         c2.setFastDecayBpsPerHour(200);
@@ -1561,16 +1034,15 @@ contract SaleSettingsTest is SaleBase {
 contract SaleAnchorTest is SaleBase {
     address internal buyer = address(0xB0B);
 
-    function _openListings(uint256 n) internal returns (uint256[] memory sids) {
+    function _composeN(uint256 n) internal returns (uint256[] memory sids) {
         sids = new uint256[](n);
         sids[0] = _composeOnce().sid;
         for (uint256 i = 1; i < n; ++i) {
             sids[i] = _another();
         }
-        _buyOnly(true);
     }
 
-    /// buys `sid` at its listing time, so the price is the start price. returns the price and the cost of the statement
+    /// buys `sid` at its compose time, so the price is the start price. returns the price and the cost of the statement
     function _buyAtStart(uint256 sid) internal returns (uint256 price, uint256 cost) {
         _age(sid, 0);
         cost = _cost(sid);
@@ -1587,7 +1059,7 @@ contract SaleAnchorTest is SaleBase {
 
     /// a sale below the anchor leaves the stored anchor, its time and the event log unchanged
     function test_anchor_aSaleBelowTheAnchorLeavesIt() public {
-        uint256 sid = _openListings(1)[0];
+        uint256 sid = _composeN(1)[0];
         _age(sid, 90 * H);
         uint256 price = ctl.priceOf(sid);
         assertEq(price, _cost(sid) * 9_000 / 10_000);
@@ -1602,10 +1074,10 @@ contract SaleAnchorTest is SaleBase {
     }
 
     /// the review sequence: four sales at the start price raise the anchor to 24_413, then two sales at the floor leave
-    /// the anchor, its time and the start price of an open listing where they were
+    /// the anchor, its time and the start price of a held statement where they were
     function test_anchor_floorSalesDoNotDragTheAnchor() public {
-        uint256[] memory sids = _openListings(6);
-        uint256 listed = _listedAt(sids[0]);
+        uint256[] memory sids = _composeN(6);
+        uint256 listed = _composedAt(sids[0]);
         for (uint256 i; i < 4; ++i) {
             _buyAtStart(sids[i]);
         }
@@ -1619,7 +1091,7 @@ contract SaleAnchorTest is SaleBase {
         assertEq(stored, 24_413);
         assertEq(at, listed);
         assertEq(anchor, 12_766, "24_413 decayed over 400 hours of a 7 day half life");
-        assertEq(ask, _cost(sids[5]) * 7_500 / 10_000, "the open listing is at the floor");
+        assertEq(ask, _cost(sids[5]) * 7_500 / 10_000, "the held statement is at the floor");
         vm.recordLogs();
         _pay(buyer, sids[4], ctl.priceOf(sids[4]));
         assertEq(ctl.anchorBps(), anchor, "anchor after the first floor sale");
@@ -1653,7 +1125,7 @@ contract SaleAnchorTest is SaleBase {
         assertEq(ctl.anchorTime(), t0);
     }
 
-    /// the start price of a new listing follows the decayed anchor
+    /// the start price of a new statement follows the decayed anchor
     function test_anchor_startPriceFollowsTheDecay() public {
         _anchor(30_000);
         assertEq(ctl.startBps(), 45_000);
@@ -1663,9 +1135,9 @@ contract SaleAnchorTest is SaleBase {
         assertEq(ctl.startBps(), 15_000, "1.5 times 10_000");
     }
 
-    /// an open listing follows the anchor down as it decays: the price is the curve from the live start price
+    /// a held statement follows the anchor down as it decays: the price is the curve from the live start price
     function test_anchor_anOpenListingFollowsTheDecayingAnchor() public {
-        uint256 sid = _openListings(1)[0];
+        uint256 sid = _composeN(1)[0];
         uint256 cost = _cost(sid);
         _anchor(30_000);
         _age(sid, 0);
@@ -1685,12 +1157,11 @@ contract SaleAnchorTest is SaleBase {
 
     /// a sale above the decayed anchor moves it halfway from the decayed value, and the stored anchor takes the time
     function test_anchor_aSaleAboveTheDecayedAnchorMovesItHalfWay() public {
-        _openListings(1);
+        _composeN(1);
         _anchor(30_000);
         vm.warp(block.timestamp + 7 days);
         assertApproxEqAbs(ctl.anchorBps(), 20_000, 1);
         uint256 sid = _another();
-        _buyOnly(true);
         uint256 cost = _cost(sid);
         uint256 effective = ctl.anchorBps();
         uint256 price = ctl.priceOf(sid);
@@ -1724,28 +1195,9 @@ contract SaleAnchorTest is SaleBase {
         assertApproxEqAbs(ctl.anchorBps(), 12_500, 1, "one new half life of 1 day");
     }
 
-    /// the buy only house reserve is the cap, so it stays at or above the live ask of the same listing when a sale
-    /// or the owner raises the anchor after the reserve was set
-    function test_anchor_buyOnlyReserveNeverUndercutsTheLiveAsk() public {
-        uint256[] memory sids = _openListings(2);
-        uint256 cost = _cost(sids[0]);
-        core.repriceStatement(sids[0]);
-        _buyAtStart(sids[1]);
-        assertEq(ctl.anchorBps(), 12_500);
-        _age(sids[0], 0);
-        assertEq(ctl.priceOf(sids[0]), cost * 18_750 / 10_000, "the live ask rose with the anchor");
-        assertGe(_live(sids[0]).reserve, ctl.priceOf(sids[0]), "the reserve stayed above it");
-        // the owner raises the anchor to the cap: the ask reaches the cap and the reserve is not under it
-        _anchor(100_000);
-        assertEq(ctl.priceOf(sids[0]), cost * 100_000 / 10_000);
-        assertGe(_live(sids[0]).reserve, ctl.priceOf(sids[0]));
-        core.repriceStatement(sids[0]);
-        assertGe(_live(sids[0]).reserve, ctl.priceOf(sids[0]));
-    }
-
     /// a sale at 15_000 moves the anchor to the mean 12_500, and the next start is 18_750
     function test_anchor_aSaleAtTheStartMovesTheAnchorHalfWay() public {
-        uint256 sid = _openListings(1)[0];
+        uint256 sid = _composeN(1)[0];
         _age(sid, 0);
         uint256 price = ctl.priceOf(sid);
         assertEq(price, _cost(sid) * 15_000 / 10_000);
@@ -1759,7 +1211,7 @@ contract SaleAnchorTest is SaleBase {
     /// four sales at the start price in a row. integer math: the start is the anchor times 1.5 rounded down, the anchor
     /// the mean of the old anchor and the sale price rounded down
     function test_anchor_fourSalesAtTheStart() public {
-        uint256[] memory sids = _openListings(4);
+        uint256[] memory sids = _composeN(4);
         uint256[4] memory start = [uint256(15_000), 18_750, 23_437, 29_296];
         uint256[4] memory anchor = [uint256(12_500), 15_625, 19_531, 24_413];
         assertEq(ctl.anchorBps(), 10_000);
@@ -1771,9 +1223,9 @@ contract SaleAnchorTest is SaleBase {
         }
     }
 
-    /// an open listing follows the anchor: its price rises when another statement sells above the anchor, at every age
+    /// a held statement follows the anchor: its price rises when another statement sells above the anchor, at every age
     function test_anchor_anOpenListingFollowsTheAnchor() public {
-        uint256[] memory sids = _openListings(2);
+        uint256[] memory sids = _composeN(2);
         uint256 cost = _cost(sids[1]);
         _age(sids[1], 0);
         uint256 before0 = ctl.priceOf(sids[1]);
@@ -1801,9 +1253,9 @@ contract SaleAnchorTest is SaleBase {
         assertEq(ctl.priceOf(sids[1]), cost * 7_500 / 10_000, "the end of the curve is the floor");
     }
 
-    /// the owner lowers the anchor back and the open listing follows it down
+    /// the owner lowers the anchor back and the held statement follows it down
     function test_anchor_theOwnerCorrectsTheAnchor() public {
-        uint256[] memory sids = _openListings(2);
+        uint256[] memory sids = _composeN(2);
         _buyAtStart(sids[0]);
         assertEq(ctl.anchorBps(), 12_500);
         _anchor(10_000);
@@ -1813,7 +1265,7 @@ contract SaleAnchorTest is SaleBase {
 
     /// the start is held at the cap, and a sale at the cap keeps the start there
     function test_anchor_startCapHoldsAfterSales() public {
-        uint256[] memory sids = _openListings(2);
+        uint256[] memory sids = _composeN(2);
         _anchor(80_000);
         assertEq(ctl.startBps(), 100_000);
         (uint256 price, uint256 cost) = _buyAtStart(sids[0]);
@@ -1824,7 +1276,7 @@ contract SaleAnchorTest is SaleBase {
 
     /// a sale above the cap (a hard floor above it) cannot take the anchor past the cap
     function test_anchor_neverPassesTheCap() public {
-        uint256 sid = _openListings(1)[0];
+        uint256 sid = _composeN(1)[0];
         _saleSettings(12_000, 12_000, 100, 10_000, 25, 7_500);
         _floorBps(30_000);
         _age(sid, 0);
@@ -1838,7 +1290,7 @@ contract SaleAnchorTest is SaleBase {
 
     /// the sale is recorded at the asking price, not at `msg.value`: the excess is refunded and does not move the anchor
     function test_anchor_buyRecordsTheAskNotMsgValue() public {
-        uint256 sid = _openListings(1)[0];
+        uint256 sid = _composeN(1)[0];
         _age(sid, 0);
         uint256 price = ctl.priceOf(sid);
         vm.expectEmit(address(ctl));
@@ -1851,7 +1303,7 @@ contract SaleAnchorTest is SaleBase {
 
     /// a refused or underpaid buy leaves the anchor where it was
     function test_anchor_aRevertedBuyDoesNotMoveIt() public {
-        uint256 sid = _openListings(1)[0];
+        uint256 sid = _composeN(1)[0];
         _age(sid, 0);
         uint256 price = ctl.priceOf(sid);
         vm.deal(buyer, price);
@@ -1859,25 +1311,15 @@ contract SaleAnchorTest is SaleBase {
         vm.expectRevert(IControllerV1.Underpaid.selector);
         ctl.buy{value: price - 1}(sid);
         assertEq(ctl.anchorBps(), 10_000);
-        _bid(address(0xB1D1), sid, _live(sid).reserve);
-        vm.deal(buyer, price);
+        // a statement that is not for sale
         vm.prank(buyer);
-        vm.expectRevert(ICore.HasBid.selector);
-        ctl.buy{value: price}(sid);
-        assertEq(ctl.anchorBps(), 10_000);
-    }
-
-    /// auction sales happen on the house and do not move the anchor
-    function test_anchor_aHouseSaleLeavesItAlone() public {
-        uint256 sid = _composeOnce().sid;
-        _bid(address(0xB1D1), sid, _live(sid).reserve);
-        _endAuction(sid);
-        _collectSales();
+        vm.expectRevert(IControllerV1.NotForSale.selector);
+        ctl.buy{value: price}(sid + 1000);
         assertEq(ctl.anchorBps(), 10_000);
     }
 }
 
-/// the two stage fall of the asking price: exact points, a start below the knee, live settings on open listings, the
+/// the two stage fall of the asking price: exact points, a start below the knee, live settings on held statements, the
 /// order of the setters, and the shape of the price in the age
 contract SaleDecayTest is SaleBase {
     /// a start of 300 percent (markup 30_000 on the anchor floor of 10_000): 1 percent an hour for 200 hours to the knee,
@@ -1942,7 +1384,7 @@ contract SaleDecayTest is SaleBase {
         }
     }
 
-    /// each of the four settings moves an open listing to the value the new rule gives for its age, with no reprice
+    /// each of the four settings moves a held statement to the value the new rule gives for its age
     function test_decay_settingsMoveAnOpenListingAtOnce() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
@@ -1963,15 +1405,13 @@ contract SaleDecayTest is SaleBase {
         ctl.setSlowDecayBpsPerHour(25);
         vm.stopPrank();
         assertEq(ctl.priceOf(sid), cost * 9_750 / 10_000, "back to the launch rule");
-        // the quote of the buy only path is the same function
         assertEq(_raw(sid), ctl.priceOf(sid));
     }
 
-    /// the setters apply to the reserve of the next reprice too, and `buy` pays the live rule
+    /// `buy` pays the live rule
     function test_decay_buyPaysTheLiveRule() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        _buyOnly(true);
         _age(sid, 60 * H);
         vm.prank(owner);
         ctl.setSlowDecayBpsPerHour(50);
@@ -2013,12 +1453,16 @@ contract SaleDecayTest is SaleBase {
         assertEq(ctl.floorBps(), 10_000);
     }
 
+    /// answers the controller's reads of the Core for the price fuzz: the cost and the compose time of any statement
+    StatementInfoStub internal stub;
+
     /// a controller with random valid settings and a random anchor, created after `warp` seconds so the anchor has not decayed
     function _decayControllerFuzz(uint256[8] memory x, uint256 warp)
         internal
         returns (IControllerV1 c, Sale memory k, uint256 anchor)
     {
         vm.warp(block.timestamp + warp);
+        stub = new StatementInfoStub(owner);
         k.markupBps = uint16(bound(x[0], 10_000, 40_000));
         k.startCapBps = uint32(bound(x[1], k.markupBps, 200_000));
         k.floorBps = uint16(bound(x[2], 1_000, 10_000));
@@ -2026,14 +1470,16 @@ contract SaleDecayTest is SaleBase {
         k.fastDecayBpsPerHour = uint16(bound(x[4], 1, 10_000));
         k.slowDecayBpsPerHour = uint16(bound(x[5], 1, 10_000));
         k.anchorHalfLife = 7 days;
-        c = Prod.newController(address(core), k);
+        c = Prod.newController(address(stub), k);
         anchor = bound(x[6], 10_000, k.startCapBps);
         vm.prank(owner);
         c.setAnchorBps(uint32(anchor));
     }
 
-    function _at(IControllerV1 c, uint256 cost, uint256 age) internal view returns (uint256) {
-        return c.statementPrice(0, cost, uint64(block.timestamp - age));
+    function _at(IControllerV1 c, uint256 cost, uint256 age) internal returns (uint256) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        stub.set(cost, uint64(block.timestamp - age));
+        return c.priceOf(0);
     }
 
     function _closedForm(IControllerV1 c, Sale memory k, uint256 cost, uint256 age) internal view returns (uint256) {

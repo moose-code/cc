@@ -19,7 +19,6 @@ interface ICoreLens {
         uint256 xPot;
         uint256 xToBuyback;
         uint256 unbookedEth;
-        uint256 salesOwed;
         uint256 routerBalance;
         uint256 routerOwed;
         uint256 flushToCore;
@@ -37,17 +36,12 @@ interface ICoreLens {
         uint256 id;
         Lane lane;
         uint256 cost;
-        bool listed;
-        uint256 auctionId;
+        uint64 composedAt;
         uint256 askingPrice;
-        uint8 status;
-        uint256 topBid;
-        uint64 endTime;
     }
 
     function CORE() external view returns (address);
     function CREDITS() external view returns (address);
-    function HOUSE() external view returns (address);
     function ROUTER() external view returns (address);
     function STATEMENTS() external view returns (address);
     function controller() external view returns (address);

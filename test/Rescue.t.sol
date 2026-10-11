@@ -5,8 +5,8 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Lane} from "../src/interfaces/Interfaces.sol";
 
-/// `rescueNft` of the Core: an ERC721 token leaves only when the Core's books do not hold it. real Credits, Statements,
-/// house and a real ERC721 of the fork
+/// `rescueNft` of the Core: an ERC721 token leaves only when the Core's books do not hold it. real Credits, Statements
+/// and a real ERC721 of the fork
 contract RescueTest is Fixture {
     /// a live ERC721 collection on the fork (BAYC)
     address internal constant FOREIGN = 0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D;
@@ -56,9 +56,8 @@ contract RescueTest is Fixture {
         Composed memory c = _composeOnce();
         (bool held,,,) = core.statementInfo(c.sid);
         assertTrue(held, "setup: the statement is held");
-        // listed on the house: the house holds it, the books say held
         _expectRescueRevert(address(STATEMENTS), c.sid, ICore.Held.selector);
-        assertEq(STATEMENTS.ownerOf(c.sid), address(house), "the statement moved");
+        assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement moved");
     }
 
     function test_REVERT_anExitLaneStatementHeldByTheCoreStays() public {
@@ -85,22 +84,13 @@ contract RescueTest is Fixture {
 
     function test_OK_aStatementThatCameBackAfterASaleLeaves() public {
         (uint256 sid,) = _sellStatement(address(0xB1D));
-        core.syncStatement(sid);
         (bool held,,,) = core.statementInfo(sid);
-        assertFalse(held, "setup: the sale is settled");
+        assertFalse(held, "setup: the sale cleared the record");
         vm.prank(address(0xB1D));
         STATEMENTS.transferFrom(address(0xB1D), address(core), sid);
         assertEq(STATEMENTS.ownerOf(sid), address(core), "setup: the statement sits in the core");
         _rescue(address(STATEMENTS), sid, dest);
         assertEq(STATEMENTS.ownerOf(sid), dest, "the statement did not reach the destination");
-    }
-
-    function test_REVERT_aSoldStatementWithItsRecordStillStaysEvenIfItIsBack() public {
-        (uint256 sid,) = _sellStatement(address(0xB1D));
-        // not synced: the books still say held
-        vm.prank(address(0xB1D));
-        STATEMENTS.transferFrom(address(0xB1D), address(core), sid);
-        _expectRescueRevert(address(STATEMENTS), sid, ICore.Held.selector);
     }
 
     function test_OK_aForeignErc721Leaves() public {

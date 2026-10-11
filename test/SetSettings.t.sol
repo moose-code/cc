@@ -38,22 +38,8 @@ contract SetSettingsProbe is SetSettings {
         return (false, 0);
     }
 
-    bool internal reprice_;
-
-    function setReprice(bool on) external {
-        reprice_ = on;
-    }
-
-    function _reprice() internal view override returns (bool) {
-        return reprice_;
-    }
-
     function warnRateCap(uint256 rateCap) external view returns (bool) {
         return _warnRateCap(ICoreOwner(core_), rateCap);
-    }
-
-    function open() external view returns (uint256[] memory) {
-        return _openListings(ICoreOwner(core_));
     }
 
     function applyTo(Settings memory s) external view returns (Settings memory) {
@@ -79,7 +65,7 @@ contract SetSettingsTest is Fixture {
         probe.configure(address(core), "");
     }
 
-    /// @dev how many of the 30 fields differ between two structs, and whether field `i` is among them
+    /// @dev how many of the 26 fields differ between two structs, and whether field `i` is among them
     function _diff(Settings memory a, Settings memory b) internal pure returns (uint256 n, uint256 first) {
         first = type(uint256).max;
         for (uint256 i; i < SettingsFields.N; ++i) {
@@ -105,12 +91,12 @@ contract SetSettingsTest is Fixture {
 
     function test_patchTextAndPatchFile() public {
         Settings memory live = core.settings();
-        probe.configure(address(core), '{"saleFloorBps": 8000, "auctionDuration": 172800}');
+        probe.configure(address(core), '{"saleFloorBps": 8000, "exitAfter": 172800}');
         Settings memory out = probe.applyTo(live);
         (uint256 n,) = _diff(live, out);
         assertEq(n, 2);
         assertEq(out.saleFloorBps, 8_000);
-        assertEq(out.auctionDuration, 172_800);
+        assertEq(out.exitAfter, 172_800);
         // the same patch from a file
         probe.configure(address(core), "test/data/SettingsPatch.json");
         Settings memory fromFile = probe.applyTo(live);
@@ -176,34 +162,5 @@ contract SetSettingsTest is Fixture {
         (bool ok,) = address(core).call(abi.encodeCall(core.setSettings, (next)));
         assertTrue(ok, "the printed calldata is accepted by the core");
         assertEq(core.settings().saleFloorBps, 8_000);
-    }
-
-    /// REPRICE=1 lists the statements the Core holds that are listed with no bid, and only those. after a raised
-    /// `saleFloorBps` each of them takes the new reserve through `repriceStatement`, the one with a bid keeps its own
-    function test_repriceModeListsOnlyUnbidListings() public {
-        uint256 a = _composeOnce().sid;
-        _fillEthPile(80);
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.compose();
-        uint256 b = STATEMENTS.supply();
-        uint256 bidReserve = _live(b).reserve;
-        _bid(makeAddr("bidder"), b, bidReserve);
-        uint256[] memory open = probe.open();
-        assertEq(open.length, 1, "one listing has no bid");
-        assertEq(open[0], a);
-
-        probe.setReprice(true);
-        probe.single("saleFloorBps", 20_000);
-        probe.run();
-        // the owner's batch: setSettings, then the repriceStatement calls the script printed
-        Settings memory next = probe.applyTo(core.settings());
-        _setSettings(next);
-        for (uint256 i; i < open.length; ++i) {
-            core.repriceStatement(open[i]);
-        }
-        (,, uint256 cost,) = core.statementInfo(a);
-        assertEq(_live(a).reserve, cost * 20_000 / 10_000, "the unbid listing took the new reserve");
-        assertEq(_live(b).reserve, bidReserve, "the listing with a bid keeps its reserve");
     }
 }

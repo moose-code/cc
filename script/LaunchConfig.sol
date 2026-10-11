@@ -140,7 +140,6 @@ abstract contract ConfigReader is CommonBase {
             factory: vm.parseJsonAddress(j, ".stack.factory"),
             locker: vm.parseJsonAddress(j, ".stack.locker"),
             escrow: vm.parseJsonAddress(j, ".stack.escrow"),
-            auctionFactory: vm.parseJsonAddress(j, ".stack.auctionFactory"),
             feeSource: address(0)
         });
         c.mevModule = vm.parseJsonAddress(j, ".stack.mevModule");
@@ -170,7 +169,6 @@ abstract contract ConfigReader is CommonBase {
         s.tipSavingsBps = _u16(j, ".settings.tipSavingsBps");
         s.tipCapBps = _u16(j, ".settings.tipCapBps");
         s.saleFloorBps = _u16(j, ".settings.saleFloorBps");
-        s.auctionDuration = _u32(j, ".settings.auctionDuration");
         s.exitAfter = _u32(j, ".settings.exitAfter");
         s.saleToBuybackBps = _u16(j, ".settings.saleToBuybackBps");
         s.exitToBuybackBps = _u16(j, ".settings.exitToBuybackBps");
@@ -197,7 +195,6 @@ abstract contract ConfigReader is CommonBase {
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {
         c.sale = Sale({
-            buyOnly: vm.parseJsonBool(j, ".sale.buyOnly"),
             markupBps: _u16(j, ".sale.markupBps"),
             startCapBps: _u32(j, ".sale.startCapBps"),
             fastDecayBpsPerHour: _u16(j, ".sale.fastDecayBpsPerHour"),

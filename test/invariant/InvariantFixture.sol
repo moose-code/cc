@@ -6,7 +6,6 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {Lane, ICreditStrategy, Mainnet} from "../../src/interfaces/Interfaces.sol";
-import {IAuctionHouse} from "../../src/interfaces/AuctionHouse.sol";
 import {Fixture} from "../utils/Fixture.sol";
 import {CreditIds} from "../utils/CreditIds.sol";
 import {MockExitModule} from "../standins/MockExitModule.sol";
@@ -16,7 +15,6 @@ import {FuzzController} from "../attackers/FuzzController.sol";
 import {TestLiquidityHelper} from "../utils/TestLiquidityHelper.sol";
 import {Handler} from "./Handler.sol";
 import {Wiring, HandlerBase} from "./HandlerBase.sol";
-import {HandlerHouse} from "./HandlerHouse.sol";
 import {HandlerOwner} from "./HandlerOwner.sol";
 import {HandlerSale} from "./HandlerSale.sol";
 
@@ -29,9 +27,8 @@ import {HandlerSale} from "./HandlerSale.sol";
 /// pre filled with real credits so that composes happen, and the clock is moved so that the rate has climbed far
 /// enough for the real CreditStrategy listings to fit under the ceiling.
 ///
-/// every statement of the prefill is listed on the real pnd auction house the core owns, and two of them are sold
-/// before the run (outside the sniper window variant, where an auction cannot finish in time): one collected and
-/// one not, neither synced, so the run starts with a stale record and with proceeds owed by the house.
+/// every statement of the prefill is held by the core, and two of them are bought through the controller before the
+/// run (outside the sniper window variant), so the run starts with sale proceeds booked and the anchor moved.
 ///
 /// two start states: after the sniper window (a week passes before the owner setup) and inside it (the run starts a
 /// few seconds after launch, the skim is 90 percent).
@@ -40,7 +37,7 @@ abstract contract InvariantFixture is Fixture {
     uint256 internal constant FUND_ETH = 100 ether;
     /// credits that stay in the eth pile after the pre filled composes, so two more fill it to 80
     uint256 internal constant LEFT_IN_PILE = 78;
-    /// statements composed and listed before the run
+    /// statements composed before the run
     uint256 internal constant COMPOSES = 4;
     /// real listings are read from this index of the strategy list, after the credits that move
     uint256 internal constant CANDIDATE_START = 600;
@@ -71,7 +68,6 @@ abstract contract InvariantFixture is Fixture {
 
         Wiring memory w = Wiring({
             core: core,
-            house: house,
             coin: coin,
             router: router,
             launchKey: launchKey,
@@ -168,18 +164,16 @@ abstract contract InvariantFixture is Fixture {
         }
     }
 
-    /// the statements the prefill sold on the house before the run, with the price. the first was collected, the second
-    /// was not, and neither was synced
+    /// the statements the prefill sold before the run, with the price
     uint256 internal sold1;
     uint256 internal sold2;
     uint256 internal price1;
     uint256 internal price2;
 
-    /// real credits sold into the piles, four composes so statements exist for the auction and the exit,
-    /// all listed on the house. outside the sniper window two of them are sold: the whale bids the reserve, the
-    /// auction runs out and is settled by a stranger, the first is collected so the buyback pot is not empty when the
-    /// run starts, the second is left owed by the house. in phase 2 the exit token bid is funded and 80 more credits are
-    /// sold into it, so the exit lane has a full page
+    /// real credits sold into the piles, four composes so statements exist for the sale and the exit. outside the
+    /// sniper window two of them are bought by the whale at the asking price, so the buyback pot is not empty when the
+    /// run starts. in phase 2 the exit token bid is funded and 80 more credits are sold into it, so the exit lane has a
+    /// full page
     function _prefill(bool phase2, bool inWindow) internal {
         uint256 ethN = COMPOSES * 80 + LEFT_IN_PILE;
         uint256[] memory ids = _credits(filler, ethN + (phase2 ? 80 : 0));
@@ -206,10 +200,8 @@ abstract contract InvariantFixture is Fixture {
         assertEq(core.pileSize(Lane.Eth), LEFT_IN_PILE);
         if (!inWindow) {
             (sold1, price1) = _saleOf(firstStatement);
-            assertGt(_collectSales(), 0);
             assertGt(core.ethToBuyback(), 0);
             (sold2, price2) = _saleOf(firstStatement + 1);
-            assertGt(_owedByHouse(), 0, "the second sale is left uncollected");
         }
         if (phase2) {
             // the exit token bid is funded the way the module would: exit token arrives and skim books it
@@ -225,11 +217,19 @@ abstract contract InvariantFixture is Fixture {
         }
     }
 
-    /// the whale bids the reserve on `sid`, the auction runs out and a stranger settles it
+    /// the whale buys `sid` at the asking price
     function _saleOf(uint256 sid) internal returns (uint256, uint256) {
-        uint256 price = _live(sid).reserve;
-        _bid(whale, sid, price);
-        _endAuction(sid);
+        // the sale needs the first controller in force: the hostile suites hand the core to the fuzz controller first
+        address current = core.controller();
+        if (current != address(ctl)) {
+            vm.prank(owner);
+            core.setController(address(ctl));
+        }
+        uint256 price = _buy(whale, sid);
+        if (current != address(ctl)) {
+            vm.prank(owner);
+            core.setController(current);
+        }
         assertEq(STATEMENTS.ownerOf(sid), whale);
         return (sid, price);
     }
@@ -276,10 +276,10 @@ abstract contract InvariantFixture is Fixture {
         if (phase2) _seedLane(Lane.Exit);
         uint256[] memory held = core.heldStatements();
         for (uint256 i; i < held.length; ++i) {
-            if (held[i] == sold1 && sold1 != 0) handler.seedGhostStatement(held[i], whale, price1, true);
-            else if (held[i] == sold2 && sold2 != 0) handler.seedGhostStatement(held[i], whale, price2, false);
-            else handler.seedGhostStatement(held[i], address(0), 0, false);
+            handler.seedGhostStatement(held[i]);
         }
+        if (sold1 != 0) handler.seedGhostSold(sold1, whale, price1);
+        if (sold2 != 0) handler.seedGhostSold(sold2, whale, price2);
         handler.seedEthBooks();
     }
 
@@ -313,12 +313,8 @@ abstract contract InvariantFixture is Fixture {
         s[n++] = HandlerBase.warp.selector;
         s[n++] = HandlerBase.roll.selector;
         s[n++] = HandlerBase.compose.selector;
-        s[n++] = HandlerHouse.bid.selector;
-        s[n++] = HandlerHouse.bid.selector;
-        s[n++] = HandlerHouse.endAuction.selector;
-        s[n++] = HandlerHouse.collectSales.selector;
-        s[n++] = HandlerHouse.syncStatement.selector;
-        s[n++] = HandlerHouse.repriceStatement.selector;
+        s[n++] = HandlerSale.buy.selector;
+        s[n++] = HandlerSale.buy.selector;
         s[n++] = HandlerBase.buyback.selector;
         s[n++] = HandlerBase.skim.selector;
         s[n++] = HandlerBase.donate.selector;
@@ -339,14 +335,8 @@ abstract contract InvariantFixture is Fixture {
             s[n++] = HandlerBase.moduleMode.selector;
         }
         if (_saleActions()) {
-            s[n++] = HandlerSale.buyOnlyBuy.selector;
-            s[n++] = HandlerSale.buyOnlyBuy.selector;
             s[n++] = HandlerSale.ownerSell.selector;
-            s[n++] = HandlerSale.repriceBid.selector;
-            s[n++] = HandlerSale.repriceBid.selector;
             s[n++] = HandlerSale.saleSettings.selector;
-            s[n++] = HandlerSale.flipMode.selector;
-            s[n++] = HandlerSale.flipMode.selector;
             s[n++] = HandlerSale.hostileOwner.selector;
             s[n++] = HandlerSale.lockDoor.selector;
             s[n++] = HandlerSale.handover.selector;

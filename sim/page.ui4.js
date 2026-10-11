@@ -4,7 +4,6 @@ const SCENARIOS = [
   { id: 'sc-base', label: 'as launched', set: {} },
   { id: 'sc-open75', label: 'opening limit 75%', set: { openPct: 75 } },
   { id: 'sc-open40', label: 'opening limit 40%', set: { openPct: 40 } },
-  { id: 'sc-auction', label: 'auction mode sale', set: { saleMode: 'auction' } },
   { id: 'sc-markup130', label: 'start price 130% of the anchor', set: { markupBps: 13000 } },
   { id: 'sc-floor14', label: 'floor 60% on day 14', set: { chgOn: true, chgDay: 14, chgKey: 'floorBps', chgValue: 6000 } },
   { id: 'sc-floor60', label: 'floor 60% from launch', set: { floorBps: 6000, saleFloorBps: 6000 } },
@@ -41,7 +40,7 @@ function buildCalibration() {
     ['comparable coin volume', 'day one 1,557 eth, 912 in hour one, then 81, 42, 46, 57, 13, 28, 58, 12, 41, 5, 2, 3', 'fit 123 exp(-0.286 d), floor 0.5 eth a day'],
     ['coin buys against sells', 'day one 819 to 738 eth, net 80 eth moves price 2.5e-8 to 4.4e-7', 'model reproduces 4.48e-7 on day one'],
     ['CreditStrategy inventory', '13,132 credits listed at median 0.036 eth, mean score 371', 'static, cleared through buyListing when the ceiling passes the ask'],
-    ['statement sale', 'a buyer takes the statement with the lowest asking price at or under its willingness to pay and does not wait for a lower price. buy only mode (launch): it pays the asking price and gets the statement at once, and the anchor moves halfway to the price paid. auction mode: it opens the auction at the asking price, later bids 5% higher, 15 minute extension, proceeds reach the pots when collectSales runs (hourly keeper)', 'src/Core.sol, src/ControllerV1.sol, docs/reference/pnd'],
+    ['statement sale', 'a buyer takes the statement with the lowest asking price at or under its willingness to pay and does not wait for a lower price. it pays the asking price and gets the statement at once through Core.sellTo, and the anchor moves halfway to the price paid', 'src/Core.sol, src/ControllerV1.sol'],
     ['launch position', 'tick -175000 to 887200, whole supply, 6.9% skim, 6.65 points to the fee router (5.90 to the engine after the 0.75 point payee, 0.25 protocol leg), 90% falling to 6.9% over 30 minutes, no lp fee', 'script/config/mainnet.json'],
   ];
   $('calTbl').innerHTML = '<thead><tr><th>input</th><th>value in the model</th><th>source</th></tr></thead><tbody>' + rows.map((r) => '<tr><td>' + r[0] + '</td><td style="white-space:normal;text-align:left">' + r[1] + '</td><td style="white-space:normal;text-align:left">' + r[2] + '</td></tr>').join('') + '</tbody>';

@@ -334,7 +334,7 @@ abstract contract PostflightV2 is SystemBuilder, Report {
             t.isPinned(c.stack.locker) && t.isPinned(c.stack.escrow),
             "isPinned(locker), isPinned(escrow)"
         );
-        address[12] memory off = [
+        address[10] memory off = [
             core,
             c.stack.feeSource,
             c.owner,
@@ -344,19 +344,16 @@ abstract contract PostflightV2 is SystemBuilder, Report {
             c.stack.poolManager,
             c.stack.factory,
             c.mevModule,
-            c.stack.auctionFactory,
-            address(ICoreHouse(core).HOUSE()),
-            ICoreHouse(core).controller()
+            ICoreController(core).controller()
         ];
         bool none = true;
         for (uint256 i; i < off.length; ++i) {
             none = none && !t.isAllowed(off[i]);
         }
-        _soft(ch, "coin: allowlist holds none of core, router, owner, creator, payee, hook, factory, mev module, house, controller", none, "isAllowed", "COIN_CHANGED=1");
+        _soft(ch, "coin: allowlist holds none of core, router, owner, creator, payee, hook, factory, mev module, controller", none, "isAllowed", "COIN_CHANGED=1");
     }
 }
 
-interface ICoreHouse {
-    function HOUSE() external view returns (address);
+interface ICoreController {
     function controller() external view returns (address);
 }

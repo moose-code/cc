@@ -16,7 +16,7 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Lane, Mainnet, Settings, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsMevSkimV2} from "../src/interfaces/ArtCoinsV2.sol";
-import {SwapMidListing, SwapMidExit, SwapAroundCollect} from "./attackers/SwapMidCall.sol";
+import {SwapMidListing, SwapMidExit, SwapAroundBuy} from "./attackers/SwapMidCall.sol";
 import {MockExitToken} from "./standins/MockExitToken.sol";
 
 /// shared helpers for the fee, buyback, auction and tax suites. every swap goes through the real pool
@@ -124,28 +124,24 @@ abstract contract FeeBase is Fixture {
         _buyCoin(trader, 20 ether);
     }
 
-    /// @dev the eth buyback pot gets filled the real way: a composed statement is listed on the real house, a real
-    /// bidder wins it at the reserve, anyone settles it and the core collects the proceeds, which the split divides
+    /// @dev the eth buyback pot gets filled the real way: a composed statement is bought through the controller at its
+    /// asking price, and the core books the proceeds, which the split divides
     function _fillEthBuyback() internal returns (uint256 toBuyback) {
         Composed memory c = _composeOnce();
         address buyer = _user("statement buyer");
         uint256 before = core.ethToBuyback();
-        _bid(buyer, c.sid, _live(c.sid).reserve);
-        _endAuction(c.sid);
-        _collectSales();
+        _buy(buyer, c.sid);
         toBuyback = core.ethToBuyback() - before;
     }
 
-    /// @dev one more statement sold on the house and collected, the way real fees and sales fill the buyback pot
+    /// @dev one more statement composed and bought, the way real fees and sales fill the buyback pot
     function _anotherSale() internal {
         _fillEthPile(80);
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
         uint256 sid = STATEMENTS.supply();
-        _bid(trader, sid, _live(sid).reserve);
-        _endAuction(sid);
-        _collectSales();
+        _buy(trader, sid);
     }
 }
 
@@ -807,44 +803,30 @@ contract ReceiveSettingsTest is FeeBase {
         assertEq(core.ethPot() + core.ethToBuyback(), address(core).balance);
     }
 
-    /// two sales are settled on the house and their proceeds wait there. one transaction then swaps in the real pool,
-    /// collects, and swaps again, so the hook pushes into `receive` before and after `collectSales` (the house delivers
-    /// statements by plain transfer and runs no code of the winner, so this is as close to the middle as a stranger
-    /// gets, and the house pays the core only from inside `collectSales`). an unrelated donation sits unbooked
-    /// throughout. every wei is booked once, in the right pot
-    function test_receiveAroundCollectSalesInOneTransaction() public {
+    /// two statements are composed. one transaction swaps in the real pool (the skim hook pushes into `receive`), buys
+    /// a statement through the controller, and swaps again, so the hook pushes into `receive` before and after the sale
+    /// is booked. an unrelated donation sits unbooked throughout. every wei is booked once, in the right pot
+    function test_receiveAroundABuyInOneTransaction() public {
         _stock();
         Settings memory s = core.settings();
         s.saleToBuybackBps = 3_333;
         _setSettings(s);
-        uint256 sid1 = _composeOnce().sid;
-        uint256 price1 = _live(sid1).reserve;
-        _bid(trader, sid1, price1);
-        _endAuction(sid1);
-        _fillEthPile(80);
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.compose();
-        uint256 sid2 = STATEMENTS.supply();
-        uint256 price2 = _live(sid2).reserve;
-        _bid(trader, sid2, price2);
-        _endAuction(sid2);
-        assertEq(_owedByHouse(), price1 + price2);
+        uint256 sid = _composeOnce().sid;
+        uint256 price = ctl.priceOf(sid);
 
         vm.deal(address(core), address(core).balance + 0.5 ether);
-        SwapAroundCollect w = new SwapAroundCollect(router, address(core), launchKey);
+        SwapAroundBuy w = new SwapAroundBuy(router, address(ctl), launchKey);
         w.setFeeRouter(address(feeRouter));
-        vm.deal(address(w), 4 ether);
+        vm.deal(address(w), 4 ether + price);
         uint256 pot = core.ethPot();
         uint256 back = core.ethToBuyback();
         uint256 bal = address(core).balance;
-        w.run(1 ether);
+        w.run(1 ether, sid);
         (, uint256 bounty) = _routerSplit(1 ether * 690 / 10_000 * 9_638 / 10_000);
-        uint256 owed = price1 + price2;
-        assertEq(core.ethToBuyback() - back, owed * 3_333 / 10_000, "the split of the collection");
-        assertEq(core.ethPot() - pot, 2 * bounty + owed - owed * 3_333 / 10_000, "two pushes and the rest of the sale");
-        assertEq(address(core).balance - bal, 2 * bounty + owed, "the core gained the pushes and the proceeds only");
-        assertEq(_owedByHouse(), 0);
+        assertEq(STATEMENTS.ownerOf(sid), address(w), "the statement went to the buyer");
+        assertEq(core.ethToBuyback() - back, price * 3_333 / 10_000, "the split of the sale");
+        assertEq(core.ethPot() - pot, 2 * bounty + price - price * 3_333 / 10_000, "two pushes and the rest of the sale");
+        assertEq(address(core).balance - bal, 2 * bounty + price, "the core gained the pushes and the proceeds only");
         assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), 0.5 ether, "the donation is unbooked");
         _solvent();
         core.skim();
@@ -852,16 +834,15 @@ contract ReceiveSettingsTest is FeeBase {
     }
 
     /// the hook push never reverts and is always booked in full, whatever came before it: a random walk over settings
-    /// changes, long gaps, collections, buybacks, skims and real swaps, from a state with a sale waiting in the house
+    /// changes, long gaps, buybacks, skims and real swaps, from a state after a statement sale
     /// forge-config: default.fuzz.runs = 24
     function testFuzz_receiveInterleavedWithEverything(uint256 seed) public {
         _stock();
-        (uint256 sid, uint256 price) = _sellStatement(trader);
+        (uint256 sid,) = _sellStatement(trader);
         assertEq(STATEMENTS.ownerOf(sid), trader);
-        assertEq(_owedByHouse(), price);
         for (uint256 step; step < 10; ++step) {
             uint256 r = uint256(keccak256(abi.encode(seed, step)));
-            uint256 kind = r % 7;
+            uint256 kind = r % 6;
             if (kind == 0) {
                 Settings memory s = _randomSettings(r >> 8);
                 // the buyback numbers stay usable so the walk can reach it
@@ -870,15 +851,12 @@ contract ReceiveSettingsTest is FeeBase {
             } else if (kind == 1) {
                 _warp(1 + (r >> 8) % (400 days));
             } else if (kind == 2) {
-                vm.prank(address(0xC011));
-                core.collectSales();
-            } else if (kind == 3) {
                 vm.roll(block.number + 1);
                 vm.prank(keeper);
                 try core.buyback() {} catch {}
-            } else if (kind == 4) {
+            } else if (kind == 3) {
                 core.skim();
-            } else if (kind == 5) {
+            } else if (kind == 4) {
                 vm.deal(trader, trader.balance + 1 ether);
                 vm.prank(trader);
                 router.swap{value: 1 ether}(launchKey, true, -1 ether, trader);
@@ -1014,8 +992,8 @@ contract BuybackTest is FeeBase {
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback());
     }
 
-    /// @dev puts `eth` into the buyback pot, backed by real eth in the core: the one seam of this file. an auction needs
-    /// an hour from its first bid and the sniper window is 30 minutes, so no real sale can fill the pot inside it
+    /// @dev puts `eth` into the buyback pot, backed by real eth in the core: the one seam of this file. a statement sale
+    /// needs a full page of credits and the sniper window is 30 minutes, so no real sale can fill the pot inside it
     function _forcePot(uint256 eth) internal {
         vm.deal(address(core), address(core).balance + eth);
         uint256 slot = stdstore.target(address(core)).sig("ethToBuyback()").find();
@@ -1035,22 +1013,6 @@ contract BuybackTest is FeeBase {
         _flush();
         assertGt(core.ethPot() - b.pot, 0.4 ether);
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback());
-    }
-}
-
-/// stands in for the auction house: reports a refund owed to the core and burns gas when asked to pay it, so the
-/// measured part of a buyback exceeds the counted gas cap
-contract GasBurningHouse {
-    fallback() external payable {
-        if (msg.sig == bytes4(keccak256("withdrawRefund()"))) {
-            uint256 g0 = gasleft();
-            while (g0 - gasleft() < 3_000_000) {}
-            return;
-        }
-        assembly ("memory-safe") {
-            mstore(0, 1)
-            return(0, 32)
-        }
     }
 }
 
@@ -1222,15 +1184,6 @@ contract BuybackPaymentTest is FeeBase {
         vm.revertToState(snap);
         Run memory tipped = _run(5 gwei, 500 gwei);
         assertEq(tipped.paid, plain.paid, "the gas price above the base fee changes nothing");
-    }
-
-    function test_countedGasIsCappedAtTheBuybackGasConstant() public {
-        // the buyback collects from the house first: a house that burns 3 million gas while paying the refund
-        address house = address(core.HOUSE());
-        vm.etch(house, address(new GasBurningHouse()).code);
-        Run memory r = _run(4 gwei, 4 gwei);
-        assertEq(r.paid, BUYBACK_GAS * 4 gwei + core.settings().keeperFee, "the gas counted stops at the constant");
-        assertGt(r.gasUsed, BUYBACK_GAS, "the call used more than the constant");
     }
 }
 

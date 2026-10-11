@@ -4,13 +4,12 @@ pragma solidity ^0.8.28;
 import {ReviewHarness} from "./utils/ReviewHarness.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
-import {IAuctionFactory} from "../src/interfaces/AuctionHouse.sol";
 import {IArtCoinsHookV2} from "../src/interfaces/ArtCoinsV2.sol";
 
 /// @notice the config mutation matrix, part one: the stack, the launch fields, the rate and the people. every mutation
 /// says which outcome it must have, `runOne` runs it in its own call frame
 contract ReviewMatrixConfigTest is ReviewHarness {
-    uint256 internal constant N_STACK = 21;
+    uint256 internal constant N_STACK = 15;
 
     function _mutStack(uint256 i) internal view returns (Mut memory m) {
         address other = Mainnet.PERMIT2; // a contract that is not part of the stack
@@ -45,38 +44,20 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("tickSpacing 0", Class.Pre);
             m.c.stack.tickSpacing = 0;
         } else if (i == 10) {
-            m = _m("auctionFactory = an EOA", Class.Pre);
-            m.c.stack.auctionFactory = address(0xE0A2);
-        } else if (i == 11) {
-            m = _m("auctionFactory = a contract that is not the factory (Permit2)", Class.Pre);
-            m.c.stack.auctionFactory = other;
-        } else if (i == 12) {
-            m = _m("auctionFactory = the artcoins factory", Class.Pre);
-            m.c.stack.auctionFactory = m.c.stack.factory;
-        } else if (i == 13) {
-            m = _m("auctionFactory = the zero address", Class.Pre);
-            m.c.stack.auctionFactory = address(0);
-        } else if (i == 14) {
-            m = _m("auctionFactory = the locker", Class.Pre);
-            m.c.stack.auctionFactory = m.c.stack.locker;
-        } else if (i == 15) {
             m = _m("mevModule = a contract that is not the module", Class.Pre);
             m.c.mevModule = other;
-        } else if (i == 16) {
+        } else if (i == 11) {
             m = _m("hook = the zero address", Class.Pre);
             m.c.stack.hook = address(0);
-        } else if (i == 17) {
+        } else if (i == 12) {
             m = _m("poolManager = the zero address", Class.Pre);
             m.c.stack.poolManager = address(0);
-        } else if (i == 18) {
+        } else if (i == 13) {
             m = _m("factory = the zero address", Class.Pre);
             m.c.stack.factory = address(0);
-        } else if (i == 19) {
+        } else {
             m = _m("locker = the zero address", Class.Pre);
             m.c.stack.locker = address(0);
-        } else {
-            m = _m("auctionFactory = the hook", Class.Pre);
-            m.c.stack.auctionFactory = m.c.stack.hook;
         }
     }
 
@@ -285,8 +266,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("router payee = the dead address", Class.Pre);
             m.c.creatorPayee = Mainnet.DEAD;
         } else if (i == 21) {
-            m = _m("sale: buyOnly flipped (valid, wrong)", Class.Hash);
-            m.c.sale.buyOnly = !m.c.sale.buyOnly;
+            m = _m("sale: anchorHalfLife 1209600 (valid, wrong)", Class.Hash);
+            m.c.sale.anchorHalfLife = 1_209_600;
         } else if (i == 22) {
             m = _m("sale: markupBps 12000 (valid, wrong)", Class.Hash);
             m.c.sale.markupBps = 12_000;
@@ -413,11 +394,11 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("owner = the dead address", Class.Pre);
             m.c.owner = Mainnet.DEAD;
         } else if (i == 7) {
-            m = _m("owner = the auction factory", Class.Pre);
-            m.c.owner = m.c.stack.auctionFactory;
+            m = _m("owner = the artcoins factory", Class.Pre);
+            m.c.owner = m.c.stack.factory;
         } else if (i == 8) {
-            m = _m("creator = the auction factory", Class.Pre);
-            m.c.creator = m.c.stack.auctionFactory;
+            m = _m("creator = the artcoins factory", Class.Pre);
+            m.c.creator = m.c.stack.factory;
         } else if (i == 9) {
             m = _m("creator = the dead address", Class.Pre);
             m.c.creator = Mainnet.DEAD;
@@ -514,10 +495,10 @@ contract ReviewMatrixConfigTest is ReviewHarness {
 /// @notice the config mutation matrix, part two: every field of the settings, above the top, below the bottom, a plausible
 /// wrong value and both edges
 contract ReviewMatrixSettingsTest is ReviewHarness {
-    uint256 internal constant N_SETTINGS = 135;
+    uint256 internal constant N_SETTINGS = 130;
 
     /// @dev a plausible value that is not the launch value, inside the bounds, for each field
-    function _wrong() internal pure returns (uint256[27] memory) {
+    function _wrong() internal pure returns (uint256[26] memory) {
         return [
             uint256(100),
             9000,
@@ -527,7 +508,6 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
             500,
             100,
             5000,
-            48 hours,
             24 hours,
             8000,
             0,
@@ -562,17 +542,17 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
     /// @dev kinds: 0 above the top, 1 below the bottom, 2 a plausible wrong value, 3 the top edge, 4 the bottom edge.
     /// an empty label means the field has no such case
     function _mutSettings(uint256 k) internal view returns (Mut memory m) {
-        uint256 f = k % 27;
-        uint256 kind = k / 27;
-        uint256[27] memory lo = SettingsFields.lo();
-        uint256[27] memory hi = SettingsFields.hi();
+        uint256 f = k % 26;
+        uint256 kind = k / 26;
+        uint256[26] memory lo = SettingsFields.lo();
+        uint256[26] memory hi = SettingsFields.hi();
         string memory nm = _trim(SettingsFields.names()[f]);
         // a rateCap other than 3 times the launch rateStart is stopped by its own preflight row
-        m = _m("", kind <= 1 || f == 22 ? Class.Pre : Class.Hash);
-        if (f == 22 && kind >= 2) m.pre = ROW_RATE_RATIO;
+        m = _m("", kind <= 1 || f == 21 ? Class.Pre : Class.Hash);
+        if (f == 21 && kind >= 2) m.pre = ROW_RATE_RATIO;
         Settings memory s = m.c.settings;
         if (kind == 0) {
-            if (f == 22) {
+            if (f == 21) {
                 // rateStart 3.3e17 + 1 is in bounds and 3 times it is the rateCap: only the settings bound fails
                 m.c.rateStart = hi[f] / 3 + 1;
                 s.rateCap = uint64(3 * m.c.rateStart);
@@ -581,13 +561,13 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
                 SettingsFields.set(s, f, hi[f] + 1);
             }
             m.label = string.concat(
-                "settings.", nm, " ", vm.toString(f == 22 ? uint256(s.rateCap) : hi[f] + 1), " above the top"
+                "settings.", nm, " ", vm.toString(f == 21 ? uint256(s.rateCap) : hi[f] + 1), " above the top"
             );
         } else if (kind == 1) {
-            if (lo[f] == 0 && f != 17) return m;
-            if (f == 17) {
-                SettingsFields.set(s, 16, s.xRateFloor - 1);
-            } else if (f == 22) {
+            if (lo[f] == 0 && f != 16) return m;
+            if (f == 16) {
+                SettingsFields.set(s, 15, s.xRateFloor - 1);
+            } else if (f == 21) {
                 // 3 times a rateStart of 1e13 / 3 - 1 is a rateCap under 1e13: the rateStart bound and the settings bound
                 // fail together, the ratio row passes
                 m.c.rateStart = lo[f] / 3 - 1;
@@ -597,23 +577,23 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
                 SettingsFields.set(s, f, lo[f] - 1);
             }
             m.label = string.concat(
-                "settings.", nm, f == 22 ? string.concat(" ", vm.toString(uint256(s.rateCap))) : " one", " below the bottom"
+                "settings.", nm, f == 21 ? string.concat(" ", vm.toString(uint256(s.rateCap))) : " one", " below the bottom"
             );
         } else if (kind == 2) {
             SettingsFields.set(s, f, _wrong()[f]);
             m.label = string.concat("settings.", nm, " ", vm.toString(_wrong()[f]), " (valid, wrong)");
         } else if (kind == 3) {
-            if (f == 17) s.xRateFloor = s.xRateCap;
+            if (f == 16) s.xRateFloor = s.xRateCap;
             else SettingsFields.set(s, f, hi[f]);
             m.label = string.concat("settings.", nm, " ", vm.toString(hi[f]), " the top edge");
         } else {
-            if (lo[f] == 0 && f != 16) return m;
-            if (f == 16) s.xRateCap = s.xRateFloor;
+            if (lo[f] == 0 && f != 15) return m;
+            if (f == 15) s.xRateCap = s.xRateFloor;
             // the lowest rate cap that still holds the launch rate
-            else if (f == 22) s.rateCap = uint64(base.rateStart);
+            else if (f == 21) s.rateCap = uint64(base.rateStart);
             else SettingsFields.set(s, f, lo[f]);
             // the smallest slice needs the cheapest buyback payment
-            if (f == 12) (s.keeperFee, s.buybackMaxBaseFee) = (0, 1 gwei);
+            if (f == 11) (s.keeperFee, s.buybackMaxBaseFee) = (0, 1 gwei);
             m.label = string.concat("settings.", nm, " the bottom edge");
         }
         // an edge that is the launch value is no mutation
@@ -627,32 +607,31 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
     /// the settings group in parts: every field above the top and below the bottom, a plausible wrong value for every
     /// field, then the edges that must still be accepted
     function test_matrix_settingsViolations() public {
-        _matrix(2, 0, 54);
+        _matrix(2, 0, 52);
     }
 
     function test_matrix_settingsWrongValues() public {
-        _matrix(2, 54, 81);
+        _matrix(2, 52, 78);
     }
 
     function test_matrix_settingsTopEdges() public {
-        _matrix(2, 81, 108);
+        _matrix(2, 78, 104);
     }
 
     function test_matrix_settingsBottomEdges() public {
-        _matrix(2, 108, N_SETTINGS);
+        _matrix(2, 104, N_SETTINGS);
     }
 }
 
 /// @notice the matrix, part three: the chain state differs from the one that was signed off (factory, owner commands,
-/// house, library, balances, predicted addresses)
+/// library, balances, predicted addresses)
 contract ReviewMatrixStateTest is ReviewHarness {
-    uint256 internal constant N_STATE = 35;
+    uint256 internal constant N_STATE = 32;
 
     /// @dev applies state mutation `i` on the current fork state and returns its label and expected class
     function _state(uint256 i) internal override returns (string memory l, Class w) {
-        address af = base.stack.auctionFactory;
         vm.startPrank(deployer);
-        if (i == 0) {
+                if (i == 0) {
             (l, w) = ("factory not deprecated (open)", Class.Pre);
             FACTORY.setDeprecated(false);
         } else if (i == 1) {
@@ -670,36 +649,24 @@ contract ReviewMatrixStateTest is ReviewHarness {
             vm.deal(deployer, 0.07 ether);
             vm.fee(1 gwei);
         } else if (i == 4) {
-            (l, w) = ("a house already exists for the predicted core", Class.Pre);
-            vm.stopPrank();
-            vm.prank(_coreAt());
-            IAuctionFactory(af).createAuctionHouse();
-            vm.startPrank(deployer);
-        } else if (i == 5) {
             (l, w) = ("the predicted coin address has code (salt reuse, a copycat)", Class.Pre);
             vm.etch(predictCoin(base, deployer, _routerAt()), hex"00");
-        } else if (i == 6) {
+        } else if (i == 5) {
             (l, w) = ("the predicted controller address has code", Class.Pre);
             vm.etch(_controllerAt(), hex"00");
-        } else if (i == 7) {
+        } else if (i == 6) {
             (l, w) = ("the predicted core address has code", Class.Pre);
             vm.etch(_coreAt(), hex"00");
-        } else if (i == 8) {
-            (l, w) = ("the house address of the core has code", Class.Pre);
-            vm.etch(IAuctionFactory(af).predictHouseAddress(_coreAt()), hex"00");
-        } else if (i == 9) {
+        } else if (i == 7) {
             (l, w) = ("the predicted router address has code", Class.Pre);
             vm.etch(_routerAt(), hex"00");
-        } else if (i == 10) {
-            (l, w) = ("auction factory default fee 250 bps (the live code, fee immutable patched)", Class.Post);
-            _patchFactoryFee(af, 250);
-        } else if (i == 11) {
+        } else if (i == 8) {
             (l, w) = ("the linked library has no code", Class.Revert);
             vm.etch(_linked(), "");
-        } else if (i == 12) {
+        } else if (i == 9) {
             (l, w) = ("different code at the linked library (a STOP)", Class.Revert);
             (lateEtchAt, lateEtchCode) = (_linked(), hex"00");
-        } else if (i == 13) {
+        } else if (i == 10) {
             (l, w) = ("the linked library plus one trailing byte", Class.Post);
             (lateEtchAt, lateEtchCode) = (_linked(), bytes.concat(_linked().code, hex"00"));
         } else {
@@ -710,67 +677,67 @@ contract ReviewMatrixStateTest is ReviewHarness {
 
     /// @dev the owner commands on the v2 factory and the hook that change what a launch is
     function _state2(uint256 i) private returns (string memory l, Class w) {
-        if (i == 14) {
+        if (i == 11) {
             (l, w) = ("factory min protocol skim share 1000 (the owner command setMinProtocolSkimShareBps(362) not run)", Class.Pre);
             FACTORY.setMinProtocolSkimShareBps(1000);
-        } else if (i == 15) {
+        } else if (i == 12) {
             (l, w) = ("factory min protocol skim share 363 (one above the 362 the bounty 9638 leaves)", Class.Pre);
             FACTORY.setMinProtocolSkimShareBps(363);
-        } else if (i == 16) {
+        } else if (i == 13) {
             (l, w) = ("factory min protocol skim share 1500 (bounty 9638 no longer fits)", Class.Pre);
             FACTORY.setMinProtocolSkimShareBps(1500);
-        } else if (i == 17) {
+        } else if (i == 14) {
             (l, w) = ("hook disabled on the factory", Class.Pre);
             FACTORY.setHook(v2.hook, false);
-        } else if (i == 18) {
+        } else if (i == 15) {
             (l, w) = ("locker disabled on the factory", Class.Pre);
             FACTORY.setLocker(v2.locker, false);
-        } else if (i == 19) {
+        } else if (i == 16) {
             (l, w) = ("mev module disabled on the factory", Class.Pre);
             FACTORY.setMevModule(v2.mev, false);
-        } else if (i == 20) {
+        } else if (i == 17) {
             (l, w) = ("locker launcher flag for the factory removed", Class.Pre);
             (bool okL,) = v2.locker.call(abi.encodeWithSignature("setLauncher(address,bool)", v2.factory, false));
             require(okL, "locker setLauncher");
-        } else if (i == 21) {
+        } else if (i == 18) {
             (l, w) = ("factory default allowlist holds an account (it would join the coin allowlist)", Class.Pre);
             address[] memory a = new address[](1);
             a[0] = creator;
             FACTORY.setDefaultAllowed(a);
-        } else if (i == 22) {
+        } else if (i == 19) {
             (l, w) = ("factory team fee recipient unset (the deploy fee has no recipient)", Class.Pre);
             FACTORY.setTeamFeeRecipient(address(0));
-        } else if (i == 23) {
+        } else if (i == 20) {
             (l, w) = ("the fee escrow has no code", Class.Pre);
             vm.etch(v2.escrow, "");
-        } else if (i == 24) {
+        } else if (i == 21) {
             (l, w) = ("hook launcher flag for the factory removed", Class.Pre);
             IArtCoinsHookV2(v2.hook).setLauncher(v2.factory, false);
-        } else if (i == 25) {
+        } else if (i == 22) {
             (l, w) = ("factory token deployer cleared by a wrong code (not settable to zero), deployer code etched away", Class.Pre);
             vm.etch(FACTORY.tokenDeployer(), "");
-        } else if (i == 26) {
+        } else if (i == 23) {
             (l, w) = ("the deployer has no eth at all", Class.Pre);
             vm.deal(deployer, 0);
-        } else if (i == 27) {
+        } else if (i == 24) {
             (l, w) = ("chain id 5 (a testnet)", Class.Pre);
             vm.chainId(5);
-        } else if (i == 28) {
+        } else if (i == 25) {
             (l, w) = ("hook code etched away", Class.Pre);
             vm.etch(v2.hook, "");
-        } else if (i == 29) {
+        } else if (i == 26) {
             (l, w) = ("the pool manager has no code", Class.Pre);
             vm.etch(Mainnet.POOL_MANAGER, "");
-        } else if (i == 30) {
+        } else if (i == 27) {
             (l, w) = ("the Credits contract has no code", Class.Pre);
             vm.etch(Mainnet.CREDITS, "");
-        } else if (i == 31) {
+        } else if (i == 28) {
             (l, w) = ("deploy fee raised to 0.5 eth (a factory value outside the signed config; the pinned fee rule)", Class.Pre);
             FACTORY.setDeployFee(0.5 ether);
-        } else if (i == 32) {
+        } else if (i == 29) {
             (l, w) = ("locker constantsHash differs from the hook's", Class.Pre);
             vm.mockCall(v2.locker, abi.encodeWithSignature("constantsHash()"), abi.encode(keccak256("another constants hash")));
-        } else if (i == 33) {
+        } else if (i == 30) {
             (l, w) = ("hook and the stack report a constantsHash other than the vendored artifacts'", Class.Pre);
             bytes memory other = abi.encode(keccak256("another constants hash"));
             address[5] memory all = [v2.hook, v2.locker, v2.escrow, v2.mev, v2.factory];
@@ -784,11 +751,11 @@ contract ReviewMatrixStateTest is ReviewHarness {
     }
 
     function test_matrix_chainStateA() public {
-        _matrix(4, 0, 14);
+        _matrix(4, 0, 11);
     }
 
     function test_matrix_chainStateB() public {
-        _matrix(4, 14, N_STATE);
+        _matrix(4, 11, N_STATE);
         // the baseline launches clean: the signed config deploys with every check passing and the signed hash
         bytes32 signed = configHash(base);
         assertTrue(this.runBaseline(signed) == Class.Slip, "the baseline launches clean");

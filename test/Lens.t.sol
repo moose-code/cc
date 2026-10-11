@@ -6,14 +6,14 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {ICoreLens} from "../src/interfaces/ICoreLens.sol";
 import {Lane} from "../src/interfaces/Interfaces.sol";
 
-/// `CoreLens` on the fork: the real Core, controller, router, house, Credits and Statements. every field of `snapshot` is
+/// `CoreLens` on the fork: the real Core, controller, router, Credits and Statements. every field of `snapshot` is
 /// compared with the direct reads on a populated system, and the flush split with an actual flush
 contract LensTest is Fixture {
-    uint256 internal sidListed;
-    uint256 internal sidBid;
+    uint256 internal sidFirst;
+    uint256 internal sidSecond;
     uint256 internal sidExit;
 
-    function _listedStatement() internal returns (uint256 sid) {
+    function _composedStatement() internal returns (uint256 sid) {
         _fillEthPile(80);
         uint256 supply = STATEMENTS.supply();
         vm.fee(composeBasefee);
@@ -33,14 +33,13 @@ contract LensTest is Fixture {
         sid = supply + 1;
     }
 
-    /// two listed eth lane statements (one with a live bid), an exit lane statement, credits in both piles, pots in both
-    /// currencies and a router that holds fee eth with the split on
+    /// two held eth lane statements, an exit lane statement, credits in both piles, pots in both currencies and a
+    /// router that holds fee eth with the split on
     function _populate() internal {
         _enterPhase2();
         _fundPot(3 ether);
-        sidListed = _listedStatement();
-        sidBid = _listedStatement();
-        _bid(address(0xB1D), sidBid, _live(sidBid).reserve);
+        sidFirst = _composedStatement();
+        sidSecond = _composedStatement();
         sidExit = _exitLaneStatement();
         _fillEthPile(7);
         uint256[] memory ids = _credits(seller, 5);
@@ -53,7 +52,7 @@ contract LensTest is Fixture {
         autoFlush = false;
         _buyCoin(funder, 3 ether);
         assertGt(address(feeRouter).balance, 0, "router loaded");
-        // eth above the booked pots and sale proceeds waiting in the house
+        // eth above the booked pots
         vm.deal(address(core), address(core).balance + 0.01 ether);
     }
 
@@ -63,19 +62,11 @@ contract LensTest is Fixture {
             uint256 sid = held[offset + i];
             ICoreLens.StatementView memory s = v[i];
             assertEq(s.id, sid, "id");
-            (, Lane lane, uint256 cost, uint64 clockStart) = core.statementInfo(sid);
+            (, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
             assertEq(uint8(s.lane), uint8(lane), "lane");
             assertEq(s.cost, cost, "cost");
-            Live memory l = _live(sid);
-            assertEq(s.status, uint8(l.status), "status");
-            assertEq(s.auctionId, l.auctionId, "auction id");
-            assertEq(s.topBid, l.bid, "top bid");
-            assertEq(s.endTime, l.endTime, "end time");
-            bool listed = l.status == ICore.StatementStatus.Listed || l.status == ICore.StatementStatus.Bid
-                || l.status == ICore.StatementStatus.Ended;
-            assertEq(s.listed, listed, "listed");
-            bool open = l.status == ICore.StatementStatus.Listed;
-            assertEq(s.askingPrice, open && lane == Lane.Eth && clockStart != 0 ? ctl.priceOf(sid) : 0, "asking price");
+            assertEq(s.composedAt, composedAt, "compose time");
+            assertEq(s.askingPrice, lane == Lane.Eth ? ctl.priceOf(sid) : 0, "asking price");
         }
     }
 
@@ -105,7 +96,6 @@ contract LensTest is Fixture {
         assertTrue(s.ethPot != 0 && s.xPot != 0, "pots populated");
         assertEq(s.unbookedEth, address(core).balance - core.ethPot() - core.ethToBuyback(), "unbookedEth");
         assertGe(s.unbookedEth, 0.01 ether, "unbookedEth carries the extra eth");
-        assertEq(s.salesOwed, house.pendingRefunds(address(core)), "salesOwed");
 
         assertEq(s.routerBalance, address(feeRouter).balance, "routerBalance");
         assertEq(s.routerOwed, feeRouter.totalOwed(), "routerOwed");
@@ -124,21 +114,12 @@ contract LensTest is Fixture {
         _assertStatementViews(s.statements, 0);
         for (uint256 i; i < s.statements.length; ++i) {
             ICoreLens.StatementView memory v = s.statements[i];
-            if (v.id == sidListed) {
-                assertTrue(v.listed);
-                assertEq(v.status, uint8(ICore.StatementStatus.Listed));
-                assertGt(v.askingPrice, 0);
-                assertEq(v.topBid, 0);
-            } else if (v.id == sidBid) {
-                assertTrue(v.listed);
-                assertEq(v.status, uint8(ICore.StatementStatus.Bid));
-                assertGt(v.topBid, 0);
-                assertEq(v.askingPrice, 0, "a statement with a bid cannot be bought at the asking price");
-            } else {
-                assertEq(v.id, sidExit);
+            if (v.id == sidExit) {
                 assertEq(uint8(v.lane), uint8(Lane.Exit));
-                assertFalse(v.listed);
                 assertEq(v.askingPrice, 0);
+            } else {
+                assertTrue(v.id == sidFirst || v.id == sidSecond);
+                assertGt(v.askingPrice, 0);
             }
         }
     }
@@ -188,8 +169,8 @@ contract LensTest is Fixture {
     function test_OK_statementsPageEqualsTheSnapshotSlices() public {
         _enterPhase2();
         _fundPot(3 ether);
-        sidListed = _listedStatement();
-        sidBid = _listedStatement();
+        sidFirst = _composedStatement();
+        sidSecond = _composedStatement();
         ICoreLens.Snapshot memory s = lens.snapshot();
         assertEq(s.statements.length, 2);
         ICoreLens.StatementView[] memory p0 = lens.statementsPage(0, 1);
@@ -212,9 +193,8 @@ contract LensTest is Fixture {
         uint256 g = gasleft();
         lens.snapshot();
         uint256 empty = g - gasleft();
-        sidListed = _listedStatement();
-        sidBid = _listedStatement();
-        _bid(address(0xB1D), sidBid, _live(sidBid).reserve);
+        sidFirst = _composedStatement();
+        sidSecond = _composedStatement();
         g = gasleft();
         lens.snapshot();
         uint256 two = g - gasleft();
@@ -225,37 +205,27 @@ contract LensTest is Fixture {
         assertLt((two - empty) / 2, 80_000, "per statement");
     }
 
-    /// the asking price is nonzero only while a buyer can buy at it: a live auction without a bid
-    function test_OK_askingPriceIsZeroUnlessABuyerCanBuyNow() public {
+    /// the asking price of an eth lane statement is the controller price, a sold statement is no longer listed, an
+    /// exit lane statement has no asking price
+    function test_OK_askingPriceIsTheControllerPriceOfHeldEthLaneStatements() public {
         _fundPot(3 ether);
-        // the sale is settled first: ending its auction moves the clock to its end time
-        uint256 sold = _listedStatement();
-        _bid(address(0xB2D), sold, _live(sold).reserve);
-        _endAuction(sold);
-        uint256 open = _listedStatement();
-        uint256 withBid = _listedStatement();
-        _bid(address(0xB1D), withBid, _live(withBid).reserve);
+        uint256 sold = _composedStatement();
+        _buy(address(0xB2D), sold);
+        uint256 first = _composedStatement();
+        _warp(2 hours);
+        uint256 second = _composedStatement();
         ICoreLens.StatementView[] memory v = lens.snapshot().statements;
-        assertEq(v.length, 3);
-        for (uint256 i; i < 3; ++i) {
-            if (v[i].id == open) {
-                assertEq(v[i].status, uint8(ICore.StatementStatus.Listed));
-                assertEq(v[i].askingPrice, ctl.priceOf(open), "open: the controller price");
-                assertGt(v[i].askingPrice, 0);
-            } else if (v[i].id == withBid) {
-                assertEq(v[i].status, uint8(ICore.StatementStatus.Bid));
-                assertEq(v[i].askingPrice, 0, "with a bid");
-                assertGt(v[i].topBid, 0);
-                assertGt(v[i].endTime, 0);
-            } else {
-                assertEq(v[i].id, sold);
-                assertEq(v[i].status, uint8(ICore.StatementStatus.Sold), "sold, record not settled");
-                assertFalse(v[i].listed);
-                assertEq(v[i].askingPrice, 0, "sold and unsynced");
-                // the controller still answers for it: the lens decides
-                assertGt(ctl.priceOf(sold), 0);
-            }
+        assertEq(v.length, 2, "the sold statement left the list");
+        for (uint256 i; i < 2; ++i) {
+            assertTrue(v[i].id == first || v[i].id == second);
+            assertEq(v[i].askingPrice, ctl.priceOf(v[i].id), "the controller price");
+            assertGt(v[i].askingPrice, 0);
         }
+        assertLt(ctl.priceOf(first) * 1e18 / _costOf(first), ctl.priceOf(second) * 1e18 / _costOf(second), "older is cheaper");
+    }
+
+    function _costOf(uint256 sid) internal view returns (uint256 cost) {
+        (,, cost,) = core.statementInfo(sid);
     }
 
     /// the lens requires the answer size of `nextPage` that the Core requires, so both agree on a short answer
@@ -280,7 +250,6 @@ contract LensTest is Fixture {
     function test_OK_thePointersAndTheControllerFollow() public {
         assertEq(lens.CORE(), address(core));
         assertEq(lens.ROUTER(), address(feeRouter));
-        assertEq(lens.HOUSE(), address(house));
         assertEq(lens.CREDITS(), address(CREDITS));
         assertEq(lens.STATEMENTS(), address(STATEMENTS));
         assertEq(lens.controller(), address(ctl));

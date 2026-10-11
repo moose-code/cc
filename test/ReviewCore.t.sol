@@ -37,8 +37,8 @@ contract ReviewCoreTest is Fixture {
         mod.setUnitPerCredit(1);
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(c.sid);
-        assertEq(STATEMENTS.ownerOf(c.sid), address(house), "the statement never left: its listing is intact");
-        assertEq(uint256(_live(c.sid).status), uint256(ICore.StatementStatus.Listed));
+        assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement never left");
+        assertTrue(_isHeld(c.sid));
         assertEq(core.unitPerCredit(), UNIT, "the stored unit did not move");
         _solvent();
     }

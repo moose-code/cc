@@ -3,7 +3,6 @@ pragma solidity ^0.8.28;
 
 import {VmSafe} from "forge-std/Vm.sol";
 import {Stack, Mainnet, IStatements} from "../src/interfaces/Interfaces.sol";
-import {IAuctionFactory} from "../src/interfaces/AuctionHouse.sol";
 import {
     IArtCoinsFactoryV2,
     IArtCoinsHookV2,
@@ -69,13 +68,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x9c0c5975c1a8a66ffadeffc413393037084d300158c902ddd3e248015e5892f2;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0xec48799159091f48f65ef479db91c143a91716ff3b7aaf6e3b727b5966032c82;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x1220f4343e914379c6845bb8fc6d80474eab5f4d2b48ea157a503221df789ce7;
+    bytes32 internal constant BUILD_HASH_CORE = 0x27023254cc5e6f5fe46361ca310c67affb4b4949ad6061b34874e88fa01ac3a1;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x85ed1807ba0f3f9482a395fedbe4dca46a80577c1dfef73974534639ddd8bedb;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x296db1f482ad0ecb8e6daaab347ffd2127c0e141c387bdea583e7179a933fa52;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
-    bytes32 internal constant BUILD_HASH_LENS = 0x4ff989feabca4e9387b32b7f3ea71b38dc0ff330f81e0cf853130082079ffb63;
+    bytes32 internal constant BUILD_HASH_LENS = 0xea2e602937d074c8ae7ca1d9f671c2486982afd670e076cd570ffc4879c47c83;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x8c71ca6d78f958fe72c91a89675bf54a8bb8dbc2b0e9eb17fd793435ca8fae5a;
+        0x76b0eda2a51b8b3a97a18bab2a1cf862e70816fc6602f21f8dd53921fb84aed1;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -190,12 +189,12 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "sale settings inside the bounds",
             badSale == 0,
-            badSale == 0 ? "buyOnly markupBps startCapBps floorBps kneeBps fastDecayBpsPerHour slowDecayBpsPerHour anchorHalfLife" : string(abi.encodePacked("out of bounds: ", badSale))
+            badSale == 0 ? "markupBps startCapBps floorBps kneeBps fastDecayBpsPerHour slowDecayBpsPerHour anchorHalfLife" : string(abi.encodePacked("out of bounds: ", badSale))
         );
         _warn(
             "warn: sale floor below the core hard floor",
             c.sale.floorBps >= c.settings.saleFloorBps,
-            "the core floors every reserve and sale at saleFloorBps, so the lower asking price is never reached"
+            "the core takes no sale below saleFloorBps, so the lower asking price is never reached"
         );
         _eq("supply equals the Core SUPPLY constant", c.supply, CORE_SUPPLY);
     }
@@ -287,7 +286,7 @@ abstract contract LaunchChecks is PostflightChecks {
             address a = who[i];
             if (a == address(0)) continue; // the placeholder row reports it
             bad = bad || a == Mainnet.DEAD || a == c.stack.poolManager || a == c.stack.hook || a == c.stack.factory
-                || a == c.stack.locker || a == c.stack.escrow || a == c.stack.auctionFactory || a == c.mevModule;
+                || a == c.stack.locker || a == c.stack.escrow || a == c.mevModule;
         }
         _check("rule: owner, creator and payees are not dead or stack addresses", !bad, "dead, stack, mev module");
         _check(
@@ -344,7 +343,6 @@ abstract contract LaunchChecks is PostflightChecks {
         _code("code: factory", c.stack.factory);
         _code("code: locker", c.stack.locker);
         _code("code: escrow", c.stack.escrow);
-        _code("code: auction factory", c.stack.auctionFactory);
         _code("code: mev module", c.mevModule);
         _code("code: Credits", Mainnet.CREDITS);
         _code("code: Statements", Mainnet.STATEMENTS);
@@ -414,7 +412,6 @@ abstract contract LaunchChecks is PostflightChecks {
             ok && coinAt.code.length == 0,
             ok ? string.concat(vm.toString(coinAt), " code ", vm.toString(coinAt.code.length)) : "predictToken failed"
         );
-        _preHouse(c, coreAt);
     }
 
     /// @dev the hook, locker, mev module and escrow checked against each other and against the stack of the config
@@ -685,32 +682,6 @@ abstract contract LaunchChecks is PostflightChecks {
         gas = g - gasleft();
     }
 
-    /// @dev the Core creates its auction house in its constructor, one house per owner address, so a house must not
-    /// exist yet for the predicted core address. the factory default fee is fixed at the factory: it is paid out of
-    /// every sale, so a non zero fee is a loud warning here, and the deploy stops at its postflight (house: protocol fee is zero)
-    function _preHouse(LaunchConfig memory c, address coreAt) private {
-        address f = c.stack.auctionFactory;
-        (bool ok1, uint256 existing) = _word(f, abi.encodeCall(IAuctionFactory.houseOf, (coreAt)));
-        _check("auction factory: no house yet for the predicted core", ok1 && existing == 0, "houseOf(core)");
-        (bool okp, uint256 predicted) = _word(f, abi.encodeCall(IAuctionFactory.predictHouseAddress, (coreAt)));
-        _check(
-            "auction factory: the house address of the core is free",
-            okp && address(uint160(predicted)).code.length == 0,
-            string.concat("predictHouseAddress(core) ", vm.toString(address(uint160(predicted))))
-        );
-        (bool ok2, uint256 fee) = _word(f, abi.encodeCall(IAuctionFactory.defaultProtocolFeeBps, ()));
-        _check("auction factory: default fee readable", ok2, vm.toString(fee));
-        _warn(
-            "warn: auction factory default fee is zero",
-            ok2 && fee == 0,
-            string.concat(
-                "fee ",
-                vm.toString(fee),
-                " bps is taken from every statement sale. the deploy stops at postflight: house fee"
-            )
-        );
-    }
-
     function _preLive() private {
         (bool ok1, uint256 cs) = _word(Mainnet.CREDITS, abi.encodeCall(ISupply.supply, ()));
         _check("Credits supply", ok1 && cs >= CREDITS_SUPPLY_MIN, vm.toString(cs));
@@ -803,13 +774,11 @@ abstract contract LaunchChecks is PostflightChecks {
             )
         );
         _info(
-            "signoff: statement auction",
+            "signoff: statement sale",
             string.concat(
                 "saleFloorBps ",
                 vm.toString(c.settings.saleFloorBps),
-                " duration ",
-                vm.toString(c.settings.auctionDuration),
-                "s exitAfter ",
+                " exitAfter ",
                 vm.toString(c.settings.exitAfter),
                 "s"
             )
@@ -836,8 +805,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _info(
             "signoff: sale controller",
             string.concat(
-                c.sale.buyOnly ? "buy only" : "auction mode",
-                " markup ",
+                "markup ",
                 vm.toString(c.sale.markupBps),
                 " start cap ",
                 vm.toString(c.sale.startCapBps),

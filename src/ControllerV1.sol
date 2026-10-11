@@ -10,15 +10,13 @@ import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Inter
 /// `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls at a fixed rate per second in two stages: at
 /// `fastDecayBpsPerHour` from `start` to `kneeBps`, then at `slowDecayBpsPerHour` to `floorBps`, where it stays. a `start`
 /// at or below `kneeBps` falls at the slow rate from the first second. the price is computed at every call from the age of
-/// the listing and the current settings, so a setting change applies to open listings at once.
+/// statement (time since its compose) and the current settings, so a setting change applies to held statements at once.
 /// `anchorBps` (bps of cost, at least 10_000) is the running level of sale prices. it moves up with sales and down with
 /// time. a `buy` whose sale price in bps of cost is above the anchor sets the anchor to the mean of the two. a `buy`
 /// at or below the anchor leaves it unchanged. the part of the anchor above 10_000 halves every `anchorHalfLife`,
 /// continuously. the controller stores the anchor at its last change (`storedAnchorBps`, `anchorTime`) and evaluates
-/// the decay at the call. the price is computed from the current anchor at every call, so open listings follow it. in
-/// auction mode the core uses the price as the house reserve, so the first bid at the asking price opens the english
-/// auction, and house sales do not move the anchor. in buy only mode `buy` sells a statement at once at the asking
-/// price.
+/// the decay at the call. the price is computed from the current anchor at every call, so held statements follow it.
+/// `buy` sells a held eth lane statement at once at the asking price.
 /// it holds no funds between calls. its settings belong to the live owner of the core (`core.owner()`), there is no
 /// second owner. the core enforces its own hard floor whatever this contract answers
 contract ControllerV1 is IController {
@@ -27,12 +25,10 @@ contract ControllerV1 is IController {
 
     error OnlyOwner();
     error BadSetting(bytes32 field);
-    error NotBuyOnly();
     error NotForSale();
     error Underpaid();
     error Reentrant();
 
-    event BuyOnlySet(bool buyOnly);
     event MarkupBpsSet(uint16 markupBps);
     event StartCapBpsSet(uint32 startCapBps);
     event FastDecayBpsPerHourSet(uint16 fastDecayBpsPerHour);
@@ -46,9 +42,6 @@ contract ControllerV1 is IController {
 
     ICoreViews public immutable CORE;
 
-    /// buy only mode: `statementPrice` returns the cap `cost * startCapBps / 10_000` as the house reserve and `buy` sells
-    /// at the decayed asking price
-    bool public buyOnly;
     /// start price over the anchor, bps. 10_000 to 40_000, at most `startCapBps`
     uint16 public markupBps;
     /// the most the start price can be, bps of cost. the larger of `markupBps` and `kneeBps` to 200_000
@@ -71,7 +64,6 @@ contract ControllerV1 is IController {
 
     constructor(address core, Sale memory sale) {
         CORE = ICoreViews(core);
-        buyOnly = sale.buyOnly;
         if (sale.markupBps < BPS || sale.markupBps > 40_000) revert BadSetting("markupBps");
         markupBps = sale.markupBps;
         if (sale.startCapBps < sale.markupBps || sale.startCapBps > 200_000) revert BadSetting("startCapBps");
@@ -97,11 +89,6 @@ contract ControllerV1 is IController {
     }
 
     // ------------------------------------------------------------------ sale settings, owner, at once
-
-    function setBuyOnly(bool on) external onlyOwner {
-        buyOnly = on;
-        emit BuyOnlySet(on);
-    }
 
     /// 10_000 to 40_000, and not above `startCapBps`
     function setMarkupBps(uint16 v) external onlyOwner {
@@ -171,31 +158,22 @@ contract ControllerV1 is IController {
         return uint32(BPS + Halving.halve(excess, block.timestamp - anchorTime, anchorHalfLife));
     }
 
-    /// the start price of a new listing, bps of cost: the anchor times `markupBps`, at most `startCapBps`
+    /// the start price of a new statement, bps of cost: the anchor times `markupBps`, at most `startCapBps`
     function startBps() public view returns (uint256) {
         uint256 start = uint256(anchorBps()) * markupBps / BPS;
         return start < startCapBps ? start : startCapBps;
     }
 
-    /// the price the core uses as the house reserve, in wei. falls with the age of the listing in auction mode. in buy
-    /// only mode it is the cap `cost * startCapBps / 10_000`, the highest `buy` price a listing can reach while the
-    /// anchor rises, so the reserve never undercuts the live ask
-    function statementPrice(uint256, uint256 cost, uint64 listedAt) external view returns (uint256) {
-        if (buyOnly) return cost * startCapBps / BPS;
-        return _ask(cost, block.timestamp - listedAt);
-    }
-
-    /// the asking price of statement `sid` now, in either mode, read from the core. never below the core hard floor
+    /// the asking price of statement `sid` now, read from the core. never below the core hard floor
     /// `cost * saleFloorBps / 10_000`, so the quote is always a price `sellTo` takes
     function priceOf(uint256 sid) public view returns (uint256 price) {
         (price,) = _quote(sid);
     }
 
-    /// buy only mode: pays the asking price, gets the statement at once, and moves the anchor halfway to the sale price
-    /// in bps of cost. the excess of `msg.value` is refunded to the caller last. reverts while a bid is live on the house
+    /// pays the asking price, gets the statement at once, and moves the anchor halfway to the sale price in bps of
+    /// cost. the excess of `msg.value` is refunded to the caller last
     function buy(uint256 sid) external payable {
         if (_busy) revert Reentrant();
-        if (!buyOnly) revert NotBuyOnly();
         _busy = true;
         (uint256 price, uint256 cost) = _quote(sid);
         if (msg.value < price) revert Underpaid();
@@ -209,10 +187,10 @@ contract ControllerV1 is IController {
     function _quote(uint256 sid) private view returns (uint256 price, uint256 cost) {
         bool held;
         Lane lane;
-        uint64 listedAt;
-        (held, lane, cost, listedAt) = CORE.statementInfo(sid);
-        if (!held || lane != Lane.Eth || listedAt == 0) revert NotForSale();
-        price = _ask(cost, block.timestamp - listedAt);
+        uint64 composedAt;
+        (held, lane, cost, composedAt) = CORE.statementInfo(sid);
+        if (!held || lane != Lane.Eth) revert NotForSale();
+        price = _ask(cost, block.timestamp - composedAt);
         uint256 floor = cost * ICoreSale(address(CORE)).settings().saleFloorBps / BPS;
         if (price < floor) price = floor;
     }

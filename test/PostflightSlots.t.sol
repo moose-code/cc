@@ -141,10 +141,10 @@ contract PostflightSlotsTest is Fixture {
         assertEq(_failedList(), string.concat("core: linked library is the compiled CoreLib, ", SLOTS_ROW));
     }
 
-    /// @dev one site of an immutable holds another value than the other sites and the getter. every one of the 12
+    /// @dev one site of an immutable holds another value than the other sites and the getter. every one of the 10
     /// immutables of the Core and its last site
     function test_oneDivergentImmutableSiteFailsPostflight() public {
-        for (uint256 g; g < 12; ++g) {
+        for (uint256 g; g < 10; ++g) {
             uint256[] memory sites = _immutableSites("Core", g);
             assertGt(sites.length, 0, "an immutable is read at least once");
             // an immutable read only by its public getter has no second site to diverge from the getter
@@ -163,7 +163,7 @@ contract PostflightSlotsTest is Fixture {
 
     function test_oneDivergentControllerSiteFailsPostflight() public {
         uint256[] memory sites = _immutableSites("ControllerV1", 0);
-        assertEq(sites.length, 13);
+        assertEq(sites.length, 12);
         for (uint256 s; s < sites.length; ++s) {
             bytes memory k = address(ctl).code;
             k[sites[s] + 31] = bytes1(uint8(k[sites[s] + 31]) ^ 1);

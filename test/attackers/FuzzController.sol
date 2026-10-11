@@ -99,36 +99,6 @@ contract FuzzController {
     }
 
     /*//////////////////////////////////////////////////////////////
-                             statementPrice
-    //////////////////////////////////////////////////////////////*/
-
-    /// benign: 50 to 200 percent of the cost. hostile: reverts, answers zero, the maximum, three times the cost,
-    /// short or long data, or burns more gas than the core allows. a pure function of the seed and the arguments
-    function statementPrice(uint256 sid, uint256 cost, uint64 listedAt) external returns (uint256) {
-        uint256 r = _r("price", uint256(keccak256(abi.encode(sid, cost, listedAt))));
-        uint256 fair = cost * (5_000 + r % 15_001) / 10_000;
-        if (!hostile) return fair;
-        _attack(r);
-        uint256 m = (r >> 24) % 9;
-        if (m == 0) revert("hostile price");
-        if (m == 1) return type(uint256).max;
-        if (m == 2) return 0;
-        if (m == 3) return cost * 3;
-        if (m == 4) {
-            assembly {
-                mstore(0, 1)
-                return(0, 31)
-            }
-        }
-        if (m == 5) {
-            _burn(250_000);
-            return fair;
-        }
-        if (m == 6) _short(2);
-        return fair;
-    }
-
-    /*//////////////////////////////////////////////////////////////
                                  helpers
     //////////////////////////////////////////////////////////////*/
 

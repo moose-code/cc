@@ -5,7 +5,6 @@ import {console} from "forge-std/console.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Lane, ICreditStrategy, IStatements, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
-import {IAuctionHouse} from "../src/interfaces/AuctionHouse.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
@@ -28,7 +27,6 @@ contract GasCapTest is SeaportBase {
     /// @dev above this share of the cap a row is flagged
     uint256 internal constant FLAG_PCT = 60;
     uint256 internal constant PAGE_GAS = 500_000;
-    uint256 internal constant READ_GAS = 200_000;
 
     address internal bidder;
     address internal bidder2;
@@ -90,10 +88,9 @@ contract GasCapTest is SeaportBase {
     /// @dev marks every account the system touches as cold, with its slots, then warms only the account of `target`
     /// (a transaction starts with its target warm). the sender is not cooled
     function _cool(address target) internal {
-        address[17] memory a = [
+        address[16] memory a = [
             address(core),
             address(ctl),
-            address(house),
             address(STATEMENTS),
             address(CREDITS),
             STRATEGY,
@@ -136,7 +133,7 @@ contract GasCapTest is SeaportBase {
         _row("deploy 2 controller", g, code);
     }
 
-    /// @dev tx 3, a second Core: the constructor creates its auction house through the real factory
+    /// @dev tx 3, a second Core
     function test_gas_deploy_3_core() public {
         bytes memory args = abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings);
         bytes memory code = bytes.concat(vm.getCode("Core.sol:Core"), args);
@@ -144,9 +141,9 @@ contract GasCapTest is SeaportBase {
         uint256 g = gasleft();
         address c2 = deployCode("Core.sol:Core", args);
         g -= gasleft();
-        assertTrue(address(ICore(payable(c2)).HOUSE()) != address(house), "a new house");
+        assertTrue(c2 != address(core), "a new core");
         console.log("core initcode bytes", code.length, "runtime bytes", c2.code.length);
-        _row("deploy 3 core (house creation inside)", g, code);
+        _row("deploy 3 core", g, code);
     }
 
     /// @dev tx 4 and 5 on a fresh launch (new salt), as the owner: `deployTokenAsOwner`, then the router setup (a second
@@ -287,7 +284,7 @@ contract GasCapTest is SeaportBase {
         _row(name, g, abi.encodeCall(core.compose, ()));
     }
 
-    /// @dev full page of 80, listing on the house included, nothing warmed by earlier work
+    /// @dev full page of 80, nothing warmed by earlier work
     function test_gas_compose_ethLane_firstCold() public {
         _fillEthPile(80);
         _cool(address(core));
@@ -418,7 +415,7 @@ contract GasCapTest is SeaportBase {
         core.exitStatement(sid);
         g -= gasleft();
         _row(
-            "exitStatement, eth lane (cancels the listing, stand in exitModule), cold",
+            "exitStatement, eth lane (stand in exitModule), cold",
             g,
             abi.encodeCall(core.exitStatement, (sid))
         );
@@ -556,40 +553,16 @@ contract GasCapTest is SeaportBase {
         _seaportBuy("buyListing through seaport, advanced order, cold", 2);
     }
 
-    /// @dev a statement sold on the house, the proceeds still in the house: collectSales alone, and buyback that collects
-    /// first and then swaps in the real pool, and buyback after a collect
-    function test_gas_collectSales_andBuyback() public {
+    /// @dev a statement sold through the controller books its buyback share, then the buyback swaps in the real pool
+    function test_gas_buyback_afterAStatementSale() public {
         _sellStatement(bidder);
         vm.roll(block.number + 1);
-        uint256 snap = vm.snapshotState();
         _cool(address(core));
-        vm.prank(stranger);
+        vm.prank(keeper);
         uint256 g = gasleft();
-        core.collectSales();
-        g -= gasleft();
-        _row("collectSales, cold", g, abi.encodeCall(core.collectSales, ()));
-        vm.revertToState(snap);
-
-        snap = vm.snapshotState();
-        _cool(address(core));
-        vm.prank(keeper);
-        g = gasleft();
         core.buyback();
         g -= gasleft();
-        _row(
-            "buyback with sale proceeds waiting in the house (collects, swaps, burns), cold",
-            g,
-            abi.encodeCall(core.buyback, ())
-        );
-        vm.revertToState(snap);
-
-        _collectSales();
-        _cool(address(core));
-        vm.prank(keeper);
-        g = gasleft();
-        core.buyback();
-        g -= gasleft();
-        _row("buyback (swaps, burns), proceeds already collected, cold", g, abi.encodeCall(core.buyback, ()));
+        _row("buyback (swaps, burns), cold", g, abi.encodeCall(core.buyback, ()));
     }
 
     function test_gas_buybackExit() public {
@@ -613,68 +586,15 @@ contract GasCapTest is SeaportBase {
         _row("buybackExit, cold", g, abi.encodeCall(core.buybackExit, (coinIn)));
     }
 
-    // ------------------------------------------------------------------ statements: reprice, sync, sellTo, the house
-
-    function test_gas_repriceStatement() public {
-        uint256 sid = _composeOnce().sid;
-        Settings memory s = core.settings();
-        s.saleFloorBps = 20_000;
-        _setSettings(s);
-        _cool(address(core));
-        vm.prank(stranger);
-        uint256 g = gasleft();
-        core.repriceStatement(sid);
-        g -= gasleft();
-        assertEq(_live(sid).reserve, _cost(sid) * 20_000 / 10_000);
-        _row("repriceStatement, cold", g, abi.encodeCall(core.repriceStatement, (sid)));
-        console.log("listings one multisig batch of setSettings plus reprices can hold (tx gas / reprice)", CAP / g);
-    }
+    // ------------------------------------------------------------------ statements: sellTo
 
     function _cost(uint256 sid) internal view returns (uint256 c) {
         (,, c,) = core.statementInfo(sid);
     }
 
-    function test_gas_syncStatement_soldPath() public {
-        (uint256 sid,) = _sellStatement(bidder);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Sold));
-        _cool(address(core));
-        vm.prank(stranger);
-        uint256 g = gasleft();
-        core.syncStatement(sid);
-        g -= gasleft();
-        _row("syncStatement, sold (clears the record), cold", g, abi.encodeCall(core.syncStatement, (sid)));
-    }
-
-    /// @dev the sale delivery to the winner fails (mocked, the real Statements never refuses), the lot is unwound after
-    /// 30 days and comes back to the core, which lists it again
-    function test_gas_syncStatement_relistPath() public {
-        uint256 sid = _composeOnce().sid;
-        Live memory l = _live(sid);
-        _bid(bidder, sid, l.reserve);
-        vm.mockCallRevert(
-            address(STATEMENTS),
-            abi.encodeWithSelector(IStatements.transferFrom.selector, address(house), bidder, sid),
-            "cannot receive"
-        );
-        _endAuction(sid);
-        _warp(30 days + 1);
-        house.unwindStuckLot{gas: END_GAS}(l.auctionId);
-        vm.clearMockedCalls();
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Returned));
-        _cool(address(core));
-        vm.prank(stranger);
-        uint256 g = gasleft();
-        core.syncStatement(sid);
-        g -= gasleft();
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Listed));
-        _row("syncStatement, relist after an unwound sale, cold", g, abi.encodeCall(core.syncStatement, (sid)));
-    }
-
-    /// @dev buy only mode: ControllerV1.buy pays the asking price and takes the statement through Core.sellTo
+    /// @dev ControllerV1.buy pays the asking price and takes the statement through Core.sellTo
     function test_gas_sellTo_throughControllerBuy() public {
         uint256 sid = _composeOnce().sid;
-        vm.prank(owner);
-        ctl.setBuyOnly(true);
         uint256 price = ctl.priceOf(sid);
         vm.deal(bidder, price);
         _cool(address(ctl));
@@ -683,38 +603,7 @@ contract GasCapTest is SeaportBase {
         ctl.buy{value: price}(sid);
         g -= gasleft();
         assertEq(STATEMENTS.ownerOf(sid), bidder);
-        _row("sellTo through ControllerV1.buy (cancels the listing), cold", g, abi.encodeCall(ctl.buy, (sid)));
-    }
-
-    function test_gas_house_createBid_andEndAuction() public {
-        uint256 sid = _composeOnce().sid;
-        Live memory l = _live(sid);
-        vm.deal(bidder, l.reserve * 2);
-        vm.deal(bidder2, l.reserve * 2);
-        bytes memory data = abi.encodeCall(house.createBid, (l.auctionId));
-        _cool(address(house));
-        vm.prank(bidder);
-        uint256 g = gasleft();
-        house.createBid{value: l.reserve}(l.auctionId);
-        g -= gasleft();
-        _row("house createBid, first bid on a statement, cold", g, data);
-
-        _cool(address(house));
-        vm.prank(bidder2);
-        g = gasleft();
-        house.createBid{value: l.reserve * 12 / 10}(l.auctionId);
-        g -= gasleft();
-        _row("house createBid, outbid (refunds the first bidder), cold", g, data);
-
-        l = _live(sid);
-        vm.warp(l.endTime);
-        _cool(address(house));
-        vm.prank(stranger);
-        g = gasleft();
-        house.endAuction{gas: END_GAS}(l.auctionId);
-        g -= gasleft();
-        assertEq(STATEMENTS.ownerOf(sid), bidder2);
-        _row("house endAuction of a statement (delivers it), cold", g, abi.encodeCall(house.endAuction, (l.auctionId)));
+        _row("sellTo through ControllerV1.buy, cold", g, abi.encodeCall(ctl.buy, (sid)));
     }
 
     // ------------------------------------------------------------------ owner doors
@@ -728,7 +617,6 @@ contract GasCapTest is SeaportBase {
         s.climbPerMinBps = 90;
         s.dropPerCreditBps = 150;
         s.saleFloorBps = 8_000;
-        s.auctionDuration = 2 days;
         s.saleToBuybackBps = 4_000;
         s.buybackSlice = 1 ether;
         s.xAuctionHalfLife = 12 hours;
@@ -778,8 +666,8 @@ contract GasCapTest is SeaportBase {
 
     // ------------------------------------------------------------------ the gas capped reads inside the core
 
-    /// @dev the core reads `nextPage` with 500,000 gas and `statementPrice` with 200,000. a full pile, cold access
-    function test_gas_readCaps_nextPageAndStatementPrice() public {
+    /// @dev the core reads `nextPage` with 500,000 gas. a full pile, cold access
+    function test_gas_readCaps_nextPage() public {
         _fillEthPile(80);
         _cool(address(ctl));
         uint256 g = gasleft();
@@ -789,15 +677,6 @@ contract GasCapTest is SeaportBase {
         console.log("READ ControllerV1.nextPage, full eth pile, cold, gas", g, "cap", PAGE_GAS);
         console.log("READ nextPage share of the cap in percent", g * 100 / PAGE_GAS);
         assertLt(g, PAGE_GAS);
-        uint256 sid = _composeOnce().sid;
-        (,, uint256 cost, uint64 at) = core.statementInfo(sid);
-        _cool(address(ctl));
-        uint256 p = gasleft();
-        ctl.statementPrice(sid, cost, at);
-        p -= gasleft();
-        console.log("READ ControllerV1.statementPrice, cold, gas", p, "cap", READ_GAS);
-        console.log("READ statementPrice share of the cap in percent", p * 100 / READ_GAS);
-        assertLt(p, READ_GAS);
     }
 
     /// @dev the same read for the exit lane pile, and for a pile far larger than a page (the read takes the head page)

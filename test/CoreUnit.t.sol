@@ -10,14 +10,13 @@ import {Lane, ICreditStrategy, Stack, Mainnet, Settings} from "../src/interfaces
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {HostileTarget} from "./attackers/HostileTarget.sol";
 import {ProbeTarget} from "./attackers/ProbeTarget.sol";
-import {ReentrantBidder} from "./attackers/StatementBuyers.sol";
 import {MockExitToken} from "./standins/MockExitToken.sol";
 import {MockExitModule} from "./standins/MockExitModule.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {BidModel} from "./utils/BidModel.sol";
 
 /// shared helpers of the core unit suites. everything runs on the real stack of the Fixture: the live coin, hook,
-/// pool, Credits, Statements, CreditStrategy, Seaport and the pnd auction house. a test that needs an exact pot donates
+/// pool, Credits, Statements, CreditStrategy and Seaport. a test that needs an exact pot donates
 /// eth to the core and calls `skim()`, which is the real path for eth that did not come from the hook
 abstract contract CoreBase is Fixture {
     using stdStorage for StdStorage;
@@ -119,7 +118,6 @@ contract CoreUnitTest is CoreBase {
             st.factory,
             st.locker,
             st.escrow,
-            st.auctionFactory,
             st.feeSource
         );
         if (which == 0) bad.poolManager = to;
@@ -127,8 +125,7 @@ contract CoreUnitTest is CoreBase {
         if (which == 2) bad.factory = to;
         if (which == 3) bad.locker = to;
         if (which == 4) bad.escrow = to;
-        if (which == 5) bad.auctionFactory = to;
-        if (which == 6) bad.feeSource = to;
+        if (which == 5) bad.feeSource = to;
     }
 
     function test_constructorRejectsZero() public {
@@ -141,8 +138,8 @@ contract CoreUnitTest is CoreBase {
         this.mk(owner, address(0), address(ctl), st, r, s);
         vm.expectRevert(ICore.ZeroAddress.selector);
         this.mk(owner, address(coin), address(0), st, r, s);
-        // every address of the stack is required, the auction factory included
-        for (uint256 i; i < 7; ++i) {
+        // every address of the stack is required
+        for (uint256 i; i < 6; ++i) {
             vm.expectRevert(ICore.ZeroAddress.selector);
             this.mk(owner, address(coin), address(ctl), _stack8(st, i, address(0)), r, s);
         }
@@ -163,7 +160,7 @@ contract CoreUnitTest is CoreBase {
         uint256 r = lc.rateStart;
         Settings memory s = lc.settings;
         address nobody = makeAddr("no code");
-        for (uint256 i; i < 7; ++i) {
+        for (uint256 i; i < 6; ++i) {
             vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, nobody));
             this.mk(owner, address(coin), address(ctl), _stack8(st, i, nobody), r, s);
         }
@@ -188,7 +185,7 @@ contract CoreUnitTest is CoreBase {
     }
 
     /// the stack is stored as given, nothing of it is hardcoded in the core. the six members that are only
-    /// addresses are stand in code, the auction factory is the live one because the constructor creates a house
+    /// addresses are stand in code
     function test_stackIsStored() public {
         Stack memory other = Stack(
             address(0x1111),
@@ -198,7 +195,6 @@ contract CoreUnitTest is CoreBase {
             address(0x3333),
             address(0x4444),
             address(0x5555),
-            Mainnet.AUCTION_FACTORY,
             address(0x6666)
         );
         for (uint160 a = 0x1111; a <= 0x6666; a += 0x1111) {
@@ -212,7 +208,6 @@ contract CoreUnitTest is CoreBase {
         assertEq(c2.FACTORY(), address(0x3333));
         assertEq(c2.LOCKER(), address(0x4444));
         assertEq(c2.ESCROW(), address(0x5555));
-        assertEq(c2.AUCTION_FACTORY(), Mainnet.AUCTION_FACTORY);
         assertEq(c2.FEE_SOURCE(), address(0x6666));
         // only the configured fee source is booked as fee income, the hook included is not
         vm.deal(address(0x6666), 1 ether);
@@ -751,7 +746,7 @@ contract CoreUnitTest is CoreBase {
     /// targets that were never allowed, and every address the core itself refuses, are not callable
     function test_buyListing_targetGuards() public {
         _fund(10 ether);
-        address[14] memory refused = [
+        address[12] memory refused = [
             address(0xABCD),
             address(CREDITS),
             address(STATEMENTS),
@@ -762,8 +757,6 @@ contract CoreUnitTest is CoreBase {
             lc.stack.factory,
             lc.stack.locker,
             lc.stack.escrow,
-            address(house),
-            Mainnet.AUCTION_FACTORY,
             Mainnet.PERMIT2,
             Mainnet.UNIVERSAL_ROUTER
         ];
@@ -1105,7 +1098,7 @@ contract CoreUnitTest is CoreBase {
     }
 
     function test_owner_targets() public {
-        address[14] memory forbidden = [
+        address[12] memory forbidden = [
             address(CREDITS),
             address(STATEMENTS),
             address(core),
@@ -1116,8 +1109,6 @@ contract CoreUnitTest is CoreBase {
             lc.stack.locker,
             lc.stack.escrow,
             address(0),
-            address(house),
-            Mainnet.AUCTION_FACTORY,
             Mainnet.POSITION_MANAGER,
             Mainnet.UNIVERSAL_ROUTER
         ];
@@ -1332,18 +1323,17 @@ contract CoreUnitTest is CoreBase {
                          doors that need no module
     //////////////////////////////////////////////////////////////*/
 
-    /// the sale doors are on the house, the core only settles records: with no statement they all say so
+    /// the statement doors with no statement: `sellTo` is the controller's, `exitStatement` needs a module
     function test_statementDoorsRefuseAnUnknownStatement() public {
-        vm.expectRevert(ICore.NotListed.selector);
-        core.syncStatement(1);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.repriceStatement(1);
+        vm.expectRevert(ICore.OnlyController.selector);
+        core.sellTo(1, alice);
+        vm.prank(address(ctl));
+        vm.expectRevert(ICore.NotForSale.selector);
+        core.sellTo(1, alice);
         vm.expectRevert(ICore.NoExitModule.selector);
         core.exitStatement(1);
-        (ICore.StatementStatus status,,,,) = core.statementStatus(1);
-        assertEq(uint256(status), uint256(ICore.StatementStatus.None));
-        // nothing is owed by the house to a core that sold nothing
-        core.collectSales();
+        (bool held,,,) = core.statementInfo(1);
+        assertFalse(held);
         assertEq(core.ethPot(), 0);
         assertEq(core.ethToBuyback(), 0);
     }
@@ -1461,15 +1451,14 @@ contract CoreComposedTest is CoreBase {
         }
         assertEq(c.sid, c.supplyBefore + 1);
         assertEq(STATEMENTS.supply(), c.sid);
-        assertEq(STATEMENTS.ownerOf(c.sid), address(house), "listed: the house holds it for the core");
+        assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the core holds it");
         assertEq(STATEMENTS.creditsOf(c.sid), 80);
 
-        (bool held, Lane lane, uint256 cost, uint64 clockStart) = core.statementInfo(c.sid);
+        (bool held, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(c.sid);
         assertTrue(held);
         assertEq(uint8(lane), uint8(Lane.Eth));
         assertEq(cost, c.cost, "cost basis is the sum of the credits' cost bases");
-        assertEq(clockStart, c.at);
-        assertEq(uint256(_live(c.sid).status), uint256(ICore.StatementStatus.Listed));
+        assertEq(composedAt, c.at);
 
         assertEq(core.pileSize(Lane.Eth), 0);
         assertEq(core.pilePage(Lane.Eth, 0, 1).length, 0);
@@ -1566,8 +1555,8 @@ contract CoreComposedTest is CoreBase {
         mod.setShortfallBps(5000);
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(c.sid);
-        assertEq(STATEMENTS.ownerOf(c.sid), address(house), "the statement never left, its listing is intact");
-        assertEq(uint256(_live(c.sid).status), uint256(ICore.StatementStatus.Listed));
+        assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement never left");
+        assertTrue(_isHeld(c.sid));
         assertEq(_held().length, 1);
 
         mod.setShortfallBps(0);
@@ -1803,7 +1792,7 @@ contract CoreComposedTest is CoreBase {
         core.composeExit();
         uint256 paid = keeper.balance - balBefore;
 
-        assertEq(STATEMENTS.ownerOf(sidX), address(core), "held by the core, never listed");
+        assertEq(STATEMENTS.ownerOf(sidX), address(core), "held by the core");
         (bool held, Lane lane, uint256 cost,) = core.statementInfo(sidX);
         assertTrue(held);
         assertEq(uint8(lane), uint8(Lane.Exit));
@@ -1811,11 +1800,9 @@ contract CoreComposedTest is CoreBase {
         assertEq(core.pileSize(Lane.Exit), 0);
         assertEq(core.ethPot(), potBefore);
         assertEq(paid, 0, "the compose pays the caller nothing");
-        assertEq(uint256(_live(sidX).status), uint256(ICore.StatementStatus.Held));
-        vm.expectRevert(ICore.NotListed.selector);
-        core.repriceStatement(sidX);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.syncStatement(sidX);
+        vm.prank(address(ctl));
+        vm.expectRevert(ICore.NotForSale.selector);
+        core.sellTo(sidX, alice);
 
         // no auction in the exit lane, so it exits at once and everything returns to the bid pot, none of it to the
         // buyback, which also keeps its auction clock
@@ -1828,47 +1815,6 @@ contract CoreComposedTest is CoreBase {
         assertEq(core.xToBuyback(), xbbBefore);
         assertEq(core.xStartTime(), startTime);
         assertEq(STATEMENTS.ownerOf(sidX), address(mod));
-        _solvent();
-    }
-
-    /// a bidder that re enters the core from its eth refund and from the statement delivery cannot disturb the books:
-    /// outbid, or alone as the winner, and the proceeds are booked exactly once by `collectSales`
-    function test_reentrantBidderCannotDisturbTheBooks() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 snap = vm.snapshotState();
-        uint256 reserve = _live(sid).reserve;
-        uint256 aid = _live(sid).auctionId;
-        uint256 pot0 = core.ethPot();
-        uint256 bal0 = address(core).balance;
-        ReentrantBidder rb = new ReentrantBidder(core);
-        vm.deal(address(rb), 10 ether);
-
-        // outbid: the refund to the bidder runs its receive on the stipend
-        rb.bid{value: reserve}(house, aid);
-        _bid(alice, sid, reserve * 106 / 100);
-        _endAuction(sid);
-        assertEq(STATEMENTS.ownerOf(sid), alice);
-        assertEq(core.ethPot(), pot0, "nothing booked before the collection");
-        assertEq(address(core).balance, bal0, "and nothing in the balance");
-        uint256 owed = _collectSales();
-        assertEq(owed, reserve * 106 / 100);
-        assertEq(core.ethPot() + core.ethToBuyback(), pot0 + owed);
-        _solvent();
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "exact books");
-        core.syncStatement(sid);
-        assertEq(_held().length, 0);
-
-        // the winner: the delivery of the statement calls back into the core
-        vm.revertToState(snap);
-        rb = new ReentrantBidder(core);
-        vm.deal(address(rb), 10 ether);
-        rb.bid{value: reserve}(house, aid);
-        _endAuction(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(rb));
-        owed = _collectSales();
-        assertEq(owed, reserve);
-        assertEq(core.ethPot() + core.ethToBuyback(), pot0 + reserve);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "exact books");
         _solvent();
     }
 

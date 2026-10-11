@@ -17,7 +17,6 @@ library SettingsBounds {
         if (s.tipSavingsBps > 2_500) return "tipSavingsBps";
         if (s.tipCapBps > 500) return "tipCapBps";
         if (s.saleFloorBps < 1_000 || s.saleFloorBps > 40_000) return "saleFloorBps";
-        if (s.auctionDuration < 6 hours || s.auctionDuration > 30 days) return "auctionDuration";
         if (s.exitAfter < 1 hours || s.exitAfter > 365 days) return "exitAfter";
         if (s.saleToBuybackBps > 10_000) return "saleToBuybackBps";
         if (s.exitToBuybackBps > 10_000) return "exitToBuybackBps";

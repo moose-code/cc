@@ -5,39 +5,31 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "./interfaces/ICore.sol";
 import {IControllerV1} from "./interfaces/IControllerV1.sol";
 import {IFeeRouter} from "./interfaces/IFeeRouter.sol";
-import {IAuctionHouse} from "./interfaces/AuctionHouse.sol";
 import {Lane} from "./interfaces/Interfaces.sol";
 
-/// read only view of the Core, the controller, the fee router and the house in one call. it has no storage and no
-/// state changing function. the Core, the router and the house are immutable pointers fixed at creation (the router
-/// is the Core fee source, the house is the Core house). the controller is read from the Core on every call, so a
-/// controller replaced by the owner is followed. Credits and Statements are the mainnet constants.
+/// read only view of the Core, the controller and the fee router in one call. it has no storage and no state changing
+/// function. the Core and the router are immutable pointers fixed at creation (the router is the Core fee source). the
+/// controller is read from the Core on every call, so a controller replaced by the owner is followed. Credits and
+/// Statements are the mainnet constants.
 /// `snapshot` returns everything a seller, a buyer or a keeper decides on. a held list of several hundred statements
 /// costs more gas than a public node allows for `eth_call`: `statementsPage` reads it in pages
 contract CoreLens {
     using FixedPointMathLib for uint256;
 
-    /// the held statement `id` of the Core. `listed` is true while its auction is live on the house (no bid, a bid
-    /// running, or ended and unsettled). `status` is `Core.StatementStatus`. `askingPrice` is the controller price now in
-    /// wei while a buyer can buy at it: an eth lane statement with status Listed (live auction, no bid). it is 0 in
-    /// every other status, for an exit lane statement and when the controller does not answer. `topBid`, `endTime` and
-    /// `status` describe the other states
+    /// the held statement `id` of the Core, with its lane, cost basis and compose time. `askingPrice` is the
+    /// controller price now in wei for an eth lane statement. it is 0 for an exit lane statement and when the
+    /// controller does not answer
     struct StatementView {
         uint256 id;
         Lane lane;
         uint256 cost;
-        bool listed;
-        uint256 auctionId;
+        uint64 composedAt;
         uint256 askingPrice;
-        uint8 status;
-        uint256 topBid;
-        uint64 endTime;
     }
 
     /// `ethRate` is the wei the Core pays for one credit now. `ethPrice` is the price state before the
     /// clamp, the figure an adopted credit is priced with. `unbookedEth` is the Core balance
-    /// above the booked pots (`skim` books it). `salesOwed` is the sale proceeds waiting in the house
-    /// (`collectSales` books them). the flush fields are what `FeeRouter.flush()` would send
+    /// above the booked pots (`skim` books it). the flush fields are what `FeeRouter.flush()` would send
     /// now: to the Core and to the payees
     struct Snapshot {
         uint256 ethRate;
@@ -53,7 +45,6 @@ contract CoreLens {
         uint256 xPot;
         uint256 xToBuyback;
         uint256 unbookedEth;
-        uint256 salesOwed;
         uint256 routerBalance;
         uint256 routerOwed;
         uint256 flushToCore;
@@ -75,14 +66,12 @@ contract CoreLens {
 
     ICore public immutable CORE;
     IFeeRouter public immutable ROUTER;
-    IAuctionHouse public immutable HOUSE;
     address public constant CREDITS = 0x97630aA70AB14ed9883B41dAfccBc11349723043;
     address public constant STATEMENTS = 0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b;
 
     constructor(address core) {
         CORE = ICore(payable(core));
         ROUTER = IFeeRouter(payable(ICore(payable(core)).FEE_SOURCE()));
-        HOUSE = IAuctionHouse(ICore(payable(core)).HOUSE());
     }
 
     /// the controller of the Core now
@@ -117,7 +106,6 @@ contract CoreLens {
         s.xPot = core.xPot();
         s.xToBuyback = core.xToBuyback();
         s.unbookedEth = address(core).balance.zeroFloorSub(s.ethPot + s.ethToBuyback);
-        s.salesOwed = HOUSE.pendingRefunds(address(core));
         s.routerBalance = address(ROUTER).balance;
         s.routerOwed = ROUTER.totalOwed();
         (s.flushToCore, s.flushToPayees) = _flush();
@@ -178,20 +166,7 @@ contract CoreLens {
 
     function _statement(uint256 sid, address ctl) private view returns (StatementView memory v) {
         v.id = sid;
-        uint64 listedAt;
-        (, v.lane, v.cost, listedAt) = CORE.statementInfo(sid);
-        try CORE.statementStatus(sid) returns (
-            ICore.StatementStatus status, uint256 auctionId, uint256, uint256 bid, uint64 endTime
-        ) {
-            v.status = uint8(status);
-            v.auctionId = auctionId;
-            v.topBid = bid;
-            v.endTime = endTime;
-            v.listed = status == ICore.StatementStatus.Listed || status == ICore.StatementStatus.Bid
-                || status == ICore.StatementStatus.Ended;
-        } catch {}
-        if (v.lane == Lane.Eth && listedAt != 0 && v.status == uint8(ICore.StatementStatus.Listed)) {
-            v.askingPrice = _askingPrice(ctl, sid);
-        }
+        (, v.lane, v.cost, v.composedAt) = CORE.statementInfo(sid);
+        if (v.lane == Lane.Eth) v.askingPrice = _askingPrice(ctl, sid);
     }
 }

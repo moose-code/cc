@@ -7,7 +7,6 @@
     "factory": "0x9b17bf6f97F5429368E11028BC637479b4667f7b",
     "locker": "0x1e2456861B864B96FFe6b34066b12FBD7EEb23fC",
     "escrow": "0x32845df52436a737C9623Af1d461A1c9999BBc1e",
-    "auctionFactory": "0x77aB853543286C9Cdd7dd6c01222A7cC4Ac93d63",
     "mevModule": "0xFbb55b4C13b8517C000e2686efB12F0FAAFc9072"
   },
   "owner": "0xCB43078C32423F5348Cab5885911C3B5faE217F9",
@@ -27,7 +26,6 @@
     "tipSavingsBps": 2500,
     "tipCapBps": 400,
     "saleFloorBps": 7500,
-    "auctionDuration": 86400,
     "exitAfter": 378000,
     "saleToBuybackBps": 5000,
     "exitToBuybackBps": 5000,
@@ -48,7 +46,6 @@
     "callerMaxBaseFee": 0
   },
   "sale": {
-    "buyOnly": true,
     "markupBps": 15000,
     "startCapBps": 100000,
     "fastDecayBpsPerHour": 100,

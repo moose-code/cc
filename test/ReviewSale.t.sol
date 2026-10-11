@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {Prod} from "./utils/Prod.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
@@ -12,6 +13,7 @@ import {LaunchConfig} from "../script/LaunchConfig.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {MockExitToken} from "./standins/MockExitToken.sol";
 import {MockExitModule} from "./standins/MockExitModule.sol";
+import {StatementInfoStub} from "./standins/StatementInfoStub.sol";
 
 /// a controller that can call sellTo with any statement, buyer and payment
 contract SellProbe is ScriptedController {
@@ -120,11 +122,6 @@ contract ReviewSaleTest is Fixture {
         return _cost(sid) * core.settings().saleFloorBps / 10_000;
     }
 
-    function _buyOnly() internal {
-        vm.prank(owner);
-        ctl.setBuyOnly(true);
-    }
-
     function _probe() internal returns (SellProbe p) {
         p = new SellProbe(core);
         _setController(address(p));
@@ -162,7 +159,6 @@ contract ReviewSaleTest is Fixture {
         vm.expectRevert(ICore.OnlyController.selector);
         core.sellTo{value: floor}(sid, owner);
         // after a controller change the old controller is dead for sales
-        _buyOnly();
         SellProbe p = _probe();
         vm.prank(bob);
         vm.expectRevert(ICore.OnlyController.selector);
@@ -174,9 +170,9 @@ contract ReviewSaleTest is Fixture {
     function test_OK_sellTo_unknownRecordReverts() public {
         _composeOnce();
         SellProbe p = _probe();
-        vm.expectRevert(ICore.NotListed.selector);
+        vm.expectRevert(ICore.NotForSale.selector);
         p.sell{value: 0}(999_999, bob);
-        vm.expectRevert(ICore.NotListed.selector);
+        vm.expectRevert(ICore.NotForSale.selector);
         p.sell{value: 0}(0, bob);
     }
 
@@ -188,43 +184,9 @@ contract ReviewSaleTest is Fixture {
         assertEq(uint256(lane), uint256(Lane.Exit));
         SellProbe p = _probe();
         vm.deal(address(this), 1000 ether);
-        vm.expectRevert(ICore.NotListed.selector);
+        vm.expectRevert(ICore.NotForSale.selector);
         p.sell{value: 1000 ether}(sid, bob);
         assertEq(STATEMENTS.ownerOf(sid), address(core));
-    }
-
-    function test_OK_sellTo_midAuctionReverts() public {
-        uint256 sid = _composeOnce().sid;
-        _bid(alice, sid, _live(sid).reserve);
-        SellProbe p = _probe();
-        vm.deal(address(this), 1000 ether);
-        vm.expectRevert(ICore.HasBid.selector);
-        p.sell{value: 1000 ether}(sid, bob);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Bid), "auction untouched");
-    }
-
-    function test_OK_sellTo_endedButUnsettledAuctionReverts() public {
-        uint256 sid = _composeOnce().sid;
-        _bid(alice, sid, _live(sid).reserve);
-        vm.warp(_live(sid).endTime + 1);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Ended));
-        SellProbe p = _probe();
-        vm.deal(address(this), 1000 ether);
-        vm.expectRevert(ICore.HasBid.selector);
-        p.sell{value: 1000 ether}(sid, bob);
-    }
-
-    function test_OK_sellTo_afterAnAuctionSaleReverts() public {
-        (uint256 sid,) = _sellStatement(alice);
-        SellProbe p = _probe();
-        vm.deal(address(this), 1000 ether);
-        // the record is stale (sold on the house) until syncStatement clears it
-        vm.expectRevert(ICore.NotListed.selector);
-        p.sell{value: 1000 ether}(sid, bob);
-        core.syncStatement(sid);
-        vm.expectRevert(ICore.NotListed.selector);
-        p.sell{value: 1000 ether}(sid, bob);
-        assertEq(STATEMENTS.ownerOf(sid), alice);
     }
 
     function test_OK_sellTo_alreadySoldReverts() public {
@@ -233,7 +195,7 @@ contract ReviewSaleTest is Fixture {
         SellProbe p = _probe();
         p.sell{value: floor}(sid, bob);
         vm.deal(address(this), 1000 ether);
-        vm.expectRevert(ICore.NotListed.selector);
+        vm.expectRevert(ICore.NotForSale.selector);
         p.sell{value: 1000 ether}(sid, alice);
         assertEq(STATEMENTS.ownerOf(sid), bob);
         assertEq(core.heldStatements().length, 0);
@@ -265,22 +227,19 @@ contract ReviewSaleTest is Fixture {
         uint256 bb = core.ethToBuyback();
         uint256 bal = address(core).balance;
         vm.expectEmit(address(core));
-        emit ICore.StatementSoldTo(sid, bob, pay);
+        emit ICore.StatementSoldTo(sid, bob, pay, pay * core.settings().saleToBuybackBps / 10_000);
         p.sell{value: pay}(sid, bob);
         assertEq(address(core).balance - bal, pay, "balance rose by the payment");
         assertEq((core.ethPot() - pot) + (core.ethToBuyback() - bb), pay, "booked exactly once");
         assertEq(core.ethToBuyback() - bb, pay * core.settings().saleToBuybackBps / 10_000);
-        // skim, collectSales and a later hook payment add nothing for this payment
+        // skim and a later hook payment add nothing for this payment
         core.skim();
-        core.collectSales();
         assertEq((core.ethPot() - pot) + (core.ethToBuyback() - bb), pay, "skim finds nothing to add");
-        assertEq(house.pendingRefunds(address(core)), 0);
         _solvent();
     }
 
     function test_OK_sellTo_buyerGetsNoCallbackAndRefundReentryIsBlocked() public {
         uint256 sid = _composeOnce().sid;
-        _buyOnly();
         uint256 price = ctl.priceOf(sid);
         EvilBuyer b = new EvilBuyer(ctl, core);
         vm.deal(address(this), price + 1 ether);
@@ -297,7 +256,6 @@ contract ReviewSaleTest is Fixture {
 
     function test_OK_buy_revertingRefundRevertsTheWholeBuy() public {
         uint256 sid = _composeOnce().sid;
-        _buyOnly();
         uint256 price = ctl.priceOf(sid);
         EvilBuyer b = new EvilBuyer(ctl, core);
         b.setFail(true);
@@ -319,14 +277,6 @@ contract ReviewSaleTest is Fixture {
         assertEq(address(ctl).balance, 0);
     }
 
-    function test_OK_buy_notInAuctionMode() public {
-        uint256 sid = _composeOnce().sid;
-        vm.deal(bob, 100 ether);
-        vm.prank(bob);
-        vm.expectRevert(IControllerV1.NotBuyOnly.selector);
-        ctl.buy{value: 100 ether}(sid);
-    }
-
     function test_OK_buy_ownerCheckFollowsTheLiveOwner() public {
         vm.prank(owner);
         core.transferOwnership(alice);
@@ -336,21 +286,17 @@ contract ReviewSaleTest is Fixture {
         core.acceptOwnership();
         vm.prank(owner);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setBuyOnly(true);
+        ctl.setFastDecayBpsPerHour(300);
         vm.prank(alice);
-        ctl.setBuyOnly(true);
-        assertTrue(ctl.buyOnly());
-        assertEq(ctl.fastDecayBpsPerHour(), 200);
+        ctl.setFastDecayBpsPerHour(300);
+        assertEq(ctl.fastDecayBpsPerHour(), 300);
     }
 
     function test_OK_buy_quoteNeverRisesForAThirdParty() public {
         uint256 sid = _composeOnce().sid;
-        _buyOnly();
         uint256 q0 = ctl.priceOf(sid);
         // a stranger runs every permissionless door: none raises the ask
         core.skim();
-        core.collectSales();
-        core.repriceStatement(sid);
         assertEq(ctl.priceOf(sid), q0);
         _warp(3 hours);
         uint256 q1 = ctl.priceOf(sid);
@@ -365,25 +311,10 @@ contract ReviewSaleTest is Fixture {
         assertEq(STATEMENTS.ownerOf(sid), bob);
     }
 
-    function test_OK_buy_aBidderBlockingABuyPaysAtLeastTheAsk() public {
-        uint256 sid = _composeOnce().sid;
-        _warp(30 hours);
-        core.repriceStatement(sid);
-        _buyOnly();
-        _warp(1 hours);
-        assertGe(_live(sid).reserve, ctl.priceOf(sid), "the reserve never sits under the ask");
-        _bid(alice, sid, _live(sid).reserve);
-        vm.deal(bob, 100 ether);
-        vm.prank(bob);
-        vm.expectRevert(ICore.HasBid.selector);
-        ctl.buy{value: 100 ether}(sid);
-    }
-
     /// S-1 fixed: the controller floor can sit under the core hard floor (the owner raised only the core floor). the
-    /// quote and the payment are clamped at the hard floor, so buy only mode keeps working and the excess comes back
-    function test_FIXED_buyOnlyWorksWhileTheAskIsUnderTheCoreFloor() public {
+    /// quote and the payment are clamped at the hard floor, so `buy` keeps working and the excess comes back
+    function test_FIXED_buyWorksWhileTheAskIsUnderTheCoreFloor() public {
         uint256 sid = _composeOnce().sid;
-        _buyOnly();
         _raise(9_000);
         _warp(100 hours);
         uint256 floor = _floorOf(sid);
@@ -396,145 +327,50 @@ contract ReviewSaleTest is Fixture {
         assertEq(address(ctl).balance, 0);
     }
 
-    // ------------------------------------------------------------------ statementPrice and _reserveFor
+    // ------------------------------------------------------------------ the asking price
 
     function test_OK_price_extremesDoNotOverflowOrUnderflow() public {
+        StatementInfoStub stub = new StatementInfoStub(owner);
+        IControllerV1 c = Prod.newController(address(stub), lc.sale);
         vm.startPrank(owner);
-        ctl.setFastDecayBpsPerHour(10_000);
-        ctl.setSlowDecayBpsPerHour(10_000);
+        c.setFastDecayBpsPerHour(10_000);
+        c.setSlowDecayBpsPerHour(10_000);
         vm.stopPrank();
         uint256 cost = 10 ether;
-        assertEq(ctl.statementPrice(0, cost, 0), cost * 7_500 / 10_000, "ancient listing sits at the floor");
-        assertEq(ctl.statementPrice(0, cost, uint64(block.timestamp)), cost * 15_000 / 10_000, "age zero is the start");
+        // forge-lint: disable-start(unsafe-typecast)
+        stub.set(cost, 0);
+        assertEq(c.priceOf(0), cost * 7_500 / 10_000, "an ancient statement sits at the floor");
+        stub.set(cost, uint64(block.timestamp));
+        assertEq(c.priceOf(0), cost * 15_000 / 10_000, "age zero is the start");
         vm.startPrank(owner);
-        ctl.setMarkupBps(40_000);
-        ctl.setStartCapBps(200_000);
+        c.setMarkupBps(40_000);
+        c.setStartCapBps(200_000);
         vm.stopPrank();
-        assertEq(ctl.statementPrice(0, type(uint128).max, 0), uint256(type(uint128).max) * 7_500 / 10_000);
-        assertEq(
-            ctl.statementPrice(0, type(uint128).max, uint64(block.timestamp)),
-            uint256(type(uint128).max) * 40_000 / 10_000,
-            "the largest start on the largest cost"
-        );
-        assertEq(ctl.statementPrice(0, 0, 0), 0, "cost zero asks zero");
-        // a listing in the future reverts (checked subtraction). the core never passes one: listedAt is set to now
+        stub.set(type(uint128).max, 0);
+        assertEq(c.priceOf(0), uint256(type(uint128).max) * 7_500 / 10_000);
+        stub.set(type(uint128).max, uint64(block.timestamp));
+        assertEq(c.priceOf(0), uint256(type(uint128).max) * 40_000 / 10_000, "the largest start on the largest cost");
+        stub.set(0, 0);
+        assertEq(c.priceOf(0), 0, "cost zero asks zero");
+        // a compose time in the future reverts (checked subtraction). the core sets it to the block time
+        stub.set(cost, uint64(block.timestamp + 1));
         vm.expectRevert();
-        ctl.statementPrice(0, cost, uint64(block.timestamp + 1));
+        c.priceOf(0);
+        stub.set(cost, type(uint64).max);
         vm.expectRevert();
-        ctl.statementPrice(0, cost, type(uint64).max);
+        c.priceOf(0);
+        // forge-lint: disable-end(unsafe-typecast)
     }
 
-    function test_OK_reserve_floorBindsAControllerThatAsksLess() public {
+    function test_OK_price_readGasIsFarUnderTheLensBound() public {
         uint256 sid = _composeOnce().sid;
-        ScriptedController sc = new ScriptedController();
-        _setController(address(sc));
-        sc.setPriceBps(1);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, _floorOf(sid), "floored at the hard floor");
-        sc.setPriceBps(20_000);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, _cost(sid) * 2, "an honest higher ask is kept");
-    }
-
-    function test_OK_reserve_badControllerAnswersRevertAndKeepTheStoredReserve() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 stored = _live(sid).reserve;
-        ScriptedController sc = new ScriptedController();
-        _setController(address(sc));
-        sc.setRevertPrice(true);
-        vm.expectRevert(ICore.BadPrice.selector);
-        core.repriceStatement(sid);
-        sc.setRevertPrice(false);
-        sc.setBurnPrice(true);
-        vm.expectRevert(ICore.BadPrice.selector);
-        core.repriceStatement(sid);
-        sc.setBurnPrice(false);
-        sc.setShortPrice(true);
-        vm.expectRevert(ICore.BadPrice.selector);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, stored, "the stored reserve stands");
-    }
-
-    function test_OK_reserve_priceReadGasIsFarUnderTheCap() public {
-        uint256 sid = _composeOnce().sid;
-        (,, uint256 cost, uint64 at) = core.statementInfo(sid);
         vm.cool(address(ctl));
+        vm.cool(address(core));
         uint256 g = gasleft();
-        ctl.statementPrice(sid, cost, at);
+        ctl.priceOf(sid);
         uint256 used = g - gasleft();
-        emit log_named_uint("cold statementPrice gas", used);
-        assertLt(used, 20_000, "the core caps the read at 200_000");
-    }
-
-    // ------------------------------------------------------------------ repriceStatement
-
-    function test_OK_reprice_aStrangerCanOnlyWalkTheReserveDownAndLoopsAreHarmless() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 last = _live(sid).reserve;
-        (,,, uint64 at0) = core.statementInfo(sid);
-        for (uint256 i; i < 6; ++i) {
-            _warp(7 hours);
-            vm.prank(bob);
-            core.repriceStatement(sid);
-            uint256 now_ = _live(sid).reserve;
-            assertLe(now_, last, "never raised by a stranger");
-            assertEq(now_, ctl.priceOf(sid), "equals the ask now");
-            vm.prank(bob);
-            core.repriceStatement(sid);
-            assertEq(_live(sid).reserve, now_, "a repeat changes nothing");
-            last = now_;
-        }
-        (,,, uint64 at1) = core.statementInfo(sid);
-        assertEq(at1, at0, "listedAt untouched by reprice");
-    }
-
-    function test_OK_reprice_withABidReverts() public {
-        uint256 sid = _composeOnce().sid;
-        _bid(alice, sid, _live(sid).reserve);
-        vm.expectRevert(ICore.HasBid.selector);
-        core.repriceStatement(sid);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.repriceStatement(424_242);
-    }
-
-    function test_OK_reprice_reserveFollowsTheRaisedFloorWhenCalled() public {
-        uint256 sid = _composeOnce().sid;
-        _raise(20_000);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, _cost(sid) * 20_000 / 10_000);
-    }
-
-    /// S-2 accepted, documented in FLOW 9.2 and DEPLOY: raise the floor with `REPRICE=1`. after the owner raises the hard floor, listings keep the old reserve until someone reprices them, and a bid at
-    /// the old reserve wins the statement below the new floor. the spec says a reserve must be at least the floor when
-    /// it was SET, so this follows the invariant, but not the plain sentence of 9.2
-    function test_ACCEPTED_reserveStaysBelowARaisedFloorUntilRepriced() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        uint256 old = _live(sid).reserve;
-        _raise(20_000);
-        assertLt(old, cost * 20_000 / 10_000);
-        _bid(alice, sid, old);
-        _endAuction(sid);
-        assertEq(STATEMENTS.ownerOf(sid), alice, "sold under the new hard floor");
-        assertEq(_collectSales(), old);
-    }
-
-    /// S-7 documented in DEPLOY: the ask rises again under a bidder after an owner change (here the mode flip), and a stranger can apply it
-    function test_ACCEPTED_aStrangerCanRaiseTheReserveAfterAnOwnerAskChange() public {
-        uint256 sid = _composeOnce().sid;
-        _warp(30 hours);
-        core.repriceStatement(sid);
-        uint256 low = _live(sid).reserve;
-        _buyOnly();
-        vm.prank(bob);
-        core.repriceStatement(sid);
-        assertGt(_live(sid).reserve, low, "reserve jumped back to the start price");
-        vm.expectRevert();
-        this._bidExt(alice, sid, low);
-    }
-
-    function _bidExt(address who, uint256 sid, uint256 amount) external {
-        _bid(who, sid, amount);
+        emit log_named_uint("cold priceOf gas", used);
+        assertLt(used, 100_000, "the lens caps the read at 200_000");
     }
 
     // ------------------------------------------------------------------ timelock removal and the locks
@@ -586,7 +422,7 @@ contract ReviewSaleTest is Fixture {
         core.setController(address(0));
         vm.expectRevert(ICore.BadModule.selector);
         core.setExitModule(address(0xdead));
-        address[4] memory bad = [lc.stack.hook, address(core), core.COIN(), address(house)];
+        address[3] memory bad = [lc.stack.hook, address(core), core.COIN()];
         for (uint256 i; i < bad.length; ++i) {
             vm.expectRevert(ICore.ForbiddenTarget.selector);
             core.addTarget(bad[i]);
@@ -684,29 +520,8 @@ contract ReviewSaleTest is Fixture {
         vm.startPrank(owner);
         core.setRate(2e15);
         ctl.setFloorBps(8_000);
-        ctl.setBuyOnly(true);
         vm.stopPrank();
         assertEq(core.settings().feeToBuybackBps, 1_234);
-    }
-
-    /// S-3 documented in DEPLOY (lock only a controller proven in use). the owner locks a controller that cannot price: reprice, compose and the relist of an unwound sale revert for
-    /// good and the controller can never be replaced. redeem still works because it never reads the controller
-    function test_ACCEPTED_lockControllerAcceptsAControllerThatCannotPrice() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        ScriptedController sc = new ScriptedController();
-        sc.setRevertPrice(true);
-        vm.startPrank(owner);
-        core.setController(address(sc));
-        core.lockController();
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("controller")));
-        core.setController(address(ctl));
-        vm.stopPrank();
-        vm.expectRevert(ICore.BadPrice.selector);
-        core.repriceStatement(sid);
-        _warp(105 hours);
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod), "redeem does not read the controller");
     }
 
     // ------------------------------------------------------------------ owner handover
@@ -1003,7 +818,7 @@ contract ReviewSaleTest is Fixture {
     // ------------------------------------------------------------------ settings, config, scripts
 
     function _withAll(bool high) internal view returns (Settings memory s) {
-        uint256[27] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
+        uint256[26] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
         for (uint256 i; i < SettingsFields.N; ++i) {
             SettingsFields.set(s, i, v[i]);
         }
@@ -1023,9 +838,9 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_settings_everyFieldBoundMatchesTheScriptTable() public {
-        bytes32[27] memory names = SettingsFields.names();
-        uint256[27] memory lo = SettingsFields.lo();
-        uint256[27] memory hi = SettingsFields.hi();
+        bytes32[26] memory names = SettingsFields.names();
+        uint256[26] memory lo = SettingsFields.lo();
+        uint256[26] memory hi = SettingsFields.hi();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = core.settings();
             SettingsFields.set(s, i, hi[i] + 1);
@@ -1071,14 +886,14 @@ contract ReviewSaleTest is Fixture {
     function test_OK_config_jsonCarriesEveryFieldAndTheSaleBlock() public view {
         string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
         string[] memory keys = vm.parseJsonKeys(j, ".settings");
-        bytes32[27] memory names = SettingsFields.names();
+        bytes32[26] memory names = SettingsFields.names();
         assertEq(keys.length, SettingsFields.N, "the settings block has exactly the fields of the struct");
         for (uint256 i; i < SettingsFields.N; ++i) {
             assertTrue(_has(keys, _nm(names[i])), _nm(names[i]));
         }
         assertFalse(_has(keys, "reserveBps"));
         string[] memory sale = vm.parseJsonKeys(j, ".sale");
-        assertEq(sale.length, 8);
+        assertEq(sale.length, 7);
         LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
         assertEq(abi.encode(f.sale), abi.encode(Mainnet.defaultSale()));
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()));
@@ -1095,16 +910,15 @@ contract ReviewSaleTest is Fixture {
             (string memory dirty,) = _failed();
             assertTrue(keccak256(bytes(dirty)) != keccak256(bytes(clean)), _nm(SettingsFields.names()[i]));
         }
-        for (uint256 i; i < 8; ++i) {
+        for (uint256 i; i < 7; ++i) {
             LaunchConfig memory c = lc;
-            if (i == 0) c.sale.buyOnly = !c.sale.buyOnly;
-            if (i == 1) c.sale.markupBps += 1;
-            if (i == 2) c.sale.startCapBps += 1;
-            if (i == 3) c.sale.fastDecayBpsPerHour += 1;
-            if (i == 4) c.sale.kneeBps += 1;
-            if (i == 5) c.sale.slowDecayBpsPerHour += 1;
-            if (i == 6) c.sale.floorBps += 1;
-            if (i == 7) c.sale.anchorHalfLife += 1;
+            if (i == 0) c.sale.markupBps += 1;
+            if (i == 1) c.sale.startCapBps += 1;
+            if (i == 2) c.sale.fastDecayBpsPerHour += 1;
+            if (i == 3) c.sale.kneeBps += 1;
+            if (i == 4) c.sale.slowDecayBpsPerHour += 1;
+            if (i == 5) c.sale.floorBps += 1;
+            if (i == 6) c.sale.anchorHalfLife += 1;
             postflightAs(c, address(core), owner);
             (string memory dirty,) = _failed();
             assertTrue(keccak256(bytes(dirty)) != keccak256(bytes(clean)), "sale field unseen by postflight");
@@ -1227,7 +1041,6 @@ contract ReviewSaleTest is Fixture {
         vm.expectRevert(IControllerV1.NotForSale.selector);
         ctl.priceOf(x);
         (uint256 sid,) = _sellStatement(alice);
-        core.syncStatement(sid);
         vm.expectRevert(IControllerV1.NotForSale.selector);
         ctl.priceOf(sid);
     }
@@ -1239,52 +1052,5 @@ contract ReviewSaleTest is Fixture {
         vm.expectRevert(ICore.OnlyPendingOwner.selector);
         core.acceptOwnership();
         assertEq(core.owner(), owner, "the owner is untouched");
-    }
-
-    /// S-4 fixed: a statement that came back from an unwound sale is relisted at the hard floor when the controller
-    /// cannot price, so it can be redeemed whatever the controller does. compose and reprice keep reverting
-    function test_FIXED_relistFallsBackToTheHardFloorWhenTheControllerFails() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        uint256 aid = _live(sid).auctionId;
-        _bid(alice, sid, _live(sid).reserve);
-        vm.mockCallRevert(
-            address(STATEMENTS),
-            abi.encodeWithSelector(IStatements.transferFrom.selector, address(house), alice, sid),
-            "cannot receive"
-        );
-        _endAuction(sid);
-        _warp(30 days + 1);
-        house.unwindStuckLot{gas: END_GAS}(aid);
-        vm.clearMockedCalls();
-        assertEq(STATEMENTS.ownerOf(sid), address(core), "returned to the core by the unwind");
-        ScriptedController sc = new ScriptedController();
-        sc.setRevertPrice(true);
-        vm.prank(owner);
-        core.setController(address(sc));
-        core.syncStatement(sid);
-        assertEq(_live(sid).reserve, _floorOf(sid), "listed at the hard floor");
-        vm.expectRevert(ICore.BadPrice.selector);
-        core.repriceStatement(sid);
-        _warp(105 hours);
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod), "redeemed with a controller that cannot price");
-    }
-
-    function test_OK_composeStillRevertsWhenTheControllerCannotPrice() public {
-        _fillEthPile(80 - core.pileSize(Lane.Eth));
-        ScriptedController sc = new ScriptedController();
-        uint256[] memory page = core.pilePage(Lane.Eth, 0, 80);
-        uint256[80] memory ids;
-        for (uint256 i; i < 80; ++i) {
-            ids[i] = page[i];
-        }
-        sc.setPage(Lane.Eth, true, ids, 0);
-        sc.setRevertPrice(true);
-        vm.prank(owner);
-        core.setController(address(sc));
-        vm.fee(composeBasefee);
-        vm.expectRevert(ICore.BadPrice.selector);
-        core.compose();
     }
 }

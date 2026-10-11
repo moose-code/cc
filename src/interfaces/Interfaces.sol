@@ -10,9 +10,6 @@ enum Lane {
 
 interface IController {
     function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format);
-    /// the asking price in wei of the eth lane statement `sid` (cost basis `cost`, listed at `listedAt`) right now. the
-    /// core calls it with a fixed gas cap and floors the answer at the hard floor `cost * saleFloorBps / 10_000`
-    function statementPrice(uint256 sid, uint256 cost, uint64 listedAt) external view returns (uint256 priceWei);
 }
 
 interface IExitModule {
@@ -28,7 +25,7 @@ interface ICoreViews {
     function pileSize(Lane lane) external view returns (uint256);
     function pilePage(Lane lane, uint256 startAfter, uint256 n) external view returns (uint256[] memory ids); // startAfter 0 starts at head
     function creditInfo(uint256 id) external view returns (bool inPile, Lane lane, uint256 cost, uint64 acquiredAt);
-    function statementInfo(uint256 sid) external view returns (bool held, Lane lane, uint256 cost, uint64 clockStart);
+    function statementInfo(uint256 sid) external view returns (bool held, Lane lane, uint256 cost, uint64 composedAt);
     function heldStatements() external view returns (uint256[] memory sids);
 }
 
@@ -78,8 +75,8 @@ interface ICreditStrategy {
 uint256 constant RATE_START_MIN_WEI = 1e13;
 uint256 constant RATE_START_MAX_WEI = 1e18;
 
-// the most gas of a buyback the caller's refund counts, so a gas burning house or hook cannot inflate it. a buyback
-// counts about 267,000 gas, 305,000 with a collection of sale proceeds. read by the Core and by the `buybackSlice` bound
+// the most gas of a buyback the caller's refund counts, so a gas burning hook cannot inflate it. a buyback counts
+// about 267,000 gas. read by the Core and by the `buybackSlice` bound
 uint256 constant BUYBACK_GAS = 600_000;
 
 /// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`, bounds
@@ -98,12 +95,10 @@ struct Settings {
     uint16 idleLoosenBps;
     uint16 tipSavingsBps;
     uint16 tipCapBps;
-    /// the hard floor of a statement sale, bps of the statement cost. no sale clears below it. the controller prices
-    /// above it, the house reserve and `sellTo` are floored at it
+    /// the hard floor of a statement sale, bps of the statement cost. `sellTo` takes no payment below it and the
+    /// controller prices at or above it
     uint16 saleFloorBps;
-    /// seconds an auction runs from its first bid
-    uint32 auctionDuration;
-    /// seconds an eth lane statement must have been listed without a bid before phase 2 may redeem it
+    /// seconds an eth lane statement must have been held since its compose before phase 2 may redeem it
     uint32 exitAfter;
     /// share of sale proceeds that goes to the coin buyback, bps
     uint16 saleToBuybackBps;
@@ -144,8 +139,6 @@ struct Settings {
 /// bounds are enforced by the controller (docs/FLOW.md 9.3). the controller keeps one more value, the anchor, which
 /// starts at 10_000
 struct Sale {
-    /// buy only mode: statements sell at once at the asking price. false is auction mode (the asking price is the house reserve)
-    bool buyOnly;
     /// the start price over the anchor, bps
     uint16 markupBps;
     /// the most the start price can be, bps of the statement cost
@@ -173,8 +166,6 @@ struct Stack {
     address factory;
     address locker;
     address escrow;
-    /// the pnd auction house factory. the Core creates its own house through it in the constructor
-    address auctionFactory;
     /// the fee router: the pool's bounty recipient. the Core books eth from it as fees and forbids it as a target
     address feeSource;
 }
@@ -198,9 +189,6 @@ library Mainnet {
     uint24 internal constant POOL_FEE = 0x800000;
     int24 internal constant TICK_SPACING = 200;
 
-    /// the pnd auction house factory, live and verified (docs/reference/pnd)
-    address internal constant AUCTION_FACTORY = 0x77aB853543286C9Cdd7dd6c01222A7cC4Ac93d63;
-
     /// the launch values of docs/FLOW.md section 2
     function defaultSettings() internal pure returns (Settings memory) {
         return Settings({
@@ -212,7 +200,6 @@ library Mainnet {
             tipSavingsBps: 2_500,
             tipCapBps: 400,
             saleFloorBps: 7_500,
-            auctionDuration: 24 hours,
             exitAfter: 105 hours,
             saleToBuybackBps: 5_000,
             exitToBuybackBps: 5_000,
@@ -234,12 +221,11 @@ library Mainnet {
         });
     }
 
-    /// the launch sale: buy only, start at 1.5 times the anchor (at most 1_000 percent of cost), falling 1 percent of cost
+    /// the launch sale: start at 1.5 times the anchor (at most 1_000 percent of cost), falling 1 percent of cost
     /// an hour to 100 percent, then 0.25 percent an hour to 75 percent, the anchor halving its excess over 10_000 every
     /// 7 days
     function defaultSale() internal pure returns (Sale memory) {
         return Sale({
-            buyOnly: true,
             markupBps: 15_000,
             startCapBps: 100_000,
             fastDecayBpsPerHour: 100,
@@ -261,7 +247,6 @@ library Mainnet {
             factory: address(0),
             locker: address(0),
             escrow: address(0),
-            auctionFactory: AUCTION_FACTORY,
             feeSource: address(0)
         });
     }

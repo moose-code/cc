@@ -21,7 +21,6 @@ import {
     Settings,
     BUYBACK_GAS
 } from "../../src/interfaces/Interfaces.sol";
-import {IAuctionHouse} from "../../src/interfaces/AuctionHouse.sol";
 import {IArtCoinsTokenV2, IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
 import {MockExitModule} from "../standins/MockExitModule.sol";
@@ -33,7 +32,6 @@ import {TestSwapRouter} from "../utils/TestSwapRouter.sol";
 /// everything the handler needs to know about the system under test.
 struct Wiring {
     ICore core;
-    IAuctionHouse house;
     IArtCoinsTokenV2 coin;
     TestSwapRouter router;
     PoolKey launchKey;
@@ -75,47 +73,40 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_WARP = 5;
     uint8 internal constant A_ROLL = 6;
     uint8 internal constant A_COMPOSE = 7;
-    uint8 internal constant A_BID = 8;
-    uint8 internal constant A_BUYBACK = 9;
-    uint8 internal constant A_SKIM = 10;
-    uint8 internal constant A_DONATE = 11;
-    uint8 internal constant A_CONTROLLER_SEED = 12;
-    uint8 internal constant A_CONTROLLER_SWAP = 13;
-    uint8 internal constant A_PROBE_CONTROLLER = 14;
-    uint8 internal constant A_SELL_FOR_EXIT = 15;
-    uint8 internal constant A_COMPOSE_EXIT = 16;
-    uint8 internal constant A_EXIT_STATEMENT = 17;
-    uint8 internal constant A_BUYBACK_EXIT = 18;
-    uint8 internal constant A_MODULE_MODE = 19;
-    uint8 internal constant A_WALLET_MOVE = 20;
-    uint8 internal constant A_END_AUCTION = 21;
-    uint8 internal constant A_COLLECT_SALES = 22;
-    uint8 internal constant A_SYNC_STATEMENT = 23;
-    uint8 internal constant A_REPRICE = 24;
-    uint8 internal constant A_SET_SETTINGS = 25;
-    uint8 internal constant A_SET_INVALID = 26;
-    uint8 internal constant A_SET_RATE = 27;
-    uint8 internal constant A_OWNER_MISC = 28;
-    uint8 internal constant A_REPLACE_MODULE = 29;
+    uint8 internal constant A_BUYBACK = 8;
+    uint8 internal constant A_SKIM = 9;
+    uint8 internal constant A_DONATE = 10;
+    uint8 internal constant A_CONTROLLER_SEED = 11;
+    uint8 internal constant A_CONTROLLER_SWAP = 12;
+    uint8 internal constant A_PROBE_CONTROLLER = 13;
+    uint8 internal constant A_SELL_FOR_EXIT = 14;
+    uint8 internal constant A_COMPOSE_EXIT = 15;
+    uint8 internal constant A_EXIT_STATEMENT = 16;
+    uint8 internal constant A_BUYBACK_EXIT = 17;
+    uint8 internal constant A_MODULE_MODE = 18;
+    uint8 internal constant A_WALLET_MOVE = 19;
+    uint8 internal constant A_SET_SETTINGS = 20;
+    uint8 internal constant A_SET_INVALID = 21;
+    uint8 internal constant A_SET_RATE = 22;
+    uint8 internal constant A_OWNER_MISC = 23;
+    uint8 internal constant A_REPLACE_MODULE = 24;
     // the sale and owner actions of HandlerSale
-    uint8 internal constant A_BUY = 30;
-    uint8 internal constant A_OWNER_SELL = 31;
-    uint8 internal constant A_REPRICE_BID = 32;
-    uint8 internal constant A_SALE_SETTINGS = 33;
-    uint8 internal constant A_FLIP_MODE = 34;
-    uint8 internal constant A_HOSTILE_OWNER = 35;
-    uint8 internal constant A_LOCK = 36;
-    uint8 internal constant A_HANDOVER = 37;
+    uint8 internal constant A_BUY = 25;
+    uint8 internal constant A_OWNER_SELL = 26;
+    uint8 internal constant A_SALE_SETTINGS = 27;
+    uint8 internal constant A_HOSTILE_OWNER = 28;
+    uint8 internal constant A_LOCK = 29;
+    uint8 internal constant A_HANDOVER = 30;
     // the fee router: a stranger's flush, and the hostile owner repointing the engine
-    uint8 internal constant A_FLUSH = 38;
-    uint8 internal constant A_REPOINT = 39;
+    uint8 internal constant A_FLUSH = 31;
+    uint8 internal constant A_REPOINT = 32;
     // the owner takes a stray NFT out of the core
-    uint8 internal constant A_RESCUE_NFT = 40;
+    uint8 internal constant A_RESCUE_NFT = 33;
     // the successor doors and the migration of everything the core tracks
-    uint8 internal constant A_MIGRATE = 41;
+    uint8 internal constant A_MIGRATE = 34;
     // anyone puts credits the core holds without a record into the eth pile
-    uint8 internal constant A_ADOPT = 42;
-    uint256 internal constant N_ACTIONS = 43;
+    uint8 internal constant A_ADOPT = 35;
+    uint256 internal constant N_ACTIONS = 36;
 
     // violation codes
     uint256 internal constant V_ETH_OUT = 1; // eth left the core beyond what the action explains
@@ -124,7 +115,7 @@ abstract contract HandlerBase is Test {
     uint256 internal constant V_X_IN = 4; // exit token arrived in the core beyond what the action explains
     uint256 internal constant V_ABOVE_CAP = 5; // a credit was bought above the rate read before the action
     uint256 internal constant V_TIP = 6; // a tip above min(tipSavingsBps of savings, tipCapBps of cost)
-    uint256 internal constant V_SALE_FLOOR = 7; // a statement sold below the reserve the core set, or a reserve off its rule
+    uint256 internal constant V_SALE_FLOOR = 7; // a statement sold below the hard floor, or at another price than the controller asks
     uint256 internal constant V_DEPART = 8; // a statement left the core without a recorded legal exit
     uint256 internal constant V_EXIT_SHORT = 9; // an exit that returned less than credits * unit per credit
     uint256 internal constant V_MODEL = 10; // the core disagrees with the handler's ghost model
@@ -141,18 +132,16 @@ abstract contract HandlerBase is Test {
     uint256 internal constant EXIT_GAS = 1_500_000;
     uint256 internal constant V_COMPOSE = 19; // a compose that paid its caller outside the caller payment rule, took an invalid page or made another statement than the next id
     uint256 internal constant V_POT = 20; // pot bookkeeping off from the action's flows
-    uint256 internal constant V_REFUND = 21; // a house refund or payout that is not what the house rules give
-    uint256 internal constant V_RECEIVE = 22; // the core's receive() reverted, or a swap failed for an unexplained reason
-    uint256 internal constant V_SUPPLY = 23; // coin supply differs from the ghost, or rose
-    uint256 internal constant V_AUCTION = 24; // the exit token auction broke its price, slice or restart rules
-    uint256 internal constant V_SETTINGS = 25; // settings changed outside the owner's call, or an owner call misbehaved
-    uint256 internal constant V_HOUSE = 26; // sale proceeds on the house or their collection are off the ghost
-    uint256 internal constant V_OWNER = 27; // an owner action moved assets or the books it must not touch
-    uint256 internal constant V_SALE_PATH = 28; // a sellTo or buy sale outside the rules: price, booking, holder or record
-    uint256 internal constant V_LOCK = 29; // a one way lock came undone, or a handover left a power behind
-    uint256 internal constant V_ROUTER = 30; // router eth went somewhere but the engine set at that time, or a flush broke its rule
-    uint256 internal constant V_RETIRED = 31; // a retired core took a call at one of the six doors, or the retired flag disagrees with the ghost
-    uint256 internal constant N_VIOL = 32;
+    uint256 internal constant V_RECEIVE = 21; // the core's receive() reverted, or a swap failed for an unexplained reason
+    uint256 internal constant V_SUPPLY = 22; // coin supply differs from the ghost, or rose
+    uint256 internal constant V_AUCTION = 23; // the exit token auction broke its price, slice or restart rules
+    uint256 internal constant V_SETTINGS = 24; // settings changed outside the owner's call, or an owner call misbehaved
+    uint256 internal constant V_OWNER = 25; // an owner action moved assets or the books it must not touch
+    uint256 internal constant V_SALE_PATH = 26; // a sellTo or buy sale outside the rules: price, booking, holder or record
+    uint256 internal constant V_LOCK = 27; // a one way lock came undone, or a handover left a power behind
+    uint256 internal constant V_ROUTER = 28; // router eth went somewhere but the engine set at that time, or a flush broke its rule
+    uint256 internal constant V_RETIRED = 29; // a retired core took a call at one of the six doors, or the retired flag disagrees with the ghost
+    uint256 internal constant N_VIOL = 30;
 
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
     IStatements internal constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
@@ -167,7 +156,6 @@ abstract contract HandlerBase is Test {
     //////////////////////////////////////////////////////////////*/
 
     ICore public core;
-    IAuctionHouse public house;
     IArtCoinsTokenV2 public coin;
     TestSwapRouter public router;
     PoolKey public launchKey;
@@ -258,25 +246,18 @@ abstract contract HandlerBase is Test {
     uint256[] internal cgList;
 
     // ghost statements. status: the one place every statement ever composed sits at any time
-    uint8 public constant S_LISTED = 1; // eth lane, on the house under `auctionId`
-    uint8 public constant S_HELD = 2; // exit lane, held by the core, never listed
-    uint8 public constant S_SOLD = 3; // a house auction cleared, the winner holds it
-    uint8 public constant S_EXITED = 4; // handed to the exit module
-    uint8 public constant S_SOLD_TO = 6; // eth lane, sold at once by the controller through `sellTo`, the buyer holds it
+    uint8 public constant S_HELD = 1; // held by the core for sale (eth lane) or exit
+    uint8 public constant S_SOLD = 2; // eth lane, sold by the controller through `sellTo`, the buyer holds it
+    uint8 public constant S_EXITED = 3; // handed to the exit module
 
     struct SG {
         uint8 status;
         uint8 lane;
         uint256 cost;
-        uint256 reserve; // the reserve the core set at the listing or the latest reprice
-        uint256 floorAtSet; // the hard floor (cost * saleFloorBps) in force when that reserve was set
-        uint256 auctionId;
-        uint64 listedAt;
-        uint256 bid; // listed: the top bid so far, zero before the first bid
-        address bidder;
-        uint256 price; // sold: the winning bid
-        address winner; // sold: who holds it
-        bool synced; // sold: the core cleared its record with syncStatement
+        uint64 composedAt;
+        uint256 floor; // sold: the hard floor (cost * saleFloorBps) in force at the sale
+        uint256 price; // sold: the price paid
+        address buyer; // sold: who holds it
         uint256 required; // exit: credit count times unit per credit
         uint256 received; // exit: exit token the core received
         address module; // exit: the module that took it
@@ -285,14 +266,11 @@ abstract contract HandlerBase is Test {
     mapping(uint256 => SG) internal _sg;
     uint256[] public everHeld;
 
-    // house money. the sum of the winning bids of the auctions that settled, and the eth collected from the house
-    uint256 public gWon;
-    uint256 public gCollected;
     /// the keccak of the settings the owner last set, which nobody else can change
     bytes32 public gSettingsHash;
 
     /// ledger of the eth books: the pots (`ethPot + ethToBuyback`) when the run began, the eth the core booked into them
-    /// since (fee flushes, sale proceeds, sale payments, skims) and the eth that left them (credit purchases, tips,
+    /// since (fee flushes, sale payments, skims) and the eth that left them (credit purchases, tips,
     /// exit repayments, buyback spends, migrations). each amount is the one measured at the recipient by the action
     uint256 public gEthStart;
     uint256 public gEthIn;
@@ -300,7 +278,6 @@ abstract contract HandlerBase is Test {
 
     constructor(Wiring memory w) {
         core = w.core;
-        house = w.house;
         coin = w.coin;
         router = w.router;
         launchKey = w.launchKey;
@@ -328,7 +305,6 @@ abstract contract HandlerBase is Test {
             "warp",
             "roll",
             "compose",
-            "bid",
             "buyback",
             "skim",
             "donate",
@@ -341,20 +317,14 @@ abstract contract HandlerBase is Test {
             "buybackExit",
             "moduleMode",
             "walletMove",
-            "endAuction",
-            "collectSales",
-            "syncStatement",
-            "repriceStatement",
             "setSettings",
             "setSettingsInvalid",
             "setRate",
             "ownerMisc",
             "replaceModule",
-            "buyOnlyBuy",
+            "buy",
             "ownerSell",
-            "repriceBid",
             "saleSettings",
-            "flipMode",
             "hostileOwner",
             "lockDoor",
             "handover",
@@ -418,31 +388,28 @@ abstract contract HandlerBase is Test {
         _addCredit(id, lane, cost);
     }
 
-    /// a statement the core held before the run began. a sold one is given with its winner, its winning bid and
-    /// whether the proceeds were collected already. a listed one is read back from the house
-    function seedGhostStatement(uint256 sid, address winner, uint256 price, bool collected) external {
-        (bool held, Lane lane, uint256 cost, uint64 clock) = core.statementInfo(sid);
+    /// a statement the core held before the run began, read back from the core
+    function seedGhostStatement(uint256 sid) external {
+        (, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
         SG storage g = _sg[sid];
         g.lane = uint8(lane);
         g.cost = cost;
-        g.listedAt = clock;
-        (, uint256 aid, uint256 reserve,,) = core.statementStatus(sid);
-        g.auctionId = aid;
-        g.floorAtSet = cost * core.settings().saleFloorBps / 10_000;
-        if (price != 0) {
-            g.status = S_SOLD;
-            g.reserve = cost * core.settings().saleFloorBps / 10_000;
-            g.price = price;
-            g.winner = winner;
-            g.synced = !held;
-            gWon += price;
-            if (collected) gCollected += price;
-        } else if (lane == Lane.Exit) {
-            g.status = S_HELD;
-        } else {
-            g.status = S_LISTED;
-            g.reserve = reserve;
-        }
+        g.composedAt = composedAt;
+        g.status = S_HELD;
+        everHeld.push(sid);
+    }
+
+    /// a statement bought before the run began, with the buyer and the price paid
+    function seedGhostSold(uint256 sid, address buyer, uint256 price) external {
+        (, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
+        SG storage g = _sg[sid];
+        g.lane = uint8(lane);
+        g.cost = cost;
+        g.composedAt = composedAt;
+        g.status = S_SOLD;
+        g.floor = cost * core.settings().saleFloorBps / 10_000;
+        g.price = price;
+        g.buyer = buyer;
         everHeld.push(sid);
     }
 
@@ -517,6 +484,22 @@ abstract contract HandlerBase is Test {
     function _skip(uint8 a) internal {
         skips[a]++;
         _bump(a, "skip");
+    }
+
+    /// which ever composed statements a picker may return
+    uint256 internal constant K_ETH_HELD = 0; // held by the core on the eth lane
+    uint256 internal constant K_ANY = 1;
+
+    /// a statement the ghost has seen, from `seed` on, of the kind asked. not found when there is none
+    function _pickBy(uint256 seed, uint256 kind) internal view returns (uint256 sid, bool found) {
+        uint256 n = everHeld.length;
+        for (uint256 k; k < n; ++k) {
+            sid = everHeld[(seed % n + k) % n];
+            SG storage g = _sg[sid];
+            if (kind == K_ANY) return (sid, true);
+            if (g.status == S_HELD && g.lane == uint8(Lane.Eth)) return (sid, true);
+        }
+        return (0, false);
     }
 
     function _unexpected(uint8 a, bytes memory why) internal {
@@ -953,17 +936,9 @@ abstract contract HandlerBase is Test {
         b.exitToken = _xBal(who);
     }
 
-    /// what the house owes the core is the winning bids of the settled auctions less what was collected, always
-    function _houseCheck() internal {
-        if (house.pendingRefunds(address(core)) != gWon - gCollected) {
-            _flag(V_HOUSE, "what the house owes the core differs from the winning bids less the collected");
-        }
-    }
-
     modifier checked() {
         _;
         _coinCheck();
-        _houseCheck();
         _settingsCheck();
         _potCheck();
     }
@@ -1569,13 +1544,12 @@ abstract contract HandlerBase is Test {
 
     function _composeFailed(uint8 a, CPre memory p, bytes memory why) internal {
         _failed(p.pull.bal0, p.pull.pot0, p.pull.rate0, "compose");
-        // a hostile controller may fail to price the listing, and then the whole compose reverts
-        // a hostile controller may also burn the core's 500_000 gas read of its page. the fuzz controller tries its
+        // a hostile controller may burn the core's 500_000 gas read of its page. the fuzz controller tries its
         // state changing attacks only inside the core's frame (each one halting a static frame burns the 300_000 gas
         // it was given), so the handler's own uncapped looking pre check cannot see that cost and the core answers
         // NotReady for a page the pre check saw as ready
-        bool hostileNotReady = bytes4(why) == ICore.NotReady.selector && _mayNotPrice();
-        if (p.valid && !(bytes4(why) == ICore.BadPrice.selector && _mayNotPrice()) && !hostileNotReady) {
+        bool hostileNotReady = bytes4(why) == ICore.NotReady.selector && _hostileController();
+        if (p.valid && !hostileNotReady) {
             _unexpected(a, why);
         }
     }
@@ -1603,85 +1577,28 @@ abstract contract HandlerBase is Test {
         _pullChecks(p.pull, logs);
         if (!p.valid) _flag(V_COMPOSE, "composed a page the ghost model considers invalid");
         uint256 sid = STATEMENTS.supply();
-        if (sid != p.supply + 1 || STATEMENTS.ownerOf(sid) != (lane == Lane.Eth ? address(house) : address(core))) {
-            _flag(V_COMPOSE, "new statement id is not supply + 1 or not held by the house (eth lane) or the core");
+        if (sid != p.supply + 1 || STATEMENTS.ownerOf(sid) != address(core)) {
+            _flag(V_COMPOSE, "new statement id is not supply + 1 or not held by the core");
         }
         _callerPayment(V_COMPOSE, p.st, COMPOSE_GAS, p.pot, p.bal, p.callerBal, "compose");
         uint256 cost = p.sum;
-        (bool held, Lane l, uint256 coreCost,) = core.statementInfo(sid);
+        (bool held, Lane l, uint256 coreCost, uint64 composedAt) = core.statementInfo(sid);
         if (!held || l != lane || coreCost != cost) _flag(V_MODEL, "statement cost basis differs from the ghost sum");
+        if (composedAt != block.timestamp) _flag(V_MODEL, "the compose time is not the block time");
         for (uint256 i; i < 80; ++i) {
             cg[ids[i]].inPile = false;
         }
         SG storage g = _sg[sid];
         g.lane = uint8(lane);
         g.cost = cost;
+        g.composedAt = composedAt;
+        g.status = S_HELD;
         everHeld.push(sid);
-        if (lane == Lane.Exit) {
-            g.status = S_HELD;
-        } else {
-            // the statement sits on the house at the reserve of the settings in force, listed now
-            _ghostListed(sid, cost, p.st.saleFloorBps, logs);
-        }
     }
 
-    /// the controller in force is the hostile fuzz controller, which may fail or answer short when asked a price
-    function _mayNotPrice() internal view returns (bool) {
+    /// the controller in force is the hostile fuzz controller, which may burn the gas of its page or answer short
+    function _hostileController() internal view returns (bool) {
         return core.controller() == address(fuzz) && fuzz.hostile();
-    }
-
-    /// the reserve the core must give a listing of `sid` priced at `listedAt`: the answer of the controller in force,
-    /// asked as the core asks (static, 200_000 gas, one word), never below the hard floor. `ok` is false when the
-    /// controller cannot answer, and then the core reverts
-    function _wantReserve(uint256 sid, uint256 cost, uint64 listedAt, uint256 floorBps)
-        internal
-        view
-        returns (bool ok, uint256 want)
-    {
-        bytes memory out;
-        (ok, out) = core.controller().staticcall{gas: 200_000}(
-            abi.encodeWithSignature("statementPrice(uint256,uint256,uint64)", sid, cost, listedAt)
-        );
-        if (!ok || out.length < 32) return (false, 0);
-        want = abi.decode(out, (uint256));
-        uint256 floor = cost * floorBps / 10_000;
-        if (want < floor) want = floor;
-    }
-
-    /// the statement was listed on the house: the core's own event gives the auction id and the reserve, which must
-    /// be what the controller in force asks (floored at the hard floor), and the house must hold the statement under
-    /// that auction at that reserve
-    function _ghostListed(uint256 sid, uint256 cost, uint256 saleFloorBps, Vm.Log[] memory logs) internal {
-        SG storage g = _sg[sid];
-        uint256 id;
-        uint256 reserve;
-        uint256 seen;
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.StatementListed.selector) continue;
-            if (uint256(logs[i].topics[1]) != sid) continue;
-            id = uint256(logs[i].topics[2]);
-            reserve = abi.decode(logs[i].data, (uint256));
-            seen++;
-        }
-        if (seen != 1) _flag(V_MODEL, "a listing did not emit exactly one StatementListed");
-        (bool priced, uint256 want) = _wantReserve(sid, cost, uint64(block.timestamp), saleFloorBps);
-        if (!priced || reserve != want) {
-            _flag(V_SALE_FLOOR, "the listing reserve is not the controller price, floored");
-        }
-        IAuctionHouse.Auction memory au = house.getAuction(id);
-        if (au.reservePrice != reserve || au.tokenOwner != address(core) || au.tokenId != sid || au.amount != 0) {
-            _flag(V_SALE_FLOOR, "the house record differs from what the core listed");
-        }
-        if (_ownerOf(sid) != address(house)) _flag(V_MODEL, "a listed statement is not held by the house");
-        // invariant 3: no reserve is ever set below the hard floor of the settings in force at that moment
-        g.floorAtSet = cost * saleFloorBps / 10_000;
-        if (reserve < g.floorAtSet) _flag(V_SALE_FLOOR, "a listing reserve below the hard floor");
-        g.status = S_LISTED;
-        g.auctionId = id;
-        g.reserve = reserve;
-        g.listedAt = uint64(block.timestamp);
-        g.bid = 0;
-        g.bidder = address(0);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1699,8 +1616,6 @@ abstract contract HandlerBase is Test {
         uint256 whoBal;
         uint256 dead;
         uint256 bps;
-        uint256 owed;
-        uint256 toSales;
         Settings st;
     }
 
@@ -1712,11 +1627,7 @@ abstract contract HandlerBase is Test {
         address who = _actor(aSeed);
         BbPre memory p;
         p.st = core.settings();
-        // sale proceeds waiting in the house are collected first, split by the settings in force now. the buyback
-        // pot and the pot that the action starts from include that collection
-        p.owed = house.pendingRefunds(address(core));
-        p.toSales = p.owed * p.st.saleToBuybackBps / 10_000;
-        p.pool = core.ethToBuyback() + p.toSales;
+        p.pool = core.ethToBuyback();
         if (p.pool == 0 || (block.number < core.lastBuybackBlock() + p.st.buybackDelay && aSeed % 5 != 0)) {
             return _skip(a);
         }
@@ -1726,7 +1637,7 @@ abstract contract HandlerBase is Test {
         // a slice under twice the largest payment reverts with SliceTooSmall
         if (p.slice < 2 * p.maxPay) return _skip(a);
         p.bal = address(core).balance;
-        p.pot = core.ethPot() + p.owed - p.toSales;
+        p.pot = core.ethPot();
         p.rate = core.ethRate();
         p.whoBal = who.balance;
         p.dead = coin.balanceOf(DEAD);
@@ -1739,7 +1650,7 @@ abstract contract HandlerBase is Test {
             _ok(a);
             _afterBuyback(who, p, vm.getRecordedLogs());
         } catch (bytes memory why) {
-            _failed(p.bal, p.pot + p.toSales - p.owed, p.rate, "buyback");
+            _failed(p.bal, p.pot, p.rate, "buyback");
             _swapFailed(why);
         }
         _rsCheck(rs, 0);
@@ -1751,11 +1662,8 @@ abstract contract HandlerBase is Test {
         uint256 evTip;
         uint256 bought;
         uint256 burned;
-        uint256 collected;
         for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].emitter == address(core) && logs[i].topics[0] == ICore.SalesCollected.selector) {
-                (collected,) = abi.decode(logs[i].data, (uint256, uint256));
-            } else if (logs[i].emitter == address(core) && logs[i].topics[0] == ICore.Buyback.selector) {
+            if (logs[i].emitter == address(core) && logs[i].topics[0] == ICore.Buyback.selector) {
                 (spent, evTip) = abi.decode(logs[i].data, (uint256, uint256));
             } else if (logs[i].emitter == address(coin) && logs[i].topics[0] == TRANSFER) {
                 (uint256 amt) = abi.decode(logs[i].data, (uint256));
@@ -1780,18 +1688,14 @@ abstract contract HandlerBase is Test {
         } else if (p.gasRate == 0 ? tip != feePart : (tip - feePart) % p.gasRate != 0) {
             _flag(V_BUYBACK, "buyback gas refund is not counted gas at the capped base fee");
         }
-        _buybackPotChecks(p, spent, tip, bounty, collected);
+        _buybackPotChecks(p, spent, tip, bounty);
         // a dust swap (the skim of it rounds to nothing) emits no skim event at all, and the fee share can now leave
         // one wei in the buyback pot, so a volume of zero is right when the whole skim rounds to zero
         _buybackSkimChecks(p, volume, bounty, protocol, spent, bought);
     }
 
-    /// @dev the house, router flush and pot checks of a buyback (a helper so the locals of `_afterBuyback` fit the stack)
-    function _buybackPotChecks(BbPre memory p, uint256 spent, uint256 tip, uint256 bounty, uint256 collected) internal {
-        // the sale proceeds the house owed were collected first, once, by the amount it owed
-        if (collected != p.owed) _flag(V_HOUSE, "buyback collected something other than what the house owed");
-        gCollected += collected;
-        _booked(collected);
+    /// @dev the router flush and pot checks of a buyback (a helper so the locals of `_afterBuyback` fit the stack)
+    function _buybackPotChecks(BbPre memory p, uint256 spent, uint256 tip, uint256 bounty) internal {
         // the skim of the swap went to the router. the flush books its engine share, split by feeToBuybackBps
         (uint256 held, uint256 toCore) = _flushRouter();
         if (held != bounty) _flag(V_BUYBACK, "the router received other than the hook bounty leg");
@@ -1800,7 +1704,7 @@ abstract contract HandlerBase is Test {
             _flag(V_BUYBACK, "buyback pot is not the pot less what was spent and paid, plus the fee share");
         }
         // eth leaves as the swap input plus the payment. the skim of the swap comes back as an inflow after the flush
-        _eth(p.bal, spent + tip, toCore + p.owed, "buyback");
+        _eth(p.bal, spent + tip, toCore, "buyback");
         if (core.ethPot() != p.pot + toCore - feeShare) _flag(V_POT, "buyback skim not booked to the pot");
     }
 
@@ -2324,14 +2228,12 @@ abstract contract HandlerBase is Test {
         uint256 cost;
         uint8 lane;
         bool ripe;
-        /// the statement is listed with no bid on it (eth lane), or held and never listed (exit lane)
-        bool open;
         /// the selector the call must revert with when the model says it reverts, zero when the cause is the module
         bytes4 refusal;
         Settings st;
     }
 
-    /// exits a held statement through the module. eth lane statements only after their auction ran its length.
+    /// exits a held statement through the module. eth lane statements only after `exitAfter` since their compose.
     /// the module may be set to underpay, and then the exit must revert.
     function exitStatement(uint256 sIdx, uint256 aSeed) external checked {
         uint8 a = A_EXIT_STATEMENT;
@@ -2339,20 +2241,15 @@ abstract contract HandlerBase is Test {
         uint256[] memory held = core.heldStatements();
         if (held.length == 0) return _skip(a);
         uint256 sid = held[sIdx % held.length];
-        (, Lane lane,, uint64 clock) = core.statementInfo(sid);
+        (, Lane lane,, uint64 composedAt) = core.statementInfo(sid);
         EPre memory p;
         p.st = core.settings();
         p.lane = uint8(lane);
         SG storage g = _sg[sid];
-        p.ripe = lane == Lane.Exit || block.timestamp >= uint256(clock) + p.st.exitAfter;
-        // an eth lane statement exits when it was listed without a bid for exitAfter. a bid makes the cancel revert,
-        // and a sold statement the core has not synced is no longer on the house
-        p.open = g.status == S_HELD || (g.status == S_LISTED && g.bid == 0);
+        p.ripe = lane == Lane.Exit || block.timestamp >= uint256(composedAt) + p.st.exitAfter;
         if (!p.ripe) p.refusal = ICore.TooEarly.selector;
-        else if (g.status == S_SOLD) p.refusal = ICore.NotListed.selector;
-        else if (g.status == S_LISTED && g.bid != 0) p.refusal = ICore.HasBid.selector;
-        // an unripe or unopen eth lane statement is only tried now and then, to see the refusal
-        if ((!p.ripe || !p.open) && aSeed % 6 != 0) return _skip(a);
+        // an unripe eth lane statement is only tried now and then, to see the refusal
+        if (!p.ripe && aSeed % 6 != 0) return _skip(a);
         p.xbal = _xBal(address(core));
         p.xpot = core.xPot();
         p.xto = core.xToBuyback();
@@ -2382,7 +2279,7 @@ abstract contract HandlerBase is Test {
             }
             if (p.refusal != 0 && bytes4(why) != p.refusal) {
                 _unexpected(a, why);
-            } else if (p.refusal == 0 && p.open && p.unit != 0 && module.shortfallBps() == 0) {
+            } else if (p.refusal == 0 && p.unit != 0 && module.shortfallBps() == 0) {
                 // the module pays by what it reports now. a payout below the stored unit must be refused
                 if (module.currentUnit() >= p.unit) _unexpected(a, why);
             }
@@ -2392,7 +2289,6 @@ abstract contract HandlerBase is Test {
 
     function _afterExit(uint256 sid, EPre memory p) internal {
         if (!p.ripe) _flag(V_DEPART, "an eth lane statement exited before exitAfter");
-        if (!p.open) _flag(V_DEPART, "a statement with a bid, or already sold, was exited");
         uint256 received = _xBal(address(core)) - p.xbal;
         if (received < p.required) _flag(V_EXIT_SHORT, "exit returned less than credits * unitPerCredit");
         if (p.unit == 0) _flag(V_EXIT_SHORT, "exit with an unreadable unit per credit");
@@ -2415,9 +2311,6 @@ abstract contract HandlerBase is Test {
         if (core.xStartTime() != wantStart) _flag(V_AUCTION, "an exit did not restart the auction clock on injection");
         if (_ownerOf(sid) != address(module)) _flag(V_DEPART, "exited statement is not with the module");
         SG storage g = _sg[sid];
-        if (g.lane == uint8(Lane.Eth) && house.getAuction(g.auctionId).tokenOwner != address(0)) {
-            _flag(V_DEPART, "an exit left the listing on the house");
-        }
         g.status = S_EXITED;
         g.required = p.required;
         g.received = received;

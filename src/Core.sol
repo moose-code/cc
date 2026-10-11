@@ -26,7 +26,6 @@ import {
     Mainnet,
     BUYBACK_GAS
 } from "./interfaces/Interfaces.sol";
-import {IAuctionHouse, IAuctionFactory} from "./interfaces/AuctionHouse.sol";
 import {CoreLib} from "./lib/CoreLib.sol";
 import {SettingsBounds} from "./lib/SettingsBounds.sol";
 import {SettingsStore} from "./lib/SettingsStore.sol";
@@ -41,22 +40,6 @@ import {RateStore} from "./lib/RateStore.sol";
 contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     using FixedPointMathLib for uint256;
     using LibTransient for LibTransient.TBool;
-
-    /*//////////////////////////////////////////////////////////////
-                                 TYPES
-    //////////////////////////////////////////////////////////////*/
-
-    /// the live state of a statement the core has a record of. `Sold` and `Returned` are stale records that
-    /// `syncStatement` settles. `Ended` is a finished auction with a bid that anyone may settle on the house
-    enum StatementStatus {
-        None,
-        Held,
-        Listed,
-        Bid,
-        Ended,
-        Sold,
-        Returned
-    }
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
@@ -97,8 +80,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error OnlyPendingOwner();
     /// a sale paid less than the hard floor of the statement
     error BelowFloor();
-    /// the controller did not answer `statementPrice` with a word
-    error BadPrice();
     error NothingToBuy();
     /// the buyback slice does not exceed the most the caller can be paid
     error SliceTooSmall();
@@ -108,14 +89,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error BadStack();
     /// a setting is out of its bounds. `field` is its name
     error BadSetting(bytes32 field);
-    /// the statement is not listed on the house by the record, or the house has no auction for it. `syncStatement` settles
-    error NotListed();
-    /// the statement still has a live auction on the house, so there is nothing to settle
-    error AuctionLive();
-    /// the statement's auction has a bid, so it cannot be cancelled or repriced
-    error HasBid();
-    /// the house did not take the statement, or an auction is in a state this call does not accept
-    error BadAuction();
+    /// `sellTo`: the statement is not an eth lane statement held by the core
+    error NotForSale();
     /// a stack member that must be a contract has no code
     error NoCode(address who);
     /// `rescueNft`: the credit is in a pile
@@ -144,21 +119,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     event ExitRateFill(uint256 rate, uint256 pot);
     event Composed(uint256 indexed sid, Lane lane, uint8 format, uint256 cost, address indexed caller);
-    /// a statement was listed on the house (at compose or after an unwind)
-    event StatementListed(uint256 indexed sid, uint256 indexed auctionId, uint256 reserve);
-    /// `syncStatement` found the auction gone and the statement with `holder`: the sale cleared, the proceeds are
-    /// the house's to pay and `collectSales` books them
-    event StatementSold(uint256 indexed sid, uint256 indexed auctionId, address indexed holder);
-    event StatementRepriced(uint256 indexed sid, uint256 reserve);
-    /// sale proceeds pulled from the house and booked: the part for the coin buyback and the rest for the pot
-    event SalesCollected(uint256 amount, uint256 toBuyback);
     event SettingsSet(Settings settings);
     event RateSet(uint256 rate);
     event StatementExited(uint256 indexed sid, Lane lane, uint256 received);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     event ExitBuyback(address indexed caller, uint256 slice, uint256 coinIn);
-    /// the controller sold a statement at once: the buyer and the price paid (booked as sale proceeds)
-    event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price);
+    /// the controller sold a statement: the buyer, the price paid and the part of it booked to the coin buyback (the
+    /// rest went to the pot)
+    event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback);
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
     event OwnershipTransferred(address indexed from, address indexed to);
     event ControllerLocked();
@@ -197,7 +165,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// gas of the work after the end of `compose` and `composeExit` that the caller payment counts, with the
     /// transaction base cost
     uint256 private constant COMPOSE_OVERHEAD_GAS = 60_000;
-    /// the most gas of a compose the caller payment counts. above the largest metered compose, 11.4 million with a loaded
+    /// the most gas of a compose the caller payment counts. above the largest metered compose, 11.1 million with a loaded
     /// fee router of four gas burning payees, so a gas burning controller or router cannot inflate the payment
     uint256 private constant COMPOSE_GAS = 13_700_000;
     /// gas of the work after the end of `exitStatement` that the caller payment counts, with the transaction base cost
@@ -218,9 +186,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     address public immutable COIN;
     /// opening bid, wei per credit, fixed at deploy
     uint256 public immutable RATE_START;
-    /// the pnd auction house factory and the house this core created through it. the core owns the house forever
-    address public immutable AUCTION_FACTORY;
-    IAuctionHouse public immutable HOUSE;
     /// the artcoins v2 stack this core launched on, fixed at deploy. FEE_SOURCE (the fee router) is the only sender whose
     /// eth is booked as fees
     IPoolManager public immutable MANAGER;
@@ -304,8 +269,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
         if (
             stack_.poolManager == address(0) || stack_.hook == address(0) || stack_.factory == address(0)
-                || stack_.locker == address(0) || stack_.escrow == address(0) || stack_.auctionFactory == address(0)
-                || stack_.feeSource == address(0)
+                || stack_.locker == address(0) || stack_.escrow == address(0) || stack_.feeSource == address(0)
         ) revert ZeroAddress();
         if (stack_.tickSpacing <= 0 || stack_.tickSpacing > 32_767) revert BadStack();
         // the stack members must be contracts. the coin is not deployed yet when the core is created
@@ -315,7 +279,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (stack_.factory.code.length == 0) revert NoCode(stack_.factory);
         if (stack_.locker.code.length == 0) revert NoCode(stack_.locker);
         if (stack_.escrow.code.length == 0) revert NoCode(stack_.escrow);
-        if (stack_.auctionFactory.code.length == 0) revert NoCode(stack_.auctionFactory);
         if (!SettingsBounds.rateInBounds(rateStart_) || rateStart_ > settings_.rateCap) revert BadRate();
         owner = owner_;
         COIN = coin_;
@@ -328,11 +291,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         FACTORY = stack_.factory;
         LOCKER = stack_.locker;
         ESCROW = stack_.escrow;
-        AUCTION_FACTORY = stack_.auctionFactory;
-        // the core owns its own house forever, and lets it take statements
-        address house = IAuctionFactory(stack_.auctionFactory).createAuctionHouse();
-        HOUSE = IAuctionHouse(house);
-        STATEMENTS.setApprovalForAll(house, true);
         controller = controller_;
         allowedTarget[Mainnet.SEAPORT] = true;
         allowedTarget[Mainnet.CREDIT_STRATEGY] = true;
@@ -606,8 +564,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// every forbidden target except the exitModule and the exitToken, which a later set may name again
     function _forbiddenBase(address t) private view returns (bool) {
         return t == address(CREDITS) || t == address(STATEMENTS) || t == address(this) || t == COIN || t == HOOK
-            || t == address(MANAGER) || t == FACTORY || t == LOCKER || t == ESCROW || t == FEE_SOURCE || t == address(HOUSE)
-            || t == AUCTION_FACTORY || t == Mainnet.PERMIT2 || t == Mainnet.POSITION_MANAGER
+            || t == address(MANAGER) || t == FACTORY || t == LOCKER || t == ESCROW || t == FEE_SOURCE
+            || t == Mainnet.PERMIT2 || t == Mainnet.POSITION_MANAGER
             || t == Mainnet.UNIVERSAL_ROUTER;
     }
 
@@ -619,8 +577,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                COMPOSING
     //////////////////////////////////////////////////////////////*/
 
-    /// composes the controller's page of eth lane credits into a statement and lists it on the house. anyone may call.
-    /// the gas counted for the caller payment includes the fee router flush. reverts `Retired` after `migrate`
+    /// composes the controller's page of eth lane credits into a statement the core holds for sale. anyone may call. the
+    /// gas counted for the caller payment includes the fee router flush. reverts `Retired` after `migrate`
     function compose() external nonReentrant {
         _compose();
     }
@@ -655,16 +613,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _heldIds.push(sid);
         _statements[sid] = CoreLib.Statement({
             cost: cost,
-            auctionId: 0,
-            listedAt: 0,
+            composedAt: uint64(block.timestamp),
             slot: uint64(_heldIds.length - 1),
             lane: lane,
-            held: true,
-            listed: false
+            held: true
         });
         // forge-lint: disable-next-line(unsafe-typecast)
         emit Composed(sid, lane, uint8(format), cost, msg.sender);
-        if (lane == Lane.Eth) _list(sid);
         _payCaller(gasStart, COMPOSE_OVERHEAD_GAS, COMPOSE_GAS);
     }
 
@@ -689,39 +644,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         SafeTransferLib.safeTransferETH(msg.sender, pay);
     }
 
-    /// the hard floor of a statement sale
-    function _floor(uint256 cost) private view returns (uint256) {
-        return cost * _st().saleFloorBps / BPS;
-    }
-
-    /// the reserve of a listing: the controller's asking price now (from the age of the listing), never below the hard
-    /// floor. a controller that fails or answers short makes the caller revert, so a listing is never priced blind,
-    /// except on the relist of `syncStatement`, which falls back to the hard floor so redemption never depends on the
-    /// controller. told apart by the selector of the call, like `_compose`, so no code is duplicated
-    function _reserveFor(uint256 sid) private view returns (uint256) {
-        CoreLib.Statement storage st = _statements[sid];
-        uint256 cost = st.cost;
-        (bool ok, bytes memory out) =
-            _ask(controller, abi.encodeCall(IController.statementPrice, (sid, cost, st.listedAt)), READ_GAS, 32);
-        if (!ok) {
-            if (msg.sig == this.syncStatement.selector) return _floor(cost);
-            revert BadPrice();
-        }
-        return abi.decode(out, (uint256)).max(_floor(cost));
-    }
-
-    /// lists a held statement on the house at the controller's price at age zero (floored). the house takes the
-    /// statement with transferFrom, so there is no callback. an auction id must come back and the house must own it
-    function _list(uint256 sid) private {
-        CoreLib.Statement storage st = _statements[sid];
-        st.listedAt = uint64(block.timestamp);
-        uint256 reserve = _reserveFor(sid);
-        uint256 id = HOUSE.createAuction(sid, address(STATEMENTS), _st().auctionDuration, reserve, 0);
-        st.auctionId = id;
-        st.listed = true;
-        emit StatementListed(sid, id, reserve);
-    }
-
     /// forgets a held statement and compacts the held list.
     function _unhold(uint256 sid) private {
         CoreLib.Statement storage s = _statements[sid];
@@ -735,126 +657,39 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                               AUCTION
+                                 SALE
     //////////////////////////////////////////////////////////////*/
 
-    /// pulls the sale proceeds the house owes this core and books them: `saleToBuybackBps` to the coin buyback, the
-    /// rest to the pot. permissionless. the core never bids, so everything the house credits to it is sale proceeds.
-    /// the eth is booked here exactly once, by the amount the house reported, and `skim` never sees it before: it sits
-    /// in the house (not in the balance) until this call moves it and books it in the same transaction
-    function collectSales() external nonReentrant {
-        _collect(true);
-    }
-
-    function _collect(bool strict) private {
-        uint256 owed = HOUSE.pendingRefunds(address(this));
-        if (owed == 0) return;
-        uint256 before = address(this).balance;
-        _measuring().set(true);
-        (bool ok,) = address(HOUSE).call(abi.encodeCall(IAuctionHouse.withdrawRefund, ()));
-        _measuring().set(false);
-        if (!ok || address(this).balance < before + owed) {
-            // buyback must never be blocked by the house
-            if (strict) revert CallFailed();
-            return;
-        }
-        _book(owed);
-    }
-
-    /// books sale proceeds: `saleToBuybackBps` to the coin buyback, the rest to the pot
-    function _book(uint256 amount) private {
-        uint256 toBuyback = amount * _st().saleToBuybackBps / BPS;
-        ethToBuyback += toBuyback;
-        _checkpoint();
-        ethPot += amount - toBuyback;
-        emit SalesCollected(amount, toBuyback);
-    }
-
-    /// the controller sells a listed eth lane statement at once, for `msg.value` at least the hard floor. a live
-    /// auction always wins: the listing is cancelled, which reverts while a bid exists. the payment is booked as sale
-    /// proceeds and the statement goes to `buyer`. no refund logic here, the controller refunds its caller
+    /// the controller sells a held eth lane statement to `buyer` for `msg.value`, at least `saleFloorBps` of the
+    /// statement cost. `saleToBuybackBps` of the payment goes to the coin buyback and the rest to the pot. the
+    /// controller refunds its own caller
     function sellTo(uint256 sid, address buyer) external payable nonReentrant {
         if (msg.sender != controller) revert OnlyController();
         CoreLib.Statement storage st = _statements[sid];
-        if (msg.value < _floor(st.cost)) revert BelowFloor();
-        _cancel(st);
-        STATEMENTS.transferFrom(address(this), buyer, sid);
-        _book(msg.value);
-        emit StatementSoldTo(sid, buyer, msg.value);
+        if (!st.held || st.lane != Lane.Eth) revert NotForSale();
+        if (msg.value < st.cost * _st().saleFloorBps / BPS) revert BelowFloor();
         _unhold(sid);
-    }
-
-    /// settles the record of a listed statement against the house, lazily and permissionlessly. if the auction is gone
-    /// and the core does not hold the statement, it was sold: the record is cleared. if the core holds it (a sale
-    /// that unwound, or a statement that came back), it is relisted at the reserve of the current settings
-    function syncStatement(uint256 sid) external nonReentrant {
-        CoreLib.Statement storage st = _statements[sid];
-        if (!st.held || !st.listed) revert NotListed();
-        if (_auction(st.auctionId)[CoreLib.W_OWNER] != 0) revert AuctionLive();
-        address holder = _holderOf(sid);
-        if (holder == address(this)) {
-            _list(sid);
-        } else {
-            emit StatementSold(sid, st.auctionId, holder);
-            _unhold(sid);
-        }
-    }
-
-    /// sets the reserve of a listing that has no bid to the controller's asking price now (floored), from the age of
-    /// the listing. permissionless: a first bidder calls it before bidding, and a change of the controller or of its
-    /// settings or of `saleFloorBps` reaches old listings
-    function repriceStatement(uint256 sid) external nonReentrant {
-        CoreLib.Statement storage st = _statements[sid];
-        _requireOpen(st);
-        uint256 reserve = _reserveFor(sid);
-        HOUSE.setAuctionReservePrice(st.auctionId, reserve);
-        emit StatementRepriced(sid, reserve);
-    }
-
-    /// takes a listed statement back from the house. reverts if the auction has a bid, or is gone
-    function _cancel(CoreLib.Statement storage st) private {
-        _requireOpen(st);
-        HOUSE.cancelAuction(st.auctionId);
-        st.listed = false;
-    }
-
-    /// the record says listed, the house has the auction, and it has no bid
-    function _requireOpen(CoreLib.Statement storage st) private view {
-        if (!st.held || !st.listed) revert NotListed();
-        uint256[12] memory w = _auction(st.auctionId);
-        if (w[CoreLib.W_OWNER] == 0) revert NotListed();
-        if (w[CoreLib.W_FIRST] != 0) revert HasBid();
-    }
-
-    /// the words of the house's auction record (`IAuctionHouse.Auction`, twelve static words). all zero when it is gone
-    function _auction(uint256 id) private view returns (uint256[12] memory w) {
-        bool ok;
-        (ok, w) = CoreLib.auctionWords(address(HOUSE), id);
-        if (!ok) revert BadAuction();
-    }
-
-    /// the owner of a statement, or zero when it does not exist (a holder may burn it)
-    function _holderOf(uint256 sid) private view returns (address who) {
-        return CoreLib.holderOf(sid);
+        STATEMENTS.transferFrom(address(this), buyer, sid);
+        uint256 toBuyback = msg.value * _st().saleToBuybackBps / BPS;
+        ethToBuyback += toBuyback;
+        _checkpoint();
+        ethPot += msg.value - toBuyback;
+        emit StatementSoldTo(sid, buyer, msg.value, toBuyback);
     }
 
     /*//////////////////////////////////////////////////////////////
                                  EXIT
     //////////////////////////////////////////////////////////////*/
 
-    /// hands a statement to the exit module. an eth lane statement must have been listed without a bid for
-    /// `exitAfter`, and its listing is cancelled first (this reverts while a bid is live). an exit lane statement
-    /// goes at once, it was never listed.
+    /// hands a held statement to the exit module. an eth lane statement must have been held for `exitAfter` since its
+    /// compose. an exit lane statement goes at once.
     function exitStatement(uint256 sid) external nonReentrant {
         uint256 gasStart = gasleft();
         address module = exitModule;
         if (module == address(0)) revert NoExitModule();
         CoreLib.Statement memory s = _statements[sid];
         if (!s.held) revert NotHeld();
-        if (s.lane == Lane.Eth) {
-            if (block.timestamp < s.listedAt + _st().exitAfter) revert TooEarly();
-            _cancel(_statements[sid]);
-        }
+        if (s.lane == Lane.Eth && block.timestamp < s.composedAt + _st().exitAfter) revert TooEarly();
         address token = exitToken;
         uint256 required = STATEMENTS.creditsOf(sid) * unitPerCredit;
         _unhold(sid);
@@ -896,9 +731,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// partial fill refund through the escrow (`skim`, after anyone claims it).
     function buyback() external nonReentrant {
         uint256 gasStart = gasleft();
-        // sale proceeds waiting in the house are collected first, so they are never stranded. a house that fails
-        // does not block the buyback
-        _collect(false);
         uint256 pool = ethToBuyback;
         if (pool == 0) revert NothingToBuy();
         Settings storage s = _st();
@@ -1053,7 +885,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// sets the successor that `migrate` sends the assets to. the zero address means no migration. it must have code.
     /// reverts `Locked("successor")` after `lockSuccessor`, and `BadSuccessor` for the core, the exit module, the exit
-    /// token, the house, the fee source, the coin, Credits and Statements. owner only, checked by the library, to which
+    /// token, the fee source, the coin, Credits and Statements. owner only, checked by the library, to which
     /// the call is handed untouched. logs `SuccessorSet`
     function setSuccessor(address) external {
         _toLib();
@@ -1068,7 +900,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// moves `ethPot`, `xPot` and up to `maxCredits` credits from the head of each pile to the successor,
     /// in batches. callable again until nothing is left. `ethToBuyback` stays for the coin buyback and `xToBuyback`
     /// for the exit token burn auction (`buybackExit`). the held
-    /// statements, their listings and their records stay with the core. an exit token transfer that fails leaves `xPot` and logs `ExitTokenMigrationSkipped`, the
+    /// statements and their records stay with the core. an exit token transfer that fails leaves `xPot` and logs `ExitTokenMigrationSkipped`, the
     /// eth and credit legs go on. the first call sets `retired` and logs `EngineRetired`. owner only and guarded, both checked by the
     /// library, to which the call is handed untouched. reverts `NoSuccessor` while the successor is zero
     function migrate(uint256) external {
@@ -1213,11 +1045,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return (c.inPile, c.lane, c.cost, c.acquiredAt);
     }
 
-    /// whether the core holds a statement for sale or exit, with its lane, cost basis and the time it was listed
-    /// (zero for an exit lane statement, which is never listed).
-    function statementInfo(uint256 sid) external view returns (bool held, Lane lane, uint256 cost, uint64 clockStart) {
+    /// whether the core holds a statement for sale or exit, with its lane, cost basis and compose time
+    function statementInfo(uint256 sid) external view returns (bool held, Lane lane, uint256 cost, uint64 composedAt) {
         CoreLib.Statement storage s = _statements[sid];
-        return (s.held, s.lane, s.cost, s.listedAt);
+        return (s.held, s.lane, s.cost, s.composedAt);
     }
 
     /// every setting. the four packed slots go to the library, which unpacks them into the struct, and the answer is
@@ -1237,27 +1068,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             returndatacopy(p, 0, returndatasize())
             return(p, returndatasize())
         }
-    }
-
-    /// the live status of a statement, read from the house, with its auction id, the reserve, the top bid and the end
-    /// time (zero until the first bid). `heldStatements` may include sold statements until `syncStatement` clears them
-    function statementStatus(uint256 sid)
-        external
-        view
-        returns (StatementStatus status, uint256 auctionId, uint256 reserve, uint256 bid, uint64 endTime)
-    {
-        CoreLib.Statement storage st = _statements[sid];
-        if (!st.held) return (StatementStatus.None, 0, 0, 0, 0);
-        if (!st.listed) return (StatementStatus.Held, 0, 0, 0, 0);
-        uint256[12] memory a = _auction(st.auctionId);
-        if (a[CoreLib.W_OWNER] == 0) {
-            status = _holderOf(sid) == address(this) ? StatementStatus.Returned : StatementStatus.Sold;
-            return (status, st.auctionId, 0, 0, 0);
-        }
-        if (a[CoreLib.W_FIRST] == 0) status = StatementStatus.Listed;
-        else status = block.timestamp < a[CoreLib.W_END] ? StatementStatus.Bid : StatementStatus.Ended;
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return (status, st.auctionId, a[CoreLib.W_RESERVE], a[CoreLib.W_AMOUNT], uint64(a[CoreLib.W_END]));
     }
 
     /// every statement the core holds for sale or exit.

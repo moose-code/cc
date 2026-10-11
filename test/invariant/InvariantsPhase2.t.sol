@@ -53,7 +53,7 @@ contract InvariantsHostileControllerDeep is InvariantsHostileController {
 
 /// invariant 8 as the hard rule, under an adversarial owner. the exit module is set and the owner's calls are as
 /// frequent as any: `setSettings` with random valid settings over the whole bounds (every corner: the lowest and the highest rate cap,
-/// the reserve at both ends, the sale split at 0 and 10_000, a zero climb, the
+/// the sale floor at both ends, the sale split at 0 and 10_000, a zero climb, the
 /// largest drop, the smallest and the largest buyback slice, no wait before an exit, every tip at zero and at its
 /// ceiling), `setRate` anywhere in its bounds, invalid settings that must revert, and strangers
 /// trying the owner's doors. the public actions keep running under whatever the owner chose. neither the owner nor

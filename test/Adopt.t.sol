@@ -30,7 +30,7 @@ contract AdoptingTarget {
     receive() external payable {}
 }
 
-/// `adopt` of the Core on the fork: the real Core, Credits, Statements, house and controller. credits are sent to the
+/// `adopt` of the Core on the fork: the real Core, Credits, Statements and controller. credits are sent to the
 /// Core outside its doors with a plain `transferFrom`
 contract AdoptTest is Fixture {
     address internal stranger = address(0xAD0);
@@ -231,9 +231,9 @@ contract AdoptTest is Fixture {
         assertEq(uint8(lane), uint8(Lane.Eth));
         assertEq(cost, sum, "statement cost is the sum of the bases");
         assertEq(core.pileSize(Lane.Eth), 0);
-        // the listing is priced from that cost
-        assertEq(_live(sid).reserve, _reserveFor(cost), "reserve");
-        assertGe(_live(sid).reserve, cost * core.settings().saleFloorBps / 10_000, "at or above the floor");
+        // the asking price is computed from that cost
+        assertEq(ctl.priceOf(sid), cost * ctl.startBps() / 10_000, "asking price");
+        assertGe(ctl.priceOf(sid), cost * core.settings().saleFloorBps / 10_000, "at or above the floor");
     }
 
     /// a successor Core with its own controller (the controller holds the address of its Core, so both addresses are

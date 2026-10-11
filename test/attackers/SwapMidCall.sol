@@ -95,32 +95,35 @@ contract SwapMidExit is IExitModule, Flushes {
     receive() external payable {}
 }
 
-interface ICollect {
-    function collectSales() external;
+interface IBuy {
+    function priceOf(uint256 sid) external view returns (uint256);
+    function buy(uint256 sid) external payable;
 }
 
-/// one transaction that swaps in the real pool (the skim hook pushes into the core's `receive`), collects the sale
-/// proceeds the house owes the core, and swaps again. the house delivers statements by plain transfer and never runs
-/// code of the winner, so this is the closest a stranger gets to interleaving the two
-contract SwapAroundCollect is Flushes {
+/// one transaction that swaps in the real pool (the skim hook pushes into the core's `receive`), buys statement `sid`
+/// through the controller, and swaps again, so the hook pushes into `receive` before and after the sale is booked
+contract SwapAroundBuy is Flushes {
     TestSwapRouter public immutable router;
-    ICollect public immutable core;
+    IBuy public immutable ctl;
     PoolKey internal key;
 
-    constructor(TestSwapRouter router_, address core_, PoolKey memory key_) {
+    constructor(TestSwapRouter router_, address ctl_, PoolKey memory key_) {
         router = router_;
-        core = ICollect(core_);
+        ctl = IBuy(ctl_);
         key = key_;
     }
 
-    function run(uint256 swapEth) external payable {
+    function run(uint256 swapEth, uint256 sid) external payable {
         router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
         _flush();
-        core.collectSales();
+        ctl.buy{value: ctl.priceOf(sid)}(sid);
         router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
         _flush();
-        core.collectSales();
     }
 
     receive() external payable {}
+
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
 }

@@ -118,13 +118,13 @@ contract CoreLayoutTest is Fixture {
             assertEq((word >> 64) & 0xff, uint256(uint8(lane)), "credit lane");
             assertEq((word >> 72) & 0xff, inPile ? 1 : 0, "credit inPile");
         }
-        // statement: cost, auctionId, then listedAt | slot | lane | held | listed; the held list at S_HELD
+        // statement: cost, then composedAt | slot | lane | held; the held list at S_HELD
         Composed memory c = _composeOnce();
-        (bool held, Lane lane, uint256 cost, uint64 listedAt) = core.statementInfo(c.sid);
+        (bool held, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(c.sid);
         uint256 sbase = _mapSlot(c.sid, S_STATEMENTS);
         assertEq(uint256(vm.load(address(core), bytes32(sbase))), cost, "statement cost");
-        uint256 sword = uint256(vm.load(address(core), bytes32(sbase + 2)));
-        assertEq(sword & type(uint64).max, listedAt, "statement listedAt");
+        uint256 sword = uint256(vm.load(address(core), bytes32(sbase + 1)));
+        assertEq(sword & type(uint64).max, composedAt, "statement composedAt");
         uint256[] memory held_ = core.heldStatements();
         uint256 at;
         for (uint256 i; i < held_.length; ++i) {
@@ -133,9 +133,7 @@ contract CoreLayoutTest is Fixture {
         assertEq((sword >> 64) & type(uint64).max, at, "statement slot");
         assertEq((sword >> 128) & 0xff, uint256(uint8(lane)), "statement lane");
         assertEq((sword >> 136) & 0xff, held ? 1 : 0, "statement held");
-        assertEq((sword >> 144) & 0xff, 1, "statement listed");
-        (, uint256 aid,,,) = core.statementStatus(c.sid);
-        assertEq(uint256(vm.load(address(core), bytes32(sbase + 1))), aid, "statement auctionId");
+        assertEq(sword >> 144, 0, "no field above held");
         assertEq(uint256(vm.load(address(core), bytes32(S_HELD))), core.heldStatements().length, "held length");
         assertEq(
             uint256(vm.load(address(core), bytes32(uint256(keccak256(abi.encode(S_HELD)))))),
@@ -148,7 +146,7 @@ contract CoreLayoutTest is Fixture {
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
-        uint256 sword2 = uint256(vm.load(address(core), bytes32(_mapSlot(second, S_STATEMENTS) + 2)));
+        uint256 sword2 = uint256(vm.load(address(core), bytes32(_mapSlot(second, S_STATEMENTS) + 1)));
         assertEq(core.heldStatements()[1], second, "the second statement is second in the list");
         assertEq((sword2 >> 64) & type(uint64).max, 1, "statement slot of the second statement");
     }

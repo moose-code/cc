@@ -54,7 +54,7 @@ abstract contract SystemResumer is SystemDeployer {
             address(core.MANAGER()) != c.stack.poolManager || core.HOOK() != c.stack.hook
                 || core.TICK_SPACING() != c.stack.tickSpacing || core.POOL_FEE() != c.stack.poolFee
                 || core.FACTORY() != c.stack.factory || core.LOCKER() != c.stack.locker
-                || core.ESCROW() != c.stack.escrow || core.AUCTION_FACTORY() != c.stack.auctionFactory
+                || core.ESCROW() != c.stack.escrow
         ) revert CoreMismatch("stack");
         if (launching) {
             // before the launch the factory prediction for the deployer and this config must give the Core's coin

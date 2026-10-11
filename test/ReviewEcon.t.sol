@@ -138,45 +138,36 @@ contract LaunchSettingsExactNumbers is ReviewEconBase {
     }
 }
 
-/// @notice the sale at the reserve, and the statement that arrives from outside
+/// @notice the sale at the asking price, and the statement that arrives from outside
 contract ReserveSaleAndOutsiders is ReviewEconBase {
-    /// E-6: a compose at the launch settings pays the caller nothing, so the cost the statement lists against is the page cost. at the
-    /// reserve the pot gets back 0.45 of the cost and the buyback pot 0.45
+    /// E-6: a compose at the launch settings pays the caller nothing, so the cost of the statement is the page cost. at the
+    /// opening ask the pot gets back 0.75 of the cost and the buyback pot 0.75
     function test_POC_composeRepaysNothingAndTheReserveSale() public {
         composeBasefee = 400 gwei;
         uint256 before = keeper.balance;
         (uint256 sid, uint256 cost) = _composeOne();
         assertEq(keeper.balance, before, "the compose pays the caller nothing");
-        uint256 reserve = _live(sid).reserve;
-        assertEq(reserve, cost * 15_000 / 10_000, "the reserve is the 150 percent opening ask of the page cost");
+        uint256 ask = ctl.priceOf(sid);
+        assertEq(ask, cost * 15_000 / 10_000, "the ask is the 150 percent opening ask of the page cost");
 
         uint256 pot = core.ethPot();
         uint256 bb = core.ethToBuyback();
-        _bid(funder, sid, reserve);
-        _endAuction(sid);
-        assertEq(_collectSales(), reserve);
-        uint256 toBuyback = reserve * 5_000 / 10_000;
+        assertEq(_buy(funder, sid), ask);
+        uint256 toBuyback = ask * 5_000 / 10_000;
         assertEq(core.ethToBuyback() - bb, toBuyback);
-        assertEq(core.ethPot() - pot, reserve - toBuyback);
-        assertGt(reserve, cost, "sold above cost at the opening ask");
-        // the engine paid the page cost for it and got back 1.1 of that, half of it to the buyback
+        assertEq(core.ethPot() - pot, ask - toBuyback);
+        assertGt(ask, cost, "sold above cost at the opening ask");
+        // the engine paid the page cost for it and got back 1.5 of that, half of it to the buyback
         emit log_named_uint("pot gets back, bps of cost", (core.ethPot() - pot) * 10_000 / cost);
         _solvent();
     }
 
     /// a statement sent to the core from outside is accepted by the receiver hook and never counted: it is not in the
-    /// held list, cannot be listed, repriced or exited. sent back before the sale is settled on the
-    /// record, it is a returned statement and `syncStatement` lists it again at the current reserve
+    /// held list, cannot be sold or exited
     function test_statementSentFromOutsideIsNotCounted() public {
         (uint256 sid,) = _composeOne();
         address a = _user("outsider");
-        uint256 snap = vm.snapshotState();
-        uint256 reserve = _live(sid).reserve;
-
-        // the sale is settled on the record first, then the winner sends the statement back
-        _bid(a, sid, reserve);
-        _endAuction(sid);
-        core.syncStatement(sid);
+        _buy(a, sid);
         assertEq(core.heldStatements().length, 0);
         vm.prank(a);
         STATEMENTS.safeTransferFrom(a, address(core), sid);
@@ -184,29 +175,13 @@ contract ReserveSaleAndOutsiders is ReviewEconBase {
         (bool held,,,) = core.statementInfo(sid);
         assertFalse(held);
         assertEq(core.heldStatements().length, 0, "not counted");
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.None));
-        vm.expectRevert(ICore.NotListed.selector);
-        core.syncStatement(sid);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.repriceStatement(sid);
+        vm.prank(address(ctl));
+        vm.expectRevert(ICore.NotForSale.selector);
+        core.sellTo(sid, a);
         _enterPhase2();
         vm.expectRevert(ICore.NotHeld.selector);
         core.exitStatement(sid);
         _solvent();
-
-        // sent back before the record is settled: the record is still live and the statement returned
-        vm.revertToState(snap);
-        _bid(a, sid, reserve);
-        _endAuction(sid);
-        vm.prank(a);
-        STATEMENTS.safeTransferFrom(a, address(core), sid);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Returned));
-        core.syncStatement(sid);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Listed));
-        assertEq(STATEMENTS.ownerOf(sid), address(house));
-        assertEq(core.heldStatements().length, 1);
-        assertEq(_live(sid).reserve, _reserveFor(_costOf(sid)), "back on the house at the current reserve");
-        assertEq(_collectSales(), reserve, "the proceeds of the first sale are still the core's");
     }
 
     function _costOf(uint256 sid) internal view returns (uint256 cost) {

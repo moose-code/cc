@@ -9,7 +9,7 @@ import {Lane, Settings} from "../src/interfaces/Interfaces.sol";
 /// @notice the inventory gate is gone (docs/FLOW.md decision 2): the engine never stops buying because statements are
 /// unsold. what is left of its suite is the rate property that never depended on the gate (the rate does not rise
 /// across an interval that was unfunded at its start) under a random walk over the doors, the clock, the fees, the
-/// sales on the house and the settings, and a proof that held and unsold statements change nothing about the bid
+/// statement sales and the settings, and a proof that held and unsold statements change nothing about the bid
 contract GateTest is Fixture {
     using FixedPointMathLib for uint256;
 
@@ -30,7 +30,7 @@ contract GateTest is Fixture {
         core.sellForEth(ids);
     }
 
-    /// two statements sit unsold on the house and nothing closes: the bid is open, the climb runs on from the dropped
+    /// two statements sit unsold in the core and nothing closes: the bid is open, the climb runs on from the dropped
     /// rate after a fill, a statement sale changes none of it, and the pot is never gated on inventory
     function test_unsoldStatementsNeverStopTheBidOrTheClimb() public {
         _skipSniperWindow();
@@ -38,8 +38,8 @@ contract GateTest is Fixture {
         uint256 s1 = _composeNext();
         uint256 s2 = _composeNext();
         assertEq(core.heldStatements().length, 2);
-        assertEq(uint256(_live(s1).status), uint256(ICore.StatementStatus.Listed));
-        assertEq(uint256(_live(s2).status), uint256(ICore.StatementStatus.Listed));
+        assertTrue(_isHeld(s1));
+        assertTrue(_isHeld(s2));
         // the bid is open at two held statements, however long they sit
         _warp(30 days);
         _sellOne();
@@ -61,21 +61,19 @@ contract GateTest is Fixture {
         if (want > cap) want = cap;
         assertApproxEqRel(core.ethRate(), want, 1e12, "0.5 percent a minute right after a fill, ten minutes");
         assertGt(core.ethRate(), 0, "the bid is open");
-        // one of them sells on the house: nothing about the bid changes, and the other keeps waiting
-        _bid(funder, s1, _live(s1).reserve);
-        _endAuction(s1);
+        // one of them sells through the controller: nothing about the bid changes, and the other keeps waiting
         uint256 rateBefore = core.ethRate();
-        _collectSales();
+        _buy(funder, s1);
         assertGe(
             core.ethRate(), rateBefore, "booking the proceeds raises the pot and so the clamp, never the price state"
         );
         _sellOne();
-        assertEq(uint256(_live(s2).status), uint256(ICore.StatementStatus.Listed));
+        assertTrue(_isHeld(s2));
         _solvent();
     }
 }
 
-/// @notice a random walk over the doors, the clock, the fees, the sales on the house and the owner's settings. every
+/// @notice a random walk over the doors, the clock, the fees, the statement sales and the owner's settings. every
 /// step checks that the rate never rose across an interval that was unfunded at its start, and that the books stay
 /// solvent
 contract GateFuzzTest is Fixture {
@@ -101,15 +99,10 @@ contract GateFuzzTest is Fixture {
         _setSettings(s);
     }
 
-    function _sellOnTheHouse(uint256 seed) internal {
+    function _sellAStatement(uint256 seed) internal {
         uint256[] memory h = core.heldStatements();
         if (h.length == 0) return;
-        uint256 sid = h[(seed >> 8) % h.length];
-        if (_live(sid).status != ICore.StatementStatus.Listed) return;
-        _bid(funder, sid, _live(sid).reserve);
-        _endAuction(sid);
-        try core.collectSales() {} catch {}
-        try core.syncStatement(sid) {} catch {}
+        _buy(funder, h[(seed >> 8) % h.length]);
     }
 
     function _try(uint256 op, uint256 seed) internal {
@@ -124,7 +117,7 @@ contract GateFuzzTest is Fixture {
             vm.prank(keeper);
             try core.compose() {} catch {}
         } else if (op == 6) {
-            _sellOnTheHouse(seed);
+            _sellAStatement(seed);
         } else if (op == 7) {
             vm.deal(funder, funder.balance + 0.02 ether);
             vm.prank(funder);

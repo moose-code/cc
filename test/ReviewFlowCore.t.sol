@@ -58,22 +58,18 @@ contract ReviewFlowCoreTest is Fixture {
         core.setSettings(s);
     }
 
-    /// FC-2 (fixed by bounds): saleFloorBps now starts at 1_000 and auctionDuration at 6 hours. at the floor an accomplice
-    /// that bids the reserve still buys at 10 percent of cost, but a stranger has six hours to bid over it
-    function test_FIXED_reserveAndAuctionDurationFloors() public {
+    /// FC-2 (fixed by bounds): saleFloorBps starts at 1_000. at the floor a buyer pays 10 percent of cost once the
+    /// asking price has decayed to it
+    function test_FIXED_saleFloorBound() public {
         _skipSniperWindow();
         _fillEthPile(80);
         Settings memory s = core.settings();
         s.saleFloorBps = 999;
         _expectBad(s, "saleFloorBps");
         s.saleFloorBps = 1_000;
-        s.auctionDuration = 6 hours - 1;
-        _expectBad(s, "auctionDuration");
-        s.auctionDuration = 6 hours;
         _setSettings(s);
         // the controller asks the floor too once its price has decayed
         vm.startPrank(owner);
-        ctl.setBuyOnly(false);
         ctl.setFloorBps(1_000);
         ctl.setFastDecayBpsPerHour(10_000);
         ctl.setSlowDecayBpsPerHour(10_000);
@@ -84,21 +80,14 @@ contract ReviewFlowCoreTest is Fixture {
         uint256 sid = STATEMENTS.supply();
         (,, uint256 cost,) = core.statementInfo(sid);
         _warp(2 hours);
-        core.repriceStatement(sid);
-        Live memory l = _live(sid);
-        assertEq(l.reserve, cost * 1_000 / 10_000, "reserve at the floor is 10 percent of cost");
-        address accomplice = _user("accomplice");
-        _bid(accomplice, sid, l.reserve);
-        // a stranger has six hours: +5 percent takes the lot
-        address stranger = _user("stranger");
-        _bid(stranger, sid, l.reserve * 105 / 100 + 1);
-        _endAuction(sid);
-        assertEq(STATEMENTS.ownerOf(sid), stranger, "the stranger won inside the window");
-        assertEq(_collectSales(), l.reserve * 105 / 100 + 1);
+        assertEq(ctl.priceOf(sid), cost * 1_000 / 10_000, "the ask at the floor is 10 percent of cost");
+        address buyer = _user("buyer");
+        assertEq(_buy(buyer, sid), cost * 1_000 / 10_000);
+        assertEq(STATEMENTS.ownerOf(sid), buyer);
     }
 
     /// FC-7 (fixed by bounds): exitAfter 0 is refused, the floor is one hour, and an exit inside it reverts
-    function test_FIXED_exitAfterFloorKeepsTheListingOpen() public {
+    function test_FIXED_exitAfterFloorKeepsTheStatementForSale() public {
         _enterPhase2();
         Settings memory s = core.settings();
         s.exitAfter = 0;
@@ -106,7 +95,7 @@ contract ReviewFlowCoreTest is Fixture {
         s.exitAfter = 1 hours;
         _setSettings(s);
         Composed memory c = _composeOnce();
-        assertEq(uint8(_live(c.sid).status), uint8(ICore.StatementStatus.Listed));
+        assertTrue(_isHeld(c.sid));
         vm.expectRevert(ICore.TooEarly.selector);
         core.exitStatement(c.sid);
         _warp(1 hours);
@@ -145,7 +134,6 @@ contract ReviewFlowCoreTest is Fixture {
         m.ceilBps = 10_000;
         m.idleLoosenBps = 1;
         m.saleFloorBps = 1_000;
-        m.auctionDuration = 6 hours;
         m.exitAfter = 1 hours;
         m.rateCap = uint64(RATE_START_MIN_WEI);
         m.buybackSlice = 0.01 ether;
@@ -165,7 +153,6 @@ contract ReviewFlowCoreTest is Fixture {
             2_500,
             500,
             40_000,
-            30 days,
             365 days,
             10_000,
             10_000,
@@ -206,9 +193,9 @@ contract ReviewFlowCoreTest is Fixture {
             // the four raw words hold exactly the values and nothing else
             bytes32 slot = 0xb5805f89ef62cd999f965a45fb6f4c11141caa04e5c4acba9c2552ef76902804;
             uint256 w0 = uint256(vm.load(address(core), slot));
-            assertEq(w0 >> 224, 0, "slot 0 top bits clear");
+            assertEq(w0 >> 192, 0, "slot 0 top bits clear");
             assertEq(uint16(w0 >> 112), two[i].saleFloorBps, "the sale floor sits at bits 112 to 127");
-            assertEq(uint16(w0 >> 208), two[i].exitToBuybackBps, "the exit eth lane share sits at bits 208 to 223");
+            assertEq(uint16(w0 >> 176), two[i].exitToBuybackBps, "the exit eth lane share sits at bits 176 to 191");
             uint256 w1 = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
             assertEq(uint64(w1 >> 144), two[i].keeperFee, "the keeper fee sits at bits 144 to 207");
             assertEq(uint48(w1 >> 208), two[i].buybackMaxBaseFee, "the base fee ceiling sits at bits 208 to 255");
@@ -397,8 +384,8 @@ contract ReviewFlowCoreTest is Fixture {
     function test_dirtyCalldataWordsAreRefused() public {
         Settings memory base = core.settings();
         bytes memory good = abi.encodeCall(ICore.setSettings, (base));
-        assertEq(good.length, 4 + 27 * 32);
-        for (uint256 i; i < 27; ++i) {
+        assertEq(good.length, 4 + 26 * 32);
+        for (uint256 i; i < 26; ++i) {
             bytes memory bad = bytes.concat(good);
             uint256 off = 32 + 4 + i * 32;
             uint256 w;
@@ -554,9 +541,5 @@ contract BurnController {
             ids[i] = page[i];
         }
         return (true, ids, 0);
-    }
-
-    function statementPrice(uint256, uint256 cost, uint64) external pure returns (uint256) {
-        return cost * 11_000 / 10_000;
     }
 }

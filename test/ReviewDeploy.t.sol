@@ -12,14 +12,13 @@ import {TestSwapRouter} from "./utils/TestSwapRouter.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Mainnet, Stack, Settings} from "../src/interfaces/Interfaces.sol";
-import {IAuctionFactory, IAuctionHouse} from "../src/interfaces/AuctionHouse.sol";
 import {IArtCoinsFactoryV2, IArtCoinsHookV2, IArtCoinsMevSkimV2, IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {SystemDeployer, Deployed} from "../script/SystemDeployer.sol";
 import {LaunchConfig, ConfigReader} from "../script/LaunchConfig.sol";
 import {Report} from "../script/Report.sol";
 
 /// @notice independent review of the deploy package (docs/archive/REVIEW-deploy.md), ported to the v2 stack: the state
-/// mutations that need their own assertions (deployer swap, library, house fee), proofs of the readbacks and a fuzz of the
+/// mutations that need their own assertions (deployer swap, library), proofs of the readbacks and a fuzz of the
 /// funded rule. the mutation matrix is in test/ReviewMatrix.t.sol. forks mainnet at FORK_BLOCK
 contract ReviewDeployTest is ReviewHarness {
     /// a deployer swap: the signer is another address than DEPLOYER, or than the factory owner: the script stops at once
@@ -41,26 +40,6 @@ contract ReviewDeployTest is ReviewHarness {
         console.log("MUT deployer swap (another signer than the factory owner) || SAFE REVERT at deploy || NotFactoryOwner");
         // the coin address depends on the sender, so the swap would have launched somewhere else
         assertTrue(predictCoin(base, deployer, _routerAt()) != predictCoin(base, other, _routerAt()));
-    }
-
-    /// the live default fee of the auction factory is zero and the preflight row says so. a non zero fee is a warning in
-    /// preflight, never a failure there, and the in script postflight stops the deploy on the house that reports it
-    function test_houseFeeWarningAndGate() public {
-        address af = base.stack.auctionFactory;
-        assertEq(IAuctionFactory(af).defaultProtocolFeeBps(), 0, "the live default fee");
-        this.runPre(base, deployer);
-        (bool found, bool ok, string memory detail) = _row("warn: auction factory default fee is zero");
-        assertTrue(found && ok, "the live fee row is clean");
-        (,, detail) = _row("auction factory: default fee readable");
-        assertEq(detail, "0");
-        _patchFactoryFee(af, 250);
-        assertEq(this.runPre(base, deployer), "", "a warning never fails the preflight");
-        (found, ok, detail) = _row("warn: auction factory default fee is zero");
-        assertTrue(found && !ok, "the warning row fires");
-        (,, detail) = _row("auction factory: default fee readable");
-        assertEq(detail, "250");
-        vm.expectRevert(abi.encodeWithSelector(Report.ChecksFailed.selector, "house: protocol fee is zero"));
-        this.tryDeploy(base, deployer);
     }
 
     /// the script rehearsal of the library: it goes through the deterministic deployer from the deployer, so it takes one
@@ -201,8 +180,6 @@ contract ReviewDeployTest is ReviewHarness {
         Deployed memory d2 = deploySystem(deployer, base);
         vm.stopPrank();
         assertTrue(d1.core != d2.core && d1.coin != d2.coin && d1.router != d2.router, "two systems");
-        assertTrue(IAuctionFactory(base.stack.auctionFactory).houseOf(d1.core) != address(0));
-        assertTrue(IAuctionFactory(base.stack.auctionFactory).houseOf(d2.core) != address(0));
         console.log(
             "NOT A MUTATION a second run of the signed config || two independent systems, both pass every check"
         );
@@ -382,13 +359,6 @@ contract ReviewDeployTest is ReviewHarness {
         bad.feeSource = makeAddr("router");
         vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, bad.feeSource));
         Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e13, s);
-        bad = st;
-        bad.auctionFactory = makeAddr("auction factory");
-        vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, bad.auctionFactory));
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e13, s);
-        bad.auctionFactory = Mainnet.PERMIT2;
-        vm.expectRevert();
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e13, s);
     }
 
     function parse(string memory j) external view returns (LaunchConfig memory) {
@@ -414,7 +384,7 @@ contract ReviewDeployTest is ReviewHarness {
             '"positionUpper": 887200',
             '"poolFee": 8388608',
             '"dropPerCreditBps": 50',
-            '"auctionDuration": 86400',
+            '"exitAfter": 378000',
             '"dropFloorBps": 5000',
             '"buybackSlice": 500000000000000000'
         ];
@@ -427,7 +397,7 @@ contract ReviewDeployTest is ReviewHarness {
             '"positionUpper": 8388608',
             '"poolFee": 16777216',
             '"dropPerCreditBps": 65536',
-            '"auctionDuration": 4294967296',
+            '"exitAfter": 4294967296',
             '"dropFloorBps": 65536',
             '"buybackSlice": 340282366920938463463374607431768211456'
         ];
@@ -440,7 +410,7 @@ contract ReviewDeployTest is ReviewHarness {
             ".launch.positionUpper",
             ".stack.poolFee",
             ".settings.dropPerCreditBps",
-            ".settings.auctionDuration",
+            ".settings.exitAfter",
             ".settings.dropFloorBps",
             ".settings.buybackSlice"
         ];
@@ -455,8 +425,6 @@ contract ReviewDeployTest is ReviewHarness {
         // a key that is missing or misspelled is an error, not a zero
         vm.expectRevert();
         this.parse(vm.replace(j, '"exitSliceCredits"', '"exitSliceCreditz"'));
-        vm.expectRevert();
-        this.parse(vm.replace(j, '"auctionFactory"', '"auctionFactoryy"'));
         vm.expectRevert();
         this.parse(vm.replace(j, '"creatorPayee"', '"creatorPayeee"'));
         // the overrides are optional and default to false

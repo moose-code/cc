@@ -9,8 +9,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PositionInfo, PositionInfoLibrary} from "v4-periphery/src/libraries/PositionInfoLibrary.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Mainnet, Stack, Settings, IStatements} from "../src/interfaces/Interfaces.sol";
-import {IAuctionHouse, IAuctionFactory} from "../src/interfaces/AuctionHouse.sol";
+import {Mainnet, Stack, Settings} from "../src/interfaces/Interfaces.sol";
 import {ICoreLib} from "../src/interfaces/ICoreLib.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
@@ -79,7 +78,7 @@ abstract contract PostflightChecks is PostflightPool {
         return vm.computeCreate2Address(LENS_SALT, keccak256(init), CREATE2_DEPLOYER);
     }
 
-    /// @dev the lens at `lensAddress(core)` has code of the compiled size, points at this Core and at the router and house
+    /// @dev the lens at `lensAddress(core)` has code of the compiled size, points at this Core and at the router
     /// the Core names, uses the Credits and Statements of mainnet, and answers `snapshot`. its controller is the Core's,
     /// read on every call
     function _postLens(ICore core) private {
@@ -92,7 +91,6 @@ abstract contract PostflightChecks is PostflightPool {
         if (!sized) return;
         _eq("lens: core", lens.CORE(), address(core));
         _eq("lens: router is the Core fee source", lens.ROUTER(), core.FEE_SOURCE());
-        _eq("lens: house is the Core house", lens.HOUSE(), address(core.HOUSE()));
         _eq("lens: credits", lens.CREDITS(), Mainnet.CREDITS);
         _eq("lens: statements", lens.STATEMENTS(), Mainnet.STATEMENTS);
         _eq("lens: controller is the Core controller", lens.controller(), core.controller());
@@ -194,9 +192,7 @@ abstract contract PostflightChecks is PostflightPool {
         }
         _eq("core: SUPPLY constant equals the config supply", core.SUPPLY(), c.supply);
         _eq("core: RATE_START", core.RATE_START(), c.rateStart);
-        _eq("core: auction factory", core.AUCTION_FACTORY(), c.stack.auctionFactory);
         _postSettings(c, core);
-        _postHouse(c, core);
         _postLibrary(core);
         _eq("core: pool manager", address(core.MANAGER()), c.stack.poolManager);
         _eq("core: hook", core.HOOK(), c.stack.hook);
@@ -208,9 +204,8 @@ abstract contract PostflightChecks is PostflightPool {
         _check(
             "code: stack addresses",
             c.stack.poolManager.code.length != 0 && c.stack.hook.code.length != 0 && c.stack.factory.code.length != 0
-                && c.stack.locker.code.length != 0 && c.stack.escrow.code.length != 0
-                && c.stack.auctionFactory.code.length != 0,
-            "pool manager, hook, factory, locker, escrow, auction factory"
+                && c.stack.locker.code.length != 0 && c.stack.escrow.code.length != 0,
+            "pool manager, hook, factory, locker, escrow"
         );
         address ctl = core.controller();
         _code("code: controller", ctl);
@@ -221,7 +216,6 @@ abstract contract PostflightChecks is PostflightPool {
                 && !core.allowedTarget(c.stack.hook) && !core.allowedTarget(c.stack.factory)
                 && !core.allowedTarget(c.stack.locker) && !core.allowedTarget(c.stack.escrow)
                 && !core.allowedTarget(c.stack.poolManager) && !core.allowedTarget(core.COIN())
-                && !core.allowedTarget(address(core.HOUSE())) && !core.allowedTarget(c.stack.auctionFactory)
                 && !core.allowedTarget(core.FEE_SOURCE()),
             "seaport and CreditStrategy only, the router is not a target"
         );
@@ -286,7 +280,7 @@ abstract contract PostflightChecks is PostflightPool {
     function _postSale(LaunchConfig memory c, address ctl) private {
         if (ctl.code.length == 0) return;
         IControllerV1 k = IControllerV1(ctl);
-        bool same = k.buyOnly() == c.sale.buyOnly && k.markupBps() == c.sale.markupBps
+        bool same = k.markupBps() == c.sale.markupBps
             && k.startCapBps() == c.sale.startCapBps && k.fastDecayBpsPerHour() == c.sale.fastDecayBpsPerHour
             && k.kneeBps() == c.sale.kneeBps && k.slowDecayBpsPerHour() == c.sale.slowDecayBpsPerHour
             && k.floorBps() == c.sale.floorBps && k.anchorHalfLife() == c.sale.anchorHalfLife;
@@ -295,7 +289,7 @@ abstract contract PostflightChecks is PostflightPool {
                 "warn: sale settings equal the config", same, "SETTINGS_CHANGED=1, the owner changed them since launch"
             );
         } else {
-            _check("controller: sale settings equal the config", same, "buyOnly markupBps startCapBps fastDecayBpsPerHour kneeBps slowDecayBpsPerHour floorBps anchorHalfLife");
+            _check("controller: sale settings equal the config", same, "markupBps startCapBps fastDecayBpsPerHour kneeBps slowDecayBpsPerHour floorBps anchorHalfLife");
         }
         // a fresh launch has no sales and no owner change, so the running level of sale prices is at its lower bound
         bool anchored = k.anchorBps() == 10_000;
@@ -307,8 +301,7 @@ abstract contract PostflightChecks is PostflightPool {
         _info(
             "controller: sale",
             string.concat(
-                k.buyOnly() ? "buy only" : "auction mode",
-                " markup ",
+                "markup ",
                 vm.toString(k.markupBps()),
                 " start cap ",
                 vm.toString(k.startCapBps()),
@@ -356,10 +349,8 @@ abstract contract PostflightChecks is PostflightPool {
         );
         _check("core: ethRate at most rateCap", core.ethRate() <= live.rateCap, vm.toString(core.ethRate()));
         _info(
-            "core: reserve and auction",
-            string.concat(
-                "saleFloorBps ", vm.toString(live.saleFloorBps), " duration ", vm.toString(live.auctionDuration), "s"
-            )
+            "core: sale floor",
+            string.concat("saleFloorBps ", vm.toString(live.saleFloorBps))
         );
         _info(
             "core: splits",
@@ -379,29 +370,6 @@ abstract contract PostflightChecks is PostflightPool {
         );
     }
 
-    /// @dev the auction house the core created in its constructor: the factory knows it, the core owns it, its fee is
-    /// zero and it may take statements
-    function _postHouse(LaunchConfig memory c, ICore core) private {
-        address house = address(core.HOUSE());
-        _code("code: house", house);
-        if (house.code.length == 0) return;
-        (bool okh, uint256 recorded) =
-            _word(c.stack.auctionFactory, abi.encodeCall(IAuctionFactory.houseOf, (address(core))));
-        _check(
-            "house: factory houseOf(core)",
-            okh && address(uint160(recorded)) == house,
-            string.concat("got ", vm.toString(address(uint160(recorded))), " want ", vm.toString(house))
-        );
-        _eq("house: owner is the core", IAuctionHouse(house).owner(), address(core));
-        (bool ok, uint256 fee) = _word(house, abi.encodeCall(IAuctionHouse.protocolFeeBps, ()));
-        _check("house: protocol fee is zero", ok && fee == 0, string.concat("protocolFeeBps ", vm.toString(fee)));
-        _check(
-            "house: approved for all statements of the core",
-            IStatements(Mainnet.STATEMENTS).isApprovedForAll(address(core), house),
-            "Statements.isApprovedForAll(core, house)"
-        );
-    }
-
     /// @dev the Core is linked against `CoreLib`: its address is the operand of eight push20 sites in the Core runtime
     /// code. the first row finds a push20 operand whose code is the compiled library (its own address masked out). the
     /// second reads every library address slot and every immutable slot of the Core runtime code and requires each to
@@ -413,23 +381,21 @@ abstract contract PostflightChecks is PostflightPool {
             found != address(0),
             string.concat("library at ", vm.toString(found))
         );
-        uint256[] memory want = new uint256[](12);
+        uint256[] memory want = new uint256[](10);
         want[0] = uint256(uint160(core.COIN()));
         want[1] = core.RATE_START();
-        want[2] = uint256(uint160(core.AUCTION_FACTORY()));
-        want[3] = uint256(uint160(address(core.HOUSE())));
-        want[4] = uint256(uint160(address(core.MANAGER())));
-        want[5] = uint256(uint160(core.HOOK()));
-        want[6] = uint256(uint160(core.FEE_SOURCE()));
-        want[7] = uint256(int256(core.TICK_SPACING()));
-        want[8] = uint256(core.POOL_FEE());
-        want[9] = uint256(uint160(core.FACTORY()));
-        want[10] = uint256(uint160(core.LOCKER()));
-        want[11] = uint256(uint160(core.ESCROW()));
+        want[2] = uint256(uint160(address(core.MANAGER())));
+        want[3] = uint256(uint160(core.HOOK()));
+        want[4] = uint256(uint160(core.FEE_SOURCE()));
+        want[5] = uint256(int256(core.TICK_SPACING()));
+        want[6] = uint256(core.POOL_FEE());
+        want[7] = uint256(uint160(core.FACTORY()));
+        want[8] = uint256(uint160(core.LOCKER()));
+        want[9] = uint256(uint160(core.ESCROW()));
         _check(
             "core: every library call site and every immutable slot holds the library or the getter value",
             found != address(0) && runtimeSlotsMatch(address(core), "Core", found, want),
-            "the 8 CoreLib call sites and the 38 immutable sites of the Core runtime code"
+            "the 8 CoreLib call sites and the 27 immutable sites of the Core runtime code"
         );
     }
 

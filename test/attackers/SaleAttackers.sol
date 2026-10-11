@@ -41,26 +41,21 @@ contract SellingController is ScriptedController {
 contract ReentrantBuyer {
     IControllerV1 public immutable CTL;
     ICore public immutable CORE;
-    /// the statement the reentry tries to buy, and the one it tries to reprice
+    /// the statement the reentry tries to buy
     uint256 public other;
-    /// a statement the buy just sold, so its record is gone
-    uint256 public sold;
     uint256 public reentries;
     bool public buyBlocked;
     bool public sellBlocked;
-    bool public repriceBlocked;
     bool public exitBlocked;
     bytes4 public buySel;
-    bytes4 public repriceSel;
 
     constructor(IControllerV1 ctl_, ICore core_) {
         CTL = ctl_;
         CORE = core_;
     }
 
-    function setOther(uint256 other_, uint256 sold_) external {
+    function setOther(uint256 other_) external {
         other = other_;
-        sold = sold_;
     }
 
     function buy(uint256 sid) external payable {
@@ -78,17 +73,11 @@ contract ReentrantBuyer {
         catch {
             sellBlocked = true;
         }
-        try CORE.repriceStatement(sold) {}
-        catch (bytes memory why) {
-            repriceBlocked = true;
-            repriceSel = bytes4(why);
-        }
         try CORE.exitStatement(other) {}
         catch {
             exitBlocked = true;
         }
         try CORE.skim() {} catch {}
-        try CORE.collectSales() {} catch {}
     }
 
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
@@ -204,9 +193,6 @@ contract RepaidCaller {
         _try(abi.encodeCall(ICore.compose, ()));
         _try(abi.encodeCall(ICore.composeExit, ()));
         _try(abi.encodeCall(ICore.skim, ()));
-        _try(abi.encodeCall(ICore.collectSales, ()));
         _try(abi.encodeCall(ICore.buyback, ()));
-        _try(abi.encodeCall(ICore.repriceStatement, (other)));
-        _try(abi.encodeCall(ICore.syncStatement, (other)));
     }
 }

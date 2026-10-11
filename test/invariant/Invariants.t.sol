@@ -7,13 +7,12 @@ import {Lane, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {ICoreLens} from "../../src/interfaces/ICoreLens.sol";
 import {RateStore} from "../../src/lib/RateStore.sol";
-import {IAuctionHouse} from "../../src/interfaces/AuctionHouse.sol";
 import {IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {InvariantFixture} from "./InvariantFixture.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 
 /// @notice SPEC section 10 as reworked by docs/FLOW.md, one `invariant_` function per item, against the real system on
-/// the mainnet fork: the real Core, the real pnd auction house it owns, the live Credits, Statements,
+/// the mainnet fork: the real Core, the live Credits, Statements,
 /// CreditStrategy, pool manager and artcoins stack. only the exit module and exit token are stand ins.
 ///
 /// how to run:
@@ -27,8 +26,8 @@ import {HandlerBase} from "./HandlerBase.sol";
 /// an environment variable, so the Deep variants carry no inline config and skip themselves unless INVARIANT_DEEP is
 /// set. they are the same suites, only the depth comes from the environment.
 /// every `invariant_` function is its own campaign, so cost grows with runs times depth times the number of
-/// functions. each campaign starts from the state after `setUp`, which has a funded pot, pre filled piles, listed
-/// statements, two of them sold (one collected) and a climbed rate. `-vv` shows the call summary that
+/// functions. each campaign starts from the state after `setUp`, which has a funded pot, pre filled piles, held
+/// statements, two of them sold and a climbed rate. `-vv` shows the call summary that
 /// `invariant_callSummary` logs. the summary also keeps running totals over all runs in this process through the
 /// environment, which no revert can undo.
 ///
@@ -40,22 +39,22 @@ import {HandlerBase} from "./HandlerBase.sol";
 /// a violation recorded in the ghosts cannot be lost to `fail_on_revert = false`.
 abstract contract InvariantsBase is InvariantFixture {
     /// the violation codes of the handler, grouped by SPEC item.
-    uint256[] internal g1 = [1, 2, 3, 4, 6, 18, 19, 21, 17, 24];
+    uint256[] internal g1 = [1, 2, 3, 4, 6, 18, 19, 17, 23];
     uint256[] internal g2 = [5];
     uint256[] internal g3 = [7];
     uint256[] internal g4 = [8, 9, 10];
-    uint256[] internal g5 = [20, 26];
+    uint256[] internal g5 = [20];
     uint256[] internal g6 = [11, 12];
     uint256[] internal g7 = [13];
-    uint256[] internal g8 = [14, 15, 16, 25, 27];
-    uint256[] internal g9 = [23];
-    uint256[] internal g10 = [22];
+    uint256[] internal g8 = [14, 15, 16, 24, 25];
+    uint256[] internal g9 = [22];
+    uint256[] internal g10 = [21];
     /// sales through sellTo and buy, and the departures of statements
-    uint256[] internal g11 = [7, 8, 28];
+    uint256[] internal g11 = [7, 8, 26];
     /// locks and handovers
-    uint256[] internal g12 = [29, 31];
+    uint256[] internal g12 = [27, 29];
     /// the fee router: its eth goes only to the engine set at that time, by the flush rule
-    uint256[] internal g13 = [30];
+    uint256[] internal g13 = [28];
 
     function _zero(uint256[] storage codes) internal view {
         for (uint256 i; i < codes.length; ++i) {
@@ -69,7 +68,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// overpayment, or a migration to the successor. every action's balance change is matched to those flows, measured at the
     /// recipients, against the settings in force at that moment (the owner changes them throughout). the inflows are the
     /// hook's skim pushed into receive() during real swaps, including the one the hook pushes back during the buyback, the
-    /// fee router's flush, `collectSales` (and the collection a buyback starts with), `sellTo` payments and a plain
+    /// fee router's flush, `sellTo` payments and a plain
     /// donation. any other movement is a violation. exit token flows too: it leaves the core only as a bid payment in
     /// sellForExitToken or as an auction slice paid for at or above the quoted coin price.
     function invariant_01_ethOnlyLeavesByAllowedPaths() public view {
@@ -83,70 +82,43 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 3. a statement leaves the core's control only by a sale at or above the hard floor (cost * saleFloorBps of the
-    /// settings in force when it was listed or repriced) or by an exit that returned at least credits * unitPerCredit.
-    /// in auction mode the house auction clears at or above the reserve the core set for it (tracked at the listing and
-    /// at every reprice), which is at least the hard floor. in buy only mode `sellTo` is paid the decaying ask, at least
-    /// the hard floor. here the first part: every sold statement sold at or above the hard floor of its listing, and the
-    /// recorded reserve is the one the core's rule gives.
-    function invariant_03_noStatementSoldBelowItsReserve() public view {
+    /// settings in force at the sale) or by an exit that returned at least credits * unitPerCredit. `sellTo` is paid the
+    /// decaying ask, at least the hard floor. here the first part: every sold statement was paid at least the hard
+    /// floor in force at its sale.
+    function invariant_03_noStatementSoldBelowTheHardFloor() public view {
         _zero(g3);
         uint256 n = handler.everHeldCount();
         for (uint256 i; i < n; ++i) {
             HandlerBase.SG memory s = handler.statementGhost(handler.everHeld(i));
             if (s.status == handler.S_SOLD()) {
-                assertGe(s.price, s.reserve, "sold below the reserve the core set");
-                assertGe(s.reserve, s.floorAtSet, "an auction reserve was set below the hard floor");
-                assertGe(s.price, s.floorAtSet, "an auction cleared below the hard floor of its listing");
-            } else if (s.status == handler.S_SOLD_TO()) {
-                assertGe(s.price, s.floorAtSet, "a sellTo sale paid less than the hard floor");
-                assertGe(s.price, s.reserve, "a sellTo sale paid less than the floor it was checked against");
+                assertGe(s.price, s.floor, "a sale paid less than the hard floor");
             }
         }
     }
 
-    /// 4. every statement ever composed is, at all times, exactly one of: listed on the house, held by the core
-    /// unlisted, sold, sold at once or exited. the ghost status is checked against the statements token, the house
-    /// and the core's own records. a sold statement is stale in the core's record until `syncStatement`, which is
-    /// then run for every one of them (and undone) and must clear the record. a listed one must refuse it.
-    function invariant_04_everyStatementIsInExactlyOnePlace() public {
+    /// 4. every statement ever composed is, at all times, exactly one of: held by the core, sold or exited. the ghost
+    /// status is checked against the statements token and the core's own records, and the held count against the core's
+    /// list.
+    function invariant_04_everyStatementIsInExactlyOnePlace() public view {
         _zero(g4);
         uint256 n = handler.everHeldCount();
         uint256 inRecord;
-        uint256 listedOrHeld;
         for (uint256 i; i < n; ++i) {
             uint256 sid = handler.everHeld(i);
             HandlerBase.SG memory s = handler.statementGhost(sid);
             address o = _ownerOfStatement(sid);
-            (bool held,, uint256 cost, uint64 clock) = core.statementInfo(sid);
-            if (s.status == handler.S_LISTED()) {
+            (bool held, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
+            if (s.status == handler.S_HELD()) {
                 inRecord++;
-                listedOrHeld++;
-                _checkListed(sid, s, o, held, cost, clock);
-            } else if (s.status == handler.S_HELD()) {
-                inRecord++;
-                listedOrHeld++;
-                assertEq(o, address(core), "an exit lane statement is not held by the core");
-                assertTrue(held, "an exit lane statement is not recorded as held");
-                assertEq(cost, s.cost, "exit lane cost basis differs");
-                (ICore.StatementStatus st,,,,) = core.statementStatus(sid);
-                assertEq(uint256(st), uint256(ICore.StatementStatus.Held), "held statement has another status");
+                assertEq(o, address(core), "a held statement is not held by the core");
+                assertTrue(held, "a held statement is not recorded as held");
+                assertEq(cost, s.cost, "held cost basis differs");
+                assertEq(uint256(lane), uint256(s.lane), "held lane differs");
+                assertEq(composedAt, s.composedAt, "compose time differs");
             } else if (s.status == handler.S_SOLD()) {
-                assertEq(o, s.winner, "a sold statement is not with its winner");
-                assertGe(s.price, s.reserve, "sold below the reserve");
-                if (!s.synced) {
-                    inRecord++;
-                    assertTrue(held, "a sold, unsynced statement lost its record");
-                    (ICore.StatementStatus st,,,,) = core.statementStatus(sid);
-                    assertEq(uint256(st), uint256(ICore.StatementStatus.Sold), "the live status of a sale is Sold");
-                } else {
-                    assertTrue(!held, "a synced sale is still recorded as held");
-                }
-            } else if (s.status == handler.S_SOLD_TO()) {
-                assertEq(o, s.winner, "a statement sold at once is not with its buyer");
-                assertTrue(!held, "a statement sold at once is still recorded as held");
-                assertGe(s.price, s.floorAtSet, "sold at once below the hard floor");
-                (bool exists,) = house.getAuctionFor(address(STATEMENTS), sid);
-                assertTrue(!exists, "the house has an auction for a statement sold at once");
+                assertEq(o, s.buyer, "a sold statement is not with its buyer");
+                assertTrue(!held, "a sold statement is still recorded as held");
+                assertGe(s.price, s.floor, "sold below the hard floor");
             } else if (s.status == handler.S_EXITED()) {
                 assertTrue(!held, "exited but still held");
                 assertEq(o, address(s.module), "an exited statement is not with the module that took it");
@@ -156,100 +128,17 @@ abstract contract InvariantsBase is InvariantFixture {
             }
         }
         assertEq(inRecord, core.heldStatements().length, "held count differs from the core's list");
-        _syncEverything(n, inRecord - listedOrHeld);
     }
 
-    function _checkListed(uint256 sid, HandlerBase.SG memory s, address o, bool held, uint256 cost, uint64 clock)
-        internal
-        view
-    {
-        assertEq(o, address(house), "a listed statement is not held by the house");
-        assertTrue(held, "a listed statement is not recorded as held");
-        assertEq(cost, s.cost, "listed cost basis differs");
-        assertEq(clock, s.listedAt, "listing time differs");
-        (ICore.StatementStatus st, uint256 aid, uint256 reserve, uint256 bid,) = core.statementStatus(sid);
-        assertEq(aid, s.auctionId, "auction id differs");
-        assertEq(reserve, s.reserve, "the reserve on the house is not the one the core set");
-        assertEq(bid, s.bid, "the top bid differs");
-        assertTrue(
-            st == ICore.StatementStatus.Listed || st == ICore.StatementStatus.Bid || st == ICore.StatementStatus.Ended,
-            "a listed statement has another live status"
-        );
-        IAuctionHouse.Auction memory au = house.getAuction(s.auctionId);
-        assertEq(au.tokenOwner, address(core), "the house does not name the core as the seller");
-        assertEq(au.tokenId, sid, "the house auction is for another statement");
-        assertEq(au.bidder, s.bidder, "the top bidder differs");
-    }
-
-    /// runs `syncStatement` for every statement the ghost model has sold, and for every listed one, and undoes it. a
-    /// sold one must clear the core's record and leave the winner the holder, a listed one must refuse with
-    /// AuctionLive. afterwards the core's held list is exactly the listed and the held statements
-    function _syncEverything(uint256 n, uint256 soldUnsynced) internal {
-        uint256 snap = vm.snapshotState();
-        uint256 listedOrHeld = core.heldStatements().length - soldUnsynced;
-        for (uint256 i; i < n; ++i) {
-            uint256 sid = handler.everHeld(i);
-            HandlerBase.SG memory s = handler.statementGhost(sid);
-            if (s.status == handler.S_SOLD() && !s.synced) {
-                core.syncStatement(sid);
-                (bool held,,,) = core.statementInfo(sid);
-                assertTrue(!held, "syncStatement left the sold statement recorded");
-                assertEq(_ownerOfStatement(sid), s.winner, "syncStatement moved the sold statement");
-            } else if (s.status == handler.S_LISTED()) {
-                try core.syncStatement(sid) {
-                    revert("syncStatement settled a statement that is still listed");
-                } catch (bytes memory why) {
-                    assertEq(bytes4(why), ICore.AuctionLive.selector, "a listed statement refused for another reason");
-                }
-            }
-        }
-        assertEq(
-            core.heldStatements().length, listedOrHeld, "after syncStatement the record is not the listed and held"
-        );
-        vm.revertToState(snap);
-    }
-
-    /// 5. ethPot + ethToBuyback never exceeds the core's eth balance, and the same for the exit token pots. the proceeds
-    /// the house owes the core are not in the pots until collected: what it owes is exactly the sum of the winning
-    /// bids of the settled auctions less what was collected, and after `collectSales` it owes nothing, the core's
-    /// balance rose by what it owed and the pots by that amount split by saleToBuybackBps. the sum ever collected
-    /// equals the sum of the winning bids of the auctions settled so far, less what is still owed.
-    function invariant_05_potsNeverExceedBalances() public {
+    /// 5. ethPot + ethToBuyback never exceeds the core's eth balance, and the same for the exit token pots. a sale
+    /// books its payment at once, split by saleToBuybackBps, so nothing is owed outside the pots.
+    function invariant_05_potsNeverExceedBalances() public view {
         _zero(g5);
         assertLe(core.ethPot() + core.ethToBuyback(), address(core).balance, "eth pots above balance");
         address t = core.exitToken();
         if (t != address(0)) {
             assertLe(core.xPot() + core.xToBuyback(), _balanceOf(t, address(core)), "exit token pots above balance");
         }
-        uint256 won;
-        uint256 n = handler.everHeldCount();
-        for (uint256 i; i < n; ++i) {
-            HandlerBase.SG memory s = handler.statementGhost(handler.everHeld(i));
-            if (s.status == handler.S_SOLD()) won += s.price;
-        }
-        assertEq(won, handler.gWon(), "the sum of the sold prices differs from the winning bids settled");
-        assertEq(
-            house.pendingRefunds(address(core)), handler.gWon() - handler.gCollected(), "the house owes the wrong sum"
-        );
-        _collectAndCheck();
-    }
-
-    /// collects the sales as a stranger and checks the books, then undoes it
-    function _collectAndCheck() internal {
-        uint256 snap = vm.snapshotState();
-        uint256 owed = house.pendingRefunds(address(core));
-        uint256 bal = address(core).balance;
-        uint256 pot = core.ethPot();
-        uint256 tb = core.ethToBuyback();
-        uint256 toBuyback = owed * core.settings().saleToBuybackBps / 10_000;
-        vm.prank(address(0xC011));
-        core.collectSales();
-        assertEq(house.pendingRefunds(address(core)), 0, "the house owes the core after collectSales");
-        assertEq(address(core).balance, bal + owed, "collectSales did not bring exactly what the house owed");
-        assertEq(core.ethToBuyback(), tb + toBuyback, "collected buyback share");
-        assertEq(core.ethPot(), pot + owed - toBuyback, "collected pot share");
-        assertLe(core.ethPot() + core.ethToBuyback(), address(core).balance, "eth pots above balance after collecting");
-        vm.revertToState(snap);
     }
 
     /// 6. the stored price state and the read follow the model around every action and every warp, against the
@@ -343,11 +232,10 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// 12. docs/FLOW.md 9.2: a statement leaves the core only by a house auction, by `sellTo` or by an exit. every ever
-    /// held statement has one of the ghost statuses Listed, Held, Sold, SoldTo or Exited,
-    /// a sale at auction or through `sellTo` paid at least the hard floor (cost * saleFloorBps of the settings in force
-    /// when the statement was listed or repriced), and the handler's departure and sale path violation codes (codes 7, 8
-    /// and 30: price, booking by saleToBuybackBps, holder and record of each sale) stay at zero.
+    /// 12. docs/FLOW.md 9.2: a statement leaves the core only by `sellTo` or by an exit. every ever held statement has
+    /// one of the ghost statuses Held, Sold or Exited, a sale through `sellTo` paid at least the hard floor (cost *
+    /// saleFloorBps of the settings in force at the sale), and the handler's departure and sale path violation codes
+    /// (codes 7, 8 and 26: price, booking by saleToBuybackBps, holder and record of each sale) stay at zero.
     function invariant_12_aStatementOnlyLeavesByASaleOrAnExit() public view {
         _zero(g11);
         uint256 n = handler.everHeldCount();
@@ -355,12 +243,10 @@ abstract contract InvariantsBase is InvariantFixture {
             HandlerBase.SG memory s = handler.statementGhost(handler.everHeld(i));
             uint8 st = s.status;
             assertTrue(
-                st == handler.S_LISTED() || st == handler.S_HELD() || st == handler.S_SOLD() || st == handler.S_SOLD_TO()
-                    || st == handler.S_EXITED(),
+                st == handler.S_HELD() || st == handler.S_SOLD() || st == handler.S_EXITED(),
                 "a statement left the core by a path that is not allowed"
             );
-            if (st == handler.S_SOLD_TO()) assertGe(s.price, s.floorAtSet, "a sale at once below the hard floor");
-            if (st == handler.S_SOLD()) assertGe(s.price, s.floorAtSet, "an auction below the hard floor");
+            if (st == handler.S_SOLD()) assertGe(s.price, s.floor, "a sale below the hard floor");
         }
     }
 
@@ -390,8 +276,8 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 14. no exit module ever called the core, or the selling controller, successfully from inside an exit. the hostile
-    /// module's callouts are compose, composeExit, skim, collectSales, buyback, buybackExit, exitStatement,
-    /// repriceStatement, adopt, sellForEth, buyListing, sellTo and the selling controller's sell. every one of them
+    /// module's callouts are compose, composeExit, skim, buyback, buybackExit, exitStatement, adopt, sellForEth,
+    /// buyListing, sellTo and the selling controller's sell. every one of them
     /// reverts while the core is inside `exitStatement`, whatever the module does with its gas
     function invariant_14_noCallFromInsideAnExitEverWorked() public view {
         uint256 n = handler.moduleEverCount();
@@ -600,7 +486,7 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(rate, price < pot ? price : pot, "the read is not the price state lowered to the pot");
     }
 
-    /// 20. `CoreLens` reports what the Core, the fee router and the house report. every scalar of `snapshot` equals the
+    /// 20. `CoreLens` reports what the Core and the fee router report. every scalar of `snapshot` equals the
     /// direct read, the flush fields equal the split of the router balance (and an actual flush when the engine is the
     /// core), and `statementsPage` over the held list equals the Core's held list and records, whole and in a window.
     /// the page readiness and the asking prices come from the controller, which a hostile one answers differently from
@@ -620,7 +506,6 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(s.xToBuyback, core.xToBuyback(), "lens xToBuyback");
         uint256 booked = core.ethPot() + core.ethToBuyback();
         assertEq(s.unbookedEth, address(core).balance > booked ? address(core).balance - booked : 0, "lens unbookedEth");
-        assertEq(s.salesOwed, house.pendingRefunds(address(core)), "lens salesOwed");
         assertEq(s.routerBalance, address(feeRouter).balance, "lens routerBalance");
         assertEq(s.routerOwed, feeRouter.totalOwed(), "lens routerOwed");
         assertEq(s.controller, core.controller(), "lens controller");
@@ -689,33 +574,16 @@ abstract contract InvariantsBase is InvariantFixture {
         ready = ok && out.length >= 82 * 32 && abi.decode(out, (uint256)) == 1;
     }
 
-    /// a statement view against the Core's record, status and (outside a hostile controller) the asking price
+    /// a statement view against the Core's record and (outside a hostile controller) the asking price
     function _lensStatement(ICoreLens.StatementView memory v, uint256 sid, address ctl, bool hostile) internal view {
         assertEq(v.id, sid, "lens statement id");
-        (, Lane lane, uint256 cost, uint64 listedAt) = core.statementInfo(sid);
+        (, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
         assertEq(uint256(v.lane), uint256(lane), "lens statement lane");
         assertEq(v.cost, cost, "lens statement cost");
-        uint8 status;
-        uint256 auctionId;
-        uint256 bid;
-        uint64 endTime;
-        bool listed;
-        try core.statementStatus(sid) returns (ICore.StatementStatus st, uint256 aid, uint256, uint256 b, uint64 end) {
-            status = uint8(st);
-            auctionId = aid;
-            bid = b;
-            endTime = end;
-            listed = st == ICore.StatementStatus.Listed || st == ICore.StatementStatus.Bid
-                || st == ICore.StatementStatus.Ended;
-        } catch {}
-        assertEq(v.status, status, "lens statement status");
-        assertEq(v.auctionId, auctionId, "lens statement auction");
-        assertEq(v.topBid, bid, "lens statement top bid");
-        assertEq(v.endTime, endTime, "lens statement end time");
-        assertEq(v.listed, listed, "lens statement listed");
+        assertEq(v.composedAt, composedAt, "lens statement compose time");
         if (hostile) return;
         uint256 asking;
-        if (lane == Lane.Eth && listedAt != 0 && status == uint8(ICore.StatementStatus.Listed)) {
+        if (lane == Lane.Eth) {
             (bool ok, bytes memory out) = ctl.staticcall{gas: 200_000}(abi.encodeCall(IControllerV1.priceOf, (sid)));
             if (ok && out.length == 32) asking = abi.decode(out, (uint256));
         }
@@ -761,8 +629,6 @@ abstract contract InvariantsBase is InvariantFixture {
             );
         }
         console.log("eth pot", core.ethPot(), "rate", core.ethRate());
-        console.log("won on the house", handler.gWon(), "collected", handler.gCollected());
-        console.log("owed by the house", house.pendingRefunds(address(core)));
         console.log("owner calls checked", handler.gOwnerCalls(), "refused as expected", handler.gOwnerRefused());
         console.log("statements ever held", handler.everHeldCount(), "held now", core.heldStatements().length);
         console.log("coin supply", coin.totalSupply(), "burned by buybacks", handler.gBurnedByBuyback());
@@ -782,13 +648,14 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// dispatches one handler action by number. the arguments mean what the action needs.
     function _act(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) internal virtual {
-        a = a % 43;
-        if (a == 42) return handler.adopt(w, x, y);
-        if (a == 41) return handler.migrate(w, x);
-        if (a == 40) return handler.rescueNft(w, x);
-        if (a == 38) return handler.flush(w, x);
-        if (a == 39) return handler.repoint(w, x);
-        a = a % 30;
+        a = a % 36;
+        if (a == 35) return handler.adopt(w, x, y);
+        if (a == 34) return handler.migrate(w, x);
+        if (a == 33) return handler.rescueNft(w, x);
+        if (a == 31) return handler.flush(w, x);
+        if (a == 32) return handler.repoint(w, x);
+        if (a == 25) return handler.buy(w, x, y, z);
+        a = a % 25;
         if (a == 0) handler.buyCoin(w, x, y);
         else if (a == 1) handler.sellCoin(w, x, y);
         else if (a == 2) handler.sellForEth(w, x, y, z);
@@ -797,27 +664,22 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 5) handler.warp(w);
         else if (a == 6) handler.roll(w);
         else if (a == 7) handler.compose(w, x);
-        else if (a == 8) handler.bid(w, x, y, z);
-        else if (a == 9) handler.buyback(w);
-        else if (a == 10) handler.skim(w);
-        else if (a == 11) handler.donate(w, x);
-        else if (a == 12) handler.controllerSeed(w);
-        else if (a == 13) handler.controllerSwap(w);
-        else if (a == 14) handler.probeController(w);
-        else if (a == 15) handler.sellForExit(w, x, y);
-        else if (a == 16) handler.composeExit(w, x);
-        else if (a == 17) handler.exitStatement(w, x);
-        else if (a == 18) handler.buybackExit(w, x);
-        else if (a == 19) handler.moduleMode(w);
-        else if (a == 20) handler.walletMove(w, x);
-        else if (a == 21) handler.endAuction(w, x);
-        else if (a == 22) handler.collectSales(w);
-        else if (a == 23) handler.syncStatement(w, x);
-        else if (a == 24) handler.repriceStatement(w, x);
-        else if (a == 25) handler.setSettings(w, x);
-        else if (a == 26) handler.setSettingsInvalid(w, x);
-        else if (a == 27) handler.setRate(w, x);
-        else if (a == 28) handler.ownerMisc(w, x);
+        else if (a == 8) handler.buyback(w);
+        else if (a == 9) handler.skim(w);
+        else if (a == 10) handler.donate(w, x);
+        else if (a == 11) handler.controllerSeed(w);
+        else if (a == 12) handler.controllerSwap(w);
+        else if (a == 13) handler.probeController(w);
+        else if (a == 14) handler.sellForExit(w, x, y);
+        else if (a == 15) handler.composeExit(w, x);
+        else if (a == 16) handler.exitStatement(w, x);
+        else if (a == 17) handler.buybackExit(w, x);
+        else if (a == 18) handler.moduleMode(w);
+        else if (a == 19) handler.walletMove(w, x);
+        else if (a == 20) handler.setSettings(w, x);
+        else if (a == 21) handler.setSettingsInvalid(w, x);
+        else if (a == 22) handler.setRate(w, x);
+        else if (a == 23) handler.ownerMisc(w, x);
         else handler.replaceModule(w, x);
     }
 
@@ -866,12 +728,12 @@ abstract contract InvariantsBase is InvariantFixture {
     function test_aRetiredCoreRefusesTheSixDoorActions() public virtual {
         for (uint256 i; i < 300 && !handler.gRetired(); ++i) {
             uint256 s = uint256(keccak256(abi.encode("retire", i)));
-            _act(41, s, s >> 8, 0, 0);
+            _act(34, s, s >> 8, 0, 0);
         }
         assertTrue(handler.gRetired(), "the handler never migrated");
         assertTrue(core.retired(), "the core is not retired");
         // sellForEth, listingStrategy, listingHostile, compose, adopt, then sellForExit and composeExit in phase 2
-        uint8[7] memory doors = [2, 3, 4, 7, 42, 15, 16];
+        uint8[7] memory doors = [2, 3, 4, 7, 35, 14, 15];
         for (uint256 k; k < doors.length; ++k) {
             if (!_available(doors[k])) continue;
             assertTrue(_try(doors[k], 40), string.concat("no refusal checked: ", handler.actionName(doors[k])));
@@ -890,17 +752,17 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     function _available(uint256 a) internal view returns (bool) {
-        if (a >= 38) return true;
-        if (a >= 30) return _saleSuite();
-        if ((a >= 15 && a <= 19 || a == 29) && !handler.phase2()) return false;
-        if (a == 13 && !handler.canSwapController()) return false;
+        if (a >= 31 || a == 25) return true;
+        if (a >= 26) return _saleSuite();
+        if ((a >= 14 && a <= 18 || a == 24) && !handler.phase2()) return false;
+        if (a == 12 && !handler.canSwapController()) return false;
         return true;
     }
 
     function _smoke() internal virtual {
         // the owner may swap to the fuzz controller at once in the swap suites. switch to it, so the page answers
         if (handler.canSwapController()) {
-            assertTrue(_try(13, 20), "no controller swap executed");
+            assertTrue(_try(12, 20), "no controller swap executed");
             // the swap action may have ended on the plain controller: put the fuzz controller in force by hand
             if (core.controller() != address(fuzz)) {
                 vm.prank(handler.owner());
@@ -910,15 +772,15 @@ abstract contract InvariantsBase is InvariantFixture {
         // plain actions
         _try(0, 20);
         _try(1, 20);
-        assertTrue(_try(20, 20), "no taxed side pool buy");
+        assertTrue(_try(19, 20), "no taxed side pool buy");
         _try(5, 5);
         _try(6, 5);
+        _try(9, 5);
         _try(10, 5);
         _try(11, 5);
-        _try(12, 5);
-        _try(14, 5);
+        _try(13, 5);
         // credits in, so the eth pile reaches 80
-        assertTrue(_try(42, 40), "no adopt");
+        assertTrue(_try(35, 40), "no adopt");
         _try(2, 40);
         _try(2, 40);
         _try(2, 40);
@@ -943,17 +805,12 @@ abstract contract InvariantsBase is InvariantFixture {
         // so the success count is geometric with p = 0.0296. 400 tries fail with probability (1 - p)^400 = 6e-6
         // (5e-5 at the lower end of the measured p).
         assertTrue(_try(7, 400), "compose never succeeded");
-        // the statement sales on the house: bids around the reserve, a settlement, the collection, the lazy sync
-        // of a sold statement and the reprice of a listing that has no bid
-        assertTrue(_try(8, 80), "no bid on a listed statement");
-        assertTrue(_try(21, 80), "no auction settled");
-        assertTrue(_try(22, 20), "no collectSales");
-        assertTrue(_try(23, 80), "no sync of a sold statement");
-        assertTrue(_try(24, 80), "no reprice of a listing");
+        // the statement sale through the controller
+        assertTrue(_try(25, 80), "no sale of a held statement");
         if (handler.phase2()) _phase2Smoke();
         // buyback needs buybackDelay blocks after the last one
         vm.roll(block.number + 200);
-        assertTrue(_try(9, 60), "no buyback");
+        assertTrue(_try(8, 60), "no buyback");
         _ownerSmoke();
         _routerSmoke();
     }
@@ -962,13 +819,13 @@ abstract contract InvariantsBase is InvariantFixture {
     /// target (the core, an engine that takes eth, one that refuses it, bad addresses), flushes against each, swaps keep
     /// working with an engine that refuses, and the engine goes back to the core
     function _routerSmoke() internal {
-        assertTrue(_try(38, 20), "no flush");
+        assertTrue(_try(31, 20), "no flush");
         for (uint256 m; m < 6; ++m) {
             handler.repoint(m + 6 * 7, m);
             handler.flush(m, 0);
             handler.buyCoin(m, 1, 0);
         }
-        assertTrue(_try(39, 20), "no repoint");
+        assertTrue(_try(32, 20), "no repoint");
         handler.repoint(0, 0);
         assertEq(feeRouter.engine(), address(core), "the engine is back at the core");
         handler.flush(1, 0);
@@ -976,40 +833,40 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// the owner's calls: valid settings across the bounds, refused ones, the rate and the other doors
     function _ownerSmoke() internal {
-        assertTrue(_try(25, 20), "no settings change");
-        assertTrue(_try(26, 20), "no refused settings");
-        assertTrue(_try(27, 20), "no setRate");
-        assertTrue(_try(28, 20), "no owner door");
-        assertTrue(_try(40, 60), "no rescue of an NFT");
-        assertTrue(_try(41, 120), "no migration");
+        assertTrue(_try(20, 20), "no settings change");
+        assertTrue(_try(21, 20), "no refused settings");
+        assertTrue(_try(22, 20), "no setRate");
+        assertTrue(_try(23, 20), "no owner door");
+        assertTrue(_try(33, 60), "no rescue of an NFT");
+        assertTrue(_try(34, 120), "no migration");
         // the books keep working under the new settings, whatever they are
         for (uint256 i; i < 6; ++i) {
-            _try(25, 5);
+            _try(20, 5);
             _try(5, 5);
             _try(2, 5);
         }
     }
 
     function _phase2Smoke() internal {
-        // an eth lane statement exits only after it was listed without a bid for exitAfter (105 hours at launch)
+        // an eth lane statement exits only after exitAfter since its compose (105 hours at launch)
         vm.warp(block.timestamp + 106 hours);
-        assertTrue(_try(17, 80), "no exit");
-        assertTrue(_try(15, 60), "no exit token sale");
-        _try(15, 60);
-        assertTrue(_try(16, 80), "no exit lane compose");
-        assertTrue(_try(19, 20), "no module mode");
+        assertTrue(_try(16, 80), "no exit");
+        assertTrue(_try(14, 60), "no exit token sale");
+        _try(14, 60);
+        assertTrue(_try(15, 80), "no exit lane compose");
+        assertTrue(_try(18, 20), "no module mode");
         // the owner replaces the exit module: a new one, the same one with a new unit, and the refusals
-        assertTrue(_try(29, 40), "no module replacement");
+        assertTrue(_try(24, 40), "no module replacement");
         for (uint256 i; i < 8; ++i) {
             handler.replaceModule(i * 7919 + 1, i);
         }
         // the auction opens at the whole coin supply for one slice and halves every 6 hours. wait until a taker can
         // afford a fill with a little coin bought in the real pool
-        for (uint256 i; i < 120 && handler.successes(18) == 0; ++i) {
-            _try(18, 4);
+        for (uint256 i; i < 120 && handler.successes(17) == 0; ++i) {
+            _try(17, 4);
             vm.warp(block.timestamp + 1 hours);
         }
-        assertGt(handler.successes(18), 0, "no exit auction fill");
+        assertGt(handler.successes(17), 0, "no exit auction fill");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1088,11 +945,11 @@ contract InvariantsPhase1Window is InvariantsBase {
         _try(1, 20);
         _try(2, 40);
         _try(2, 40);
+        _try(9, 5);
         _try(10, 5);
-        _try(11, 5);
         assertTrue(_try(7, 80), "no compose inside the window");
-        // statements listed inside the window take bids. an auction cannot finish inside it, so no sale yet
-        assertTrue(_try(8, 80), "no bid inside the window");
+        // statements composed inside the window are for sale at once
+        assertTrue(_try(25, 80), "no sale inside the window");
         for (uint256 i; i < 5; ++i) {
             _try(0, 10);
         }

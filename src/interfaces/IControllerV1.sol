@@ -7,7 +7,6 @@ import {Lane} from "./Interfaces.sol";
 interface IControllerV1 {
 
     error BadSetting(bytes32 field);
-    error NotBuyOnly();
     error NotForSale();
     error OnlyOwner();
     error Reentrant();
@@ -17,7 +16,6 @@ interface IControllerV1 {
     event AnchorHalfLifeSet(uint32 anchorHalfLife);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
-    event BuyOnlySet(bool buyOnly);
     event FastDecayBpsPerHourSet(uint16 fastDecayBpsPerHour);
     event FloorBpsSet(uint16 floorBps);
     event KneeBpsSet(uint32 kneeBps);
@@ -30,7 +28,6 @@ interface IControllerV1 {
     function anchorHalfLife() external view returns (uint32);
     function anchorTime() external view returns (uint40);
     function buy(uint256 sid) external payable;
-    function buyOnly() external view returns (bool);
     function fastDecayBpsPerHour() external view returns (uint16);
     function floorBps() external view returns (uint16);
     function kneeBps() external view returns (uint32);
@@ -39,7 +36,6 @@ interface IControllerV1 {
     function priceOf(uint256 sid) external view returns (uint256 price);
     function setAnchorBps(uint32 v) external;
     function setAnchorHalfLife(uint32 v) external;
-    function setBuyOnly(bool on) external;
     function setFastDecayBpsPerHour(uint16 v) external;
     function setFloorBps(uint16 v) external;
     function setKneeBps(uint32 v) external;
@@ -49,6 +45,5 @@ interface IControllerV1 {
     function slowDecayBpsPerHour() external view returns (uint16);
     function startBps() external view returns (uint256);
     function startCapBps() external view returns (uint32);
-    function statementPrice(uint256, uint256 cost, uint64 listedAt) external view returns (uint256);
     function storedAnchorBps() external view returns (uint32);
 }

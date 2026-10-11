@@ -72,7 +72,6 @@ contract ConfigTest is Fixture {
         assertEq(f.salt, keccak256("CC"));
         assertEq(f.rateStart, 8.9e15);
         assertEq(f.supply, 1_000_000_000e18);
-        assertEq(f.stack.auctionFactory, Mainnet.AUCTION_FACTORY);
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()), "settings block is the launch values");
         // the launch values of docs/FLOW.md 10.1 and 10.6
         assertEq(f.baselineSkimBps, 690);
@@ -233,7 +232,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "");
         _print("preflight");
         // every launch input has a row: the count is part of the report
-        assertEq(rows.length, 121, "preflight rows: docs/DEPLOY.md step 4");
+        assertEq(rows.length, 116, "preflight rows: docs/DEPLOY.md step 4");
     }
 
     /// each pinned code hash has a row. appending one byte of code to a contract fails exactly its row
@@ -362,9 +361,8 @@ contract ConfigTest is Fixture {
         _pre(c, _user("poor deployer"));
         (list, n) = _failed();
         assertGe(n, 8, list);
-        // the predicted addresses are already taken: rewind the fixture owner to the nonce it deployed at. the core of the
-        // fixture owns a house, so the two house rows fail with the three address rows. the coin is taken by the same
-        // salt of the same config, and the launch cannot be simulated
+        // the predicted addresses are already taken: rewind the fixture owner to the nonce it deployed at. the coin is
+        // taken by the same salt of the same config, and the launch cannot be simulated
         (bool found, uint256 coreNonce) = _coreNonce(address(core), owner);
         assertTrue(found);
         vm.resetNonce(owner);
@@ -373,7 +371,7 @@ contract ConfigTest is Fixture {
         _pre(lc, owner);
         assertEq(
             _failedNames(),
-            "factory: deployTokenAsOwner accepts the config (simulated), predicted router is empty, predicted controller is empty, predicted core is empty, predicted coin is empty, auction factory: no house yet for the predicted core, auction factory: the house address of the core is free"
+            "factory: deployTokenAsOwner accepts the config (simulated), predicted router is empty, predicted controller is empty, predicted core is empty, predicted coin is empty"
         );
     }
 
@@ -451,14 +449,10 @@ contract ConfigTest is Fixture {
         assertEq(lensAt, address(lens), "the lens sits at the CREATE2 address of the Core");
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "", "the lens of the deploy passes");
-        // a lens that points at another router, house or Core fails its row
+        // a lens that points at another router or Core fails its row
         vm.mockCall(lensAt, abi.encodeWithSignature("ROUTER()"), abi.encode(address(0x1234)));
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "lens: router is the Core fee source");
-        vm.clearMockedCalls();
-        vm.mockCall(lensAt, abi.encodeWithSignature("HOUSE()"), abi.encode(address(0x1234)));
-        postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "lens: house is the Core house");
         vm.clearMockedCalls();
         vm.mockCall(lensAt, abi.encodeWithSignature("CORE()"), abi.encode(address(0x1234)));
         postflightAs(lc, address(core), owner);
@@ -644,18 +638,12 @@ contract ConfigTest is Fixture {
         postflightAs(c, address(core), owner);
         assertEq(_failedNames(), "core: escrow, code: stack addresses, factory: deploymentInfo names the coin, hook, locker, mev module, escrow and pool of the config, coin: allowlist holds the locker, the escrow and the config entries, coin: the locker and the escrow are pinned");
 
-        // the auction factory of the config is not the one the core was built with
-        c = lc;
-        c.stack.auctionFactory = Mainnet.PERMIT2;
-        postflightAs(c, address(core), owner);
-        assertEq(_failedNames(), "core: auction factory, house: factory houseOf(core)");
-
         postflightAs(lc, address(0xBEEF), owner);
         assertEq(_failedNames(), "code: core");
     }
 
-    /// the two json files collapsed into one: the settings block is inside the hash, and so is the auction factory
-    function test_hashCoversSettingsAndAuctionFactory() public view {
+    /// the two json files collapsed into one: the settings block is inside the hash, and so is the stack
+    function test_hashCoversSettingsAndStack() public view {
         bytes32 h = configHash(lc);
         for (uint256 i; i < SettingsFields.N; ++i) {
             LaunchConfig memory c = lc;
@@ -664,8 +652,8 @@ contract ConfigTest is Fixture {
             assertTrue(configHash(c) != h, "a settings field is outside the hash");
         }
         LaunchConfig memory a = lc;
-        a.stack.auctionFactory = address(0xA11CE);
-        assertTrue(configHash(a) != h, "the auction factory is outside the hash");
+        a.stack.hook = address(0xA11CE);
+        assertTrue(configHash(a) != h, "the stack is outside the hash");
         a = lc;
         a.image = string.concat(lc.image, "x");
         assertTrue(configHash(a) != h, "the image is outside the hash");
@@ -678,29 +666,29 @@ contract ConfigTest is Fixture {
 
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[27] memory lo = SettingsFields.lo();
-        uint256[27] memory hi = SettingsFields.hi();
-        bytes32[27] memory names = SettingsFields.names();
+        uint256[26] memory lo = SettingsFields.lo();
+        uint256[26] memory hi = SettingsFields.hi();
+        bytes32[26] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // above the top, and the top itself (the two bound by another field start from a free partner)
-            if (i == 17) s.xRateCap = 10_000;
+            if (i == 16) s.xRateCap = 10_000;
             SettingsFields.set(s, i, hi[i]);
             assertEq(SettingsBounds.firstViolation(s), bytes32(0), "the top edge is inside");
             s = Mainnet.defaultSettings();
             SettingsFields.set(s, i, hi[i] + 1);
             assertEq(SettingsBounds.firstViolation(s), names[i], "above the top");
             // below the bottom, for the fields that have one
-            if (lo[i] == 0 && i != 17) continue;
+            if (lo[i] == 0 && i != 16) continue;
             s = Mainnet.defaultSettings();
-            if (i == 17) {
-                SettingsFields.set(s, 16, s.xRateFloor - 1);
+            if (i == 16) {
+                SettingsFields.set(s, 15, s.xRateFloor - 1);
             } else {
                 SettingsFields.set(s, i, lo[i] - 1);
             }
             bytes32 got = SettingsBounds.firstViolation(s);
             // the cap below the floor names the floor, as the Core does
-            assertEq(got, i == 17 ? bytes32("xRateFloor") : names[i], "below the bottom");
+            assertEq(got, i == 16 ? bytes32("xRateFloor") : names[i], "below the bottom");
         }
     }
 
@@ -849,24 +837,4 @@ contract ConfigTest is Fixture {
         preflight(c, who);
         c.rateStart = start;
     }
-
-    /// the auction factory rows of the preflight: the live factory is clean, a house for the core fails it
-    function test_preflightAuctionFactoryRows() public {
-        address d2 = _funded();
-        _pre(lc, d2);
-        assertEq(_failedNames(), "");
-        // a house already exists for the predicted core
-        address coreAt = vm.computeCreateAddress(d2, vm.getNonce(d2) + 2);
-        vm.prank(coreAt);
-        IAuctionFactoryProbe(Mainnet.AUCTION_FACTORY).createAuctionHouse();
-        _pre(lc, d2);
-        assertEq(
-            _failedNames(),
-            "auction factory: no house yet for the predicted core, auction factory: the house address of the core is free"
-        );
-    }
-}
-
-interface IAuctionFactoryProbe {
-    function createAuctionHouse() external returns (address);
 }

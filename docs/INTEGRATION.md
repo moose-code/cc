@@ -12,13 +12,11 @@ units. a rate is wei per credit. every credit has the same price, the rate. a `L
 | Statements | 0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b | constant `Mainnet.STATEMENTS` |
 | CreditStrategy | 0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6 | allowed target of `buyListing` at launch |
 | Seaport 1.6 | 0x0000000000000068F116a894984e2DB1123eB395 | allowed target of `buyListing` at launch |
-| pnd auction factory | 0x77aB853543286C9Cdd7dd6c01222A7cC4Ac93d63 | creates the house of the Core |
 | pool manager | 0x000000000004444c5dc75cB358380D2e3dE08A90 | uniswap v4, holds the coin pool |
 | Core | the `core` line of the `Deploy` output | custody and every rule |
 | coin | `core.COIN()` | launched through the artcoins v2 factory |
 | controller | `core.controller()` | ControllerV1 at launch. the owner can replace it until `lockController` |
 | fee router | `core.FEE_SOURCE()` | the bounty recipient of the pool |
-| house | `core.HOUSE()` | the auction house of the Core, where statements are listed |
 | lens | the `lens` line of the `Deploy` output, or the CREATE2 address derived from the Core | `CoreLens`. `lens.CORE()` names the Core it reads |
 | exitModule, exitToken | `core.exitModule()`, `core.exitToken()` | zero until the owner sets them |
 
@@ -87,30 +85,18 @@ what the call does:
 2. `NotReady` when the controller reports no page. `BadFormat` for a format above 7.
 3. the 80 credits leave the pile (`NotInPile`, `NotHeld`) and go to `Statements.compose`. `BadStatement` when the result is not the next statement id held by the Core with 80 credits.
 4. the statement is booked with the sum of the cost bases of its 80 credits. holders of the coin and people in the project compose, and the owner composes when nobody does.
-5. event `Composed(sid, lane, format, cost, caller)`. an eth lane statement is listed on the house in the same call (`StatementListed(sid, auctionId, reserve)`).
+5. event `Composed(sid, lane, format, cost, caller)`. the statement stays in the Core with its compose time (`statementInfo(sid)`).
 6. the caller payment, last. `min(counted gas, 13,700,000) * min(block.basefee, callerMaxBaseFee) + callerFee`, from `ethPot`, at most `ethPot`. counted gas is the gas measured from the first line of the body, which includes the fee pull, plus 60,000 for the transaction base cost and the work after the measured part. `callerFee` and `callerMaxBaseFee` are 0 at launch, so the payment is 0 and no eth moves. the owner turns it on with `setSettings`. the payment goes to `msg.sender`, so a contract caller needs a `receive()` that accepts eth. `exitStatement` pays its caller by the same rule and the same two settings, with a gas bound of 1,500,000 and 50,000 of overhead. the transfer is the last action of the door and the Core is locked against re entry while it runs.
 
-send at least 12,000,000 gas: the live Statements contract needs about 8.7 million for 80 credits, and the gas the transaction needs is the gas before the refund of the cleared credit records, 10.9 million, or 11.4 million with a loaded fee router of four gas burning payees (section 13).
+send at least 12,000,000 gas: the live Statements contract needs about 8.7 million for 80 credits, and the gas the transaction needs is the gas before the refund of the cleared credit records, 10.6 million, or 11.1 million with a loaded fee router of four gas burning payees (section 13).
 
-## 6. statements: the buy mode and buying through the house
+## 6. statements: buying
 
-an eth lane statement is listed on `core.HOUSE()` at once. `lens.snapshot().statements` lists every held statement with its status, auction id, top bid, end time and `askingPrice`. the asking price of a statement of cost `c` at `age` seconds since listing is `c * price / 10,000`, with `price` in bps of cost falling at a fixed rate and changing every second: `start` less `fastDecayBpsPerHour` (100) per hour while above `kneeBps` (10,000), then `kneeBps` less `slowDecayBpsPerHour` (25) per hour from the second the knee is reached, never below `floorBps` (7,500). a `start` at or below `kneeBps` falls at the slow rate from listing. at the launch anchor the price is 15,000 at listing, 10,000 at hour 50, 9,000 at hour 90 and 7,500 from hour 150. `start` is `controller.startBps()`, which is `min(anchorBps * markupBps / 10,000, startCapBps)`, 15,000 at the launch anchor of 10,000. `anchorBps` is the running level of sale prices in bps of cost. a `buy` whose sale price in bps of cost is above the anchor sets it to the mean of the anchor now and the sale price, at most `startCapBps` (100,000). a `buy` at or below the anchor leaves it unchanged. the part of the anchor above 10,000 halves every `anchorHalfLife` (604,800 seconds, 7 days at launch), continuously, so the anchor falls with time and `controller.anchorBps()` returns the value now. the price is computed from the age, the anchor now and the current settings at every call, so the price of an open listing rises when another statement sells above the anchor, falls as the anchor decays, and changes at once when the owner changes `markupBps`, `startCapBps`, `anchorHalfLife`, either rate, `kneeBps` or `floorBps`. the reserve and the `sellTo` price are at least `saleFloorBps` (7,500) of the cost. `controller.priceOf(sid)` returns the asking price now in either mode.
+a statement stays in the Core after compose and sells only through `ControllerV1.buy`. `lens.snapshot().statements` lists every held statement with its lane, cost, compose time and `askingPrice`. the asking price of a statement of cost `c` at `age` seconds since its compose is `c * price / 10,000`, with `price` in bps of cost falling at a fixed rate and changing every second: `start` less `fastDecayBpsPerHour` (100) per hour while above `kneeBps` (10,000), then `kneeBps` less `slowDecayBpsPerHour` (25) per hour from the second the knee is reached, never below `floorBps` (7,500). a `start` at or below `kneeBps` falls at the slow rate from compose. at the launch anchor the price is 15,000 at compose, 10,000 at hour 50, 9,000 at hour 90 and 7,500 from hour 150. `start` is `controller.startBps()`, which is `min(anchorBps * markupBps / 10,000, startCapBps)`, 15,000 at the launch anchor of 10,000. `anchorBps` is the running level of sale prices in bps of cost. a `buy` whose sale price in bps of cost is above the anchor sets it to the mean of the anchor now and the sale price, at most `startCapBps` (100,000). a `buy` at or below the anchor leaves it unchanged. the part of the anchor above 10,000 halves every `anchorHalfLife` (604,800 seconds, 7 days at launch), continuously, so the anchor falls with time and `controller.anchorBps()` returns the value now. the price is computed from the age, the anchor now and the current settings at every call, so the price of a held statement rises when another statement sells above the anchor, falls as the anchor decays, and changes at once when the owner changes `markupBps`, `startCapBps`, `anchorHalfLife`, either rate, `kneeBps`, `floorBps` or `saleFloorBps`. `sellTo` takes at least `saleFloorBps` (7,500) of the cost, and `controller.priceOf(sid)` returns the asking price now, never below that floor.
 
-the controller is in one of two modes (`controller.buyOnly()`). launch is buy mode.
-
-buy mode (`buyOnly` true):
-
-1. `controller.priceOf(sid)` returns the price in wei. `NotForSale` for a statement that is not held, is on the exit lane or has no listing time. the price falls with time and rises when the anchor rises, so a price read in an earlier block can be too low by the time the transaction lands. an indexer reads the anchor now from `controller.anchorBps()`. `storedAnchorBps()` and `anchorTime()` are the anchor at its last change.
-2. `controller.buy{value: v}(sid)` with `v` equal to the quote from `priceOf`. a buy earlier in the same block can raise the price, and the call then reverts `Underpaid`. the controller records the sale at the asking price and refunds any excess of `v` to the caller last. the controller calls `core.sellTo(sid, buyer)`, which cancels the listing (`HasBid` while a bid is live on the house), sends the statement to the buyer and books the payment as sale proceeds.
-3. events `StatementSoldTo(sid, buyer, price)` on the Core, `AnchorMoved(sid, saleBps, anchorBps)` and `Bought(sid, buyer, price)` on the controller. `buy` reverts `NotBuyOnly` in auction mode. read `controller.anchorBps()` and `controller.startBps()` for the level the next listing starts from. `AnchorMoved` is emitted only by a buy above the anchor.
-
-auction mode (`buyOnly` false, an owner setting; a house sale does not move the anchor):
-
-1. read the asking price and the auction id from the lens.
-2. optional: `core.repriceStatement(sid)` sets the reserve of a listing without a bid to the asking price now. anyone may call it, and the first bidder calls it before bidding.
-3. `house.createBid{value: amount}(auctionId)`. the first bid must reach the reserve (`BidBelowReserve`) and each later bid must exceed the top bid by 500 bps (`BidBelowMinimum`). the auction runs `auctionDuration` (86,400 seconds at launch) from the first bid. the duration is the one the listing was created with: a later `setSettings` reaches new listings only, and `repriceStatement` sets the reserve of an old listing and leaves its duration.
-4. after the end time anyone calls `house.endAuction(auctionId)` with at least 2,000,000 gas (the house needs 580,000 for its delivery). the statement goes to the winner and the proceeds are credited to the Core on the house.
-5. `core.collectSales()` books the proceeds (`saleToBuybackBps` to the coin buyback pot, the rest to `ethPot`) and `core.syncStatement(sid)` deletes the record of the sold statement. both are permissionless and `buyback()` collects first.
+1. `controller.priceOf(sid)` returns the price in wei. `NotForSale` for a statement that is not held or is on the exit lane. the price falls with time and rises when the anchor rises, so a price read in an earlier block can be too low by the time the transaction lands. an indexer reads the anchor now from `controller.anchorBps()`. `storedAnchorBps()` and `anchorTime()` are the anchor at its last change.
+2. `controller.buy{value: v}(sid)` with `v` at least the quote from `priceOf`. a buy earlier in the same block can raise the price, and the call then reverts `Underpaid`. the controller records the sale at the asking price and refunds any excess of `v` to the caller last. the controller calls `core.sellTo(sid, buyer)`, which sends the statement to the buyer and books the payment at once: `saleToBuybackBps` to the coin buyback pot, the rest to `ethPot`.
+3. events `StatementSoldTo(sid, buyer, price, toBuyback)` on the Core, `AnchorMoved(sid, saleBps, anchorBps)` and `Bought(sid, buyer, price)` on the controller. read `controller.anchorBps()` and `controller.startBps()` for the level the next statement starts from. `AnchorMoved` is emitted only by a buy above the anchor.
 
 ## 7. the fee pull and flush()
 
@@ -120,7 +106,7 @@ the pool sends fee eth to the fee router. the router holds it until `flush()`:
 * while the split is on (`splitOn`, from `splitStart`), each payee receives `amount * ppm / 1_000_000` with 100,000 gas. a share that fails is recorded in `owed` and paid by `claim(payee)`.
 * the rest goes to the engine, the Core, whose `receive()` books it: `feeToBuybackBps` to the coin buyback pot, the rest to `ethPot`. `FlushFailed` when the engine refuses it, and the fees stay in the router. `NoEngine` while no engine is set. an empty balance returns early.
 
-the Core pulls the fees itself. `sellForEth` (both forms), `buyListing`, `compose`, `composeExit` and `adopt` call `flush()` first. the gas of the flush is part of the gas counted for the caller payment of `compose` and `composeExit` (section 5). `CoreLib.pullFees` uses at most 1,000,000 gas and ignores a failing router. `adopt` pulls as well, before it reads the price. `sellForExitToken`, `exitStatement`, `collectSales`, `sellTo`, `skim` and `buyback` read no eth price and book on their own schedule. `lens.snapshot()` reports what a flush would send now: `flushToCore` and `flushToPayees`.
+the Core pulls the fees itself. `sellForEth` (both forms), `buyListing`, `compose`, `composeExit` and `adopt` call `flush()` first. the gas of the flush is part of the gas counted for the caller payment of `compose` and `composeExit` (section 5). `CoreLib.pullFees` uses at most 1,000,000 gas and ignores a failing router. `adopt` pulls as well, before it reads the price. `sellForExitToken`, `exitStatement`, `sellTo`, `skim` and `buyback` read no eth price and book on their own schedule. `lens.snapshot()` reports what a flush would send now: `flushToCore` and `flushToPayees`.
 
 ## 8. adopt
 
@@ -143,13 +129,13 @@ a successor Core (section 9) receives credits without records and adopts them th
 
 | call | what it does | reverts |
 |---|---|---|
-| `setSuccessor(address)` | names the contract that `migrate` sends to. zero or an address with code other than the Core, the exit module, the exit token, the house, the fee source, the coin, Credits or Statements | `OnlyOwner`, `Locked("successor")`, `NoCode`, `BadSuccessor` |
+| `setSuccessor(address)` | names the contract that `migrate` sends to. zero or an address with code other than the Core, the exit module, the exit token, the fee source, the coin, Credits or Statements | `OnlyOwner`, `Locked("successor")`, `NoCode`, `BadSuccessor` |
 | `lockSuccessor()` | closes `setSuccessor` permanently. allowed while the successor is zero, which disables `migrate` | `OnlyOwner` |
-| `migrate(maxCredits)` | the first call sets `retired` (view `retired()`, event `EngineRetired`). moves in batches: `ethPot` by one plain call, `xPot` by `transfer`, up to `maxCredits` from the head of each pile by `transferFrom`. `ethToBuyback` and `xToBuyback` stay in the Core. an exit token `transfer` that reverts or returns false leaves `xPot` in the Core, logs `ExitTokenMigrationSkipped(successor, amount)` and the other legs go on (`Migrated` shows 0 exit tokens). the held statements, their listings and their records stay in the Core | `OnlyOwner`, `NoSuccessor`, `Reentrancy`, `CallFailed` |
+| `migrate(maxCredits)` | the first call sets `retired` (view `retired()`, event `EngineRetired`). moves in batches: `ethPot` by one plain call, `xPot` by `transfer`, up to `maxCredits` from the head of each pile by `transferFrom`. `ethToBuyback` and `xToBuyback` stay in the Core. an exit token `transfer` that reverts or returns false leaves `xPot` in the Core, logs `ExitTokenMigrationSkipped(successor, amount)` and the other legs go on (`Migrated` shows 0 exit tokens). the held statements and their records stay in the Core | `OnlyOwner`, `NoSuccessor`, `Reentrancy`, `CallFailed` |
 | `rescueCoin(to, amount)` | sends coin the Core holds to `to`. coin an allowlisted holder sent to the Core is the only coin it holds | `OnlyOwner`, `ZeroAddress` |
 | `rescueNft(token, id, to)` | sends an ERC721 the Core holds to `to`: a credit only while it is outside both piles, a statement only while the Core has no record of it, any other ERC721 freely | `OnlyOwner`, `ZeroAddress`, `InPile`, `Held`, `NotHolder` |
 
-what a successor has to implement: a `receive()` that accepts a plain eth call, and an exit token and Credits that it accepts by `transfer` and `transferFrom`, so the `onERC721Received` of the successor is skipped. `migrate` transfers eth, exit token and credits. the old Core is retired by the first `migrate`; an integrator that sells credits to a Core reads `core.retired()` first. `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`, `compose` and `composeExit` revert `Retired`, and `retired()` reads true. it keeps its statements and sells them out itself, so call `collectSales` and `syncStatement` there and call `migrate` again to move the proceeds, until it moves nothing. it keeps `exitStatement`, `repriceStatement`, `skim`, `buyback` and `buybackExit`, and books the fees that still arrive. `buybackExit` there sells the `xToBuyback` that stayed at the migration and whatever later exits add. `exitStatement` there repays its caller from what is left in `ethPot`, capped at the pot, so the repayment is often 0 after a `migrate`. point the fee router at the successor with `router.setEngine` before the first `migrate`: the retired Core calls no `flush`. `maxCredits` applies to each pile, and 0 moves the pots only. the successor builds its pile with `adopt`.
+what a successor has to implement: a `receive()` that accepts a plain eth call, and an exit token and Credits that it accepts by `transfer` and `transferFrom`, so the `onERC721Received` of the successor is skipped. `migrate` transfers eth, exit token and credits. the old Core is retired by the first `migrate`; an integrator that sells credits to a Core reads `core.retired()` first. `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`, `compose` and `composeExit` revert `Retired`, and `retired()` reads true. it keeps its statements and sells them out itself, so `buy` and `exitStatement` still work there, and call `migrate` again to move the proceeds, until it moves nothing. it keeps `sellTo`, `skim`, `buyback` and `buybackExit`, and books the fees that still arrive. `buybackExit` there sells the `xToBuyback` that stayed at the migration and whatever later exits add. `exitStatement` there repays its caller from what is left in `ethPot`, capped at the pot, so the repayment is often 0 after a `migrate`. point the fee router at the successor with `router.setEngine` before the first `migrate`: the retired Core calls no `flush`. `maxCredits` applies to each pile, and 0 moves the pots only. the successor builds its pile with `adopt`.
 
 ## 10. the lens
 
@@ -160,7 +146,7 @@ what a successor has to implement: a `receive()` that accepts a plain eth call, 
 | `snapshot()` | the `Snapshot` struct below, with every held statement. the struct has no `retired` field: read `core.retired()` |
 | `statementsPage(start, n)` | `StatementView[]` for the held statements `start` to `start + n`, in the order of `core.heldStatements()` |
 | `controller()` | the controller of the Core now |
-| `CORE()`, `ROUTER()`, `HOUSE()`, `CREDITS()`, `STATEMENTS()` | the pointers |
+| `CORE()`, `ROUTER()`, `CREDITS()`, `STATEMENTS()` | the pointers |
 
 | `Snapshot` field | meaning |
 |---|---|
@@ -170,7 +156,6 @@ what a successor has to implement: a `receive()` that accepts a plain eth call, 
 | `ethPageReady`, `exitPageReady` | the controller answers `nextPage` for the lane with a ready flag and the full answer size (82 words) that `compose` requires |
 | `ethPot`, `ethToBuyback`, `xPot`, `xToBuyback` | the four pots. `ethToBuyback` leaves only through a `buyback()` whose swap completes: a pool or hook failure reverts the call and the pot stays |
 | `unbookedEth` | Core balance above the booked pots. `skim()` books it |
-| `salesOwed` | sale proceeds waiting in the house. `collectSales()` books them |
 | `routerBalance`, `routerOwed` | eth in the router, and the part owed to payees |
 | `flushToCore`, `flushToPayees` | what `flush()` sends now |
 | `controller`, `successor` | the addresses now |
@@ -180,12 +165,10 @@ what a successor has to implement: a `receive()` that accepts a plain eth call, 
 | `StatementView` field | meaning |
 |---|---|
 | `id`, `lane`, `cost` | statement id, lane and cost basis |
-| `listed` | the auction is live on the house: no bid, a bid running, or ended and not settled |
-| `status` | `Core.StatementStatus`: 0 None, 1 Held, 2 Listed, 3 Bid, 4 Ended, 5 Sold, 6 Returned |
-| `auctionId`, `topBid`, `endTime` | from the house. `topBid` and `endTime` are 0 before the first bid |
-| `askingPrice` | the controller's `priceOf(id)` in wei while a buyer can buy at it: an eth lane statement with status Listed (live auction, no bid). 0 in every other status, for an exit lane statement and for a controller that does not answer. `status`, `topBid` and `endTime` describe the other states |
+| `composedAt` | the compose time. an eth lane statement may exit after `composedAt + exitAfter` |
+| `askingPrice` | the controller's `priceOf(id)` in wei for an eth lane statement. 0 for an exit lane statement and for a controller that does not answer |
 
-`snapshot()` costs about 130,000 gas plus 47,000 per held statement. a list of several hundred statements exceeds the gas that a public node allows for one `eth_call`, so a keeper reads them with `statementsPage` in pages of a few hundred.
+`snapshot()` costs about 120,000 gas plus 25,000 per held statement. a list of several hundred statements exceeds the gas that a public node allows for one `eth_call`, so a keeper reads them with `statementsPage` in pages of a few hundred.
 
 ## 11. events
 
@@ -214,14 +197,10 @@ the Core (`src/interfaces/ICore.sol`):
 | `OwnershipTransferStarted` | `address indexed owner, address indexed pending` | the owner named `pending` |
 | `OwnershipTransferred` | `address indexed from, address indexed to` | `acceptOwnership` completed (also at construction, from the zero address) |
 | `RateSet` | `uint256 rate` | the owner restated the eth rate (wei per credit) |
-| `SalesCollected` | `uint256 amount, uint256 toBuyback` | `collectSales` (or `buyback`) pulled `amount` from the house: `toBuyback` to the coin buyback pot, the rest to `ethPot` |
 | `SettingsSet` | `Settings settings` | the owner set every setting |
 | `Skimmed` | `uint256 eth, uint256 exitToken` | `skim` booked eth and exitToken the Core held above the recorded pots |
 | `StatementExited` | `uint256 indexed sid, Lane lane, uint256 received` | `exitStatement` handed the statement on (phase 2). `received` is the exitToken that came back |
-| `StatementListed` | `uint256 indexed sid, uint256 indexed auctionId, uint256 reserve` | an eth lane statement was listed on the Core house (at compose or after a relist by `syncStatement`). `reserve` is the opening reserve |
-| `StatementRepriced` | `uint256 indexed sid, uint256 reserve` | `repriceStatement` set the reserve of a listing without a bid |
-| `StatementSold` | `uint256 indexed sid, uint256 indexed auctionId, address indexed holder` | `syncStatement` found the auction gone and the statement with `holder`: the sale cleared and the record is deleted |
-| `StatementSoldTo` | `uint256 indexed sid, address indexed buyer, uint256 price` | `sellTo` (the controller `buy` path): the statement went to `buyer` for `price`, booked as sale proceeds |
+| `StatementSoldTo` | `uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback` | `sellTo` (the controller `buy` path): the statement went to `buyer` for `price`, booked at once: `toBuyback` to the coin buyback pot, the rest to `ethPot` |
 | `SuccessorLocked` | (empty) | `lockSuccessor` |
 | `SuccessorSet` | `address successor` | `setSuccessor` |
 | `TargetAdded` | `address target` | `addTarget` (Seaport and CreditStrategy at construction) |
@@ -233,7 +212,6 @@ the controller (`src/interfaces/IControllerV1.sol`):
 | event | fields | emitted when |
 |---|---|---|
 | `Bought` | `uint256 indexed sid, address indexed buyer, uint256 price` | `buy`: `buyer` paid `price` and received statement `sid` |
-| `BuyOnlySet` | `bool buyOnly` | the owner switched the sale mode |
 | `AnchorMoved` | `uint256 indexed sid, uint256 saleBps, uint32 anchorBps` | `buy`: the sale price in bps of cost and the new anchor |
 | `AnchorBpsSet` | `uint32 anchorBps` | the owner set the anchor, or a lower `startCapBps` lowered it |
 | `AnchorHalfLifeSet` | `uint32 anchorHalfLife` | sale setting changed |
@@ -260,8 +238,6 @@ the fee router (`src/interfaces/IFeeRouter.sol`):
 | `SplitStartSet` | `uint64 at` | the owner set the split start time |
 | `SplitStarted` | `uint256 at` | the first flush at or after the split start turned the split on |
 
-the house (`src/interfaces/AuctionHouse.sol`) emits its own auction events; the interface file lists them.
-
 ## 12. reverts
 
 the Core. an error named here is declared in `ICore`, and the ones raised inside `CoreLib` carry the same selectors.
@@ -270,12 +246,9 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 |---|---|---|
 | `AboveCeiling()` | `buyListing` | `value` is above `ethRate()` |
 | `AlreadyOwned()` | `buyListing` | the Core already owns the credit |
-| `AuctionLive()` | `syncStatement` | the auction is still live on the house |
-| `BadAuction()` | statement reads | the house did not answer, or an auction is in a state the call does not accept |
 | `BadCost()` | `buyListing` | the eth balance did not fall, or fell by more than `value` |
 | `BadFormat()` | `compose` | the controller returned a format above 7 |
 | `BadModule()` | `setExitModule` | the module is rejected |
-| `BadPrice()` | `compose`, `repriceStatement` | the controller did not answer `statementPrice` with one word |
 | `BadRate()` | `setRate`, constructor | the rate is outside its bounds |
 | `BadSender()` | `onERC721Received` | an ERC721 other than Credits or Statements was safe transferred to the Core |
 | `BadSetting(bytes32 field)` | `setSettings` | the setting `field` is outside its bounds |
@@ -284,11 +257,10 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `BadSuccessor(address who)` | `setSuccessor` | the address is the Core or a contract the Core works with (`who`) |
 | `BadSwap()` | `buyback` | the pool swap result is out of bounds |
 | `BelowFloor()` | `sellTo` | `msg.value` is below the hard floor `cost * saleFloorBps / 10_000` |
-| `CallFailed()` | `buyListing`, `collectSales`, `migrate` | the target call reverted, the house did not pay what it owed, or the successor refused the eth |
+| `CallFailed()` | `buyListing`, `migrate` | the target call reverted, or the successor refused the eth |
 | `Empty()` | `sellForEth`, `sellForExitToken`, `adopt` | an empty id list |
 | `ExitTokenChanged()` | `setExitModule` | a replacement module names another exitToken |
 | `ForbiddenTarget()` | `addTarget` | the target is a contract the Core refuses to call |
-| `HasBid()` | `repriceStatement`, `sellTo`, `exitStatement` | the auction has a bid, so it cannot be cancelled or repriced |
 | `Held()` | `rescueNft` | the statement is on the books of the Core |
 | `InPile()` | `adopt`, `rescueNft` | the credit is in a pile |
 | `Locked(bytes32 what)` | owner setters | the door `what` (`controller`, `exitModule`, `targets`, `successor`) is locked |
@@ -301,7 +273,6 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `NotHeld()` | `compose`, `exitStatement` | the Core does not hold the credit of the page, or has no record of the statement |
 | `NotHolder()` | `adopt`, `rescueNft` | the Core is not the holder of the token |
 | `NotInPile(uint256 id)` | `compose` | the controller named a credit that is not in the lane pile (`id`) |
-| `NotListed()` | `syncStatement`, `repriceStatement`, `sellTo` | the record does not say listed, or the house has no auction for it |
 | `NotOwner()` | `sellForEth`, `sellForExitToken` | the caller does not own the credit |
 | `NotReady()` | `compose`, `composeExit` | the controller reports no page, or the read fails |
 | `NothingBought()` | `buyback` | the swap bought no coin |
@@ -315,7 +286,8 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `SliceTooSmall()` | `buyback` | the slice is under twice the largest payment to the caller: 600,000 gas at the capped base fee plus `keeperFee` |
 | `Slippage()` | `sellForEth`, `sellForExitToken`, `buybackExit` | total payout below `minOut`, or the coin cost above `maxCoinIn` |
 | `TargetNotAllowed()` | `buyListing` | the target is not on the allowlist, or it is a forbidden contract |
-| `TooEarly()` | `exitStatement` | the listing is younger than `exitAfter` |
+| `NotForSale()` | `sellTo` | the Core does not hold the statement, or it is on the exit lane |
+| `TooEarly()` | `exitStatement` | the eth lane statement was composed less than `exitAfter` ago |
 | `TooSoon()` | `buyback` | fewer than `buybackDelay` blocks since the last buyback |
 | `Underpaid()` | `exitStatement` | the module returned less than the credit count times the unit |
 | `ZeroAddress()` | constructor, `rescueCoin`, `rescueNft`, `setController` | a zero address argument |
@@ -327,8 +299,7 @@ the controller:
 | error | raised by | meaning |
 |---|---|---|
 | `BadSetting(bytes32 field)` | sale setters, constructor | the setting `field` is outside its bounds |
-| `NotBuyOnly()` | `buy` | the controller is in auction mode |
-| `NotForSale()` | `buy`, `priceOf` | the statement is not held, is on the exit lane, or has no listing time |
+| `NotForSale()` | `buy`, `priceOf` | the statement is not held, or is on the exit lane |
 | `OnlyOwner()` | sale setters | the caller is not `core.owner()` |
 | `Reentrant()` | `buy` | `buy` was entered again |
 | `Underpaid()` | `buy` | `msg.value` is below `priceOf(sid)` |
@@ -356,37 +327,30 @@ measured on the pinned fork with foundry 1.8.1. `tx` includes the intrinsic 21,0
 
 | call | gas | pinned by |
 |---|---|---|
-| `sellForEth`, 1 credit, cold | tx 430,845 | `test/GasCap.t.sol` `test_gas_sellForEth_batch_launchSettings` |
+| `sellForEth`, 1 credit, cold | tx 429,897 | `test/GasCap.t.sol` `test_gas_sellForEth_batch_launchSettings` |
 | `sellForEth`, each further credit | 142,066 | the same test (fit over 1 to 40 credits) |
-| `sellForEth`, largest batch under the cap | 115 credits, tx 16,660,796 | the same test |
+| `sellForEth`, largest batch under the cap | 115 credits, tx 16,659,842 | the same test |
 | `sellForEth`, 1 credit, router empty, call gas | 344,241 | `test/PullFees.t.sol` `test_gasOfThePullOnOneCredit` |
 | `sellForEth`, 1 credit, router holds 1 eth, call gas | 404,992 | the same test |
 | `flush`, most expensive case (four payees that burn all their gas) | 639,876 | `test/PullFees.t.sol` `test_worstCaseFlushGasAndTheDoorCompletes` |
 | `flush` with the split on, two payees | tx 139,228 | `test/GasCap.t.sol` `test_gas_routerFlush` |
 | `flush` that turns the split on | tx 104,997 | `test/GasCap.t.sol` `test_gas_routerFlush_firstAtSplitStart` |
-| `buyListing` through the CreditStrategy | tx 434,100 | `test/GasCap.t.sol` `test_gas_buyListing_creditStrategy` |
-| `buyListing` through Seaport, basic order | tx 446,330 | `test_gas_buyListing_seaport_basic` |
-| `buyListing` through Seaport, basic order with a fee recipient | tx 483,660 | `test_gas_buyListing_seaport_basicWithFee` |
-| `buyListing` through Seaport, advanced order | tx 460,219 | `test_gas_buyListing_seaport_advanced` |
-| `compose()`, eth lane, 80 credits, first compose | tx 8,708,257 after the refund, 10.88 million before it (refund 2.18 million), 11.4 million before it with a loaded router of four gas burning payees | `test/GasCap.t.sol` `test_gas_compose_ethLane_firstCold`, `test/CallerPay.t.sol` |
-| `compose()`, second compose | tx 8,657,605 | `test_gas_compose_ethLane_secondWarmAndCold` |
-| `composeExit()`, 80 credits | tx 8,466,249 | `test_gas_composeExit_andExitStatement_exitLane` |
-| `ControllerV1.nextPage`, full eth pile, cold | 238,269 (the Core allows 500,000) | `test_gas_readCaps_nextPageAndStatementPrice` |
-| `repriceStatement` | tx 102,331 | `test_gas_repriceStatement` |
-| house `createBid`, first bid | tx 102,760 | `test_gas_house_createBid_andEndAuction` |
-| house `createBid`, outbid | tx 89,520 | the same test |
-| house `endAuction` | tx 151,342 | the same test |
-| `syncStatement`, sold statement | tx 92,479 | `test_gas_syncStatement_soldPath` |
-| `syncStatement`, relist after an unwound sale | tx 357,948 | `test_gas_syncStatement_relistPath` |
-| `controller.buy` (the `sellTo` path) | tx 241,988 | `test_gas_sellTo_throughControllerBuy` |
-| `collectSales` | tx 116,307 | `test_gas_collectSales_andBuyback` |
-| `buyback` with proceeds waiting in the house | tx 270,237 | the same test |
-| `buyback`, nothing to collect | exec 246,216, counted for the refund 266,559 (305,000 with proceeds waiting in the house) | `test/Fees.t.sol` `test_callerIsPaidCountedGasAtTheBaseFeePlusTheFee` |
+| `buyListing` through the CreditStrategy | tx 433,868 | `test/GasCap.t.sol` `test_gas_buyListing_creditStrategy` |
+| `buyListing` through Seaport, basic order | tx 446,086 | `test_gas_buyListing_seaport_basic` |
+| `buyListing` through Seaport, basic order with a fee recipient | tx 483,417 | `test_gas_buyListing_seaport_basicWithFee` |
+| `buyListing` through Seaport, advanced order | tx 459,975 | `test_gas_buyListing_seaport_advanced` |
+| `compose()`, eth lane, 80 credits, first compose | tx 8,484,004 after the refund, 10.60 million before it (refund 2.12 million), 11.1 million before it with a loaded router of four gas burning payees | `test/GasCap.t.sol` `test_gas_compose_ethLane_firstCold`, `test/CallerPay.t.sol` |
+| `compose()`, second compose | tx 8,444,792 | `test_gas_compose_ethLane_secondWarmAndCold` |
+| `composeExit()`, 80 credits | tx 8,467,837 | `test_gas_composeExit_andExitStatement_exitLane` |
+| `ControllerV1.nextPage`, full eth pile, cold | 238,062 (the Core allows 500,000) | `test_gas_readCaps_nextPage` |
+| `controller.buy` (the `sellTo` path) | tx 177,648 | `test_gas_sellTo_throughControllerBuy` |
+| `buyback` after a statement sale | tx 234,500 | `test_gas_buyback_afterAStatementSale` |
+| `buyback` | exec 238,032, counted for the refund 258,586 | `test/Fees.t.sol` `test_callerIsPaidCountedGasAtTheBaseFeePlusTheFee` |
 | `adopt`, 1 credit, router empty | call gas 199,532 | `test/Adopt.t.sol` `test_GAS_adopt` (asserted within 5 percent) |
 | `adopt`, 80 credits, router empty | call gas 7,660,657 (95,758 per credit) | the same test |
 | `migrate`, pots only | call gas 159,226 | `test/Migrate.t.sol` `test_GAS_migrateEightyCreditsPerPile` |
 | `migrate`, 80 credits per pile | call gas 8,022,084 (44,772 per credit) | the same test |
-| `lens.snapshot()` | 130,172 with no statements, 46,679 more per statement | `test/Lens.t.sol` `test_GAS_snapshotPerStatement` |
+| `lens.snapshot()` | 120,041 with no statements, 25,201 more per statement | `test/Lens.t.sol` `test_GAS_snapshotPerStatement` |
 
 ## 14. interface files
 
@@ -394,10 +358,10 @@ generated from the production abi by `script/tools/gen-interfaces.sh`, which `--
 
 | file | contract |
 |---|---|
-| `src/interfaces/ICore.sol` | `Core`: functions, events, errors and the `StatementStatus` enum |
+| `src/interfaces/ICore.sol` | `Core`: functions, events and errors |
 | `src/interfaces/IControllerV1.sol` | `ControllerV1` |
 | `src/interfaces/IFeeRouter.sol` | `FeeRouter` |
 | `src/interfaces/ICoreLens.sol` | `CoreLens` with the `Snapshot` and `StatementView` structs |
 | `src/interfaces/ICoreLib.sol` | `CoreLib`: the pure and view functions of the library and `swapIn`. the Core forwards its owner functions, `sellForExitToken` and `adopt` to the library under the same selectors, so a caller uses `ICore` for them |
 
-hand written shared types and external interfaces: `src/interfaces/Interfaces.sol` (`Lane`, `Settings`, `Stack`, `Sale`, Credits, Statements and the `Mainnet` constants), `src/interfaces/AuctionHouse.sol` (the house and its factory) and `src/interfaces/ArtCoinsV2.sol` (the v2 stack).
+hand written shared types and external interfaces: `src/interfaces/Interfaces.sol` (`Lane`, `Settings`, `Stack`, `Sale`, Credits, Statements and the `Mainnet` constants), and `src/interfaces/ArtCoinsV2.sol` (the v2 stack).

@@ -11,7 +11,6 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {Lane, ICredits, IStatements, Settings, Mainnet} from "../interfaces/Interfaces.sol";
-import {IAuctionHouse} from "../interfaces/AuctionHouse.sol";
 import {Halving} from "./Halving.sol";
 import {SettingsBounds} from "./SettingsBounds.sol";
 import {SettingsStore} from "./SettingsStore.sol";
@@ -76,27 +75,19 @@ library CoreLib {
         bool inPile;
     }
 
-    /// `listed` means the record says the statement sits on the house under `auctionId`. the house is the truth, the
-    /// record is settled lazily by `syncStatement`. an exit lane statement is held and never listed
+    /// a statement the Core holds for sale or exit. `composedAt` is the time of the compose, `slot` the index in
+    /// `heldIds`. the record is deleted when the statement leaves
     struct Statement {
         uint256 cost;
-        uint256 auctionId;
-        uint64 listedAt;
+        uint64 composedAt;
         uint64 slot;
         Lane lane;
         bool held;
-        bool listed;
     }
 
     uint256 internal constant BPS = 10_000;
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
     IStatements internal constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
-    // word positions in the house's auction record
-    uint256 internal constant W_FIRST = 2;
-    uint256 internal constant W_AMOUNT = 3;
-    uint256 internal constant W_RESERVE = 4;
-    uint256 internal constant W_OWNER = 5;
-    uint256 internal constant W_END = 7;
 
     /// the same declarations as the Core, so the library's reverts and logs decode against the Core abi
     error Empty();
@@ -150,7 +141,6 @@ library CoreLib {
         s.tipSavingsBps = ns.tipSavingsBps;
         s.tipCapBps = ns.tipCapBps;
         s.saleFloorBps = ns.saleFloorBps;
-        s.auctionDuration = ns.auctionDuration;
         s.exitAfter = ns.exitAfter;
         s.saleToBuybackBps = ns.saleToBuybackBps;
         s.exitToBuybackBps = ns.exitToBuybackBps;
@@ -185,10 +175,9 @@ library CoreLib {
         s.tipSavingsBps = uint16(a >> 80);
         s.tipCapBps = uint16(a >> 96);
         s.saleFloorBps = uint16(a >> 112);
-        s.auctionDuration = uint32(a >> 128);
-        s.exitAfter = uint32(a >> 160);
-        s.saleToBuybackBps = uint16(a >> 192);
-        s.exitToBuybackBps = uint16(a >> 208);
+        s.exitAfter = uint32(a >> 128);
+        s.saleToBuybackBps = uint16(a >> 160);
+        s.exitToBuybackBps = uint16(a >> 176);
         s.buybackSlice = uint128(b);
         s.buybackDelay = uint16(b >> 128);
         s.keeperFee = uint64(b >> 144);
@@ -361,7 +350,7 @@ library CoreLib {
     }
 
     /// @notice sets the successor to which `migrate` sends the assets. the zero address means no migration. reverts
-    /// after `lockSuccessor`, and for the Core itself, the exit module, the exit token, the house, the fee source, the
+    /// after `lockSuccessor`, and for the Core itself, the exit module, the exit token, the fee source, the
     /// coin, Credits and Statements. the Core forwards its call here untouched
     function setSuccessor(address next) external {
         _onlyOwner();
@@ -371,9 +360,8 @@ library CoreLib {
             if (next.code.length == 0) revert NoCode(next);
             ICoinOf core = ICoinOf(address(this));
             if (
-                next == address(this) || next == c.exitModule || next == c.exitToken || next == core.HOUSE()
-                    || next == core.FEE_SOURCE() || next == core.COIN() || next == address(CREDITS)
-                    || next == address(STATEMENTS)
+                next == address(this) || next == c.exitModule || next == c.exitToken || next == core.FEE_SOURCE()
+                    || next == core.COIN() || next == address(CREDITS) || next == address(STATEMENTS)
             ) revert BadSuccessor(next);
         }
         c.successor = next;
@@ -398,7 +386,7 @@ library CoreLib {
     /// `ExitTokenMigrationSkipped` and the call goes on; a later `migrate` retries. the coin stays.
     /// credits: up to `maxCredits` from the head of each pile, by `transferFrom`, the pile membership cleared (the
     /// cost, lane and arrival time of the record stay). zero moves the pots only.
-    /// the held statements, their listings and their records stay with the Core, which sells them out itself.
+    /// the held statements and their records stay with the Core, which sells or exits them itself.
     /// the rates are checkpointed before a pot is zeroed. a call with nothing left to move logs zeros
     function migrate(uint256 maxCredits) external {
         _onlyOwner();
@@ -480,21 +468,6 @@ library CoreLib {
                 moved += k;
             }
         }
-    }
-
-    /// the twelve words of the house's auction record `id` (`IAuctionHouse.Auction`, static words), all zero when the
-    /// auction is gone. false when the house does not answer with them
-    function auctionWords(address house, uint256 id) internal view returns (bool ok, uint256[12] memory w) {
-        bytes memory out;
-        (ok, out) = house.staticcall(abi.encodeCall(IAuctionHouse.getAuction, (id)));
-        if (!ok || out.length != 384) return (false, w);
-        w = abi.decode(out, (uint256[12]));
-    }
-
-    /// the owner of a statement, or zero when it does not exist
-    function holderOf(uint256 sid) internal view returns (address who) {
-        (bool ok, bytes memory out) = address(STATEMENTS).staticcall(abi.encodeCall(IStatements.ownerOf, (sid)));
-        if (ok && out.length == 32) who = abi.decode(out, (address));
     }
 
     /// the caller of an owner function the Core forwarded here: `msg.sender` is the caller of the Core
@@ -637,6 +610,5 @@ interface IRouterFlush {
 
 interface ICoinOf {
     function COIN() external view returns (address);
-    function HOUSE() external view returns (address);
     function FEE_SOURCE() external view returns (address);
 }

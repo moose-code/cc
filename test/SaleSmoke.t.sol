@@ -6,22 +6,16 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Lane, Settings} from "../src/interfaces/Interfaces.sol";
 
-/// the sale controller and the fee share on the live fork: the asking price and its decay, repricing, buy only mode
-/// through `sellTo`, the hard floor, the pool fee split and the redeem caller payment
+/// the sale controller and the fee share on the live fork: the asking price and its decay, `buy` through
+/// `sellTo`, the hard floor, the pool fee split and the redeem caller payment
 contract SaleSmokeTest is Fixture {
     function _cost(uint256 sid) internal view returns (uint256 cost) {
         (,, cost,) = core.statementInfo(sid);
     }
 
-    function _buyOnly() internal {
-        vm.prank(owner);
-        ctl.setBuyOnly(true);
-    }
-
-    function test_listing_opens_at_the_start_price_of_the_controller() public {
+    function test_statement_opens_at_the_start_price_of_the_controller() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        assertEq(_live(sid).reserve, cost * 15_000 / 10_000, "reserve is 150 percent");
         assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000, "ask is 150 percent");
     }
 
@@ -38,27 +32,8 @@ contract SaleSmokeTest is Fixture {
         assertEq(ctl.priceOf(sid), cost * 7_500 / 10_000, "never below the floor");
     }
 
-    function test_reprice_takes_the_current_ask_as_the_house_reserve() public {
+    function test_buy_sells_at_once_and_refunds_the_excess() public {
         uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        _warp(50 hours);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost, "reserve follows the ask, 100 percent at the knee");
-        _bid(address(0xB1D), sid, cost);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Bid));
-    }
-
-    function test_buy_reverts_in_auction_mode() public {
-        uint256 sid = _composeOnce().sid;
-        vm.deal(address(0xB0B), 10 ether);
-        vm.prank(address(0xB0B));
-        vm.expectRevert(IControllerV1.NotBuyOnly.selector);
-        ctl.buy{value: 10 ether}(sid);
-    }
-
-    function test_buy_only_sells_at_once_and_refunds_the_excess() public {
-        uint256 sid = _composeOnce().sid;
-        _buyOnly();
         _warp(6 hours);
         uint256 price = ctl.priceOf(sid);
         uint256 potBefore = core.ethPot();
@@ -72,24 +47,12 @@ contract SaleSmokeTest is Fixture {
         uint256 toBuyback = price * core.settings().saleToBuybackBps / 10_000;
         assertEq(core.ethToBuyback() - bbBefore, toBuyback, "buyback share booked");
         assertEq(core.ethPot() - potBefore, price - toBuyback, "rest to the pot");
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.None), "record cleared");
+        assertFalse(_isHeld(sid), "record cleared");
         _solvent();
-    }
-
-    function test_buy_with_a_live_bid_reverts_and_the_auction_wins() public {
-        uint256 sid = _composeOnce().sid;
-        _buyOnly();
-        _bid(address(0xB1D), sid, _live(sid).reserve);
-        address buyer = address(0xB0B);
-        vm.deal(buyer, 10 ether);
-        vm.prank(buyer);
-        vm.expectRevert(ICore.HasBid.selector);
-        ctl.buy{value: 10 ether}(sid);
     }
 
     function test_buy_below_the_price_reverts() public {
         uint256 sid = _composeOnce().sid;
-        _buyOnly();
         uint256 price = ctl.priceOf(sid);
         vm.deal(address(0xB0B), price);
         vm.prank(address(0xB0B));
@@ -112,7 +75,6 @@ contract SaleSmokeTest is Fixture {
     function test_the_core_floor_binds_a_lower_controller_price() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        _buyOnly();
         Settings memory s = core.settings();
         s.saleFloorBps = 20_000;
         _setSettings(s);
@@ -120,13 +82,10 @@ contract SaleSmokeTest is Fixture {
         address buyer = address(0xB0B);
         uint256 ask = ctl.priceOf(sid);
         assertEq(ask, cost * 20_000 / 10_000, "the quote is the hard floor");
-        core.repriceStatement(sid);
-        assertGe(_live(sid).reserve, ctl.priceOf(sid), "the reserve is not under the live ask");
-        assertEq(_live(sid).reserve, cost * 100_000 / 10_000, "buy only reserve is the cap, above the floor");
         vm.deal(buyer, 10 ether);
         vm.prank(buyer);
         ctl.buy{value: ask}(sid);
-        assertEq(STATEMENTS.ownerOf(sid), buyer, "sold at the floor, buy only mode is alive");
+        assertEq(STATEMENTS.ownerOf(sid), buyer, "sold at the floor");
     }
 
     function test_pool_fees_split_by_feeToBuybackBps() public {

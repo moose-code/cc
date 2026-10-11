@@ -39,8 +39,8 @@ one `Settings` struct in Core storage, one owner function `setSettings(Settings)
 | reimburseBps | 8_000 | 0 to 15_000 | (superseded by 67: removed) of the metered gas cost of `exitStatement`. the Core meters gross gas and the EIP-3529 refund cap returns up to 20 percent of it to the caller |
 | reimburseCapBps | 500 | 0 to 1_000 | (superseded by 67: removed) of statement cost, for the `exitStatement` reimbursement |
 | saleFloorBps | 7_500 | 1_000 to 40_000 | the hard floor of a statement sale, bps of statement cost. replaces reserveBps (section 9) |
-| auctionDuration | 24 hours | 6 hours to 30 days | runs from the first bid |
-| exitAfter | 105 hours | 1 hour to 365 days | how long an eth lane statement must have been listed without a bid before it may be redeemed in phase 2 |
+| auctionDuration | 24 hours | 6 hours to 30 days | (removed by decision 68) runs from the first bid |
+| exitAfter | 105 hours | 1 hour to 365 days | how long an eth lane statement must have been listed without a bid before it may be redeemed in phase 2 (decision 68: held since its compose) |
 | saleToBuybackBps | 5_000 | 0 to 10_000 | share of sale proceeds to the coin buyback, rest to the pot |
 | exitToBuybackBps | 5_000 | 0 to 10_000 | share of exit token from eth lane exits to the coin buyback |
 | buybackSlice | 1 ether (superseded by 51: 0.5 ether at launch, bound 0.01 to 1 ether) | 0.01 to 2 ether | the most eth one `buyback` spends from the coin buyback pot |
@@ -82,9 +82,11 @@ the skim split (9.5 points to the engine, 0.5 to the creator) was the v1 launch 
 
 ## 4. statement sales on the pnd auction house
 
+(superseded by 68: the auction house, `collectSales`, `syncStatement`, `repriceStatement` and auction mode are removed. a statement stays in the Core after compose and sells only through the controller. read docs/ARCHITECTURE.md section 7. the rest of this section is history.)
+
 note: the reserve rule of this section (`reserveBps`) is superseded by section 9. read section 9.2 for the live rule. there is no queue and no delay anywhere in this file after section 9.
 
-live factory: `SovereignAuctionHouseV2Factory` 0x77aB853543286C9Cdd7dd6c01222A7cC4Ac93d63 (verified; source saved under docs/reference/pnd/). facts read from the source:
+live factory: `SovereignAuctionHouseV2Factory` 0x77aB853543286C9Cdd7dd6c01222A7cC4Ac93d63 (verified; source saved under docs/archive/reference/pnd/). facts read from the source:
 * `createAuctionHouse()` deploys a non upgradeable clone owned forever by msg.sender. one per address. fee is fixed at the factory default (0 now).
 * `createAuction(tokenId, tokenContract, duration, reservePrice, listingExpiry)` is owner only, pulls the token into the house with transferFrom (needs approval), returns an auction id. `getAuctionFor(token, id)` and `getAuction(id)` read it.
 * before the first bid the token owner can `cancelAuction` (token returns) or `setAuctionReservePrice`. after the first bid neither is possible.

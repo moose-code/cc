@@ -280,7 +280,7 @@ contract CallerPayTest is Fixture {
         uint256 pot = core.ethPot();
         rc.compose(0);
         assertEq(rc.hits(), 1, "paid once");
-        assertEq(rc.blocked(), 8, "all eight doors refused it");
+        assertEq(rc.blocked(), 5, "all five doors refused it");
         assertEq(rc.ok(), 0);
         assertEq(core.ethPot(), pot - rc.repaid(), "the pot paid it once");
         assertEq(core.heldStatements().length, 1);

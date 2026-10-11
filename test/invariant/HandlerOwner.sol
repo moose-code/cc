@@ -4,8 +4,8 @@ pragma solidity ^0.8.28;
 import {Vm} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {Lane, Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../../src/interfaces/Interfaces.sol";
-import {HandlerHouse} from "./HandlerHouse.sol";
 import {BidModel} from "../utils/BidModel.sol";
+import {HandlerBase} from "./HandlerBase.sol";
 import {MockExitModule} from "../standins/MockExitModule.sol";
 import {MockExitToken} from "../standins/MockExitToken.sol";
 import {MigrationSink} from "../standins/MigrationSink.sol";
@@ -16,7 +16,7 @@ import {CountingEngine, RefusingEngine} from "../attackers/FlushEngines.sol";
 /// settings, rates and callers that must revert. the bounds are written out again here, independently of the
 /// library under test. after every owner call the settings are what was set, the rate is what it should be, and the
 /// core's eth, pots and exit token did not move: the owner has no path to the assets.
-abstract contract HandlerOwner is HandlerHouse {
+abstract contract HandlerOwner is HandlerBase {
     /// owner calls that went through, and the ones the model expected to revert and did
     uint256 public gOwnerCalls;
     uint256 public gOwnerRefused;
@@ -51,7 +51,6 @@ abstract contract HandlerOwner is HandlerHouse {
         s.tipSavingsBps = uint16(_f(_r(seed, 8), 0, 2_500, c.tipSavingsBps));
         s.tipCapBps = uint16(_f(_r(seed, 9), 0, 500, c.tipCapBps));
         s.saleFloorBps = uint16(_f(_r(seed, 12), 1_000, 40_000, c.saleFloorBps));
-        s.auctionDuration = uint32(_f(_r(seed, 13), 6 hours, 30 days, c.auctionDuration));
         s.exitAfter = uint32(_f(_r(seed, 14), 1 hours, 365 days, c.exitAfter));
         s.saleToBuybackBps = uint16(_f(_r(seed, 15), 0, 10_000, c.saleToBuybackBps));
         s.exitToBuybackBps = uint16(_f(_r(seed, 16), 0, 10_000, c.exitToBuybackBps));
@@ -133,7 +132,6 @@ abstract contract HandlerOwner is HandlerHouse {
             s.climbPerMinBps = 1_000;
             s.ceilBps = 30_000;
             s.idleLoosenBps = 2_000;
-            s.auctionDuration = 6 hours;
             s.xAuctionHalfLife = 10 minutes;
         } else if (k == 17) {
             // the lowest rate cap: it pulls the eth rate down to it at the checkpoint
@@ -164,7 +162,6 @@ abstract contract HandlerOwner is HandlerHouse {
         uint256 xPot;
         uint256 xToBuyback;
         uint256 xBal;
-        uint256 owed;
     }
 
     function _opre() internal view returns (OPre memory p) {
@@ -178,10 +175,9 @@ abstract contract HandlerOwner is HandlerHouse {
         p.xPot = core.xPot();
         p.xToBuyback = core.xToBuyback();
         p.xBal = _xBal(address(core));
-        p.owed = house.pendingRefunds(address(core));
     }
 
-    /// what no owner call may touch: the core's eth, its pots, its exit token and what the house owes it
+    /// what no owner call may touch: the core's eth, its pots and its exit token
     function _opost(OPre memory p, string memory what) internal {
         _eth(p.bal, 0, 0, what);
         _x(p.xBal, 0, 0, what);
@@ -189,14 +185,13 @@ abstract contract HandlerOwner is HandlerHouse {
         if (core.xPot() != p.xPot || core.xToBuyback() != p.xToBuyback) {
             _flag(V_OWNER, "an owner call moved an exit pot");
         }
-        if (house.pendingRefunds(address(core)) != p.owed) _flag(V_OWNER, "an owner call moved what the house owes");
         gOwnerCalls++;
     }
 
     /// the owner changes the settings to random valid ones, effective at once. nothing may revert. afterwards the
     /// settings are what was set, the stored eth rate is exactly what it was (the call checkpoints it, it never jumps),
-    /// the exit rate is only held inside the new band, the exit auction price is continuous, and the pots, balances
-    /// and the house's debt did not move
+    /// the exit rate is only held inside the new band, the exit auction price is continuous, and the pots and balances
+    /// did not move
     /// the owner sets exactly `ns` and the ghost follows. not in the fuzz selector list: the smoke tests use it
     function setSettingsExact(Settings memory ns) external {
         vm.prank(owner);
@@ -267,7 +262,6 @@ abstract contract HandlerOwner is HandlerHouse {
         if (s.tipSavingsBps > 2_500) return "tipSavingsBps";
         if (s.tipCapBps > 500) return "tipCapBps";
         if (s.saleFloorBps < 1_000 || s.saleFloorBps > 40_000) return "saleFloorBps";
-        if (s.auctionDuration < 6 hours || s.auctionDuration > 30 days) return "auctionDuration";
         if (s.exitAfter < 1 hours || s.exitAfter > 365 days) return "exitAfter";
         if (s.saleToBuybackBps > 10_000) return "saleToBuybackBps";
         if (s.exitToBuybackBps > 10_000) return "exitToBuybackBps";
@@ -323,9 +317,9 @@ abstract contract HandlerOwner is HandlerHouse {
         } else if (which == 11) {
             (s.saleFloorBps, name) = (40_001, "saleFloorBps");
         } else if (which == 12) {
-            (s.auctionDuration, name) = (6 hours - 1, "auctionDuration");
+            (s.exitAfter, name) = (0, "exitAfter");
         } else if (which == 13) {
-            (s.auctionDuration, name) = (uint32(30 days) + 1, "auctionDuration");
+            (s.saleFloorBps, name) = (0, "saleFloorBps");
         } else if (which == 14) {
             (s.exitAfter, name) = (uint32(365 days) + 1, "exitAfter");
         } else if (which == 15) {

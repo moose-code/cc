@@ -176,7 +176,7 @@ contract RehearsalTest is Test, ProdDeployer {
             "1 library CoreLib (create2 deployer)",
             "2 controller",
             "3 router",
-            "4 core (house creation inside)",
+            "4 core",
             "5 lens (read only)",
             "6 launch through the factory (deployTokenAsOwner)",
             "7 router setEngine",

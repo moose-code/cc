@@ -63,9 +63,7 @@ contract V2PortMigrationTest is FeeBase {
         vm.prank(keeper);
         core.compose();
         uint256 sid = STATEMENTS.supply();
-        _bid(trader, sid, _live(sid).reserve);
-        _endAuction(sid);
-        _collectSales();
+        _buy(trader, sid);
         _solvent();
         assertEq(core2.ethPot(), toEngine, "the new Core is untouched by the old one's work");
     }

@@ -7,7 +7,6 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {Mainnet} from "../src/interfaces/Interfaces.sol";
-import {IAuctionFactory, IAuctionHouse} from "../src/interfaces/AuctionHouse.sol";
 import {
     IArtCoinsFactoryV2,
     IArtCoinsHookV2,
@@ -131,7 +130,6 @@ contract LaunchTest is Fixture {
         for (uint256 i; i < off.length; ++i) {
             assertFalse(coin.isAllowed(off[i]), "nothing else is on the allowlist");
         }
-        assertFalse(coin.isAllowed(address(core.HOUSE())));
         assertFalse(coin.allowlistLocked());
         assertFalse(coin.recipientsLocked());
     }
@@ -275,18 +273,8 @@ contract LaunchTest is Fixture {
     }
 }
 
-/// the pieces of the launch that the Core itself creates: its auction house and its linked library
+/// the pieces of the launch that the Core itself links: its library
 contract LaunchWiringTest is Fixture {
-    /// the Core created its own pnd auction house in its constructor, through the live factory
-    function test_coreOwnsItsHouse() public view {
-        IAuctionHouse h = IAuctionHouse(core.HOUSE());
-        assertEq(IAuctionFactory(Mainnet.AUCTION_FACTORY).houseOf(address(core)), address(h), "the factory knows it");
-        assertEq(h.owner(), address(core), "the core owns it for good");
-        assertEq(h.protocolFeeBps(), 0, "no fee at the pin");
-        assertTrue(STATEMENTS.isApprovedForAll(address(core), address(h)), "it may take statements");
-        assertEq(core.AUCTION_FACTORY(), Mainnet.AUCTION_FACTORY);
-    }
-
     /// the linked library: its address is in the Core code, its code is the compiled CoreLib, and the settings the
     /// constructor wrote through it read back as the config
     function test_coreIsLinkedToTheCompiledLibrary() public view {

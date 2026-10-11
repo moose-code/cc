@@ -135,14 +135,12 @@ contract OwnerFormerQueueTest is OwnerBase {
             p[i] = page[i];
         }
         sc.setPage(Lane.Eth, true, p, 0);
-        sc.setPriceBps(13_000);
         _setController(address(sc));
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
         uint256 sid = STATEMENTS.supply();
-        (,, uint256 cost,) = core.statementInfo(sid);
-        assertEq(_live(sid).reserve, cost * 13_000 / 10_000, "listed at the new controller price");
+        assertTrue(_isHeld(sid), "composed from the page of the new controller");
     }
 
     // ------------------------------------------------------------------ setExitModule
@@ -248,7 +246,7 @@ contract OwnerFormerQueueTest is OwnerBase {
     }
 
     function test_target_forbiddenAddressesAreRefused() public {
-        address[15] memory bad = [
+        address[13] memory bad = [
             address(CREDITS),
             address(STATEMENTS),
             address(core),
@@ -259,8 +257,6 @@ contract OwnerFormerQueueTest is OwnerBase {
             core.FACTORY(),
             core.LOCKER(),
             core.ESCROW(),
-            address(house),
-            core.AUCTION_FACTORY(),
             Mainnet.PERMIT2,
             Mainnet.POSITION_MANAGER,
             Mainnet.UNIVERSAL_ROUTER
@@ -354,7 +350,6 @@ contract OwnerLocksTest is OwnerBase {
         // every other door is open, and the controller's own sale settings stay adjustable
         _openExcept(D_CONTROLLER, owner);
         vm.startPrank(owner);
-        ctl.setBuyOnly(true);
         ctl.setMarkupBps(12_000);
         ctl.setStartCapBps(150_000);
         ctl.setFastDecayBpsPerHour(200);
@@ -470,14 +465,14 @@ contract OwnerLocksTest is OwnerBase {
         assertFalse(core.controllerLocked() || core.exitModuleLocked() || core.targetsLocked());
     }
 
-    /// a locked controller cannot be swapped, so a controller that goes bad stays: the sale and compose revert, the
-    /// doors that do not depend on pricing stay open
+    /// a locked controller cannot be swapped, so a controller that goes bad stays: compose reverts, the doors that do
+    /// not read the controller stay open
     function test_locks_aLockedControllerStaysEvenWhenItBreaks() public {
         ScriptedController sc = _scripted();
         _setController(address(sc));
         vm.prank(owner);
         core.lockController();
-        sc.setRevertPrice(true);
+        sc.setRevertPage(true);
         vm.prank(owner);
         vm.expectRevert(_lockedErr("controller"));
         core.setController(address(ctl));
@@ -526,8 +521,6 @@ contract OwnerHandoverTest is OwnerBase {
         // the controller's sale settings follow the live owner
         vm.startPrank(owner);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setBuyOnly(true);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setMarkupBps(12_000);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setStartCapBps(150_000);
@@ -545,7 +538,6 @@ contract OwnerHandoverTest is OwnerBase {
         // the new owner has every door
         _openExcept(N_DOORS, heir);
         vm.startPrank(heir);
-        ctl.setBuyOnly(true);
         ctl.setMarkupBps(12_000);
         ctl.setStartCapBps(150_000);
         ctl.setFastDecayBpsPerHour(200);
@@ -557,7 +549,6 @@ contract OwnerHandoverTest is OwnerBase {
         core.lockExitModule();
         core.lockTargets();
         vm.stopPrank();
-        assertTrue(ctl.buyOnly());
         assertTrue(core.controllerLocked() && core.exitModuleLocked() && core.targetsLocked());
     }
 
@@ -675,7 +666,7 @@ contract OwnerHandoverTest is OwnerBase {
         assertEq(CREDITS.balanceOf(address(core)), credits);
         assertEq(core.ethPot(), pot);
         assertEq(heir.balance, heirEth);
-        assertEq(STATEMENTS.ownerOf(sid), address(house));
+        assertEq(STATEMENTS.ownerOf(sid), address(core));
         assertEq(STATEMENTS.balanceOf(heir), 0);
         assertEq(coin.balanceOf(heir), 0);
     }

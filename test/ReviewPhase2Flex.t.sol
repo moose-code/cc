@@ -44,14 +44,11 @@ contract ReenteringModule is IExitModule {
         _try(abi.encodeWithSignature("skim()"));
         _try(abi.encodeWithSignature("composeExit()"));
         _try(abi.encodeWithSignature("compose()"));
-        _try(abi.encodeWithSignature("collectSales()"));
         _try(abi.encodeWithSignature("buyback()"));
         _try(abi.encodeWithSignature("buybackExit(uint256)", type(uint256).max));
         _try(abi.encodeWithSignature("sellForEth(uint256[])", ids));
         _try(abi.encodeWithSignature("sellForExitToken(uint256[])", ids));
         _try(abi.encodeWithSignature("exitStatement(uint256)", 1));
-        _try(abi.encodeWithSignature("syncStatement(uint256)", 1));
-        _try(abi.encodeWithSignature("repriceStatement(uint256)", 1));
         _try(abi.encodeWithSignature("buyListing(uint256,bytes,uint256,address)", 0, "", 1, address(this)));
         _try(abi.encodeWithSignature("setExitModule(address)", address(this)));
         _try(abi.encodeWithSignature("setController(address)", address(this)));
@@ -113,7 +110,6 @@ contract PackHarness {
         s.tipSavingsBps = type(uint16).max;
         s.tipCapBps = type(uint16).max;
         s.saleFloorBps = type(uint16).max;
-        s.auctionDuration = type(uint32).max;
         s.exitAfter = type(uint32).max;
         s.saleToBuybackBps = type(uint16).max;
         s.exitToBuybackBps = type(uint16).max;
@@ -402,7 +398,7 @@ contract ReviewPhase2FlexTest is Fixture {
         _warp(105 hours);
         uint256 before = xt.balanceOf(address(core));
         core.exitStatement(sid);
-        assertGt(rm.attempts(), 14, "tried every door");
+        assertGt(rm.attempts(), 13, "tried every door");
         assertEq(rm.succeeded(), 0, "none got through");
         assertFalse(rm.skimInside(), "the guard refused skim inside the callback");
         assertEq(core.xPot() + core.xToBuyback(), xt.balanceOf(address(core)) - before);
@@ -641,7 +637,6 @@ contract ReviewPhase2FlexTest is Fixture {
         m.tipSavingsBps = type(uint16).max;
         m.tipCapBps = type(uint16).max;
         m.saleFloorBps = type(uint16).max;
-        m.auctionDuration = type(uint32).max;
         m.exitAfter = type(uint32).max;
         m.saleToBuybackBps = type(uint16).max;
         m.exitToBuybackBps = type(uint16).max;
@@ -669,7 +664,7 @@ contract ReviewPhase2FlexTest is Fixture {
         PackHarness h = new PackHarness();
         h.maxAll();
         (uint256 a, uint256 b, uint256 c, uint256 d) = h.words();
-        assertEq(a, (1 << 224) - 1, "word 0: 224 bits, the top 32 are free");
+        assertEq(a, (1 << 192) - 1, "word 0: 192 bits, the top 64 are free");
         assertEq(b, type(uint256).max, "word 1");
         assertEq(c, (1 << 208) - 1, "word 2: 176 bits of neighbors then the two 16 bit shares");
         assertEq(d, (1 << 112) - 1, "word 3: callerFee 64 bits then callerMaxBaseFee 48 bits");

@@ -6,20 +6,18 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, Settings, Mainnet, IStatements, Stack, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
-import {IAuctionHouse, IAuctionFactory} from "../src/interfaces/AuctionHouse.sol";
+import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
+import {Lane, Settings, Mainnet, Stack, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
-import {DeafBidder} from "./attackers/StatementBuyers.sol";
 import {MockExitToken} from "./standins/MockExitToken.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 
-/// @notice the flow rework (docs/FLOW.md) on the real stack: settings, the flat bid, statement sales on the live pnd
-/// auction house, collection of proceeds, sync and reprice, the phase 2 exit by cancel, forbidden targets,
-/// and the hard rule that the owner can never move assets out under any settings
+/// @notice the flow rework (docs/FLOW.md) on the real stack: settings, the flat bid, statement sales through the
+/// controller, the phase 2 exit, and the hard rule that the owner can never move assets out under any settings
 contract FlowTest is Fixture {
     using FixedPointMathLib for uint256;
 
-    uint256 internal constant N = 27;
+    uint256 internal constant N = 26;
 
     // ------------------------------------------------------------------ helpers
 
@@ -40,7 +38,7 @@ contract FlowTest is Fixture {
         return keccak256(abi.encode(s));
     }
 
-    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 27 fields in declaration order
+    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 26 fields in declaration order
     function _get(Settings memory s, uint256 i) internal pure returns (uint256) {
         return SettingsFields.get(s, i);
     }
@@ -49,32 +47,32 @@ contract FlowTest is Fixture {
         SettingsFields.set(s, i, v);
     }
 
-    function _lo() internal pure returns (uint256[27] memory) {
+    function _lo() internal pure returns (uint256[26] memory) {
         return SettingsFields.lo();
     }
 
-    function _hi() internal pure returns (uint256[27] memory) {
+    function _hi() internal pure returns (uint256[26] memory) {
         return SettingsFields.hi();
     }
 
-    function _names() internal pure returns (bytes32[27] memory) {
+    function _names() internal pure returns (bytes32[26] memory) {
         return SettingsFields.names();
     }
 
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
-        uint256[27] memory lo = _lo();
-        uint256[27] memory hi = _hi();
+        uint256[26] memory lo = _lo();
+        uint256[26] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
             uint256 b = hi[i];
-            if (i == 17) b = s.xRateCap;
+            if (i == 16) b = s.xRateCap;
             _set(s, i, a + (b > a ? x % (b - a + 1) : 0));
         }
-        // the slice is at least twice the largest buyback payment (field 12 is `buybackSlice`)
+        // the slice is at least twice the largest buyback payment (field 11 is `buybackSlice`)
         uint256 minSlice = 2 * (BUYBACK_GAS * s.buybackMaxBaseFee + s.keeperFee);
-        if (s.buybackSlice < minSlice) _set(s, 12, minSlice);
+        if (s.buybackSlice < minSlice) _set(s, 11, minSlice);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -90,7 +88,6 @@ contract FlowTest is Fixture {
         assertEq(s.tipSavingsBps, 2_500);
         assertEq(s.tipCapBps, 400);
         assertEq(s.saleFloorBps, 7_500);
-        assertEq(s.auctionDuration, 24 hours);
         assertEq(s.exitAfter, 105 hours);
         assertEq(s.saleToBuybackBps, 5_000);
         assertEq(s.exitToBuybackBps, 5_000);
@@ -121,17 +118,17 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundEdgeIsAccepted() public {
-        uint256[27] memory lo = _lo();
-        uint256[27] memory hi = _hi();
+        uint256[26] memory lo = _lo();
+        uint256[26] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             for (uint256 k; k < 2; ++k) {
                 Settings memory s = Mainnet.defaultSettings();
                 uint256 v = k == 0 ? lo[i] : hi[i];
                 // the two fields bounded by another field
-                if (i == 16 && k == 0) s.xRateFloor = 0;
-                if (i == 17 && k == 1) v = s.xRateCap;
+                if (i == 15 && k == 0) s.xRateFloor = 0;
+                if (i == 16 && k == 1) v = s.xRateCap;
                 // the smallest slice needs the cheapest buyback payment: 2 * (600,000 gas * 1 gwei + 0) is 0.0012 ether
-                if (i == 12 && k == 0) (s.keeperFee, s.buybackMaxBaseFee) = (0, 1 gwei);
+                if (i == 11 && k == 0) (s.keeperFee, s.buybackMaxBaseFee) = (0, 1 gwei);
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -140,9 +137,9 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundViolationReverts() public {
-        uint256[27] memory lo = _lo();
-        uint256[27] memory hi = _hi();
-        bytes32[27] memory names = _names();
+        uint256[26] memory lo = _lo();
+        uint256[26] memory hi = _hi();
+        bytes32[26] memory names = _names();
         for (uint256 i; i < N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // above the top
@@ -152,11 +149,11 @@ contract FlowTest is Fixture {
             vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, names[i]));
             core.setSettings(s);
             // below the bottom (fields whose bottom is zero have none)
-            if (lo[i] == 0 && i != 17) continue;
+            if (lo[i] == 0 && i != 16) continue;
             s = Mainnet.defaultSettings();
-            if (i == 17) {
+            if (i == 16) {
                 // the floor is bounded by the cap, so a cap below the floor is the violation, and it names the floor
-                _set(s, 16, s.xRateFloor - 1);
+                _set(s, 15, s.xRateFloor - 1);
                 names[i] = "xRateFloor";
             } else {
                 _set(s, i, lo[i] - 1);
@@ -404,75 +401,28 @@ contract FlowTest is Fixture {
         assertEq(expect, OPEN_RATE * 9_950 / 10_000);
     }
 
-    // ------------------------------------------------------------------ compose lists on the real house
+    // ------------------------------------------------------------------ compose holds the statement
 
-    function test_house_isOursFromTheConstructor() public view {
-        IAuctionFactory f = IAuctionFactory(Mainnet.AUCTION_FACTORY);
-        assertEq(f.houseOf(address(core)), address(house));
-        assertEq(address(core.HOUSE()), address(house));
-        assertEq(core.AUCTION_FACTORY(), Mainnet.AUCTION_FACTORY);
-        assertEq(house.owner(), address(core), "the core owns its house");
-        assertEq(house.protocolFeeBps(), 0, "no fee");
-        assertTrue(STATEMENTS.isApprovedForAll(address(core), address(house)), "approved for all statements");
-    }
-
-    function test_compose_listsAtNinetyPercentWithTheConfiguredDuration() public {
+    function test_compose_holdsTheStatementAndRecordsTheComposeTime() public {
         Composed memory c = _composeOnce();
-        (bool held, Lane lane, uint256 cost, uint64 listedAt) = core.statementInfo(c.sid);
+        (bool held, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(c.sid);
         assertTrue(held);
         assertEq(uint256(lane), uint256(Lane.Eth));
         assertEq(cost, c.cost, "cost basis is the sum of the credits' cost bases");
-        assertEq(listedAt, c.at);
-        Live memory l = _live(c.sid);
-        assertEq(uint256(l.status), uint256(ICore.StatementStatus.Listed));
-        assertEq(l.reserve, cost * 15_000 / 10_000, "150 percent of cost");
-        IAuctionHouse.Auction memory a = _auctionOf(c.sid);
-        assertEq(a.tokenId, c.sid);
-        assertEq(a.tokenContract, address(STATEMENTS));
-        assertEq(a.tokenOwner, address(core));
-        assertEq(a.fundsRecipient, address(core));
-        assertEq(a.reservePrice, l.reserve);
-        assertEq(a.duration, 24 hours);
-        assertEq(a.firstBidTime, 0);
-        assertEq(a.amount, 0);
-        assertEq(a.bidder, address(0));
-        assertEq(STATEMENTS.ownerOf(c.sid), address(house), "the house holds the statement");
-        (bool exists, uint256 id) = house.getAuctionFor(address(STATEMENTS), c.sid);
-        assertTrue(exists);
-        assertEq(id, l.auctionId);
+        assertEq(composedAt, c.at);
+        assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the core holds the statement");
+        assertEq(ctl.priceOf(c.sid), cost * 15_000 / 10_000, "150 percent of cost");
         assertEq(core.heldStatements().length, 1);
+        assertEq(core.heldStatements()[0], c.sid);
     }
 
-    function test_compose_readsTheSettingsAtListing() public {
-        Settings memory s = core.settings();
-        s.saleFloorBps = 15_000;
-        s.auctionDuration = 3 days;
-        _owner(s);
+    function test_compose_askingPriceReadsTheSettingsLive() public {
         Composed memory c = _composeOnce();
         (,, uint256 cost,) = core.statementInfo(c.sid);
-        Live memory l = _live(c.sid);
-        assertEq(l.reserve, cost * 15_000 / 10_000);
-        assertEq(_auctionOf(c.sid).duration, 3 days);
-    }
-
-    function test_compose_emitsListedAndComposed() public {
-        _fillEthPile(80);
-        vm.fee(composeBasefee);
-        vm.recordLogs();
-        vm.prank(keeper);
-        core.compose();
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        uint256 sid = STATEMENTS.supply();
-        bool listed;
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].emitter == address(core) && logs[i].topics[0] == ICore.StatementListed.selector) {
-                listed = true;
-                assertEq(uint256(logs[i].topics[1]), sid);
-                assertEq(uint256(logs[i].topics[2]), _live(sid).auctionId);
-                assertEq(abi.decode(logs[i].data, (uint256)), _live(sid).reserve);
-            }
-        }
-        assertTrue(listed, "StatementListed");
+        Settings memory s = core.settings();
+        s.saleFloorBps = 20_000;
+        _owner(s);
+        assertEq(ctl.priceOf(c.sid), cost * 20_000 / 10_000, "the hard floor lifts the ask of the held statement");
     }
 
     /// the `Composed` log: `sid` and `caller` are indexed, the data is `(lane, format, cost)` with the cost the sum of the
@@ -506,7 +456,7 @@ contract FlowTest is Fixture {
         assertEq(seen, 1, "one Composed");
     }
 
-    function test_compose_exitLaneIsNeverListed() public {
+    function test_compose_exitLaneStatementIsHeldAndNotForSale() public {
         _enterPhase2();
         uint256[] memory ids = _credits(seller, 80);
         xt.mint(address(core), 5e19);
@@ -516,214 +466,110 @@ contract FlowTest is Fixture {
         vm.fee(composeBasefee);
         core.composeExit();
         uint256 sid = STATEMENTS.supply();
-        Live memory l = _live(sid);
-        assertEq(uint256(l.status), uint256(ICore.StatementStatus.Held));
-        assertEq(l.auctionId, 0);
-        assertEq(STATEMENTS.ownerOf(sid), address(core), "held by the core, not on the house");
+        (bool held, Lane lane,, uint64 composedAt) = core.statementInfo(sid);
+        assertTrue(held);
+        assertEq(uint256(lane), uint256(Lane.Exit));
+        assertEq(composedAt, block.timestamp);
+        assertEq(STATEMENTS.ownerOf(sid), address(core), "held by the core");
+        vm.expectRevert(IControllerV1.NotForSale.selector);
+        ctl.priceOf(sid);
     }
 
-    // ------------------------------------------------------------------ bidding on the house
+    /// the removed auction surface answers with an empty revert (no function, no fallback), where a live function
+    /// would revert with its own error
+    function test_noAuctionSurfaceRemains() public {
+        string[8] memory sigs = [
+            "collectSales()",
+            "syncStatement(uint256)",
+            "repriceStatement(uint256)",
+            "statementStatus(uint256)",
+            "HOUSE()",
+            "AUCTION_FACTORY()",
+            "buyOnly()",
+            "statementPrice(uint256,uint256,uint64)"
+        ];
+        for (uint256 i; i < sigs.length; ++i) {
+            bytes memory data = abi.encodeWithSignature(sigs[i], uint256(1), uint256(1), uint64(1));
+            (bool ok, bytes memory why) = address(core).call(data);
+            assertFalse(ok, sigs[i]);
+            assertEq(why.length, 0, sigs[i]);
+            if (i < 6) continue;
+            (ok, why) = address(ctl).call(data);
+            assertFalse(ok, sigs[i]);
+            assertEq(why.length, 0, sigs[i]);
+        }
+        (bool ok2,) = address(ctl).call(abi.encodeWithSignature("setBuyOnly(bool)", true));
+        assertFalse(ok2);
+    }
+
+    // ------------------------------------------------------------------ selling through the controller
 
     address internal alice = address(0xA11CE);
     address internal bob = address(0xB0B);
 
-    function test_bid_belowReserveFails() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 id = _live(sid).auctionId;
-        uint256 reserve = _live(sid).reserve;
-        vm.deal(alice, 10 ether);
-        vm.startPrank(alice);
-        vm.expectRevert(IAuctionHouse.BidBelowReserve.selector);
-        house.createBid{value: reserve - 1}(id);
-        vm.expectRevert(IAuctionHouse.BidMustBePositive.selector);
-        house.createBid(id);
-        vm.stopPrank();
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Listed), "still no bid");
-    }
-
-    function test_bid_reserveStartsTheTimer() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 reserve = _live(sid).reserve;
-        _bid(alice, sid, reserve);
-        IAuctionHouse.Auction memory a = _auctionOf(sid);
-        assertEq(a.firstBidTime, block.timestamp);
-        assertEq(a.endTime, block.timestamp + 24 hours);
-        assertEq(a.amount, reserve);
-        assertEq(a.bidder, alice);
-        Live memory l = _live(sid);
-        assertEq(uint256(l.status), uint256(ICore.StatementStatus.Bid));
-        assertEq(l.bid, reserve);
-        assertEq(l.endTime, block.timestamp + 24 hours);
-    }
-
-    function test_bid_fivePercentRuleAndRefund() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 first = _live(sid).reserve;
-        _bid(alice, sid, first);
-        uint256 id = _live(sid).auctionId;
-        uint256 minNext = first + first * 500 / 10_000;
-        vm.deal(bob, 10 ether);
-        vm.prank(bob);
-        vm.expectRevert(IAuctionHouse.BidBelowMinimum.selector);
-        house.createBid{value: minNext - 1}(id);
-        uint256 aliceBefore = alice.balance;
-        vm.prank(bob);
-        house.createBid{value: minNext}(id);
-        assertEq(alice.balance - aliceBefore, first, "the outbid bidder is refunded in the same call");
-        assertEq(_auctionOf(sid).bidder, bob);
-        assertEq(_auctionOf(sid).amount, minNext);
-    }
-
-    function test_bid_aBidderThatCannotReceiveIsCredited() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 first = _live(sid).reserve;
-        DeafBidder deaf = new DeafBidder();
-        vm.deal(address(deaf), first);
-        deaf.bid{value: first}(house, _live(sid).auctionId);
-        _bid(bob, sid, first * 106 / 100);
-        assertEq(house.pendingRefunds(address(deaf)), first, "credited on the house, never lost");
-        uint256 before = alice.balance;
-        deaf.pull(house, payable(alice));
-        assertEq(house.pendingRefunds(address(deaf)), 0);
-        assertEq(alice.balance - before, first, "pulled");
-    }
-
-    function test_bid_lateBidExtendsByFifteenMinutes() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 first = _live(sid).reserve;
-        _bid(alice, sid, first);
-        uint64 end = _live(sid).endTime;
-        // a bid an hour before the end does not extend
-        vm.warp(end - 1 hours);
-        _bid(bob, sid, first * 106 / 100);
-        assertEq(_live(sid).endTime, end, "not extended");
-        // a bid ten minutes before the end moves it to fifteen minutes from now
-        vm.warp(end - 10 minutes);
-        _bid(alice, sid, _live(sid).bid * 106 / 100);
-        assertEq(_live(sid).endTime, block.timestamp + 15 minutes, "extended");
-        assertEq(_live(sid).endTime, end + 5 minutes);
-    }
-
-    function test_end_strangerSettlesAndTheWinnerGetsTheStatement() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 price = _live(sid).reserve;
-        _bid(alice, sid, price);
-        uint256 id = _live(sid).auctionId;
-        vm.warp(_live(sid).endTime - 1);
-        vm.expectRevert(IAuctionHouse.AuctionNotEnded.selector);
-        house.endAuction(id);
-        uint256 balance = address(core).balance;
-        uint256 pot = core.ethPot();
-        uint256 buyback = core.ethToBuyback();
-        _endAuction(sid);
-        assertEq(STATEMENTS.ownerOf(sid), alice, "delivered to the winner");
-        assertEq(_owedByHouse(), price, "the proceeds are credited to the core on the house");
-        assertEq(address(core).balance, balance, "nothing arrived at the core yet");
-        assertEq(core.ethPot(), pot, "pot unchanged until collected");
-        assertEq(core.ethToBuyback(), buyback);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Sold), "the record is stale");
-        assertEq(core.heldStatements().length, 1, "still listed as held until synced");
-        assertEq(_auctionOf(sid).tokenOwner, address(0), "the house forgot the auction");
-    }
-
-    // ------------------------------------------------------------------ collecting the proceeds
-
-    function _collectSplit(uint256 bps) internal {
+    function _saleSplit(uint256 bps) internal {
         Settings memory s = core.settings();
+        // forge-lint: disable-next-line(unsafe-typecast)
         s.saleToBuybackBps = uint16(bps);
         _owner(s);
-        (uint256 sid, uint256 price) = _sellStatement(alice);
-        assertEq(STATEMENTS.ownerOf(sid), alice);
+        uint256 sid = _composeOnce().sid;
+        uint256 price = ctl.priceOf(sid);
         uint256 balance = address(core).balance;
         uint256 pot = core.ethPot();
         uint256 buyback = core.ethToBuyback();
         uint256 toBuyback = price * bps / 10_000;
         vm.expectEmit(address(core));
-        emit ICore.SalesCollected(price, toBuyback);
-        assertEq(_collectSales(), price);
-        assertEq(address(core).balance, balance + price, "the eth moved from the house to the core");
+        emit ICore.StatementSoldTo(sid, alice, price, toBuyback);
+        assertEq(_buy(alice, sid), price);
+        assertEq(STATEMENTS.ownerOf(sid), alice);
+        assertEq(address(core).balance, balance + price, "the payment is in the core");
         assertEq(core.ethToBuyback(), buyback + toBuyback, "buyback share");
         assertEq(core.ethPot(), pot + price - toBuyback, "pot share");
-        assertEq(_owedByHouse(), 0);
+        assertEq(core.heldStatements().length, 0);
         _solvent();
     }
 
-    function test_collect_splitHalf() public {
-        _collectSplit(5_000);
+    function test_sale_splitHalf() public {
+        _saleSplit(5_000);
     }
 
-    function test_collect_splitAllToThePot() public {
-        _collectSplit(0);
+    function test_sale_splitAllToThePot() public {
+        _saleSplit(0);
     }
 
-    function test_collect_splitAllToTheBuyback() public {
-        _collectSplit(10_000);
+    function test_sale_splitAllToTheBuyback() public {
+        _saleSplit(10_000);
     }
 
-    function test_collect_splitOddShareRoundsDownToTheBuyback() public {
-        _collectSplit(3_333);
+    function test_sale_splitOddShareRoundsDownToTheBuyback() public {
+        _saleSplit(3_333);
     }
 
     /// forge-config: default.fuzz.runs = 24
-    function testFuzz_collect_anySplitIsExact(uint256 bps) public {
-        _collectSplit(bound(bps, 0, 10_000));
+    function testFuzz_sale_anySplitIsExact(uint256 bps) public {
+        _saleSplit(bound(bps, 0, 10_000));
     }
 
-    function test_collect_usesTheSplitOfTheCollectionTime() public {
+    function test_sale_booksTheSplitOfTheSaleTime() public {
         (, uint256 price) = _sellStatement(alice);
+        uint256 buyback = core.ethToBuyback();
+        assertEq(buyback, price * 5_000 / 10_000);
         Settings memory s = core.settings();
         s.saleToBuybackBps = 2_000;
         _owner(s);
-        uint256 buyback = core.ethToBuyback();
-        _collectSales();
-        assertEq(core.ethToBuyback() - buyback, price * 2_000 / 10_000);
+        assertEq(core.ethToBuyback(), buyback, "a later change books nothing again");
     }
 
-    function test_collect_nothingOwedIsANoOp() public {
-        uint256 pot = core.ethPot();
-        vm.recordLogs();
-        vm.prank(alice);
-        core.collectSales();
-        assertEq(vm.getRecordedLogs().length, 0, "no event");
-        assertEq(core.ethPot(), pot);
-    }
-
-    function test_collect_onlyOnce() public {
-        (, uint256 price) = _sellStatement(alice);
-        _collectSales();
-        uint256 pot = core.ethPot();
-        uint256 buyback = core.ethToBuyback();
-        vm.prank(bob);
-        core.collectSales();
-        assertEq(core.ethPot(), pot);
-        assertEq(core.ethToBuyback(), buyback);
-        assertGt(price, 0);
-    }
-
-    function test_buyback_collectsTheSalesFirst() public {
+    function test_buyback_burnsWhatTheSaleBooked() public {
         _sellStatement(alice);
-        uint256 owed = _owedByHouse();
-        assertGt(owed, 0);
-        assertEq(core.ethToBuyback(), 0, "nothing booked yet, so nothing to buy without the collection");
+        assertGt(core.ethToBuyback(), 0);
         uint256 supply = coin.totalSupply();
         _warp(1);
-        vm.expectEmit(address(core));
-        emit ICore.SalesCollected(owed, owed / 2);
         vm.prank(keeper);
         core.buyback();
-        assertEq(_owedByHouse(), 0, "collected by the buyback");
         assertLt(coin.totalSupply(), supply, "coin was bought and burned");
         assertGt(keeper.balance, 0, "the keeper payment");
         _solvent();
-    }
-
-    function test_buyback_stillRunsWhenNothingIsOwed() public {
-        _sellStatement(alice);
-        _collectSales();
-        _warp(1);
-        vm.prank(keeper);
-        core.buyback();
-        assertLt(core.ethToBuyback(), 0.07 ether);
     }
 
     // ------------------------------------------------------------------ skim never double books sale proceeds
@@ -732,15 +578,12 @@ contract FlowTest is Fixture {
         return core.ethPot() + core.ethToBuyback();
     }
 
-    function test_skim_seesNothingWhileTheProceedsSitInTheHouse() public {
-        (, uint256 price) = _sellStatement(alice);
-        uint256 booked = _booked();
-        vm.expectEmit(address(core));
-        emit ICore.Skimmed(0, 0);
+    function test_skim_findsNothingAfterASale() public {
+        uint256 sid = _composeOnce().sid;
         core.skim();
-        assertEq(_booked(), booked, "the house balance is not the core balance");
-        _collectSales();
-        assertEq(_booked(), booked + price, "booked once by collectSales");
+        uint256 booked = _booked();
+        uint256 price = _buy(alice, sid);
+        assertEq(_booked(), booked + price, "booked once by the sale");
         vm.expectEmit(address(core));
         emit ICore.Skimmed(0, 0);
         core.skim();
@@ -748,209 +591,38 @@ contract FlowTest is Fixture {
         _solvent();
     }
 
-    function test_skim_afterCollectionEvenWithADonationBooksOnlyTheDonation() public {
+    function test_skim_afterASaleWithADonationBooksOnlyTheDonation() public {
         (, uint256 price) = _sellStatement(alice);
         uint256 booked = _booked();
         // an unrelated donation sits unbooked in the core
         vm.deal(address(this), 3 ether);
         (bool ok,) = address(core).call{value: 1 ether}("");
         assertTrue(ok);
-        _collectSales();
-        assertEq(_booked(), booked + price, "collection books the proceeds only, not the donation");
-        assertEq(address(core).balance - _booked(), 1 ether, "the donation is still unbooked");
+        assertEq(address(core).balance - _booked(), 1 ether, "the donation is unbooked");
         vm.expectEmit(address(core));
         emit ICore.Skimmed(1 ether, 0);
         core.skim();
-        assertEq(_booked(), booked + price + 1 ether);
+        assertEq(_booked(), booked + 1 ether);
         core.skim();
-        assertEq(_booked(), booked + price + 1 ether, "nothing left to book");
+        assertEq(_booked(), booked + 1 ether, "nothing left to book");
+        assertGt(price, 0);
         _solvent();
     }
 
-    function test_skim_beforeAndAfterTheSaleInEveryOrder() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 price = _live(sid).reserve;
-        _bid(alice, sid, price);
-        core.skim();
-        _endAuction(sid);
-        core.skim();
-        uint256 booked = _booked();
-        core.collectSales();
-        core.skim();
-        core.collectSales();
-        core.skim();
-        assertEq(_booked(), booked + price);
-        assertEq(address(core).balance - _booked(), address(core).balance - booked - price);
-        _solvent();
-    }
-
-    // ------------------------------------------------------------------ syncStatement
-
-    function test_sync_soldClearsTheRecord() public {
-        (uint256 sid,) = _sellStatement(alice);
-        uint256 aid = _live(sid).auctionId;
-        vm.expectEmit(address(core));
-        emit ICore.StatementSold(sid, aid, alice);
-        vm.prank(bob);
-        core.syncStatement(sid);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.None));
-        (bool held,,,) = core.statementInfo(sid);
-        assertFalse(held);
-        assertEq(core.heldStatements().length, 0);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.syncStatement(sid);
-    }
-
-    function test_sync_refusesWhileTheAuctionExists() public {
-        uint256 sid = _composeOnce().sid;
-        vm.expectRevert(ICore.AuctionLive.selector);
-        core.syncStatement(sid);
-        _bid(alice, sid, _live(sid).reserve);
-        vm.expectRevert(ICore.AuctionLive.selector);
-        core.syncStatement(sid);
-        vm.warp(_live(sid).endTime);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Ended));
-        vm.expectRevert(ICore.AuctionLive.selector);
-        core.syncStatement(sid);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.syncStatement(999_999);
-    }
-
-    function test_sync_aWinnerThatBurnedTheStatementStillSettles() public {
-        (uint256 sid,) = _sellStatement(alice);
-        vm.mockCallRevert(address(STATEMENTS), abi.encodeWithSelector(IStatements.ownerOf.selector, sid), "burned");
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Sold));
-        core.syncStatement(sid);
-        assertEq(core.heldStatements().length, 0);
-    }
-
-    /// @dev a sale whose delivery to the winner fails on the house. the real Statements never refuses a transfer, so the
-    /// refusal is simulated by a mocked revert of exactly this transfer
-    function _failedDelivery() internal returns (uint256 sid, uint256 aid, uint256 price) {
-        sid = _composeOnce().sid;
-        Live memory l = _live(sid);
-        price = l.reserve;
-        aid = l.auctionId;
-        _bid(alice, sid, price);
-        vm.mockCallRevert(
-            address(STATEMENTS),
-            abi.encodeWithSelector(IStatements.transferFrom.selector, address(house), alice, sid),
-            "cannot receive"
-        );
-        _endAuction(sid);
-        assertTrue(house.pendingDelivery(aid), "deferred");
-    }
-
-    function test_sync_unwoundSaleRelistsAtTheCurrentReserve() public {
-        (uint256 sid, uint256 aid, uint256 price) = _failedDelivery();
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Ended));
-        assertEq(_owedByHouse(), 0, "a deferred sale pays nobody");
-        vm.expectRevert(IAuctionHouse.AuctionAlreadySettled.selector);
-        house.endAuction{gas: END_GAS}(aid);
-        vm.expectRevert(ICore.AuctionLive.selector);
-        core.syncStatement(sid);
-        vm.expectRevert(IAuctionHouse.UnwindTooEarly.selector);
-        house.unwindStuckLot{gas: END_GAS}(aid);
-
-        _warp(30 days + 1);
-        house.unwindStuckLot{gas: END_GAS}(aid);
-        assertEq(STATEMENTS.ownerOf(sid), address(core), "returned to the core by the unwind");
-        assertEq(house.pendingRefunds(alice), price, "the winner is refunded");
-        assertEq(_owedByHouse(), 0, "no proceeds for the core");
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Returned));
-
-        Settings memory s = core.settings();
-        s.saleFloorBps = 20_000;
-        _owner(s);
-        (,, uint256 cost,) = core.statementInfo(sid);
-        vm.expectEmit(address(core));
-        emit ICore.StatementListed(sid, aid + 1, cost * 20_000 / 10_000);
-        vm.prank(bob);
-        core.syncStatement(sid);
-        Live memory l = _live(sid);
-        assertEq(uint256(l.status), uint256(ICore.StatementStatus.Listed));
-        assertEq(l.auctionId, aid + 1, "a new auction");
-        assertEq(l.reserve, cost * 20_000 / 10_000, "at the current reserve");
-        (,,, uint64 listedAt) = core.statementInfo(sid);
-        assertEq(listedAt, block.timestamp, "the listing clock restarted");
-        assertEq(STATEMENTS.ownerOf(sid), address(house));
-
-        uint256 before = alice.balance;
-        vm.prank(alice);
-        house.withdrawRefund();
-        assertEq(alice.balance - before, price);
-        // nothing of this sale was booked as proceeds
-        uint256 booked = _booked();
-        core.collectSales();
-        assertEq(_booked(), booked);
-    }
-
-    function test_sync_deferredThenClaimedIsASale() public {
-        (uint256 sid, uint256 aid, uint256 price) = _failedDelivery();
-        vm.clearMockedCalls();
-        house.claimLot(aid, address(0));
-        assertEq(STATEMENTS.ownerOf(sid), alice);
-        assertEq(_owedByHouse(), price);
-        assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Sold));
-        core.syncStatement(sid);
-        _collectSales();
-        _solvent();
-    }
-
-    // ------------------------------------------------------------------ repriceStatement
-
-    function test_reprice_appliesANewReserveToAnOldListing() public {
-        uint256 sid = _composeOnce().sid;
-        (,, uint256 cost,) = core.statementInfo(sid);
-        uint256 old = _live(sid).reserve;
-        Settings memory s = core.settings();
-        s.saleFloorBps = 20_000;
-        _owner(s);
-        assertEq(_live(sid).reserve, old, "a settings change does not touch the listing by itself");
-        vm.expectEmit(address(core));
-        emit ICore.StatementRepriced(sid, cost * 20_000 / 10_000);
-        vm.prank(bob);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 20_000 / 10_000);
-        assertEq(_auctionOf(sid).reservePrice, cost * 20_000 / 10_000);
-        // the new reserve binds the bidders
-        uint256 id = _live(sid).auctionId;
-        vm.deal(alice, 10 ether);
-        vm.prank(alice);
-        vm.expectRevert(IAuctionHouse.BidBelowReserve.selector);
-        house.createBid{value: old}(id);
-        s.saleFloorBps = 3_000;
-        _owner(s);
-        core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 15_000 / 10_000, "a lower floor leaves the controller ask in force");
-    }
-
-    function test_reprice_refusedWithABidOrWithoutAListing() public {
-        uint256 sid = _composeOnce().sid;
-        _bid(alice, sid, _live(sid).reserve);
-        vm.expectRevert(ICore.HasBid.selector);
-        core.repriceStatement(sid);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.repriceStatement(424_242);
-        _endAuction(sid);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.repriceStatement(sid);
-    }
-
-    // ------------------------------------------------------------------ phase 2 exit: cancel then exit
+    // ------------------------------------------------------------------ phase 2 exit
 
     function _exitSplit(uint256 bps) internal {
         Settings memory s = core.settings();
+        // forge-lint: disable-next-line(unsafe-typecast)
         s.exitToBuybackBps = uint16(bps);
         _owner(s);
         _enterPhase2();
         Composed memory c = _composeOnce();
-        (,,, uint64 listedAt) = core.statementInfo(c.sid);
-        uint256 aid = _live(c.sid).auctionId;
-        vm.warp(listedAt + 105 hours - 1);
+        (,,, uint64 composedAt) = core.statementInfo(c.sid);
+        vm.warp(composedAt + 105 hours - 1);
         vm.expectRevert(ICore.TooEarly.selector);
         core.exitStatement(c.sid);
-        vm.warp(listedAt + 105 hours);
+        vm.warp(composedAt + 105 hours);
         uint256 rating = STATEMENTS.creditsOf(c.sid);
         uint256 before = xt.balanceOf(address(core));
         uint256 pot = core.xPot();
@@ -963,12 +635,11 @@ contract FlowTest is Fixture {
         assertEq(core.xToBuyback(), got * bps / 10_000, "buyback share of the exit token");
         assertEq(core.xPot() - pot, got - got * bps / 10_000, "bid share of the exit token");
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "in the module");
-        assertEq(house.getAuction(aid).tokenOwner, address(0), "the listing was cancelled");
         assertEq(core.heldStatements().length, 0);
         _solvent();
     }
 
-    function test_exit_afterExitAfterCancelsThenExitsSplitHalf() public {
+    function test_exit_afterExitAfterExitsSplitHalf() public {
         _exitSplit(5_000);
     }
 
@@ -982,23 +653,6 @@ contract FlowTest is Fixture {
 
     function test_exit_splitOddShare() public {
         _exitSplit(3_333);
-    }
-
-    function test_exit_refusedWhileABidIsLive() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        _warp(105 hours);
-        _bid(alice, sid, _live(sid).reserve);
-        vm.expectRevert(ICore.HasBid.selector);
-        core.exitStatement(sid);
-        vm.warp(_live(sid).endTime + 1 days);
-        vm.expectRevert(ICore.HasBid.selector);
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(house), "nothing moved");
-        _endAuction(sid);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), alice, "a sold statement cannot be exited");
     }
 
     function test_exit_exitAfterIsASetting() public {
@@ -1023,27 +677,13 @@ contract FlowTest is Fixture {
         core.exitStatement(sid);
     }
 
-    function test_exit_staleRecordOfASoldStatementIsNotExited() public {
+    function test_exit_aSoldStatementIsNotExited() public {
         _enterPhase2();
         (uint256 sid,) = _sellStatement(alice);
         _warp(105 hours);
-        vm.expectRevert(ICore.NotListed.selector);
+        vm.expectRevert(ICore.NotHeld.selector);
         core.exitStatement(sid);
-    }
-
-    function test_exit_returnedStatementMustBeRelistedFirst() public {
-        _enterPhase2();
-        (uint256 sid, uint256 aid,) = _failedDelivery();
-        _warp(30 days + 1);
-        house.unwindStuckLot{gas: END_GAS}(aid);
-        vm.expectRevert(ICore.NotListed.selector);
-        core.exitStatement(sid);
-        core.syncStatement(sid);
-        (,,, uint64 listedAt) = core.statementInfo(sid);
-        vm.warp(listedAt + 105 hours);
-        vm.clearMockedCalls();
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod));
+        assertEq(STATEMENTS.ownerOf(sid), alice);
     }
 
     function test_exit_exitLaneIsUnchanged() public {
@@ -1059,69 +699,46 @@ contract FlowTest is Fixture {
         uint256 rating = STATEMENTS.creditsOf(sid);
         uint256 before = xt.balanceOf(address(core));
         uint256 buyback = core.xToBuyback();
-        // at once, never listed, no cancel
-        vm.recordLogs();
+        // at once, no wait
         core.exitStatement(sid);
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        for (uint256 i; i < logs.length; ++i) {
-            assertTrue(logs[i].emitter != address(house), "the house is not involved");
-        }
         assertEq(xt.balanceOf(address(core)) - before, rating * UNIT);
         assertEq(core.xToBuyback(), buyback, "an exit lane exit adds nothing to the buyback");
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
     }
 
-    // ------------------------------------------------------------------ forbidden targets and the constructor
+    // ------------------------------------------------------------------ the constructor
 
-    function test_forbidden_theHouseAndItsFactoryCannotBeTargets() public {
-        address[2] memory t = [address(house), Mainnet.AUCTION_FACTORY];
-        for (uint256 i; i < 2; ++i) {
-            vm.prank(owner);
-            vm.expectRevert(ICore.ForbiddenTarget.selector);
-            core.addTarget(t[i]);
-            vm.expectRevert(ICore.TargetNotAllowed.selector);
-            core.buyListing(0, "", 1, t[i]);
-            assertFalse(core.allowedTarget(t[i]));
-        }
+    function _newCore(Settings memory s, address escrow) internal returns (ICore) {
+        Stack memory st = lc.stack;
+        st.escrow = escrow;
+        return Prod.newCore(owner, address(coin), address(ctl), st, OPEN_RATE, s);
     }
 
-    function _newCore(Settings memory s, address factory) internal returns (ICore) {
-        return Prod.newCore(owner, address(coin), address(ctl), _stack(factory), OPEN_RATE, s);
-    }
-
-    function _stack(address factory) internal view returns (Stack memory st) {
-        st = lc.stack;
-        st.auctionFactory = factory;
-    }
-
-    function test_constructor_createsItsOwnHouse() public {
-        ICore c2 = _newCore(Mainnet.defaultSettings(), Mainnet.AUCTION_FACTORY);
-        address h2 = IAuctionFactory(Mainnet.AUCTION_FACTORY).houseOf(address(c2));
-        assertTrue(h2 != address(0) && h2 != address(house));
-        assertEq(address(c2.HOUSE()), h2);
-        assertEq(IAuctionHouse(h2).owner(), address(c2));
-        assertTrue(STATEMENTS.isApprovedForAll(address(c2), h2));
+    function test_constructor_storesTheSettings() public {
+        ICore c2 = _newCore(Mainnet.defaultSettings(), lc.stack.escrow);
         assertEq(_hash(c2.settings()), _hash(Mainnet.defaultSettings()));
+        assertEq(STATEMENTS.balanceOf(address(c2)), 0);
     }
 
     function test_constructor_refusesBadInputs() public {
         Settings memory s = Mainnet.defaultSettings();
         s.dropPerCreditBps = 0;
         vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("dropPerCreditBps")));
-        this.newCoreExternal(s, Mainnet.AUCTION_FACTORY);
+        this.newCoreExternal(s, lc.stack.escrow);
         // the opening rate (OPEN_RATE) may not sit above the rate cap
         Settings memory capped = Mainnet.defaultSettings();
+        // forge-lint: disable-next-line(unsafe-typecast)
         capped.rateCap = uint64(OPEN_RATE - 1);
         vm.expectRevert(ICore.BadRate.selector);
-        this.newCoreExternal(capped, Mainnet.AUCTION_FACTORY);
+        this.newCoreExternal(capped, lc.stack.escrow);
         vm.expectRevert(ICore.ZeroAddress.selector);
         this.newCoreExternal(Mainnet.defaultSettings(), address(0));
         vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, address(0xBEEF)));
         this.newCoreExternal(Mainnet.defaultSettings(), address(0xBEEF));
     }
 
-    function newCoreExternal(Settings memory s, address factory) external returns (ICore) {
-        return _newCore(s, factory);
+    function newCoreExternal(Settings memory s, address escrow) external returns (ICore) {
+        return _newCore(s, escrow);
     }
 
     // ------------------------------------------------------------------ the rate never reverts, however long the gap
@@ -1176,7 +793,7 @@ contract FlowTest is Fixture {
         }
     }
 
-    /// @dev a random sequence of owner calls under random valid settings, mixed with public doors, bids and time. the
+    /// @dev a random sequence of owner calls under random valid settings, mixed with public doors and time. the
     /// owner and the controller never end up holding more eth, coin, credits, statements or exit token than they
     /// began with, an owner call never changes what the core holds, and eth leaves the core only by a sale of a credit
     /// (paid to the seller, exactly the quoted ceiling) or by the buyback (at most one slice). the exit is a paid door
@@ -1199,21 +816,15 @@ contract FlowTest is Fixture {
         for (uint256 step; step < 12; ++step) {
             uint256 r = uint256(keccak256(abi.encode(seed, "step", step)));
             uint256 coreEth = address(core).balance;
-            uint256 kind = r % 11;
+            uint256 kind = r % 9;
             if (kind <= 4) {
                 _ownerCall(kind, r);
                 assertEq(address(core).balance, coreEth, "an owner call never moves the core's eth");
             } else if (kind == 5) {
                 next = _publicDoor(sid, r, next);
             } else if (kind == 6) {
-                Live memory l = _live(sid);
-                if (l.status == ICore.StatementStatus.Listed) _bid(alice, sid, l.reserve);
-                else if (l.status == ICore.StatementStatus.Bid) _bid(bob, sid, l.bid * 105 / 100);
-            } else if (kind == 7) {
                 _warp(1 hours + (r >> 8) % 3 days);
-            } else if (kind == 8) {
-                if (_live(sid).status == ICore.StatementStatus.Ended) _endAuction(sid);
-            } else if (kind == 9) {
+            } else if (kind == 7) {
                 _sellMaybe(ids[(r >> 8) % 6]);
             } else {
                 _exitAsKeeper(sid);
@@ -1246,8 +857,8 @@ contract FlowTest is Fixture {
         st.callerMaxBaseFee = 10 gwei;
         _setSettings(st);
         _potTo(1 ether);
-        (,,, uint64 listedAt) = core.statementInfo(c.sid);
-        vm.warp(listedAt + 105 hours);
+        (,,, uint64 composedAt) = core.statementInfo(c.sid);
+        vm.warp(composedAt + 105 hours);
         uint256 cap = 1_500_000 * uint256(st.callerMaxBaseFee) + st.callerFee;
         uint256 pot = core.ethPot();
         uint256 coreEth = address(core).balance;
@@ -1287,30 +898,22 @@ contract FlowTest is Fixture {
 
     /// @dev permissionless doors called by the owner or a stranger. the buyback may spend at most one slice. an owner
     /// who acts as a keeper is paid like anyone, which is why the owner does not call the paid doors here
-    function _publicDoor(uint256 sid, uint256 r, uint256) internal returns (uint256) {
-        uint256 pick = (r >> 8) % 6;
+    function _publicDoor(uint256, uint256 r, uint256) internal returns (uint256) {
+        uint256 pick = (r >> 8) % 2;
         // the buyback pays its caller, so the owner is not the keeper in this run
-        address who = pick != 4 && r % 2 == 0 ? owner : bob;
+        address who = pick != 1 && r % 2 == 0 ? owner : bob;
         uint256 before = address(core).balance;
         uint256 slice =
             core.ethToBuyback() < core.settings().buybackSlice ? core.ethToBuyback() : core.settings().buybackSlice;
         vm.startPrank(who);
         if (pick == 0) {
             try core.skim() {} catch {}
-        } else if (pick == 1) {
-            try core.collectSales() {} catch {}
-        } else if (pick == 2) {
-            try core.syncStatement(sid) {} catch {}
-        } else if (pick == 3) {
-            try core.repriceStatement(sid) {} catch {}
-        } else if (pick == 4) {
-            try core.buyback() {} catch {}
         } else {
-            try core.syncStatement(sid) {} catch {}
+            try core.buyback() {} catch {}
         }
         vm.stopPrank();
         if (address(core).balance < before) {
-            assertEq(pick, 4, "only the buyback spends eth here");
+            assertEq(pick, 1, "only the buyback spends eth here");
             assertLe(before - address(core).balance, slice, "at most one slice");
         }
         return 0;

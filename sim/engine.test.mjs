@@ -49,7 +49,7 @@ const R0 = 6.668e15;
   for (const k of newFields) if (cfg.settings[k] !== undefined) near(SETTINGS[k], cfg.settings[k], 1e-12, 'setting ' + k);
   for (const k of Object.keys(SETTINGS)) ok(BUILT_ONLY.includes(k) || cfg.settings[k] !== undefined || (moved && (newFields.includes(k) || k === 'reserveBps')), 'the config carries ' + k);
   for (const k of Object.keys(CONTROLLER)) near(+CONTROLLER[k], +cfg.sale[k], 1e-12, 'controller ' + k);
-  assert.deepEqual(Object.keys(cfg.sale).sort(), Object.keys(CONTROLLER).sort()); n++; // the sale block and the model carry the same five fields
+  assert.deepEqual(Object.keys(cfg.sale).sort(), Object.keys(CONTROLLER).sort()); n++; // the sale block and the model carry the same fields
   // the launch rateStart is 100 percent of market
   near(cfg.rateStart, 0.0089 * W, 1e-3, 'launch rateStart is 100 percent of the 0.0089 market');
   // the pool and router values of the v2 launch
@@ -61,13 +61,14 @@ const R0 = 6.668e15;
   assert.equal(firstViolation(SETTINGS), null); n++;
   assert.equal(controllerViolation(CONTROLLER), null); n++;
   // the rules of docs/FLOW.md section 9 at launch
-  assert.deepEqual(CONTROLLER, { buyOnly: true, markupBps: 15000, startCapBps: 100000, fastDecayBpsPerHour: 100, kneeBps: 10000, slowDecayBpsPerHour: 25, floorBps: 7500, anchorHalfLife: 7 * 24 * H }); n++;
+  assert.deepEqual(CONTROLLER, { markupBps: 15000, startCapBps: 100000, fastDecayBpsPerHour: 100, kneeBps: 10000, slowDecayBpsPerHour: 25, floorBps: 7500, anchorHalfLife: 7 * 24 * H }); n++;
   assert.equal(SETTINGS.saleFloorBps, 7500); assert.equal(SETTINGS.exitAfter, 105 * H); assert.equal(SETTINGS.feeToBuybackBps, 0); n += 3;
 }
 // no inventory gate and no dutch statement auction anywhere
 {
   const src = fs.readFileSync(new URL('./engine.js', import.meta.url), 'utf8');
   ok(!/inventoryGate|setGate|gated|AUCTION_START|AUCTION_FLOOR|AUCTION_LENGTH|buyStatement|bidMode/.test(src), 'no trace of the gate or the dutch auction');
+  ok(!/auctionDuration|buyOnly|houseOwed|collectSales|bidOn|minBid/.test(src), 'no trace of the pnd auction house or auction mode');
   ok(DEFAULTS.inventoryGate === undefined && Core.prototype.setGate === undefined, 'no gate in the defaults or the Core');
   ok(!/reserveBps/.test(src) && DEFAULTS.reserveBps === undefined && Core.prototype.reprice === undefined, 'reserveBps is gone from the model, the reprice step is folded into the first bid');
 }
@@ -246,8 +247,8 @@ const R0 = 6.668e15;
   const g = fresh({ markupBps: 12000, startCapBps: 12000, saleFloorBps: 30000 }, 10);
   const rg = g.buy(g.compose(1, 'eth', 0), 0); assert.equal(rg.saleBps, 30000); assert.equal(g.anchorAt(0), 12000); n += 2; // a hard floor above the cap cannot pull the anchor past the cap
   // a refused sale leaves the anchor alone
-  const h = fresh({}, 10); const live = h.compose(1, 'eth', 0); h.bidOn(live, 1.6, 0, 1);
-  assert.equal(h.buy(live, 0), null); assert.equal(h.anchorAt(0), 10000); n += 2;
+  const h = fresh({}, 10); const sold = h.compose(1, 'eth', 0); h.buy(sold, 0); const a1 = h.anchorAt(0);
+  assert.equal(h.buy(sold, 0), null); assert.equal(h.anchorAt(0), a1); n += 2;
   // the owner corrects the anchor (setAnchorBps): between 10000 and startCapBps
   h.setSettings({ anchorBps: 14000 }, 0); assert.equal(h.anchorAt(0), 14000); assert.equal(h.startBps(0), 21000); n += 2;
   assert.throws(() => h.setSettings({ anchorBps: 9999 }, 0), /anchorBps/); assert.throws(() => h.setSettings({ anchorBps: 100001 }, 0), /anchorBps/); n += 2;
@@ -272,65 +273,20 @@ const R0 = 6.668e15;
   const s = a.compose(1, 'eth', 0);
   assert.equal(a.sellTo(s, 0.7499, 0), null); assert.notEqual(a.sellTo(s, 0.75, 0), null); n += 2;
 }
-// compose lists the statement at age zero, at the start price. the exit lane statement is never listed
+// compose holds the statement in the Core from composedAt, asked at age zero at the start price. the exit lane statement is never asked
 {
   const c = fresh({}, 10);
   const st = c.compose(0.8, 'eth', 0);
-  near(st.reserve, st.cost * 1.5, 1e-12, 'listed at the start price, 150 percent of cost');
-  near(fresh({ markupBps: 10000 }, 10).compose(1, 'eth', 0).reserve, 1.0, 1e-12, 'markupBps 10000');
-  near(fresh({ markupBps: 13000 }, 10).compose(1, 'eth', 0).reserve, 1.3, 1e-12, 'markupBps 13000');
-  assert.equal(c.compose(0, 'exit', 0).reserve, undefined); n++;
-  assert.equal(st.bid, 0); assert.equal(st.end, 0); n += 2; // unbid statements stay listed, no timer
-}
-// auction mode: a buyer at or above the asking price opens the english auction AT that price (the first bidder reprices the listing to it first),
-// then the house rules: timer from the first bid, 5 percent raise, 15 minute extension
-{
-  const c = fresh({ auctionDuration: 24 * H, buyOnly: false }, 10);
-  const st = c.compose(1, 'eth', 0);
-  assert.equal(st.bid, 0); assert.equal(st.end, 0); n += 2; // unbid statements stay listed, no timer
+  near(c.askingPrice(st, 0), st.cost * 1.5, 1e-12, 'asked at the start price, 150 percent of cost');
+  near(fresh({ markupBps: 10000 }, 10).askingPrice({ cost: 1, t0: 0, lane: 'eth' }, 0), 1.0, 1e-12, 'markupBps 10000');
+  near(fresh({ markupBps: 13000 }, 10).askingPrice({ cost: 1, t0: 0, lane: 'eth' }, 0), 1.3, 1e-12, 'markupBps 13000');
+  assert.deepEqual(Object.keys(st).sort(), ['cost', 'lane', 't0']); n++; // the record carries cost, composedAt and lane
   const a100 = c.askingPrice(st, 100);
-  near(a100, 1.5 - 100 * 100 / (3600 * 10000), 1e-12, 'the asking price a hundred seconds in');
-  ok(!c.bidOn(st, a100 - 1e-6, 100, 1), 'below the asking price');
-  ok(c.bidOn(st, a100, 100, 1), 'the asking price starts the auction');
-  near(st.reserve, a100, 1e-12, 'the auction opened at the asking price at that moment'); assert.equal(st.end, 100 + 24 * H); n++;
-  // a buyer who comes at hour 50 finds the asking price at 100 and opens there
-  const s50 = c.compose(1, 'eth', 0);
-  ok(!c.bidOn(s50, 1.0 - 1e-6, 50 * H, 1), 'under 100 at hour 50'); ok(c.bidOn(s50, 1.0, 50 * H, 1), 'opens at 100 at hour 50');
-  near(s50.reserve, 1.0, 1e-12, 'reserve is the accepted price'); near(s50.bid, 1.0, 1e-12, 'first bid is the accepted price'); assert.equal(s50.end, 50 * H + 24 * H); n++;
-  // and one at the floor opens at the floor
-  const sFloor = c.compose(1, 'eth', 0);
-  ok(c.bidOn(sFloor, 0.75, 200 * H, 1)); near(sFloor.reserve, 0.75, 1e-12, 'opens at the hard floor');
-  // house sales do not move the anchor
-  c.settle(sFloor); c.collectSales(200 * H); assert.equal(c.anchorAt(200 * H), 10000); n++;
-  // later bids: 5 percent over the top bid, no matter what the asking line says
-  near(c.minBid(st, 100), a100 * 1.05, 1e-12, 'next bid at least 5 percent over');
-  near(c.minBid(st, 100 + 1000 * H), a100 * 1.05, 1e-12, 'a live auction ignores the line');
-  ok(!c.bidOn(st, a100 * 1.05 - 1e-6, 200, 2), 'under the 5 percent raise');
-  ok(c.bidOn(st, a100 * 1.05, 200, 2), 'exactly 5 percent over');
-  assert.equal(st.end, 100 + 24 * H); n++; // far from the end, no extension
-  // a bid 10 minutes before the end pushes the end to 15 minutes from the bid
-  const t = st.end - 600;
-  ok(c.bidOn(st, st.bid * 1.06, t, 3));
-  assert.equal(st.end, t + 900); n++;
-  // a bid 20 minutes before the end does not extend
-  const st2 = c.compose(1, 'eth', 0); c.bidOn(st2, 1.5, 0, 1);
-  const e2 = st2.end; c.bidOn(st2, 1.6, e2 - 1200, 2);
-  assert.equal(st2.end, e2); n++;
-  ok(!c.bidOn(st2, 2, e2, 3), 'a bid at or after the end reverts');
-  // the highest bidder wins and its bid is what the house owes
-  assert.equal(st.bids, 3); assert.equal(st.bidderWtp, 3); n += 2;
-  near(c.settle(st), a100 * 1.05 * 1.06, 1e-12, 'the top bid is paid');
-  near(c.houseOwed, a100 * 1.05 * 1.06, 1e-12, 'credited to the Core in the house');
-  // a duration change applies to new listings, not to one already listed
-  const st3 = c.compose(1, 'eth', 0);
-  c.setSettings({ auctionDuration: 6 * H }, 5);
-  c.bidOn(st3, 1.5, 10, 1);
-  assert.equal(st3.end, 10 + 24 * H); n++;
-  assert.equal(c.compose(1, 'eth', 0).duration, 6 * H); n++;
+  near(a100, 0.8 * 1.5 - 0.8 * 100 * 100 / (3600 * 10000), 1e-12, 'the asking price a hundred seconds in');
 }
-// buy only mode: sellTo pays the asking price and the statement is gone at once, no auction, nothing waits in the house
+// sellTo pays the asking price and the statement is gone at once
 {
-  const c = fresh({ buyOnly: true }, 10);
+  const c = fresh({}, 10);
   const pot0 = c.ethPot;
   const st = c.compose(1, 'eth', 0);
   const ask = c.askingPrice(st, 50 * H); near(ask, 1.0, 1e-12, 'asking price at hour 50');
@@ -339,44 +295,21 @@ const R0 = 6.668e15;
   near(r.toBuyback, 0.5, 1e-12, 'launch split: half to the buyback'); near(r.toPot, 0.5, 1e-12, 'half to the pot');
   near(c.ethPot - pot0, 0.5, 1e-12, 'the pot has it at once'); near(c.ethToBuyback, 0.5, 1e-12, 'the buyback pot has it at once');
   assert.equal(c.anchorAt(50 * H), 10000); n++; // sellTo is the Core door, the anchor moves in the controller's buy
-  assert.equal(c.houseOwed, 0); assert.equal(st.bid, 0); assert.equal(st.bids, 0); n += 3; // nothing in the house, no bid, no timer
   assert.equal(c.sellTo(st, ask, 31 * H), null); n++; // a statement is sold once
-  const live = c.compose(1, 'eth', 0); c.bidOn(live, 1.5, 0, 1);
-  assert.equal(c.sellTo(live, 5, 1), null); n++; // a live auction always wins
-  assert.equal(c.sellTo(c.compose(0, 'exit', 0), 5, 1), null); n++; // the exit lane is never listed
+  assert.equal(c.sellTo(c.compose(0, 'exit', 0), 5, 1), null); n++; // the exit lane is never asked
   // overpaying is booked in full, the Core gives no refund
   const o = c.compose(1, 'eth', 0); const p1 = c.ethPot + c.ethToBuyback;
   c.sellTo(o, 3, 0); near(c.ethPot + c.ethToBuyback - p1, 3, 1e-12, 'what is paid is booked');
 }
-// the proceeds split: nothing reaches the pots before collectSales, then saleToBuybackBps to the buyback
-{
-  const c = fresh({}, 10);
-  const pot0 = c.ethPot;
-  c.houseOwed = 1;
-  assert.equal(c.ethPot, pot0); assert.equal(c.ethToBuyback, 0); n += 2;
-  const r = c.collectSales(0);
-  near(r.toBuyback, 0.5, 1e-12, 'launch split 50 to buyback'); near(c.ethPot - pot0, 0.5, 1e-12, 'and 50 to the pot');
-  assert.equal(c.houseOwed, 0); assert.equal(c.collectSales(0), null); n += 2;
-  for (const [bps, bb] of [[0, 0], [2500, 0.25], [7500, 0.75], [10000, 1]]) {
-    const d = fresh({ saleToBuybackBps: bps }, 10); const p0 = d.ethPot; d.houseOwed = 2;
-    d.collectSales(0);
-    near(d.ethToBuyback, 2 * bb, 1e-12, 'buyback share at ' + bps); near(d.ethPot - p0, 2 * (1 - bb), 1e-12, 'pot share at ' + bps);
-  }
-}
-// the split arithmetic is the same in both modes: auction proceeds after collectSales, buy only proceeds at once, saleToBuybackBps to the buyback
+// the proceeds split: sellTo books saleToBuybackBps to the buyback and the rest to the pot at once
 {
   for (const [bps, bb] of [[0, 0], [1000, 0.1], [5000, 0.5], [10000, 1]]) {
-    const a = fresh({ saleToBuybackBps: bps }, 10); const pa = a.ethPot;
-    const sa = a.compose(1, 'eth', 0); a.bidOn(sa, 1.5, 0, 1); a.settle(sa);
-    near(a.ethToBuyback, 0, 1e-12, 'auction mode: nothing before collectSales at ' + bps);
-    a.collectSales(0);
-    near(a.ethToBuyback, 1.5 * bb, 1e-12, 'auction mode buyback share at ' + bps); near(a.ethPot - pa, 1.5 * (1 - bb), 1e-12, 'auction mode pot share at ' + bps);
-    const b = fresh({ saleToBuybackBps: bps, buyOnly: true }, 10); const pb = b.ethPot;
+    const b = fresh({ saleToBuybackBps: bps }, 10); const pb = b.ethPot;
     const sb = b.compose(1, 'eth', 0); b.sellTo(sb, 1.5, 0);
-    near(b.ethToBuyback, 1.5 * bb, 1e-12, 'buy only buyback share at ' + bps); near(b.ethPot - pb, 1.5 * (1 - bb), 1e-12, 'buy only pot share at ' + bps);
+    near(b.ethToBuyback, 1.5 * bb, 1e-12, 'buyback share at ' + bps); near(b.ethPot - pb, 1.5 * (1 - bb), 1e-12, 'pot share at ' + bps);
   }
   // a split change applies to the next booking, the Core reads it live
-  const c = fresh({}, 10); c.setSettings({ saleToBuybackBps: 2500 }, 0); const p0 = c.ethPot; c.houseOwed = 4; c.collectSales(0);
+  const c = fresh({}, 10); c.setSettings({ saleToBuybackBps: 2500 }, 0); const p0 = c.ethPot; c.sellTo(c.compose(1, 'eth', 0), 4, 0);
   near(c.ethToBuyback, 1, 1e-12, 'live split'); near(c.ethPot - p0, 3, 1e-12, 'live split, pot');
 }
 // feeToBuybackBps: the share of swap fee eth booked in receive() that goes to the buyback pot, the rest to the pot
@@ -395,23 +328,22 @@ const R0 = 6.668e15;
   // a change applies to the next booking, sale proceeds are not touched by it
   const s = fresh({}, 10); s.setSettings({ feeToBuybackBps: 10000 }, 0); s.addFees(1, 0);
   near(s.ethToBuyback, 1, 1e-12, 'live fee share'); near(s.ethPot, 10, 1e-12, 'pot unchanged by a fee booked at 10000');
-  s.houseOwed = 2; s.collectSales(0); near(s.ethToBuyback, 2, 1e-12, 'sales follow saleToBuybackBps, not the fee share');
+  s.sellTo(s.compose(1, 'eth', 0), 2, 0); near(s.ethToBuyback, 2, 1e-12, 'sales follow saleToBuybackBps, not the fee share'); // fee booking 1 + sale 2 * 0.5
   assert.throws(() => s.setSettings({ feeToBuybackBps: 10001 }, 0), /feeToBuybackBps/); n++;
   assert.throws(() => s.setSettings({ saleFloorBps: 999 }, 0), /saleFloorBps/); n++;
 }
 // conservation of eth through the Core: fees, sales, spend and the buyback slice all come from and go to one ledger
 {
-  for (const over of [{ buyOnly: false }, {}, { buyOnly: false, feeToBuybackBps: 5000 }, { feeToBuybackBps: 2500, saleToBuybackBps: 7500 }, { buyOnly: false, feeToBuybackBps: 10000, saleToBuybackBps: 0 }, { basefeeGwei: 40 }]) {
+  for (const over of [{}, { feeToBuybackBps: 5000 }, { feeToBuybackBps: 2500, saleToBuybackBps: 7500 }, { feeToBuybackBps: 10000, saleToBuybackBps: 0 }, { basefeeGwei: 40 }]) {
     const c = new Core(Object.assign({}, DEFAULTS, LEGACY, over), 0);
     let inflow = 0, out = 0;
     c.addFees(20, 0); inflow += 20;
     c.addFees(3.3, 50); inflow += 3.3;
     if (c.spend(1.2, 100)) out += 1.2; else ok(c.s.feeToBuybackBps === 10000, 'a spend only fails on an empty pot');
     const st = c.compose(0.9, 'eth', 200);
-    if (c.c.buyOnly) { const p0 = c.askingPrice(st, 40 * H); c.buy(st, 40 * H); inflow += p0; }
-    else { c.bidOn(st, c.askingPrice(st, 40 * H), 40 * H, 1); c.settle(st); inflow += st.bid; c.collectSales(41 * H); }
+    const p0 = c.askingPrice(st, 40 * H); c.buy(st, 40 * H); inflow += p0;
     const b = c.takeBuybackSlice(50 * H); if (b) out += b.budget + b.tip; // what leaves the buyback pot: the swap budget and the caller payment
-    near(c.ethPot + c.ethToBuyback + c.houseOwed + out, inflow, 1e-12, 'eth conserved ' + JSON.stringify(over));
+    near(c.ethPot + c.ethToBuyback + out, inflow, 1e-12, 'eth conserved ' + JSON.stringify(over));
     ok(c.ethPot >= 0 && c.ethToBuyback >= 0, 'no negative pot');
   }
 }
@@ -436,11 +368,11 @@ const R0 = 6.668e15;
   // the tightened bounds of the audit fixes (FC-1 accepted with bounds, FC-2, FC-3, FC-7) and the rate cap (FC-5)
   const bad = (patch, name) => { assert.equal(firstViolation(Object.assign({}, SETTINGS, patch)), name); n++; };
   bad({ dropBps: 499 }, 'dropBps');
-  bad({ saleFloorBps: 999 }, 'saleFloorBps'); bad({ saleFloorBps: 40001 }, 'saleFloorBps'); bad({ feeToBuybackBps: 10001 }, 'feeToBuybackBps'); bad({ auctionDuration: 6 * 3600 - 1 }, 'auctionDuration');
+  bad({ saleFloorBps: 999 }, 'saleFloorBps'); bad({ saleFloorBps: 40001 }, 'saleFloorBps'); bad({ feeToBuybackBps: 10001 }, 'feeToBuybackBps'); 
   bad({ buybackSlice: 1.01 }, 'buybackSlice'); bad({ exitAfter: 3599 }, 'exitAfter');
   bad({ rateCap: 1e13 - 1e6 }, 'rateCap'); bad({ rateCap: 1.1e18 }, 'rateCap');
   bad({ exitLaneToBuybackBps: 10001 }, 'exitLaneToBuybackBps');
-  assert.equal(firstViolation(Object.assign({}, SETTINGS, { dropBps: 500, saleFloorBps: 1000, feeToBuybackBps: 10000, auctionDuration: 6 * 3600, buybackSlice: 1, exitAfter: 3600, rateCap: 1e18 })), null); n++;
+  assert.equal(firstViolation(Object.assign({}, SETTINGS, { dropBps: 500, saleFloorBps: 1000, feeToBuybackBps: 10000, buybackSlice: 1, exitAfter: 3600, rateCap: 1e18 })), null); n++;
   assert.equal(SETTINGS.rateCap, 26700000000000000); assert.equal(SETTINGS.rateCap, 3 * DEFAULTS.rateStart); n++;
   assert.equal(firstViolation(Object.assign({}, SETTINGS, { xRateFloor: 9800 })), 'xRateFloor'); n++;
 }
@@ -457,14 +389,12 @@ const R0 = 6.668e15;
   c.setSettings({ rateCap: 8.66e16 }, 11000 * H);
   near(c.ethRate(12000 * H), 8.66e16, 1e-12, 'a higher cap lets the climb go on');
 }
-// phase 2 exit eligibility: a listing without a bid for exitAfter, the exit lane at once, never with a bid
+// phase 2 exit eligibility: an eth lane statement held for exitAfter since composedAt, the exit lane at once, never after a sale
 {
   const c = fresh({}, 10); c.setExitModule(0, 1e-5);
   const st = c.compose(1, 'eth', 0);
   assert.equal(c.exitReady(st, 105 * H - 1), false); assert.equal(c.exitReady(st, 105 * H), true); n += 2; // exitAfter 105 hours
-  c.bidOn(st, st.reserve, 100, 1);
-  assert.equal(c.exitReady(st, 500 * H), false); n++;
-  assert.equal(c.exitReady({ lane: 'exit', bid: 0, t0: 0 }, 0), true); n++;
+  assert.equal(c.exitReady({ lane: 'exit', t0: 0 }, 0), true); n++;
   assert.equal(fresh({}, 10).exitReady(c.compose(1, 'eth', 0), 9999 * H), false); n++; // no module, no exit
   const d = fresh({ exitAfter: 24 * H }, 10); d.setExitModule(0, 1e-5);
   assert.equal(d.exitReady(d.compose(1, 'eth', 0), 24 * H), true); n++;
@@ -594,11 +524,11 @@ const R0 = 6.668e15;
   const a = simL({ days: 20, seed: 3 }), b = simL({ days: 20, seed: 3 }), c = simL({ days: 20, seed: 4 });
   assert.deepEqual(a.S.pot, b.S.pot); n++;
   assert.notDeepEqual(a.S.pot, c.S.pot); n++;
-  for (const r of [a, simL({ days: 40, floorBps: 6000, saleFloorBps: 6000, seed: 5 }), simL({ days: 40, buyOnly: false, feeToBuybackBps: 2500, seed: 6 }), simL({ days: 40, basefeeGwei: 40, seed: 9 }), simL({ days: 40, buyerWaits: 'floor', feeToBuybackBps: 10000, seed: 8 }), simL({ days: 40, phase2Day: 12, xp: 3e-5, stmtPick: 'random' })]) {
+  for (const r of [a, simL({ days: 40, floorBps: 6000, saleFloorBps: 6000, seed: 5 }), simL({ days: 40, feeToBuybackBps: 2500, seed: 6 }), simL({ days: 40, basefeeGwei: 40, seed: 9 }), simL({ days: 40, buyerWaits: 'floor', feeToBuybackBps: 10000, seed: 8 }), simL({ days: 40, phase2Day: 12, xp: 3e-5, stmtPick: 'random' })]) {
     ok(Math.abs(r.stats.potCheck) < 1e-6, 'pot accounting ' + r.stats.potCheck);
     ok(Math.abs(r.stats.buybackCheck) < 1e-9, 'buyback accounting ' + r.stats.buybackCheck);
-    ok(Math.abs(r.stats.houseCheck) < 1e-9, 'house accounting ' + r.stats.houseCheck);
-    for (const k of ['pot', 'toBuyback', 'locked', 'burned', 'pending']) ok(r.S[k].every((x) => x >= -1e-12), k + ' negative');
+    ok(Math.abs(r.stats.saleCheck) < 1e-9, 'sale accounting ' + r.stats.saleCheck);
+    for (const k of ['pot', 'toBuyback', 'locked', 'burned']) ok(r.S[k].every((x) => x >= -1e-12), k + ' negative');
     ok(r.S.burned[r.H] <= 1e9);
   }
   // the engine never stops buying because statements are unsold: no buyers at all, statements pile up, credits keep coming
@@ -606,25 +536,18 @@ const R0 = 6.668e15;
   ok(none.T.sold === 0 && none.S.waiting[none.H] > 100, 'no statement sells, many wait');
   ok(none.S.credits[none.H] > 0.8 * simL({ days: 30, seed: 3 }).S.credits[30 * 24], 'credits keep coming with no sale at all, at least 80 percent of the base run at day 30');
   // every sale clears at or above the hard floor (cost * saleFloorBps) and at or above the price the buyer saw
-  const e = simL({ days: 30, seed: 3, buyOnly: false });
-  ok(e.T.sold > 0 && e.T.soldPrice >= e.T.soldFloor * (1 - 1e-9), 'sales clear at or above the hard floor');
-  ok(e.stats.bidsPerSale >= 1, 'every sale has at least one bid');
-  ok(e.stats.saleOverCost >= 0.75 && e.stats.saleOverCost <= 1.5, 'average sale price over cost sits between the floor and the start');
-  // buy only: every sale is one instant payment, no bid, nothing waits in the house, no auction is ever live
-  const bo = simL({ days: 30, seed: 3 }); // buy only is the launch mode
-  ok(bo.T.sold > 0 && bo.T.soldInstant === bo.T.sold, 'every buy only sale is instant'); assert.equal(bo.stats.bidsPerSale, 1); assert.equal(bo.live.length, 0); n += 2;
-  ok(bo.S.pending.every((x) => x === 0), 'nothing waits in the house in buy only mode'); ok(bo.T.soldPrice >= bo.T.soldFloor * (1 - 1e-9), 'buy only sales clear at the hard floor or above');
-  ok(e.T.soldInstant === 0, 'auction mode has no instant sales'); assert.equal(e.core.anchorAt(0), 10000); n++; // house sales leave the anchor alone
+  const bo = simL({ days: 30, seed: 3 });
+  ok(bo.T.sold > 0 && bo.T.soldPrice >= bo.T.soldFloor * (1 - 1e-9), 'sales clear at or above the hard floor');
+  ok(bo.stats.saleOverCost >= 0.75 && bo.stats.saleOverCost <= 1.5, 'average sale price over cost sits between the floor and the start');
   const boEnd = bo.core.anchorAt(bo.H * 3600); ok(boEnd >= 10000 && boEnd <= bo.core.c.startCapBps, 'the anchor stays between 10000 and the cap'); ok(bo.stats.finalAnchorBps === boEnd, 'stats carry the anchor');
   // the pessimistic run: a buyer who waits for the floor pays the lowest price of every statement it takes, and none sells young
-  const wf = simL({ days: 30, seed: 3, buyerWaits: 'floor', buyOnly: false });
+  const wf = simL({ days: 30, seed: 3, buyerWaits: 'floor' });
   ok(wf.T.sold > 0 && Math.abs(wf.stats.saleOverCost - 0.75) < 1e-9 && wf.stats.saleAtFloorShare === 1, 'waiting buyers pay the floor');
   ok(wf.stats.saleAgeHours >= 150, 'and only after the asking price has reached it');
-  // a settings change mid run: controller settings on day 5, the mode and the floors on day 10, all read at once
-  const sw = simL({ days: 20, seed: 3, buyOnly: false, schedule: [{ day: 5, patch: { markupBps: 13000, fastDecayBpsPerHour: 200 } }, { day: 10, patch: { floorBps: 6000, saleFloorBps: 6000, buyOnly: true, feeToBuybackBps: 2500, saleToBuybackBps: 7500 } }] });
-  assert.equal(sw.core.c.floorBps, 6000); assert.equal(sw.core.s.saleFloorBps, 6000); assert.equal(sw.core.c.buyOnly, true); n += 4;
+  // a settings change mid run: controller settings on day 5, the floors and splits on day 10, all read at once
+  const sw = simL({ days: 20, seed: 3, schedule: [{ day: 5, patch: { markupBps: 13000, fastDecayBpsPerHour: 200 } }, { day: 10, patch: { floorBps: 6000, saleFloorBps: 6000, feeToBuybackBps: 2500, saleToBuybackBps: 7500 } }] });
+  assert.equal(sw.core.c.floorBps, 6000); assert.equal(sw.core.s.saleFloorBps, 6000); n += 3;
   assert.equal(sw.core.c.markupBps, 13000); assert.equal(sw.core.c.fastDecayBpsPerHour, 200); assert.equal(sw.core.s.saleToBuybackBps, 7500); assert.equal(sw.core.s.feeToBuybackBps, 2500); assert.equal(sw.T.settingsChanges, 2); n += 4;
-  ok(sw.T.soldInstant > 0 && sw.T.soldInstant < sw.T.sold, 'sales before the flip went through auctions, after it instantly');
   ok(sw.core.feeToBuyback > 0, 'the fee share starts at its change'); ok(Math.abs(sw.stats.potCheck) < 1e-6, 'accounting closes across settings changes');
   ok(Math.abs(sw.stats.buybackCheck) < 1e-9, 'buyback accounting closes across settings changes');
   const f0 = simL({ days: 20, seed: 3 }), f1 = simL({ days: 20, seed: 3, feeToBuybackBps: 10000 });
@@ -637,7 +560,7 @@ const R0 = 6.668e15;
   const w55low = simL({ days: 30, seed: 3, wtpMult: 0.55, markupBps: 10000, floorBps: 3000, saleFloorBps: 3000 });
   ok(w55low.T.sold > 1.8 * w55.T.sold, 'the same buyers buy more when the asking curve is lower'); ok(w55low.stats.saleOverCost < 0.5, 'and they pay a lower share of cost');
   const p2 = simL({ days: 30, phase2Day: 10, xp: 3e-5, seed: 3 });
-  ok(p2.T.exited > 0 && p2.T.exitedAge > 0, 'unbid listings exit through the exitModule');
+  ok(p2.T.exited > 0 && p2.T.exitedAge > 0, 'held statements exit through the exitModule');
   const s = summary(a); ok(s.credits > 0 && s.potGoneDay > 1 && s.statements > 0, 'summary reads the run');
 }
 // sub-hour step: the default is the hourly step, minute and five minute steps give the same economy within sampling noise, and the books close
@@ -648,7 +571,7 @@ const R0 = 6.668e15;
   for (const m of [m5, m1]) {
     const c = m.S.credits[m.H], c0 = h.S.credits[h.H];
     ok(c > 0.9 * c0 && c < 1.1 * c0, 'credits bought at a sub hour step stay within 10 percent of the hourly step');
-    ok(Math.abs(m.stats.potCheck) < 1e-6 && Math.abs(m.stats.houseCheck) < 1e-6, 'accounting closes at a sub hour step');
+    ok(Math.abs(m.stats.potCheck) < 1e-6 && Math.abs(m.stats.saleCheck) < 1e-6, 'accounting closes at a sub hour step');
     assert.equal(m.S.pot.length, h.S.pot.length); n++;
   }
   assert.throws(() => simL({ days: 2, stepSec: 7 })); n++;
@@ -703,7 +626,7 @@ const R0 = 6.668e15;
   const rs = (share) => share * 0.0089e18;
   for (const o of [{ bidRule: 'dropToLast' }, { bidRule: 'stepped', ceilPct: 110 }]) {
     const r = simL(Object.assign({ days: 6, seed: 2, stepSec: 60, rateStart: rs(1), climbPerMin: 1 }, o));
-    ok(Math.abs(r.stats.potCheck) < 1e-6 && Math.abs(r.stats.houseCheck) < 1e-6, 'accounting closes under ' + o.bidRule);
+    ok(Math.abs(r.stats.potCheck) < 1e-6 && Math.abs(r.stats.saleCheck) < 1e-6, 'accounting closes under ' + o.bidRule);
     ok(r.S.credits[r.H] > 0 && r.stats.idleHoursMax >= 0);
     if (o.bidRule === 'stepped') ok(r.core.ethRate(r.H * 3600) <= r.core.lastPaidRate * 1.1 * (1 + 1e-9) || r.core.ethRate(r.H * 3600) <= r.p.rateStart * 1.1, 'stepped ceiling at the end of a run');
   }
@@ -777,7 +700,7 @@ const R0 = 6.668e15;
 {
   const r = simulate({ days: 6, seed: 3 });
   ok(r.params.bidRule === 'stepped' && r.params.stepSec === 60, 'the default run is the stepped launch rule at minute steps');
-  ok(Math.abs(r.stats.potCheck) < 1e-6 && Math.abs(r.stats.houseCheck) < 1e-6, 'accounting closes on the default run');
+  ok(Math.abs(r.stats.potCheck) < 1e-6 && Math.abs(r.stats.saleCheck) < 1e-6, 'accounting closes on the default run');
   ok(r.stats.rateMaxBidRatio < 1.6, 'the default bid stays under 1.6x the market (rate cap and ceiling): ' + r.stats.rateMaxBidRatio);
   ok(summary(r, 6).credits > 5000, 'the default run buys credits in week one');
 }

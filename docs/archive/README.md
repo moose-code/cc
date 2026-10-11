@@ -21,6 +21,7 @@ history, not current instructions. each file records what was decided or measure
 | reference/artcoins-notes.md | notes on the artcoins v1 stack at block 26127622 |
 | reference/tokenworks-notes.md | notes on the tokenworks reference code |
 | reference/tokenworks/ | the verified tokenworks sources the notes refer to |
+| reference/pnd/ | the verified source of the pnd auction house v2 that the Core created and listed statements on until FLOW decision 68 |
 | sim/results/ | outputs of the simulator batches, run before FLOW decision 55 |
 | sim/study-bid.mjs | the bid rule study script |
 | sim/study-stalls.mjs | the stall study script |

@@ -15,12 +15,8 @@ import {SystemResumer, Stage} from "../script/SystemResumer.sol";
 import {LaunchConfig} from "../script/LaunchConfig.sol";
 import {Report} from "../script/Report.sol";
 
-interface IHouseFactoryR {
-    function houseOf(address owner) external view returns (address);
-}
-
 /// @notice `script/SystemResumer.sol` on the pinned fork with the live v2 stack: a deploy stopped after each of
-/// the transactions (the library, the controller, the router, the core with its house, the launch, the router engine,
+/// the transactions (the library, the controller, the router, the core, the launch, the router engine,
 /// the router payees, the split start) is finished by sending only the missing steps, as the original deployer, who is
 /// the factory owner and the config owner. the library goes through the deterministic deployer in a broadcast and takes
 /// one deployer nonce, so the tests send it through that deployer too and bump the nonce by hand (a test prank sends no
@@ -300,7 +296,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         this.resume(deployer, c, core);
         // another stack address
         c = base;
-        c.stack.auctionFactory = Mainnet.PERMIT2;
+        c.stack.escrow = Mainnet.PERMIT2;
         vm.expectRevert(abi.encodeWithSelector(CoreMismatch.selector, "stack"));
         this.resume(deployer, c, core);
         // a stranger is not the deployer of the run: the prediction does not hold
@@ -408,12 +404,10 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         _requireDeployer(want, got);
     }
 
-    /// the core created its own house in its constructor: it is there at the first resume point, owned by the core
-    function test_theHouseExistsFromTheCoreOn() public {
+    /// the core is on chain at the first resume point
+    function test_theCoreExistsAtTheFirstResumePoint() public {
         (address core,,) = _steps(4);
-        address house = IHouseFactoryR(base.stack.auctionFactory).houseOf(core);
-        assertTrue(house != address(0) && house.code.length != 0, "no house");
-        assertEq(address(ICore(payable(core)).HOUSE()), house);
+        assertTrue(core.code.length != 0, "no core");
         _assertDone(core, Stage.CoreOnly);
     }
 
