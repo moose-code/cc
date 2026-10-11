@@ -1016,6 +1016,17 @@ contract BuybackTest is FeeBase {
     }
 }
 
+/// pool manager stand in whose `unlock` burns gas, then reports the whole budget spent for `BOUGHT` coin
+contract GasBurningManager {
+    uint256 internal constant BOUGHT = 1_000e18;
+
+    function unlock(bytes calldata data) external view returns (bytes memory) {
+        uint256 end = gasleft() - 3_000_000;
+        while (gasleft() > end) {}
+        return abi.encode(abi.decode(data, (uint256)), BOUGHT);
+    }
+}
+
 /// what the caller of `buyback` is paid: counted gas at the base fee, capped, plus the keeper fee
 contract BuybackPaymentTest is FeeBase {
     using stdStorage for StdStorage;
@@ -1164,6 +1175,15 @@ contract BuybackPaymentTest is FeeBase {
         assertEq((r.paid - s.keeperFee) % 5 gwei, 0, "the rest of the payment is whole gas at the base fee");
         assertEq(r.potAfter, r.pool - r.spent - r.paid);
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no surplus, no deficit");
+    }
+
+    /// the swap path burns 3 million gas: the call uses more than `BUYBACK_GAS`, the counted gas stops at it
+    function test_countedGasIsCappedAtTheBuybackGasConstant() public {
+        vm.etch(address(PM), address(new GasBurningManager()).code);
+        deal(address(coin), address(core), 1_000e18);
+        Run memory r = _run(4 gwei, 4 gwei);
+        assertGt(r.gasUsed, BUYBACK_GAS + 2_000_000, "the call used far more than the constant");
+        assertEq(r.paid, BUYBACK_GAS * 4 gwei + core.settings().keeperFee, "the gas counted stops at the constant");
     }
 
     function test_baseFeeAboveTheCapIsRefundedAtTheCap() public {

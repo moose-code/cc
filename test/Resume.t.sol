@@ -73,6 +73,9 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         base.creatorPayee = makeAddr("resume.payee");
         base.name = "Resume Coin";
         base.symbol = "RSM";
+        // a launch ready config: the tracked mainnet.json leaves both strings empty for the owner to fill
+        base.image = "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        base.description = "Resume Coin test description";
         base.salt = keccak256("resume");
         base.stack.hook = v2.hook;
         base.stack.factory = v2.factory;

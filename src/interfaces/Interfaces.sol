@@ -153,6 +153,8 @@ struct Sale {
     uint16 floorBps;
     /// seconds for the part of the anchor above 10_000 to halve
     uint32 anchorHalfLife;
+    /// the least statement cost, in wei, whose sale moves the anchor
+    uint128 anchorMinCost;
 }
 
 /// the artcoins stack a launch runs on. a deploy input of the Core, so a new artcoins version needs no code change.
@@ -223,7 +225,7 @@ library Mainnet {
 
     /// the launch sale: start at 1.5 times the anchor (at most 1_000 percent of cost), falling 1 percent of cost
     /// an hour to 100 percent, then 0.25 percent an hour to 75 percent, the anchor halving its excess over 10_000 every
-    /// 7 days
+    /// 7 days, and moving only on statements that cost at least 0.1 eth
     function defaultSale() internal pure returns (Sale memory) {
         return Sale({
             markupBps: 15_000,
@@ -232,7 +234,8 @@ library Mainnet {
             kneeBps: 10_000,
             slowDecayBpsPerHour: 25,
             floorBps: 7_500,
-            anchorHalfLife: 7 days
+            anchorHalfLife: 7 days,
+            anchorMinCost: 0.1 ether
         });
     }
 

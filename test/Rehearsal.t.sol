@@ -28,11 +28,16 @@ interface IPermit2R {
 /// preflight, the real deploy path as the factory owner, the postflight, and a short smoke: a buy and a sell through the
 /// universal router, a flush of the router and a real credit sold into the bid. it skips cleanly unless the env var
 /// REHEARSAL is set, so the default suite stays pinned and fast. it reads the config file named by LAUNCH_CONFIG, like the
-/// scripts do, so the operator rehearses the exact file they will launch with. the launch goes through the live v2
+/// scripts do, and defaults to script/config/rehearsal.json, whose `image` and `description` hold the placeholder marker:
+/// the preflight row `rule: image and description are filled and are not placeholders` is expected to fail before and
+/// after the owner command. a file with real values is rehearsed as it is and every row must pass. the launch goes through the live v2
 /// factory (the config owner is its owner, impersonated on the fork). it measures the gas of every transaction of the deploy and asserts each
 /// one fits under the per transaction gas cap
-/// `set -a; . ./.env; set +a; REHEARSAL=1 LAUNCH_CONFIG=script/config/local.json forge test --match-path test/Rehearsal.t.sol -vv`
+/// `set -a; . ./.env; set +a; REHEARSAL=1 forge test --match-path test/Rehearsal.t.sol -vv`
 contract RehearsalTest is Test, ProdDeployer {
+    string internal constant REHEARSAL_CONFIG_FILE = "script/config/rehearsal.json";
+    string internal constant METADATA_ROW = "rule: image and description are filled and are not placeholders";
+
     LaunchConfig internal c;
     Deployed internal d;
     address internal deployer;
@@ -51,7 +56,7 @@ contract RehearsalTest is Test, ProdDeployer {
 
         // the exact file the operator will launch with: LAUNCH_CONFIG, as the scripts read it. a placeholder the file
         // leaves unset gets a rehearsal value, a placeholder it fills is rehearsed as it is
-        string memory file = vm.envOr("LAUNCH_CONFIG", DEFAULT_CONFIG_FILE);
+        string memory file = vm.envOr("LAUNCH_CONFIG", REHEARSAL_CONFIG_FILE);
         console.log("rehearsing the config file", file);
         c = loadConfig(file);
         if (c.owner == address(0)) c.owner = _user("owner");
@@ -108,6 +113,20 @@ contract RehearsalTest is Test, ProdDeployer {
         assertEq(_failedNames(), "", "postflight after the lock step");
     }
 
+    /// @dev the metadata row fails on chain id 1 while a value holds the placeholder marker, as the rehearsal file does.
+    /// it is the first row of the preflight table
+    function _marked() internal view returns (bool) {
+        return vm.contains(c.image, PLACEHOLDER_MARKER) || vm.contains(c.description, PLACEHOLDER_MARKER);
+    }
+
+    function _metadataRow() internal view returns (string memory) {
+        return _marked() ? string.concat(METADATA_ROW, ", ") : "";
+    }
+
+    function _metadataRowOnly() internal view returns (string memory) {
+        return _marked() ? METADATA_ROW : "";
+    }
+
     function _failedNames() internal view returns (string memory list) {
         (list,) = _failed();
     }
@@ -121,18 +140,21 @@ contract RehearsalTest is Test, ProdDeployer {
         if (f.minProtocolSkimShareBps() > 10_000 - c.bountyBps) {
             assertEq(
                 before_,
-                "factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)",
+                string.concat(
+                    _metadataRow(),
+                    "factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
+                ),
                 "preflight before the owner commands"
             );
             vm.startPrank(deployer);
             f.setMinProtocolSkimShareBps(uint16(10_000 - c.bountyBps));
             vm.stopPrank();
         } else {
-            assertEq(before_, "", "the factory minimums are already open");
+            assertEq(before_, _metadataRowOnly(), "the factory minimums are already open");
         }
         preflight(c, deployer);
         _print("preflight after the owner command");
-        assertEq(_failedNames(), "", "preflight after the owner command");
+        assertEq(_failedNames(), _metadataRowOnly(), "preflight after the owner command");
     }
 
     function _deploy() internal {

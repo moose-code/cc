@@ -1,0 +1,169 @@
+# every test function present at 0d86ee7 and absent at d77b82c by function name (166; 175 by Contract::function, 9 of those are suite renames such as SaleBuyOnlyTest -> SaleBuyTest), classified.
+# A = deletion correct. B = behavior still exists, coverage lost. the A rows tagged 'behavior kept' have a renamed or re-valued test in the same area; the name match is by reading, not by tooling.
+# method: name diff per file, bodies of the ambiguous ones read at 0d86ee7. replacements are named in REVIEW-d77b82c.md.
+A  behavior kept, test replaced by a renamed or re-valued test test/BidRule.t.sol BidRuleTest::test_anchorLoosensTwentyPercentPerTenIdleMinutesAtLaunch
+A  behavior kept, test replaced by a renamed or re-valued test test/BidRule.t.sol BidRuleTest::test_ceilingHoldsAt125PercentOfTheAnchor
+A  behavior kept, test replaced by a renamed or re-valued test test/BidRule.t.sol BidRuleTest::test_launchDropReachesTheFloorAfterFortyFiveFills
+A  behavior kept, test replaced by a renamed or re-valued test test/Config.t.sol ConfigTest::test_hashCoversSettingsAndAuctionFactory
+A  behavior kept, test replaced by a renamed or re-valued test test/Config.t.sol ConfigTest::test_preflightRateCapIsTenTimesRateStart
+A  behavior kept, test replaced by a renamed or re-valued test test/CoreUnit.t.sol CoreUnitTest::test_buyListing_tipIsCappedAtTwoPercentOfCost
+A  behavior kept, test replaced by a renamed or re-valued test test/CoreUnit.t.sol CoreUnitTest::test_buyListing_tipIsTenthOfSavingsWhenSmall
+A  behavior kept, test replaced by a renamed or re-valued test test/Fees.t.sol ReceiveSettingsTest::test_receiveAroundCollectSalesInOneTransaction
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::testFuzz_collect_anySplitIsExact
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_buyback_collectsTheSalesFirst
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_buyback_stillRunsWhenNothingIsOwed
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_collect_splitAllToTheBuyback
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_collect_splitAllToThePot
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_collect_splitHalf
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_collect_splitOddShareRoundsDownToTheBuyback
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_collect_usesTheSplitOfTheCollectionTime
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_compose_emitsListedAndComposed
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_compose_exitLaneIsNeverListed
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_compose_listsAtNinetyPercentWithTheConfiguredDuration
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_compose_readsTheSettingsAtListing
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_constructor_createsItsOwnHouse
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_exit_afterExitAfterCancelsThenExitsSplitHalf
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_exit_staleRecordOfASoldStatementIsNotExited
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_house_isOursFromTheConstructor
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_rule8_ownerAsRedeemCallerGetsOnlyTheCappedReimbursement
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_skim_afterCollectionEvenWithADonationBooksOnlyTheDonation
+A  behavior kept, test replaced by a renamed or re-valued test test/Flow.t.sol FlowTest::test_skim_beforeAndAfterTheSaleInEveryOrder
+A  behavior kept, test replaced by a renamed or re-valued test test/GasCap.t.sol GasCapTest::test_gas_collectSales_andBuyback
+A  behavior kept, test replaced by a renamed or re-valued test test/GasCap.t.sol GasCapTest::test_gas_readCaps_nextPageAndStatementPrice
+A  behavior kept, test replaced by a renamed or re-valued test test/Lens.t.sol LensTest::test_OK_askingPriceIsZeroUnlessABuyerCanBuyNow
+A  behavior kept, test replaced by a renamed or re-valued test test/Lifecycle.t.sol LifecycleComposeTest::test_auction_bidSettleCollectBuyback
+A  behavior kept, test replaced by a renamed or re-valued test test/Lifecycle.t.sol LifecycleComposeTest::test_auction_multiSliceBuybackAfterTheOwnerLowersTheSlice
+A  behavior kept, test replaced by a renamed or re-valued test test/Lifecycle.t.sol LifecycleComposeTest::test_compose_unbidStatementStaysListed
+A  behavior kept, test replaced by a renamed or re-valued test test/Lifecycle.t.sol LifecyclePhase2Test::test_phase2_aBidBlocksTheExitAndTheSaleWins
+A  behavior kept, test replaced by a renamed or re-valued test test/Migrate.t.sol MigrateTest::test_OK_aListingWithoutABidStaysListedAndSells
+A  behavior kept, test replaced by a renamed or re-valued test test/Migrate.t.sol MigrateTest::test_OK_aRetiredCoreStillRepricesSyncsCollectsAndExits
+A  behavior kept, test replaced by a renamed or re-valued test test/Migrate.t.sol MigrateTest::test_OK_buybackAfterAMigrationBurnsTheRetainedBuybackPotAndCollectsWaitingSalesFirst
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_ethLaneCostCapBindsExactly
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_ethLaneGasCountIsCappedExactly
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_ethLanePotBindsExactly
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_exitLaneGasCountIsCappedExactly
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_exitLanePotBindsAndZeroPotPaysZero
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_exitLaneUsesTheNotionalCap
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_naturalCountEthLane
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_naturalCountExitLane
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_neverAboveTheCapWithAGasBurningModule
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_nothingIsAddedToTheBooksOnlyThePotPays
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_zeroPotPaysZeroAndDoesNotRevert
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemRepayTest::test_repay_zeroRatioAndZeroCapPayNothing
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemTimingTest::test_timing_aBidAfterTheWaitAlsoRevertsAndTheBidderKeepsTheAuction
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemTimingTest::test_timing_aBidFirstMakesTheExitRevert
+A  behavior kept, test replaced by a renamed or re-valued test test/Redeem.t.sol RedeemTimingTest::test_timing_aBuyOnlySaleFirstMakesTheExitRevert
+A  behavior kept, test replaced by a renamed or re-valued test test/Rescue.t.sol RescueTest::test_REVERT_aSoldStatementWithItsRecordStillStaysEvenIfItIsBack
+A  behavior kept, test replaced by a renamed or re-valued test test/Resume.t.sol ResumeTest::test_theHouseExistsFromTheCoreOn
+A  behavior kept, test replaced by a renamed or re-valued test test/ReviewFlowCore.t.sol ReviewFlowCoreTest::test_FIXED_exitAfterFloorKeepsTheListingOpen
+A  behavior kept, test replaced by a renamed or re-valued test test/ReviewSale.t.sol ReviewSaleTest::test_ACCEPTED_lockControllerAcceptsAControllerThatCannotPrice
+A  behavior kept, test replaced by a renamed or re-valued test test/ReviewSale.t.sol ReviewSaleTest::test_FIXED_buyOnlyWorksWhileTheAskIsUnderTheCoreFloor
+A  behavior kept, test replaced by a renamed or re-valued test test/ReviewSale.t.sol ReviewSaleTest::test_OK_composeStillRevertsWhenTheControllerCannotPrice
+A  behavior kept, test replaced by a renamed or re-valued test test/ReviewSale.t.sol ReviewSaleTest::test_OK_exitRepay_aRevertingExitPaysNothing
+A  behavior kept, test replaced by a renamed or re-valued test test/ReviewSale.t.sol ReviewSaleTest::test_OK_exitRepay_gasBurningModuleCannotPassTheGasBound
+A  behavior kept, test replaced by a renamed or re-valued test test/ReviewSale.t.sol ReviewSaleTest::test_OK_exitRepay_paidFromThePotOnceAndCapped
+A  behavior kept, test replaced by a renamed or re-valued test test/ReviewSale.t.sol ReviewSaleTest::test_OK_reserve_priceReadGasIsFarUnderTheCap
+A  behavior kept, test replaced by a renamed or re-valued test test/ReviewSale.t.sol ReviewSaleTest::test_exitRepayIsTheNetGasCostAtTheLaunchShare
+A  behavior kept, test replaced by a renamed or re-valued test test/ReviewV2Port.t.sol ReviewReimburseTest::test_OK_exitLaneAndEthLaneExitNeverPayAboveTheirCaps
+A  behavior kept, test replaced by a renamed or re-valued test test/Sale.t.sol SaleAnchorTest::test_anchor_aSaleBelowTheCostLeavesTheAnchorAtTheLowerBound
+A  behavior kept, test replaced by a renamed or re-valued test test/Sale.t.sol SaleCurveTest::test_curve_controllerFloorBelowTheHardFloorIsLiftedOnTheReserve
+A  behavior kept, test replaced by a renamed or re-valued test test/Sale.t.sol SaleCurveTest::test_curve_durationBoundaries
+A  behavior kept, test replaced by a renamed or re-valued test test/Sale.t.sol SaleFloorTest::test_broken_composeRevertsAndKeepsEverything
+A  behavior kept, test replaced by a renamed or re-valued test test/Sale.t.sol SaleFloorTest::test_floor_beatsAHigherCoreFloorAtListing
+A  behavior kept, test replaced by a renamed or re-valued test test/Sale.t.sol SaleFloorTest::test_floor_beatsALowerControllerPriceAtListingAndReprice
+A  behavior kept, test replaced by a renamed or re-valued test test/Sale.t.sol SaleSellToTest::test_sellTo_exitLaneUnknownAndNotListedRevert
+A  behavior kept, test replaced by a renamed or re-valued test test/SaleSmoke.t.sol SaleSmokeTest::test_buy_only_sells_at_once_and_refunds_the_excess
+A  behavior kept, test replaced by a renamed or re-valued test test/SaleSmoke.t.sol SaleSmokeTest::test_listing_opens_at_the_start_price_of_the_controller
+A  behavior kept, test replaced by a renamed or re-valued test test/SaleSmoke.t.sol SaleSmokeTest::test_price_falls_in_a_straight_line_to_the_floor
+A  behavior kept, test replaced by a renamed or re-valued test test/Seaport.t.sol SeaportTest::test_basic_tipIsCappedAtTwoPercentOfCost
+A  behavior kept, test replaced by a renamed or re-valued test test/invariant/Invariants.t.sol InvariantsBase::invariant_03_noStatementSoldBelowItsReserve
+A  tested a removed function or the house                      test/Config.t.sol ConfigTest::test_preflightAuctionFactoryRows
+A  tested a removed function or the house                      test/CoreUnit.t.sol CoreComposedTest::test_reentrantBidderCannotDisturbTheBooks
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_bid_aBidderThatCannotReceiveIsCredited
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_bid_belowReserveFails
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_bid_fivePercentRuleAndRefund
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_bid_lateBidExtendsByFifteenMinutes
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_bid_reserveStartsTheTimer
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_collect_nothingOwedIsANoOp
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_collect_onlyOnce
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_end_strangerSettlesAndTheWinnerGetsTheStatement
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_exit_refusedWhileABidIsLive
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_exit_returnedStatementMustBeRelistedFirst
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_forbidden_theHouseAndItsFactoryCannotBeTargets
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_reprice_appliesANewReserveToAnOldListing
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_reprice_refusedWithABidOrWithoutAListing
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_skim_seesNothingWhileTheProceedsSitInTheHouse
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_sync_aWinnerThatBurnedTheStatementStillSettles
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_sync_deferredThenClaimedIsASale
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_sync_refusesWhileTheAuctionExists
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_sync_soldClearsTheRecord
+A  tested a removed function or the house                      test/Flow.t.sol FlowTest::test_sync_unwoundSaleRelistsAtTheCurrentReserve
+A  tested a removed function or the house                      test/GasCap.t.sol GasCapTest::test_gas_house_createBid_andEndAuction
+A  tested a removed function or the house                      test/GasCap.t.sol GasCapTest::test_gas_repriceStatement
+A  tested a removed function or the house                      test/GasCap.t.sol GasCapTest::test_gas_syncStatement_relistPath
+A  tested a removed function or the house                      test/GasCap.t.sol GasCapTest::test_gas_syncStatement_soldPath
+A  tested a removed function or the house                      test/Launch.t.sol LaunchWiringTest::test_coreOwnsItsHouse
+A  tested a removed function or the house                      test/Migrate.t.sol MigrateTest::test_OK_aRetiredCoreRelistsAnUnwoundSale
+A  tested a removed function or the house                      test/ReviewDeploy.t.sol ReviewDeployTest::test_houseFeeWarningAndGate
+A  tested a removed function or the house                      test/ReviewFlowCore.t.sol ReviewFlowCoreTest::test_FIXED_reserveAndAuctionDurationFloors
+A  tested a removed function or the house                      test/ReviewFlowHouse.t.sol ReviewFlowHouseTest::test_DOCUMENTED_FH2_raisedReserveDoesNotProtectOldListings
+A  tested a removed function or the house                      test/ReviewFlowHouse.t.sol ReviewFlowHouseTest::test_FIXED_FH1_soldStatementParkedInTheHouseClearsAsSold
+A  tested a removed function or the house                      test/ReviewFlowHouse.t.sol ReviewFlowHouseTest::test_measure_composeAndDeliveryGas
+A  tested a removed function or the house                      test/ReviewFlowHouse.t.sol ReviewFlowHouseTest::test_measure_deliveryGasOfTheRealStatements
+A  tested a removed function or the house                      test/ReviewFlowHouse.t.sol ReviewFlowHouseTest::test_state_aDonationFromTheHouseIsNotProceeds
+A  tested a removed function or the house                      test/ReviewFlowHouse.t.sol ReviewFlowHouseTest::test_state_durationAndClockStayWithTheOldListing
+A  tested a removed function or the house                      test/ReviewFlowHouse.t.sol ReviewFlowHouseTest::test_state_houseAdminIsUnreachable
+A  tested a removed function or the house                      test/ReviewFlowHouse.t.sol ReviewFlowHouseTest::test_state_soldThenReturnedBeforeSyncRelistsAndBooksEachSaleOnce
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_ACCEPTED_aStrangerCanRaiseTheReserveAfterAnOwnerAskChange
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_ACCEPTED_reserveStaysBelowARaisedFloorUntilRepriced
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_FIXED_relistFallsBackToTheHardFloorWhenTheControllerFails
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_OK_buy_aBidderBlockingABuyPaysAtLeastTheAsk
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_OK_buy_notInAuctionMode
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_OK_exitRepay_exitLaneUsesTheNotionalCap
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_OK_reprice_aStrangerCanOnlyWalkTheReserveDownAndLoopsAreHarmless
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_OK_reprice_reserveFollowsTheRaisedFloorWhenCalled
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_OK_reprice_withABidReverts
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_OK_reserve_badControllerAnswersRevertAndKeepTheStoredReserve
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_OK_reserve_floorBindsAControllerThatAsksLess
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_OK_sellTo_afterAnAuctionSaleReverts
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_OK_sellTo_endedButUnsettledAuctionReverts
+A  tested a removed function or the house                      test/ReviewSale.t.sol ReviewSaleTest::test_OK_sellTo_midAuctionReverts
+A  tested a removed function or the house                      test/Sale.t.sol SaleAnchorTest::test_anchor_aHouseSaleLeavesItAlone
+A  tested a removed function or the house                      test/Sale.t.sol SaleAnchorTest::test_anchor_buyOnlyReserveNeverUndercutsTheLiveAsk
+A  tested a removed function or the house                      test/Sale.t.sol SaleAuctionTest::test_auction_aBidFreezesTheReserveWhileTheAskKeepsFalling
+A  tested a removed function or the house                      test/Sale.t.sol SaleAuctionTest::test_auction_noBidMeansNoSaleAndNoBooking
+A  tested a removed function or the house                      test/Sale.t.sol SaleAuctionTest::test_auction_pathSplitAtAll
+A  tested a removed function or the house                      test/Sale.t.sol SaleAuctionTest::test_auction_pathSplitAtAnOddShare
+A  tested a removed function or the house                      test/Sale.t.sol SaleAuctionTest::test_auction_pathSplitAtHalf
+A  tested a removed function or the house                      test/Sale.t.sol SaleAuctionTest::test_auction_pathSplitAtZero
+A  tested a removed function or the house                      test/Sale.t.sol SaleAuctionTest::test_auction_repriceLowersTheBarForTheFirstBid
+A  tested a removed function or the house                      test/Sale.t.sol SaleBuyOnlyTest::test_buy_revertsInAuctionMode
+A  tested a removed function or the house                      test/Sale.t.sol SaleBuyOnlyTest::test_buy_withALiveBidRevertsAndTheBidderKeepsTheAuction
+A  tested a removed function or the house                      test/Sale.t.sol SaleCurveTest::test_curve_buyOnlyKeepsTheReserveAtTheCapAndTheAskFalls
+A  tested a removed function or the house                      test/Sale.t.sol SaleCurveTest::test_curve_repriceFollowsTheAskDownToTheFloor
+A  tested a removed function or the house                      test/Sale.t.sol SaleFloorTest::test_broken_aControllerWithNoCodeCannotPriceEither
+A  tested a removed function or the house                      test/Sale.t.sol SaleFloorTest::test_broken_buyAndSellStayOpenWhilePricingIsBroken
+A  tested a removed function or the house                      test/Sale.t.sol SaleFloorTest::test_broken_repriceRevertsAndKeepsTheStoredReserve
+A  tested a removed function or the house                      test/Sale.t.sol SaleFloorTest::test_floor_aHugeControllerPriceIsTakenAndNoBidReachesIt
+A  tested a removed function or the house                      test/Sale.t.sol SaleFloorTest::test_reprice_isPermissionlessAndRefusesWhatIsNotListed
+A  tested a removed function or the house                      test/Sale.t.sol SaleFloorTest::test_reprice_withALiveBidRevertsAndKeepsTheReserve
+A  tested a removed function or the house                      test/Sale.t.sol SaleModeFlipTest::test_flip_backToAuctionWithAnAgedListing
+A  tested a removed function or the house                      test/Sale.t.sol SaleModeFlipTest::test_flip_onlyTheOwnerFlips
+A  tested a removed function or the house                      test/Sale.t.sol SaleModeFlipTest::test_flip_repricedListingWalksBackUpInBuyOnly
+A  tested a removed function or the house                      test/Sale.t.sol SaleModeFlipTest::test_flip_toBuyOnlyWithABidWithNoBidAndANewListing
+A  tested a removed function or the house                      test/Sale.t.sol SaleRelistTest::test_relist_aBrokenControllerListsAtTheHardFloor
+A  tested a removed function or the house                      test/Sale.t.sol SaleRelistTest::test_relist_unwoundSaleRestartsTheClockAndThePrice
+A  tested a removed function or the house                      test/Sale.t.sol SaleSellToTest::test_sellTo_aLiveBidAlwaysWins
+A  tested a removed function or the house                      test/SaleSmoke.t.sol SaleSmokeTest::test_buy_reverts_in_auction_mode
+A  tested a removed function or the house                      test/SaleSmoke.t.sol SaleSmokeTest::test_buy_with_a_live_bid_reverts_and_the_auction_wins
+A  tested a removed function or the house                      test/SaleSmoke.t.sol SaleSmokeTest::test_redeem_repays_the_caller_gas_from_the_pot
+A  tested a removed function or the house                      test/SaleSmoke.t.sol SaleSmokeTest::test_reprice_takes_the_current_ask_as_the_house_reserve
+A  tested a removed function or the house                      test/SetSettings.t.sol SetSettingsTest::test_repriceModeListsOnlyUnbidListings
+A  tested a removed function or the house                      test/audit/FloorRaiseRace.t.sol FloorRaiseRaceTest::test_ACCEPTED_A01_bidAtTheOldReserveBeforeRepriceWins
+A  tested a removed function or the house                      test/audit/FloorRaiseRace.t.sol FloorRaiseRaceTest::test_FIXED_A01_aListingTheControllerCannotPriceIsNamed
+A  tested a removed function or the house                      test/audit/FloorRaiseRace.t.sol FloorRaiseRaceTest::test_FIXED_A01_finalTableNamesWhatCannotBeRepriced
+A  tested a removed function or the house                      test/audit/FloorRaiseRace.t.sol FloorRaiseRaceTest::test_FIXED_A01_secondPassRepricesAStatementComposedAfterTheFirstRead
+A  tested a removed function or the house                      test/audit/FloorRaiseRace.t.sol FloorRaiseRaceTest::test_FIXED_A01_sweepFindsEveryOpenListingWithoutAFirstRead
+A  tested a removed function or the house                      test/audit/FloorRaiseRace.t.sol FloorRaiseRaceTest::test_batchedRepriceClosesTheWindowForAListingInTheSnapshot
+A  tested a removed function or the house                      test/audit/FloorRaiseRace.t.sol FloorRaiseRaceTest::test_floorBelowTheListingPriceNeedsNoReprice
+B  coverage lost                                               test/Fees.t.sol BuybackPaymentTest::test_countedGasIsCappedAtTheBuybackGasConstant

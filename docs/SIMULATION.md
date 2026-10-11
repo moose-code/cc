@@ -1,6 +1,6 @@
 # simulation of the credits engine
 
-the figures and the sale rule in this file predate FLOW decisions 61 (buyback caller payment) and 62 (statement pricing); `sim/engine.js` is current.
+the figures and the sale rules in this file predate FLOW decisions 61 to 68 (buyback caller payment, statement pricing, falling price at fixed rates, one caller payment rule, removal of the auction house and of auction mode). the english auction, `buyOnly`, `collectSales`, `auctionDuration`, `startBps`, `reimburseBps` and the earlier launch values named below describe the engine at `cd7d404` and are not the launch rule. the launch rule is statements held in the Core and sold only through the controller's falling price (FLOW 65 and 68); `sim/engine.js` is current and `node sim/engine.test.mjs` checks it.
 
 follows the contract at commit `cd7d404`. launch values are script/config/mainnet.json. the engine at commit `382b967` repays nothing to the compose caller and the statement cost is the sum of the 80 credit bases; the batches below were run with the earlier compose repay (under 1 percent of a statement's cost at 1.5 gwei), which is inside the seed noise of every figure, so they were not rerun. the simulator code follows `382b967`.
 
@@ -41,7 +41,7 @@ fee path. a trader pays 6.9 points of volume. the pool pays 96.38 percent of the
 
 ## sensitivity rows (comparable volume, 5 seeds, day 90)
 
-launch is `startBps` 11000, `stepEvery` 3 hours, `stepBps` 100, `floorBps` 7500, `saleFloorBps` 7500, auction mode, `feeToBuybackBps` 0. eth to burn is eth spent buying and burning the coin. differences in credits under 2 percent are seed noise.
+history, not the launch rule (see the note at the top). this run used `startBps` 11000, `stepEvery` 3 hours, `stepBps` 100, `floorBps` 7500, `saleFloorBps` 7500, auction mode, `feeToBuybackBps` 0. eth to burn is eth spent buying and burning the coin. differences in credits under 2 percent are seed noise.
 
 | setting | credits bought | statements created | sold | avg sale price over cost | waiting | eth to burn | eth recycled by sales | sold at the lowest price |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -96,7 +96,7 @@ the buyers and the sale rules in sim/engine.js, so the numbers can be checked:
 2. **asking price.** steps = floor(age / `stepEvery`), age counted from the listing, a new statement starts at age zero. bps = max(`startBps` minus steps times `stepBps`, `floorBps`) of cost. the price used is the higher of that and `saleFloorBps` of cost (the Core's hard floor). launch: 110 percent, 109 at hour 3, 100 at hour 30, 75 from hour 105. the controller settings and the hard floor are read live, a change applies to every listed statement at once.
 3. **arrivals and the pick rule.** buyers arrive as a Poisson process, 8 a day at launch, halving every 21 days down to 2 a day, whatever the price. each buyer makes one purchase attempt. it takes the statement with the lowest asking price at or under its willingness to pay (`stmtPick` random takes any that fits, section 4 shows both). a buyer that fits nothing leaves and is counted as a miss (29 percent of arrivals at launch, 80 of 278).
 4. **a buyer buys what it can afford now.** a buyer who can afford a statement now buys it now. the pessimistic run is the opposite: with `buyerWaits` set to `floor` every buyer buys only a statement whose asking price has reached its lowest level (the higher of `floorBps` and `saleFloorBps`) and nobody bids on a live auction.
-5. **auction mode (launch).** a buyer at or above the asking price opens the english auction at that price: the first bid is the asking price at that moment (the first bidder reprices the listing to it first). `auctionDuration` 24 hours runs from the first bid, a later bidder must have a higher willingness to pay than the top bidder and bid 5 percent more, a bid in the last 15 minutes extends the end to 15 minutes from the bid. the proceeds are credited to the Core in the house and reach the pots when `collectSales` runs (an hourly keeper), split by `saleToBuybackBps`. a statement with a bid stays out of the exitModule.
+5. **auction mode (history, removed by FLOW 68).** a buyer at or above the asking price opens the english auction at that price: the first bid is the asking price at that moment (the first bidder reprices the listing to it first). `auctionDuration` 24 hours runs from the first bid, a later bidder must have a higher willingness to pay than the top bidder and bid 5 percent more, a bid in the last 15 minutes extends the end to 15 minutes from the bid. the proceeds are credited to the Core in the house and reach the pots when `collectSales` runs (an hourly keeper), split by `saleToBuybackBps`. a statement with a bid stays out of the exitModule.
 6. **buy only mode.** the buyer pays the asking price through `sellTo` and gets the statement at once. the proceeds are booked into the pots in the same call, split by `saleToBuybackBps`. a house listing in this mode sits at the start price, and buyers use the controller.
 7. **fee share.** all swap fee eth reaches the Core through the fee router, which the Core pulls at the start of every sell and compose door, and the model books it as it arrives. `feeToBuybackBps` of it goes to the buyback pot and the rest to the pot. fees from the buyback's own swaps and from the exitToken auction takers count the same. eth booked later by `skim()` goes to the pot.
 8. **keepers.** `collectSales` runs every hour, `endAuction` is called the moment an auction ends, the buyback keeper runs every 25 blocks. a statement is sold once, and a house delivery failure is outside the model.
@@ -118,7 +118,7 @@ verdict in one paragraph: **the engine keeps buying under every volume preset, a
 | bid | `bidRule` stepped. a fill lowers the bid by `dropPerCreditBps` 50 (0.5 percent), staying at or above `dropFloorBps` 8000 of the rate at the first fill of the minute. the bid climbs `climbPerMinBps` 50 a minute toward the lowest of `ceilBps` 12500 of the last fill rate (grown by `idleLoosenBps` 200 per idle 10 minutes, linear), `rateCap` and the clamp. the read bid is lowered to the clamp, the rate at which the hourly cap (`spendCapBps` 10000 of the pot an hour) affords one average credit. `flatBps` 10000 prices every credit as `avgScore`, 0 prices it by its own score, in between blends. the controller bonus is 0 (ControllerV1 returns 0) |
 | gate | removed, with every trace. a test checks the source |
 | statement price | the controller's asking price: `startBps` 11000 of cost, minus `stepBps` 100 every `stepEvery` 3 hours, to `floorBps` 7500. the Core's `saleFloorBps` 7500 is the hard floor: the price used is the higher of the two |
-| statement sale | auction mode (launch): a buyer at or above the asking price opens the english auction at that price, `auctionDuration` timer from the first bid, 5 percent raise, 15 minute extension. buy only mode: the buyer pays the asking price and gets the statement at once. unbid statements stay listed |
+| statement sale | auction mode (history, removed by FLOW 68): a buyer at or above the asking price opens the english auction at that price, `auctionDuration` timer from the first bid, 5 percent raise, 15 minute extension. buy only mode: the buyer pays the asking price and gets the statement at once. unbid statements stay listed |
 | proceeds | auction: credited to the Core in the house, reach the pots when `collectSales` runs (an hourly keeper). buy only: booked at once. both split by `saleToBuybackBps` |
 | fees | the fee router pays the Core: 6.65022 points of volume at the baseline plus the anti sniper extra, less, from 30 minutes after launch, 112,778 ppm to the payee. `feeToBuybackBps` (launch 0) of the booked eth goes to the buyback pot, the rest to the pot |
 | exit (`exitStatement`) | `reimburseBps` 8000 |
@@ -223,6 +223,8 @@ sustained 17 eth a day: 43,660 / 41,820 / 38,610 / 26,360 / 21,960 credits at 10
 
 ## 4. the statement sale: asking price, floors, mode and the buyers
 
+superseded by FLOW 68: the auction house, auction mode, `buyOnly`, `collectSales` and `auctionDuration` are removed, and statements sell only at the controller's falling price (FLOW 65, `docs/ARCHITECTURE.md` section 1). the text and figures below describe the engine at `cd7d404`.
+
 status: older run, before decision 41 (compose repays nothing). numbers are not rerun.
 
 the sale design has five dials (`startBps`, `stepBps` with `stepEvery`, `floorBps`, `saleFloorBps`, `buyOnly`) and two inputs outside the owner's settings (the pick rule and the buyers' willingness to pay). the rows against launch are in the table at the top of this file. what they say, with the extra sweeps:
@@ -310,7 +312,7 @@ the sale design has five dials (`startBps`, `stepBps` with `stepEvery`, `floorBp
 9. a cut of both floors adds eth recycled whenever it is made in the first month: day 7 cut 91.5, day 14 cut 96.8, day 30 cut 95.5, cut at launch 95.2, against 87.0 at launch values. a day 14 cut sells 205 at 76 percent, a cut at launch 210 at 73 percent. lowering only `floorBps` changes nothing until `saleFloorBps` is lowered too (the Core's hard floor wins).
 10. `startBps` down to 9000 on day 14 loses eth (84.8 against 87.0 recycled). buy only on day 14 recycles 110.6, level with buy only from launch (107.3). the fee share on day 14 leaves the result unchanged (89 percent of the fees are already in). the three levers differ in timing: the floors can be cut once the first weeks show the stock waiting, the fee share has to be chosen at launch, the mode can be switched at any time.
 
-recommendation for the sale design: **keep the launch values** (11000, 3 hours, 100, floor 7500, auction, fee share 0). in this model the curve moves the average price by 14 points across its dials and credits by 4 percent, while the pick rule and the number of buyers move eth recycled by 41 percent and more. the owner's useful moves after week two, in order: lower both floors to 6000 if statements older than the 105 hours of the curve keep piling up and fewer than one sells a day (comparable volume gains 9 percent eth recycled, 17 eth a day loses 8 percent), switch to buy only if second bidders pile onto live auctions (comparable volume gains 23 percent eth recycled, 17 eth a day gains under 1 percent), raise `startBps` or `stepEvery` if the average price over cost is low while few statements wait, shorten `auctionDuration` if second bidders are a large share of sales.
+recommendation of the `cd7d404` run, superseded by FLOW 65 and 68: keep those values (11000, 3 hours, 100, floor 7500, auction, fee share 0). in this model the curve moves the average price by 14 points across its dials and credits by 4 percent, while the pick rule and the number of buyers move eth recycled by 41 percent and more. the owner's useful moves after week two, in order: lower both floors to 6000 if statements older than the 105 hours of the curve keep piling up and fewer than one sells a day (comparable volume gains 9 percent eth recycled, 17 eth a day loses 8 percent), switch to buy only if second bidders pile onto live auctions (comparable volume gains 23 percent eth recycled, 17 eth a day gains under 1 percent), raise `startBps` or `stepEvery` if the average price over cost is low while few statements wait, shorten `auctionDuration` if second bidders are a large share of sales.
 
 ## 5. the proceeds split
 
@@ -504,6 +506,8 @@ low and high value of each input against the base case (31,510 credits and 394 s
 
 ## recommended launch settings
 
+superseded by FLOW 68: the auction house, auction mode, `buyOnly`, `collectSales` and `auctionDuration` are removed, and statements sell only at the controller's falling price (FLOW 65, `docs/ARCHITECTURE.md` section 1). the text and figures below describe the engine at `cd7d404`.
+
 | setting | launch value | recommendation | why |
 |---|---|---|---|
 | `rateStart` | 2.0554e13 (100% of market) | keep | buys at once, first 80 cost 0.86x market, day 1 holds 2,004 credits against 1,149 at 25%. later totals are flat across 25% to 125% |
@@ -525,6 +529,8 @@ low and high value of each input against the base case (31,510 credits and 394 s
 | `exitToBuybackBps`, `exitLaneToBuybackBps` and exitToken settings | as launched (the exit lane share is 0: exit lane proceeds stay in the exit bid pot) | keep | phase 2 only. the auction pace is slow (1 slice per 6 hours) |
 
 ## settings the owner should expect to adjust, and the signal
+
+superseded by FLOW 68: the auction house, auction mode, `buyOnly`, `collectSales` and `auctionDuration` are removed, and statements sell only at the controller's falling price (FLOW 65, `docs/ARCHITECTURE.md` section 1). the text and figures below describe the engine at `cd7d404`.
 
 | setting | expected move | signal to watch |
 |---|---|---|

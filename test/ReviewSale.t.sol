@@ -893,7 +893,7 @@ contract ReviewSaleTest is Fixture {
         }
         assertFalse(_has(keys, "reserveBps"));
         string[] memory sale = vm.parseJsonKeys(j, ".sale");
-        assertEq(sale.length, 7);
+        assertEq(sale.length, 8);
         LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
         assertEq(abi.encode(f.sale), abi.encode(Mainnet.defaultSale()));
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()));
@@ -910,7 +910,7 @@ contract ReviewSaleTest is Fixture {
             (string memory dirty,) = _failed();
             assertTrue(keccak256(bytes(dirty)) != keccak256(bytes(clean)), _nm(SettingsFields.names()[i]));
         }
-        for (uint256 i; i < 7; ++i) {
+        for (uint256 i; i < 8; ++i) {
             LaunchConfig memory c = lc;
             if (i == 0) c.sale.markupBps += 1;
             if (i == 1) c.sale.startCapBps += 1;
@@ -919,6 +919,7 @@ contract ReviewSaleTest is Fixture {
             if (i == 4) c.sale.slowDecayBpsPerHour += 1;
             if (i == 5) c.sale.floorBps += 1;
             if (i == 6) c.sale.anchorHalfLife += 1;
+            if (i == 7) c.sale.anchorMinCost += 1;
             postflightAs(c, address(core), owner);
             (string memory dirty,) = _failed();
             assertTrue(keccak256(bytes(dirty)) != keccak256(bytes(clean)), "sale field unseen by postflight");
@@ -938,7 +939,7 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_saleBounds_scriptAndControllerConstructorAgree() public {
-        Sale[22] memory v;
+        Sale[25] memory v;
         for (uint256 i; i < v.length; ++i) {
             v[i] = Mainnet.defaultSale();
         }
@@ -967,6 +968,9 @@ contract ReviewSaleTest is Fixture {
         v[19].kneeBps = v[19].floorBps;
         v[20].fastDecayBpsPerHour = 1;
         v[21].slowDecayBpsPerHour = 10_000;
+        v[22].anchorMinCost = 10 ether + 1;
+        v[23].anchorMinCost = 10 ether;
+        v[24].anchorMinCost = 0;
         for (uint256 i; i < v.length; ++i) {
             LaunchConfig memory c = lc;
             c.sale = v[i];

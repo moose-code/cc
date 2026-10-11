@@ -152,11 +152,12 @@ abstract contract HandlerSale is HandlerOwner {
     uint256 internal _stored0;
     uint256 internal _anchorTime0;
 
-    /// the anchor after a sale at `price` of a statement of `cost`, written out again from docs/FLOW.md 64: the anchor now
-    /// when the sale price in bps of cost (rounded up) is not above it, otherwise the mean of the two, at most the start cap
+    /// the anchor after a sale at `price` of a statement of `cost`, written out again from docs/FLOW.md 64 and 70: the
+    /// anchor now when `cost` is under `anchorMinCost` or the sale price in bps of cost (rounded up) is not above it,
+    /// otherwise the mean of the two, at most the start cap
     function _anchorAfter(uint256 anchor0, uint256 price, uint256 cost) internal view returns (uint256 next) {
         uint256 saleBps = (price * 10_000 + cost - 1) / cost;
-        if (saleBps <= anchor0) return anchor0;
+        if (cost < IControllerV1(v1).anchorMinCost() || saleBps <= anchor0) return anchor0;
         next = (anchor0 + saleBps) / 2;
         uint256 cap = IControllerV1(v1).startCapBps();
         if (next > cap) next = cap;
@@ -203,10 +204,10 @@ abstract contract HandlerSale is HandlerOwner {
                 _flag(V_SALE_PATH, "a buy did not move the anchor halfway to the sale price");
             }
             if (
-                (price * 10_000 + _cost0 - 1) / _cost0 <= _anchor0
+                ((price * 10_000 + _cost0 - 1) / _cost0 <= _anchor0 || _cost0 < IControllerV1(v1).anchorMinCost())
                     && (IControllerV1(v1).storedAnchorBps() != _stored0 || IControllerV1(v1).anchorTime() != _anchorTime0)
             ) {
-                _flag(V_SALE_PATH, "a buy at or below the anchor stored the anchor");
+                _flag(V_SALE_PATH, "a buy at or below the anchor, or of a statement under the minimum cost, stored the anchor");
             }
             if (p.payerBal - who.balance != price) {
                 _flag(V_SALE_PATH, "the buyer did not pay exactly the ask, or the excess was not refunded");
@@ -303,11 +304,16 @@ abstract contract HandlerSale is HandlerOwner {
             cur = c.anchorBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : cap + 1) : _f(seed, 10_000, cap, cur);
             valid = v >= 10_000 && v <= cap;
-        } else {
+        } else if (which == 7) {
             sel = IControllerV1.setAnchorHalfLife.selector;
             cur = c.anchorHalfLife();
             v = bad ? (seed % 2 == 0 ? 1 days - 1 : 90 days + 1) : _f(seed, 1 days, 90 days, cur);
             valid = v >= 1 days && v <= 90 days;
+        } else {
+            sel = IControllerV1.setAnchorMinCost.selector;
+            cur = c.anchorMinCost();
+            v = bad ? 10 ether + 1 + seed % 1e18 : _f(seed, 0, 10 ether, cur);
+            valid = v <= 10 ether;
         }
     }
 
@@ -327,16 +333,17 @@ abstract contract HandlerSale is HandlerOwner {
         if (which == 4) return c.kneeBps();
         if (which == 5) return c.floorBps();
         if (which == 6) return c.anchorBps();
-        return c.anchorHalfLife();
+        if (which == 7) return c.anchorHalfLife();
+        return c.anchorMinCost();
     }
 
-    /// the owner sets one of the eight sale numbers of the first controller to a value inside or outside the bounds of
+    /// the owner sets one of the nine sale numbers of the first controller to a value inside or outside the bounds of
     /// docs/FLOW.md 9.3 (written out again here), or a stranger tries. inside: it goes through and reads back. outside:
     /// BadSetting with the field. a stranger: OnlyOwner. no asset or pot moves
     function saleSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_SALE_SETTINGS;
         IControllerV1 c = IControllerV1(v1);
-        uint256 which = mode % 8;
+        uint256 which = mode % 9;
         bool stranger = (mode >> 8) % 6 == 0;
         uint256 anchor0 = c.anchorBps();
         bool bad = (mode >> 12) % 4 == 0;

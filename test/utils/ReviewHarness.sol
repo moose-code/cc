@@ -48,6 +48,9 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         base.creatorPayee = makeAddr("review.payee");
         base.name = "Review Coin";
         base.symbol = "REV";
+        // a launch ready config: the tracked mainnet.json leaves both strings empty for the owner to fill
+        base.image = "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        base.description = "Review Coin test description";
         base.salt = keccak256("review deploy");
         base.stack.hook = v2.hook;
         base.stack.factory = v2.factory;

@@ -48,7 +48,7 @@ const R0 = 6.668e15;
   }
   for (const k of newFields) if (cfg.settings[k] !== undefined) near(SETTINGS[k], cfg.settings[k], 1e-12, 'setting ' + k);
   for (const k of Object.keys(SETTINGS)) ok(BUILT_ONLY.includes(k) || cfg.settings[k] !== undefined || (moved && (newFields.includes(k) || k === 'reserveBps')), 'the config carries ' + k);
-  for (const k of Object.keys(CONTROLLER)) near(+CONTROLLER[k], +cfg.sale[k], 1e-12, 'controller ' + k);
+  for (const k of Object.keys(CONTROLLER)) near(+CONTROLLER[k], k === 'anchorMinCost' ? +cfg.sale[k] / 1e18 : +cfg.sale[k], 1e-12, 'controller ' + k); // eth in the model, wei in the config
   assert.deepEqual(Object.keys(cfg.sale).sort(), Object.keys(CONTROLLER).sort()); n++; // the sale block and the model carry the same fields
   // the launch rateStart is 100 percent of market
   near(cfg.rateStart, 0.0089 * W, 1e-3, 'launch rateStart is 100 percent of the 0.0089 market');
@@ -61,7 +61,7 @@ const R0 = 6.668e15;
   assert.equal(firstViolation(SETTINGS), null); n++;
   assert.equal(controllerViolation(CONTROLLER), null); n++;
   // the rules of docs/FLOW.md section 9 at launch
-  assert.deepEqual(CONTROLLER, { markupBps: 15000, startCapBps: 100000, fastDecayBpsPerHour: 100, kneeBps: 10000, slowDecayBpsPerHour: 25, floorBps: 7500, anchorHalfLife: 7 * 24 * H }); n++;
+  assert.deepEqual(CONTROLLER, { markupBps: 15000, startCapBps: 100000, fastDecayBpsPerHour: 100, kneeBps: 10000, slowDecayBpsPerHour: 25, floorBps: 7500, anchorHalfLife: 7 * 24 * H, anchorMinCost: 0.1 }); n++;
   assert.equal(SETTINGS.saleFloorBps, 7500); assert.equal(SETTINGS.exitAfter, 105 * H); assert.equal(SETTINGS.feeToBuybackBps, 0); n += 3;
 }
 // no inventory gate and no dutch statement auction anywhere
@@ -184,7 +184,7 @@ const R0 = 6.668e15;
   assert.throws(() => e.setSettings({ markupBps: 9999 }, 0), /markupBps/); assert.throws(() => e.setSettings({ startCapBps: 11999 }, 0), /startCapBps/); n += 2;
   assert.throws(() => e.setSettings({ kneeBps: 7499 }, 0), /kneeBps/); n += 1;
   near(e.c.markupBps, 12000, 1e-12, 'a rejected change leaves the controller alone');
-  for (const [k, bad] of [['markupBps', 40001], ['startCapBps', 200001], ['floorBps', 999], ['fastDecayBpsPerHour', 0], ['fastDecayBpsPerHour', 10001], ['slowDecayBpsPerHour', 0], ['slowDecayBpsPerHour', 10001], ['kneeBps', 7499], ['kneeBps', 100001], ['anchorHalfLife', 86399], ['anchorHalfLife', 90 * 86400 + 1]]) assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { [k]: bad })), k), n++;
+  for (const [k, bad] of [['markupBps', 40001], ['startCapBps', 200001], ['floorBps', 999], ['fastDecayBpsPerHour', 0], ['fastDecayBpsPerHour', 10001], ['slowDecayBpsPerHour', 0], ['slowDecayBpsPerHour', 10001], ['kneeBps', 7499], ['kneeBps', 100001], ['anchorHalfLife', 86399], ['anchorHalfLife', 90 * 86400 + 1], ['anchorMinCost', -1], ['anchorMinCost', 10.0001]]) assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { [k]: bad })), k), n++;
   assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { startCapBps: 14999 })), 'startCapBps'); n++;
   assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { markupBps: 40000, startCapBps: 40000, kneeBps: 40000, floorBps: 10000, fastDecayBpsPerHour: 10000, slowDecayBpsPerHour: 1, anchorHalfLife: 86400 })), null); n++;
   assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { markupBps: 10000, startCapBps: 200000, kneeBps: 1000, floorBps: 1000, fastDecayBpsPerHour: 1, slowDecayBpsPerHour: 10000, anchorHalfLife: 90 * 86400 })), null); n++;
@@ -253,6 +253,16 @@ const R0 = 6.668e15;
   h.setSettings({ anchorBps: 14000 }, 0); assert.equal(h.anchorAt(0), 14000); assert.equal(h.startBps(0), 21000); n += 2;
   assert.throws(() => h.setSettings({ anchorBps: 9999 }, 0), /anchorBps/); assert.throws(() => h.setSettings({ anchorBps: 100001 }, 0), /anchorBps/); n += 2;
   assert.equal(h.anchorAt(0), 14000); n++;
+  // anchorMinCost (0.1 eth at launch): a statement that costs less is sold at its start price and leaves the anchor and its time. one that costs the minimum moves it
+  const mc = fresh({}, 10);
+  const small = mc.buy(mc.compose(0.0999, 'eth', 0), 0);
+  assert.equal(small.saleBps, 15000); assert.equal(mc.anchorStored, 10000); assert.equal(mc.anchorTime, 0); n += 3;
+  const edge = mc.buy(mc.compose(0.1, 'eth', 5 * H), 5 * H);
+  assert.equal(edge.saleBps, 15000); assert.equal(mc.anchorStored, 12500); assert.equal(mc.anchorTime, 5 * H); n += 3;
+  // the minimum is a setting: 0 lets every statement move the anchor, the owner sets it at once
+  mc.setSettings({ anchorMinCost: 0 }, 6 * H); mc.setSettings({ anchorBps: 10000 }, 6 * H);
+  mc.buy(mc.compose(0.0001, 'eth', 6 * H), 6 * H); assert.equal(mc.anchorStored, 12500); n++;
+  assert.throws(() => mc.setSettings({ anchorMinCost: 10.0001 }, 6 * H), /anchorMinCost/); n++;
 }
 // the hard floor: the price used is never below saleFloorBps of cost, a lower curve floor does not get under it
 {

@@ -310,7 +310,8 @@ contract SaleCurveTest is SaleBase {
                 kneeBps: 10_000,
                 slowDecayBpsPerHour: 25,
                 floorBps: 7_500,
-                anchorHalfLife: 7 days
+                anchorHalfLife: 7 days,
+                anchorMinCost: 0.1 ether
             })
         );
     }
@@ -728,7 +729,8 @@ contract SaleSettingsTest is SaleBase {
             kneeBps: lc.sale.kneeBps,
             slowDecayBpsPerHour: lc.sale.slowDecayBpsPerHour,
             floorBps: lc.sale.floorBps,
-            anchorHalfLife: lc.sale.anchorHalfLife
+            anchorHalfLife: lc.sale.anchorHalfLife,
+            anchorMinCost: lc.sale.anchorMinCost
         });
     }
 
@@ -744,6 +746,7 @@ contract SaleSettingsTest is SaleBase {
         assertEq(lc.sale.slowDecayBpsPerHour, 25);
         assertEq(lc.sale.floorBps, 7_500);
         assertEq(lc.sale.anchorHalfLife, 7 days);
+        assertEq(lc.sale.anchorMinCost, 0.1 ether);
         assertEq(abi.encode(Mainnet.defaultSale()), abi.encode(lc.sale), "the launch sale");
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.startCapBps(), 100_000);
@@ -752,6 +755,7 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.slowDecayBpsPerHour(), 25);
         assertEq(ctl.floorBps(), 7_500);
         assertEq(ctl.anchorHalfLife(), 7 days);
+        assertEq(ctl.anchorMinCost(), 0.1 ether);
         assertEq(ctl.anchorBps(), 10_000, "the anchor starts at the cost");
         assertEq(ctl.storedAnchorBps(), 10_000);
         assertEq(ctl.anchorTime(), block.timestamp);
@@ -820,7 +824,15 @@ contract SaleSettingsTest is SaleBase {
         ctl.setAnchorHalfLife(90 days);
         vm.expectRevert(_bad("anchorHalfLife"));
         ctl.setAnchorHalfLife(90 days + 1);
+        // anchorMinCost 0 to 10 ether
+        ctl.setAnchorMinCost(0);
+        ctl.setAnchorMinCost(10 ether);
+        vm.expectRevert(_bad("anchorMinCost"));
+        ctl.setAnchorMinCost(10 ether + 1);
+        vm.expectRevert(_bad("anchorMinCost"));
+        ctl.setAnchorMinCost(type(uint128).max);
         vm.stopPrank();
+        assertEq(ctl.anchorMinCost(), 10 ether);
         assertEq(ctl.anchorHalfLife(), 90 days);
         assertEq(ctl.markupBps(), 40_000);
         assertEq(ctl.startCapBps(), 200_000);
@@ -899,6 +911,9 @@ contract SaleSettingsTest is SaleBase {
         vm.expectEmit(address(ctl));
         emit IControllerV1.AnchorHalfLifeSet(3 days);
         ctl.setAnchorHalfLife(3 days);
+        vm.expectEmit(address(ctl));
+        emit IControllerV1.AnchorMinCostSet(0.25 ether);
+        ctl.setAnchorMinCost(0.25 ether);
         vm.stopPrank();
         assertEq(ctl.markupBps(), 12_000);
         assertEq(ctl.startCapBps(), 150_000);
@@ -908,6 +923,7 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.floorBps(), 8_000);
         assertEq(ctl.anchorBps(), 11_000);
         assertEq(ctl.anchorHalfLife(), 3 days);
+        assertEq(ctl.anchorMinCost(), 0.25 ether);
         assertEq(ctl.startBps(), 13_200);
     }
 
@@ -932,9 +948,12 @@ contract SaleSettingsTest is SaleBase {
             ctl.setAnchorBps(11_000);
             vm.expectRevert(IControllerV1.OnlyOwner.selector);
             ctl.setAnchorHalfLife(3 days);
+            vm.expectRevert(IControllerV1.OnlyOwner.selector);
+            ctl.setAnchorMinCost(0.25 ether);
             vm.stopPrank();
         }
         assertEq(ctl.anchorHalfLife(), 7 days);
+        assertEq(ctl.anchorMinCost(), 0.1 ether);
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.anchorBps(), 10_000);
     }
@@ -1013,6 +1032,16 @@ contract SaleSettingsTest is SaleBase {
         vm.expectRevert(_bad("anchorHalfLife"));
         Prod.newController(address(core), s);
         s = _fresh();
+        s.anchorMinCost = 10 ether + 1;
+        vm.expectRevert(_bad("anchorMinCost"));
+        Prod.newController(address(core), s);
+        s = _fresh();
+        s.anchorMinCost = 10 ether;
+        assertEq(Prod.newController(address(core), s).anchorMinCost(), 10 ether);
+        s = _fresh();
+        s.anchorMinCost = 0;
+        assertEq(Prod.newController(address(core), s).anchorMinCost(), 0);
+        s = _fresh();
         IControllerV1 c = Prod.newController(address(core), s);
         assertEq(c.anchorBps(), 10_000);
         assertEq(c.anchorHalfLife(), 7 days);
@@ -1033,6 +1062,15 @@ contract SaleSettingsTest is SaleBase {
 
 contract SaleAnchorTest is SaleBase {
     address internal buyer = address(0xB0B);
+    uint128 internal constant LAUNCH_MIN_COST = 0.1 ether;
+
+    /// a page at the fixture rate costs under the launch `anchorMinCost`. the anchor tests run with the minimum at 0 and
+    /// the tests of the minimum set it
+    function setUp() public override {
+        super.setUp();
+        vm.prank(owner);
+        ctl.setAnchorMinCost(0);
+    }
 
     function _composeN(uint256 n) internal returns (uint256[] memory sids) {
         sids = new uint256[](n);
@@ -1071,6 +1109,85 @@ contract SaleAnchorTest is SaleBase {
         assertEq(ctl.anchorTime(), t0, "no checkpoint");
         assertEq(ctl.anchorBps(), 10_000);
         assertEq(ctl.startBps(), 15_000);
+    }
+
+    /// the review of d77b82c (F1): with an empty pot the engine pays 1 wei per credit, so a statement of about 80 wei is
+    /// composed and bought at its start price. four rounds leave the anchor, its time and the fresh start price unchanged
+    function test_anchor_dustStatementsLeaveTheAnchor() public {
+        vm.prank(owner);
+        ctl.setAnchorMinCost(LAUNCH_MIN_COST);
+        assertEq(core.ethPot(), 0, "the pot is empty");
+        address attacker = address(0xA77);
+        uint256 t0 = ctl.anchorTime();
+        for (uint256 r; r < 4; ++r) {
+            uint256[] memory ids = _credits(attacker, 80);
+            for (uint256 i; i < 80; ++i) {
+                vm.deal(attacker, attacker.balance + 1);
+                vm.prank(attacker);
+                (bool ok,) = address(core).call{value: 1}("");
+                assertTrue(ok);
+                core.skim();
+                uint256[] memory one = new uint256[](1);
+                one[0] = ids[i];
+                vm.prank(attacker);
+                core.sellForEth(one);
+            }
+            vm.fee(composeBasefee);
+            vm.prank(keeper);
+            core.compose();
+            uint256 sid = STATEMENTS.supply();
+            assertLt(_cost(sid), ctl.anchorMinCost(), "the statement costs less than the minimum");
+            assertLt(_cost(sid), 1_000, "80 credits at 1 wei each, plus the page remainder");
+            uint256 price = ctl.priceOf(sid);
+            assertEq(price, _cost(sid) * 15_000 / 10_000, "the start price");
+            vm.recordLogs();
+            _pay(attacker, sid, price);
+            assertEq(_moved(vm.getRecordedLogs()), 0, "no AnchorMoved");
+            assertEq(STATEMENTS.ownerOf(sid), attacker, "the buy completed");
+            assertEq(ctl.anchorBps(), 10_000);
+            assertEq(ctl.storedAnchorBps(), 10_000);
+            assertEq(ctl.anchorTime(), t0, "no checkpoint");
+            assertEq(ctl.startBps(), 15_000, "a fresh statement still starts at 150 percent of cost");
+        }
+    }
+
+    /// a statement whose cost equals `anchorMinCost` moves the anchor. one wei less leaves it
+    function test_anchor_theMinimumCostIsInclusive() public {
+        uint256[] memory sids = _composeN(2);
+        uint128 c0 = uint128(_cost(sids[0]));
+        uint128 c1 = uint128(_cost(sids[1]));
+        vm.prank(owner);
+        ctl.setAnchorMinCost(c0 + 1);
+        uint256 t0 = ctl.anchorTime();
+        _buyAtStart(sids[0]);
+        assertEq(ctl.storedAnchorBps(), 10_000, "one wei under the minimum");
+        assertEq(ctl.anchorTime(), t0);
+        vm.prank(owner);
+        ctl.setAnchorMinCost(c1);
+        _buyAtStart(sids[1]);
+        assertEq(ctl.storedAnchorBps(), 12_500, "at the minimum");
+        assertEq(ctl.anchorTime(), block.timestamp);
+    }
+
+    /// at the launch minimum a page of 0.114 eth moves the anchor and a page of 0.078 eth leaves it. a minimum of 0 lets
+    /// any cost move it
+    function test_anchor_launchMinimumAndZero() public {
+        uint256[] memory sids = _composeN(2);
+        vm.prank(owner);
+        ctl.setAnchorMinCost(LAUNCH_MIN_COST);
+        assertGe(_cost(sids[0]), LAUNCH_MIN_COST);
+        assertLt(_cost(sids[1]), LAUNCH_MIN_COST);
+        _buyAtStart(sids[0]);
+        assertEq(ctl.storedAnchorBps(), 12_500, "a page above the minimum");
+        uint256 at = ctl.anchorTime();
+        _buyAtStart(sids[1]);
+        assertEq(ctl.storedAnchorBps(), 12_500, "a page under the minimum");
+        assertEq(ctl.anchorTime(), at);
+        uint256 sid = _another();
+        vm.prank(owner);
+        ctl.setAnchorMinCost(0);
+        _buyAtStart(sid);
+        assertEq(ctl.storedAnchorBps(), 15_625, "a minimum of 0");
     }
 
     /// the review sequence: four sales at the start price raise the anchor to 24_413, then two sales at the floor leave

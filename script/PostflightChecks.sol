@@ -283,13 +283,14 @@ abstract contract PostflightChecks is PostflightPool {
         bool same = k.markupBps() == c.sale.markupBps
             && k.startCapBps() == c.sale.startCapBps && k.fastDecayBpsPerHour() == c.sale.fastDecayBpsPerHour
             && k.kneeBps() == c.sale.kneeBps && k.slowDecayBpsPerHour() == c.sale.slowDecayBpsPerHour
-            && k.floorBps() == c.sale.floorBps && k.anchorHalfLife() == c.sale.anchorHalfLife;
+            && k.floorBps() == c.sale.floorBps && k.anchorHalfLife() == c.sale.anchorHalfLife
+            && k.anchorMinCost() == c.sale.anchorMinCost;
         if (_settingsChanged()) {
             _warn(
                 "warn: sale settings equal the config", same, "SETTINGS_CHANGED=1, the owner changed them since launch"
             );
         } else {
-            _check("controller: sale settings equal the config", same, "markupBps startCapBps fastDecayBpsPerHour kneeBps slowDecayBpsPerHour floorBps anchorHalfLife");
+            _check("controller: sale settings equal the config", same, "markupBps startCapBps fastDecayBpsPerHour kneeBps slowDecayBpsPerHour floorBps anchorHalfLife anchorMinCost");
         }
         // a fresh launch has no sales and no owner change, so the running level of sale prices is at its lower bound
         bool anchored = k.anchorBps() == 10_000;
@@ -317,7 +318,9 @@ abstract contract PostflightChecks is PostflightPool {
                 vm.toString(k.anchorBps()),
                 " anchor half life ",
                 vm.toString(k.anchorHalfLife()),
-                "s"
+                "s anchor min cost ",
+                vm.toString(k.anchorMinCost()),
+                " wei"
             )
         );
     }

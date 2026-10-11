@@ -14,6 +14,7 @@ interface IControllerV1 {
 
     event AnchorBpsSet(uint32 anchorBps);
     event AnchorHalfLifeSet(uint32 anchorHalfLife);
+    event AnchorMinCostSet(uint128 anchorMinCost);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event FastDecayBpsPerHourSet(uint16 fastDecayBpsPerHour);
@@ -26,6 +27,7 @@ interface IControllerV1 {
     function CORE() external view returns (address);
     function anchorBps() external view returns (uint32);
     function anchorHalfLife() external view returns (uint32);
+    function anchorMinCost() external view returns (uint128);
     function anchorTime() external view returns (uint40);
     function buy(uint256 sid) external payable;
     function fastDecayBpsPerHour() external view returns (uint16);
@@ -36,6 +38,7 @@ interface IControllerV1 {
     function priceOf(uint256 sid) external view returns (uint256 price);
     function setAnchorBps(uint32 v) external;
     function setAnchorHalfLife(uint32 v) external;
+    function setAnchorMinCost(uint128 v) external;
     function setFastDecayBpsPerHour(uint16 v) external;
     function setFloorBps(uint16 v) external;
     function setKneeBps(uint32 v) external;

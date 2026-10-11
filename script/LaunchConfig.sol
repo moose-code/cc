@@ -201,7 +201,8 @@ abstract contract ConfigReader is CommonBase {
             kneeBps: _u32(j, ".sale.kneeBps"),
             slowDecayBpsPerHour: _u16(j, ".sale.slowDecayBpsPerHour"),
             floorBps: _u16(j, ".sale.floorBps"),
-            anchorHalfLife: _u32(j, ".sale.anchorHalfLife")
+            anchorHalfLife: _u32(j, ".sale.anchorHalfLife"),
+            anchorMinCost: _u128(j, ".sale.anchorMinCost")
         });
     }
 
@@ -243,6 +244,11 @@ abstract contract ConfigReader is CommonBase {
     function _u32(string memory j, string memory key) private pure returns (uint32) {
         // forge-lint: disable-next-line(unsafe-typecast)
         return uint32(_uint(j, key, type(uint32).max));
+    }
+
+    function _u128(string memory j, string memory key) private pure returns (uint128) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint128(_uint(j, key, type(uint128).max));
     }
 
     function _i24(string memory j, string memory key) private pure returns (int24) {
@@ -292,6 +298,7 @@ abstract contract ConfigReader is CommonBase {
         if (k.fastDecayBpsPerHour < 1 || k.fastDecayBpsPerHour > 10_000) return "fastDecayBpsPerHour";
         if (k.slowDecayBpsPerHour < 1 || k.slowDecayBpsPerHour > 10_000) return "slowDecayBpsPerHour";
         if (k.anchorHalfLife < 1 days || k.anchorHalfLife > 90 days) return "anchorHalfLife";
+        if (k.anchorMinCost > 10 ether) return "anchorMinCost";
         return bytes32(0);
     }
 

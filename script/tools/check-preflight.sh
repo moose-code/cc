@@ -6,6 +6,11 @@
 # it also checks what forge cannot (ffi is off): the git tree is clean and HEAD contains the frozen candidate recorded
 # in project/director-state.json (docs/DEPLOY.md step 4). the build pins are preflight rows (script/Checks.sol).
 # usage: script/tools/check-preflight.sh [config.json]
+#        the config defaults to script/config/mainnet.json, the file the launch uses. the rehearsal passes
+#        script/config/rehearsal.json explicitly.
+# the row `rule: image and description are filled and are not placeholders` is expected to fail only when the config
+# holds the text PLACEHOLDER in `image` or `description` (the rehearsal file, by design). an empty value is not expected:
+# the launch config fails this script until the owner fills both.
 # env:   MAINNET_RPC_URL (default: the Tenderly public gateway, archive state), FORK_BLOCK (default 26158000),
 #        DEPLOYER (default: the config owner), EXPECT_FAIL (comma separated failed rows; default: the three rows that fail
 #        on the pin block before the factory owner step: the deployer balance and the two factory rows of DEPLOY step 3)
@@ -22,7 +27,10 @@ echo "ok: git tree clean, HEAD $(git rev-parse --short HEAD) contains the frozen
 rpc="${MAINNET_RPC_URL:-https://mainnet.gateway.tenderly.co}"
 block="${FORK_BLOCK:-26158000}"
 deployer="${DEPLOYER:-$(jq -r .owner "$cfg")}"
-expect="${EXPECT_FAIL-deployer: balance covers the deploy fee and the gas, factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)}"
+imgrow="rule: image and description are filled and are not placeholders"
+owner_rows="deployer: balance covers the deploy fee and the gas, factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
+if jq -e '[.image, .description] | any(contains("PLACEHOLDER"))' "$cfg" >/dev/null; then owner_rows="$imgrow, $owner_rows"; fi
+expect="${EXPECT_FAIL-$owner_rows}"
 out="$(LAUNCH_CONFIG="$cfg" DEPLOYER="$deployer" forge script script/Preflight.s.sol --rpc-url "$rpc" --fork-block-number "$block" --sender "$deployer" 2>&1 || true)"
 summary="$(grep -E '^ +[0-9]+ of [0-9]+ checks passed' <<<"$out" || true)"
 if [ -z "$summary" ]; then

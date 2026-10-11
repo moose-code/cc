@@ -168,7 +168,8 @@ const SETTING_KEYS = Object.keys(SETTINGS);
 // start = min(anchorBps * markupBps / 10000, startCapBps) and falls per second in two stages: fastDecayBpsPerHour from start to kneeBps, then
 // slowDecayBpsPerHour to floorBps, where it stays. a start at or below kneeBps falls at the slow rate from the first second (askBps).
 // the anchor (ControllerV1.anchorBps, starts at 10000) is the running level of sale prices in bps of cost. a sale above the anchor now sets it to the
-// mean of the anchor now and the sale price, a sale at or below it leaves it. the part of the anchor above 10000 halves every anchorHalfLife, continuously.
+// mean of the anchor now and the sale price, a sale at or below it leaves it, and so does a sale of a statement that costs less than anchorMinCost (eth here, wei in the
+// contract). the part of the anchor above 10000 halves every anchorHalfLife, continuously.
 // a buyer pays the asking price and gets the statement at once through Core.sellTo.
 const CONTROLLER = {
   markupBps: 15000,
@@ -178,6 +179,7 @@ const CONTROLLER = {
   slowDecayBpsPerHour: 25,
   floorBps: 7500,
   anchorHalfLife: 7 * 86400,
+  anchorMinCost: 0.1,
 };
 const CONTROLLER_KEYS = Object.keys(CONTROLLER);
 // the asking price in bps of cost after `age` seconds from a start price of `start` bps (ControllerV1._ask without its integer rounding):
@@ -198,6 +200,7 @@ function controllerViolation(c) {
   if (c.fastDecayBpsPerHour < 1 || c.fastDecayBpsPerHour > 10000) return 'fastDecayBpsPerHour';
   if (c.slowDecayBpsPerHour < 1 || c.slowDecayBpsPerHour > 10000) return 'slowDecayBpsPerHour';
   if (c.anchorHalfLife < 86400 || c.anchorHalfLife > 90 * 86400) return 'anchorHalfLife';
+  if (c.anchorMinCost < 0 || c.anchorMinCost > 10) return 'anchorMinCost';
   return null;
 }
 
@@ -447,7 +450,7 @@ class Core {
     this.funded = this.ethPot * W >= this.rateAtCheckpoint;
   }
   // owner: setSettings. validates, checkpoints both rates first, then applies at once. patch.rate is setRate.
-  // the patch may also hold controller settings (markupBps, startCapBps, fastDecayBpsPerHour, kneeBps, slowDecayBpsPerHour, floorBps, anchorHalfLife) and anchorBps (setAnchorBps): the controller reads them live.
+  // the patch may also hold controller settings (markupBps, startCapBps, fastDecayBpsPerHour, kneeBps, slowDecayBpsPerHour, floorBps, anchorHalfLife, anchorMinCost) and anchorBps (setAnchorBps): the controller reads them live.
   // a new anchorHalfLife stores the anchor now first, and a start cap below the anchor now lowers the anchor to the cap
   setSettings(patch, now) {
     const rate = patch.rate;
@@ -561,14 +564,14 @@ class Core {
     return this.bookSale(value, now);
   }
   // ControllerV1.buy: pays the asking price now through sellTo. a sale price in bps of cost (rounded up) above the anchor now moves the anchor
-  // to the mean of the two, not above startCapBps. a sale at or below the anchor leaves it. returns the booking, or null when the Core would revert
+  // to the mean of the two, not above startCapBps. a sale at or below the anchor leaves it, and so does a statement that costs less than anchorMinCost. returns the booking, or null when the Core would revert
   buy(st, now) {
     const price = this.askingPrice(st, now);
     const res = this.sellTo(st, price, now);
     if (!res) return null;
     const saleBps = Math.ceil((price * BPS) / st.cost - 1e-9);
     const anchor = this.anchorAt(now);
-    if (saleBps > anchor) this.setAnchor(Math.min(Math.floor((anchor + saleBps) / 2), this.c.startCapBps), now);
+    if (st.cost >= this.c.anchorMinCost && saleBps > anchor) this.setAnchor(Math.min(Math.floor((anchor + saleBps) / 2), this.c.startCapBps), now);
     return Object.assign({ price, saleBps }, res);
   }
 

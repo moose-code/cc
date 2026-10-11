@@ -72,7 +72,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0x27023254cc5e6f5fe46361ca310c67affb4b4949ad6061b34874e88fa01ac3a1;
     bytes32 internal constant BUILD_HASH_CORELIB = 0x85ed1807ba0f3f9482a395fedbe4dca46a80577c1dfef73974534639ddd8bedb;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x296db1f482ad0ecb8e6daaab347ffd2127c0e141c387bdea583e7179a933fa52;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x08dfd5f7bdd3eb4539f1a9ce911a9133a0fe13b743e500b26bee18ec78b51695;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0xea2e602937d074c8ae7ca1d9f671c2486982afd670e076cd570ffc4879c47c83;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
@@ -191,7 +191,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "sale settings inside the bounds",
             badSale == 0,
-            badSale == 0 ? "markupBps startCapBps floorBps kneeBps fastDecayBpsPerHour slowDecayBpsPerHour anchorHalfLife" : string(abi.encodePacked("out of bounds: ", badSale))
+            badSale == 0 ? "markupBps startCapBps floorBps kneeBps fastDecayBpsPerHour slowDecayBpsPerHour anchorHalfLife anchorMinCost" : string(abi.encodePacked("out of bounds: ", badSale))
         );
         _warn(
             "warn: sale floor below the core hard floor",
@@ -821,7 +821,9 @@ abstract contract LaunchChecks is PostflightChecks {
                 vm.toString(c.sale.floorBps),
                 " anchor half life ",
                 vm.toString(c.sale.anchorHalfLife),
-                "s"
+                "s, the anchor moves on statements costing at least ",
+                vm.toString(c.sale.anchorMinCost),
+                " wei"
             )
         );
         _info("signoff: settings are adjustable", "the owner can change every setting at once after launch");

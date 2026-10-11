@@ -12,8 +12,8 @@ import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Inter
 /// at or below `kneeBps` falls at the slow rate from the first second. the price is computed at every call from the age of
 /// statement (time since its compose) and the current settings, so a setting change applies to held statements at once.
 /// `anchorBps` (bps of cost, at least 10_000) is the running level of sale prices. it moves up with sales and down with
-/// time. a `buy` whose sale price in bps of cost is above the anchor sets the anchor to the mean of the two. a `buy`
-/// at or below the anchor leaves it unchanged. the part of the anchor above 10_000 halves every `anchorHalfLife`,
+/// time. a `buy` of a statement whose cost is at least `anchorMinCost` and whose sale price in bps of cost is above the
+/// anchor sets the anchor to the mean of the two. every other `buy` leaves the anchor unchanged. the part of the anchor above 10_000 halves every `anchorHalfLife`,
 /// continuously. the controller stores the anchor at its last change (`storedAnchorBps`, `anchorTime`) and evaluates
 /// the decay at the call. the price is computed from the current anchor at every call, so held statements follow it.
 /// `buy` sells a held eth lane statement at once at the asking price.
@@ -22,6 +22,7 @@ import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Inter
 contract ControllerV1 is IController {
     uint256 private constant PAGE = 80;
     uint256 private constant BPS = 10_000;
+    uint256 private constant MAX_ANCHOR_MIN_COST = 10 ether;
 
     error OnlyOwner();
     error BadSetting(bytes32 field);
@@ -37,6 +38,7 @@ contract ControllerV1 is IController {
     event FloorBpsSet(uint16 floorBps);
     event AnchorBpsSet(uint32 anchorBps);
     event AnchorHalfLifeSet(uint32 anchorHalfLife);
+    event AnchorMinCostSet(uint128 anchorMinCost);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
 
@@ -60,6 +62,8 @@ contract ControllerV1 is IController {
     uint40 public anchorTime;
     /// seconds for the part of the anchor above 10_000 to halve. 1 day to 90 days
     uint32 public anchorHalfLife;
+    /// the least statement cost, in wei, whose `buy` moves the anchor. 0 to 10 ether
+    uint128 public anchorMinCost;
     bool private _busy;
 
     constructor(address core, Sale memory sale) {
@@ -78,6 +82,8 @@ contract ControllerV1 is IController {
         slowDecayBpsPerHour = sale.slowDecayBpsPerHour;
         if (sale.anchorHalfLife < 1 days || sale.anchorHalfLife > 90 days) revert BadSetting("anchorHalfLife");
         anchorHalfLife = sale.anchorHalfLife;
+        if (sale.anchorMinCost > MAX_ANCHOR_MIN_COST) revert BadSetting("anchorMinCost");
+        anchorMinCost = sale.anchorMinCost;
         storedAnchorBps = uint32(BPS);
         // forge-lint: disable-next-line(unsafe-typecast)
         anchorTime = uint40(block.timestamp);
@@ -148,6 +154,13 @@ contract ControllerV1 is IController {
         emit AnchorHalfLifeSet(v);
     }
 
+    /// 0 to 10 ether. applies to the next `buy`
+    function setAnchorMinCost(uint128 v) external onlyOwner {
+        if (v > MAX_ANCHOR_MIN_COST) revert BadSetting("anchorMinCost");
+        anchorMinCost = v;
+        emit AnchorMinCostSet(v);
+    }
+
     // ------------------------------------------------------------------ pricing and sale
 
     /// the running level of sale prices now, bps of cost: 10_000 plus the part of `storedAnchorBps` above 10_000,
@@ -171,7 +184,7 @@ contract ControllerV1 is IController {
     }
 
     /// pays the asking price, gets the statement at once, and moves the anchor halfway to the sale price in bps of
-    /// cost. the excess of `msg.value` is refunded to the caller last
+    /// cost when the cost is at least `anchorMinCost`. the excess of `msg.value` is refunded to the caller last
     function buy(uint256 sid) external payable {
         if (_busy) revert Reentrant();
         _busy = true;
@@ -195,9 +208,10 @@ contract ControllerV1 is IController {
         if (price < floor) price = floor;
     }
 
-    /// a sale price in bps of cost (rounded up) above the anchor sets the anchor to the mean of the two, at most
-    /// `startCapBps`. a sale price at or below the anchor leaves the stored anchor and `anchorTime` unchanged
+    /// with `cost` at least `anchorMinCost`, a sale price in bps of cost (rounded up) above the anchor sets the anchor to
+    /// the mean of the two, at most `startCapBps`. every other sale leaves the stored anchor and `anchorTime` unchanged
     function _moveAnchor(uint256 sid, uint256 price, uint256 cost) private {
+        if (cost < anchorMinCost) return;
         // cost is at least 80: every eth lane credit enters the pile through `_spend` (nonzero) or `adopt` (at least 1 wei)
         uint256 saleBps = (price * BPS + cost - 1) / cost;
         uint256 current = anchorBps();
