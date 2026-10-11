@@ -577,7 +577,7 @@ contract ReceiveTest is FeeBase {
         assertEq(CREDITS.ownerOf(id), address(core));
         assertEq(t.flushFailed(), 1, "the mid call flush failed");
         assertGt(address(feeRouter).balance, routerBefore, "the fees wait in the router");
-        // no savings, so no tip: the cost is the price
+        // no gap, so no payment: the cost is the price
         assertEq(core.ethPot(), pot - ceiling, "the cost is exact");
         assertEq(address(core).balance, balance - ceiling);
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "consistent");
@@ -727,8 +727,8 @@ contract ReceiveSettingsTest is FeeBase {
         }
     }
 
-    /// the push inside `buyListing`'s measurement under changed settings (tip rules). nothing is booked
-    /// then, the push only lowers the measured cost, and the tip follows the settings
+    /// the push inside `buyListing`'s measurement under changed settings (keeper fee). nothing is booked
+    /// then, the push only lowers the measured cost, and the payment is capped at the bid less the cost
     function test_receiveMidBuyListingAcrossSettings() public {
         SwapMidListing t = new SwapMidListing(router, address(core), launchKey);
         t.setFeeRouter(address(feeRouter));
@@ -736,22 +736,19 @@ contract ReceiveSettingsTest is FeeBase {
         _stock();
         _fundPot(1 ether);
         uint256 snap = vm.snapshotState();
-        uint256[3] memory tipSav = [uint256(1_000), 2_500, 0];
-        uint256[3] memory tipCap = [uint256(200), 500, 100];
+        uint256[3] memory fees = [uint256(0), 0.0005 ether, 0.005 ether];
         for (uint256 i; i < 3; ++i) {
             vm.revertToState(snap);
-            _midListingCase(t, tipSav[i], tipCap[i]);
+            _midListingCase(t, fees[i]);
         }
     }
 
     /// @dev one setting row of `test_receiveMidBuyListingAcrossSettings` (a helper so the locals fit the stack)
-    function _midListingCase(SwapMidListing t, uint256 tipSav, uint256 tipCap) internal {
+    function _midListingCase(SwapMidListing t, uint256 fee) internal {
         {
             Settings memory s = core.settings();
-            // forge-lint: disable-start(unsafe-typecast)
-            s.tipSavingsBps = uint16(tipSav);
-            s.tipCapBps = uint16(tipCap);
-            // forge-lint: disable-end(unsafe-typecast)
+            // forge-lint: disable-next-line(unsafe-typecast)
+            s.keeperFee = uint64(fee);
             _setSettings(s);
         }
         uint256 id = _credits(address(t), 1)[0];
@@ -760,15 +757,15 @@ contract ReceiveSettingsTest is FeeBase {
         vm.deal(address(t), swapEth);
         t.arm(id, swapEth);
         uint256 pot = core.ethPot();
-        // the mid call flush fails (V2R-1), so the cost is the price and there are no savings to tip
+        // the mid call flush fails (V2R-1), so the cost is the price and the payment cap (bid less cost) is zero
         uint256 cost = ceiling;
-        uint256 tip = 0;
+        uint256 paid = 0;
         uint256 keeper0 = keeper.balance;
         vm.prank(keeper);
         core.buyListing(ceiling, hex"deadbeef", id, address(t));
         assertEq(CREDITS.ownerOf(id), address(core));
-        assertEq(keeper.balance - keeper0, tip, "tip by the settings");
-        assertEq(core.ethPot(), pot - cost - tip, "the cost is exact");
+        assertEq(keeper.balance - keeper0, paid, "the payment is capped at the bid less the cost");
+        assertEq(core.ethPot(), pot - cost - paid, "the cost is exact");
         assertEq(t.flushFailed(), 1, "the mid call flush failed");
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "consistent");
     }
@@ -906,7 +903,7 @@ contract BuybackTest is FeeBase {
     /// spends the whole budget. reads the logs recorded since the call
     function _residue(uint256 pool) internal returns (uint256 residue) {
         (uint256 spent, uint256 paid) = _buybackEvent(vm.getRecordedLogs());
-        uint256 maxPay = 600_000 * block.basefee.min(core.settings().buybackMaxBaseFee) + core.settings().keeperFee;
+        uint256 maxPay = 600_000 * block.basefee.min(core.settings().keeperMaxBaseFee) + core.settings().keeperFee;
         assertEq(spent, pool - maxPay, "the swap spends the whole budget");
         residue = maxPay - paid;
     }
@@ -1188,7 +1185,7 @@ contract BuybackPaymentTest is FeeBase {
 
     function test_baseFeeAboveTheCapIsRefundedAtTheCap() public {
         Settings memory s = core.settings();
-        s.buybackMaxBaseFee = 3 gwei;
+        s.keeperMaxBaseFee = 3 gwei;
         _setSettings(s);
         uint256 snap = vm.snapshotState();
         Run memory atCap = _run(3 gwei, 3 gwei);
@@ -1247,7 +1244,7 @@ contract BuybackSettingsTest is FeeBase {
         uint256 spent;
         (spent, paid) = _buybackEvent(vm.getRecordedLogs());
         assertEq(keeper.balance - keeper0, paid, "the caller got the payment");
-        uint256 maxPay = 600_000 * block.basefee.min(s.buybackMaxBaseFee) + s.keeperFee;
+        uint256 maxPay = 600_000 * block.basefee.min(s.keeperMaxBaseFee) + s.keeperFee;
         assertGe(paid, s.keeperFee * spent / (s.buybackSlice - maxPay), "the payment holds the scaled fee of the setting");
         assertEq(core.ethToBuyback(), pool - spent - paid, "the pot fell by the spend and the payment");
         assertLe(spent + paid, slice, "the slice bounds both");
@@ -1316,7 +1313,7 @@ contract BuybackSettingsTest is FeeBase {
         assertEq(core.ethToBuyback(), lastMargin + lastFeeShare, "only the unused payment margin and the fee share are left");
         assertEq(
             lastMargin,
-            600_000 * block.basefee.min(core.settings().buybackMaxBaseFee) + 0.0005 ether - paid,
+            600_000 * block.basefee.min(core.settings().keeperMaxBaseFee) + 0.0005 ether - paid,
             "the margin is the largest payment less the payment"
         );
         // the longest delay binds in blocks

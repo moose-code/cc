@@ -79,6 +79,11 @@ uint256 constant RATE_START_MAX_WEI = 1e18;
 // about 267,000 gas. read by the Core and by the `buybackSlice` bound
 uint256 constant BUYBACK_GAS = 600_000;
 
+// the most gas of a buyListing the caller's payment counts, so a gas burning target cannot inflate it. the largest
+// measured buyListing (CreditStrategy path, four gas burning router payees flushing) is 946,000 gas as a transaction,
+// 450,000 to 490,000 without the router load. read by the Core
+uint256 constant BUYLISTING_GAS = 1_500_000;
+
 /// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`, bounds
 /// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into four storage slots
 /// (a hot path reads it with a handful of loads). docs/FLOW.md section 2 has the meaning of every field
@@ -93,8 +98,6 @@ struct Settings {
     uint16 ceilBps;
     /// growth of the ceiling anchor per full 10 minutes since the last fill, bps of the anchor
     uint16 idleLoosenBps;
-    uint16 tipSavingsBps;
-    uint16 tipCapBps;
     /// the hard floor of a statement sale, bps of the statement cost. `sellTo` takes no payment below it and the
     /// controller prices at or above it
     uint16 saleFloorBps;
@@ -107,10 +110,11 @@ struct Settings {
     uint128 buybackSlice;
     /// blocks between two coin buybacks
     uint16 buybackDelay;
-    /// fixed fee paid to the caller of `buyback`, wei, scaled by the eth spent over the largest swap budget the `buybackSlice` setting allows
+    /// fixed fee paid to the caller of `buyback` and `buyListing`, wei. the `buyback` fee is scaled by the eth spent over
+    /// the largest swap budget the `buybackSlice` setting allows, the `buyListing` fee is paid whole
     uint64 keeperFee;
-    /// base fee ceiling of the `buyback` gas refund, wei
-    uint48 buybackMaxBaseFee;
+    /// base fee ceiling of the gas refund of `buyback` and `buyListing`, wei
+    uint48 keeperMaxBaseFee;
     /// exit rate cap and floor, bps of one credit's exit value
     uint16 xRateCap;
     uint16 xRateFloor;
@@ -199,8 +203,6 @@ library Mainnet {
             climbPerMinBps: 50,
             ceilBps: 11_000,
             idleLoosenBps: 200,
-            tipSavingsBps: 2_500,
-            tipCapBps: 400,
             saleFloorBps: 7_500,
             exitAfter: 105 hours,
             saleToBuybackBps: 5_000,
@@ -208,7 +210,7 @@ library Mainnet {
             buybackSlice: 0.5 ether,
             buybackDelay: 25,
             keeperFee: 0.0005 ether,
-            buybackMaxBaseFee: 10 gwei,
+            keeperMaxBaseFee: 10 gwei,
             xRateCap: 9_700,
             xRateFloor: 3_000,
             xRateClimbPerHour: 100,

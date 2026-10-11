@@ -12,8 +12,11 @@
 # holds the text PLACEHOLDER in `image` or `description` (the rehearsal file, by design). an empty value is not expected:
 # the launch config fails this script until the owner fills both.
 # env:   MAINNET_RPC_URL (default: the Tenderly public gateway, archive state), FORK_BLOCK (default 26158000),
-#        DEPLOYER (default: the config owner), EXPECT_FAIL (comma separated failed rows; default: the three rows that fail
-#        on the pin block before the factory owner step: the deployer balance and the two factory rows of DEPLOY step 3)
+#        DEPLOYER (default: the config owner), EXPECT_FAIL (comma separated failed rows; default: the two factory rows of
+#        DEPLOY step 3, which fail on the pin block before the factory owner step).
+#        the row `deployer: balance covers the deploy fee and the gas` is left out of the comparison on both sides: it
+#        reads the owner's eth balance at the fork block, which changes whenever the owner is funded, and it is not a
+#        property of the code or the config. read it in the printed table.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 cfg="${1:-script/config/mainnet.json}"
@@ -28,7 +31,8 @@ rpc="${MAINNET_RPC_URL:-https://mainnet.gateway.tenderly.co}"
 block="${FORK_BLOCK:-26158000}"
 deployer="${DEPLOYER:-$(jq -r .owner "$cfg")}"
 imgrow="rule: image and description are filled and are not placeholders"
-owner_rows="deployer: balance covers the deploy fee and the gas, factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
+balrow="deployer: balance covers the deploy fee and the gas"
+owner_rows="factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
 if jq -e '[.image, .description] | any(contains("PLACEHOLDER"))' "$cfg" >/dev/null; then owner_rows="$imgrow, $owner_rows"; fi
 expect="${EXPECT_FAIL-$owner_rows}"
 out="$(LAUNCH_CONFIG="$cfg" DEPLOYER="$deployer" forge script script/Preflight.s.sol --rpc-url "$rpc" --fork-block-number "$block" --sender "$deployer" 2>&1 || true)"
@@ -39,6 +43,10 @@ fi
 failed="$(grep -E '^ +failed: ' <<<"$out" | sed -E 's/^ +failed: //' || true)"
 echo "$summary" | sed 's/^ *//'
 grep -oE '(CONFIG_HASH|CONTROLLER_NONCE)=[0-9a-fx]+' <<<"$out" | sort -u || true
+# the failed rows without the balance row, in the same ", " joined form as the expected rows
+without_balance() { { sed 's/, /\n/g' <<<"$1" | grep -vxF "$balrow" || true; } | paste -sd, - | sed 's/,/, /g'; }
+failed="$(without_balance "$failed")"
+expect="$(without_balance "$expect")"
 if [ "$failed" != "$expect" ]; then
   echo "failed rows differ from the expected ones"; echo "  got:      $failed"; echo "  expected: $expect"; exit 1
 fi

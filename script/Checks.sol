@@ -70,13 +70,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x27023254cc5e6f5fe46361ca310c67affb4b4949ad6061b34874e88fa01ac3a1;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x85ed1807ba0f3f9482a395fedbe4dca46a80577c1dfef73974534639ddd8bedb;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x08dfd5f7bdd3eb4539f1a9ce911a9133a0fe13b743e500b26bee18ec78b51695;
+    bytes32 internal constant BUILD_HASH_CORE = 0x0d4b78012aef376a1879fbdf3e8a0d1b15370c0981d9f583faf1e4c845807054;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xef0cafa27d8e02efc63a72853cb7599c3d517f49efcb07c09021b444ad8110b4;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xefc7a0c18bbb502185f9b9ff92b0dd02df1c8e7317bfd095ebd9bd1e80d8fac3;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0xea2e602937d074c8ae7ca1d9f671c2486982afd670e076cd570ffc4879c47c83;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x76b0eda2a51b8b3a97a18bab2a1cf862e70816fc6602f21f8dd53921fb84aed1;
+        0x204fce18e86b33bb34fc4f883391bed1077dd8f6cd364f6f35b67500f345b3ca;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -398,8 +398,8 @@ abstract contract LaunchChecks is PostflightChecks {
         );
     }
 
-    /// @dev the deploy order is router, controller, Core: the router takes the deployer nonce after the library (when
-    /// the library still has to go out), the controller the next, the Core the one after. the coin comes from the
+    /// @dev the deploy order is controller, router, Core: the controller takes the deployer nonce after the library (when
+    /// the library still has to go out), the router the next, the Core the one after. the coin comes from the
     /// factory's own `predictToken` for the deployer and the full config, read through a call that cannot revert here
     function _prePredictions(LaunchConfig memory c, address deployer) private {
         uint64 nonce = _controllerNonce(deployer);
@@ -800,8 +800,8 @@ abstract contract LaunchChecks is PostflightChecks {
                 vm.toString(c.settings.buybackSlice),
                 " keeper fee ",
                 vm.toString(c.settings.keeperFee),
-                " base fee ceiling ",
-                vm.toString(c.settings.buybackMaxBaseFee)
+                " keeper base fee ceiling ",
+                vm.toString(c.settings.keeperMaxBaseFee)
             )
         );
         _info(

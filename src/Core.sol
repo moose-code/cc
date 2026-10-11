@@ -24,7 +24,8 @@ import {
     Stack,
     Settings,
     Mainnet,
-    BUYBACK_GAS
+    BUYBACK_GAS,
+    BUYLISTING_GAS
 } from "./interfaces/Interfaces.sol";
 import {CoreLib} from "./lib/CoreLib.sol";
 import {SettingsBounds} from "./lib/SettingsBounds.sol";
@@ -114,7 +115,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event Skimmed(uint256 eth, uint256 exitToken);
     event CreditBought(uint256 indexed id, address indexed from, Lane lane, uint256 cost);
     event ListingBought(
-        uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 tip, uint256 rate
+        uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     event ExitRateFill(uint256 rate, uint256 pot);
@@ -174,6 +175,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant EXIT_GAS = 1_500_000;
     /// gas of the work after the end of `buyback` that its refund counts, with the transaction base cost
     uint256 private constant BUYBACK_OVERHEAD_GAS = 60_000;
+    /// gas of the work after the count in `buyListing` (the spend, the pile record, the event and the payment, about
+    /// 200,000), the transaction base cost and typical calldata
+    uint256 private constant BUYLISTING_OVERHEAD_GAS = 250_000;
     /// gas the controller's `nextPage` may use, in both lanes. a full page of ControllerV1 costs about 73,000 (measured
     /// in test/ReviewFlowCore.t.sol), so this is about 7 times that
     uint256 private constant PAGE_GAS = 500_000;
@@ -506,9 +510,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         SafeTransferLib.safeTransferETH(msg.sender, total);
     }
 
-    /// buy credit id through an allowed target. the caller supplies the complete calldata and earns a tip from the savings.
-    /// reverts `Retired` after `migrate`
+    /// buy credit id through an allowed target. the caller supplies the complete calldata and is paid from `ethPot`: the
+    /// gas of the call at the base fee, capped at `keeperMaxBaseFee` and `BUYLISTING_GAS`, plus `keeperFee`. the payment
+    /// is at most the bid less the listing cost, so the pot pays at most the bid for the credit. the gas counted
+    /// includes the fee router flush. reverts `Retired` after `migrate`
     function buyListing(uint256 value, bytes calldata data, uint256 id, address target) external nonReentrant {
+        uint256 gasStart = gasleft();
         _openDoor();
         if (!allowedTarget[target] || _forbidden(target)) revert TargetNotAllowed();
         if (id == 0) revert ZeroId();
@@ -532,11 +539,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 cost = ethBefore - ethAfter;
         if (cost > value) revert BadCost();
 
-        uint256 tip = (uint256(_st().tipSavingsBps) * (ceiling - cost) / BPS).min(uint256(_st().tipCapBps) * cost / BPS);
-        _spend(cost + tip);
-        _push(Lane.Eth, id, cost + tip);
-        emit ListingBought(id, target, msg.sender, cost, tip, rateAtCheckpoint);
-        if (tip != 0) SafeTransferLib.safeTransferETH(msg.sender, tip);
+        // the bid is at most `ethPot` (the read is lowered to the pot) and cost is at most `value`, at most the bid
+        Settings storage s = _st();
+        uint256 paid = _payment(gasStart, BUYLISTING_OVERHEAD_GAS, BUYLISTING_GAS, s.keeperMaxBaseFee, s.keeperFee)
+            .min(ceiling - cost);
+        _spend(cost + paid);
+        _push(Lane.Eth, id, cost + paid);
+        emit ListingBought(id, target, msg.sender, cost, paid, rateAtCheckpoint);
+        if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
     }
 
     /// sell credits into the exit token bid. phase 2 only. reverts `Retired` after `migrate`. the body is
@@ -724,7 +734,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// swaps up to one slice of the eth buyback pot for coin in the canonical pool, then burns the coin on the token
     /// so the total supply falls. the caller is paid from the slice: the gas of the call at the base fee, capped at
-    /// `buybackMaxBaseFee` and `BUYBACK_GAS`, plus `keeperFee` scaled by `spent` over the largest swap budget the
+    /// `keeperMaxBaseFee` and `BUYBACK_GAS`, plus `keeperFee` scaled by `spent` over the largest swap budget the
     /// `buybackSlice` setting allows. the largest payment is `BUYBACK_GAS * rate + keeperFee`, the swap budget is the
     /// slice less that payment, and a slice under twice that payment reverts, so the payment is at most half the slice.
     /// the core's own bounty share of the hook's skim on this swap reaches the pot through the router (`flush`), and a
@@ -737,7 +747,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (block.number < lastBuybackBlock + s.buybackDelay) revert TooSoon();
         uint256 setSlice = s.buybackSlice;
         uint256 slice = pool.min(setSlice);
-        uint256 rate = block.basefee.min(s.buybackMaxBaseFee);
+        uint256 rate = block.basefee.min(s.keeperMaxBaseFee);
         uint256 fee = s.keeperFee;
         uint256 maxPay = BUYBACK_GAS * rate + fee;
         if (slice < 2 * maxPay) revert SliceTooSmall();
@@ -749,7 +759,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         ICoin(COIN).burn(bought);
         // spent is at most budget, which is at most setSlice - maxPay, so the scaled fee is at most the fee
         uint256 paid = _payment(
-            gasStart, BUYBACK_OVERHEAD_GAS, BUYBACK_GAS, s.buybackMaxBaseFee, fee.min(fee * spent / (setSlice - maxPay))
+            gasStart, BUYBACK_OVERHEAD_GAS, BUYBACK_GAS, s.keeperMaxBaseFee, fee.min(fee * spent / (setSlice - maxPay))
         );
         ethToBuyback += slice - spent - paid;
         emit Buyback(msg.sender, spent, paid);

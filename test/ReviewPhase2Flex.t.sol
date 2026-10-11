@@ -107,8 +107,6 @@ contract PackHarness {
         s.climbPerMinBps = type(uint16).max;
         s.ceilBps = type(uint16).max;
         s.idleLoosenBps = type(uint16).max;
-        s.tipSavingsBps = type(uint16).max;
-        s.tipCapBps = type(uint16).max;
         s.saleFloorBps = type(uint16).max;
         s.exitAfter = type(uint32).max;
         s.saleToBuybackBps = type(uint16).max;
@@ -116,7 +114,7 @@ contract PackHarness {
         s.buybackSlice = type(uint128).max;
         s.buybackDelay = type(uint16).max;
         s.keeperFee = type(uint64).max;
-        s.buybackMaxBaseFee = type(uint48).max;
+        s.keeperMaxBaseFee = type(uint48).max;
         s.xRateCap = type(uint16).max;
         s.xRateFloor = type(uint16).max;
         s.xRateClimbPerHour = type(uint16).max;
@@ -634,8 +632,6 @@ contract ReviewPhase2FlexTest is Fixture {
         m.climbPerMinBps = type(uint16).max;
         m.ceilBps = type(uint16).max;
         m.idleLoosenBps = type(uint16).max;
-        m.tipSavingsBps = type(uint16).max;
-        m.tipCapBps = type(uint16).max;
         m.saleFloorBps = type(uint16).max;
         m.exitAfter = type(uint32).max;
         m.saleToBuybackBps = type(uint16).max;
@@ -643,7 +639,7 @@ contract ReviewPhase2FlexTest is Fixture {
         m.buybackSlice = type(uint128).max;
         m.buybackDelay = type(uint16).max;
         m.keeperFee = type(uint64).max;
-        m.buybackMaxBaseFee = type(uint48).max;
+        m.keeperMaxBaseFee = type(uint48).max;
         m.xRateCap = type(uint16).max;
         m.xRateFloor = type(uint16).max;
         m.xRateClimbPerHour = type(uint16).max;
@@ -664,7 +660,7 @@ contract ReviewPhase2FlexTest is Fixture {
         PackHarness h = new PackHarness();
         h.maxAll();
         (uint256 a, uint256 b, uint256 c, uint256 d) = h.words();
-        assertEq(a, (1 << 192) - 1, "word 0: 192 bits, the top 64 are free");
+        assertEq(a, (1 << 160) - 1, "word 0: 160 bits, the top 96 are free");
         assertEq(b, type(uint256).max, "word 1");
         assertEq(c, (1 << 208) - 1, "word 2: 176 bits of neighbors then the two 16 bit shares");
         assertEq(d, (1 << 112) - 1, "word 3: callerFee 64 bits then callerMaxBaseFee 48 bits");

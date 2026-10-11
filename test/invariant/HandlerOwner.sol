@@ -48,8 +48,6 @@ abstract contract HandlerOwner is HandlerBase {
         s.climbPerMinBps = uint16(_f(_r(seed, 4), 1, 1_000, c.climbPerMinBps));
         s.ceilBps = uint16(_f(_r(seed, 5), 10_000, 30_000, c.ceilBps));
         s.idleLoosenBps = uint16(_f(_r(seed, 29), 1, 2_000, c.idleLoosenBps));
-        s.tipSavingsBps = uint16(_f(_r(seed, 8), 0, 2_500, c.tipSavingsBps));
-        s.tipCapBps = uint16(_f(_r(seed, 9), 0, 500, c.tipCapBps));
         s.saleFloorBps = uint16(_f(_r(seed, 12), 1_000, 40_000, c.saleFloorBps));
         s.exitAfter = uint32(_f(_r(seed, 14), 1 hours, 365 days, c.exitAfter));
         s.saleToBuybackBps = uint16(_f(_r(seed, 15), 0, 10_000, c.saleToBuybackBps));
@@ -57,7 +55,7 @@ abstract contract HandlerOwner is HandlerBase {
         s.buybackSlice = uint128(_f(_r(seed, 17), 0.01 ether, 1 ether, c.buybackSlice));
         s.buybackDelay = uint16(_f(_r(seed, 18), 1, 7_200, c.buybackDelay));
         s.keeperFee = uint64(_f(_r(seed, 19), 0, 0.005 ether, c.keeperFee));
-        s.buybackMaxBaseFee = uint48(_f(_r(seed, 30), 1 gwei, 100 gwei, c.buybackMaxBaseFee));
+        s.keeperMaxBaseFee = uint48(_f(_r(seed, 30), 1 gwei, 100 gwei, c.keeperMaxBaseFee));
         s.xRateCap = uint16(_f(_r(seed, 20), 0, 10_000, c.xRateCap));
         s.xRateFloor = uint16(_f(_r(seed, 21), 0, s.xRateCap, c.xRateFloor));
         s.xRateClimbPerHour = uint16(_f(_r(seed, 22), 0, 1_000, c.xRateClimbPerHour));
@@ -71,7 +69,7 @@ abstract contract HandlerOwner is HandlerBase {
         s.callerMaxBaseFee = uint48(_f(_r(seed, 11), 0, 100 gwei, c.callerMaxBaseFee));
         _corner(s, corner);
         // the slice stays at or above twice the largest buyback payment
-        uint256 minSlice = 2 * (BUYBACK_GAS * s.buybackMaxBaseFee + s.keeperFee);
+        uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
         if (s.buybackSlice < minSlice) s.buybackSlice = uint128(minSlice);
         // forge-lint: disable-end(unsafe-typecast)
     }
@@ -104,7 +102,7 @@ abstract contract HandlerOwner is HandlerBase {
             // the smallest slice: the cheapest payment allows it
             s.buybackSlice = 0.01 ether;
             s.keeperFee = 0;
-            s.buybackMaxBaseFee = 1 gwei;
+            s.keeperMaxBaseFee = 1 gwei;
         } else if (k == 11) {
             s.buybackSlice = 1 ether;
         } else if (k == 12) {
@@ -113,20 +111,16 @@ abstract contract HandlerOwner is HandlerBase {
             s.xRateCap = 0;
             s.xRateFloor = 0;
         } else if (k == 14) {
-            // every tip, caller payment and keeper reward at zero
-            s.tipSavingsBps = 0;
-            s.tipCapBps = 0;
+            // every caller payment and keeper reward at zero
             s.callerFee = 0;
             s.callerMaxBaseFee = 0;
             s.keeperFee = 0;
         } else if (k == 15) {
-            // every tip, caller payment and keeper reward at its ceiling
-            s.tipSavingsBps = 2_500;
-            s.tipCapBps = 500;
+            // every caller payment and keeper reward at its ceiling
             s.callerFee = 0.005 ether;
             s.callerMaxBaseFee = 100 gwei;
             s.keeperFee = 0.005 ether;
-            s.buybackMaxBaseFee = 100 gwei;
+            s.keeperMaxBaseFee = 100 gwei;
         } else if (k == 16) {
             // the shortest clocks and the most aggressive climb
             s.climbPerMinBps = 1_000;
@@ -259,8 +253,6 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.climbPerMinBps < 1 || s.climbPerMinBps > 1_000) return "climbPerMinBps";
         if (s.ceilBps < 10_000 || s.ceilBps > 30_000) return "ceilBps";
         if (s.idleLoosenBps < 1 || s.idleLoosenBps > 2_000) return "idleLoosenBps";
-        if (s.tipSavingsBps > 2_500) return "tipSavingsBps";
-        if (s.tipCapBps > 500) return "tipCapBps";
         if (s.saleFloorBps < 1_000 || s.saleFloorBps > 40_000) return "saleFloorBps";
         if (s.exitAfter < 1 hours || s.exitAfter > 365 days) return "exitAfter";
         if (s.saleToBuybackBps > 10_000) return "saleToBuybackBps";
@@ -268,8 +260,8 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.buybackSlice < 0.01 ether || s.buybackSlice > 1 ether) return "buybackSlice";
         if (s.buybackDelay < 1 || s.buybackDelay > 7_200) return "buybackDelay";
         if (s.keeperFee > 0.005 ether) return "keeperFee";
-        if (s.buybackMaxBaseFee < 1 gwei || s.buybackMaxBaseFee > 100 gwei) return "buybackMaxBaseFee";
-        if (s.buybackSlice < 2 * (BUYBACK_GAS * s.buybackMaxBaseFee + s.keeperFee)) return "buybackSlice";
+        if (s.keeperMaxBaseFee < 1 gwei || s.keeperMaxBaseFee > 100 gwei) return "keeperMaxBaseFee";
+        if (s.buybackSlice < 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee)) return "buybackSlice";
         if (s.xRateCap > 10_000) return "xRateCap";
         if (s.xRateFloor > s.xRateCap) return "xRateFloor";
         if (s.xRateClimbPerHour > 1_000) return "xRateClimbPerHour";
@@ -305,9 +297,9 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 5) {
             (s.climbPerMinBps, name) = (1_001, "climbPerMinBps");
         } else if (which == 6) {
-            (s.tipSavingsBps, name) = (2_501, "tipSavingsBps");
+            (s.keeperFee, name) = (0.005 ether + 1, "keeperFee");
         } else if (which == 7) {
-            (s.tipCapBps, name) = (501, "tipCapBps");
+            (s.xRateCap, name) = (10_001, "xRateCap");
         } else if (which == 8) {
             (s.callerFee, name) = (0.005 ether + 1, "callerFee");
         } else if (which == 9) {
@@ -371,9 +363,9 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 38) {
             (s.idleLoosenBps, name) = (0, "idleLoosenBps");
         } else if (which == 39) {
-            (s.buybackMaxBaseFee, name) = (1 gwei - 1, "buybackMaxBaseFee");
+            (s.keeperMaxBaseFee, name) = (1 gwei - 1, "keeperMaxBaseFee");
         } else {
-            (s.buybackMaxBaseFee, name) = (100 gwei + 1, "buybackMaxBaseFee");
+            (s.keeperMaxBaseFee, name) = (100 gwei + 1, "keeperMaxBaseFee");
         }
         // forge-lint: disable-end(unsafe-typecast)
     }

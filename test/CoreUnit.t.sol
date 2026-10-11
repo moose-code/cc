@@ -6,10 +6,11 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, ICreditStrategy, Stack, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Lane, ICreditStrategy, Stack, Mainnet, Settings, BUYLISTING_GAS} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {HostileTarget} from "./attackers/HostileTarget.sol";
 import {ProbeTarget} from "./attackers/ProbeTarget.sol";
+import {ListingTarget} from "./attackers/ListingTarget.sol";
 import {MockExitToken} from "./standins/MockExitToken.sol";
 import {MockExitModule} from "./standins/MockExitModule.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
@@ -633,74 +634,141 @@ contract CoreUnitTest is CoreBase {
         core.buyListing(price, _listing(LISTED_A), LISTED_A, STRATEGY);
     }
 
-    /// the tip is `tipSavingsBps` of the savings (ceiling minus cost) and never more than `tipCapBps` of the cost. the
-    /// call is made after `extra` more seconds of climb, so the savings are small or large. the cost basis includes
-    /// the tip, the pot pays both, the keeper gets the tip
-    function _tipCase(uint256 savingsBps, uint256 capBps, uint256 extra) internal returns (uint256 tip) {
-        if (savingsBps != 2_500 || capBps != 400) {
-            Settings memory s = core.settings();
-            // forge-lint: disable-start(unsafe-typecast)
-            s.tipSavingsBps = uint16(savingsBps);
-            s.tipCapBps = uint16(capBps);
-            // forge-lint: disable-end(unsafe-typecast)
-            _setSettings(s);
-        }
-        uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
-        assertEq(price, 0.036 ether);
-        _fundAndClimb(LISTED_A, price);
-        _warp(extra);
+    struct PayRun {
+        uint256 paid;
+        uint256 gap;
+        uint256 used;
+    }
 
+    /// moves credit `id` from the strategy to a fresh `ListingTarget` and allows it
+    function _listingTarget(uint256 id) internal returns (ListingTarget t) {
+        t = new ListingTarget();
+        vm.prank(STRATEGY);
+        CREDITS.transferFrom(STRATEGY, address(t), id);
+        _allow(address(t));
+    }
+
+    /// one `buyListing` of credit `id` through `target` with `data`, at base fee `bf` and gas price `gp`, for `value`
+    /// less `gapWanted` under the bid when `gapWanted` is nonzero. checks the books: the keeper gets the payment, the
+    /// pot pays the cost and the payment, the cost basis is both
+    function _payRun(address target, bytes memory data, uint256 id, uint256 cost, uint256 bf, uint256 gp)
+        internal
+        returns (PayRun memory r)
+    {
+        vm.fee(bf);
+        vm.txGasPrice(gp);
         uint256 ceiling = core.ethRate();
-        uint256 rate = ceiling;
-        tip = (ceiling - price) * savingsBps / 10_000;
-        uint256 capTip = price * capBps / 10_000;
-        if (tip > capTip) tip = capTip;
-
+        r.gap = ceiling - cost;
         uint256 pot = core.ethPot();
-        uint256 keeperBefore = keeper.balance;
+        uint256 before = keeper.balance;
         vm.prank(keeper);
-        core.buyListing(price, _listing(LISTED_A), LISTED_A, STRATEGY);
-
-        assertEq(keeper.balance - keeperBefore, tip);
-        assertEq(core.ethPot(), pot - price - tip);
-        assertEq(core.rateAtCheckpoint(), _dropped(rate));
-        assertEq(core.lastFillTime(), block.timestamp);
-        assertEq(CREDITS.ownerOf(LISTED_A), address(core));
-        assertEq(ICreditStrategy(STRATEGY).nftForSale(LISTED_A), 0);
-        (bool inPile, Lane lane, uint256 cost,) = core.creditInfo(LISTED_A);
-        assertTrue(inPile);
-        assertEq(uint8(lane), uint8(Lane.Eth));
-        assertEq(cost, price + tip, "cost basis includes the tip");
+        uint256 g = gasleft();
+        core.buyListing(cost, data, id, target);
+        r.used = g - gasleft();
+        r.paid = keeper.balance - before;
+        _assertListingPay(r.paid, r.gap);
+        assertEq(core.ethPot(), pot - cost - r.paid, "the pot pays the cost and the payment");
+        (,, uint256 basis,) = core.creditInfo(id);
+        assertEq(basis, cost + r.paid, "the cost basis is the cost plus the payment");
+        assertLe(basis, ceiling, "the engine pays at most its bid");
         _solvent();
     }
 
-    function test_buyListing_tipIsQuarterOfSavingsWhenSmall() public {
-        uint256 tip = _tipCase(2500, 400, 0);
-        assertGt(tip, 0);
-        assertLt(tip, 0.036 ether * 400 / 10_000, "savings bound branch");
+    /// the payment is the gas counted at the base fee plus the whole keeper fee, on the real strategy path. the counted
+    /// gas covers the gas used and the transaction base cost, and scales with the base fee
+    function test_buyListing_paysCountedGasAtTheBaseFeePlusTheFee() public {
+        uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
+        assertEq(price, 0.036 ether);
+        _fundAndClimb(LISTED_A, price);
+        _warp(30 hours);
+        uint256 snap = vm.snapshotState();
+        PayRun memory a = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 1 gwei, 1 gwei);
+        uint256 fee = core.settings().keeperFee;
+        assertEq(fee, 0.0005 ether);
+        assertGt(a.gap, a.paid, "the gap does not bind");
+        assertEq((a.paid - fee) % 1 gwei, 0, "whole gas units");
+        uint256 counted = (a.paid - fee) / 1 gwei;
+        assertGe(counted, a.used + 21_000, "the counted gas covers the gas used and the transaction base cost");
+        assertLe(counted, a.used + 120_000, "and carries no more than the work after the count");
+        emit log_named_uint("buyListing strategy path: gas used", a.used);
+        emit log_named_uint("buyListing strategy path: gas counted", counted);
+        vm.revertToState(snap);
+        PayRun memory b = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 2 gwei, 2 gwei);
+        assertEq(b.paid - fee, 2 * (a.paid - fee), "the gas part scales with the base fee");
     }
 
-    function test_buyListing_tipIsCappedAtFourPercentOfCost() public {
-        uint256 tip = _tipCase(2500, 400, 30 hours);
-        assertEq(tip, 0.036 ether * 400 / 10_000);
+    /// a base fee above `keeperMaxBaseFee` pays at the ceiling, and the gas price above the base fee is not refunded
+    function test_buyListing_baseFeeCeilingAndPriorityFee() public {
+        uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
+        _fundAndClimb(LISTED_A, price);
+        _warp(30 hours);
+        assertEq(core.settings().keeperMaxBaseFee, 10 gwei);
+        uint256 snap = vm.snapshotState();
+        PayRun memory atCeiling = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 10 gwei, 10 gwei);
+        vm.revertToState(snap);
+        PayRun memory above = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 300 gwei, 300 gwei);
+        assertEq(above.paid, atCeiling.paid, "a base fee above the ceiling pays at the ceiling");
+        vm.revertToState(snap);
+        PayRun memory tipped = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 10 gwei, 500 gwei);
+        assertEq(tipped.paid, atCeiling.paid, "the gas price above the base fee changes nothing");
     }
 
-    /// the dials: a quarter of the savings with a cap of half a percent, then no tip at all, then the largest cap
-    function test_buyListing_tipAtChangedSettings() public {
-        uint256 tip = _tipCase(2500, 50, 30 hours);
-        assertEq(tip, 0.036 ether * 50 / 10_000, "the half percent cap binds");
+    /// the keeper fee is paid whole at a zero base fee, whatever the cost
+    function test_buyListing_keeperFeeIsPaidWhole() public {
+        _fundAndClimb(LISTED_A, 0.036 ether);
+        uint256 id = CreditIds.at(540);
+        ListingTarget t = _listingTarget(id);
+        Settings memory s = core.settings();
+        s.keeperFee = 0.005 ether;
+        _setSettings(s);
+        uint256 cost = 0.01 ether;
+        PayRun memory r = _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 0)), id, cost, 0, 0);
+        assertEq(r.paid, 0.005 ether, "the whole fee, no gas part");
     }
 
-    function test_buyListing_tipOffPaysNothing() public {
-        uint256 tip = _tipCase(0, 200, 30 hours);
-        assertEq(tip, 0);
-        assertEq(keeper.balance, 0);
+    /// a gap smaller than the payment is the payment, so cost plus payment equals the bid. a zero gap pays nothing
+    function test_buyListing_paymentIsCappedAtTheGap() public {
+        _fund(10 ether);
+        uint256 ceiling = core.ethRate();
+        uint256[4] memory gaps = [uint256(0), 1, 1000, 0.0004 ether];
+        for (uint256 i; i < gaps.length; ++i) {
+            uint256 id = CreditIds.at(545 + i);
+            ListingTarget t = _listingTarget(id);
+            uint256 snap = vm.snapshotState();
+            PayRun memory r =
+                _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 0)), id, ceiling - gaps[i], 1 gwei, 1 gwei);
+            assertEq(r.paid, gaps[i], "the payment is the gap");
+            (,, uint256 basis,) = core.creditInfo(id);
+            assertEq(basis, ceiling, "cost plus payment is the bid");
+            vm.revertToState(snap);
+        }
     }
 
-    function test_buyListing_tipAtTheLargestBounds() public {
-        uint256 tip = _tipCase(2500, 500, 60 hours);
-        assertLe(tip, 0.036 ether * 500 / 10_000, "never more than 5 percent of the cost");
-        assertGt(tip, 0.036 ether * 400 / 10_000, "above the launch cap");
+    /// the bid is lowered to the pot, so the payment cannot take the pot below zero: with a pot under the price state
+    /// the bid is the pot, a listing 100 wei under that leaves a 100 wei payment and an empty pot
+    function test_buyListing_paymentIsCappedAtThePot() public {
+        _fund(0.001 ether);
+        uint256 bid = core.ethRate();
+        assertEq(bid, core.ethPot(), "the pot clamps the bid");
+        uint256 id = CreditIds.at(552);
+        ListingTarget t = _listingTarget(id);
+        PayRun memory r = _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 0)), id, bid - 100, 5 gwei, 5 gwei);
+        assertEq(r.paid, 100);
+        assertEq(core.ethPot(), 0, "the pot is empty, not below it");
+    }
+
+    /// the counted gas stops at `BUYLISTING_GAS`: a target that burns 3 million gas is paid for 1.5 million
+    function test_buyListing_countedGasIsCappedAtTheConstant() public {
+        _fundAndClimb(LISTED_A, 0.036 ether);
+        uint256 id = CreditIds.at(553);
+        ListingTarget t = _listingTarget(id);
+        Settings memory s = core.settings();
+        s.keeperFee = 0;
+        _setSettings(s);
+        uint256 cost = 0.01 ether;
+        PayRun memory r = _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 3_000_000)), id, cost, 1 gwei, 1 gwei);
+        assertGt(r.used, 3_000_000, "the call burned the gas");
+        assertEq(r.paid, BUYLISTING_GAS * 1 gwei, "the gas counted stops at the constant");
     }
 
     function test_buyListing_failedCallRevertsOnlyThatBuy() public {
@@ -820,17 +888,18 @@ contract CoreUnitTest is CoreBase {
         uint256 ceiling = core.ethRate();
         uint256 value = ceiling * 3 / 4;
         uint256 cost = value - value / 2;
-        Settings memory s = core.settings();
-        uint256 tip = ((ceiling - cost) * s.tipSavingsBps / 10_000).min(cost * s.tipCapBps / 10_000);
         uint256 excessBefore = address(core).balance - core.ethPot() - core.ethToBuyback();
         uint256 listingBefore = address(p).balance;
 
+        uint256 keeperBefore = keeper.balance;
         vm.prank(keeper);
         core.buyListing(value, abi.encodeCall(ProbeTarget.fill, (id, 0)), id, address(p));
+        uint256 paid = keeper.balance - keeperBefore;
+        _assertListingPay(paid, ceiling - cost);
 
         (,, uint256 booked,) = core.creditInfo(id);
-        assertEq(booked, cost + tip, "cost is net of the refund");
-        assertEq(core.ethPot(), 10 ether - cost - tip);
+        assertEq(booked, cost + paid, "cost is net of the refund");
+        assertEq(core.ethPot(), 10 ether - cost - paid);
         assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), excessBefore, "refund booked nowhere");
         assertEq(address(p).balance - listingBefore, cost, "the listing kept the net price");
         _solvent();
@@ -1491,7 +1560,7 @@ contract CoreComposedTest is CoreBase {
         uint256 gasPrice = 5 gwei;
         Settings memory s = core.settings();
         s.keeperFee = 0.005 ether;
-        s.buybackMaxBaseFee = 100 gwei;
+        s.keeperMaxBaseFee = 100 gwei;
 
         vm.revertToState(snap);
         _setSettings(s);

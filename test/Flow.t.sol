@@ -17,7 +17,7 @@ import {SettingsFields} from "../script/SettingsFields.sol";
 contract FlowTest is Fixture {
     using FixedPointMathLib for uint256;
 
-    uint256 internal constant N = 26;
+    uint256 internal constant N = 24;
 
     // ------------------------------------------------------------------ helpers
 
@@ -38,7 +38,7 @@ contract FlowTest is Fixture {
         return keccak256(abi.encode(s));
     }
 
-    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 26 fields in declaration order
+    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 24 fields in declaration order
     function _get(Settings memory s, uint256 i) internal pure returns (uint256) {
         return SettingsFields.get(s, i);
     }
@@ -47,32 +47,32 @@ contract FlowTest is Fixture {
         SettingsFields.set(s, i, v);
     }
 
-    function _lo() internal pure returns (uint256[26] memory) {
+    function _lo() internal pure returns (uint256[24] memory) {
         return SettingsFields.lo();
     }
 
-    function _hi() internal pure returns (uint256[26] memory) {
+    function _hi() internal pure returns (uint256[24] memory) {
         return SettingsFields.hi();
     }
 
-    function _names() internal pure returns (bytes32[26] memory) {
+    function _names() internal pure returns (bytes32[24] memory) {
         return SettingsFields.names();
     }
 
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
-        uint256[26] memory lo = _lo();
-        uint256[26] memory hi = _hi();
+        uint256[24] memory lo = _lo();
+        uint256[24] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
             uint256 b = hi[i];
-            if (i == 16) b = s.xRateCap;
+            if (i == 14) b = s.xRateCap;
             _set(s, i, a + (b > a ? x % (b - a + 1) : 0));
         }
-        // the slice is at least twice the largest buyback payment (field 11 is `buybackSlice`)
-        uint256 minSlice = 2 * (BUYBACK_GAS * s.buybackMaxBaseFee + s.keeperFee);
-        if (s.buybackSlice < minSlice) _set(s, 11, minSlice);
+        // the slice is at least twice the largest buyback payment (field 9 is `buybackSlice`)
+        uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
+        if (s.buybackSlice < minSlice) _set(s, 9, minSlice);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -85,8 +85,6 @@ contract FlowTest is Fixture {
         assertEq(s.climbPerMinBps, 50);
         assertEq(s.ceilBps, 11_000);
         assertEq(s.idleLoosenBps, 200);
-        assertEq(s.tipSavingsBps, 2_500);
-        assertEq(s.tipCapBps, 400);
         assertEq(s.saleFloorBps, 7_500);
         assertEq(s.exitAfter, 105 hours);
         assertEq(s.saleToBuybackBps, 5_000);
@@ -94,7 +92,7 @@ contract FlowTest is Fixture {
         assertEq(s.buybackSlice, 0.5 ether);
         assertEq(s.buybackDelay, 25);
         assertEq(s.keeperFee, 0.0005 ether);
-        assertEq(s.buybackMaxBaseFee, 10 gwei);
+        assertEq(s.keeperMaxBaseFee, 10 gwei);
         assertEq(s.xRateCap, 9_700);
         assertEq(s.xRateFloor, 3_000);
         assertEq(s.xRateClimbPerHour, 100);
@@ -118,17 +116,17 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundEdgeIsAccepted() public {
-        uint256[26] memory lo = _lo();
-        uint256[26] memory hi = _hi();
+        uint256[24] memory lo = _lo();
+        uint256[24] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             for (uint256 k; k < 2; ++k) {
                 Settings memory s = Mainnet.defaultSettings();
                 uint256 v = k == 0 ? lo[i] : hi[i];
                 // the two fields bounded by another field
-                if (i == 15 && k == 0) s.xRateFloor = 0;
-                if (i == 16 && k == 1) v = s.xRateCap;
+                if (i == 13 && k == 0) s.xRateFloor = 0;
+                if (i == 14 && k == 1) v = s.xRateCap;
                 // the smallest slice needs the cheapest buyback payment: 2 * (600,000 gas * 1 gwei + 0) is 0.0012 ether
-                if (i == 11 && k == 0) (s.keeperFee, s.buybackMaxBaseFee) = (0, 1 gwei);
+                if (i == 9 && k == 0) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -137,9 +135,9 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundViolationReverts() public {
-        uint256[26] memory lo = _lo();
-        uint256[26] memory hi = _hi();
-        bytes32[26] memory names = _names();
+        uint256[24] memory lo = _lo();
+        uint256[24] memory hi = _hi();
+        bytes32[24] memory names = _names();
         for (uint256 i; i < N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // above the top
@@ -149,11 +147,11 @@ contract FlowTest is Fixture {
             vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, names[i]));
             core.setSettings(s);
             // below the bottom (fields whose bottom is zero have none)
-            if (lo[i] == 0 && i != 16) continue;
+            if (lo[i] == 0 && i != 14) continue;
             s = Mainnet.defaultSettings();
-            if (i == 16) {
+            if (i == 14) {
                 // the floor is bounded by the cap, so a cap below the floor is the violation, and it names the floor
-                _set(s, 15, s.xRateFloor - 1);
+                _set(s, 13, s.xRateFloor - 1);
                 names[i] = "xRateFloor";
             } else {
                 _set(s, i, lo[i] - 1);
@@ -167,26 +165,26 @@ contract FlowTest is Fixture {
     function test_settings_buybackPaymentBounds() public {
         Settings memory s = Mainnet.defaultSettings();
         s.keeperFee = 0.005 ether;
-        s.buybackMaxBaseFee = 100 gwei;
+        s.keeperMaxBaseFee = 100 gwei;
         _owner(s);
-        s.buybackMaxBaseFee = 1 gwei;
+        s.keeperMaxBaseFee = 1 gwei;
         _owner(s);
         s.keeperFee = 0.005 ether + 1;
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("keeperFee")));
         core.setSettings(s);
         s.keeperFee = 0;
-        s.buybackMaxBaseFee = 1 gwei - 1;
+        s.keeperMaxBaseFee = 1 gwei - 1;
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("buybackMaxBaseFee")));
+        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("keeperMaxBaseFee")));
         core.setSettings(s);
-        s.buybackMaxBaseFee = 100 gwei + 1;
+        s.keeperMaxBaseFee = 100 gwei + 1;
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("buybackMaxBaseFee")));
+        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("keeperMaxBaseFee")));
         core.setSettings(s);
     }
 
-    /// `buybackSlice` is at least twice the largest buyback payment, `BUYBACK_GAS * buybackMaxBaseFee + keeperFee`
+    /// `buybackSlice` is at least twice the largest buyback payment, `BUYBACK_GAS * keeperMaxBaseFee + keeperFee`
     function test_settings_buybackSliceCoversTwiceTheLargestPayment() public {
         Settings memory s = Mainnet.defaultSettings();
         bytes memory bad = abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("buybackSlice"));
@@ -200,7 +198,7 @@ contract FlowTest is Fixture {
         assertEq(core.settings().buybackSlice, 0.013 ether);
         // a dearer payment raises the line, and a cheaper one lowers it
         s.keeperFee = 0.005 ether;
-        s.buybackMaxBaseFee = 100 gwei;
+        s.keeperMaxBaseFee = 100 gwei;
         // forge-lint: disable-next-line(unsafe-typecast)
         s.buybackSlice = uint128(2 * (BUYBACK_GAS * 100 gwei + 0.005 ether) - 1);
         vm.prank(owner);
@@ -209,11 +207,11 @@ contract FlowTest is Fixture {
         s.buybackSlice += 1;
         _owner(s);
         s.keeperFee = 0;
-        s.buybackMaxBaseFee = 1 gwei;
+        s.keeperMaxBaseFee = 1 gwei;
         s.buybackSlice = 0.01 ether;
         _owner(s);
         // the edge at another base fee ceiling
-        s.buybackMaxBaseFee = 17 gwei;
+        s.keeperMaxBaseFee = 17 gwei;
         // forge-lint: disable-next-line(unsafe-typecast)
         s.buybackSlice = uint128(2 * BUYBACK_GAS * 17 gwei - 1);
         vm.prank(owner);

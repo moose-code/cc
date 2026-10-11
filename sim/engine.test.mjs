@@ -44,7 +44,7 @@ const R0 = 6.668e15;
     if (k in STEPPED) continue;
     if (k === 'reserveBps') { ok(SETTINGS.reserveBps === undefined, 'reserveBps is gone from the model'); continue; }
     if (moved && k === 'exitAfter') continue; // 72 hours in the old file, 105 hours in the new rules
-    near(SETTINGS[k], k === 'buybackSlice' || k === 'keeperFee' || k === 'callerFee' ? v / 1e18 : k === 'buybackMaxBaseFee' || k === 'callerMaxBaseFee' ? v / 1e9 : v, 1e-12, 'setting ' + k); // eth and gwei in the model, wei in the config
+    near(SETTINGS[k], k === 'buybackSlice' || k === 'keeperFee' || k === 'callerFee' ? v / 1e18 : k === 'keeperMaxBaseFee' || k === 'callerMaxBaseFee' ? v / 1e9 : v, 1e-12, 'setting ' + k); // eth and gwei in the model, wei in the config
   }
   for (const k of newFields) if (cfg.settings[k] !== undefined) near(SETTINGS[k], cfg.settings[k], 1e-12, 'setting ' + k);
   for (const k of Object.keys(SETTINGS)) ok(BUILT_ONLY.includes(k) || cfg.settings[k] !== undefined || (moved && (newFields.includes(k) || k === 'reserveBps')), 'the config carries ' + k);
@@ -128,16 +128,20 @@ const R0 = 6.668e15;
   ok(c.spend(500, 0) && c.spend(499.9, 0), 'a spend of most of the pot passes, there is no hourly cap');
   assert.equal(c.spend(1, 0), false); n++; // more than the pot left
 }
-// buyListing tip: min(tipSavingsBps of savings, tipCapBps of cost) and booked as spend
+// buyListing payment (docs/FLOW.md 71): counted gas (at most BUYLISTING_GAS) at min(basefee, keeperMaxBaseFee) plus keeperFee, at most the bid less the ask, booked as spend with the cost
 {
   const c = fresh({}, 10);
-  c.rateAtCheckpoint = 1e16; // ceiling 0.01 eth
+  c.rateAtCheckpoint = 1e16; // ceiling 0.01 eth, base fee 1 gwei, keeperFee 0.0005
+  const gas = 470000e-9 + 0.0005;
   const res = c.buyListing(0.008, 0);
   ok(res);
-  near(res.tip, 0.00032, 1e-12, 'tip capped at 4 percent of cost');
+  near(res.paid, gas, 1e-12, 'a large gap pays counted gas at the base fee plus the keeper fee');
+  near(c.ethPot, 10 - 0.008 - gas, 1e-12, 'the pot paid the cost and the payment');
   const c2 = fresh({}, 10); c2.rateAtCheckpoint = 1e16;
-  near(c2.buyListing(0.0099, 0).tip, 0.000025, 1e-9, 'tip is 25 percent of savings when below the cap');
+  near(c2.buyListing(0.0099, 0).paid, 0.0001, 1e-9, 'a gap under the largest payment is the payment');
   assert.equal(c2.buyListing(0.0101, 0), null); n++;
+  const c3 = fresh({}, 10); c3.rateAtCheckpoint = 1e16; c3.p.basefeeGwei = 50;
+  near(c3.buyListing(0.002, 0).paid, 470000 * 10e-9 + 0.0005, 1e-12, 'a base fee above keeperMaxBaseFee pays at the cap');
 }
 // compose at the launch settings pays nothing: the pot is unchanged and the statement cost is the plain sum of the credit costs in both lanes
 {
@@ -466,10 +470,10 @@ const R0 = 6.668e15;
     near(l.exitStatement({ lane: 'eth', t0: 0 }, 10000, 0).toBuyback, 0.05, 1e-12, 'eth lane ignores exitLaneToBuybackBps');
   }
 }
-// buyback slice and the caller payment (docs/FLOW.md 61): the caller is paid 270,000 gas at min(basefee, buybackMaxBaseFee) plus keeperFee out of the slice.
+// buyback slice and the caller payment (docs/FLOW.md 61): the caller is paid 270,000 gas at min(basefee, keeperMaxBaseFee) plus keeperFee out of the slice.
 // the swap budget is the slice less the largest payment (600,000 gas at the capped rate plus keeperFee), the unspent part of that reserve goes back to the pot
 {
-  const c = fresh(); c.ethToBuyback = 2.5; // 1 gwei base fee, keeperFee 0.0005, buybackMaxBaseFee 10 gwei
+  const c = fresh(); c.ethToBuyback = 2.5; // 1 gwei base fee, keeperFee 0.0005, keeperMaxBaseFee 10 gwei
   const a = c.takeBuybackSlice(1000);
   near(a.slice, 0.5, 1e-12, 'slice is at most 0.5 eth');
   near(a.tip, 270000e-9 + 0.0005, 1e-12, 'payment is 270,000 gas at 1 gwei plus the keeper fee');
@@ -478,7 +482,7 @@ const R0 = 6.668e15;
   assert.equal(c.takeBuybackSlice(1000 + 299), null); n++; // 25 blocks = 300 s
   ok(c.takeBuybackSlice(1000 + 300));
   near(c.ethToBuyback, 1.5 + 2 * (600000e-9 - 270000e-9), 1e-12, 'pool after two slices');
-  // a base fee above buybackMaxBaseFee is paid at the cap
+  // a base fee above keeperMaxBaseFee is paid at the cap
   const hi = fresh({ basefeeGwei: 50 }); hi.ethToBuyback = 2.5;
   near(hi.takeBuybackSlice(0).tip, 270000 * 10e-9 + 0.0005, 1e-12, 'paid at the 10 gwei cap');
   const lo = fresh({ basefeeGwei: 5 }); lo.ethToBuyback = 2.5;
@@ -490,14 +494,14 @@ const R0 = 6.668e15;
   // a small pot pays a share of the fee: the swap budget over the largest budget the setting allows
   const part = fresh({ basefeeGwei: 10 }); part.ethToBuyback = 0.0265; // slice 0.0265, budget 0.02, largest budget 0.5 - 0.0065
   near(part.takeBuybackSlice(0).tip, 270000 * 10e-9 + 0.0005 * 0.02 / (0.5 - 0.0065), 1e-12, 'the keeper fee scales with the budget');
-  // the buybackSlice bound at its edge: 2 * (600,000 gas * buybackMaxBaseFee + keeperFee)
+  // the buybackSlice bound at its edge: 2 * (600,000 gas * keeperMaxBaseFee + keeperFee)
   ok(firstViolation(Object.assign({}, SETTINGS, { buybackSlice: 0.0131 })) === null, 'just above twice the launch payment is inside'); n++;
   assert.equal(firstViolation(Object.assign({}, SETTINGS, { buybackSlice: 0.0129 })), 'buybackSlice'); n++;
   const free = fresh({ keeperFee: 0, basefeeGwei: 1 }); free.ethToBuyback = 1;
   near(free.takeBuybackSlice(0).tip, 270000e-9, 1e-12, 'no keeper fee leaves the gas refund');
-  assert.throws(() => free.setSettings({ keeperFee: 0.0051 }, 0), /keeperFee/); assert.throws(() => free.setSettings({ buybackMaxBaseFee: 0.9 }, 0), /buybackMaxBaseFee/);
-  assert.throws(() => free.setSettings({ buybackMaxBaseFee: 101 }, 0), /buybackMaxBaseFee/); n += 3;
-  ok(firstViolation(Object.assign({}, SETTINGS, { keeperFee: 0.005, buybackMaxBaseFee: 100 })) === null, 'the upper bounds are inside'); n++;
+  assert.throws(() => free.setSettings({ keeperFee: 0.0051 }, 0), /keeperFee/); assert.throws(() => free.setSettings({ keeperMaxBaseFee: 0.9 }, 0), /keeperMaxBaseFee/);
+  assert.throws(() => free.setSettings({ keeperMaxBaseFee: 101 }, 0), /keeperMaxBaseFee/); n += 3;
+  ok(firstViolation(Object.assign({}, SETTINGS, { keeperFee: 0.005, keeperMaxBaseFee: 100 })) === null, 'the upper bounds are inside'); n++;
   ok(SETTINGS.keeperTipBps === undefined, 'keeperTipBps is gone from the model'); n++;
 }
 // launch position: whole supply single sided, price 2.513e-8 eth per coin at the start tick

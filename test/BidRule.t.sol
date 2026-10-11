@@ -550,7 +550,7 @@ contract BidRuleTest is Fixture {
         assertEq(core.lastFillTime(), block.timestamp);
     }
 
-    /// `buyListing` with the clamp binding: one fill, the cost basis is the cost plus the tip, the anchor is the price state
+    /// `buyListing` with the clamp binding: one fill, the cost basis is the cost plus the payment, the anchor is the price state
     /// at the fill and the price state drops once
     function test_buyListingAtTheClampIsOneFill() public {
         uint256 price = _forListing();
@@ -565,23 +565,18 @@ contract BidRuleTest is Fixture {
         assertEq(core.ethRate(), state / 2, "the clamp binds");
         uint256 ceiling = core.ethRate();
         assertGe(ceiling, price, "and the ceiling still covers the listing");
-        Settings memory s = core.settings();
-        uint256 tip = _min(uint256(s.tipSavingsBps) * (ceiling - price) / 10_000, uint256(s.tipCapBps) * price / 10_000);
         uint256 keeperBefore = keeper.balance;
         vm.prank(keeper);
         core.buyListing(price, _listingData(LISTED_A), LISTED_A, STRATEGY);
+        uint256 paid = keeper.balance - keeperBefore;
+        _assertListingPay(paid, ceiling - price);
         (,, uint256 basis,) = core.creditInfo(LISTED_A);
-        assertEq(basis, price + tip, "the cost basis is the cost plus the tip");
-        assertEq(keeper.balance - keeperBefore, tip);
-        assertEq(core.ethPot(), pot - price - tip);
+        assertEq(basis, price + paid, "the cost basis is the cost plus the payment");
+        assertEq(core.ethPot(), pot - price - paid);
         (uint256 anchor, uint256 start,) = _anchor();
         assertEq(anchor, state, "the anchor is the price state at the fill");
         assertEq(start, state);
         assertEq(core.rateAtCheckpoint(), state * 9_950 / 10_000, "exactly one drop");
-    }
-
-    function _min(uint256 a, uint256 b) internal pure returns (uint256) {
-        return a < b ? a : b;
     }
 
     /// a reverted buy and a sell of no credit change neither the rate nor the anchor

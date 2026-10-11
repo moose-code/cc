@@ -72,7 +72,7 @@ interface ICore {
     event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
     event FeesAdded(uint256 amount);
     event ListingBought(
-        uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 tip, uint256 rate
+        uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
     event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);

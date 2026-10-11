@@ -19,7 +19,8 @@ import {
     IStatements,
     Mainnet,
     Settings,
-    BUYBACK_GAS
+    BUYBACK_GAS,
+    BUYLISTING_GAS
 } from "../../src/interfaces/Interfaces.sol";
 import {IArtCoinsTokenV2, IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
@@ -114,7 +115,7 @@ abstract contract HandlerBase is Test {
     uint256 internal constant V_X_OUT = 3; // exit token left the core beyond what the action explains
     uint256 internal constant V_X_IN = 4; // exit token arrived in the core beyond what the action explains
     uint256 internal constant V_ABOVE_CAP = 5; // a credit was bought above the rate read before the action
-    uint256 internal constant V_TIP = 6; // a tip above min(tipSavingsBps of savings, tipCapBps of cost)
+    uint256 internal constant V_LISTING_PAY = 6; // a buyListing payment outside min(bid less cost, gas cap at the base fee plus keeperFee)
     uint256 internal constant V_SALE_FLOOR = 7; // a statement sold below the hard floor, or at another price than the controller asks
     uint256 internal constant V_DEPART = 8; // a statement left the core without a recorded legal exit
     uint256 internal constant V_EXIT_SHORT = 9; // an exit that returned less than credits * unit per credit
@@ -1281,8 +1282,8 @@ abstract contract HandlerBase is Test {
             if (gone[cand]) continue;
             uint256 p = ICreditStrategy(STRATEGY).nftForSale(cand);
             if (p == 0) continue;
-            // the keeper tip is booked as spend on top of the price, up to tipCapBps of it
-            if (core.ethRate() >= p && p * (10_000 + core.settings().tipCapBps) / 10_000 <= _budget()) {
+            // the keeper payment is booked as spend on top of the price and stays inside the bid, which is inside the pot
+            if (core.ethRate() >= p) {
                 id = cand;
                 price = p;
                 allowed = true;
@@ -1383,31 +1384,37 @@ abstract contract HandlerBase is Test {
         if (a == A_LISTING_HOSTILE && !probe.honest(probe.mode())) {
             _flag(V_HOSTILE_OK, "a hostile listing target got a buy through");
         }
-        uint256 tip = keeper.balance - p.keeperBal;
+        uint256 paid = keeper.balance - p.keeperBal;
         uint256 outflow = p.bal - address(core).balance;
-        uint256 cost = outflow - tip;
+        uint256 cost = outflow - paid;
         if (cost != expectCost) _flag(V_ETH_OUT, "listing cost differs from what the target should charge");
-        // the rate was read before the action. the ceiling of the buy and the tip rules are checked against it
+        // the rate was read before the action. the ceiling of the buy and the payment rule are checked against it
         uint256 ceiling = p.ceiling;
         if (value > ceiling) _flag(V_ABOVE_CAP, "listing value above the ceiling");
         if (cost > value) _flag(V_ABOVE_CAP, "listing cost above the value");
-        if (cost + tip > ceiling) _flag(V_ABOVE_CAP, "listing cost plus tip above the ceiling");
-        if (
-            tip * 10_000 > uint256(st.tipSavingsBps) * (ceiling > cost ? ceiling - cost : 0)
-                || tip * 10_000 > uint256(st.tipCapBps) * cost
-        ) {
-            _flag(V_TIP, "tip above min(tipSavingsBps of savings, tipCapBps of cost)");
-        }
-        uint256 potLeft = _recordSpend(cost + tip, p.pot);
-        _eth(p.bal, tip + expectCost, 0, "buyListing");
-        if (core.ethPot() != potLeft) _flag(V_POT, "listing pot not reduced by cost and tip");
+        if (cost + paid > ceiling) _flag(V_ABOVE_CAP, "listing cost plus payment above the ceiling");
+        _listingPayChecks(paid, ceiling > cost ? ceiling - cost : 0, st);
+        uint256 potLeft = _recordSpend(cost + paid, p.pot);
+        _eth(p.bal, paid + expectCost, 0, "buyListing");
+        if (core.ethPot() != potLeft) _flag(V_POT, "listing pot not reduced by cost and the payment");
         uint256 stored = _dropped(st, p.price, p.minuteStart);
         if (core.rateAtCheckpoint() != stored || core.ethRate() != _readAfterFill(st, stored, potLeft)) {
             _flag(V_RATE_BOUND, "drop on fill differs from dropPerCreditBps with the minute floor");
         }
         if (CREDITS.ownerOf(id) != address(core)) _flag(V_MODEL, "listing did not deliver the credit");
         gone[id] = true;
-        _addCredit(id, 0, cost + tip);
+        _addCredit(id, 0, cost + paid);
+    }
+
+    /// the payment of one `buyListing`: at most the bid less the cost, at most the gas cap at the capped base fee plus
+    /// the keeper fee, and below the gap the keeper fee plus whole gas units at the capped base fee
+    function _listingPayChecks(uint256 paid, uint256 gap, Settings memory st) internal {
+        uint256 rate = block.basefee < st.keeperMaxBaseFee ? block.basefee : st.keeperMaxBaseFee;
+        if (paid > gap || paid > BUYLISTING_GAS * rate + st.keeperFee) {
+            _flag(V_LISTING_PAY, "listing payment above min(bid less cost, gas cap plus keeperFee)");
+        } else if (paid != gap && (paid < st.keeperFee || (rate == 0 ? paid != st.keeperFee : (paid - st.keeperFee) % rate != 0))) {
+            _flag(V_LISTING_PAY, "listing payment is not the keeper fee plus whole gas units at the capped base fee");
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1632,7 +1639,7 @@ abstract contract HandlerBase is Test {
             return _skip(a);
         }
         p.slice = p.pool < p.st.buybackSlice ? p.pool : p.st.buybackSlice;
-        p.gasRate = block.basefee < p.st.buybackMaxBaseFee ? block.basefee : p.st.buybackMaxBaseFee;
+        p.gasRate = block.basefee < p.st.keeperMaxBaseFee ? block.basefee : p.st.keeperMaxBaseFee;
         p.maxPay = BUYBACK_GAS * p.gasRate + p.st.keeperFee;
         // a slice under twice the largest payment reverts with SliceTooSmall
         if (p.slice < 2 * p.maxPay) return _skip(a);

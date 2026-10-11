@@ -229,11 +229,11 @@ contract PullFeesTest is CoreBase {
 
     // ------------------------------------------------------------------ buyListing
 
-    /// reads the cost and tip of the `ListingBought` event
-    function _listingBought(Vm.Log[] memory logs) internal pure returns (uint256 cost, uint256 tip) {
+    /// reads the cost and payment of the `ListingBought` event
+    function _listingBought(Vm.Log[] memory logs) internal pure returns (uint256 cost, uint256 paid) {
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].topics[0] == ICore.ListingBought.selector) {
-                (cost, tip,) = abi.decode(logs[i].data, (uint256, uint256, uint256));
+                (cost, paid,) = abi.decode(logs[i].data, (uint256, uint256, uint256));
             }
         }
     }
@@ -254,16 +254,16 @@ contract PullFeesTest is CoreBase {
         vm.recordLogs();
         vm.prank(keeper);
         core.buyListing(price, _listing(LISTED_A), LISTED_A, STRATEGY);
-        (uint256 cost, uint256 buyTip) = _listingBought(vm.getRecordedLogs());
+        (uint256 cost, uint256 buyPaid) = _listingBought(vm.getRecordedLogs());
 
         assertEq(cost, price, "the measured cost is the listing price");
         assertEq(address(feeRouter).balance, 0, "router emptied");
         assertEq(_payeeBalance() - payeeBefore, x.shared, "payee share");
-        assertEq(keeper.balance - keeperBefore, buyTip, "the buy tip to the buyer");
+        assertEq(keeper.balance - keeperBefore, buyPaid, "the buy payment to the buyer");
         assertEq(core.ethToBuyback() - buyback, x.toBuyback);
-        assertEq(core.ethPot(), pot + x.toPot - price - buyTip, "the pot took the fees and paid the purchase");
+        assertEq(core.ethPot(), pot + x.toPot - price - buyPaid, "the pot took the fees and paid the purchase");
         (,, uint256 basis,) = core.creditInfo(LISTED_A);
-        assertEq(basis, price + buyTip, "cost basis is price plus tip");
+        assertEq(basis, price + buyPaid, "cost basis is price plus the payment");
     }
 
     // ------------------------------------------------------------------ compose

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {console} from "forge-std/console.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Lane, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
@@ -225,15 +226,10 @@ abstract contract SeaportBase is Fixture {
         assertEq(a.feeTaker, b.feeTaker, "feeTaker");
     }
 
-    function _tip(uint256 ceiling, uint256 cost) internal pure returns (uint256) {
-        return ((ceiling - cost) * 2_500 / 10_000).min(cost * 400 / 10_000);
-    }
-
     /// calls the door as the keeper and checks everything a successful buy must leave behind.
     /// `cost` is the exact net eth the order takes from the core.
-    function _buy(uint256 id, uint256 value, bytes memory data, uint256 cost) internal returns (uint256 tip) {
+    function _buy(uint256 id, uint256 value, bytes memory data, uint256 cost) internal returns (uint256 paid) {
         uint256 ceiling = core.ethRate();
-        tip = _tip(ceiling, cost);
         Snap memory before = _snap();
         uint256 rate = core.ethRate();
 
@@ -245,16 +241,16 @@ abstract contract SeaportBase is Fixture {
         (bool inPile, Lane lane, uint256 booked,) = core.creditInfo(id);
         assertTrue(inPile, "in the pile");
         assertEq(uint8(lane), uint8(Lane.Eth), "eth lane");
-        assertEq(booked, cost + tip, "costOf is cost plus tip");
+        paid = keeper.balance - before.keeper;
+        assertEq(booked, cost + paid, "costOf is cost plus the payment");
         assertEq(core.pileSize(Lane.Eth), before.pile + 1);
-        assertEq(keeper.balance - before.keeper, tip, "tip paid to caller");
-        assertEq(core.ethPot(), before.pot - cost - tip, "pot down by exactly cost and tip");
-        assertEq(address(core).balance, before.balance - cost - tip, "balance down by exactly cost and tip");
+        _assertListingPay(paid, ceiling - cost);
+        assertEq(core.ethPot(), before.pot - cost - paid, "pot down by exactly cost and the payment");
+        assertEq(address(core).balance, before.balance - cost - paid, "balance down by exactly cost and the payment");
         assertEq(core.ethToBuyback(), before.toBuyback);
         assertEq(core.rateAtCheckpoint(), BidModel.dropOnce(core.settings(), rate, rate), "rate drop");
         assertEq(core.lastFillTime(), block.timestamp);
-        assertLe(cost + tip, ceiling, "never above the ceiling");
-        assertLe(tip, cost * 400 / 10_000, "tip within four percent of cost");
+        assertLe(cost + paid, ceiling, "never above the ceiling");
         _solvent();
         assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), 0, "no surplus");
     }
@@ -304,26 +300,34 @@ contract SeaportTest is SeaportBase {
         uint256 id = _list();
         uint256 ceiling = core.ethRate();
         uint256 price = ceiling * 9 / 10;
-        // at 90 percent of the ceiling the savings bound is the active one.
-        assertLt((ceiling - price) / 4, price * 400 / 10_000);
         OrderComponents memory c = _open(id, price, 0);
         assertEq(c.consideration.length, 1);
 
         uint256 makerBefore = maker.balance;
-        uint256 tip = _buy(id, price, _basicData(c), price);
-
-        assertEq(tip, (ceiling - price) * 2_500 / 10_000, "tip is a quarter of the savings");
+        _buy(id, price, _basicData(c), price);
         assertEq(maker.balance - makerBefore, price, "maker received the price");
     }
 
-    function test_basic_tipIsCappedAtFourPercentOfCost() public {
+    /// 10 percent under the bid the gap is 0.0433 ether, far above the largest payment at the base fee
+    function test_basic_paymentBelowTheGapIsGasPlusFee() public {
+        uint256 id = _list();
+        uint256 price = core.ethRate() * 9 / 10;
+        OrderComponents memory c = _open(id, price, 0);
+        vm.fee(1 gwei);
+        uint256 paid = _buy(id, price, _basicData(c), price);
+        assertLt(paid, core.ethRate() / 10, "the gap does not bind");
+        assertGt(paid, core.settings().keeperFee, "gas is paid on top of the fee");
+        assertEq((paid - core.settings().keeperFee) % 1 gwei, 0, "gas units at 1 gwei");
+    }
+
+    /// a price a few wei under the bid leaves a gap smaller than any payment: the payment is the gap
+    function test_basic_paymentIsTheGapNearTheCeiling() public {
         uint256 id = _list();
         uint256 ceiling = core.ethRate();
-        uint256 price = ceiling / 2;
+        uint256 price = ceiling - 1000;
         OrderComponents memory c = _open(id, price, 0);
-
-        uint256 tip = _buy(id, price, _basicData(c), price);
-        assertEq(tip, price * 400 / 10_000, "cap branch");
+        vm.fee(1 gwei);
+        assertEq(_buy(id, price, _basicData(c), price), 1000, "the payment is the gap");
     }
 
     function test_basic_additionalRecipient() public {
@@ -336,12 +340,12 @@ contract SeaportTest is SeaportBase {
 
         uint256 makerBefore = maker.balance;
         uint256 feeBefore = feeTaker.balance;
-        _buy(id, total, _basicData(c), total);
+        uint256 paid = _buy(id, total, _basicData(c), total);
 
         assertEq(maker.balance - makerBefore, total - fee, "maker got the price less the fee");
         assertEq(feeTaker.balance - feeBefore, fee, "fee recipient got one percent");
         (,, uint256 booked,) = core.creditInfo(id);
-        assertEq(booked, total + total * 400 / 10_000, "cost is the sum of every payout");
+        assertEq(booked, total + paid, "cost is the sum of every payout plus the payment");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -399,14 +403,14 @@ contract SeaportTest is SeaportBase {
         uint256 balanceBefore = address(core).balance;
         uint256 makerBefore = maker.balance;
         uint256 feeBefore = feeTaker.balance;
-        uint256 tip = _buy(id, value, data, total);
+        uint256 paid = _buy(id, value, data, total);
 
-        // the excess came back to the core mid call: the balance fell by cost and tip only, not by value.
-        assertEq(balanceBefore - address(core).balance, total + tip, "refund came back");
+        // the excess came back to the core mid call: the balance fell by the cost and the payment, not by value.
+        assertEq(balanceBefore - address(core).balance, total + paid, "refund came back");
         assertEq(maker.balance - makerBefore, total - fee);
         assertEq(feeTaker.balance - feeBefore, fee);
         (,, uint256 booked,) = core.creditInfo(id);
-        assertEq(booked, total + tip, "cost is the order total, not value");
+        assertEq(booked, total + paid, "cost is the order total, not value");
 
         // the refund is not revenue: nothing for skim to book, pot and buyback pot unchanged by it.
         uint256 pot = core.ethPot();
@@ -495,8 +499,8 @@ contract SeaportTest is SeaportBase {
         // the order itself is fine at exactly the ceiling.
         _expectFail(id, ceiling + 1, _basicData(c), ICore.AboveCeiling.selector);
         _expectFail(id, ceiling + 1, _orderData(c), ICore.AboveCeiling.selector);
-        uint256 tip = _buy(id, ceiling, _basicData(c), ceiling);
-        assertEq(tip, 0, "no savings, no tip");
+        uint256 paid = _buy(id, ceiling, _basicData(c), ceiling);
+        assertEq(paid, 0, "no gap, no payment");
     }
 
     function test_fail_orderPaysOutMoreThanValue() public {
@@ -589,23 +593,21 @@ contract SeaportTest is SeaportBase {
         OrderComponents memory c = _open(id, price, 0);
 
         uint256 makerBefore = maker.balance;
-        uint256 tip = _buy(id, price, _basicData(c), price);
+        uint256 paid = _buy(id, price, _basicData(c), price);
 
         (,, uint256 booked,) = core.creditInfo(id);
-        assertEq(booked, price + tip);
-        assertLe(booked, ceiling, "cost plus tip never exceeds the ceiling");
-        assertLe(tip, price * 400 / 10_000, "tip at most 4% of cost");
-        assertLe(tip, (ceiling - price) * 2_500 / 10_000, "tip at most 25% of savings");
+        assertEq(booked, price + paid);
+        assertLe(booked, ceiling, "cost plus the payment never exceeds the ceiling");
         assertEq(maker.balance - makerBefore, price);
     }
 
     /*//////////////////////////////////////////////////////////////
-                    9. the self dealing tip (spec 5.4)
+                    9. the self dealing payment (spec 5.4)
     //////////////////////////////////////////////////////////////*/
 
     /// the maker lists their own credit on real Seaport and calls the door themselves. the order pays `price` less
     /// `side` to the maker and `side` to a second account the maker also controls. returns what both accounts gained
-    function _selfDeal(uint256 id, uint256 price, uint256 side) internal returns (uint256 gained, uint256 tip) {
+    function _selfDeal(uint256 id, uint256 price, uint256 side) internal returns (uint256 gained, uint256 paid) {
         OrderComponents memory c = _open(id, price - side, side);
         bytes memory data = _orderData(c);
         uint256 before = maker.balance + feeTaker.balance;
@@ -613,9 +615,9 @@ contract SeaportTest is SeaportBase {
         vm.prank(maker);
         core.buyListing(price, data, id, Mainnet.SEAPORT);
         gained = maker.balance + feeTaker.balance - before;
-        tip = pot - core.ethPot() - price;
+        paid = pot - core.ethPot() - price;
         assertEq(CREDITS.ownerOf(id), address(core));
-        assertEq(gained, price + tip, "the maker side got the price and the tip");
+        assertEq(gained, price + paid, "the maker side got the price and the payment");
     }
 
     function _sellThroughTheDoor(uint256 id) internal returns (uint256 gained) {
@@ -625,11 +627,12 @@ contract SeaportTest is SeaportBase {
         gained = maker.balance - before;
     }
 
-    /// for any listing price up to the ceiling the maker ends with strictly less eth than the sell door pays, and
-    /// the tip stays within 4 percent of the cost and a quarter of the savings. at exactly the ceiling there is no tip
-    /// and it is break even. the order is a genuine Seaport order, filled by the maker through the door
+    /// for any listing price up to the ceiling the maker ends with at most the eth the sell door pays: the price and the
+    /// payment together never exceed the bid. the maker's own gas is not counted, so the sell door is never worse. at
+    /// exactly the ceiling there is no payment and it is break even. the order is a genuine Seaport order, filled by
+    /// the maker through the door
     /// forge-config: default.fuzz.runs = 64
-    function testFuzz_selfDealingTipNeverPays(uint256 priceSeed, uint256 sideSeed, uint256 warpHours) public {
+    function testFuzz_selfDealingNeverBeatsTheSellDoor(uint256 priceSeed, uint256 sideSeed, uint256 warpHours) public {
         _warp(bound(warpHours, 0, 12) * 1 hours);
         uint256 id = _list();
         uint256 ceiling = core.ethRate();
@@ -638,18 +641,16 @@ contract SeaportTest is SeaportBase {
         uint256 side = bound(sideSeed, 0, price - 1) % (price / 2 + 1);
         uint256 snap = vm.snapshotState();
 
-        (uint256 viaListing, uint256 tip) = _selfDeal(id, price, side);
-        assertLe(tip * 10_000, price * 400, "tip within 4 percent of cost");
-        assertLe(tip * 10_000, (ceiling - price) * 2_500, "tip within a quarter of the savings");
+        (uint256 viaListing, uint256 paid) = _selfDeal(id, price, side);
+        assertLe(price + paid, ceiling, "the price and the payment stay inside the bid");
 
         vm.revertToState(snap);
         uint256 viaDoor = _sellThroughTheDoor(id);
         assertEq(viaDoor, ceiling, "the door pays the ceiling");
 
-        if (price < ceiling) {
-            assertLt(viaListing, viaDoor, "self dealing loses against the sell door");
-        } else {
-            assertEq(tip, 0, "no savings, no tip");
+        assertLe(viaListing, viaDoor, "self dealing never beats the sell door");
+        if (price == ceiling) {
+            assertEq(paid, 0, "no gap, no payment");
             assertEq(viaListing, viaDoor, "break even at the ceiling");
         }
     }
@@ -662,14 +663,15 @@ contract SeaportTest is SeaportBase {
         uint256[3] memory prices = [uint256(1), ceiling - 1, ceiling];
         uint256 snap = vm.snapshotState();
         for (uint256 i; i < 3; ++i) {
-            (uint256 viaListing, uint256 tip) = _selfDeal(id, prices[i], 0);
-            assertLe(tip * 10_000, prices[i] * 400);
+            (uint256 viaListing, uint256 paid) = _selfDeal(id, prices[i], 0);
+            assertLe(prices[i] + paid, ceiling);
             vm.revertToState(snap);
             uint256 viaDoor = _sellThroughTheDoor(id);
             vm.revertToState(snap);
             assertEq(viaDoor, ceiling);
-            if (i < 2) assertLt(viaListing, viaDoor);
-            else assertEq(viaListing, viaDoor);
+            assertLe(viaListing, viaDoor);
+            if (i == 0) assertLt(viaListing, viaDoor);
+            if (i == 2) assertEq(viaListing, viaDoor);
         }
     }
 
@@ -692,30 +694,34 @@ contract SeaportTest is SeaportBase {
         _buy(id, ceiling, data, ceiling);
     }
 
-    /// the tip rules are settings: raised to their bounds the door pays the larger tip and still never exceeds the ceiling
-    function test_tipSettingsReachTheDoor() public {
+    /// the payment settings reach the door at once: the keeper fee, and the base fee ceiling that binds when the base
+    /// fee is above it. a zero fee at a zero base fee pays nothing
+    function test_paymentSettingsReachTheDoor() public {
         Settings memory s = core.settings();
-        s.tipSavingsBps = 2_500;
-        s.tipCapBps = 500;
+        s.keeperFee = 0.005 ether;
+        s.keeperMaxBaseFee = 2 gwei;
         _setSettings(s);
         uint256 id = _list();
-        uint256 ceiling = core.ethRate();
-        uint256 price = ceiling * 6 / 10;
-        uint256 before = keeper.balance;
-        bytes memory data = _basicData(_open(id, price, 0));
-        vm.prank(keeper);
-        core.buyListing(price, data, id, Mainnet.SEAPORT);
-        uint256 tip = keeper.balance - before;
-        assertEq(tip, ((ceiling - price) * 2_500 / 10_000).min(price * 500 / 10_000));
-        assertGt(tip, price * 400 / 10_000, "above what the launch cap allows");
-        s.tipSavingsBps = 0;
-        _setSettings(s);
+        uint256 price = core.ethRate() * 6 / 10;
+        vm.fee(1 gwei);
+        uint256 paid = _buy(id, price, _basicData(_open(id, price, 0)), price);
+        assertGt(paid, 0.005 ether, "gas is paid on top of the raised fee");
+
+        // a base fee above the ceiling pays at the ceiling: the same call at 2 gwei and at 50 gwei pays the same
         uint256 id2 = _list();
-        before = keeper.balance;
-        data = _basicData(_open(id2, price / 2, 0));
-        vm.prank(keeper);
-        core.buyListing(price / 2, data, id2, Mainnet.SEAPORT);
-        assertEq(keeper.balance, before, "no tip at zero");
+        uint256 snap = vm.snapshotState();
+        vm.fee(2 gwei);
+        uint256 atCeiling = _buy(id2, price, _basicData(_open(id2, price, 0)), price);
+        vm.revertToState(snap);
+        vm.fee(50 gwei);
+        uint256 above = _buy(id2, price, _basicData(_open(id2, price, 0)), price);
+        assertEq(above, atCeiling, "a base fee above the ceiling pays at the ceiling");
+
+        s.keeperFee = 0;
+        _setSettings(s);
+        uint256 id4 = _list();
+        vm.fee(0);
+        assertEq(_buy(id4, price, _basicData(_open(id4, price, 0)), price), 0, "no fee, no base fee, no payment");
     }
 }
 
@@ -728,5 +734,106 @@ contract SeaportColdTest is SeaportBase {
         OrderComponents memory c = _open(id, price, 0);
         assertEq(core.ethPot(), 0);
         _expectFail(id, price, _basicData(c), ICore.PotTooSmall.selector);
+    }
+}
+
+/// the caller economics of `buyListing` at the launch settings (keeperFee 0.0005 ether, keeperMaxBaseFee 10 gwei) with
+/// the gas of the call measured cold, through a basic Seaport order. the caller pays gas at the base fee and no
+/// priority fee. profit is the payment less the transaction gas (21,000, the call, the calldata) at the base fee
+contract SeaportCallerPayTest is SeaportBase {
+    /// the opening bid of docs/FLOW.md section 2, wei per credit
+    uint256 internal constant P0 = 8_900_000_000_000_000;
+
+    function setUp() public override {
+        super.setUp();
+        _fundPot(30 ether);
+    }
+
+    function _coolAll() internal {
+        address[14] memory a = [
+            address(core),
+            address(ctl),
+            address(STATEMENTS),
+            address(CREDITS),
+            address(SEAPORT),
+            address(PM),
+            v2.hook,
+            address(coin),
+            v2.locker,
+            v2.escrow,
+            v2.factory,
+            v2.mev,
+            address(feeRouter),
+            STRATEGY
+        ];
+        for (uint256 i; i < a.length; ++i) {
+            if (a[i] != address(0)) vm.cool(a[i]);
+        }
+    }
+
+    function _calldataGas(bytes memory d) internal pure returns (uint256 g) {
+        for (uint256 i; i < d.length; ++i) {
+            g += d[i] == 0 ? 4 : 16;
+        }
+    }
+
+    /// one buy of a listing `gapBps` under `bid` at base fee `bf`. returns the payment and the caller's profit
+    function _run(uint256 bid, uint256 gapBps, uint256 bf) internal returns (uint256 paid, int256 profit) {
+        vm.prank(owner);
+        core.setRate(bid);
+        assertEq(core.ethRate(), bid, "the bid is the restated rate");
+        uint256 id = _list();
+        uint256 price = bid - bid * gapBps / 10_000;
+        bytes memory data = _basicData(_open(id, price, 0));
+        vm.fee(bf);
+        vm.txGasPrice(bf);
+        _coolAll();
+        uint256 before = keeper.balance;
+        vm.prank(keeper);
+        uint256 g = gasleft();
+        core.buyListing(price, data, id, Mainnet.SEAPORT);
+        g -= gasleft();
+        paid = keeper.balance - before;
+        uint256 txGas = 21_000 + g + _calldataGas(abi.encodeCall(core.buyListing, (price, data, id, Mainnet.SEAPORT)));
+        profit = int256(paid) - int256(txGas * bf);
+        console.log("bid, gap bps, base fee gwei*1000:", bid, gapBps, bf / 1e6);
+        console.log("  tx gas, paid, cost at the base fee:", txGas, paid, txGas * bf);
+        console.log(profit < 0 ? "  loss:" : "  profit:", profit < 0 ? uint256(-profit) : uint256(profit));
+    }
+
+    /// 10 percent under a bid of 1.5 times the opening bid, at 2 gwei: the gap (0.001335 ether) is above the gas cost
+    /// (about 0.0009 ether) and below the largest payment, so the caller is paid the gap and profits
+    function test_listingTenPercentUnderTheBidProfitsAtTwoGwei() public {
+        (uint256 paid, int256 profit) = _run(P0 * 3 / 2, 1_000, 2 gwei);
+        assertEq(paid, P0 * 3 / 2 / 10, "the gap binds");
+        assertGt(profit, 0.0003 ether, "profit");
+    }
+
+    /// at the rate cap bid (3 times the opening bid) the payment is gas plus the keeper fee, not the gap
+    function test_listingTenPercentUnderTheCapBidProfitsAtTwoGwei() public {
+        (uint256 paid, int256 profit) = _run(P0 * 3, 1_000, 2 gwei);
+        assertLt(paid, P0 * 3 / 10, "the gap does not bind");
+        assertGt(profit, 0.0005 ether, "the keeper fee and the overhead margin");
+    }
+
+    /// at the opening bid itself a 10 percent gap (0.00089 ether) equals the gas cost at 2 gwei: no profit and no loss
+    /// beyond a few thousand gwei
+    function test_listingTenPercentUnderTheOpeningBidIsBreakEvenAtTwoGwei() public {
+        (, int256 profit) = _run(P0, 1_000, 2 gwei);
+        assertLt(profit, 0.0001 ether);
+        assertGt(profit, -0.0001 ether);
+    }
+
+    /// the table of the report: gaps of 5, 10, 20 and 50 percent at the opening bid, base fees 1, 2, 5 gwei
+    function test_profitTable() public {
+        uint256[4] memory gaps = [uint256(500), 1_000, 2_000, 5_000];
+        uint256[3] memory fees = [uint256(1 gwei), 2 gwei, 5 gwei];
+        uint256 snap = vm.snapshotState();
+        for (uint256 i; i < gaps.length; ++i) {
+            for (uint256 j; j < fees.length; ++j) {
+                _run(P0, gaps[i], fees[j]);
+                vm.revertToState(snap);
+            }
+        }
     }
 }

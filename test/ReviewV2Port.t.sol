@@ -88,7 +88,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
         vm.deal(address(feeRouter), 0);
     }
 
-    /// the maker lists at exactly the ceiling (no savings, so no tip is due) with a one wei second recipient that is
+    /// the maker lists at exactly the ceiling (no gap, so no payment is due) with a one wei second recipient that is
     /// the attacker contract. returns the data for the door
     function _order(uint256 id, uint256 price, FlushingPayee atk) internal returns (bytes memory) {
         OrderComponents memory c = _open(id, price - 1, 1);
@@ -97,7 +97,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
     }
 
     /// V2R-1 fixed: the Core refuses the fee source while it measures. the flush fails whole, the attacker's top up
-    /// waits in the router, the cost basis is the price and no tip is paid on a purchase at the ceiling
+    /// waits in the router, the cost basis is the price and no payment is made on a purchase at the ceiling
     function test_FIXED_strangerFlushInsideBuyListingRevertsAndTheCostIsExact() public {
         uint256 held = _queueFees(1.5 ether);
         uint256 id = _list();
@@ -118,7 +118,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
         assertFalse(atk.flushOk(), "the flush inside the measured call reverted");
         assertEq(address(feeRouter).balance, held, "the attacker top up waits in the router, untouched");
         (,, uint256 booked,) = core.creditInfo(id);
-        assertEq(maker.balance - maker0, price - 1, "no tip at the ceiling");
+        assertEq(maker.balance - maker0, price - 1, "no payment at the ceiling");
         assertEq(booked, price, "the cost basis is the price paid");
         assertEq(core.ethPot(), pot0 - price, "the pot paid the exact cost");
         assertEq(address(core).balance, bal0 - price, "the Core gained nothing mid call");
@@ -145,23 +145,23 @@ contract ReviewSeaportFlushTest is SeaportBase {
         vm.recordLogs();
         vm.prank(maker);
         core.buyListing(price, data, id, Mainnet.SEAPORT);
-        (uint256 cost, uint256 buyTip) = _listingBought(vm.getRecordedLogs());
+        (uint256 cost, uint256 buyPaid) = _listingBought(vm.getRecordedLogs());
 
         assertTrue(atk.tried(), "the attacker tried the flush");
         assertFalse(atk.flushOk(), "the flush inside the measured call reverted");
         assertEq(address(feeRouter).balance, held, "only the attacker top up waits in the router");
         (,, uint256 booked,) = core.creditInfo(id);
         assertEq(cost, price, "the measured cost is the price");
-        assertEq(booked, price + buyTip, "the cost basis is the price plus the buy tip");
+        assertEq(booked, price + buyPaid, "the cost basis is the price plus the buy payment");
         uint256 toBuyback = engine * core.settings().feeToBuybackBps / 10_000;
-        assertEq(core.ethPot(), pot0 + engine - toBuyback - price - buyTip, "the pot took the held fees and paid the cost");
+        assertEq(core.ethPot(), pot0 + engine - toBuyback - price - buyPaid, "the pot took the held fees and paid the cost");
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "pots stay consistent");
     }
 
-    function _listingBought(Vm.Log[] memory logs) internal pure returns (uint256 cost, uint256 tip) {
+    function _listingBought(Vm.Log[] memory logs) internal pure returns (uint256 cost, uint256 paid) {
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].topics[0] == ICore.ListingBought.selector) {
-                (cost, tip,) = abi.decode(logs[i].data, (uint256, uint256, uint256));
+                (cost, paid,) = abi.decode(logs[i].data, (uint256, uint256, uint256));
             }
         }
     }
@@ -241,7 +241,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
         }
     }
 
-    function test_OK_theSameOrderWithAnEmptyRouterPaysNoTip() public {
+    function test_OK_theSameOrderWithAnEmptyRouterPaysNothing() public {
         uint256 id = _list();
         uint256 price = core.ethRate();
         FlushingPayee atk = new FlushingPayee(address(feeRouter));
@@ -252,7 +252,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
         vm.prank(maker);
         core.buyListing(price, data, id, Mainnet.SEAPORT);
         (,, uint256 booked,) = core.creditInfo(id);
-        assertEq(maker.balance - maker0, price - 1, "no tip at the ceiling");
+        assertEq(maker.balance - maker0, price - 1, "no payment at the ceiling");
         assertEq(booked, price, "the cost basis is the price");
     }
 }

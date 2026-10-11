@@ -7,7 +7,7 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {Lane, ICredits, IStatements, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
+import {Lane, ICredits, IStatements, Mainnet, Settings, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
 import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
 import {ICoreLens} from "../../src/interfaces/ICoreLens.sol";
 import {
@@ -157,7 +157,27 @@ abstract contract Fixture is Test, ProdDeployer {
         gross = net + refunded;
     }
 
-    /// @dev the test contract is a caller of the doors that pay eth to their caller (the compose and exit caller payment, the buyListing and buyback tips), so it takes eth
+    /// @dev the most one `buyListing` can pay at the base fee now, before the cap at the bid less the cost
+    function _maxListingPay() internal view returns (uint256) {
+        Settings memory s = core.settings();
+        uint256 rate = block.basefee < s.keeperMaxBaseFee ? block.basefee : s.keeperMaxBaseFee;
+        return BUYLISTING_GAS * rate + s.keeperFee;
+    }
+
+    /// @dev checks the payment of one `buyListing` against the rule: at most the bid less the cost (`gap`), at most the
+    /// largest payment of the base fee now, and, below the gap, the keeper fee plus whole gas units at the base fee
+    function _assertListingPay(uint256 paid, uint256 gap) internal view {
+        assertLe(paid, gap, "the payment stays inside the bid");
+        assertLe(paid, _maxListingPay(), "the payment stays inside the gas cap");
+        if (paid == gap) return;
+        Settings memory s = core.settings();
+        uint256 rate = block.basefee < s.keeperMaxBaseFee ? block.basefee : s.keeperMaxBaseFee;
+        assertGe(paid, s.keeperFee, "the keeper fee is paid whole");
+        if (rate == 0) assertEq(paid, s.keeperFee, "no base fee, the keeper fee alone");
+        else assertEq((paid - s.keeperFee) % rate, 0, "whole gas units at the base fee");
+    }
+
+    /// @dev the test contract is a caller of the doors that pay eth to their caller (the compose and exit caller payment, the buyListing and buyback payments), so it takes eth
     receive() external payable {}
 
     function setUp() public virtual {

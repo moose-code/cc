@@ -12,16 +12,14 @@ export const SETTINGS = {
   climbDoubleEvery: 24 * 3600,
   climbMaxBps: 800, // per hour
   dropBps: 2000,
-  tipSavingsBps: 2500,
-  tipCapBps: 400,
   saleFloorBps: 7500, // the hard floor: no sale of a statement below cost * saleFloorBps / 10000, whatever the controller asks
   exitAfter: 105 * 3600, // an unsold statement may exit through the exitModule after this long
   saleToBuybackBps: 5000, // share of sale proceeds to the coin buyback, rest to the pot
   exitToBuybackBps: 5000,
   buybackSlice: 0.5,
   buybackDelay: 25, // blocks, 12 s each
-  keeperFee: 0.0005, // eth. the buyback caller is paid BUYBACK_GAS_USED * min(basefee, buybackMaxBaseFee) + keeperFee out of the slice (docs/FLOW.md 61)
-  buybackMaxBaseFee: 10, // gwei, the cap on the base fee the refund uses
+  keeperFee: 0.0005, // eth. the buyback caller is paid BUYBACK_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the slice (docs/FLOW.md 61), the buyListing caller BUYLISTING_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the pot (docs/FLOW.md 71)
+  keeperMaxBaseFee: 10, // gwei, the cap on the base fee the refunds use
   xRateCap: 9700,
   xRateFloor: 3000,
   xRateClimbPerHour: 100,
@@ -82,8 +80,6 @@ export function firstViolation(s) {
   if (s.climbDoubleEvery < h || s.climbDoubleEvery > 30 * d) return 'climbDoubleEvery';
   if (s.climbMaxBps < s.climbBaseBps || s.climbMaxBps > 2000) return 'climbMaxBps';
   if (s.dropBps < 500 || s.dropBps > 5000) return 'dropBps';
-  if (s.tipSavingsBps > 2500) return 'tipSavingsBps';
-  if (s.tipCapBps > 500) return 'tipCapBps';
   if (s.saleFloorBps < 1000 || s.saleFloorBps > 40000) return 'saleFloorBps';
   if (s.exitAfter < h || s.exitAfter > 365 * d) return 'exitAfter';
   if (s.saleToBuybackBps > 10000) return 'saleToBuybackBps';
@@ -91,8 +87,8 @@ export function firstViolation(s) {
   if (s.buybackSlice < 0.01 || s.buybackSlice > 1) return 'buybackSlice';
   if (s.buybackDelay < 1 || s.buybackDelay > 7200) return 'buybackDelay';
   if (s.keeperFee > 0.005) return 'keeperFee';
-  if (s.buybackMaxBaseFee < 1 || s.buybackMaxBaseFee > 100) return 'buybackMaxBaseFee';
-  if (s.buybackSlice < 2 * (600000 * s.buybackMaxBaseFee * 1e-9 + s.keeperFee)) return 'buybackSlice'; // BUYBACK_GAS (Interfaces.sol)
+  if (s.keeperMaxBaseFee < 1 || s.keeperMaxBaseFee > 100) return 'keeperMaxBaseFee';
+  if (s.buybackSlice < 2 * (600000 * s.keeperMaxBaseFee * 1e-9 + s.keeperFee)) return 'buybackSlice'; // BUYBACK_GAS (Interfaces.sol)
   if (s.xRateCap > 10000) return 'xRateCap';
   if (s.xRateFloor > s.xRateCap) return 'xRateFloor';
   if (s.xRateClimbPerHour > 1000) return 'xRateClimbPerHour';
@@ -116,6 +112,8 @@ export const CORE_PARAMS = {
   PAGE: 80,
   BUYBACK_GAS: 600000, // Core.sol: the gas that sizes the swap budget reserve of a buyback (reserve = BUYBACK_GAS * capped base fee + keeperFee)
   BUYBACK_GAS_USED: 270000, // counted gas of one buyback (measured 270,237 in docs/INTEGRATION.md): what the caller is paid at the capped base fee
+  BUYLISTING_GAS: 1500000, // Interfaces.sol: the most gas of a buyListing the caller payment counts
+  BUYLISTING_GAS_USED: 470000, // counted gas of one buyListing through the CreditStrategy (466,714 in test/CoreUnit.t.sol): gas used 418,000 plus the 250,000 overhead less the work after the count
 };
 
 // launch config (script/config/mainnet.json) and simulator inputs
@@ -200,7 +198,7 @@ export const SIM_DEFAULTS = {
   takerThreshold: 0.15,
   exitMinRatio: 0, // a keeper exits only when the credit count * xp is at least this times the asking price
   keeperBuyback: true,
-  basefeeGwei: 1, // the block base fee of the buyback calls, gwei (the refund uses min(basefee, buybackMaxBaseFee))
+  basefeeGwei: 1, // the block base fee of the buyback calls, gwei (the refunds use min(basefee, keeperMaxBaseFee))
 };
 
 export const DEFAULTS = Object.assign({}, CORE_PARAMS, SETTINGS, CONTROLLER, SIM_DEFAULTS);
@@ -380,15 +378,20 @@ export class Core {
     const price = this.ethRate(now) / W;
     return this.spend(price, now) ? price : 0;
   }
-  // door two: buy a listing at its ask. returns {cost, tip} or null
+  // the largest payment of a buyListing at the base fee now: counted gas (at most BUYLISTING_GAS) at min(basefee, keeperMaxBaseFee) plus keeperFee
+  listingPayMax() {
+    const s = this.s, p = this.p;
+    return Math.min(p.BUYLISTING_GAS_USED, p.BUYLISTING_GAS) * Math.min(p.basefeeGwei, s.keeperMaxBaseFee) * 1e-9 + s.keeperFee;
+  }
+  // door two: buy a listing at its ask. the caller is paid the largest payment, at most the bid less the ask, and the payment is booked as spend with the cost.
+  // returns {cost, paid} or null
   buyListing(ask, now) {
-    const s = this.s;
     this.checkpoint(now);
     const ceil = this.ethRate(now) / W;
     if (ask > this.ethPot || ask > ceil) return null;
-    const tip = Math.min((s.tipSavingsBps * (ceil - ask)) / BPS, (s.tipCapBps * ask) / BPS);
-    if (!this.spend(ask + tip, now)) return null;
-    return { cost: ask, tip };
+    const paid = Math.min(this.listingPayMax(), ceil - ask);
+    if (!this.spend(ask + paid, now)) return null;
+    return { cost: ask, paid };
   }
   // compose 80 credits. repays nothing: cost is the sum of their costs in both lanes. returns the statement, held by the Core from t0 = composedAt (eth lane: asked at age zero, so at the start price)
   compose(costSum, lane, now) {
@@ -517,7 +520,7 @@ export class Core {
     this.xStartTime = now;
     return { slice, price, coinIn };
   }
-  // buyback(): one slice at most per buybackDelay blocks. rate = min(basefee, buybackMaxBaseFee). the swap budget is the slice less the largest payment
+  // buyback(): one slice at most per buybackDelay blocks. rate = min(basefee, keeperMaxBaseFee). the swap budget is the slice less the largest payment
   // (BUYBACK_GAS * rate + keeperFee), and a slice under twice that payment reverts (no call). the caller is paid BUYBACK_GAS_USED * rate plus keeperFee
   // times the swap budget over the largest budget the buybackSlice setting allows (the model fills the swap, so spent = budget), out of the slice.
   // the unspent part of the reserve goes back to the buyback pot. `tip` is that payment
@@ -526,7 +529,7 @@ export class Core {
     const pool = this.ethToBuyback;
     if (pool <= 1e-15 || now < this.lastBuybackTime + s.buybackDelay * 12) return null;
     const slice = Math.min(pool, s.buybackSlice);
-    const rate = Math.min(p.basefeeGwei, s.buybackMaxBaseFee) * 1e-9;
+    const rate = Math.min(p.basefeeGwei, s.keeperMaxBaseFee) * 1e-9;
     const reserve = p.BUYBACK_GAS * rate + s.keeperFee;
     if (slice < 2 * reserve) return null;
     const tip = p.BUYBACK_GAS_USED * rate + s.keeperFee * Math.min(1, (slice - reserve) / (s.buybackSlice - reserve));
@@ -687,7 +690,7 @@ export function simulate(userParams = {}) {
   let unbid = []; // eth lane statements held by the Core for sale
   let lnM = 0, nextSid = 1;
   const T = { // totals
-    fees: 0, feesBuyback: 0, feesTaker: 0, saleGross: 0, saleToPot: 0, saleToBuyback: 0, spent: 0, tips: 0,
+    fees: 0, feesBuyback: 0, feesTaker: 0, saleGross: 0, saleToPot: 0, saleToBuyback: 0, spent: 0, listingPaid: 0,
     bought: 0, boughtX: 0, pts: 0, cost: 0, mkt: 0, ask: 0, sumM: 0, composed: 0, composedX: 0, sold: 0, exited: 0, exitedX: 0,
     soldPrice: 0, soldCost: 0, soldPts: 0, soldFloor: 0, soldAge: 0, soldAtFloor: 0, buybackSpent: 0, buybackTips: 0, burned: 0, burnedX: 0,
     listBought: 0, stratBought: 0, xFills: 0, xCoin: 0, xValue: 0, xGross: 0, xDiscSum: 0, xRecv: 0, xSpent: 0, firstFill: -1,
@@ -744,7 +747,7 @@ export function simulate(userParams = {}) {
       const listing = isStrat || it.listed;
       const ask = isStrat ? it.price : it.m * it.prem * Pe;
       const ethOk = need <= r, xOk = !isStrat && ask * W <= xPerCredit;
-      const ethFits = ethOk && (listing ? ask * (1 + core.s.tipCapBps / BPS) <= afford : r / W <= afford);
+      const ethFits = ethOk && (listing ? Math.min(ask + core.listingPayMax(), r / W) <= afford : r / W <= afford);
       const xFits = xOk && xPerCredit / W <= xAfford;
       if (ethFits || xFits) return { i, need, ethFits, xFits, isStrat, it, ask, listing };
     }
@@ -787,7 +790,7 @@ export function simulate(userParams = {}) {
       if (!c) { noteBind(); break; }
       const it = c.it, useS = c.isStrat;
       let door = c.ethFits && c.xFits ? (r >= xPerCredit ? 'eth' : 'x') : c.ethFits ? 'eth' : 'x';
-      let cost = 0, tip = 0, viaListing = false, ok = false;
+      let cost = 0, paid = 0, viaListing = false, ok = false;
       if (door === 'x') {
         // the exitToken bid pays the same for every credit
         cost = core.xBuy(now);
@@ -797,7 +800,7 @@ export function simulate(userParams = {}) {
       if (door === 'eth') {
         if (c.listing) {
           const res = core.buyListing(c.ask, now);
-          if (res) { cost = res.cost; tip = res.tip; ok = true; viaListing = true; }
+          if (res) { cost = res.cost; paid = res.paid; ok = true; viaListing = true; }
         } else {
           cost = core.sellForEth(now);
           ok = cost > 0;
@@ -808,18 +811,18 @@ export function simulate(userParams = {}) {
       if (door === 'x') {
         T.boughtX++; T.xSpent += cost; xPile.push({ pts: it.pts });
       } else {
-        T.bought++; T.pts += it.pts; T.cost += cost + tip; T.mkt += Pe; T.ask += c.ask; T.spent += cost + tip; T.tips += tip;
-        spentEth += cost + tip;
+        T.bought++; T.pts += it.pts; T.cost += cost + paid; T.mkt += Pe; T.ask += c.ask; T.spent += cost + paid; T.listingPaid += paid;
+        spentEth += cost + paid;
         if (viaListing) T.listBought++;
         if (useS) T.stratBought++;
         else T.sumM += it.m;
         const bin = Math.min(9, Math.floor((it.pts - 80) / 72));
-        histPts[bin]++; histCost[bin] += cost + tip;
-        T.maxPaidRatio = Math.max(T.maxPaidRatio, (cost + tip) / Pe);
-        ethPile.push({ pts: it.pts, cost: cost + tip });
+        histPts[bin]++; histCost[bin] += cost + paid;
+        T.maxPaidRatio = Math.max(T.maxPaidRatio, (cost + paid) / Pe);
+        ethPile.push({ pts: it.pts, cost: cost + paid });
         if (T.firstFill < 0) T.firstFill = now / 3600;
         if (T.first80n < 80) {
-          T.first80n++; T.first80cost += cost + tip; T.first80mkt += Pe; T.first80pts += it.pts;
+          T.first80n++; T.first80cost += cost + paid; T.first80mkt += Pe; T.first80pts += it.pts;
           if (T.first80n === 80) T.first80t = now / 3600;
         }
       }

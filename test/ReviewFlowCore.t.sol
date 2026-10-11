@@ -138,7 +138,7 @@ contract ReviewFlowCoreTest is Fixture {
         m.rateCap = uint64(RATE_START_MIN_WEI);
         m.buybackSlice = 0.01 ether;
         m.buybackDelay = 1;
-        m.buybackMaxBaseFee = 1 gwei;
+        m.keeperMaxBaseFee = 1 gwei;
         m.xAuctionHalfLife = 10 minutes;
         m.exitSliceCredits = 1;
     }
@@ -150,8 +150,6 @@ contract ReviewFlowCoreTest is Fixture {
             1_000,
             30_000,
             2_000,
-            2_500,
-            500,
             40_000,
             365 days,
             10_000,
@@ -193,12 +191,12 @@ contract ReviewFlowCoreTest is Fixture {
             // the four raw words hold exactly the values and nothing else
             bytes32 slot = 0xb5805f89ef62cd999f965a45fb6f4c11141caa04e5c4acba9c2552ef76902804;
             uint256 w0 = uint256(vm.load(address(core), slot));
-            assertEq(w0 >> 192, 0, "slot 0 top bits clear");
-            assertEq(uint16(w0 >> 112), two[i].saleFloorBps, "the sale floor sits at bits 112 to 127");
-            assertEq(uint16(w0 >> 176), two[i].exitToBuybackBps, "the exit eth lane share sits at bits 176 to 191");
+            assertEq(w0 >> 160, 0, "slot 0 top bits clear");
+            assertEq(uint16(w0 >> 80), two[i].saleFloorBps, "the sale floor sits at bits 80 to 95");
+            assertEq(uint16(w0 >> 144), two[i].exitToBuybackBps, "the exit eth lane share sits at bits 144 to 159");
             uint256 w1 = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
             assertEq(uint64(w1 >> 144), two[i].keeperFee, "the keeper fee sits at bits 144 to 207");
-            assertEq(uint48(w1 >> 208), two[i].buybackMaxBaseFee, "the base fee ceiling sits at bits 208 to 255");
+            assertEq(uint48(w1 >> 208), two[i].keeperMaxBaseFee, "the keeper base fee ceiling sits at bits 208 to 255");
             uint256 w2 = uint256(vm.load(address(core), bytes32(uint256(slot) + 2)));
             assertEq(w2 >> 208, 0, "slot 2 top bits clear");
             assertEq(uint16(w2 >> 192), two[i].feeToBuybackBps, "the fee share sits at bits 192 to 207");
@@ -384,8 +382,8 @@ contract ReviewFlowCoreTest is Fixture {
     function test_dirtyCalldataWordsAreRefused() public {
         Settings memory base = core.settings();
         bytes memory good = abi.encodeCall(ICore.setSettings, (base));
-        assertEq(good.length, 4 + 26 * 32);
-        for (uint256 i; i < 26; ++i) {
+        assertEq(good.length, 4 + 24 * 32);
+        for (uint256 i; i < 24; ++i) {
             bytes memory bad = bytes.concat(good);
             uint256 off = 32 + 4 + i * 32;
             uint256 w;

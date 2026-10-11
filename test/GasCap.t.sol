@@ -525,6 +525,39 @@ contract GasCapTest is SeaportBase {
         _row("buyListing through the CreditStrategy target, cold", g, data);
     }
 
+    /// @dev the CreditStrategy listing with the router split on and 1 eth in the router, so the door's flush runs. with
+    /// `burning` the four payees burn all the gas they are given (the most expensive flush)
+    function _buyListingLoaded(bool burning) internal {
+        _splitOn(burning);
+        _fundPot(10 ether);
+        uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
+        _warpUntilCeiling(LISTED_A, price);
+        vm.deal(address(feeRouter), address(feeRouter).balance + 1 ether);
+        bytes memory listing = abi.encodeCall(ICreditStrategy.sellTargetNFT, (LISTED_A));
+        bytes memory data = abi.encodeCall(core.buyListing, (price, listing, LISTED_A, STRATEGY));
+        _cool(address(core));
+        vm.prank(keeper);
+        uint256 g = gasleft();
+        core.buyListing(price, listing, LISTED_A, STRATEGY);
+        g -= gasleft();
+        assertEq(address(feeRouter).balance, burning ? feeRouter.totalOwed() : 0, "the buy pulled the router");
+        _row(
+            burning
+                ? "buyListing through the CreditStrategy target, router 1 eth, four burning payees, cold"
+                : "buyListing through the CreditStrategy target, router 1 eth, cold",
+            g,
+            data
+        );
+    }
+
+    function test_gas_buyListing_creditStrategy_routerLoaded() public {
+        _buyListingLoaded(false);
+    }
+
+    function test_gas_buyListing_creditStrategy_routerWorstCaseFlush() public {
+        _buyListingLoaded(true);
+    }
+
     function _seaportBuy(string memory name, uint256 mode) internal {
         _fundPot(10 ether);
         uint256 id = _list();

@@ -197,37 +197,37 @@ contract LifecycleDoorsTest is Fixture {
         return abi.encodeCall(ICreditStrategy.sellTargetNFT, (id));
     }
 
-    function _checkListingBuy(uint256 id, uint256 price, bool tipCapBinds) internal {
+    function _checkListingBuy(uint256 id, uint256 price, bool gapBinds) internal {
         uint256 ceiling = core.ethRate();
         uint256 rate = core.ethRate();
         uint256 pot = core.ethPot();
         uint256 balance = address(core).balance;
-        uint256 savings = (ceiling - price) * core.settings().tipSavingsBps / 10_000;
-        uint256 capTip = price * core.settings().tipCapBps / 10_000;
-        assertEq(savings > capTip, tipCapBinds, "which bound applies");
-        uint256 tip = savings.min(capTip);
+        vm.fee(1 gwei);
+        assertEq(ceiling - price < _maxListingPay(), gapBinds, "which bound applies");
         uint256 keeper0 = keeper.balance;
 
         vm.prank(keeper);
         core.buyListing(price, _buyData(id), id, STRATEGY);
 
-        assertEq(keeper.balance - keeper0, tip, "the caller earns the tip");
+        uint256 paid = keeper.balance - keeper0;
+        _assertListingPay(paid, ceiling - price);
+        if (gapBinds) assertEq(paid, ceiling - price, "the payment is the gap");
+        else assertLt(paid, ceiling - price, "the payment is gas plus the fee");
         assertEq(CREDITS.ownerOf(id), address(core));
         assertEq(ICreditStrategy(STRATEGY).nftForSale(id), 0, "the strategy sold it");
-        assertEq(core.ethPot(), pot - price - tip);
-        assertEq(address(core).balance, balance - price - tip);
+        assertEq(core.ethPot(), pot - price - paid);
+        assertEq(address(core).balance, balance - price - paid);
         assertEq(core.rateAtCheckpoint(), _dropped(rate, rate));
         assertEq(core.lastFillTime(), block.timestamp);
         (bool inPile, Lane lane, uint256 cost,) = core.creditInfo(id);
         assertTrue(inPile);
         assertEq(uint8(lane), uint8(Lane.Eth));
-        assertEq(cost, price + tip, "cost basis includes the tip");
-        assertLe(tip * 10_000, price * 400, "tip is at most 4 percent of cost");
+        assertEq(cost, price + paid, "cost basis includes the payment");
         _solvent();
     }
 
     /// a real CreditStrategy listing bought with the real pot, right where the ceiling first clears the price.
-    function test_buyListing_realStrategy_savingsBoundTip() public {
+    function test_buyListing_realStrategy_gapBoundPayment() public {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         assertEq(price, 0.036 ether);
         assertGt(price, core.ethRate(), "the start rate is far below the listing");
@@ -236,15 +236,15 @@ contract LifecycleDoorsTest is Fixture {
         core.buyListing(price, _buyData(LISTED_A), LISTED_A, STRATEGY);
 
         _warpUntilCeiling(LISTED_A, price);
-        _checkListingBuy(LISTED_A, price, false);
+        _checkListingBuy(LISTED_A, price, true);
     }
 
-    /// far above the price the tip stops at 4 percent of what the core paid.
-    function test_buyListing_realStrategy_capBoundTip() public {
+    /// far above the price the payment is gas at the base fee plus the keeper fee.
+    function test_buyListing_realStrategy_gasBoundPayment() public {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         _warpUntilCeiling(LISTED_A, price);
         _warp(30 hours);
-        _checkListingBuy(LISTED_A, price, true);
+        _checkListingBuy(LISTED_A, price, false);
     }
 
     /// a CreditStrategy call that fails reverts only that buy, and the state is exactly what it was.

@@ -123,12 +123,14 @@ contract V2PortFeeTest is FeeBase {
         uint256 pot = core.ethPot();
         uint256 bal = address(core).balance;
         uint256 cost = ceiling - e;
-        uint256 tip = (2_500 * (ceiling - cost) / 10_000).min(400 * cost / 10_000);
+        uint256 keeperBefore = keeper.balance;
         vm.prank(keeper);
         core.buyListing(ceiling, hex"deadbeef", id, address(t));
+        uint256 paid = keeper.balance - keeperBefore;
+        _assertListingPay(paid, ceiling - cost);
         assertEq(CREDITS.ownerOf(id), address(core));
-        assertEq(core.ethPot(), pot - cost - tip, "the pot paid the measured cost, which the claim lowered");
-        assertEq(address(core).balance, bal - cost - tip, "balance and pot moved together");
+        assertEq(core.ethPot(), pot - cost - paid, "the pot paid the measured cost, which the claim lowered");
+        assertEq(address(core).balance, bal - cost - paid, "balance and pot moved together");
         _solvent();
     }
 
