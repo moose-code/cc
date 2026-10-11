@@ -57,6 +57,8 @@ abstract contract LaunchChecks is PostflightChecks {
     /// `MAX_DESCRIPTION_BYTES`, the factory reverts above them)
     uint256 internal constant MAX_IMAGE_BYTES = 2048;
     uint256 internal constant MAX_DESCRIPTION_BYTES = 4096;
+    /// @dev a config `image` or `description` containing this text is a rehearsal value. it fails preflight on chain id 1
+    string internal constant PLACEHOLDER_MARKER = "PLACEHOLDER";
     // the pinned launch rules (docs/DEPLOY.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
     uint24 internal constant PIN_BASELINE_SKIM = 690;
@@ -297,13 +299,13 @@ abstract contract LaunchChecks is PostflightChecks {
             )
         );
         bool filled = bytes(c.image).length != 0 && bytes(c.description).length != 0;
-        _warn(
-            "warn: image and description are filled",
-            filled,
-            filled
-                ? "both set in the launch transaction"
-                : "empty at launch: fill both in the config before step 4, or the coin admin sets them with updateImage and updateDescription"
-        );
+        bool marked = vm.contains(c.image, PLACEHOLDER_MARKER) || vm.contains(c.description, PLACEHOLDER_MARKER);
+        string memory filledName = "rule: image and description are filled and are not placeholders";
+        string memory filledDetail = !filled
+            ? "empty: fill both in the config before step 4"
+            : marked ? string.concat("a value contains ", PLACEHOLDER_MARKER) : "both set in the launch transaction";
+        if (block.chainid == 1) _check(filledName, filled && !marked, filledDetail);
+        else _warn(filledName, filled && !marked, filledDetail);
         bool set = c.owner != address(0) && c.creator != address(0);
         _warn("warn: owner differs from creator", !set || c.owner != c.creator, "one party takes both roles");
         deployer;

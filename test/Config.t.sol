@@ -544,30 +544,56 @@ contract ConfigTest is Fixture {
         assertFalse(_warnClean("warn: coin: description equals the config"));
     }
 
-    /// preflight: both fields inside the coin caps (2048 and 4096 bytes), a warning while either is empty
+    /// preflight: both fields inside the coin caps (2048 and 4096 bytes), filled and free of the placeholder marker (a failure on chain id 1, a warning elsewhere)
     function test_preflightImageAndDescription() public {
         address d2 = _funded();
         string memory cap = "rule: image at most 2048 bytes, description at most 4096 bytes";
-        string memory filled = "warn: image and description are filled";
+        string memory filled = "rule: image and description are filled and are not placeholders";
         // the factory enforces the same caps, so its simulated launch fails with the rule row
         string memory both = string.concat(cap, ", factory: deployTokenAsOwner accepts the config (simulated)");
         _pre(lc, d2);
         assertTrue(_warnClean(cap) && _warnClean(filled), "filled and inside the caps");
 
+        // chain id 1: an empty value or the marker fails the row
         LaunchConfig memory c = lc;
         c.image = "";
         _pre(c, d2);
-        assertEq(_failedNames(), "", "an empty image is not a failure");
-        assertFalse(_warnClean(filled), "an empty image warns");
+        assertEq(_failedNames(), filled, "an empty image fails");
         c = lc;
         c.description = "";
         _pre(c, d2);
-        assertEq(_failedNames(), "");
-        assertFalse(_warnClean(filled), "an empty description warns");
+        assertEq(_failedNames(), filled, "an empty description fails");
         c.image = "";
         _pre(c, d2);
-        assertEq(_failedNames(), "");
+        assertEq(_failedNames(), filled, "both empty fails");
         assertTrue(_warnClean(cap));
+        c = lc;
+        c.image = "ipfs://PLACEHOLDER-cc-image";
+        _pre(c, d2);
+        assertEq(_failedNames(), filled, "a placeholder image fails");
+        c = lc;
+        c.description = "a PLACEHOLDER description";
+        _pre(c, d2);
+        assertEq(_failedNames(), filled, "a placeholder description fails");
+        c = lc;
+        c.image = "ipfs://placeholder";
+        _pre(c, d2);
+        assertEq(_failedNames(), "", "the marker is case sensitive");
+
+        // another chain id: the row warns and never fails (the chain id row fails there)
+        vm.chainId(11155111);
+        c = lc;
+        c.image = "";
+        _pre(c, d2);
+        assertFalse(_warnClean(filled), "an empty image warns off mainnet");
+        assertTrue(bytes(_failedNames()).length != 0, "the chain id row fails");
+        c = lc;
+        c.description = "PLACEHOLDER";
+        _pre(c, d2);
+        assertFalse(_warnClean(filled), "a placeholder warns off mainnet");
+        (string memory list,) = _failed();
+        assertFalse(vm.contains(list, filled), "the row is not a failure off mainnet");
+        vm.chainId(1);
 
         c = lc;
         c.image = _bytesOf(MAX_IMAGE_BYTES);
