@@ -8,7 +8,7 @@ the baton for the session that directs this project next. read this file, then r
 |---|---|
 | AGENTS.md | precedence between the sources below |
 | docs/ARCHITECTURE.md | the current reading of intent and of the system. section 1 "current intent at a glance" lists guarantees, behavior, parameters and accepted risks with their decision numbers and status |
-| docs/FLOW.md | the dated owner decision log, decisions 1 to 47. a later dated decision supersedes an earlier one |
+| docs/FLOW.md | the dated owner decision log, decisions 1 to 58. a later dated decision supersedes an earlier one |
 | docs/NEXT.md | the change list: decided, built, reviewed |
 | project/director-state.json | the objective, open owner decisions, gates. `python3 script/director.py status` |
 | project/evidence.json | the evidence ledger with the assumptions each record used. `python3 script/director.py evidence` |
@@ -33,27 +33,27 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 | item | state |
 |---|---|
 | branch | `main` is the working branch on github ripe0x/cc. the director repair of 2026-10-10 is on the local branch `claude/repair-project-director-1366be`, not pushed |
-| phase | implementation. no candidate is frozen. NEXT item 21 (preflight `rateCap` row) is built at fb6c26c, with the review matrix isolating each rate bounds row at 2645c00 and f1fd139. focused tests pass, independent review of the change done in the director session of 2026-10-10 |
+| phase | launch preparation. candidate c02435e is frozen (`project/director-state.json`). the full suite, the deep run (on 1e2c4b3, carried to 14c6306), the security review (docs/REVIEW-security.md), the deploy rehearsal (docs/REHEARSAL-c02435e.md) and the product acceptance review (docs/REVIEW-acceptance.md) are done |
 | source | Core 21,285 bytes runtime (3,291 bytes of headroom), CoreLib 15,608, ControllerV1 4,282, CoreLens 7,479, measured at c8892a2 |
-| tests | candidate run at c8892a2: 1013 pass, 0 fail, 8 skipped (the Deep suites), REHEARSAL=1. the real preflight script on a fork: 121 rows, 118 pass, the three documented owner-side failures (at 14c6306) |
-| reviews | none is valid for the current source: every docs/REVIEW-*.md predates 34 or more source commits, and docs/AUDIT-codex.md (commit 32ff35b) is on a branch outside main |
-| owner steps before launch | fund the owner address 0xCB43 (0.068 eth at block 26158000, the launch needs about 0.1), run `setMinProtocolSkimShareBps(362)` on the v2 factory, then docs/DEPLOY.md with `--slow` (the owner address is an EIP 7702 delegated account) |
+| tests | the full suite and the 7 Deep suites ran on the candidate line (docs/DEEP-RUN-1e2c4b3.log, carried to 14c6306). the real preflight script on a fork: 121 rows, 118 pass, the three documented owner-side failures. the rehearsal test: preflight 121 of 121 after the owner command, postflight 102 of 102 |
+| reviews | independent review of decisions 55 and 56 (docs/REVIEW-next29.md), security review of 1e2c4b3 (docs/REVIEW-security.md, fixes at 14c6306), acceptance review of c02435e (docs/REVIEW-acceptance.md, verdict accept with listed fixes: the intent records in docs/ARCHITECTURE.md section 1). docs/AUDIT-codex.md (commit 32ff35b) is on a branch outside main |
+| owner steps before launch | fund the owner address 0xCB43 (0.0163 eth at the rehearsal, the launch needs about 0.086 eth at 1 gwei and 0.15 eth at 5 gwei), run `setMinProtocolSkimShareBps(362)` on the v2 factory, then docs/DEPLOY.md with `--slow` (the owner address is an EIP 7702 delegated account) |
 
 ## 4. owner decisions
 
 **OD-1, decided 2026-10-10 (FLOW 48).** the first `migrate` retires the old engine. `ethToBuyback` stays in it and its buyback burns it. the exit token pots move. built as NEXT item 22 at 74d1cbe, full suite 1078 pass, reviewed with no defect (docs/REVIEW-retire.md), follow ups built as NEXT item 23 at eff3051.
 
-**OD-3, decided 2026-10-10 (FLOW 50).** `idleLoosenBps` 2_000 at launch and a lower bound of 1. being built as NEXT item 26 after NEXT item 24.
+**OD-3, decided 2026-10-10 (FLOW 50).** `idleLoosenBps` 2_000 at launch and a lower bound of 1. built at dfd6001 (NEXT item 26).
 
-**OD-5, decided 2026-10-10 (FLOW 51).** buyback slice 0.5 eth at launch, upper bound 1 eth. being built with decision 50 as NEXT item 26.
+**OD-5, decided 2026-10-10 (FLOW 51).** buyback slice 0.5 eth at launch, upper bound 1 eth. built at dfd6001 (NEXT item 26).
 
-**OD-4, decided 2026-10-10 (FLOW 52).** `xToBuyback` stays in the old engine on `migrate`. built after NEXT item 26 as NEXT item 27.
+**OD-4, decided 2026-10-10 (FLOW 52).** `xToBuyback` stays in the old engine on `migrate`. built at b2118fd (NEXT item 27).
 
-**metadata, decided 2026-10-10 (FLOW 53, 54).** the name `CC` is final. `image` and `description` become launch config parameters, built as NEXT item 28 after NEXT item 26. the owner supplies the image url and the description text before launch.
+**metadata, decided 2026-10-10 (FLOW 53, 54).** the name `CC` is final. `image` and `description` become launch config parameters, built at 70d88be (NEXT item 28). the owner supplies the image url and the description text before launch.
 
-**scores, decided 2026-10-10 (FLOW 55).** the engine stops using credit scores everywhere, phase 2 included: per credit rates and a per credit exit unit. built as NEXT item 29 after items 26 to 28. it changes the Settings struct, the rate units, the exitModule interface, the config, the scripts, the simulator and most tests, so it gets its own full suite, deep invariants and independent review before the freeze.
+**scores, decided 2026-10-10 (FLOW 55).** the engine stops using credit scores everywhere, phase 2 included: per credit rates and a per credit exit unit. built at c8892a2 (NEXT item 29) and reviewed (docs/REVIEW-next29.md).
 
-**removals, decided 2026-10-10 (FLOW 56).** built with NEXT item 29. **OD-6, decided 2026-10-10 (FLOW 57):** `buyListing` stays; the owner's keeper is a fallback, built after launch.
+**removals, decided 2026-10-10 (FLOW 56).** built with NEXT item 29. **decision 58, decided 2026-10-10:** `sellForEth(ids)` without `minOut` stays and pays `min(price, pot)`. **OD-6, decided 2026-10-10 (FLOW 57):** `buyListing` stays; the owner's keeper is a fallback, built after launch.
 
 **OD-2, open, does not block the launch.** when to call `coin.lockAllowlist()` and `router.lock()` (NEXT item 19, after launch). after `lockAllowlist`, `rescueCoin` reaches only addresses already listed.
 
@@ -63,16 +63,16 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 `python3 script/director.py evidence` lists every record with its validity. what a new session must know:
 
-* valid: the focused tests of the rate rows at f1fd139 (E-FOCUSED-f1fd139) and the decision audit carried to f1fd139. the full suite and the deep invariants recorded on 06009bd are invalid at HEAD, because fb6c26c changed script/Checks.sol and two test files under their scope. they are rerun on the frozen candidate.
-* invalid: every independent review (source changed), the codex audit (outside main), the simulator's statement flow figures (they assume a paid composer, decision 41 removed the payment).
+* valid: the deep run on 1e2c4b3 carried to 14c6306 (E-DEEP-CARRY-14c6306), the candidate suite carried to 14c6306, the security review of 1e2c4b3 with its fixes. the rehearsal (docs/REHEARSAL-c02435e.md) and the acceptance review (docs/REVIEW-acceptance.md) are written and have no evidence record yet.
+* invalid: the codex audit (outside main), the simulator's statement flow figures (they assume a paid composer, decision 41 removed the payment).
 * migration gaps: no test migrates into a real second Core and runs `adopt` there, and `adopt` gives a migrated credit the successor's bid as its cost basis (the old basis is dropped).
 * unproved assumptions: a composer exists for every full page at no cost to the engine, the 90 day volume projection (1,961 eth, fitted to 13 measured days), the credit market price of 0.0089 eth, the seller book and the absence of competing bidders in the simulator.
 
 ## 6. next action
 
-resolve the independent review of c8892a2 (decisions 55 and 56). then freeze the candidate with `python3 script/director.py freeze <commit>`, run the 7 Deep suites once (`CANDIDATE_RUN=1 INVARIANT_DEEP=1 ...`, the only sanctioned long run), an independent security review of the frozen candidate, the rehearsal from a clean checkout, `python3 script/director.py check --gate deploy`, then the owner's launch steps.
+apply the acceptance fixes to the intent records, record the evidence for the gates productRules, independentReview and deploymentRehearsal, run `python3 script/director.py check --gate deploy` from the branch tip (it fails at the candidate commit, whose state file names an earlier candidate), then the owner's launch steps.
 
-owner inputs before launch: the coin's image url and description (config), funding the owner address (0.0163 eth held at block 26164762, about 0.1 needed; no owner transaction between preflight and the last deploy transaction: the deploy checks `CONTROLLER_NONCE`), `setMinProtocolSkimShareBps(362)` on the factory, the launch day `rateStart` and `rateCap` from the credit price.
+owner inputs before launch: the coin's image url and description (config), funding the owner address (0.0163 eth held at the rehearsal, about 0.086 eth needed at 1 gwei; no owner transaction between preflight and the last deploy transaction: the deploy checks `CONTROLLER_NONCE`), `setMinProtocolSkimShareBps(362)` on the factory, the launch day `rateStart` and `rateCap` from the credit price.
 
 ## 7. how to work in this repo
 
@@ -84,7 +84,7 @@ owner inputs before launch: the coin's image url and description (config), fundi
 | timings | clean build about 3 to 4 minutes, a test file change about 3 seconds, a `src/Core.sol` change about 35 seconds. full suite with `REHEARSAL=1 forge test -j 6` about 2 minutes on a 16 core machine (rerun rpc failures with `-j 1`). a Deep suite 577 to 692 seconds: `INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 forge test --match-contract '^<Suite>Deep$'` |
 | verification | during an edit run the smallest test that covers it (`--match-path`). run one combined gate at a batch boundary. full suites, deep invariants and the rehearsal belong to a frozen candidate or to a gate whose evidence was invalidated. before a command over 30 seconds, say what it must establish |
 | interfaces | after changing a production contract's external surface run `script/tools/gen-interfaces.sh` and repin test/BuildIdentity.t.sol. never import `src/Core.sol` in a test |
-| Core size | 512 bytes left, margin rule at least 60. new logic goes into `CoreLib`. never drop a check to make room |
+| Core size | 3,291 bytes of headroom at c8892a2, margin rule at least 60. new logic goes into `CoreLib`. never drop a check to make room |
 | safety | no mainnet broadcast, deploy, push or private key without the owner's explicit instruction |
 
 ## 8. known and not fixed
