@@ -129,13 +129,13 @@ contract SetSettingsTest is Fixture {
         s.saleToBuybackBps = 3_000;
         s.buybackSlice = 1 ether;
         _setSettings(s);
-        probe.single("keeperTipBps", 100);
+        probe.single("keeperFee", 0.001 ether);
         Settings memory out = probe.applyTo(core.settings());
         (uint256 n,) = _diff(s, out);
         assertEq(n, 1);
         assertEq(out.saleToBuybackBps, 3_000);
         assertEq(out.buybackSlice, 1 ether);
-        assertEq(out.keeperTipBps, 100);
+        assertEq(out.keeperFee, 0.001 ether);
     }
 
     function test_unknownFieldAndTooWideValue() public {

@@ -59,7 +59,8 @@ abstract contract HandlerOwner is HandlerHouse {
         s.exitToBuybackBps = uint16(_f(_r(seed, 16), 0, 10_000, c.exitToBuybackBps));
         s.buybackSlice = uint128(_f(_r(seed, 17), 0.01 ether, 1 ether, c.buybackSlice));
         s.buybackDelay = uint16(_f(_r(seed, 18), 1, 7_200, c.buybackDelay));
-        s.keeperTipBps = uint16(_f(_r(seed, 19), 0, 500, c.keeperTipBps));
+        s.keeperFee = uint64(_f(_r(seed, 19), 0, 0.005 ether, c.keeperFee));
+        s.buybackMaxBaseFee = uint48(_f(_r(seed, 30), 1 gwei, 100 gwei, c.buybackMaxBaseFee));
         s.xRateCap = uint16(_f(_r(seed, 20), 0, 10_000, c.xRateCap));
         s.xRateFloor = uint16(_f(_r(seed, 21), 0, s.xRateCap, c.xRateFloor));
         s.xRateClimbPerHour = uint16(_f(_r(seed, 22), 0, 1_000, c.xRateClimbPerHour));
@@ -112,14 +113,15 @@ abstract contract HandlerOwner is HandlerHouse {
             s.tipCapBps = 0;
             s.reimburseBps = 0;
             s.reimburseCapBps = 0;
-            s.keeperTipBps = 0;
+            s.keeperFee = 0;
         } else if (k == 15) {
             // every tip, reimbursement and keeper reward at its ceiling
             s.tipSavingsBps = 2_500;
             s.tipCapBps = 500;
             s.reimburseBps = 15_000;
             s.reimburseCapBps = 1_000;
-            s.keeperTipBps = 500;
+            s.keeperFee = 0.005 ether;
+            s.buybackMaxBaseFee = 100 gwei;
         } else if (k == 16) {
             // the shortest clocks and the most aggressive climb
             s.climbPerMinBps = 1_000;
@@ -260,7 +262,8 @@ abstract contract HandlerOwner is HandlerHouse {
         if (s.exitToBuybackBps > 10_000) return "exitToBuybackBps";
         if (s.buybackSlice < 0.01 ether || s.buybackSlice > 1 ether) return "buybackSlice";
         if (s.buybackDelay < 1 || s.buybackDelay > 7_200) return "buybackDelay";
-        if (s.keeperTipBps > 500) return "keeperTipBps";
+        if (s.keeperFee > 0.005 ether) return "keeperFee";
+        if (s.buybackMaxBaseFee < 1 gwei || s.buybackMaxBaseFee > 100 gwei) return "buybackMaxBaseFee";
         if (s.xRateCap > 10_000) return "xRateCap";
         if (s.xRateFloor > s.xRateCap) return "xRateFloor";
         if (s.xRateClimbPerHour > 1_000) return "xRateClimbPerHour";
@@ -280,7 +283,7 @@ abstract contract HandlerOwner is HandlerHouse {
     /// breaks exactly one field of valid settings, `which` picks it. returns the name the library must report
     function _break(Settings memory s, uint256 which) internal pure returns (bytes32 name) {
         // forge-lint: disable-start(unsafe-typecast)
-        which = which % 39;
+        which = which % 41;
         if (which == 0) {
             (s.dropPerCreditBps, name) = (1_001, "dropPerCreditBps");
         } else if (which == 1) {
@@ -324,7 +327,7 @@ abstract contract HandlerOwner is HandlerHouse {
         } else if (which == 20) {
             (s.buybackDelay, name) = (7_201, "buybackDelay");
         } else if (which == 21) {
-            (s.keeperTipBps, name) = (501, "keeperTipBps");
+            (s.keeperFee, name) = (0.005 ether + 1, "keeperFee");
         } else if (which == 22) {
             (s.xRateCap, name) = (10_001, "xRateCap");
         } else if (which == 23) {
@@ -357,8 +360,12 @@ abstract contract HandlerOwner is HandlerHouse {
             (s.ceilBps, name) = (30_001, "ceilBps");
         } else if (which == 37) {
             (s.idleLoosenBps, name) = (2_001, "idleLoosenBps");
-        } else {
+        } else if (which == 38) {
             (s.idleLoosenBps, name) = (0, "idleLoosenBps");
+        } else if (which == 39) {
+            (s.buybackMaxBaseFee, name) = (1 gwei - 1, "buybackMaxBaseFee");
+        } else {
+            (s.buybackMaxBaseFee, name) = (100 gwei + 1, "buybackMaxBaseFee");
         }
         // forge-lint: disable-end(unsafe-typecast)
     }

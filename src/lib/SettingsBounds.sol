@@ -25,7 +25,8 @@ library SettingsBounds {
         if (s.exitToBuybackBps > 10_000) return "exitToBuybackBps";
         if (s.buybackSlice < 0.01 ether || s.buybackSlice > 1 ether) return "buybackSlice";
         if (s.buybackDelay < 1 || s.buybackDelay > 7_200) return "buybackDelay";
-        if (s.keeperTipBps > 500) return "keeperTipBps";
+        if (s.keeperFee > 0.005 ether) return "keeperFee";
+        if (s.buybackMaxBaseFee < 1 gwei || s.buybackMaxBaseFee > 100 gwei) return "buybackMaxBaseFee";
         if (s.xRateCap > 10_000) return "xRateCap";
         if (s.xRateFloor > s.xRateCap) return "xRateFloor";
         if (s.xRateClimbPerHour > 1_000) return "xRateClimbPerHour";

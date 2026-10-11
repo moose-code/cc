@@ -146,6 +146,7 @@ contract ReviewFlowCoreTest is Fixture {
         m.rateCap = uint64(RATE_START_MIN_WEI);
         m.buybackSlice = 0.01 ether;
         m.buybackDelay = 1;
+        m.buybackMaxBaseFee = 1 gwei;
         m.xAuctionHalfLife = 10 minutes;
         m.exitSliceCredits = 1;
     }
@@ -168,7 +169,8 @@ contract ReviewFlowCoreTest is Fixture {
             10_000,
             1 ether,
             7_200,
-            500,
+            0.005 ether,
+            100 gwei,
             10_000,
             10_000,
             1_000,
@@ -202,11 +204,14 @@ contract ReviewFlowCoreTest is Fixture {
             uint256 w0 = uint256(vm.load(address(core), slot));
             assertEq(uint16(w0 >> 144), two[i].saleFloorBps, "the sale floor sits at bits 144 to 159");
             assertEq(uint16(w0 >> 240), two[i].exitToBuybackBps, "the exit eth lane share sits at bits 240 to 255");
+            uint256 w1 = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
+            assertEq(uint64(w1 >> 144), two[i].keeperFee, "the keeper fee sits at bits 144 to 207");
+            assertEq(uint48(w1 >> 208), two[i].buybackMaxBaseFee, "the base fee ceiling sits at bits 208 to 255");
             uint256 w2 = uint256(vm.load(address(core), bytes32(uint256(slot) + 2)));
-            assertEq(w2 >> 112, 0, "slot 2 top bits clear");
-            assertEq(uint16(w2 >> 96), two[i].feeToBuybackBps, "the fee share sits at bits 96 to 111");
-            assertEq(uint64(w2 >> 16), two[i].rateCap, "the rate cap sits at bits 16 to 79");
-            assertEq(uint16(w2 >> 80), two[i].exitLaneToBuybackBps, "the exit lane share sits at bits 80 to 95");
+            assertEq(w2 >> 208, 0, "slot 2 top bits clear");
+            assertEq(uint16(w2 >> 192), two[i].feeToBuybackBps, "the fee share sits at bits 192 to 207");
+            assertEq(uint64(w2 >> 112), two[i].rateCap, "the rate cap sits at bits 112 to 175");
+            assertEq(uint16(w2 >> 176), two[i].exitLaneToBuybackBps, "the exit lane share sits at bits 176 to 191");
         }
     }
 
@@ -383,8 +388,8 @@ contract ReviewFlowCoreTest is Fixture {
     function test_dirtyCalldataWordsAreRefused() public {
         Settings memory base = core.settings();
         bytes memory good = abi.encodeCall(ICore.setSettings, (base));
-        assertEq(good.length, 4 + 26 * 32);
-        for (uint256 i; i < 26; ++i) {
+        assertEq(good.length, 4 + 27 * 32);
+        for (uint256 i; i < 27; ++i) {
             bytes memory bad = bytes.concat(good);
             uint256 off = 32 + 4 + i * 32;
             uint256 w;

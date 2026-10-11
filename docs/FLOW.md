@@ -45,7 +45,8 @@ one `Settings` struct in Core storage, one owner function `setSettings(Settings)
 | exitToBuybackBps | 5_000 | 0 to 10_000 | share of exit token from eth lane exits to the coin buyback |
 | buybackSlice | 1 ether | 0.01 to 2 ether | the most eth one `buyback` spends from the coin buyback pot |
 | buybackDelay | 25 | 1 to 7_200 blocks | blocks that must pass between two `buyback` calls |
-| keeperTipBps | 50 | 0 to 500 | share of the buyback slice paid to the caller of `buyback`, bps, scaled down when the swap fills only in part |
+| keeperFee | 0.0005 ether | 0 to 0.005 ether | fixed fee paid to the caller of `buyback`, wei, scaled down when the swap fills only in part. the caller is also paid the gas of the call at the base fee (decision 61) |
+| buybackMaxBaseFee | 10 gwei | 1 gwei to 100 gwei | base fee ceiling of the `buyback` gas refund, wei |
 | xRateCap / xRateFloor | 9_700 / 3_000 | floor <= cap <= 10_000 | upper and lower bound of the exit token bid, bps of score. the cap also stops at what the exit pot funds, the floor is the lowest the bid falls to as credits are bought, and `setXRate` stays inside both |
 | xRateClimbPerHour | 100 | 0 to 1_000 | climb of the exit token bid per hour, bps of score, linear, while the exit pot funds the bid |
 | xRateDropPerCredit | 20 | 0 to 1_000 | fall of the exit token bid per credit bought through `sellForExitToken`, bps of score |

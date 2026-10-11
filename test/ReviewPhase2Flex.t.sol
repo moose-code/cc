@@ -121,7 +121,8 @@ contract PackHarness {
         s.exitToBuybackBps = type(uint16).max;
         s.buybackSlice = type(uint128).max;
         s.buybackDelay = type(uint16).max;
-        s.keeperTipBps = type(uint16).max;
+        s.keeperFee = type(uint64).max;
+        s.buybackMaxBaseFee = type(uint48).max;
         s.xRateCap = type(uint16).max;
         s.xRateFloor = type(uint16).max;
         s.xRateClimbPerHour = type(uint16).max;
@@ -639,7 +640,8 @@ contract ReviewPhase2FlexTest is Fixture {
         m.exitToBuybackBps = type(uint16).max;
         m.buybackSlice = type(uint128).max;
         m.buybackDelay = type(uint16).max;
-        m.keeperTipBps = type(uint16).max;
+        m.keeperFee = type(uint64).max;
+        m.buybackMaxBaseFee = type(uint48).max;
         m.xRateCap = type(uint16).max;
         m.xRateFloor = type(uint16).max;
         m.xRateClimbPerHour = type(uint16).max;
@@ -652,7 +654,7 @@ contract ReviewPhase2FlexTest is Fixture {
     }
 
     /// OK: with every field at the max of its TYPE (past the bounds, so a stray bit would show) the compiler layout and
-    /// the library's decode agree, the two last fields sit alone at bits 80 to 111 of the third word, and a write to it
+    /// the library's decode agree, the two last fields sit alone at bits 176 to 207 of the third word, and a write to it
     /// touches nothing else
     function test_OK_packingEveryFieldAtTypeMaxRoundTrips() public {
         PackHarness h = new PackHarness();
@@ -660,7 +662,7 @@ contract ReviewPhase2FlexTest is Fixture {
         (uint256 a, uint256 b, uint256 c) = h.words();
         assertEq(a, type(uint256).max, "word 0");
         assertEq(b, type(uint256).max, "word 1");
-        assertEq(c, (1 << 112) - 1, "word 2: 80 bits of neighbors then the two 16 bit shares");
+        assertEq(c, (1 << 208) - 1, "word 2: 176 bits of neighbors then the two 16 bit shares");
         bytes32 slot = SettingsStore.SLOT;
         vm.store(address(core), slot, bytes32(a));
         vm.store(address(core), bytes32(uint256(slot) + 1), bytes32(b));
@@ -671,7 +673,7 @@ contract ReviewPhase2FlexTest is Fixture {
         (a, b, c) = g.words();
         assertEq(a, 0);
         assertEq(b, 0);
-        assertEq(c, uint256(type(uint16).max) << 80, "the share alone");
+        assertEq(c, uint256(type(uint16).max) << 176, "the share alone");
         ICoreLib clib = ICoreLib(findLibrary(address(core).code));
         Settings memory u = clib.unpack(a, b, c);
         assertEq(u.exitLaneToBuybackBps, type(uint16).max);
@@ -682,7 +684,7 @@ contract ReviewPhase2FlexTest is Fixture {
         (a, b, c) = f.words();
         assertEq(a, 0);
         assertEq(b, 0);
-        assertEq(c, uint256(type(uint16).max) << 96, "the fee share alone");
+        assertEq(c, uint256(type(uint16).max) << 192, "the fee share alone");
         u = clib.unpack(a, b, c);
         assertEq(u.feeToBuybackBps, type(uint16).max);
         assertEq(u.exitLaneToBuybackBps, 0);

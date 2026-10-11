@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
@@ -481,6 +482,18 @@ abstract contract Fixture is Test, ProdDeployer {
         lastFillRate = uint256(vm.load(address(core), slot));
         minuteStartRate = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
         minuteBucket = uint64(uint256(vm.load(address(core), bytes32(uint256(slot) + 2))));
+    }
+
+    /// @notice the eth spent in the swap and the eth paid to the caller, from the `Buyback` event of `logs`
+    function _buybackEvent(Vm.Log[] memory logs) internal view returns (uint256 spent, uint256 paid) {
+        bytes32 sig = ICore.Buyback.selector;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == address(core) && logs[i].topics[0] == sig) {
+                (spent, paid) = abi.decode(logs[i].data, (uint256, uint256));
+                return (spent, paid);
+            }
+        }
+        revert("no Buyback event");
     }
 
     /// @notice the owner changes the settings

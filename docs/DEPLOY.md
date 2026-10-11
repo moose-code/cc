@@ -160,7 +160,8 @@ settings. one struct, `Settings`, in Core storage, in the config file under `set
 | `exitAfter` | 378000 | 3600 to 31536000 s | how long an eth lane statement must have been listed without a bid before it may be redeemed in phase 2 (105 hours, the hour the asking price reaches its floor) | yes |
 | `saleToBuybackBps` | 5000 | 0 to 10000 | share of sale proceeds to the coin buyback pot, the rest to the credit pot | yes |
 | `exitToBuybackBps` | 5000 | 0 to 10000 | share of exit token from an eth lane exit to the buyback pot | yes |
-| `buybackSlice`, `buybackDelay`, `keeperTipBps` | 0.5 eth, 25 blocks, 50 | 0.01 to 1 eth, 1 to 7200, 0 to 500 | coin buyback slice, minimum block gap, caller tip in bps of the slice. the swap has no minimum output, so the slice is the size of a sandwich target: lower it after a large fall of the coin price (section 4, watching the buyback after a price fall) | yes |
+| `buybackSlice`, `buybackDelay` | 0.5 eth, 25 blocks | 0.01 to 1 eth, 1 to 7200 | coin buyback slice and minimum block gap. the swap has no minimum output, so the slice is the size of a sandwich target: lower it after a large fall of the coin price (section 4, watching the buyback after a price fall) | yes |
+| `keeperFee`, `buybackMaxBaseFee` | 0.0005 eth, 10 gwei | 0 to 0.005 eth, 1 to 100 gwei | payment to the caller of `buyback`, from the buyback pot: the gas of the call at the base fee (at most `buybackMaxBaseFee`, counted gas at most 600,000) plus `keeperFee`. a buyback counts about 267,000 gas, so 0.0027 eth of gas at 10 gwei. the fee scales down when the swap fills in part. the swap budget is the slice less the largest possible payment, and a slice that does not exceed it reverts `SliceTooSmall` | yes |
 | `xRateCap`, `xRateFloor` | 9700, 3000 | floor <= cap <= 10000 | exit token bid in bps of one credit's exit value, phase 2 | yes |
 | `xRateClimbPerHour`, `xRateDropPerCredit` | 100, 20 | 0 to 1000 each | exit bid climb per hour and drop per credit | yes |
 | `xAuctionHalfLife` | 21600 | 600 to 2592000 s | exit token dutch auction price half life | yes |
@@ -251,9 +252,9 @@ export POOL_MANAGER=$(jq -r .stack.poolManager $LAUNCH_CONFIG) HOOK=$(jq -r .sta
 export LOCKER=$(jq -r .stack.locker $LAUNCH_CONFIG) ESCROW=$(jq -r .stack.escrow $LAUNCH_CONFIG)
 export AUCTION_FACTORY=$(jq -r .stack.auctionFactory $LAUNCH_CONFIG)
 export RATE_START=$(jq -r .rateStart $LAUNCH_CONFIG)   # OWNER, FACTORY, CORE, COIN, ROUTER, CONTROLLER, LIB as in sections 0 and 1
-export SETTINGS="($(jq -r '.settings | [.dropPerCreditBps,.dropFloorBps,.climbPerMinBps,.ceilBps,.idleLoosenBps,.tipSavingsBps,.tipCapBps,.reimburseBps,.reimburseCapBps,.saleFloorBps,.auctionDuration,.exitAfter,.saleToBuybackBps,.exitToBuybackBps,.buybackSlice,.buybackDelay,.keeperTipBps,.xRateCap,.xRateFloor,.xRateClimbPerHour,.xRateDropPerCredit,.xAuctionHalfLife,.exitSliceCredits,.rateCap,.exitLaneToBuybackBps,.feeToBuybackBps] | map(tostring) | join(",")' $LAUNCH_CONFIG))"
+export SETTINGS="($(jq -r '.settings | [.dropPerCreditBps,.dropFloorBps,.climbPerMinBps,.ceilBps,.idleLoosenBps,.tipSavingsBps,.tipCapBps,.reimburseBps,.reimburseCapBps,.saleFloorBps,.auctionDuration,.exitAfter,.saleToBuybackBps,.exitToBuybackBps,.buybackSlice,.buybackDelay,.keeperFee,.buybackMaxBaseFee,.xRateCap,.xRateFloor,.xRateClimbPerHour,.xRateDropPerCredit,.xAuctionHalfLife,.exitSliceCredits,.rateCap,.exitLaneToBuybackBps,.feeToBuybackBps] | map(tostring) | join(",")' $LAUNCH_CONFIG))"
 ARGS=$(cast abi-encode \
-  "constructor(address,address,address,(address,address,int24,uint24,address,address,address,address,address),uint256,(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16))" \
+  "constructor(address,address,address,(address,address,int24,uint24,address,address,address,address,address),uint256,(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint64,uint48,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16))" \
   $OWNER $COIN $CONTROLLER \
   "($POOL_MANAGER,$HOOK,200,8388608,$FACTORY,$LOCKER,$ESCROW,$AUCTION_FACTORY,$ROUTER)" \
   $RATE_START "$SETTINGS")
@@ -353,7 +354,7 @@ anyone can run these. none is needed for safety, they keep the engine moving. no
 | compose statements | `core.compose()`, `core.composeExit()` | the caller pays the gas, 8.71 million measured for 80 credits, including the pull of the fee router. holders compose, and the owner composes when nobody does. set the gas limit above 10 million (the cap is 16,777,216) |
 | adopt credits | `core.adopt(ids)` | puts credits that were transferred to the Core outside its doors into the eth pile at the basis of the price state now. event `CreditAdopted` |
 | collect sales | `core.collectSales()` | moves statement sale proceeds into the pots. `buyback()` calls it first |
-| buyback | `core.buyback()` | burns coin bought with one slice of the buyback pot, caller tip `keeperTipBps` |
+| buyback | `core.buyback()` | burns coin bought with one slice of the buyback pot, caller paid the gas of the call plus `keeperFee` |
 | reprice | `core.repriceStatement(sid)` | permissionless, listings with no bid |
 | claim owed | `router.claim(payee)` | pays a payee whose send failed, to the payee |
 
@@ -423,10 +424,10 @@ SET_saleFloorBps=12000 REPRICE=1 forge script script/SetSettings.s.sol --rpc-url
 
 `SET_<field>` and `SETTINGS_PATCH` name the fields of the table, the single variables win over the patch, `SET_RATE` adds `setRate`, `REPRICE=1` adds the reprices. checked on the anvil fork: the table showed the live value 9000 and the new one 8000, the broadcast from the impersonated owner changed `saleFloorBps` and the rate.
 
-the by hand way, with `cast`. the tuple type is the one of the constructor in section 3 (`T` below). the struct has 26 fields in the order of `Settings` in `src/interfaces/Interfaces.sol`: field 10 is `saleFloorBps`, field 24 is `rateCap`, field 25 is `exitLaneToBuybackBps` and field 26 is `feeToBuybackBps`. the `echo` line prints the field name with its value before and after the change: read it, and send only when the name and both values are the ones intended (a wrong index changes another setting, and the Core accepts any value inside its bounds):
+the by hand way, with `cast`. the tuple type is the one of the constructor in section 3 (`T` below). the struct has 27 fields in the order of `Settings` in `src/interfaces/Interfaces.sol`: field 10 is `saleFloorBps`, field 25 is `rateCap`, field 26 is `exitLaneToBuybackBps` and field 27 is `feeToBuybackBps`. the `echo` line prints the field name with its value before and after the change: read it, and send only when the name and both values are the ones intended (a wrong index changes another setting, and the Core accepts any value inside its bounds):
 
 ```sh
-T="(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16)"
+T="(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint64,uint48,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16)"
 S=$(cast call $CORE "settings()($T)" --rpc-url $MAINNET_RPC_URL | sed -E 's/ \[[^]]*\]//g')   # the live struct, plain numbers
 NEW=$(echo "$S" | tr -d '() ' | awk -F, -v OFS=, '{$10=8000; print "(" $0 ")"}')                # change field 10 (saleFloorBps) only
 echo "$S"; echo "$NEW"                                                                          # read both before sending

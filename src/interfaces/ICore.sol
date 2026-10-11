@@ -59,6 +59,7 @@ interface ICore {
     error PotTooSmall();
     error Reentrancy();
     error Retired();
+    error SliceTooSmall();
     error Slippage();
     error TargetNotAllowed();
     error TooEarly();
@@ -68,7 +69,7 @@ interface ICore {
     error ZeroAmount();
     error ZeroId();
 
-    event Buyback(address indexed caller, uint256 amountIn, uint256 tip);
+    event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     event CoinRescued(address indexed to, uint256 amount);
     event Composed(uint256 indexed sid, Lane lane, uint8 format, uint256 cost, address indexed caller);
     event ControllerLocked();

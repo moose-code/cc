@@ -65,7 +65,7 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// 1. eth leaves the core only as a credit purchase within the ceiling, a `buyListing` tip within tipCapBps and
     /// tipSavingsBps, the gas repayment of an exit within reimburseBps, reimburseCapBps and the pot, a buyback slice (the
-    /// swap input plus the keeper tip), a refund of overpayment, or a migration to the successor. `compose` and
+    /// swap input plus the payment to the caller), a refund of overpayment, or a migration to the successor. `compose` and
     /// `composeExit` pay the caller nothing. every action's balance change is matched to those flows, measured at the
     /// recipients, against the settings in force at that moment (the owner changes them throughout). the inflows are the
     /// hook's skim pushed into receive() during real swaps, including the one the hook pushes back during the buyback, the

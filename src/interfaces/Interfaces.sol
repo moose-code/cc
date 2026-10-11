@@ -112,7 +112,10 @@ struct Settings {
     uint128 buybackSlice;
     /// blocks between two coin buybacks
     uint16 buybackDelay;
-    uint16 keeperTipBps;
+    /// fixed fee paid to the caller of `buyback`, wei, scaled down when the swap fills only in part
+    uint64 keeperFee;
+    /// base fee ceiling of the `buyback` gas refund, wei
+    uint48 buybackMaxBaseFee;
     /// exit rate cap and floor, bps of one credit's exit value
     uint16 xRateCap;
     uint16 xRateFloor;
@@ -207,7 +210,8 @@ library Mainnet {
             exitToBuybackBps: 5_000,
             buybackSlice: 0.5 ether,
             buybackDelay: 25,
-            keeperTipBps: 50,
+            keeperFee: 0.0005 ether,
+            buybackMaxBaseFee: 10 gwei,
             xRateCap: 9_700,
             xRateFloor: 3_000,
             xRateClimbPerHour: 100,

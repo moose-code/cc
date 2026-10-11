@@ -244,13 +244,13 @@ contract FeeShareBuybackTest is FeeBase {
         uint256 toBb = inflow * bps / 10_000;
         assertEq(core.ethPot() - pot0, inflow - toBb, "pot share of the returning skim");
         assertEq(core.ethToBuyback(), pool - slice + toBb + (slice - spent - tip), "buyback pot");
-        assertEq(keeper.balance - keeperEth, tip, "the keeper is tipped as before");
+        assertEq(keeper.balance - keeperEth, tip, "the keeper is paid what the event reports");
         assertLt(coin.totalSupply(), supply, "coin was bought and burned");
         assertEq(coin.balanceOf(address(core)), 0);
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no unbooked eth");
         _solvent();
-        // and the buyback works again with what came back
-        if (core.ethToBuyback() != 0) {
+        // and the buyback works again with what came back, when it exceeds the largest payment (0.0065 ether at launch)
+        if (core.ethToBuyback() > 0.01 ether) {
             vm.roll(block.number + core.settings().buybackDelay);
             uint256 s2 = coin.totalSupply();
             vm.prank(keeper);

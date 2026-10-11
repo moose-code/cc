@@ -157,7 +157,8 @@ library CoreLib {
         s.exitToBuybackBps = ns.exitToBuybackBps;
         s.buybackSlice = ns.buybackSlice;
         s.buybackDelay = ns.buybackDelay;
-        s.keeperTipBps = ns.keeperTipBps;
+        s.keeperFee = ns.keeperFee;
+        s.buybackMaxBaseFee = ns.buybackMaxBaseFee;
         s.xRateCap = ns.xRateCap;
         s.xRateFloor = ns.xRateFloor;
         s.xRateClimbPerHour = ns.xRateClimbPerHour;
@@ -191,16 +192,17 @@ library CoreLib {
         s.exitToBuybackBps = uint16(a >> 240);
         s.buybackSlice = uint128(b);
         s.buybackDelay = uint16(b >> 128);
-        s.keeperTipBps = uint16(b >> 144);
-        s.xRateCap = uint16(b >> 160);
-        s.xRateFloor = uint16(b >> 176);
-        s.xRateClimbPerHour = uint16(b >> 192);
-        s.xRateDropPerCredit = uint16(b >> 208);
-        s.xAuctionHalfLife = uint32(b >> 224);
-        s.exitSliceCredits = uint16(c);
-        s.rateCap = uint64(c >> 16);
-        s.exitLaneToBuybackBps = uint16(c >> 80);
-        s.feeToBuybackBps = uint16(c >> 96);
+        s.keeperFee = uint64(b >> 144);
+        s.buybackMaxBaseFee = uint48(b >> 208);
+        s.xRateCap = uint16(c);
+        s.xRateFloor = uint16(c >> 16);
+        s.xRateClimbPerHour = uint16(c >> 32);
+        s.xRateDropPerCredit = uint16(c >> 48);
+        s.xAuctionHalfLife = uint32(c >> 64);
+        s.exitSliceCredits = uint16(c >> 96);
+        s.rateCap = uint64(c >> 112);
+        s.exitLaneToBuybackBps = uint16(c >> 176);
+        s.feeToBuybackBps = uint16(c >> 192);
         // forge-lint: disable-end(unsafe-typecast)
     }
 

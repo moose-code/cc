@@ -1677,13 +1677,17 @@ abstract contract HandlerBase is Test {
                            BUYBACK, SKIM, DONATE
     //////////////////////////////////////////////////////////////*/
 
+    /// mirrors the private constant `BUYBACK_GAS` of the Core
+    uint256 internal constant BUYBACK_GAS = 600_000;
+
     struct BbPre {
         uint256 bal;
         uint256 pot;
         uint256 pool;
         uint256 rate;
         uint256 slice;
-        uint256 tip0;
+        uint256 maxPay;
+        uint256 gasRate;
         uint256 whoBal;
         uint256 dead;
         uint256 bps;
@@ -1709,7 +1713,10 @@ abstract contract HandlerBase is Test {
             return _skip(a);
         }
         p.slice = p.pool < p.st.buybackSlice ? p.pool : p.st.buybackSlice;
-        p.tip0 = p.slice * p.st.keeperTipBps / 10_000;
+        p.gasRate = block.basefee < p.st.buybackMaxBaseFee ? block.basefee : p.st.buybackMaxBaseFee;
+        p.maxPay = BUYBACK_GAS * p.gasRate + p.st.keeperFee;
+        // a slice that does not exceed the largest payment reverts with SliceTooSmall
+        if (p.slice <= p.maxPay) return _skip(a);
         p.bal = address(core).balance;
         p.pot = core.ethPot() + p.owed - p.toSales;
         p.rate = core.ethRate();
@@ -1751,13 +1758,19 @@ abstract contract HandlerBase is Test {
             }
         }
         (uint256 volume, uint256 bounty, uint256 protocol) = _skimOf(logs);
-        uint256 budget = p.slice - p.tip0;
+        uint256 budget = p.slice - p.maxPay;
         if (p.bps > 690) windowSwaps++;
         if (bought == 0) _flag(V_BUYBACK, "buyback bought no coin");
         if (burned != bought) _flag(V_BUYBACK, "buyback did not burn exactly the coin it bought");
-        if (spent == 0 || spent > budget) _flag(V_BUYBACK, "buyback spent more than the slice less the tip");
-        if (evTip != tip) _flag(V_BUYBACK, "buyback tip event differs from what the caller received");
-        if (tip != p.tip0 * spent / budget) _flag(V_BUYBACK, "buyback tip is not keeperTipBps of the slice, scaled");
+        if (spent == 0 || spent > budget) _flag(V_BUYBACK, "buyback spent more than the slice less the largest payment");
+        if (evTip != tip) _flag(V_BUYBACK, "buyback payment event differs from what the caller received");
+        // the payment is the keeper fee scaled by the share of the budget spent, plus counted gas at the capped base fee
+        uint256 feePart = p.st.keeperFee * spent / budget;
+        if (tip < feePart || tip > feePart + BUYBACK_GAS * p.gasRate) {
+            _flag(V_BUYBACK, "buyback payment is outside the scaled fee plus the gas refund cap");
+        } else if (p.gasRate == 0 ? tip != feePart : (tip - feePart) % p.gasRate != 0) {
+            _flag(V_BUYBACK, "buyback gas refund is not counted gas at the capped base fee");
+        }
         _buybackPotChecks(p, spent, tip, bounty, collected);
         // a dust swap (the skim of it rounds to nothing) emits no skim event at all, and the fee share can now leave
         // one wei in the buyback pot, so a volume of zero is right when the whole skim rounds to zero
@@ -1775,9 +1788,9 @@ abstract contract HandlerBase is Test {
         if (held != bounty) _flag(V_BUYBACK, "the router received other than the hook bounty leg");
         uint256 feeShare = toCore * core.settings().feeToBuybackBps / 10_000;
         if (core.ethToBuyback() != p.pool - spent - tip + feeShare) {
-            _flag(V_BUYBACK, "buyback pot is not the pot less what was spent and tipped, plus the fee share");
+            _flag(V_BUYBACK, "buyback pot is not the pot less what was spent and paid, plus the fee share");
         }
-        // eth leaves as the swap input plus the tip. the skim of the swap comes back as an inflow after the flush
+        // eth leaves as the swap input plus the payment. the skim of the swap comes back as an inflow after the flush
         _eth(p.bal, spent + tip, toCore + p.owed, "buyback");
         if (core.ethPot() != p.pot + toCore - feeShare) _flag(V_POT, "buyback skim not booked to the pot");
     }

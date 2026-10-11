@@ -3,15 +3,15 @@ pragma solidity ^0.8.28;
 
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
 
-/// @notice the 26 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
+/// @notice the 27 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
 /// docs/FLOW.md section 2, for the settings script and the config and deploy tests. the two fields bounded by another
 /// field (xRateCap, xRateFloor) have the bounds of the other field in the callers' hands
 library SettingsFields {
-    uint256 internal constant N = 26;
+    uint256 internal constant N = 27;
 
     /// @dev field i of the settings struct, in declaration order
     function get(Settings memory s, uint256 i) internal pure returns (uint256) {
-        uint256[26] memory f = [
+        uint256[27] memory f = [
             uint256(s.dropPerCreditBps),
             s.dropFloorBps,
             s.climbPerMinBps,
@@ -28,7 +28,8 @@ library SettingsFields {
             s.exitToBuybackBps,
             s.buybackSlice,
             s.buybackDelay,
-            s.keeperTipBps,
+            s.keeperFee,
+            s.buybackMaxBaseFee,
             s.xRateCap,
             s.xRateFloor,
             s.xRateClimbPerHour,
@@ -61,22 +62,23 @@ library SettingsFields {
         else if (i == 13) s.exitToBuybackBps = uint16(v);
         else if (i == 14) s.buybackSlice = uint128(v);
         else if (i == 15) s.buybackDelay = uint16(v);
-        else if (i == 16) s.keeperTipBps = uint16(v);
-        else if (i == 17) s.xRateCap = uint16(v);
-        else if (i == 18) s.xRateFloor = uint16(v);
-        else if (i == 19) s.xRateClimbPerHour = uint16(v);
-        else if (i == 20) s.xRateDropPerCredit = uint16(v);
-        else if (i == 21) s.xAuctionHalfLife = uint32(v);
-        else if (i == 22) s.exitSliceCredits = uint16(v);
-        else if (i == 23) s.rateCap = uint64(v);
-        else if (i == 24) s.exitLaneToBuybackBps = uint16(v);
+        else if (i == 16) s.keeperFee = uint64(v);
+        else if (i == 17) s.buybackMaxBaseFee = uint48(v);
+        else if (i == 18) s.xRateCap = uint16(v);
+        else if (i == 19) s.xRateFloor = uint16(v);
+        else if (i == 20) s.xRateClimbPerHour = uint16(v);
+        else if (i == 21) s.xRateDropPerCredit = uint16(v);
+        else if (i == 22) s.xAuctionHalfLife = uint32(v);
+        else if (i == 23) s.exitSliceCredits = uint16(v);
+        else if (i == 24) s.rateCap = uint64(v);
+        else if (i == 25) s.exitLaneToBuybackBps = uint16(v);
         else s.feeToBuybackBps = uint16(v);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
     /// @dev the documented lower bound of every field. xRateFloor and xRateCap are bounded by each other, those two are
     /// handled by the callers
-    function lo() internal pure returns (uint256[26] memory) {
+    function lo() internal pure returns (uint256[27] memory) {
         return [
             uint256(1),
             5_000,
@@ -95,6 +97,7 @@ library SettingsFields {
             0.01 ether,
             1,
             0,
+            1 gwei,
             0,
             0,
             0,
@@ -107,7 +110,7 @@ library SettingsFields {
         ];
     }
 
-    function hi() internal pure returns (uint256[26] memory) {
+    function hi() internal pure returns (uint256[27] memory) {
         return [
             uint256(1_000),
             10_000,
@@ -125,7 +128,8 @@ library SettingsFields {
             10_000,
             1 ether,
             7_200,
-            500,
+            0.005 ether,
+            100 gwei,
             10_000,
             10_000,
             1_000,
@@ -138,7 +142,7 @@ library SettingsFields {
         ];
     }
 
-    function names() internal pure returns (bytes32[26] memory) {
+    function names() internal pure returns (bytes32[27] memory) {
         return [
             bytes32("dropPerCreditBps"),
             "dropFloorBps",
@@ -156,7 +160,8 @@ library SettingsFields {
             "exitToBuybackBps",
             "buybackSlice",
             "buybackDelay",
-            "keeperTipBps",
+            "keeperFee",
+            "buybackMaxBaseFee",
             "xRateCap",
             "xRateFloor",
             "xRateClimbPerHour",

@@ -192,7 +192,7 @@ the Core (`src/interfaces/ICore.sol`):
 
 | event | fields | emitted when |
 |---|---|---|
-| `Buyback` | `address indexed caller, uint256 amountIn, uint256 tip` | `buyback`: `amountIn` eth swapped for coin and the coin burned, `tip` paid to `caller` |
+| `Buyback` | `address indexed caller, uint256 amountIn, uint256 paid` | `buyback`: `amountIn` eth swapped for coin and the coin burned, `paid` to `caller`: counted gas at the base fee plus the keeper fee |
 | `Composed` | `uint256 indexed sid, Lane lane, uint8 format, uint256 cost, address indexed caller` | `compose` or `composeExit`. `lane` 0 or 1, `format` the Statements format, `cost` the cost basis of the statement (the sum of the bases of the 80 credits) |
 | `ControllerLocked` | (empty) | `lockController` |
 | `ControllerSet` | `address controller` | `setController` (also at construction) |
@@ -306,6 +306,7 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `OnlyPoolManager()` | `unlockCallback` | the caller is not the pool manager |
 | `PotTooSmall()` | `sellForEth`, `buyListing`, `sellForExitToken` | the spend is larger than the pot |
 | `Reentrancy()` | guarded functions | a guarded function was entered while another guarded call runs |
+| `SliceTooSmall()` | `buyback` | the slice does not exceed the largest payment to the caller: 600,000 gas at the capped base fee plus `keeperFee` |
 | `Slippage()` | `sellForEth`, `sellForExitToken`, `buybackExit` | total payout below `minOut`, or the coin cost above `maxCoinIn` |
 | `TargetNotAllowed()` | `buyListing` | the target is not on the allowlist, or it is a forbidden contract |
 | `TooEarly()` | `exitStatement` | the listing is younger than `exitAfter` |
@@ -374,6 +375,7 @@ measured on the pinned fork with foundry 1.8.1. `tx` includes the intrinsic 21,0
 | `controller.buy` (the `sellTo` path) | tx 241,988 | `test_gas_sellTo_throughControllerBuy` |
 | `collectSales` | tx 116,307 | `test_gas_collectSales_andBuyback` |
 | `buyback` with proceeds waiting in the house | tx 270,237 | the same test |
+| `buyback`, nothing to collect | exec 246,216, counted for the refund 266,559 (305,000 with proceeds waiting in the house) | `test/Fees.t.sol` `test_callerIsPaidCountedGasAtTheBaseFeePlusTheFee` |
 | `adopt`, 1 credit, router empty | call gas 199,532 | `test/Adopt.t.sol` `test_GAS_adopt` (asserted within 5 percent) |
 | `adopt`, 80 credits, router empty | call gas 7,660,657 (95,758 per credit) | the same test |
 | `migrate`, pots only | call gas 159,226 | `test/Migrate.t.sol` `test_GAS_migrateEightyCreditsPerPile` |

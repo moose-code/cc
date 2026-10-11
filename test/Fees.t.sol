@@ -687,11 +687,12 @@ contract ReceiveSettingsTest is FeeBase {
     }
 
     /// the hook pushes its skim into the core in the middle of `buyback`, under changed settings. the push is booked
-    /// by the receive that runs inside the unlock, and the spend, the tip and the pot stay exact
+    /// by the receive that runs inside the unlock, and the spend, the payment and the pot stay exact
     function test_receiveMidBuybackAcrossSettings() public {
         _stock();
+        vm.fee(1 gwei);
         uint256[3] memory slice = [uint256(0.02 ether), 0.05 ether, 1 ether];
-        uint256[3] memory tips = [uint256(0), 200, 500];
+        uint256[3] memory fees = [uint256(0), 0.001 ether, 0.005 ether];
         for (uint256 i; i < 3; ++i) {
             Settings memory s = core.settings();
             s.dropPerCreditBps = uint16(50 * (i + 1));
@@ -699,14 +700,13 @@ contract ReceiveSettingsTest is FeeBase {
             s.buybackDelay = 1;
             // forge-lint: disable-start(unsafe-typecast)
             s.buybackSlice = uint128(slice[i]);
-            s.keeperTipBps = uint16(tips[i]);
+            s.keeperFee = uint64(fees[i]);
             // forge-lint: disable-end(unsafe-typecast)
             _setSettings(s);
             _anotherSale();
             vm.roll(block.number + 1);
             uint256 pot = core.ethPot();
             uint256 pool = core.ethToBuyback();
-            uint256 take = pool.min(slice[i]);
             uint256 keeper0 = keeper.balance;
             uint256 supply = coin.totalSupply();
             uint256 rbal = address(feeRouter).balance;
@@ -714,14 +714,16 @@ contract ReceiveSettingsTest is FeeBase {
             vm.prank(keeper);
             core.buyback();
             Flow memory f;
-            _readSkim(f, vm.getRecordedLogs());
+            Vm.Log[] memory logs = vm.getRecordedLogs();
+            _readSkim(f, logs);
             assertEq(core.ethPot(), pot, "the skim went to the router, nothing came back inside the unlock");
             assertEq(address(feeRouter).balance - rbal, f.skimBounty, "the bounty leg reached the router");
             _flush();
-            uint256 spent = take - take * tips[i] / 10_000;
-            assertApproxEqAbs(f.skimVolume + f.skimBounty + f.skimProtocol, spent, 2, "the swap spent the slice less the tip");
-            assertEq(keeper.balance - keeper0, take * tips[i] / 10_000);
-            assertEq(core.ethToBuyback(), pool - take);
+            (uint256 spent, uint256 paid) = _buybackEvent(logs);
+            assertApproxEqAbs(f.skimVolume + f.skimBounty + f.skimProtocol, spent, 2, "the swap spent the budget");
+            assertGe(paid, fees[i], "the payment holds the fee");
+            assertEq(keeper.balance - keeper0, paid);
+            assertEq(core.ethToBuyback(), pool - spent - paid);
             assertLt(coin.totalSupply(), supply);
             assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no surplus, no deficit");
         }
@@ -923,18 +925,18 @@ contract BuybackTest is FeeBase {
     function test_buybackBurnsTheCoinBoughtAndBooksTheSkim() public {
         _stock();
         uint256 toBuyback = _fillEthBuyback();
+        vm.fee(5 gwei);
         assertGt(toBuyback, 0);
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "clean books before");
         Before memory b = _before();
-        uint256 slice = b.pool.min(core.settings().buybackSlice);
-        uint256 tip0 = slice * core.settings().keeperTipBps / 10_000;
-        uint256 budget = slice - tip0;
 
         vm.recordLogs();
         vm.prank(keeper);
         core.buyback();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
         Flow memory f;
-        _readSkim(f, vm.getRecordedLogs());
+        _readSkim(f, logs);
+        (uint256 budget, uint256 paid) = _buybackEvent(logs);
 
         // the coin left the pool and was burned: total supply fell by exactly what the pool gave up
         uint256 bought = b.pmCoin - coin.balanceOf(Mainnet.POOL_MANAGER);
@@ -942,10 +944,11 @@ contract BuybackTest is FeeBase {
         assertEq(b.supply - coin.totalSupply(), bought, "supply fell by exactly the coin bought");
         assertEq(coin.balanceOf(address(core)), 0, "the core holds no coin");
         assertEq(coin.balanceOf(DEAD), b.deadCoin, "the buyback take is untaxed");
-        // eth side: the slice left the pot, the tip went to the caller
-        assertEq(core.ethToBuyback(), b.pool - slice, "buyback pot fell by the slice");
-        assertEq(keeper.balance - b.keeperEth, tip0, "tip to the caller");
-        assertEq(tip0, slice * 50 / 10_000);
+        // eth side: the swap and the payment left the pot, the payment went to the caller
+        assertEq(core.ethToBuyback(), b.pool - budget - paid, "buyback pot fell by the spend and the payment");
+        assertEq(keeper.balance - b.keeperEth, paid, "payment to the caller");
+        assertGt(paid, core.settings().keeperFee, "the gas refund is paid on top of the fee");
+        assertEq((paid - core.settings().keeperFee) % 5 gwei, 0, "the refund is counted gas at the base fee");
         // the skim on the buyback goes to the router (6.65022 points of the eth spent), not to the core: the pot is unchanged
         // until the router is flushed
         (uint256 toRouter,) = _expected(budget);
@@ -970,7 +973,7 @@ contract BuybackTest is FeeBase {
         assertLt(b.pool, 1 ether, "a sale builds less than one slice");
         vm.prank(keeper);
         core.buyback();
-        assertEq(core.ethToBuyback(), 0, "the slice was the whole pot");
+        assertLt(core.ethToBuyback(), 0.01 ether, "the slice was the whole pot, the unused payment margin stays");
         assertEq(core.lastBuybackBlock(), block.number);
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback());
 
@@ -986,9 +989,9 @@ contract BuybackTest is FeeBase {
         vm.roll(block.number + 1);
         vm.prank(keeper);
         core.buyback();
-        assertEq(core.ethToBuyback(), 0);
+        assertLt(core.ethToBuyback(), 0.01 ether);
         vm.roll(block.number + core.settings().buybackDelay);
-        vm.expectRevert(ICore.NothingToBuy.selector);
+        vm.expectRevert(ICore.SliceTooSmall.selector);
         core.buyback();
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback());
     }
@@ -1017,28 +1020,184 @@ contract BuybackTest is FeeBase {
     }
 }
 
-/// the buyback reads its slice, its delay and the keeper tip from the settings, effective at once
+/// stands in for the auction house: reports a refund owed to the core and burns gas when asked to pay it, so the
+/// measured part of a buyback exceeds the counted gas cap
+contract GasBurningHouse {
+    fallback() external payable {
+        if (msg.sig == bytes4(keccak256("withdrawRefund()"))) {
+            uint256 g0 = gasleft();
+            while (g0 - gasleft() < 3_000_000) {}
+            return;
+        }
+        assembly ("memory-safe") {
+            mstore(0, 1)
+            return(0, 32)
+        }
+    }
+}
+
+/// what the caller of `buyback` is paid: counted gas at the base fee, capped, plus the keeper fee
+contract BuybackPaymentTest is FeeBase {
+    using stdStorage for StdStorage;
+    using FixedPointMathLib for uint256;
+
+    /// mirrors the private constants of the Core
+    uint256 internal constant BUYBACK_GAS = 600_000;
+    uint256 internal constant BUYBACK_OVERHEAD_GAS = 50_000;
+
+    function setUp() public override {
+        super.setUp();
+        _stock();
+        _forcePot(1 ether);
+    }
+
+    function _forcePot(uint256 eth) internal {
+        vm.deal(address(core), address(core).balance + eth);
+        uint256 slot = stdstore.target(address(core)).sig("ethToBuyback()").find();
+        vm.store(address(core), bytes32(slot), bytes32(core.ethToBuyback() + eth));
+    }
+
+    struct Run {
+        uint256 pool;
+        uint256 spent;
+        uint256 paid;
+        uint256 gasUsed;
+        uint256 callerGain;
+        uint256 potAfter;
+    }
+
+    /// one buyback by the keeper at `baseFee` and `gasPrice`, with the books read around it
+    function _run(uint256 baseFee, uint256 gasPrice) internal returns (Run memory r) {
+        vm.fee(baseFee);
+        vm.txGasPrice(gasPrice);
+        r.pool = core.ethToBuyback();
+        uint256 before = keeper.balance;
+        vm.recordLogs();
+        vm.prank(keeper);
+        uint256 g0 = gasleft();
+        core.buyback();
+        r.gasUsed = g0 - gasleft();
+        (r.spent, r.paid) = _buybackEvent(vm.getRecordedLogs());
+        r.callerGain = keeper.balance - before;
+        r.potAfter = core.ethToBuyback();
+    }
+
+    function _countedGas(Run memory r, uint256 baseFee) internal view returns (uint256) {
+        uint256 refund = r.paid - core.settings().keeperFee;
+        assertEq(refund % baseFee, 0, "the refund is a whole number of gas at the base fee");
+        return refund / baseFee;
+    }
+
+    function test_callerIsPaidCountedGasAtTheBaseFeePlusTheFee() public {
+        Run memory r = _run(7 gwei, 7 gwei);
+        assertEq(r.callerGain, r.paid, "the event reports what the caller received");
+        uint256 counted = _countedGas(r, 7 gwei);
+        emit log_named_uint("counted gas of a full buyback", counted);
+        emit log_named_uint("gas used of the call", r.gasUsed);
+        // counted gas is the measured part of the call plus the fixed overhead. it covers the transaction base cost on
+        // top of the gas of the call, and the overhead bounds what is counted beyond the call
+        assertGt(counted, BUYBACK_OVERHEAD_GAS);
+        assertLt(counted, BUYBACK_GAS / 2, "the constant is more than twice the counted gas");
+        assertGe(counted, r.gasUsed + 15_000, "covers the call and most of the transaction base cost");
+        assertLe(counted, r.gasUsed + BUYBACK_OVERHEAD_GAS, "no more than the call plus the overhead");
+        assertEq(r.potAfter, r.pool - r.spent - r.paid, "the pot fell by the spend and the payment");
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no surplus, no deficit");
+    }
+
+    /// a swap that the pool fills in part: the fee scales by the share of the budget spent, the gas refund is whole.
+    /// the launch pool cannot be made to fill in part, so the pool manager answers `unlock` with a tenth of the budget
+    function test_partialFillScalesTheFeeAndPaysTheGasWhole() public {
+        Settings memory s = core.settings();
+        s.keeperFee = 0.005 ether;
+        s.buybackSlice = 1 ether;
+        _setSettings(s);
+        uint256 budget = 1 ether - (BUYBACK_GAS * 5 gwei + 0.005 ether);
+        uint256 spentIn = budget / 10;
+        uint256 bought = 1_000e18;
+        deal(address(coin), address(core), bought);
+        vm.mockCall(
+            address(PM), abi.encodeWithSelector(PM.unlock.selector), abi.encode(abi.encode(spentIn, bought))
+        );
+        Run memory r = _run(5 gwei, 5 gwei);
+        assertEq(r.spent, spentIn);
+        uint256 feePart = 0.005 ether * spentIn / budget;
+        assertEq(feePart, 0.0005 ether, "a tenth of the fee");
+        assertEq((r.paid - feePart) % 5 gwei, 0, "the rest is counted gas at the base fee");
+        uint256 counted = (r.paid - feePart) / 5 gwei;
+        assertGt(counted, BUYBACK_OVERHEAD_GAS, "the gas refund is not scaled down");
+        assertLt(counted, BUYBACK_GAS / 2);
+        assertEq(r.potAfter, r.pool - r.spent - r.paid, "the unspent budget and the unpaid fee stay in the pot");
+    }
+
+    /// a slice that does not exceed the largest payment (600,000 gas at the capped base fee plus the fee) reverts
+    function test_sliceNotAboveTheLargestPaymentReverts() public {
+        Settings memory s = core.settings();
+        s.keeperFee = 0.005 ether;
+        s.buybackSlice = 0.011 ether;
+        _setSettings(s);
+        vm.fee(10 gwei);
+        // 600,000 * 10 gwei + 0.005 ether is 0.011 ether
+        vm.prank(keeper);
+        vm.expectRevert(ICore.SliceTooSmall.selector);
+        core.buyback();
+        vm.fee(9 gwei);
+        Run memory r = _run(9 gwei, 9 gwei);
+        assertGt(r.spent, 0, "a base fee that leaves room for a swap works");
+    }
+
+    function test_baseFeeAboveTheCapIsRefundedAtTheCap() public {
+        Settings memory s = core.settings();
+        s.buybackMaxBaseFee = 3 gwei;
+        _setSettings(s);
+        uint256 snap = vm.snapshotState();
+        Run memory atCap = _run(3 gwei, 3 gwei);
+        vm.revertToState(snap);
+        Run memory above = _run(60 gwei, 60 gwei);
+        assertEq(above.paid, atCap.paid, "a base fee above the cap pays what the cap pays");
+        assertEq(_countedGas(above, 3 gwei), _countedGas(atCap, 3 gwei));
+    }
+
+    function test_priorityFeeIsNotRefunded() public {
+        uint256 snap = vm.snapshotState();
+        Run memory plain = _run(5 gwei, 5 gwei);
+        vm.revertToState(snap);
+        Run memory tipped = _run(5 gwei, 500 gwei);
+        assertEq(tipped.paid, plain.paid, "the gas price above the base fee changes nothing");
+    }
+
+    function test_countedGasIsCappedAtTheBuybackGasConstant() public {
+        // the buyback collects from the house first: a house that burns 3 million gas while paying the refund
+        address house = address(core.HOUSE());
+        vm.etch(house, address(new GasBurningHouse()).code);
+        Run memory r = _run(4 gwei, 4 gwei);
+        assertEq(r.paid, BUYBACK_GAS * 4 gwei + core.settings().keeperFee, "the gas counted stops at the constant");
+        assertGt(r.gasUsed, BUYBACK_GAS, "the call used more than the constant");
+    }
+}
+
+/// the buyback reads its slice, its delay and the keeper fee from the settings, effective at once
 contract BuybackSettingsTest is FeeBase {
     using FixedPointMathLib for uint256;
 
     function setUp() public override {
         super.setUp();
         _stock();
+        vm.fee(1 gwei);
     }
 
-    function _configure(uint256 slice, uint256 delay, uint256 tip) internal {
+    function _configure(uint256 slice, uint256 delay, uint256 fee) internal {
         Settings memory s = core.settings();
         s.saleToBuybackBps = 10_000;
         // forge-lint: disable-start(unsafe-typecast)
         s.buybackSlice = uint128(slice);
         s.buybackDelay = uint16(delay);
-        s.keeperTipBps = uint16(tip);
+        s.keeperFee = uint64(fee);
         // forge-lint: disable-end(unsafe-typecast)
         _setSettings(s);
     }
 
-    /// one buyback by the keeper, checked against the settings. returns the slice taken
-    function _buyback() internal returns (uint256 slice) {
+    /// one buyback by the keeper, checked against the settings. returns the slice taken and the payment
+    function _buyback() internal returns (uint256 slice, uint256 paid) {
         Settings memory s = core.settings();
         uint256 pool = core.ethToBuyback();
         slice = pool.min(s.buybackSlice);
@@ -1046,10 +1205,15 @@ contract BuybackSettingsTest is FeeBase {
         uint256 keeper0 = keeper.balance;
         uint256 pot = core.ethPot();
         uint256 rbal = address(feeRouter).balance;
+        vm.recordLogs();
         vm.prank(keeper);
         core.buyback();
-        assertEq(keeper.balance - keeper0, slice * s.keeperTipBps / 10_000, "tip of the slice at the setting");
-        assertEq(core.ethToBuyback(), pool - slice, "the pot fell by the slice at the setting");
+        uint256 spent;
+        (spent, paid) = _buybackEvent(vm.getRecordedLogs());
+        assertEq(keeper.balance - keeper0, paid, "the caller got the payment");
+        assertGe(paid, s.keeperFee, "the payment holds the fee of the setting");
+        assertEq(core.ethToBuyback(), pool - spent - paid, "the pot fell by the spend and the payment");
+        assertLe(spent + paid, slice, "the slice bounds both");
         assertLt(coin.totalSupply(), supply, "burned");
         assertEq(core.ethPot(), pot, "the skim of the swap went to the router");
         assertGt(address(feeRouter).balance, rbal, "the skim of the swap reached the router");
@@ -1058,12 +1222,13 @@ contract BuybackSettingsTest is FeeBase {
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no surplus, no deficit");
     }
 
-    function test_sliceDelayAndTipFollowTheSettings() public {
-        _configure(0.02 ether, 3, 200);
+    function test_sliceDelayAndFeeFollowTheSettings() public {
+        _configure(0.02 ether, 3, 0.001 ether);
         _fillEthBuyback();
         uint256 pool = core.ethToBuyback();
         assertGt(pool, 0.1 ether);
-        assertEq(_buyback(), 0.02 ether);
+        (uint256 slice,) = _buyback();
+        assertEq(slice, 0.02 ether);
 
         vm.prank(keeper);
         vm.expectRevert(ICore.TooSoon.selector);
@@ -1073,34 +1238,41 @@ contract BuybackSettingsTest is FeeBase {
         vm.expectRevert(ICore.TooSoon.selector);
         core.buyback();
         vm.roll(block.number + 1);
-        assertEq(_buyback(), 0.02 ether);
+        (slice,) = _buyback();
+        assertEq(slice, 0.02 ether);
 
         // a shorter delay, effective at once: one block is enough now
-        _configure(0.02 ether, 1, 200);
+        _configure(0.02 ether, 1, 0.001 ether);
         vm.prank(keeper);
         vm.expectRevert(ICore.TooSoon.selector);
         core.buyback();
         vm.roll(block.number + 1);
-        assertEq(_buyback(), 0.02 ether);
+        (slice,) = _buyback();
+        assertEq(slice, 0.02 ether);
 
-        // no tip at zero
+        // a zero fee pays the gas refund alone
         _configure(0.01 ether, 1, 0);
         vm.roll(block.number + 1);
         uint256 keeper0 = keeper.balance;
-        assertEq(_buyback(), 0.01 ether);
-        assertEq(keeper.balance, keeper0, "tip zero pays nothing");
+        uint256 paid;
+        (slice, paid) = _buyback();
+        assertEq(slice, 0.01 ether);
+        assertEq(keeper.balance - keeper0, paid);
+        assertGt(paid, 0, "the gas refund is still paid");
 
-        // the largest tip is 500 bps of the slice
-        _configure(0.01 ether, 1, 500);
+        // the largest fee
+        _configure(0.01 ether, 1, 0.005 ether);
         vm.roll(block.number + 1);
-        _buyback();
+        (, paid) = _buyback();
+        assertGt(paid, 0.005 ether);
 
         // a slice above the pot takes the whole pot
-        _configure(1 ether, 7_200, 50);
+        _configure(1 ether, 7_200, 0.0005 ether);
         vm.roll(block.number + 7_200);
         uint256 rest = core.ethToBuyback();
-        assertEq(_buyback(), rest);
-        assertEq(core.ethToBuyback(), 0);
+        (slice,) = _buyback();
+        assertEq(slice, rest);
+        assertLt(core.ethToBuyback(), 0.001 ether, "only the unused payment margin is left");
         // the longest delay binds in blocks
         _anotherSale();
         vm.roll(block.number + 7_199);
@@ -1111,10 +1283,10 @@ contract BuybackSettingsTest is FeeBase {
         _buyback();
     }
 
-    /// any slice, delay and tip inside the bounds: one buyback burns, tips and books exactly
+    /// any slice, delay and fee inside the bounds: one buyback burns, pays and books exactly
     /// forge-config: default.fuzz.runs = 16
-    function testFuzz_buybackAnySettings(uint256 slice, uint256 delay, uint256 tip) public {
-        _configure(bound(slice, 0.01 ether, 1 ether), bound(delay, 1, 7_200), bound(tip, 0, 500));
+    function testFuzz_buybackAnySettings(uint256 slice, uint256 delay, uint256 fee) public {
+        _configure(bound(slice, 0.01 ether, 1 ether), bound(delay, 1, 7_200), bound(fee, 0, 0.005 ether));
         _fillEthBuyback();
         _buyback();
     }

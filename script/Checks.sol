@@ -69,13 +69,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x16b1d237386c477deb585d2807057803c7d17bbb2f8f0daac67c26226eb6dae8;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x7dfc4db44c2aaca677e22a22dd803782a971fa2a2db9cd5a2bf5399042aeeb79;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x95b20fcfaaafc11df13abbd28b21c75874e393106c985c1fe0d04835618d1a38;
+    bytes32 internal constant BUILD_HASH_CORE = 0x6de473622f58c1016a752d86a9de55e4792986e949b79f54d290e6f2b47a36fc;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x58e5eac7553235d16d09bc4f64a2723862c04b454d620ed9349d152def5178f6;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xbc799728c955467bf697aed6ff168d7772e3cf5ef58291e2590236dba7592d37;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0x4ff989feabca4e9387b32b7f3ea71b38dc0ff330f81e0cf853130082079ffb63;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x7da9b204e0ffd9eb166aa65ba2058a878e88f80e4f3600f9ddd8d4a0fd6ca49e;
+        0x97422a80c883dfac5194a3a3e6ab367fe6622bf0eb35276a0ff6461d1272dec0;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -826,7 +826,11 @@ abstract contract LaunchChecks is PostflightChecks {
                 " fee to buyback ",
                 vm.toString(c.settings.feeToBuybackBps),
                 " buyback slice ",
-                vm.toString(c.settings.buybackSlice)
+                vm.toString(c.settings.buybackSlice),
+                " keeper fee ",
+                vm.toString(c.settings.keeperFee),
+                " base fee ceiling ",
+                vm.toString(c.settings.buybackMaxBaseFee)
             )
         );
         _info(

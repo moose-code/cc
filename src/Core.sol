@@ -99,6 +99,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the controller did not answer `statementPrice` with a word
     error BadPrice();
     error NothingToBuy();
+    /// the buyback slice does not exceed the most the caller can be paid
+    error SliceTooSmall();
     error NothingBought();
     error TooSoon();
     error BadRate();
@@ -152,7 +154,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event SettingsSet(Settings settings);
     event RateSet(uint256 rate);
     event StatementExited(uint256 indexed sid, Lane lane, uint256 received);
-    event Buyback(address indexed caller, uint256 amountIn, uint256 tip);
+    event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     event ExitBuyback(address indexed caller, uint256 slice, uint256 coinIn);
     /// the controller sold a statement at once: the buyer and the price paid (booked as sale proceeds)
     event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price);
@@ -195,6 +197,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant EXIT_OVERHEAD_GAS = 50_000;
     /// the most gas of an exit the reimbursement counts, so a gas burning module cannot inflate it
     uint256 private constant EXIT_GAS = 1_500_000;
+    /// gas of the work after the end of `buyback` that its refund counts, with the transaction base cost
+    uint256 private constant BUYBACK_OVERHEAD_GAS = 60_000;
+    /// the most gas of a buyback the refund counts, so a gas burning house or hook cannot inflate it. a buyback counts
+    /// about 267,000 gas, 305,000 with a collection of sale proceeds
+    uint256 private constant BUYBACK_GAS = 600_000;
     /// gas the controller's `nextPage` may use, in both lanes. a full page of ControllerV1 costs about 73,000 (measured
     /// in test/ReviewFlowCore.t.sol), so this is about 7 times that
     uint256 private constant PAGE_GAS = 500_000;
@@ -875,9 +882,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// swaps up to one slice of the eth buyback pot for coin in the canonical pool, then burns the coin on the token
-    /// so the total supply falls. tips the caller. the core's own bounty share of the hook's skim on this swap reaches the pot
-    /// through the router (`flush`), and a partial fill refund through the escrow (`skim`, after anyone claims it).
+    /// so the total supply falls. the caller is paid from the slice: the gas of the call at the base fee, capped at
+    /// `buybackMaxBaseFee` and `BUYBACK_GAS`, plus `keeperFee` scaled by the share of the swap budget that was spent.
+    /// the swap budget is the slice less the largest possible payment, and a slice that does not exceed that payment
+    /// reverts. the core's own bounty share of the hook's skim on this swap reaches the pot through the router
+    /// (`flush`), and a partial fill refund through the escrow (`skim`, after anyone claims it).
     function buyback() external nonReentrant {
+        uint256 gasStart = gasleft();
         // sale proceeds waiting in the house are collected first, so they are never stranded. a house that fails
         // does not block the buyback
         _collect(false);
@@ -886,18 +897,19 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         Settings storage s = _st();
         if (block.number < lastBuybackBlock + s.buybackDelay) revert TooSoon();
         uint256 slice = pool.min(s.buybackSlice);
+        uint256 rate = block.basefee.min(s.buybackMaxBaseFee);
+        uint256 fee = s.keeperFee;
+        uint256 budget = slice.zeroFloorSub(BUYBACK_GAS * rate + fee);
+        if (budget == 0) revert SliceTooSmall();
         ethToBuyback = pool - slice;
         lastBuybackBlock = block.number;
-        uint256 tip0 = slice * s.keeperTipBps / BPS;
-        uint256 budget = slice - tip0;
         (uint256 spent, uint256 bought) = abi.decode(MANAGER.unlock(abi.encode(budget)), (uint256, uint256));
         if (bought == 0) revert NothingBought();
         ICoin(COIN).burn(bought);
-        // the tip is sized on the full slice and scaled down when the fill is partial
-        uint256 tip = tip0 * spent / budget;
-        ethToBuyback += slice - spent - tip;
-        emit Buyback(msg.sender, spent, tip);
-        if (tip != 0) SafeTransferLib.safeTransferETH(msg.sender, tip);
+        uint256 paid = (gasStart - gasleft() + BUYBACK_OVERHEAD_GAS).min(BUYBACK_GAS) * rate + fee * spent / budget;
+        ethToBuyback += slice - spent - paid;
+        emit Buyback(msg.sender, spent, paid);
+        if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
     }
 
     /// pool manager callback of `buyback`. swaps exact eth in for coin, which comes to the core. returns the eth

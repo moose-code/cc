@@ -179,7 +179,10 @@ abstract contract ConfigReader is CommonBase {
         // forge-lint: disable-next-line(unsafe-typecast)
         s.buybackSlice = uint128(_uint(j, ".settings.buybackSlice", type(uint128).max));
         s.buybackDelay = _u16(j, ".settings.buybackDelay");
-        s.keeperTipBps = _u16(j, ".settings.keeperTipBps");
+        // forge-lint: disable-start(unsafe-typecast)
+        s.keeperFee = uint64(_uint(j, ".settings.keeperFee", type(uint64).max));
+        s.buybackMaxBaseFee = uint48(_uint(j, ".settings.buybackMaxBaseFee", type(uint48).max));
+        // forge-lint: disable-end(unsafe-typecast)
         s.xRateCap = _u16(j, ".settings.xRateCap");
         s.xRateFloor = _u16(j, ".settings.xRateFloor");
         s.xRateClimbPerHour = _u16(j, ".settings.xRateClimbPerHour");

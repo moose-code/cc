@@ -481,16 +481,21 @@ contract LifecycleComposeTest is Fixture {
         b.pmCoin = coin.balanceOf(address(PM));
         b.dead = coin.balanceOf(DEAD);
 
+        vm.fee(1 gwei);
+        vm.recordLogs();
         vm.prank(caller);
         core.buyback();
+        (uint256 spent, uint256 paid) = _buybackEvent(vm.getRecordedLogs());
 
         uint256 burned = b.supply - coin.totalSupply();
         assertGt(burned, 0, "real burn: the total supply fell");
         assertEq(b.pmCoin - coin.balanceOf(address(PM)), burned, "the coin came out of the pool and was burned");
         assertEq(coin.balanceOf(address(core)), 0, "the core never holds the coin");
         assertEq(coin.balanceOf(DEAD), b.dead, "burned, not parked");
-        assertEq(caller.balance - b.caller, b.slice * s.keeperTipBps / 10_000, "the caller got the tip");
-        assertEq(core.ethToBuyback(), b.pool - b.slice, "the pot fell by one slice");
+        assertEq(caller.balance - b.caller, paid, "the caller got the payment");
+        assertGe(paid, s.keeperFee, "the payment holds the fee");
+        assertEq(core.ethToBuyback(), b.pool - spent - paid, "the pot fell by the spend and the payment");
+        assertLe(spent + paid, b.slice, "the slice bounds both");
         _flush();
         assertGt(core.ethPot(), b.pot, "the skim of the swap came back into the pot");
         assertEq(core.lastBuybackBlock(), block.number);
@@ -558,16 +563,17 @@ contract LifecycleComposeTest is Fixture {
         core.buyback();
         vm.roll(block.number + 1);
         uint256 left = core.ethToBuyback();
-        assertEq(left, step / 2 - 1 ether, "the pool is the share less the first slice");
+        assertGe(left, step / 2 - 1 ether, "the pool is the share less the first slice");
+        assertLt(left - (step / 2 - 1 ether), 0.01 ether, "plus the unused payment margin");
         while (left > 1 ether) {
             assertEq(_buybackAndCheck(buybacker), 1 ether, "a full slice");
             left = core.ethToBuyback();
             vm.roll(block.number + 25);
         }
         assertEq(_buybackAndCheck(buybacker), left, "the last slice is what is left");
-        assertEq(core.ethToBuyback(), 0);
+        assertLt(core.ethToBuyback(), 0.01 ether, "only the unused payment margin is left");
         vm.roll(block.number + 25);
-        vm.expectRevert(ICore.NothingToBuy.selector);
+        vm.expectRevert(ICore.SliceTooSmall.selector);
         core.buyback();
     }
 
@@ -594,18 +600,15 @@ contract LifecycleComposeTest is Fixture {
         vm.roll(block.number + 1);
         _buybackAndCheck(buybacker);
 
-        // drained down to the last partial slice
-        uint256 last;
-        for (uint256 i; i < 10 && core.ethToBuyback() != 0; ++i) {
+        // drained until the pot does not exceed the largest payment (1 gwei: 600,000 gas plus the fee, 0.0011 ether)
+        for (uint256 i; i < 30 && core.ethToBuyback() > 0.0011 ether; ++i) {
             vm.roll(block.number + 3);
             uint256 rest = core.ethToBuyback();
-            last = _buybackAndCheck(buybacker);
-            assertEq(last, rest.min(0.02 ether));
+            assertEq(_buybackAndCheck(buybacker), rest.min(0.02 ether));
         }
-        assertEq(core.ethToBuyback(), 0);
-        assertLt(last, 0.02 ether, "the last slice was partial");
+        assertLe(core.ethToBuyback(), 0.0011 ether, "only the unused payment margin is left");
         vm.roll(block.number + 3);
-        vm.expectRevert(ICore.NothingToBuy.selector);
+        vm.expectRevert(ICore.SliceTooSmall.selector);
         core.buyback();
     }
 }
@@ -955,7 +958,8 @@ contract LifecycleNarrativeTest is Fixture {
     }
 
     function _buybacks() internal {
-        for (uint256 i; i < 3 && core.ethToBuyback() != 0; ++i) {
+        // a pot that does not exceed the largest payment (0.0065 ether at the launch values) is left for the next sale
+        for (uint256 i; i < 3 && core.ethToBuyback() > 0.01 ether; ++i) {
             vm.roll(block.number + 25);
             uint256 supply0 = coin.totalSupply();
             vm.prank(buybacker);

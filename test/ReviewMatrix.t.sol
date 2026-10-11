@@ -514,10 +514,10 @@ contract ReviewMatrixConfigTest is ReviewHarness {
 /// @notice the config mutation matrix, part two: every field of the settings, above the top, below the bottom, a plausible
 /// wrong value and both edges
 contract ReviewMatrixSettingsTest is ReviewHarness {
-    uint256 internal constant N_SETTINGS = 130;
+    uint256 internal constant N_SETTINGS = 135;
 
     /// @dev a plausible value that is not the launch value, inside the bounds, for each field
-    function _wrong() internal pure returns (uint256[26] memory) {
+    function _wrong() internal pure returns (uint256[27] memory) {
         return [
             uint256(100),
             9000,
@@ -535,7 +535,8 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
             0,
             0.2 ether,
             50,
-            100,
+            0.001 ether,
+            20 gwei,
             9000,
             2000,
             200,
@@ -561,17 +562,17 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
     /// @dev kinds: 0 above the top, 1 below the bottom, 2 a plausible wrong value, 3 the top edge, 4 the bottom edge.
     /// an empty label means the field has no such case
     function _mutSettings(uint256 k) internal view returns (Mut memory m) {
-        uint256 f = k % 26;
-        uint256 kind = k / 26;
-        uint256[26] memory lo = SettingsFields.lo();
-        uint256[26] memory hi = SettingsFields.hi();
+        uint256 f = k % 27;
+        uint256 kind = k / 27;
+        uint256[27] memory lo = SettingsFields.lo();
+        uint256[27] memory hi = SettingsFields.hi();
         string memory nm = _trim(SettingsFields.names()[f]);
         // a rateCap other than 10 times the launch rateStart is stopped by its own preflight row
-        m = _m("", kind <= 1 || f == 23 ? Class.Pre : Class.Hash);
-        if (f == 23 && kind >= 2) m.pre = ROW_RATE_RATIO;
+        m = _m("", kind <= 1 || f == 24 ? Class.Pre : Class.Hash);
+        if (f == 24 && kind >= 2) m.pre = ROW_RATE_RATIO;
         Settings memory s = m.c.settings;
         if (kind == 0) {
-            if (f == 23) {
+            if (f == 24) {
                 // rateStart 1e17 + 1 is in bounds and 10 times it is the rateCap: only the settings bound fails
                 m.c.rateStart = hi[f] / 10 + 1;
                 s.rateCap = uint64(10 * m.c.rateStart);
@@ -580,13 +581,13 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
                 SettingsFields.set(s, f, hi[f] + 1);
             }
             m.label = string.concat(
-                "settings.", nm, " ", vm.toString(f == 23 ? uint256(s.rateCap) : hi[f] + 1), " above the top"
+                "settings.", nm, " ", vm.toString(f == 24 ? uint256(s.rateCap) : hi[f] + 1), " above the top"
             );
         } else if (kind == 1) {
-            if (lo[f] == 0 && f != 18) return m;
-            if (f == 18) {
-                SettingsFields.set(s, 17, s.xRateFloor - 1);
-            } else if (f == 23) {
+            if (lo[f] == 0 && f != 19) return m;
+            if (f == 19) {
+                SettingsFields.set(s, 18, s.xRateFloor - 1);
+            } else if (f == 24) {
                 // 10 times a rateStart of 1e12 - 1 is the rateCap 1e13 - 10: the rateStart bound and the settings bound
                 // fail together, the ratio row passes
                 m.c.rateStart = lo[f] / 10 - 1;
@@ -596,20 +597,20 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
                 SettingsFields.set(s, f, lo[f] - 1);
             }
             m.label = string.concat(
-                "settings.", nm, f == 23 ? string.concat(" ", vm.toString(uint256(s.rateCap))) : " one", " below the bottom"
+                "settings.", nm, f == 24 ? string.concat(" ", vm.toString(uint256(s.rateCap))) : " one", " below the bottom"
             );
         } else if (kind == 2) {
             SettingsFields.set(s, f, _wrong()[f]);
             m.label = string.concat("settings.", nm, " ", vm.toString(_wrong()[f]), " (valid, wrong)");
         } else if (kind == 3) {
-            if (f == 18) s.xRateFloor = s.xRateCap;
+            if (f == 19) s.xRateFloor = s.xRateCap;
             else SettingsFields.set(s, f, hi[f]);
             m.label = string.concat("settings.", nm, " ", vm.toString(hi[f]), " the top edge");
         } else {
-            if (lo[f] == 0 && f != 17) return m;
-            if (f == 17) s.xRateCap = s.xRateFloor;
+            if (lo[f] == 0 && f != 18) return m;
+            if (f == 18) s.xRateCap = s.xRateFloor;
             // the lowest rate cap that still holds the launch rate
-            else if (f == 23) s.rateCap = uint64(base.rateStart);
+            else if (f == 24) s.rateCap = uint64(base.rateStart);
             else SettingsFields.set(s, f, lo[f]);
             m.label = string.concat("settings.", nm, " the bottom edge");
         }
@@ -624,19 +625,19 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
     /// the settings group in parts: every field above the top and below the bottom, a plausible wrong value for every
     /// field, then the edges that must still be accepted
     function test_matrix_settingsViolations() public {
-        _matrix(2, 0, 52);
+        _matrix(2, 0, 54);
     }
 
     function test_matrix_settingsWrongValues() public {
-        _matrix(2, 52, 78);
+        _matrix(2, 54, 81);
     }
 
     function test_matrix_settingsTopEdges() public {
-        _matrix(2, 78, 104);
+        _matrix(2, 81, 108);
     }
 
     function test_matrix_settingsBottomEdges() public {
-        _matrix(2, 104, N_SETTINGS);
+        _matrix(2, 108, N_SETTINGS);
     }
 }
 

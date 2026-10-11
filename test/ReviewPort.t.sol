@@ -358,7 +358,7 @@ contract ReviewPort is Fixture {
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), what);
     }
 
-    /// a swap fired from the eth callback of a sell payout and the keeper tip of the coin buyback. the
+    /// a swap fired from the eth callback of a sell payout and the payment to the caller of the coin buyback. the
     /// hook pushes into `receive()` mid door, it is booked in full, and the books stay exact
     function test_held_swapInsidePayoutCallbacks() public {
         _stockPool();
@@ -377,17 +377,17 @@ contract ReviewPort is Fixture {
         assertGt(core.ethPot(), pot0 - 1 ether, "bounty booked");
         _assertClean("after sell");
 
-        // the keeper tip of the coin buyback is paid to the caller, who swaps from inside it
+        // the payment to the caller of the coin buyback is paid to the caller, who swaps from inside it
         _forceBuyback(1 ether);
         vm.roll(block.number + 30);
         actor.arm(1 ether);
         uint256 potB = core.ethPot();
-        uint256 tipBefore = address(actor).balance;
+        uint256 payBefore = address(actor).balance;
         actor.buyback(core);
-        assertTrue(actor.fired(), "swap fired inside the keeper tip");
-        assertGt(address(actor).balance + 1 ether, tipBefore, "the tip was paid");
+        assertTrue(actor.fired(), "swap fired inside the caller payment");
+        assertGt(address(actor).balance + 1 ether, payBefore, "the payment was paid");
         assertGt(core.ethPot(), potB, "bounty booked");
-        _assertClean("after buyback tip");
+        _assertClean("after buyback payment");
     }
 
     function _slice(uint256[] memory a, uint256 from, uint256 n) internal pure returns (uint256[] memory r) {
