@@ -107,7 +107,7 @@
         "description": "material decisions classified supported, unproved, contradicted or superseded",
         "status": "in-progress",
         "evidence": [
-          "E-AUDIT-CARRY-f1fd139"
+          "E-ACCEPT-CARRY-0c3ecd2"
         ]
       },
       {
@@ -119,20 +119,27 @@
       {
         "id": "independent-security-review",
         "description": "fresh reviewer on the frozen candidate",
-        "status": "pending",
-        "evidence": []
+        "status": "in-progress",
+        "evidence": [
+          "E-REVIEW-CARRY-0c3ecd2"
+        ]
       },
       {
         "id": "candidate-suites",
         "description": "full suite and the 7 Deep suites on the frozen candidate",
-        "status": "pending",
-        "evidence": []
+        "status": "verified",
+        "evidence": [
+          "E-SUITE-CARRY-0c3ecd2",
+          "E-DEEP-CARRY-0c3ecd2"
+        ]
       },
       {
         "id": "rehearsal",
         "description": "exact release path from a clean checkout of the candidate on the owner's host",
-        "status": "pending",
-        "evidence": []
+        "status": "in-progress",
+        "evidence": [
+          "E-REHEARSAL-CARRY-0c3ecd2"
+        ]
       }
     ]
   },
@@ -208,7 +215,9 @@
   ],
   "gates": {
     "productRules": {
-      "evidence": [],
+      "evidence": [
+        "E-ACCEPT-CARRY-0c3ecd2"
+      ],
       "kinds": [
         "acceptance",
         "review"
@@ -216,8 +225,8 @@
     },
     "focusedTests": {
       "evidence": [
-        "E-SUITE-CARRY-14c6306",
-        "E-DEEP-CARRY-14c6306"
+        "E-SUITE-CARRY-0c3ecd2",
+        "E-DEEP-CARRY-0c3ecd2"
       ],
       "kinds": [
         "test"
@@ -232,8 +241,8 @@
     },
     "localLifecycle": {
       "evidence": [
-        "E-SUITE-CARRY-14c6306",
-        "E-DEEP-CARRY-14c6306"
+        "E-SUITE-CARRY-0c3ecd2",
+        "E-DEEP-CARRY-0c3ecd2"
       ],
       "kinds": [
         "test",
@@ -242,21 +251,25 @@
     },
     "fullSuite": {
       "evidence": [
-        "E-SUITE-CARRY-14c6306",
-        "E-DEEP-CARRY-14c6306"
+        "E-SUITE-CARRY-0c3ecd2",
+        "E-DEEP-CARRY-0c3ecd2"
       ],
       "kinds": [
         "test"
       ]
     },
     "independentReview": {
-      "evidence": [],
+      "evidence": [
+        "E-REVIEW-CARRY-0c3ecd2"
+      ],
       "kinds": [
         "review"
       ]
     },
     "deploymentRehearsal": {
-      "evidence": [],
+      "evidence": [
+        "E-REHEARSAL-CARRY-0c3ecd2"
+      ],
       "kinds": [
         "rehearsal"
       ]

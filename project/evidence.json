@@ -51,11 +51,11 @@
       "checked": "2026-10-10"
     },
     "A-OWNER-DECISIONS": {
-      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 56. v7: decision 56 removes the hourly window, overprint, setXRate and duplicate views",
+      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 71. v8 (2026-10-11): decisions 57 to 71 on top of v7 (decisions 1 to 56): the keeper payment rule of buyback, compose, exit and buyListing (61, 66, 67, 71), the statement sale by a falling price with an anchor and the removal of the auction house (62, 64, 65, 68, 70), the launch bid values (69), the payee share (59), compose unpaid at launch (63)",
       "kind": "owner-decision",
       "source": "docs/FLOW.md",
-      "version": 7,
-      "checked": "2026-10-10"
+      "version": 8,
+      "checked": "2026-10-11"
     },
     "A-OWNER-DELEGATE": {
       "statement": "the owner 0xCB43 delegates to 0x612373d7003d694220f7800eeaf8e3924c0951d3 (Uniswap Calibur 1.0.0, code hash 0xff0357b5...d631) with no registered keys",
@@ -1094,6 +1094,467 @@
       "reviewer": "",
       "result": "pass",
       "limitations": "no rerun of the carried campaign",
+      "invalidated": null
+    },
+    "E-SUITE-97c1866": {
+      "claim": "full suite at the candidate 97c1866: 995 tests passed, 0 failed, 8 skipped (the Deep suites) in 103 test suites",
+      "kind": "test",
+      "sourceRevision": "97c1866fada6afe79c798e92cdc05fc40503a1f3",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 8,
+        "A-OWNER-DELEGATE": 1
+      },
+      "inputs": "clean candidate clone /private/tmp/cand-97c1866 at 97c1866; MAINNET_RPC_URL and FORK_BLOCK come from the environment (pin 26158000, docs/HANDOFF.md section 7)",
+      "method": "CANDIDATE_RUN=1 REHEARSAL=1 forge test -j 6, foundry 1.8.1; log docs/SUITE-97c1866.log",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "the log omits the fork block and the endpoint. the 8 skipped tests are the Deep suites (E-DEEP-97c1866). script/tools/check-preflight.sh runs in the rehearsal",
+      "report": {
+        "path": "docs/SUITE-97c1866.log",
+        "sha256": "342b2fea36d1f9cbf63de7cb68449fe0b1b374d2350f11ff9b2700d7aba18366",
+        "revision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be"
+      },
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-DEEP-97c1866": {
+      "claim": "the 7 Deep invariant suites pass at 97c1866 (InvariantsHostileOwnerDeep, InvariantsHostileControllerDeep, InvariantsPhase1Deep, InvariantsPhase1WindowDeep, InvariantsSalePhase1Deep, InvariantsPhase2Deep, InvariantsSalePhase2Deep): every suite exits 0 with 0 failed tests, 64 runs at depth 200",
+      "kind": "test",
+      "sourceRevision": "97c1866fada6afe79c798e92cdc05fc40503a1f3",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 8
+      },
+      "inputs": "clean candidate clone /private/tmp/cand-97c1866 at 97c1866; MAINNET_RPC_URL and FORK_BLOCK from the environment (pin 26158000)",
+      "method": "INVARIANT_DEEP=1 with 64 runs at depth 200 (docs/HANDOFF.md section 7), one suite at a time, 475 to 611 seconds each; log docs/DEEP-RUN-97c1866.log",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "runs on the fork pin with the exitModule stand in. InvariantsPhase1Deep printed a warning that a cached invariant_11 failure file was ignored because the target selectors changed",
+      "report": {
+        "path": "docs/DEEP-RUN-97c1866.log",
+        "sha256": "1083928a9ac73bcdd85fd061210e02af02c6907af87aaafa577472fb9a20f4f3",
+        "revision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be"
+      },
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-SUITE-CARRY-0c3ecd2": {
+      "claim": "the result of E-SUITE-97c1866 holds at the candidate 0c3ecd2",
+      "kind": "analysis",
+      "sourceRevision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 8,
+        "A-OWNER-DELEGATE": 1
+      },
+      "carries": [
+        "E-SUITE-97c1866"
+      ],
+      "carriedChanges": [
+        "script/tools/check-preflight.sh"
+      ],
+      "inputs": "git diff --stat 97c1866 0c3ecd2",
+      "method": "the diff changes docs and script/tools/check-preflight.sh; src, test, lib, foundry.toml and every other file of the scope are identical. check-preflight.sh changed in 9ce8542 (the opt-in IGNORE_BALANCE filter, run five times in the rehearsal of 9ce8542, docs/REHEARSAL-97c1866.md) and in 0c3ecd2 (header comment). test/ScriptLint.t.sol names the script in a comment",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "the carried campaign stays as run at 97c1866. the IGNORE_BALANCE filter runs in the rehearsal only",
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-DEEP-CARRY-0c3ecd2": {
+      "claim": "the result of E-DEEP-97c1866 holds at the candidate 0c3ecd2",
+      "kind": "analysis",
+      "sourceRevision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 8
+      },
+      "carries": [
+        "E-DEEP-97c1866"
+      ],
+      "carriedChanges": [],
+      "inputs": "git diff --stat 97c1866 0c3ecd2",
+      "method": "no file of the deep run scope differs between 97c1866 and 0c3ecd2 (src, test, script/*.sol, lib, foundry.toml, foundry.lock, remappings.txt); the diff holds docs and script/tools/check-preflight.sh",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "the carried campaign stays as run at 97c1866",
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-REHEARSAL-9ce8542": {
+      "claim": "rehearsal of docs/DEPLOY.md at the candidate 97c1866 (branch tip 9ce8542) with the placeholder config script/config/rehearsal.json, nothing broadcast: the rehearsal test passes (preflight 115 of 116 after the owner command, postflight 96 of 96 after the launch and after the lock); the live preflight reads 113 of 116 with exactly the three expected rows failing; the Deploy and Resume dry runs refuse as designed; check-preflight.sh matches its expected rows at the latest block",
+      "kind": "rehearsal",
+      "sourceRevision": "9ce85423a074ae78393667497b7d8004d81e80ba",
+      "scope": [
+        "src/**",
+        "script/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt",
+        "test/Rehearsal.t.sol",
+        "docs/DEPLOY.md"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 8,
+        "A-OWNER-DELEGATE": 1
+      },
+      "inputs": "clean clone /private/tmp/rehearsal-97c1866 at 9ce8542; mainnet through publicnode at block 26171749 (rehearsal test 26171754); owner nonce 3846, owner balance 0.126388 eth; forge 1.8.1",
+      "method": "the steps of docs/DEPLOY.md in dry form, result table in docs/REHEARSAL-97c1866.md",
+      "author": "rehearsal agent (not named in the report), recorded by the director 2026-10-11",
+      "result": "pass",
+      "limitations": "run with placeholder image and description; DEPLOY step 3 (setMinProtocolSkimShareBps) open; the library CoreLib has no code on chain. the Deploy dry run reads the owner balance 0.07 to 0.08 eth above the chain balance (cause unknown; the step 4 row reads the real balance). the rehearsal listed nine runbook corrections, applied in 0c3ecd2; a second walk of the corrected text is open",
+      "report": {
+        "path": "docs/REHEARSAL-97c1866.md",
+        "sha256": "84ff0762766cb364ea2a2fd948357e8c80846da57ab4702e2abd1fba2b9251cd",
+        "revision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be"
+      },
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-REHEARSAL-CARRY-0c3ecd2": {
+      "claim": "the rehearsal E-REHEARSAL-9ce8542 holds at the candidate 0c3ecd2 for the code, the configuration and the commands; the corrected runbook text is new",
+      "kind": "analysis",
+      "sourceRevision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be",
+      "scope": [
+        "src/**",
+        "script/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt",
+        "test/Rehearsal.t.sol",
+        "docs/DEPLOY.md"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 8,
+        "A-OWNER-DELEGATE": 1
+      },
+      "carries": [
+        "E-REHEARSAL-9ce8542"
+      ],
+      "carriedChanges": [
+        "docs/DEPLOY.md",
+        "script/tools/check-preflight.sh"
+      ],
+      "inputs": "git diff 9ce8542 0c3ecd2",
+      "method": "docs/DEPLOY.md differs by the corrections the rehearsal listed. script/tools/check-preflight.sh differs in its header comment only. the other differences are the reports and logs added in 0c3ecd2, outside the scope",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "the corrected DEPLOY.md text and the new header comment wait for a second walk",
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-REVIEW-1e2c4b3-KEPT": {
+      "claim": "independent security review of the frozen candidate 1e2c4b3 (docs/REVIEW-security.md), the portion that still holds at 0c3ecd2: the deploy scripts Builder, Lock, NewProd and Postflight, the FeeRouter and its interfaces and the v2 stack record. no critical or high finding. findings 1 and 2 (medium, launch verification in Checks, Deploy, Resume, PostflightChecks and PostflightV2) were fixed at 14c6306 (NEXT item 30)",
+      "kind": "review",
+      "sourceRevision": "1e2c4b38eee6dfb26180c77fb6020f85d8f28f3a",
+      "scope": [
+        "script/Builder.sol",
+        "script/Lock.s.sol",
+        "script/NewProd.sol",
+        "script/Postflight.s.sol",
+        "script/config/v2-mainnet.json",
+        "src/FeeRouter.sol",
+        "src/interfaces/ArtCoinsV2.sol",
+        "src/interfaces/IFeeRouter.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "inputs": "frozen candidate 1e2c4b3, prior reviews, live reads at block 26164762",
+      "method": "read only review in its own clone: full read of Core, CoreLib, FeeRouter, ControllerV1, CoreLens, the house source, every deploy script and Checks; probes on a fork; one source mutation run",
+      "author": "implementers and director",
+      "reviewer": "independent read only reviewer, 2026-10-10",
+      "result": "pass",
+      "limitations": "scope lists the files this review read that have not changed since 1e2c4b3. script/PostflightPool.sol and script/Report.sol are listed as not examined in the report and are left out. the report was written against decisions through 57; decisions 58 to 71 leave the listed files unchanged. the fixes of findings 1 and 2 wait for a review of their own",
+      "report": {
+        "path": "docs/REVIEW-security.md",
+        "sha256": "9e0d4d5f300dda779c0f7721841b452e3b60454fa5eb3515e75d1b31eb6845f3",
+        "revision": "566d7d5d4e845a101d0c74743df3c7ab38ca3257"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-0d86ee7": {
+      "claim": "independent security review of 14c6306..0d86ee7 (docs/REVIEW-security-0d86ee7.md): no critical or high finding; M1 (the anchor falls in one block and every open listing follows), L2, L3, I4, I5. M1 was fixed by decision 64, L2 by decision 70 (the review of d77b82c ties L2 to its F1), I4 by the removal of the house (decision 68)",
+      "kind": "review",
+      "sourceRevision": "0d86ee799ca9a64836d2f2c2620dad947e20e5cc",
+      "scope": [
+        "script/Checks.sol",
+        "script/LaunchConfig.sol",
+        "script/PostflightChecks.sol",
+        "script/SetSettings.s.sol",
+        "script/SettingsFields.sol",
+        "script/config/mainnet.json",
+        "src/ControllerV1.sol",
+        "src/Core.sol",
+        "src/interfaces/IControllerV1.sol",
+        "src/interfaces/ICore.sol",
+        "src/interfaces/Interfaces.sol",
+        "src/lib/CoreLib.sol",
+        "src/lib/SettingsBounds.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "inputs": "git diff 14c6306 0d86ee7 -- src script, docs/FLOW.md decisions 59 to 63, docs/ARCHITECTURE.md section 1, script/config/mainnet.json",
+      "method": "read only review in its own clone: diff and surrounding code, targeted forge test --match-path on the fork, one proof of concept",
+      "author": "implementers and director",
+      "reviewer": "independent read only reviewer, 2026-10-11",
+      "result": "findings",
+      "limitations": "every file in scope changed again after 0d86ee7 (decisions 64 to 71), so this record is invalid at 0c3ecd2 and stays out of the chain. the later windows are E-REVIEW-d77b82c-KEPT, E-REVIEW-50cec6f-KEPT and E-REVIEW-INLINE-97c1866. L3 (small buyback slices pay the full gas refund) has the report's own note 'no change needed if at most half is the intent'",
+      "report": {
+        "path": "docs/REVIEW-security-0d86ee7.md",
+        "sha256": "2ae533a7420632b3355ad2271bb34d8cd58d973f1b63dfdeccc57743af64f4ec",
+        "revision": "c6a20d624f6dd1f7e9788474c25c84b095a9bab8"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-d77b82c-KEPT": {
+      "claim": "independent security review of 0d86ee7..d77b82c (docs/REVIEW-d77b82c.md), the portion that still holds at 0c3ecd2: PostflightV2, SystemResumer, CoreLens and its interface, ICoreLib, Halving, SettingsStore and RateStore. no critical, high or medium finding. F1 (anchor pumped by dust statements) was fixed by decision 70, F2 (buyback gas cap test) was restored in 50cec6f, F3 (stale documents) was followed by document corrections in 50cec6f and 97c1866 (D1 to D7 of the acceptance review list the remainder)",
+      "kind": "review",
+      "sourceRevision": "d77b82c8c699770094034200d780c699ea3b3ee4",
+      "scope": [
+        "script/PostflightV2.sol",
+        "script/SystemResumer.sol",
+        "src/CoreLens.sol",
+        "src/interfaces/ICoreLens.sol",
+        "src/interfaces/ICoreLib.sol",
+        "src/lib/Halving.sol",
+        "src/lib/SettingsStore.sol",
+        "src/lib/RateStore.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "inputs": "git diff 0d86ee7 d77b82c, docs/FLOW.md decisions 64 to 69",
+      "method": "read only review in its own clone: Core, ControllerV1, CoreLens, src/lib/*, script and config diffs, every test file name diffed, forge test --match-path per file on the fork, one proof of concept",
+      "author": "implementers and director",
+      "reviewer": "independent read only reviewer, 2026-10-11",
+      "result": "pass",
+      "limitations": "scope lists the files read by this review that have not changed since d77b82c; src/lib/RateStore.sol is listed because the report read src/lib/* in full. FeeRouter, the hook and sniper module gas, decision 69 economics and the full suite are outside the report. the fixes of F1 to F3 wait for a review of their own in later windows",
+      "report": {
+        "path": "docs/REVIEW-d77b82c.md",
+        "sha256": "3475e88dee4d64ad7916185978efdac60343f5d5b4dfad27a64498ed08edd072",
+        "revision": "50cec6fbdd93b048a2d619153af2d4bf91173b83"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-50cec6f-KEPT": {
+      "claim": "independent security review of d77b82c..50cec6f (part 1 of docs/ACCEPTANCE-50cec6f.md), the portion that still holds at 0c3ecd2: ControllerV1 (anchorMinCost), IControllerV1 and PostflightChecks. no critical, high or medium finding. L1 (the anchor can still be pumped at a priced cost, about 0.15 eth in round 1) is the griefing the owner accepted in decision 68 and is recorded as an accepted risk",
+      "kind": "review",
+      "sourceRevision": "50cec6fbdd93b048a2d619153af2d4bf91173b83",
+      "scope": [
+        "script/PostflightChecks.sol",
+        "src/ControllerV1.sol",
+        "src/interfaces/IControllerV1.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "inputs": "git diff d77b82c 50cec6f, docs/FLOW.md decisions 64 to 70",
+      "method": "read only review in its own clone at 50cec6f: anchorMinCost path, metadata guard path, buyback gas cap mutation check, tests run per file",
+      "author": "implementers and director",
+      "reviewer": "independent read only acceptance reviewer, 2026-10-11",
+      "result": "pass",
+      "limitations": "scope lists the files of the d77b82c..50cec6f diff that have not changed since 50cec6f. L2 (the metadata guard is a marker test) concerns script/Checks.sol, which changed in 97c1866 and is not in this scope. the reviewer ran focused tests only; the full suite, deep invariants and fork lifecycle are outside the report",
+      "report": {
+        "path": "docs/ACCEPTANCE-50cec6f.md",
+        "sha256": "2ba45b0b3bd3965a85c0e5ee97e58be32c6fa59b7ce7c1b4ee7d3aac4ffa7c99",
+        "revision": "97c1866fada6afe79c798e92cdc05fc40503a1f3"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-INLINE-97c1866": {
+      "claim": "independent review of efd4656..97c1866 (decision 71, buyListing pays its caller by the keeper rule): no defect in src; three findings in documents and scripts, fixed in 9ce8542",
+      "kind": "analysis",
+      "sourceRevision": "97c1866fada6afe79c798e92cdc05fc40503a1f3",
+      "scope": [
+        "script/Checks.sol",
+        "script/LaunchConfig.sol",
+        "script/SetSettings.s.sol",
+        "script/SettingsFields.sol",
+        "script/config/mainnet.json",
+        "script/config/rehearsal.json",
+        "src/Core.sol",
+        "src/interfaces/ICore.sol",
+        "src/interfaces/Interfaces.sol",
+        "src/lib/CoreLib.sol",
+        "src/lib/SettingsBounds.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "inputs": "the verdict as stated in the director's brief of 2026-10-11. the report file for this review is missing from the repository",
+      "method": "inline record of an independent review of the diff efd4656..97c1866. the three findings correspond to the document and script changes of 9ce8542 (preflight script balance row, stale tip text in HANDOFF and NEXT, per its commit message)",
+      "author": "director, 2026-10-11",
+      "reviewer": "independent reviewer of efd4656..97c1866 (identity and report not recorded)",
+      "result": "pass",
+      "limitations": "kind analysis because the checker requires a pinned report for a review record. the reviewer identity, the method detail and the finding list are absent from the repository. scope lists the 11 files last changed in 97c1866",
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-CARRY-0c3ecd2": {
+      "claim": "chain of independent reviews of the source at 0c3ecd2: 1e2c4b3 (full read), 14c6306..0d86ee7, 0d86ee7..d77b82c, d77b82c..50cec6f, efd4656..97c1866, with src unchanged from 97c1866 to 0c3ecd2. each link covers the files whose last change lies in its window",
+      "kind": "analysis",
+      "sourceRevision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be",
+      "scope": [
+        "*"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "carries": [
+        "E-REVIEW-1e2c4b3-KEPT",
+        "E-REVIEW-d77b82c-KEPT",
+        "E-REVIEW-50cec6f-KEPT",
+        "E-REVIEW-INLINE-97c1866"
+      ],
+      "carriedChanges": [],
+      "inputs": "last change of each of the 36 files under src/**, script/*.sol and script/config/** at 0c3ecd2 (git log -1 per file), mapped to the review windows",
+      "method": "coverage by report backed review: 19 files (1e2c4b3: 8, d77b82c: 8, 50cec6f: 3). the window of 0d86ee7 holds the last change of 0 current files. 11 files last changed in 97c1866 are covered by E-REVIEW-INLINE-97c1866, which has no report. 6 files wait for an independent review of their current content: script/Deploy.s.sol, script/Preflight.s.sol, script/Resume.s.sol, script/SystemDeployer.sol (last changed in 14c6306, the fixes for the findings of 1e2c4b3; the review window starts at 14c6306), script/PostflightPool.sol and script/Report.sol (not examined by the review of 1e2c4b3)",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "the chain carries an analysis link, so the independentReview gate rejects it until a pinned report for the review of efd4656..97c1866 is committed and recorded as kind review. the 6 files above stay uncovered until reviewed. the review of 14c6306..0d86ee7 covers 0 current files (E-REVIEW-0d86ee7 is invalid and stays out of the chain)",
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-ACCEPT-50cec6f": {
+      "claim": "acceptance review of 50cec6f (docs/ACCEPTANCE-50cec6f.md): ACCEPT the code at 50cec6f for owner decisions 42 to 70; no critical, high or medium finding; open items L1 and L2 (low), D1 to D7 (document mismatches), C1 and C2 (owner confirmations), E1 (no deep run at 50cec6f). decision 71 was raised by this review (G5) and is outside it",
+      "kind": "acceptance",
+      "sourceRevision": "50cec6fbdd93b048a2d619153af2d4bf91173b83",
+      "scope": [
+        "script/Builder.sol",
+        "script/Lock.s.sol",
+        "script/NewProd.sol",
+        "script/Postflight.s.sol",
+        "script/PostflightPool.sol",
+        "script/Report.sol",
+        "script/config/v2-mainnet.json",
+        "src/FeeRouter.sol",
+        "src/interfaces/ArtCoinsV2.sol",
+        "src/interfaces/IFeeRouter.sol",
+        "src/lib/RateStore.sol",
+        "script/Deploy.s.sol",
+        "script/Preflight.s.sol",
+        "script/Resume.s.sol",
+        "script/SystemDeployer.sol",
+        "script/PostflightV2.sol",
+        "script/SystemResumer.sol",
+        "src/CoreLens.sol",
+        "src/interfaces/ICoreLens.sol",
+        "src/interfaces/ICoreLib.sol",
+        "src/lib/Halving.sol",
+        "src/lib/SettingsStore.sol",
+        "script/PostflightChecks.sol",
+        "src/ControllerV1.sol",
+        "src/interfaces/IControllerV1.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "inputs": "docs/FLOW.md decisions 42 to 70, docs/ARCHITECTURE.md section 1, script/config/mainnet.json, launch settings (P0 0.0089 eth per credit)",
+      "method": "read only review at 50cec6f in its own clone: part 1 security of d77b82c..50cec6f, part 2 decisions 42 to 70 against code and ARCHITECTURE section 1, part 3 owner goals G1 to G7 at launch settings by script from CoreLib and ControllerV1 formulas",
+      "author": "implementers and director",
+      "reviewer": "independent read only acceptance reviewer, 2026-10-11",
+      "result": "findings",
+      "limitations": "covers decisions 42 to 70 and the 25 files under src/**, script/*.sol and script/config/** whose last change is at or before 50cec6f. the 11 files changed by decision 71 (Core, CoreLib, ICore, Interfaces, SettingsBounds, Checks, LaunchConfig, SetSettings, SettingsFields, mainnet.json, rehearsal.json) are outside it. the system audit path by path, the owner keeper, Statements contract internals and the invariant handlers are outside the report. open owner items C1 (decision 67 words) and C2 (value of anchorMinCost) await an answer",
+      "report": {
+        "path": "docs/ACCEPTANCE-50cec6f.md",
+        "sha256": "2ba45b0b3bd3965a85c0e5ee97e58be32c6fa59b7ce7c1b4ee7d3aac4ffa7c99",
+        "revision": "97c1866fada6afe79c798e92cdc05fc40503a1f3"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-ACCEPT-CARRY-0c3ecd2": {
+      "claim": "product acceptance coverage at 0c3ecd2: decisions 42 to 70 by E-ACCEPT-50cec6f on the files unchanged since 50cec6f; decision 71 and its 11 files by the review E-REVIEW-INLINE-97c1866 only",
+      "kind": "analysis",
+      "sourceRevision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be",
+      "scope": [
+        "*"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "carries": [
+        "E-ACCEPT-50cec6f",
+        "E-REVIEW-INLINE-97c1866"
+      ],
+      "carriedChanges": [],
+      "inputs": "docs/ACCEPTANCE-50cec6f.md, E-REVIEW-INLINE-97c1866, docs/FLOW.md decisions 42 to 71",
+      "method": "decision 71 is covered by a review of its diff; an acceptance of it is open. the acceptance in this chain starts at decision 42 (the older acceptance review docs/REVIEW-acceptance.md is on c02435e)",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "the productRules gate rejects this record while it holds an analysis link and an acceptance record with result findings. an acceptance of the decision 71 changes, answers to C1 and C2 and the dispositions of L2 and D1 to D7 close it",
+      "dependsOn": [],
+      "reviewer": "",
       "invalidated": null
     }
   }
