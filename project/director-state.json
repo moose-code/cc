@@ -40,7 +40,7 @@
       },
       {
         "id": "compose-and-listing",
-        "description": "compose and composeExit with no paid caller, statement cost basis, listing on the house, controller pricing",
+        "description": "compose and composeExit with no paid caller, statement cost basis and compose time, controller pricing",
         "status": "in-progress",
         "evidence": [
           "E-AUDIT-CARRY-f1fd139"
@@ -48,7 +48,7 @@
       },
       {
         "id": "statement-sale-and-proceeds",
-        "description": "house auction, collectSales, syncStatement, repriceStatement, sellTo, proceeds split, buyback and burn",
+        "description": "sellTo through the controller, proceeds split, buyback and burn",
         "status": "in-progress",
         "evidence": [
           "E-AUDIT-SYSTEM-eff3051"
