@@ -1556,6 +1556,318 @@
       "dependsOn": [],
       "reviewer": "",
       "invalidated": null
+    },
+    "E-TARGETED-483be30": {
+      "claim": "targeted runs at the tip 85d0c44 (candidate 483be30 plus project/director-state.json): Config 32, BuildIdentity 5, PostflightSlots 8, ReviewDeploy 18, Resume 22, ReviewMatrix 11, Launch 16 pass; the Rehearsal test (REHEARSAL=1, latest block) passes",
+      "kind": "test",
+      "sourceRevision": "483be308cc48f4af17837bc62bda4b518bac162c",
+      "scope": [
+        "src/**",
+        "script/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt",
+        "test/Config.t.sol",
+        "test/BuildIdentity.t.sol",
+        "test/PostflightSlots.t.sol",
+        "test/ReviewDeploy.t.sol",
+        "test/Resume.t.sol",
+        "test/ReviewMatrix.t.sol",
+        "test/Launch.t.sol",
+        "test/Rehearsal.t.sol",
+        "test/utils/**"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 8,
+        "A-OWNER-DELEGATE": 1
+      },
+      "inputs": "MAINNET_RPC_URL the Tenderly gateway and FORK_BLOCK 26158000 for the per file runs, publicnode at the latest block for the Rehearsal test; tip 85d0c44 differs from 483be30 in project/director-state.json only",
+      "method": "forge test --match-path per file; REHEARSAL=1 forge test --match-path test/Rehearsal.t.sol. outcome relayed in the coordinator brief of 2026-10-11, no log file in the repository",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "no log file; the counts come from the brief. the full suite and the deep run are carried, not rerun",
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-SUITE-CARRY-483be30": {
+      "claim": "the result of E-SUITE-97c1866 holds at the candidate 483be30",
+      "kind": "analysis",
+      "sourceRevision": "483be308cc48f4af17837bc62bda4b518bac162c",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 8,
+        "A-OWNER-DELEGATE": 1
+      },
+      "carries": [
+        "E-SUITE-97c1866"
+      ],
+      "carriedChanges": [
+        "script/Checks.sol",
+        "script/PostflightChecks.sol",
+        "script/tools/check-preflight.sh",
+        "src/Core.sol",
+        "test/Config.t.sol"
+      ],
+      "dependsOn": [
+        "E-TARGETED-483be30"
+      ],
+      "inputs": "git diff 97c1866 483be30",
+      "method": "changed files in scope: script/tools/check-preflight.sh (9ce8542 filter and comments, 0c3ecd2 header), src/Core.sol (483be30: two comment hunks, runtime bytecode identical to 97c1866, bytecode_hash none, build pins unchanged), script/Checks.sol (the metadata guard rows), script/PostflightChecks.sol (row text), test/Config.t.sol (metadata guard cases). the rerun of the touched test files is E-TARGETED-483be30",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "the carried campaign stays as run at 97c1866. the identical runtime bytecode is a statement of the brief, backed by BuildIdentity in E-TARGETED-483be30",
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-DEEP-CARRY-483be30": {
+      "claim": "the result of E-DEEP-97c1866 holds at the candidate 483be30",
+      "kind": "analysis",
+      "sourceRevision": "483be308cc48f4af17837bc62bda4b518bac162c",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 8
+      },
+      "carries": [
+        "E-DEEP-97c1866"
+      ],
+      "carriedChanges": [
+        "script/Checks.sol",
+        "script/PostflightChecks.sol",
+        "src/Core.sol",
+        "test/Config.t.sol"
+      ],
+      "dependsOn": [
+        "E-TARGETED-483be30"
+      ],
+      "inputs": "git diff 97c1866 483be30",
+      "method": "changed files in the deep scope: src/Core.sol (comments only, runtime bytecode identical), script/Checks.sol and script/PostflightChecks.sol (preflight and postflight rows; SystemDeployer inherits them and deploySystem, which the invariant fixtures call, runs none of the rows), test/Config.t.sol (not an invariant test)",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "the carried campaign stays as run at 97c1866",
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-REHEARSAL-CARRY-483be30": {
+      "claim": "the rehearsal E-REHEARSAL-9ce8542 holds at the candidate 483be30 for the code, the configuration and the commands; the corrected runbook text and the new metadata rows are newer than the rehearsal",
+      "kind": "analysis",
+      "sourceRevision": "483be308cc48f4af17837bc62bda4b518bac162c",
+      "scope": [
+        "src/**",
+        "script/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt",
+        "test/Rehearsal.t.sol",
+        "docs/DEPLOY.md"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 8,
+        "A-OWNER-DELEGATE": 1
+      },
+      "carries": [
+        "E-REHEARSAL-9ce8542"
+      ],
+      "carriedChanges": [
+        "docs/DEPLOY.md",
+        "script/Checks.sol",
+        "script/PostflightChecks.sol",
+        "script/tools/check-preflight.sh",
+        "src/Core.sol"
+      ],
+      "dependsOn": [
+        "E-TARGETED-483be30"
+      ],
+      "inputs": "git diff 9ce8542 483be30",
+      "method": "docs/DEPLOY.md differs by the rehearsal corrections (0c3ecd2) and the review fixes (483be30). script/tools/check-preflight.sh differs in comments. script/Checks.sol and script/PostflightChecks.sol differ in the metadata rows. src/Core.sol differs in comments. the Rehearsal test passes at the tip (E-TARGETED-483be30)",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "the live preflight, Deploy and Resume dry runs and check-preflight.sh were run at 9ce8542. the corrected DEPLOY.md text, the new metadata rows and check-preflight.sh at this candidate wait for a second walk",
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-REVIEW-SECURITY-0c3ecd2": {
+      "claim": "full independent security review of the source at 0c3ecd2 (src read in full, the deploy scripts, script/config/mainnet.json, the check-preflight.sh delta; runtime identical to 97c1866): no critical, high or medium finding. L1 (low: the buyListing caller appends Seaport tips and takes the whole gap between the bid and the listing price; the engine pays at most its bid) was resolved by the director note on FLOW 71 and ARCHITECTURE rows 28 and 35 in 483be30. L2 (low: the metadata guard) was fixed in script/Checks.sol in 483be30. I1 and I5 (info) were fixed in documents and comments in 483be30, I2, I3 and I4 (info) are accepted",
+      "kind": "review",
+      "sourceRevision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be",
+      "scope": [
+        "src/ControllerV1.sol",
+        "src/FeeRouter.sol",
+        "src/CoreLens.sol",
+        "src/lib/CoreLib.sol",
+        "src/lib/SettingsBounds.sol",
+        "src/lib/SettingsStore.sol",
+        "src/lib/RateStore.sol",
+        "src/lib/Halving.sol",
+        "src/interfaces/Interfaces.sol",
+        "src/interfaces/ICore.sol",
+        "src/interfaces/ICoreLens.sol",
+        "src/interfaces/IControllerV1.sol",
+        "src/interfaces/ICoreLib.sol",
+        "script/Deploy.s.sol",
+        "script/Resume.s.sol",
+        "script/Preflight.s.sol",
+        "script/Postflight.s.sol",
+        "script/Lock.s.sol",
+        "script/SetSettings.s.sol",
+        "script/SystemDeployer.sol",
+        "script/SystemResumer.sol",
+        "script/NewProd.sol",
+        "script/Builder.sol",
+        "script/PostflightV2.sol",
+        "script/PostflightPool.sol",
+        "script/LaunchConfig.sol",
+        "script/SettingsFields.sol",
+        "script/Report.sol",
+        "script/tools/check-preflight.sh",
+        "script/config/mainnet.json"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "inputs": "candidate 0c3ecd2 in the clone /private/tmp/sec-0c3ecd2, ARCHITECTURE, FLOW decisions 56 to 71, the four earlier reviews, live reads",
+      "method": "read only line by line review against attacker models, one fork proof of concept (buyListing tip), targeted forge test --match-path runs on the fork (BuildIdentity 5, CoreLayout 3, Seaport 29, PostflightSlots 8, CoreUnit 78, Fees 76, Config 32, Resume 22, Migrate 35, CallerPay 12, Rescue 12, Adopt 21, Sale 67, ReviewDeploy 18, PullFees 17)",
+      "author": "implementers and director",
+      "reviewer": "independent read only security reviewer, 2026-10-11",
+      "result": "pass",
+      "limitations": "scope lists the files the report read that are unchanged in 483be30; src/Core.sol, script/Checks.sol and script/PostflightChecks.sol changed in 483be30 and wait for a review of that delta. the L1 resolution is a director note, the report offers the owner a second option (a target adapter). L2 was fixed after the review. outside the report: the full suite, deep invariants, a real broadcast, the live CreditStrategy refund behavior, Statements and Credits internals, the v2 hook, escrow, locker and factory beyond pinned reads, sim/. src/interfaces/ArtCoinsV2.sol, IFeeRouter.sol and the other config files are outside the report's file list",
+      "report": {
+        "path": "docs/REVIEW-security-0c3ecd2.md",
+        "sha256": "e3c0600d0beee605143e1fa3700a89c55fb4e4a742c9a02eb54b9656f4b10ff6",
+        "revision": "483be308cc48f4af17837bc62bda4b518bac162c"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-DELTA-483be30": {
+      "claim": "the delta 0c3ecd2..483be30 of the three reviewed files that changed: src/Core.sol holds two comment hunks and compiles to the same runtime bytecode; script/Checks.sol holds the metadata guard fix (blank after trimming spaces, placeholder in any case, todo or tbd as the whole value); script/PostflightChecks.sol holds row text",
+      "kind": "analysis",
+      "sourceRevision": "483be308cc48f4af17837bc62bda4b518bac162c",
+      "scope": [
+        "src/Core.sol",
+        "script/Checks.sol",
+        "script/PostflightChecks.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "inputs": "git diff 0c3ecd2 483be30 -- src script; E-TARGETED-483be30",
+      "method": "director read of the diff: the Core.sol hunks change two comments (PAGE_GAS and the _ask docstring position); the Checks.sol hunks add _blank and _marked and change the row detail; the guard cases are tested by Config 32 in E-TARGETED-483be30",
+      "author": "director, 2026-10-11",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "a director analysis; no independent reviewer has read this delta. the gate independentReview accepts kind review only, so this link keeps the gate red until a reviewer reads the three files",
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-CARRY-483be30": {
+      "claim": "independent review coverage of the source at 483be30: E-REVIEW-SECURITY-0c3ecd2 for the files unchanged since 0c3ecd2, E-REVIEW-DELTA-483be30 for the three files changed in 483be30",
+      "kind": "analysis",
+      "sourceRevision": "483be308cc48f4af17837bc62bda4b518bac162c",
+      "scope": [
+        "*"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "carries": [
+        "E-REVIEW-SECURITY-0c3ecd2",
+        "E-REVIEW-DELTA-483be30"
+      ],
+      "carriedChanges": [],
+      "inputs": "git diff 0c3ecd2 483be30 -- src script",
+      "method": "the review of 0c3ecd2 lists 30 files and all 30 are identical at 483be30. the other changed files are src/Core.sol, script/Checks.sol and script/PostflightChecks.sol",
+      "author": "director, 2026-10-11",
+      "result": "pass",
+      "limitations": "the gate independentReview rejects this record while it holds the analysis link. a reviewer pass over the delta, recorded as kind review with its report, closes it. dropping the link turns the gate green and leaves the three files outside any independent review",
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-ACCEPT-0c3ecd2": {
+      "claim": "acceptance review of 0c3ecd2 (docs/ACCEPTANCE-0c3ecd2.md): ACCEPT the code and script/config/mainnet.json against owner decisions 1 to 71; 69 of the 71 decisions ok (some as superseded) and decisions 47 and 57 not verifiable from the repository; the 9 required paths traced end to end with tests (seven verified, launch-runbook verified with gaps, participant-economics a gap); no critical, high or medium code defect. goal risks R1 (one dump stalls buying) and R2 (statements bought above 1.33 times market stay unsold) are recorded as ARCHITECTURE section 14 items 47 and 48; the readings C1 and C2 are items 49 and 50; M1 to M7 and L2 were fixed in 483be30",
+      "kind": "acceptance",
+      "sourceRevision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be",
+      "scope": [
+        "src/ControllerV1.sol",
+        "src/FeeRouter.sol",
+        "src/CoreLens.sol",
+        "src/lib/CoreLib.sol",
+        "src/lib/SettingsBounds.sol",
+        "src/lib/SettingsStore.sol",
+        "src/lib/RateStore.sol",
+        "src/lib/Halving.sol",
+        "src/interfaces/Interfaces.sol",
+        "src/interfaces/ICore.sol",
+        "src/interfaces/ICoreLens.sol",
+        "src/interfaces/IControllerV1.sol",
+        "src/interfaces/ICoreLib.sol",
+        "script/Deploy.s.sol",
+        "script/Resume.s.sol",
+        "script/Preflight.s.sol",
+        "script/Postflight.s.sol",
+        "script/Lock.s.sol",
+        "script/SetSettings.s.sol",
+        "script/SystemDeployer.sol",
+        "script/SystemResumer.sol",
+        "script/NewProd.sol",
+        "script/Builder.sol",
+        "script/PostflightV2.sol",
+        "script/PostflightPool.sol",
+        "script/LaunchConfig.sol",
+        "script/SettingsFields.sol",
+        "script/Report.sol",
+        "script/tools/check-preflight.sh",
+        "script/config/mainnet.json"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 8
+      },
+      "inputs": "FLOW decisions 1 to 71, ARCHITECTURE section 1, script/config/mainnet.json at launch settings (P0 0.0089 eth), SUITE-97c1866.log and DEEP-RUN-97c1866.log read",
+      "method": "read only acceptance in the clone /private/tmp/accept-0c3ecd2: decision table, path table, goal risks R1 to R8 by scratch test on the real contracts and a model of CoreLib; 620 targeted tests pass; Rehearsal test passes; Preflight on mainnet.json at the pin block 112 of 116 with the 4 expected failures",
+      "author": "implementers and director",
+      "reviewer": "independent read only acceptance reviewer, 2026-10-11",
+      "result": "pass",
+      "limitations": "scope lists the files unchanged in 483be30; the changes of src/Core.sol (comments), script/Checks.sol and script/PostflightChecks.sol are outside it. R1, R2 and the readings C1 and C2 are recorded for the owner's confirmation. outside the report: the owner keeper (decision 57), the burn router readiness (decision 47), rateStart and the metadata values (launch day inputs), the real exitModule (stand ins only), market and seller data behind R1 to R3, the full suite and deep runs (read from logs)",
+      "report": {
+        "path": "docs/ACCEPTANCE-0c3ecd2.md",
+        "sha256": "9b90bf8cd1227999a86ad666413563e17e7e133783ad79905c1bdc2b07a28203",
+        "revision": "483be308cc48f4af17837bc62bda4b518bac162c"
+      },
+      "dependsOn": [],
+      "invalidated": null
     }
   }
 }
