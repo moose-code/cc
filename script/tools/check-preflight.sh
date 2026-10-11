@@ -14,9 +14,9 @@
 # env:   MAINNET_RPC_URL (default: the Tenderly public gateway, archive state), FORK_BLOCK (default 26158000),
 #        DEPLOYER (default: the config owner), EXPECT_FAIL (comma separated failed rows; default: the two factory rows of
 #        DEPLOY step 3, which fail on the pin block before the factory owner step).
-#        the row `deployer: balance covers the deploy fee and the gas` is left out of the comparison on both sides: it
-#        reads the owner's eth balance at the fork block, which changes whenever the owner is funded, and it is not a
-#        property of the code or the config. read it in the printed table.
+#        IGNORE_BALANCE=1 leaves the row `deployer: balance covers the deploy fee and the gas` out of the comparison on
+#        both sides, for a rehearsal on a fork block where the owner's balance is not the launch day balance. the launch
+#        sign-off runs without it, so an underfunded deployer fails here.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 cfg="${1:-script/config/mainnet.json}"
@@ -45,8 +45,10 @@ echo "$summary" | sed 's/^ *//'
 grep -oE '(CONFIG_HASH|CONTROLLER_NONCE)=[0-9a-fx]+' <<<"$out" | sort -u || true
 # the failed rows without the balance row, in the same ", " joined form as the expected rows
 without_balance() { { sed 's/, /\n/g' <<<"$1" | grep -vxF "$balrow" || true; } | paste -sd, - | sed 's/,/, /g'; }
-failed="$(without_balance "$failed")"
-expect="$(without_balance "$expect")"
+if [ "${IGNORE_BALANCE:-0}" = 1 ]; then
+  failed="$(without_balance "$failed")"
+  expect="$(without_balance "$expect")"
+fi
 if [ "$failed" != "$expect" ]; then
   echo "failed rows differ from the expected ones"; echo "  got:      $failed"; echo "  expected: $expect"; exit 1
 fi
