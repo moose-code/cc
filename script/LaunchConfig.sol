@@ -169,8 +169,6 @@ abstract contract ConfigReader is CommonBase {
         s.idleLoosenBps = _u16(j, ".settings.idleLoosenBps");
         s.tipSavingsBps = _u16(j, ".settings.tipSavingsBps");
         s.tipCapBps = _u16(j, ".settings.tipCapBps");
-        s.reimburseBps = _u16(j, ".settings.reimburseBps");
-        s.reimburseCapBps = _u16(j, ".settings.reimburseCapBps");
         s.saleFloorBps = _u16(j, ".settings.saleFloorBps");
         s.auctionDuration = _u32(j, ".settings.auctionDuration");
         s.exitAfter = _u32(j, ".settings.exitAfter");
@@ -182,6 +180,8 @@ abstract contract ConfigReader is CommonBase {
         // forge-lint: disable-start(unsafe-typecast)
         s.keeperFee = uint64(_uint(j, ".settings.keeperFee", type(uint64).max));
         s.buybackMaxBaseFee = uint48(_uint(j, ".settings.buybackMaxBaseFee", type(uint48).max));
+        s.callerFee = uint64(_uint(j, ".settings.callerFee", type(uint64).max));
+        s.callerMaxBaseFee = uint48(_uint(j, ".settings.callerMaxBaseFee", type(uint48).max));
         // forge-lint: disable-end(unsafe-typecast)
         s.xRateCap = _u16(j, ".settings.xRateCap");
         s.xRateFloor = _u16(j, ".settings.xRateFloor");

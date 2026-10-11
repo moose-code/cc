@@ -94,7 +94,7 @@ contract SetSettingsTest is Fixture {
         Settings memory out = probe.applyTo(live);
         (uint256 n, uint256 first) = _diff(live, out);
         assertEq(n, 1);
-        assertEq(first, 9, "saleFloorBps is the 10th field");
+        assertEq(first, 7, "saleFloorBps is the 8th field");
         assertEq(out.saleFloorBps, 8_000);
     }
 

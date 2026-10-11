@@ -51,8 +51,8 @@ contract EconDialsTest is Fixture {
 
     function test_drop_launchValue() public {
         assertEq(core.settings().dropPerCreditBps, 50);
-        assertEq(core.settings().dropFloorBps, 8_000);
-        _manyFills(50, 8_000);
+        assertEq(core.settings().dropFloorBps, 5_000);
+        _manyFills(50, 5_000);
     }
 
     function test_drop_atTheSmallestBound() public {

@@ -489,69 +489,6 @@ contract ReviewFlushInPayoutTest is FeeBase {
     }
 }
 
-/// F5. the carried question: can the Core pay more than `reimburseCapBps` of the statement cost (or of the notional cap on
-/// the exit lane), even by 1 wei. `_repay` pays `min(floor(gas * basefee * reimburseBps / BPS), floor(cap * reimburseCapBps / BPS),
-/// ethPot)` with `cap` the stored cost (exit of an eth lane statement) or `80 * RATE_START`
-/// (exit lane). every term is a floor, so the payment is at most
-/// the exact quotient. only a mirror that rounds up (or divides once instead of twice) can see 1 wei more
-contract ReviewReimburseTest is Fixture {
-    uint16[8] internal caps = [1, 7, 99, 333, 500, 777, 999, 1000];
-
-    function _cap(uint16 bps) internal {
-        Settings memory s = core.settings();
-        s.reimburseCapBps = bps;
-        _setSettings(s);
-    }
-
-    function _exitLane(uint16 bps, uint256 sid, uint256 snap) internal returns (uint256 r) {
-        vm.revertToState(snap);
-        _cap(bps);
-        vm.fee(500 gwei);
-        uint256 k0 = keeper.balance;
-        vm.prank(keeper);
-        core.exitStatement(sid);
-        r = keeper.balance - k0;
-    }
-
-    function test_OK_exitLaneAndEthLaneExitNeverPayAboveTheirCaps() public {
-        _enterPhase2();
-        _fundPot(1 ether);
-        // eth lane statement, exited after the wait: cap is the stored cost
-        uint256 sid = _composeOnce().sid;
-        _warp(105 hours);
-        uint256 snap = vm.snapshotState();
-        (,, uint256 cost,) = core.statementInfo(sid);
-        for (uint256 i; i < caps.length; ++i) {
-            uint256 r = _exitLane(caps[i], sid, snap);
-            assertEq(r, cost * caps[i] / 10_000);
-            assertLe(r * 10_000, cost * caps[i]);
-        }
-        // exit lane statement: cap is the notional, floored once, then times the bps floored again
-        vm.revertToState(snap);
-        uint256[] memory ids = _credits(seller, 80);
-        xt.mint(address(core), 5e19);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.composeExit();
-        uint256 xsid = STATEMENTS.supply();
-        uint256 snap2 = vm.snapshotState();
-        uint256 notional = 80 * core.RATE_START();
-        uint256 differs;
-        for (uint256 i; i < caps.length; ++i) {
-            uint256 r = _exitLane(caps[i], xsid, snap2);
-            assertEq(r, notional * caps[i] / 10_000, "the cap binds");
-            assertLe(r * 10_000, notional * caps[i]);
-            uint256 single = 80 * core.RATE_START() * caps[i] / 1e4;
-            assertGe(single, r, "one division can only be bigger, never smaller");
-            if (single != r) ++differs;
-        }
-        emit log_named_uint("caps where a single division mirror differs by wei", differs);
-    }
-}
-
 /// pushes eth with the 2,300 gas stipend only (call with zero gas and a value), like the v2 hook does
 contract StipendPusher {
     function push(address to) external payable returns (bool ok) {

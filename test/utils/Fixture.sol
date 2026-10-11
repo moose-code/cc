@@ -149,7 +149,20 @@ abstract contract Fixture is Test, ProdDeployer {
         return Mainnet.defaultSettings();
     }
 
-    /// @dev the test contract is a caller of the doors that pay eth to their caller (the exitStatement reimbursement, the buyListing and buyback tips), so it takes eth
+    /// @dev the gas of the last external call as a transaction, before the refund, and the refund. forge reports the call
+    /// net of the refund (up to 20 percent of the gross, EIP-3529), the Core meters the gross with `gasleft`. decoded by
+    /// position, so a forge-std struct with more fields than the installed forge answers does not matter
+    function _lastCallGross() internal view returns (uint256 gross, uint256 refunded) {
+        (bool ok, bytes memory out) = address(vm).staticcall(abi.encodeWithSignature("lastCallGas()"));
+        require(ok, "lastCallGas");
+        uint256 net;
+        int256 refund;
+        (, net,, refund) = abi.decode(out, (uint256, uint256, uint256, int256));
+        refunded = refund < 0 ? 0 : uint256(refund);
+        gross = net + refunded;
+    }
+
+    /// @dev the test contract is a caller of the doors that pay eth to their caller (the compose and exit caller payment, the buyListing and buyback tips), so it takes eth
     receive() external payable {}
 
     function setUp() public virtual {

@@ -64,9 +64,9 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 1. eth leaves the core only as a credit purchase within the ceiling, a `buyListing` tip within tipCapBps and
-    /// tipSavingsBps, the gas repayment of an exit within reimburseBps, reimburseCapBps and the pot, a buyback slice (the
-    /// swap input plus the payment to the caller), a refund of overpayment, or a migration to the successor. `compose` and
-    /// `composeExit` pay the caller nothing. every action's balance change is matched to those flows, measured at the
+    /// tipSavingsBps, the caller payment of `compose`, `composeExit` and `exitStatement` within callerFee,
+    /// callerMaxBaseFee and the pot, a buyback slice (the swap input plus the payment to the caller), a refund of
+    /// overpayment, or a migration to the successor. every action's balance change is matched to those flows, measured at the
     /// recipients, against the settings in force at that moment (the owner changes them throughout). the inflows are the
     /// hook's skim pushed into receive() during real swaps, including the one the hook pushes back during the buyback, the
     /// fee router's flush, `collectSales` (and the collection a buyback starts with), `sellTo` payments and a plain
@@ -923,6 +923,14 @@ abstract contract InvariantsBase is InvariantFixture {
         _try(2, 40);
         _try(2, 40);
         _try(4, 60);
+        // the real listings need the ceiling to clear the price, so warp until one passes. the launch ceiling (110 percent,
+        // 2 percent loosening per 10 idle minutes) takes days to reach the price of a real listing, and the launch rate cap
+        // (2.67e16) is under the 0.036 eth price of the real CreditStrategy listings: the owner widens both here
+        Settings memory wide = core.settings();
+        wide.ceilBps = 30_000;
+        wide.idleLoosenBps = 2_000;
+        wide.rateCap = 1e17;
+        handler.setSettingsExact(wide);
         // the real listings need the ceiling to clear the price, so warp until one passes
         for (uint256 i; i < 12 && !_try(3, 20); ++i) {
             handler.warp(uint256(keccak256(abi.encode("w", i))) / 10 * 10 + 1);

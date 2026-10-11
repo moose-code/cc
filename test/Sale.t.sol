@@ -453,7 +453,7 @@ contract SaleFloorTest is SaleBase {
             core.compose();
             assertEq(STATEMENTS.supply(), supply, "nothing minted");
             assertEq(core.pileSize(Lane.Eth), 80, "the pile is whole");
-            assertEq(core.ethPot(), pot, "no reimbursement paid");
+            assertEq(core.ethPot(), pot, "no payment to the caller");
             assertEq(core.heldStatements().length, 0);
             // the same controller, repaired, composes
             sc.setRevertPrice(false);

@@ -226,7 +226,7 @@ abstract contract SeaportBase is Fixture {
     }
 
     function _tip(uint256 ceiling, uint256 cost) internal pure returns (uint256) {
-        return ((ceiling - cost) * 1000 / 10_000).min(cost * 200 / 10_000);
+        return ((ceiling - cost) * 2_500 / 10_000).min(cost * 400 / 10_000);
     }
 
     /// calls the door as the keeper and checks everything a successful buy must leave behind.
@@ -254,7 +254,7 @@ abstract contract SeaportBase is Fixture {
         assertEq(core.rateAtCheckpoint(), BidModel.dropOnce(core.settings(), rate, rate), "rate drop");
         assertEq(core.lastFillTime(), block.timestamp);
         assertLe(cost + tip, ceiling, "never above the ceiling");
-        assertLe(tip, cost * 200 / 10_000, "tip within two percent of cost");
+        assertLe(tip, cost * 400 / 10_000, "tip within four percent of cost");
         _solvent();
         assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), 0, "no surplus");
     }
@@ -281,7 +281,7 @@ contract SeaportTest is SeaportBase {
 
     function setUp() public override {
         super.setUp();
-        // the launch rate cap (10 times the opening rate) is far below the rate the cases need: raise it to the bounds,
+        // the launch rate cap (3 times the opening rate) is far below the rate the cases need: raise it to the bounds,
         // with the clamp at one credit of pot and the ceiling at its loosest so the bid reaches it in days
         Settings memory cs = core.settings();
         cs.rateCap = uint64(TARGET_RATE);
@@ -305,25 +305,25 @@ contract SeaportTest is SeaportBase {
         uint256 ceiling = core.ethRate();
         uint256 price = ceiling * 9 / 10;
         // at 90 percent of the ceiling the savings bound is the active one.
-        assertLt((ceiling - price) / 10, price * 200 / 10_000);
+        assertLt((ceiling - price) / 4, price * 400 / 10_000);
         OrderComponents memory c = _open(id, price, 0);
         assertEq(c.consideration.length, 1);
 
         uint256 makerBefore = maker.balance;
         uint256 tip = _buy(id, price, _basicData(c), price);
 
-        assertEq(tip, (ceiling - price) * 1000 / 10_000, "tip is a tenth of the savings");
+        assertEq(tip, (ceiling - price) * 2_500 / 10_000, "tip is a quarter of the savings");
         assertEq(maker.balance - makerBefore, price, "maker received the price");
     }
 
-    function test_basic_tipIsCappedAtTwoPercentOfCost() public {
+    function test_basic_tipIsCappedAtFourPercentOfCost() public {
         uint256 id = _list();
         uint256 ceiling = core.ethRate();
         uint256 price = ceiling / 2;
         OrderComponents memory c = _open(id, price, 0);
 
         uint256 tip = _buy(id, price, _basicData(c), price);
-        assertEq(tip, price * 200 / 10_000, "cap branch");
+        assertEq(tip, price * 400 / 10_000, "cap branch");
     }
 
     function test_basic_additionalRecipient() public {
@@ -341,7 +341,7 @@ contract SeaportTest is SeaportBase {
         assertEq(maker.balance - makerBefore, total - fee, "maker got the price less the fee");
         assertEq(feeTaker.balance - feeBefore, fee, "fee recipient got one percent");
         (,, uint256 booked,) = core.creditInfo(id);
-        assertEq(booked, total + total * 200 / 10_000, "cost is the sum of every payout");
+        assertEq(booked, total + total * 400 / 10_000, "cost is the sum of every payout");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -594,8 +594,8 @@ contract SeaportTest is SeaportBase {
         (,, uint256 booked,) = core.creditInfo(id);
         assertEq(booked, price + tip);
         assertLe(booked, ceiling, "cost plus tip never exceeds the ceiling");
-        assertLe(tip, price * 200 / 10_000, "tip at most 2% of cost");
-        assertLe(tip, (ceiling - price) * 1000 / 10_000, "tip at most 10% of savings");
+        assertLe(tip, price * 400 / 10_000, "tip at most 4% of cost");
+        assertLe(tip, (ceiling - price) * 2_500 / 10_000, "tip at most 25% of savings");
         assertEq(maker.balance - makerBefore, price);
     }
 
@@ -626,7 +626,7 @@ contract SeaportTest is SeaportBase {
     }
 
     /// for any listing price up to the ceiling the maker ends with strictly less eth than the sell door pays, and
-    /// the tip stays within 2 percent of the cost and a tenth of the savings. at exactly the ceiling there is no tip
+    /// the tip stays within 4 percent of the cost and a quarter of the savings. at exactly the ceiling there is no tip
     /// and it is break even. the order is a genuine Seaport order, filled by the maker through the door
     /// forge-config: default.fuzz.runs = 64
     function testFuzz_selfDealingTipNeverPays(uint256 priceSeed, uint256 sideSeed, uint256 warpHours) public {
@@ -639,8 +639,8 @@ contract SeaportTest is SeaportBase {
         uint256 snap = vm.snapshotState();
 
         (uint256 viaListing, uint256 tip) = _selfDeal(id, price, side);
-        assertLe(tip * 10_000, price * 200, "tip within 2 percent of cost");
-        assertLe(tip * 10_000, (ceiling - price) * 1000, "tip within a tenth of the savings");
+        assertLe(tip * 10_000, price * 400, "tip within 4 percent of cost");
+        assertLe(tip * 10_000, (ceiling - price) * 2_500, "tip within a quarter of the savings");
 
         vm.revertToState(snap);
         uint256 viaDoor = _sellThroughTheDoor(id);
@@ -663,7 +663,7 @@ contract SeaportTest is SeaportBase {
         uint256 snap = vm.snapshotState();
         for (uint256 i; i < 3; ++i) {
             (uint256 viaListing, uint256 tip) = _selfDeal(id, prices[i], 0);
-            assertLe(tip * 10_000, prices[i] * 200);
+            assertLe(tip * 10_000, prices[i] * 400);
             vm.revertToState(snap);
             uint256 viaDoor = _sellThroughTheDoor(id);
             vm.revertToState(snap);
@@ -707,7 +707,7 @@ contract SeaportTest is SeaportBase {
         core.buyListing(price, data, id, Mainnet.SEAPORT);
         uint256 tip = keeper.balance - before;
         assertEq(tip, ((ceiling - price) * 2_500 / 10_000).min(price * 500 / 10_000));
-        assertGt(tip, price * 200 / 10_000, "above what the launch cap allows");
+        assertGt(tip, price * 400 / 10_000, "above what the launch cap allows");
         s.tipSavingsBps = 0;
         _setSettings(s);
         uint256 id2 = _list();

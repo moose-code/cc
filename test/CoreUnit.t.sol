@@ -307,9 +307,17 @@ contract CoreUnitTest is CoreBase {
         );
     }
 
+    /// @dev lifts the ceiling to its bound so a climb curve of an hour is not cut by the launch ceiling of 110 percent
+    function _wideCeiling() internal {
+        Settings memory s = core.settings();
+        s.ceilBps = 30_000;
+        _setSettings(s);
+    }
+
     /// the climb is 0.5 percent a minute compounded from the checkpoint, and 1.005^n of the stored rate is exact
     /// for whole minutes
     function test_rate_climbsPerMinuteCompounded() public {
+        _wideCeiling();
         _fund(10 ether);
         _warp(1 minutes);
         assertApproxEqRel(core.ethRate(), OPEN_RATE * 1.005e18 / 1e18, 1e9, "1 minute");
@@ -334,6 +342,7 @@ contract CoreUnitTest is CoreBase {
     function test_rate_climbAtChangedSettings() public {
         Settings memory s = core.settings();
         s.climbPerMinBps = 200;
+        s.ceilBps = 30_000;
         _setSettings(s);
         _fund(10 ether);
         _warp(10 minutes);
@@ -341,6 +350,7 @@ contract CoreUnitTest is CoreBase {
     }
 
     function test_rate_checkpointKeepsTheCurve() public {
+        _wideCeiling();
         _fund(10 ether);
         _warp(30 minutes);
         uint256 r30 = core.ethRate();
@@ -426,11 +436,6 @@ contract CoreUnitTest is CoreBase {
     /// a fill drops the rate by `dropPerCreditBps`, makes the rate paid the ceiling anchor and restarts the climb clock
     function test_rate_dropAndClockResetOnFill() public {
         _fund(10 ether);
-        // the loosening the ceiling arithmetic below is written for: 2 percent per 10 idle minutes (the launch setting,
-        // 20 percent, lifts the ceiling above the rate cap within the 30 hour wait)
-        Settings memory loose = core.settings();
-        loose.idleLoosenBps = 200;
-        _setSettings(loose);
         _warp(30 hours);
         uint256 id = _credits(alice, 1)[0];
         uint256 rate = core.ethRate();
@@ -456,15 +461,15 @@ contract CoreUnitTest is CoreBase {
         assertEq(core.pileSize(Lane.Eth), 1);
         _solvent();
 
-        // the climb restarts from the dropped rate, and the ceiling is 125 percent of the rate paid
+        // the climb restarts from the dropped rate, and the ceiling is 110 percent of the rate paid
         uint256 after_ = core.rateAtCheckpoint();
         _warp(10 minutes);
         assertApproxEqRel(core.ethRate(), after_ * 1_051_140_132_040_790_642 / 1e18, 1e9);
         _warp(10 hours);
         assertEq(
             core.ethRate(),
-            rate * 12_500 * (10_000 + 200 * 61) / 1e8,
-            "ceiling 125 percent of the rate paid, loosened 2 percent per 10 idle minutes"
+            rate * 11_000 * (10_000 + 200 * 61) / 1e8,
+            "ceiling 110 percent of the rate paid, loosened 2 percent per 10 idle minutes"
         );
     }
 
@@ -637,7 +642,7 @@ contract CoreUnitTest is CoreBase {
     /// call is made after `extra` more seconds of climb, so the savings are small or large. the cost basis includes
     /// the tip, the pot pays both, the keeper gets the tip
     function _tipCase(uint256 savingsBps, uint256 capBps, uint256 extra) internal returns (uint256 tip) {
-        if (savingsBps != 1000 || capBps != 200) {
+        if (savingsBps != 2_500 || capBps != 400) {
             Settings memory s = core.settings();
             // forge-lint: disable-start(unsafe-typecast)
             s.tipSavingsBps = uint16(savingsBps);
@@ -674,15 +679,15 @@ contract CoreUnitTest is CoreBase {
         _solvent();
     }
 
-    function test_buyListing_tipIsTenthOfSavingsWhenSmall() public {
-        uint256 tip = _tipCase(1000, 200, 0);
+    function test_buyListing_tipIsQuarterOfSavingsWhenSmall() public {
+        uint256 tip = _tipCase(2500, 400, 0);
         assertGt(tip, 0);
-        assertLt(tip, 0.036 ether * 200 / 10_000, "savings bound branch");
+        assertLt(tip, 0.036 ether * 400 / 10_000, "savings bound branch");
     }
 
-    function test_buyListing_tipIsCappedAtTwoPercentOfCost() public {
-        uint256 tip = _tipCase(1000, 200, 30 hours);
-        assertEq(tip, 0.036 ether * 200 / 10_000);
+    function test_buyListing_tipIsCappedAtFourPercentOfCost() public {
+        uint256 tip = _tipCase(2500, 400, 30 hours);
+        assertEq(tip, 0.036 ether * 400 / 10_000);
     }
 
     /// the dials: a quarter of the savings with a cap of half a percent, then no tip at all, then the largest cap
@@ -700,7 +705,7 @@ contract CoreUnitTest is CoreBase {
     function test_buyListing_tipAtTheLargestBounds() public {
         uint256 tip = _tipCase(2500, 500, 60 hours);
         assertLe(tip, 0.036 ether * 500 / 10_000, "never more than 5 percent of the cost");
-        assertGt(tip, 0.036 ether * 200 / 10_000, "above the launch cap");
+        assertGt(tip, 0.036 ether * 400 / 10_000, "above the launch cap");
     }
 
     function test_buyListing_failedCallRevertsOnlyThatBuy() public {
@@ -1488,16 +1493,16 @@ contract CoreComposedTest is CoreBase {
         assertGt(c.cost, 80 * OPEN_RATE * 3 / 4, "and not far under");
     }
 
-    /// a compose moves no eth out of the Core: the Core balance and `ethPot` are unchanged and the caller pays its own
-    /// gas, at any basefee and any reimbursement setting
+    /// at the launch values of `callerFee` and `callerMaxBaseFee` (zero) a compose moves no eth out of the Core: the
+    /// Core balance and `ethPot` are unchanged, at any basefee and with the buyback payment settings at their ceilings
     function test_compose_movesNoEthOut() public {
         Composed memory c = _composeOnce();
         uint256 snap = preComposeSnap;
         uint256 supply = c.supplyBefore;
         uint256 gasPrice = 5 gwei;
         Settings memory s = core.settings();
-        s.reimburseBps = 15_000;
-        s.reimburseCapBps = 1_000;
+        s.keeperFee = 0.005 ether;
+        s.buybackMaxBaseFee = 100 gwei;
 
         vm.revertToState(snap);
         _setSettings(s);

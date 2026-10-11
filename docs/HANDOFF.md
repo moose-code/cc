@@ -34,16 +34,17 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 |---|---|
 | branch | `main` is the working branch on github ripe0x/cc. the director repair of 2026-10-10 is on the local branch `claude/repair-project-director-1366be`, not pushed |
 | phase | launch preparation. candidate c02435e is frozen (`project/director-state.json`). the full suite, the deep run (on 1e2c4b3, carried to 14c6306), the security review (docs/REVIEW-security.md), the deploy rehearsal (docs/REHEARSAL-c02435e.md) and the product acceptance review (docs/REVIEW-acceptance.md) are done |
-| source | Core 21,464 bytes runtime (3,112 bytes of headroom), CoreLib 16,088, ControllerV1 5,217, CoreLens 7,479, measured on the change after 38af5f3 |
+| source | Core 21,539 bytes runtime (3,037 bytes of headroom), CoreLib 15,964, ControllerV1 7,669, CoreLens 7,479, measured after decisions 66, 67 and 69 |
 | tests | the full suite and the 7 Deep suites ran on the candidate line (docs/DEEP-RUN-1e2c4b3.log, carried to 14c6306). the real preflight script on a fork: 121 rows, 118 pass, the three documented owner-side failures. the rehearsal test: preflight 121 of 121 after the owner command, postflight 102 of 102 |
 | reviews | independent review of decisions 55 and 56 (docs/REVIEW-next29.md), security review of 1e2c4b3 (docs/REVIEW-security.md, fixes at 14c6306), acceptance review of c02435e (docs/REVIEW-acceptance.md, verdict accept with listed fixes: the intent records in docs/ARCHITECTURE.md section 1). docs/AUDIT-codex.md (commit 32ff35b) is on a branch outside main |
+| launch prerequisite | the owner keeper, a separate project, ships before launch (FLOW 69, NEXT item 32). it is a backup for `buyListing`: outside bots are the primary callers (the tip is 25 percent of the savings, at most 4 percent of the price). the keeper acts only when a listing has sat below the bid for 10 minutes with nobody filling it, simulates before it sends, and sends through a private relay (Flashbots Protect or MEV Blocker) so a lost race costs no gas |
 | owner steps before launch | fund the owner address 0xCB43 (0.0163 eth at the rehearsal, the launch needs about 0.086 eth at 1 gwei and 0.15 eth at 5 gwei), run `setMinProtocolSkimShareBps(362)` on the v2 factory, then docs/DEPLOY.md with `--slow` (the owner address is an EIP 7702 delegated account) |
 
 ## 4. owner decisions
 
 **OD-1, decided 2026-10-10 (FLOW 48).** the first `migrate` retires the old engine. `ethToBuyback` stays in it and its buyback burns it. the exit token pots move. built as NEXT item 22 at 74d1cbe, full suite 1078 pass, reviewed with no defect (docs/REVIEW-retire.md), follow ups built as NEXT item 23 at eff3051.
 
-**OD-3, decided 2026-10-10 (FLOW 50).** `idleLoosenBps` 2_000 at launch and a lower bound of 1. built at dfd6001 (NEXT item 26).
+**OD-3, decided 2026-10-10 (FLOW 50).** `idleLoosenBps` 2_000 at launch and a lower bound of 1. built at dfd6001 (NEXT item 26). the launch value is 200 since FLOW 69 (NEXT item 32).
 
 **OD-5, decided 2026-10-10 (FLOW 51).** buyback slice 0.5 eth at launch, upper bound 1 eth. built at dfd6001 (NEXT item 26).
 
@@ -72,7 +73,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 apply the acceptance fixes to the intent records, record the evidence for the gates productRules, independentReview and deploymentRehearsal, run `python3 script/director.py check --gate deploy` from the branch tip (it fails at the candidate commit, whose state file names an earlier candidate), then the owner's launch steps.
 
-owner inputs before launch: the coin's image url and description (config), funding the owner address (0.0163 eth held at the rehearsal, about 0.086 eth needed at 1 gwei; no owner transaction between preflight and the last deploy transaction: the deploy checks `CONTROLLER_NONCE`), `setMinProtocolSkimShareBps(362)` on the factory, the launch day `rateStart` and `rateCap` from the credit price.
+owner inputs before launch: the coin's image url and description (config), funding the owner address (0.0163 eth held at the rehearsal, about 0.086 eth needed at 1 gwei; no owner transaction between preflight and the last deploy transaction: the deploy checks `CONTROLLER_NONCE`), `setMinProtocolSkimShareBps(362)` on the factory, the launch day `rateStart` and `rateCap` (3 times `rateStart`, FLOW 69) from the credit price, and the owner keeper (section 3, launch prerequisite).
 
 ## 7. how to work in this repo
 
@@ -84,7 +85,7 @@ owner inputs before launch: the coin's image url and description (config), fundi
 | timings | clean build about 3 to 4 minutes, a test file change about 3 seconds, a `src/Core.sol` change about 35 seconds. full suite with `REHEARSAL=1 forge test -j 6` about 2 minutes on a 16 core machine (rerun rpc failures with `-j 1`). a Deep suite 577 to 692 seconds: `INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 forge test --match-contract '^<Suite>Deep$'` |
 | verification | during an edit run the smallest test that covers it (`--match-path`). run one combined gate at a batch boundary. full suites, deep invariants and the rehearsal belong to a frozen candidate or to a gate whose evidence was invalidated. before a command over 30 seconds, say what it must establish |
 | interfaces | after changing a production contract's external surface run `script/tools/gen-interfaces.sh` and repin test/BuildIdentity.t.sol. never import `src/Core.sol` in a test |
-| Core size | 3,112 bytes of headroom after 38af5f3, margin rule at least 60. new logic goes into `CoreLib`. never drop a check to make room |
+| Core size | 3,037 bytes of headroom after decisions 66, 67 and 69, margin rule at least 60. new logic goes into `CoreLib`. never drop a check to make room |
 | safety | no mainnet broadcast, deploy, push or private key without the owner's explicit instruction |
 
 ## 8. known and not fixed

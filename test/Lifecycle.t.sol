@@ -224,7 +224,7 @@ contract LifecycleDoorsTest is Fixture {
         assertTrue(inPile);
         assertEq(uint8(lane), uint8(Lane.Eth));
         assertEq(cost, price + tip, "cost basis includes the tip");
-        assertLe(tip * 10_000, price * 200, "tip is at most 2 percent of cost");
+        assertLe(tip * 10_000, price * 400, "tip is at most 4 percent of cost");
         _solvent();
     }
 
@@ -241,7 +241,7 @@ contract LifecycleDoorsTest is Fixture {
         _checkListingBuy(LISTED_A, price, false);
     }
 
-    /// far above the price the tip stops at 2 percent of what the core paid.
+    /// far above the price the tip stops at 4 percent of what the core paid.
     function test_buyListing_realStrategy_capBoundTip() public {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         _warpUntilCeiling(LISTED_A, price);

@@ -20,14 +20,12 @@
   "rateStart": 8900000000000000,
   "settings": {
     "dropPerCreditBps": 50,
-    "dropFloorBps": 8000,
+    "dropFloorBps": 5000,
     "climbPerMinBps": 50,
-    "ceilBps": 12500,
-    "idleLoosenBps": 2000,
-    "tipSavingsBps": 1000,
-    "tipCapBps": 200,
-    "reimburseBps": 8000,
-    "reimburseCapBps": 500,
+    "ceilBps": 11000,
+    "idleLoosenBps": 200,
+    "tipSavingsBps": 2500,
+    "tipCapBps": 400,
     "saleFloorBps": 7500,
     "auctionDuration": 86400,
     "exitAfter": 378000,
@@ -43,9 +41,11 @@
     "xRateDropPerCredit": 20,
     "xAuctionHalfLife": 21600,
     "exitSliceCredits": 20,
-    "rateCap": 89000000000000000,
+    "rateCap": 26700000000000000,
     "exitLaneToBuybackBps": 0,
-    "feeToBuybackBps": 0
+    "feeToBuybackBps": 0,
+    "callerFee": 0,
+    "callerMaxBaseFee": 0
   },
   "sale": {
     "buyOnly": true,

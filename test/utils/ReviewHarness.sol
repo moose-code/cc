@@ -119,7 +119,7 @@ abstract contract ReviewHarness is Test, ProdDeployer {
 
     /// the names of the preflight rows on the rate (script/Checks.sol)
     string internal constant ROW_RATE_BOUNDS = "rateStart in bounds and at most rateCap";
-    string internal constant ROW_RATE_RATIO = "rateCap is 10 times rateStart";
+    string internal constant ROW_RATE_RATIO = "rateCap is 3 times rateStart";
     string internal constant ROW_SETTINGS_BOUNDS = "settings inside the bounds";
 
     struct Mut {

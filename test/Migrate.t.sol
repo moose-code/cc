@@ -263,7 +263,7 @@ contract MigrateTest is Fixture {
         assertEq(_heldCount(), 2, "two statements left on the books");
         // a listing without a bid exits to the exit token
         vm.warp(block.timestamp + core.settings().exitAfter);
-        // the pots are empty after the migration: the exit reimbursement of the caller clamps at the pot
+        // the pots are empty after the migration: the exit payment to the caller clamps at the pot
         assertEq(core.ethPot(), 0, "setup: the eth pot is empty");
         vm.fee(composeBasefee);
         vm.txGasPrice(composeBasefee);
@@ -271,7 +271,7 @@ contract MigrateTest is Fixture {
         core.exitStatement(w.listed);
         core.exitStatement(w.exitLane);
         assertEq(core.ethPot(), 0, "the exit took eth from an empty pot");
-        assertEq(address(this).balance, callerBalance, "the caller was repaid from an empty pot");
+        assertEq(address(this).balance, callerBalance, "the caller was paid from an empty pot");
         assertEq(_heldCount(), 0, "the exits left nothing on the books");
         assertGt(core.xPot() + core.xToBuyback(), 0, "the exit did not fill the exit pots");
         // the proceeds of the sales are booked by collectSales. the pot share moves in the next call, the buyback

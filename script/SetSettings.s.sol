@@ -64,7 +64,7 @@ contract SetSettings is Script {
     error FloorNotRaised(uint256 count);
 
     string internal constant TUPLE =
-        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint64,uint48,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16)";
+        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint32,uint16,uint16,uint128,uint16,uint64,uint48,uint16,uint16,uint16,uint16,uint32,uint16,uint64,uint16,uint16,uint64,uint48)";
 
     function run() external {
         ICoreOwner core = ICoreOwner(_core());

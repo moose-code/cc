@@ -141,10 +141,8 @@ const SETTINGS = {
   climbDoubleEvery: 24 * 3600,
   climbMaxBps: 800, // per hour
   dropBps: 2000,
-  tipSavingsBps: 1000,
-  tipCapBps: 200,
-  reimburseBps: 8000, // governs exitStatement gas repay; the simulator does not model exit gas
-  reimburseCapBps: 500,
+  tipSavingsBps: 2500,
+  tipCapBps: 400,
   saleFloorBps: 7500, // the hard floor: no sale of a statement below cost * saleFloorBps / 10000, whatever the controller asks
   auctionDuration: 24 * 3600, // runs from the first bid
   exitAfter: 105 * 3600, // an unbid listing may exit through the exitModule after this long
@@ -160,9 +158,11 @@ const SETTINGS = {
   xRateDropPerCredit: 20,
   xAuctionHalfLife: 6 * 3600,
   exitSliceCredits: 20,
-  rateCap: 89000000000000000, // wei per credit, 10 times rateStart: the eth rate never passes it (climb clamp, setRate)
+  rateCap: 26700000000000000, // wei per credit, 3 times rateStart: the eth rate never passes it (climb clamp, setRate)
   exitLaneToBuybackBps: 0, // share of exitToken from exit lane exits to the coin buyback, rest to the exit bid pot
   feeToBuybackBps: 0, // share of swap fee eth booked in receive() that goes to the buyback instead of the pot
+  callerFee: 0, // eth. paid to the caller of compose, composeExit and exitStatement from the pot, with the gas refund below. launch 0: the simulator does not model these payments
+  callerMaxBaseFee: 0, // gwei, the cap on the base fee the refund of those three doors uses. 0 refunds no gas
 };
 const SETTING_KEYS = Object.keys(SETTINGS);
 // the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement of cost c, in bps of c, starts at
@@ -214,8 +214,6 @@ function firstViolation(s) {
   if (s.dropBps < 500 || s.dropBps > 5000) return 'dropBps';
   if (s.tipSavingsBps > 2500) return 'tipSavingsBps';
   if (s.tipCapBps > 500) return 'tipCapBps';
-  if (s.reimburseBps > 15000) return 'reimburseBps';
-  if (s.reimburseCapBps > 1000) return 'reimburseCapBps';
   if (s.saleFloorBps < 1000 || s.saleFloorBps > 40000) return 'saleFloorBps';
   if (s.auctionDuration < 6 * h || s.auctionDuration > 30 * d) return 'auctionDuration';
   if (s.exitAfter < h || s.exitAfter > 365 * d) return 'exitAfter';
@@ -235,6 +233,8 @@ function firstViolation(s) {
   if (s.rateCap < RATE_MIN || s.rateCap > RATE_MAX) return 'rateCap';
   if (s.exitLaneToBuybackBps > 10000) return 'exitLaneToBuybackBps';
   if (s.feeToBuybackBps > 10000) return 'feeToBuybackBps';
+  if (s.callerFee > 0.005) return 'callerFee';
+  if (s.callerMaxBaseFee > 100) return 'callerMaxBaseFee';
   return null;
 }
 // the eth rate bounds of setRate, rateStart and rateCap, wei per credit (Interfaces.sol)
@@ -263,14 +263,14 @@ const SIM_DEFAULTS = {
   // 'stepped': a fill drops the bid dropPerCreditPct, not below dropToPct of the bid at the first fill of that timestamp; climbs climbPerMin
   // percent per minute, never above ceilPct of the rate of the last fill (of rateStart before any fill). the funded clamp and rateCap apply to all rules
   bidRule: 'stepped',
-  dropToPct: 80,
+  dropToPct: 50,
   climbPerMin: 0.5,
   dropPerCreditPct: 0.5,
-  ceilPct: 125,
+  ceilPct: 110,
   // seller model toggle: one seller with an unlimited supply sells one credit per step whenever the bid has reached throttleFrac of the market price
   throttler: false,
   throttleFrac: 0.95,
-  idleLoosenPct: 20, // stepped: percent added to the ceiling anchor every idleLoosenMin minutes while no fill happens (launch 20, linear), 0 = none
+  idleLoosenPct: 2, // stepped: percent added to the ceiling anchor every idleLoosenMin minutes while no fill happens (launch 2, linear), 0 = none
   idleLoosenMin: 10,
   ceilDecayHours: 0, // stepped: half life of the ceiling headroom since the last fill, 0 = none
   askFloor: 0, // lowest seller ask as a multiple of the market price (0: none, asks are lognormal around 1)
@@ -1346,7 +1346,7 @@ const CHG = {
 };
 // every control: key in the state object, how to show it. launch values are the Core's (script/config/mainnet.json)
 const BASE_STATE = { volPreset: 'comparable', volScale: 1, volTail: 17, volHalfLifeDays: 3, buyShareLate: 'auto', pricePath: 'flat', priceP0: 0.0089, wtpMult: 1, stmtPerDay: 8, buyerWaits: 'no', impactElast: 0.12,
-  openPct: 100, saleMode: 'buyOnly', markupBps: 15000, startCapBps: 100000, fastBpsH: 100, kneeBps: 10000, slowBpsH: 25, floorBps: 7500, saleFloorBps: 7500, auctionHours: 24, saleToBuybackBps: 5000, feeToBuybackBps: 0, exitAfterH: 105, dropPerCreditPct: 0.5, dropToPct: 80, climbPerMin: 0.5, ceilPct: 125, idleLoosenPct: 2, rateCap: 205540000000000, fundedRule: 'built',
+  openPct: 100, saleMode: 'buyOnly', markupBps: 15000, startCapBps: 100000, fastBpsH: 100, kneeBps: 10000, slowBpsH: 25, floorBps: 7500, saleFloorBps: 7500, auctionHours: 24, saleToBuybackBps: 5000, feeToBuybackBps: 0, exitAfterH: 105, dropPerCreditPct: 0.5, dropToPct: 50, climbPerMin: 0.5, ceilPct: 110, idleLoosenPct: 2, rateCap: 26700000000000000, fundedRule: 'built',
   basefeeGwei: 1, keeperFee: 0.0005, buybackMaxBaseFee: 10,
   chgOn: false, chgDay: 30, chgKey: 'saleToBuybackBps', chgValue: 7500,
   phase2On: false, phase2Day: 14, xp: 0.0108, takerThreshold: 0.15, days: 90, seed: 7 };
@@ -1383,11 +1383,11 @@ const GROUPS = [
   ] },
   { title: 'engine settings', open: false, ctl: [
     { k: 'dropPerCreditPct', t: 'range', label: 'dropPerCreditBps', min: 0.1, max: 5, log: true, fmt: (v) => Math.round(v * 100), hint: 'bps the bid falls after each credit bought. launch 50' },
-    { k: 'dropToPct', t: 'range', label: 'dropFloorBps', min: 50, max: 99, step: 1, fmt: (v) => v * 100, hint: 'within one minute the bid stays at or above this share of the rate at the first fill. launch 8000' },
+    { k: 'dropToPct', t: 'range', label: 'dropFloorBps', min: 50, max: 99, step: 1, fmt: (v) => v * 100, hint: 'within one minute the bid stays at or above this share of the rate at the first fill. launch 5000' },
     { k: 'climbPerMin', t: 'range', label: 'climbPerMinBps', min: 0.1, max: 3, log: true, fmt: (v) => Math.round(v * 100), hint: 'bps the bid climbs each minute. launch 50' },
-    { k: 'ceilPct', t: 'range', label: 'ceilBps', min: 101, max: 300, step: 1, fmt: (v) => v * 100, hint: 'the bid never climbs above this share of the last fill rate. launch 12500' },
+    { k: 'ceilPct', t: 'range', label: 'ceilBps', min: 101, max: 300, step: 1, fmt: (v) => v * 100, hint: 'the bid never climbs above this share of the last fill rate. launch 11000' },
     { k: 'idleLoosenPct', t: 'range', label: 'idleLoosenBps', min: 0, max: 20, step: 0.5, fmt: (v) => Math.round(v * 100), hint: 'bps added to the ceiling anchor every 10 idle minutes. launch 200' },
-    { k: 'rateCap', t: 'range', label: 'rateCap, wei per credit', min: 1.3e16, max: 1e18, log: true, fmt: fmtSci, hint: 'the eth rate never passes it. launch 8.9e16, 10 times rateStart. the page keeps it at or above rateStart' },
+    { k: 'rateCap', t: 'range', label: 'rateCap, wei per credit', min: 1.3e16, max: 1e18, log: true, fmt: fmtSci, hint: 'the eth rate never passes it. launch 2.67e16, 3 times rateStart. the page keeps it at or above rateStart' },
     { k: 'basefeeGwei', t: 'range', label: 'base fee of the buyback calls, gwei', min: 0.1, max: 200, log: true, fmt: (v) => fmtN(v) + ' gwei', hint: 'the caller is paid 270,000 gas at min(base fee, buybackMaxBaseFee) plus keeperFee out of each slice' },
     { k: 'keeperFee', t: 'range', label: 'keeperFee, eth', min: 0, max: 0.005, step: 0.00025, fmt: (v) => v.toFixed(5), hint: 'paid to the buyback caller on top of the gas. launch 0.0005, at most 0.005' },
     { k: 'buybackMaxBaseFee', t: 'range', label: 'buybackMaxBaseFee, gwei', min: 1, max: 100, step: 1, fmt: (v) => v + ' gwei', hint: 'the base fee the gas refund stops at. launch 10' },

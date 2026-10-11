@@ -26,7 +26,7 @@ contract ReviewFlowCoreTest is Fixture {
     /// pot, as many as the pot pays, the last at the clamp
     function test_ACCEPTED_ownerCanOverpayAnAccompliceSeller() public {
         _skipSniperWindow();
-        _fundPot(10 ether);
+        _fundPot(1 ether);
         uint256 pot = core.ethPot();
         vm.warp(block.timestamp + 2 hours);
         uint256 launchCap = core.settings().rateCap;
@@ -48,7 +48,7 @@ contract ReviewFlowCoreTest is Fixture {
         emit log_named_uint("paid to the accomplice (wei)", got);
         emit log_named_uint("market value of the credits (wei)", n * MARKET);
         assertEq(got, pot, "the whole pot in one block");
-        assertGt(got, n * MARKET * 5, "paid several times the market");
+        assertGt(got, n * MARKET * 3 / 2, "paid well above the market");
         _solvent();
     }
 
@@ -164,8 +164,6 @@ contract ReviewFlowCoreTest is Fixture {
             2_000,
             2_500,
             500,
-            15_000,
-            1_000,
             40_000,
             30 days,
             365 days,
@@ -183,7 +181,9 @@ contract ReviewFlowCoreTest is Fixture {
             1_000,
             uint64(RATE_START_MAX_WEI),
             10_000,
-            10_000
+            10_000,
+            0.005 ether,
+            100 gwei
         );
     }
 
@@ -203,11 +203,12 @@ contract ReviewFlowCoreTest is Fixture {
         for (uint256 i; i < 2; ++i) {
             _setSettings(two[i]);
             assertEq(keccak256(abi.encode(core.settings())), keccak256(abi.encode(two[i])), "round trip");
-            // the three raw words hold exactly the values and nothing else
+            // the four raw words hold exactly the values and nothing else
             bytes32 slot = 0xb5805f89ef62cd999f965a45fb6f4c11141caa04e5c4acba9c2552ef76902804;
             uint256 w0 = uint256(vm.load(address(core), slot));
-            assertEq(uint16(w0 >> 144), two[i].saleFloorBps, "the sale floor sits at bits 144 to 159");
-            assertEq(uint16(w0 >> 240), two[i].exitToBuybackBps, "the exit eth lane share sits at bits 240 to 255");
+            assertEq(w0 >> 224, 0, "slot 0 top bits clear");
+            assertEq(uint16(w0 >> 112), two[i].saleFloorBps, "the sale floor sits at bits 112 to 127");
+            assertEq(uint16(w0 >> 208), two[i].exitToBuybackBps, "the exit eth lane share sits at bits 208 to 223");
             uint256 w1 = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
             assertEq(uint64(w1 >> 144), two[i].keeperFee, "the keeper fee sits at bits 144 to 207");
             assertEq(uint48(w1 >> 208), two[i].buybackMaxBaseFee, "the base fee ceiling sits at bits 208 to 255");
@@ -216,6 +217,10 @@ contract ReviewFlowCoreTest is Fixture {
             assertEq(uint16(w2 >> 192), two[i].feeToBuybackBps, "the fee share sits at bits 192 to 207");
             assertEq(uint64(w2 >> 112), two[i].rateCap, "the rate cap sits at bits 112 to 175");
             assertEq(uint16(w2 >> 176), two[i].exitLaneToBuybackBps, "the exit lane share sits at bits 176 to 191");
+            uint256 w3 = uint256(vm.load(address(core), bytes32(uint256(slot) + 3)));
+            assertEq(w3 >> 112, 0, "slot 3 top bits clear");
+            assertEq(uint64(w3), two[i].callerFee, "the caller fee sits at bits 0 to 63");
+            assertEq(uint48(w3 >> 64), two[i].callerMaxBaseFee, "the caller base fee ceiling sits at bits 64 to 111");
         }
     }
 
@@ -311,7 +316,7 @@ contract ReviewFlowCoreTest is Fixture {
         vm.deal(address(core), address(core).balance + 100 ether);
         core.skim();
         Settings memory s = core.settings();
-        assertEq(s.rateCap, 89_000_000_000_000_000, "launch value");
+        assertEq(s.rateCap, 26_700_000_000_000_000, "launch value");
         vm.prank(owner);
         vm.expectRevert(ICore.BadRate.selector);
         core.setRate(uint256(s.rateCap) + 1);

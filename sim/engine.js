@@ -12,10 +12,8 @@ export const SETTINGS = {
   climbDoubleEvery: 24 * 3600,
   climbMaxBps: 800, // per hour
   dropBps: 2000,
-  tipSavingsBps: 1000,
-  tipCapBps: 200,
-  reimburseBps: 8000, // governs exitStatement gas repay; the simulator does not model exit gas
-  reimburseCapBps: 500,
+  tipSavingsBps: 2500,
+  tipCapBps: 400,
   saleFloorBps: 7500, // the hard floor: no sale of a statement below cost * saleFloorBps / 10000, whatever the controller asks
   auctionDuration: 24 * 3600, // runs from the first bid
   exitAfter: 105 * 3600, // an unbid listing may exit through the exitModule after this long
@@ -31,9 +29,11 @@ export const SETTINGS = {
   xRateDropPerCredit: 20,
   xAuctionHalfLife: 6 * 3600,
   exitSliceCredits: 20,
-  rateCap: 89000000000000000, // wei per credit, 10 times rateStart: the eth rate never passes it (climb clamp, setRate)
+  rateCap: 26700000000000000, // wei per credit, 3 times rateStart: the eth rate never passes it (climb clamp, setRate)
   exitLaneToBuybackBps: 0, // share of exitToken from exit lane exits to the coin buyback, rest to the exit bid pot
   feeToBuybackBps: 0, // share of swap fee eth booked in receive() that goes to the buyback instead of the pot
+  callerFee: 0, // eth. paid to the caller of compose, composeExit and exitStatement from the pot, with the gas refund below. launch 0: the simulator does not model these payments
+  callerMaxBaseFee: 0, // gwei, the cap on the base fee the refund of those three doors uses. 0 refunds no gas
 };
 export const SETTING_KEYS = Object.keys(SETTINGS);
 // the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement of cost c, in bps of c, starts at
@@ -85,8 +85,6 @@ export function firstViolation(s) {
   if (s.dropBps < 500 || s.dropBps > 5000) return 'dropBps';
   if (s.tipSavingsBps > 2500) return 'tipSavingsBps';
   if (s.tipCapBps > 500) return 'tipCapBps';
-  if (s.reimburseBps > 15000) return 'reimburseBps';
-  if (s.reimburseCapBps > 1000) return 'reimburseCapBps';
   if (s.saleFloorBps < 1000 || s.saleFloorBps > 40000) return 'saleFloorBps';
   if (s.auctionDuration < 6 * h || s.auctionDuration > 30 * d) return 'auctionDuration';
   if (s.exitAfter < h || s.exitAfter > 365 * d) return 'exitAfter';
@@ -106,6 +104,8 @@ export function firstViolation(s) {
   if (s.rateCap < RATE_MIN || s.rateCap > RATE_MAX) return 'rateCap';
   if (s.exitLaneToBuybackBps > 10000) return 'exitLaneToBuybackBps';
   if (s.feeToBuybackBps > 10000) return 'feeToBuybackBps';
+  if (s.callerFee > 0.005) return 'callerFee';
+  if (s.callerMaxBaseFee > 100) return 'callerMaxBaseFee';
   return null;
 }
 // the eth rate bounds of setRate, rateStart and rateCap, wei per credit (Interfaces.sol)
@@ -134,14 +134,14 @@ export const SIM_DEFAULTS = {
   // 'stepped': a fill drops the bid dropPerCreditPct, not below dropToPct of the bid at the first fill of that timestamp; climbs climbPerMin
   // percent per minute, never above ceilPct of the rate of the last fill (of rateStart before any fill). the funded clamp and rateCap apply to all rules
   bidRule: 'stepped',
-  dropToPct: 80,
+  dropToPct: 50,
   climbPerMin: 0.5,
   dropPerCreditPct: 0.5,
-  ceilPct: 125,
+  ceilPct: 110,
   // seller model toggle: one seller with an unlimited supply sells one credit per step whenever the bid has reached throttleFrac of the market price
   throttler: false,
   throttleFrac: 0.95,
-  idleLoosenPct: 20, // stepped: percent added to the ceiling anchor every idleLoosenMin minutes while no fill happens (launch 20, linear), 0 = none
+  idleLoosenPct: 2, // stepped: percent added to the ceiling anchor every idleLoosenMin minutes while no fill happens (launch 2, linear), 0 = none
   idleLoosenMin: 10,
   ceilDecayHours: 0, // stepped: half life of the ceiling headroom since the last fill, 0 = none
   askFloor: 0, // lowest seller ask as a multiple of the market price (0: none, asks are lognormal around 1)

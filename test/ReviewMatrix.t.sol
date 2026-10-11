@@ -337,53 +337,53 @@ contract ReviewMatrixConfigTest is ReviewHarness {
     }
 
     function _miscRate(uint256 i) private view returns (Mut memory m) {
-        // rows 0 to 3 keep rateCap at 10 times rateStart, so the ratio row passes and the rate bounds rows are the only
+        // rows 0 to 3 keep rateCap at 3 times rateStart, so the ratio row passes and the rate bounds rows are the only
         // ones that can stop them. `pre` names the exact failed rows
         if (i == 0) {
-            // cap 1e13 is the lowest rateCap the settings accept: only the rateStart bound fails
-            m = _m("rateStart 1e12 below min (rateCap 1e13, 10x)", Class.Pre);
-            m.c.rateStart = 1e12;
-            m.c.settings.rateCap = 1e13;
+            // cap 3e13 - 3 is inside the settings bounds: only the rateStart bound fails
+            m = _m("rateStart 1e13 - 1 below min (rateCap 3e13 - 3, 3x)", Class.Pre);
+            m.c.rateStart = 1e13 - 1;
+            m.c.settings.rateCap = 3e13 - 3;
             m.pre = ROW_RATE_BOUNDS;
         } else if (i == 1) {
-            // cap 1.2e19 is also above the settings bound
-            m = _m("rateStart 1.2e18 above max (rateCap 1.2e19, 10x)", Class.Pre);
+            // cap 3.6e18 is also above the settings bound
+            m = _m("rateStart 1.2e18 above max (rateCap 3.6e18, 3x)", Class.Pre);
             m.c.rateStart = 1.2e18;
-            m.c.settings.rateCap = 1.2e19;
+            m.c.settings.rateCap = 3.6e18;
             m.pre = string.concat(ROW_RATE_BOUNDS, ", ", ROW_SETTINGS_BOUNDS);
         } else if (i == 2) {
-            // 10 * 0 == 0, and a rateCap of 0 is also below the settings bound
-            m = _m("rateStart 0 (rateCap 0, 10x)", Class.Pre);
+            // 3 * 0 == 0, and a rateCap of 0 is also below the settings bound
+            m = _m("rateStart 0 (rateCap 0, 3x)", Class.Pre);
             m.c.rateStart = 0;
             m.c.settings.rateCap = 0;
             m.pre = string.concat(ROW_RATE_BOUNDS, ", ", ROW_SETTINGS_BOUNDS);
         } else if (i == 3) {
-            // cap 1.5e19 is also above the settings bound
-            m = _m("rateStart 1.5e18 (1.5x above max, rateCap 1.5e19, 10x)", Class.Pre);
+            // cap 4.5e18 is also above the settings bound
+            m = _m("rateStart 1.5e18 (1.5x above max, rateCap 4.5e18, 3x)", Class.Pre);
             m.c.rateStart = 1.5e18;
-            m.c.settings.rateCap = 1.5e19;
+            m.c.settings.rateCap = 4.5e18;
             m.pre = string.concat(ROW_RATE_BOUNDS, ", ", ROW_SETTINGS_BOUNDS);
         } else if (i == 4) {
             m = _m("rateStart 1e14 (in bounds, not the signed value)", Class.Hash);
             m.c.rateStart = 1e14;
-            m.c.settings.rateCap = 1e15;
+            m.c.settings.rateCap = 3e14;
         } else if (i == 5) {
-            m = _m("rateStart 4e16 (about 5x the launch day value, rateCap 4e17, in bounds)", Class.Hash);
+            m = _m("rateStart 4e16 (about 5x the launch day value, rateCap 1.2e17, in bounds)", Class.Hash);
             m.c.rateStart = 4e16;
-            m.c.settings.rateCap = 4e17;
+            m.c.settings.rateCap = 1.2e17;
         } else if (i == 6) {
-            m = _m("rateStart 1e13 (the lowest edge, rateCap 1e14)", Class.Hash);
+            m = _m("rateStart 1e13 (the lowest edge, rateCap 3e13)", Class.Hash);
             m.c.rateStart = 1e13;
-            m.c.settings.rateCap = 1e14;
+            m.c.settings.rateCap = 3e13;
         } else if (i == 8) {
             // rateStart above rateCap, both inside their bounds: the start-at-most-cap clause of the bounds row fails,
-            // and 1e14 is not 10 times 2e14, so the ratio row fails with it
+            // and 1e14 is not 3 times 2e14, so the ratio row fails with it
             m = _m("rateStart 2e14 above rateCap 1e14", Class.Pre);
             m.c.rateStart = 2e14;
             m.c.settings.rateCap = 1e14;
             m.pre = string.concat(ROW_RATE_BOUNDS, ", ", ROW_RATE_RATIO);
         } else {
-            m = _m("rateStart 1e18 (the highest edge, rateCap 1e18 is not 10 times)", Class.Pre);
+            m = _m("rateStart 1e18 (the highest edge, rateCap 1e18 is not 3 times)", Class.Pre);
             m.c.rateStart = 1e18;
             m.c.settings.rateCap = 1e18;
             m.pre = ROW_RATE_RATIO;
@@ -526,8 +526,6 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
             100,
             500,
             100,
-            10_000,
-            300,
             5000,
             48 hours,
             24 hours,
@@ -545,7 +543,9 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
             40,
             40_000_000_000_000_000,
             5000,
-            5000
+            5000,
+            0.002 ether,
+            50 gwei
         ];
     }
 
@@ -567,53 +567,53 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
         uint256[27] memory lo = SettingsFields.lo();
         uint256[27] memory hi = SettingsFields.hi();
         string memory nm = _trim(SettingsFields.names()[f]);
-        // a rateCap other than 10 times the launch rateStart is stopped by its own preflight row
-        m = _m("", kind <= 1 || f == 24 ? Class.Pre : Class.Hash);
-        if (f == 24 && kind >= 2) m.pre = ROW_RATE_RATIO;
+        // a rateCap other than 3 times the launch rateStart is stopped by its own preflight row
+        m = _m("", kind <= 1 || f == 22 ? Class.Pre : Class.Hash);
+        if (f == 22 && kind >= 2) m.pre = ROW_RATE_RATIO;
         Settings memory s = m.c.settings;
         if (kind == 0) {
-            if (f == 24) {
-                // rateStart 1e17 + 1 is in bounds and 10 times it is the rateCap: only the settings bound fails
-                m.c.rateStart = hi[f] / 10 + 1;
-                s.rateCap = uint64(10 * m.c.rateStart);
+            if (f == 22) {
+                // rateStart 3.3e17 + 1 is in bounds and 3 times it is the rateCap: only the settings bound fails
+                m.c.rateStart = hi[f] / 3 + 1;
+                s.rateCap = uint64(3 * m.c.rateStart);
                 m.pre = ROW_SETTINGS_BOUNDS;
             } else {
                 SettingsFields.set(s, f, hi[f] + 1);
             }
             m.label = string.concat(
-                "settings.", nm, " ", vm.toString(f == 24 ? uint256(s.rateCap) : hi[f] + 1), " above the top"
+                "settings.", nm, " ", vm.toString(f == 22 ? uint256(s.rateCap) : hi[f] + 1), " above the top"
             );
         } else if (kind == 1) {
-            if (lo[f] == 0 && f != 19) return m;
-            if (f == 19) {
-                SettingsFields.set(s, 18, s.xRateFloor - 1);
-            } else if (f == 24) {
-                // 10 times a rateStart of 1e12 - 1 is the rateCap 1e13 - 10: the rateStart bound and the settings bound
+            if (lo[f] == 0 && f != 17) return m;
+            if (f == 17) {
+                SettingsFields.set(s, 16, s.xRateFloor - 1);
+            } else if (f == 22) {
+                // 3 times a rateStart of 1e13 / 3 - 1 is a rateCap under 1e13: the rateStart bound and the settings bound
                 // fail together, the ratio row passes
-                m.c.rateStart = lo[f] / 10 - 1;
-                s.rateCap = uint64(10 * m.c.rateStart);
+                m.c.rateStart = lo[f] / 3 - 1;
+                s.rateCap = uint64(3 * m.c.rateStart);
                 m.pre = string.concat(ROW_RATE_BOUNDS, ", ", ROW_SETTINGS_BOUNDS);
             } else {
                 SettingsFields.set(s, f, lo[f] - 1);
             }
             m.label = string.concat(
-                "settings.", nm, f == 24 ? string.concat(" ", vm.toString(uint256(s.rateCap))) : " one", " below the bottom"
+                "settings.", nm, f == 22 ? string.concat(" ", vm.toString(uint256(s.rateCap))) : " one", " below the bottom"
             );
         } else if (kind == 2) {
             SettingsFields.set(s, f, _wrong()[f]);
             m.label = string.concat("settings.", nm, " ", vm.toString(_wrong()[f]), " (valid, wrong)");
         } else if (kind == 3) {
-            if (f == 19) s.xRateFloor = s.xRateCap;
+            if (f == 17) s.xRateFloor = s.xRateCap;
             else SettingsFields.set(s, f, hi[f]);
             m.label = string.concat("settings.", nm, " ", vm.toString(hi[f]), " the top edge");
         } else {
-            if (lo[f] == 0 && f != 18) return m;
-            if (f == 18) s.xRateCap = s.xRateFloor;
+            if (lo[f] == 0 && f != 16) return m;
+            if (f == 16) s.xRateCap = s.xRateFloor;
             // the lowest rate cap that still holds the launch rate
-            else if (f == 24) s.rateCap = uint64(base.rateStart);
+            else if (f == 22) s.rateCap = uint64(base.rateStart);
             else SettingsFields.set(s, f, lo[f]);
             // the smallest slice needs the cheapest buyback payment
-            if (f == 14) (s.keeperFee, s.buybackMaxBaseFee) = (0, 1 gwei);
+            if (f == 12) (s.keeperFee, s.buybackMaxBaseFee) = (0, 1 gwei);
             m.label = string.concat("settings.", nm, " the bottom edge");
         }
         // an edge that is the launch value is no mutation

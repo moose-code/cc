@@ -69,13 +69,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x7e76af58dc53f7d9875f5d80bba678318643a8ce738d3cca83f2f5d4bd95bd5e;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x1295748f50482ac6c75db38efcf1b60eb211ba157557df00d0a674d45c36d96c;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xe374fe3952dcd87dacdbcc1da044565a7d2fa18ec1a02c1bcc5d267ca5c7bc3c;
+    bytes32 internal constant BUILD_HASH_CORE = 0x9c0c5975c1a8a66ffadeffc413393037084d300158c902ddd3e248015e5892f2;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xec48799159091f48f65ef479db91c143a91716ff3b7aaf6e3b727b5966032c82;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x1220f4343e914379c6845bb8fc6d80474eab5f4d2b48ea157a503221df789ce7;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0x4ff989feabca4e9387b32b7f3ea71b38dc0ff330f81e0cf853130082079ffb63;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x79b0dd0664519e417981eaeafa81a5b45c32237261c8ceb8422debb833ba242c;
+        0x8c71ca6d78f958fe72c91a89675bf54a8bb8dbc2b0e9eb17fd793435ca8fae5a;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -169,8 +169,8 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat("rateStart ", vm.toString(c.rateStart), " rateCap ", vm.toString(c.settings.rateCap))
         );
         _check(
-            "rateCap is 10 times rateStart",
-            c.settings.rateCap == 10 * c.rateStart,
+            "rateCap is 3 times rateStart",
+            c.settings.rateCap == 3 * c.rateStart,
             string.concat(
                 "rateStart ",
                 vm.toString(c.rateStart),

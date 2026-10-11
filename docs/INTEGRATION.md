@@ -31,7 +31,7 @@ the record of a launch is the output of `script/Deploy.s.sol` (core, coin, contr
 | the eth a seller receives now for a credit | `core.ethRate()` (the snapshot field `ethRate`) |
 | the price state before the clamp of a thin pot | `core.ethPrice()` |
 
-a batch sold through `sellForEth` is paid credit by credit. after each credit the rate falls by `dropPerCreditBps` (50, which is 0.5 percent) and stays at or above `dropFloorBps` (8,000) of the price state at the first fill of the current minute, so the total of a batch of `n` credits is below `n * ethRate`. the quote of the first credit is exact for the state of the block the transaction runs in. the pull of fees (section 7) runs first and can raise the pot, which can only raise the read, so the first credit is paid `ethRate` or more. `minOut` is the floor on the total.
+a batch sold through `sellForEth` is paid credit by credit. after each credit the rate falls by `dropPerCreditBps` (50, which is 0.5 percent) and stays at or above `dropFloorBps` (5,000) of the price state at the first fill of the current minute, so the total of a batch of `n` credits is below `n * ethRate`. the quote of the first credit is exact for the state of the block the transaction runs in. the pull of fees (section 7) runs first and can raise the pot, which can only raise the read, so the first credit is paid `ethRate` or more. `minOut` is the floor on the total.
 
 ## 3. door 1: sell credits for eth
 
@@ -74,7 +74,7 @@ what the call does, in order:
 2. `TargetNotAllowed` when the target is not allowed or is a forbidden contract. `ZeroId`. `AlreadyOwned` when the Core owns the credit. `PotTooSmall`, `AboveCeiling` (value above `ethRate()`).
 3. the Core calls `target` with `value` and `data`. `CallFailed` when it reverts. during the call the router cannot flush into the Core (`Measuring`), so the pull waits for the next door.
 4. the Core checks that exactly one credit arrived and that it is `id` (`NoCredit`), that the eth balance fell (`BadCost`) and that the fall is at most `value` (`BadCost`). the fall is the cost, so a target that refunds part of `value` lowers the cost.
-5. the tip is `min(tipSavingsBps * (ceiling - cost) / 10_000, tipCapBps * cost / 10_000)` (1,000 and 200 at launch), paid to the caller last.
+5. the tip is `min(tipSavingsBps * (ceiling - cost) / 10_000, tipCapBps * cost / 10_000)` (2,500 and 400 at launch), paid to the caller last.
 6. `cost + tip` is spent from the pot and is the cost basis of the credit. event `ListingBought(id, target, caller, cost, tip, rate)`.
 
 ## 5. compose
@@ -86,10 +86,11 @@ what the call does:
 1. the fee pull of section 7.
 2. `NotReady` when the controller reports no page. `BadFormat` for a format above 7.
 3. the 80 credits leave the pile (`NotInPile`, `NotHeld`) and go to `Statements.compose`. `BadStatement` when the result is not the next statement id held by the Core with 80 credits.
-4. the statement is booked with the sum of the cost bases of its 80 credits. the caller pays the gas of the call, including the fee pull. holders of the coin and people in the project compose, and the owner composes when nobody does.
+4. the statement is booked with the sum of the cost bases of its 80 credits. holders of the coin and people in the project compose, and the owner composes when nobody does.
 5. event `Composed(sid, lane, format, cost, caller)`. an eth lane statement is listed on the house in the same call (`StatementListed(sid, auctionId, reserve)`).
+6. the caller payment, last. `min(counted gas, 13,700,000) * min(block.basefee, callerMaxBaseFee) + callerFee`, from `ethPot`, at most `ethPot`. counted gas is the gas measured from the first line of the body, which includes the fee pull, plus 60,000 for the transaction base cost and the work after the measured part. `callerFee` and `callerMaxBaseFee` are 0 at launch, so the payment is 0 and no eth moves. the owner turns it on with `setSettings`. the payment goes to `msg.sender`, so a contract caller needs a `receive()` that accepts eth. `exitStatement` pays its caller by the same rule and the same two settings, with a gas bound of 1,500,000 and 50,000 of overhead. the transfer is the last action of the door and the Core is locked against re entry while it runs.
 
-send at least 10,000,000 gas: the live Statements contract needs about 8.71 million for 80 credits (section 13).
+send at least 12,000,000 gas: the live Statements contract needs about 8.7 million for 80 credits, and the gas the transaction needs is the gas before the refund of the cleared credit records, 10.9 million, or 11.4 million with a loaded fee router of four gas burning payees (section 13).
 
 ## 6. statements: the buy mode and buying through the house
 
@@ -119,7 +120,7 @@ the pool sends fee eth to the fee router. the router holds it until `flush()`:
 * while the split is on (`splitOn`, from `splitStart`), each payee receives `amount * ppm / 1_000_000` with 100,000 gas. a share that fails is recorded in `owed` and paid by `claim(payee)`.
 * the rest goes to the engine, the Core, whose `receive()` books it: `feeToBuybackBps` to the coin buyback pot, the rest to `ethPot`. `FlushFailed` when the engine refuses it, and the fees stay in the router. `NoEngine` while no engine is set. an empty balance returns early.
 
-the Core pulls the fees itself. `sellForEth` (both forms), `buyListing`, `compose`, `composeExit` and `adopt` call `flush()` first. the caller of `compose` or `composeExit` pays the gas of the flush. `CoreLib.pullFees` uses at most 1,000,000 gas and ignores a failing router. `adopt` pulls as well, before it reads the price. `sellForExitToken`, `exitStatement`, `collectSales`, `sellTo`, `skim` and `buyback` read no eth price and book on their own schedule. `lens.snapshot()` reports what a flush would send now: `flushToCore` and `flushToPayees`.
+the Core pulls the fees itself. `sellForEth` (both forms), `buyListing`, `compose`, `composeExit` and `adopt` call `flush()` first. the gas of the flush is part of the gas counted for the caller payment of `compose` and `composeExit` (section 5). `CoreLib.pullFees` uses at most 1,000,000 gas and ignores a failing router. `adopt` pulls as well, before it reads the price. `sellForExitToken`, `exitStatement`, `collectSales`, `sellTo`, `skim` and `buyback` read no eth price and book on their own schedule. `lens.snapshot()` reports what a flush would send now: `flushToCore` and `flushToPayees`.
 
 ## 8. adopt
 
@@ -351,7 +352,7 @@ the fee router:
 
 ## 13. gas
 
-measured on the pinned fork with foundry 1.8.1. `tx` includes the intrinsic 21,000 and the calldata, `exec` is the gas inside the call. the transaction cap is 16,777,216.
+measured on the pinned fork with foundry 1.8.1. `tx` includes the intrinsic 21,000 and the calldata, `exec` is the gas inside the call. forge reports a call after the EIP-3529 refund, which is up to 20 percent of the gas for a call that clears many records. the gas limit of a transaction has to cover the gas before the refund. the transaction cap is 16,777,216.
 
 | call | gas | pinned by |
 |---|---|---|
@@ -367,7 +368,7 @@ measured on the pinned fork with foundry 1.8.1. `tx` includes the intrinsic 21,0
 | `buyListing` through Seaport, basic order | tx 446,330 | `test_gas_buyListing_seaport_basic` |
 | `buyListing` through Seaport, basic order with a fee recipient | tx 483,660 | `test_gas_buyListing_seaport_basicWithFee` |
 | `buyListing` through Seaport, advanced order | tx 460,219 | `test_gas_buyListing_seaport_advanced` |
-| `compose()`, eth lane, 80 credits, first compose | tx 8,708,257 | `test/GasCap.t.sol` `test_gas_compose_ethLane_firstCold` |
+| `compose()`, eth lane, 80 credits, first compose | tx 8,708,257 after the refund, 10.88 million before it (refund 2.18 million), 11.4 million before it with a loaded router of four gas burning payees | `test/GasCap.t.sol` `test_gas_compose_ethLane_firstCold`, `test/CallerPay.t.sol` |
 | `compose()`, second compose | tx 8,657,605 | `test_gas_compose_ethLane_secondWarmAndCold` |
 | `composeExit()`, 80 credits | tx 8,466,249 | `test_gas_composeExit_andExitStatement_exitLane` |
 | `ControllerV1.nextPage`, full eth pile, cold | 238,269 (the Core allows 500,000) | `test_gas_readCaps_nextPageAndStatementPrice` |

@@ -69,12 +69,12 @@ contract FlowTest is Fixture {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
             uint256 b = hi[i];
-            if (i == 19) b = s.xRateCap;
+            if (i == 17) b = s.xRateCap;
             _set(s, i, a + (b > a ? x % (b - a + 1) : 0));
         }
-        // the slice is at least twice the largest buyback payment (field 14 is `buybackSlice`)
+        // the slice is at least twice the largest buyback payment (field 12 is `buybackSlice`)
         uint256 minSlice = 2 * (BUYBACK_GAS * s.buybackMaxBaseFee + s.keeperFee);
-        if (s.buybackSlice < minSlice) _set(s, 14, minSlice);
+        if (s.buybackSlice < minSlice) _set(s, 12, minSlice);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -83,14 +83,12 @@ contract FlowTest is Fixture {
         assertEq(_hash(core.settings()), _hash(Mainnet.defaultSettings()), "launch values");
         Settings memory s = core.settings();
         assertEq(s.dropPerCreditBps, 50);
-        assertEq(s.dropFloorBps, 8_000);
+        assertEq(s.dropFloorBps, 5_000);
         assertEq(s.climbPerMinBps, 50);
-        assertEq(s.ceilBps, 12_500);
-        assertEq(s.idleLoosenBps, 2_000);
-        assertEq(s.tipSavingsBps, 1_000);
-        assertEq(s.tipCapBps, 200);
-        assertEq(s.reimburseBps, 8_000);
-        assertEq(s.reimburseCapBps, 500);
+        assertEq(s.ceilBps, 11_000);
+        assertEq(s.idleLoosenBps, 200);
+        assertEq(s.tipSavingsBps, 2_500);
+        assertEq(s.tipCapBps, 400);
         assertEq(s.saleFloorBps, 7_500);
         assertEq(s.auctionDuration, 24 hours);
         assertEq(s.exitAfter, 105 hours);
@@ -106,9 +104,11 @@ contract FlowTest is Fixture {
         assertEq(s.xRateDropPerCredit, 20);
         assertEq(s.xAuctionHalfLife, 6 hours);
         assertEq(s.exitSliceCredits, 20);
-        assertEq(s.rateCap, 89_000_000_000_000_000);
+        assertEq(s.rateCap, 26_700_000_000_000_000);
         assertEq(s.exitLaneToBuybackBps, 0);
         assertEq(s.feeToBuybackBps, 0);
+        assertEq(s.callerFee, 0);
+        assertEq(s.callerMaxBaseFee, 0);
     }
 
     /// @dev write then read of random valid settings: the packed layout the library unpacks matches the compiler's
@@ -128,10 +128,10 @@ contract FlowTest is Fixture {
                 Settings memory s = Mainnet.defaultSettings();
                 uint256 v = k == 0 ? lo[i] : hi[i];
                 // the two fields bounded by another field
-                if (i == 18 && k == 0) s.xRateFloor = 0;
-                if (i == 19 && k == 1) v = s.xRateCap;
+                if (i == 16 && k == 0) s.xRateFloor = 0;
+                if (i == 17 && k == 1) v = s.xRateCap;
                 // the smallest slice needs the cheapest buyback payment: 2 * (600,000 gas * 1 gwei + 0) is 0.0012 ether
-                if (i == 14 && k == 0) (s.keeperFee, s.buybackMaxBaseFee) = (0, 1 gwei);
+                if (i == 12 && k == 0) (s.keeperFee, s.buybackMaxBaseFee) = (0, 1 gwei);
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -152,11 +152,11 @@ contract FlowTest is Fixture {
             vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, names[i]));
             core.setSettings(s);
             // below the bottom (fields whose bottom is zero have none)
-            if (lo[i] == 0 && i != 19) continue;
+            if (lo[i] == 0 && i != 17) continue;
             s = Mainnet.defaultSettings();
-            if (i == 19) {
+            if (i == 17) {
                 // the floor is bounded by the cap, so a cap below the floor is the violation, and it names the floor
-                _set(s, 18, s.xRateFloor - 1);
+                _set(s, 16, s.xRateFloor - 1);
                 names[i] = "xRateFloor";
             } else {
                 _set(s, i, lo[i] - 1);
@@ -1180,8 +1180,8 @@ contract FlowTest is Fixture {
     /// owner and the controller never end up holding more eth, coin, credits, statements or exit token than they
     /// began with, an owner call never changes what the core holds, and eth leaves the core only by a sale of a credit
     /// (paid to the seller, exactly the quoted ceiling) or by the buyback (at most one slice). the exit is a paid door
-    /// (it repays its caller's gas from the pot), so it is called by a neutral keeper that is not watched,
-    /// and what that keeper receives is at most the reimbursement cap
+    /// (it pays its caller from the pot), so it is called by a neutral keeper that is not watched,
+    /// and what that keeper receives is at most the gas cap at the capped base fee plus the fee
     /// forge-config: default.fuzz.runs = 40
     function testFuzz_rule8_noSettingsOrOwnerCallMovesAssetsOut(uint256 seed) public {
         if (seed % 2 == 1) _enterPhase2();
@@ -1225,26 +1225,30 @@ contract FlowTest is Fixture {
         }
     }
 
-    /// @dev a neutral keeper exits the statement. the paid door pays it at most `reimburseCapBps` of the statement cost
+    /// @dev a neutral keeper exits the statement. the paid door pays it at most `EXIT_GAS` at `callerMaxBaseFee` plus
+    /// `callerFee`
     function _exitAsKeeper(uint256 sid) internal {
         address exitKeeper = makeAddr("exitKeeper");
-        (,, uint256 cost,) = core.statementInfo(sid);
-        uint256 cap = cost * core.settings().reimburseCapBps / 10_000;
+        Settings memory st = core.settings();
+        uint256 cap = 1_500_000 * uint256(st.callerMaxBaseFee) + st.callerFee;
         uint256 before = exitKeeper.balance;
         vm.prank(exitKeeper);
         try core.exitStatement(sid) {} catch {}
-        assertLe(exitKeeper.balance - before, cap, "the exit reimbursement stays within the cap");
+        assertLe(exitKeeper.balance - before, cap, "the exit payment stays within the cap");
     }
 
     /// @dev the owner who calls the paid exit door is paid like any keeper: exactly the pot debit, within the cap
-    function test_rule8_ownerAsRedeemCallerGetsOnlyTheCappedReimbursement() public {
+    function test_rule8_ownerAsRedeemCallerGetsOnlyTheCappedPayment() public {
         _enterPhase2();
         Composed memory c = _composeOnce();
+        Settings memory st = core.settings();
+        st.callerFee = 0.0005 ether;
+        st.callerMaxBaseFee = 10 gwei;
+        _setSettings(st);
         _potTo(1 ether);
         (,,, uint64 listedAt) = core.statementInfo(c.sid);
         vm.warp(listedAt + 105 hours);
-        (,, uint256 cost,) = core.statementInfo(c.sid);
-        uint256 cap = cost * core.settings().reimburseCapBps / 10_000;
+        uint256 cap = 1_500_000 * uint256(st.callerMaxBaseFee) + st.callerFee;
         uint256 pot = core.ethPot();
         uint256 coreEth = address(core).balance;
         uint256[5] memory base = _holdings(owner);

@@ -183,6 +183,11 @@ contract RepaidCaller {
         CORE.exitStatement(sid);
     }
 
+    function compose(uint256 other_) external {
+        other = other_;
+        CORE.compose();
+    }
+
     function _try(bytes memory data) private {
         (bool success, bytes memory out) = address(CORE).call(data);
         if (success) {

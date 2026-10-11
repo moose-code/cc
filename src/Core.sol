@@ -194,9 +194,15 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant PAGE = 80;
     uint256 private constant MAX_FORMAT = 7;
     uint256 private constant READ_GAS = 200_000;
-    /// gas of the work after the end of `exitStatement` that its reimbursement counts
+    /// gas of the work after the end of `compose` and `composeExit` that the caller payment counts, with the
+    /// transaction base cost
+    uint256 private constant COMPOSE_OVERHEAD_GAS = 60_000;
+    /// the most gas of a compose the caller payment counts. above the largest metered compose, 11.4 million with a loaded
+    /// fee router of four gas burning payees, so a gas burning controller or router cannot inflate the payment
+    uint256 private constant COMPOSE_GAS = 13_700_000;
+    /// gas of the work after the end of `exitStatement` that the caller payment counts, with the transaction base cost
     uint256 private constant EXIT_OVERHEAD_GAS = 50_000;
-    /// the most gas of an exit the reimbursement counts, so a gas burning module cannot inflate it
+    /// the most gas of an exit the caller payment counts, so a gas burning module cannot inflate it
     uint256 private constant EXIT_GAS = 1_500_000;
     /// gas of the work after the end of `buyback` that its refund counts, with the transaction base cost
     uint256 private constant BUYBACK_OVERHEAD_GAS = 60_000;
@@ -452,7 +458,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// bounded read of a module. any failure or short answer returns false and a long answer is cut off.
-    /// the settings, three packed slots at a fixed location shared with the library
+    /// the settings, four packed slots at a fixed location shared with the library
     function _st() private pure returns (Settings storage) {
         return SettingsStore.load();
     }
@@ -614,19 +620,20 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// composes the controller's page of eth lane credits into a statement and lists it on the house. anyone may call.
-    /// the caller pays the gas, which includes the fee router flush. reverts `Retired` after `migrate`
+    /// the gas counted for the caller payment includes the fee router flush. reverts `Retired` after `migrate`
     function compose() external nonReentrant {
         _compose();
     }
 
-    /// composes the controller's page of exit lane credits into a statement. anyone may call. the caller pays the gas,
-    /// which includes the fee router flush. reverts `Retired` after `migrate`
+    /// composes the controller's page of exit lane credits into a statement. anyone may call. the gas counted for the
+    /// caller payment includes the fee router flush. reverts `Retired` after `migrate`
     function composeExit() external nonReentrant {
         _compose();
     }
 
     /// one body for both lanes, told apart by the selector of the call, so the code is not duplicated
     function _compose() private {
+        uint256 gasStart = gasleft();
         _openDoor();
         Lane lane = msg.sig == this.composeExit.selector ? Lane.Exit : Lane.Eth;
         (bool ready, uint256[80] memory ids, uint256 format) = _nextPage(lane);
@@ -658,22 +665,28 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         // forge-lint: disable-next-line(unsafe-typecast)
         emit Composed(sid, lane, uint8(format), cost, msg.sender);
         if (lane == Lane.Eth) _list(sid);
+        _payCaller(gasStart, COMPOSE_OVERHEAD_GAS, COMPOSE_GAS);
     }
 
-    /// the gas reimbursement of an exit: `reimburseBps` of the gas cost, at most `reimburseCapBps` of `cap`
-    /// and of the pot. the pot is debited here, the caller pays it out last
-    function _repay(uint256 gasUsed, uint256 cap) private returns (uint256 r) {
+    /// the payment to the caller of a paying door: the gas counted from `gasStart` plus `overhead`, at most `gasCap`,
+    /// at the base fee capped at `maxBaseFee`, plus `fee`
+    function _payment(uint256 gasStart, uint256 overhead, uint256 gasCap, uint256 maxBaseFee, uint256 fee)
+        private
+        view
+        returns (uint256)
+    {
+        return (gasStart - gasleft() + overhead).min(gasCap) * block.basefee.min(maxBaseFee) + fee;
+    }
+
+    /// pays the caller of `compose`, `composeExit` and `exitStatement` from `ethPot`, at most the pot, by the
+    /// `callerFee` and `callerMaxBaseFee` settings. the last action of the door, after all state is final
+    function _payCaller(uint256 gasStart, uint256 overhead, uint256 gasCap) private {
         Settings storage s = _st();
-        r = (gasUsed * block.basefee * s.reimburseBps / BPS).min(cap * s.reimburseCapBps / BPS).min(ethPot);
-        if (r != 0) {
-            _checkpoint();
-            ethPot -= r;
-        }
-    }
-
-    /// the cap of an exit lane statement, which has no eth cost basis: a page at the opening rate
-    function _notionalCap() private view returns (uint256) {
-        return PAGE * RATE_START;
+        uint256 pay = _payment(gasStart, overhead, gasCap, s.callerMaxBaseFee, s.callerFee).min(ethPot);
+        if (pay == 0) return;
+        _checkpoint();
+        ethPot -= pay;
+        SafeTransferLib.safeTransferETH(msg.sender, pay);
     }
 
     /// the hard floor of a statement sale
@@ -867,12 +880,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         xPot += received - toBuyback;
         _syncXFunded();
         emit StatementExited(sid, s.lane, received);
-        // the caller's gas is repaid from the eth pot after all state is final. nothing is added to a cost basis. the
-        // gas counted is bounded, so a gas burning module cannot push it past the cap
-        uint256 repay = _repay(
-            (gasStart - gasleft() + EXIT_OVERHEAD_GAS).min(EXIT_GAS), s.lane == Lane.Eth ? s.cost : _notionalCap()
-        );
-        if (repay != 0) SafeTransferLib.safeTransferETH(msg.sender, repay);
+        _payCaller(gasStart, EXIT_OVERHEAD_GAS, EXIT_GAS);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -908,8 +916,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (bought == 0) revert NothingBought();
         ICoin(COIN).burn(bought);
         // spent is at most budget, which is at most setSlice - maxPay, so the scaled fee is at most the fee
-        uint256 paid = (gasStart - gasleft() + BUYBACK_OVERHEAD_GAS).min(BUYBACK_GAS) * rate
-            + fee.min(fee * spent / (setSlice - maxPay));
+        uint256 paid = _payment(
+            gasStart, BUYBACK_OVERHEAD_GAS, BUYBACK_GAS, s.buybackMaxBaseFee, fee.min(fee * spent / (setSlice - maxPay))
+        );
         ethToBuyback += slice - spent - paid;
         emit Buyback(msg.sender, spent, paid);
         if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
@@ -1211,7 +1220,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return (s.held, s.lane, s.cost, s.listedAt);
     }
 
-    /// every setting. the three packed slots go to the library, which unpacks them into the struct, and the answer is
+    /// every setting. the four packed slots go to the library, which unpacks them into the struct, and the answer is
     /// returned as it comes (an abi encoded `Settings`)
     function settings() external view returns (Settings memory) {
         bytes32 slot = SettingsStore.SLOT;
@@ -1223,7 +1232,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             mstore(add(p, 4), sload(slot))
             mstore(add(p, 0x24), sload(add(slot, 1)))
             mstore(add(p, 0x44), sload(add(slot, 2)))
-            if iszero(staticcall(gas(), lib, p, 0x64, 0, 0)) { revert(0, 0) }
+            mstore(add(p, 0x64), sload(add(slot, 3)))
+            if iszero(staticcall(gas(), lib, p, 0x84, 0, 0)) { revert(0, 0) }
             returndatacopy(p, 0, returndatasize())
             return(p, returndatasize())
         }

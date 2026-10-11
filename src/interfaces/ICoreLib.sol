@@ -44,7 +44,7 @@ interface ICoreLib {
         view
         returns (uint256 price, uint256 read);
     function decay(uint256 start, uint256 elapsed, uint256 halfLife) external pure returns (uint256 p);
-    function unpack(uint256 a, uint256 b, uint256 c) external pure returns (Settings memory s);
+    function unpack(uint256 a, uint256 b, uint256 c, uint256 d) external pure returns (Settings memory s);
 
     function swapIn(address manager, address coin, uint24 fee, int24 spacing, address hook, uint256 amountIn)
         external

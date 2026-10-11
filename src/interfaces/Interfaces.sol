@@ -83,7 +83,7 @@ uint256 constant RATE_START_MAX_WEI = 1e18;
 uint256 constant BUYBACK_GAS = 600_000;
 
 /// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`, bounds
-/// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into three storage slots
+/// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into four storage slots
 /// (a hot path reads it with a handful of loads). docs/FLOW.md section 2 has the meaning of every field
 struct Settings {
     /// fall of the eth rate per credit bought, bps of the rate before that credit
@@ -98,10 +98,6 @@ struct Settings {
     uint16 idleLoosenBps;
     uint16 tipSavingsBps;
     uint16 tipCapBps;
-    /// gas reimbursement of `exitStatement`, bps of gas cost
-    uint16 reimburseBps;
-    /// cap of the `exitStatement` reimbursement, bps of the statement cost
-    uint16 reimburseCapBps;
     /// the hard floor of a statement sale, bps of the statement cost. no sale clears below it. the controller prices
     /// above it, the house reserve and `sellTo` are floored at it
     uint16 saleFloorBps;
@@ -137,6 +133,11 @@ struct Settings {
     /// share of the swap fee eth that the fee router flushes to the core (booked in `receive()`) that goes to the coin buyback,
     /// the rest to the pot, bps. eth booked later by `skim` goes to the pot whole
     uint16 feeToBuybackBps;
+    /// fixed fee paid to the caller of `compose`, `composeExit` and `exitStatement`, wei, from `ethPot`. zero turns the
+    /// whole payment of those doors off when `callerMaxBaseFee` is zero too
+    uint64 callerFee;
+    /// base fee ceiling of the gas refund of `compose`, `composeExit` and `exitStatement`, wei. zero refunds no gas
+    uint48 callerMaxBaseFee;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -204,16 +205,12 @@ library Mainnet {
     function defaultSettings() internal pure returns (Settings memory) {
         return Settings({
             dropPerCreditBps: 50,
-            dropFloorBps: 8_000,
+            dropFloorBps: 5_000,
             climbPerMinBps: 50,
-            ceilBps: 12_500,
-            idleLoosenBps: 2_000,
-            tipSavingsBps: 1_000,
-            tipCapBps: 200,
-            // the Core meters gross gas. the EIP-3529 refund cap returns up to 20 percent of it to the caller, and an exit
-            // clears enough storage to reach the cap, so 80 percent of the metered gas is the net cost
-            reimburseBps: 8_000,
-            reimburseCapBps: 500,
+            ceilBps: 11_000,
+            idleLoosenBps: 200,
+            tipSavingsBps: 2_500,
+            tipCapBps: 400,
             saleFloorBps: 7_500,
             auctionDuration: 24 hours,
             exitAfter: 105 hours,
@@ -229,9 +226,11 @@ library Mainnet {
             xRateDropPerCredit: 20,
             xAuctionHalfLife: 6 hours,
             exitSliceCredits: 20,
-            rateCap: 89_000_000_000_000_000,
+            rateCap: 26_700_000_000_000_000,
             exitLaneToBuybackBps: 0,
-            feeToBuybackBps: 0
+            feeToBuybackBps: 0,
+            callerFee: 0,
+            callerMaxBaseFee: 0
         });
     }
 

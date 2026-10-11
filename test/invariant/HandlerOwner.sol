@@ -50,8 +50,6 @@ abstract contract HandlerOwner is HandlerHouse {
         s.idleLoosenBps = uint16(_f(_r(seed, 29), 1, 2_000, c.idleLoosenBps));
         s.tipSavingsBps = uint16(_f(_r(seed, 8), 0, 2_500, c.tipSavingsBps));
         s.tipCapBps = uint16(_f(_r(seed, 9), 0, 500, c.tipCapBps));
-        s.reimburseBps = uint16(_f(_r(seed, 10), 0, 15_000, c.reimburseBps));
-        s.reimburseCapBps = uint16(_f(_r(seed, 11), 0, 1_000, c.reimburseCapBps));
         s.saleFloorBps = uint16(_f(_r(seed, 12), 1_000, 40_000, c.saleFloorBps));
         s.auctionDuration = uint32(_f(_r(seed, 13), 6 hours, 30 days, c.auctionDuration));
         s.exitAfter = uint32(_f(_r(seed, 14), 1 hours, 365 days, c.exitAfter));
@@ -70,6 +68,8 @@ abstract contract HandlerOwner is HandlerHouse {
         s.rateCap = uint64(_f(_r(seed, 26), RATE_START_MIN_WEI, RATE_START_MAX_WEI, c.rateCap));
         s.exitLaneToBuybackBps = uint16(_f(_r(seed, 27), 0, 10_000, c.exitLaneToBuybackBps));
         s.feeToBuybackBps = uint16(_f(_r(seed, 28), 0, 10_000, c.feeToBuybackBps));
+        s.callerFee = uint64(_f(_r(seed, 10), 0, 0.005 ether, c.callerFee));
+        s.callerMaxBaseFee = uint48(_f(_r(seed, 11), 0, 100 gwei, c.callerMaxBaseFee));
         _corner(s, corner);
         // the slice stays at or above twice the largest buyback payment
         uint256 minSlice = 2 * (BUYBACK_GAS * s.buybackMaxBaseFee + s.keeperFee);
@@ -114,18 +114,18 @@ abstract contract HandlerOwner is HandlerHouse {
             s.xRateCap = 0;
             s.xRateFloor = 0;
         } else if (k == 14) {
-            // every tip, reimbursement and keeper reward at zero
+            // every tip, caller payment and keeper reward at zero
             s.tipSavingsBps = 0;
             s.tipCapBps = 0;
-            s.reimburseBps = 0;
-            s.reimburseCapBps = 0;
+            s.callerFee = 0;
+            s.callerMaxBaseFee = 0;
             s.keeperFee = 0;
         } else if (k == 15) {
-            // every tip, reimbursement and keeper reward at its ceiling
+            // every tip, caller payment and keeper reward at its ceiling
             s.tipSavingsBps = 2_500;
             s.tipCapBps = 500;
-            s.reimburseBps = 15_000;
-            s.reimburseCapBps = 1_000;
+            s.callerFee = 0.005 ether;
+            s.callerMaxBaseFee = 100 gwei;
             s.keeperFee = 0.005 ether;
             s.buybackMaxBaseFee = 100 gwei;
         } else if (k == 16) {
@@ -197,6 +197,13 @@ abstract contract HandlerOwner is HandlerHouse {
     /// settings are what was set, the stored eth rate is exactly what it was (the call checkpoints it, it never jumps),
     /// the exit rate is only held inside the new band, the exit auction price is continuous, and the pots, balances
     /// and the house's debt did not move
+    /// the owner sets exactly `ns` and the ghost follows. not in the fuzz selector list: the smoke tests use it
+    function setSettingsExact(Settings memory ns) external {
+        vm.prank(owner);
+        core.setSettings(ns);
+        gSettingsHash = keccak256(abi.encode(core.settings()));
+    }
+
     function setSettings(uint256 seed, uint256 corner) external checked {
         uint8 a = A_SET_SETTINGS;
         Settings memory cur = core.settings();
@@ -259,8 +266,6 @@ abstract contract HandlerOwner is HandlerHouse {
         if (s.idleLoosenBps < 1 || s.idleLoosenBps > 2_000) return "idleLoosenBps";
         if (s.tipSavingsBps > 2_500) return "tipSavingsBps";
         if (s.tipCapBps > 500) return "tipCapBps";
-        if (s.reimburseBps > 15_000) return "reimburseBps";
-        if (s.reimburseCapBps > 1_000) return "reimburseCapBps";
         if (s.saleFloorBps < 1_000 || s.saleFloorBps > 40_000) return "saleFloorBps";
         if (s.auctionDuration < 6 hours || s.auctionDuration > 30 days) return "auctionDuration";
         if (s.exitAfter < 1 hours || s.exitAfter > 365 days) return "exitAfter";
@@ -280,6 +285,8 @@ abstract contract HandlerOwner is HandlerHouse {
         if (s.rateCap < RATE_START_MIN_WEI || s.rateCap > RATE_START_MAX_WEI) return "rateCap";
         if (s.exitLaneToBuybackBps > 10_000) return "exitLaneToBuybackBps";
         if (s.feeToBuybackBps > 10_000) return "feeToBuybackBps";
+        if (s.callerFee > 0.005 ether) return "callerFee";
+        if (s.callerMaxBaseFee > 100 gwei) return "callerMaxBaseFee";
         return bytes32(0);
     }
 
@@ -308,9 +315,9 @@ abstract contract HandlerOwner is HandlerHouse {
         } else if (which == 7) {
             (s.tipCapBps, name) = (501, "tipCapBps");
         } else if (which == 8) {
-            (s.reimburseBps, name) = (15_001, "reimburseBps");
+            (s.callerFee, name) = (0.005 ether + 1, "callerFee");
         } else if (which == 9) {
-            (s.reimburseCapBps, name) = (1_001, "reimburseCapBps");
+            (s.callerMaxBaseFee, name) = (100 gwei + 1, "callerMaxBaseFee");
         } else if (which == 10) {
             (s.saleFloorBps, name) = (999, "saleFloorBps");
         } else if (which == 11) {

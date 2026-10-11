@@ -136,10 +136,10 @@ abstract contract HandlerBase is Test {
     uint256 internal constant V_REENTER = 16; // a reentry attempt succeeded
     uint256 internal constant V_REVERT_CHANGED = 17; // a reverted action changed core state
     uint256 internal constant V_BUYBACK = 18; // a buyback slice or tip outside the rules
-    /// least share of the metered gross gas left after the EIP-3529 refund (the refund is at most 20 percent of it). the
-    /// cap of the exit gas repayment divides the net gas by it to get the metered gas
-    uint256 internal constant REFUND_FLOOR_BPS = 8_000;
-    uint256 internal constant V_COMPOSE = 19; // a compose that paid its caller, took an invalid page or made another statement than the next id
+    /// the gas bounds of the caller payment (private constants of the core, restated here)
+    uint256 internal constant COMPOSE_GAS = 13_700_000;
+    uint256 internal constant EXIT_GAS = 1_500_000;
+    uint256 internal constant V_COMPOSE = 19; // a compose that paid its caller outside the caller payment rule, took an invalid page or made another statement than the next id
     uint256 internal constant V_POT = 20; // pot bookkeeping off from the action's flows
     uint256 internal constant V_REFUND = 21; // a house refund or payout that is not what the house rules give
     uint256 internal constant V_RECEIVE = 22; // the core's receive() reverted, or a swap failed for an unexplained reason
@@ -1580,12 +1580,22 @@ abstract contract HandlerBase is Test {
         }
     }
 
-    /// @dev a compose moves no eth out of the core: the caller receives nothing, the core balance and the pot are as
-    /// the pull of the fee router left them (a helper so the locals of `_afterCompose` fit the stack)
-    function _composeMovesNoEth(CPre memory p) internal {
-        if (keeper.balance != p.callerBal) _flag(V_COMPOSE, "a compose paid its caller");
-        _eth(p.bal, 0, 0, "compose");
-        if (core.ethPot() != p.pot) _flag(V_POT, "compose changed the pot");
+    /// @dev the caller payment of `compose`, `composeExit` and `exitStatement`: at most the counted gas bound at the base
+    /// fee capped by `callerMaxBaseFee` plus `callerFee`, at least the fee when the pot covers it, at most the pot,
+    /// exactly zero when both settings are zero, and exactly the debit of the pot and the outflow of the core
+    function _callerPayment(uint256 code, Settings memory st, uint256 gasBound, uint256 pot0, uint256 bal0, uint256 callerBal0, string memory what)
+        internal
+    {
+        uint256 pay = keeper.balance - callerBal0;
+        uint256 rate = block.basefee < st.callerMaxBaseFee ? block.basefee : st.callerMaxBaseFee;
+        uint256 most = gasBound * rate + st.callerFee;
+        if (pay > most) _flag(code, string.concat(what, " paid above the gas bound plus the fee"));
+        if (pay > pot0) _flag(code, string.concat(what, " paid above the pot"));
+        uint256 least = st.callerFee < pot0 ? st.callerFee : pot0;
+        if (pay < least) _flag(code, string.concat(what, " paid below the fee"));
+        if (st.callerFee == 0 && st.callerMaxBaseFee == 0 && pay != 0) _flag(code, string.concat(what, " paid with the payment off"));
+        if (core.ethPot() != pot0 - pay) _flag(V_POT, string.concat(what, " did not debit the pot by the payment"));
+        _eth(bal0, pay, 0, what);
     }
 
     function _afterCompose(Lane lane, uint256[] memory ids, CPre memory p) internal {
@@ -1596,7 +1606,7 @@ abstract contract HandlerBase is Test {
         if (sid != p.supply + 1 || STATEMENTS.ownerOf(sid) != (lane == Lane.Eth ? address(house) : address(core))) {
             _flag(V_COMPOSE, "new statement id is not supply + 1 or not held by the house (eth lane) or the core");
         }
-        _composeMovesNoEth(p);
+        _callerPayment(V_COMPOSE, p.st, COMPOSE_GAS, p.pot, p.bal, p.callerBal, "compose");
         uint256 cost = p.sum;
         (bool held, Lane l, uint256 coreCost,) = core.statementInfo(sid);
         if (!held || l != lane || coreCost != cost) _flag(V_MODEL, "statement cost basis differs from the ghost sum");
@@ -2391,20 +2401,7 @@ abstract contract HandlerBase is Test {
         if (core.xToBuyback() != p.xto + toBuyback) _flag(V_POT, "exit buyback share wrong");
         if (core.xPot() != p.xpot + received - toBuyback) _flag(V_POT, "exit pot share wrong");
         _x(p.xbal, 0, received, "exitStatement");
-        // the caller's gas is repaid from the eth pot: at most reimburseBps of the gas (counted with the fixed overhead
-        // and cut at 1.5m gas), reimburseCapBps of the cost (the exit lane: 80 credits at the opening rate), and
-        // the pot. nothing else moves
-        uint256 reimb = keeper.balance - p.callerBal;
-        // net gas paid plus the overhead, scaled to the metered gross gas by the refund floor, cut at 1.5m metered gas
-        uint256 netCap = (p.gasUsed + 50_000) * p.st.reimburseBps / REFUND_FLOOR_BPS;
-        uint256 meterCap = 1_500_000 * uint256(p.st.reimburseBps) / 10_000;
-        uint256 gasCap = (netCap < meterCap ? netCap : meterCap) * block.basefee;
-        uint256 base = p.lane == uint8(Lane.Eth) ? p.cost : 80 * core.RATE_START();
-        uint256 costCap = base * p.st.reimburseCapBps / 10_000;
-        if (reimb > gasCap || reimb > costCap) _flag(V_EXIT_SHORT, "the redeem reimbursement is above its caps");
-        if (reimb > p.pot0) _flag(V_EXIT_SHORT, "the redeem reimbursement is above the pot");
-        if (core.ethPot() != p.pot0 - reimb) _flag(V_POT, "the eth pot did not fall by the redeem reimbursement");
-        _eth(p.b0, reimb, 0, "exitStatement");
+        _callerPayment(V_EXIT_SHORT, p.st, EXIT_GAS, p.pot0, p.b0, p.callerBal, "exitStatement");
         // every injection into the buyback pot re anchors the curve at max(price now, start / 4) and restarts the
         // clock. an exit that adds nothing to the pot changes neither
         uint256 wantPrice = p.startPrice;

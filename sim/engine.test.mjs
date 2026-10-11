@@ -28,7 +28,7 @@ const R0 = 6.668e15;
   const moved = cfg.settings.reserveBps !== undefined; // the config still on the old rules: the new fields are not there yet
   const newFields = ['saleFloorBps', 'feeToBuybackBps'];
   // the stepped bid rule fields of the Core are sim parameters of the bidRule stepped (setting B of docs/archive/BID-STUDY.md), under other names. the built rule fields are sim only
-  const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 8000, climbPerMinBps: 50, ceilBps: 12500, idleLoosenBps: 2000 };
+  const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 5000, climbPerMinBps: 50, ceilBps: 11000, idleLoosenBps: 200 };
   const BUILT_ONLY = ['climbBaseBps', 'climbDoubleEvery', 'climbMaxBps', 'dropBps'];
   for (const [k, v] of Object.entries(STEPPED)) if (cfg.settings[k] !== undefined) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
   // the sim defaults are the launch bid rule: stepped, field for field with the config (bps to percent)
@@ -44,7 +44,7 @@ const R0 = 6.668e15;
     if (k in STEPPED) continue;
     if (k === 'reserveBps') { ok(SETTINGS.reserveBps === undefined, 'reserveBps is gone from the model'); continue; }
     if (moved && k === 'exitAfter') continue; // 72 hours in the old file, 105 hours in the new rules
-    near(SETTINGS[k], k === 'buybackSlice' || k === 'keeperFee' ? v / 1e18 : k === 'buybackMaxBaseFee' ? v / 1e9 : v, 1e-12, 'setting ' + k); // eth and gwei in the model, wei in the config
+    near(SETTINGS[k], k === 'buybackSlice' || k === 'keeperFee' || k === 'callerFee' ? v / 1e18 : k === 'buybackMaxBaseFee' || k === 'callerMaxBaseFee' ? v / 1e9 : v, 1e-12, 'setting ' + k); // eth and gwei in the model, wei in the config
   }
   for (const k of newFields) if (cfg.settings[k] !== undefined) near(SETTINGS[k], cfg.settings[k], 1e-12, 'setting ' + k);
   for (const k of Object.keys(SETTINGS)) ok(BUILT_ONLY.includes(k) || cfg.settings[k] !== undefined || (moved && (newFields.includes(k) || k === 'reserveBps')), 'the config carries ' + k);
@@ -133,12 +133,12 @@ const R0 = 6.668e15;
   c.rateAtCheckpoint = 1e16; // ceiling 0.01 eth
   const res = c.buyListing(0.008, 0);
   ok(res);
-  near(res.tip, 0.00016, 1e-12, 'tip capped at 2 percent of cost');
+  near(res.tip, 0.00032, 1e-12, 'tip capped at 4 percent of cost');
   const c2 = fresh({}, 10); c2.rateAtCheckpoint = 1e16;
-  near(c2.buyListing(0.0099, 0).tip, 0.00001, 1e-9, 'tip is 10 percent of savings when below the cap');
+  near(c2.buyListing(0.0099, 0).tip, 0.000025, 1e-9, 'tip is 25 percent of savings when below the cap');
   assert.equal(c2.buyListing(0.0101, 0), null); n++;
 }
-// compose repays nothing: the pot is unchanged and the statement cost is the plain sum of the credit costs in both lanes
+// compose at the launch settings pays nothing: the pot is unchanged and the statement cost is the plain sum of the credit costs in both lanes
 {
   const c = fresh({}, 10);
   const pot = c.ethPot;
@@ -441,7 +441,7 @@ const R0 = 6.668e15;
   bad({ rateCap: 1e13 - 1e6 }, 'rateCap'); bad({ rateCap: 1.1e18 }, 'rateCap');
   bad({ exitLaneToBuybackBps: 10001 }, 'exitLaneToBuybackBps');
   assert.equal(firstViolation(Object.assign({}, SETTINGS, { dropBps: 500, saleFloorBps: 1000, feeToBuybackBps: 10000, auctionDuration: 6 * 3600, buybackSlice: 1, exitAfter: 3600, rateCap: 1e18 })), null); n++;
-  assert.equal(SETTINGS.rateCap, 89000000000000000); n++;
+  assert.equal(SETTINGS.rateCap, 26700000000000000); assert.equal(SETTINGS.rateCap, 3 * DEFAULTS.rateStart); n++;
   assert.equal(firstViolation(Object.assign({}, SETTINGS, { xRateFloor: 9800 })), 'xRateFloor'); n++;
 }
 // rateCap: the climb clamps at it, setRate refuses above it, a lower cap pulls the rate down at the checkpoint

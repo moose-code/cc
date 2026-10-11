@@ -123,7 +123,7 @@ contract V2PortFeeTest is FeeBase {
         uint256 pot = core.ethPot();
         uint256 bal = address(core).balance;
         uint256 cost = ceiling - e;
-        uint256 tip = (1000 * (ceiling - cost) / 10_000).min(200 * cost / 10_000);
+        uint256 tip = (2_500 * (ceiling - cost) / 10_000).min(400 * cost / 10_000);
         vm.prank(keeper);
         core.buyListing(ceiling, hex"deadbeef", id, address(t));
         assertEq(CREDITS.ownerOf(id), address(core));

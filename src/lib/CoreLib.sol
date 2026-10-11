@@ -149,8 +149,6 @@ library CoreLib {
         s.idleLoosenBps = ns.idleLoosenBps;
         s.tipSavingsBps = ns.tipSavingsBps;
         s.tipCapBps = ns.tipCapBps;
-        s.reimburseBps = ns.reimburseBps;
-        s.reimburseCapBps = ns.reimburseCapBps;
         s.saleFloorBps = ns.saleFloorBps;
         s.auctionDuration = ns.auctionDuration;
         s.exitAfter = ns.exitAfter;
@@ -169,13 +167,15 @@ library CoreLib {
         s.rateCap = ns.rateCap;
         s.exitLaneToBuybackBps = ns.exitLaneToBuybackBps;
         s.feeToBuybackBps = ns.feeToBuybackBps;
+        s.callerFee = ns.callerFee;
+        s.callerMaxBaseFee = ns.callerMaxBaseFee;
         emit SettingsSet(ns);
     }
 
-    /// @notice the settings as a struct, from the three packed storage words they sit in. the layout is the one the
+    /// @notice the settings as a struct, from the four packed storage words they sit in. the layout is the one the
     /// compiler gives `Settings` (fields packed in order, a field never straddles a slot), which test/Flow.t.sol
     /// checks against a write and a read
-    function unpack(uint256 a, uint256 b, uint256 c) external pure returns (Settings memory s) {
+    function unpack(uint256 a, uint256 b, uint256 c, uint256 d) external pure returns (Settings memory s) {
         // forge-lint: disable-start(unsafe-typecast)
         s.dropPerCreditBps = uint16(a);
         s.dropFloorBps = uint16(a >> 16);
@@ -184,13 +184,11 @@ library CoreLib {
         s.idleLoosenBps = uint16(a >> 64);
         s.tipSavingsBps = uint16(a >> 80);
         s.tipCapBps = uint16(a >> 96);
-        s.reimburseBps = uint16(a >> 112);
-        s.reimburseCapBps = uint16(a >> 128);
-        s.saleFloorBps = uint16(a >> 144);
-        s.auctionDuration = uint32(a >> 160);
-        s.exitAfter = uint32(a >> 192);
-        s.saleToBuybackBps = uint16(a >> 224);
-        s.exitToBuybackBps = uint16(a >> 240);
+        s.saleFloorBps = uint16(a >> 112);
+        s.auctionDuration = uint32(a >> 128);
+        s.exitAfter = uint32(a >> 160);
+        s.saleToBuybackBps = uint16(a >> 192);
+        s.exitToBuybackBps = uint16(a >> 208);
         s.buybackSlice = uint128(b);
         s.buybackDelay = uint16(b >> 128);
         s.keeperFee = uint64(b >> 144);
@@ -204,6 +202,8 @@ library CoreLib {
         s.rateCap = uint64(c >> 112);
         s.exitLaneToBuybackBps = uint16(c >> 176);
         s.feeToBuybackBps = uint16(c >> 192);
+        s.callerFee = uint64(d);
+        s.callerMaxBaseFee = uint48(d >> 64);
         // forge-lint: disable-end(unsafe-typecast)
     }
 

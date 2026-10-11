@@ -7,7 +7,7 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Lane, Settings} from "../src/interfaces/Interfaces.sol";
 
 /// the sale controller and the fee share on the live fork: the asking price and its decay, repricing, buy only mode
-/// through `sellTo`, the hard floor, the pool fee split and the redeem reimbursement
+/// through `sellTo`, the hard floor, the pool fee split and the redeem caller payment
 contract SaleSmokeTest is Fixture {
     function _cost(uint256 sid) internal view returns (uint256 cost) {
         (,, cost,) = core.statementInfo(sid);
@@ -150,10 +150,13 @@ contract SaleSmokeTest is Fixture {
         _solvent();
     }
 
-    function test_redeem_repays_the_caller_gas_from_the_pot() public {
+    function test_redeem_pays_the_caller_from_the_pot() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
+        Settings memory st = core.settings();
+        st.callerFee = 0.0005 ether;
+        st.callerMaxBaseFee = 10 gwei;
+        _setSettings(st);
         _warp(core.settings().exitAfter);
         vm.fee(composeBasefee);
         uint256 pot = core.ethPot();
@@ -161,8 +164,8 @@ contract SaleSmokeTest is Fixture {
         vm.prank(keeper);
         core.exitStatement(sid);
         uint256 got = keeper.balance - before_;
-        assertGt(got, 0, "caller repaid");
-        assertLe(got, cost * core.settings().reimburseCapBps / 10_000, "capped");
+        assertGt(got, 0.0005 ether, "caller paid the fee and the gas");
+        assertLe(got, 1_500_000 * 10 gwei + 0.0005 ether, "capped");
         assertEq(pot - core.ethPot(), got, "paid from the pot");
         _solvent();
     }

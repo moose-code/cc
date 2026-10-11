@@ -9,12 +9,12 @@ import {Lane, Settings} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {SellingController, HostileModule, RepaidCaller} from "./attackers/SaleAttackers.sol";
 
-/// phase 2 redemption: when an eth lane statement may be exited, what stops it, and the reimbursement of the caller's
-/// gas from the eth pot. real Core, house, Statements. the stand in module and token, and the attacker modules
+/// phase 2 redemption: when an eth lane statement may be exited, what stops it, and the payment to the caller from
+/// the eth pot. real Core, house, Statements. the stand in module and token, and the attacker modules
 abstract contract RedeemBase is Fixture {
     using stdStorage for StdStorage;
 
-    /// the most gas of an exit the reimbursement counts (a private constant of the core, restated here)
+    /// the most gas of an exit the caller payment counts (a private constant of the core, restated here)
     uint256 internal constant EXIT_GAS = 1_500_000;
     uint256 internal constant NOTIONAL_COUNT = 80;
     HostileModule internal hm;
@@ -74,18 +74,20 @@ abstract contract RedeemBase is Fixture {
         assertEq(core.ethToBuyback(), bb, "the buyback pot is not touched");
     }
 
-    function _notionalCap() internal view returns (uint256) {
+    /// the caller payment on: 0.0005 ether and a 10 gwei base fee ceiling
+    uint256 internal constant PAY_FEE = 0.0005 ether;
+    uint256 internal constant PAY_CEILING = 10 gwei;
+
+    function _payOn() internal {
         Settings memory s = core.settings();
-        uint256 base = NOTIONAL_COUNT * core.RATE_START();
-        return base * s.reimburseCapBps / 10_000;
+        s.callerFee = uint64(PAY_FEE);
+        s.callerMaxBaseFee = uint48(PAY_CEILING);
+        _setSettings(s);
     }
 
-    function _ethCap(uint256 sid) internal view returns (uint256) {
-        return _cost(sid) * core.settings().reimburseCapBps / 10_000;
-    }
-
-    function _gasPart(uint256 gasCounted, uint256 basefee) internal view returns (uint256) {
-        return gasCounted * basefee * core.settings().reimburseBps / 10_000;
+    /// the payment of `gasCounted` at `basefee` under the settings of `_payOn`
+    function _want(uint256 gasCounted, uint256 basefee) internal pure returns (uint256) {
+        return gasCounted * (basefee < PAY_CEILING ? basefee : PAY_CEILING) + PAY_FEE;
     }
 }
 
@@ -268,36 +270,72 @@ contract RedeemRepayTest is RedeemBase {
         _warp(105 hours);
     }
 
-    /// eth lane, a module that burns more than the count allows: the count is capped at EXIT_GAS, so the repayment
-    /// is exactly EXIT_GAS * basefee * reimburseBps
-    function test_repay_ethLaneGasCountIsCappedExactly() public {
+    /// at the launch settings an exit pays nothing and moves no eth, at any base fee
+    function test_pay_launchSettingsPayZero() public {
         uint256 sid = _ethStatementReady();
         hm.setBurn(4_000_000);
-        uint256 cap = _ethCap(sid);
-        uint256 want = _gasPart(EXIT_GAS, LOW);
-        assertEq(want, 240_000_000_000_000, "1.5M gas at 0.2 gwei and 80 percent");
-        assertLt(want, cap, "the cost cap does not bind here");
+        uint256 bal = address(core).balance;
+        (uint256 repaid, uint256 potLost) = _exit(sid, HIGH);
+        assertEq(repaid, 0);
+        assertEq(potLost, 0);
+        assertEq(address(core).balance, bal - 0, "no eth moved");
+        assertEq(STATEMENTS.ownerOf(sid), address(hm), "the exit went through");
+        uint256 lane = _exitLaneStatement();
+        bal = address(core).balance;
+        (repaid, potLost) = _exit(lane, HIGH);
+        assertEq(repaid, 0);
+        assertEq(potLost, 0);
+        assertEq(address(core).balance, bal);
+    }
+
+    /// the fee and the ceiling are separate: the fee alone pays the fee, the ceiling alone pays the gas
+    function test_pay_feeAndCeilingAreIndependent() public {
+        uint256 sid = _ethStatementReady();
+        hm.setBurn(4_000_000);
+        uint256 snap = vm.snapshotState();
+        Settings memory s = core.settings();
+        s.callerFee = uint64(PAY_FEE);
+        _setSettings(s);
+        (uint256 repaid, uint256 potLost) = _exit(sid, LOW);
+        assertEq(repaid, PAY_FEE, "the fee alone");
+        assertEq(potLost, PAY_FEE);
+        vm.revertToState(snap);
+        s.callerFee = 0;
+        s.callerMaxBaseFee = uint48(PAY_CEILING);
+        _setSettings(s);
+        (repaid, potLost) = _exit(sid, LOW);
+        assertEq(repaid, EXIT_GAS * LOW, "the gas alone");
+        assertEq(potLost, repaid);
+    }
+
+    /// eth lane, a module that burns more than the count allows: the count is capped at EXIT_GAS, so the payment
+    /// is exactly EXIT_GAS * basefee + callerFee
+    function test_pay_ethLaneGasCountIsCappedExactly() public {
+        uint256 sid = _ethStatementReady();
+        hm.setBurn(4_000_000);
+        _payOn();
+        uint256 want = _want(EXIT_GAS, LOW);
+        assertEq(want, 300_000_000_000_000 + PAY_FEE, "1.5M gas at 0.2 gwei plus the fee");
         (uint256 repaid, uint256 potLost) = _exit(sid, LOW);
         assertEq(repaid, want);
         assertEq(potLost, want, "paid from the pot, to the wei");
         _solvent();
     }
 
-    function test_repay_ethLaneCostCapBindsExactly() public {
+    /// above the ceiling the gas is paid at the ceiling
+    function test_pay_baseFeeAboveTheCeilingPaysAtTheCeiling() public {
         uint256 sid = _ethStatementReady();
         hm.setBurn(4_000_000);
-        uint256 cap = _ethCap(sid);
-        assertGt(_gasPart(EXIT_GAS, HIGH), cap);
-        uint256 cost = _cost(sid);
+        _payOn();
         (uint256 repaid, uint256 potLost) = _exit(sid, HIGH);
-        assertEq(repaid, cap, "reimburseCapBps of the statement cost");
-        assertEq(repaid, cost * 500 / 10_000);
-        assertEq(potLost, cap);
+        assertEq(repaid, EXIT_GAS * PAY_CEILING + PAY_FEE);
+        assertEq(potLost, repaid);
     }
 
-    function test_repay_ethLanePotBindsExactly() public {
+    function test_pay_ethLanePotBindsExactly() public {
         uint256 sid = _ethStatementReady();
         hm.setBurn(4_000_000);
+        _payOn();
         _setPot(1e12);
         (uint256 repaid, uint256 potLost) = _exit(sid, HIGH);
         assertEq(repaid, 1e12, "the whole pot");
@@ -305,8 +343,9 @@ contract RedeemRepayTest is RedeemBase {
         assertEq(core.ethPot(), 0);
     }
 
-    function test_repay_zeroPotPaysZeroAndDoesNotRevert() public {
+    function test_pay_zeroPotPaysZeroAndDoesNotRevert() public {
         uint256 sid = _ethStatementReady();
+        _payOn();
         _setPot(0);
         (uint256 repaid,) = _exit(sid, HIGH);
         assertEq(repaid, 0);
@@ -314,33 +353,22 @@ contract RedeemRepayTest is RedeemBase {
         assertEq(core.ethPot(), 0);
     }
 
-    function test_repay_exitLaneUsesTheNotionalCap() public {
+    function test_pay_exitLaneGasCountIsCappedExactly() public {
         _phase2Hostile();
         uint256 sid = _exitLaneStatement();
         hm.setBurn(4_000_000);
-        uint256 cap = _notionalCap();
-        assertEq(cap, uint256(80) * OPEN_RATE * 500 / 10_000);
-        assertGt(_gasPart(EXIT_GAS, HIGH), cap);
-        (uint256 repaid, uint256 potLost) = _exit(sid, HIGH);
-        assertEq(repaid, cap, "a page at the opening rate, reimburseCapBps of it");
-        assertEq(potLost, cap);
-    }
-
-    function test_repay_exitLaneGasCountIsCappedExactly() public {
-        _phase2Hostile();
-        uint256 sid = _exitLaneStatement();
-        hm.setBurn(4_000_000);
-        uint256 want = _gasPart(EXIT_GAS, LOW);
-        assertLt(want, _notionalCap());
+        _payOn();
+        uint256 want = _want(EXIT_GAS, LOW);
         (uint256 repaid, uint256 potLost) = _exit(sid, LOW);
         assertEq(repaid, want);
         assertEq(potLost, want);
     }
 
-    function test_repay_exitLanePotBindsAndZeroPotPaysZero() public {
+    function test_pay_exitLanePotBindsAndZeroPotPaysZero() public {
         _phase2Hostile();
         uint256 sid = _exitLaneStatement();
         uint256 sid2 = _exitLaneStatement();
+        _payOn();
         _setPot(7_777);
         (uint256 repaid,) = _exit(sid, HIGH);
         assertEq(repaid, 7_777);
@@ -351,10 +379,10 @@ contract RedeemRepayTest is RedeemBase {
     }
 
     /// the natural regime: the counted gas is what the exit used plus the fixed overhead, at most EXIT_GAS. with the
-    /// ratio at 100 percent the repayment is counted gas times basefee, so the count can be read back
+    /// fee at zero the payment is counted gas times basefee, so the count can be read back
     function _natural(uint256 sid) internal {
         Settings memory s = core.settings();
-        s.reimburseBps = 10_000;
+        s.callerMaxBaseFee = uint48(PAY_CEILING);
         _setSettings(s);
         uint256 basefee = 1 gwei;
         vm.fee(basefee);
@@ -362,55 +390,52 @@ contract RedeemRepayTest is RedeemBase {
         uint256 g0 = gasleft();
         vm.prank(keeper);
         core.exitStatement(sid);
-        uint256 used = g0 - gasleft();
+        g0 -= gasleft();
+        (uint256 gross,) = _lastCallGross();
         uint256 repaid = keeper.balance - bal;
         assertEq(repaid % basefee, 0);
         uint256 counted = repaid / basefee;
         assertGt(counted, 50_000, "the overhead and the work");
         assertLe(counted, EXIT_GAS);
-        // the meter is gross gas and the caller pays net of the EIP-3529 refund (up to 20 percent of the gross), so at
-        // the launch share of 80 percent the repayment is at most the net gas of the call plus the 50_000 overhead
-        assertLe(counted * 8_000 / 10_000, used + 50_000, "never more than the caller's own net gas plus the overhead");
-        assertGe(counted + 150_000, used, "and not far below it: the caller's gas is what is repaid");
+        assertGe(counted + 15_000, gross, "covers the gross gas of the transaction but for the part of the overhead the constant leaves out");
+        assertLe(counted, gross + 20_000, "and the overhead is not oversized");
     }
 
-    function test_repay_naturalCountEthLane() public {
+    function test_pay_naturalCountEthLane() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         _warp(105 hours);
         _natural(sid);
     }
 
-    function test_repay_naturalCountExitLane() public {
+    function test_pay_naturalCountExitLane() public {
         _enterPhase2();
         _natural(_exitLaneStatement());
     }
 
-    /// never above the cap or the pot, for any basefee, with a module that burns as much as it likes
-    function test_repay_neverAboveTheCapWithAGasBurningModule() public {
+    /// never above the gas bound at the ceiling plus the fee, and never above the pot, for any basefee, with a module
+    /// that burns as much as it likes
+    function test_pay_neverAboveTheBoundWithAGasBurningModule() public {
         uint256[8] memory fees = [uint256(0), 1, 1e6, 1e9, 1e10, 1e11, 1e12, 1e15];
         for (uint256 lane; lane < 2; ++lane) {
             for (uint256 i; i < fees.length; ++i) {
                 uint256 snap = vm.snapshotState();
                 _phase2Hostile();
                 uint256 sid;
-                uint256 cap;
                 if (lane == 0) {
                     sid = _composeOnce().sid;
                     _warp(105 hours);
-                    cap = _ethCap(sid);
                 } else {
                     sid = _exitLaneStatement();
-                    cap = _notionalCap();
                 }
+                _payOn();
                 hm.setBurn(20_000_000);
                 uint256 pot = core.ethPot();
-                uint256 want = _gasPart(EXIT_GAS, fees[i]);
-                if (want > cap) want = cap;
+                uint256 want = _want(EXIT_GAS, fees[i]);
                 if (want > pot) want = pot;
                 (uint256 repaid, uint256 potLost) = _exit(sid, fees[i]);
-                assertEq(repaid, want, "min of the gas part, the cost cap and the pot");
-                assertLe(repaid, cap);
+                assertEq(repaid, want, "min of the payment and the pot");
+                assertLe(repaid, EXIT_GAS * PAY_CEILING + PAY_FEE);
                 assertLe(repaid, pot);
                 assertEq(potLost, repaid);
                 _solvent();
@@ -419,25 +444,9 @@ contract RedeemRepayTest is RedeemBase {
         }
     }
 
-    function test_repay_zeroRatioAndZeroCapPayNothing() public {
+    function test_pay_nothingIsAddedToTheBooksOnlyThePotPays() public {
         uint256 sid = _ethStatementReady();
-        Settings memory s = core.settings();
-        s.reimburseBps = 0;
-        _setSettings(s);
-        (uint256 repaid,) = _exit(sid, HIGH);
-        assertEq(repaid, 0);
-        uint256 b = _another();
-        s.reimburseBps = 15_000;
-        s.reimburseCapBps = 0;
-        _setSettings(s);
-        _warp(105 hours);
-        (repaid,) = _exit(b, HIGH);
-        assertEq(repaid, 0, "a zero cost cap pays nothing");
-        assertEq(STATEMENTS.ownerOf(b), address(hm));
-    }
-
-    function test_repay_nothingIsAddedToTheBooksOnlyThePotPays() public {
-        uint256 sid = _ethStatementReady();
+        _payOn();
         uint256 pot = core.ethPot();
         uint256 bb = core.ethToBuyback();
         uint256 bal = address(core).balance;
@@ -448,7 +457,7 @@ contract RedeemRepayTest is RedeemBase {
         assertGt(repaid, 0);
         assertEq(core.ethPot(), pot - repaid);
         assertEq(core.ethToBuyback(), bb);
-        assertEq(address(core).balance, bal - repaid, "the balance fell by the repayment only");
+        assertEq(address(core).balance, bal - repaid, "the balance fell by the payment only");
         uint256 toBb = owed * core.settings().exitToBuybackBps / 10_000;
         assertEq(core.xToBuyback() - xb, toBb);
         assertEq(core.xPot() - xp, owed - toBb);
@@ -456,12 +465,13 @@ contract RedeemRepayTest is RedeemBase {
 
     // ------------------------------------------------------------------ reentrancy
 
-    /// the repayment is paid after all state is final: a caller that re enters from its receive finds every door shut
+    /// the payment is paid after all state is final: a caller that re enters from its receive finds every door shut
     function test_reenter_theRepaidCallerFindsEveryDoorShut() public {
         _enterPhase2();
         uint256 a = _composeOnce().sid;
         uint256 b = _another();
         RepaidCaller rc = new RepaidCaller(core);
+        _payOn();
         _warp(105 hours);
         vm.fee(LOW);
         uint256 pot = core.ethPot();

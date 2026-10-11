@@ -684,23 +684,23 @@ contract ConfigTest is Fixture {
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // above the top, and the top itself (the two bound by another field start from a free partner)
-            if (i == 19) s.xRateCap = 10_000;
+            if (i == 17) s.xRateCap = 10_000;
             SettingsFields.set(s, i, hi[i]);
             assertEq(SettingsBounds.firstViolation(s), bytes32(0), "the top edge is inside");
             s = Mainnet.defaultSettings();
             SettingsFields.set(s, i, hi[i] + 1);
             assertEq(SettingsBounds.firstViolation(s), names[i], "above the top");
             // below the bottom, for the fields that have one
-            if (lo[i] == 0 && i != 19) continue;
+            if (lo[i] == 0 && i != 17) continue;
             s = Mainnet.defaultSettings();
-            if (i == 19) {
-                SettingsFields.set(s, 18, s.xRateFloor - 1);
+            if (i == 17) {
+                SettingsFields.set(s, 16, s.xRateFloor - 1);
             } else {
                 SettingsFields.set(s, i, lo[i] - 1);
             }
             bytes32 got = SettingsBounds.firstViolation(s);
             // the cap below the floor names the floor, as the Core does
-            assertEq(got, i == 19 ? bytes32("xRateFloor") : names[i], "below the bottom");
+            assertEq(got, i == 17 ? bytes32("xRateFloor") : names[i], "below the bottom");
         }
     }
 
@@ -787,18 +787,19 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), string.concat(codeRow, ", ", keyRow));
     }
 
-    /// FLOW decision 46: preflight fails unless `settings.rateCap` is 10 times `rateStart`. the Core and the deploy guard
+    /// FLOW decisions 46 and 69: preflight fails unless `settings.rateCap` is 3 times `rateStart`. the Core and the deploy guard
     /// accept other ratios, so only this row stops a `rateStart` edit that leaves the old cap
-    function test_preflightRateCapIsTenTimesRateStart() public {
-        string memory row = "rateCap is 10 times rateStart";
+    function test_preflightRateCapIsThreeTimesRateStart() public {
+        string memory row = "rateCap is 3 times rateStart";
         address d2 = _funded();
         LaunchConfig memory shipped = _shipped();
-        assertEq(shipped.settings.rateCap, 10 * shipped.rateStart, "the shipped file holds the ratio");
-        // the fixture opens at 1.732e15 under the launch cap: the row passes once the start is the tenth of the cap
+        assertEq(shipped.settings.rateCap, 3 * shipped.rateStart, "the shipped file holds the ratio");
+        assertEq(shipped.settings.rateCap, 2.67e16, "decision 69 opening cap");
+        // the fixture opens at 1.732e15 under the launch cap: the row passes once the start is a third of the cap
         LaunchConfig memory c = lc;
-        c.rateStart = c.settings.rateCap / 10;
+        c.rateStart = c.settings.rateCap / 3;
         preflight(c, d2);
-        assertTrue(_warnClean(row), "10 times passes the row");
+        assertTrue(_warnClean(row), "3 times passes the row");
         assertEq(_failedNames(), "");
         // rateStart changed, rateCap unchanged: the bounds row still passes, only the ratio row fails
         c.rateStart = c.rateStart / 2;
@@ -808,43 +809,43 @@ contract ConfigTest is Fixture {
         assertEq(
             _rowDetail(row),
             string.concat(
-                "rateStart ", vm.toString(c.rateStart), " rateCap ", vm.toString(c.settings.rateCap), " ratio x10000 200000"
+                "rateStart ", vm.toString(c.rateStart), " rateCap ", vm.toString(c.settings.rateCap), " ratio x10000 60000"
             )
         );
         // rateCap changed, rateStart unchanged
-        c.rateStart = lc.settings.rateCap / 10;
+        c.rateStart = lc.settings.rateCap / 3;
         c.settings.rateCap += 1;
         preflight(c, d2);
         assertEq(_failedNames(), row);
     }
 
-    /// the rate bounds rows fail on their own: a 10 times pair keeps the ratio row passing while rateStart or rateCap is
+    /// the rate bounds rows fail on their own: a 3 times pair keeps the ratio row passing while rateStart or rateCap is
     /// out of its bounds. rateStart bounds are 1e13 to 1e18 and the settings accept the same range for rateCap, so a
-    /// 10 times pair has a rateStart inside its bounds only up to 1e17
+    /// 3 times pair has a rateStart inside its bounds only up to 3.33e17
     function test_preflightRateBoundsFailWithoutTheRatioRow() public {
         address d2 = _funded();
         LaunchConfig memory c = lc;
-        // rateStart 1e12 is below the minimum, rateCap 1e13 is the lowest cap the settings accept
-        c.rateStart = 1e12;
-        c.settings.rateCap = 1e13;
+        // rateStart 1e13 - 1 is below the minimum, 3 times it is inside the settings bounds for rateCap
+        c.rateStart = 1e13 - 1;
+        c.settings.rateCap = uint64(3 * c.rateStart);
         preflight(c, d2);
         assertEq(_failedNames(), "rateStart in bounds and at most rateCap");
-        assertTrue(_warnClean("rateCap is 10 times rateStart"), "the ratio row passes");
-        // rateStart 1e17 + 1 is inside its bounds, 10 times it is 1e18 + 10, above the settings bound for rateCap
-        c.rateStart = 1e17 + 1;
-        c.settings.rateCap = uint64(10 * c.rateStart);
+        assertTrue(_warnClean("rateCap is 3 times rateStart"), "the ratio row passes");
+        // rateStart 3.4e17 is inside its bounds, 3 times it is 1.02e18, above the settings bound for rateCap
+        c.rateStart = 3.4e17;
+        c.settings.rateCap = uint64(3 * c.rateStart);
         assertTrue(rateInBounds(c), "rateStart bounds row passes");
         preflight(c, d2);
         assertEq(_failedNames(), "settings inside the bounds");
-        assertTrue(_warnClean("rateCap is 10 times rateStart"), "the ratio row passes");
+        assertTrue(_warnClean("rateCap is 3 times rateStart"), "the ratio row passes");
     }
 
     /// @dev preflight of a config whose opening bid is the fixture's: the fixture opens at 1.732e15 under the launch cap, a
-    /// ratio of about 51, so the start is read as a tenth of the cap while the row is not under test. a start that a test
+    /// ratio of about 51, so the start is read as a third of the cap while the row is not under test. a start that a test
     /// sets itself is passed through
     function _pre(LaunchConfig memory c, address who) internal {
         uint256 start = c.rateStart;
-        if (start == lc.rateStart) c.rateStart = c.settings.rateCap / 10;
+        if (start == lc.rateStart) c.rateStart = c.settings.rateCap / 3;
         preflight(c, who);
         c.rateStart = start;
     }

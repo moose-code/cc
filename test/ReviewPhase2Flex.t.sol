@@ -112,8 +112,6 @@ contract PackHarness {
         s.idleLoosenBps = type(uint16).max;
         s.tipSavingsBps = type(uint16).max;
         s.tipCapBps = type(uint16).max;
-        s.reimburseBps = type(uint16).max;
-        s.reimburseCapBps = type(uint16).max;
         s.saleFloorBps = type(uint16).max;
         s.auctionDuration = type(uint32).max;
         s.exitAfter = type(uint32).max;
@@ -132,6 +130,8 @@ contract PackHarness {
         s.rateCap = type(uint64).max;
         s.exitLaneToBuybackBps = type(uint16).max;
         s.feeToBuybackBps = type(uint16).max;
+        s.callerFee = type(uint64).max;
+        s.callerMaxBaseFee = type(uint48).max;
     }
 
     function onlyLane() external {
@@ -142,12 +142,21 @@ contract PackHarness {
         SettingsStore.load().feeToBuybackBps = type(uint16).max;
     }
 
-    function words() external view returns (uint256 a, uint256 b, uint256 c) {
+    function onlyCallerFee() external {
+        SettingsStore.load().callerFee = type(uint64).max;
+    }
+
+    function onlyCallerMaxBaseFee() external {
+        SettingsStore.load().callerMaxBaseFee = type(uint48).max;
+    }
+
+    function words() external view returns (uint256 a, uint256 b, uint256 c, uint256 d) {
         bytes32 slot = SettingsStore.SLOT;
         assembly {
             a := sload(slot)
             b := sload(add(slot, 1))
             c := sload(add(slot, 2))
+            d := sload(add(slot, 3))
         }
     }
 }
@@ -631,8 +640,6 @@ contract ReviewPhase2FlexTest is Fixture {
         m.idleLoosenBps = type(uint16).max;
         m.tipSavingsBps = type(uint16).max;
         m.tipCapBps = type(uint16).max;
-        m.reimburseBps = type(uint16).max;
-        m.reimburseCapBps = type(uint16).max;
         m.saleFloorBps = type(uint16).max;
         m.auctionDuration = type(uint32).max;
         m.exitAfter = type(uint32).max;
@@ -651,43 +658,65 @@ contract ReviewPhase2FlexTest is Fixture {
         m.rateCap = type(uint64).max;
         m.exitLaneToBuybackBps = type(uint16).max;
         m.feeToBuybackBps = type(uint16).max;
+        m.callerFee = type(uint64).max;
+        m.callerMaxBaseFee = type(uint48).max;
     }
 
     /// OK: with every field at the max of its TYPE (past the bounds, so a stray bit would show) the compiler layout and
-    /// the library's decode agree, the two last fields sit alone at bits 176 to 207 of the third word, and a write to it
-    /// touches nothing else
+    /// the library's decode agree, the two last share fields sit at bits 176 to 207 of the third word, the two caller
+    /// payment fields fill bits 0 to 111 of the fourth word, and a write to one touches nothing else
     function test_OK_packingEveryFieldAtTypeMaxRoundTrips() public {
         PackHarness h = new PackHarness();
         h.maxAll();
-        (uint256 a, uint256 b, uint256 c) = h.words();
-        assertEq(a, type(uint256).max, "word 0");
+        (uint256 a, uint256 b, uint256 c, uint256 d) = h.words();
+        assertEq(a, (1 << 224) - 1, "word 0: 224 bits, the top 32 are free");
         assertEq(b, type(uint256).max, "word 1");
         assertEq(c, (1 << 208) - 1, "word 2: 176 bits of neighbors then the two 16 bit shares");
+        assertEq(d, (1 << 112) - 1, "word 3: callerFee 64 bits then callerMaxBaseFee 48 bits");
         bytes32 slot = SettingsStore.SLOT;
         vm.store(address(core), slot, bytes32(a));
         vm.store(address(core), bytes32(uint256(slot) + 1), bytes32(b));
         vm.store(address(core), bytes32(uint256(slot) + 2), bytes32(c));
+        vm.store(address(core), bytes32(uint256(slot) + 3), bytes32(d));
         assertEq(keccak256(abi.encode(core.settings())), keccak256(abi.encode(_maxStruct())), "decode(encode(x)) == x");
         PackHarness g = new PackHarness();
         g.onlyLane();
-        (a, b, c) = g.words();
+        (a, b, c, d) = g.words();
         assertEq(a, 0);
         assertEq(b, 0);
         assertEq(c, uint256(type(uint16).max) << 176, "the share alone");
+        assertEq(d, 0);
         ICoreLib clib = ICoreLib(findLibrary(address(core).code));
-        Settings memory u = clib.unpack(a, b, c);
+        Settings memory u = clib.unpack(a, b, c, d);
         assertEq(u.exitLaneToBuybackBps, type(uint16).max);
         assertEq(u.rateCap, 0);
         assertEq(u.exitSliceCredits, 0);
         PackHarness f = new PackHarness();
         f.onlyFee();
-        (a, b, c) = f.words();
+        (a, b, c, d) = f.words();
         assertEq(a, 0);
         assertEq(b, 0);
         assertEq(c, uint256(type(uint16).max) << 192, "the fee share alone");
-        u = clib.unpack(a, b, c);
+        assertEq(d, 0);
+        u = clib.unpack(a, b, c, d);
         assertEq(u.feeToBuybackBps, type(uint16).max);
         assertEq(u.exitLaneToBuybackBps, 0);
+        PackHarness p = new PackHarness();
+        p.onlyCallerFee();
+        (a, b, c, d) = p.words();
+        assertEq(a | b | c, 0);
+        assertEq(d, uint256(type(uint64).max), "callerFee alone");
+        u = clib.unpack(a, b, c, d);
+        assertEq(u.callerFee, type(uint64).max);
+        assertEq(u.callerMaxBaseFee, 0);
+        PackHarness q = new PackHarness();
+        q.onlyCallerMaxBaseFee();
+        (a, b, c, d) = q.words();
+        assertEq(a | b | c, 0);
+        assertEq(d, uint256(type(uint48).max) << 64, "callerMaxBaseFee alone");
+        u = clib.unpack(a, b, c, d);
+        assertEq(u.callerFee, 0);
+        assertEq(u.callerMaxBaseFee, type(uint48).max);
     }
 
     function test_OK_exitLaneShareBounds() public {

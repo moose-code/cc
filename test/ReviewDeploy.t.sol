@@ -415,7 +415,7 @@ contract ReviewDeployTest is ReviewHarness {
             '"poolFee": 8388608',
             '"dropPerCreditBps": 50',
             '"auctionDuration": 86400',
-            '"dropFloorBps": 8000',
+            '"dropFloorBps": 5000',
             '"buybackSlice": 500000000000000000'
         ];
         string[11] memory to = [
@@ -642,9 +642,9 @@ contract ReviewFundedTest is Fixture {
         Prod.newCore(owner, address(coin), predicted, st, 1e13 - 1, Mainnet.defaultSettings());
         vm.expectRevert(ICore.BadRate.selector);
         Prod.newCore(owner, address(coin), predicted, st, 1e18 + 1, Mainnet.defaultSettings());
-        // the opening rate may not sit above the rate cap (8.9e16 at the launch values)
+        // the opening rate may not sit above the rate cap (2.67e16 at the launch values)
         vm.expectRevert(ICore.BadRate.selector);
-        Prod.newCore(owner, address(coin), predicted, st, 8.9e16 + 1, Mainnet.defaultSettings());
+        Prod.newCore(owner, address(coin), predicted, st, 2.67e16 + 1, Mainnet.defaultSettings());
         Settings memory top = Mainnet.defaultSettings();
         top.rateCap = uint64(1e18);
         ICore lo = Prod.newCore(owner, address(coin), predicted, st, 1e13, top);

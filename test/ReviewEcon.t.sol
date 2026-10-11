@@ -11,7 +11,7 @@ import {Lane, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 
 /// @notice independent review of the economics (docs/archive/REVIEW-econ.md), on the real stack, after the flow rework. what
 /// survives: the `pilePage` fuzz against a reference walk, exact numbers at the launch settings (they replace the
-/// golden test of the old defaults), the reimbursement cap with the sale at the reserve, a statement sent to the core
+/// golden test of the old defaults), the compose caller payment with the sale at the reserve, a statement sent to the core
 /// from outside, and a model of the rate written independently of the Core loop. the dutch price curve, the gate
 /// proofs and the recommended config file belong to things that no longer exist
 abstract contract ReviewEconBase is Fixture {
@@ -94,7 +94,7 @@ contract PilePageEquivalence is ReviewEconBase {
 }
 
 /// @notice exact numbers at the launch settings (drop 0.5 percent per credit with an
-/// 80 percent minute floor, climb 0.5 percent a minute, ceiling 125 percent of the rate paid plus 20 percent per 10 idle
+/// 50 percent minute floor, climb 0.5 percent a minute, ceiling 110 percent of the rate paid plus 2 percent per 10 idle
 /// minutes, clamp at the pot). the pot is booked by donation so every number is a closed form
 contract LaunchSettingsExactNumbers is ReviewEconBase {
     function test_scenarioAtTheLaunchSettings() public {
@@ -125,10 +125,10 @@ contract LaunchSettingsExactNumbers is ReviewEconBase {
         (uint256 anchor, uint256 minuteStart,) = _anchor();
         assertEq(anchor, r3, "the rate of the last fill is the anchor");
         assertEq(minuteStart, r1, "the minute started at the first rate paid");
-        // forty hours later the ceiling, 125 percent of the anchor loosened by 240 intervals of 20 percent, is above the
+        // 120 hours later the ceiling, 110 percent of the anchor loosened by 720 intervals of 2 percent, is above the
         // rate cap, so the read sits at the cap
-        _warp(40 hours);
-        assertGt(r3 * (10_000 + 2_000 * 240) * 12_500 / 1e8, core.settings().rateCap, "the loosened ceiling is above the cap");
+        _warp(120 hours);
+        assertGt(r3 * (10_000 + 200 * 720) * 11_000 / 1e8, core.settings().rateCap, "the loosened ceiling is above the cap");
         assertEq(core.ethRate(), core.settings().rateCap);
         // the pot is above the rate cap, so after a long climb the rate sits at the rate cap
         _warp(10_000 hours);
@@ -138,9 +138,9 @@ contract LaunchSettingsExactNumbers is ReviewEconBase {
     }
 }
 
-/// @notice the reimbursement cap and the sale at the reserve, and the statement that arrives from outside
+/// @notice the sale at the reserve, and the statement that arrives from outside
 contract ReserveSaleAndOutsiders is ReviewEconBase {
-    /// E-6: a compose pays the caller nothing, so the cost the statement lists against is the page cost. at the
+    /// E-6: a compose at the launch settings pays the caller nothing, so the cost the statement lists against is the page cost. at the
     /// reserve the pot gets back 0.45 of the cost and the buyback pot 0.45
     function test_POC_composeRepaysNothingAndTheReserveSale() public {
         composeBasefee = 400 gwei;

@@ -19,8 +19,6 @@ library SettingsFields {
             s.idleLoosenBps,
             s.tipSavingsBps,
             s.tipCapBps,
-            s.reimburseBps,
-            s.reimburseCapBps,
             s.saleFloorBps,
             s.auctionDuration,
             s.exitAfter,
@@ -38,7 +36,9 @@ library SettingsFields {
             s.exitSliceCredits,
             s.rateCap,
             s.exitLaneToBuybackBps,
-            s.feeToBuybackBps
+            s.feeToBuybackBps,
+            s.callerFee,
+            s.callerMaxBaseFee
         ];
         return f[i];
     }
@@ -53,26 +53,26 @@ library SettingsFields {
         else if (i == 4) s.idleLoosenBps = uint16(v);
         else if (i == 5) s.tipSavingsBps = uint16(v);
         else if (i == 6) s.tipCapBps = uint16(v);
-        else if (i == 7) s.reimburseBps = uint16(v);
-        else if (i == 8) s.reimburseCapBps = uint16(v);
-        else if (i == 9) s.saleFloorBps = uint16(v);
-        else if (i == 10) s.auctionDuration = uint32(v);
-        else if (i == 11) s.exitAfter = uint32(v);
-        else if (i == 12) s.saleToBuybackBps = uint16(v);
-        else if (i == 13) s.exitToBuybackBps = uint16(v);
-        else if (i == 14) s.buybackSlice = uint128(v);
-        else if (i == 15) s.buybackDelay = uint16(v);
-        else if (i == 16) s.keeperFee = uint64(v);
-        else if (i == 17) s.buybackMaxBaseFee = uint48(v);
-        else if (i == 18) s.xRateCap = uint16(v);
-        else if (i == 19) s.xRateFloor = uint16(v);
-        else if (i == 20) s.xRateClimbPerHour = uint16(v);
-        else if (i == 21) s.xRateDropPerCredit = uint16(v);
-        else if (i == 22) s.xAuctionHalfLife = uint32(v);
-        else if (i == 23) s.exitSliceCredits = uint16(v);
-        else if (i == 24) s.rateCap = uint64(v);
-        else if (i == 25) s.exitLaneToBuybackBps = uint16(v);
-        else s.feeToBuybackBps = uint16(v);
+        else if (i == 7) s.saleFloorBps = uint16(v);
+        else if (i == 8) s.auctionDuration = uint32(v);
+        else if (i == 9) s.exitAfter = uint32(v);
+        else if (i == 10) s.saleToBuybackBps = uint16(v);
+        else if (i == 11) s.exitToBuybackBps = uint16(v);
+        else if (i == 12) s.buybackSlice = uint128(v);
+        else if (i == 13) s.buybackDelay = uint16(v);
+        else if (i == 14) s.keeperFee = uint64(v);
+        else if (i == 15) s.buybackMaxBaseFee = uint48(v);
+        else if (i == 16) s.xRateCap = uint16(v);
+        else if (i == 17) s.xRateFloor = uint16(v);
+        else if (i == 18) s.xRateClimbPerHour = uint16(v);
+        else if (i == 19) s.xRateDropPerCredit = uint16(v);
+        else if (i == 20) s.xAuctionHalfLife = uint32(v);
+        else if (i == 21) s.exitSliceCredits = uint16(v);
+        else if (i == 22) s.rateCap = uint64(v);
+        else if (i == 23) s.exitLaneToBuybackBps = uint16(v);
+        else if (i == 24) s.feeToBuybackBps = uint16(v);
+        else if (i == 25) s.callerFee = uint64(v);
+        else s.callerMaxBaseFee = uint48(v);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
@@ -85,8 +85,6 @@ library SettingsFields {
             1,
             10_000,
             1,
-            0,
-            0,
             0,
             0,
             1_000,
@@ -106,6 +104,8 @@ library SettingsFields {
             1,
             RATE_START_MIN_WEI,
             0,
+            0,
+            0,
             0
         ];
     }
@@ -119,8 +119,6 @@ library SettingsFields {
             2_000,
             2_500,
             500,
-            15_000,
-            1_000,
             40_000,
             30 days,
             365 days,
@@ -138,7 +136,9 @@ library SettingsFields {
             1_000,
             RATE_START_MAX_WEI,
             10_000,
-            10_000
+            10_000,
+            0.005 ether,
+            100 gwei
         ];
     }
 
@@ -151,8 +151,6 @@ library SettingsFields {
             "idleLoosenBps",
             "tipSavingsBps",
             "tipCapBps",
-            "reimburseBps",
-            "reimburseCapBps",
             "saleFloorBps",
             "auctionDuration",
             "exitAfter",
@@ -170,7 +168,9 @@ library SettingsFields {
             "exitSliceCredits",
             "rateCap",
             "exitLaneToBuybackBps",
-            "feeToBuybackBps"
+            "feeToBuybackBps",
+            "callerFee",
+            "callerMaxBaseFee"
         ];
     }
 }

@@ -66,7 +66,7 @@ contract EvilBuyer {
     }
 }
 
-/// an exit module that burns gas before it pays, for the cap of the redeem reimbursement
+/// an exit module that burns gas before it pays, for the gas bound of the exit caller payment
 contract BurnModule is IExitModule {
     address public immutable exitToken;
     uint256 public immutable unit;
@@ -893,7 +893,18 @@ contract ReviewSaleTest is Fixture {
         assertGe(address(core).balance, core.ethPot() + core.ethToBuyback());
     }
 
-    // ------------------------------------------------------------------ redeem reimbursement
+    // ------------------------------------------------------------------ exit caller payment
+
+    /// @dev the caller payment on: 0.0005 ether and a 10 gwei base fee ceiling
+    function _callerPayOn() internal {
+        Settings memory s = core.settings();
+        s.callerFee = 0.0005 ether;
+        s.callerMaxBaseFee = 10 gwei;
+        _setSettings(s);
+    }
+
+    /// gas of the last measured exit as a transaction, before the refund
+    uint256 internal lastExitGross;
 
     function _exitAndMeasure(uint256 sid) internal returns (uint256 got, uint256 gasUsed, uint256 potDrop) {
         uint256 pot = core.ethPot();
@@ -902,30 +913,34 @@ contract ReviewSaleTest is Fixture {
         vm.prank(keeper);
         core.exitStatement(sid);
         gasUsed = g - gasleft();
+        (lastExitGross,) = _lastCallGross();
         got = keeper.balance - before_;
         potDrop = pot - core.ethPot();
     }
 
-    function test_OK_exitRepay_paidFromThePotOnceAndCapped() public {
+    function test_OK_exitPay_paidFromThePotOnceAndCappedAtTheBaseFeeCeiling() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
+        _callerPayOn();
         _warp(105 hours);
         vm.fee(300 gwei);
         (uint256 got,, uint256 drop) = _exitAndMeasure(sid);
         assertEq(got, drop, "paid from the pot, nowhere else");
-        assertEq(got, cost * core.settings().reimburseCapBps / 10_000, "a high basefee binds the cap of the statement cost");
+        assertGt(got, 0.0005 ether, "the gas refund is paid on top of the fee");
+        assertEq((got - 0.0005 ether) % 10 gwei, 0, "a high basefee pays at the ceiling");
+        assertLe(got, 1_500_000 * 10 gwei + 0.0005 ether, "within the gas bound at the ceiling plus the fee");
         vm.prank(keeper);
         vm.expectRevert(ICore.NotHeld.selector);
         core.exitStatement(sid);
         _solvent();
     }
 
-    function test_OK_exitRepay_gasBurningModuleCannotPassTheGasBound() public {
+    function test_OK_exitPay_gasBurningModuleCannotPassTheGasBound() public {
         xt = new MockExitToken("X", "X");
         BurnModule bm = new BurnModule(address(xt), UNIT, 6_000_000);
         _setExitModule(address(bm));
         uint256 sid = _composeOnce().sid;
+        _callerPayOn();
         _warp(105 hours);
         vm.fee(composeBasefee);
         uint256 pot = core.ethPot();
@@ -934,13 +949,14 @@ contract ReviewSaleTest is Fixture {
         core.exitStatement{gas: 9_000_000}(sid);
         uint256 got = keeper.balance - before_;
         // the counted gas stops at 1_500_000, whatever the module burned
-        assertEq(got, 1_500_000 * composeBasefee * core.settings().reimburseBps / 10_000);
+        assertEq(got, 1_500_000 * composeBasefee + 0.0005 ether);
         assertEq(pot - core.ethPot(), got);
     }
 
-    function test_OK_exitRepay_aRevertingExitPaysNothing() public {
+    function test_OK_exitPay_aRevertingExitPaysNothing() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
+        _callerPayOn();
         mod.setShortfallBps(5_000);
         _warp(105 hours);
         uint256 pot = core.ethPot();
@@ -954,32 +970,34 @@ contract ReviewSaleTest is Fixture {
         assertTrue(held);
     }
 
-    function test_OK_exitRepay_exitLaneUsesTheNotionalCap() public {
+    function test_OK_exitPay_exitLanePaysByTheSameRule() public {
         _enterPhase2();
         _fundPot(1 ether);
         uint256 sid = _exitLaneStatement();
+        _callerPayOn();
         vm.fee(500 gwei);
-        (uint256 got,,) = _exitAndMeasure(sid);
-        Settings memory s = core.settings();
-        uint256 notional = 80 * lc.rateStart;
-        assertEq(got, notional * s.reimburseCapBps / 10_000);
+        (uint256 got,, uint256 drop) = _exitAndMeasure(sid);
+        assertEq(got, drop);
+        assertGt(got, 0.0005 ether);
+        assertLe(got, 1_500_000 * 10 gwei + 0.0005 ether);
     }
 
-    /// S-8. the core meters gross gas plus a fixed 50_000 and repays 80 percent of it (`reimburseBps` 8_000). the
-    /// transaction costs the caller its gas net of the EIP-3529 refund, up to 20 percent of the gross, with the 21_000
-    /// intrinsic cost included in the measured gas. so the repayment never exceeds the real cost and stays within 10
-    /// percent of it. bounded by the cap and one per statement
-    function test_exitRepayIsTheNetGasCostAtTheLaunchShare() public {
+    /// the payment is the counted gas at the base fee. the counted gas is the metered gas of the call plus a fixed
+    /// overhead that includes the transaction base cost, so it covers the gross gas of the transaction
+    function test_exitPayCoversTheGrossGasOfTheTransaction() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
+        Settings memory s = core.settings();
+        s.callerMaxBaseFee = 10 gwei;
+        _setSettings(s);
         _warp(105 hours);
         vm.fee(composeBasefee);
-        (uint256 got, uint256 gasUsed,) = _exitAndMeasure(sid);
-        uint256 realCost = gasUsed * composeBasefee;
-        emit log_named_uint("repaid", got);
-        emit log_named_uint("real cost", realCost);
-        assertLe(got, realCost, "never more than the net gas the caller paid");
-        assertGe(got * 10, realCost * 9, "within 10 percent of the net gas the caller paid");
+        (uint256 got,,) = _exitAndMeasure(sid);
+        uint256 gross = lastExitGross;
+        emit log_named_uint("paid", got);
+        emit log_named_uint("gross gas of the transaction at the base fee", gross * composeBasefee);
+        assertGe(got + 15_000 * composeBasefee, gross * composeBasefee, "covers the gross gas of the transaction but for the part of the overhead the constant leaves out");
+        assertLe(got, (gross + 20_000) * composeBasefee, "the overhead is not oversized");
     }
 
     // ------------------------------------------------------------------ settings, config, scripts
@@ -997,7 +1015,7 @@ contract ReviewSaleTest is Fixture {
             assertEq(SettingsBounds.firstViolation(s), bytes32(0), "table values are inside the bounds");
             _setSettings(s);
             Settings memory live = core.settings();
-            assertEq(abi.encode(live), abi.encode(s), "every field survives the three packed slots");
+            assertEq(abi.encode(live), abi.encode(s), "every field survives the four packed slots");
             for (uint256 i; i < SettingsFields.N; ++i) {
                 assertEq(SettingsFields.get(live, i), SettingsFields.get(s, i));
             }

@@ -1696,8 +1696,9 @@ contract AuctionTest is FeeBase {
     /// (c) fills near a fair price: restart at twice the clearing price, one slice per half life
     function test_fairPriceTakersGetOneSlicePerHalfLife() public {
         _auction();
-        while (core.xToBuyback() < 4 * _fullSlice()) _refill();
+        // the taker buys its coin first: the refills below fund the pot with buys of their own, which move the pool
         _equipTaker(2000 ether);
+        while (core.xToBuyback() < 4 * _fullSlice()) _refill();
         // the first fill takes whatever the long wait left and sets the baseline start price
         _warpUntilDust();
         (, uint256 first) = core.exitAuctionQuote();
