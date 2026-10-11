@@ -511,9 +511,16 @@ const R0 = 6.668e15;
   near(hi.takeBuybackSlice(0).tip, 270000 * 10e-9 + 0.0005, 1e-12, 'paid at the 10 gwei cap');
   const lo = fresh({ basefeeGwei: 5 }); lo.ethToBuyback = 2.5;
   near(lo.takeBuybackSlice(0).tip, 270000 * 5e-9 + 0.0005, 1e-12, 'below the cap the actual base fee');
-  // a slice not above the largest payment is not called (SliceTooSmall), nothing moves
-  const small = fresh({ basefeeGwei: 50 }); small.ethToBuyback = 0.006; // the reserve is 600,000 gas at 10 gwei plus 0.0005 = 0.0065
-  assert.equal(small.takeBuybackSlice(0), null); near(small.ethToBuyback, 0.006, 1e-15, 'the pot is untouched'); assert.equal(small.lastBuybackTime, -1e12); n += 2;
+  // a slice under twice the largest payment is not called (SliceTooSmall), nothing moves. the reserve is 600,000 gas at 10 gwei plus 0.0005 = 0.0065
+  const small = fresh({ basefeeGwei: 50, buybackSlice: 0.0131 }); small.ethToBuyback = 0.0129;
+  assert.equal(small.takeBuybackSlice(0), null); near(small.ethToBuyback, 0.0129, 1e-15, 'the pot is untouched'); assert.equal(small.lastBuybackTime, -1e12); n += 2;
+  small.ethToBuyback = 0.0131; ok(small.takeBuybackSlice(0), 'a slice of exactly twice the payment is called');
+  // a small pot pays a share of the fee: the swap budget over the largest budget the setting allows
+  const part = fresh({ basefeeGwei: 10 }); part.ethToBuyback = 0.0265; // slice 0.0265, budget 0.02, largest budget 0.5 - 0.0065
+  near(part.takeBuybackSlice(0).tip, 270000 * 10e-9 + 0.0005 * 0.02 / (0.5 - 0.0065), 1e-12, 'the keeper fee scales with the budget');
+  // the buybackSlice bound at its edge: 2 * (600,000 gas * buybackMaxBaseFee + keeperFee)
+  ok(firstViolation(Object.assign({}, SETTINGS, { buybackSlice: 0.0131 })) === null, 'just above twice the launch payment is inside'); n++;
+  assert.equal(firstViolation(Object.assign({}, SETTINGS, { buybackSlice: 0.0129 })), 'buybackSlice'); n++;
   const free = fresh({ keeperFee: 0, basefeeGwei: 1 }); free.ethToBuyback = 1;
   near(free.takeBuybackSlice(0).tip, 270000e-9, 1e-12, 'no keeper fee leaves the gas refund');
   assert.throws(() => free.setSettings({ keeperFee: 0.0051 }, 0), /keeperFee/); assert.throws(() => free.setSettings({ buybackMaxBaseFee: 0.9 }, 0), /buybackMaxBaseFee/);

@@ -18,7 +18,8 @@ import {
     ICreditStrategy,
     IStatements,
     Mainnet,
-    Settings
+    Settings,
+    BUYBACK_GAS
 } from "../../src/interfaces/Interfaces.sol";
 import {IAuctionHouse} from "../../src/interfaces/AuctionHouse.sol";
 import {IArtCoinsTokenV2, IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
@@ -1677,9 +1678,6 @@ abstract contract HandlerBase is Test {
                            BUYBACK, SKIM, DONATE
     //////////////////////////////////////////////////////////////*/
 
-    /// mirrors the private constant `BUYBACK_GAS` of the Core
-    uint256 internal constant BUYBACK_GAS = 600_000;
-
     struct BbPre {
         uint256 bal;
         uint256 pot;
@@ -1715,8 +1713,8 @@ abstract contract HandlerBase is Test {
         p.slice = p.pool < p.st.buybackSlice ? p.pool : p.st.buybackSlice;
         p.gasRate = block.basefee < p.st.buybackMaxBaseFee ? block.basefee : p.st.buybackMaxBaseFee;
         p.maxPay = BUYBACK_GAS * p.gasRate + p.st.keeperFee;
-        // a slice that does not exceed the largest payment reverts with SliceTooSmall
-        if (p.slice <= p.maxPay) return _skip(a);
+        // a slice under twice the largest payment reverts with SliceTooSmall
+        if (p.slice < 2 * p.maxPay) return _skip(a);
         p.bal = address(core).balance;
         p.pot = core.ethPot() + p.owed - p.toSales;
         p.rate = core.ethRate();
@@ -1764,8 +1762,9 @@ abstract contract HandlerBase is Test {
         if (burned != bought) _flag(V_BUYBACK, "buyback did not burn exactly the coin it bought");
         if (spent == 0 || spent > budget) _flag(V_BUYBACK, "buyback spent more than the slice less the largest payment");
         if (evTip != tip) _flag(V_BUYBACK, "buyback payment event differs from what the caller received");
-        // the payment is the keeper fee scaled by the share of the budget spent, plus counted gas at the capped base fee
-        uint256 feePart = p.st.keeperFee * spent / budget;
+        // the payment is the keeper fee scaled by the budget spent over the largest budget the setting allows, plus
+        // counted gas at the capped base fee
+        uint256 feePart = p.st.keeperFee * spent / (p.st.buybackSlice - p.maxPay);
         if (tip < feePart || tip > feePart + BUYBACK_GAS * p.gasRate) {
             _flag(V_BUYBACK, "buyback payment is outside the scaled fee plus the gas refund cap");
         } else if (p.gasRate == 0 ? tip != feePart : (tip - feePart) % p.gasRate != 0) {

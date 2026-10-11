@@ -78,6 +78,10 @@ interface ICreditStrategy {
 uint256 constant RATE_START_MIN_WEI = 1e13;
 uint256 constant RATE_START_MAX_WEI = 1e18;
 
+// the most gas of a buyback the caller's refund counts, so a gas burning house or hook cannot inflate it. a buyback
+// counts about 267,000 gas, 305,000 with a collection of sale proceeds. read by the Core and by the `buybackSlice` bound
+uint256 constant BUYBACK_GAS = 600_000;
+
 /// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`, bounds
 /// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into three storage slots
 /// (a hot path reads it with a handful of loads). docs/FLOW.md section 2 has the meaning of every field
@@ -112,7 +116,7 @@ struct Settings {
     uint128 buybackSlice;
     /// blocks between two coin buybacks
     uint16 buybackDelay;
-    /// fixed fee paid to the caller of `buyback`, wei, scaled down when the swap fills only in part
+    /// fixed fee paid to the caller of `buyback`, wei, scaled by the eth spent over the largest swap budget the `buybackSlice` setting allows
     uint64 keeperFee;
     /// base fee ceiling of the `buyback` gas refund, wei
     uint48 buybackMaxBaseFee;

@@ -612,6 +612,8 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
             // the lowest rate cap that still holds the launch rate
             else if (f == 24) s.rateCap = uint64(base.rateStart);
             else SettingsFields.set(s, f, lo[f]);
+            // the smallest slice needs the cheapest buyback payment
+            if (f == 14) (s.keeperFee, s.buybackMaxBaseFee) = (0, 1 gwei);
             m.label = string.concat("settings.", nm, " the bottom edge");
         }
         // an edge that is the launch value is no mutation

@@ -296,6 +296,13 @@ abstract contract PostflightChecks is PostflightPool {
         } else {
             _check("controller: sale settings equal the config", same, "buyOnly markupBps startCapBps decayDuration floorBps");
         }
+        // a fresh launch has no sales and no owner change, so the running level of sale prices is at its lower bound
+        bool anchored = k.anchorBps() == 10_000;
+        if (_settingsChanged()) {
+            _warn("warn: controller anchor is 10_000", anchored, "SETTINGS_CHANGED=1, sales or the owner moved it since launch");
+        } else {
+            _check("controller: anchor is 10_000", anchored, vm.toString(k.anchorBps()));
+        }
         _info(
             "controller: sale",
             string.concat(

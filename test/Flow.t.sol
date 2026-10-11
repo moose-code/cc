@@ -6,7 +6,7 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, Settings, Mainnet, IStatements, Stack} from "../src/interfaces/Interfaces.sol";
+import {Lane, Settings, Mainnet, IStatements, Stack, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
 import {IAuctionHouse, IAuctionFactory} from "../src/interfaces/AuctionHouse.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {DeafBidder} from "./attackers/StatementBuyers.sol";
@@ -72,6 +72,9 @@ contract FlowTest is Fixture {
             if (i == 19) b = s.xRateCap;
             _set(s, i, a + (b > a ? x % (b - a + 1) : 0));
         }
+        // the slice is at least twice the largest buyback payment (field 14 is `buybackSlice`)
+        uint256 minSlice = 2 * (BUYBACK_GAS * s.buybackMaxBaseFee + s.keeperFee);
+        if (s.buybackSlice < minSlice) _set(s, 14, minSlice);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -127,6 +130,8 @@ contract FlowTest is Fixture {
                 // the two fields bounded by another field
                 if (i == 18 && k == 0) s.xRateFloor = 0;
                 if (i == 19 && k == 1) v = s.xRateCap;
+                // the smallest slice needs the cheapest buyback payment: 2 * (600,000 gas * 1 gwei + 0) is 0.0012 ether
+                if (i == 14 && k == 0) (s.keeperFee, s.buybackMaxBaseFee) = (0, 1 gwei);
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -181,6 +186,41 @@ contract FlowTest is Fixture {
         s.buybackMaxBaseFee = 100 gwei + 1;
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("buybackMaxBaseFee")));
+        core.setSettings(s);
+    }
+
+    /// `buybackSlice` is at least twice the largest buyback payment, `BUYBACK_GAS * buybackMaxBaseFee + keeperFee`
+    function test_settings_buybackSliceCoversTwiceTheLargestPayment() public {
+        Settings memory s = Mainnet.defaultSettings();
+        bytes memory bad = abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("buybackSlice"));
+        // the launch payment is 600,000 gas at 10 gwei plus 0.0005 ether: twice that is 0.013 ether
+        s.buybackSlice = 0.013 ether - 1;
+        vm.prank(owner);
+        vm.expectRevert(bad);
+        core.setSettings(s);
+        s.buybackSlice = 0.013 ether;
+        _owner(s);
+        assertEq(core.settings().buybackSlice, 0.013 ether);
+        // a dearer payment raises the line, and a cheaper one lowers it
+        s.keeperFee = 0.005 ether;
+        s.buybackMaxBaseFee = 100 gwei;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        s.buybackSlice = uint128(2 * (BUYBACK_GAS * 100 gwei + 0.005 ether) - 1);
+        vm.prank(owner);
+        vm.expectRevert(bad);
+        core.setSettings(s);
+        s.buybackSlice += 1;
+        _owner(s);
+        s.keeperFee = 0;
+        s.buybackMaxBaseFee = 1 gwei;
+        s.buybackSlice = 0.01 ether;
+        _owner(s);
+        // the edge at another base fee ceiling
+        s.buybackMaxBaseFee = 17 gwei;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        s.buybackSlice = uint128(2 * BUYBACK_GAS * 17 gwei - 1);
+        vm.prank(owner);
+        vm.expectRevert(bad);
         core.setSettings(s);
     }
 

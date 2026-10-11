@@ -100,7 +100,7 @@ the controller is in one of two modes (`controller.buyOnly()`). launch is buy mo
 buy mode (`buyOnly` true):
 
 1. `controller.priceOf(sid)` returns the price in wei. `NotForSale` for a statement that is not held, is on the exit lane or has no listing time. the price falls with time and rises when the anchor rises, so a price read in an earlier block can be too low by the time the transaction lands.
-2. `controller.buy{value: v}(sid)` with `v` at least the price (`Underpaid`). send a margin above the quote: the controller records the sale at the asking price and refunds the excess of `v` to the caller last. the controller calls `core.sellTo(sid, buyer)`, which cancels the listing (`HasBid` while a bid is live on the house), sends the statement to the buyer and books the payment as sale proceeds.
+2. `controller.buy{value: v}(sid)` with `v` equal to the quote from `priceOf`. a buy earlier in the same block can raise the price, and the call then reverts `Underpaid`. the controller records the sale at the asking price and refunds any excess of `v` to the caller last. the controller calls `core.sellTo(sid, buyer)`, which cancels the listing (`HasBid` while a bid is live on the house), sends the statement to the buyer and books the payment as sale proceeds.
 3. events `StatementSoldTo(sid, buyer, price)` on the Core, `AnchorMoved(sid, saleBps, anchorBps)` and `Bought(sid, buyer, price)` on the controller. `buy` reverts `NotBuyOnly` in auction mode. read `controller.anchorBps()` and `controller.startBps()` for the level the next listing starts from.
 
 auction mode (`buyOnly` false, an owner setting; a house sale does not move the anchor):
@@ -308,7 +308,7 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `OnlyPoolManager()` | `unlockCallback` | the caller is not the pool manager |
 | `PotTooSmall()` | `sellForEth`, `buyListing`, `sellForExitToken` | the spend is larger than the pot |
 | `Reentrancy()` | guarded functions | a guarded function was entered while another guarded call runs |
-| `SliceTooSmall()` | `buyback` | the slice does not exceed the largest payment to the caller: 600,000 gas at the capped base fee plus `keeperFee` |
+| `SliceTooSmall()` | `buyback` | the slice is under twice the largest payment to the caller: 600,000 gas at the capped base fee plus `keeperFee` |
 | `Slippage()` | `sellForEth`, `sellForExitToken`, `buybackExit` | total payout below `minOut`, or the coin cost above `maxCoinIn` |
 | `TargetNotAllowed()` | `buyListing` | the target is not on the allowlist, or it is a forbidden contract |
 | `TooEarly()` | `exitStatement` | the listing is younger than `exitAfter` |

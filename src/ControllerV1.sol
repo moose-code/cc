@@ -37,8 +37,8 @@ contract ControllerV1 is IController {
 
     ICoreViews public immutable CORE;
 
-    /// buy only mode: `statementPrice` returns the start price without decay (the house reserve is not walked down) and
-    /// `buy` sells at the decayed asking price
+    /// buy only mode: `statementPrice` returns the cap `cost * startCapBps / 10_000` as the house reserve and `buy` sells
+    /// at the decayed asking price
     bool public buyOnly;
     /// start price over the anchor, bps. 10_000 to 40_000, at most `startCapBps`
     uint16 public markupBps;
@@ -85,11 +85,15 @@ contract ControllerV1 is IController {
         emit MarkupBpsSet(v);
     }
 
-    /// `markupBps` to 200_000
+    /// `markupBps` to 200_000. an `anchorBps` above the new cap is lowered to it
     function setStartCapBps(uint32 v) external onlyOwner {
         if (v < markupBps || v > 200_000) revert BadSetting("startCapBps");
         startCapBps = v;
         emit StartCapBpsSet(v);
+        if (anchorBps > v) {
+            anchorBps = v;
+            emit AnchorBpsSet(v);
+        }
     }
 
     /// 1 hour to 30 days
@@ -121,10 +125,12 @@ contract ControllerV1 is IController {
         return start < startCapBps ? start : startCapBps;
     }
 
-    /// the price the core uses as the house reserve, in wei. falls with the age of the listing in auction mode, stays at
-    /// the start price in buy only mode so the reserve is not walked down
+    /// the price the core uses as the house reserve, in wei. falls with the age of the listing in auction mode. in buy
+    /// only mode it is the cap `cost * startCapBps / 10_000`, the highest `buy` price a listing can reach while the
+    /// anchor rises, so the reserve never undercuts the live ask
     function statementPrice(uint256, uint256 cost, uint64 listedAt) external view returns (uint256) {
-        return _ask(cost, buyOnly ? 0 : block.timestamp - listedAt);
+        if (buyOnly) return cost * startCapBps / BPS;
+        return _ask(cost, block.timestamp - listedAt);
     }
 
     /// the asking price of statement `sid` now, in either mode, read from the core. never below the core hard floor
@@ -162,6 +168,7 @@ contract ControllerV1 is IController {
     /// the new anchor is the mean of the old anchor and the sale price in bps of cost (rounded up), from 10_000 to
     /// `startCapBps`
     function _moveAnchor(uint256 sid, uint256 price, uint256 cost) private {
+        // cost is at least 80: every eth lane credit enters the pile through `_spend` (nonzero) or `adopt` (at least 1 wei)
         uint256 saleBps = (price * BPS + cost - 1) / cost;
         uint256 next = (anchorBps + saleBps) / 2;
         uint256 cap = startCapBps;

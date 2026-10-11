@@ -294,17 +294,17 @@ contract SaleCurveTest is SaleBase {
         );
     }
 
-    /// the whole line again with the mode flipped: buy only keeps the house reserve at the start price while the
-    /// ask in `priceOf` still falls
-    function test_curve_buyOnlyKeepsTheReserveAtTheStartAndTheAskFalls() public {
+    /// the whole line again with the mode flipped: buy only puts the house reserve at the cap while the ask in
+    /// `priceOf` falls
+    function test_curve_buyOnlyKeepsTheReserveAtTheCapAndTheAskFalls() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
         _buyOnly(true);
         _age(sid, 52 * H + 30 minutes);
         assertEq(ctl.priceOf(sid), cost * 11_250 / 10_000, "the ask falls");
-        assertEq(ctl.statementPrice(sid, cost, _listedAt(sid)), cost * 15_000 / 10_000, "the reserve price does not");
+        assertEq(ctl.statementPrice(sid, cost, _listedAt(sid)), cost * 100_000 / 10_000, "the reserve price is the cap");
         core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 15_000 / 10_000);
+        assertEq(_live(sid).reserve, cost * 100_000 / 10_000);
     }
 
     function test_curve_priceOfRefusesWhatIsNotForSale() public {
@@ -844,22 +844,22 @@ contract SaleModeFlipTest is SaleBase {
         assertEq(STATEMENTS.ownerOf(a), bidder, "the auction ran on after the flip");
         _collectSales();
 
-        // a listing without a bid, aged. the house reserve is whatever it was until a reprice, and a reprice in buy only
-        // mode puts it back at the start price, it does not follow the ask down
+        // a listing without a bid, aged. the house reserve in buy only mode is the cap at listing and at every reprice,
+        // while the ask falls
         uint256 b = _another();
         uint256 cost = _cost(b);
         _age(b, 84 * H);
-        assertEq(_live(b).reserve, cost * 15_000 / 10_000);
+        assertEq(_live(b).reserve, cost * 100_000 / 10_000);
         assertEq(ctl.priceOf(b), cost * 9_000 / 10_000);
         core.repriceStatement(b);
-        assertEq(_live(b).reserve, cost * 15_000 / 10_000, "buy only reprices to the start price");
+        assertEq(_live(b).reserve, cost * 100_000 / 10_000, "buy only reprices to the cap");
         address buyer = address(0xB0B2);
         _pay(buyer, b, ctl.priceOf(b));
         assertEq(STATEMENTS.ownerOf(b), buyer);
 
-        // a new listing in buy only mode opens at the start price and sells at it
+        // a new listing in buy only mode has the cap as its reserve and sells at the start price
         uint256 c = _another();
-        assertEq(_live(c).reserve, _cost(c) * 15_000 / 10_000);
+        assertEq(_live(c).reserve, _cost(c) * 100_000 / 10_000);
         assertEq(ctl.priceOf(c), _cost(c) * 15_000 / 10_000);
         _pay(address(0xB0B3), c, ctl.priceOf(c));
         assertEq(STATEMENTS.ownerOf(c), address(0xB0B3));
@@ -874,7 +874,7 @@ contract SaleModeFlipTest is SaleBase {
         uint256 cost = _cost(sid);
         _age(sid, 84 * H);
         _buyOnly(false);
-        assertEq(_live(sid).reserve, cost * 15_000 / 10_000);
+        assertEq(_live(sid).reserve, cost * 100_000 / 10_000);
         vm.deal(address(0xB0B), 100 ether);
         vm.prank(address(0xB0B));
         vm.expectRevert(IControllerV1.NotBuyOnly.selector);
@@ -885,8 +885,8 @@ contract SaleModeFlipTest is SaleBase {
         assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Bid));
     }
 
-    /// a listing repriced down in auction mode, then the flip: its reserve walks back UP to the start price at the
-    /// next reprice, while `buy` still sells at the decayed ask
+    /// a listing repriced down in auction mode, then the flip: its reserve goes back UP to the cap at the next
+    /// reprice, while `buy` still sells at the decayed ask
     function test_flip_repricedListingWalksBackUpInBuyOnly() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
@@ -895,7 +895,7 @@ contract SaleModeFlipTest is SaleBase {
         assertEq(_live(sid).reserve, cost);
         _buyOnly(true);
         core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 15_000 / 10_000, "the reserve went up");
+        assertEq(_live(sid).reserve, cost * 100_000 / 10_000, "the reserve went up");
         assertEq(ctl.priceOf(sid), cost, "the ask is still 100 percent");
         _pay(address(0xB0B), sid, cost);
         assertEq(STATEMENTS.ownerOf(sid), address(0xB0B));
@@ -1269,6 +1269,25 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.startBps(), 200_000, "800_000 is held at the cap");
     }
 
+    /// a cap set below the anchor lowers the anchor to it, with the anchor event. a cap at or above the anchor leaves it
+    function test_settings_loweringTheCapBelowTheAnchorLowersTheAnchor() public {
+        vm.startPrank(owner);
+        ctl.setAnchorBps(80_000);
+        vm.expectEmit(address(ctl));
+        emit IControllerV1.StartCapBpsSet(60_000);
+        vm.expectEmit(address(ctl));
+        emit IControllerV1.AnchorBpsSet(60_000);
+        ctl.setStartCapBps(60_000);
+        assertEq(ctl.anchorBps(), 60_000);
+        assertEq(ctl.startBps(), 60_000);
+        vm.recordLogs();
+        ctl.setStartCapBps(60_000);
+        ctl.setStartCapBps(90_000);
+        assertEq(vm.getRecordedLogs().length, 2, "only the cap events");
+        assertEq(ctl.anchorBps(), 60_000);
+        vm.stopPrank();
+    }
+
     function test_settings_eventsAndValues() public {
         vm.startPrank(owner);
         vm.expectEmit(address(ctl));
@@ -1423,6 +1442,25 @@ contract SaleAnchorTest is SaleBase {
         _pay(buyer, sid, price);
         assertEq(ctl.anchorBps(), 10_000);
         assertEq(ctl.startBps(), 15_000);
+    }
+
+    /// the buy only house reserve is the cap, so it stays at or above the live ask of the same listing when a sale
+    /// or the owner raises the anchor after the reserve was set
+    function test_anchor_buyOnlyReserveNeverUndercutsTheLiveAsk() public {
+        uint256[] memory sids = _openListings(2);
+        uint256 cost = _cost(sids[0]);
+        core.repriceStatement(sids[0]);
+        _buyAtStart(sids[1]);
+        assertEq(ctl.anchorBps(), 12_500);
+        _age(sids[0], 0);
+        assertEq(ctl.priceOf(sids[0]), cost * 18_750 / 10_000, "the live ask rose with the anchor");
+        assertGe(_live(sids[0]).reserve, ctl.priceOf(sids[0]), "the reserve stayed above it");
+        // the owner raises the anchor to the cap: the ask reaches the cap and the reserve is not under it
+        _anchor(100_000);
+        assertEq(ctl.priceOf(sids[0]), cost * 100_000 / 10_000);
+        assertGe(_live(sids[0]).reserve, ctl.priceOf(sids[0]));
+        core.repriceStatement(sids[0]);
+        assertGe(_live(sids[0]).reserve, ctl.priceOf(sids[0]));
     }
 
     /// a sale at 15_000 moves the anchor to the mean 12_500, and the next start is 18_750

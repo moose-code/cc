@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Vm} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
-import {Lane, Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../../src/interfaces/Interfaces.sol";
+import {Lane, Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../../src/interfaces/Interfaces.sol";
 import {HandlerHouse} from "./HandlerHouse.sol";
 import {BidModel} from "../utils/BidModel.sol";
 import {MockExitModule} from "../standins/MockExitModule.sol";
@@ -71,6 +71,9 @@ abstract contract HandlerOwner is HandlerHouse {
         s.exitLaneToBuybackBps = uint16(_f(_r(seed, 27), 0, 10_000, c.exitLaneToBuybackBps));
         s.feeToBuybackBps = uint16(_f(_r(seed, 28), 0, 10_000, c.feeToBuybackBps));
         _corner(s, corner);
+        // the slice stays at or above twice the largest buyback payment
+        uint256 minSlice = 2 * (BUYBACK_GAS * s.buybackMaxBaseFee + s.keeperFee);
+        if (s.buybackSlice < minSlice) s.buybackSlice = uint128(minSlice);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
@@ -99,7 +102,10 @@ abstract contract HandlerOwner is HandlerHouse {
             s.dropPerCreditBps = 1_000;
             s.dropFloorBps = 5_000;
         } else if (k == 10) {
+            // the smallest slice: the cheapest payment allows it
             s.buybackSlice = 0.01 ether;
+            s.keeperFee = 0;
+            s.buybackMaxBaseFee = 1 gwei;
         } else if (k == 11) {
             s.buybackSlice = 1 ether;
         } else if (k == 12) {
@@ -264,6 +270,7 @@ abstract contract HandlerOwner is HandlerHouse {
         if (s.buybackDelay < 1 || s.buybackDelay > 7_200) return "buybackDelay";
         if (s.keeperFee > 0.005 ether) return "keeperFee";
         if (s.buybackMaxBaseFee < 1 gwei || s.buybackMaxBaseFee > 100 gwei) return "buybackMaxBaseFee";
+        if (s.buybackSlice < 2 * (BUYBACK_GAS * s.buybackMaxBaseFee + s.keeperFee)) return "buybackSlice";
         if (s.xRateCap > 10_000) return "xRateCap";
         if (s.xRateFloor > s.xRateCap) return "xRateFloor";
         if (s.xRateClimbPerHour > 1_000) return "xRateClimbPerHour";

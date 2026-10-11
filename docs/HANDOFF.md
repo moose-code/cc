@@ -34,7 +34,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 |---|---|
 | branch | `main` is the working branch on github ripe0x/cc. the director repair of 2026-10-10 is on the local branch `claude/repair-project-director-1366be`, not pushed |
 | phase | launch preparation. candidate c02435e is frozen (`project/director-state.json`). the full suite, the deep run (on 1e2c4b3, carried to 14c6306), the security review (docs/REVIEW-security.md), the deploy rehearsal (docs/REHEARSAL-c02435e.md) and the product acceptance review (docs/REVIEW-acceptance.md) are done |
-| source | Core 21,285 bytes runtime (3,291 bytes of headroom), CoreLib 15,608, ControllerV1 4,282, CoreLens 7,479, measured at c8892a2 |
+| source | Core 21,464 bytes runtime (3,112 bytes of headroom), CoreLib 16,088, ControllerV1 5,217, CoreLens 7,479, measured on the change after 38af5f3 |
 | tests | the full suite and the 7 Deep suites ran on the candidate line (docs/DEEP-RUN-1e2c4b3.log, carried to 14c6306). the real preflight script on a fork: 121 rows, 118 pass, the three documented owner-side failures. the rehearsal test: preflight 121 of 121 after the owner command, postflight 102 of 102 |
 | reviews | independent review of decisions 55 and 56 (docs/REVIEW-next29.md), security review of 1e2c4b3 (docs/REVIEW-security.md, fixes at 14c6306), acceptance review of c02435e (docs/REVIEW-acceptance.md, verdict accept with listed fixes: the intent records in docs/ARCHITECTURE.md section 1). docs/AUDIT-codex.md (commit 32ff35b) is on a branch outside main |
 | owner steps before launch | fund the owner address 0xCB43 (0.0163 eth at the rehearsal, the launch needs about 0.086 eth at 1 gwei and 0.15 eth at 5 gwei), run `setMinProtocolSkimShareBps(362)` on the v2 factory, then docs/DEPLOY.md with `--slow` (the owner address is an EIP 7702 delegated account) |
@@ -84,7 +84,7 @@ owner inputs before launch: the coin's image url and description (config), fundi
 | timings | clean build about 3 to 4 minutes, a test file change about 3 seconds, a `src/Core.sol` change about 35 seconds. full suite with `REHEARSAL=1 forge test -j 6` about 2 minutes on a 16 core machine (rerun rpc failures with `-j 1`). a Deep suite 577 to 692 seconds: `INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 forge test --match-contract '^<Suite>Deep$'` |
 | verification | during an edit run the smallest test that covers it (`--match-path`). run one combined gate at a batch boundary. full suites, deep invariants and the rehearsal belong to a frozen candidate or to a gate whose evidence was invalidated. before a command over 30 seconds, say what it must establish |
 | interfaces | after changing a production contract's external surface run `script/tools/gen-interfaces.sh` and repin test/BuildIdentity.t.sol. never import `src/Core.sol` in a test |
-| Core size | 3,291 bytes of headroom at c8892a2, margin rule at least 60. new logic goes into `CoreLib`. never drop a check to make room |
+| Core size | 3,112 bytes of headroom after 38af5f3, margin rule at least 60. new logic goes into `CoreLib`. never drop a check to make room |
 | safety | no mainnet broadcast, deploy, push or private key without the owner's explicit instruction |
 
 ## 8. known and not fixed

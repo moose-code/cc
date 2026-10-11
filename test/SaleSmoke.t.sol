@@ -119,7 +119,8 @@ contract SaleSmokeTest is Fixture {
         uint256 ask = ctl.priceOf(sid);
         assertEq(ask, cost * 20_000 / 10_000, "the quote is the hard floor");
         core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 20_000 / 10_000, "reserve floored");
+        assertGe(_live(sid).reserve, ctl.priceOf(sid), "the reserve is not under the live ask");
+        assertEq(_live(sid).reserve, cost * 100_000 / 10_000, "buy only reserve is the cap, above the floor");
         vm.deal(buyer, 10 ether);
         vm.prank(buyer);
         ctl.buy{value: ask}(sid);

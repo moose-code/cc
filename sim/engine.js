@@ -79,6 +79,7 @@ export function firstViolation(s) {
   if (s.buybackDelay < 1 || s.buybackDelay > 7200) return 'buybackDelay';
   if (s.keeperFee > 0.005) return 'keeperFee';
   if (s.buybackMaxBaseFee < 1 || s.buybackMaxBaseFee > 100) return 'buybackMaxBaseFee';
+  if (s.buybackSlice < 2 * (600000 * s.buybackMaxBaseFee * 1e-9 + s.keeperFee)) return 'buybackSlice'; // BUYBACK_GAS (Interfaces.sol)
   if (s.xRateCap > 10000) return 'xRateCap';
   if (s.xRateFloor > s.xRateCap) return 'xRateFloor';
   if (s.xRateClimbPerHour > 1000) return 'xRateClimbPerHour';
@@ -521,8 +522,9 @@ export class Core {
     return { slice, price, coinIn };
   }
   // buyback(): one slice at most per buybackDelay blocks. rate = min(basefee, buybackMaxBaseFee). the swap budget is the slice less the largest payment
-  // (BUYBACK_GAS * rate + keeperFee), and a slice not above that payment reverts (no call). the caller is paid BUYBACK_GAS_USED * rate + keeperFee out of the slice
-  // and the unspent part of the reserve goes back to the buyback pot. `tip` is that payment
+  // (BUYBACK_GAS * rate + keeperFee), and a slice under twice that payment reverts (no call). the caller is paid BUYBACK_GAS_USED * rate plus keeperFee
+  // times the swap budget over the largest budget the buybackSlice setting allows (the model fills the swap, so spent = budget), out of the slice.
+  // the unspent part of the reserve goes back to the buyback pot. `tip` is that payment
   takeBuybackSlice(now) {
     const s = this.s, p = this.p;
     const pool = this.ethToBuyback;
@@ -530,8 +532,8 @@ export class Core {
     const slice = Math.min(pool, s.buybackSlice);
     const rate = Math.min(p.basefeeGwei, s.buybackMaxBaseFee) * 1e-9;
     const reserve = p.BUYBACK_GAS * rate + s.keeperFee;
-    if (slice <= reserve) return null;
-    const tip = p.BUYBACK_GAS_USED * rate + s.keeperFee;
+    if (slice < 2 * reserve) return null;
+    const tip = p.BUYBACK_GAS_USED * rate + s.keeperFee * Math.min(1, (slice - reserve) / (s.buybackSlice - reserve));
     this.ethToBuyback = pool - slice + (reserve - tip);
     this.lastBuybackTime = now;
     return { slice, tip, budget: slice - reserve };

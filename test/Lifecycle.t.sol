@@ -468,6 +468,9 @@ contract LifecycleComposeTest is Fixture {
         uint256 dead;
     }
 
+    /// what the last `_buybackAndCheck` returned to the pot: the largest payment less the payment
+    uint256 internal lastResidue;
+
     /// one real buyback with its effects checked against the real pool. the skim on the swap returns to the pot
     function _buybackAndCheck(address caller) internal returns (uint256) {
         Settings memory s = core.settings();
@@ -493,9 +496,15 @@ contract LifecycleComposeTest is Fixture {
         assertEq(coin.balanceOf(address(core)), 0, "the core never holds the coin");
         assertEq(coin.balanceOf(DEAD), b.dead, "burned, not parked");
         assertEq(caller.balance - b.caller, paid, "the caller got the payment");
-        assertGe(paid, s.keeperFee, "the payment holds the fee");
+        // the fee is scaled by the budget spent over the largest budget the setting allows
+        assertGe(paid, s.keeperFee * spent / (s.buybackSlice - (600_000 * 1 gwei + s.keeperFee)), "the payment holds the scaled fee");
         assertEq(core.ethToBuyback(), b.pool - spent - paid, "the pot fell by the spend and the payment");
         assertLe(spent + paid, b.slice, "the slice bounds both");
+        // the largest payment at the 1 gwei base fee is 600,000 gas plus the keeper fee. the swap spends the whole budget
+        uint256 maxPay = 600_000 * 1 gwei + s.keeperFee;
+        assertEq(spent, b.slice - maxPay, "the swap spends the whole budget");
+        lastResidue = maxPay - paid;
+        assertEq(core.ethToBuyback(), b.pool - b.slice + lastResidue, "the unused payment returned to the pot");
         _flush();
         assertGt(core.ethPot(), b.pot, "the skim of the swap came back into the pot");
         assertEq(core.lastBuybackBlock(), block.number);
@@ -564,14 +573,14 @@ contract LifecycleComposeTest is Fixture {
         vm.roll(block.number + 1);
         uint256 left = core.ethToBuyback();
         assertGe(left, step / 2 - 1 ether, "the pool is the share less the first slice");
-        assertLt(left - (step / 2 - 1 ether), 0.01 ether, "plus the unused payment margin");
+        assertEq(left - (step / 2 - 1 ether), lastResidue, "plus the unused payment margin");
         while (left > 1 ether) {
             assertEq(_buybackAndCheck(buybacker), 1 ether, "a full slice");
             left = core.ethToBuyback();
             vm.roll(block.number + 25);
         }
         assertEq(_buybackAndCheck(buybacker), left, "the last slice is what is left");
-        assertLt(core.ethToBuyback(), 0.01 ether, "only the unused payment margin is left");
+        assertEq(core.ethToBuyback(), lastResidue, "only the unused payment margin is left");
         vm.roll(block.number + 25);
         vm.expectRevert(ICore.SliceTooSmall.selector);
         core.buyback();
