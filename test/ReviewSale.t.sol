@@ -1059,7 +1059,7 @@ contract ReviewSaleTest is Fixture {
         }
         assertFalse(_has(keys, "reserveBps"));
         string[] memory sale = vm.parseJsonKeys(j, ".sale");
-        assertEq(sale.length, 5);
+        assertEq(sale.length, 6);
         LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
         assertEq(abi.encode(f.sale), abi.encode(Mainnet.defaultSale()));
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()));
@@ -1076,13 +1076,14 @@ contract ReviewSaleTest is Fixture {
             (string memory dirty,) = _failed();
             assertTrue(keccak256(bytes(dirty)) != keccak256(bytes(clean)), _nm(SettingsFields.names()[i]));
         }
-        for (uint256 i; i < 5; ++i) {
+        for (uint256 i; i < 6; ++i) {
             LaunchConfig memory c = lc;
             if (i == 0) c.sale.buyOnly = !c.sale.buyOnly;
             if (i == 1) c.sale.markupBps += 1;
             if (i == 2) c.sale.startCapBps += 1;
             if (i == 3) c.sale.decayDuration += 1;
             if (i == 4) c.sale.floorBps += 1;
+            if (i == 5) c.sale.anchorHalfLife += 1;
             postflightAs(c, address(core), owner);
             (string memory dirty,) = _failed();
             assertTrue(keccak256(bytes(dirty)) != keccak256(bytes(clean)), "sale field unseen by postflight");
@@ -1102,7 +1103,7 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_saleBounds_scriptAndControllerConstructorAgree() public {
-        Sale[10] memory v;
+        Sale[14] memory v;
         for (uint256 i; i < v.length; ++i) {
             v[i] = Mainnet.defaultSale();
         }
@@ -1119,6 +1120,10 @@ contract ReviewSaleTest is Fixture {
         v[8].startCapBps = 200_000;
         v[8].floorBps = 10_000;
         v[9].startCapBps = 200_001;
+        v[10].anchorHalfLife = 1 days - 1;
+        v[11].anchorHalfLife = 90 days + 1;
+        v[12].anchorHalfLife = 1 days;
+        v[13].anchorHalfLife = 90 days;
         for (uint256 i; i < v.length; ++i) {
             LaunchConfig memory c = lc;
             c.sale = v[i];

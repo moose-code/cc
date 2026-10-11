@@ -290,7 +290,15 @@ contract SaleCurveTest is SaleBase {
         // a controller built with a cap below its markup is refused
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("startCapBps")));
         Prod.newController(
-            address(core), Sale({buyOnly: false, markupBps: 15_000, startCapBps: 14_999, decayDuration: 105 hours, floorBps: 7_500})
+            address(core),
+            Sale({
+                buyOnly: false,
+                markupBps: 15_000,
+                startCapBps: 14_999,
+                decayDuration: 105 hours,
+                floorBps: 7_500,
+                anchorHalfLife: 7 days
+            })
         );
     }
 
@@ -1201,7 +1209,8 @@ contract SaleSettingsTest is SaleBase {
             markupBps: lc.sale.markupBps,
             startCapBps: lc.sale.startCapBps,
             decayDuration: lc.sale.decayDuration,
-            floorBps: lc.sale.floorBps
+            floorBps: lc.sale.floorBps,
+            anchorHalfLife: lc.sale.anchorHalfLife
         });
     }
 
@@ -1214,12 +1223,16 @@ contract SaleSettingsTest is SaleBase {
         assertEq(lc.sale.startCapBps, 100_000);
         assertEq(lc.sale.decayDuration, 105 hours);
         assertEq(lc.sale.floorBps, 7_500);
+        assertEq(lc.sale.anchorHalfLife, 7 days);
         assertTrue(Mainnet.defaultSale().buyOnly, "the launch sale is buy only");
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.startCapBps(), 100_000);
         assertEq(ctl.decayDuration(), 105 hours);
         assertEq(ctl.floorBps(), 7_500);
+        assertEq(ctl.anchorHalfLife(), 7 days);
         assertEq(ctl.anchorBps(), 10_000, "the anchor starts at the cost");
+        assertEq(ctl.storedAnchorBps(), 10_000);
+        assertEq(ctl.anchorTime(), block.timestamp);
         assertEq(ctl.startBps(), 15_000);
     }
 
@@ -1260,7 +1273,15 @@ contract SaleSettingsTest is SaleBase {
         ctl.setAnchorBps(200_000);
         vm.expectRevert(_bad("anchorBps"));
         ctl.setAnchorBps(200_001);
+        // anchorHalfLife 1 day to 90 days
+        vm.expectRevert(_bad("anchorHalfLife"));
+        ctl.setAnchorHalfLife(1 days - 1);
+        ctl.setAnchorHalfLife(1 days);
+        ctl.setAnchorHalfLife(90 days);
+        vm.expectRevert(_bad("anchorHalfLife"));
+        ctl.setAnchorHalfLife(90 days + 1);
         vm.stopPrank();
+        assertEq(ctl.anchorHalfLife(), 90 days);
         assertEq(ctl.markupBps(), 40_000);
         assertEq(ctl.startCapBps(), 200_000);
         assertEq(ctl.decayDuration(), 30 days);
@@ -1288,6 +1309,28 @@ contract SaleSettingsTest is SaleBase {
         vm.stopPrank();
     }
 
+    /// the clamp reads the anchor now: a cap above the decayed anchor leaves the stored anchor and its time, a cap below
+    /// it stores the cap with the time of the call
+    function test_settings_capClampUsesTheDecayedAnchor() public {
+        vm.prank(owner);
+        ctl.setAnchorBps(80_000);
+        uint256 t0 = block.timestamp;
+        vm.warp(t0 + 7 days);
+        assertEq(ctl.anchorBps(), 45_000, "70_000 of excess halved once");
+        vm.startPrank(owner);
+        ctl.setStartCapBps(60_000);
+        assertEq(ctl.storedAnchorBps(), 80_000, "the cap is above the decayed anchor: no change");
+        assertEq(ctl.anchorTime(), t0);
+        assertEq(ctl.anchorBps(), 45_000);
+        vm.expectEmit(address(ctl));
+        emit IControllerV1.AnchorBpsSet(40_000);
+        ctl.setStartCapBps(40_000);
+        vm.stopPrank();
+        assertEq(ctl.storedAnchorBps(), 40_000);
+        assertEq(ctl.anchorTime(), t0 + 7 days);
+        assertEq(ctl.anchorBps(), 40_000);
+    }
+
     function test_settings_eventsAndValues() public {
         vm.startPrank(owner);
         vm.expectEmit(address(ctl));
@@ -1306,6 +1349,9 @@ contract SaleSettingsTest is SaleBase {
         emit IControllerV1.AnchorBpsSet(11_000);
         ctl.setAnchorBps(11_000);
         vm.expectEmit(address(ctl));
+        emit IControllerV1.AnchorHalfLifeSet(3 days);
+        ctl.setAnchorHalfLife(3 days);
+        vm.expectEmit(address(ctl));
         emit IControllerV1.BuyOnlySet(false);
         ctl.setBuyOnly(false);
         vm.stopPrank();
@@ -1314,6 +1360,7 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.decayDuration(), 2 hours);
         assertEq(ctl.floorBps(), 8_000);
         assertEq(ctl.anchorBps(), 11_000);
+        assertEq(ctl.anchorHalfLife(), 3 days);
         assertEq(ctl.startBps(), 13_200);
         assertFalse(ctl.buyOnly());
     }
@@ -1335,8 +1382,11 @@ contract SaleSettingsTest is SaleBase {
             ctl.setFloorBps(8_000);
             vm.expectRevert(IControllerV1.OnlyOwner.selector);
             ctl.setAnchorBps(11_000);
+            vm.expectRevert(IControllerV1.OnlyOwner.selector);
+            ctl.setAnchorHalfLife(3 days);
             vm.stopPrank();
         }
+        assertEq(ctl.anchorHalfLife(), 7 days);
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.anchorBps(), 10_000);
         assertFalse(ctl.buyOnly());
@@ -1392,10 +1442,19 @@ contract SaleSettingsTest is SaleBase {
         vm.expectRevert(_bad("floorBps"));
         Prod.newController(address(core), s);
         s = _fresh();
+        s.anchorHalfLife = 1 days - 1;
+        vm.expectRevert(_bad("anchorHalfLife"));
+        Prod.newController(address(core), s);
+        s = _fresh();
+        s.anchorHalfLife = 90 days + 1;
+        vm.expectRevert(_bad("anchorHalfLife"));
+        Prod.newController(address(core), s);
+        s = _fresh();
         s.buyOnly = true;
         IControllerV1 c = Prod.newController(address(core), s);
         assertTrue(c.buyOnly());
         assertEq(c.anchorBps(), 10_000);
+        assertEq(c.anchorHalfLife(), 7 days);
     }
 
     /// a controller the owner installs later is governed by the same live owner
@@ -1431,17 +1490,150 @@ contract SaleAnchorTest is SaleBase {
         _pay(buyer, sid, price);
     }
 
-    /// a sale below the anchor leaves it at 10_000: the mean 9_500 is under the lower bound
-    function test_anchor_aSaleBelowTheCostLeavesTheAnchorAtTheLowerBound() public {
+    /// the number of `AnchorMoved` logs of the controller in `logs`
+    function _moved(Vm.Log[] memory logs) internal view returns (uint256 n) {
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == address(ctl) && logs[i].topics[0] == IControllerV1.AnchorMoved.selector) ++n;
+        }
+    }
+
+    /// a sale below the anchor leaves the stored anchor, its time and the event log unchanged
+    function test_anchor_aSaleBelowTheAnchorLeavesIt() public {
         uint256 sid = _openListings(1)[0];
         _age(sid, 84 * H);
         uint256 price = ctl.priceOf(sid);
         assertEq(price, _cost(sid) * 9_000 / 10_000);
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.AnchorMoved(sid, 9_000, 10_000);
+        uint256 t0 = ctl.anchorTime();
+        vm.recordLogs();
         _pay(buyer, sid, price);
+        assertEq(_moved(vm.getRecordedLogs()), 0, "no AnchorMoved");
+        assertEq(ctl.storedAnchorBps(), 10_000);
+        assertEq(ctl.anchorTime(), t0, "no checkpoint");
         assertEq(ctl.anchorBps(), 10_000);
         assertEq(ctl.startBps(), 15_000);
+    }
+
+    /// the review sequence: four sales at the start price raise the anchor to 24_413, then two sales at the floor leave
+    /// the anchor, its time and the start price of an open listing where they were
+    function test_anchor_floorSalesDoNotDragTheAnchor() public {
+        uint256[] memory sids = _openListings(6);
+        uint256 listed = _listedAt(sids[0]);
+        for (uint256 i; i < 4; ++i) {
+            _buyAtStart(sids[i]);
+        }
+        assertEq(ctl.anchorBps(), 24_413);
+        _age(sids[4], 105 * H);
+        uint256 anchor = ctl.anchorBps();
+        uint256 start = ctl.startBps();
+        uint256 stored = ctl.storedAnchorBps();
+        uint256 at = ctl.anchorTime();
+        uint256 ask = ctl.priceOf(sids[5]);
+        assertEq(stored, 24_413);
+        assertEq(at, listed);
+        assertEq(anchor, 19_345, "24_413 decayed over 105 hours of a 7 day half life");
+        assertEq(ask, _cost(sids[5]) * 7_500 / 10_000, "the open listing is at the floor");
+        vm.recordLogs();
+        _pay(buyer, sids[4], ctl.priceOf(sids[4]));
+        assertEq(ctl.anchorBps(), anchor, "anchor after the first floor sale");
+        assertEq(ctl.startBps(), start);
+        assertEq(ctl.priceOf(sids[5]), ask);
+        _pay(buyer, sids[5], ctl.priceOf(sids[5]));
+        assertEq(_moved(vm.getRecordedLogs()), 0, "no AnchorMoved");
+        assertEq(ctl.anchorBps(), anchor, "anchor after the second floor sale");
+        assertEq(ctl.storedAnchorBps(), stored);
+        assertEq(ctl.anchorTime(), at);
+        assertEq(ctl.startBps(), start, "the fresh ask is unchanged");
+    }
+
+    /// the part of the anchor above 10_000 halves every half life, continuously, and stops at 10_000
+    function test_anchor_decaysWithTime() public {
+        _anchor(30_000);
+        uint256 t0 = block.timestamp;
+        assertEq(ctl.anchorTime(), t0);
+        assertEq(ctl.anchorBps(), 30_000);
+        vm.warp(t0 + 7 days);
+        assertApproxEqAbs(ctl.anchorBps(), 20_000, 1, "one half life");
+        vm.warp(t0 + 14 days);
+        assertApproxEqAbs(ctl.anchorBps(), 15_000, 1, "two half lives");
+        vm.warp(t0 + 3.5 days);
+        assertApproxEqAbs(ctl.anchorBps(), 24_142, 1, "half a half life");
+        vm.warp(t0 + 365 days);
+        assertEq(ctl.anchorBps(), 10_000, "the lower bound holds");
+        vm.warp(t0 + 7 days * 300);
+        assertEq(ctl.anchorBps(), 10_000, "after 256 half lives");
+        assertEq(ctl.storedAnchorBps(), 30_000, "reads do not store");
+        assertEq(ctl.anchorTime(), t0);
+    }
+
+    /// the start price of a new listing follows the decayed anchor
+    function test_anchor_startPriceFollowsTheDecay() public {
+        _anchor(30_000);
+        assertEq(ctl.startBps(), 45_000);
+        vm.warp(block.timestamp + 7 days);
+        assertApproxEqAbs(ctl.startBps(), 30_000, 2, "1.5 times 20_000");
+        vm.warp(block.timestamp + 7 days * 20);
+        assertEq(ctl.startBps(), 15_000, "1.5 times 10_000");
+    }
+
+    /// an open listing follows the anchor down as it decays: the price is the line from the live start price
+    function test_anchor_anOpenListingFollowsTheDecayingAnchor() public {
+        uint256 sid = _openListings(1)[0];
+        uint256 cost = _cost(sid);
+        _anchor(30_000);
+        _age(sid, 0);
+        assertEq(ctl.priceOf(sid), cost * 45_000 / 10_000);
+        _age(sid, 52 * H + 30 minutes);
+        uint256 anchor = ctl.anchorBps();
+        assertApproxEqAbs(anchor, 10_000 + 20_000 * 8_053 / 10_000, 2, "2^(-52.5 / 168) of the excess");
+        assertEq(ctl.priceOf(sid), _line(cost, anchor * 15_000 / 10_000, 7_500, 105 hours, 52 * H + 30 minutes));
+        assertLt(
+            ctl.priceOf(sid),
+            _line(cost, 45_000, 7_500, 105 hours, 52 * H + 30 minutes),
+            "below the line of an anchor that did not decay"
+        );
+        _age(sid, 105 * H);
+        assertEq(ctl.priceOf(sid), cost * 7_500 / 10_000, "the end of the line is the floor");
+    }
+
+    /// a sale above the decayed anchor moves it halfway from the decayed value, and the stored anchor takes the time
+    function test_anchor_aSaleAboveTheDecayedAnchorMovesItHalfWay() public {
+        _openListings(1);
+        _anchor(30_000);
+        vm.warp(block.timestamp + 7 days);
+        assertApproxEqAbs(ctl.anchorBps(), 20_000, 1);
+        uint256 sid = _another();
+        _buyOnly(true);
+        uint256 cost = _cost(sid);
+        uint256 effective = ctl.anchorBps();
+        uint256 price = ctl.priceOf(sid);
+        assertEq(price, cost * ctl.startBps() / 10_000);
+        uint256 saleBps = (price * 10_000 + cost - 1) / cost;
+        assertGt(saleBps, effective);
+        vm.expectEmit(address(ctl));
+        emit IControllerV1.AnchorMoved(sid, saleBps, uint32((effective + saleBps) / 2));
+        _pay(buyer, sid, price);
+        assertEq(ctl.storedAnchorBps(), (effective + saleBps) / 2);
+        assertEq(ctl.anchorTime(), block.timestamp);
+        assertEq(ctl.anchorBps(), (effective + saleBps) / 2);
+        assertApproxEqAbs(ctl.anchorBps(), 25_000, 2, "halfway between 20_000 and 30_000");
+    }
+
+    /// changing the half life stores the anchor now first, so the new rate applies to the time after the change
+    function test_anchor_halfLifeChangeCheckpoints() public {
+        _anchor(30_000);
+        uint256 t0 = block.timestamp;
+        vm.warp(t0 + 7 days);
+        vm.prank(owner);
+        ctl.setAnchorHalfLife(14 days);
+        assertEq(ctl.anchorTime(), t0 + 7 days);
+        assertApproxEqAbs(ctl.storedAnchorBps(), 20_000, 1);
+        assertApproxEqAbs(ctl.anchorBps(), 20_000, 1, "the value at the change is unchanged");
+        vm.warp(t0 + 7 days + 14 days);
+        assertApproxEqAbs(ctl.anchorBps(), 15_000, 1, "one new half life after the change");
+        vm.prank(owner);
+        ctl.setAnchorHalfLife(1 days);
+        vm.warp(block.timestamp + 1 days);
+        assertApproxEqAbs(ctl.anchorBps(), 12_500, 1, "one new half life of 1 day");
     }
 
     /// the buy only house reserve is the cap, so it stays at or above the live ask of the same listing when a sale
@@ -1506,8 +1698,16 @@ contract SaleAnchorTest is SaleBase {
         _age(sids[1], 0);
         assertEq(ctl.priceOf(sids[1]), cost * 18_750 / 10_000, "the start follows the anchor");
         assertGt(ctl.priceOf(sids[1]), before0);
+        // 52.5 hours later the anchor 12_500 has decayed to 12_013 (7 day half life): start 18_019, middle of the line
+        // (18_019 + 7_500) / 2 = 12_759.5
         _age(sids[1], 52 * H + 30 minutes);
-        assertEq(ctl.priceOf(sids[1]), cost * 13_125 / 10_000, "and so does the middle of the line");
+        assertApproxEqAbs(ctl.anchorBps(), 12_013, 1);
+        assertEq(
+            ctl.priceOf(sids[1]),
+            _line(cost, ctl.anchorBps() * 15_000 / 10_000, 7_500, 105 hours, 52 * H + 30 minutes),
+            "and so does the middle of the line"
+        );
+        assertApproxEqAbs(ctl.priceOf(sids[1]), cost * 12_759 / 10_000, cost * 2 / 10_000);
         assertGt(ctl.priceOf(sids[1]), before1);
         _age(sids[1], 105 * H);
         assertEq(ctl.priceOf(sids[1]), cost * 7_500 / 10_000, "the end of the line is the floor");

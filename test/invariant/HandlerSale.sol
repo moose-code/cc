@@ -155,13 +155,16 @@ abstract contract HandlerSale is HandlerOwner {
 
     uint256 internal _anchor0;
     uint256 internal _cost0;
+    uint256 internal _stored0;
+    uint256 internal _anchorTime0;
 
-    /// the anchor after a sale at `price` of a statement of `cost`, written out again from docs/FLOW.md 62: the mean of the
-    /// old anchor and the sale price in bps of cost (rounded up), from 10_000 to the start cap
+    /// the anchor after a sale at `price` of a statement of `cost`, written out again from docs/FLOW.md 64: the anchor now
+    /// when the sale price in bps of cost (rounded up) is not above it, otherwise the mean of the two, at most the start cap
     function _anchorAfter(uint256 anchor0, uint256 price, uint256 cost) internal view returns (uint256 next) {
-        next = (anchor0 + (price * 10_000 + cost - 1) / cost) / 2;
+        uint256 saleBps = (price * 10_000 + cost - 1) / cost;
+        if (saleBps <= anchor0) return anchor0;
+        next = (anchor0 + saleBps) / 2;
         uint256 cap = IControllerV1(v1).startCapBps();
-        if (next < 10_000) next = 10_000;
         if (next > cap) next = cap;
     }
 
@@ -196,6 +199,8 @@ abstract contract HandlerSale is HandlerOwner {
         p.payerBal = who.balance;
         RS memory rs = _rs();
         _anchor0 = IControllerV1(v1).anchorBps();
+        _stored0 = IControllerV1(v1).storedAnchorBps();
+        _anchorTime0 = IControllerV1(v1).anchorTime();
         (,, _cost0,) = core.statementInfo(sid);
         _att(a);
         vm.prank(who);
@@ -203,6 +208,12 @@ abstract contract HandlerSale is HandlerOwner {
             _ok(a);
             if (IControllerV1(v1).anchorBps() != _anchorAfter(_anchor0, price, _cost0)) {
                 _flag(V_SALE_PATH, "a buy did not move the anchor halfway to the sale price");
+            }
+            if (
+                (price * 10_000 + _cost0 - 1) / _cost0 <= _anchor0
+                    && (IControllerV1(v1).storedAnchorBps() != _stored0 || IControllerV1(v1).anchorTime() != _anchorTime0)
+            ) {
+                _flag(V_SALE_PATH, "a buy at or below the anchor stored the anchor");
             }
             if (p.payerBal - who.balance != price) {
                 _flag(V_SALE_PATH, "the buyer did not pay exactly the ask, or the excess was not refunded");
@@ -297,11 +308,16 @@ abstract contract HandlerSale is HandlerOwner {
             cur = c.floorBps();
             v = bad ? (seed % 2 == 0 ? 999 : 10_001) : _f(seed, 1_000, 10_000, cur);
             valid = v >= 1_000 && v <= 10_000;
-        } else {
+        } else if (which == 4) {
             sel = IControllerV1.setAnchorBps.selector;
             cur = c.anchorBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : cap + 1) : _f(seed, 10_000, cap, cur);
             valid = v >= 10_000 && v <= cap;
+        } else {
+            sel = IControllerV1.setAnchorHalfLife.selector;
+            cur = c.anchorHalfLife();
+            v = bad ? (seed % 2 == 0 ? 1 days - 1 : 90 days + 1) : _f(seed, 1 days, 90 days, cur);
+            valid = v >= 1 days && v <= 90 days;
         }
     }
 
@@ -310,17 +326,19 @@ abstract contract HandlerSale is HandlerOwner {
         if (which == 1) return c.startCapBps();
         if (which == 2) return c.decayDuration();
         if (which == 3) return c.floorBps();
-        return c.anchorBps();
+        if (which == 4) return c.anchorBps();
+        return c.anchorHalfLife();
     }
 
-    /// the owner sets one of the five sale numbers of the first controller to a value inside or outside the bounds of
+    /// the owner sets one of the six sale numbers of the first controller to a value inside or outside the bounds of
     /// docs/FLOW.md 9.3 (written out again here), or a stranger tries. inside: it goes through and reads back. outside:
     /// BadSetting with the field. a stranger: OnlyOwner. no asset, pot or house debt moves
     function saleSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_SALE_SETTINGS;
         IControllerV1 c = IControllerV1(v1);
-        uint256 which = mode % 5;
+        uint256 which = mode % 6;
         bool stranger = (mode >> 8) % 6 == 0;
+        uint256 anchor0 = c.anchorBps();
         bool bad = (mode >> 12) % 4 == 0;
         (bytes4 sel, uint256 v, bool valid, uint256 cur) = _saleCase(c, seed, which, bad);
         address caller = stranger ? address(uint160(uint256(keccak256(abi.encode("stranger", seed))))) : owner;
@@ -332,6 +350,7 @@ abstract contract HandlerSale is HandlerOwner {
         if (ok) {
             if (want != 0) _flag(V_OWNER, "a sale setting the model refuses was accepted");
             if (_saleGot(c, which) != v) _flag(V_OWNER, "a sale setting did not read back");
+            if (which == 5 && c.anchorBps() != anchor0) _flag(V_OWNER, "a half life change moved the anchor");
             gOwnerCalls++;
         } else {
             if (want == 0 || bytes4(out) != want) _unexpected(a, out);

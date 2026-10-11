@@ -139,8 +139,8 @@ struct Settings {
     uint16 feeToBuybackBps;
 }
 
-/// the four sale settings of the controller, its constructor argument and the `sale` block of the launch config.
-/// bounds are enforced by the controller (docs/FLOW.md 9.3). the controller keeps a fifth value, the anchor, which
+/// the five sale settings of the controller, its constructor argument and the `sale` block of the launch config.
+/// bounds are enforced by the controller (docs/FLOW.md 9.3). the controller keeps one more value, the anchor, which
 /// starts at 10_000
 struct Sale {
     /// buy only mode: statements sell at once at the asking price. false is auction mode (the asking price is the house reserve)
@@ -153,6 +153,8 @@ struct Sale {
     uint32 decayDuration;
     /// the asking price never falls below this, bps of the statement cost
     uint16 floorBps;
+    /// seconds for the part of the anchor above 10_000 to halve
+    uint32 anchorHalfLife;
 }
 
 /// the artcoins stack a launch runs on. a deploy input of the Core, so a new artcoins version needs no code change.
@@ -230,9 +232,16 @@ library Mainnet {
     }
 
     /// the launch sale: buy only, start at 1.5 times the anchor (at most 1_000 percent of cost), falling in a straight
-    /// line to 75 percent of cost over 105 hours
+    /// line to 75 percent of cost over 105 hours, the anchor halving its excess over 10_000 every 7 days
     function defaultSale() internal pure returns (Sale memory) {
-        return Sale({buyOnly: true, markupBps: 15_000, startCapBps: 100_000, decayDuration: 105 hours, floorBps: 7_500});
+        return Sale({
+            buyOnly: true,
+            markupBps: 15_000,
+            startCapBps: 100_000,
+            decayDuration: 105 hours,
+            floorBps: 7_500,
+            anchorHalfLife: 7 days
+        });
     }
 
     /// the default stack: the fixed parts of mainnet. the v2 members (hook, factory, locker, escrow) and the fee router

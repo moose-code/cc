@@ -52,7 +52,8 @@
     "markupBps": 15000,
     "startCapBps": 100000,
     "decayDuration": 378000,
-    "floorBps": 7500
+    "floorBps": 7500,
+    "anchorHalfLife": 604800
   },
   "launch": {
     "supply": "1000000000000000000000000000",

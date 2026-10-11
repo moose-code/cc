@@ -14,6 +14,7 @@ interface IControllerV1 {
     error Underpaid();
 
     event AnchorBpsSet(uint32 anchorBps);
+    event AnchorHalfLifeSet(uint32 anchorHalfLife);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event BuyOnlySet(bool buyOnly);
@@ -24,6 +25,8 @@ interface IControllerV1 {
 
     function CORE() external view returns (address);
     function anchorBps() external view returns (uint32);
+    function anchorHalfLife() external view returns (uint32);
+    function anchorTime() external view returns (uint40);
     function buy(uint256 sid) external payable;
     function buyOnly() external view returns (bool);
     function decayDuration() external view returns (uint32);
@@ -32,6 +35,7 @@ interface IControllerV1 {
     function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format);
     function priceOf(uint256 sid) external view returns (uint256 price);
     function setAnchorBps(uint32 v) external;
+    function setAnchorHalfLife(uint32 v) external;
     function setBuyOnly(bool on) external;
     function setDecayDuration(uint32 v) external;
     function setFloorBps(uint16 v) external;
@@ -40,4 +44,5 @@ interface IControllerV1 {
     function startBps() external view returns (uint256);
     function startCapBps() external view returns (uint32);
     function statementPrice(uint256, uint256 cost, uint64 listedAt) external view returns (uint256);
+    function storedAnchorBps() external view returns (uint32);
 }

@@ -1,0 +1,782 @@
+=== InvariantsPhase1Deep START Sun Oct 11 11:09:12 EDT 2026
+No files changed, compilation skipped
+Warning: Failure from "/private/tmp/cand-0d86ee7/cache/invariant/failures/InvariantsPhase1Deep/invariants/invariant_11_noUnexpectedReverts" file was ignored because invariant test settings have changed: target selectors changed
+
+Ran 6 tests for test/invariant/Invariants.t.sol:InvariantsPhase1Deep
+[PASS]
+InvariantsPhase1Deep invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowItsReserve
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+ InvariantsPhase1Deep invariants (runs: 64, calls: 12800, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 372   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | bid                | 785   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 778   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 362   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | collectSales       | 351   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 409   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 370   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 388   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 365   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | endAuction         | 376   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | flush              | 715   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 409   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 357   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 372   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 359   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 368   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repoint            | 375   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repriceStatement   | 390   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 374   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 383   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 357   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 737   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 385   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 384   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 362   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | skim               | 367   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | syncStatement      | 405   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 367   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 778   | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1076259, ~: 973528)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 10341160)
+[PASS] test_everyActionSucceeds() (gas: 61282591)
+[PASS] test_storageLayoutMatchesTheHandlerSlots() (gas: 24624)
+[PASS] test_theBidCheckFindsASeller() (gas: 571337)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 515.61s (515.89s CPU time)
+
+Ran 1 test suite in 515.63s (515.61s CPU time): 6 tests passed, 0 failed, 0 skipped (6 total tests)
+=== InvariantsPhase1Deep 516s exit=0
+=== InvariantsPhase1WindowDeep START Sun Oct 11 11:17:48 EDT 2026
+No files changed, compilation skipped
+
+Ran 6 tests for test/invariant/Invariants.t.sol:InvariantsPhase1WindowDeep
+[PASS]
+InvariantsPhase1WindowDeep invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowItsReserve
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+ InvariantsPhase1WindowDeep invariants (runs: 64, calls: 12800, reverts: 1)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 357   | 1       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | bid                | 758   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 747   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 385   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | collectSales       | 377   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 373   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 389   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 391   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 366   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | endAuction         | 394   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | flush              | 748   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 391   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 377   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 360   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 359   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 352   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repoint            | 380   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repriceStatement   | 377   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 401   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 400   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 354   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 713   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 359   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 364   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 388   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | skim               | 404   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | syncStatement      | 374   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 388   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 774   | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1017464, ~: 927766)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 10224562)
+[PASS] test_everyActionSucceeds() (gas: 102330319)
+[PASS] test_startsInsideTheSniperWindow() (gas: 12794)
+[PASS] test_theBidCheckFindsASeller() (gas: 549593)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 540.53s (540.91s CPU time)
+
+Ran 1 test suite in 540.55s (540.53s CPU time): 6 tests passed, 0 failed, 0 skipped (6 total tests)
+=== InvariantsPhase1WindowDeep 541s exit=0
+=== InvariantsPhase2Deep START Sun Oct 11 11:26:49 EDT 2026
+No files changed, compilation skipped
+
+Ran 5 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsPhase2Deep
+[PASS]
+InvariantsPhase2Deep invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowItsReserve
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+ InvariantsPhase2Deep invariants (runs: 64, calls: 12800, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 341   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | bid                | 632   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 644   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 314   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buybackExit        | 598   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | collectSales       | 321   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 321   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeExit        | 308   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 292   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 286   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 303   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | endAuction         | 337   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | exitStatement      | 295   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | flush              | 617   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 327   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 289   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 336   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | moduleMode         | 318   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 315   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 290   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | replaceModule      | 295   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repoint            | 305   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repriceStatement   | 307   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 327   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 337   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 317   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 621   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForExit        | 358   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 322   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 309   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 322   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | skim               | 306   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | syncStatement      | 312   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 288   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 590   | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1270785, ~: 1019075)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 11384551)
+[PASS] test_everyActionSucceeds() (gas: 83319969)
+[PASS] test_theBidCheckFindsASeller() (gas: 571337)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 603.24s (603.33s CPU time)
+
+Ran 1 test suite in 603.26s (603.24s CPU time): 5 tests passed, 0 failed, 0 skipped (5 total tests)
+=== InvariantsPhase2Deep 603s exit=0
+=== InvariantsHostileControllerDeep START Sun Oct 11 11:36:52 EDT 2026
+No files changed, compilation skipped
+
+Ran 5 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileControllerDeep
+[PASS]
+InvariantsHostileControllerDeep invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowItsReserve
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+ InvariantsHostileControllerDeep invariants (runs: 64, calls: 12800, reverts: 15)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 282   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | bid                | 596   | 15      | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 640   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 322   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buybackExit        | 621   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | collectSales       | 296   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 319   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeExit        | 339   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 293   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 314   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 298   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | endAuction         | 322   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | exitStatement      | 329   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | flush              | 610   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 340   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 293   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 298   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | moduleMode         | 295   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 302   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 314   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | replaceModule      | 317   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repoint            | 311   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repriceStatement   | 287   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 322   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 324   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 299   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 607   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForExit        | 362   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 301   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 300   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 306   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | skim               | 326   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | syncStatement      | 326   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 345   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 644   | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1166565, ~: 1023792)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 11356251)
+[PASS] test_everyActionSucceeds() (gas: 119763546)
+[PASS] test_theBidCheckFindsASeller() (gas: 571337)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 620.83s (621.22s CPU time)
+
+Ran 1 test suite in 620.85s (620.83s CPU time): 5 tests passed, 0 failed, 0 skipped (5 total tests)
+=== InvariantsHostileControllerDeep 622s exit=0
+=== InvariantsHostileOwnerDeep START Sun Oct 11 11:09:12 EDT 2026
+No files changed, compilation skipped
+
+Ran 5 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileOwnerDeep
+[PASS]
+InvariantsHostileOwnerDeep invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowItsReserve
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+ InvariantsHostileOwnerDeep invariants (runs: 64, calls: 12800, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 165   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | bid                | 310   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 347   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 163   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buybackExit        | 288   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | collectSales       | 160   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 147   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeExit        | 171   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 188   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 167   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 174   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | endAuction         | 145   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | exitStatement      | 128   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | flush              | 294   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 149   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 155   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 972   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | moduleMode         | 145   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 982   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 153   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | replaceModule      | 919   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repoint            | 947   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repriceStatement   | 154   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 965   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 179   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 181   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 318   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForExit        | 175   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 948   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 907   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 911   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | skim               | 147   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | syncStatement      | 169   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 162   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 315   | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1235699, ~: 1011445)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 11384551)
+[PASS] test_everyActionSucceeds() (gas: 83319969)
+[PASS] test_theBidCheckFindsASeller() (gas: 571337)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 616.95s (617.04s CPU time)
+
+Ran 1 test suite in 616.97s (616.95s CPU time): 5 tests passed, 0 failed, 0 skipped (5 total tests)
+=== InvariantsHostileOwnerDeep 617s exit=0
+=== InvariantsSalePhase1Deep START Sun Oct 11 11:19:29 EDT 2026
+No files changed, compilation skipped
+
+Ran 8 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase1Deep
+[PASS]
+InvariantsSalePhase1Deep invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowItsReserve
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+ InvariantsSalePhase1Deep invariants (runs: 64, calls: 12800, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 272   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | bid                | 570   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 562   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyOnlyBuy         | 546   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 266   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | collectSales       | 299   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 283   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 269   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 282   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 272   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | endAuction         | 280   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | flipMode           | 580   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | flush              | 552   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | handover           | 284   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | hostileOwner       | 296   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 285   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 308   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | lockDoor           | 278   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 275   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 298   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerSell          | 285   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 312   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repoint            | 311   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repriceBid         | 548   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repriceStatement   | 283   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 259   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 271   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | saleSettings       | 297   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 299   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 574   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 304   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 285   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 278   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | skim               | 283   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | syncStatement      | 269   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 281   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 604   | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1055213, ~: 965270)
+[PASS] testFuzz_saleActionsNeverRevert(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1014275, ~: 955872)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 10348014)
+[PASS] test_everyActionSucceeds() (gas: 61292290)
+[PASS] test_saleActionsEverySucceed() (gas: 23931944)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 5304961)
+[PASS] test_theBidCheckFindsASeller() (gas: 571337)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 534.92s (539.94s CPU time)
+
+Ran 1 test suite in 534.94s (534.92s CPU time): 8 tests passed, 0 failed, 0 skipped (8 total tests)
+=== InvariantsSalePhase1Deep 536s exit=0
+=== InvariantsSalePhase2Deep START Sun Oct 11 11:28:25 EDT 2026
+No files changed, compilation skipped
+
+Ran 8 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase2Deep
+[PASS]
+InvariantsSalePhase2Deep invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowItsReserve
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+ InvariantsSalePhase2Deep invariants (runs: 64, calls: 12800, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 193   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | bid                | 421   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 441   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyOnlyBuy         | 474   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 200   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buybackExit        | 414   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | collectSales       | 216   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 195   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeExit        | 212   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 224   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 222   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 205   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | endAuction         | 223   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | exitStatement      | 204   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | flipMode           | 422   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | flush              | 411   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | handover           | 193   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | hostileOwner       | 228   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 208   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 225   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | lockDoor           | 216   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 401   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | moduleMode         | 227   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 460   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerSell          | 207   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 205   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | replaceModule      | 451   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repoint            | 470   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repriceBid         | 450   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repriceStatement   | 190   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 420   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 223   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | saleSettings       | 215   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 213   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 420   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForExit        | 203   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 449   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 411   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 396   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | skim               | 210   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | syncStatement      | 211   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 203   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 418   | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1190897, ~: 994570)
+[PASS] testFuzz_saleActionsNeverRevert(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1028004, ~: 971414)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 11391717)
+[PASS] test_everyActionSucceeds() (gas: 83331495)
+[PASS] test_saleActionsEverySucceed() (gas: 25043026)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 5389107)
+[PASS] test_theBidCheckFindsASeller() (gas: 571337)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 626.00s (628.86s CPU time)
+
+Ran 1 test suite in 626.02s (626.00s CPU time): 8 tests passed, 0 failed, 0 skipped (8 total tests)
+=== InvariantsSalePhase2Deep 626s exit=0

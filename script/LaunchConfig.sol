@@ -201,7 +201,8 @@ abstract contract ConfigReader is CommonBase {
             markupBps: _u16(j, ".sale.markupBps"),
             startCapBps: _u32(j, ".sale.startCapBps"),
             decayDuration: _u32(j, ".sale.decayDuration"),
-            floorBps: _u16(j, ".sale.floorBps")
+            floorBps: _u16(j, ".sale.floorBps"),
+            anchorHalfLife: _u32(j, ".sale.anchorHalfLife")
         });
     }
 
@@ -289,6 +290,7 @@ abstract contract ConfigReader is CommonBase {
         if (k.startCapBps < k.markupBps || k.startCapBps > 200_000) return "startCapBps";
         if (k.decayDuration < 1 hours || k.decayDuration > 30 days) return "decayDuration";
         if (k.floorBps < 1_000 || k.floorBps > 10_000) return "floorBps";
+        if (k.anchorHalfLife < 1 days || k.anchorHalfLife > 90 days) return "anchorHalfLife";
         return bytes32(0);
     }
 

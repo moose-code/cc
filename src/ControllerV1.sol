@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Interfaces.sol";
 
@@ -8,11 +9,14 @@ import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Inter
 /// it prices and sells statements. the asking price of a statement of cost `c` at age `t` since listing is
 /// `c * (start - (start - floorBps) * min(t, decayDuration) / decayDuration)`, in bps of `c`, falling in a straight line
 /// from `start` to `floorBps`. `start = min(anchorBps * markupBps / 10_000, startCapBps)`.
-/// `anchorBps` (bps of cost, at least 10_000) is the running level of sale prices: each `buy` sets it to the mean of
-/// the old anchor and the sale price. the price is computed from the current anchor at every call, so open listings
-/// follow it. in auction mode the core uses the price as the house reserve, so the first bid at the asking price opens
-/// the english auction, and house sales do not move the anchor. in buy only mode `buy` sells a statement at once at
-/// the asking price.
+/// `anchorBps` (bps of cost, at least 10_000) is the running level of sale prices. it moves up with sales and down with
+/// time. a `buy` whose sale price in bps of cost is above the anchor sets the anchor to the mean of the two. a `buy`
+/// at or below the anchor leaves it unchanged. the part of the anchor above 10_000 halves every `anchorHalfLife`,
+/// continuously. the controller stores the anchor at its last change (`storedAnchorBps`, `anchorTime`) and evaluates
+/// the decay at the call. the price is computed from the current anchor at every call, so open listings follow it. in
+/// auction mode the core uses the price as the house reserve, so the first bid at the asking price opens the english
+/// auction, and house sales do not move the anchor. in buy only mode `buy` sells a statement at once at the asking
+/// price.
 /// it holds no funds between calls. its settings belong to the live owner of the core (`core.owner()`), there is no
 /// second owner. the core enforces its own hard floor whatever this contract answers
 contract ControllerV1 is IController {
@@ -32,6 +36,7 @@ contract ControllerV1 is IController {
     event DecayDurationSet(uint32 decayDuration);
     event FloorBpsSet(uint16 floorBps);
     event AnchorBpsSet(uint32 anchorBps);
+    event AnchorHalfLifeSet(uint32 anchorHalfLife);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
 
@@ -48,8 +53,12 @@ contract ControllerV1 is IController {
     uint32 public decayDuration;
     /// the asking price never falls below this, bps of cost. 1_000 to 10_000
     uint16 public floorBps;
-    /// the running level of sale prices, bps of cost. 10_000 to `startCapBps`
-    uint32 public anchorBps;
+    /// the anchor at `anchorTime`, bps of cost. 10_000 to `startCapBps`. `anchorBps()` is the value now
+    uint32 public storedAnchorBps;
+    /// when `storedAnchorBps` was last set
+    uint40 public anchorTime;
+    /// seconds for the part of the anchor above 10_000 to halve. 1 day to 90 days
+    uint32 public anchorHalfLife;
     bool private _busy;
 
     constructor(address core, Sale memory sale) {
@@ -63,7 +72,11 @@ contract ControllerV1 is IController {
         decayDuration = sale.decayDuration;
         if (sale.floorBps < 1_000 || sale.floorBps > BPS) revert BadSetting("floorBps");
         floorBps = sale.floorBps;
-        anchorBps = uint32(BPS);
+        if (sale.anchorHalfLife < 1 days || sale.anchorHalfLife > 90 days) revert BadSetting("anchorHalfLife");
+        anchorHalfLife = sale.anchorHalfLife;
+        storedAnchorBps = uint32(BPS);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        anchorTime = uint40(block.timestamp);
     }
 
     modifier onlyOwner() {
@@ -85,15 +98,12 @@ contract ControllerV1 is IController {
         emit MarkupBpsSet(v);
     }
 
-    /// `markupBps` to 200_000. an `anchorBps` above the new cap is lowered to it
+    /// `markupBps` to 200_000. an `anchorBps()` above the new cap is lowered to it
     function setStartCapBps(uint32 v) external onlyOwner {
         if (v < markupBps || v > 200_000) revert BadSetting("startCapBps");
         startCapBps = v;
         emit StartCapBpsSet(v);
-        if (anchorBps > v) {
-            anchorBps = v;
-            emit AnchorBpsSet(v);
-        }
+        if (anchorBps() > v) _setAnchor(v);
     }
 
     /// 1 hour to 30 days
@@ -110,18 +120,33 @@ contract ControllerV1 is IController {
         emit FloorBpsSet(v);
     }
 
-    /// 10_000 to `startCapBps`. replaces the running level of sale prices
+    /// 10_000 to `startCapBps`. replaces the running level of sale prices and restarts its decay
     function setAnchorBps(uint32 v) external onlyOwner {
         if (v < BPS || v > startCapBps) revert BadSetting("anchorBps");
-        anchorBps = v;
-        emit AnchorBpsSet(v);
+        _setAnchor(v);
+    }
+
+    /// 1 day to 90 days. the anchor at the call is stored first, so the new half life applies from now on
+    function setAnchorHalfLife(uint32 v) external onlyOwner {
+        if (v < 1 days || v > 90 days) revert BadSetting("anchorHalfLife");
+        _setAnchorStored(anchorBps());
+        anchorHalfLife = v;
+        emit AnchorHalfLifeSet(v);
     }
 
     // ------------------------------------------------------------------ pricing and sale
 
+    /// the running level of sale prices now, bps of cost: 10_000 plus the part of `storedAnchorBps` above 10_000,
+    /// halved every `anchorHalfLife` since `anchorTime`
+    function anchorBps() public view returns (uint32) {
+        uint256 excess = storedAnchorBps - BPS;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint32(BPS + _halve(excess, block.timestamp - anchorTime, anchorHalfLife));
+    }
+
     /// the start price of a new listing, bps of cost: the anchor times `markupBps`, at most `startCapBps`
     function startBps() public view returns (uint256) {
-        uint256 start = uint256(anchorBps) * markupBps / BPS;
+        uint256 start = uint256(anchorBps()) * markupBps / BPS;
         return start < startCapBps ? start : startCapBps;
     }
 
@@ -165,19 +190,46 @@ contract ControllerV1 is IController {
         if (price < floor) price = floor;
     }
 
-    /// the new anchor is the mean of the old anchor and the sale price in bps of cost (rounded up), from 10_000 to
-    /// `startCapBps`
+    /// a sale price in bps of cost (rounded up) above the anchor sets the anchor to the mean of the two, at most
+    /// `startCapBps`. a sale price at or below the anchor leaves the stored anchor and `anchorTime` unchanged
     function _moveAnchor(uint256 sid, uint256 price, uint256 cost) private {
         // cost is at least 80: every eth lane credit enters the pile through `_spend` (nonzero) or `adopt` (at least 1 wei)
         uint256 saleBps = (price * BPS + cost - 1) / cost;
-        uint256 next = (anchorBps + saleBps) / 2;
+        uint256 current = anchorBps();
+        if (saleBps <= current) return;
+        uint256 next = (current + saleBps) / 2;
         uint256 cap = startCapBps;
-        if (next < BPS) next = BPS;
-        else if (next > cap) next = cap;
+        if (next > cap) next = cap;
         // forge-lint: disable-next-line(unsafe-typecast)
-        anchorBps = uint32(next);
+        _setAnchorStored(uint32(next));
         // forge-lint: disable-next-line(unsafe-typecast)
         emit AnchorMoved(sid, saleBps, uint32(next));
+    }
+
+    function _setAnchor(uint32 v) private {
+        _setAnchorStored(v);
+        emit AnchorBpsSet(v);
+    }
+
+    function _setAnchorStored(uint32 v) private {
+        storedAnchorBps = v;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        anchorTime = uint40(block.timestamp);
+    }
+
+    /// `x` halved `elapsed / halfLife` times, with the fraction of a half life by `powWad`, the computation of
+    /// `CoreLib.decay`. zero after 256 half lives
+    function _halve(uint256 x, uint256 elapsed, uint256 halfLife) private pure returns (uint256 p) {
+        uint256 halvings = elapsed / halfLife;
+        if (halvings >= 256) return 0;
+        p = x >> halvings;
+        uint256 rest = elapsed % halfLife;
+        if (rest != 0) {
+            // forge-lint: disable-next-line(unsafe-typecast)
+            int256 factor = FixedPointMathLib.powWad(0.5e18, int256(rest * 1e18 / halfLife));
+            // forge-lint: disable-next-line(unsafe-typecast)
+            p = p * uint256(factor) / 1e18;
+        }
     }
 
     /// the asking price in wei after `age` seconds: a straight line from `startBps()` of `cost` to `floorBps` of `cost`

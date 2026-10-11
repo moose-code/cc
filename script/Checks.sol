@@ -71,7 +71,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0x7e76af58dc53f7d9875f5d80bba678318643a8ce738d3cca83f2f5d4bd95bd5e;
     bytes32 internal constant BUILD_HASH_CORELIB = 0x7a947208a5489d46bf03e495b70aefba411557008b328081b9bd0397e64063a5;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x8da088f918479851e9caafebbade16d58c5438826a8dd59ebb633abfd8bf5ab5;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xc8c35eb1756887586a0ddbcbd4965fb792020e375f950dc58526ef54b154a7ab;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0x4ff989feabca4e9387b32b7f3ea71b38dc0ff330f81e0cf853130082079ffb63;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
@@ -190,7 +190,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "sale settings inside the bounds",
             badSale == 0,
-            badSale == 0 ? "buyOnly markupBps startCapBps decayDuration floorBps" : string(abi.encodePacked("out of bounds: ", badSale))
+            badSale == 0 ? "buyOnly markupBps startCapBps decayDuration floorBps anchorHalfLife" : string(abi.encodePacked("out of bounds: ", badSale))
         );
         _warn(
             "warn: sale floor below the core hard floor",
@@ -844,7 +844,10 @@ abstract contract LaunchChecks is PostflightChecks {
                 " decay ",
                 vm.toString(c.sale.decayDuration),
                 "s floor ",
-                vm.toString(c.sale.floorBps)
+                vm.toString(c.sale.floorBps),
+                " anchor half life ",
+                vm.toString(c.sale.anchorHalfLife),
+                "s"
             )
         );
         _info("signoff: settings are adjustable", "the owner can change every setting at once after launch");

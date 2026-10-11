@@ -167,8 +167,9 @@ const SETTINGS = {
 const SETTING_KEYS = Object.keys(SETTINGS);
 // the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement of cost c at age t is
 // c * (start - (start - floorBps) * min(t, decayDuration) / decayDuration) in bps, a straight line, with start = min(anchorBps * markupBps / 10000, startCapBps).
-// the anchor (Core.anchorBps, starts at 10000) is the running level of sale prices in bps of cost: a buy only sale sets it to the mean of the old anchor and
-// the sale price. buyOnly false: a buyer at or above the asking price opens the english auction at that price (house sales do not move the anchor).
+// the anchor (ControllerV1.anchorBps, starts at 10000) is the running level of sale prices in bps of cost. a buy only sale above the anchor now sets it to the
+// mean of the anchor now and the sale price, a sale at or below it leaves it. the part of the anchor above 10000 halves every anchorHalfLife, continuously.
+// buyOnly false: a buyer at or above the asking price opens the english auction at that price (house sales do not move the anchor).
 // buyOnly true: that buyer pays the asking price and gets the statement at once
 const CONTROLLER = {
   buyOnly: true,
@@ -176,6 +177,7 @@ const CONTROLLER = {
   startCapBps: 100000,
   decayDuration: 105 * 3600,
   floorBps: 7500,
+  anchorHalfLife: 7 * 86400,
 };
 const CONTROLLER_KEYS = Object.keys(CONTROLLER);
 // ControllerV1 bounds: the name of the first controller field out of bounds, or null
@@ -185,6 +187,7 @@ function controllerViolation(c) {
   if (c.startCapBps < c.markupBps || c.startCapBps > 200000) return 'startCapBps';
   if (c.decayDuration < 3600 || c.decayDuration > 30 * 86400) return 'decayDuration';
   if (c.floorBps < 1000 || c.floorBps > 10000) return 'floorBps';
+  if (c.anchorHalfLife < 86400 || c.anchorHalfLife > 90 * 86400) return 'anchorHalfLife';
   return null;
 }
 
@@ -208,6 +211,7 @@ function firstViolation(s) {
   if (s.buybackDelay < 1 || s.buybackDelay > 7200) return 'buybackDelay';
   if (s.keeperFee > 0.005) return 'keeperFee';
   if (s.buybackMaxBaseFee < 1 || s.buybackMaxBaseFee > 100) return 'buybackMaxBaseFee';
+  if (s.buybackSlice < 2 * (600000 * s.buybackMaxBaseFee * 1e-9 + s.keeperFee)) return 'buybackSlice'; // BUYBACK_GAS (Interfaces.sol)
   if (s.xRateCap > 10000) return 'xRateCap';
   if (s.xRateFloor > s.xRateCap) return 'xRateFloor';
   if (s.xRateClimbPerHour > 1000) return 'xRateClimbPerHour';
@@ -373,7 +377,8 @@ class Core {
     for (const k of SETTING_KEYS) this.s[k] = p[k];
     this.c = {}; // the controller's settings
     for (const k of CONTROLLER_KEYS) this.c[k] = p[k];
-    this.anchorBps = 10000; // the controller's running level of sale prices, bps of cost
+    this.anchorStored = 10000; // the controller's storedAnchorBps: the anchor at anchorTime, bps of cost
+    this.anchorTime = t0;
     this.feeToBuyback = 0; // cumulative swap fee eth sent to the buyback pot by feeToBuybackBps
     this.ethPot = 0; this.ethToBuyback = 0; this.xPot = 0; this.xToBuyback = 0;
     this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0; this.funded = false;
@@ -437,7 +442,8 @@ class Core {
     this.funded = this.ethPot * W >= this.rateAtCheckpoint;
   }
   // owner: setSettings. validates, checkpoints both rates first, then applies at once. patch.rate is setRate.
-  // the patch may also hold controller settings (buyOnly, markupBps, startCapBps, decayDuration, floorBps) and anchorBps (setAnchorBps): the controller reads them live
+  // the patch may also hold controller settings (buyOnly, markupBps, startCapBps, decayDuration, floorBps, anchorHalfLife) and anchorBps (setAnchorBps): the controller reads them live.
+  // a new anchorHalfLife stores the anchor now first, and a start cap below the anchor now lowers the anchor to the cap
   setSettings(patch, now) {
     const rate = patch.rate;
     const next = Object.assign({}, this.s), nextC = Object.assign({}, this.c);
@@ -447,9 +453,12 @@ class Core {
     if (bad) throw new Error('BadSetting ' + bad);
     if (rate !== undefined && !(rate >= RATE_MIN && rate <= RATE_MAX && rate <= next.rateCap)) throw new Error('BadRate');
     this.checkpoint(now); this.xCheckpoint(now);
+    const anchorNow = this.anchorAt(now);
     const anchor = this.moduleSet && this.xToBuyback > 0, half = this.s.xAuctionHalfLife, price = anchor ? this.xAuctionPrice(now) : 0;
     this.s = next; this.c = nextC;
-    if (patch.anchorBps !== undefined) this.anchorBps = patch.anchorBps;
+    if (patch.anchorHalfLife !== undefined) this.setAnchor(anchorNow, now);
+    if (this.c.startCapBps < anchorNow) this.setAnchor(this.c.startCapBps, now);
+    if (patch.anchorBps !== undefined) this.setAnchor(patch.anchorBps, now);
     if (anchor && next.xAuctionHalfLife !== half) { this.xStartPrice = Math.max(price, 1e-12); this.xStartTime = now; }
     this.xRateAtCheckpoint = Math.max(Math.min(this.xRateAtCheckpoint, next.xRateCap), next.xRateFloor);
     this.rateAtCheckpoint = Math.min(this.rateAtCheckpoint, next.rateCap); // a lower cap pulls the rate down now
@@ -508,15 +517,22 @@ class Core {
     if (lane === 'eth') { st.reserve = this.askingPrice(st, now); st.duration = this.s.auctionDuration; }
     return st;
   }
+  // ControllerV1._setAnchorStored: the anchor at `now`
+  setAnchor(bps, now) { this.anchorStored = bps; this.anchorTime = now; }
+  // ControllerV1.anchorBps(): 10000 plus the part of the stored anchor above 10000, halved every anchorHalfLife since anchorTime, rounded down like the contract
+  anchorAt(now) {
+    const excess = this.anchorStored - 10000, t = Math.max(0, now - this.anchorTime);
+    return 10000 + Math.floor(excess * Math.pow(0.5, t / this.c.anchorHalfLife) + 1e-9);
+  }
   // ControllerV1.startBps(): min(anchorBps * markupBps / 10000, startCapBps), rounded down like the contract
-  startBps() {
+  startBps(now) {
     const c = this.c;
-    return Math.min(Math.floor((this.anchorBps * c.markupBps) / BPS), c.startCapBps);
+    return Math.min(Math.floor((this.anchorAt(now) * c.markupBps) / BPS), c.startCapBps);
   }
   // ControllerV1.statementPrice(sid, cost, listedAt): the straight line from startBps() to floorBps over decayDuration, read live from the current anchor.
   // the price is relative to what the engine PAID (the statement cost), not to the market price of its parts
   statementPrice(cost, listedAt, now) {
-    const c = this.c, start = this.startBps();
+    const c = this.c, start = this.startBps(now);
     const t = Math.min(Math.max(0, now - listedAt), c.decayDuration);
     return (cost * (start - ((start - c.floorBps) * t) / c.decayDuration)) / BPS;
   }
@@ -567,14 +583,15 @@ class Core {
     st.sold = true; st.soldAt = now;
     return this.bookSale(value, now);
   }
-  // ControllerV1.buy (buy only mode): pays the asking price now through sellTo, then moves the anchor halfway to the sale price in bps of cost (rounded up),
-  // not below 10000 and not above startCapBps. returns the booking, or null when the Core would revert
+  // ControllerV1.buy (buy only mode): pays the asking price now through sellTo. a sale price in bps of cost (rounded up) above the anchor now moves the anchor
+  // to the mean of the two, not above startCapBps. a sale at or below the anchor leaves it. returns the booking, or null when the Core would revert
   buy(st, now) {
     const price = this.askingPrice(st, now);
     const res = this.sellTo(st, price, now);
     if (!res) return null;
     const saleBps = Math.ceil((price * BPS) / st.cost - 1e-9);
-    this.anchorBps = Math.min(Math.max(Math.floor((this.anchorBps + saleBps) / 2), 10000), this.c.startCapBps);
+    const anchor = this.anchorAt(now);
+    if (saleBps > anchor) this.setAnchor(Math.min(Math.floor((anchor + saleBps) / 2), this.c.startCapBps), now);
     return Object.assign({ price, saleBps }, res);
   }
 
@@ -650,8 +667,9 @@ class Core {
     return { slice, price, coinIn };
   }
   // buyback(): one slice at most per buybackDelay blocks. rate = min(basefee, buybackMaxBaseFee). the swap budget is the slice less the largest payment
-  // (BUYBACK_GAS * rate + keeperFee), and a slice not above that payment reverts (no call). the caller is paid BUYBACK_GAS_USED * rate + keeperFee out of the slice
-  // and the unspent part of the reserve goes back to the buyback pot. `tip` is that payment
+  // (BUYBACK_GAS * rate + keeperFee), and a slice under twice that payment reverts (no call). the caller is paid BUYBACK_GAS_USED * rate plus keeperFee
+  // times the swap budget over the largest budget the buybackSlice setting allows (the model fills the swap, so spent = budget), out of the slice.
+  // the unspent part of the reserve goes back to the buyback pot. `tip` is that payment
   takeBuybackSlice(now) {
     const s = this.s, p = this.p;
     const pool = this.ethToBuyback;
@@ -659,8 +677,8 @@ class Core {
     const slice = Math.min(pool, s.buybackSlice);
     const rate = Math.min(p.basefeeGwei, s.buybackMaxBaseFee) * 1e-9;
     const reserve = p.BUYBACK_GAS * rate + s.keeperFee;
-    if (slice <= reserve) return null;
-    const tip = p.BUYBACK_GAS_USED * rate + s.keeperFee;
+    if (slice < 2 * reserve) return null;
+    const tip = p.BUYBACK_GAS_USED * rate + s.keeperFee * Math.min(1, (slice - reserve) / (s.buybackSlice - reserve));
     this.ethToBuyback = pool - slice + (reserve - tip);
     this.lastBuybackTime = now;
     return { slice, tip, budget: slice - reserve };
@@ -1263,7 +1281,7 @@ function simulate(userParams = {}) {
     houseCheck: T.saleGross - T.saleToPot - T.saleToBuyback - core.houseOwed,
     stallHours: stallTotal / 3600, stallHoursMax: stallMax / 3600, gapHoursMax: gapMax / 3600, stallRuns, stallCauseHours: Object.fromEntries(Object.entries(stallCause).map(([k, v]) => [k, v / 3600])), gateClosedHours: gateClosed / 3600, rateCapHours: rateCapSec / 3600,
     idleHoursMax: idleMax / 3600, maxPaidRatio: T.maxPaidRatio, throttled: T.throttled,
-    finalRate: core.ethRate(H * 3600), finalPot: core.ethPot, finalAnchorBps: core.anchorBps,
+    finalRate: core.ethRate(H * 3600), finalPot: core.ethPot, finalAnchorBps: core.anchorAt(H * 3600),
   };
   return { params: p, H, S, T, stats, at, histPts, histCost, xFillLog, core, pool, unbid, live };
 }

@@ -61,7 +61,7 @@ const R0 = 6.668e15;
   assert.equal(firstViolation(SETTINGS), null); n++;
   assert.equal(controllerViolation(CONTROLLER), null); n++;
   // the rules of docs/FLOW.md section 9 at launch
-  assert.deepEqual(CONTROLLER, { buyOnly: true, markupBps: 15000, startCapBps: 100000, decayDuration: 105 * H, floorBps: 7500 }); n++;
+  assert.deepEqual(CONTROLLER, { buyOnly: true, markupBps: 15000, startCapBps: 100000, decayDuration: 105 * H, floorBps: 7500, anchorHalfLife: 7 * 24 * H }); n++;
   assert.equal(SETTINGS.saleFloorBps, 7500); assert.equal(SETTINGS.exitAfter, 105 * H); assert.equal(SETTINGS.feeToBuybackBps, 0); n += 3;
 }
 // no inventory gate and no dutch statement auction anywhere
@@ -179,47 +179,71 @@ const R0 = 6.668e15;
   assert.throws(() => e.setSettings({ floorBps: 10001 }, 0), /floorBps/); assert.throws(() => e.setSettings({ decayDuration: H - 1 }, 0), /decayDuration/); n += 2;
   assert.throws(() => e.setSettings({ markupBps: 9999 }, 0), /markupBps/); assert.throws(() => e.setSettings({ startCapBps: 11999 }, 0), /startCapBps/); n += 2;
   near(e.c.markupBps, 12000, 1e-12, 'a rejected change leaves the controller alone');
-  for (const [k, bad] of [['markupBps', 40001], ['startCapBps', 200001], ['floorBps', 999], ['decayDuration', 30 * 86400 + 1]]) assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { [k]: bad })), k), n++;
+  for (const [k, bad] of [['markupBps', 40001], ['startCapBps', 200001], ['floorBps', 999], ['decayDuration', 30 * 86400 + 1], ['anchorHalfLife', 86399], ['anchorHalfLife', 90 * 86400 + 1]]) assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { [k]: bad })), k), n++;
   assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { startCapBps: 14999 })), 'startCapBps'); n++;
-  assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { markupBps: 40000, startCapBps: 40000, floorBps: 10000, decayDuration: 3600 })), null); n++;
-  assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { markupBps: 10000, startCapBps: 200000, floorBps: 1000, decayDuration: 30 * 86400 })), null); n++;
+  assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { markupBps: 40000, startCapBps: 40000, floorBps: 10000, decayDuration: 3600, anchorHalfLife: 86400 })), null); n++;
+  assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { markupBps: 10000, startCapBps: 200000, floorBps: 1000, decayDuration: 30 * 86400, anchorHalfLife: 90 * 86400 })), null); n++;
   ok(Math.abs(c.askingPrice(st, 12345) - line(15000, 7500, 105 * H, 12345)) < 1e-12, 'the closed form');
 }
-// the anchor: the running level of sale prices in bps of cost. a buy only sale sets it to the mean of the old anchor and the sale price (rounded up in bps),
-// never below 10000 and never above startCapBps. the start price follows it, open listings included
+// the anchor: the running level of sale prices in bps of cost. a buy only sale above the anchor now sets it to the mean of the two (the sale price rounded up in bps),
+// never above startCapBps. a sale at or below the anchor leaves it and its time. the part above 10000 halves every anchorHalfLife (7 days at launch), continuously.
+// the start price follows it, open listings included
 {
-  const bps = (x) => Math.round(x * 10000);
+  const D = 86400;
   const c = fresh({}, 10);
-  assert.equal(c.anchorBps, 10000); assert.equal(c.startBps(), 15000); n += 2;
-  const st = c.compose(1, 'eth', 0);
-  // a sale at 90 percent (hour 84) leaves the anchor at its lower bound
+  assert.equal(c.anchorAt(0), 10000); assert.equal(c.startBps(0), 15000); n += 2;
+  // a sale at 90 percent (hour 84) is below the anchor: the stored anchor and its time stay
   const lo = c.buy(c.compose(1, 'eth', 0), 84 * H);
-  assert.equal(lo.saleBps, 9000); assert.equal(c.anchorBps, 10000); n += 2;
+  assert.equal(lo.saleBps, 9000); assert.equal(c.anchorStored, 10000); assert.equal(c.anchorTime, 0); n += 3;
   // a sale at the start price, 15000, moves the anchor to 12500 and the next start to 18750
-  const hi = c.buy(c.compose(1, 'eth', 1000 * H), 1000 * H);
-  assert.equal(hi.saleBps, 15000); assert.equal(c.anchorBps, 12500); assert.equal(c.startBps(), 18750); n += 3;
-  // the listing open since hour 0 follows the anchor: its start is now 18750, half way down the line it is 13125
-  near(c.askingPrice(st, 1000 * H), 0.75, 1e-12, 'long after listing the open one asks the floor');
-  near(c.askingPrice({ cost: 1, t0: 0 }, 52.5 * H), 1.3125, 1e-12, 'the middle of the line follows the anchor');
-  near(c.askingPrice({ cost: 1, t0: 0 }, 0), 1.875, 1e-12, 'and so does the start');
+  const T = 1000 * H;
+  const open = c.compose(1, 'eth', T);
+  const hi = c.buy(c.compose(1, 'eth', T), T);
+  assert.equal(hi.saleBps, 15000); assert.equal(c.anchorAt(T), 12500); assert.equal(c.startBps(T), 18750); assert.equal(c.anchorTime, T); n += 4;
+  // the listing open since T follows the anchor: its start is now 18750. 52.5 hours later the anchor has decayed to 12013 (floor of 10000 + 2500 * 2^(-52.5 / 168)), the start is 18019
+  near(c.askingPrice(open, T), 1.875, 1e-12, 'the start follows the anchor');
+  assert.equal(c.anchorAt(T + 52.5 * H), 12013); assert.equal(c.startBps(T + 52.5 * H), 18019); n += 2;
+  near(c.askingPrice(open, T + 52.5 * H), (18019 + 7500) / 2 / 10000, 1e-12, 'the middle of the line follows the decayed anchor');
+  near(c.askingPrice(open, T + 105 * H), 0.75, 1e-12, 'the end of the line is the floor');
   // four sales at the start price in a row (integer math): the anchor is 12500, 15625, 19531, 24413 after them
   const d = fresh({}, 10); const seen = [];
-  for (let i = 0; i < 4; i++) { const r = d.buy(d.compose(1, 'eth', 0), 0); seen.push(r.saleBps, d.anchorBps); }
+  for (let i = 0; i < 4; i++) { const r = d.buy(d.compose(1, 'eth', 0), 0); seen.push(r.saleBps, d.anchorAt(0)); }
   assert.deepEqual(seen, [15000, 12500, 18750, 15625, 23437, 19531, 29296, 24413]); n++;
+  // two sales at the floor at hour 105 leave the anchor, its time and the fresh start price where they were
+  d.compose(1, 'eth', 0); d.compose(1, 'eth', 0);
+  const startBefore = d.startBps(105 * H), freshAsk = d.askingPrice({ cost: 1, t0: 105 * H }, 105 * H);
+  const f1 = d.buy(d.compose(1, 'eth', 0), 105 * H), f2 = d.buy(d.compose(1, 'eth', 0), 105 * H);
+  assert.equal(f1.saleBps, 7500); assert.equal(f2.saleBps, 7500); assert.equal(d.anchorStored, 24413); assert.equal(d.anchorTime, 0); n += 4;
+  assert.equal(d.startBps(105 * H), startBefore); near(d.askingPrice({ cost: 1, t0: 105 * H }, 105 * H), freshAsk, 1e-12, 'the fresh ask'); n++;
+  // decay: 30000 reads 20000 after 7 days, 15000 after 14, 24142 after 3.5, and holds 10000 after a year and after 300 half lives
+  const k = fresh({}, 10); k.setSettings({ anchorBps: 30000 }, 0);
+  assert.equal(k.anchorAt(0), 30000); assert.equal(k.anchorAt(7 * D), 20000); assert.equal(k.anchorAt(14 * D), 15000); assert.equal(k.anchorAt(3.5 * D), 24142); n += 4;
+  assert.equal(k.anchorAt(365 * D), 10000); assert.equal(k.anchorAt(300 * 7 * D), 10000); assert.equal(k.startBps(7 * D), 30000); n += 3;
+  // a sale above the decayed anchor moves it half way from the decayed value: (20000 + 30000) / 2
+  const sb = k.buy(k.compose(1, 'eth', 7 * D), 7 * D);
+  assert.equal(sb.saleBps, 30000); assert.equal(k.anchorStored, 25000); assert.equal(k.anchorTime, 7 * D); n += 3;
+  // a new half life stores the anchor now first: 20000 at day 7, then 15000 one new half life (14 days) later
+  const m = fresh({}, 10); m.setSettings({ anchorBps: 30000 }, 0); m.setSettings({ anchorHalfLife: 14 * D }, 7 * D);
+  assert.equal(m.anchorStored, 20000); assert.equal(m.anchorTime, 7 * D); assert.equal(m.anchorAt(7 * D), 20000); assert.equal(m.anchorAt(21 * D), 15000); n += 4;
+  assert.throws(() => m.setSettings({ anchorHalfLife: D - 1 }, 0), /anchorHalfLife/); assert.throws(() => m.setSettings({ anchorHalfLife: 90 * D + 1 }, 0), /anchorHalfLife/); n += 2;
+  // a start cap below the anchor now lowers the anchor to the cap and stores it. a cap above the decayed anchor leaves the stored anchor
+  const q = fresh({}, 10); q.setSettings({ anchorBps: 80000 }, 0);
+  assert.equal(q.anchorAt(7 * D), 45000); q.setSettings({ startCapBps: 60000 }, 7 * D); assert.equal(q.anchorStored, 80000); assert.equal(q.anchorTime, 0); n += 3;
+  q.setSettings({ startCapBps: 40000 }, 7 * D); assert.equal(q.anchorStored, 40000); assert.equal(q.anchorTime, 7 * D); n += 2;
   // the cap holds the start and the anchor
   const e = fresh({ startCapBps: 20000 }, 10);
   e.setSettings({ anchorBps: 20000 }, 0);
-  assert.equal(e.startBps(), 20000); n++;
-  const r = e.buy(e.compose(1, 'eth', 0), 0); assert.equal(r.saleBps, 20000); assert.equal(e.anchorBps, 20000); n += 2;
+  assert.equal(e.startBps(0), 20000); n++;
+  const r = e.buy(e.compose(1, 'eth', 0), 0); assert.equal(r.saleBps, 20000); assert.equal(e.anchorAt(0), 20000); n += 2;
   const g = fresh({ markupBps: 12000, startCapBps: 12000, saleFloorBps: 30000 }, 10);
-  const rg = g.buy(g.compose(1, 'eth', 0), 0); assert.equal(rg.saleBps, 30000); assert.equal(g.anchorBps, 12000); n += 2; // a hard floor above the cap cannot pull the anchor past the cap
+  const rg = g.buy(g.compose(1, 'eth', 0), 0); assert.equal(rg.saleBps, 30000); assert.equal(g.anchorAt(0), 12000); n += 2; // a hard floor above the cap cannot pull the anchor past the cap
   // a refused sale leaves the anchor alone
   const h = fresh({}, 10); const live = h.compose(1, 'eth', 0); h.bidOn(live, 1.6, 0, 1);
-  assert.equal(h.buy(live, 0), null); assert.equal(h.anchorBps, 10000); n += 2;
+  assert.equal(h.buy(live, 0), null); assert.equal(h.anchorAt(0), 10000); n += 2;
   // the owner corrects the anchor (setAnchorBps): between 10000 and startCapBps
-  h.setSettings({ anchorBps: 14000 }, 0); assert.equal(h.anchorBps, 14000); assert.equal(h.startBps(), 21000); n += 2;
+  h.setSettings({ anchorBps: 14000 }, 0); assert.equal(h.anchorAt(0), 14000); assert.equal(h.startBps(0), 21000); n += 2;
   assert.throws(() => h.setSettings({ anchorBps: 9999 }, 0), /anchorBps/); assert.throws(() => h.setSettings({ anchorBps: 100001 }, 0), /anchorBps/); n += 2;
-  assert.equal(h.anchorBps, 14000); n++;
+  assert.equal(h.anchorAt(0), 14000); n++;
 }
 // the hard floor: the price used is never below saleFloorBps of cost, a lower curve floor does not get under it
 {
@@ -269,7 +293,7 @@ const R0 = 6.668e15;
   const s105 = c.compose(1, 'eth', 0);
   ok(c.bidOn(s105, 0.75, 200 * H, 1)); near(s105.reserve, 0.75, 1e-12, 'opens at the hard floor');
   // house sales do not move the anchor
-  c.settle(s105); c.collectSales(200 * H); assert.equal(c.anchorBps, 10000); n++;
+  c.settle(s105); c.collectSales(200 * H); assert.equal(c.anchorAt(200 * H), 10000); n++;
   // later bids: 5 percent over the top bid, no matter what the asking line says
   near(c.minBid(st, 100), a100 * 1.05, 1e-12, 'next bid at least 5 percent over');
   near(c.minBid(st, 100 + 1000 * H), a100 * 1.05, 1e-12, 'a live auction ignores the line');
@@ -306,7 +330,7 @@ const R0 = 6.668e15;
   ok(r !== null && st.sold === true, 'sold in the same call');
   near(r.toBuyback, 0.5, 1e-12, 'launch split: half to the buyback'); near(r.toPot, 0.5, 1e-12, 'half to the pot');
   near(c.ethPot - pot0, 0.5, 1e-12, 'the pot has it at once'); near(c.ethToBuyback, 0.5, 1e-12, 'the buyback pot has it at once');
-  assert.equal(c.anchorBps, 10000); n++; // sellTo is the Core door, the anchor moves in the controller's buy
+  assert.equal(c.anchorAt(70 * H), 10000); n++; // sellTo is the Core door, the anchor moves in the controller's buy
   assert.equal(c.houseOwed, 0); assert.equal(st.bid, 0); assert.equal(st.bids, 0); n += 3; // nothing in the house, no bid, no timer
   assert.equal(c.sellTo(st, ask, 31 * H), null); n++; // a statement is sold once
   const live = c.compose(1, 'eth', 0); c.bidOn(live, 1.5, 0, 1);
@@ -582,8 +606,8 @@ const R0 = 6.668e15;
   const bo = simL({ days: 30, seed: 3 }); // buy only is the launch mode
   ok(bo.T.sold > 0 && bo.T.soldInstant === bo.T.sold, 'every buy only sale is instant'); assert.equal(bo.stats.bidsPerSale, 1); assert.equal(bo.live.length, 0); n += 2;
   ok(bo.S.pending.every((x) => x === 0), 'nothing waits in the house in buy only mode'); ok(bo.T.soldPrice >= bo.T.soldFloor * (1 - 1e-9), 'buy only sales clear at the hard floor or above');
-  ok(e.T.soldInstant === 0, 'auction mode has no instant sales'); assert.equal(e.core.anchorBps, 10000); n++; // house sales leave the anchor alone
-  ok(bo.core.anchorBps >= 10000 && bo.core.anchorBps <= bo.core.c.startCapBps, 'the anchor stays between 10000 and the cap'); ok(bo.stats.finalAnchorBps === bo.core.anchorBps, 'stats carry the anchor');
+  ok(e.T.soldInstant === 0, 'auction mode has no instant sales'); assert.equal(e.core.anchorAt(0), 10000); n++; // house sales leave the anchor alone
+  const boEnd = bo.core.anchorAt(bo.H * 3600); ok(boEnd >= 10000 && boEnd <= bo.core.c.startCapBps, 'the anchor stays between 10000 and the cap'); ok(bo.stats.finalAnchorBps === boEnd, 'stats carry the anchor');
   // the pessimistic run: a buyer who waits for the floor pays the lowest price of every statement it takes, and none sells young
   const wf = simL({ days: 30, seed: 3, buyerWaits: 'floor', buyOnly: false });
   ok(wf.T.sold > 0 && Math.abs(wf.stats.saleOverCost - 0.75) < 1e-9 && wf.stats.saleAtFloorShare === 1, 'waiting buyers pay the floor');
