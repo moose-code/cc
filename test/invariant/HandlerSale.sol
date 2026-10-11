@@ -153,6 +153,18 @@ abstract contract HandlerSale is HandlerOwner {
         return _sellToRefusal(_sg[sid], p.price, p.floor);
     }
 
+    uint256 internal _anchor0;
+    uint256 internal _cost0;
+
+    /// the anchor after a sale at `price` of a statement of `cost`, written out again from docs/FLOW.md 62: the mean of the
+    /// old anchor and the sale price in bps of cost (rounded up), from 10_000 to the start cap
+    function _anchorAfter(uint256 anchor0, uint256 price, uint256 cost) internal view returns (uint256 next) {
+        next = (anchor0 + (price * 10_000 + cost - 1) / cost) / 2;
+        uint256 cap = IControllerV1(v1).startCapBps();
+        if (next < 10_000) next = 10_000;
+        if (next > cap) next = cap;
+    }
+
     /// a buyer pays the asking price of the first controller, with an excess now and then and a short payment now and
     /// then. in auction mode, with a bid, with another controller in force, on a sold or exited statement it must
     /// refuse with the model's selector. a sale pays the ask exactly, the excess comes back
@@ -183,10 +195,15 @@ abstract contract HandlerSale is HandlerOwner {
         vm.deal(who, who.balance + value);
         p.payerBal = who.balance;
         RS memory rs = _rs();
+        _anchor0 = IControllerV1(v1).anchorBps();
+        (,, _cost0,) = core.statementInfo(sid);
         _att(a);
         vm.prank(who);
         try IControllerV1(v1).buy{value: value}(sid) {
             _ok(a);
+            if (IControllerV1(v1).anchorBps() != _anchorAfter(_anchor0, price, _cost0)) {
+                _flag(V_SALE_PATH, "a buy did not move the anchor halfway to the sale price");
+            }
             if (p.payerBal - who.balance != price) {
                 _flag(V_SALE_PATH, "the buyer did not pay exactly the ask, or the excess was not refunded");
             }
@@ -253,43 +270,59 @@ abstract contract HandlerSale is HandlerOwner {
     //////////////////////////////////////////////////////////////*/
 
     /// @dev the sale setting the handler tries: its selector, the value, and whether the model says it is inside the bounds
-    /// (a helper so the locals of `saleSettings` fit the stack)
-    function _saleCase(IControllerV1 c, uint256 seed, uint256 which, bool bad, uint256 start, uint256 floor_)
+    /// (a helper so the locals of `saleSettings` fit the stack). `cur` is the live value of the setting
+    function _saleCase(IControllerV1 c, uint256 seed, uint256 which, bool bad)
         internal
         view
-        returns (bytes4 sel, uint256 v, bool valid)
+        returns (bytes4 sel, uint256 v, bool valid, uint256 cur)
     {
+        uint256 cap = c.startCapBps();
         if (which == 0) {
-            sel = IControllerV1.setStartBps.selector;
-            v = bad ? (seed % 2 == 0 ? floor_ - 1 : 40_001) : _f(seed, floor_, 40_000, start);
-            valid = v >= 1_000 && v <= 40_000 && v >= floor_;
+            sel = IControllerV1.setMarkupBps.selector;
+            cur = c.markupBps();
+            v = bad ? (seed % 2 == 0 ? 9_999 : 40_001) : _f(seed, 10_000, 40_000, cur);
+            valid = v >= 10_000 && v <= 40_000 && v <= cap;
         } else if (which == 1) {
-            sel = IControllerV1.setStepBps.selector;
-            v = bad ? 5_001 + seed % 1000 : _f(seed, 0, 5_000, c.stepBps());
-            valid = v <= 5_000;
+            sel = IControllerV1.setStartCapBps.selector;
+            cur = cap;
+            v = bad ? (seed % 2 == 0 ? c.markupBps() - 1 : 200_001) : _f(seed, c.markupBps(), 200_000, cur);
+            valid = v >= c.markupBps() && v <= 200_000;
         } else if (which == 2) {
-            sel = IControllerV1.setStepEvery.selector;
-            v = bad ? (seed % 2 == 0 ? 59 : 30 days + 1) : _f(seed, 60, 30 days, c.stepEvery());
-            valid = v >= 60 && v <= 30 days;
-        } else {
+            sel = IControllerV1.setDecayDuration.selector;
+            cur = c.decayDuration();
+            v = bad ? (seed % 2 == 0 ? 1 hours - 1 : 30 days + 1) : _f(seed, 1 hours, 30 days, cur);
+            valid = v >= 1 hours && v <= 30 days;
+        } else if (which == 3) {
             sel = IControllerV1.setFloorBps.selector;
-            v = bad ? (seed % 2 == 0 ? 999 : start + 1) : _f(seed, 1_000, start, floor_);
-            valid = v >= 1_000 && v <= start;
+            cur = c.floorBps();
+            v = bad ? (seed % 2 == 0 ? 999 : 10_001) : _f(seed, 1_000, 10_000, cur);
+            valid = v >= 1_000 && v <= 10_000;
+        } else {
+            sel = IControllerV1.setAnchorBps.selector;
+            cur = c.anchorBps();
+            v = bad ? (seed % 2 == 0 ? 9_999 : cap + 1) : _f(seed, 10_000, cap, cur);
+            valid = v >= 10_000 && v <= cap;
         }
     }
 
-    /// the owner sets one of the four sale numbers of the first controller to a value inside or outside the bounds of
+    function _saleGot(IControllerV1 c, uint256 which) internal view returns (uint256) {
+        if (which == 0) return c.markupBps();
+        if (which == 1) return c.startCapBps();
+        if (which == 2) return c.decayDuration();
+        if (which == 3) return c.floorBps();
+        return c.anchorBps();
+    }
+
+    /// the owner sets one of the five sale numbers of the first controller to a value inside or outside the bounds of
     /// docs/FLOW.md 9.3 (written out again here), or a stranger tries. inside: it goes through and reads back. outside:
     /// BadSetting with the field. a stranger: OnlyOwner. no asset, pot or house debt moves
     function saleSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_SALE_SETTINGS;
         IControllerV1 c = IControllerV1(v1);
-        uint256 which = mode % 4;
+        uint256 which = mode % 5;
         bool stranger = (mode >> 8) % 6 == 0;
         bool bad = (mode >> 12) % 4 == 0;
-        uint256 start = c.startBps();
-        uint256 floor_ = c.floorBps();
-        (bytes4 sel, uint256 v, bool valid) = _saleCase(c, seed, which, bad, start, floor_);
+        (bytes4 sel, uint256 v, bool valid, uint256 cur) = _saleCase(c, seed, which, bad);
         address caller = stranger ? address(uint160(uint256(keccak256(abi.encode("stranger", seed))))) : owner;
         OPre memory pre = _opre();
         _att(a);
@@ -298,12 +331,11 @@ abstract contract HandlerSale is HandlerOwner {
         bytes4 want = stranger ? IControllerV1.OnlyOwner.selector : (valid ? bytes4(0) : IControllerV1.BadSetting.selector);
         if (ok) {
             if (want != 0) _flag(V_OWNER, "a sale setting the model refuses was accepted");
-            uint256 got = which == 0 ? c.startBps() : which == 1 ? c.stepBps() : which == 2 ? c.stepEvery() : c.floorBps();
-            if (got != v) _flag(V_OWNER, "a sale setting did not read back");
+            if (_saleGot(c, which) != v) _flag(V_OWNER, "a sale setting did not read back");
             gOwnerCalls++;
         } else {
             if (want == 0 || bytes4(out) != want) _unexpected(a, out);
-            if (c.startBps() != start || c.floorBps() != floor_) _flag(V_OWNER, "a refused sale setting changed a value");
+            if (_saleGot(c, which) != cur) _flag(V_OWNER, "a refused sale setting changed a value");
             gOwnerRefused++;
         }
         _opost(pre, "saleSettings");
@@ -561,7 +593,7 @@ abstract contract HandlerSale is HandlerOwner {
             (ok,) = address(core).call(abi.encodeCall(ICore.transferOwnership, (formerOwners[i])));
             if (ok) _flag(V_LOCK, "a former owner started a handover");
             vm.prank(formerOwners[i]);
-            (ok,) = address(v1).call(abi.encodeCall(IControllerV1.setStepBps, (1)));
+            (ok,) = address(v1).call(abi.encodeCall(IControllerV1.setDecayDuration, (2 hours)));
             if (ok) _flag(V_LOCK, "a former owner set a sale setting");
         }
         if (core.owner() != owner) _flag(V_LOCK, "the core owner is not the handler's owner");

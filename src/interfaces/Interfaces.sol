@@ -135,17 +135,18 @@ struct Settings {
     uint16 feeToBuybackBps;
 }
 
-/// the five sale settings of the controller, its constructor argument and the `sale` block of the launch config.
-/// bounds are enforced by the controller (docs/FLOW.md 9.3)
+/// the four sale settings of the controller, its constructor argument and the `sale` block of the launch config.
+/// bounds are enforced by the controller (docs/FLOW.md 9.3). the controller keeps a fifth value, the anchor, which
+/// starts at 10_000
 struct Sale {
     /// buy only mode: statements sell at once at the asking price. false is auction mode (the asking price is the house reserve)
     bool buyOnly;
-    /// the asking price at listing, bps of the statement cost
-    uint16 startBps;
-    /// bps the asking price falls per step
-    uint16 stepBps;
-    /// seconds per step
-    uint32 stepEvery;
+    /// the start price over the anchor, bps
+    uint16 markupBps;
+    /// the most the start price can be, bps of the statement cost
+    uint32 startCapBps;
+    /// seconds from the start price to the floor
+    uint32 decayDuration;
     /// the asking price never falls below this, bps of the statement cost
     uint16 floorBps;
 }
@@ -224,9 +225,10 @@ library Mainnet {
         });
     }
 
-    /// the launch sale: start at 110 percent, one point every 3 hours, down to 75 percent at hour 105, auction mode
+    /// the launch sale: buy only, start at 1.5 times the anchor (at most 1_000 percent of cost), falling in a straight
+    /// line to 75 percent of cost over 105 hours
     function defaultSale() internal pure returns (Sale memory) {
-        return Sale({buyOnly: false, startBps: 11_000, stepBps: 100, stepEvery: 3 hours, floorBps: 7_500});
+        return Sale({buyOnly: true, markupBps: 15_000, startCapBps: 100_000, decayDuration: 105 hours, floorBps: 7_500});
     }
 
     /// the default stack: the fixed parts of mainnet. the v2 members (hook, factory, locker, escrow) and the fee router

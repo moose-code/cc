@@ -13,26 +13,31 @@ interface IControllerV1 {
     error Reentrant();
     error Underpaid();
 
+    event AnchorBpsSet(uint32 anchorBps);
+    event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event BuyOnlySet(bool buyOnly);
+    event DecayDurationSet(uint32 decayDuration);
     event FloorBpsSet(uint16 floorBps);
-    event StartBpsSet(uint16 startBps);
-    event StepBpsSet(uint16 stepBps);
-    event StepEverySet(uint32 stepEvery);
+    event MarkupBpsSet(uint16 markupBps);
+    event StartCapBpsSet(uint32 startCapBps);
 
     function CORE() external view returns (address);
+    function anchorBps() external view returns (uint32);
     function buy(uint256 sid) external payable;
     function buyOnly() external view returns (bool);
+    function decayDuration() external view returns (uint32);
     function floorBps() external view returns (uint16);
+    function markupBps() external view returns (uint16);
     function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format);
-    function priceOf(uint256 sid) external view returns (uint256);
+    function priceOf(uint256 sid) external view returns (uint256 price);
+    function setAnchorBps(uint32 v) external;
     function setBuyOnly(bool on) external;
+    function setDecayDuration(uint32 v) external;
     function setFloorBps(uint16 v) external;
-    function setStartBps(uint16 v) external;
-    function setStepBps(uint16 v) external;
-    function setStepEvery(uint32 v) external;
-    function startBps() external view returns (uint16);
+    function setMarkupBps(uint16 v) external;
+    function setStartCapBps(uint32 v) external;
+    function startBps() external view returns (uint256);
+    function startCapBps() external view returns (uint32);
     function statementPrice(uint256, uint256 cost, uint64 listedAt) external view returns (uint256);
-    function stepBps() external view returns (uint16);
-    function stepEvery() external view returns (uint32);
 }

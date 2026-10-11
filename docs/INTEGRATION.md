@@ -91,25 +91,25 @@ what the call does:
 
 send at least 10,000,000 gas: the live Statements contract needs about 8.71 million for 80 credits (section 13).
 
-## 6. statements: buying through the house and the buy mode
+## 6. statements: the buy mode and buying through the house
 
-an eth lane statement is listed on `core.HOUSE()` at once. `lens.snapshot().statements` lists every held statement with its status, auction id, top bid, end time and `askingPrice`. the asking price of the controller starts at `startBps` (11,000) of the cost and falls `stepBps` (100) every `stepEvery` (10,800 seconds) down to `floorBps` (7,500). the reserve and the `sellTo` price are at least `saleFloorBps` (7,500) of the cost. `controller.priceOf(sid)` returns the asking price now in either mode.
+an eth lane statement is listed on `core.HOUSE()` at once. `lens.snapshot().statements` lists every held statement with its status, auction id, top bid, end time and `askingPrice`. the asking price of a statement of cost `c` at `age` seconds since listing is `c * (start - (start - floorBps) * min(age, decayDuration) / decayDuration) / 10,000`: a straight line from the start price to `floorBps` (7,500) over `decayDuration` (378,000 seconds, 105 hours), changing every second. `start` is `controller.startBps()`, which is `min(anchorBps * markupBps / 10,000, startCapBps)`, 15,000 at the launch anchor of 10,000. `anchorBps` is the running level of sale prices in bps of cost: every `buy` sets it to the mean of the old anchor and the sale price in bps of cost, from 10,000 to `startCapBps` (100,000). the price is computed from the current anchor at every call, so the price of an open listing rises when another statement sells above the anchor. the reserve and the `sellTo` price are at least `saleFloorBps` (7,500) of the cost. `controller.priceOf(sid)` returns the asking price now in either mode.
 
-the controller is in one of two modes (`controller.buyOnly()`).
+the controller is in one of two modes (`controller.buyOnly()`). launch is buy mode.
 
-auction mode:
+buy mode (`buyOnly` true):
+
+1. `controller.priceOf(sid)` returns the price in wei. `NotForSale` for a statement that is not held, is on the exit lane or has no listing time. the price falls with time and rises when the anchor rises, so a price read in an earlier block can be too low by the time the transaction lands.
+2. `controller.buy{value: v}(sid)` with `v` at least the price (`Underpaid`). send a margin above the quote: the controller records the sale at the asking price and refunds the excess of `v` to the caller last. the controller calls `core.sellTo(sid, buyer)`, which cancels the listing (`HasBid` while a bid is live on the house), sends the statement to the buyer and books the payment as sale proceeds.
+3. events `StatementSoldTo(sid, buyer, price)` on the Core, `AnchorMoved(sid, saleBps, anchorBps)` and `Bought(sid, buyer, price)` on the controller. `buy` reverts `NotBuyOnly` in auction mode. read `controller.anchorBps()` and `controller.startBps()` for the level the next listing starts from.
+
+auction mode (`buyOnly` false, an owner setting; a house sale does not move the anchor):
 
 1. read the asking price and the auction id from the lens.
 2. optional: `core.repriceStatement(sid)` sets the reserve of a listing without a bid to the asking price now. anyone may call it, and the first bidder calls it before bidding.
 3. `house.createBid{value: amount}(auctionId)`. the first bid must reach the reserve (`BidBelowReserve`) and each later bid must exceed the top bid by 500 bps (`BidBelowMinimum`). the auction runs `auctionDuration` (86,400 seconds at launch) from the first bid. the duration is the one the listing was created with: a later `setSettings` reaches new listings only, and `repriceStatement` sets the reserve of an old listing and leaves its duration.
 4. after the end time anyone calls `house.endAuction(auctionId)` with at least 2,000,000 gas (the house needs 580,000 for its delivery). the statement goes to the winner and the proceeds are credited to the Core on the house.
 5. `core.collectSales()` books the proceeds (`saleToBuybackBps` to the coin buyback pot, the rest to `ethPot`) and `core.syncStatement(sid)` deletes the record of the sold statement. both are permissionless and `buyback()` collects first.
-
-buy mode (`buyOnly` true):
-
-1. `controller.priceOf(sid)` returns the price. `NotForSale` for a statement that is not held, is on the exit lane or has no listing time.
-2. `controller.buy{value: v}(sid)` with `v` at least the price (`Underpaid`). the controller calls `core.sellTo(sid, buyer)`, which cancels the listing (`HasBid` while a bid is live), sends the statement to the buyer and books the payment as sale proceeds. the excess of `v` is refunded to the caller last.
-3. events `StatementSoldTo(sid, buyer, price)` on the Core and `Bought(sid, buyer, price)` on the controller. `buy` reverts `NotBuyOnly` in auction mode.
 
 ## 7. the fee pull and flush()
 
@@ -233,10 +233,12 @@ the controller (`src/interfaces/IControllerV1.sol`):
 |---|---|---|
 | `Bought` | `uint256 indexed sid, address indexed buyer, uint256 price` | `buy`: `buyer` paid `price` and received statement `sid` |
 | `BuyOnlySet` | `bool buyOnly` | the owner switched the sale mode |
+| `AnchorMoved` | `uint256 indexed sid, uint256 saleBps, uint32 anchorBps` | `buy`: the sale price in bps of cost and the new anchor |
+| `AnchorBpsSet` | `uint32 anchorBps` | the owner set the anchor |
+| `DecayDurationSet` | `uint32 decayDuration` | sale setting changed |
 | `FloorBpsSet` | `uint16 floorBps` | sale setting changed |
-| `StartBpsSet` | `uint16 startBps` | sale setting changed |
-| `StepBpsSet` | `uint16 stepBps` | sale setting changed |
-| `StepEverySet` | `uint32 stepEvery` | sale setting changed |
+| `MarkupBpsSet` | `uint16 markupBps` | sale setting changed |
+| `StartCapBpsSet` | `uint32 startCapBps` | sale setting changed |
 
 the fee router (`src/interfaces/IFeeRouter.sol`):
 

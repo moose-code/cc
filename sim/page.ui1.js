@@ -9,8 +9,8 @@ const fmtSci = (x) => (x == null || !isFinite(x) ? 'n/a' : x === 0 ? '0' : x.toE
 
 // the one mid run change: the setting, its unit and a sensible value to switch to
 const CHG = {
-  floorBps: { label: 'lowest price (floorBps and saleFloorBps together)', unit: 'bps of cost, 1000 to 40000', to: 6000, also: ['saleFloorBps'] },
-  startBps: { label: 'startBps (start price over cost)', unit: 'bps of cost, 1000 to 40000', to: 9000 },
+  floorBps: { label: 'lowest price (floorBps and saleFloorBps together)', unit: 'bps of cost, 1000 to 10000, 1000 to 40000 for saleFloorBps', to: 6000, also: ['saleFloorBps'] },
+  markupBps: { label: 'markupBps (start price over the anchor)', unit: 'bps, 10000 to 40000', to: 12000 },
   buyOnly: { label: 'buyOnly (1 is buy only, 0 is auction)', unit: '0 or 1', to: 1, bool: true },
   feeToBuybackBps: { label: 'feeToBuybackBps (fee share to burn $CC)', unit: 'bps, 0 to 10000', to: 2500 },
   auctionDuration: { label: 'auctionDuration', unit: 'hours, 6 to 720', to: 6, hours: true },
@@ -20,7 +20,8 @@ const CHG = {
 };
 // every control: key in the state object, how to show it. launch values are the Core's (script/config/mainnet.json)
 const BASE_STATE = { volPreset: 'comparable', volScale: 1, volTail: 17, volHalfLifeDays: 3, buyShareLate: 'auto', pricePath: 'flat', priceP0: 0.0089, wtpMult: 1, stmtPerDay: 8, buyerWaits: 'no', impactElast: 0.12,
-  openPct: 100, saleMode: 'auction', startBps: 11000, stepBps: 100, stepEveryH: 3, floorBps: 7500, saleFloorBps: 7500, auctionHours: 24, saleToBuybackBps: 5000, feeToBuybackBps: 0, exitAfterH: 105, dropPerCreditPct: 0.5, dropToPct: 80, climbPerMin: 0.5, ceilPct: 125, idleLoosenPct: 2, rateCap: 205540000000000, fundedRule: 'built',
+  openPct: 100, saleMode: 'buyOnly', markupBps: 15000, startCapBps: 100000, decayH: 105, floorBps: 7500, saleFloorBps: 7500, auctionHours: 24, saleToBuybackBps: 5000, feeToBuybackBps: 0, exitAfterH: 105, dropPerCreditPct: 0.5, dropToPct: 80, climbPerMin: 0.5, ceilPct: 125, idleLoosenPct: 2, rateCap: 205540000000000, fundedRule: 'built',
+  basefeeGwei: 1, keeperFee: 0.0005, buybackMaxBaseFee: 10,
   chgOn: false, chgDay: 30, chgKey: 'saleToBuybackBps', chgValue: 7500,
   phase2On: false, phase2Day: 14, xp: 0.0108, takerThreshold: 0.15, days: 90, seed: 7 };
 const GROUPS = [
@@ -43,10 +44,10 @@ const GROUPS = [
   ] },
   { title: 'selling statements', open: true, ctl: [
     { k: 'saleMode', t: 'select', label: 'sale mode', opts: [['auction', 'auction: a buyer at the asking price opens a 24 hour auction'], ['buyOnly', 'buy only: a buyer pays the asking price and gets it at once']] },
-    { k: 'startBps', t: 'range', label: 'start price, percent of cost (startBps)', min: 5000, max: 20000, step: 500, fmt: (v) => v / 100 + '%', hint: 'asking price when a statement is listed, as a share of what the engine paid for its 80 credits' },
-    { k: 'stepBps', t: 'range', label: 'drop per step (stepBps)', min: 0, max: 500, step: 25, fmt: (v) => (v / 100).toFixed(2) + ' pt', hint: 'points of cost the asking price falls each step' },
-    { k: 'stepEveryH', t: 'range', label: 'step length (stepEvery), hours', min: 1, max: 24, step: 1, fmt: (v) => v + 'h', hint: 'asking price walk:', hintFn: (s) => walkText(s) },
-    { k: 'floorBps', t: 'range', label: 'floor of the asking price (floorBps)', min: 2000, max: 12000, step: 500, fmt: (v) => v / 100 + '%', hint: 'the price stops falling here' },
+    { k: 'markupBps', t: 'range', label: 'start price over the anchor (markupBps)', min: 10000, max: 40000, step: 500, fmt: (v) => v / 100 + '%', hint: 'asking price when a statement is listed, as a share of the anchor, the running level of sale prices (100% of cost at launch, each buy only sale moves it halfway to the price paid, never below 100%)' },
+    { k: 'startCapBps', t: 'range', label: 'cap on the start price (startCapBps)', min: 15000, max: 200000, step: 5000, fmt: (v) => v / 100 + '%', hint: 'the start price never passes this share of cost, whatever the anchor' },
+    { k: 'decayH', t: 'range', label: 'decay time to the floor (decayDuration), hours', min: 1, max: 720, log: true, fmt: (v) => (+v).toFixed(v < 10 ? 1 : 0) + 'h', hint: 'asking price walk:', hintFn: (s) => walkText(s) },
+    { k: 'floorBps', t: 'range', label: 'floor of the asking price (floorBps)', min: 2000, max: 10000, step: 500, fmt: (v) => v / 100 + '%', hint: 'the price falls in a straight line to here and stops' },
     { k: 'saleFloorBps', t: 'range', label: 'hard floor, set in the Core (saleFloorBps)', min: 1000, max: 12000, step: 500, fmt: (v) => v / 100 + '%', hint: 'no sale ever goes under this share of cost, even if the floor above is lower' },
     { k: 'auctionHours', t: 'range', label: 'auctionDuration, hours', min: 6, max: 168, log: true, fmt: (v) => (+v).toFixed(v < 10 ? 1 : 0) + 'h', hint: 'auction mode only. runs from the first bid' },
     { k: 'saleToBuybackBps', t: 'range', label: 'saleToBuybackBps, sale proceeds to burn $CC', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of sale proceeds that buys and burns $CC, the rest goes to the pot' },
@@ -59,6 +60,9 @@ const GROUPS = [
     { k: 'ceilPct', t: 'range', label: 'ceilBps', min: 101, max: 300, step: 1, fmt: (v) => v * 100, hint: 'the bid never climbs above this share of the last fill rate. launch 12500' },
     { k: 'idleLoosenPct', t: 'range', label: 'idleLoosenBps', min: 0, max: 20, step: 0.5, fmt: (v) => Math.round(v * 100), hint: 'bps added to the ceiling anchor every 10 idle minutes. launch 200' },
     { k: 'rateCap', t: 'range', label: 'rateCap, wei per credit', min: 1.3e16, max: 1e18, log: true, fmt: fmtSci, hint: 'the eth rate never passes it. launch 8.9e16, 10 times rateStart. the page keeps it at or above rateStart' },
+    { k: 'basefeeGwei', t: 'range', label: 'base fee of the buyback calls, gwei', min: 0.1, max: 200, log: true, fmt: (v) => fmtN(v) + ' gwei', hint: 'the caller is paid 270,000 gas at min(base fee, buybackMaxBaseFee) plus keeperFee out of each slice' },
+    { k: 'keeperFee', t: 'range', label: 'keeperFee, eth', min: 0, max: 0.005, step: 0.00025, fmt: (v) => v.toFixed(5), hint: 'paid to the buyback caller on top of the gas. launch 0.0005, at most 0.005' },
+    { k: 'buybackMaxBaseFee', t: 'range', label: 'buybackMaxBaseFee, gwei', min: 1, max: 100, step: 1, fmt: (v) => v + ' gwei', hint: 'the base fee the gas refund stops at. launch 10' },
   ] },
   { title: 'change a setting on day N', open: true, ctl: [
     { k: 'chgOn', t: 'check', label: 'the owner changes one setting' },
@@ -77,11 +81,10 @@ const GROUPS = [
     { k: 'seed', t: 'number', label: 'seed' },
   ] },
 ];
-// the asking price walk in plain words: where it starts, where it stops and when it gets there
+// the asking price walk in plain words: where it starts at the launch anchor, where it stops and when it gets there
 function walkText(s) {
-  const fl = Math.min(s.floorBps, s.startBps), low = Math.max(fl, s.saleFloorBps), top = Math.max(s.startBps, s.saleFloorBps);
-  const steps = s.stepBps > 0 && top > low ? Math.ceil((s.startBps - low) / s.stepBps) : 0;
-  return (top / 100) + '% of cost at listing, ' + (low / 100) + '% ' + (steps > 0 ? 'from hour ' + steps * s.stepEveryH : 'throughout');
+  const top = Math.max(Math.min(s.markupBps, s.startCapBps), s.saleFloorBps), low = Math.max(s.floorBps, s.saleFloorBps);
+  return (top / 100) + '% of cost at listing (anchor 100%), a straight line to ' + (low / 100) + '% at hour ' + (+s.decayH).toFixed(s.decayH < 10 ? 1 : 0);
 }
 const rateOf = (s) => (s.openPct / 100) * (s.priceP0 * 1e18);
 let state = Object.assign({}, BASE_STATE);
@@ -146,7 +149,8 @@ function toParams(s) {
   const p = {
     volPreset: s.volPreset, volScale: s.volScale, volTail: s.volTail, volHalfLifeDays: s.volHalfLifeDays, buyShareLate: s.buyShareLate === 'auto' ? null : +s.buyShareLate,
     pricePath: s.pricePath, priceP0: s.priceP0, wtpMult: s.wtpMult, stmtPerDay: s.stmtPerDay, impactElast: s.impactElast, rateStart: rateOf(s),
-    buyOnly: s.saleMode === 'buyOnly', startBps: s.startBps, stepBps: s.stepBps, stepEvery: Math.round(s.stepEveryH * 3600), floorBps: Math.min(s.floorBps, s.startBps), saleFloorBps: s.saleFloorBps,
+    buyOnly: s.saleMode === 'buyOnly', markupBps: s.markupBps, startCapBps: Math.max(s.startCapBps, s.markupBps), decayDuration: Math.round(s.decayH * 3600), floorBps: s.floorBps, saleFloorBps: s.saleFloorBps,
+    basefeeGwei: s.basefeeGwei, keeperFee: s.keeperFee, buybackMaxBaseFee: s.buybackMaxBaseFee,
     buyerWaits: s.buyerWaits, feeToBuybackBps: s.feeToBuybackBps, auctionDuration: Math.round(s.auctionHours * 3600), saleToBuybackBps: s.saleToBuybackBps, exitAfter: s.exitAfterH * 3600,
     bidRule: 'stepped', dropPerCreditPct: s.dropPerCreditPct, dropToPct: s.dropToPct, climbPerMin: s.climbPerMin, ceilPct: s.ceilPct, idleLoosenPct: s.idleLoosenPct,
     stepSec: 300, // 5 minute steps keep a live page responsive, credits within 1 percent of the 60 second steps of the batches

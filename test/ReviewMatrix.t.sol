@@ -285,44 +285,44 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("router payee = the dead address", Class.Pre);
             m.c.creatorPayee = Mainnet.DEAD;
         } else if (i == 21) {
-            m = _m("sale: buyOnly on (valid, wrong)", Class.Hash);
-            m.c.sale.buyOnly = true;
+            m = _m("sale: buyOnly flipped (valid, wrong)", Class.Hash);
+            m.c.sale.buyOnly = !m.c.sale.buyOnly;
         } else if (i == 22) {
-            m = _m("sale: startBps 12000 (valid, wrong)", Class.Hash);
-            m.c.sale.startBps = 12_000;
+            m = _m("sale: markupBps 12000 (valid, wrong)", Class.Hash);
+            m.c.sale.markupBps = 12_000;
         } else if (i == 23) {
-            m = _m("sale: stepBps 200 (valid, wrong)", Class.Hash);
-            m.c.sale.stepBps = 200;
+            m = _m("sale: startCapBps 150000 (valid, wrong)", Class.Hash);
+            m.c.sale.startCapBps = 150_000;
         } else if (i == 24) {
-            m = _m("sale: stepEvery 1 hour (valid, wrong)", Class.Hash);
-            m.c.sale.stepEvery = 1 hours;
+            m = _m("sale: decayDuration 1 hour (valid, wrong)", Class.Hash);
+            m.c.sale.decayDuration = 1 hours;
         } else if (i == 25) {
             m = _m("sale: floorBps 8000 (valid, wrong)", Class.Hash);
             m.c.sale.floorBps = 8000;
         } else if (i == 26) {
-            m = _m("sale: startBps 40001", Class.Pre);
-            m.c.sale.startBps = 40_001;
+            m = _m("sale: markupBps 40001", Class.Pre);
+            m.c.sale.markupBps = 40_001;
         } else if (i == 27) {
-            m = _m("sale: startBps 999", Class.Pre);
-            m.c.sale.startBps = 999;
+            m = _m("sale: markupBps 9999", Class.Pre);
+            m.c.sale.markupBps = 9_999;
         } else if (i == 28) {
-            m = _m("sale: stepBps 5001", Class.Pre);
-            m.c.sale.stepBps = 5001;
+            m = _m("sale: startCapBps 200001", Class.Pre);
+            m.c.sale.startCapBps = 200_001;
         } else if (i == 29) {
-            m = _m("sale: stepEvery 59 seconds", Class.Pre);
-            m.c.sale.stepEvery = 59;
+            m = _m("sale: decayDuration 59 minutes", Class.Pre);
+            m.c.sale.decayDuration = 1 hours - 1;
         } else if (i == 30) {
-            m = _m("sale: stepEvery 31 days", Class.Pre);
-            m.c.sale.stepEvery = 31 days;
+            m = _m("sale: decayDuration 31 days", Class.Pre);
+            m.c.sale.decayDuration = 31 days;
         } else if (i == 31) {
-            m = _m("sale: floorBps above startBps", Class.Pre);
-            m.c.sale.floorBps = m.c.sale.startBps + 1;
+            m = _m("sale: startCapBps below markupBps", Class.Pre);
+            m.c.sale.startCapBps = m.c.sale.markupBps - 1;
         } else if (i == 32) {
             m = _m("sale: floorBps 999", Class.Pre);
             m.c.sale.floorBps = 999;
         } else {
-            m = _m("sale: stepBps 0 (the bottom edge)", Class.Hash);
-            m.c.sale.stepBps = 0;
+            m = _m("sale: floorBps 10000 (the top edge)", Class.Hash);
+            m.c.sale.floorBps = 10_000;
         }
     }
 

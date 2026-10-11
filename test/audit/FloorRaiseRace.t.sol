@@ -32,7 +32,7 @@ contract FloorProbe is SetSettings {
 contract FloorRaiseRaceTest is Fixture {
     FloorProbe internal probe;
     address internal bidder;
-    uint256 internal constant NEW_FLOOR = 12_000;
+    uint256 internal constant NEW_FLOOR = 20_000;
 
     function setUp() public override {
         super.setUp();
@@ -67,7 +67,7 @@ contract FloorRaiseRaceTest is Fixture {
     function test_ACCEPTED_A01_bidAtTheOldReserveBeforeRepriceWins() public {
         uint256 sid = _composeOnce().sid;
         uint256 old = _live(sid).reserve;
-        assertEq(old, _cost(sid) * 11_000 / 10_000, "a fresh listing sits at 110 percent of cost");
+        assertEq(old, _cost(sid) * 15_000 / 10_000, "a fresh listing sits at 150 percent of cost");
         _raise(NEW_FLOOR);
         assertEq(_live(sid).reserve, old, "the raise did not move the open reserve");
 

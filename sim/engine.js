@@ -23,7 +23,8 @@ export const SETTINGS = {
   exitToBuybackBps: 5000,
   buybackSlice: 0.5,
   buybackDelay: 25, // blocks, 12 s each
-  keeperTipBps: 50,
+  keeperFee: 0.0005, // eth. the buyback caller is paid BUYBACK_GAS_USED * min(basefee, buybackMaxBaseFee) + keeperFee out of the slice (docs/FLOW.md 61)
+  buybackMaxBaseFee: 10, // gwei, the cap on the base fee the refund uses
   xRateCap: 9700,
   xRateFloor: 3000,
   xRateClimbPerHour: 100,
@@ -35,24 +36,26 @@ export const SETTINGS = {
   feeToBuybackBps: 0, // share of swap fee eth booked in receive() that goes to the buyback instead of the pot
 };
 export const SETTING_KEYS = Object.keys(SETTINGS);
-// the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement starts at startBps of its cost
-// and falls stepBps every stepEvery seconds to floorBps. buyOnly false: a buyer at or above the asking price opens the english auction at that price.
+// the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement of cost c at age t is
+// c * (start - (start - floorBps) * min(t, decayDuration) / decayDuration) in bps, a straight line, with start = min(anchorBps * markupBps / 10000, startCapBps).
+// the anchor (Core.anchorBps, starts at 10000) is the running level of sale prices in bps of cost: a buy only sale sets it to the mean of the old anchor and
+// the sale price. buyOnly false: a buyer at or above the asking price opens the english auction at that price (house sales do not move the anchor).
 // buyOnly true: that buyer pays the asking price and gets the statement at once
 export const CONTROLLER = {
-  buyOnly: false,
-  startBps: 11000,
-  stepBps: 100,
-  stepEvery: 3 * 3600,
+  buyOnly: true,
+  markupBps: 15000,
+  startCapBps: 100000,
+  decayDuration: 105 * 3600,
   floorBps: 7500,
 };
 export const CONTROLLER_KEYS = Object.keys(CONTROLLER);
 // ControllerV1 bounds: the name of the first controller field out of bounds, or null
 export function controllerViolation(c) {
   if (typeof c.buyOnly !== 'boolean') return 'buyOnly';
-  if (c.startBps < 1000 || c.startBps > 40000) return 'startBps';
-  if (c.stepBps < 0 || c.stepBps > 5000) return 'stepBps';
-  if (c.stepEvery < 60 || c.stepEvery > 30 * 86400) return 'stepEvery';
-  if (c.floorBps < 1000 || c.floorBps > c.startBps) return 'floorBps';
+  if (c.markupBps < 10000 || c.markupBps > 40000) return 'markupBps';
+  if (c.startCapBps < c.markupBps || c.startCapBps > 200000) return 'startCapBps';
+  if (c.decayDuration < 3600 || c.decayDuration > 30 * 86400) return 'decayDuration';
+  if (c.floorBps < 1000 || c.floorBps > 10000) return 'floorBps';
   return null;
 }
 
@@ -74,7 +77,8 @@ export function firstViolation(s) {
   if (s.exitToBuybackBps > 10000) return 'exitToBuybackBps';
   if (s.buybackSlice < 0.01 || s.buybackSlice > 1) return 'buybackSlice';
   if (s.buybackDelay < 1 || s.buybackDelay > 7200) return 'buybackDelay';
-  if (s.keeperTipBps > 500) return 'keeperTipBps';
+  if (s.keeperFee > 0.005) return 'keeperFee';
+  if (s.buybackMaxBaseFee < 1 || s.buybackMaxBaseFee > 100) return 'buybackMaxBaseFee';
   if (s.xRateCap > 10000) return 'xRateCap';
   if (s.xRateFloor > s.xRateCap) return 'xRateFloor';
   if (s.xRateClimbPerHour > 1000) return 'xRateClimbPerHour';
@@ -96,6 +100,8 @@ export const CORE_PARAMS = {
   PAGE: 80,
   BID_RAISE_BPS: 500, // the house: a later bid must beat the top bid by 5 percent
   TIME_BUFFER: 15 * 60, // the house: a bid in the last 15 minutes pushes the end to 15 minutes from the bid
+  BUYBACK_GAS: 600000, // Core.sol: the gas that sizes the swap budget reserve of a buyback (reserve = BUYBACK_GAS * capped base fee + keeperFee)
+  BUYBACK_GAS_USED: 270000, // counted gas of one buyback (measured 270,237 in docs/INTEGRATION.md): what the caller is paid at the capped base fee
 };
 
 // launch config (script/config/mainnet.json) and simulator inputs
@@ -181,6 +187,7 @@ export const SIM_DEFAULTS = {
   takerThreshold: 0.15,
   exitMinRatio: 0, // a keeper exits only when the credit count * xp is at least this times the asking price
   keeperBuyback: true,
+  basefeeGwei: 1, // the block base fee of the buyback calls, gwei (the refund uses min(basefee, buybackMaxBaseFee))
 };
 
 export const DEFAULTS = Object.assign({}, CORE_PARAMS, SETTINGS, CONTROLLER, SIM_DEFAULTS);
@@ -237,6 +244,7 @@ export class Core {
     for (const k of SETTING_KEYS) this.s[k] = p[k];
     this.c = {}; // the controller's settings
     for (const k of CONTROLLER_KEYS) this.c[k] = p[k];
+    this.anchorBps = 10000; // the controller's running level of sale prices, bps of cost
     this.feeToBuyback = 0; // cumulative swap fee eth sent to the buyback pot by feeToBuybackBps
     this.ethPot = 0; this.ethToBuyback = 0; this.xPot = 0; this.xToBuyback = 0;
     this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0; this.funded = false;
@@ -300,18 +308,19 @@ export class Core {
     this.funded = this.ethPot * W >= this.rateAtCheckpoint;
   }
   // owner: setSettings. validates, checkpoints both rates first, then applies at once. patch.rate is setRate.
-  // the patch may also hold controller settings (buyOnly, startBps, stepBps, stepEvery, floorBps): the controller reads them live
+  // the patch may also hold controller settings (buyOnly, markupBps, startCapBps, decayDuration, floorBps) and anchorBps (setAnchorBps): the controller reads them live
   setSettings(patch, now) {
     const rate = patch.rate;
     const next = Object.assign({}, this.s), nextC = Object.assign({}, this.c);
     for (const k of SETTING_KEYS) if (patch[k] !== undefined) next[k] = patch[k];
     for (const k of CONTROLLER_KEYS) if (patch[k] !== undefined) nextC[k] = patch[k];
-    const bad = firstViolation(next) || controllerViolation(nextC);
+    const bad = firstViolation(next) || controllerViolation(nextC) || (patch.anchorBps !== undefined && !(patch.anchorBps >= 10000 && patch.anchorBps <= nextC.startCapBps) ? 'anchorBps' : null);
     if (bad) throw new Error('BadSetting ' + bad);
     if (rate !== undefined && !(rate >= RATE_MIN && rate <= RATE_MAX && rate <= next.rateCap)) throw new Error('BadRate');
     this.checkpoint(now); this.xCheckpoint(now);
     const anchor = this.moduleSet && this.xToBuyback > 0, half = this.s.xAuctionHalfLife, price = anchor ? this.xAuctionPrice(now) : 0;
     this.s = next; this.c = nextC;
+    if (patch.anchorBps !== undefined) this.anchorBps = patch.anchorBps;
     if (anchor && next.xAuctionHalfLife !== half) { this.xStartPrice = Math.max(price, 1e-12); this.xStartTime = now; }
     this.xRateAtCheckpoint = Math.max(Math.min(this.xRateAtCheckpoint, next.xRateCap), next.xRateFloor);
     this.rateAtCheckpoint = Math.min(this.rateAtCheckpoint, next.rateCap); // a lower cap pulls the rate down now
@@ -370,13 +379,17 @@ export class Core {
     if (lane === 'eth') { st.reserve = this.askingPrice(st, now); st.duration = this.s.auctionDuration; }
     return st;
   }
-  // ControllerV1.statementPrice(sid, cost, listedAt): steps = floor(age / stepEvery), bps = max(startBps - min(steps * stepBps, startBps), floorBps).
+  // ControllerV1.startBps(): min(anchorBps * markupBps / 10000, startCapBps), rounded down like the contract
+  startBps() {
+    const c = this.c;
+    return Math.min(Math.floor((this.anchorBps * c.markupBps) / BPS), c.startCapBps);
+  }
+  // ControllerV1.statementPrice(sid, cost, listedAt): the straight line from startBps() to floorBps over decayDuration, read live from the current anchor.
   // the price is relative to what the engine PAID (the statement cost), not to the market price of its parts
   statementPrice(cost, listedAt, now) {
-    const c = this.c;
-    const steps = Math.floor(Math.max(0, now - listedAt) / c.stepEvery);
-    const bps = Math.max(c.startBps - Math.min(steps * c.stepBps, c.startBps), c.floorBps);
-    return (cost * bps) / BPS;
+    const c = this.c, start = this.startBps();
+    const t = Math.min(Math.max(0, now - listedAt), c.decayDuration);
+    return (cost * (start - ((start - c.floorBps) * t) / c.decayDuration)) / BPS;
   }
   // the Core's hard floor: no sale below cost * saleFloorBps / 10000
   floorPrice(st) { return (st.cost * this.s.saleFloorBps) / BPS; }
@@ -424,6 +437,16 @@ export class Core {
     if (value < this.floorPrice(st) * (1 - 1e-12)) return null;
     st.sold = true; st.soldAt = now;
     return this.bookSale(value, now);
+  }
+  // ControllerV1.buy (buy only mode): pays the asking price now through sellTo, then moves the anchor halfway to the sale price in bps of cost (rounded up),
+  // not below 10000 and not above startCapBps. returns the booking, or null when the Core would revert
+  buy(st, now) {
+    const price = this.askingPrice(st, now);
+    const res = this.sellTo(st, price, now);
+    if (!res) return null;
+    const saleBps = Math.ceil((price * BPS) / st.cost - 1e-9);
+    this.anchorBps = Math.min(Math.max(Math.floor((this.anchorBps + saleBps) / 2), 10000), this.c.startCapBps);
+    return Object.assign({ price, saleBps }, res);
   }
 
   // ---- phase 2: exitModule pays credits * unitPerCredit of exitToken. pots here hold the eth value of exitToken at xp per credit
@@ -497,16 +520,21 @@ export class Core {
     this.xStartTime = now;
     return { slice, price, coinIn };
   }
-  // buyback(): one slice at most per buybackDelay blocks, tip on the slice
+  // buyback(): one slice at most per buybackDelay blocks. rate = min(basefee, buybackMaxBaseFee). the swap budget is the slice less the largest payment
+  // (BUYBACK_GAS * rate + keeperFee), and a slice not above that payment reverts (no call). the caller is paid BUYBACK_GAS_USED * rate + keeperFee out of the slice
+  // and the unspent part of the reserve goes back to the buyback pot. `tip` is that payment
   takeBuybackSlice(now) {
-    const s = this.s;
+    const s = this.s, p = this.p;
     const pool = this.ethToBuyback;
     if (pool <= 1e-15 || now < this.lastBuybackTime + s.buybackDelay * 12) return null;
     const slice = Math.min(pool, s.buybackSlice);
-    this.ethToBuyback = pool - slice;
+    const rate = Math.min(p.basefeeGwei, s.buybackMaxBaseFee) * 1e-9;
+    const reserve = p.BUYBACK_GAS * rate + s.keeperFee;
+    if (slice <= reserve) return null;
+    const tip = p.BUYBACK_GAS_USED * rate + s.keeperFee;
+    this.ethToBuyback = pool - slice + (reserve - tip);
     this.lastBuybackTime = now;
-    const tip = (slice * s.keeperTipBps) / BPS;
-    return { slice, tip, budget: slice - tip };
+    return { slice, tip, budget: slice - reserve };
   }
 }
 
@@ -870,7 +898,7 @@ export function simulate(userParams = {}) {
       if (p.stmtPick === 'random') pick = opts[Math.floor(rng() * opts.length)];
       else for (const o of opts) if (o.mb < pick.mb) pick = o;
       if (core.c.buyOnly) {
-        const res = core.sellTo(pick.st, pick.mb, ta);
+        const res = core.buy(pick.st, ta);
         if (!res) { T.stmtMiss++; continue; }
         unbid.splice(unbid.indexOf(pick.st), 1);
         T.saleGross += pick.mb; T.saleToPot += res.toPot; T.saleToBuyback += res.toBuyback; T.bidsOnSold++; T.soldInstant++;
@@ -1106,7 +1134,7 @@ export function simulate(userParams = {}) {
     houseCheck: T.saleGross - T.saleToPot - T.saleToBuyback - core.houseOwed,
     stallHours: stallTotal / 3600, stallHoursMax: stallMax / 3600, gapHoursMax: gapMax / 3600, stallRuns, stallCauseHours: Object.fromEntries(Object.entries(stallCause).map(([k, v]) => [k, v / 3600])), gateClosedHours: gateClosed / 3600, rateCapHours: rateCapSec / 3600,
     idleHoursMax: idleMax / 3600, maxPaidRatio: T.maxPaidRatio, throttled: T.throttled,
-    finalRate: core.ethRate(H * 3600), finalPot: core.ethPot,
+    finalRate: core.ethRate(H * 3600), finalPot: core.ethPot, finalAnchorBps: core.anchorBps,
   };
   return { params: p, H, S, T, stats, at, histPts, histCost, xFillLog, core, pool, unbid, live };
 }

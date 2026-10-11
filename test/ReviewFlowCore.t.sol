@@ -71,16 +71,19 @@ contract ReviewFlowCoreTest is Fixture {
         _expectBad(s, "auctionDuration");
         s.auctionDuration = 6 hours;
         _setSettings(s);
-        // the controller asks the floor too
+        // the controller asks the floor too once its price has decayed
         vm.startPrank(owner);
+        ctl.setBuyOnly(false);
         ctl.setFloorBps(1_000);
-        ctl.setStartBps(1_000);
+        ctl.setDecayDuration(1 hours);
         vm.stopPrank();
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
         uint256 sid = STATEMENTS.supply();
         (,, uint256 cost,) = core.statementInfo(sid);
+        _warp(1 hours);
+        core.repriceStatement(sid);
         Live memory l = _live(sid);
         assertEq(l.reserve, cost * 1_000 / 10_000, "reserve at the floor is 10 percent of cost");
         address accomplice = _user("accomplice");

@@ -355,10 +355,11 @@ contract OwnerLocksTest is OwnerBase {
         _openExcept(D_CONTROLLER, owner);
         vm.startPrank(owner);
         ctl.setBuyOnly(true);
-        ctl.setStartBps(12_000);
-        ctl.setStepBps(10);
-        ctl.setStepEvery(1 hours);
+        ctl.setMarkupBps(12_000);
+        ctl.setStartCapBps(150_000);
+        ctl.setDecayDuration(1 hours);
         ctl.setFloorBps(8_000);
+        ctl.setAnchorBps(11_000);
         vm.stopPrank();
         assertTrue(core.controllerLocked());
     }
@@ -525,22 +526,25 @@ contract OwnerHandoverTest is OwnerBase {
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setBuyOnly(true);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setStartBps(12_000);
+        ctl.setMarkupBps(12_000);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setStepBps(1);
+        ctl.setStartCapBps(150_000);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setStepEvery(2 hours);
+        ctl.setDecayDuration(2 hours);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setFloorBps(8_000);
+        vm.expectRevert(IControllerV1.OnlyOwner.selector);
+        ctl.setAnchorBps(11_000);
         vm.stopPrank();
         // the new owner has every door
         _openExcept(N_DOORS, heir);
         vm.startPrank(heir);
         ctl.setBuyOnly(true);
-        ctl.setStartBps(12_000);
-        ctl.setStepBps(1);
-        ctl.setStepEvery(2 hours);
+        ctl.setMarkupBps(12_000);
+        ctl.setStartCapBps(150_000);
+        ctl.setDecayDuration(2 hours);
         ctl.setFloorBps(8_000);
+        ctl.setAnchorBps(11_000);
         core.lockController();
         core.lockExitModule();
         core.lockTargets();

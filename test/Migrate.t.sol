@@ -723,7 +723,7 @@ contract MigrateTest is Fixture {
         // reprice a listing without a bid
         uint256 reserve = _live(w.listed).reserve;
         Settings memory st = core.settings();
-        st.saleFloorBps = 12_000;
+        st.saleFloorBps = 20_000;
         _setSettings(st);
         core.repriceStatement(w.listed);
         assertGt(_live(w.listed).reserve, reserve, "the listing was not repriced");

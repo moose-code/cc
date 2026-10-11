@@ -286,27 +286,30 @@ abstract contract PostflightChecks is PostflightPool {
     function _postSale(LaunchConfig memory c, address ctl) private {
         if (ctl.code.length == 0) return;
         IControllerV1 k = IControllerV1(ctl);
-        bool same = k.buyOnly() == c.sale.buyOnly && k.startBps() == c.sale.startBps && k.stepBps() == c.sale.stepBps
-            && k.stepEvery() == c.sale.stepEvery && k.floorBps() == c.sale.floorBps;
+        bool same = k.buyOnly() == c.sale.buyOnly && k.markupBps() == c.sale.markupBps
+            && k.startCapBps() == c.sale.startCapBps && k.decayDuration() == c.sale.decayDuration
+            && k.floorBps() == c.sale.floorBps;
         if (_settingsChanged()) {
             _warn(
                 "warn: sale settings equal the config", same, "SETTINGS_CHANGED=1, the owner changed them since launch"
             );
         } else {
-            _check("controller: sale settings equal the config", same, "buyOnly startBps stepBps stepEvery floorBps");
+            _check("controller: sale settings equal the config", same, "buyOnly markupBps startCapBps decayDuration floorBps");
         }
         _info(
             "controller: sale",
             string.concat(
                 k.buyOnly() ? "buy only" : "auction mode",
-                " start ",
-                vm.toString(k.startBps()),
-                " step ",
-                vm.toString(k.stepBps()),
-                " every ",
-                vm.toString(k.stepEvery()),
+                " markup ",
+                vm.toString(k.markupBps()),
+                " start cap ",
+                vm.toString(k.startCapBps()),
+                " decay ",
+                vm.toString(k.decayDuration()),
                 "s floor ",
-                vm.toString(k.floorBps())
+                vm.toString(k.floorBps()),
+                " anchor ",
+                vm.toString(k.anchorBps())
             )
         );
     }

@@ -618,14 +618,14 @@ contract GasCapTest is SeaportBase {
     function test_gas_repriceStatement() public {
         uint256 sid = _composeOnce().sid;
         Settings memory s = core.settings();
-        s.saleFloorBps = 12_000;
+        s.saleFloorBps = 20_000;
         _setSettings(s);
         _cool(address(core));
         vm.prank(stranger);
         uint256 g = gasleft();
         core.repriceStatement(sid);
         g -= gasleft();
-        assertEq(_live(sid).reserve, _cost(sid) * 12_000 / 10_000);
+        assertEq(_live(sid).reserve, _cost(sid) * 20_000 / 10_000);
         _row("repriceStatement, cold", g, abi.encodeCall(core.repriceStatement, (sid)));
         console.log("listings one multisig batch of setSettings plus reprices can hold (tx gas / reprice)", CAP / g);
     }

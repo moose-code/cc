@@ -27,7 +27,7 @@ export function metrics(res) {
     steadyBurnEth: s.steadyBurnEth == null ? NaN : s.steadyBurnEth,
     firstFillHour: st.firstFillHour, costVsMarket: st.costVsMarket, costPerPointVsMarket: st.costPerPointVsMarket, costVsAsk: st.costVsAsk,
     avgScoreBought: st.avgScoreBought, clampSteps: st.clampSteps, rateMaxBidRatio: st.rateMaxBidRatio,
-    saleOverCost: st.saleOverCost, saleOverFloor: st.saleOverFloor, saleAgeH: st.saleAgeHours, saleAtFloor: st.saleAtFloorShare, soldInstant: T.soldInstant, bidsPerSale: st.bidsPerSale, contestedShare: st.contestedShare,
+    saleOverCost: st.saleOverCost, saleOverFloor: st.saleOverFloor, saleAgeH: st.saleAgeHours, saleAtFloor: st.saleAtFloorShare, soldInstant: T.soldInstant, anchorBps: st.finalAnchorBps, bidsPerSale: st.bidsPerSale, contestedShare: st.contestedShare,
     stmtArrivals: st.stmtArrivals, stmtMiss: st.stmtMiss, rebids: T.rebids, extended: T.extended,
     xFills: st.xFills, xMedianIntervalH: st.xMedianIntervalH, xMeanDiscount: st.xMeanDiscount,
     boughtX: T.boughtX, exitedX: T.exitedX, burnEthM: T.burned / 1e6, burnXM: T.burnedX / 1e6, tips: T.tips, spent: T.spent,
@@ -98,9 +98,8 @@ batches.q2 = () => {
 const designRows = (base, seeds) => {
   const out = { base: many(base, seeds) };
   const row = (over) => many(Object.assign({}, base, over), seeds);
-  out.startBps = [9000, 11000, 13000].map((v) => Object.assign({ startBps: v }, row({ startBps: v })));
-  out.stepEvery = [1, 3, 6].map((h) => Object.assign({ stepEveryH: h }, row({ stepEvery: h * 3600 })));
-  out.stepBps = [50, 100, 200].map((v) => Object.assign({ stepBps: v }, row({ stepBps: v })));
+  out.markupBps = [10000, 15000, 20000].map((v) => Object.assign({ markupBps: v }, row({ markupBps: v })));
+  out.decayH = [24, 105, 200].map((h) => Object.assign({ decayH: h }, row({ decayDuration: h * 3600 })));
   out.floorHardHolds = [7500, 6000, 5000].map((v) => Object.assign({ floorBps: v, saleFloorBps: 7500 }, row({ floorBps: v })));
   out.floorBoth = [7500, 6000, 5000].map((v) => Object.assign({ floorBps: v, saleFloorBps: v }, row({ floorBps: v, saleFloorBps: v })));
   out.mode = [false, true].map((v) => Object.assign({ buyOnly: v }, row({ buyOnly: v })));
@@ -116,7 +115,7 @@ batches.q4 = () => {
   for (const w of [0.7, 0.84, 1, 1.3, 1.6]) out.wtp.push(Object.assign({ wtpMult: w }, many({ wtpMult: w }, SEEDS3)));
   for (const n of [3, 8, 20, 40]) out.buyers.push(Object.assign({ stmtPerDay: n }, many({ stmtPerDay: n, stmtFloorPerDay: Math.min(2, n) }, SEEDS3)));
   const lower = { floorBps: 6000, saleFloorBps: 6000 };
-  for (const [day, patch] of [[7, lower], [14, lower], [30, lower], [14, { startBps: 9000 }], [14, { buyOnly: true }], [14, { feeToBuybackBps: 2500 }]]) {
+  for (const [day, patch] of [[7, lower], [14, lower], [30, lower], [14, { markupBps: 12000 }], [14, { buyOnly: false }], [14, { feeToBuybackBps: 2500 }]]) {
     out.change.push({ day, patch: JSON.stringify(patch), ...many({ schedule: [{ day, patch }] }, SEEDS5) });
   }
   return out;
@@ -190,7 +189,7 @@ batches.q9 = () => {
   const tests = [
     ['volScale', 0.25, 4], ['priceP0', 0.0045, 0.018], ['pricePath', 'decline', 'recovery'], ['askSigma', 0.15, 0.4], ['impactElast', 0, 0.3],
     ['offersPerHour', 60, 400], ['supplyElast', 0.5, 3], ['bookChurn', 0.02, 0.15], ['stmtPerDay', 3, 20], ['wtpMult', 0.7, 1.3],
-    ['buyShareLate', 0.42, 0.52], ['rateStart', rateAt(0.25), rateAt(1.25)], ['startBps', 9000, 13000], ['stepEvery', 3600, 6 * 3600], ['floor, both floors', { floorBps: 5000, saleFloorBps: 5000 }, { floorBps: 7500, saleFloorBps: 7500 }],
+    ['buyShareLate', 0.42, 0.52], ['rateStart', rateAt(0.25), rateAt(1.25)], ['markupBps', 10000, 20000], ['decayDuration', 24 * 3600, 200 * 3600], ['floor, both floors', { floorBps: 5000, saleFloorBps: 5000 }, { floorBps: 7500, saleFloorBps: 7500 }],
     ['buyOnly', false, true], ['feeToBuybackBps', 0, 2500], ['buyerWaits', 'no', 'floor'], ['auctionDuration', 6 * 3600, 72 * 3600],
     ['saleToBuybackBps', 0, 10000], ['dropPerCreditPct', 0.25, 2], ['climbPerMin', 0.25, 2], ['ceilPct', 110, 200], ['idleLoosenPct', 0, 5],
     ['listedShare', 0, 0.5], ['sniperVolShare', 0.2, 0.6], ['h1Share', 0.45, 0.7], ['exitAfter', 24 * 3600, 7 * 86400], ['stmtPick', 'cheapest', 'random'],
@@ -218,9 +217,9 @@ export const COMBOS = {
   floor6000at14: { schedule: [{ day: 14, patch: { floorBps: 6000, saleFloorBps: 6000 } }] },
   floor6000: { floorBps: 6000, saleFloorBps: 6000 },
   floor5000: { floorBps: 5000, saleFloorBps: 5000 },
-  buyOnly: { buyOnly: true },
+  auction: { buyOnly: false },
   fee2500: { feeToBuybackBps: 2500 },
-  start13000: { startBps: 13000 },
+  markup13000: { markupBps: 13000 },
   waitFloor: { buyerWaits: 'floor' },
   split0: { saleToBuybackBps: 0 },
   split10000: { saleToBuybackBps: 10000 },

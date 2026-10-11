@@ -385,7 +385,7 @@ contract FlowTest is Fixture {
         assertEq(listedAt, c.at);
         Live memory l = _live(c.sid);
         assertEq(uint256(l.status), uint256(ICore.StatementStatus.Listed));
-        assertEq(l.reserve, cost * 11_000 / 10_000, "110 percent of cost");
+        assertEq(l.reserve, cost * 15_000 / 10_000, "150 percent of cost");
         IAuctionHouse.Auction memory a = _auctionOf(c.sid);
         assertEq(a.tokenId, c.sid);
         assertEq(a.tokenContract, address(STATEMENTS));
@@ -820,17 +820,17 @@ contract FlowTest is Fixture {
         assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Returned));
 
         Settings memory s = core.settings();
-        s.saleFloorBps = 12_000;
+        s.saleFloorBps = 20_000;
         _owner(s);
         (,, uint256 cost,) = core.statementInfo(sid);
         vm.expectEmit(address(core));
-        emit ICore.StatementListed(sid, aid + 1, cost * 12_000 / 10_000);
+        emit ICore.StatementListed(sid, aid + 1, cost * 20_000 / 10_000);
         vm.prank(bob);
         core.syncStatement(sid);
         Live memory l = _live(sid);
         assertEq(uint256(l.status), uint256(ICore.StatementStatus.Listed));
         assertEq(l.auctionId, aid + 1, "a new auction");
-        assertEq(l.reserve, cost * 12_000 / 10_000, "at the current reserve");
+        assertEq(l.reserve, cost * 20_000 / 10_000, "at the current reserve");
         (,,, uint64 listedAt) = core.statementInfo(sid);
         assertEq(listedAt, block.timestamp, "the listing clock restarted");
         assertEq(STATEMENTS.ownerOf(sid), address(house));
@@ -864,15 +864,15 @@ contract FlowTest is Fixture {
         (,, uint256 cost,) = core.statementInfo(sid);
         uint256 old = _live(sid).reserve;
         Settings memory s = core.settings();
-        s.saleFloorBps = 12_000;
+        s.saleFloorBps = 20_000;
         _owner(s);
         assertEq(_live(sid).reserve, old, "a settings change does not touch the listing by itself");
         vm.expectEmit(address(core));
-        emit ICore.StatementRepriced(sid, cost * 12_000 / 10_000);
+        emit ICore.StatementRepriced(sid, cost * 20_000 / 10_000);
         vm.prank(bob);
         core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 12_000 / 10_000);
-        assertEq(_auctionOf(sid).reservePrice, cost * 12_000 / 10_000);
+        assertEq(_live(sid).reserve, cost * 20_000 / 10_000);
+        assertEq(_auctionOf(sid).reservePrice, cost * 20_000 / 10_000);
         // the new reserve binds the bidders
         uint256 id = _live(sid).auctionId;
         vm.deal(alice, 10 ether);
@@ -882,7 +882,7 @@ contract FlowTest is Fixture {
         s.saleFloorBps = 3_000;
         _owner(s);
         core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost * 11_000 / 10_000, "a lower floor leaves the controller ask in force");
+        assertEq(_live(sid).reserve, cost * 15_000 / 10_000, "a lower floor leaves the controller ask in force");
     }
 
     function test_reprice_refusedWithABidOrWithoutAListing() public {

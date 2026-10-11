@@ -71,7 +71,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0x6de473622f58c1016a752d86a9de55e4792986e949b79f54d290e6f2b47a36fc;
     bytes32 internal constant BUILD_HASH_CORELIB = 0x58e5eac7553235d16d09bc4f64a2723862c04b454d620ed9349d152def5178f6;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xbc799728c955467bf697aed6ff168d7772e3cf5ef58291e2590236dba7592d37;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x961adb4259c505f38c6f9e31014a97fd0406c876ba68febcb6aeca8d9a9f59ca;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0x4ff989feabca4e9387b32b7f3ea71b38dc0ff330f81e0cf853130082079ffb63;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
@@ -190,7 +190,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "sale settings inside the bounds",
             badSale == 0,
-            badSale == 0 ? "buyOnly startBps stepBps stepEvery floorBps" : string(abi.encodePacked("out of bounds: ", badSale))
+            badSale == 0 ? "buyOnly markupBps startCapBps decayDuration floorBps" : string(abi.encodePacked("out of bounds: ", badSale))
         );
         _warn(
             "warn: sale floor below the core hard floor",
@@ -837,12 +837,12 @@ abstract contract LaunchChecks is PostflightChecks {
             "signoff: sale controller",
             string.concat(
                 c.sale.buyOnly ? "buy only" : "auction mode",
-                " start ",
-                vm.toString(c.sale.startBps),
-                " step ",
-                vm.toString(c.sale.stepBps),
-                " every ",
-                vm.toString(c.sale.stepEvery),
+                " markup ",
+                vm.toString(c.sale.markupBps),
+                " start cap ",
+                vm.toString(c.sale.startCapBps),
+                " decay ",
+                vm.toString(c.sale.decayDuration),
                 "s floor ",
                 vm.toString(c.sale.floorBps)
             )

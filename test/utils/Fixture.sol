@@ -176,6 +176,9 @@ abstract contract Fixture is Test, ProdDeployer {
         lc = defaultConfig();
         // the core tests are written against this opening bid, whatever the launch default is
         lc.rateStart = OPEN_RATE;
+        // the sale tests start in auction mode, whatever the launch default is; the launch mode is covered by SaleAnchorTest
+        // and the config tests
+        lc.sale.buyOnly = false;
         lc.settings = _settings();
         lc.owner = owner;
         lc.creator = creator;
@@ -459,10 +462,10 @@ abstract contract Fixture is Test, ProdDeployer {
     }
 
     /// @notice the reserve a statement of `cost` gets when it is listed: the controller's start price, never below the
-    /// hard floor (the fixture controller is built from `lc.sale`)
+    /// hard floor (the live controller start, which follows its anchor)
     function _reserveFor(uint256 cost) internal view returns (uint256) {
         uint256 floor = cost * core.settings().saleFloorBps / 10_000;
-        uint256 ask = cost * lc.sale.startBps / 10_000;
+        uint256 ask = cost * ctl.startBps() / 10_000;
         return ask > floor ? ask : floor;
     }
 

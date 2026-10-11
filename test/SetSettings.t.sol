@@ -194,7 +194,7 @@ contract SetSettingsTest is Fixture {
         assertEq(open[0], a);
 
         probe.setReprice(true);
-        probe.single("saleFloorBps", 12_000);
+        probe.single("saleFloorBps", 20_000);
         probe.run();
         // the owner's batch: setSettings, then the repriceStatement calls the script printed
         Settings memory next = probe.applyTo(core.settings());
@@ -203,7 +203,7 @@ contract SetSettingsTest is Fixture {
             core.repriceStatement(open[i]);
         }
         (,, uint256 cost,) = core.statementInfo(a);
-        assertEq(_live(a).reserve, cost * 12_000 / 10_000, "the unbid listing took the new reserve");
+        assertEq(_live(a).reserve, cost * 20_000 / 10_000, "the unbid listing took the new reserve");
         assertEq(_live(b).reserve, bidReserve, "the listing with a bid keeps its reserve");
     }
 }

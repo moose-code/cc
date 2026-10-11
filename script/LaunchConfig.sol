@@ -198,9 +198,9 @@ abstract contract ConfigReader is CommonBase {
     function _loadSale(LaunchConfig memory c, string memory j) private pure {
         c.sale = Sale({
             buyOnly: vm.parseJsonBool(j, ".sale.buyOnly"),
-            startBps: _u16(j, ".sale.startBps"),
-            stepBps: _u16(j, ".sale.stepBps"),
-            stepEvery: _u32(j, ".sale.stepEvery"),
+            markupBps: _u16(j, ".sale.markupBps"),
+            startCapBps: _u32(j, ".sale.startCapBps"),
+            decayDuration: _u32(j, ".sale.decayDuration"),
             floorBps: _u16(j, ".sale.floorBps")
         });
     }
@@ -285,10 +285,10 @@ abstract contract ConfigReader is CommonBase {
     /// @notice the name of the first launch sale setting outside the bounds the controller enforces, zero when all are inside
     function saleViolation(LaunchConfig memory c) internal pure returns (bytes32) {
         Sale memory k = c.sale;
-        if (k.startBps < 1_000 || k.startBps > 40_000) return "startBps";
-        if (k.stepBps > 5_000) return "stepBps";
-        if (k.stepEvery < 1 minutes || k.stepEvery > 30 days) return "stepEvery";
-        if (k.floorBps < 1_000 || k.floorBps > k.startBps) return "floorBps";
+        if (k.markupBps < 10_000 || k.markupBps > 40_000) return "markupBps";
+        if (k.startCapBps < k.markupBps || k.startCapBps > 200_000) return "startCapBps";
+        if (k.decayDuration < 1 hours || k.decayDuration > 30 days) return "decayDuration";
+        if (k.floorBps < 1_000 || k.floorBps > 10_000) return "floorBps";
         return bytes32(0);
     }
 

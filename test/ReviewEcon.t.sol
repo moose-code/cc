@@ -148,7 +148,7 @@ contract ReserveSaleAndOutsiders is ReviewEconBase {
         (uint256 sid, uint256 cost) = _composeOne();
         assertEq(keeper.balance, before, "the compose pays the caller nothing");
         uint256 reserve = _live(sid).reserve;
-        assertEq(reserve, cost * 11_000 / 10_000, "the reserve is the 110 percent opening ask of the page cost");
+        assertEq(reserve, cost * 15_000 / 10_000, "the reserve is the 150 percent opening ask of the page cost");
 
         uint256 pot = core.ethPot();
         uint256 bb = core.ethToBuyback();

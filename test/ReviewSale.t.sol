@@ -331,7 +331,7 @@ contract ReviewSaleTest is Fixture {
         vm.prank(owner);
         core.transferOwnership(alice);
         vm.prank(owner);
-        ctl.setStepBps(50);
+        ctl.setDecayDuration(50 hours);
         vm.prank(alice);
         core.acceptOwnership();
         vm.prank(owner);
@@ -340,7 +340,7 @@ contract ReviewSaleTest is Fixture {
         vm.prank(alice);
         ctl.setBuyOnly(true);
         assertTrue(ctl.buyOnly());
-        assertEq(ctl.stepBps(), 50);
+        assertEq(ctl.decayDuration(), 50 hours);
     }
 
     function test_OK_buy_quoteNeverRisesForAThirdParty() public {
@@ -385,7 +385,7 @@ contract ReviewSaleTest is Fixture {
         uint256 sid = _composeOnce().sid;
         _buyOnly();
         _raise(9_000);
-        _warp(63 hours);
+        _warp(100 hours);
         uint256 floor = _floorOf(sid);
         assertEq(ctl.priceOf(sid), floor, "the quote is the hard floor");
         vm.deal(bob, 1000 ether);
@@ -400,15 +400,21 @@ contract ReviewSaleTest is Fixture {
 
     function test_OK_price_extremesDoNotOverflowOrUnderflow() public {
         vm.startPrank(owner);
-        ctl.setStepBps(5_000);
-        ctl.setStepEvery(1 minutes);
+        ctl.setDecayDuration(1 hours);
         vm.stopPrank();
         uint256 cost = 10 ether;
         assertEq(ctl.statementPrice(0, cost, 0), cost * 7_500 / 10_000, "ancient listing sits at the floor");
-        assertEq(ctl.statementPrice(0, cost, uint64(block.timestamp)), cost * 11_000 / 10_000, "age zero is the start");
-        vm.prank(owner);
-        ctl.setStartBps(40_000);
+        assertEq(ctl.statementPrice(0, cost, uint64(block.timestamp)), cost * 15_000 / 10_000, "age zero is the start");
+        vm.startPrank(owner);
+        ctl.setMarkupBps(40_000);
+        ctl.setStartCapBps(200_000);
+        vm.stopPrank();
         assertEq(ctl.statementPrice(0, type(uint128).max, 0), uint256(type(uint128).max) * 7_500 / 10_000);
+        assertEq(
+            ctl.statementPrice(0, type(uint128).max, uint64(block.timestamp)),
+            uint256(type(uint128).max) * 40_000 / 10_000,
+            "the largest start on the largest cost"
+        );
         assertEq(ctl.statementPrice(0, 0, 0), 0, "cost zero asks zero");
         // a listing in the future reverts (checked subtraction). the core never passes one: listedAt is set to now
         vm.expectRevert();
@@ -492,9 +498,9 @@ contract ReviewSaleTest is Fixture {
 
     function test_OK_reprice_reserveFollowsTheRaisedFloorWhenCalled() public {
         uint256 sid = _composeOnce().sid;
-        _raise(12_000);
+        _raise(20_000);
         core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, _cost(sid) * 12_000 / 10_000);
+        assertEq(_live(sid).reserve, _cost(sid) * 20_000 / 10_000);
     }
 
     /// S-2 accepted, documented in FLOW 9.2 and DEPLOY: raise the floor with `REPRICE=1`. after the owner raises the hard floor, listings keep the old reserve until someone reprices them, and a bid at
@@ -624,7 +630,7 @@ contract ReviewSaleTest is Fixture {
         s.tipCapBps = 100;
         _setSettings(s);
         vm.prank(owner);
-        ctl.setStepBps(10);
+        ctl.setDecayDuration(10 hours);
         assertFalse(core.exitModuleLocked() || core.targetsLocked());
     }
 
@@ -728,7 +734,7 @@ contract ReviewSaleTest is Fixture {
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.lockTargets();
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setStepBps(1);
+        ctl.setDecayDuration(1 hours);
         vm.stopPrank();
         vm.prank(alice);
         vm.expectRevert(ICore.OnlyPendingOwner.selector);
@@ -1073,9 +1079,9 @@ contract ReviewSaleTest is Fixture {
         for (uint256 i; i < 5; ++i) {
             LaunchConfig memory c = lc;
             if (i == 0) c.sale.buyOnly = !c.sale.buyOnly;
-            if (i == 1) c.sale.startBps += 1;
-            if (i == 2) c.sale.stepBps += 1;
-            if (i == 3) c.sale.stepEvery += 1;
+            if (i == 1) c.sale.markupBps += 1;
+            if (i == 2) c.sale.startCapBps += 1;
+            if (i == 3) c.sale.decayDuration += 1;
             if (i == 4) c.sale.floorBps += 1;
             postflightAs(c, address(core), owner);
             (string memory dirty,) = _failed();
@@ -1096,20 +1102,23 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_saleBounds_scriptAndControllerConstructorAgree() public {
-        Sale[9] memory v;
+        Sale[10] memory v;
         for (uint256 i; i < v.length; ++i) {
             v[i] = Mainnet.defaultSale();
         }
-        v[0].startBps = 999;
-        v[1].startBps = 40_001;
-        v[2].stepBps = 5_001;
-        v[3].stepEvery = 59;
-        v[4].stepEvery = 30 days + 1;
+        v[0].markupBps = 9_999;
+        v[1].markupBps = 40_001;
+        v[2].startCapBps = 14_999;
+        v[3].decayDuration = 1 hours - 1;
+        v[4].decayDuration = 30 days + 1;
         v[5].floorBps = 999;
-        v[6].floorBps = 11_001;
-        v[7].stepBps = 5_000;
-        v[7].stepEvery = 1 minutes;
-        v[8].floorBps = 11_000;
+        v[6].floorBps = 10_001;
+        v[7].markupBps = 40_000;
+        v[7].startCapBps = 40_000;
+        v[7].decayDuration = 1 hours;
+        v[8].startCapBps = 200_000;
+        v[8].floorBps = 10_000;
+        v[9].startCapBps = 200_001;
         for (uint256 i; i < v.length; ++i) {
             LaunchConfig memory c = lc;
             c.sale = v[i];

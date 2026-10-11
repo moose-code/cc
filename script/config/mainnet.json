@@ -48,10 +48,10 @@
     "feeToBuybackBps": 0
   },
   "sale": {
-    "buyOnly": false,
-    "startBps": 11000,
-    "stepBps": 100,
-    "stepEvery": 10800,
+    "buyOnly": true,
+    "markupBps": 15000,
+    "startCapBps": 100000,
+    "decayDuration": 378000,
     "floorBps": 7500
   },
   "launch": {
