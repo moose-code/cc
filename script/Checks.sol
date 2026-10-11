@@ -71,7 +71,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0x7e76af58dc53f7d9875f5d80bba678318643a8ce738d3cca83f2f5d4bd95bd5e;
     bytes32 internal constant BUILD_HASH_CORELIB = 0x1295748f50482ac6c75db38efcf1b60eb211ba157557df00d0a674d45c36d96c;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xc8c35eb1756887586a0ddbcbd4965fb792020e375f950dc58526ef54b154a7ab;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xe374fe3952dcd87dacdbcc1da044565a7d2fa18ec1a02c1bcc5d267ca5c7bc3c;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0x4ff989feabca4e9387b32b7f3ea71b38dc0ff330f81e0cf853130082079ffb63;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
@@ -190,7 +190,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "sale settings inside the bounds",
             badSale == 0,
-            badSale == 0 ? "buyOnly markupBps startCapBps decayDuration floorBps anchorHalfLife" : string(abi.encodePacked("out of bounds: ", badSale))
+            badSale == 0 ? "buyOnly markupBps startCapBps floorBps kneeBps fastDecayBpsPerHour slowDecayBpsPerHour anchorHalfLife" : string(abi.encodePacked("out of bounds: ", badSale))
         );
         _warn(
             "warn: sale floor below the core hard floor",
@@ -841,9 +841,13 @@ abstract contract LaunchChecks is PostflightChecks {
                 vm.toString(c.sale.markupBps),
                 " start cap ",
                 vm.toString(c.sale.startCapBps),
-                " decay ",
-                vm.toString(c.sale.decayDuration),
-                "s floor ",
+                " fast decay ",
+                vm.toString(c.sale.fastDecayBpsPerHour),
+                " bps/h to knee ",
+                vm.toString(c.sale.kneeBps),
+                " then slow decay ",
+                vm.toString(c.sale.slowDecayBpsPerHour),
+                " bps/h to floor ",
                 vm.toString(c.sale.floorBps),
                 " anchor half life ",
                 vm.toString(c.sale.anchorHalfLife),

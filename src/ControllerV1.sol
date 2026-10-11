@@ -6,9 +6,11 @@ import {Halving} from "./lib/Halving.sol";
 import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Interfaces.sol";
 
 /// first policy module. composes the oldest 80 credits of a lane with format 0.
-/// it prices and sells statements. the asking price of a statement of cost `c` at age `t` since listing is
-/// `c * (start - (start - floorBps) * min(t, decayDuration) / decayDuration)`, in bps of `c`, falling in a straight line
-/// from `start` to `floorBps`. `start = min(anchorBps * markupBps / 10_000, startCapBps)`.
+/// it prices and sells statements. the asking price of a statement of cost `c` is a fraction of `c` in bps that starts at
+/// `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls at a fixed rate per second in two stages: at
+/// `fastDecayBpsPerHour` from `start` to `kneeBps`, then at `slowDecayBpsPerHour` to `floorBps`, where it stays. a `start`
+/// at or below `kneeBps` falls at the slow rate from the first second. the price is computed at every call from the age of
+/// the listing and the current settings, so a setting change applies to open listings at once.
 /// `anchorBps` (bps of cost, at least 10_000) is the running level of sale prices. it moves up with sales and down with
 /// time. a `buy` whose sale price in bps of cost is above the anchor sets the anchor to the mean of the two. a `buy`
 /// at or below the anchor leaves it unchanged. the part of the anchor above 10_000 halves every `anchorHalfLife`,
@@ -33,7 +35,9 @@ contract ControllerV1 is IController {
     event BuyOnlySet(bool buyOnly);
     event MarkupBpsSet(uint16 markupBps);
     event StartCapBpsSet(uint32 startCapBps);
-    event DecayDurationSet(uint32 decayDuration);
+    event FastDecayBpsPerHourSet(uint16 fastDecayBpsPerHour);
+    event KneeBpsSet(uint32 kneeBps);
+    event SlowDecayBpsPerHourSet(uint16 slowDecayBpsPerHour);
     event FloorBpsSet(uint16 floorBps);
     event AnchorBpsSet(uint32 anchorBps);
     event AnchorHalfLifeSet(uint32 anchorHalfLife);
@@ -47,11 +51,15 @@ contract ControllerV1 is IController {
     bool public buyOnly;
     /// start price over the anchor, bps. 10_000 to 40_000, at most `startCapBps`
     uint16 public markupBps;
-    /// the most the start price can be, bps of cost. `markupBps` to 200_000
+    /// the most the start price can be, bps of cost. the larger of `markupBps` and `kneeBps` to 200_000
     uint32 public startCapBps;
-    /// seconds from the start price to the floor. 1 hour to 30 days
-    uint32 public decayDuration;
-    /// the asking price never falls below this, bps of cost. 1_000 to 10_000
+    /// fall of the asking price per hour above `kneeBps`, bps of cost. 1 to 10_000
+    uint16 public fastDecayBpsPerHour;
+    /// fall of the asking price per hour at or below `kneeBps`, bps of cost. 1 to 10_000
+    uint16 public slowDecayBpsPerHour;
+    /// the price where the fast fall ends and the slow fall starts, bps of cost. `floorBps` to `startCapBps`
+    uint32 public kneeBps;
+    /// lowest asking price, bps of cost. 1_000 to the smaller of 10_000 and `kneeBps`
     uint16 public floorBps;
     /// the anchor at `anchorTime`, bps of cost. 10_000 to `startCapBps`. `anchorBps()` is the value now
     uint32 public storedAnchorBps;
@@ -68,10 +76,14 @@ contract ControllerV1 is IController {
         markupBps = sale.markupBps;
         if (sale.startCapBps < sale.markupBps || sale.startCapBps > 200_000) revert BadSetting("startCapBps");
         startCapBps = sale.startCapBps;
-        if (sale.decayDuration < 1 hours || sale.decayDuration > 30 days) revert BadSetting("decayDuration");
-        decayDuration = sale.decayDuration;
         if (sale.floorBps < 1_000 || sale.floorBps > BPS) revert BadSetting("floorBps");
         floorBps = sale.floorBps;
+        if (sale.kneeBps < sale.floorBps || sale.kneeBps > sale.startCapBps) revert BadSetting("kneeBps");
+        kneeBps = sale.kneeBps;
+        if (sale.fastDecayBpsPerHour < 1 || sale.fastDecayBpsPerHour > BPS) revert BadSetting("fastDecayBpsPerHour");
+        fastDecayBpsPerHour = sale.fastDecayBpsPerHour;
+        if (sale.slowDecayBpsPerHour < 1 || sale.slowDecayBpsPerHour > BPS) revert BadSetting("slowDecayBpsPerHour");
+        slowDecayBpsPerHour = sale.slowDecayBpsPerHour;
         if (sale.anchorHalfLife < 1 days || sale.anchorHalfLife > 90 days) revert BadSetting("anchorHalfLife");
         anchorHalfLife = sale.anchorHalfLife;
         storedAnchorBps = uint32(BPS);
@@ -98,24 +110,39 @@ contract ControllerV1 is IController {
         emit MarkupBpsSet(v);
     }
 
-    /// `markupBps` to 200_000. an `anchorBps()` above the new cap is lowered to it
+    /// the larger of `markupBps` and `kneeBps` to 200_000. an `anchorBps()` above the new cap is lowered to it
     function setStartCapBps(uint32 v) external onlyOwner {
-        if (v < markupBps || v > 200_000) revert BadSetting("startCapBps");
+        if (v < markupBps || v < kneeBps || v > 200_000) revert BadSetting("startCapBps");
         startCapBps = v;
         emit StartCapBpsSet(v);
         if (anchorBps() > v) _setAnchor(v);
     }
 
-    /// 1 hour to 30 days
-    function setDecayDuration(uint32 v) external onlyOwner {
-        if (v < 1 hours || v > 30 days) revert BadSetting("decayDuration");
-        decayDuration = v;
-        emit DecayDurationSet(v);
+    /// 1 to 10_000
+    function setFastDecayBpsPerHour(uint16 v) external onlyOwner {
+        if (v < 1 || v > BPS) revert BadSetting("fastDecayBpsPerHour");
+        fastDecayBpsPerHour = v;
+        emit FastDecayBpsPerHourSet(v);
     }
 
-    /// 1_000 to 10_000
+    /// 1 to 10_000
+    function setSlowDecayBpsPerHour(uint16 v) external onlyOwner {
+        if (v < 1 || v > BPS) revert BadSetting("slowDecayBpsPerHour");
+        slowDecayBpsPerHour = v;
+        emit SlowDecayBpsPerHourSet(v);
+    }
+
+    /// `floorBps` to `startCapBps`. raising it above the cap takes `setStartCapBps` first, lowering it below the floor
+    /// takes `setFloorBps` first
+    function setKneeBps(uint32 v) external onlyOwner {
+        if (v < floorBps || v > startCapBps) revert BadSetting("kneeBps");
+        kneeBps = v;
+        emit KneeBpsSet(v);
+    }
+
+    /// 1_000 to the smaller of 10_000 and `kneeBps`
     function setFloorBps(uint16 v) external onlyOwner {
-        if (v < 1_000 || v > BPS) revert BadSetting("floorBps");
+        if (v < 1_000 || v > BPS || v > kneeBps) revert BadSetting("floorBps");
         floorBps = v;
         emit FloorBpsSet(v);
     }
@@ -217,13 +244,28 @@ contract ControllerV1 is IController {
         anchorTime = uint40(block.timestamp);
     }
 
-    /// the asking price in wei after `age` seconds: a straight line from `startBps()` of `cost` to `floorBps` of `cost`
-    /// over `decayDuration`
+    /// the asking price in wei after `age` seconds. the price is held in units of 1/3600 bps so each stage is an integer
+    /// line of the second: it falls by `fastDecayBpsPerHour` units a second from the start to the knee and by
+    /// `slowDecayBpsPerHour` units a second after, never below `floorBps`. the slow stage starts at the second the fast
+    /// stage reaches the knee, which is `(start - knee) / fastDecayBpsPerHour` hours and need not be a whole second, so
+    /// its fall is rounded up. the rounding keeps the price non-increasing in `age`
     function _ask(uint256 cost, uint256 age) private view returns (uint256) {
-        uint256 d = decayDuration;
-        uint256 start = startBps();
-        uint256 t = age < d ? age : d;
-        return cost * (start * d - (start - floorBps) * t) / (d * BPS);
+        uint256 start = startBps() * 1 hours;
+        uint256 knee = uint256(kneeBps) * 1 hours;
+        uint256 fast = fastDecayBpsPerHour;
+        uint256 fallen = fast * age;
+        uint256 span = start > knee ? start - knee : 0;
+        uint256 n;
+        if (fallen <= span) {
+            n = start - fallen;
+        } else {
+            uint256 drop = (slowDecayBpsPerHour * (fallen - span) + fast - 1) / fast;
+            uint256 base = start < knee ? start : knee;
+            n = base > drop ? base - drop : 0;
+        }
+        uint256 low = uint256(floorBps) * 1 hours;
+        if (n < low) n = low;
+        return cost * n / (1 hours * BPS);
     }
 
     // ------------------------------------------------------------------ credit picking, unchanged

@@ -287,14 +287,15 @@ abstract contract PostflightChecks is PostflightPool {
         if (ctl.code.length == 0) return;
         IControllerV1 k = IControllerV1(ctl);
         bool same = k.buyOnly() == c.sale.buyOnly && k.markupBps() == c.sale.markupBps
-            && k.startCapBps() == c.sale.startCapBps && k.decayDuration() == c.sale.decayDuration
+            && k.startCapBps() == c.sale.startCapBps && k.fastDecayBpsPerHour() == c.sale.fastDecayBpsPerHour
+            && k.kneeBps() == c.sale.kneeBps && k.slowDecayBpsPerHour() == c.sale.slowDecayBpsPerHour
             && k.floorBps() == c.sale.floorBps && k.anchorHalfLife() == c.sale.anchorHalfLife;
         if (_settingsChanged()) {
             _warn(
                 "warn: sale settings equal the config", same, "SETTINGS_CHANGED=1, the owner changed them since launch"
             );
         } else {
-            _check("controller: sale settings equal the config", same, "buyOnly markupBps startCapBps decayDuration floorBps anchorHalfLife");
+            _check("controller: sale settings equal the config", same, "buyOnly markupBps startCapBps fastDecayBpsPerHour kneeBps slowDecayBpsPerHour floorBps anchorHalfLife");
         }
         // a fresh launch has no sales and no owner change, so the running level of sale prices is at its lower bound
         bool anchored = k.anchorBps() == 10_000;
@@ -311,9 +312,13 @@ abstract contract PostflightChecks is PostflightPool {
                 vm.toString(k.markupBps()),
                 " start cap ",
                 vm.toString(k.startCapBps()),
-                " decay ",
-                vm.toString(k.decayDuration()),
-                "s floor ",
+                " fast decay ",
+                vm.toString(k.fastDecayBpsPerHour()),
+                " bps/h to knee ",
+                vm.toString(k.kneeBps()),
+                " then slow decay ",
+                vm.toString(k.slowDecayBpsPerHour()),
+                " bps/h to floor ",
                 vm.toString(k.floorBps()),
                 " anchor ",
                 vm.toString(k.anchorBps()),

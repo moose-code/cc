@@ -61,7 +61,7 @@ const R0 = 6.668e15;
   assert.equal(firstViolation(SETTINGS), null); n++;
   assert.equal(controllerViolation(CONTROLLER), null); n++;
   // the rules of docs/FLOW.md section 9 at launch
-  assert.deepEqual(CONTROLLER, { buyOnly: true, markupBps: 15000, startCapBps: 100000, decayDuration: 105 * H, floorBps: 7500, anchorHalfLife: 7 * 24 * H }); n++;
+  assert.deepEqual(CONTROLLER, { buyOnly: true, markupBps: 15000, startCapBps: 100000, fastDecayBpsPerHour: 100, kneeBps: 10000, slowDecayBpsPerHour: 25, floorBps: 7500, anchorHalfLife: 7 * 24 * H }); n++;
   assert.equal(SETTINGS.saleFloorBps, 7500); assert.equal(SETTINGS.exitAfter, 105 * H); assert.equal(SETTINGS.feeToBuybackBps, 0); n += 3;
 }
 // no inventory gate and no dutch statement auction anywhere
@@ -147,43 +147,51 @@ const R0 = 6.668e15;
   near(c.compose(0, 'exit', 0).cost, 0, 1e-15, 'exit lane cost is the credit sum');
   assert.equal(c.ethPot, pot); assert.equal(st.reimb, undefined); n += 2;
 }
-// the asking price of a statement (ControllerV1.statementPrice, then the Core's hard floor): a straight line from start to floorBps over decayDuration,
-// start = min(anchorBps * markupBps / 10000, startCapBps). the price is a share of what the engine PAID, the statement cost
+// the asking price of a statement (ControllerV1.statementPrice, then the Core's hard floor): start falls fastDecayBpsPerHour an hour to kneeBps, then
+// slowDecayBpsPerHour an hour to floorBps. start = min(anchorBps * markupBps / 10000, startCapBps). the price is a share of what the engine PAID, the statement cost
 {
   const c = fresh({}, 10);
   const st = { cost: 1, t0: 0 }; // cost 1 eth keeps the percent readable
   const at = (h) => c.askingPrice(st, h * H);
-  const line = (start, floor, d, t) => (start - ((start - floor) * Math.min(t, d)) / d) / 10000;
   near(at(0), 1.50, 1e-12, 'asking 150 at hour 0 (anchor 10000, markup 15000)');
-  near(at(26.25), 1.3125, 1e-12, 'asking 131.25 a quarter of the way');
-  near(at(52.5), 1.125, 1e-12, 'asking 112.5 half way');
-  near(at(84), 0.90, 1e-12, 'asking 90 at hour 84');
-  near(at(105), 0.75, 1e-12, 'asking 75 at hour 105');
-  near(c.askingPrice(st, 105 * H - 1), 0.75 + 0.75 / (105 * H), 1e-9, 'one second before the floor the price is one second of slope above it');
-  near(c.askingPrice(st, 1), 1.5 - 0.75 / (105 * H), 1e-12, 'the price falls every second');
-  near(at(106), 0.75, 1e-12, 'floor after hour 105'); near(at(5000), 0.75, 1e-12, 'floor long after');
-  near(c.askingPrice({ cost: 2.4, t0: 10 * H }, 62.5 * H), 2.4 * 1.125, 1e-12, 'age counts from listedAt, price scales with cost');
+  near(at(25), 1.25, 1e-12, 'asking 125 half way to the knee');
+  near(at(50), 1.00, 1e-12, 'asking 100 at the knee, hour 50');
+  near(at(90), 0.90, 1e-12, 'asking 90 at hour 90');
+  near(at(150), 0.75, 1e-12, 'asking 75 at hour 150');
+  near(c.askingPrice(st, 150 * H - 1), 0.75 + 25 / (3600 * 10000), 1e-9, 'one second before the floor the price is one second of the slow rate above it');
+  near(c.askingPrice(st, 1), 1.5 - 100 / (3600 * 10000), 1e-12, 'the price falls every second');
+  near(c.askingPrice(st, 50 * H + 1), 1.0 - 25 / (3600 * 10000), 1e-12, 'one second past the knee falls at the slow rate');
+  near(at(151), 0.75, 1e-12, 'floor after hour 150'); near(at(5000), 0.75, 1e-12, 'floor long after');
+  near(c.askingPrice({ cost: 2.4, t0: 10 * H }, 62.5 * H), 2.4 * 0.99375, 1e-12, 'age counts from listedAt, price scales with cost');
   near(c.askingPrice({ cost: 1, t0: 100 }, 50), 1.50, 1e-12, 'a clock before listedAt is age zero');
   assert.equal(c.lowestPrice(st), 0.75); n++;
-  // the settings are read live: another markup, another cap, another duration, another floor
-  const d = fresh({ markupBps: 20000, startCapBps: 100000, decayDuration: 10 * H, floorBps: 9000, saleFloorBps: 7500 }, 10);
-  near(d.askingPrice(st, 0), 2.00, 1e-12, 'start 200'); near(d.askingPrice(st, 5 * H), 1.45, 1e-12, 'half way between 200 and 90');
+  // the settings are read live: another markup, cap, both rates, knee and floor
+  const d = fresh({ markupBps: 20000, startCapBps: 100000, fastDecayBpsPerHour: 1000, kneeBps: 15000, slowDecayBpsPerHour: 500, floorBps: 9000, saleFloorBps: 7500 }, 10);
+  near(d.askingPrice(st, 0), 2.00, 1e-12, 'start 200'); near(d.askingPrice(st, 5 * H), 1.50, 1e-12, 'the knee at 150 after 5 hours');
+  near(d.askingPrice(st, 7 * H), 1.40, 1e-12, '2 hours past the knee at 5 percent an hour');
   near(d.askingPrice(st, 1000 * H), 0.90, 1e-12, 'curve floor 90 above the hard floor wins');
   near(fresh({ markupBps: 10000 }, 10).askingPrice(st, 0), 1.00, 1e-12, 'markup 10000 starts at the anchor');
+  near(fresh({ markupBps: 10000 }, 10).askingPrice(st, 40 * H), 0.90, 1e-12, 'a start at the knee falls at the slow rate from the first second');
+  near(fresh({ kneeBps: 20000 }, 10).askingPrice(st, 40 * H), 1.40, 1e-12, 'a start under the knee falls at the slow rate from the first second');
   near(fresh({ floorBps: 10000, markupBps: 10000 }, 10).askingPrice(st, 77 * H), 1.00, 1e-12, 'start equal to the floor is flat');
   // the controller settings change at once through setSettings and are validated against the controller bounds
-  const e = fresh({}, 10); e.setSettings({ markupBps: 12000, decayDuration: H }, 5 * H);
+  const e = fresh({}, 10); e.setSettings({ markupBps: 12000, fastDecayBpsPerHour: 200 }, 5 * H);
   const st5 = { cost: 1, t0: 5 * H };
-  near(e.askingPrice(st5, 5 * H), 1.20, 1e-12, 'a changed markup and duration read at once');
-  near(e.askingPrice(st5, 5.5 * H), 0.975, 1e-12, 'half way down the new one hour line');
-  assert.throws(() => e.setSettings({ floorBps: 10001 }, 0), /floorBps/); assert.throws(() => e.setSettings({ decayDuration: H - 1 }, 0), /decayDuration/); n += 2;
+  near(e.askingPrice(st5, 5 * H), 1.20, 1e-12, 'a changed markup and rate read at once');
+  near(e.askingPrice(st5, 10 * H), 1.10, 1e-12, '5 hours down the new fast stage');
+  assert.throws(() => e.setSettings({ floorBps: 10001 }, 0), /floorBps/); assert.throws(() => e.setSettings({ fastDecayBpsPerHour: 0 }, 0), /fastDecayBpsPerHour/); n += 2;
   assert.throws(() => e.setSettings({ markupBps: 9999 }, 0), /markupBps/); assert.throws(() => e.setSettings({ startCapBps: 11999 }, 0), /startCapBps/); n += 2;
+  assert.throws(() => e.setSettings({ kneeBps: 7499 }, 0), /kneeBps/); n += 1;
   near(e.c.markupBps, 12000, 1e-12, 'a rejected change leaves the controller alone');
-  for (const [k, bad] of [['markupBps', 40001], ['startCapBps', 200001], ['floorBps', 999], ['decayDuration', 30 * 86400 + 1], ['anchorHalfLife', 86399], ['anchorHalfLife', 90 * 86400 + 1]]) assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { [k]: bad })), k), n++;
+  for (const [k, bad] of [['markupBps', 40001], ['startCapBps', 200001], ['floorBps', 999], ['fastDecayBpsPerHour', 0], ['fastDecayBpsPerHour', 10001], ['slowDecayBpsPerHour', 0], ['slowDecayBpsPerHour', 10001], ['kneeBps', 7499], ['kneeBps', 100001], ['anchorHalfLife', 86399], ['anchorHalfLife', 90 * 86400 + 1]]) assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { [k]: bad })), k), n++;
   assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { startCapBps: 14999 })), 'startCapBps'); n++;
-  assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { markupBps: 40000, startCapBps: 40000, floorBps: 10000, decayDuration: 3600, anchorHalfLife: 86400 })), null); n++;
-  assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { markupBps: 10000, startCapBps: 200000, floorBps: 1000, decayDuration: 30 * 86400, anchorHalfLife: 90 * 86400 })), null); n++;
-  ok(Math.abs(c.askingPrice(st, 12345) - line(15000, 7500, 105 * H, 12345)) < 1e-12, 'the closed form');
+  assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { markupBps: 40000, startCapBps: 40000, kneeBps: 40000, floorBps: 10000, fastDecayBpsPerHour: 10000, slowDecayBpsPerHour: 1, anchorHalfLife: 86400 })), null); n++;
+  assert.equal(controllerViolation(Object.assign({}, CONTROLLER, { markupBps: 10000, startCapBps: 200000, kneeBps: 1000, floorBps: 1000, fastDecayBpsPerHour: 1, slowDecayBpsPerHour: 10000, anchorHalfLife: 90 * 86400 })), null); n++;
+  // the closed form, written again here: 15000 less 100 an hour until 10000 at hour 50, then 25 an hour until 7500, in bps
+  const ref = (h) => Math.max(h <= 50 ? 15000 - 100 * h : 10000 - 25 * (h - 50), 7500) / 10000;
+  for (const sec of [0, 1, 59, 12345, 50 * 3600 - 1, 50 * 3600, 50 * 3600 + 1, 100000, 149 * 3600 + 3599, 150 * 3600, 600000]) ok(Math.abs(c.askingPrice(st, sec) - ref(sec / 3600)) < 1e-12, 'the closed form at ' + sec + ' seconds');
+  // the price never rises with the age
+  let prev = Infinity; for (let sec = 0; sec <= 700000; sec += 997) { const v = c.askingPrice(st, sec); ok(v <= prev + 1e-15, 'non-increasing in the age'); prev = v; }
 }
 // the anchor: the running level of sale prices in bps of cost. a buy only sale above the anchor now sets it to the mean of the two (the sale price rounded up in bps),
 // never above startCapBps. a sale at or below the anchor leaves it and its time. the part above 10000 halves every anchorHalfLife (7 days at launch), continuously.
@@ -192,8 +200,8 @@ const R0 = 6.668e15;
   const D = 86400;
   const c = fresh({}, 10);
   assert.equal(c.anchorAt(0), 10000); assert.equal(c.startBps(0), 15000); n += 2;
-  // a sale at 90 percent (hour 84) is below the anchor: the stored anchor and its time stay
-  const lo = c.buy(c.compose(1, 'eth', 0), 84 * H);
+  // a sale at 90 percent (hour 90) is below the anchor: the stored anchor and its time stay
+  const lo = c.buy(c.compose(1, 'eth', 0), 90 * H);
   assert.equal(lo.saleBps, 9000); assert.equal(c.anchorStored, 10000); assert.equal(c.anchorTime, 0); n += 3;
   // a sale at the start price, 15000, moves the anchor to 12500 and the next start to 18750
   const T = 1000 * H;
@@ -203,18 +211,18 @@ const R0 = 6.668e15;
   // the listing open since T follows the anchor: its start is now 18750. 52.5 hours later the anchor has decayed to 12013 (floor of 10000 + 2500 * 2^(-52.5 / 168)), the start is 18019
   near(c.askingPrice(open, T), 1.875, 1e-12, 'the start follows the anchor');
   assert.equal(c.anchorAt(T + 52.5 * H), 12013); assert.equal(c.startBps(T + 52.5 * H), 18019); n += 2;
-  near(c.askingPrice(open, T + 52.5 * H), (18019 + 7500) / 2 / 10000, 1e-12, 'the middle of the line follows the decayed anchor');
-  near(c.askingPrice(open, T + 105 * H), 0.75, 1e-12, 'the end of the line is the floor');
+  near(c.askingPrice(open, T + 52.5 * H), (18019 - 5250) / 10000, 1e-12, 'the price follows the decayed anchor: the start less 52.5 hours of 100 bps');
+  near(c.askingPrice(open, T + 1000 * H), 0.75, 1e-12, 'the end of the curve is the floor');
   // four sales at the start price in a row (integer math): the anchor is 12500, 15625, 19531, 24413 after them
   const d = fresh({}, 10); const seen = [];
   for (let i = 0; i < 4; i++) { const r = d.buy(d.compose(1, 'eth', 0), 0); seen.push(r.saleBps, d.anchorAt(0)); }
   assert.deepEqual(seen, [15000, 12500, 18750, 15625, 23437, 19531, 29296, 24413]); n++;
-  // two sales at the floor at hour 105 leave the anchor, its time and the fresh start price where they were
+  // two sales at the floor at hour 400 leave the anchor, its time and the fresh start price where they were
   d.compose(1, 'eth', 0); d.compose(1, 'eth', 0);
-  const startBefore = d.startBps(105 * H), freshAsk = d.askingPrice({ cost: 1, t0: 105 * H }, 105 * H);
-  const f1 = d.buy(d.compose(1, 'eth', 0), 105 * H), f2 = d.buy(d.compose(1, 'eth', 0), 105 * H);
+  const startBefore = d.startBps(400 * H), freshAsk = d.askingPrice({ cost: 1, t0: 400 * H }, 400 * H);
+  const f1 = d.buy(d.compose(1, 'eth', 0), 400 * H), f2 = d.buy(d.compose(1, 'eth', 0), 400 * H);
   assert.equal(f1.saleBps, 7500); assert.equal(f2.saleBps, 7500); assert.equal(d.anchorStored, 24413); assert.equal(d.anchorTime, 0); n += 4;
-  assert.equal(d.startBps(105 * H), startBefore); near(d.askingPrice({ cost: 1, t0: 105 * H }, 105 * H), freshAsk, 1e-12, 'the fresh ask'); n++;
+  assert.equal(d.startBps(400 * H), startBefore); near(d.askingPrice({ cost: 1, t0: 400 * H }, 400 * H), freshAsk, 1e-12, 'the fresh ask'); n++;
   // decay: 30000 reads 20000 after 7 days, 15000 after 14, 24142 after 3.5, and holds 10000 after a year and after 300 half lives
   const k = fresh({}, 10); k.setSettings({ anchorBps: 30000 }, 0);
   assert.equal(k.anchorAt(0), 30000); assert.equal(k.anchorAt(7 * D), 20000); assert.equal(k.anchorAt(14 * D), 15000); assert.equal(k.anchorAt(3.5 * D), 24142); n += 4;
@@ -249,10 +257,10 @@ const R0 = 6.668e15;
 {
   const st = { cost: 1, t0: 0 };
   const a = fresh({ floorBps: 6000, saleFloorBps: 7500 }, 10);
-  near(a.askingPrice(st, 105 * H), 0.75, 1e-12, 'curve floor 60 under the hard floor 75: the hard floor wins at hour 105');
-  near(a.askingPrice(st, 150 * H), 0.75, 1e-12, 'and after the curve would have reached 60');
-  near(a.askingPrice(st, 52.5 * H), 1.05, 1e-12, 'above the hard floor the curve decides (150 falling to 60, half way)');
-  near(a.statementPrice(1, 0, 105 * H), 0.60, 1e-12, 'the controller price alone reaches 60');
+  near(a.askingPrice(st, 200 * H), 0.75, 1e-12, 'curve at 62.5 under the hard floor 75: the hard floor wins at hour 200');
+  near(a.askingPrice(st, 300 * H), 0.75, 1e-12, 'and after the curve has reached 60');
+  near(a.askingPrice(st, 52.5 * H), 0.99375, 1e-12, 'above the hard floor the curve decides');
+  near(a.statementPrice(1, 0, 300 * H), 0.60, 1e-12, 'the controller price alone reaches 60');
   const b = fresh({ saleFloorBps: 20000 }, 10);
   near(b.askingPrice(st, 0), 2.0, 1e-12, 'a start under the hard floor is lifted to it');
   const c = fresh({ floorBps: 6000, saleFloorBps: 6000 }, 10);
@@ -281,19 +289,19 @@ const R0 = 6.668e15;
   const st = c.compose(1, 'eth', 0);
   assert.equal(st.bid, 0); assert.equal(st.end, 0); n += 2; // unbid statements stay listed, no timer
   const a100 = c.askingPrice(st, 100);
-  near(a100, 1.5 - 0.75 * 100 / (105 * H), 1e-12, 'the asking price a hundred seconds in');
+  near(a100, 1.5 - 100 * 100 / (3600 * 10000), 1e-12, 'the asking price a hundred seconds in');
   ok(!c.bidOn(st, a100 - 1e-6, 100, 1), 'below the asking price');
   ok(c.bidOn(st, a100, 100, 1), 'the asking price starts the auction');
   near(st.reserve, a100, 1e-12, 'the auction opened at the asking price at that moment'); assert.equal(st.end, 100 + 24 * H); n++;
-  // a buyer who comes at hour 70 finds the asking price at 100 and opens there
-  const s70 = c.compose(1, 'eth', 0);
-  ok(!c.bidOn(s70, 1.0 - 1e-6, 70 * H, 1), 'under 100 at hour 70'); ok(c.bidOn(s70, 1.0, 70 * H, 1), 'opens at 100 at hour 70');
-  near(s70.reserve, 1.0, 1e-12, 'reserve is the accepted price'); near(s70.bid, 1.0, 1e-12, 'first bid is the accepted price'); assert.equal(s70.end, 70 * H + 24 * H); n++;
+  // a buyer who comes at hour 50 finds the asking price at 100 and opens there
+  const s50 = c.compose(1, 'eth', 0);
+  ok(!c.bidOn(s50, 1.0 - 1e-6, 50 * H, 1), 'under 100 at hour 50'); ok(c.bidOn(s50, 1.0, 50 * H, 1), 'opens at 100 at hour 50');
+  near(s50.reserve, 1.0, 1e-12, 'reserve is the accepted price'); near(s50.bid, 1.0, 1e-12, 'first bid is the accepted price'); assert.equal(s50.end, 50 * H + 24 * H); n++;
   // and one at the floor opens at the floor
-  const s105 = c.compose(1, 'eth', 0);
-  ok(c.bidOn(s105, 0.75, 200 * H, 1)); near(s105.reserve, 0.75, 1e-12, 'opens at the hard floor');
+  const sFloor = c.compose(1, 'eth', 0);
+  ok(c.bidOn(sFloor, 0.75, 200 * H, 1)); near(sFloor.reserve, 0.75, 1e-12, 'opens at the hard floor');
   // house sales do not move the anchor
-  c.settle(s105); c.collectSales(200 * H); assert.equal(c.anchorAt(200 * H), 10000); n++;
+  c.settle(sFloor); c.collectSales(200 * H); assert.equal(c.anchorAt(200 * H), 10000); n++;
   // later bids: 5 percent over the top bid, no matter what the asking line says
   near(c.minBid(st, 100), a100 * 1.05, 1e-12, 'next bid at least 5 percent over');
   near(c.minBid(st, 100 + 1000 * H), a100 * 1.05, 1e-12, 'a live auction ignores the line');
@@ -325,12 +333,12 @@ const R0 = 6.668e15;
   const c = fresh({ buyOnly: true }, 10);
   const pot0 = c.ethPot;
   const st = c.compose(1, 'eth', 0);
-  const ask = c.askingPrice(st, 70 * H); near(ask, 1.0, 1e-12, 'asking price at hour 70');
-  const r = c.sellTo(st, ask, 70 * H);
+  const ask = c.askingPrice(st, 50 * H); near(ask, 1.0, 1e-12, 'asking price at hour 50');
+  const r = c.sellTo(st, ask, 50 * H);
   ok(r !== null && st.sold === true, 'sold in the same call');
   near(r.toBuyback, 0.5, 1e-12, 'launch split: half to the buyback'); near(r.toPot, 0.5, 1e-12, 'half to the pot');
   near(c.ethPot - pot0, 0.5, 1e-12, 'the pot has it at once'); near(c.ethToBuyback, 0.5, 1e-12, 'the buyback pot has it at once');
-  assert.equal(c.anchorAt(70 * H), 10000); n++; // sellTo is the Core door, the anchor moves in the controller's buy
+  assert.equal(c.anchorAt(50 * H), 10000); n++; // sellTo is the Core door, the anchor moves in the controller's buy
   assert.equal(c.houseOwed, 0); assert.equal(st.bid, 0); assert.equal(st.bids, 0); n += 3; // nothing in the house, no bid, no timer
   assert.equal(c.sellTo(st, ask, 31 * H), null); n++; // a statement is sold once
   const live = c.compose(1, 'eth', 0); c.bidOn(live, 1.5, 0, 1);
@@ -453,7 +461,7 @@ const R0 = 6.668e15;
 {
   const c = fresh({}, 10); c.setExitModule(0, 1e-5);
   const st = c.compose(1, 'eth', 0);
-  assert.equal(c.exitReady(st, 105 * H - 1), false); assert.equal(c.exitReady(st, 105 * H), true); n += 2; // exitAfter 105 hours, the hour the asking price reaches its floor
+  assert.equal(c.exitReady(st, 105 * H - 1), false); assert.equal(c.exitReady(st, 105 * H), true); n += 2; // exitAfter 105 hours
   c.bidOn(st, st.reserve, 100, 1);
   assert.equal(c.exitReady(st, 500 * H), false); n++;
   assert.equal(c.exitReady({ lane: 'exit', bid: 0, t0: 0 }, 0), true); n++;
@@ -611,11 +619,11 @@ const R0 = 6.668e15;
   // the pessimistic run: a buyer who waits for the floor pays the lowest price of every statement it takes, and none sells young
   const wf = simL({ days: 30, seed: 3, buyerWaits: 'floor', buyOnly: false });
   ok(wf.T.sold > 0 && Math.abs(wf.stats.saleOverCost - 0.75) < 1e-9 && wf.stats.saleAtFloorShare === 1, 'waiting buyers pay the floor');
-  ok(wf.stats.saleAgeHours >= 105, 'and only after the asking price has reached it');
+  ok(wf.stats.saleAgeHours >= 150, 'and only after the asking price has reached it');
   // a settings change mid run: controller settings on day 5, the mode and the floors on day 10, all read at once
-  const sw = simL({ days: 20, seed: 3, buyOnly: false, schedule: [{ day: 5, patch: { markupBps: 13000, decayDuration: 50 * H } }, { day: 10, patch: { floorBps: 6000, saleFloorBps: 6000, buyOnly: true, feeToBuybackBps: 2500, saleToBuybackBps: 7500 } }] });
+  const sw = simL({ days: 20, seed: 3, buyOnly: false, schedule: [{ day: 5, patch: { markupBps: 13000, fastDecayBpsPerHour: 200 } }, { day: 10, patch: { floorBps: 6000, saleFloorBps: 6000, buyOnly: true, feeToBuybackBps: 2500, saleToBuybackBps: 7500 } }] });
   assert.equal(sw.core.c.floorBps, 6000); assert.equal(sw.core.s.saleFloorBps, 6000); assert.equal(sw.core.c.buyOnly, true); n += 4;
-  assert.equal(sw.core.c.markupBps, 13000); assert.equal(sw.core.c.decayDuration, 50 * H); assert.equal(sw.core.s.saleToBuybackBps, 7500); assert.equal(sw.core.s.feeToBuybackBps, 2500); assert.equal(sw.T.settingsChanges, 2); n += 4;
+  assert.equal(sw.core.c.markupBps, 13000); assert.equal(sw.core.c.fastDecayBpsPerHour, 200); assert.equal(sw.core.s.saleToBuybackBps, 7500); assert.equal(sw.core.s.feeToBuybackBps, 2500); assert.equal(sw.T.settingsChanges, 2); n += 4;
   ok(sw.T.soldInstant > 0 && sw.T.soldInstant < sw.T.sold, 'sales before the flip went through auctions, after it instantly');
   ok(sw.core.feeToBuyback > 0, 'the fee share starts at its change'); ok(Math.abs(sw.stats.potCheck) < 1e-6, 'accounting closes across settings changes');
   ok(Math.abs(sw.stats.buybackCheck) < 1e-9, 'buyback accounting closes across settings changes');

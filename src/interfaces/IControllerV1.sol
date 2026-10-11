@@ -18,9 +18,11 @@ interface IControllerV1 {
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event BuyOnlySet(bool buyOnly);
-    event DecayDurationSet(uint32 decayDuration);
+    event FastDecayBpsPerHourSet(uint16 fastDecayBpsPerHour);
     event FloorBpsSet(uint16 floorBps);
+    event KneeBpsSet(uint32 kneeBps);
     event MarkupBpsSet(uint16 markupBps);
+    event SlowDecayBpsPerHourSet(uint16 slowDecayBpsPerHour);
     event StartCapBpsSet(uint32 startCapBps);
 
     function CORE() external view returns (address);
@@ -29,18 +31,22 @@ interface IControllerV1 {
     function anchorTime() external view returns (uint40);
     function buy(uint256 sid) external payable;
     function buyOnly() external view returns (bool);
-    function decayDuration() external view returns (uint32);
+    function fastDecayBpsPerHour() external view returns (uint16);
     function floorBps() external view returns (uint16);
+    function kneeBps() external view returns (uint32);
     function markupBps() external view returns (uint16);
     function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format);
     function priceOf(uint256 sid) external view returns (uint256 price);
     function setAnchorBps(uint32 v) external;
     function setAnchorHalfLife(uint32 v) external;
     function setBuyOnly(bool on) external;
-    function setDecayDuration(uint32 v) external;
+    function setFastDecayBpsPerHour(uint16 v) external;
     function setFloorBps(uint16 v) external;
+    function setKneeBps(uint32 v) external;
     function setMarkupBps(uint16 v) external;
+    function setSlowDecayBpsPerHour(uint16 v) external;
     function setStartCapBps(uint32 v) external;
+    function slowDecayBpsPerHour() external view returns (uint16);
     function startBps() external view returns (uint256);
     function startCapBps() external view returns (uint32);
     function statementPrice(uint256, uint256 cost, uint64 listedAt) external view returns (uint256);

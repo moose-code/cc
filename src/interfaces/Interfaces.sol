@@ -139,7 +139,7 @@ struct Settings {
     uint16 feeToBuybackBps;
 }
 
-/// the five sale settings of the controller, its constructor argument and the `sale` block of the launch config.
+/// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
 /// bounds are enforced by the controller (docs/FLOW.md 9.3). the controller keeps one more value, the anchor, which
 /// starts at 10_000
 struct Sale {
@@ -149,9 +149,13 @@ struct Sale {
     uint16 markupBps;
     /// the most the start price can be, bps of the statement cost
     uint32 startCapBps;
-    /// seconds from the start price to the floor
-    uint32 decayDuration;
-    /// the asking price never falls below this, bps of the statement cost
+    /// fall of the asking price per hour above the knee, bps of the statement cost
+    uint16 fastDecayBpsPerHour;
+    /// the price where the fast fall ends and the slow fall starts, bps of the statement cost
+    uint32 kneeBps;
+    /// fall of the asking price per hour at or below the knee, bps of the statement cost
+    uint16 slowDecayBpsPerHour;
+    /// lowest asking price, bps of the statement cost
     uint16 floorBps;
     /// seconds for the part of the anchor above 10_000 to halve
     uint32 anchorHalfLife;
@@ -231,14 +235,17 @@ library Mainnet {
         });
     }
 
-    /// the launch sale: buy only, start at 1.5 times the anchor (at most 1_000 percent of cost), falling in a straight
-    /// line to 75 percent of cost over 105 hours, the anchor halving its excess over 10_000 every 7 days
+    /// the launch sale: buy only, start at 1.5 times the anchor (at most 1_000 percent of cost), falling 1 percent of cost
+    /// an hour to 100 percent, then 0.25 percent an hour to 75 percent, the anchor halving its excess over 10_000 every
+    /// 7 days
     function defaultSale() internal pure returns (Sale memory) {
         return Sale({
             buyOnly: true,
             markupBps: 15_000,
             startCapBps: 100_000,
-            decayDuration: 105 hours,
+            fastDecayBpsPerHour: 100,
+            kneeBps: 10_000,
+            slowDecayBpsPerHour: 25,
             floorBps: 7_500,
             anchorHalfLife: 7 days
         });

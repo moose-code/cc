@@ -288,6 +288,7 @@ abstract contract HandlerSale is HandlerOwner {
         returns (bytes4 sel, uint256 v, bool valid, uint256 cur)
     {
         uint256 cap = c.startCapBps();
+        uint256 knee = c.kneeBps();
         if (which == 0) {
             sel = IControllerV1.setMarkupBps.selector;
             cur = c.markupBps();
@@ -296,19 +297,31 @@ abstract contract HandlerSale is HandlerOwner {
         } else if (which == 1) {
             sel = IControllerV1.setStartCapBps.selector;
             cur = cap;
-            v = bad ? (seed % 2 == 0 ? c.markupBps() - 1 : 200_001) : _f(seed, c.markupBps(), 200_000, cur);
-            valid = v >= c.markupBps() && v <= 200_000;
+            v = bad
+                ? (seed % 3 == 0 ? c.markupBps() - 1 : (seed % 3 == 1 ? 200_001 : knee - 1))
+                : _f(seed, _max(c.markupBps(), knee), 200_000, cur);
+            valid = v >= c.markupBps() && v >= knee && v <= 200_000;
         } else if (which == 2) {
-            sel = IControllerV1.setDecayDuration.selector;
-            cur = c.decayDuration();
-            v = bad ? (seed % 2 == 0 ? 1 hours - 1 : 30 days + 1) : _f(seed, 1 hours, 30 days, cur);
-            valid = v >= 1 hours && v <= 30 days;
+            sel = IControllerV1.setFastDecayBpsPerHour.selector;
+            cur = c.fastDecayBpsPerHour();
+            v = bad ? (seed % 2 == 0 ? 0 : 10_001) : _f(seed, 1, 10_000, cur);
+            valid = v >= 1 && v <= 10_000;
         } else if (which == 3) {
+            sel = IControllerV1.setSlowDecayBpsPerHour.selector;
+            cur = c.slowDecayBpsPerHour();
+            v = bad ? (seed % 2 == 0 ? 0 : 10_001) : _f(seed, 1, 10_000, cur);
+            valid = v >= 1 && v <= 10_000;
+        } else if (which == 4) {
+            sel = IControllerV1.setKneeBps.selector;
+            cur = knee;
+            v = bad ? (seed % 2 == 0 ? c.floorBps() - 1 : cap + 1) : _f(seed, c.floorBps(), cap, cur);
+            valid = v >= c.floorBps() && v <= cap;
+        } else if (which == 5) {
             sel = IControllerV1.setFloorBps.selector;
             cur = c.floorBps();
-            v = bad ? (seed % 2 == 0 ? 999 : 10_001) : _f(seed, 1_000, 10_000, cur);
-            valid = v >= 1_000 && v <= 10_000;
-        } else if (which == 4) {
+            v = bad ? (seed % 3 == 0 ? 999 : (seed % 3 == 1 ? 10_001 : knee + 1)) : _f(seed, 1_000, _min(10_000, knee), cur);
+            valid = v >= 1_000 && v <= 10_000 && v <= knee;
+        } else if (which == 6) {
             sel = IControllerV1.setAnchorBps.selector;
             cur = c.anchorBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : cap + 1) : _f(seed, 10_000, cap, cur);
@@ -321,22 +334,32 @@ abstract contract HandlerSale is HandlerOwner {
         }
     }
 
+    function _max(uint256 x, uint256 y) private pure returns (uint256) {
+        return x > y ? x : y;
+    }
+
+    function _min(uint256 x, uint256 y) private pure returns (uint256) {
+        return x < y ? x : y;
+    }
+
     function _saleGot(IControllerV1 c, uint256 which) internal view returns (uint256) {
         if (which == 0) return c.markupBps();
         if (which == 1) return c.startCapBps();
-        if (which == 2) return c.decayDuration();
-        if (which == 3) return c.floorBps();
-        if (which == 4) return c.anchorBps();
+        if (which == 2) return c.fastDecayBpsPerHour();
+        if (which == 3) return c.slowDecayBpsPerHour();
+        if (which == 4) return c.kneeBps();
+        if (which == 5) return c.floorBps();
+        if (which == 6) return c.anchorBps();
         return c.anchorHalfLife();
     }
 
-    /// the owner sets one of the six sale numbers of the first controller to a value inside or outside the bounds of
+    /// the owner sets one of the eight sale numbers of the first controller to a value inside or outside the bounds of
     /// docs/FLOW.md 9.3 (written out again here), or a stranger tries. inside: it goes through and reads back. outside:
     /// BadSetting with the field. a stranger: OnlyOwner. no asset, pot or house debt moves
     function saleSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_SALE_SETTINGS;
         IControllerV1 c = IControllerV1(v1);
-        uint256 which = mode % 6;
+        uint256 which = mode % 8;
         bool stranger = (mode >> 8) % 6 == 0;
         uint256 anchor0 = c.anchorBps();
         bool bad = (mode >> 12) % 4 == 0;
@@ -350,7 +373,7 @@ abstract contract HandlerSale is HandlerOwner {
         if (ok) {
             if (want != 0) _flag(V_OWNER, "a sale setting the model refuses was accepted");
             if (_saleGot(c, which) != v) _flag(V_OWNER, "a sale setting did not read back");
-            if (which == 5 && c.anchorBps() != anchor0) _flag(V_OWNER, "a half life change moved the anchor");
+            if (which == 7 && c.anchorBps() != anchor0) _flag(V_OWNER, "a half life change moved the anchor");
             gOwnerCalls++;
         } else {
             if (want == 0 || bytes4(out) != want) _unexpected(a, out);
@@ -612,7 +635,7 @@ abstract contract HandlerSale is HandlerOwner {
             (ok,) = address(core).call(abi.encodeCall(ICore.transferOwnership, (formerOwners[i])));
             if (ok) _flag(V_LOCK, "a former owner started a handover");
             vm.prank(formerOwners[i]);
-            (ok,) = address(v1).call(abi.encodeCall(IControllerV1.setDecayDuration, (2 hours)));
+            (ok,) = address(v1).call(abi.encodeCall(IControllerV1.setFastDecayBpsPerHour, (200)));
             if (ok) _flag(V_LOCK, "a former owner set a sale setting");
         }
         if (core.owner() != owner) _flag(V_LOCK, "the core owner is not the handler's owner");

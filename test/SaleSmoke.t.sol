@@ -25,13 +25,15 @@ contract SaleSmokeTest is Fixture {
         assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000, "ask is 150 percent");
     }
 
-    function test_price_falls_in_a_straight_line_to_the_floor() public {
+    function test_price_falls_to_the_knee_then_to_the_floor() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        _warp(52 hours + 30 minutes);
-        assertEq(ctl.priceOf(sid), cost * 11_250 / 10_000, "half way: 112.5 percent");
-        _warp(52 hours + 30 minutes);
-        assertEq(ctl.priceOf(sid), cost * 7_500 / 10_000, "at the floor at hour 105");
+        _warp(25 hours);
+        assertEq(ctl.priceOf(sid), cost * 12_500 / 10_000, "half way to the knee: 125 percent");
+        _warp(25 hours);
+        assertEq(ctl.priceOf(sid), cost, "at the knee at hour 50: 100 percent");
+        _warp(100 hours);
+        assertEq(ctl.priceOf(sid), cost * 7_500 / 10_000, "at the floor at hour 150");
         _warp(100 hours);
         assertEq(ctl.priceOf(sid), cost * 7_500 / 10_000, "never below the floor");
     }
@@ -39,9 +41,9 @@ contract SaleSmokeTest is Fixture {
     function test_reprice_takes_the_current_ask_as_the_house_reserve() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        _warp(70 hours);
+        _warp(50 hours);
         core.repriceStatement(sid);
-        assertEq(_live(sid).reserve, cost, "reserve follows the ask, two thirds down the line to 100 percent");
+        assertEq(_live(sid).reserve, cost, "reserve follows the ask, 100 percent at the knee");
         _bid(address(0xB1D), sid, cost);
         assertEq(uint256(_live(sid).status), uint256(ICore.StatementStatus.Bid));
     }

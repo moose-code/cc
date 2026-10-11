@@ -331,7 +331,7 @@ contract ReviewSaleTest is Fixture {
         vm.prank(owner);
         core.transferOwnership(alice);
         vm.prank(owner);
-        ctl.setDecayDuration(50 hours);
+        ctl.setFastDecayBpsPerHour(200);
         vm.prank(alice);
         core.acceptOwnership();
         vm.prank(owner);
@@ -340,7 +340,7 @@ contract ReviewSaleTest is Fixture {
         vm.prank(alice);
         ctl.setBuyOnly(true);
         assertTrue(ctl.buyOnly());
-        assertEq(ctl.decayDuration(), 50 hours);
+        assertEq(ctl.fastDecayBpsPerHour(), 200);
     }
 
     function test_OK_buy_quoteNeverRisesForAThirdParty() public {
@@ -400,7 +400,8 @@ contract ReviewSaleTest is Fixture {
 
     function test_OK_price_extremesDoNotOverflowOrUnderflow() public {
         vm.startPrank(owner);
-        ctl.setDecayDuration(1 hours);
+        ctl.setFastDecayBpsPerHour(10_000);
+        ctl.setSlowDecayBpsPerHour(10_000);
         vm.stopPrank();
         uint256 cost = 10 ether;
         assertEq(ctl.statementPrice(0, cost, 0), cost * 7_500 / 10_000, "ancient listing sits at the floor");
@@ -630,7 +631,7 @@ contract ReviewSaleTest is Fixture {
         s.tipCapBps = 100;
         _setSettings(s);
         vm.prank(owner);
-        ctl.setDecayDuration(10 hours);
+        ctl.setFastDecayBpsPerHour(500);
         assertFalse(core.exitModuleLocked() || core.targetsLocked());
     }
 
@@ -734,7 +735,7 @@ contract ReviewSaleTest is Fixture {
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.lockTargets();
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setDecayDuration(1 hours);
+        ctl.setFastDecayBpsPerHour(200);
         vm.stopPrank();
         vm.prank(alice);
         vm.expectRevert(ICore.OnlyPendingOwner.selector);
@@ -1059,7 +1060,7 @@ contract ReviewSaleTest is Fixture {
         }
         assertFalse(_has(keys, "reserveBps"));
         string[] memory sale = vm.parseJsonKeys(j, ".sale");
-        assertEq(sale.length, 6);
+        assertEq(sale.length, 8);
         LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
         assertEq(abi.encode(f.sale), abi.encode(Mainnet.defaultSale()));
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()));
@@ -1076,14 +1077,16 @@ contract ReviewSaleTest is Fixture {
             (string memory dirty,) = _failed();
             assertTrue(keccak256(bytes(dirty)) != keccak256(bytes(clean)), _nm(SettingsFields.names()[i]));
         }
-        for (uint256 i; i < 6; ++i) {
+        for (uint256 i; i < 8; ++i) {
             LaunchConfig memory c = lc;
             if (i == 0) c.sale.buyOnly = !c.sale.buyOnly;
             if (i == 1) c.sale.markupBps += 1;
             if (i == 2) c.sale.startCapBps += 1;
-            if (i == 3) c.sale.decayDuration += 1;
-            if (i == 4) c.sale.floorBps += 1;
-            if (i == 5) c.sale.anchorHalfLife += 1;
+            if (i == 3) c.sale.fastDecayBpsPerHour += 1;
+            if (i == 4) c.sale.kneeBps += 1;
+            if (i == 5) c.sale.slowDecayBpsPerHour += 1;
+            if (i == 6) c.sale.floorBps += 1;
+            if (i == 7) c.sale.anchorHalfLife += 1;
             postflightAs(c, address(core), owner);
             (string memory dirty,) = _failed();
             assertTrue(keccak256(bytes(dirty)) != keccak256(bytes(clean)), "sale field unseen by postflight");
@@ -1103,20 +1106,20 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_saleBounds_scriptAndControllerConstructorAgree() public {
-        Sale[14] memory v;
+        Sale[22] memory v;
         for (uint256 i; i < v.length; ++i) {
             v[i] = Mainnet.defaultSale();
         }
         v[0].markupBps = 9_999;
         v[1].markupBps = 40_001;
         v[2].startCapBps = 14_999;
-        v[3].decayDuration = 1 hours - 1;
-        v[4].decayDuration = 30 days + 1;
+        v[3].fastDecayBpsPerHour = 0;
+        v[4].fastDecayBpsPerHour = 10_001;
         v[5].floorBps = 999;
         v[6].floorBps = 10_001;
         v[7].markupBps = 40_000;
         v[7].startCapBps = 40_000;
-        v[7].decayDuration = 1 hours;
+        v[7].fastDecayBpsPerHour = 10_000;
         v[8].startCapBps = 200_000;
         v[8].floorBps = 10_000;
         v[9].startCapBps = 200_001;
@@ -1124,6 +1127,14 @@ contract ReviewSaleTest is Fixture {
         v[11].anchorHalfLife = 90 days + 1;
         v[12].anchorHalfLife = 1 days;
         v[13].anchorHalfLife = 90 days;
+        v[14].slowDecayBpsPerHour = 0;
+        v[15].slowDecayBpsPerHour = 10_001;
+        v[16].kneeBps = v[16].floorBps - 1;
+        v[17].kneeBps = v[17].startCapBps + 1;
+        v[18].kneeBps = v[18].startCapBps;
+        v[19].kneeBps = v[19].floorBps;
+        v[20].fastDecayBpsPerHour = 1;
+        v[21].slowDecayBpsPerHour = 10_000;
         for (uint256 i; i < v.length; ++i) {
             LaunchConfig memory c = lc;
             c.sale = v[i];

@@ -75,14 +75,15 @@ contract ReviewFlowCoreTest is Fixture {
         vm.startPrank(owner);
         ctl.setBuyOnly(false);
         ctl.setFloorBps(1_000);
-        ctl.setDecayDuration(1 hours);
+        ctl.setFastDecayBpsPerHour(10_000);
+        ctl.setSlowDecayBpsPerHour(10_000);
         vm.stopPrank();
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
         uint256 sid = STATEMENTS.supply();
         (,, uint256 cost,) = core.statementInfo(sid);
-        _warp(1 hours);
+        _warp(2 hours);
         core.repriceStatement(sid);
         Live memory l = _live(sid);
         assertEq(l.reserve, cost * 1_000 / 10_000, "reserve at the floor is 10 percent of cost");

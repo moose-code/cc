@@ -357,7 +357,9 @@ contract OwnerLocksTest is OwnerBase {
         ctl.setBuyOnly(true);
         ctl.setMarkupBps(12_000);
         ctl.setStartCapBps(150_000);
-        ctl.setDecayDuration(1 hours);
+        ctl.setFastDecayBpsPerHour(200);
+        ctl.setSlowDecayBpsPerHour(50);
+        ctl.setKneeBps(12_000);
         ctl.setFloorBps(8_000);
         ctl.setAnchorBps(11_000);
         vm.stopPrank();
@@ -530,7 +532,11 @@ contract OwnerHandoverTest is OwnerBase {
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setStartCapBps(150_000);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setDecayDuration(2 hours);
+        ctl.setFastDecayBpsPerHour(200);
+        vm.expectRevert(IControllerV1.OnlyOwner.selector);
+        ctl.setSlowDecayBpsPerHour(50);
+        vm.expectRevert(IControllerV1.OnlyOwner.selector);
+        ctl.setKneeBps(12_000);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setFloorBps(8_000);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
@@ -542,7 +548,9 @@ contract OwnerHandoverTest is OwnerBase {
         ctl.setBuyOnly(true);
         ctl.setMarkupBps(12_000);
         ctl.setStartCapBps(150_000);
-        ctl.setDecayDuration(2 hours);
+        ctl.setFastDecayBpsPerHour(200);
+        ctl.setSlowDecayBpsPerHour(50);
+        ctl.setKneeBps(12_000);
         ctl.setFloorBps(8_000);
         ctl.setAnchorBps(11_000);
         core.lockController();

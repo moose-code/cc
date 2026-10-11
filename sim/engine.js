@@ -36,8 +36,9 @@ export const SETTINGS = {
   feeToBuybackBps: 0, // share of swap fee eth booked in receive() that goes to the buyback instead of the pot
 };
 export const SETTING_KEYS = Object.keys(SETTINGS);
-// the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement of cost c at age t is
-// c * (start - (start - floorBps) * min(t, decayDuration) / decayDuration) in bps, a straight line, with start = min(anchorBps * markupBps / 10000, startCapBps).
+// the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement of cost c, in bps of c, starts at
+// start = min(anchorBps * markupBps / 10000, startCapBps) and falls per second in two stages: fastDecayBpsPerHour from start to kneeBps, then
+// slowDecayBpsPerHour to floorBps, where it stays. a start at or below kneeBps falls at the slow rate from the first second (askBps).
 // the anchor (ControllerV1.anchorBps, starts at 10000) is the running level of sale prices in bps of cost. a buy only sale above the anchor now sets it to the
 // mean of the anchor now and the sale price, a sale at or below it leaves it. the part of the anchor above 10000 halves every anchorHalfLife, continuously.
 // buyOnly false: a buyer at or above the asking price opens the english auction at that price (house sales do not move the anchor).
@@ -46,18 +47,31 @@ export const CONTROLLER = {
   buyOnly: true,
   markupBps: 15000,
   startCapBps: 100000,
-  decayDuration: 105 * 3600,
+  fastDecayBpsPerHour: 100,
+  kneeBps: 10000,
+  slowDecayBpsPerHour: 25,
   floorBps: 7500,
   anchorHalfLife: 7 * 86400,
 };
 export const CONTROLLER_KEYS = Object.keys(CONTROLLER);
+// the asking price in bps of cost after `age` seconds from a start price of `start` bps (ControllerV1._ask without its integer rounding):
+// start less fastDecayBpsPerHour an hour while above kneeBps, then slowDecayBpsPerHour an hour, never below floorBps
+export function askBps(c, start, age) {
+  const hours = age / 3600, span = Math.max(0, start - c.kneeBps);
+  const p = c.fastDecayBpsPerHour * hours <= span
+    ? start - c.fastDecayBpsPerHour * hours
+    : Math.min(start, c.kneeBps) - c.slowDecayBpsPerHour * (hours - span / c.fastDecayBpsPerHour);
+  return Math.max(p, c.floorBps);
+}
 // ControllerV1 bounds: the name of the first controller field out of bounds, or null
 export function controllerViolation(c) {
   if (typeof c.buyOnly !== 'boolean') return 'buyOnly';
   if (c.markupBps < 10000 || c.markupBps > 40000) return 'markupBps';
   if (c.startCapBps < c.markupBps || c.startCapBps > 200000) return 'startCapBps';
-  if (c.decayDuration < 3600 || c.decayDuration > 30 * 86400) return 'decayDuration';
   if (c.floorBps < 1000 || c.floorBps > 10000) return 'floorBps';
+  if (c.kneeBps < c.floorBps || c.kneeBps > c.startCapBps) return 'kneeBps';
+  if (c.fastDecayBpsPerHour < 1 || c.fastDecayBpsPerHour > 10000) return 'fastDecayBpsPerHour';
+  if (c.slowDecayBpsPerHour < 1 || c.slowDecayBpsPerHour > 10000) return 'slowDecayBpsPerHour';
   if (c.anchorHalfLife < 86400 || c.anchorHalfLife > 90 * 86400) return 'anchorHalfLife';
   return null;
 }
@@ -313,7 +327,7 @@ export class Core {
     this.funded = this.ethPot * W >= this.rateAtCheckpoint;
   }
   // owner: setSettings. validates, checkpoints both rates first, then applies at once. patch.rate is setRate.
-  // the patch may also hold controller settings (buyOnly, markupBps, startCapBps, decayDuration, floorBps, anchorHalfLife) and anchorBps (setAnchorBps): the controller reads them live.
+  // the patch may also hold controller settings (buyOnly, markupBps, startCapBps, fastDecayBpsPerHour, kneeBps, slowDecayBpsPerHour, floorBps, anchorHalfLife) and anchorBps (setAnchorBps): the controller reads them live.
   // a new anchorHalfLife stores the anchor now first, and a start cap below the anchor now lowers the anchor to the cap
   setSettings(patch, now) {
     const rate = patch.rate;
@@ -400,12 +414,10 @@ export class Core {
     const c = this.c;
     return Math.min(Math.floor((this.anchorAt(now) * c.markupBps) / BPS), c.startCapBps);
   }
-  // ControllerV1.statementPrice(sid, cost, listedAt): the straight line from startBps() to floorBps over decayDuration, read live from the current anchor.
+  // ControllerV1.statementPrice(sid, cost, listedAt): askBps at the age of the listing from the current anchor and settings, in wei of the cost.
   // the price is relative to what the engine PAID (the statement cost), not to the market price of its parts
   statementPrice(cost, listedAt, now) {
-    const c = this.c, start = this.startBps(now);
-    const t = Math.min(Math.max(0, now - listedAt), c.decayDuration);
-    return (cost * (start - ((start - c.floorBps) * t) / c.decayDuration)) / BPS;
+    return (cost * askBps(this.c, this.startBps(now), Math.max(0, now - listedAt))) / BPS;
   }
   // the Core's hard floor: no sale below cost * saleFloorBps / 10000
   floorPrice(st) { return (st.cost * this.s.saleFloorBps) / BPS; }

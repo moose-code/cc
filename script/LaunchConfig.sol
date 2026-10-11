@@ -200,7 +200,9 @@ abstract contract ConfigReader is CommonBase {
             buyOnly: vm.parseJsonBool(j, ".sale.buyOnly"),
             markupBps: _u16(j, ".sale.markupBps"),
             startCapBps: _u32(j, ".sale.startCapBps"),
-            decayDuration: _u32(j, ".sale.decayDuration"),
+            fastDecayBpsPerHour: _u16(j, ".sale.fastDecayBpsPerHour"),
+            kneeBps: _u32(j, ".sale.kneeBps"),
+            slowDecayBpsPerHour: _u16(j, ".sale.slowDecayBpsPerHour"),
             floorBps: _u16(j, ".sale.floorBps"),
             anchorHalfLife: _u32(j, ".sale.anchorHalfLife")
         });
@@ -288,8 +290,10 @@ abstract contract ConfigReader is CommonBase {
         Sale memory k = c.sale;
         if (k.markupBps < 10_000 || k.markupBps > 40_000) return "markupBps";
         if (k.startCapBps < k.markupBps || k.startCapBps > 200_000) return "startCapBps";
-        if (k.decayDuration < 1 hours || k.decayDuration > 30 days) return "decayDuration";
         if (k.floorBps < 1_000 || k.floorBps > 10_000) return "floorBps";
+        if (k.kneeBps < k.floorBps || k.kneeBps > k.startCapBps) return "kneeBps";
+        if (k.fastDecayBpsPerHour < 1 || k.fastDecayBpsPerHour > 10_000) return "fastDecayBpsPerHour";
+        if (k.slowDecayBpsPerHour < 1 || k.slowDecayBpsPerHour > 10_000) return "slowDecayBpsPerHour";
         if (k.anchorHalfLife < 1 days || k.anchorHalfLife > 90 days) return "anchorHalfLife";
         return bytes32(0);
     }

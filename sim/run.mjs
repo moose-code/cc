@@ -99,7 +99,7 @@ const designRows = (base, seeds) => {
   const out = { base: many(base, seeds) };
   const row = (over) => many(Object.assign({}, base, over), seeds);
   out.markupBps = [10000, 15000, 20000].map((v) => Object.assign({ markupBps: v }, row({ markupBps: v })));
-  out.decayH = [24, 105, 200].map((h) => Object.assign({ decayH: h }, row({ decayDuration: h * 3600 })));
+  out.fastDecay = [50, 100, 400].map((v) => Object.assign({ fastDecayBpsPerHour: v }, row({ fastDecayBpsPerHour: v })));
   out.floorHardHolds = [7500, 6000, 5000].map((v) => Object.assign({ floorBps: v, saleFloorBps: 7500 }, row({ floorBps: v })));
   out.floorBoth = [7500, 6000, 5000].map((v) => Object.assign({ floorBps: v, saleFloorBps: v }, row({ floorBps: v, saleFloorBps: v })));
   out.mode = [false, true].map((v) => Object.assign({ buyOnly: v }, row({ buyOnly: v })));
@@ -189,7 +189,7 @@ batches.q9 = () => {
   const tests = [
     ['volScale', 0.25, 4], ['priceP0', 0.0045, 0.018], ['pricePath', 'decline', 'recovery'], ['askSigma', 0.15, 0.4], ['impactElast', 0, 0.3],
     ['offersPerHour', 60, 400], ['supplyElast', 0.5, 3], ['bookChurn', 0.02, 0.15], ['stmtPerDay', 3, 20], ['wtpMult', 0.7, 1.3],
-    ['buyShareLate', 0.42, 0.52], ['rateStart', rateAt(0.25), rateAt(1.25)], ['markupBps', 10000, 20000], ['decayDuration', 24 * 3600, 200 * 3600], ['floor, both floors', { floorBps: 5000, saleFloorBps: 5000 }, { floorBps: 7500, saleFloorBps: 7500 }],
+    ['buyShareLate', 0.42, 0.52], ['rateStart', rateAt(0.25), rateAt(1.25)], ['markupBps', 10000, 20000], ['fastDecayBpsPerHour', 50, 400], ['floor, both floors', { floorBps: 5000, saleFloorBps: 5000 }, { floorBps: 7500, saleFloorBps: 7500 }],
     ['buyOnly', false, true], ['feeToBuybackBps', 0, 2500], ['buyerWaits', 'no', 'floor'], ['auctionDuration', 6 * 3600, 72 * 3600],
     ['saleToBuybackBps', 0, 10000], ['dropPerCreditPct', 0.25, 2], ['climbPerMin', 0.25, 2], ['ceilPct', 110, 200], ['idleLoosenPct', 0, 5],
     ['listedShare', 0, 0.5], ['sniperVolShare', 0.2, 0.6], ['h1Share', 0.45, 0.7], ['exitAfter', 24 * 3600, 7 * 86400], ['stmtPick', 'cheapest', 'random'],

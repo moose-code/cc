@@ -294,8 +294,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("sale: startCapBps 150000 (valid, wrong)", Class.Hash);
             m.c.sale.startCapBps = 150_000;
         } else if (i == 24) {
-            m = _m("sale: decayDuration 1 hour (valid, wrong)", Class.Hash);
-            m.c.sale.decayDuration = 1 hours;
+            m = _m("sale: fastDecayBpsPerHour 200 (valid, wrong)", Class.Hash);
+            m.c.sale.fastDecayBpsPerHour = 200;
         } else if (i == 25) {
             m = _m("sale: floorBps 8000 (valid, wrong)", Class.Hash);
             m.c.sale.floorBps = 8000;
@@ -309,11 +309,11 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("sale: startCapBps 200001", Class.Pre);
             m.c.sale.startCapBps = 200_001;
         } else if (i == 29) {
-            m = _m("sale: decayDuration 59 minutes", Class.Pre);
-            m.c.sale.decayDuration = 1 hours - 1;
+            m = _m("sale: fastDecayBpsPerHour 0", Class.Pre);
+            m.c.sale.fastDecayBpsPerHour = 0;
         } else if (i == 30) {
-            m = _m("sale: decayDuration 31 days", Class.Pre);
-            m.c.sale.decayDuration = 31 days;
+            m = _m("sale: kneeBps below floorBps", Class.Pre);
+            m.c.sale.kneeBps = m.c.sale.floorBps - 1;
         } else if (i == 31) {
             m = _m("sale: startCapBps below markupBps", Class.Pre);
             m.c.sale.startCapBps = m.c.sale.markupBps - 1;
