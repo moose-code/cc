@@ -70,12 +70,12 @@ abstract contract LaunchChecks is PostflightChecks {
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0x7e76af58dc53f7d9875f5d80bba678318643a8ce738d3cca83f2f5d4bd95bd5e;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x7a947208a5489d46bf03e495b70aefba411557008b328081b9bd0397e64063a5;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x1295748f50482ac6c75db38efcf1b60eb211ba157557df00d0a674d45c36d96c;
     bytes32 internal constant BUILD_HASH_CONTROLLER = 0xc8c35eb1756887586a0ddbcbd4965fb792020e375f950dc58526ef54b154a7ab;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0x4ff989feabca4e9387b32b7f3ea71b38dc0ff330f81e0cf853130082079ffb63;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x5fe9a470f75720056617a2ed48d88f73feb4e4d89012dbc58cbc4d740d907a69;
+        0x79b0dd0664519e417981eaeafa81a5b45c32237261c8ceb8422debb833ba242c;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;

@@ -12,6 +12,7 @@ import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {Lane, ICredits, IStatements, Settings, Mainnet} from "../interfaces/Interfaces.sol";
 import {IAuctionHouse} from "../interfaces/AuctionHouse.sol";
+import {Halving} from "./Halving.sol";
 import {SettingsBounds} from "./SettingsBounds.sol";
 import {SettingsStore} from "./SettingsStore.sol";
 import {RateStore} from "./RateStore.sol";
@@ -265,16 +266,7 @@ library CoreLib {
     /// @notice `start` halved `elapsed / halfLife` times, with the fraction of a half life by the exponential. zero
     /// after 256 half lives
     function decay(uint256 start, uint256 elapsed, uint256 halfLife) external pure returns (uint256 p) {
-        uint256 halvings = elapsed / halfLife;
-        if (halvings >= 256) return 0;
-        p = start >> halvings;
-        uint256 rest = elapsed % halfLife;
-        if (rest != 0) {
-            // forge-lint: disable-next-line(unsafe-typecast)
-            int256 factor = FixedPointMathLib.powWad(0.5e18, int256(rest * 1e18 / halfLife));
-            // forge-lint: disable-next-line(unsafe-typecast)
-            p = p * uint256(factor) / 1e18;
-        }
+        p = Halving.halve(start, elapsed, halfLife);
     }
 
     /// @notice the swap of the coin buyback, run inside the pool manager unlock callback of the Core: exact eth in for

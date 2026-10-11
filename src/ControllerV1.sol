@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {Halving} from "./lib/Halving.sol";
 import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Interfaces.sol";
 
 /// first policy module. composes the oldest 80 credits of a lane with format 0.
@@ -141,7 +141,7 @@ contract ControllerV1 is IController {
     function anchorBps() public view returns (uint32) {
         uint256 excess = storedAnchorBps - BPS;
         // forge-lint: disable-next-line(unsafe-typecast)
-        return uint32(BPS + _halve(excess, block.timestamp - anchorTime, anchorHalfLife));
+        return uint32(BPS + Halving.halve(excess, block.timestamp - anchorTime, anchorHalfLife));
     }
 
     /// the start price of a new listing, bps of cost: the anchor times `markupBps`, at most `startCapBps`
@@ -215,21 +215,6 @@ contract ControllerV1 is IController {
         storedAnchorBps = v;
         // forge-lint: disable-next-line(unsafe-typecast)
         anchorTime = uint40(block.timestamp);
-    }
-
-    /// `x` halved `elapsed / halfLife` times, with the fraction of a half life by `powWad`, the computation of
-    /// `CoreLib.decay`. zero after 256 half lives
-    function _halve(uint256 x, uint256 elapsed, uint256 halfLife) private pure returns (uint256 p) {
-        uint256 halvings = elapsed / halfLife;
-        if (halvings >= 256) return 0;
-        p = x >> halvings;
-        uint256 rest = elapsed % halfLife;
-        if (rest != 0) {
-            // forge-lint: disable-next-line(unsafe-typecast)
-            int256 factor = FixedPointMathLib.powWad(0.5e18, int256(rest * 1e18 / halfLife));
-            // forge-lint: disable-next-line(unsafe-typecast)
-            p = p * uint256(factor) / 1e18;
-        }
     }
 
     /// the asking price in wei after `age` seconds: a straight line from `startBps()` of `cost` to `floorBps` of `cost`
