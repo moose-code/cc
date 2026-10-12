@@ -101,7 +101,7 @@ contract RecoveryOracleTest is Fixture {
         else assertApproxEqRel(got, sim, 0.003e18, "closed form vs step simulation");
     }
 
-    /// the launch settings (recovery 200, climb 50, half life 6 h, gap 200): the closed form matches a tenth of a
+    /// the launch settings (recovery 200, climb 50, half life 6 h, gap 1_000): the closed form matches a tenth of a
     /// second step simulation within 50 ppm over a range of elapsed times, well past the crossing
     function test_closedFormLaunchErr() public {
         uint256[6] memory el = [uint256(60), 600, 1800, 2700, 3600, 7200];

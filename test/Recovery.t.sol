@@ -12,7 +12,8 @@ contract RecoveryTest is Fixture {
     address internal seller_;
 
     /// the launch values these tests measure. the config file, `Mainnet.defaultSettings()` and the fixture core agree, and
-    /// every measured value below is pinned at this gap, so a change of the launch gap changes them
+    /// the dump recoveries and the batch seller rates are pinned at this gap, so a change of the launch gap changes them.
+    /// the lone seller and market fall values do not depend on the gap
     function test_launchGapIs1000() public view {
         string memory json = vm.readFile("script/config/mainnet.json");
         assertEq(vm.parseJsonUint(json, ".settings.recoveryGapBps"), 1_000, "shipped config");
@@ -164,7 +165,7 @@ contract RecoveryTest is Fixture {
         assertEq(paid, 101_633_664_963_187_848, "batches of 10: wei paid");
     }
 
-    /// batches of 19 credits drop the bid 9.1 percent, the largest batch inside the launch gap of 10 percent
+    /// batches of 19 credits drop the bid 9.1 percent. batches of up to 21 credits stay inside the launch gap of 10 percent
     function test_batchSeller19() public {
         (uint256 sold, uint256 paid) = _batchSeller(19);
         _logBatch(19, sold, paid);
