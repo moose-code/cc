@@ -1061,10 +1061,12 @@ a {
   inset: 0 auto 0 0;
   background: var(--composed);
 }
+/* the forming statement: 8 wide x 10 tall, the real sheet layout */
 .slot-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 0.4rem;
+  max-width: 560px;
 }
 .slot {
   display: flex;
