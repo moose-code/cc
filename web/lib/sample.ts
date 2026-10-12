@@ -2,6 +2,8 @@
 // and numbers are stable across renders. Replace each getter with an on-chain
 // read at wiring time; see web/CONNECTIONS.md for the exact calls.
 
+import { statementCreditIds } from "./credit-art";
+
 export type Lane = "eth" | "exit";
 export type StatementStatus = "listed" | "sold" | "held";
 
@@ -28,12 +30,6 @@ export interface SampleCredit {
 
 const round4 = (n: number) => Math.round(n * 1e4) / 1e4;
 
-// 80 credit ids for a statement, deterministic from the id.
-function creditIdsFor(sid: number): number[] {
-  const base = 40000 + sid * 80;
-  return Array.from({ length: 80 }, (_, i) => base + i);
-}
-
 export const statements: SampleStatement[] = Array.from({ length: 12 }, (_, i) => {
   const id = 212 - i;
   const cost = round4(0.5 + ((id * 7) % 13) / 100); // 0.50 - 0.62
@@ -51,7 +47,7 @@ export const statements: SampleStatement[] = Array.from({ length: 12 }, (_, i) =
     floor,
     composedAgo: 60 + i * 1800,
     status,
-    creditIds: creditIdsFor(id),
+    creditIds: statementCreditIds(id),
     buyer: status === "sold" ? "0x91ac4df2a1e8b7c3d5f6a9e0b2c4d6e8f0a2c44de".slice(0, 42) : undefined,
   };
 });

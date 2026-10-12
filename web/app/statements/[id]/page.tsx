@@ -24,7 +24,7 @@ export default function StatementDetail({ params }: { params: { id: string } }) 
 
       <div className="detail-grid">
         <div className="detail-art">
-          <StatementTile id={s.id} size={12} />
+          <StatementTile id={s.id} />
         </div>
 
         <div className="detail-main">

@@ -294,26 +294,22 @@ a {
   font-weight: 600;
 }
 
-/* tiles */
-.tile-credit {
-  display: flex;
-  gap: 2px;
-  height: 30px;
-  align-items: flex-end;
-}
-.tile-credit i {
+/* tiles — canvas CMYK rasters, scaled up crisply. credit is square (12x12),
+   statement is 8 wide x 10 tall (4:5). */
+.tile-credit,
+.tile-statement {
   display: block;
-  width: 7px;
-  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #fff;
+}
+.tile-credit {
+  width: 30px;
+  height: 30px;
 }
 .tile-statement {
-  display: grid;
   width: 56px;
-  height: 56px;
-  gap: 0;
-}
-.tile-statement i {
-  display: block;
+  height: 70px;
 }
 
 /* ---- trade panel ---------------------------------------------------------- */
@@ -727,13 +723,11 @@ a {
 }
 .detail-art .tile-statement {
   width: 268px;
-  height: 268px;
+  height: 335px;
 }
 .credit-art .tile-credit {
-  height: 160px;
-}
-.credit-art .tile-credit i {
-  width: 22px;
+  width: 180px;
+  height: 180px;
 }
 .detail-title {
   display: flex;
@@ -816,13 +810,12 @@ a {
   margin-top: 1rem;
 }
 .credit-mini-grid a {
-  display: flex;
+  display: block;
 }
 .credit-mini-grid .tile-credit {
-  height: 34px;
-}
-.credit-mini-grid .tile-credit i {
-  width: 5px;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
 }
 
 @media (max-width: 640px) {
@@ -832,7 +825,7 @@ a {
   }
   .detail-art .tile-statement {
     width: 220px;
-    height: 220px;
+    height: 275px;
   }
 }
 
@@ -1088,11 +1081,8 @@ a {
   background: var(--rowhover);
 }
 .slot.filled .tile-credit {
-  height: 60%;
-  gap: 2px;
-}
-.slot.filled .tile-credit i {
-  width: 5px;
+  width: 82%;
+  height: 82%;
 }
 .slot.empty {
   border-style: dashed;

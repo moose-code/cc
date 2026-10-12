@@ -67,6 +67,16 @@ then cache, then RPC; `CoreLens.snapshot()` returns most of this in one call.
 - **sell** (disabled) — `Core.sellForEth(ids, minOut)`. `minOut` guards the rate
   moving down between build and mine. Total received = count * rate.
 
+## credit / statement art — `lib/credit-art.ts`, `components/Tiles.tsx`
+
+- Tiles render the real **Credits format**: a Credit is a CMYK overprint
+  (cyan/magenta/yellow/black, subtractive on white) in a 12x12 raster; a
+  Statement is 80 Credits laid out 8 wide x 10 tall (burn order).
+- Currently the raster is seeded by id (a faithful look-alike). At wiring time,
+  draw the real raster from `Credits.seedOf(id)` + the art contract (see
+  gtmcknight/creditunion `CreditDrawing.sol` / `sheet` renderers), and use the
+  real composed ids from the Core compose record in `statementCreditIds`.
+
 ## ENS (global) — `lib/ens.ts`, `components/Addr.tsx`
 
 - `<Addr address>` shows the ENS name when one resolves, else a short address,
