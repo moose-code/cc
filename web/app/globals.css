@@ -714,6 +714,34 @@ a {
   justify-content: space-between;
 }
 
+/* statement card: price primary, credit score below */
+.card-price {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.card-price.muted {
+  font-size: 1rem;
+  font-weight: 400;
+}
+.card-price-tag {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--sold);
+  border: 1px solid var(--sold);
+  padding: 0.05rem 0.35rem;
+}
+.card-sub {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 .badge {
   font-size: 0.72rem;
   padding: 0.1rem 0.4rem;

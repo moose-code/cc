@@ -16,6 +16,7 @@ export interface SampleStatement {
   floor: number; // price floor
   composedAgo: number; // seconds since compose
   status: StatementStatus;
+  score: number; // aggregate Credit Rating of its 80 credits
   creditIds: number[]; // the 80 composed credit ids
   buyer?: string; // set when sold
 }
@@ -47,6 +48,7 @@ export const statements: SampleStatement[] = Array.from({ length: 12 }, (_, i) =
     floor,
     composedAgo: 60 + i * 1800,
     status,
+    score: 42000 + ((id * 911) % 26000), // aggregate rating of the 80 credits
     creditIds: statementCreditIds(id),
     buyer: status === "sold" ? "0x91ac4df2a1e8b7c3d5f6a9e0b2c4d6e8f0a2c44de".slice(0, 42) : undefined,
   };
