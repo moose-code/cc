@@ -29,15 +29,14 @@ export function metrics(res) {
     avgScoreBought: st.avgScoreBought, clampSteps: st.clampSteps, rateMaxBidRatio: st.rateMaxBidRatio,
     saleOverCost: st.saleOverCost, saleOverFloor: st.saleOverFloor, saleAgeH: st.saleAgeHours, saleAtFloor: st.saleAtFloorShare, anchorBps: st.finalAnchorBps,
     stmtArrivals: st.stmtArrivals, stmtMiss: st.stmtMiss,
-    xFills: st.xFills, xMedianIntervalH: st.xMedianIntervalH, xMeanDiscount: st.xMeanDiscount,
-    boughtX: T.boughtX, exitedX: T.exitedX, burnEthM: T.burned / 1e6, burnXM: T.burnedX / 1e6, listingPaid: T.listingPaid, spent: T.spent,
+    boughtX: T.boughtX, exitedX: T.exitedX, burnEthM: T.burned / 1e6, listingPaid: T.listingPaid, spent: T.spent,
     stCost: T.composed ? T.stCost / T.composed : NaN, stRating: T.composed ? T.stRating / T.composed : NaN,
-    xPotEnd: res.core.xPot, xToBuybackEnd: res.core.xToBuyback, potEnd: res.core.ethPot, toBuybackEnd: res.core.ethToBuyback,
+    xPotEnd: res.core.xPot, redeemBurnEnd: res.core.ethRedeemBurn, redeemBurnMoved: res.core.redeemBurnMoved, potEnd: res.core.ethPot, toBuybackEnd: res.core.ethToBuyback,
     feeToBurnEnd: res.core.feeToBuyback,
     recycledRatio: T.spent ? T.saleGross / T.spent : 0, fees: S.cumFees[H], saleToPot: T.saleToPot, saleToBuyback: T.saleToBuyback,
     f80hours: st.first80 ? st.first80.hours : NaN, f80ratio: st.first80 ? st.first80.ratio : NaN, f80score: st.first80 ? st.first80.avgScore : NaN,
     exitedValue: T.exitedValue, exitedCost: T.exitedCost, exitedValueOverCost: T.exitedCost ? T.exitedValue / T.exitedCost : NaN,
-    exitedAgeDays: T.exited ? T.exitedAge / T.exited / 86400 : NaN, xValue: T.xValue, xCoinM: T.xCoin / 1e6, stratBought: T.stratBought,
+    exitedAgeDays: T.exited ? T.exitedAge / T.exited / 86400 : NaN, xRecv: T.xRecv, stratBought: T.stratBought,
   });
   return m;
 }
@@ -154,29 +153,28 @@ batches.q7 = () => {
   return out;
 };
 
-// ---- q8: phase 2 arrives on day 14, 30 or 60, for a range of exitToken prices
+// ---- q8: phase 2 arrives on day 14, 30 or 60 in hold (exitMode 1) or on (exitMode 2), for a range of exit token values per score point
 batches.q8 = () => {
-  const out = { grid: [], bid: [], fills: [], noModule: many({}, SEEDS3) };
-  const XPS = [5e-6, 1e-5, 1.5e-5, 2e-5, 3e-5, 5e-5, 1e-4];
-  for (const day of [14, 30, 60]) {
-    for (const xp of XPS) {
-      const runs = SEEDS3.map((seed) => {
-        const r = simulate({ seed, phase2Day: day, xp, days: 90 });
-        const m = metrics(r), b = r.at(day - 1 / 24), p7 = r.at(Math.min(90, day + 7)), p30 = r.at(Math.min(90, day + 30));
-        return Object.assign(m, { waitBefore: b.waiting, exitedAt7: p7.exited, xPotAt7: p7.xPot, xRateAt7: p7.xRate, xBoughtAt7: p7.xBought, xBoughtAt30: p30.xBought, xToBuybackAt30: p30.xToBuyback });
-      });
-      out.grid.push(Object.assign({ day, xp }, mean(runs)));
+  const out = { grid: [], bid: [], noModule: many({}, SEEDS3) };
+  const XPS = [1e-5, 2e-5, 3e-5, 5e-5, 1e-4, 2e-4]; // eth value per point; a 440 point credit redeems 440 times this
+  for (const mode of [1, 2]) {
+    for (const day of [14, 30, 60]) {
+      for (const xpPerPoint of XPS) {
+        const runs = SEEDS3.map((seed) => {
+          const r = simulate({ seed, phase2Day: day, phase2ExitMode: mode, xpPerPoint, days: 90 });
+          const m = metrics(r), b = r.at(day - 1 / 24), p7 = r.at(Math.min(90, day + 7)), p30 = r.at(Math.min(90, day + 30));
+          return Object.assign(m, { waitBefore: b.waiting, exitedAt7: p7.exited, xPotAt7: p7.xPot, xBoughtAt7: p7.xBought, xBoughtAt30: p30.xBought, redeemBurnMovedAt30: p30.redeemBurnMoved });
+        });
+        out.grid.push(Object.assign({ mode, day, xpPerPoint }, mean(runs)));
+      }
     }
   }
-  for (const xp of [1e-5, 3e-5]) {
-    const r = simulate({ xp, phase2Day: 14, seed: 1 });
-    for (const d of [14.5, 15, 16, 18, 21, 30, 45, 60, 90]) { const a = r.at(d); out.bid.push({ xp, day: d, xRate: a.xRate, xPot: a.xPot, xToBuyback: a.xToBuyback, xBought: a.xBought, exited: a.exited, burnPct: a.burnedPct, xFills: a.xFills }); }
+  for (const xpPerPoint of [2e-5, 1e-4]) {
+    const r = simulate({ xpPerPoint, phase2Day: 14, seed: 1 });
+    for (const d of [14.5, 15, 16, 18, 21, 30, 45, 60, 90]) { const a = r.at(d); out.bid.push({ xpPerPoint, day: d, xPot: a.xPot, redeemBurn: a.redeemBurn, xBought: a.xBought, exited: a.exited, burnPct: a.burnedPct }); }
   }
-  const r = simulate({ xp: 3e-5, phase2Day: 14, seed: 1 });
-  out.fills = r.xFillLog.slice(0, 10).map(([hour, sliceValue, coinIn, ethCost, disc]) => ({ day: hour / 24, sliceValue, coinIn, ethCost, disc }));
-  out.fillCount = r.xFillLog.length;
-  // a keeper that exits only when the module pays at least the asking price
-  out.keeper = [0, 1].map((ratio) => Object.assign({ exitMinRatio: ratio }, many({ phase2Day: 30, xp: 1e-5, exitMinRatio: ratio }, SEEDS3)));
+  // a keeper that redeems only when the exit token returned is worth at least the asking price
+  out.keeper = [0, 1].map((ratio) => Object.assign({ exitMinRatio: ratio }, many({ phase2Day: 30, xpPerPoint: 3e-5, exitMinRatio: ratio }, SEEDS3)));
   return out;
 };
 
@@ -189,7 +187,7 @@ batches.q9 = () => {
     ['buyShareLate', 0.42, 0.52], ['rateStart', rateAt(0.25), rateAt(1.25)], ['markupBps', 10000, 20000], ['fastDecayBpsPerHour', 50, 400], ['floor, both floors', { floorBps: 5000, saleFloorBps: 5000 }, { floorBps: 7500, saleFloorBps: 7500 }],
     ['feeToBuybackBps', 0, 2500], ['buyerWaits', 'no', 'floor'],
     ['saleToBuybackBps', 0, 10000], ['dropPerCreditPct', 0.25, 2], ['climbPerMin', 0.25, 2], ['ceilPct', 110, 200], ['idleLoosenPct', 0, 5],
-    ['listedShare', 0, 0.5], ['sniperVolShare', 0.2, 0.6], ['h1Share', 0.45, 0.7], ['exitAfter', 24 * 3600, 7 * 86400], ['stmtPick', 'cheapest', 'random'],
+    ['listedShare', 0, 0.5], ['sniperVolShare', 0.2, 0.6], ['h1Share', 0.45, 0.7], ['feeToRedeemBurnBps', 0, 2500], ['stmtPick', 'cheapest', 'random'],
   ];
   const out = { base, rows: [] };
   for (const [k, lo, hi] of tests) {

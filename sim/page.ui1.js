@@ -9,19 +9,23 @@ const fmtSci = (x) => (x == null || !isFinite(x) ? 'n/a' : x === 0 ? '0' : x.toE
 
 // the one mid run change: the setting, its unit and a sensible value to switch to
 const CHG = {
-  floorBps: { label: 'lowest price (floorBps and saleFloorBps together)', unit: 'bps of cost, 1000 to 10000, 1000 to 40000 for saleFloorBps', to: 6000, also: ['saleFloorBps'] },
+  floorBps: { label: 'lowest price (floorBps and saleFloorBps together)', unit: 'bps of cost, 1000 to 10000, 1000 to 40000 for saleFloorBps. launch 10000', to: 7500, also: ['saleFloorBps'] },
   markupBps: { label: 'markupBps (start price over the anchor)', unit: 'bps, 10000 to 40000', to: 12000 },
   feeToBuybackBps: { label: 'feeToBuybackBps (fee share to burn $CC)', unit: 'bps, 0 to 10000', to: 2500 },
   saleToBuybackBps: { label: 'saleToBuybackBps (sale proceeds to burn $CC)', unit: 'bps, 0 to 10000', to: 2500 },
-  exitAfter: { label: 'exitAfter', unit: 'hours, 1 to 8760', to: 24, hours: true },
+  feeToRedeemBurnBps: { label: 'feeToRedeemBurnBps (fee share to the redeem burn reserve)', unit: 'bps, 0 to 10000, with feeToBuybackBps at most 10000', to: 2500 },
+  redeemBurnBps: { label: 'redeemBurnBps (reserve share released by a redemption)', unit: 'bps, 0 to 10000', to: 5000 },
+  exitMode: { label: 'exitMode (needs phase 2 switched on to have an effect)', unit: '0 off, 1 hold, 2 on', to: 0 },
+  exitBidMarginBps: { label: 'exitBidMarginBps (margin under the redeemable value)', unit: 'bps, 0 to 9000', to: 4000 },
   rateCap: { label: 'rateCap (most the eth rate can be)', unit: 'wei per credit, 1e13 to 1e18', to: 2.2e16 },
 };
 // every control: key in the state object, how to show it. launch values are the Core's (script/config/mainnet.json)
 const BASE_STATE = { volPreset: 'comparable', volScale: 1, volTail: 17, volHalfLifeDays: 3, buyShareLate: 'auto', pricePath: 'flat', priceP0: 0.0089, wtpMult: 1, stmtPerDay: 8, buyerWaits: 'no', impactElast: 0.12,
-  openPct: 100, markupBps: 15000, startCapBps: 100000, fastBpsH: 100, kneeBps: 10000, slowBpsH: 25, floorBps: 7500, saleFloorBps: 7500, saleToBuybackBps: 5000, feeToBuybackBps: 0, exitAfterH: 105, dropPerCreditPct: 0.5, dropToPct: 50, climbPerMin: 0.5, ceilPct: 110, idleLoosenPct: 2, rateCap: 26700000000000000, fundedRule: 'built',
+  openPct: 100, markupBps: 15000, startCapBps: 100000, fastBpsH: 100, kneeBps: 10000, slowBpsH: 25, floorBps: 10000, saleFloorBps: 10000, saleToBuybackBps: 5000, feeToBuybackBps: 0, feeToRedeemBurnBps: 1000, anchorHalfLifeDays: 7, anchorMinCost: 0.1, dropPerCreditPct: 0.5, dropToPct: 50, climbPerMin: 0.5, ceilPct: 110, idleLoosenPct: 2, recoveryClimbPerMin: 2, recoveryGapPct: 10, peakHalfLifeHours: 6, rateCap: 26700000000000000,
   basefeeGwei: 1, keeperFee: 0.0005, keeperMaxBaseFee: 10,
+  pauseOn: false, pauseDay: 20, pauseDays: 7,
   chgOn: false, chgDay: 30, chgKey: 'saleToBuybackBps', chgValue: 7500,
-  phase2On: false, phase2Day: 14, xp: 0.0108, takerThreshold: 0.15, days: 90, seed: 7 };
+  phase2On: false, phase2Day: 14, phase2ExitMode: 2, xpPerPoint: 0.0108 / 440, exitPoolSet: false, exitBidMarginBps: 2000, redeemBurnBps: 2000, days: 90, seed: 7 };
 const GROUPS = [
   { title: 'market', open: true, ctl: [
     { k: 'volPreset', t: 'select', label: '$CC volume preset', opts: [['comparable', 'comparable decay'], ['sustained17', 'sustained 17 eth a day'], ['sustained50', 'sustained 50 eth a day'], ['deadWeek1', 'dead after week one'], ['custom', 'custom']] },
@@ -38,7 +42,6 @@ const GROUPS = [
   ] },
   { title: 'launch settings', open: true, ctl: [
     { k: 'openPct', t: 'range', label: 'opening limit, percent of market', min: 20, max: 125, step: 5, fmt: (v) => v + '%', hint: 'rateStart, wei per credit =', hintFn: (s) => fmtSci(rateOf(s)) },
-    { k: 'exitAfterH', t: 'range', label: 'exitAfter, hours', min: 3, max: 336, step: 3, fmt: (v) => v + 'h', hint: 'a statement may exit in phase 2 after this long in the Core. 150 hours is when a 150% start reaches the 75% floor at launch settings' },
   ] },
   { title: 'selling statements', open: true, ctl: [
     { k: 'markupBps', t: 'range', label: 'start price over the anchor (markupBps)', min: 10000, max: 40000, step: 500, fmt: (v) => v / 100 + '%', hint: 'asking price when a statement is listed, as a share of the anchor, the running level of sale prices (100% of cost at launch, each sale moves it halfway to the price paid, never below 100%)' },
@@ -46,16 +49,27 @@ const GROUPS = [
     { k: 'fastBpsH', t: 'range', label: 'fast fall, bps of cost an hour (fastDecayBpsPerHour)', min: 10, max: 2000, log: true, fmt: (v) => Math.round(v), hint: 'asking price walk:', hintFn: (s) => walkText(s) },
     { k: 'kneeBps', t: 'range', label: 'knee, where the fast fall ends (kneeBps)', min: 2000, max: 100000, step: 500, fmt: (v) => v / 100 + '%', hint: 'a start at or below the knee falls at the slow rate from the first second' },
     { k: 'slowBpsH', t: 'range', label: 'slow fall, bps of cost an hour (slowDecayBpsPerHour)', min: 5, max: 1000, log: true, fmt: (v) => Math.round(v), hint: 'the rate below the knee, down to the floor' },
-    { k: 'floorBps', t: 'range', label: 'floor of the asking price (floorBps)', min: 2000, max: 10000, step: 500, fmt: (v) => v / 100 + '%', hint: 'the price falls to here and stops. at most the knee' },
-    { k: 'saleFloorBps', t: 'range', label: 'hard floor, set in the Core (saleFloorBps)', min: 1000, max: 12000, step: 500, fmt: (v) => v / 100 + '%', hint: 'no sale ever goes under this share of cost, even if the floor above is lower' },
+    { k: 'floorBps', t: 'range', label: 'floor of the asking price (floorBps)', min: 2000, max: 10000, step: 500, fmt: (v) => v / 100 + '%', hint: 'the price falls to here and stops. at most the knee. launch 10000, so a statement is asked at its cost once the fall reaches it' },
+    { k: 'saleFloorBps', t: 'range', label: 'hard floor, set in the Core (saleFloorBps)', min: 1000, max: 12000, step: 500, fmt: (v) => v / 100 + '%', hint: 'no sale ever goes under this share of cost, even if the floor above is lower. launch 10000: unsold statements sit at cost' },
     { k: 'saleToBuybackBps', t: 'range', label: 'saleToBuybackBps, sale proceeds to burn $CC', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of sale proceeds that buys and burns $CC, the rest goes to the pot' },
     { k: 'feeToBuybackBps', t: 'range', label: 'feeToBuybackBps, fee share to burn $CC', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of $CC swap fee eth that buys and burns $CC instead of going to the pot' },
+    { k: 'feeToRedeemBurnBps', t: 'range', label: 'feeToRedeemBurnBps, fee share to the redeem burn reserve', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of $CC swap fee eth held back for redemptions. each redemption of a held statement moves redeemBurnBps of the reserve to buy and burn $CC. launch 1000. with feeToBuybackBps at most 10000 together' },
+    { k: 'anchorHalfLifeDays', t: 'range', label: 'anchorHalfLife, days', min: 1, max: 90, step: 1, fmt: (v) => v + 'd', hint: 'the part of the anchor above 100% of cost halves in this time. launch 7' },
+    { k: 'anchorMinCost', t: 'range', label: 'anchorMinCost, eth', min: 0, max: 10, step: 0.1, fmt: (v) => v.toFixed(1), hint: 'a sale of a statement that cost less leaves the anchor where it is. launch 0.1' },
+  ] },
+  { title: 'pause statement sales (setPaused)', open: false, ctl: [
+    { k: 'pauseOn', t: 'check', label: 'the owner pauses statement sales' },
+    { k: 'pauseDay', t: 'range', label: 'from day', min: 1, max: 89, step: 1, fmt: (v) => 'day ' + v },
+    { k: 'pauseDays', t: 'range', label: 'for how many days', min: 1, max: 60, step: 1, fmt: (v) => v + 'd', hint: 'a buy reverts while paused, the price clock stops, composing, the bid, redemptions and buybacks run on' },
   ] },
   { title: 'engine settings', open: false, ctl: [
     { k: 'dropPerCreditPct', t: 'range', label: 'dropPerCreditBps', min: 0.1, max: 5, log: true, fmt: (v) => Math.round(v * 100), hint: 'bps the bid falls after each credit bought. launch 50' },
     { k: 'dropToPct', t: 'range', label: 'dropFloorBps', min: 50, max: 99, step: 1, fmt: (v) => v * 100, hint: 'within one minute the bid stays at or above this share of the rate at the first fill. launch 5000' },
     { k: 'climbPerMin', t: 'range', label: 'climbPerMinBps', min: 0.1, max: 3, log: true, fmt: (v) => Math.round(v * 100), hint: 'bps the bid climbs each minute. launch 50' },
-    { k: 'ceilPct', t: 'range', label: 'ceilBps', min: 101, max: 300, step: 1, fmt: (v) => v * 100, hint: 'the bid never climbs above this share of the last fill rate. launch 11000' },
+    { k: 'ceilPct', t: 'range', label: 'ceilBps', min: 101, max: 300, step: 1, fmt: (v) => v * 100, hint: 'the bid never climbs above this share of the ceiling anchor, the higher of the last fill rate and the remembered peak. launch 11000' },
+    { k: 'recoveryClimbPerMin', t: 'range', label: 'recoveryClimbPerMinBps', min: 0.5, max: 10, log: true, fmt: (v) => Math.round(v * 100), hint: 'bps the bid climbs each minute while it is more than recoveryGapBps under the remembered peak. launch 200' },
+    { k: 'recoveryGapPct', t: 'range', label: 'recoveryGapBps', min: 0, max: 50, step: 1, fmt: (v) => v * 100, hint: 'the recovery climb applies only below the peak less this share. launch 1000' },
+    { k: 'peakHalfLifeHours', t: 'range', label: 'peakHalfLife, hours', min: 0.5, max: 168, log: true, fmt: (v) => fmtN(v) + 'h', hint: 'the remembered peak halves in this time. launch 6' },
     { k: 'idleLoosenPct', t: 'range', label: 'idleLoosenBps', min: 0, max: 20, step: 0.5, fmt: (v) => Math.round(v * 100), hint: 'bps added to the ceiling anchor every 10 idle minutes. launch 200' },
     { k: 'rateCap', t: 'range', label: 'rateCap, wei per credit', min: 1.3e16, max: 1e18, log: true, fmt: fmtSci, hint: 'the eth rate never passes it. launch 2.67e16, 3 times rateStart. the page keeps it at or above rateStart' },
     { k: 'basefeeGwei', t: 'range', label: 'base fee of the buyback calls, gwei', min: 0.1, max: 200, log: true, fmt: (v) => fmtN(v) + ' gwei', hint: 'the buyback caller is paid 270,000 gas at min(base fee, keeperMaxBaseFee) plus keeperFee out of each slice, the buyListing caller 470,000 gas at the same rate plus keeperFee out of the pot, at most the gap to the bid' },
@@ -70,9 +84,12 @@ const GROUPS = [
   ] },
   { title: 'phase 2: exitModule and exitToken', open: false, ctl: [
     { k: 'phase2On', t: 'check', label: 'phase 2 switched on' },
-    { k: 'phase2Day', t: 'range', label: 'on day', min: 1, max: 89, step: 1, fmt: (v) => 'day ' + v },
-    { k: 'xp', t: 'range', label: 'exitToken price, eth per credit', min: 8e-4, max: 0.13, log: true, fmt: fmtSci, hint: 'a statement of 80 credits pays 80 times this, about 0.9 eth at 0.0108' },
-    { k: 'takerThreshold', t: 'range', label: 'exitToken auction taker discount', min: 0.02, max: 0.4, step: 0.01, fmt: (v) => (v * 100).toFixed(0) + '%', hint: 'discount to the pool price, skim included, that triggers a fill' },
+    { k: 'phase2Day', t: 'range', label: 'on day', min: 1, max: 89, step: 1, fmt: (v) => 'day ' + v, hint: 'the owner sets the exit module and exitMode that day. exitMode is 0 at launch: unsold statements sit at cost and nothing redeems' },
+    { k: 'phase2ExitMode', t: 'select', label: 'exitMode that day', opts: [[1, '1 hold: redemptions at cost, no exit token bid'], [2, '2 on: redemptions and the exit token bid']] },
+    { k: 'xpPerPoint', t: 'range', label: 'exit token value per score point, eth', min: 2e-6, max: 3e-4, log: true, fmt: fmtSci, hint: 'unitPerPoint at the exit token price. a statement of 80 credits at 440 points redeems 35,200 times this', hintFn: (s) => (s.xpPerPoint * 35200).toFixed(2) + ' eth' },
+    { k: 'exitPoolSet', t: 'check', label: 'exit token pool key set in the controller', hint: 'asking price is at least the redeemable value. unset at launch' },
+    { k: 'exitBidMarginBps', t: 'range', label: 'exitBidMarginBps', min: 0, max: 9000, step: 500, fmt: (v) => v, hint: 'the bid pays the redeemable value of a credit less this share. launch 2000' },
+    { k: 'redeemBurnBps', t: 'range', label: 'redeemBurnBps', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of the redeem burn reserve moved to buy and burn $CC by each redemption of an eth lane statement. launch 2000' },
   ] },
   { title: 'run', open: false, ctl: [
     { k: 'days', t: 'select', label: 'horizon', opts: [[30, '30 days'], [60, '60 days'], [90, '90 days'], [180, '180 days']] },
@@ -142,7 +159,8 @@ function syncControls() {
     else if (c.t === 'check') c.inp.checked = !!v;
     else if (document.activeElement !== c.inp) c.inp.value = String(v);
     if (c.only) $('row-' + k).style.display = state.volPreset === c.only ? '' : 'none';
-    if (k === 'phase2Day' || k === 'xp' || k === 'takerThreshold') $('row-' + k).style.opacity = state.phase2On ? 1 : 0.5;
+    if (k === 'phase2Day' || k === 'phase2ExitMode' || k === 'xpPerPoint' || k === 'exitPoolSet' || k === 'exitBidMarginBps') $('row-' + k).style.opacity = state.phase2On ? 1 : 0.5;
+    if (k === 'pauseDay' || k === 'pauseDays') $('row-' + k).style.opacity = state.pauseOn ? 1 : 0.5;
     if (k === 'chgDay' || k === 'chgKey' || k === 'chgValue') $('row-' + k).style.opacity = state.chgOn ? 1 : 0.5;
     if (c.hintFn) c.hintEl.innerHTML = c.hint + ' <b>' + c.hintFn(state) + '</b>';
   }
@@ -154,19 +172,26 @@ function toParams(s) {
     pricePath: s.pricePath, priceP0: s.priceP0, wtpMult: s.wtpMult, stmtPerDay: s.stmtPerDay, impactElast: s.impactElast, rateStart: rateOf(s),
     markupBps: s.markupBps, startCapBps: Math.max(s.startCapBps, s.markupBps), fastDecayBpsPerHour: Math.round(s.fastBpsH), kneeBps: Math.min(Math.max(s.kneeBps, s.floorBps), Math.max(s.startCapBps, s.markupBps)), slowDecayBpsPerHour: Math.round(s.slowBpsH), floorBps: s.floorBps, saleFloorBps: s.saleFloorBps,
     basefeeGwei: s.basefeeGwei, keeperFee: s.keeperFee, keeperMaxBaseFee: s.keeperMaxBaseFee,
-    buyerWaits: s.buyerWaits, feeToBuybackBps: s.feeToBuybackBps, saleToBuybackBps: s.saleToBuybackBps, exitAfter: s.exitAfterH * 3600,
+    buyerWaits: s.buyerWaits, feeToBuybackBps: s.feeToBuybackBps, feeToRedeemBurnBps: Math.min(s.feeToRedeemBurnBps, 10000 - s.feeToBuybackBps), saleToBuybackBps: s.saleToBuybackBps,
+    anchorHalfLife: Math.round(s.anchorHalfLifeDays * 86400), anchorMinCost: s.anchorMinCost, // the Core refuses the two fee shares above 10000 together
     bidRule: 'stepped', dropPerCreditPct: s.dropPerCreditPct, dropToPct: s.dropToPct, climbPerMin: s.climbPerMin, ceilPct: s.ceilPct, idleLoosenPct: s.idleLoosenPct,
+    recoveryClimbPerMin: Math.max(s.recoveryClimbPerMin, s.climbPerMin), recoveryGapPct: s.recoveryGapPct, peakHalfLifeHours: s.peakHalfLifeHours, // the Core needs the recovery climb at least the climb
     stepSec: 300, // 5 minute steps keep a live page responsive, credits within 1 percent of the 60 second steps of the batches
     rateCap: Math.max(s.rateCap, rateOf(s)), // the Core refuses a deploy with rateStart above rateCap
-    phase2Day: s.phase2On ? s.phase2Day : null, xp: s.xp, takerThreshold: s.takerThreshold, days: +s.days, seed: s.seed,
+    phase2Day: s.phase2On ? s.phase2Day : null, phase2ExitMode: +s.phase2ExitMode, xpPerPoint: s.xpPerPoint, exitPoolSet: !!s.exitPoolSet, exitBidMarginBps: s.exitBidMarginBps, redeemBurnBps: s.redeemBurnBps,
+    days: +s.days, seed: s.seed,
   };
   if (p.phase2Day != null && p.phase2Day >= p.days) p.phase2Day = null;
   p.schedule = [];
   if (s.chgOn && s.chgDay < p.days) {
     const ch = CHG[s.chgKey], patch = {};
-    patch[s.chgKey] = ch.hours ? Math.round(s.chgValue * 3600) : s.chgValue;
+    patch[s.chgKey] = s.chgValue;
     for (const k of ch.also || []) patch[k] = s.chgValue;
     p.schedule.push({ day: s.chgDay, patch });
+  }
+  if (s.pauseOn && s.pauseDay < p.days) {
+    p.schedule.push({ day: s.pauseDay, patch: { paused: true } });
+    if (s.pauseDay + s.pauseDays < p.days) p.schedule.push({ day: s.pauseDay + s.pauseDays, patch: { paused: false } });
   }
   return p;
 }
