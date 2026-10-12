@@ -136,6 +136,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event TargetsLocked();
     event ControllerSet(address controller);
     event ExitModuleSet(address exitModule, address exitToken, uint256 unitPerPoint);
+    /// `refreshUnitPerPoint` re-read `unitPerPoint` from the current module
+    event UnitPerPointRefreshed(address exitModule, uint256 unitPerPoint);
+    /// `releaseRedeemBurn` moved `amount` of the redeem burn reserve into the coin buyback
+    event RedeemBurnReleased(uint256 amount);
     event TargetAdded(address target);
     event TargetRemoved(address target);
     event CoinRescued(address indexed to, uint256 amount);
@@ -393,7 +397,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                            CONTROLLER READS
     //////////////////////////////////////////////////////////////*/
 
-    /// the settings, four packed slots at a fixed location shared with the library
+    /// the settings, three packed slots at a fixed location shared with the library
     function _st() private pure returns (Settings storage) {
         return SettingsStore.load();
     }
@@ -804,6 +808,31 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _setExitModule(module);
     }
 
+    /// re-reads `unitPerPoint` from the current module and stores it. works after `lockExitModule`, and changes
+    /// neither the module nor the exit token. the unit must be nonzero and at most `type(uint128).max`, the same check
+    /// a module set makes. the owner calls it after the module reports a new redeem rate
+    function refreshUnitPerPoint() external onlyOwner nonReentrant {
+        address module = exitModule;
+        if (module == address(0)) revert NoExitModule();
+        (bool ok, bytes memory out) = _ask(module, abi.encodeCall(IExitModule.unitPerPoint, ()), READ_GAS, 32);
+        uint256 unit = ok ? abi.decode(out, (uint256)) : 0;
+        if (unit == 0 || unit > type(uint128).max) revert BadModule();
+        unitPerPoint = unit;
+        emit UnitPerPointRefreshed(module, unit);
+    }
+
+    /// moves `amount` of the redeem burn reserve into the coin buyback, capped at the reserve. the eth stays inside the
+    /// core for a coin buy and burn: `ethRedeemBurn` falls and `ethToBuyback` rises by the same amount, so the tracked
+    /// total and solvency hold. callable after `migrate`. reverts `ZeroAmount` when the reserve is empty or `amount` is 0
+    function releaseRedeemBurn(uint256 amount) external onlyOwner nonReentrant {
+        uint256 reserve = ethRedeemBurn;
+        uint256 move = amount < reserve ? amount : reserve;
+        if (move == 0) revert ZeroAmount();
+        ethRedeemBurn = reserve - move;
+        ethToBuyback += move;
+        emit RedeemBurnReleased(move);
+    }
+
     /// allows a target of `buyListing` at once. forbidden targets are refused. reverts after `lockTargets`
     function addTarget(address t) external onlyOwner {
         if (targetsLocked) revert Locked("targets");
@@ -999,7 +1028,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return _statements[sid].rating;
     }
 
-    /// every setting. the four packed slots go to the library, which unpacks them into the struct, and the answer is
+    /// every setting. the three packed slots go to the library, which unpacks them into the struct, and the answer is
     /// returned as it comes (an abi encoded `Settings`)
     function settings() external view returns (Settings memory) {
         bytes32 slot = SettingsStore.SLOT;

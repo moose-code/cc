@@ -110,7 +110,10 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_ADOPT = 35;
     // the owner pauses and resumes sales in the sale controller
     uint8 internal constant A_PAUSE = 36;
-    uint256 internal constant N_ACTIONS = 37;
+    // the owner refreshes the stored unit from the module and releases part of the redeem burn reserve
+    uint8 internal constant A_REFRESH_UNIT = 37;
+    uint8 internal constant A_RELEASE_REDEEM = 38;
+    uint256 internal constant N_ACTIONS = 39;
 
     // violation codes
     uint256 internal constant V_ETH_OUT = 1; // eth left the core beyond what the action explains
@@ -337,7 +340,9 @@ abstract contract HandlerBase is Test {
             "rescueNft",
             "migrate",
             "adopt",
-            "pause"
+            "pause",
+            "refreshUnit",
+            "releaseRedeem"
         ];
         names = n;
         controllers.push(w.v1);
@@ -2186,7 +2191,9 @@ abstract contract HandlerBase is Test {
         if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForExitToken(uint256[])", _firstOf(who)))) return;
         uint256 len = inventory[who].length;
         if (len == 0) return _skip(a);
-        uint256 unit = _unitOf();
+        // the bid pays by the lower of the stored unit and the module's live unit (`_bidUnit`), both nonzero here. a
+        // module set to fail its unit read (`module.revertUnit()`) reverts the whole bid
+        uint256 unit = _bidUnit();
         if (unit == 0) return _skip(a);
         uint256 want = bound(nSeed, 1, 10);
         (uint256[] memory ids, uint256 n) = _pickExitIds(who, len, want, pick, unit);
@@ -2212,11 +2219,13 @@ abstract contract HandlerBase is Test {
         _att(a);
         vm.prank(who);
         try core.sellForExitToken(ids) {
+            if (module.revertUnit()) _flag(V_MODEL, "the bid went through with a failing live unit read");
             _ok(a);
             _afterSellExit(who, p, bound_, b0);
         } catch (bytes memory why) {
             _failed(b0, pot0, rate0, "sellForExit");
-            _unexpected(a, why);
+            if (module.revertUnit()) _ok(a);
+            else _unexpected(a, why);
         }
         _rsCheck(rs, 0);
     }
@@ -2243,10 +2252,19 @@ abstract contract HandlerBase is Test {
         _eth(b0, 0, 0, "sellForExit");
     }
 
-    /// the unit the core stored when the module was last set. the module can change what it reports, the core reads
-    /// it again only when a module is set
+    /// the stored unit: read when the module was last set or refreshed. the exit check basis `exitStatement` uses for
+    /// its required minimum. the module can change what it reports, the core keeps the stored value until a set or a
+    /// `refreshUnitPerPoint`
     function _unitOf() internal view returns (uint256 u) {
         return core.unitPerPoint();
+    }
+
+    /// the unit the exit token bid pays by: the lower of the stored unit and the module's live unit, so a module that
+    /// lowered its rate cannot make the bid overpay. the core reads both and takes the smaller
+    function _bidUnit() internal view returns (uint256) {
+        uint256 stored = core.unitPerPoint();
+        uint256 live = module.currentUnit();
+        return live < stored ? live : stored;
     }
 
     /// the controller's eligibility answer read the way the core reads it: a revert, a short answer or a false reads as

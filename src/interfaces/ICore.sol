@@ -78,6 +78,7 @@ interface ICore {
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
     event OwnershipTransferred(address indexed from, address indexed to);
     event RateSet(uint256 rate);
+    event RedeemBurnReleased(uint256 amount);
     event SettingsSet(Settings settings);
     event Skimmed(uint256 eth, uint256 exitToken);
     event StatementExited(uint256 indexed sid, Lane lane, uint256 received);
@@ -87,6 +88,7 @@ interface ICore {
     event TargetAdded(address target);
     event TargetRemoved(address target);
     event TargetsLocked();
+    event UnitPerPointRefreshed(address exitModule, uint256 unitPerPoint);
 
     receive() external payable;
 
@@ -136,6 +138,8 @@ interface ICore {
     function pileSize(Lane lane) external view returns (uint256);
     function rateAtCheckpoint() external view returns (uint256);
     function ratingOf(uint256 sid) external view returns (uint256);
+    function refreshUnitPerPoint() external;
+    function releaseRedeemBurn(uint256 amount) external;
     function removeTarget(address target) external;
     function rescueCoin(address, uint256) external;
     function rescueNft(address, uint256, address) external;

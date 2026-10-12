@@ -483,6 +483,8 @@ contract ReviewFlowCoreTest is Fixture {
         _fundPot(3 ether);
         Settings memory s = core.settings();
         s.exitBidMarginBps = 0;
+        // slippage at or below the bid margin: a zero margin needs zero slippage
+        s.exitSlippageBps = 0;
         _setSettings(s);
         xt.mint(address(core), 1e22);
         core.skim();

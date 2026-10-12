@@ -73,13 +73,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x91b46f22813af17a7c1b55e984720866018df0e3ae757d15edda318e431bf4dc;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0xc25270c96a8a7727555e72bb144ff005318b3b323df1b27af331d68cc25c19ea;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x46057493ff133ace355b0e5e004cca36e0d6bcea19f201a9c88a097120baee8f;
+    bytes32 internal constant BUILD_HASH_CORE = 0x2029cddc33642cce448c22a1cd466eac4870c9308a6041c449b91d1c72e89feb;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x2482aabdc316f7ed9eb3bfd38ebb75932e5e90f3de8b38f8c12ca57820a34054;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xfbed47e49617ab8ef5142faa553d98923ff16cbd7368158cd6fabd1b54c366ab;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
-    bytes32 internal constant BUILD_HASH_LENS = 0xc96886d3d5d2387d3006879c63a9466d3ca091d3e5b5f137baff0ad74d28c30d;
+    bytes32 internal constant BUILD_HASH_LENS = 0x4465f4e05dee796565288bcecbb6bedabf1047522ca73fbb0cd37648c38be3c2;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x5a7edd1b7a89e0069af2838cfb769638adf2d086adcdbe86d8487a467e51f378;
+        0x73162a8be72339a939d455dba2141d4caa2cb3dc19ce7b102709388d93de1023;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;

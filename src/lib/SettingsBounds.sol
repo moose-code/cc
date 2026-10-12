@@ -36,6 +36,8 @@ library SettingsBounds {
         if (s.exitMode > 2) return "exitMode";
         if (s.exitSlippageBps > 1_000) return "exitSlippageBps";
         if (s.exitBidMarginBps > 9_000) return "exitBidMarginBps";
+        // the exit lane cycle (bid then redeem) cannot lose more than its margin: slippage at most the bid margin
+        if (s.exitSlippageBps > s.exitBidMarginBps) return "exitSlippageBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         return bytes32(0);
     }

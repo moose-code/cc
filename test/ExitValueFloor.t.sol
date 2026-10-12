@@ -108,27 +108,38 @@ contract ExitValueFloorTest is Fixture {
         assertEq(ctl.priceOf(sid), curve, "the asking price is the curve");
     }
 
-    function test_uninitializedPoolGivesTheCurve() public {
+    function test_uninitializedPoolRejected() public {
         _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        uint256 curve = ctl.priceOf(sid);
-        // point at a pool that was never initialized: the sqrt price reads zero
-        _setKey(address(0), address(xt), 500, 10);
-        assertTrue(ctl.exitPoolKeySet(), "the key is set");
-        assertEq(ctl.priceOf(sid), curve, "a zero pool read falls to the curve");
+        // a pool that was never initialized reads a zero sqrt price: the setter refuses it so the floor is never off
+        IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
+            currency0: IControllerV1.Currency.wrap(address(0)),
+            currency1: IControllerV1.Currency.wrap(address(xt)),
+            fee: 500,
+            tickSpacing: 10,
+            hooks: address(0)
+        });
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("exitPoolKey")));
+        ctl.setExitPoolKey(k);
+        assertFalse(ctl.exitPoolKeySet(), "the key stays unset");
     }
 
-    function test_setterAcceptsBothCurrencyOrders() public {
+    function test_setterTakesNativeEthCurrency0Only() public {
         _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        uint256 curve = ctl.priceOf(sid);
-        // native eth currency0, exit token currency1 (the order a real native pool has)
-        _setKey(address(0), address(xt), 3000, 60);
-        assertTrue(ctl.exitPoolKeySet());
-        assertEq(ctl.priceOf(sid), curve, "uninitialized pool: the ask is the curve");
-        // exit token currency0, native eth currency1 (accepted for completeness; a native pool cannot sort this way)
-        _setKey(address(xt), address(0), 3000, 60);
-        assertEq(ctl.priceOf(sid), curve, "the reverse order is accepted and falls to the curve");
+        // native eth currency0, exit token currency1, on an initialized pool: accepted
+        _initAndSet(_highSqrtPrice(), 3000, 60);
+        assertTrue(ctl.exitPoolKeySet(), "the native eth currency0 order is accepted");
+        // exit token currency0, native eth currency1 cannot be a native eth pool and is refused
+        IControllerV1.PoolKey memory reverseKey = IControllerV1.PoolKey({
+            currency0: IControllerV1.Currency.wrap(address(xt)),
+            currency1: IControllerV1.Currency.wrap(address(0)),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: address(0)
+        });
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("exitPoolKey")));
+        ctl.setExitPoolKey(reverseKey);
     }
 
     function test_setterRejectsPairsWithoutTheTokenAndNativeEth() public {

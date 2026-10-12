@@ -171,15 +171,18 @@ contract CoreLens {
         return ok && out.length == 32 && abi.decode(out, (bool));
     }
 
-    /// the exit token the bid pays for a live credit now, zero when the bid is off (`exitMode` other than 2) or no
-    /// module is set. the Core reads the same score from the credit score contract in `sellForExitToken`
+    /// the exit token the bid pays for a live credit now, zero when the bid is off: no module set, `exitMode` other
+    /// than 2, or the engine retired. the bid is capped at `xPot`, the most `sellForExitToken` can pay for one credit.
+    /// the Core reads the same score from the credit score contract in `sellForExitToken`
     function exitBidOf(uint256 id) external view returns (uint256) {
         ICore core = CORE;
-        if (core.exitModule() == address(0)) return 0;
+        if (core.exitModule() == address(0) || core.retired()) return 0;
         Settings memory st = core.settings();
         if (st.exitMode != 2) return 0;
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(ICredits(CREDITS).seedOf(id), ICredits(CREDITS).timestampOf(id));
-        return score * core.unitPerPoint() * (10_000 - st.exitBidMarginBps) / 10_000;
+        uint256 bid = score * core.unitPerPoint() * (10_000 - st.exitBidMarginBps) / 10_000;
+        uint256 pot = core.xPot();
+        return bid > pot ? pot : bid;
     }
 
     function _statements(uint256 start, uint256 n) private view returns (StatementView[] memory out) {

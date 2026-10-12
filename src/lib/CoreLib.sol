@@ -10,7 +10,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {Lane, ICredits, ICreditScore, IStatements, Settings, Mainnet} from "../interfaces/Interfaces.sol";
+import {Lane, ICredits, ICreditScore, IExitModule, IStatements, Settings, Mainnet} from "../interfaces/Interfaces.sol";
 import {Halving} from "./Halving.sol";
 import {SettingsBounds} from "./SettingsBounds.sol";
 import {SettingsStore} from "./SettingsStore.sol";
@@ -48,7 +48,7 @@ struct CoreState {
 }
 
 /// the one linked library of the Core: the settings write (validation, storage, event), the eth rate (the climb with its
-/// clamp and ceiling, and the drop on a fill), the exit auction decay, the pool manager swap of the coin buyback, the
+/// clamp and ceiling, and the drop on a fill), the pool manager swap of the coin buyback, the
 /// pull of the fee router's balance and the sale of credits into the exit token bid.
 /// it holds no state of its own and is called by delegatecall, so it works on the Core's storage and balance, and the
 /// Core keeps its runtime under the size limit. deployed once before the Core (docs/DEPLOY.md)
@@ -126,7 +126,7 @@ library CoreLib {
     event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
 
     /// @notice validates the settings, stores them and logs them. the Core forwards its own `setSettings` call here
-    /// untouched (same selector), after it checkpointed both rates. the constructor calls it too. a change of
+    /// untouched (same selector), after it checkpointed the eth rate. the constructor calls it too. a change of
     /// `peakHalfLife` restates the remembered peak at the old half life before storing the new one, so the new half
     /// life decays the peak forward only
     function setSettings(Settings calldata ns) external {
@@ -571,9 +571,11 @@ library CoreLib {
         _sellForExitToken(ids, minOut);
     }
 
-    /// pays each credit `score * unitPerPoint * (10_000 - exitBidMarginBps) / 10_000` in exit token from `xPot`, reading
-    /// the score from the credit score contract. runs only while `exitMode` is 2. each credit's price must not exceed the
-    /// remaining pot. the credit record keeps the exit token paid as its cost
+    /// pays each credit `score * unit * (10_000 - exitBidMarginBps) / 10_000` in exit token from `xPot`, where `unit` is
+    /// the lower of the stored `unitPerPoint` and the module's live `unitPerPoint()`, so a module that lowered its rate
+    /// after the owner set it cannot make the bid overpay. reads the score from the credit score contract. runs only
+    /// while `exitMode` is 2. each credit's price must not exceed the remaining pot. the credit record keeps the exit
+    /// token paid as its cost. a failing or short live unit read reverts the whole bid
     function _sellForExitToken(uint256[] calldata ids, uint256 minOut) private {
         CoreState storage c = state();
         if (c.retired) revert Retired();
@@ -582,6 +584,8 @@ library CoreLib {
         if (ids.length == 0) revert Empty();
         if (c.exitModule == address(0)) revert NoExitModule();
         uint256 unit = c.unitPerPoint;
+        uint256 live = IExitModule(c.exitModule).unitPerPoint();
+        if (live < unit) unit = live;
         uint256 net = BPS - s.exitBidMarginBps;
         uint256 pot = c.xPot;
         uint256 total;

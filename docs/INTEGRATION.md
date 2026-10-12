@@ -192,6 +192,8 @@ the Core (`src/interfaces/ICore.sol`):
 | `EthRateFill` | `uint256 spent, uint256 rate, uint256 pot` | every spend from `ethPot`: `spent`, the price state after the drop (`rate`) and the pot after the spend |
 | `ExitModuleLocked` | (empty) | `lockExitModule` |
 | `ExitModuleSet` | `address exitModule, address exitToken, uint256 unitPerPoint` | `setExitModule` |
+| `UnitPerPointRefreshed` | `address exitModule, uint256 unitPerPoint` | `refreshUnitPerPoint`: the stored unit re-read from the current module, which works after `lockExitModule` |
+| `RedeemBurnReleased` | `uint256 amount` | `releaseRedeemBurn`: `amount` moved from the redeem burn reserve (`ethRedeemBurn`) into the coin buyback pot (`ethToBuyback`) |
 | `FeesAdded` | `uint256 amount` | `receive()` booked a flush of the fee router: `feeToBuybackBps` of it to the coin buyback pot, `feeToRedeemBurnBps` to the redeem burn reserve, the rest to `ethPot` |
 | `ListingBought` | `uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate` | `buyListing`. `cost` is the eth the target took, `paid` the payment to the caller, `rate` the price state after the fill. the cost basis of the credit is `cost + paid` |
 | `EngineRetired` | `address indexed successor` | the first `migrate`, once. the Core refuses the six doors from then on |

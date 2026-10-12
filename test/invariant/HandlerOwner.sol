@@ -69,6 +69,8 @@ abstract contract HandlerOwner is HandlerBase {
         if (uint256(s.feeToBuybackBps) + s.feeToRedeemBurnBps > 10_000) {
             s.feeToRedeemBurnBps = uint16(10_000 - s.feeToBuybackBps);
         }
+        // the exit lane cycle cannot lose more than its margin: slippage stays at or below the bid margin
+        if (s.exitSlippageBps > s.exitBidMarginBps) s.exitSlippageBps = s.exitBidMarginBps;
         // recoveryClimbPerMinBps is at least the final climbPerMinBps, set after the corners so it stays valid
         s.recoveryClimbPerMinBps = uint16(_f(_r(seed, 31), s.climbPerMinBps, 1_000, c.recoveryClimbPerMinBps));
         s.peakHalfLife = uint32(_f(_r(seed, 32), 600, 604_800, c.peakHalfLife));
@@ -261,6 +263,7 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.exitMode > 2) return "exitMode";
         if (s.exitSlippageBps > 1_000) return "exitSlippageBps";
         if (s.exitBidMarginBps > 9_000) return "exitBidMarginBps";
+        if (s.exitSlippageBps > s.exitBidMarginBps) return "exitSlippageBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         return bytes32(0);
     }
@@ -586,6 +589,72 @@ abstract contract HandlerOwner is HandlerBase {
         if (core.unitPerPoint() != next.currentUnit()) _flag(V_OWNER, "a module set did not read the unit again");
         if (core.allowedTarget(address(next))) {
             _flag(V_OWNER, "a module set left the allowed target flag of the module");
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                      REFRESH THE UNIT, RELEASE THE RESERVE
+    //////////////////////////////////////////////////////////////*/
+
+    /// the owner re-reads the stored unit from the current module. it changes no asset and, after a good refresh, the
+    /// stored unit equals the module's live unit. a stranger is refused with OnlyOwner
+    function refreshUnit(uint256 seed) external checked {
+        uint8 a = A_REFRESH_UNIT;
+        if (!phase2() || module.revertUnit()) return _skip(a);
+        bool stranger = seed % 5 == 0;
+        OPre memory p = _opre();
+        _att(a);
+        vm.prank(stranger ? _actor(seed >> 8) : owner);
+        try core.refreshUnitPerPoint() {
+            if (stranger) _flag(V_OWNER, "a stranger refreshed the unit");
+            if (core.unitPerPoint() != module.currentUnit()) _flag(V_OWNER, "refresh did not read the module live unit");
+            _opost(p, "refreshUnit");
+            _ok(a);
+        } catch (bytes memory why) {
+            _failed(p.bal, p.pot, p.rate, "refreshUnit");
+            _opost(p, "refreshUnit");
+            if (stranger && bytes4(why) == ICore.OnlyOwner.selector) _ok(a);
+            else _unexpected(a, why);
+        }
+    }
+
+    /// the owner moves part of the redeem burn reserve into the coin buyback. no eth leaves the core and the three eth
+    /// trackers keep their sum, so solvency and the eth books hold. a zero release or a stranger is refused
+    function releaseRedeem(uint256 seed, uint256 amt) external checked {
+        uint8 a = A_RELEASE_REDEEM;
+        bool stranger = seed % 5 == 0;
+        uint256 reserve = core.ethRedeemBurn();
+        uint256 ask = seed % 4 == 0 ? reserve + 1 : (seed % 4 == 1 ? 0 : _logBound(amt, 1, reserve == 0 ? 1 : reserve));
+        uint256 move = ask < reserve ? ask : reserve;
+        uint256 pot = core.ethPot();
+        uint256 tb = core.ethToBuyback();
+        uint256 bal = address(core).balance;
+        uint256 xp = core.xPot();
+        uint256 rate = core.ethRate();
+        _att(a);
+        vm.prank(stranger ? _actor(seed >> 8) : owner);
+        try core.releaseRedeemBurn(ask) {
+            if (stranger) _flag(V_OWNER, "a stranger released the reserve");
+            if (move == 0) _flag(V_OWNER, "a zero release was accepted");
+            if (core.ethRedeemBurn() != reserve - move) _flag(V_OWNER, "the reserve did not fall by the move");
+            if (core.ethToBuyback() != tb + move) _flag(V_OWNER, "the released reserve did not reach the coin buyback");
+            if (core.ethPot() != pot || core.xPot() != xp) _flag(V_OWNER, "a release moved the pot or the exit pot");
+            if (address(core).balance != bal) _flag(V_ETH_OUT, "a release moved eth out of the core");
+            _ok(a);
+        } catch (bytes memory why) {
+            _failed(bal, pot, rate, "releaseRedeem");
+            if (stranger) {
+                if (bytes4(why) != ICore.OnlyOwner.selector) _unexpected(a, why);
+                else _ok(a);
+            } else if (move == 0) {
+                if (bytes4(why) != ICore.ZeroAmount.selector) _unexpected(a, why);
+                else _ok(a);
+            } else {
+                _unexpected(a, why);
+            }
+            if (core.ethRedeemBurn() != reserve || core.ethToBuyback() != tb) {
+                _flag(V_REVERT_CHANGED, "a refused release moved a pot");
+            }
         }
     }
 

@@ -95,10 +95,9 @@ contract ControllerV1 is IController {
     bool public paused;
     /// whether the exit token pool key is set. launch value false
     bool public exitPoolKeySet;
-    /// true when the exit token is `exitPoolKey.currency0` and native eth is `currency1`, false for the reverse
-    bool private _exitIsCurrency0;
-    /// the uniswap v4 pool of the exit token against native eth, used to price the redeemable value floor. one currency
-    /// is the core's exit token, the other is native eth (the zero address). unset at launch
+    /// the uniswap v4 pool of the exit token against native eth, used to price the redeemable value floor. native eth
+    /// is `currency0` (the zero address) and the exit token is `currency1`, the only order a native eth pool sorts to.
+    /// unset at launch
     PoolKey public exitPoolKey;
     /// the pause windows in time order, disjoint. window `i` is paused from `start` until `end`. while `paused` is true the
     /// last window is open and its `end` is 0. `pausedBefore` is the paused seconds of windows `0` to `i - 1`
@@ -221,16 +220,17 @@ contract ControllerV1 is IController {
         emit PausedSet(v);
     }
 
-    /// sets the exit token / native eth pool whose sqrt price floors the asking price at a statement's redeemable value.
-    /// one currency must be the core's current exit token and the other native eth (the zero address). effective at once
+    /// sets the native eth / exit token pool whose sqrt price floors the asking price at a statement's redeemable value.
+    /// `currency0` must be native eth (the zero address) and `currency1` the core's current exit token, the order a
+    /// native eth pool sorts to. the pool must be initialized, so `_value` reads a live price at once. effective at once
     function setExitPoolKey(PoolKey calldata key) external onlyOwner {
         address token = CORE.exitToken();
         if (token == address(0)) revert BadSetting("exitToken");
         address c0 = Currency.unwrap(key.currency0);
         address c1 = Currency.unwrap(key.currency1);
-        if (c0 == token && c1 == address(0)) _exitIsCurrency0 = true;
-        else if (c1 == token && c0 == address(0)) _exitIsCurrency0 = false;
-        else revert BadSetting("exitPoolKey");
+        if (c0 != address(0) || c1 != token) revert BadSetting("exitPoolKey");
+        (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(key.toId());
+        if (sqrtPriceX96 == 0) revert BadSetting("exitPoolKey");
         exitPoolKey = key;
         exitPoolKeySet = true;
         emit ExitPoolKeySet(c0, c1, key.fee, key.tickSpacing, address(key.hooks));
@@ -300,7 +300,8 @@ contract ControllerV1 is IController {
 
     /// the redeemable value of statement `sid` in wei from the exit token pool: `rating * unitPerPoint` exit token base
     /// units priced at the pool sqrt price. zero when the pool key is unset, no exit module is set, the owed amount is
-    /// zero, or the pool sqrt price reads zero. `mulDiv` carries the sqrt price squared at full precision
+    /// zero, or the pool sqrt price reads zero. native eth is `currency0`, so wei per token base unit is
+    /// `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
     function _value(uint256 sid) private view returns (uint256) {
         if (!exitPoolKeySet) return 0;
         if (CORE.exitModule() == address(0)) return 0;
@@ -310,9 +311,6 @@ contract ControllerV1 is IController {
         if (sqrtPriceX96 == 0) return 0;
         uint256 q = FixedPoint96.Q96;
         uint256 p = sqrtPriceX96;
-        // native eth is currency1: wei per token base unit is (sqrtPrice / 2^96)^2
-        if (_exitIsCurrency0) return FullMath.mulDiv(FullMath.mulDiv(owed, p, q), p, q);
-        // native eth is currency0: wei per token base unit is (2^96 / sqrtPrice)^2
         return FullMath.mulDiv(FullMath.mulDiv(owed, q, p), q, p);
     }
 

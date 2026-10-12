@@ -656,7 +656,9 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// dispatches one handler action by number. the arguments mean what the action needs.
     function _act(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) internal virtual {
-        a = a % 37;
+        a = a % 39;
+        if (a == 38) return handler.releaseRedeem(w, x);
+        if (a == 37) return handler.refreshUnit(w);
         if (a == 36) return handler.pause(w, x);
         if (a == 35) return handler.adopt(w, x, y);
         if (a == 34) return handler.migrate(w, x);
@@ -764,6 +766,8 @@ abstract contract InvariantsBase is InvariantFixture {
         if (a == 36) return false;
         // 17 (buybackExit) is removed: the exit token dutch auction no longer exists, redeemed exit token goes to xPot
         if (a == 17) return false;
+        // refreshUnit reads the module, so it only lands in phase 2
+        if (a == 37) return handler.phase2();
         if (a >= 31 || a == 25) return true;
         if (a >= 26) return _saleSuite();
         if ((a >= 14 && a <= 18 || a == 24) && !handler.phase2()) return false;
@@ -849,6 +853,7 @@ abstract contract InvariantsBase is InvariantFixture {
         assertTrue(_try(21, 20), "no refused settings");
         assertTrue(_try(22, 20), "no setRate");
         assertTrue(_try(23, 20), "no owner door");
+        assertTrue(_try(38, 20), "no reserve release");
         assertTrue(_try(33, 60), "no rescue of an NFT");
         assertTrue(_try(34, 120), "no migration");
         // the books keep working under the new settings, whatever they are
@@ -873,6 +878,7 @@ abstract contract InvariantsBase is InvariantFixture {
         for (uint256 i; i < 8; ++i) {
             handler.replaceModule(i * 7919 + 1, i);
         }
+        assertTrue(_try(37, 20), "no unit refresh");
     }
 
     /*//////////////////////////////////////////////////////////////
