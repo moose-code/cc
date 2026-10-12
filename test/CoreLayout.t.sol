@@ -8,10 +8,10 @@ import {Lane} from "../src/interfaces/Interfaces.sol";
 /// reaches the Core's storage through it. every field with a public getter is compared with the raw storage word the
 /// mirror assumes, the mappings and the held list by the slot arithmetic the compiler uses
 contract CoreLayoutTest is Fixture {
-    uint256 internal constant S_PILES = 15;
-    uint256 internal constant S_CREDITS = 16;
-    uint256 internal constant S_STATEMENTS = 17;
-    uint256 internal constant S_HELD = 18;
+    uint256 internal constant S_PILES = 13;
+    uint256 internal constant S_CREDITS = 14;
+    uint256 internal constant S_STATEMENTS = 15;
+    uint256 internal constant S_HELD = 16;
 
     /// the bytes `[offset, offset + size)` of storage slot `slot` of the core
     function _field(uint256 slot, uint256 offset, uint256 size) internal view returns (uint256) {
@@ -30,9 +30,11 @@ contract CoreLayoutTest is Fixture {
         uint256[] memory sold = _credits(seller, 3);
         vm.prank(seller);
         core.sellForEth(sold);
-        // xFunded is true: a large exit token balance is booked into the exit pot, which funds the bid
+        // a large exit token balance is booked into the exit pot and the reserve holds fee eth, so both nonzero words
+        // are compared
         xt.mint(address(core), 1_000_000_000e18);
         core.skim();
+        vm.store(address(core), bytes32(uint256(8)), bytes32(uint256(1 ether)));
         vm.startPrank(owner);
         core.addTarget(address(0xA110C));
         vm.stopPrank();
@@ -59,44 +61,26 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(5, 0, 20), uint256(uint160(core.pendingOwner())), "pendingOwner");
         assertEq(_field(6, 0, 32), core.ethPot(), "ethPot");
         assertEq(_field(7, 0, 32), core.ethToBuyback(), "ethToBuyback");
-        assertEq(_field(8, 0, 32), core.xPot(), "xPot");
-        assertEq(_field(9, 0, 32), core.xToBuyback(), "xToBuyback");
+        assertEq(_field(8, 0, 32), core.ethRedeemBurn(), "ethRedeemBurn");
+        assertEq(core.ethRedeemBurn(), 1 ether, "ethRedeemBurn value");
+        assertEq(_field(9, 0, 32), core.xPot(), "xPot");
         assertEq(_field(10, 0, 32), core.rateAtCheckpoint(), "rateAtCheckpoint");
         assertEq(_field(11, 0, 8), core.checkpointTime(), "checkpointTime");
         assertEq(_field(11, 8, 8), core.lastFillTime(), "lastFillTime");
-        assertEq(_field(13, 8, 1), 1, "xFunded is true");
-        assertEq(_field(14, 0, 32), core.lastBuybackBlock(), "lastBuybackBlock");
-        assertEq(_field(19, 0, 32), core.unitPerCredit(), "unitPerCredit");
-        assertEq(_field(20, 0, 32), core.xStartPrice(), "xStartPrice");
-        assertEq(_field(21, 0, 8), core.xStartTime(), "xStartTime");
-        assertEq(_field(21, 8, 20), uint256(uint160(core.successor())), "successor");
-        assertEq(_field(21, 28, 1), core.successorLocked() ? 1 : 0, "successorLocked");
+        assertEq(_field(12, 0, 32), core.lastBuybackBlock(), "lastBuybackBlock");
+        assertEq(_field(17, 0, 32), core.unitPerPoint(), "unitPerPoint");
+        assertEq(_field(18, 0, 20), uint256(uint160(core.successor())), "successor");
+        assertEq(_field(18, 20, 1), core.successorLocked() ? 1 : 0, "successorLocked");
         assertEq(core.successor(), address(this), "successor value");
         assertTrue(core.successorLocked(), "successorLocked value");
         assertTrue(core.controllerLocked() && core.exitModuleLocked() && core.targetsLocked(), "locks");
         // the first migrate sets retired. the call moves the pots, so it comes after the pot words are compared
-        assertEq(_field(21, 29, 1), 0, "retired is false before a migrate");
+        assertEq(_field(18, 21, 1), 0, "retired is false before a migrate");
         assertFalse(core.retired(), "retired value before");
         vm.prank(owner);
         core.migrate(0);
-        assertEq(_field(21, 29, 1), 1, "retired");
+        assertEq(_field(18, 21, 1), 1, "retired");
         assertTrue(core.retired(), "retired value");
-    }
-
-    function test_OK_exitRateWordsSitWhereTheMirrorSays() public {
-        _enterPhase2();
-        // an exit sale stores the rate after its drops. with an empty exit pot the rate is not funded and `xRate()` reads the stored word
-        assertEq(_field(12, 0, 32), core.XRATE_START(), "xRateAtCheckpoint at the start");
-        assertEq(_field(13, 8, 1), 0, "xFunded is false with an empty exit pot");
-        xt.mint(address(core), 1_000e18);
-        core.skim();
-        uint256[] memory ids = _credits(seller, 2);
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        assertEq(_field(12, 0, 32), core.xRate(), "xRateAtCheckpoint is the rate after the drops");
-        assertEq(_field(12, 0, 32), core.XRATE_START() - 2 * core.settings().xRateDropPerCredit, "two drops");
-        assertEq(_field(13, 0, 8), block.timestamp, "xCheckpointTime");
-        assertEq(_field(13, 8, 1), 1, "xFunded after the sale");
     }
 
     function test_OK_pilesCreditsAndStatementsSitWhereTheMirrorSays() public {
@@ -118,7 +102,7 @@ contract CoreLayoutTest is Fixture {
             assertEq((word >> 64) & 0xff, uint256(uint8(lane)), "credit lane");
             assertEq((word >> 72) & 0xff, inPile ? 1 : 0, "credit inPile");
         }
-        // statement: cost, then composedAt | slot | lane | held; the held list at S_HELD
+        // statement: cost, then composedAt | slot | rating | lane | held; the held list at S_HELD
         Composed memory c = _composeOnce();
         (bool held, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(c.sid);
         uint256 sbase = _mapSlot(c.sid, S_STATEMENTS);
@@ -131,9 +115,10 @@ contract CoreLayoutTest is Fixture {
             if (held_[i] == c.sid) at = i;
         }
         assertEq((sword >> 64) & type(uint64).max, at, "statement slot");
-        assertEq((sword >> 128) & 0xff, uint256(uint8(lane)), "statement lane");
-        assertEq((sword >> 136) & 0xff, held ? 1 : 0, "statement held");
-        assertEq(sword >> 144, 0, "no field above held");
+        assertEq((sword >> 128) & type(uint32).max, core.ratingOf(c.sid), "statement rating");
+        assertEq((sword >> 160) & 0xff, uint256(uint8(lane)), "statement lane");
+        assertEq((sword >> 168) & 0xff, held ? 1 : 0, "statement held");
+        assertEq(sword >> 169, 0, "no field above held");
         assertEq(uint256(vm.load(address(core), bytes32(S_HELD))), core.heldStatements().length, "held length");
         assertEq(
             uint256(vm.load(address(core), bytes32(uint256(keccak256(abi.encode(S_HELD)))))),

@@ -232,7 +232,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "");
         _print("preflight");
         // every launch input has a row: the count is part of the report
-        assertEq(rows.length, 116, "preflight rows: docs/DEPLOY.md step 4");
+        assertEq(rows.length, 117, "preflight rows: docs/DEPLOY.md step 4");
     }
 
     /// each pinned code hash has a row. appending one byte of code to a contract fails exactly its row
@@ -696,8 +696,8 @@ contract ConfigTest is Fixture {
         assertEq(c.description, "the CC coin");
     }
 
-    function test_supplyConstantMatchesCore() public view {
-        assertEq(CORE_SUPPLY, core.SUPPLY());
+    function test_configSupplyMatchesCoinSupply() public view {
+        assertEq(COIN_SUPPLY, lc.supply);
     }
 
     /// the verification arguments built from the config and the first controller are the arguments the core was built with
@@ -761,30 +761,27 @@ contract ConfigTest is Fixture {
 
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[27] memory lo = SettingsFields.lo();
-        uint256[27] memory hi = SettingsFields.hi();
-        bytes32[27] memory names = SettingsFields.names();
+        uint256[23] memory lo = SettingsFields.lo();
+        uint256[23] memory hi = SettingsFields.hi();
+        bytes32[23] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
-            // above the top, and the top itself (the fields bound by another field start from a free partner)
-            if (i == 16) s.xRateCap = 10_000;
+            // the top itself (the fields bound by another field start from a free partner)
+            // feeToBuybackBps at its top needs feeToRedeemBurnBps at zero to keep the sum at 10_000
+            if (i == 21) s.feeToRedeemBurnBps = 0;
+            // climbPerMinBps at its top needs recoveryClimbPerMinBps raised to stay at or above it
             if (i == 2) s.recoveryClimbPerMinBps = 1_000;
             SettingsFields.set(s, i, hi[i]);
             assertEq(SettingsBounds.firstViolation(s), bytes32(0), "the top edge is inside");
             s = Mainnet.defaultSettings();
+            if (i == 21) s.feeToRedeemBurnBps = 0;
             SettingsFields.set(s, i, hi[i] + 1);
             assertEq(SettingsBounds.firstViolation(s), names[i], "above the top");
             // below the bottom, for the fields that have one
-            if (lo[i] == 0 && i != 16) continue;
+            if (lo[i] == 0) continue;
             s = Mainnet.defaultSettings();
-            if (i == 16) {
-                SettingsFields.set(s, 15, s.xRateFloor - 1);
-            } else {
-                SettingsFields.set(s, i, lo[i] - 1);
-            }
-            bytes32 got = SettingsBounds.firstViolation(s);
-            // the cap below the floor names the floor, as the Core does
-            assertEq(got, i == 16 ? bytes32("xRateFloor") : names[i], "below the bottom");
+            SettingsFields.set(s, i, lo[i] - 1);
+            assertEq(SettingsBounds.firstViolation(s), names[i], "below the bottom");
         }
     }
 
@@ -798,9 +795,10 @@ contract ConfigTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "settings"));
         this.requireExt(c);
         c = lc;
-        c.settings.xRateFloor = c.settings.xRateCap + 1;
-        _pre(c, d2);
-        assertEq(_failedNames(), "settings inside the bounds");
+        c.settings.feeToBuybackBps = 9_500;
+        c.settings.feeToRedeemBurnBps = 1_000;
+        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "settings"));
+        this.requireExt(c);
         c = lc;
         c.settings.dropFloorBps = 4_999;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "settings"));

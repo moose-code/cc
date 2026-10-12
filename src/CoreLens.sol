@@ -5,7 +5,7 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "./interfaces/ICore.sol";
 import {IControllerV1} from "./interfaces/IControllerV1.sol";
 import {IFeeRouter} from "./interfaces/IFeeRouter.sol";
-import {Lane} from "./interfaces/Interfaces.sol";
+import {Lane, ICredits, ICreditScore, IExitModule, Settings, Mainnet} from "./interfaces/Interfaces.sol";
 
 /// read only view of the Core, the controller and the fee router in one call. it has no storage and no state changing
 /// function. the Core and the router are immutable pointers fixed at creation (the router is the Core fee source). the
@@ -16,15 +16,18 @@ import {Lane} from "./interfaces/Interfaces.sol";
 contract CoreLens {
     using FixedPointMathLib for uint256;
 
-    /// the held statement `id` of the Core, with its lane, cost basis and compose time. `askingPrice` is the
+    /// the held statement `id` of the Core, with its lane, cost basis, compose time and rating. `askingPrice` is the
     /// controller price now in wei for an eth lane statement. it is 0 for an exit lane statement and when the
-    /// controller does not answer
+    /// controller does not answer. `exitEligible` is true when a redemption of this statement would pass the Core gates
+    /// now: a module set, `exitMode` at least 1, and for an eth lane statement an asking price at or below cost
     struct StatementView {
         uint256 id;
         Lane lane;
         uint256 cost;
         uint64 composedAt;
+        uint256 rating;
         uint256 askingPrice;
+        bool exitEligible;
     }
 
     /// `ethRate` is the wei the Core pays for one credit now. `ethPrice` is the price state before the
@@ -42,8 +45,8 @@ contract CoreLens {
         bool exitPageReady;
         uint256 ethPot;
         uint256 ethToBuyback;
+        uint256 ethRedeemBurn;
         uint256 xPot;
-        uint256 xToBuyback;
         uint256 unbookedEth;
         uint256 routerBalance;
         uint256 routerOwed;
@@ -51,6 +54,10 @@ contract CoreLens {
         uint256 flushToPayees;
         address controller;
         address successor;
+        address exitModule;
+        address exitToken;
+        uint256 exitMode;
+        uint256 unitPerPoint;
         bool controllerLocked;
         bool exitModuleLocked;
         bool targetsLocked;
@@ -103,13 +110,17 @@ contract CoreLens {
         s.exitPageReady = _pageReady(s.controller, Lane.Exit);
         s.ethPot = core.ethPot();
         s.ethToBuyback = core.ethToBuyback();
+        s.ethRedeemBurn = core.ethRedeemBurn();
         s.xPot = core.xPot();
-        s.xToBuyback = core.xToBuyback();
-        s.unbookedEth = address(core).balance.zeroFloorSub(s.ethPot + s.ethToBuyback);
+        s.unbookedEth = address(core).balance.zeroFloorSub(s.ethPot + s.ethToBuyback + s.ethRedeemBurn);
         s.routerBalance = address(ROUTER).balance;
         s.routerOwed = ROUTER.totalOwed();
         (s.flushToCore, s.flushToPayees) = _flush();
         s.successor = core.successor();
+        s.exitModule = core.exitModule();
+        s.exitToken = core.exitToken();
+        s.exitMode = core.settings().exitMode;
+        s.unitPerPoint = core.unitPerPoint();
         s.controllerLocked = core.controllerLocked();
         s.exitModuleLocked = core.exitModuleLocked();
         s.targetsLocked = core.targetsLocked();
@@ -153,20 +164,59 @@ contract CoreLens {
         if (ok && out.length == 32) price = abi.decode(out, (uint256));
     }
 
+    /// the controller's eligibility answer for an eth lane statement, read with the gas the Core uses. a revert, a
+    /// short answer or a `false` reads as not eligible
+    function _atCost(address ctl, uint256 sid) private view returns (bool) {
+        (bool ok, bytes memory out) = ctl.staticcall{gas: ASK_GAS}(abi.encodeCall(IControllerV1.atCost, (sid)));
+        return ok && out.length == 32 && abi.decode(out, (bool));
+    }
+
+    /// the module's `unitPerPoint()` read with the gas the Core uses. a revert or a short answer reads as 0
+    function _liveUnit(address module) private view returns (uint256) {
+        (bool ok, bytes memory out) = module.staticcall{gas: ASK_GAS}(abi.encodeCall(IExitModule.unitPerPoint, ()));
+        return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
+    }
+
+    /// the exit token the bid pays for a live credit now, zero when the bid is off: no module set, `exitMode` other
+    /// than 2, or the engine retired. the unit is the lower of the stored and the live `unitPerPoint()`, as in
+    /// `sellForExitToken`, and a failed live read gives 0. the bid is capped at `xPot`, the most `sellForExitToken` can pay for one credit.
+    /// the Core reads the same score from the credit score contract in `sellForExitToken`
+    function exitBidOf(uint256 id) external view returns (uint256) {
+        ICore core = CORE;
+        if (core.exitModule() == address(0) || core.retired()) return 0;
+        Settings memory st = core.settings();
+        if (st.exitMode != 2) return 0;
+        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(ICredits(CREDITS).seedOf(id), ICredits(CREDITS).timestampOf(id));
+        uint256 unit = core.unitPerPoint();
+        uint256 live = _liveUnit(core.exitModule());
+        if (live < unit) unit = live;
+        uint256 bid = score * unit * (10_000 - st.exitBidMarginBps) / 10_000;
+        uint256 pot = core.xPot();
+        return bid > pot ? pot : bid;
+    }
+
     function _statements(uint256 start, uint256 n) private view returns (StatementView[] memory out) {
+        ICore core = CORE;
         address ctl = controller();
-        uint256[] memory ids = CORE.heldStatements();
+        bool modeOn = core.exitModule() != address(0) && core.settings().exitMode >= 1;
+        uint256[] memory ids = core.heldStatements();
         uint256 from = start.min(ids.length);
         uint256 to = ids.length.min(from.saturatingAdd(n));
         out = new StatementView[](to - from);
         for (uint256 i = from; i < to; ++i) {
-            out[i - from] = _statement(ids[i], ctl);
+            out[i - from] = _statement(ids[i], ctl, modeOn);
         }
     }
 
-    function _statement(uint256 sid, address ctl) private view returns (StatementView memory v) {
+    function _statement(uint256 sid, address ctl, bool modeOn) private view returns (StatementView memory v) {
         v.id = sid;
         (, v.lane, v.cost, v.composedAt) = CORE.statementInfo(sid);
-        if (v.lane == Lane.Eth) v.askingPrice = _askingPrice(ctl, sid);
+        v.rating = CORE.ratingOf(sid);
+        if (v.lane == Lane.Eth) {
+            v.askingPrice = _askingPrice(ctl, sid);
+            v.exitEligible = modeOn && _atCost(ctl, sid);
+        } else {
+            v.exitEligible = modeOn;
+        }
     }
 }

@@ -167,31 +167,25 @@ abstract contract ConfigReader is CommonBase {
         s.ceilBps = _u16(j, ".settings.ceilBps");
         s.idleLoosenBps = _u16(j, ".settings.idleLoosenBps");
         s.saleFloorBps = _u16(j, ".settings.saleFloorBps");
-        s.exitAfter = _u32(j, ".settings.exitAfter");
         s.saleToBuybackBps = _u16(j, ".settings.saleToBuybackBps");
-        s.exitToBuybackBps = _u16(j, ".settings.exitToBuybackBps");
-        s.peakHalfLife = _u32(j, ".settings.peakHalfLife");
         s.recoveryClimbPerMinBps = _u16(j, ".settings.recoveryClimbPerMinBps");
-        // forge-lint: disable-next-line(unsafe-typecast)
-        s.buybackSlice = uint128(_uint(j, ".settings.buybackSlice", type(uint128).max));
+        s.recoveryGapBps = _u16(j, ".settings.recoveryGapBps");
+        s.peakHalfLife = _u32(j, ".settings.peakHalfLife");
         s.buybackDelay = _u16(j, ".settings.buybackDelay");
         // forge-lint: disable-start(unsafe-typecast)
+        s.exitMode = uint8(_uint(j, ".settings.exitMode", type(uint8).max));
+        s.exitSlippageBps = _u16(j, ".settings.exitSlippageBps");
+        s.exitBidMarginBps = _u16(j, ".settings.exitBidMarginBps");
+        s.redeemBurnBps = _u16(j, ".settings.redeemBurnBps");
+        s.buybackSlice = uint128(_uint(j, ".settings.buybackSlice", type(uint128).max));
         s.keeperFee = uint64(_uint(j, ".settings.keeperFee", type(uint64).max));
         s.keeperMaxBaseFee = uint48(_uint(j, ".settings.keeperMaxBaseFee", type(uint48).max));
+        s.rateCap = uint64(_uint(j, ".settings.rateCap", type(uint64).max));
         s.callerFee = uint64(_uint(j, ".settings.callerFee", type(uint64).max));
         s.callerMaxBaseFee = uint48(_uint(j, ".settings.callerMaxBaseFee", type(uint48).max));
         // forge-lint: disable-end(unsafe-typecast)
-        s.xRateCap = _u16(j, ".settings.xRateCap");
-        s.xRateFloor = _u16(j, ".settings.xRateFloor");
-        s.xRateClimbPerHour = _u16(j, ".settings.xRateClimbPerHour");
-        s.xRateDropPerCredit = _u16(j, ".settings.xRateDropPerCredit");
-        s.xAuctionHalfLife = _u32(j, ".settings.xAuctionHalfLife");
-        s.exitSliceCredits = _u16(j, ".settings.exitSliceCredits");
-        // forge-lint: disable-next-line(unsafe-typecast)
-        s.rateCap = uint64(_uint(j, ".settings.rateCap", type(uint64).max));
-        s.exitLaneToBuybackBps = _u16(j, ".settings.exitLaneToBuybackBps");
         s.feeToBuybackBps = _u16(j, ".settings.feeToBuybackBps");
-        s.recoveryGapBps = _u16(j, ".settings.recoveryGapBps");
+        s.feeToRedeemBurnBps = _u16(j, ".settings.feeToRedeemBurnBps");
     }
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {

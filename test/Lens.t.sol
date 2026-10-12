@@ -91,10 +91,14 @@ contract LensTest is Fixture {
 
         assertEq(s.ethPot, core.ethPot(), "ethPot");
         assertEq(s.ethToBuyback, core.ethToBuyback(), "ethToBuyback");
+        assertEq(s.ethRedeemBurn, core.ethRedeemBurn(), "ethRedeemBurn");
         assertEq(s.xPot, core.xPot(), "xPot");
-        assertEq(s.xToBuyback, core.xToBuyback(), "xToBuyback");
         assertTrue(s.ethPot != 0 && s.xPot != 0, "pots populated");
-        assertEq(s.unbookedEth, address(core).balance - core.ethPot() - core.ethToBuyback(), "unbookedEth");
+        assertEq(
+            s.unbookedEth,
+            address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(),
+            "unbookedEth"
+        );
         assertGe(s.unbookedEth, 0.01 ether, "unbookedEth carries the extra eth");
 
         assertEq(s.routerBalance, address(feeRouter).balance, "routerBalance");

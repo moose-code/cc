@@ -91,12 +91,12 @@ contract SetSettingsTest is Fixture {
 
     function test_patchTextAndPatchFile() public {
         Settings memory live = core.settings();
-        probe.configure(address(core), '{"saleFloorBps": 8000, "exitAfter": 172800}');
+        probe.configure(address(core), '{"saleFloorBps": 8000, "redeemBurnBps": 3000}');
         Settings memory out = probe.applyTo(live);
         (uint256 n,) = _diff(live, out);
         assertEq(n, 2);
         assertEq(out.saleFloorBps, 8_000);
-        assertEq(out.exitAfter, 172_800);
+        assertEq(out.redeemBurnBps, 3_000);
         // the same patch from a file
         probe.configure(address(core), "test/data/SettingsPatch.json");
         Settings memory fromFile = probe.applyTo(live);

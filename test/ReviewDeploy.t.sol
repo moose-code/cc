@@ -384,7 +384,7 @@ contract ReviewDeployTest is ReviewHarness {
             '"positionUpper": 887200',
             '"poolFee": 8388608',
             '"dropPerCreditBps": 50',
-            '"exitAfter": 378000',
+            '"peakHalfLife": 21600',
             '"dropFloorBps": 5000',
             '"buybackSlice": 500000000000000000'
         ];
@@ -397,7 +397,7 @@ contract ReviewDeployTest is ReviewHarness {
             '"positionUpper": 8388608',
             '"poolFee": 16777216',
             '"dropPerCreditBps": 65536',
-            '"exitAfter": 4294967296',
+            '"peakHalfLife": 4294967296',
             '"dropFloorBps": 65536',
             '"buybackSlice": 340282366920938463463374607431768211456'
         ];
@@ -410,7 +410,7 @@ contract ReviewDeployTest is ReviewHarness {
             ".launch.positionUpper",
             ".stack.poolFee",
             ".settings.dropPerCreditBps",
-            ".settings.exitAfter",
+            ".settings.peakHalfLife",
             ".settings.dropFloorBps",
             ".settings.buybackSlice"
         ];
@@ -424,7 +424,7 @@ contract ReviewDeployTest is ReviewHarness {
         assertEq(this.parse(vm.replace(j, from[4], '"startTick": -8388608')).startTick, -8_388_608);
         // a key that is missing or misspelled is an error, not a zero
         vm.expectRevert();
-        this.parse(vm.replace(j, '"exitSliceCredits"', '"exitSliceCreditz"'));
+        this.parse(vm.replace(j, '"feeToRedeemBurnBps"', '"feeToRedeemBurnBpz"'));
         vm.expectRevert();
         this.parse(vm.replace(j, '"creatorPayee"', '"creatorPayeee"'));
         // the overrides are optional and default to false

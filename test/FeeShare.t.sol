@@ -16,6 +16,8 @@ contract FeeShareTest is FeeBase {
     function _share(uint16 bps) internal {
         Settings memory s = core.settings();
         s.feeToBuybackBps = bps;
+        // the redeem burn share is tested separately; zero it so feeToBuybackBps can take its whole range
+        s.feeToRedeemBurnBps = 0;
         _setSettings(s);
     }
 
@@ -136,16 +138,13 @@ contract FeeShareTest is FeeBase {
         assertEq(core.ethPot() - pot, 1.5 ether);
     }
 
-    /// the exit token sent to the core is booked by skim to its own pot, whatever the share
-    function test_skim_theExitTokenGoesToItsPotWhateverTheShare() public {
+    /// the exit token sent to the core is booked by skim to the bid pot
+    function test_skim_theExitTokenGoesToTheBidPot() public {
         _enterPhase2();
-        _share(10_000);
         xt.mint(address(core), 7e18);
-        uint256 xb = core.xToBuyback();
         uint256 xp = core.xPot();
         core.skim();
         assertEq(core.xPot() - xp, 7e18);
-        assertEq(core.xToBuyback(), xb);
     }
 
     // ------------------------------------------------------------------ a change of the setting
@@ -177,6 +176,7 @@ contract FeeShareTest is FeeBase {
 
     function test_change_boundIsTenThousand() public {
         Settings memory s = core.settings();
+        s.feeToRedeemBurnBps = 0; // so feeToBuybackBps can reach its own bound without the sum bound binding
         s.feeToBuybackBps = 10_001;
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("feeToBuybackBps")));
@@ -210,6 +210,8 @@ contract FeeShareBuybackTest is FeeBase {
     function _share(uint16 bps) internal {
         Settings memory s = core.settings();
         s.feeToBuybackBps = bps;
+        // the redeem burn share is tested separately; zero it so feeToBuybackBps can take its whole range
+        s.feeToRedeemBurnBps = 0;
         _setSettings(s);
     }
 
@@ -247,7 +249,11 @@ contract FeeShareBuybackTest is FeeBase {
         assertEq(keeper.balance - keeperEth, tip, "the keeper is paid what the event reports");
         assertLt(coin.totalSupply(), supply, "coin was bought and burned");
         assertEq(coin.balanceOf(address(core)), 0);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no unbooked eth");
+        assertEq(
+            address(core).balance,
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            "no unbooked eth"
+        );
         _solvent();
         // and the buyback works again with what came back, when it exceeds the largest payment (0.0065 ether at launch)
         if (core.ethToBuyback() > 0.01 ether) {

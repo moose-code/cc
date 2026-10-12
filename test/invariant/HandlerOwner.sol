@@ -49,25 +49,28 @@ abstract contract HandlerOwner is HandlerBase {
         s.ceilBps = uint16(_f(_r(seed, 5), 10_000, 30_000, c.ceilBps));
         s.idleLoosenBps = uint16(_f(_r(seed, 29), 1, 2_000, c.idleLoosenBps));
         s.saleFloorBps = uint16(_f(_r(seed, 12), 1_000, 40_000, c.saleFloorBps));
-        s.exitAfter = uint32(_f(_r(seed, 14), 1 hours, 365 days, c.exitAfter));
         s.saleToBuybackBps = uint16(_f(_r(seed, 15), 0, 10_000, c.saleToBuybackBps));
-        s.exitToBuybackBps = uint16(_f(_r(seed, 16), 0, 10_000, c.exitToBuybackBps));
         s.buybackSlice = uint128(_f(_r(seed, 17), 0.01 ether, 1 ether, c.buybackSlice));
         s.buybackDelay = uint16(_f(_r(seed, 18), 1, 7_200, c.buybackDelay));
         s.keeperFee = uint64(_f(_r(seed, 19), 0, 0.005 ether, c.keeperFee));
         s.keeperMaxBaseFee = uint48(_f(_r(seed, 30), 1 gwei, 100 gwei, c.keeperMaxBaseFee));
-        s.xRateCap = uint16(_f(_r(seed, 20), 0, 10_000, c.xRateCap));
-        s.xRateFloor = uint16(_f(_r(seed, 21), 0, s.xRateCap, c.xRateFloor));
-        s.xRateClimbPerHour = uint16(_f(_r(seed, 22), 0, 1_000, c.xRateClimbPerHour));
-        s.xRateDropPerCredit = uint16(_f(_r(seed, 23), 0, 1_000, c.xRateDropPerCredit));
-        s.xAuctionHalfLife = uint32(_f(_r(seed, 24), 10 minutes, 30 days, c.xAuctionHalfLife));
-        s.exitSliceCredits = uint16(_f(_r(seed, 25), 1, 1_000, c.exitSliceCredits));
+        s.exitMode = uint8(_f(_r(seed, 20), 0, 2, c.exitMode));
+        s.exitSlippageBps = uint16(_f(_r(seed, 21), 0, 1_000, c.exitSlippageBps));
+        s.exitBidMarginBps = uint16(_f(_r(seed, 22), 0, 9_000, c.exitBidMarginBps));
+        s.redeemBurnBps = uint16(_f(_r(seed, 23), 0, 10_000, c.redeemBurnBps));
         s.rateCap = uint64(_f(_r(seed, 26), RATE_START_MIN_WEI, RATE_START_MAX_WEI, c.rateCap));
-        s.exitLaneToBuybackBps = uint16(_f(_r(seed, 27), 0, 10_000, c.exitLaneToBuybackBps));
         s.feeToBuybackBps = uint16(_f(_r(seed, 28), 0, 10_000, c.feeToBuybackBps));
+        // feeToBuybackBps + feeToRedeemBurnBps is at most 10_000
+        s.feeToRedeemBurnBps = uint16(_f(_r(seed, 27), 0, 10_000 - s.feeToBuybackBps, c.feeToRedeemBurnBps));
         s.callerFee = uint64(_f(_r(seed, 10), 0, 0.005 ether, c.callerFee));
         s.callerMaxBaseFee = uint48(_f(_r(seed, 11), 0, 100 gwei, c.callerMaxBaseFee));
         _corner(s, corner);
+        // the fee split corners may raise feeToBuybackBps; keep the sum valid afterwards
+        if (uint256(s.feeToBuybackBps) + s.feeToRedeemBurnBps > 10_000) {
+            s.feeToRedeemBurnBps = uint16(10_000 - s.feeToBuybackBps);
+        }
+        // the exit lane cycle cannot lose more than its margin: slippage stays at or below the bid margin
+        if (s.exitSlippageBps > s.exitBidMarginBps) s.exitSlippageBps = s.exitBidMarginBps;
         // recoveryClimbPerMinBps is at least the final climbPerMinBps, set after the corners so it stays valid
         s.recoveryClimbPerMinBps = uint16(_f(_r(seed, 31), s.climbPerMinBps, 1_000, c.recoveryClimbPerMinBps));
         s.peakHalfLife = uint32(_f(_r(seed, 32), 600, 604_800, c.peakHalfLife));
@@ -110,10 +113,11 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (k == 11) {
             s.buybackSlice = 1 ether;
         } else if (k == 12) {
-            s.exitAfter = 1 hours;
+            s.exitMode = 0;
         } else if (k == 13) {
-            s.xRateCap = 0;
-            s.xRateFloor = 0;
+            s.exitMode = 2;
+            s.exitSlippageBps = 1_000;
+            s.exitBidMarginBps = 9_000;
         } else if (k == 14) {
             // every caller payment and keeper reward at zero
             s.callerFee = 0;
@@ -130,17 +134,18 @@ abstract contract HandlerOwner is HandlerBase {
             s.climbPerMinBps = 1_000;
             s.ceilBps = 30_000;
             s.idleLoosenBps = 2_000;
-            s.xAuctionHalfLife = 10 minutes;
         } else if (k == 17) {
             // the lowest rate cap: it pulls the eth rate down to it at the checkpoint
             s.rateCap = uint64(RATE_START_MIN_WEI);
         } else if (k == 18) {
-            // every exit goes to the bid pot, and every exit lane exit goes to the buyback
-            s.exitToBuybackBps = 0;
-            s.exitLaneToBuybackBps = 10_000;
+            // the whole fee stream to the coin buyback, nothing to the redeem burn reserve
+            s.feeToBuybackBps = 10_000;
+            s.feeToRedeemBurnBps = 0;
         } else if (k == 19) {
-            s.exitToBuybackBps = 10_000;
-            s.exitLaneToBuybackBps = 10_000;
+            // the whole fee stream to the redeem burn reserve and the full per redemption release
+            s.feeToBuybackBps = 0;
+            s.feeToRedeemBurnBps = 10_000;
+            s.redeemBurnBps = 10_000;
         }
         // forge-lint: disable-end(unsafe-typecast)
     }
@@ -153,12 +158,10 @@ abstract contract HandlerOwner is HandlerBase {
         uint256 bal;
         uint256 pot;
         uint256 toBuyback;
+        uint256 reserve;
         uint256 rate;
         uint256 price;
-        uint256 xRate;
-        uint256 xPrice;
         uint256 xPot;
-        uint256 xToBuyback;
         uint256 xBal;
     }
 
@@ -166,12 +169,10 @@ abstract contract HandlerOwner is HandlerBase {
         p.bal = address(core).balance;
         p.pot = core.ethPot();
         p.toBuyback = core.ethToBuyback();
+        p.reserve = core.ethRedeemBurn();
         p.rate = core.ethRate();
         p.price = _priceNow(core.settings());
-        p.xRate = core.xRate();
-        p.xPrice = core.exitAuctionPrice();
         p.xPot = core.xPot();
-        p.xToBuyback = core.xToBuyback();
         p.xBal = _xBal(address(core));
     }
 
@@ -179,10 +180,10 @@ abstract contract HandlerOwner is HandlerBase {
     function _opost(OPre memory p, string memory what) internal {
         _eth(p.bal, 0, 0, what);
         _x(p.xBal, 0, 0, what);
-        if (core.ethPot() != p.pot || core.ethToBuyback() != p.toBuyback) _flag(V_OWNER, "an owner call moved a pot");
-        if (core.xPot() != p.xPot || core.xToBuyback() != p.xToBuyback) {
-            _flag(V_OWNER, "an owner call moved an exit pot");
-        }
+        if (
+            core.ethPot() != p.pot || core.ethToBuyback() != p.toBuyback || core.ethRedeemBurn() != p.reserve
+        ) _flag(V_OWNER, "an owner call moved a pot");
+        if (core.xPot() != p.xPot) _flag(V_OWNER, "an owner call moved the exit pot");
         gOwnerCalls++;
     }
 
@@ -232,17 +233,6 @@ abstract contract HandlerOwner is HandlerBase {
             if (stored != p.price) _flag(V_RATE_BOUND, "a settings call moved the stored eth rate");
             if (core.ethRate() != want) _flag(V_RATE_BOUND, "a settings call moved the eth rate");
         }
-        if (phase2()) _xFundedCheck();
-        // the exit rate is held inside the new band and nothing else
-        uint256 want = p.xRate > ns.xRateCap ? ns.xRateCap : p.xRate;
-        if (want < ns.xRateFloor) want = ns.xRateFloor;
-        if (core.xRate() != want) _flag(V_SETTINGS, "the exit rate is not held inside the new band");
-        // the exit auction keeps its price whatever happens to the half life. a price that decayed to zero is
-        // re anchored at one when the half life changes (the core keeps the start price at one at least)
-        uint256 price = core.exitAuctionPrice();
-        if (price != p.xPrice && !(p.xPrice == 0 && price == 1)) {
-            _flag(V_AUCTION, "a settings call moved the exit auction price");
-        }
     }
 
     /// the bounds of docs/FLOW.md section 2, written out again. the name of the first field out of bounds, or zero
@@ -253,9 +243,7 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.ceilBps < 10_000 || s.ceilBps > 30_000) return "ceilBps";
         if (s.idleLoosenBps < 1 || s.idleLoosenBps > 2_000) return "idleLoosenBps";
         if (s.saleFloorBps < 1_000 || s.saleFloorBps > 40_000) return "saleFloorBps";
-        if (s.exitAfter < 1 hours || s.exitAfter > 365 days) return "exitAfter";
         if (s.saleToBuybackBps > 10_000) return "saleToBuybackBps";
-        if (s.exitToBuybackBps > 10_000) return "exitToBuybackBps";
         if (s.peakHalfLife < 600 || s.peakHalfLife > 604_800) return "peakHalfLife";
         if (s.recoveryClimbPerMinBps < s.climbPerMinBps || s.recoveryClimbPerMinBps > 1_000) {
             return "recoveryClimbPerMinBps";
@@ -266,17 +254,17 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.keeperFee > 0.005 ether) return "keeperFee";
         if (s.keeperMaxBaseFee < 1 gwei || s.keeperMaxBaseFee > 100 gwei) return "keeperMaxBaseFee";
         if (s.buybackSlice < 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee)) return "buybackSlice";
-        if (s.xRateCap > 10_000) return "xRateCap";
-        if (s.xRateFloor > s.xRateCap) return "xRateFloor";
-        if (s.xRateClimbPerHour > 1_000) return "xRateClimbPerHour";
-        if (s.xRateDropPerCredit > 1_000) return "xRateDropPerCredit";
-        if (s.xAuctionHalfLife < 10 minutes || s.xAuctionHalfLife > 30 days) return "xAuctionHalfLife";
-        if (s.exitSliceCredits < 1 || s.exitSliceCredits > 1_000) return "exitSliceCredits";
         if (s.rateCap < RATE_START_MIN_WEI || s.rateCap > RATE_START_MAX_WEI) return "rateCap";
-        if (s.exitLaneToBuybackBps > 10_000) return "exitLaneToBuybackBps";
         if (s.feeToBuybackBps > 10_000) return "feeToBuybackBps";
+        if (s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
+        if (uint256(s.feeToBuybackBps) + s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
         if (s.callerFee > 0.005 ether) return "callerFee";
         if (s.callerMaxBaseFee > 100 gwei) return "callerMaxBaseFee";
+        if (s.exitMode > 2) return "exitMode";
+        if (s.exitSlippageBps > 1_000) return "exitSlippageBps";
+        if (s.exitBidMarginBps > 9_000) return "exitBidMarginBps";
+        if (s.exitSlippageBps > s.exitBidMarginBps) return "exitSlippageBps";
+        if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         return bytes32(0);
     }
 
@@ -303,7 +291,7 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 6) {
             (s.keeperFee, name) = (0.005 ether + 1, "keeperFee");
         } else if (which == 7) {
-            (s.xRateCap, name) = (10_001, "xRateCap");
+            (s.exitMode, name) = (3, "exitMode");
         } else if (which == 8) {
             (s.callerFee, name) = (0.005 ether + 1, "callerFee");
         } else if (which == 9) {
@@ -313,15 +301,15 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 11) {
             (s.saleFloorBps, name) = (40_001, "saleFloorBps");
         } else if (which == 12) {
-            (s.exitAfter, name) = (0, "exitAfter");
+            (s.exitSlippageBps, name) = (1_001, "exitSlippageBps");
         } else if (which == 13) {
             (s.saleFloorBps, name) = (0, "saleFloorBps");
         } else if (which == 14) {
-            (s.exitAfter, name) = (uint32(365 days) + 1, "exitAfter");
+            (s.exitBidMarginBps, name) = (9_001, "exitBidMarginBps");
         } else if (which == 15) {
             (s.saleToBuybackBps, name) = (10_001, "saleToBuybackBps");
         } else if (which == 16) {
-            (s.exitToBuybackBps, name) = (10_001, "exitToBuybackBps");
+            (s.redeemBurnBps, name) = (10_001, "redeemBurnBps");
         } else if (which == 17) {
             (s.buybackSlice, name) = (0.01 ether - 1, "buybackSlice");
         } else if (which == 18) {
@@ -333,31 +321,33 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 21) {
             (s.keeperFee, name) = (0.005 ether + 1, "keeperFee");
         } else if (which == 22) {
-            (s.xRateCap, name) = (10_001, "xRateCap");
+            (s.feeToRedeemBurnBps, name) = (10_001, "feeToRedeemBurnBps");
         } else if (which == 23) {
-            (s.xRateCap, s.xRateFloor, name) = (5_000, 5_001, "xRateFloor");
+            // the fee split sum over 10_000 names feeToRedeemBurnBps, as the library does
+            (s.feeToBuybackBps, s.feeToRedeemBurnBps, name) = (6_000, 5_000, "feeToRedeemBurnBps");
         } else if (which == 24) {
-            (s.xRateClimbPerHour, name) = (1_001, "xRateClimbPerHour");
+            (s.exitMode, name) = (5, "exitMode");
         } else if (which == 25) {
-            (s.xRateDropPerCredit, name) = (1_001, "xRateDropPerCredit");
+            (s.exitSlippageBps, name) = (2_000, "exitSlippageBps");
         } else if (which == 26) {
-            (s.xAuctionHalfLife, name) = (10 minutes - 1, "xAuctionHalfLife");
+            (s.exitBidMarginBps, name) = (10_000, "exitBidMarginBps");
         } else if (which == 27) {
-            (s.xAuctionHalfLife, name) = (uint32(30 days) + 1, "xAuctionHalfLife");
+            (s.redeemBurnBps, name) = (20_000, "redeemBurnBps");
         } else if (which == 28) {
-            (s.exitSliceCredits, name) = (0, "exitSliceCredits");
+            (s.feeToBuybackBps, name) = (10_001, "feeToBuybackBps");
         } else if (which == 29) {
-            (s.exitSliceCredits, name) = (1_001, "exitSliceCredits");
+            (s.exitMode, name) = (10, "exitMode");
         } else if (which == 30) {
             (s.ceilBps, name) = (9_999, "ceilBps");
         } else if (which == 31) {
-            (s.exitAfter, name) = (1 hours - 1, "exitAfter");
+            (s.exitSlippageBps, name) = (5_000, "exitSlippageBps");
         } else if (which == 32) {
             (s.rateCap, name) = (1e13 - 1, "rateCap");
         } else if (which == 33) {
             (s.rateCap, name) = (1e18 + 1, "rateCap");
         } else if (which == 34) {
-            (s.exitLaneToBuybackBps, name) = (10_001, "exitLaneToBuybackBps");
+            // the fee split sum over 10_000 names feeToRedeemBurnBps
+            (s.feeToBuybackBps, s.feeToRedeemBurnBps, name) = (9_000, 2_000, "feeToRedeemBurnBps");
         } else if (which == 35) {
             (s.feeToBuybackBps, name) = (10_001, "feeToBuybackBps");
         } else if (which == 36) {
@@ -537,26 +527,24 @@ abstract contract HandlerOwner is HandlerBase {
 
     /// the owner replaces the exit module at once (docs/FLOW.md section 8): a new module with the same
     /// exit token and a new unit, the same address again after its unit changed, the same address and unit, and the
-    /// refused ones (another exit token, no unit, a unit the opening price floor refuses, no code). a good set keeps the pots, the balances and the
-    /// exit auction price and clock, credits the exit rate under the old unit, resyncs the funded flag, reads the unit again and
-    /// switches the handler to the new module. a refused one changes nothing
+    /// refused ones (another exit token, no unit, a unit above the uint128 bound, no code). a good set keeps the pots,
+    /// the balances and the exit token pot, reads the unit again and switches the handler to the new module. a refused
+    /// one changes nothing
     function replaceModule(uint256 seed, uint256 mode) external checked {
         uint8 a = A_REPLACE_MODULE;
         if (!phase2()) return _skip(a);
         address token = core.exitToken();
         address oldModule = core.exitModule();
-        uint256 oldUnit = core.unitPerCredit();
+        uint256 oldUnit = core.unitPerPoint();
         (MockExitModule next, bytes4 want) = _nextModule(seed, mode % 8, token);
         // a locked module door refuses every set, whatever the module
         if (core.exitModuleLocked()) want = ICore.Locked.selector;
         _att(a);
         OPre memory p = _opre();
-        uint256 start0 = core.xStartPrice();
-        uint64 at0 = core.xStartTime();
         vm.prank(owner);
         try core.setExitModule(address(next)) {
             if (want != 0) _flag(V_OWNER, "a refused module set was accepted");
-            _afterModuleSet(p, next, token, start0, at0);
+            _afterModuleSet(p, next, token);
             module = next;
             _ok(a);
         } catch (bytes memory why) {
@@ -564,7 +552,7 @@ abstract contract HandlerOwner is HandlerBase {
             _opost(p, "replaceModule");
             if (want == 0 || bytes4(why) != want) _unexpected(a, why);
             else _ok(a);
-            if (core.exitModule() != oldModule || core.unitPerCredit() != oldUnit || core.exitToken() != token) {
+            if (core.exitModule() != oldModule || core.unitPerPoint() != oldUnit || core.exitToken() != token) {
                 _flag(V_OWNER, "a refused module set changed the module, the unit or the token");
             }
         }
@@ -573,45 +561,100 @@ abstract contract HandlerOwner is HandlerBase {
     /// the module the owner proposes and the selector the set must revert with, zero when it must go through
     function _nextModule(uint256 seed, uint256 m, address token) internal returns (MockExitModule next, bytes4 want) {
         if (m <= 1) {
-            next = new MockExitModule(token, _logBound(seed >> 8, 2e9, 5e10));
+            next = new MockExitModule(token, _logBound(seed >> 8, 2e6, 5e7));
         } else if (m <= 3) {
             // the same module again: its unit changed (m 2) or did not (m 3), and it answers the unit read
             module.setRevertUnit(false);
-            if (m == 2) module.setUnitPerCredit(_logBound(seed >> 8, 2e9, 5e10));
+            if (m == 2) module.setUnitPerPoint(_logBound(seed >> 8, 2e6, 5e7));
             next = module;
         } else if (m == 4) {
-            next = new MockExitModule(address(new MockExitToken("Other", "OTH")), 1e10);
+            next = new MockExitModule(address(new MockExitToken("Other", "OTH")), 1e7);
             want = ICore.ExitTokenChanged.selector;
         } else if (m == 5) {
             next = new MockExitModule(token, seed % 2 == 0 ? 0 : uint256(type(uint128).max) + 1);
             want = ICore.BadModule.selector;
         } else if (m == 6) {
-            // the opening price asks the supply for one slice (exitSliceCredits * unit, at least the unit): above
-            // 1e33 per credit it falls under 1e12 under any setting
-            next = new MockExitModule(token, 1e34);
-            want = ICore.BadModule.selector;
+            // a plain valid set with a large in bounds unit
+            next = new MockExitModule(token, _logBound(seed >> 8, 1e8, 1e10));
         } else {
             next = MockExitModule(address(uint160(uint256(keccak256(abi.encode("nocode", seed))))));
             want = ICore.BadModule.selector;
         }
     }
 
-    function _afterModuleSet(OPre memory p, MockExitModule next, address token, uint256 start0, uint64 at0) internal {
+    function _afterModuleSet(OPre memory p, MockExitModule next, address token) internal {
         _opost(p, "replaceModule");
         if (core.exitModule() != address(next)) _flag(V_OWNER, "the module set did not install the module");
         if (core.exitToken() != token) _flag(V_OWNER, "a module set changed the exit token");
-        if (core.unitPerCredit() != next.currentUnit()) _flag(V_OWNER, "a module set did not read the unit again");
-        // the climb so far was credited under the old unit
-        if (core.xRate() != p.xRate) _flag(V_RATE_BOUND, "a module set lost or invented exit rate climb");
-        _xFundedCheck();
-        // the price is coin per exit token: kept whatever the unit, and the clock too while there is something to sell
-        if (core.exitAuctionPrice() < p.xPrice) _flag(V_AUCTION, "a module set made the exit auction cheaper");
-        // a later set never touches the start price or the clock, with or without something for sale
-        if (core.exitAuctionPrice() != p.xPrice || core.xStartPrice() != start0 || core.xStartTime() != at0) {
-            _flag(V_AUCTION, "a module set moved the exit auction");
-        }
+        if (core.unitPerPoint() != next.currentUnit()) _flag(V_OWNER, "a module set did not read the unit again");
         if (core.allowedTarget(address(next))) {
             _flag(V_OWNER, "a module set left the allowed target flag of the module");
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                      REFRESH THE UNIT, RELEASE THE RESERVE
+    //////////////////////////////////////////////////////////////*/
+
+    /// the owner re-reads the stored unit from the current module. it changes no asset and, after a good refresh, the
+    /// stored unit equals the module's live unit. a stranger is refused with OnlyOwner
+    function refreshUnit(uint256 seed) external checked {
+        uint8 a = A_REFRESH_UNIT;
+        if (!phase2() || module.revertUnit()) return _skip(a);
+        bool stranger = seed % 5 == 0;
+        OPre memory p = _opre();
+        _att(a);
+        vm.prank(stranger ? _actor(seed >> 8) : owner);
+        try core.refreshUnitPerPoint() {
+            if (stranger) _flag(V_OWNER, "a stranger refreshed the unit");
+            if (core.unitPerPoint() != module.currentUnit()) _flag(V_OWNER, "refresh did not read the module live unit");
+            _opost(p, "refreshUnit");
+            _ok(a);
+        } catch (bytes memory why) {
+            _failed(p.bal, p.pot, p.rate, "refreshUnit");
+            _opost(p, "refreshUnit");
+            if (stranger && bytes4(why) == ICore.OnlyOwner.selector) _ok(a);
+            else _unexpected(a, why);
+        }
+    }
+
+    /// the owner moves part of the redeem burn reserve into the coin buyback. no eth leaves the core and the three eth
+    /// trackers keep their sum, so solvency and the eth books hold. a zero release or a stranger is refused
+    function releaseRedeem(uint256 seed, uint256 amt) external checked {
+        uint8 a = A_RELEASE_REDEEM;
+        bool stranger = seed % 5 == 0;
+        uint256 reserve = core.ethRedeemBurn();
+        uint256 ask = seed % 4 == 0 ? reserve + 1 : (seed % 4 == 1 ? 0 : _logBound(amt, 1, reserve == 0 ? 1 : reserve));
+        uint256 move = ask < reserve ? ask : reserve;
+        uint256 pot = core.ethPot();
+        uint256 tb = core.ethToBuyback();
+        uint256 bal = address(core).balance;
+        uint256 xp = core.xPot();
+        uint256 rate = core.ethRate();
+        _att(a);
+        vm.prank(stranger ? _actor(seed >> 8) : owner);
+        try core.releaseRedeemBurn(ask) {
+            if (stranger) _flag(V_OWNER, "a stranger released the reserve");
+            if (move == 0) _flag(V_OWNER, "a zero release was accepted");
+            if (core.ethRedeemBurn() != reserve - move) _flag(V_OWNER, "the reserve did not fall by the move");
+            if (core.ethToBuyback() != tb + move) _flag(V_OWNER, "the released reserve did not reach the coin buyback");
+            if (core.ethPot() != pot || core.xPot() != xp) _flag(V_OWNER, "a release moved the pot or the exit pot");
+            if (address(core).balance != bal) _flag(V_ETH_OUT, "a release moved eth out of the core");
+            _ok(a);
+        } catch (bytes memory why) {
+            _failed(bal, pot, rate, "releaseRedeem");
+            if (stranger) {
+                if (bytes4(why) != ICore.OnlyOwner.selector) _unexpected(a, why);
+                else _ok(a);
+            } else if (move == 0) {
+                if (bytes4(why) != ICore.ZeroAmount.selector) _unexpected(a, why);
+                else _ok(a);
+            } else {
+                _unexpected(a, why);
+            }
+            if (core.ethRedeemBurn() != reserve || core.ethToBuyback() != tb) {
+                _flag(V_REVERT_CHANGED, "a refused release moved a pot");
+            }
         }
     }
 
@@ -744,7 +787,8 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (m == 3) {
             r.token = address(coin);
             if (phase2() && seed % 2 == 0) r.token = core.exitToken();
-            if (seed % 5 == 0) r.token = address(uint160(seed));
+            // a keccak derived address, so a random token never lands on a precompile or the forge console address
+            if (seed % 5 == 0) r.token = address(uint160(uint256(keccak256(abi.encode("rescueToken", seed)))));
             r.id = 1 + seed % 1e18;
             r.ok = true;
             r.want = ICore.NotHolder.selector;
@@ -775,7 +819,6 @@ abstract contract HandlerOwner is HandlerBase {
         uint256 eth;
         uint256 balance;
         uint256 x;
-        uint256 xBuyback;
         uint256 xBalance;
         uint256 sinkEth;
         uint256 sinkX;
@@ -783,6 +826,7 @@ abstract contract HandlerOwner is HandlerBase {
         uint256[] statements;
         uint256 maxCredits;
         uint256 buyback;
+        uint256 reserve;
         bool wasRetired;
     }
 
@@ -891,10 +935,10 @@ abstract contract HandlerOwner is HandlerBase {
     function _migPre(uint256 seed, address to) internal returns (MigPre memory q) {
         q.eth = core.ethPot();
         q.buyback = core.ethToBuyback();
+        q.reserve = core.ethRedeemBurn();
         q.wasRetired = gRetired;
         q.balance = address(core).balance;
         q.x = core.xPot();
-        q.xBuyback = core.xToBuyback();
         q.xBalance = _xBal(address(core));
         q.sinkEth = to.balance;
         q.sinkX = _xBal(to);
@@ -923,8 +967,8 @@ abstract contract HandlerOwner is HandlerBase {
         if (to.balance != q.sinkEth + q.eth) _flag(V_OWNER, "the successor did not get the eth pots");
         if (_xBal(to) != q.sinkX + q.x) _flag(V_OWNER, "the successor did not get xPot");
         if (core.ethPot() != 0 || core.xPot() != 0) _flag(V_OWNER, "a tracker is not zero after a migration");
-        if (core.xToBuyback() != q.xBuyback) _flag(V_OWNER, "migrate moved the exit buyback pot");
         if (core.ethToBuyback() != q.buyback) _flag(V_OWNER, "migrate moved the eth buyback pot");
+        if (core.ethRedeemBurn() != q.reserve) _flag(V_OWNER, "migrate moved the redeem burn reserve");
         // credits: the first of each pile
         for (uint256 i; i < q.credits.length; ++i) {
             uint256 id = q.credits[i];

@@ -83,7 +83,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 3. a statement leaves the core's control only by a sale at or above the hard floor (cost * saleFloorBps of the
-    /// settings in force at the sale) or by an exit that returned at least credits * unitPerCredit. `sellTo` is paid the
+    /// settings in force at the sale) or by an exit that returned at least credits * unitPerPoint. `sellTo` is paid the
     /// decaying ask, at least the hard floor. here the first part: every sold statement was paid at least the hard
     /// floor in force at its sale.
     function invariant_03_noStatementSoldBelowTheHardFloor() public view {
@@ -123,7 +123,7 @@ abstract contract InvariantsBase is InvariantFixture {
             } else if (s.status == handler.S_EXITED()) {
                 assertTrue(!held, "exited but still held");
                 assertEq(o, address(s.module), "an exited statement is not with the module that took it");
-                assertGe(s.received, s.required, "exit returned less than credits * unitPerCredit");
+                assertGe(s.received, s.required, "exit returned less than credits * unitPerPoint");
             } else {
                 revert("an ever held statement has no recorded status");
             }
@@ -135,10 +135,12 @@ abstract contract InvariantsBase is InvariantFixture {
     /// books its payment at once, split by saleToBuybackBps, so nothing is owed outside the pots.
     function invariant_05_potsNeverExceedBalances() public view {
         _zero(g5);
-        assertLe(core.ethPot() + core.ethToBuyback(), address(core).balance, "eth pots above balance");
+        assertLe(
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance, "eth pots above balance"
+        );
         address t = core.exitToken();
         if (t != address(0)) {
-            assertLe(core.xPot() + core.xToBuyback(), _balanceOf(t, address(core)), "exit token pots above balance");
+            assertLe(core.xPot(), _balanceOf(t, address(core)), "exit token pot above balance");
         }
     }
 
@@ -188,13 +190,14 @@ abstract contract InvariantsBase is InvariantFixture {
     /// two burn totals from the token's own transfer events and the auction's events.
     function invariant_09_coinSupplyOnlyFallsByBurns() public view {
         _zero(g9);
+        uint256 launchSupply = 1_000_000_000e18;
         uint256 supply = coin.totalSupply();
-        assertLe(supply, core.SUPPLY(), "coin supply rose above its launch supply");
+        assertLe(supply, launchSupply, "coin supply rose above its launch supply");
         assertEq(supply, handler.gSupply(), "coin supply differs from the ghost of expected supply");
         assertEq(
-            core.SUPPLY() - supply,
-            handler.gBurnedByBuyback() + handler.gBurnedByAuction(),
-            "supply fell by something other than buyback and auction burns"
+            launchSupply - supply,
+            handler.gBurnedByBuyback(),
+            "supply fell by something other than buyback burns"
         );
         assertGe(coin.balanceOf(Mainnet.DEAD), handler.gDead(), "the burn address lost coin");
         assertEq(coin.balanceOf(Mainnet.DEAD), handler.gDead(), "the burn address holds coin nothing sent it");
@@ -461,7 +464,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// outside the sum until `skim` books it.
     function invariant_18_ethConservation() public view {
         assertEq(
-            core.ethPot() + core.ethToBuyback() + handler.gEthOut(),
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + handler.gEthOut(),
             handler.gEthStart() + handler.gEthIn(),
             "the eth books do not balance: start + booked != pots + paid out"
         );
@@ -507,9 +510,9 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(s.exitPileHead, _head(Lane.Exit), "lens exitPileHead");
         assertEq(s.ethPot, core.ethPot(), "lens ethPot");
         assertEq(s.ethToBuyback, core.ethToBuyback(), "lens ethToBuyback");
+        assertEq(s.ethRedeemBurn, core.ethRedeemBurn(), "lens ethRedeemBurn");
         assertEq(s.xPot, core.xPot(), "lens xPot");
-        assertEq(s.xToBuyback, core.xToBuyback(), "lens xToBuyback");
-        uint256 booked = core.ethPot() + core.ethToBuyback();
+        uint256 booked = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
         assertEq(s.unbookedEth, address(core).balance > booked ? address(core).balance - booked : 0, "lens unbookedEth");
         assertEq(s.routerBalance, address(feeRouter).balance, "lens routerBalance");
         assertEq(s.routerOwed, feeRouter.totalOwed(), "lens routerOwed");
@@ -653,7 +656,9 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// dispatches one handler action by number. the arguments mean what the action needs.
     function _act(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) internal virtual {
-        a = a % 37;
+        a = a % 39;
+        if (a == 38) return handler.releaseRedeem(w, x);
+        if (a == 37) return handler.refreshUnit(w);
         if (a == 36) return handler.pause(w, x);
         if (a == 35) return handler.adopt(w, x, y);
         if (a == 34) return handler.migrate(w, x);
@@ -759,6 +764,10 @@ abstract contract InvariantsBase is InvariantFixture {
 
     function _available(uint256 a) internal view returns (bool) {
         if (a == 36) return false;
+        // 17 (buybackExit) is removed: the exit token dutch auction no longer exists, redeemed exit token goes to xPot
+        if (a == 17) return false;
+        // refreshUnit reads the module, so it only lands in phase 2
+        if (a == 37) return handler.phase2();
         if (a >= 31 || a == 25) return true;
         if (a >= 26) return _saleSuite();
         if ((a >= 14 && a <= 18 || a == 24) && !handler.phase2()) return false;
@@ -844,6 +853,7 @@ abstract contract InvariantsBase is InvariantFixture {
         assertTrue(_try(21, 20), "no refused settings");
         assertTrue(_try(22, 20), "no setRate");
         assertTrue(_try(23, 20), "no owner door");
+        assertTrue(_try(38, 20), "no reserve release");
         assertTrue(_try(33, 60), "no rescue of an NFT");
         assertTrue(_try(34, 120), "no migration");
         // the books keep working under the new settings, whatever they are
@@ -855,8 +865,9 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     function _phase2Smoke() internal {
-        // an eth lane statement exits only after exitAfter since its compose (105 hours at launch)
-        vm.warp(block.timestamp + 106 hours);
+        // an eth lane statement is redeemable once its asking price falls to its cost; the long warp takes every held
+        // statement there
+        vm.warp(block.timestamp + 160 hours);
         assertTrue(_try(16, 80), "no exit");
         assertTrue(_try(14, 60), "no exit token sale");
         _try(14, 60);
@@ -867,13 +878,7 @@ abstract contract InvariantsBase is InvariantFixture {
         for (uint256 i; i < 8; ++i) {
             handler.replaceModule(i * 7919 + 1, i);
         }
-        // the auction opens at the whole coin supply for one slice and halves every 6 hours. wait until a taker can
-        // afford a fill with a little coin bought in the real pool
-        for (uint256 i; i < 120 && handler.successes(17) == 0; ++i) {
-            _try(17, 4);
-            vm.warp(block.timestamp + 1 hours);
-        }
-        assertGt(handler.successes(17), 0, "no exit auction fill");
+        assertTrue(_try(37, 20), "no unit refresh");
     }
 
     /*//////////////////////////////////////////////////////////////

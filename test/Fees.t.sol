@@ -64,6 +64,18 @@ abstract contract FeeBase is Fixture {
         toEngine = amount - toPayees;
     }
 
+    /// @dev the part of an engine inflow `toEngine` the core's `receive` books to the pot: the buyback share and the
+    /// redeem burn share, both bps of the inflow, are taken off first
+    function _toPot(uint256 toEngine) internal view returns (uint256) {
+        Settings memory s = core.settings();
+        return toEngine - toEngine * s.feeToBuybackBps / 10_000 - toEngine * s.feeToRedeemBurnBps / 10_000;
+    }
+
+    /// @dev the redeem burn share the core's `receive` books from an engine inflow `toEngine`
+    function _toRedeemBurn(uint256 toEngine) internal view returns (uint256) {
+        return toEngine * core.settings().feeToRedeemBurnBps / 10_000;
+    }
+
     /// @dev runs one swap of `kind`, then flushes the router. `amount` is eth in for BuyExactIn, coin out for
     /// BuyExactOut, coin in for SellExactIn and eth out for SellExactOut. the gross eth notional is measured from the
     /// swap, not from the hook
@@ -156,8 +168,8 @@ contract FeeFlowTest is FeeBase {
         // the hook's own books agree to the wei with the router, and the core booked what the router split left
         assertEq(f.routerRise, f.skimBounty, "router equals the hook bounty leg");
         (, uint256 toEngine) = _routerSplit(f.routerRise);
-        assertEq(f.potRise, toEngine, "the pot got the router inflow less the payees' parts");
-        assertEq(f.balanceRise, f.potRise, "nothing unbooked");
+        assertEq(f.potRise, _toPot(toEngine), "the pot got the engine inflow less the buyback and redeem burn shares");
+        assertEq(f.balanceRise, toEngine, "the core booked the whole engine inflow");
         assertEq(address(feeRouter).balance, 0, "the flush emptied the router");
         assertEq(f.skimReferral, 0);
         assertGt(f.potRise, 0);
@@ -172,11 +184,12 @@ contract FeeFlowTest is FeeBase {
         Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
         assertEq(f.routerRise, 0.0665022 ether);
         assertEq(f.skimProtocol, 0.0024978 ether);
-        assertEq(f.potRise, 0.0665022 ether - 0.0665022 ether * 112_778 / 1_000_000);
+        assertEq(f.potRise, _toPot(0.0665022 ether - 0.0665022 ether * 112_778 / 1_000_000));
         // payee 66_502_200_000_000_000 * 112_778 / 1e6 = 7_499_985_111_600_000 (0.7499985 points),
-        // pot is the router inflow less the payee = 59_002_214_888_400_000 (5.9002215 points)
+        // the engine inflow is the router inflow less the payee = 59_002_214_888_400_000 (5.9002215 points); the pot
+        // gets that less the redeem burn share
         assertEq(f.toPayees, 7_499_985_111_600_000, "the payee: 0.7499985 points of the buy, its share of the inflow");
-        assertEq(f.potRise, 59_002_214_888_400_000);
+        assertEq(f.potRise, _toPot(59_002_214_888_400_000));
         assertEq(feeRouter.splitOn(), true);
     }
 
@@ -254,7 +267,7 @@ contract FeeFlowTest is FeeBase {
         assertEq(a.balance - a0, gross * 80_515 / 1_000_000);
         assertEq(b.balance, gross * 80_515 / 1_000_000);
         assertEq(f.toPayees, 2 * (gross * 80_515 / 1_000_000));
-        assertEq(f.potRise, gross - f.toPayees);
+        assertEq(f.potRise, _toPot(gross - f.toPayees));
     }
 
     /// the protocol leg of the skim (0.24978 points) is not the engine's: it goes to the v2 protocol controller, by push
@@ -282,8 +295,8 @@ contract FeeFlowTest is FeeBase {
         assertEq(f.routerRise, bountyShare + extra, "the whole extra goes to the bounty recipient");
         assertEq(f.skimProtocol, base - bountyShare, "the protocol leg does not grow in the window");
         assertEq(f.toPayees, 0);
-        assertEq(f.potRise, f.routerRise, "the pot gets it all");
-        assertApproxEqAbs(f.potRise, 0.8975022 ether, 0.005 ether);
+        assertEq(f.potRise, _toPot(f.routerRise), "the pot gets the window inflow less the redeem burn share");
+        assertApproxEqAbs(f.potRise, _toPot(0.8975022 ether), 0.005 ether);
         assertFalse(feeRouter.splitOn());
 
         // halfway through the window the rate has decayed to 50 percent (linearly from 90 to the baseline, 6.9)
@@ -317,7 +330,8 @@ contract FeeFlowTest is FeeBase {
         (, uint256 toEngine) = _routerSplit(held);
         assertEq(toEngine, held, "the split is off until the first flush after the window");
         assertEq(_flush(), held);
-        assertEq(core.ethPot(), held, "all of it in the pot");
+        assertEq(core.ethPot(), _toPot(held), "the pot got the window eth less the redeem burn share");
+        assertEq(core.ethRedeemBurn(), _toRedeemBurn(held), "the redeem burn share of the window eth");
         assertEq(lc.creatorPayee.balance, a0, "the payees got none of the window eth");
         assertTrue(feeRouter.splitOn(), "the split is on now");
         // the next buy is shared
@@ -366,11 +380,11 @@ contract FeeFlowTest is FeeBase {
         assertEq(f.potRise, plain.potRise);
         f = _flow(Kind.SellExactIn, coin.balanceOf(trader) / 4, _referralData(ref, 1000));
         assertEq(f.skimReferral, 0);
-        assertEq(f.potRise, f.routerRise - f.toPayees);
+        assertEq(f.potRise, _toPot(f.routerRise - f.toPayees));
     }
 
-    /// the split of a swap fee is fixed inside the pool and the router. no setting moves it, and the core books the whole
-    /// flush into the pot, never into the buyback share (`feeToBuybackBps` is 0 at launch)
+    /// the split of a swap fee is fixed inside the pool and the router. the sale buyback share does not move it: a flush
+    /// books the engine inflow to the pot less the redeem burn share, and the fee buyback share stays 0 at launch
     function test_feeSplitIsNotASetting() public {
         _stock();
         uint256 back = core.ethToBuyback();
@@ -379,13 +393,12 @@ contract FeeFlowTest is FeeBase {
             Settings memory s = core.settings();
             // forge-lint: disable-next-line(unsafe-typecast)
             s.saleToBuybackBps = uint16(share[i]);
-            s.exitToBuybackBps = s.saleToBuybackBps;
             s.saleFloorBps = 40_000;
             _setSettings(s);
             Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
             (, uint256 toEngine) = _routerSplit(f.routerRise);
-            assertEq(f.potRise, toEngine, "the flush to the pot");
-            assertEq(core.ethToBuyback(), back, "nothing to the buyback share");
+            assertEq(f.potRise, _toPot(toEngine), "the flush to the pot less the redeem burn share");
+            assertEq(core.ethToBuyback(), back, "nothing to the fee buyback share");
         }
     }
 
@@ -426,22 +439,23 @@ contract ReceiveTest is FeeBase {
     }
 
     function _solventNow() internal view {
-        assertLe(core.ethPot() + core.ethToBuyback(), address(core).balance);
+        assertLe(core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance);
     }
 
-    /// pots of any size, any gap in time, funded or not: the hook push is always accepted and booked in full
+    /// pots of any size, any gap in time, funded or not: the hook push is always accepted and booked in full across the
+    /// pot, the buyback share and the redeem burn share
     function testFuzz_receiveNeverReverts(uint96 a, uint32 gap1, uint96 b, uint256 gap2, uint96 c) public {
         gap2 = bound(gap2, 0, TWENTY_YEARS);
-        uint256 booked;
         assertTrue(_hookSend(a));
-        booked += a;
         vm.warp(block.timestamp + gap1);
         assertTrue(_hookSend(b));
-        booked += b;
         vm.warp(block.timestamp + gap2);
         assertTrue(_hookSend(c));
-        booked += c;
-        assertEq(core.ethPot(), booked, "every push booked");
+        assertEq(
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            uint256(a) + b + c,
+            "every push booked"
+        );
         assertEq(core.checkpointTime(), block.timestamp);
         _solventNow();
     }
@@ -543,7 +557,7 @@ contract ReceiveTest is FeeBase {
             vm.deal(address(core), held[i]);
             Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
             (, uint256 toEngine) = _routerSplit(0.0665022 ether);
-            assertEq(f.potRise, toEngine);
+            assertEq(f.potRise, _toPot(toEngine));
             uint256 coinBal = coin.balanceOf(trader);
             f = _flow(Kind.SellExactIn, coinBal / 10, "");
             assertGt(f.potRise, 0);
@@ -551,7 +565,11 @@ contract ReceiveTest is FeeBase {
         }
         core.skim();
         _solventNow();
-        assertEq(address(core).balance, core.ethPot(), "everything is booked");
+        assertEq(
+            address(core).balance,
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            "everything is booked"
+        );
     }
 
     /// the hook pushes eth to the router while `buyListing` is measuring the cost and the attacker flushes the router
@@ -580,9 +598,13 @@ contract ReceiveTest is FeeBase {
         // no gap, so no payment: the cost is the price
         assertEq(core.ethPot(), pot - ceiling, "the cost is exact");
         assertEq(address(core).balance, balance - ceiling);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "consistent");
+        assertEq(
+            address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "consistent"
+        );
         assertGt(_flush(), 0, "the next flush delivers the fees");
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "booked once");
+        assertEq(
+            address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "booked once"
+        );
     }
 
     /// the same during `exitStatement`
@@ -593,8 +615,9 @@ contract ReceiveTest is FeeBase {
         m.setFeeRouter(address(feeRouter));
         vm.deal(address(m), 1 ether);
         _setExitModule(address(m));
+        _setExitMode(2);
         Composed memory c = _composeOnce();
-        vm.warp(block.timestamp + core.settings().exitAfter);
+        _makeEligible(c.sid);
         uint256 pot = core.ethPot();
         uint256 gas0 = address(this).balance;
         core.exitStatement(c.sid);
@@ -602,10 +625,10 @@ contract ReceiveTest is FeeBase {
         assertEq(m.flushFailed(), 1, "the mid call flush failed");
         assertGt(address(feeRouter).balance, 0, "the fees wait in the router");
         assertEq(core.ethPot(), pot - (address(this).balance - gas0), "nothing booked mid exit");
-        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), 0);
-        assertGt(core.xToBuyback(), 0);
+        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(), 0);
+        assertGt(core.xPot(), 0);
         core.skim();
-        assertEq(core.ethPot() + core.ethToBuyback(), address(core).balance);
+        assertEq(core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance);
     }
 }
 
@@ -659,10 +682,12 @@ contract ReceiveSettingsTest is FeeBase {
             uint256 rate = core.ethRate();
             assertTrue(_hookSend(amounts[i]), "receive does not revert");
             booked += amounts[i];
-            assertEq(core.ethPot(), booked, "every push booked");
+            assertEq(
+                core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), booked, "every push booked"
+            );
             assertEq(core.checkpointTime(), block.timestamp, "checkpointed at the push");
             assertGe(core.rateAtCheckpoint(), rate, "the price state was locked in first, the read is at most that");
-            assertEq(address(core).balance, core.ethPot() + core.ethToBuyback());
+            assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
         }
     }
 
@@ -726,7 +751,7 @@ contract ReceiveSettingsTest is FeeBase {
             assertEq(keeper.balance - keeper0, paid);
             assertEq(core.ethToBuyback(), pool - spent - paid);
             assertLt(coin.totalSupply(), supply);
-            assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no surplus, no deficit");
+            assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
         }
     }
 
@@ -770,7 +795,9 @@ contract ReceiveSettingsTest is FeeBase {
         assertEq(keeper.balance - keeper0, paid, "the payment is capped at the bid less the cost");
         assertEq(core.ethPot(), pot - cost - paid, "the cost is exact");
         assertEq(t.flushFailed(), 1, "the mid call flush failed");
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "consistent");
+        assertEq(
+            address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "consistent"
+        );
     }
 
     /// the push inside `exitStatement`'s measurement, with the exit split and the wait taken from the settings
@@ -781,26 +808,23 @@ contract ReceiveSettingsTest is FeeBase {
         m.setFeeRouter(address(feeRouter));
         vm.deal(address(m), 1 ether);
         _setExitModule(address(m));
-        Settings memory s = core.settings();
-        s.exitAfter = 1 hours;
-        s.exitToBuybackBps = 10_000;
-        _setSettings(s);
+        _setExitMode(2);
         Composed memory c = _composeOnce();
-        vm.warp(c.at + 1 hours - 1);
-        vm.expectRevert(ICore.TooEarly.selector);
+        // an eth lane statement is not eligible until its asking price falls to its cost
+        vm.expectRevert(ICore.NotEligible.selector);
         core.exitStatement(c.sid);
-        vm.warp(c.at + 1 hours);
+        _makeEligible(c.sid);
         uint256 pot = core.ethPot();
         uint256 gas0 = address(this).balance;
+        uint256 rating = core.ratingOf(c.sid);
         core.exitStatement(c.sid);
         // the swap mid exit booked nothing: the pot only fell by the gas repay the caller received
         assertEq(m.flushFailed(), 1, "the mid call flush failed");
         assertEq(core.ethPot(), pot - (address(this).balance - gas0), "nothing booked mid exit");
-        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), 0);
-        assertEq(core.xPot(), 0);
-        assertEq(core.xToBuyback(), STATEMENTS.creditsOf(c.sid) * UNIT, "the whole exit went to the buyback");
+        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(), 0);
+        assertEq(core.xPot(), rating * UNIT, "the whole exit went to the bid pot");
         core.skim();
-        assertEq(core.ethPot() + core.ethToBuyback(), address(core).balance);
+        assertEq(core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance);
     }
 
     /// two statements are composed. one transaction swaps in the real pool (the skim hook pushes into `receive`), buys
@@ -825,12 +849,20 @@ contract ReceiveSettingsTest is FeeBase {
         (, uint256 bounty) = _routerSplit(1 ether * 690 / 10_000 * 9_638 / 10_000);
         assertEq(STATEMENTS.ownerOf(sid), address(w), "the statement went to the buyer");
         assertEq(core.ethToBuyback() - back, price * 3_333 / 10_000, "the split of the sale");
-        assertEq(core.ethPot() - pot, 2 * bounty + price - price * 3_333 / 10_000, "two pushes and the rest of the sale");
+        assertEq(
+            core.ethPot() - pot,
+            2 * _toPot(bounty) + price - price * 3_333 / 10_000,
+            "two pushes less their redeem burn share and the rest of the sale"
+        );
         assertEq(address(core).balance - bal, 2 * bounty + price, "the core gained the pushes and the proceeds only");
-        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), 0.5 ether, "the donation is unbooked");
+        assertEq(
+            address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(),
+            0.5 ether,
+            "the donation is unbooked"
+        );
         _solvent();
         core.skim();
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback());
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
     }
 
     /// the hook push never reverts and is always booked in full, whatever came before it: a random walk over settings
@@ -867,7 +899,7 @@ contract ReceiveSettingsTest is FeeBase {
             }
             uint256 pot = core.ethPot();
             assertTrue(_hookSend(0.1 ether), "the push is accepted");
-            assertEq(core.ethPot(), pot + 0.1 ether, "and booked in full");
+            assertEq(core.ethPot(), pot + _toPot(0.1 ether), "the pot got the push less the redeem burn share");
             _solvent();
         }
     }
@@ -916,7 +948,11 @@ contract BuybackTest is FeeBase {
         uint256 toBuyback = _fillEthBuyback();
         vm.fee(5 gwei);
         assertGt(toBuyback, 0);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "clean books before");
+        assertEq(
+            address(core).balance,
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            "clean books before"
+        );
         Before memory b = _before();
 
         vm.recordLogs();
@@ -949,11 +985,18 @@ contract BuybackTest is FeeBase {
         assertEq(address(feeRouter).balance - b.routerBal, f.skimBounty);
         (, uint256 toEngine) = _routerSplit(address(feeRouter).balance);
         _flush();
-        uint256 feeShare = toEngine * core.settings().feeToBuybackBps / 10_000;
-        assertEq(core.ethPot() - b.pot, toEngine - feeShare, "the flush returns the engine share to the pot, less the buyback share");
+        assertEq(
+            core.ethPot() - b.pot,
+            _toPot(toEngine),
+            "the flush returns the engine share to the pot, less the buyback and redeem burn shares"
+        );
         // the v2 hook reports the volume net of its own skim, so volume plus both legs is the eth spent
         assertApproxEqAbs(f.skimVolume + f.skimBounty + f.skimProtocol, budget, 2);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "nothing left unbooked");
+        assertEq(
+            address(core).balance,
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            "nothing left unbooked"
+        );
     }
 
     /// the launch values: a slice of 1 eth cuts the pot, and 25 blocks must pass between two buybacks. the pot a sale
@@ -969,7 +1012,7 @@ contract BuybackTest is FeeBase {
         uint256 residue = _residue(b.pool);
         assertEq(core.ethToBuyback(), residue, "the slice was the whole pot, the unused payment margin stays");
         assertEq(core.lastBuybackBlock(), block.number);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback());
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
 
         _anotherSale();
         assertGt(core.ethToBuyback(), 0);
@@ -989,7 +1032,7 @@ contract BuybackTest is FeeBase {
         vm.roll(block.number + core.settings().buybackDelay);
         vm.expectRevert(ICore.SliceTooSmall.selector);
         core.buyback();
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback());
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
     }
 
     /// @dev puts `eth` into the buyback pot, backed by real eth in the core: the one seam of this file. a statement sale
@@ -1012,7 +1055,7 @@ contract BuybackTest is FeeBase {
         assertGt(address(feeRouter).balance, 0.4 ether);
         _flush();
         assertGt(core.ethPot() - b.pot, 0.4 ether);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback());
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
     }
 }
 
@@ -1093,7 +1136,7 @@ contract BuybackPaymentTest is FeeBase {
         // a full slice spends the whole budget and pays the whole fee: the rest is whole gas at the base fee
         assertEq(r.spent, core.settings().buybackSlice - (BUYBACK_GAS * 7 gwei + core.settings().keeperFee));
         assertEq(r.potAfter, r.pool - r.spent - r.paid, "the pot fell by the spend and the payment");
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no surplus, no deficit");
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
     }
 
     /// a swap that the pool fills in part: the fee scales by the share of the budget spent, the gas refund is whole.
@@ -1121,11 +1164,11 @@ contract BuybackPaymentTest is FeeBase {
         assertEq(r.potAfter, r.pool - r.spent - r.paid, "the unspent budget and the unpaid fee stay in the pot");
     }
 
-    /// the pot set to exactly `eth`, backed by the same eth in the core
+    /// the pot set to exactly `eth`, backed by the same eth in the core on top of the pot and the redeem burn reserve
     function _setPot(uint256 eth) internal {
         uint256 slot = stdstore.target(address(core)).sig("ethToBuyback()").find();
         vm.store(address(core), bytes32(slot), bytes32(eth));
-        vm.deal(address(core), core.ethPot() + eth);
+        vm.deal(address(core), core.ethPot() + eth + core.ethRedeemBurn());
     }
 
     /// a slice under twice the largest payment (600,000 gas at the capped base fee plus the fee) reverts, twice that
@@ -1143,7 +1186,7 @@ contract BuybackPaymentTest is FeeBase {
         assertEq(r.spent, maxPay, "the budget is half the slice");
         assertLe(r.paid, maxPay, "the payment is at most half the slice");
         assertEq(r.potAfter, r.pool - r.spent - r.paid);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no surplus, no deficit");
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
     }
 
     /// a slice just above twice the largest payment pays the gas whole and a fee in proportion to the swap: the budget
@@ -1162,7 +1205,7 @@ contract BuybackPaymentTest is FeeBase {
         assertGt((r.paid - feePart) / 5 gwei, BUYBACK_OVERHEAD_GAS, "the gas refund is whole");
         assertLe(r.paid, maxPay);
         assertEq(r.potAfter, r.pool - r.spent - r.paid, "the pot fell by the spend and the payment");
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no surplus, no deficit");
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
     }
 
     /// a slice equal to the setting spends the whole budget and pays the whole fee
@@ -1174,7 +1217,7 @@ contract BuybackPaymentTest is FeeBase {
         assertEq(r.spent, s.buybackSlice - maxPay, "the whole budget");
         assertEq((r.paid - s.keeperFee) % 5 gwei, 0, "the rest of the payment is whole gas at the base fee");
         assertEq(r.potAfter, r.pool - r.spent - r.paid);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no surplus, no deficit");
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
     }
 
     /// the swap path burns 3 million gas: the call uses more than `BUYBACK_GAS`, the counted gas stops at it
@@ -1260,7 +1303,7 @@ contract BuybackSettingsTest is FeeBase {
         _flush();
         assertEq(core.ethToBuyback(), pool - slice + lastMargin + lastFeeShare, "the unused payment and the fee share came back");
         assertEq(core.lastBuybackBlock(), block.number);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "no surplus, no deficit");
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
     }
 
     function test_sliceDelayAndFeeFollowTheSettings() public {
@@ -1337,529 +1380,6 @@ contract BuybackSettingsTest is FeeBase {
         _configure(bound(slice, 2 * (600_000 * 10 gwei + fee), 1 ether), bound(delay, 1, 7_200), fee);
         _fillEthBuyback();
         _buyback();
-    }
-}
-
-/// the dutch auction that sells the exit token buyback pot for coin, which it burns. phase 2, with the stand ins
-contract AuctionTest is FeeBase {
-    using stdStorage for StdStorage;
-    using FixedPointMathLib for uint256;
-
-    address internal taker;
-
-    function setUp() public override {
-        super.setUp();
-        taker = _user("taker");
-    }
-
-    /// @dev phase 2 with `xToBuyback` filled by a real compose, auction and exit of a statement
-    function _auction() internal returns (uint256 received) {
-        _enterPhase2();
-        _stock();
-        received = _fillExitBuyback();
-        assertGt(core.xToBuyback(), 0);
-    }
-
-    function _fullSlice() internal view returns (uint256) {
-        return uint256(core.settings().exitSliceCredits) * UNIT;
-    }
-
-    /// @dev the taker buys coin in the real pool and approves the core
-    function _equipTaker(uint256 ethIn) internal {
-        _buyCoin(taker, ethIn);
-        vm.prank(taker);
-        coin.approve(address(core), type(uint256).max);
-    }
-
-    /// @dev warps an hour at a time until a fill costs no more than what the taker holds
-    function _waitUntilAffordable() internal returns (uint256 slice, uint256 coinIn) {
-        for (uint256 i; i < 2000; ++i) {
-            (slice, coinIn) = core.exitAuctionQuote();
-            if (coinIn <= coin.balanceOf(taker)) return (slice, coinIn);
-            vm.warp(block.timestamp + 1 hours);
-        }
-        revert("never affordable");
-    }
-
-    function _fill(uint256 maxCoinIn) internal {
-        vm.prank(taker);
-        core.buybackExit(maxCoinIn);
-    }
-
-    // ------------------------------------------------------------------ price
-
-    function test_openingPriceAsksTheWholeSupplyForOneSlice() public {
-        _auction();
-        assertEq(core.xStartPrice(), 1_000_000_000e18 * 1e18 / _fullSlice());
-        (uint256 slice, uint256 coinIn) = core.exitAuctionQuote();
-        assertEq(slice, _fullSlice().min(core.xToBuyback()));
-        // a full slice costs the whole coin supply at the opening price
-        assertApproxEqRel(coinIn, 1_000_000_000e18 * slice / _fullSlice(), 1e9);
-    }
-
-    function test_priceHalvesEverySixHours() public {
-        _auction();
-        uint256 p0 = core.exitAuctionPrice();
-        assertEq(p0, core.xStartPrice(), "no time has passed since the pot filled");
-        vm.warp(block.timestamp + 6 hours);
-        assertEq(core.exitAuctionPrice(), p0 >> 1);
-        vm.warp(block.timestamp + 6 hours);
-        assertEq(core.exitAuctionPrice(), p0 >> 2);
-        vm.warp(block.timestamp + 36 hours);
-        assertEq(core.exitAuctionPrice(), p0 >> 8);
-        // continuous in between: three hours is a factor of 2^-0.5
-        vm.warp(block.timestamp + 3 hours);
-        assertApproxEqRel(core.exitAuctionPrice(), (p0 >> 8) * 707_106_781_186_547_524 / 1e18, 1e9);
-        // strictly decreasing minute by minute
-        uint256 last = core.exitAuctionPrice();
-        for (uint256 i; i < 10; ++i) {
-            vm.warp(block.timestamp + 1 minutes);
-            assertLt(core.exitAuctionPrice(), last);
-            last = core.exitAuctionPrice();
-        }
-    }
-
-    // ------------------------------------------------------------------ fills
-
-    function test_fillQuoteMatchesExecutionAndBurnsTheTakersCoin() public {
-        _auction();
-        _equipTaker(40 ether);
-        (uint256 slice, uint256 coinIn) = _waitUntilAffordable();
-        assertGt(coinIn, 0);
-        uint256 coinBefore = coin.balanceOf(taker);
-        uint256 supplyBefore = coin.totalSupply();
-        uint256 deadBefore = coin.balanceOf(DEAD);
-        uint256 poolBefore = core.xToBuyback();
-        _fill(coinIn);
-        assertEq(coinBefore - coin.balanceOf(taker), coinIn, "burnFrom took the quoted coin from the taker");
-        assertEq(supplyBefore - coin.totalSupply(), coinIn, "it was burned, total supply fell");
-        assertEq(coin.balanceOf(DEAD), deadBefore, "not sent to the dead address");
-        assertEq(xt.balanceOf(taker), slice, "the taker got the slice");
-        assertEq(core.xToBuyback(), poolBefore - slice);
-        assertEq(coin.balanceOf(address(core)), 0);
-        _solvent();
-    }
-
-    function test_maxCoinInGuard() public {
-        _auction();
-        _equipTaker(40 ether);
-        (, uint256 coinIn) = _waitUntilAffordable();
-        vm.prank(taker);
-        vm.expectRevert(ICore.Slippage.selector);
-        core.buybackExit(coinIn - 1);
-        // the quote only falls with time, so a stale cap stays safe, and it fills at exactly the quote
-        _fill(coinIn);
-
-        // another fill restarts the auction at twice its clearing price, so the old cap no longer covers it
-        (, uint256 next) = core.exitAuctionQuote();
-        assertGt(next, coinIn, "restart is above the last price");
-        vm.prank(taker);
-        vm.expectRevert(ICore.Slippage.selector);
-        core.buybackExit(coinIn);
-    }
-
-    function test_takerNeedsToApproveAndOnlyTheCallersCoinIsBurned() public {
-        _auction();
-        _buyCoin(taker, 40 ether);
-        address victim = _user("victim");
-        _buyCoin(victim, 40 ether);
-        vm.prank(victim);
-        coin.approve(address(core), type(uint256).max);
-        (, uint256 coinIn) = _waitUntilAffordable();
-        uint256 victimBefore = coin.balanceOf(victim);
-        // the taker never approved the core: the fill reverts, and the victim's approval does not help the taker
-        vm.prank(taker);
-        vm.expectRevert();
-        core.buybackExit(coinIn);
-        assertEq(coin.balanceOf(victim), victimBefore);
-        // a taker with no coin cannot fill at a non zero price
-        address broke = _user("broke");
-        vm.prank(broke);
-        vm.expectRevert();
-        core.buybackExit(type(uint256).max);
-    }
-
-    function test_sliceSizing() public {
-        _auction();
-        _equipTaker(60 ether);
-        uint256 full = _fullSlice();
-        uint256 pool = core.xToBuyback();
-        assertGt(pool, full, "the fixture pot is more than one slice");
-        uint256 sliced;
-        for (uint256 i; i < 6 && core.xToBuyback() != 0; ++i) {
-            (uint256 slice, uint256 coinIn) = _waitUntilAffordable();
-            assertEq(slice, full.min(core.xToBuyback()), "min(pot, 20 average credits)");
-            _fill(coinIn);
-            sliced += slice;
-        }
-        assertEq(core.xToBuyback(), 0);
-        assertEq(sliced, pool);
-        assertEq(xt.balanceOf(taker), pool);
-        vm.prank(taker);
-        vm.expectRevert(ICore.NothingToBuy.selector);
-        core.buybackExit(type(uint256).max);
-    }
-
-    function test_restartAtDoubleTheClearingPrice() public {
-        _auction();
-        _equipTaker(60 ether);
-        _waitUntilAffordable();
-        uint256 clearing = core.exitAuctionPrice();
-        uint256 prevStart = core.xStartPrice();
-        assertGt(2 * clearing, prevStart / 4, "a fill near a fair price, so the double wins over the quarter");
-        (, uint256 coinIn) = core.exitAuctionQuote();
-        _fill(coinIn);
-        assertEq(core.xStartPrice(), 2 * clearing);
-        assertEq(core.xStartTime(), block.timestamp);
-        assertEq(core.exitAuctionPrice(), 2 * clearing, "restarts at twice the price it just cleared at");
-        vm.warp(block.timestamp + 6 hours);
-        assertEq(core.exitAuctionPrice(), clearing, "and halves again from there");
-    }
-
-    function test_noExitModuleOrNothingToSell() public {
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.buybackExit(type(uint256).max);
-        _enterPhase2();
-        vm.expectRevert(ICore.NothingToBuy.selector);
-        core.buybackExit(type(uint256).max);
-        (uint256 slice, uint256 coinIn) = core.exitAuctionQuote();
-        assertEq(slice, 0);
-        assertEq(coinIn, 0);
-    }
-
-    // ------------------------------------------------------------------ the clock and long gaps
-
-    /// @dev composes and exits a second statement, which refills the exit buyback pot
-    function _refill() internal {
-        _fillEthPile(80);
-        vm.prank(keeper);
-        core.compose();
-        uint256 sid = STATEMENTS.supply();
-        vm.warp(block.timestamp + core.settings().exitAfter);
-        core.exitStatement(sid);
-    }
-
-    /// the clock does not run while nothing is for sale. fund, drain, wait a week, refund: the price restarts from
-    /// the stored start price and not from nearly zero
-    function test_clockStopsWhileThePotIsEmpty() public {
-        _auction();
-        _equipTaker(60 ether);
-        for (uint256 i; i < 8 && core.xToBuyback() != 0; ++i) {
-            (, uint256 coinIn) = _waitUntilAffordable();
-            _fill(coinIn);
-        }
-        assertEq(core.xToBuyback(), 0, "drained");
-        uint256 stored = core.xStartPrice();
-        uint256 storedAt = core.xStartTime();
-        assertGt(stored, 0);
-
-        vm.warp(block.timestamp + 7 days);
-        assertEq(core.exitAuctionPrice(), stored, "an empty auction shows its start price");
-        assertEq(core.xStartPrice(), stored);
-        _refill();
-        assertGt(core.xToBuyback(), 0);
-        assertGt(core.xStartTime(), storedAt + 7 days, "the clock restarted when the pot went from empty");
-        assertEq(core.xStartTime(), block.timestamp);
-        assertEq(core.xStartPrice(), stored, "the start price is kept");
-        assertEq(core.exitAuctionPrice(), stored, "price restarts from the stored start price, not near zero");
-        vm.warp(block.timestamp + 6 hours);
-        assertEq(core.exitAuctionPrice(), stored >> 1);
-    }
-
-    /// a refill while the pot is not empty re anchors the curve at max(price now, start / 4) and restarts the clock,
-    /// so the new funds never inherit a decayed clock
-    function test_refillOnANonEmptyPotReanchorsTheCurve() public {
-        _auction();
-        uint256 price = core.xStartPrice();
-        vm.warp(block.timestamp + 3 hours);
-        uint256 now0 = core.exitAuctionPrice();
-        assertLt(now0, price);
-        // a statement exit adds exit token after its own 72 hour auction wait
-        _fillEthPile(80);
-        vm.prank(keeper);
-        core.compose();
-        uint256 sid = STATEMENTS.supply();
-        vm.warp(block.timestamp + core.settings().exitAfter);
-        uint256 priceBefore = core.exitAuctionPrice();
-        assertLt(priceBefore, price / 4, "the clock ran far enough to pass the quarter floor");
-        core.exitStatement(sid);
-        assertEq(core.xStartTime(), block.timestamp);
-        assertEq(core.xStartPrice(), price / 4, "floored at a quarter");
-        assertEq(core.exitAuctionPrice(), price / 4);
-    }
-
-    /// after decades the price is zero. a fill then costs nothing, and the auction restarts above zero
-    function test_longGapsNeverRevertAndAZeroPriceFillRestartsAboveZero() public {
-        _auction();
-        uint256 start0 = core.xStartPrice();
-        vm.warp(block.timestamp + 20 * 365 days);
-        assertEq(core.exitAuctionPrice(), 0);
-        (uint256 slice, uint256 coinIn) = core.exitAuctionQuote();
-        assertGt(slice, 0);
-        assertEq(coinIn, 0);
-        uint256 supply = coin.totalSupply();
-        vm.prank(taker);
-        core.buybackExit(0);
-        assertEq(coin.totalSupply(), supply, "nothing to burn at price zero");
-        assertEq(xt.balanceOf(taker), slice);
-        assertEq(core.xStartPrice(), start0 / 4, "the restart is a quarter of the last start, never dust");
-        assertEq(core.exitAuctionPrice(), start0 / 4);
-    }
-
-    // ------------------------------------------------------------------ the restart rule
-
-    uint256 private constant DUST = 1e15;
-
-    function _warpUntilDust() internal returns (uint256 waited) {
-        for (uint256 i; i < 3000; ++i) {
-            (, uint256 coinIn) = core.exitAuctionQuote();
-            if (coinIn <= DUST) return waited;
-            vm.warp(block.timestamp + 1 hours);
-            waited += 1 hours;
-        }
-        revert("never dust");
-    }
-
-    /// (a) a fill at a decayed dust price restarts the next auction at a quarter of the last start, not at dust
-    function test_restartAfterADustFillIsAQuarterOfThePreviousStart() public {
-        _auction();
-        _equipTaker(1 ether);
-        uint256 start0 = core.xStartPrice();
-        vm.warp(block.timestamp + 360 hours);
-        uint256 dust = core.exitAuctionPrice();
-        assertGt(dust, 0);
-        assertLt(dust, start0 >> 59, "sixty halvings: dust");
-        (, uint256 coinIn) = core.exitAuctionQuote();
-        _fill(coinIn);
-        assertEq(core.xStartPrice(), start0 / 4, "a quarter of the previous start, not twice the dust price");
-        assertEq(core.xStartTime(), block.timestamp);
-        assertEq(core.exitAuctionPrice(), start0 / 4);
-        (, uint256 next) = core.exitAuctionQuote();
-        assertGt(next, 1e24, "the next slice is not cheap");
-    }
-
-    /// (b) draining slices at dust needs a separate long decay for every slice
-    function test_drainingSlicesAtDustNeedsSeparateDecays() public {
-        _auction();
-        while (core.xToBuyback() < 3 * _fullSlice()) _refill();
-        _equipTaker(1 ether);
-        uint256 start0 = core.xStartPrice();
-        uint256 t0 = core.xStartTime();
-        uint256[3] memory decay;
-        for (uint256 i; i < 3; ++i) {
-            _warpUntilDust();
-            decay[i] = block.timestamp - core.xStartTime();
-            (uint256 slice, uint256 coinIn) = core.exitAuctionQuote();
-            assertEq(slice, _fullSlice(), "a full slice at dust");
-            _fill(coinIn);
-            assertEq(core.xStartPrice(), start0 >> (2 * (i + 1)), "each restart is a quarter of the last start");
-        }
-        // the first slice needs about 40 halvings (240 hours) from the opening price. the refills above each pulled the
-        // start down toward a quarter, so from there it needs a little less. every later one starts 2 halvings
-        // (12 hours) lower
-        assertGe(decay[0], 200 hours);
-        assertLe(decay[0], 245 hours);
-        assertApproxEqAbs(decay[1], decay[0] - 12 hours, 1 hours);
-        assertApproxEqAbs(decay[2], decay[0] - 24 hours, 1 hours);
-        uint256 total = block.timestamp - t0;
-        assertApproxEqAbs(total, 3 * decay[0] - 36 hours, 2 hours);
-        assertGe(total, 600 hours, "three slices at dust take about 25 days, not one decay");
-    }
-
-    /// (c) fills near a fair price: restart at twice the clearing price, one slice per half life
-    function test_fairPriceTakersGetOneSlicePerHalfLife() public {
-        _auction();
-        // the taker buys its coin first: the refills below fund the pot with buys of their own, which move the pool
-        _equipTaker(2000 ether);
-        while (core.xToBuyback() < 4 * _fullSlice()) _refill();
-        // the first fill takes whatever the long wait left and sets the baseline start price
-        _warpUntilDust();
-        (, uint256 first) = core.exitAuctionQuote();
-        _fill(first);
-        uint256 base = core.xStartPrice();
-        uint256 hl = core.settings().xAuctionHalfLife;
-        // three half lives later the price is an eighth of the baseline, the lowest price where twice the clearing price
-        // still equals the quarter floor: the fair price the taker now pays, with the least coin this can take
-        vm.warp(block.timestamp + 3 * hl);
-        uint256 clearing = base >> 3;
-        for (uint256 i; i < 3; ++i) {
-            if (i != 0) vm.warp(block.timestamp + hl);
-            // at the quarter floor the restart can sit a few wei above twice the clearing price, from the rounding
-            assertApproxEqAbs(core.exitAuctionPrice(), clearing, 8, "one half life after the restart the price is back");
-            (uint256 slice, uint256 coinIn) = core.exitAuctionQuote();
-            assertEq(slice, _fullSlice());
-            assertGt(coinIn, 1e24, "a real price, not dust");
-            _fill(coinIn);
-            assertApproxEqAbs(core.xStartPrice(), 2 * clearing, 8, "restart at twice the clearing price");
-            assertEq(core.xStartTime(), block.timestamp);
-        }
-        assertEq(xt.balanceOf(taker), 4 * _fullSlice(), "four slices: the first, then one per half life");
-    }
-
-    /// (d) gaps of any length never revert and never underflow
-    function test_longGapsNeverRevertOrUnderflow() public {
-        _auction();
-        uint256 start0 = core.xStartPrice();
-        uint256 t0 = block.timestamp;
-        uint256 hl = core.settings().xAuctionHalfLife;
-        uint256[9] memory gaps =
-            [uint256(0), 1, hl - 1, hl, 255 * hl, 256 * hl - 1, 256 * hl, 256 * hl + 1, uint256(1) << 60];
-        uint256 last = type(uint256).max;
-        for (uint256 i; i < gaps.length; ++i) {
-            vm.warp(t0 + gaps[i]);
-            uint256 p = core.exitAuctionPrice();
-            assertLe(p, last);
-            last = p;
-            (uint256 slice, uint256 coinIn) = core.exitAuctionQuote();
-            assertGt(slice, 0);
-            assertEq(coinIn, slice.mulDivUp(p, 1e18));
-        }
-        assertEq(last, 0, "gone after 256 halvings");
-        _fill(0);
-        assertEq(core.xStartPrice(), start0 / 4, "the fill did not revert and restarted at a quarter");
-    }
-
-    /// the restart price is never zero, even from a start of one or three wei
-    function test_restartNeverZero() public {
-        _auction();
-        vm.warp(block.timestamp + 300 * core.settings().xAuctionHalfLife);
-        assertEq(core.exitAuctionPrice(), 0);
-        vm.store(
-            address(core), bytes32(stdstore.target(address(core)).sig("xStartPrice()").find()), bytes32(uint256(3))
-        );
-        _fill(0);
-        assertEq(core.xStartPrice(), 1, "3 / 4 is zero, the floor keeps one");
-        vm.warp(block.timestamp + 300 * core.settings().xAuctionHalfLife);
-        _fill(0);
-        assertEq(core.xStartPrice(), 1, "one stays one");
-        assertEq(core.exitAuctionPrice(), 1);
-    }
-
-    /// forge-config: default.fuzz.runs = 24
-    function testFuzz_priceNeverRevertsAndNeverRises(uint64 gap1, uint64 gap2) public {
-        _auction();
-        uint256 p0 = core.exitAuctionPrice();
-        vm.warp(block.timestamp + gap1);
-        uint256 p1 = core.exitAuctionPrice();
-        assertLe(p1, p0);
-        vm.warp(block.timestamp + gap2);
-        assertLe(core.exitAuctionPrice(), p1);
-        core.exitAuctionQuote();
-    }
-
-    // ------------------------------------------------------------------ the settings of the auction
-
-    function _auctionSettings(uint256 halfLife, uint256 sliceCredits) internal {
-        Settings memory s = core.settings();
-        // forge-lint: disable-start(unsafe-typecast)
-        s.xAuctionHalfLife = uint32(halfLife);
-        s.exitSliceCredits = uint16(sliceCredits);
-        // forge-lint: disable-end(unsafe-typecast)
-        _setSettings(s);
-    }
-
-    /// the half life is a setting: the price halves every `hl` from the start, at any value inside the bounds
-    function _halfLifeCase(uint256 hl) internal {
-        _auctionSettings(hl, 20);
-        _auction();
-        uint256 p0 = core.exitAuctionPrice();
-        assertEq(p0, core.xStartPrice());
-        vm.warp(block.timestamp + hl);
-        assertEq(core.exitAuctionPrice(), p0 >> 1, "halved after one half life");
-        vm.warp(block.timestamp + 2 * hl);
-        assertEq(core.exitAuctionPrice(), p0 >> 3);
-        vm.warp(block.timestamp + hl / 2);
-        assertApproxEqRel(core.exitAuctionPrice(), (p0 >> 4) * 1_414_213_562_373_095_049 / 1e18, 1e9);
-    }
-
-    function test_halfLifeTenMinutes() public {
-        _halfLifeCase(10 minutes);
-    }
-
-    function test_halfLifeOneHour() public {
-        _halfLifeCase(1 hours);
-    }
-
-    function test_halfLifeThirtyDays() public {
-        _halfLifeCase(30 days);
-    }
-
-    /// forge-config: default.fuzz.runs = 12
-    function testFuzz_halfLifeAnywhereInTheBounds(uint256 hl) public {
-        // an even number of seconds, so the half of it is exact
-        _halfLifeCase(bound(hl, 10 minutes, 30 days) / 2 * 2);
-    }
-
-    /// a fill under a short half life restarts at twice the clearing price, and the clock halves at the new pace
-    function test_shortHalfLifeFillRestartsAtItsOwnPace() public {
-        _auctionSettings(1 hours, 20);
-        _auction();
-        _equipTaker(60 ether);
-        (, uint256 coinIn) = _waitUntilAffordable();
-        uint256 clearing = core.exitAuctionPrice();
-        _fill(coinIn);
-        assertGe(core.xStartPrice(), 2 * clearing);
-        uint256 start = core.xStartPrice();
-        vm.warp(block.timestamp + 1 hours);
-        assertEq(core.exitAuctionPrice(), start >> 1, "one hour per halving now");
-    }
-
-    /// the slice is `exitSliceCredits` credits, or what is left. the opening price asks the whole supply for
-    /// one full slice at the credits in force when the module is set
-    function _sliceCase(uint256 credits) internal {
-        _auctionSettings(6 hours, credits);
-        _auction();
-        uint256 full = credits * UNIT;
-        assertEq(core.xStartPrice(), 1_000_000_000e18 * 1e18 / full, "opening price of the slice in force");
-        (uint256 slice, uint256 coinIn) = core.exitAuctionQuote();
-        assertEq(slice, full.min(core.xToBuyback()));
-        assertApproxEqRel(coinIn, 1_000_000_000e18 * slice / full, 1e9);
-    }
-
-    function test_sliceOfOneCredit() public {
-        _sliceCase(1);
-    }
-
-    function test_sliceOfFiveCredits() public {
-        _sliceCase(5);
-    }
-
-    function test_sliceOfAThousandCredits() public {
-        _sliceCase(1_000);
-        (uint256 slice,) = core.exitAuctionQuote();
-        assertEq(slice, core.xToBuyback(), "the pot is less than a thousand credits: the whole pot is the slice");
-    }
-
-    /// the credits per slice change after the module is set: the next quote uses the new size at the same price
-    function test_sliceChangesAfterPhase2Started() public {
-        _auction();
-        _equipTaker(60 ether);
-        uint256 price = core.exitAuctionPrice();
-        _auctionSettings(6 hours, 3);
-        assertEq(core.exitAuctionPrice(), price, "the price is not touched");
-        (uint256 slice,) = core.exitAuctionQuote();
-        assertEq(slice, 3 * UNIT);
-        (, uint256 coinIn) = _waitUntilAffordable();
-        uint256 pool = core.xToBuyback();
-        _fill(coinIn);
-        assertEq(core.xToBuyback(), pool - 3 * UNIT);
-        assertEq(xt.balanceOf(taker), 3 * UNIT);
-        _solvent();
-    }
-
-    /// changing the half life while an auction runs re anchors it at the price now, so the change never jumps the price
-    function test_halfLifeChangeMidAuctionKeepsThePrice() public {
-        _auction();
-        vm.warp(block.timestamp + 5 hours);
-        uint256 price = core.exitAuctionPrice();
-        _auctionSettings(10 minutes, 20);
-        assertEq(core.exitAuctionPrice(), price);
-        vm.warp(block.timestamp + 10 minutes);
-        assertApproxEqAbs(core.exitAuctionPrice(), price / 2, price / 1e6);
-        _auctionSettings(30 days, 20);
-        uint256 now0 = core.exitAuctionPrice();
-        vm.warp(block.timestamp + 30 days);
-        assertApproxEqAbs(core.exitAuctionPrice(), now0 / 2, now0 / 1e6);
     }
 }
 
@@ -2017,7 +1537,8 @@ contract UniversalRouterTest is FeeBase {
         assertEq(address(feeRouter).balance, 0.0665022 ether, "skim on the buy: 6.65022 points to the router");
         (, uint256 toEngine) = _routerSplit(0.0665022 ether);
         _flush();
-        assertEq(core.ethPot() - pot, toEngine, "and the flush books the engine share");
+        uint256 redeemBurn = toEngine * core.settings().feeToRedeemBurnBps / 10_000;
+        assertEq(core.ethPot() - pot, toEngine - redeemBurn, "and the flush books the engine share less the redeem burn");
         assertEq(coin.balanceOf(DEAD), dead, "nothing burned");
 
         // sell half through permit2, the way the router pulls erc20 input
@@ -2042,7 +1563,7 @@ contract UniversalRouterTest is FeeBase {
         assertApproxEqAbs(inflow, gross * 69 / 1000 * 9_638 / 10_000, 3, "skim on the sell");
         (, uint256 eng) = _routerSplit(inflow);
         _flush();
-        assertEq(core.ethPot() - pot, eng);
+        assertEq(core.ethPot() - pot, _toPot(eng));
         assertEq(coin.balanceOf(DEAD), dead, "nothing burned on the sell either");
     }
 }

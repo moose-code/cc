@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, ICreditStrategy, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Lane, ICreditStrategy, ICreditScore, ICredits, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {BidModel} from "./utils/BidModel.sol";
@@ -27,8 +27,13 @@ contract LifecycleSwapsTest is Fixture {
         assertGt(coinOut, 0);
         uint256 pot = core.ethPot();
         assertGt(pot, 0, "a buy feeds the pot");
-        assertEq(address(core).balance, pot, "every wei of the balance is booked");
+        assertGt(core.ethRedeemBurn(), 0, "feeToRedeemBurnBps routes a share to the reserve");
         assertEq(core.ethToBuyback(), 0, "swap fees never touch the buyback pot");
+        assertGe(
+            address(core).balance,
+            pot + core.ethToBuyback() + core.ethRedeemBurn(),
+            "the booked pots never exceed the balance"
+        );
 
         _sellCoin(trader, coinOut / 2);
         assertGt(core.ethPot(), pot, "a sell feeds the pot too");
@@ -64,15 +69,13 @@ contract LifecycleSwapsTest is Fixture {
         assertEq(core.ethRate(), clamp < core.settings().rateCap ? clamp : core.settings().rateCap);
     }
 
-    /// phase 2 doors are shut while the exit module slot is empty
+    /// phase 2 doors are shut while the exit module slot is empty and exitMode is 0
     function test_phase1_exitDoorsAreClosed() public {
         vm.expectRevert(ICore.NoExitModule.selector);
         core.exitStatement(1);
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.buybackExit(type(uint256).max);
-        vm.expectRevert(ICore.NoExitModule.selector);
+        vm.expectRevert(ICore.ExitModeOff.selector);
         core.sellForExitToken(_one(1));
-        vm.expectRevert(ICore.NotReady.selector);
+        vm.expectRevert(ICore.ExitModeOff.selector);
         core.composeExit();
         // the statement sale door belongs to the controller and needs no module
         vm.expectRevert(ICore.OnlyController.selector);
@@ -143,7 +146,11 @@ contract LifecycleDoorsTest is Fixture {
         // a real buy afterwards adds to the same pot
         _buyCoin(funder, 10 ether);
         assertGt(core.ethPot(), pot - total);
-        assertEq(address(core).balance, core.ethPot(), "everything held is booked");
+        assertEq(
+            address(core).balance,
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            "everything held is booked"
+        );
         _solvent();
     }
 
@@ -437,7 +444,7 @@ contract LifecycleComposeTest is Fixture {
         assertEq(STATEMENTS.ownerOf(c.sid), address(core));
         assertEq(core.heldStatements().length, 1);
         assertEq(core.ethPot(), pot, "an unsold statement costs nothing and books nothing");
-        assertEq(ctl.priceOf(c.sid), basis * 7_500 / 10_000, "the asking price is at the floor");
+        assertEq(ctl.priceOf(c.sid), basis * 10_000 / 10_000, "the asking price is at the floor");
         // two months later a buyer still gets it at the floor
         _buy(alice, c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), alice);
@@ -609,92 +616,42 @@ contract LifecyclePhase2Test is Fixture {
         _warp(90 hours);
     }
 
-    function _fullSlice() internal view returns (uint256) {
-        return uint256(core.settings().exitSliceCredits) * UNIT;
+    /// the per point bid pays each credit its score times the unit less the margin
+    function _bid(uint256 id) internal view returns (uint256) {
+        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id));
+        return score * UNIT * (10_000 - core.settings().exitBidMarginBps) / 10_000;
     }
 
-    /// an eth lane statement exits only after it was held for `exitAfter` since its compose: half of what the module
-    /// pays goes to the buyback share, half to the bid
+    /// an eth lane statement is eligible once its asking price falls to its cost, and the exit books the whole received
+    /// amount into the bid pot
     function _exitTheStatement() internal returns (Composed memory c, uint256 required) {
         assertEq(core.exitToken(), address(xt));
         assertEq(core.exitModule(), address(mod));
         c = _composeOnce();
-        vm.expectRevert(ICore.TooEarly.selector);
+        vm.expectRevert(ICore.NotEligible.selector);
         core.exitStatement(c.sid);
-        vm.warp(c.at + 105 hours - 1);
-        vm.expectRevert(ICore.TooEarly.selector);
-        core.exitStatement(c.sid);
-        vm.warp(c.at + 105 hours);
+        _makeEligible(c.sid);
 
-        required = STATEMENTS.creditsOf(c.sid) * UNIT;
-        assertEq(core.xPot() + core.xToBuyback(), 0);
+        required = core.ratingOf(c.sid) * UNIT;
+        uint256 pot = core.xPot();
         core.exitStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "the module has the statement");
-        assertEq(xt.balanceOf(address(core)), required);
-        assertEq(core.xToBuyback(), required / 2, "half to the buyback");
-        assertEq(core.xPot(), required - required / 2, "half to the bid");
+        assertEq(xt.balanceOf(address(core)) - pot, required);
+        assertEq(core.xPot() - pot, required, "all to the bid pot");
         (bool held,,,) = core.statementInfo(c.sid);
         assertFalse(held);
         assertEq(core.heldStatements().length, 0);
         _solvent();
     }
 
-    function test_phase2_exitStatementThenDutchAuctionFill() public {
-        (, uint256 required) = _exitTheStatement();
-        uint256 pool = core.xToBuyback();
-        uint256 fullSlice = _fullSlice();
-        assertLt(fullSlice, pool, "more than one slice is waiting");
-
-        // a taker buys coin in the real pool and waits for the price to fall to what the coin can pay
-        _buyCoin(taker, 40 ether);
-        vm.prank(taker);
-        coin.approve(address(core), type(uint256).max);
-        uint256 slice;
-        uint256 coinIn;
-        for (uint256 i; i < 2000; ++i) {
-            (slice, coinIn) = core.exitAuctionQuote();
-            if (coinIn <= coin.balanceOf(taker)) break;
-            _warp(1 hours);
-        }
-        assertEq(slice, fullSlice);
-        assertGt(coinIn, 0);
-        uint256 price = core.exitAuctionPrice();
-        uint256 startBefore = core.xStartPrice();
-        assertEq(coinIn, slice.mulDivUp(price, 1e18));
-
-        uint256 supply0 = coin.totalSupply();
-        uint256 taker0 = coin.balanceOf(taker);
-        vm.prank(taker);
-        core.buybackExit(coinIn);
-        assertEq(taker0 - coin.balanceOf(taker), coinIn, "the taker paid the quote in coin");
-        assertEq(supply0 - coin.totalSupply(), coinIn, "and it was burned, total supply fell");
-        assertEq(xt.balanceOf(taker), slice, "the taker got the slice");
-        assertEq(core.xToBuyback(), pool - slice);
-        assertEq(core.xPot(), required - required / 2, "the bid share is untouched");
-        assertEq(core.xStartPrice(), (2 * price).max(startBefore / 4), "restart at max(2 * clearing, start / 4)");
-        assertEq(core.xStartTime(), block.timestamp);
-        assertEq(coin.balanceOf(address(core)), 0);
-        _solvent();
-
-        // the restart price is far above what the taker holds now, so an immediate second fill cannot be paid
-        (, uint256 again) = core.exitAuctionQuote();
-        assertGt(again, coin.balanceOf(taker));
-        uint256 held = coin.balanceOf(taker);
-        vm.prank(taker);
-        vm.expectRevert(ICore.Slippage.selector);
-        core.buybackExit(held);
-        _solvent();
-    }
-
-    /// a sold statement can never be exited, and a statement the module holds cannot be sold
+    /// a sold statement can never be exited
     function test_phase2_aSaleFirstMakesTheExitRevert() public {
         Composed memory c = _composeOnce();
-        vm.warp(c.at + 105 hours);
         _buy(alice, c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), alice);
         vm.expectRevert(ICore.NotHeld.selector);
         core.exitStatement(c.sid);
-        assertEq(core.xPot() + core.xToBuyback(), 0, "no exit token came in");
+        assertEq(core.xPot(), 0, "no exit token came in");
         _solvent();
     }
 
@@ -702,32 +659,25 @@ contract LifecyclePhase2Test is Fixture {
     /// everything back to xPot, so the pot compounds
     function test_phase2_bidComposeExitAndCompound() public {
         _exitTheStatement();
-        // the exit token bid is thin after the first exit, so top it up the way fees in the exit token would arrive:
-        // plain exit token sent to the core and booked by skim
-        xt.mint(address(core), 5e18);
+        // top the bid pot up the way exit token fees would arrive: plain exit token booked by skim
+        xt.mint(address(core), 1e22);
         core.skim();
         _solvent();
-
-        _warp(10 hours);
-        uint256 r = core.xRate();
-        assertGt(r, core.XRATE_START(), "the bid climbed while funded");
 
         uint256[] memory ids = _credits(xseller, 80);
         uint256 xPotBefore = core.xPot();
         uint256 total;
         uint256[] memory prices = new uint256[](80);
         for (uint256 i; i < 80; ++i) {
-            prices[i] = r * UNIT / 10_000;
+            prices[i] = _bid(ids[i]);
             total += prices[i];
-            r = r.zeroFloorSub(core.settings().xRateDropPerCredit).max(core.settings().xRateFloor);
         }
         assertLt(total, xPotBefore, "the pot carries the whole page");
 
         vm.prank(xseller);
         core.sellForExitToken(ids);
-        assertEq(xt.balanceOf(xseller), total, "paid in the exit token, by the credit's own rating");
+        assertEq(xt.balanceOf(xseller), total, "paid in the exit token, by each credit's score");
         assertEq(core.xPot(), xPotBefore - total);
-        assertEq(core.xRate(), r, "20 basis points down per credit");
         assertEq(core.pileSize(Lane.Exit), 80);
         for (uint256 i; i < 80; ++i) {
             (bool inPile, Lane bidLane, uint256 cost,) = core.creditInfo(ids[i]);
@@ -738,8 +688,7 @@ contract LifecyclePhase2Test is Fixture {
         }
         _solvent();
 
-        // compose the exit lane. the caller receives nothing, the eth pot is unchanged and the cost basis is in the
-        // exit token
+        // compose the exit lane. the caller receives nothing, the eth pot is unchanged, the basis is the exit token paid
         uint256 supply0 = STATEMENTS.supply();
         uint256 ethPot0 = core.ethPot();
         uint256 keeper0 = keeper.balance;
@@ -757,22 +706,17 @@ contract LifecyclePhase2Test is Fixture {
             assertEq(basis, total, "the basis is the exit token paid");
             assertEq(keeper.balance, keeper0);
             assertEq(core.ethPot(), ethPot0);
-
-            // the exit lane statement is not for sale
             vm.prank(address(ctl));
             vm.expectRevert(ICore.NotForSale.selector);
             core.sellTo(sid, alice);
         }
 
-        // immediate exit, everything to xPot, nothing to the buyback
-        uint256 required = STATEMENTS.creditsOf(sid) * UNIT;
+        // immediate exit, everything to xPot
+        uint256 required = core.ratingOf(sid) * UNIT;
         uint256 xPot1 = core.xPot();
-        uint256 toBuyback1 = core.xToBuyback();
         core.exitStatement(sid);
         assertEq(core.xPot(), xPot1 + required, "all of it back to xPot");
-        assertEq(core.xToBuyback(), toBuyback1, "no buyback share in the exit lane");
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
-
         // compounding: the pot ends above where it stood before the bids were paid
         assertEq(core.xPot(), xPotBefore - total + required);
         assertGt(core.xPot(), xPotBefore, "compounded");
@@ -780,15 +724,14 @@ contract LifecyclePhase2Test is Fixture {
         _solvent();
     }
 
-    /// a module that underpays reverts the exit and changes nothing, however little it is short. the statement is
-    /// still held by the core afterwards, as if nothing happened
+    /// a module that underpays reverts the exit and changes nothing, however little it is short
     function test_phase2_hostileExitModuleUnderpaysReverts() public {
         Composed memory c = _composeOnce();
-        vm.warp(c.at + 105 hours);
-        bytes32 before = keccak256(abi.encode(core.xPot(), core.xToBuyback(), xt.balanceOf(address(core))));
+        _makeEligible(c.sid);
+        bytes32 before = keccak256(abi.encode(core.xPot(), xt.balanceOf(address(core))));
 
-        // one basis point short
-        mod.setShortfallBps(1);
+        // one basis point under the slippage floor
+        mod.setPayBps(10_000 - core.settings().exitSlippageBps - 1);
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement never left the core");
@@ -796,24 +739,24 @@ contract LifecyclePhase2Test is Fixture {
         assertTrue(held);
 
         // all of it withheld
-        mod.setShortfallBps(10_000);
+        mod.setPayBps(0);
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(c.sid);
 
-        // a module that lowers the unit it pays by after it was set. the core holds the unit from set time
-        mod.setShortfallBps(0);
-        mod.setUnitPerCredit(1);
+        // a module that lowers the unit it pays by after it was set; the core holds the unit from set time
+        mod.setPayBps(10_000);
+        mod.setUnitPerPoint(1);
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(c.sid);
 
-        assertEq(keccak256(abi.encode(core.xPot(), core.xToBuyback(), xt.balanceOf(address(core)))), before);
+        assertEq(keccak256(abi.encode(core.xPot(), xt.balanceOf(address(core)))), before);
         // the statement is still good: a buyer could take it right now
         uint256 snap = vm.snapshotState();
         _buy(alice, c.sid);
         vm.revertToState(snap);
 
         // an honest module goes through afterwards
-        mod.setUnitPerCredit(UNIT);
+        mod.setUnitPerPoint(UNIT);
         core.exitStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod));
         _solvent();
@@ -920,16 +863,14 @@ contract LifecycleNarrativeTest is Fixture {
         }
     }
 
-    /// the statement nobody bought: still held after the sale of the other, redeemed after `exitAfter`
-    function _exit(uint256 sid, uint64 at) internal {
+    /// the statement nobody bought: still held after the sale of the other, redeemed once its price falls to its cost
+    function _exit(uint256 sid, uint64) internal {
         assertTrue(_isHeld(sid), "no buyer, so still held");
-        vm.warp(at + core.settings().exitAfter);
-        uint256 required = STATEMENTS.creditsOf(sid) * UNIT;
-        uint256 back0 = core.xToBuyback();
+        _makeEligible(sid);
+        uint256 required = core.ratingOf(sid) * UNIT;
         uint256 pot0 = core.xPot();
         core.exitStatement(sid);
-        assertEq(core.xToBuyback() - back0, required / 2);
-        assertEq(core.xPot() - pot0, required - required / 2);
+        assertEq(core.xPot() - pot0, required, "all to the bid pot");
         _check();
     }
 
@@ -938,28 +879,6 @@ contract LifecycleNarrativeTest is Fixture {
         vm.prank(xseller);
         core.sellForExitToken(ids);
         assertGt(xt.balanceOf(xseller), 0);
-        _check();
-    }
-
-    function _dutchFill() internal {
-        _buyCoin(taker, 40 ether);
-        _check();
-        vm.prank(taker);
-        coin.approve(address(core), type(uint256).max);
-        uint256 slice;
-        uint256 coinIn;
-        for (uint256 i; i < 2000; ++i) {
-            (slice, coinIn) = core.exitAuctionQuote();
-            if (coinIn <= coin.balanceOf(taker)) break;
-            _warp(1 hours);
-        }
-        uint256 supply0 = coin.totalSupply();
-        uint256 got0 = xt.balanceOf(taker);
-        vm.prank(taker);
-        core.buybackExit(coinIn);
-        assertEq(xt.balanceOf(taker) - got0, slice);
-        burnedByAuction += supply0 - coin.totalSupply();
-        assertEq(supply0 - coin.totalSupply(), coinIn);
         _check();
     }
 
@@ -977,7 +896,10 @@ contract LifecycleNarrativeTest is Fixture {
             // eth, not milli eth). the owner puts it back to the opening price of the launch
             if (round == 1) {
                 uint256 opening = core.RATE_START();
-                assertGt(core.ethRate(), 10 * opening);
+                // the long idle waits let the bid climb well above the opening price (the pot's clamp is lower than
+                // before the per redemption reserve took a share of fees, so the climb reaches a few times the opening,
+                // not ten times)
+                assertGt(core.ethRate(), 2 * opening);
                 vm.prank(owner);
                 core.setRate(opening);
                 _check();
@@ -994,11 +916,9 @@ contract LifecycleNarrativeTest is Fixture {
             _buybacks();
             _exit(aged, agedAt);
             _bidForCredits();
-            _dutchFill();
             assertEq(core.heldStatements().length, 0);
         }
         assertGt(burnedByBuyback, 0);
-        assertGt(burnedByAuction, 0);
         assertLt(coin.totalSupply(), 1_000_000_000e18, "the supply fell over the loops");
         assertEq(coin.balanceOf(address(core)), 0);
         assertGt(steps, 25);
@@ -1038,7 +958,7 @@ contract LifecycleOwnerAdaptsTest is Fixture {
         // old numbers: a drop of 0.5 percent, a 75 percent floor and a 150 percent ask, an even split of the sale
         Settings memory old = core.settings();
         assertEq(old.dropPerCreditBps, 50);
-        assertEq(old.saleFloorBps, 7_500);
+        assertEq(old.saleFloorBps, 10_000);
         assertEq(old.saleToBuybackBps, 5_000);
 
         // two statements held under the old numbers

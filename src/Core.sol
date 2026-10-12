@@ -74,7 +74,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error Underpaid();
     error NoExitModule();
     error ExitTokenChanged();
-    error TooEarly();
+    /// the action is not allowed in the current `exitMode`
+    error ExitModeOff();
+    /// `exitStatement`: the eth lane statement's asking price is above its stored cost, or the controller did not answer
+    error NotEligible();
     /// the door `what` ("controller", "exitModule" or "targets") was locked by the owner
     error Locked(bytes32 what);
     error OnlyController();
@@ -118,13 +121,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
-    event ExitRateFill(uint256 rate, uint256 pot);
     event Composed(uint256 indexed sid, Lane lane, uint8 format, uint256 cost, address indexed caller);
     event SettingsSet(Settings settings);
     event RateSet(uint256 rate);
     event StatementExited(uint256 indexed sid, Lane lane, uint256 received);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
-    event ExitBuyback(address indexed caller, uint256 slice, uint256 coinIn);
     /// the controller sold a statement: the buyer, the price paid and the part of it booked to the coin buyback (the
     /// rest went to the pot)
     event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback);
@@ -134,7 +135,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event ExitModuleLocked();
     event TargetsLocked();
     event ControllerSet(address controller);
-    event ExitModuleSet(address exitModule, address exitToken, uint256 unitPerCredit);
+    event ExitModuleSet(address exitModule, address exitToken, uint256 unitPerPoint);
+    /// `refreshUnitPerPoint` re-read `unitPerPoint` from the current module
+    event UnitPerPointRefreshed(address exitModule, uint256 unitPerPoint);
+    /// `releaseRedeemBurn` moved `amount` of the redeem burn reserve into the coin buyback
+    event RedeemBurnReleased(uint256 amount);
     event TargetAdded(address target);
     event TargetRemoved(address target);
     event CoinRescued(address indexed to, uint256 amount);
@@ -153,11 +158,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /*//////////////////////////////////////////////////////////////
                               PARAMETERS
     //////////////////////////////////////////////////////////////*/
-
-    /// the coin supply of the launch, which the exit auction opening price reads
-    uint256 public constant SUPPLY = 1_000_000_000e18;
-    /// the exit rate the state starts at, bps of one credit's exit value
-    uint256 public constant XRATE_START = 6000;
 
     uint256 private constant BPS = 10_000;
     uint256 private constant PAGE = 80;
@@ -219,16 +219,15 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     uint256 public ethPot;
     uint256 public ethToBuyback;
+    /// eth reserve filled by `feeToRedeemBurnBps` of the fee stream. each eth lane redemption moves `redeemBurnBps` of it
+    /// into `ethToBuyback`, so a statement that leaves the engine by redemption funds a coin buy and burn
+    uint256 public ethRedeemBurn;
+    /// exit token held for the exit token bid. redemptions add to it, `sellForExitToken` pays from it
     uint256 public xPot;
-    uint256 public xToBuyback;
 
     uint256 public rateAtCheckpoint;
     uint64 public checkpointTime;
     uint64 public lastFillTime;
-
-    uint256 xRateAtCheckpoint;
-    uint64 xCheckpointTime;
-    bool xFunded;
 
     uint256 public lastBuybackBlock;
 
@@ -237,12 +236,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     mapping(uint256 => CoreLib.Statement) private _statements;
     uint256[] private _heldIds;
 
-    /// exit token base units per credit, read from the module when it is set
-    uint256 public unitPerCredit;
-    /// exit token auction: price in coin wei per exit token unit, wad scaled, at `xStartTime`. it halves every
-    /// `xAuctionHalfLife`. the clock only runs while `xToBuyback` is not zero
-    uint256 public xStartPrice;
-    uint64 public xStartTime;
+    /// exit token base units per stored score unit (one ten-thousandth of a point), read from the module when it is set
+    uint256 public unitPerPoint;
 
     /// the contract `migrate` sends the assets to, and whether `setSuccessor` is closed
     address public successor;
@@ -305,7 +300,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         a.lastFillRate = rateStart_;
         a.peakRate = rateStart_;
         a.peakTime = uint64(block.timestamp);
-        xRateAtCheckpoint = uint256(XRATE_START).min(settings_.xRateCap).max(settings_.xRateFloor);
         CREDITS.setApprovalForAll(address(STATEMENTS), true);
         emit OwnershipTransferred(address(0), owner_);
         emit ControllerSet(controller_);
@@ -316,17 +310,20 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// accepts eth from anyone but the fee source and leaves it unbooked (`skim` books it). eth from the fee source (the
-    /// router flushing the pool's fee eth) is booked: `feeToBuybackBps` of it to the coin buyback, the rest to the pot.
-    /// while a measurement is in flight the fee source REVERTS: a router flush started inside a measured call (by
-    /// the seller's callback, say) then fails as a whole and the fees wait in the router. every other sender is
-    /// accepted unbooked, so a refund or a sale payout can never fail a call
+    /// router flushing the pool's fee eth) is booked: `feeToBuybackBps` to the coin buyback, `feeToRedeemBurnBps` to the
+    /// redeem burn reserve, the rest to the pot. while a measurement is in flight the fee source REVERTS: a router flush
+    /// started inside a measured call (by the seller's callback, say) then fails as a whole and the fees wait in the
+    /// router. every other sender is accepted unbooked, so a refund or a sale payout can never fail a call
     receive() external payable {
         if (msg.sender != FEE_SOURCE) return;
         if (_measuring().get()) revert Measuring();
         _checkpoint();
-        uint256 toBuyback = msg.value * _st().feeToBuybackBps / BPS;
+        Settings storage s = _st();
+        uint256 toBuyback = msg.value * s.feeToBuybackBps / BPS;
+        uint256 toRedeemBurn = msg.value * s.feeToRedeemBurnBps / BPS;
         if (toBuyback != 0) ethToBuyback += toBuyback;
-        ethPot += msg.value - toBuyback;
+        if (toRedeemBurn != 0) ethRedeemBurn += toRedeemBurn;
+        ethPot += msg.value - toBuyback - toRedeemBurn;
         emit FeesAdded(msg.value);
     }
 
@@ -342,7 +339,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// books any eth or exit token held above the recorded pots into the buying pots. anyone may call.
     function skim() external nonReentrant {
-        uint256 eth = address(this).balance.zeroFloorSub(ethPot + ethToBuyback);
+        uint256 eth = address(this).balance.zeroFloorSub(ethPot + ethToBuyback + ethRedeemBurn);
         if (eth != 0) {
             _checkpoint();
             ethPot += eth;
@@ -350,12 +347,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 x;
         address token = exitToken;
         if (token != address(0)) {
-            x = SafeTransferLib.balanceOf(token, address(this)).zeroFloorSub(xPot + xToBuyback);
-            if (x != 0) {
-                _xCheckpoint();
-                xPot += x;
-                _syncXFunded();
-            }
+            x = SafeTransferLib.balanceOf(token, address(this)).zeroFloorSub(xPot);
+            if (x != 0) xPot += x;
         }
         emit Skimmed(eth, x);
     }
@@ -401,28 +394,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                              EXIT RATE
-    //////////////////////////////////////////////////////////////*/
-
-    /// exit token bid in bps of one credit's exit value right now.
-    function xRate() public view returns (uint256 r) {
-        return CoreLib.xRateOf(xRateAtCheckpoint, xFunded, xPot, unitPerCredit, xCheckpointTime, _st());
-    }
-
-    function _xCheckpoint() private {
-        xRateAtCheckpoint = xRate();
-        xCheckpointTime = uint64(block.timestamp);
-    }
-
-    function _syncXFunded() private {
-        xFunded = CoreLib.xFundedOf(xPot, xRateAtCheckpoint, unitPerCredit);
-    }
-
-    /*//////////////////////////////////////////////////////////////
                            CONTROLLER READS
     //////////////////////////////////////////////////////////////*/
 
-    /// the settings, four packed slots at a fixed location shared with the library
+    /// the settings, three packed slots at a fixed location shared with the library
     function _st() private pure returns (Settings storage) {
         return SettingsStore.load();
     }
@@ -447,6 +422,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 flag;
         (flag, ids, format) = abi.decode(out, (uint256, uint256[80], uint256));
         ready = flag == 1;
+    }
+
+    /// bounded read of the controller's eligibility answer for an eth lane statement. a revert, a short answer or a
+    /// `false` reads as not eligible
+    function _atCost(uint256 sid) private view returns (bool) {
+        (bool ok, bytes memory out) = _ask(controller, abi.encodeCall(IController.atCost, (sid)), READ_GAS, 32);
+        return ok && abi.decode(out, (bool));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -607,6 +589,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 gasStart = gasleft();
         _openDoor();
         Lane lane = msg.sig == this.composeExit.selector ? Lane.Exit : Lane.Eth;
+        // the exit lane feeds the exit token bid, which runs only while exitMode is 2
+        if (lane == Lane.Exit && _st().exitMode != 2) revert ExitModeOff();
         (bool ready, uint256[80] memory ids, uint256 format) = _nextPage(lane);
         if (!ready) revert NotReady();
         if (format > MAX_FORMAT) revert BadFormat();
@@ -624,10 +608,17 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
 
         _heldIds.push(sid);
+        // rating is the sum of 80 credit scores in ten-thousandths of a point, each at most 8_000_000, so at most
+        // 640_000_000, within uint32. the cast is checked so a statement whose rating does not fit is refused rather
+        // than stored truncated (a compose cannot overprint, so this bound always holds)
+        uint256 rating = STATEMENTS.creditScoreOf(sid);
+        if (rating > type(uint32).max) revert BadStatement();
+        // forge-lint: disable-next-line(unsafe-typecast)
         _statements[sid] = CoreLib.Statement({
             cost: cost,
             composedAt: uint64(block.timestamp),
             slot: uint64(_heldIds.length - 1),
+            rating: uint32(rating),
             lane: lane,
             held: true
         });
@@ -698,17 +689,21 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                  EXIT
     //////////////////////////////////////////////////////////////*/
 
-    /// hands a held statement to the exit module. an eth lane statement must have been held for `exitAfter` since its
-    /// compose. an exit lane statement goes at once.
+    /// hands a held statement to the exit module and books the exit token it returns into `xPot`. requires `exitMode`
+    /// at least 1 and a module set. an eth lane statement is eligible when the controller's asking price is at or below
+    /// its stored cost; an exit lane statement is eligible at once. the exit must raise the exit token balance by at
+    /// least `rating * unitPerPoint * (10_000 - exitSlippageBps) / 10_000`. an eth lane redemption also moves
+    /// `redeemBurnBps` of the redeem burn reserve into the coin buyback
     function exitStatement(uint256 sid) external nonReentrant {
         uint256 gasStart = gasleft();
         address module = exitModule;
         if (module == address(0)) revert NoExitModule();
+        if (_st().exitMode == 0) revert ExitModeOff();
         CoreLib.Statement memory s = _statements[sid];
         if (!s.held) revert NotHeld();
-        if (s.lane == Lane.Eth && block.timestamp < s.composedAt + _st().exitAfter) revert TooEarly();
+        if (s.lane == Lane.Eth && !_atCost(sid)) revert NotEligible();
         address token = exitToken;
-        uint256 required = STATEMENTS.creditsOf(sid) * unitPerCredit;
+        uint256 required = uint256(s.rating) * unitPerPoint * (BPS - _st().exitSlippageBps) / BPS;
         _unhold(sid);
 
         uint256 balanceBefore = SafeTransferLib.balanceOf(token, address(this));
@@ -719,18 +714,15 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 balanceAfter = SafeTransferLib.balanceOf(token, address(this));
         if (balanceAfter < balanceBefore + required) revert Underpaid();
         uint256 received = balanceAfter - balanceBefore;
+        xPot += received;
 
-        uint256 toBuyback = received * (s.lane == Lane.Eth ? _st().exitToBuybackBps : _st().exitLaneToBuybackBps) / BPS;
-        _xCheckpoint();
-        if (toBuyback != 0) {
-            // new funds never inherit a decayed clock: the curve re anchors at the price now, floored at a quarter
-            // of the start, and the clock restarts. with an empty pot the price now is the stored start price
-            xStartPrice = exitAuctionPrice().max(xStartPrice / 4).max(1);
-            xStartTime = uint64(block.timestamp);
+        if (s.lane == Lane.Eth) {
+            uint256 toBurn = ethRedeemBurn * _st().redeemBurnBps / BPS;
+            if (toBurn != 0) {
+                ethRedeemBurn -= toBurn;
+                ethToBuyback += toBurn;
+            }
         }
-        xToBuyback += toBuyback;
-        xPot += received - toBuyback;
-        _syncXFunded();
         emit StatementExited(sid, s.lane, received);
         _payCaller(gasStart, EXIT_OVERHEAD_GAS, EXIT_GAS);
     }
@@ -783,46 +775,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return abi.encode(owed, bought);
     }
 
-    /// sells one slice of the exit token buyback pot for coin at the dutch auction price and burns the coin it
-    /// takes from the caller. the caller must have approved the core for it. phase 2 only.
-    function buybackExit(uint256 maxCoinIn) external nonReentrant {
-        address token = exitToken;
-        if (token == address(0)) revert NoExitModule();
-        (uint256 slice, uint256 coinIn, uint256 price) = _exitQuote();
-        if (slice == 0) revert NothingToBuy();
-        if (coinIn > maxCoinIn) revert Slippage();
-        xToBuyback -= slice;
-        // never below a quarter of the start just played, never zero
-        xStartPrice = (2 * price).max(xStartPrice / 4).max(1);
-        xStartTime = uint64(block.timestamp);
-        if (coinIn != 0) ICoin(COIN).burnFrom(msg.sender, coinIn);
-        SafeTransferLib.safeTransfer(token, msg.sender, slice);
-        emit ExitBuyback(msg.sender, slice, coinIn);
-    }
-
-    /// the exit token auction price now, coin wei per exit token unit in wad. it halves every 6 hours from the start
-    /// price and may reach zero. while nothing is for sale the clock is stopped and this is the start price.
-    function exitAuctionPrice() public view returns (uint256) {
-        if (xToBuyback == 0) return xStartPrice;
-        return CoreLib.decay(xStartPrice, block.timestamp - xStartTime, _st().xAuctionHalfLife);
-    }
-
-    /// the exit token slice a fill would take now and the coin it would burn.
-    function exitAuctionQuote() external view returns (uint256 slice, uint256 coinIn) {
-        (slice, coinIn,) = _exitQuote();
-    }
-
-    /// exit token of one full exit buyback slice: `exitSliceCredits` credits
-    function _fullSlice(uint256 unit) private view returns (uint256) {
-        return uint256(_st().exitSliceCredits) * unit;
-    }
-
-    function _exitQuote() private view returns (uint256 slice, uint256 coinIn, uint256 price) {
-        slice = xToBuyback.min(_fullSlice(unitPerCredit));
-        price = exitAuctionPrice();
-        coinIn = slice.mulDivUp(price, 1e18);
-    }
-
     /*//////////////////////////////////////////////////////////////
                                 OWNER
     //////////////////////////////////////////////////////////////*/
@@ -854,6 +806,33 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function setExitModule(address module) external onlyOwner nonReentrant {
         if (exitModuleLocked) revert Locked("exitModule");
         _setExitModule(module);
+    }
+
+    /// re-reads `unitPerPoint` from the current module and stores it. works after `lockExitModule`, and changes
+    /// neither the module nor the exit token. the module's `exitToken()` must equal the stored exit token
+    /// (`ExitTokenChanged`). the unit must be nonzero and at most `type(uint128).max`, the same check
+    /// a module set makes. the owner calls it after the module reports a new redeem rate
+    function refreshUnitPerPoint() external onlyOwner nonReentrant {
+        address module = exitModule;
+        if (module == address(0)) revert NoExitModule();
+        if (IExitModule(module).exitToken() != exitToken) revert ExitTokenChanged();
+        (bool ok, bytes memory out) = _ask(module, abi.encodeCall(IExitModule.unitPerPoint, ()), READ_GAS, 32);
+        uint256 unit = ok ? abi.decode(out, (uint256)) : 0;
+        if (unit == 0 || unit > type(uint128).max) revert BadModule();
+        unitPerPoint = unit;
+        emit UnitPerPointRefreshed(module, unit);
+    }
+
+    /// moves `amount` of the redeem burn reserve into the coin buyback, capped at the reserve. the eth stays inside the
+    /// core for a coin buy and burn: `ethRedeemBurn` falls and `ethToBuyback` rises by the same amount, so the tracked
+    /// total and solvency hold. callable after `migrate`. reverts `ZeroAmount` when the reserve is empty or `amount` is 0
+    function releaseRedeemBurn(uint256 amount) external onlyOwner nonReentrant {
+        uint256 reserve = ethRedeemBurn;
+        uint256 move = amount < reserve ? amount : reserve;
+        if (move == 0) revert ZeroAmount();
+        ethRedeemBurn = reserve - move;
+        ethToBuyback += move;
+        emit RedeemBurnReleased(move);
     }
 
     /// allows a target of `buyListing` at once. forbidden targets are refused. reverts after `lockTargets`
@@ -915,11 +894,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// moves `ethPot`, `xPot` and up to `maxCredits` credits from the head of each pile to the successor,
-    /// in batches. callable again until nothing is left. `ethToBuyback` stays for the coin buyback and `xToBuyback`
-    /// for the exit token burn auction (`buybackExit`). the held
-    /// statements and their records stay with the core. an exit token transfer that fails leaves `xPot` and logs `ExitTokenMigrationSkipped`, the
-    /// eth and credit legs go on. the first call sets `retired` and logs `EngineRetired`. owner only and guarded, both checked by the
-    /// library, to which the call is handed untouched. reverts `NoSuccessor` while the successor is zero
+    /// in batches. callable again until nothing is left. `ethToBuyback` and `ethRedeemBurn` stay for the coin buyback.
+    /// the held statements and their records stay with the core. an exit token transfer that fails leaves `xPot` and
+    /// logs `ExitTokenMigrationSkipped`, the eth and credit legs go on. the first call sets `retired` and logs
+    /// `EngineRetired`. owner only and guarded, both checked by the library, to which the call is handed untouched.
+    /// reverts `NoSuccessor` while the successor is zero
     function migrate(uint256) external {
         _toLib();
     }
@@ -957,19 +936,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit TargetRemoved(target);
     }
 
-    /// sets every economic setting at once, effective now. the eth rate and the exit rate are checkpointed first, so no
-    /// climb is credited under the wrong numbers, then the call is handed to the library untouched: it checks every
-    /// field against its bounds, stores them and logs them. the exit funded flag is recomputed after, the exit rate is
-    /// held inside the new band, and the exit auction is re anchored at its price now when its half life changes. a
-    /// change of `peakHalfLife` restates the remembered peak at the old half life first, so the new one decays forward only
+    /// sets every economic setting at once, effective now. the eth rate is checkpointed first, so no climb is credited
+    /// under the wrong numbers, then the call is handed to the library untouched: it checks every field against its
+    /// bounds, stores them and logs them. a change of `peakHalfLife` restates the remembered peak at the old half life
+    /// first, so the new one decays forward only
     function setSettings(Settings calldata) external onlyOwner nonReentrant {
         _checkpoint();
-        _xCheckpoint();
-        Settings storage s = _st();
-        bool module = exitModule != address(0);
-        bool anchor = module && xToBuyback != 0;
-        uint256 half = s.xAuctionHalfLife;
-        uint256 price = anchor ? exitAuctionPrice() : 0;
         address lib = address(CoreLib);
         bytes4 sel = CoreLib.setSettings.selector;
         assembly ("memory-safe") {
@@ -983,12 +955,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                 revert(p, returndatasize())
             }
         }
-        if (anchor && s.xAuctionHalfLife != half) {
-            xStartPrice = price.max(1);
-            xStartTime = uint64(block.timestamp);
-        }
-        xRateAtCheckpoint = xRateAtCheckpoint.min(s.xRateCap).max(s.xRateFloor);
-        if (module) _syncXFunded();
     }
 
     /// restates the eth rate (wei per credit) as `rate`, within the rate bounds. the stored rate, the last fill rate and
@@ -1005,36 +971,22 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit RateSet(rate);
     }
 
-    /// sets or replaces the exit module. the exit token never changes once set.
-    /// the unit is read again every time, so naming the same module again is how the unit is updated. the exit rate is
-    /// checkpointed under the old unit first and the exit funded flag resynced after. a later set never touches the exit
-    /// auction price or clock: the price is coin per exit token, the unit only changes the slice. a dormant allowed
-    /// target flag of the new module is cleared, so it cannot come back to life when the module is replaced
+    /// sets or replaces the exit module. the exit token never changes once set. the unit is read again every time, so
+    /// naming the same module again is how the unit is updated. a dormant allowed target flag of the new module is
+    /// cleared, so it cannot come back to life when the module is replaced
     function _setExitModule(address module) private {
         address old = exitModule;
         if (module.code.length == 0) revert BadModule();
         address token = IExitModule(module).exitToken();
         if (old != address(0) && token != exitToken) revert ExitTokenChanged();
         if (token.code.length == 0 || _forbiddenBase(module) || _forbiddenBase(token)) revert BadModule();
-        (bool ok, bytes memory out) = _ask(module, abi.encodeCall(IExitModule.unitPerCredit, ()), READ_GAS, 32);
+        (bool ok, bytes memory out) = _ask(module, abi.encodeCall(IExitModule.unitPerPoint, ()), READ_GAS, 32);
         uint256 unit = ok ? abi.decode(out, (uint256)) : 0;
         if (unit == 0 || unit > type(uint128).max) revert BadModule();
-        // the climb so far is credited under the old unit
-        _xCheckpoint();
         exitModule = module;
         exitToken = token;
-        unitPerCredit = unit;
-        // the opening price asks the whole coin supply for one full slice
-        uint256 start = SUPPLY * 1e18 / _fullSlice(unit);
-        // below 1e12 the integer halves to zero within days, and zero hands the slice away
-        if (start < 1e12) revert BadModule();
+        unitPerPoint = unit;
         if (allowedTarget[module]) delete allowedTarget[module];
-        if (old == address(0)) {
-            xStartPrice = start;
-            xStartTime = uint64(block.timestamp);
-        } else {
-            _syncXFunded();
-        }
         emit ExitModuleSet(module, token, unit);
     }
 
@@ -1073,7 +1025,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return (s.held, s.lane, s.cost, s.composedAt);
     }
 
-    /// every setting. the four packed slots go to the library, which unpacks them into the struct, and the answer is
+    /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose
+    function ratingOf(uint256 sid) external view returns (uint256) {
+        return _statements[sid].rating;
+    }
+
+    /// every setting. the three packed slots go to the library, which unpacks them into the struct, and the answer is
     /// returned as it comes (an abi encoded `Settings`)
     function settings() external view returns (Settings memory) {
         bytes32 slot = SettingsStore.SLOT;
@@ -1085,8 +1042,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             mstore(add(p, 4), sload(slot))
             mstore(add(p, 0x24), sload(add(slot, 1)))
             mstore(add(p, 0x44), sload(add(slot, 2)))
-            mstore(add(p, 0x64), sload(add(slot, 3)))
-            if iszero(staticcall(gas(), lib, p, 0x84, 0, 0)) { revert(0, 0) }
+            if iszero(staticcall(gas(), lib, p, 0x64, 0, 0)) { revert(0, 0) }
             returndatacopy(p, 0, returndatasize())
             return(p, returndatasize())
         }

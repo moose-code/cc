@@ -80,14 +80,14 @@ contract BurnModule is IExitModule {
         burn = burn_;
     }
 
-    function unitPerCredit() external view returns (uint256) {
+    function unitPerPoint() external view returns (uint256) {
         return unit;
     }
 
     function exit(uint256 sid) external returns (uint256 out) {
         uint256 stop = gasleft() - burn;
         while (gasleft() > stop) {}
-        out = IStatements(Mainnet.STATEMENTS).creditsOf(sid) * unit;
+        out = IStatements(Mainnet.STATEMENTS).creditScoreOf(sid) * unit;
         MockExitToken(exitToken).mint(msg.sender, out);
     }
 }
@@ -315,8 +315,11 @@ contract ReviewSaleTest is Fixture {
     /// quote and the payment are clamped at the hard floor, so `buy` keeps working and the excess comes back
     function test_FIXED_buyWorksWhileTheAskIsUnderTheCoreFloor() public {
         uint256 sid = _composeOnce().sid;
-        _raise(9_000);
-        _warp(100 hours);
+        // lower the controller floor below the core hard floor (saleFloorBps stays at its launch 100 percent), so the
+        // decayed ask falls under the core floor and the quote is pinned up to it
+        vm.prank(owner);
+        ctl.setFloorBps(5_000);
+        _warp(300 hours);
         uint256 floor = _floorOf(sid);
         assertEq(ctl.priceOf(sid), floor, "the quote is the hard floor");
         vm.deal(bob, 1000 ether);
@@ -339,7 +342,7 @@ contract ReviewSaleTest is Fixture {
         uint256 cost = 10 ether;
         // forge-lint: disable-start(unsafe-typecast)
         stub.set(cost, 0);
-        assertEq(c.priceOf(0), cost * 7_500 / 10_000, "an ancient statement sits at the floor");
+        assertEq(c.priceOf(0), cost * 10_000 / 10_000, "an ancient statement sits at the floor");
         stub.set(cost, uint64(block.timestamp));
         assertEq(c.priceOf(0), cost * 15_000 / 10_000, "age zero is the start");
         vm.startPrank(owner);
@@ -347,7 +350,7 @@ contract ReviewSaleTest is Fixture {
         c.setStartCapBps(200_000);
         vm.stopPrank();
         stub.set(type(uint128).max, 0);
-        assertEq(c.priceOf(0), uint256(type(uint128).max) * 7_500 / 10_000);
+        assertEq(c.priceOf(0), uint256(type(uint128).max) * 10_000 / 10_000);
         stub.set(type(uint128).max, uint64(block.timestamp));
         assertEq(c.priceOf(0), uint256(type(uint128).max) * 40_000 / 10_000, "the largest start on the largest cost");
         stub.set(0, 0);
@@ -485,10 +488,11 @@ contract ReviewSaleTest is Fixture {
         address fresh = address(new MockExitModule(address(xt), 3 * UNIT));
         vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("exitModule")));
         core.setExitModule(fresh);
-        core.setController(address(new SellProbe(core)));
+        SellProbe probe = new SellProbe(core);
+        probe.setAtCost(true); // the eth lane statement is eligible under this controller
+        core.setController(address(probe));
         core.addTarget(address(0x7A9));
         vm.stopPrank();
-        _warp(105 hours);
         core.exitStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod), "redeem still works");
     }
@@ -643,6 +647,7 @@ contract ReviewSaleTest is Fixture {
     function _feeShare(uint16 bps) internal {
         Settings memory s = core.settings();
         s.feeToBuybackBps = bps;
+        s.feeToRedeemBurnBps = 0; // isolate the buyback share from the redeem burn share
         _setSettings(s);
     }
 
@@ -754,9 +759,10 @@ contract ReviewSaleTest is Fixture {
         xt = new MockExitToken("X", "X");
         BurnModule bm = new BurnModule(address(xt), UNIT, 6_000_000);
         _setExitModule(address(bm));
+        _setExitMode(2);
         uint256 sid = _composeOnce().sid;
         _callerPayOn();
-        _warp(105 hours);
+        _makeEligible(sid);
         vm.fee(composeBasefee);
         uint256 pot = core.ethPot();
         uint256 before_ = keeper.balance;
@@ -772,8 +778,8 @@ contract ReviewSaleTest is Fixture {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         _callerPayOn();
-        mod.setShortfallBps(5_000);
-        _warp(105 hours);
+        mod.setPayBps(5_000);
+        _makeEligible(sid);
         uint256 pot = core.ethPot();
         uint256 bal = keeper.balance;
         vm.prank(keeper);
@@ -818,10 +824,12 @@ contract ReviewSaleTest is Fixture {
     // ------------------------------------------------------------------ settings, config, scripts
 
     function _withAll(bool high) internal view returns (Settings memory s) {
-        uint256[27] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
+        uint256[23] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
         for (uint256 i; i < SettingsFields.N; ++i) {
             SettingsFields.set(s, i, v[i]);
         }
+        // feeToBuybackBps and feeToRedeemBurnBps cannot both be at their max: their sum is at most 10_000
+        if (high) s.feeToRedeemBurnBps = uint16(10_000 - s.feeToBuybackBps);
     }
 
     function test_OK_settings_packingRoundTripAtEveryMaxAndMin() public {
@@ -838,9 +846,9 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_settings_everyFieldBoundMatchesTheScriptTable() public {
-        bytes32[27] memory names = SettingsFields.names();
-        uint256[27] memory lo = SettingsFields.lo();
-        uint256[27] memory hi = SettingsFields.hi();
+        bytes32[23] memory names = SettingsFields.names();
+        uint256[23] memory lo = SettingsFields.lo();
+        uint256[23] memory hi = SettingsFields.hi();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = core.settings();
             SettingsFields.set(s, i, hi[i] + 1);
@@ -886,7 +894,7 @@ contract ReviewSaleTest is Fixture {
     function test_OK_config_jsonCarriesEveryFieldAndTheSaleBlock() public view {
         string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
         string[] memory keys = vm.parseJsonKeys(j, ".settings");
-        bytes32[27] memory names = SettingsFields.names();
+        bytes32[23] memory names = SettingsFields.names();
         assertEq(keys.length, SettingsFields.N, "the settings block has exactly the fields of the struct");
         for (uint256 i; i < SettingsFields.N; ++i) {
             assertTrue(_has(keys, _nm(names[i])), _nm(names[i]));

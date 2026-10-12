@@ -50,7 +50,10 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @dev the opening bid of the fixture core, wei per credit
     uint256 internal constant OPEN_RATE = 1_732_000_000_000_000;
     /// @dev exit token base units per credit reported by the stand in exit module
-    uint256 internal constant UNIT = 43_300_000_000_000_000;
+    /// exit token base units per stored score unit (one ten-thousandth of a point). a credit of average score (about
+    /// 4.33e6 in stored units) is paid about 4.33e16 of exit token, the magnitude the per credit unit had before the
+    /// per point rebuild
+    uint256 internal constant UNIT = 1e10;
     /// @dev the sniper window of the launch, seconds
     uint256 internal constant SNIPER_WINDOW = 1800;
     bytes32 internal constant FIXTURE_SALT = keccak256("credits-engine fixture coin");
@@ -335,9 +338,11 @@ abstract contract Fixture is Test, ProdDeployer {
     /// of every buy reaches the pot (6.9 points of skim, 96.38 percent to the router, minus the payee), inside
     /// the sniper window more
     function _fundPot(uint256 eth) internal {
-        for (uint256 i; i < 8 && core.ethPot() < eth; ++i) {
+        // about 5.31 percent of a buy reaches the pot now (5.90 points to the engine, less the 10 percent redeem burn
+        // share); the estimate undershoots so each iteration overshoots the gap
+        for (uint256 i; i < 16 && core.ethPot() < eth; ++i) {
             uint256 need = eth - core.ethPot();
-            _buyCoin(funder, need * 10_000 / 510 + 1000);
+            _buyCoin(funder, need * 10_000 / 460 + 1000);
         }
         assertGe(core.ethPot(), eth, "pot not funded");
     }
@@ -345,8 +350,8 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @notice like `_fundPot` but never buys more than the gap needs (the guess is the first flush rate, the highest one),
     /// so the pot lands just over `eth`. for tests that need a pot close to an exact figure
     function _fundPotNear(uint256 eth) internal {
-        for (uint256 i; i < 12 && core.ethPot() < eth; ++i) {
-            _buyCoin(funder, (eth - core.ethPot()) * 10_000 / 665 + 1e12);
+        for (uint256 i; i < 16 && core.ethPot() < eth; ++i) {
+            _buyCoin(funder, (eth - core.ethPot()) * 10_000 / 531 + 1e12);
         }
         assertGe(core.ethPot(), eth, "pot not funded");
     }
@@ -516,6 +521,13 @@ abstract contract Fixture is Test, ProdDeployer {
         core.setExitModule(m);
     }
 
+    /// @notice the owner sets the phase 2 mode (0 off, 1 hold, 2 on)
+    function _setExitMode(uint8 m) internal {
+        Settings memory s = core.settings();
+        s.exitMode = m;
+        _setSettings(s);
+    }
+
     /// @notice adds a target to the core allowlist
     function _allow(address target) internal {
         vm.prank(owner);
@@ -524,19 +536,28 @@ abstract contract Fixture is Test, ProdDeployer {
 
     // ------------------------------------------------------------------ phase 2
 
-    /// @notice sets the stand in exit module and exit token at once. there is no exit pool: the coin
-    /// buyback of the exit token is a dutch auction inside the core
+    /// @notice sets the stand in exit module and exit token and turns phase 2 on (exitMode 2), so redemptions and the
+    /// exit token bid both run. the exit token the core receives from a redemption goes to `xPot`
     function _enterPhase2() internal {
         xt = new MockExitToken("Exit Token", "XT");
         mod = new MockExitModule(address(xt), UNIT);
         _setExitModule(address(mod));
+        _setExitMode(2);
     }
 
-    /// @notice composes the eth pile, waits `exitAfter` and exits the statement, which puts half of the
-    /// exit token into `xToBuyback`. needs phase 2. returns the exit token the core received
+    /// @notice warps until the controller's asking price of an eth lane statement is at or below its cost, which makes
+    /// it eligible for redemption. the launch curve falls from 150 percent to 100 percent of cost over 50 hours
+    function _makeEligible(uint256 sid) internal {
+        for (uint256 i; i < 400 && !ctl.atCost(sid); ++i) {
+            vm.warp(block.timestamp + 1 hours);
+        }
+    }
+
+    /// @notice composes the eth pile, makes the statement eligible and redeems it, which books the exit token into
+    /// `xPot`. needs phase 2. returns the exit token the core received
     function _fillExitBuyback() internal returns (uint256 received) {
         Composed memory c = _composeOnce();
-        vm.warp(block.timestamp + core.settings().exitAfter);
+        _makeEligible(c.sid);
         uint256 before = xt.balanceOf(address(core));
         core.exitStatement(c.sid);
         received = xt.balanceOf(address(core)) - before;
@@ -546,28 +567,20 @@ abstract contract Fixture is Test, ProdDeployer {
 
     /// @notice invariant 5 of the spec: the pots never exceed what the core holds
     function _solvent() internal view {
-        assertLe(core.ethPot() + core.ethToBuyback(), address(core).balance, "eth pots exceed balance");
+        assertLe(
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            address(core).balance,
+            "eth pots exceed balance"
+        );
         address t = core.exitToken();
         if (t != address(0)) {
-            assertLe(core.xPot() + core.xToBuyback(), MockExitToken(t).balanceOf(address(core)), "exit pots exceed");
+            assertLe(core.xPot(), MockExitToken(t).balanceOf(address(core)), "exit pot exceeds");
         }
     }
 
     function _one(uint256 id) internal pure returns (uint256[] memory ids) {
         ids = new uint256[](1);
         ids[0] = id;
-    }
-
-    /// @dev sets the exit rate as the stored word with the checkpoint time at now and the funded flag its definition
-    /// gives (slots 12 and 13 of the Core, test/CoreLayout.t.sol pins them)
-    function _storeXRate(uint256 rate) internal {
-        uint256 w = uint256(vm.load(address(core), bytes32(uint256(13))));
-        w = (w & ~uint256(type(uint64).max)) | block.timestamp;
-        uint256 unit = core.unitPerCredit();
-        bool funded = unit != 0 && core.xPot() * 1e4 >= rate * unit;
-        w = funded ? w | (uint256(1) << 64) : w & ~(uint256(0xff) << 64);
-        vm.store(address(core), bytes32(uint256(12)), bytes32(rate));
-        vm.store(address(core), bytes32(uint256(13)), bytes32(w));
     }
 
     function _warp(uint256 secs) internal {

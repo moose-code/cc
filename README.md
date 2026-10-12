@@ -1,113 +1,106 @@
 # credits engine
 
-an erc20 on ethereum mainnet whose swap fees buy Credits nfts at a bid, compose them into Statements, and sell each statement at a falling price. the engine exists to keep credits flowing into statements: sales do not need to profit, and unsold statements wait for phase 2, when the exitModule redeems them for an exitToken. sale proceeds refill the buying and buy and burn the coin. the coin, pool, hook and fee flow run on the artcoins v2 stack (restricted coin, skim hook, lp locker, fee escrow), with a fee router between the hook and the engine. every economic number is a setting the owner can change at once. status: unaudited, not deployed. `main` is the working branch.
+an erc20 on ethereum mainnet whose swap fees buy Credits nfts, compose them into Statements and sell each statement at a falling price. the coin, pool, hook and fee flow run on the artcoins v2 stack (restricted coin, skim hook, lp locker, fee escrow), with a fee router between the hook and the engine. every economic number is an owner setting, effective at once. status: unaudited, not deployed. `main` is the working branch.
 
-## contracts
+## what the engine does
 
-we own five contracts. everything else is live. the artcoins v2 stack is live on mainnet (`script/config/v2-mainnet.json`) and enters the engine as a config input: its five addresses are in `script/config/mainnet.json` and the Core takes the stack as a constructor argument.
+* **fees buy credits.** the v2 hook skims 6.9 points of swap volume. 6.65022 points reach the FeeRouter, which pays its payee 0.75 points and sends the rest to the Core. the Core books the eth into the eth pot (90 percent) and the redeem burn reserve (10 percent). the pot funds a bid, the rate in wei per credit, and every credit is paid the same rate. a seller calls `sellForEth`, or a caller fills a marketplace listing below the bid with `buyListing`. each fill drops the rate, and between fills the rate climbs toward a ceiling.
+* **credits compose into statements.** `compose()` takes 80 credits from the pile and mints a Statement. the Core holds it and records its cost, the sum of the 80 cost bases.
+* **statements sell at a falling price.** `ControllerV1.buy` sells a held statement. the start price is 1.5 times an anchor (the anchor moves up with sales and decays with time). the price falls fast from the start to the knee, then slowly to the floor. at launch the knee and the floor are both 100 percent of cost, so the price reaches cost at hour 50 and an unsold statement sits there.
+* **each sale funds a buy and burn.** 50 percent of the proceeds (`saleToBuybackBps`) go to the coin buyback, which swaps eth for the coin in the pool and burns it. the other 50 percent refill the eth pot.
+* **the redeem burn reserve.** each redemption of a statement moves 20 percent of the reserve (`redeemBurnBps`) to the buyback, so every statement that leaves the engine, sold or redeemed, funds a buy and burn.
+* **phase 2.** the owner sets an exitModule and switches `exitMode` from 0 (off) to 1 (hold) or 2 (on). from mode 1, `exitStatement` redeems a held statement once its asking price has fallen to its cost. each statement stores a rating (the sum of its credits' scores) at compose. a redemption must return at least `rating * unitPerPoint` of the exitToken less `exitSlippageBps`, and the Core keeps what arrives. in mode 2 the Core also buys credits with the exitToken, per point: `score * unitPerPoint` less `exitBidMarginBps` (20 percent at launch), and `composeExit` builds exit lane statements. once the exitToken trades, the owner sets its v4 pool key on the controller, and a statement's asking price is at least the higher of its cost and its redemption value in eth.
 
-| name | role | address |
-|---|---|---|
-| Core | custody and every rule, books the router's flushes as fees, holds the statements until they sell or exit | ours, predicted at deploy |
-| CoreLib | linked library of the Core: settings write, rate and exit auction math, the buyback swap, `rescueCoin`, `rescueNft` | ours, deployed before the Core |
-| ControllerV1 | first policy module and the statement sale (`priceOf`, `buy`), immutable | ours, predicted at deploy |
-| CoreLens | read only view of the Core, the controller and the fee router in one call, no storage | ours, predicted at deploy |
-| FeeRouter | bounty recipient of the pool. empty `receive`, permissionless `flush()` (payees, engine), called by the Core at the start of its eth pot doors, owner setters closed by one way `lock` | ours, predicted at deploy |
-| ArtCoinsTokenV2 | the coin, restricted, launched through the factory | created at launch |
-| ArtCoinsFactoryV2, skim hook, lp locker, fee escrow, anti sniper module | the v2 stack, reference commit d4aa46b (branch v2-legibility of the launcher repo) | live on mainnet, a config input (`script/config/v2-mainnet.json`) |
-
-## flow
+the full rules and the settings table are in docs/ARCHITECTURE.md. the owner decisions behind them are in docs/FLOW.md.
 
 ```mermaid
 graph LR
     swap["swap in the coin/eth pool"]
     hook["v2 skim hook<br/>6.9 points of volume"]
     router["FeeRouter<br/>6.65022 points, flush<br/>payee, engine"]
-    pot["Core.receive()<br/>eth pot"]
-    buy["buy credits at the bid<br/>sellForEth or buyListing"]
-    compose["compose 80 credits<br/>into a Statement"]
-    held["held by the Core<br/>falling price, 150 percent of cost to 75"]
-    sold["buy: sellTo<br/>split by saleToBuybackBps"]
-    unsold["no buyer: stays held"]
-    burn["buy and burn coin"]
-    exit["phase 2: exitModule<br/>pays exitToken"]
-    dutch["dutch auction<br/>exitToken for coin, coin burned"]
+    core["Core<br/>eth pot, redeem burn reserve"]
+    buy["sellForEth, buyListing<br/>credits at the bid"]
+    compose["compose<br/>80 credits, one Statement"]
+    held["held by the Core<br/>1.5x anchor falling to cost"]
+    sold["ControllerV1.buy<br/>sellTo"]
+    burn["coin buy and burn"]
+    exit["exitStatement<br/>exitMode 1 or 2, at cost"]
 
-    swap --> hook
-    hook --> router
-    router --> pot
-    pot --> buy
-    buy --> compose
-    compose --> held
+    swap --> hook --> router --> core --> buy --> compose --> held
     held --> sold
-    held --> unsold
-    sold -->|pot share| pot
-    sold -->|buyback share| burn
-    unsold -->|after exitAfter| exit
-    exit --> dutch
+    held --> exit
+    sold -->|50 percent| burn
+    sold -->|50 percent| core
+    exit -->|reserve share| burn
 ```
 
-credits keep being bought whatever the statements do. every credit is paid the same price, the rate in wei per credit. the full rules, the settings table and the owner powers are in docs/ARCHITECTURE.md. the owner moves assets only through `migrate` to the successor (lockable), `rescueNft` for NFTs the Core holds in no pile and on no book, and `rescueCoin` for coin, and it sets the price the engine pays, so a dishonest owner or a stolen owner key could drain the eth pot by selling credits to the engine at an inflated limit, at a bounded pace (docs/ARCHITECTURE.md section 10). holders trust the owner key.
+## contracts
 
-## branches
+five contracts are ours. the artcoins v2 stack is live on mainnet (`script/config/v2-mainnet.json`) and enters the engine as a config input (`script/config/mainnet.json`).
 
-| branch | what it holds |
+| name | role |
 |---|---|
-| `main` | the working branch and the current implementation. adjustable settings, flat or blended bid, statements sold through the controller's falling price, no inventory gate, no dutch statement auction. intent: docs/ARCHITECTURE.md, owner decisions: docs/FLOW.md |
-| `bundle/artcoin` | historical: the earlier implementation on the artcoins launcher with a dutch statement auction and four deploy dials |
-| `bundle/econ-options` | historical: the economics options as deploy config, with their independent review |
+| Core | custody and every rule: pots, bid, piles, doors, compose, `sellTo`, exit, buyback, settings, owner doors, locks |
+| CoreLib | library of the Core called by delegatecall: settings write, bid math, the buyback swap, the exitToken bid, `adopt`, `rescueCoin`, `rescueNft`, `migrate` |
+| ControllerV1 | statement sale: `priceOf`, `buy`, the anchor, the pause, the exitToken pool key for the redemption value floor |
+| CoreLens | read only view of the Core, the controller and the fee router in one call |
+| FeeRouter | bounty recipient of the pool: empty `receive`, `flush()` to the payees and the engine |
+| ArtCoinsTokenV2 and the v2 stack | the coin and its factory, hook, locker, escrow and anti sniper module (`script/config/v2-mainnet.json`) |
+
+each runtime contract stays under 24,576 bytes (`forge build --sizes`).
+
+## who can call what
+
+| caller | doors |
+|---|---|
+| anyone | `sellForEth`, `buyListing`, `adopt`, `compose`, `composeExit`, `sellForExitToken` (exitMode 2), `exitStatement`, `buyback`, `skim`, `ControllerV1.buy`, `FeeRouter.flush` |
+| owner of the Core | `setSettings`, `setRate`, `setController`, `setExitModule`, `refreshUnitPerPoint`, `releaseRedeemBurn`, `addTarget`, `removeTarget`, `rescueCoin`, `rescueNft`, `setSuccessor`, `migrate`, two step `transferOwnership` |
+| owner on the controller | the sale settings, `setAnchorBps`, `setExitPoolKey`, `setPaused` (blocks `buy`, composing, the bid, exits and buybacks continue) |
+| owner of the router | `setEngine`, `setPayees`, `setSplitStart` |
+| locks, one way | `lockController`, `lockExitModule`, `lockTargets`, `lockSuccessor` on the Core, `lock` on the router |
+
+eth, credits and exitToken leave the Core at the owner's call only through `migrate` to the successor. coin leaves through `rescueCoin` and NFTs off the books through `rescueNft`. the owner sets the price the engine pays and the exitModule that redeems statements, so holders trust the owner key (docs/ARCHITECTURE.md section 10).
 
 ## build and test
 
-prerequisites: foundry and an archive mainnet rpc (drpc.org, mevblocker.io, blastapi.io or tenderly all work).
+prerequisites: foundry 1.8.1 and an archive mainnet rpc (drpc.org, mevblocker.io, blastapi.io or tenderly all work).
 
 ```sh
 git clone --recurse-submodules <repo>
 cd credits-engine
 cp .env.example .env
-forge build
 set -a; . ./.env; set +a
-forge test
+forge build
+forge test --match-path test/Sale.t.sol
 ```
 
-tests run on a mainnet fork pinned to block 26158000 (`FORK_BLOCK`). the fixture attaches to the live v2 stack at the addresses of `script/config/v2-mainnet.json` (`test/utils/V2Stack.sol`). the block is after the last transaction of the stack deploy (26157222). foundry caches fork state on disk, so the first run is slow. use `--match-path` while iterating, and run one forge command at a time.
+* tests run on a mainnet fork pinned to block 26158000 (`FORK_BLOCK`) against the live v2 stack. foundry caches fork state on disk, so the first run is slow.
+* during work, run `forge build` and `forge test --match-path` on the test files the change touches. the full suite, the deep invariant runs and the rehearsal run once, on a frozen candidate, with `CANDIDATE_RUN=1`.
+* the guard `script/tools/guard-forge-test.sh` (a PreToolUse hook in `.claude/settings.json`) refuses a whole-suite `forge test` and any `INVARIANT_DEEP=1` run unless the command carries `CANDIDATE_RUN=1`.
+* the production contracts (`src/*.sol`, `src/lib/CoreLib.sol`) and the deploy scripts that use `new` compile with via_ir. tests reach them through `src/interfaces/ICore.sol`, `IControllerV1.sol` and `ICoreLib.sol` (generated by `script/tools/gen-interfaces.sh`, rerun after an abi change) and `test/utils/Prod.sol`. tests import the interfaces and leave `src/Core.sol` and `src/ControllerV1.sol` alone. `test/BuildIdentity.t.sol` pins the shipped build hashes.
+* stand ins are in `test/standins/`, attack contracts in `test/attackers/`.
+* the simulator runs on node: `node sim/engine.test.mjs`, `node sim/build.mjs`, `node sim/run.mjs q1`.
 
-* real contracts only, the live v2 stack included. the stand ins are in `test/standins/` (`MockExitModule`, `MockExitToken` and the like), attack contracts are in `test/attackers/`
-* `test/Flow.t.sol` covers the rework, `test/Launch.t.sol` the launch, `test/V2Port.t.sol`, `V2PortRestriction.t.sol` and `V2PortMigration.t.sol` the v2 fee path, the restricted coin and a second Core, `test/Rehearsal.t.sol` forks the latest block and skips unless `REHEARSAL` is set
-* build profiles: only the production contracts (`src/Core.sol`, `src/ControllerV1.sol`, `src/lib/CoreLib.sol`, any new `src/Name.sol`) and the deploy scripts that use `new` (`script/NewProd.sol`, `Deploy.s.sol`, `Resume.s.sol`) compile with via_ir. tests and the other scripts compile without it and reach the production contracts through `src/interfaces/ICore.sol`, `IControllerV1.sol` and `ICoreLib.sol` (generated by `script/tools/gen-interfaces.sh`, rerun it after an abi change, `--check` verifies) and the `Prod` helper in `test/utils/Prod.sol`. never import `src/Core.sol` or `src/ControllerV1.sol` in a test: it pulls the importing file onto via_ir. `test/BuildIdentity.t.sol` proves the fixture deploys the via_ir artifacts. a clean build takes about 4 minutes and 3 gb, a change in a test file about 3 seconds, a change in `src/Core.sol` about 35 seconds
-* check sizes with `forge build --sizes`. every runtime contract must stay under 24,576 bytes
-* the simulator needs only node: `node sim/engine.test.mjs` runs its checks, `node sim/build.mjs` rebuilds `sim/index.html`, `node sim/run.mjs q1` runs a batch
+toolchain notes and timings: docs/HANDOFF.md section 7.
 
 ## deploy
 
-warning: the owner decisions listed in docs/HANDOFF.md must be settled first.
+one script, `script/Deploy.s.sol`, deploys the system and launches the coin through the v2 factory, driven by one config file (`script/config/mainnet.json`, copied to the gitignored `script/config/local.json`). the factory owner key signs everything, and `Resume.s.sol` sets the router split start after the launch. read-only `Preflight.s.sol` and `Postflight.s.sol` check the system before and after, and `Lock.s.sol` sends `coin.lockRecipients()`. the owner address is an EIP 7702 delegated account, so broadcasts use `--slow`. the owner decisions in docs/HANDOFF.md are settled before launch.
 
-the system launches on the artcoins v2 stack. everything a launch needs is in one config file, `script/config/mainnet.json`: the v2 stack (the five live addresses), `rateStart`, the `settings`, `sale`, `launch` and `router` blocks. copy it to the gitignored `script/config/local.json` and point `LAUNCH_CONFIG` at it. the deploy refuses to run while a stack address is zero, or unless `CONFIG_HASH` (printed by preflight) matches the file. one key, the v2 factory owner, signs everything (`deployTokenAsOwner` is owner only). secrets come from the command line (`--ledger`) or the environment (`ETHERSCAN_API_KEY`).
-
-| step | action |
-|---|---|
-| 1 | fill the config. set `rateStart` on launch day to the market price of a credit (default 2.0554e13 for 0.0089 eth), the rule is in docs/DEPLOY.md |
-| 2 | rehearse: `REHEARSAL=1 forge test --match-path test/Rehearsal.t.sol -vv` |
-| 3 | owner command, once: `setMinProtocolSkimShareBps(362)` on the v2 factory (the factory minimum protocol share of the baseline skim, 1,000 on the v2 mainnet environment, must leave room for `bountyBps` 9,638) |
-| 4 | `forge script script/Preflight.s.sol --rpc-url $MAINNET_RPC_URL` (read only) |
-| 5 | `forge script script/Deploy.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger` through a private relay, with `CONFIG_HASH` set. eight transactions, the library first. `Resume.s.sol` sends the split start as the ninth in step 6. a half finished deploy is finished with `script/Resume.s.sol` |
-| 6 | once the launch is mined, `CORE=0x... forge script script/Resume.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger` sets the split start. verify CoreLib, ControllerV1, FeeRouter and Core, then `CORE=0x... forge script script/Postflight.s.sol --rpc-url $MAINNET_RPC_URL` (read only) |
-| 7 | right after the postflight passes: `CORE=0x... SEND=1 forge script script/Lock.s.sol --rpc-url $MAINNET_RPC_URL --broadcast --ledger` sends `coin.lockRecipients()`. `coin.lockAllowlist()` and `router.lock()` are owner decisions |
-| 8 | after launch: the Core pulls the router fees at its doors (a keeper may call `flush()`), owner commands on the router (payees, split start, engine, lock) are in docs/DEPLOY.md section 4 |
-
-the full runbook is docs/DEPLOY.md.
+the runbook, with the commands in order, is docs/DEPLOY.md.
 
 ## docs
 
 | file | what |
 |---|---|
-| docs/archive/ | history: the original handoff spec, the v2 port plan, the bid study, the reviews written before the rework, the reference notes and the simulator studies. see docs/archive/README.md |
-| docs/FLOW.md | the director brief for this branch and the owner's decisions |
-| docs/ARCHITECTURE.md | the system as built on this branch: settings, rules, owner powers, accepted risks |
-| docs/SIMULATION.md | what the simulator says, against the owner's goal, with recommended launch settings |
-| sim/index.html | the interactive simulator, one file, runs offline |
-| docs/DEPLOY.md | the launch runbook, parameter sign off table and the artcoins v2 re check list |
-| docs/REVIEW-decisions.md, REVIEW-director-repair.md, REVIEW-retire.md, REVIEW-sandwich-delegate.md, REVIEW-system-audit.md | the current independent reviews |
+| docs/ARCHITECTURE.md | the system as built: intent at a glance, settings, rules, owner powers, accepted risks |
+| docs/FLOW.md | the dated owner decision log |
+| docs/INTEGRATION.md | call sequences, events, reverts and gas for integrators and keepers |
+| docs/DEPLOY.md | the launch runbook, the parameter sign off table, owner commands after launch |
+| docs/HANDOFF.md | the objective, open owner decisions, evidence state, how to work in this repo |
+| docs/SIMULATION.md, sim/index.html | the simulator study and the offline simulator |
+| docs/REVIEW-*.md, docs/REHEARSAL-*.md | independent reviews and rehearsals, each pinned to the commit it examined |
+| docs/archive/ | history (see docs/archive/README.md) |
 
 ## license
 

@@ -94,10 +94,6 @@ contract ProbeTarget {
             attempts++;
             if (ok) reentered++;
         }
-        // the exit token auction is a guarded door like the rest and must refuse a call from inside a buy.
-        (bool ok2,) = core.call(abi.encodeWithSignature("buybackExit(uint256)", uint256(type(uint256).max)));
-        attempts++;
-        if (ok2) reentered++;
     }
 
     receive() external payable {}

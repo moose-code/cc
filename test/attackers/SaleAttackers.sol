@@ -123,7 +123,7 @@ contract HostileModule is IExitModule {
         unit = unit_;
     }
 
-    function unitPerCredit() external view returns (uint256) {
+    function unitPerPoint() external view returns (uint256) {
         return unit;
     }
 
@@ -141,7 +141,7 @@ contract HostileModule is IExitModule {
     }
 
     function exit(uint256 sid) external returns (uint256 out) {
-        uint256 rating = IStatements(Mainnet.STATEMENTS).creditsOf(sid);
+        uint256 rating = IStatements(Mainnet.STATEMENTS).creditScoreOf(sid);
         out = rating * unit * payBps / 10_000;
         MockExitToken(exitToken).mint(msg.sender, out);
         if (target != address(0)) {

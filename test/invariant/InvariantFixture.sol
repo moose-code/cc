@@ -5,7 +5,7 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {Lane, ICreditStrategy, Mainnet} from "../../src/interfaces/Interfaces.sol";
+import {Lane, ICreditStrategy, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
 import {Fixture} from "../utils/Fixture.sol";
 import {CreditIds} from "../utils/CreditIds.sol";
 import {MockExitModule} from "../standins/MockExitModule.sol";
@@ -136,7 +136,12 @@ abstract contract InvariantFixture is Fixture {
         vm.startPrank(owner);
         core.addTarget(address(probeTarget));
         if (hostile) core.setController(address(fuzz));
-        if (phase2) core.setExitModule(address(mod));
+        if (phase2) {
+            core.setExitModule(address(mod));
+            Settings memory es = core.settings();
+            es.exitMode = 2;
+            core.setSettings(es);
+        }
         vm.stopPrank();
         assertTrue(core.allowedTarget(address(probeTarget)));
     }
@@ -147,7 +152,7 @@ abstract contract InvariantFixture is Fixture {
         vm.prank(whale);
         coin.approve(address(router), type(uint256).max);
         assertGt(core.ethPot(), 3 ether);
-        assertEq(address(core).balance, core.ethPot());
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
     }
 
     /// four actors with credits, eth and coin, all approved for the core and the router. every approval and every
@@ -330,8 +335,6 @@ abstract contract InvariantFixture is Fixture {
             s[n++] = HandlerBase.sellForExit.selector;
             s[n++] = HandlerBase.composeExit.selector;
             s[n++] = HandlerBase.exitStatement.selector;
-            s[n++] = HandlerBase.buybackExit.selector;
-            s[n++] = HandlerBase.buybackExit.selector;
             s[n++] = HandlerBase.moduleMode.selector;
         }
         if (_saleActions()) {

@@ -61,17 +61,16 @@ abstract contract RedeemBase is Fixture {
         assertEq(core.ethPot(), v);
     }
 
-    /// exits `sid` as the keeper at `basefee` and returns what the keeper was repaid and what the pot lost
+    /// exits `sid` as the keeper at `basefee` and returns what the keeper was repaid and what the pot lost. an eth lane
+    /// redemption may move part of the redeem burn reserve into the coin buyback, so the buyback pot is not asserted here
     function _exit(uint256 sid, uint256 basefee) internal returns (uint256 repaid, uint256 potLost) {
         vm.fee(basefee);
         uint256 pot = core.ethPot();
         uint256 bal = keeper.balance;
-        uint256 bb = core.ethToBuyback();
         vm.prank(keeper);
         core.exitStatement(sid);
         repaid = keeper.balance - bal;
         potLost = pot - core.ethPot();
-        assertEq(core.ethToBuyback(), bb, "the buyback pot is not touched");
     }
 
     /// the caller payment on: 0.0005 ether and a 10 gwei base fee ceiling
@@ -92,44 +91,40 @@ abstract contract RedeemBase is Fixture {
 }
 
 contract RedeemTimingTest is RedeemBase {
-    function test_timing_revertsBeforeExitAfterAndWorksAtIt() public {
+    function test_timing_revertsUntilAtCostThenWorks() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        uint64 at = _composedAt(sid);
-        uint256 wait = core.settings().exitAfter;
-        assertEq(wait, 105 hours);
-        vm.warp(uint256(at));
-        vm.expectRevert(ICore.TooEarly.selector);
+        // not eligible while the asking price is above cost
+        assertFalse(ctl.atCost(sid), "fresh statement starts above cost");
+        vm.expectRevert(ICore.NotEligible.selector);
         core.exitStatement(sid);
-        vm.warp(uint256(at) + wait - 1);
-        vm.expectRevert(ICore.TooEarly.selector);
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(core), "still held after the refused tries");
-        vm.warp(uint256(at) + wait);
+        assertEq(STATEMENTS.ownerOf(sid), address(core), "still held after the refused try");
+        _makeEligible(sid);
+        assertTrue(ctl.atCost(sid), "the price has fallen to cost");
+        uint256 owed = core.ratingOf(sid) * UNIT;
         core.exitStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
         (bool held,,,) = core.statementInfo(sid);
         assertFalse(held);
-        assertEq(core.xPot() + core.xToBuyback(), STATEMENTS.creditsOf(sid) * UNIT);
+        assertEq(core.xPot(), owed);
         _solvent();
     }
 
-    function test_timing_exitAfterIsReadLive() public {
+    /// eligibility is read live from the controller price: a pause freezes the age, so a statement that was not yet at
+    /// cost stays ineligible across the pause and becomes eligible only after the age advances again
+    function test_timing_eligibilityFrozenDuringPause() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        uint64 at = _composedAt(sid);
-        Settings memory s = core.settings();
-        s.exitAfter = 365 days;
-        _setSettings(s);
-        vm.warp(uint256(at) + 200 days);
-        vm.expectRevert(ICore.TooEarly.selector);
+        // pause before the price reaches cost
+        vm.prank(owner);
+        ctl.setPaused(true);
+        _warp(300 hours);
+        assertFalse(ctl.atCost(sid), "a pause holds the age, so the price stays above cost");
+        vm.expectRevert(ICore.NotEligible.selector);
         core.exitStatement(sid);
-        s.exitAfter = 1 hours;
-        _setSettings(s);
-        vm.warp(uint256(at) + 1 hours - 1);
-        vm.expectRevert(ICore.TooEarly.selector);
-        core.exitStatement(sid);
-        vm.warp(uint256(at) + 1 hours);
+        vm.prank(owner);
+        ctl.setPaused(false);
+        _makeEligible(sid);
         core.exitStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
     }
@@ -143,7 +138,6 @@ contract RedeemTimingTest is RedeemBase {
 
     function test_timing_noModuleNotHeldAndUnknown() public {
         uint256 sid = _composeOnce().sid;
-        _warp(105 hours);
         vm.expectRevert(ICore.NoExitModule.selector);
         core.exitStatement(sid);
         _enterPhase2();
@@ -153,10 +147,22 @@ contract RedeemTimingTest is RedeemBase {
         core.exitStatement(0);
     }
 
+    function test_timing_offWhenExitModeZero() public {
+        _enterPhase2();
+        uint256 sid = _composeOnce().sid;
+        _makeEligible(sid);
+        _setExitMode(0);
+        vm.expectRevert(ICore.ExitModeOff.selector);
+        core.exitStatement(sid);
+        // mode 1 (hold) redeems
+        _setExitMode(1);
+        core.exitStatement(sid);
+        assertEq(STATEMENTS.ownerOf(sid), address(mod));
+    }
+
     function test_timing_aBuyFirstMakesTheExitRevert() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        _warp(105 hours);
         uint256 price = ctl.priceOf(sid);
         vm.deal(address(0xB0B), price);
         vm.prank(address(0xB0B));
@@ -171,33 +177,36 @@ contract RedeemTimingTest is RedeemBase {
         uint256 sid = _composeOnce().sid;
         SellingController sc = new SellingController(core);
         _setController(address(sc));
-        uint256 floor = _cost(sid) * 7_500 / 10_000;
+        uint256 floor = _cost(sid) * core.settings().saleFloorBps / 10_000;
         sc.sell{value: floor}(sid, address(0xB0B));
-        _warp(105 hours);
         vm.expectRevert(ICore.NotHeld.selector);
         core.exitStatement(sid);
     }
 
-    /// redemption never depends on the controller: a broken one, a missing one, a locked one
-    function test_timing_independentOfTheController() public {
+    /// an eth lane redemption needs the controller's eligibility answer: a controller that cannot answer makes eth lane
+    /// statements ineligible, while exit lane statements still redeem at once
+    function test_timing_ethLaneNeedsTheControllerButExitLaneDoesNot() public {
         _enterPhase2();
-        uint256 sid = _composeOnce().sid;
+        uint256 ethSid = _composeOnce().sid;
+        uint256 exitSid = _exitLaneStatement();
         ScriptedController sc = new ScriptedController();
-        sc.setRevertPage(true);
+        sc.setRevertPage(true); // atCostFlag defaults false, so atCost returns false
         _setController(address(sc));
         vm.prank(owner);
         core.lockController();
-        _warp(105 hours);
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod));
+        vm.expectRevert(ICore.NotEligible.selector);
+        core.exitStatement(ethSid);
+        // the exit lane does not read the controller
+        core.exitStatement(exitSid);
+        assertEq(STATEMENTS.ownerOf(exitSid), address(mod));
     }
 
-    /// a module that pays less than rating times unit is refused: nothing moves and nothing is repaid
+    /// a module that pays less than rating times unit less slippage is refused: nothing moves and nothing is repaid
     function test_timing_anUnderpayingModuleRevertsEverything() public {
         _phase2Hostile();
         uint256 sid = _composeOnce().sid;
-        _warp(105 hours);
-        hm.setPayBps(9_999);
+        _makeEligible(sid);
+        hm.setPayBps(10_000 - core.settings().exitSlippageBps - 1);
         uint256 pot = core.ethPot();
         uint256 xpot = core.xPot();
         uint256 bal = keeper.balance;
@@ -222,7 +231,7 @@ contract RedeemRepayTest is RedeemBase {
     function _ethStatementReady() internal returns (uint256 sid) {
         _phase2Hostile();
         sid = _composeOnce().sid;
-        _warp(105 hours);
+        _makeEligible(sid);
     }
 
     /// at the launch settings an exit pays nothing and moves no eth, at any base fee
@@ -359,7 +368,7 @@ contract RedeemRepayTest is RedeemBase {
     function test_pay_naturalCountEthLane() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        _warp(105 hours);
+        _makeEligible(sid);
         _natural(sid);
     }
 
@@ -379,7 +388,7 @@ contract RedeemRepayTest is RedeemBase {
                 uint256 sid;
                 if (lane == 0) {
                     sid = _composeOnce().sid;
-                    _warp(105 hours);
+                    _makeEligible(sid);
                 } else {
                     sid = _exitLaneStatement();
                 }
@@ -404,18 +413,19 @@ contract RedeemRepayTest is RedeemBase {
         _payOn();
         uint256 pot = core.ethPot();
         uint256 bb = core.ethToBuyback();
+        uint256 reserve = core.ethRedeemBurn();
         uint256 bal = address(core).balance;
         uint256 xp = core.xPot();
-        uint256 xb = core.xToBuyback();
-        uint256 owed = STATEMENTS.creditsOf(sid) * UNIT;
+        uint256 owed = core.ratingOf(sid) * UNIT;
         (uint256 repaid,) = _exit(sid, LOW);
         assertGt(repaid, 0);
-        assertEq(core.ethPot(), pot - repaid);
-        assertEq(core.ethToBuyback(), bb);
+        assertEq(core.ethPot(), pot - repaid, "only the caller payment leaves the pot");
+        // the reserve release moves between trackers, it does not add or remove eth
+        uint256 released = reserve * core.settings().redeemBurnBps / 10_000;
+        assertEq(core.ethToBuyback(), bb + released, "the buyback pot rose by the released reserve only");
+        assertEq(core.ethRedeemBurn(), reserve - released, "the reserve fell by the release only");
         assertEq(address(core).balance, bal - repaid, "the balance fell by the payment only");
-        uint256 toBb = owed * core.settings().exitToBuybackBps / 10_000;
-        assertEq(core.xToBuyback() - xb, toBb);
-        assertEq(core.xPot() - xp, owed - toBb);
+        assertEq(core.xPot() - xp, owed, "the whole received amount went to the bid pot");
     }
 
     // ------------------------------------------------------------------ reentrancy
@@ -427,7 +437,7 @@ contract RedeemRepayTest is RedeemBase {
         uint256 b = _another();
         RepaidCaller rc = new RepaidCaller(core);
         _payOn();
-        _warp(105 hours);
+        _makeEligible(a);
         vm.fee(LOW);
         uint256 pot = core.ethPot();
         uint256 bal = address(rc).balance;
@@ -451,6 +461,7 @@ contract RedeemRepayTest is RedeemBase {
             uint256 a = _composeOnce().sid;
             uint256 b = _another();
             SellingController sc = new SellingController(core);
+            sc.setAtCost(true); // the eth lane statement is eligible under this controller
             _setController(address(sc));
             bytes memory data;
             address target = address(core);
@@ -463,7 +474,6 @@ contract RedeemRepayTest is RedeemBase {
                 data = abi.encodeCall(SellingController.sell, (b, address(hm)));
             }
             hm.setCall(target, data);
-            _warp(105 hours);
             vm.prank(keeper);
             core.exitStatement(a);
             assertTrue(hm.called());

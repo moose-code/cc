@@ -3,7 +3,13 @@ pragma solidity ^0.8.28;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {Halving} from "./lib/Halving.sol";
-import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Interfaces.sol";
+import {Lane, Sale, IController, ICoreViews, ICoreSale, Mainnet} from "./interfaces/Interfaces.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// first policy module. composes the oldest 80 credits of a lane with format 0.
 /// it prices and sells statements. the asking price of a statement of cost `c` is a fraction of `c` in bps that starts at
@@ -22,10 +28,17 @@ import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Inter
 /// and continues from the same age at resume. the anchor decays with wall time in both states, so the start of the
 /// curve, and with it the asking price, can still fall in a pause while the anchor is above 10_000.
 /// it holds no funds between calls. its settings belong to the live owner of the core (`core.owner()`), there is no
-/// second owner. the core enforces its own hard floor whatever this contract answers
+/// second owner. the core enforces its own hard floor whatever this contract answers.
+/// once the owner sets the exit token pool (`setExitPoolKey`), the asking price is also floored at the statement's
+/// redeemable value in eth, `rating * unit` exit token base units priced at the pool sqrt price, with `unit` the lower of the stored and the live `unitPerPoint()`. `atCost` and
+/// the anchor use the curve price, not this floor. with the pool key unset, no exit module set, or a zero pool read
+/// the value floor is 0 and the asking price is the curve price
 contract ControllerV1 is IController {
+    using StateLibrary for IPoolManager;
+
     uint256 private constant PAGE = 80;
     uint256 private constant BPS = 10_000;
+    uint256 private constant READ_GAS = 50_000;
     uint256 private constant MAX_ANCHOR_MIN_COST = 10 ether;
 
     error OnlyOwner();
@@ -47,6 +60,7 @@ contract ControllerV1 is IController {
     event PausedSet(bool paused);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
+    event ExitPoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
 
     /// one pause of sales: a single storage slot
     struct PauseWindow {
@@ -80,6 +94,12 @@ contract ControllerV1 is IController {
     bool private _busy;
     /// whether sales are paused. launch value false
     bool public paused;
+    /// whether the exit token pool key is set. launch value false
+    bool public exitPoolKeySet;
+    /// the uniswap v4 pool of the exit token against native eth, used to price the redeemable value floor. native eth
+    /// is `currency0` (the zero address) and the exit token is `currency1`, the only order a native eth pool sorts to.
+    /// unset at launch
+    PoolKey public exitPoolKey;
     /// the pause windows in time order, disjoint. window `i` is paused from `start` until `end`. while `paused` is true the
     /// last window is open and its `end` is 0. `pausedBefore` is the paused seconds of windows `0` to `i - 1`
     PauseWindow[] private _pauses;
@@ -201,6 +221,22 @@ contract ControllerV1 is IController {
         emit PausedSet(v);
     }
 
+    /// sets the native eth / exit token pool whose sqrt price floors the asking price at a statement's redeemable value.
+    /// `currency0` must be native eth (the zero address) and `currency1` the core's current exit token, the order a
+    /// native eth pool sorts to. the pool must be initialized, so `_value` reads a live price at once. effective at once
+    function setExitPoolKey(PoolKey calldata key) external onlyOwner {
+        address token = CORE.exitToken();
+        if (token == address(0)) revert BadSetting("exitToken");
+        address c0 = Currency.unwrap(key.currency0);
+        address c1 = Currency.unwrap(key.currency1);
+        if (c0 != address(0) || c1 != token) revert BadSetting("exitPoolKey");
+        (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(key.toId());
+        if (sqrtPriceX96 == 0) revert BadSetting("exitPoolKey");
+        exitPoolKey = key;
+        exitPoolKeySet = true;
+        emit ExitPoolKeySet(c0, c1, key.fee, key.tickSpacing, address(key.hooks));
+    }
+
     // ------------------------------------------------------------------ pricing and sale
 
     /// the running level of sale prices now, bps of cost: 10_000 plus the part of `storedAnchorBps` above 10_000,
@@ -218,9 +254,21 @@ contract ControllerV1 is IController {
     }
 
     /// the asking price of statement `sid` now, read from the core. never below the core hard floor
-    /// `cost * saleFloorBps / 10_000`, so the quote is always a price `sellTo` takes. answers while paused
+    /// `cost * saleFloorBps / 10_000`, and never below the redeemable value floor once the exit token pool key is set,
+    /// so the quote is always a price `sellTo` takes. answers while paused
     function priceOf(uint256 sid) public view returns (uint256 price) {
-        (price,) = _quote(sid);
+        uint256 cost;
+        (price, cost) = _quote(sid);
+        uint256 value = _value(sid);
+        if (value > price) price = value;
+    }
+
+    /// true when the asking price of eth lane statement `sid` is at or below its stored cost. the asking price excludes
+    /// paused seconds, so eligibility holds its value while sales are paused. the core reads it to gate a phase 2
+    /// redemption of an eth lane statement
+    function atCost(uint256 sid) external view returns (bool) {
+        (uint256 price, uint256 cost) = _quote(sid);
+        return price <= cost;
     }
 
     /// pays the asking price, gets the statement at once, and moves the anchor halfway to the sale price in bps of
@@ -229,9 +277,11 @@ contract ControllerV1 is IController {
         if (paused) revert Paused();
         if (_busy) revert Reentrant();
         _busy = true;
-        (uint256 price, uint256 cost) = _quote(sid);
+        (uint256 curve, uint256 cost) = _quote(sid);
+        uint256 value = _value(sid);
+        uint256 price = value > curve ? value : curve;
         if (msg.value < price) revert Underpaid();
-        _moveAnchor(sid, price, cost);
+        _moveAnchor(sid, curve, cost);
         ICoreSale(address(CORE)).sellTo{value: price}(sid, msg.sender);
         emit Bought(sid, msg.sender, price);
         if (msg.value > price) SafeTransferLib.safeTransferETH(msg.sender, msg.value - price);
@@ -247,6 +297,32 @@ contract ControllerV1 is IController {
         price = _ask(cost, _age(composedAt));
         uint256 floor = cost * ICoreSale(address(CORE)).settings().saleFloorBps / BPS;
         if (price < floor) price = floor;
+    }
+
+    /// the module's `unitPerPoint()` read with at most `READ_GAS`. a revert or a short answer reads as 0
+    function _liveUnit(address module) private view returns (uint256) {
+        (bool ok, bytes memory out) = module.staticcall{gas: READ_GAS}(abi.encodeWithSignature("unitPerPoint()"));
+        return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
+    }
+
+    /// the redeemable value of statement `sid` in wei from the exit token pool: `rating * unit` exit token base units
+    /// priced at the pool sqrt price, where `unit` is the lower of the stored and the module's live `unitPerPoint()`
+    /// (a failed live read gives 0). zero when the pool key is unset, no exit module is set, the owed amount is
+    /// zero, or the pool sqrt price reads zero. native eth is `currency0`, so wei per token base unit is
+    /// `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
+    function _value(uint256 sid) private view returns (uint256) {
+        if (!exitPoolKeySet) return 0;
+        if (CORE.exitModule() == address(0)) return 0;
+        uint256 unit = CORE.unitPerPoint();
+        uint256 live = _liveUnit(CORE.exitModule());
+        if (live < unit) unit = live;
+        uint256 owed = CORE.ratingOf(sid) * unit;
+        if (owed == 0) return 0;
+        (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(exitPoolKey.toId());
+        if (sqrtPriceX96 == 0) return 0;
+        uint256 q = FixedPoint96.Q96;
+        uint256 p = sqrtPriceX96;
+        return FullMath.mulDiv(FullMath.mulDiv(owed, q, p), q, p);
     }
 
     /// the age of a statement composed at `composedAt`: the seconds from then to now outside every pause window. a

@@ -11,8 +11,9 @@ const near = (a, b, tol, msg) => {
 };
 const ok = (c, msg) => { n++; assert.ok(c, msg); };
 const H = 3600;
-// the sim defaults are the launch bid rule (stepped). the checks below that port the earlier rule and its hand computed values run on these earlier defaults
-const LEGACY = { stepSec: 3600, bidRule: 'built', rateStart: 6.668e15, climbPerMin: 1, idleLoosenPct: 0, reimburseBps: 11000, rateCap: 53344000000000000 };
+// the sim defaults are the launch values. the checks below that port the earlier bid rule and the earlier statement curve (floors at 75 percent of cost, no
+// redeem burn reserve) with their hand computed values run on these earlier defaults; the launch values have their own checks
+const LEGACY = { stepSec: 3600, bidRule: 'built', rateStart: 6.668e15, climbPerMin: 1, idleLoosenPct: 0, rateCap: 53344000000000000, floorBps: 7500, saleFloorBps: 7500, feeToRedeemBurnBps: 0 };
 const simL = (o = {}) => simulate(Object.assign({}, LEGACY, o));
 const fresh = (over = {}, pot = 1000) => {
   const p = Object.assign({}, DEFAULTS, LEGACY, over);
@@ -29,12 +30,10 @@ const R0 = 6.668e15;
 // carries a field of the rules in docs/FLOW.md section 9 it must match, and a field of the old rules (reserveBps) must be gone from the model
 {
   const cfg = JSON.parse(fs.readFileSync(new URL('../script/config/mainnet.json', import.meta.url), 'utf8'));
-  const moved = cfg.settings.reserveBps !== undefined; // the config still on the old rules: the new fields are not there yet
-  const newFields = ['saleFloorBps', 'feeToBuybackBps'];
   // the stepped bid rule fields of the Core are sim parameters of the bidRule stepped (setting B of docs/archive/BID-STUDY.md), under other names. the built rule fields are sim only
   const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 5000, climbPerMinBps: 50, ceilBps: 11000, idleLoosenBps: 200, peakHalfLife: 21600, recoveryClimbPerMinBps: 200, recoveryGapBps: 1000 };
   const BUILT_ONLY = ['climbBaseBps', 'climbDoubleEvery', 'climbMaxBps', 'dropBps'];
-  for (const [k, v] of Object.entries(STEPPED)) if (cfg.settings[k] !== undefined) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
+  for (const [k, v] of Object.entries(STEPPED)) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
   // the sim defaults are the launch bid rule: stepped, field for field with the config (bps to percent)
   ok(DEFAULTS.bidRule === 'stepped', 'the default bid rule is stepped');
   near(DEFAULTS.dropPerCreditPct, cfg.settings.dropPerCreditBps / 100, 1e-12, 'default dropPerCreditPct');
@@ -47,14 +46,13 @@ const R0 = 6.668e15;
   near(DEFAULTS.peakHalfLifeHours, cfg.settings.peakHalfLife / 3600, 1e-12, 'default peakHalfLifeHours');
   ok(cfg.settings.clampCredits === undefined && DEFAULTS.clampCredits === undefined, 'the clamp divisor is gone from the config and the model');
   near(DEFAULTS.rateStart, cfg.rateStart, 1e-12, 'default rateStart');
+  // every other setting of the config is a SETTINGS field with the same value (eth and gwei in the model, wei in the config)
   for (const [k, v] of Object.entries(cfg.settings)) {
     if (k in STEPPED) continue;
-    if (k === 'reserveBps') { ok(SETTINGS.reserveBps === undefined, 'reserveBps is gone from the model'); continue; }
-    if (moved && k === 'exitAfter') continue; // 72 hours in the old file, 105 hours in the new rules
-    near(SETTINGS[k], k === 'buybackSlice' || k === 'keeperFee' || k === 'callerFee' ? v / 1e18 : k === 'keeperMaxBaseFee' || k === 'callerMaxBaseFee' ? v / 1e9 : v, 1e-12, 'setting ' + k); // eth and gwei in the model, wei in the config
+    near(SETTINGS[k], k === 'buybackSlice' || k === 'keeperFee' || k === 'callerFee' ? v / 1e18 : k === 'keeperMaxBaseFee' || k === 'callerMaxBaseFee' ? v / 1e9 : v, 1e-12, 'setting ' + k);
   }
-  for (const k of newFields) if (cfg.settings[k] !== undefined) near(SETTINGS[k], cfg.settings[k], 1e-12, 'setting ' + k);
-  for (const k of Object.keys(SETTINGS)) ok(BUILT_ONLY.includes(k) || cfg.settings[k] !== undefined || (moved && (newFields.includes(k) || k === 'reserveBps')), 'the config carries ' + k);
+  for (const k of Object.keys(SETTINGS)) ok(BUILT_ONLY.includes(k) || cfg.settings[k] !== undefined, 'the config carries ' + k);
+  for (const k of Object.keys(cfg.settings)) ok(k in STEPPED || k in SETTINGS, 'the model carries ' + k);
   for (const k of Object.keys(CONTROLLER)) near(+CONTROLLER[k], k === 'anchorMinCost' ? +cfg.sale[k] / 1e18 : +cfg.sale[k], 1e-12, 'controller ' + k); // eth in the model, wei in the config
   assert.deepEqual(Object.keys(cfg.sale).sort(), Object.keys(CONTROLLER).sort()); n++; // the sale block and the model carry the same fields
   // the launch rateStart is 100 percent of market
@@ -67,9 +65,12 @@ const R0 = 6.668e15;
   near(DEFAULTS.routerPayeePpm, cfg.router.payeePpm, 1e-12, 'router payeePpm');
   assert.equal(firstViolation(SETTINGS), null); n++;
   assert.equal(controllerViolation(CONTROLLER), null); n++;
-  // the rules of docs/FLOW.md section 9 at launch
-  assert.deepEqual(CONTROLLER, { markupBps: 15000, startCapBps: 100000, fastDecayBpsPerHour: 100, kneeBps: 10000, slowDecayBpsPerHour: 25, floorBps: 7500, anchorHalfLife: 7 * 24 * H, anchorMinCost: 0.1 }); n++;
-  assert.equal(SETTINGS.saleFloorBps, 7500); assert.equal(SETTINGS.exitAfter, 105 * H); assert.equal(SETTINGS.feeToBuybackBps, 0); n += 3;
+  // the launch rules: statements fall to cost and stay there (FLOW 85), phase 2 starts off (FLOW 86), the redeem burn reserve takes 10 percent of fees and each redemption releases 20 percent of it
+  assert.deepEqual(CONTROLLER, { markupBps: 15000, startCapBps: 100000, fastDecayBpsPerHour: 100, kneeBps: 10000, slowDecayBpsPerHour: 25, floorBps: 10000, anchorHalfLife: 7 * 24 * H, anchorMinCost: 0.1 }); n++;
+  assert.equal(SETTINGS.saleFloorBps, 10000); assert.equal(SETTINGS.feeToBuybackBps, 0); assert.equal(SETTINGS.feeToRedeemBurnBps, 1000); n += 3;
+  assert.equal(SETTINGS.exitMode, 0); assert.equal(SETTINGS.exitSlippageBps, 200); assert.equal(SETTINGS.exitBidMarginBps, 2000); assert.equal(SETTINGS.redeemBurnBps, 2000); n += 4;
+  ok(SETTINGS.exitAfter === undefined && SETTINGS.exitToBuybackBps === undefined && SETTINGS.xAuctionHalfLife === undefined && SETTINGS.exitSliceCredits === undefined && SETTINGS.exitLaneToBuybackBps === undefined && SETTINGS.xRateCap === undefined, 'the exit token auction and the climbing exit bid are gone from the model');
+  ok(DEFAULTS.exitPoolSet === false && DEFAULTS.phase2Day === null, 'the exit token pool key is unset and phase 2 is off at launch');
 }
 // the owner pause (ControllerV1.setPaused): the age a price falls with excludes every paused window, a buy refuses while paused, a repeat opens no window
 {
@@ -314,14 +315,15 @@ const R0 = 6.668e15;
   const s = a.compose(1, 'eth', 0);
   assert.equal(a.sellTo(s, 0.7499, 0), null); assert.notEqual(a.sellTo(s, 0.75, 0), null); n += 2;
 }
-// compose holds the statement in the Core from composedAt, asked at age zero at the start price. the exit lane statement is never asked
+// compose holds the statement in the Core from composedAt, asked at age zero at the start price, and stores its rating. the exit lane statement is never asked
 {
   const c = fresh({}, 10);
   const st = c.compose(0.8, 'eth', 0);
   near(c.askingPrice(st, 0), st.cost * 1.5, 1e-12, 'asked at the start price, 150 percent of cost');
   near(fresh({ markupBps: 10000 }, 10).askingPrice({ cost: 1, t0: 0, lane: 'eth' }, 0), 1.0, 1e-12, 'markupBps 10000');
   near(fresh({ markupBps: 13000 }, 10).askingPrice({ cost: 1, t0: 0, lane: 'eth' }, 0), 1.3, 1e-12, 'markupBps 13000');
-  assert.deepEqual(Object.keys(st).sort(), ['cost', 'lane', 't0']); n++; // the record carries cost, composedAt and lane
+  assert.deepEqual(Object.keys(st).sort(), ['cost', 'lane', 'rating', 't0']); n++; // the record carries cost, composedAt, lane and rating
+  assert.equal(c.compose(1, 'eth', 0, 35200).rating, 35200); n++
   const a100 = c.askingPrice(st, 100);
   near(a100, 0.8 * 1.5 - 0.8 * 100 * 100 / (3600 * 10000), 1e-12, 'the asking price a hundred seconds in');
 }
@@ -373,19 +375,22 @@ const R0 = 6.668e15;
   assert.throws(() => s.setSettings({ feeToBuybackBps: 10001 }, 0), /feeToBuybackBps/); n++;
   assert.throws(() => s.setSettings({ saleFloorBps: 999 }, 0), /saleFloorBps/); n++;
 }
-// conservation of eth through the Core: fees, sales, spend and the buyback slice all come from and go to one ledger
+// conservation of eth through the Core: fees, sales, spend, redemptions and the buyback slice all come from and go to one ledger (pot, buyback pot, redeem burn reserve)
 {
-  for (const over of [{}, { feeToBuybackBps: 5000 }, { feeToBuybackBps: 2500, saleToBuybackBps: 7500 }, { feeToBuybackBps: 10000, saleToBuybackBps: 0 }, { basefeeGwei: 40 }]) {
+  for (const over of [{}, { feeToBuybackBps: 5000 }, { feeToBuybackBps: 2500, saleToBuybackBps: 7500 }, { feeToBuybackBps: 10000, saleToBuybackBps: 0 }, { basefeeGwei: 40 }, { feeToRedeemBurnBps: 1000 }, { feeToRedeemBurnBps: 2500, feeToBuybackBps: 5000, redeemBurnBps: 10000, exitMode: 1 }]) {
     const c = new Core(Object.assign({}, DEFAULTS, LEGACY, over), 0);
+    c.setExitModule(0, 1e-5);
     let inflow = 0, out = 0;
     c.addFees(20, 0); inflow += 20;
     c.addFees(3.3, 50); inflow += 3.3;
     if (c.spend(1.2, 100)) out += 1.2; else ok(c.s.feeToBuybackBps === 10000, 'a spend only fails on an empty pot');
-    const st = c.compose(0.9, 'eth', 200);
+    const st = c.compose(0.9, 'eth', 200, 35200);
     const p0 = c.askingPrice(st, 40 * H); c.buy(st, 40 * H); inflow += p0;
+    if (c.s.exitMode >= 1) c.exitStatement(c.compose(0.9, 'eth', 200, 35200), 80 * H); // the exit token leaves the eth ledger, the reserve moves into the buyback pot
     const b = c.takeBuybackSlice(50 * H); if (b) out += b.budget + b.tip; // what leaves the buyback pot: the swap budget and the caller payment
-    near(c.ethPot + c.ethToBuyback + out, inflow, 1e-12, 'eth conserved ' + JSON.stringify(over));
-    ok(c.ethPot >= 0 && c.ethToBuyback >= 0, 'no negative pot');
+    near(c.ethPot + c.ethToBuyback + c.ethRedeemBurn + out, inflow, 1e-12, 'eth conserved ' + JSON.stringify(over));
+    near(c.feeToRedeemBurn - c.redeemBurnMoved - c.ethRedeemBurn, 0, 1e-12, 'reserve conserved ' + JSON.stringify(over));
+    ok(c.ethPot >= 0 && c.ethToBuyback >= 0 && c.ethRedeemBurn >= 0, 'no negative pot');
   }
 }
 // setSettings: validates, checkpoints both rates first, applies at once
@@ -405,17 +410,24 @@ const R0 = 6.668e15;
   // the clamp reads the live pot
   const d = fresh({ rateCap: 1e18 }, 0.1);
   near(d.clamp(), 0.1 * W, 1e-12, 'clamp is the pot');
-  assert.equal(firstViolation(Object.assign({}, SETTINGS, { exitAfter: 366 * 86400 })), 'exitAfter'); n++;
   // the tightened bounds of the audit fixes (FC-1 accepted with bounds, FC-2, FC-3, FC-7) and the rate cap (FC-5)
   const bad = (patch, name) => { assert.equal(firstViolation(Object.assign({}, SETTINGS, patch)), name); n++; };
   bad({ dropBps: 499 }, 'dropBps');
-  bad({ saleFloorBps: 999 }, 'saleFloorBps'); bad({ saleFloorBps: 40001 }, 'saleFloorBps'); bad({ feeToBuybackBps: 10001 }, 'feeToBuybackBps'); 
-  bad({ buybackSlice: 1.01 }, 'buybackSlice'); bad({ exitAfter: 3599 }, 'exitAfter');
+  bad({ saleFloorBps: 999 }, 'saleFloorBps'); bad({ saleFloorBps: 40001 }, 'saleFloorBps'); bad({ feeToBuybackBps: 10001 }, 'feeToBuybackBps');
+  bad({ buybackSlice: 1.01 }, 'buybackSlice'); bad({ buybackDelay: 0 }, 'buybackDelay'); bad({ buybackDelay: 7201 }, 'buybackDelay');
   bad({ rateCap: 1e13 - 1e6 }, 'rateCap'); bad({ rateCap: 1.1e18 }, 'rateCap');
-  bad({ exitLaneToBuybackBps: 10001 }, 'exitLaneToBuybackBps');
-  assert.equal(firstViolation(Object.assign({}, SETTINGS, { dropBps: 500, saleFloorBps: 1000, feeToBuybackBps: 10000, buybackSlice: 1, exitAfter: 3600, rateCap: 1e18 })), null); n++;
+  // the exit side (FLOW 84, 86): exitMode 0 to 2, slippage at most 10 percent, margin at most 90 percent, the reserve shares at most 100 percent, and the fee shares together at most 100 percent
+  bad({ exitMode: 3 }, 'exitMode'); bad({ exitMode: -1 }, 'exitMode'); bad({ exitSlippageBps: 1001 }, 'exitSlippageBps'); bad({ exitBidMarginBps: 9001 }, 'exitBidMarginBps');
+  bad({ exitSlippageBps: 201, exitBidMarginBps: 200 }, 'exitSlippageBps'); bad({ exitBidMarginBps: 0 }, 'exitSlippageBps'); // slippage at most the bid margin
+  assert.equal(firstViolation(Object.assign({}, SETTINGS, { exitSlippageBps: 200, exitBidMarginBps: 200 })), null); assert.equal(firstViolation(Object.assign({}, SETTINGS, { exitSlippageBps: 0, exitBidMarginBps: 0 })), null); n += 2;
+  bad({ redeemBurnBps: 10001 }, 'redeemBurnBps'); bad({ feeToRedeemBurnBps: 10001 }, 'feeToRedeemBurnBps');
+  bad({ feeToBuybackBps: 9001, feeToRedeemBurnBps: 1000 }, 'feeToRedeemBurnBps'); bad({ feeToBuybackBps: 5000, feeToRedeemBurnBps: 5001 }, 'feeToRedeemBurnBps');
+  assert.equal(firstViolation(Object.assign({}, SETTINGS, { feeToBuybackBps: 9000, feeToRedeemBurnBps: 1000 })), null); n++;
+  assert.equal(firstViolation(Object.assign({}, SETTINGS, { dropBps: 500, saleFloorBps: 1000, feeToBuybackBps: 10000, feeToRedeemBurnBps: 0, buybackSlice: 1, rateCap: 1e18, exitMode: 2, exitSlippageBps: 1000, exitBidMarginBps: 9000, redeemBurnBps: 10000 })), null); n++;
   assert.equal(SETTINGS.rateCap, 26700000000000000); assert.equal(SETTINGS.rateCap, 3 * DEFAULTS.rateStart); n++;
-  assert.equal(firstViolation(Object.assign({}, SETTINGS, { xRateFloor: 9800 })), 'xRateFloor'); n++;
+  const c2 = fresh({}, 10);
+  assert.throws(() => c2.setSettings({ exitMode: 3 }, 0), /exitMode/); assert.throws(() => c2.setSettings({ feeToBuybackBps: 9500, feeToRedeemBurnBps: 1000 }, 0), /feeToRedeemBurnBps/); n += 2;
+  c2.setSettings({ exitMode: 1 }, 5); assert.equal(c2.s.exitMode, 1); n++;
 }
 // rateCap: the climb clamps at it, setRate refuses above it, a lower cap pulls the rate down at the checkpoint
 {
@@ -430,72 +442,159 @@ const R0 = 6.668e15;
   c.setSettings({ rateCap: 8.66e16 }, 11000 * H);
   near(c.ethRate(12000 * H), 8.66e16, 1e-12, 'a higher cap lets the climb go on');
 }
-// phase 2 exit eligibility: an eth lane statement held for exitAfter since composedAt, the exit lane at once, never after a sale
+// the redeem burn reserve (FLOW 86): feeToRedeemBurnBps of the fee eth fills it, feeToBuybackBps goes to the buyback pot, the rest to the pot
 {
-  const c = fresh({}, 10); c.setExitModule(0, 1e-5);
-  const st = c.compose(1, 'eth', 0);
-  assert.equal(c.exitReady(st, 105 * H - 1), false); assert.equal(c.exitReady(st, 105 * H), true); n += 2; // exitAfter 105 hours
-  assert.equal(c.exitReady({ lane: 'exit', t0: 0 }, 0), true); n++;
-  assert.equal(fresh({}, 10).exitReady(c.compose(1, 'eth', 0), 9999 * H), false); n++; // no module, no exit
-  const d = fresh({ exitAfter: 24 * H }, 10); d.setExitModule(0, 1e-5);
-  assert.equal(d.exitReady(d.compose(1, 'eth', 0), 24 * H), true); n++;
+  const d = new Core(Object.assign({}, DEFAULTS), 0); // launch values: 10 percent of fees to the reserve
+  const r = d.addFees(8, 0);
+  near(d.ethRedeemBurn, 0.8, 1e-12, 'launch reserve share of the fees'); near(d.ethPot, 7.2, 1e-12, 'the rest to the pot'); near(d.ethToBuyback, 0, 1e-12, 'nothing to the buyback pot'); near(d.feeToRedeemBurn, 0.8, 1e-12, 'booked');
+  near(r.toRedeemBurn + r.toBuyback + r.toPot, 8, 1e-12, 'the fee split adds up');
+  const e = new Core(Object.assign({}, DEFAULTS, { feeToBuybackBps: 2500, feeToRedeemBurnBps: 1000 }), 0);
+  e.addFees(10, 0);
+  near(e.ethToBuyback, 2.5, 1e-12, 'buyback share'); near(e.ethRedeemBurn, 1, 1e-12, 'reserve share'); near(e.ethPot, 6.5, 1e-12, 'pot share');
+  near(e.ethPot + e.ethToBuyback + e.ethRedeemBurn, 10, 1e-12, 'all of it is booked');
+  // the reserve share does not enter the pot, so the funded flag and the clamp follow the pot alone
+  const q = new Core(Object.assign({}, DEFAULTS, { rateCap: 1e18 }), 0); q.addFees(0.1, 0); near(q.clamp(), 0.09 * W, 1e-12, 'the clamp is the pot without the reserve');
+  // sale proceeds follow saleToBuybackBps only
+  const s = new Core(Object.assign({}, DEFAULTS), 0); s.sellTo({ cost: 1, lane: 'eth', t0: 0 }, 2, 0);
+  near(s.ethRedeemBurn, 0, 1e-12, 'a sale does not fill the reserve'); near(s.ethToBuyback, 1, 1e-12, 'a sale sends saleToBuybackBps to the buyback');
 }
-// exitToken auction: halves every xAuctionHalfLife, clock stopped while the pot is empty, restart rule
+// redemption eligibility (Core.exitStatement, ControllerV1.atCost): a module is set, exitMode is 1 or 2, an eth lane statement is at cost (its curve price is at or below its cost), an exit lane statement is eligible at once
 {
-  const c = fresh();
-  c.setExitModule(0, 2.5e-5);
-  near(c.xStartPrice, 1e9 / (20 * 2.5e-5), 1e-12, 'first start asks the whole supply for a full slice');
-  c.xStartPrice = 1000; c.xStartTime = 0;
-  near(c.xAuctionPrice(10 * H), 1000, 1e-12, 'empty pot: clock stopped');
-  c.xToBuyback = 1;
-  near(c.xAuctionPrice(0), 1000, 1e-12, 'start');
-  near(c.xAuctionPrice(6 * H), 500, 1e-12, 'one half life');
-  near(c.xAuctionPrice(9 * H), 353.5533905932738, 1e-12, 'one and a half half lives');
-  near(c.xAuctionPrice(7.5 * H), 420.44820762685725, 1e-12, 'one and a quarter');
-  near(c.xAuctionPrice(2000 * H), 0, 1e-9, 'long gap reaches zero'); // 256 half lives
-  const f = c.xFill(6 * H);
-  near(f.price, 500, 1e-12, 'fill price');
-  near(c.xStartPrice, 1000, 1e-12, 'restart max(2 * 500, 1000 / 4)');
-  c.xStartPrice = 1000; c.xStartTime = 0; c.xToBuyback = 1;
-  c.xFill(30 * H); // price 1000 * 2^-5 = 31.25
-  near(c.xStartPrice, 250, 1e-12, 'restart floors at a quarter of the start');
-  // a settings change of the half life re anchors the curve at its price now
-  const d = fresh(); d.setExitModule(0, 2.5e-5); d.xStartPrice = 1000; d.xStartTime = 0; d.xToBuyback = 1;
-  d.setSettings({ xAuctionHalfLife: 12 * H }, 6 * H);
-  near(d.xStartPrice, 500, 1e-12, 're anchored at the price now'); near(d.xAuctionPrice(18 * H), 250, 1e-12, 'new half life from the anchor');
-  near(fresh({ exitSliceCredits: 40 }).xSlice(), 0, 1e-12, 'no slice without a pot');
-}
-// exitToken bid: climbs 100 bps an hour while funded, drops 20 per credit, bounds 3000 and 9700, the same for every credit
-{
-  const c = fresh();
-  c.setExitModule(0, 1e-5);
-  c.xPot = 100; c.xCheckpoint(0); c.syncXFunded();
-  assert.equal(c.xFunded, true); n++;
-  near(c.xRate(5 * H), 6500, 1e-12, 'climb 100 bps an hour');
-  near(c.xRate(100 * H), 9700, 1e-12, 'cap 9700');
-  const paid = c.xBuy(0);
-  near(paid, (6000 * 1e-5) / 1e4, 1e-12, 'pays xRate * xp, the same for every credit'); near(c.xRateAtCheckpoint, 5980, 1e-12, 'drop 20 per credit');
-  c.xRateAtCheckpoint = 3010; c.xBuy(0); near(c.xRateAtCheckpoint, 3000, 1e-12, 'floor 3000');
-}
-{
-  const c = fresh(); c.setExitModule(0, 1e-5);
-  c.xPot = 0.000005; c.xCheckpoint(0); c.syncXFunded();
-  assert.equal(c.xFunded, false); n++; // below 0.6 * 1e-5 = 0.000006
-  near(c.xRate(100 * H), 6000, 1e-12, 'unfunded exit bid does not climb');
-  c.xPot = 0;
-  const res = c.exitStatement({ lane: 'eth', t0: 0 }, 35000, 80 * H);
-  near(res.received, 0.35, 1e-12, 'exit pays credits * unitPerCredit'); near(c.xToBuyback, 0.175, 1e-12, 'eth lane 50 to buyback'); near(c.xPot, 0.175, 1e-12, '50 to the bid pot');
-  c.exitStatement({ lane: 'exit', t0: 0 }, 10000, 80 * H);
-  near(c.xPot, 0.175 + 0.1, 1e-12, 'exit lane keeps all');
-  const e = fresh({ exitToBuybackBps: 2000 }); e.setExitModule(0, 1e-5);
-  near(e.exitStatement({ lane: 'eth', t0: 0 }, 10000, 0).toBuyback, 0.02, 1e-12, 'exitToBuybackBps');
-  // exitLaneToBuybackBps: the exit lane share to the buyback, the rest to the bid pot, the eth lane unaffected
-  for (const [bps, want] of [[0, 0], [5000, 0.05], [10000, 0.1]]) {
-    const l = fresh({ exitLaneToBuybackBps: bps }); l.setExitModule(0, 1e-5);
-    const r = l.exitStatement({ lane: 'exit', t0: 0 }, 10000, 0);
-    near(r.toBuyback, want, 1e-12, 'exit lane to buyback at ' + bps); near(l.xPot, 0.1 - want, 1e-12, 'exit lane rest to the bid pot at ' + bps);
-    near(l.exitStatement({ lane: 'eth', t0: 0 }, 10000, 0).toBuyback, 0.05, 1e-12, 'eth lane ignores exitLaneToBuybackBps');
+  const mk = (over = {}) => { const c = fresh(Object.assign({ exitMode: 2 }, over), 10); c.setExitModule(0, 1e-5); return c; };
+  const c = mk();
+  const st = c.compose(1, 'eth', 0, 35200);
+  assert.equal(c.exitReady(st, 50 * H - 1), false); assert.equal(c.exitReady(st, 50 * H), true); assert.equal(c.exitReady(st, 5000 * H), true); n += 3; // the curve reaches cost at hour 50
+  assert.equal(c.exitReady({ cost: 1, lane: 'exit', t0: 0, rating: 1 }, 0), true); n++;
+  assert.equal(fresh({ exitMode: 2 }, 10).exitReady(c.compose(1, 'eth', 0), 9999 * H), false); n++; // no module, no exit
+  for (const [mode, want] of [[0, false], [1, true], [2, true]]) {
+    const m = mk({ exitMode: mode });
+    assert.equal(m.exitReady(m.compose(1, 'eth', 0), 60 * H), want); assert.equal(m.exitReady({ cost: 1, lane: 'exit', t0: 0, rating: 1 }, 0), want); n += 2;
   }
+  // a hard floor above cost keeps the curve price above cost, so the statement is never at cost; a hard floor at or below cost does not matter
+  const hi = mk({ saleFloorBps: 12000 }); assert.equal(hi.exitReady(hi.compose(1, 'eth', 0), 9999 * H), false); n++;
+  const lo = mk({ saleFloorBps: 5000, floorBps: 5000 }); assert.equal(lo.exitReady(lo.compose(1, 'eth', 0), 50 * H), true); assert.equal(lo.exitReady(lo.compose(1, 'eth', 0), 49 * H), false); n += 2;
+  // a sold or redeemed statement is gone
+  const sold = c.compose(1, 'eth', 0, 1); c.sellTo(sold, 1.5, 0); assert.equal(c.exitReady(sold, 60 * H), false);
+  const done = c.compose(1, 'eth', 0, 1); assert.notEqual(c.exitStatement(done, 60 * H), null); assert.equal(c.exitReady(done, 61 * H), false); assert.equal(c.exitStatement(done, 61 * H), null); assert.equal(c.sellTo(done, 9, 61 * H), null); n += 5;
+  // the launch curve falls to cost and stays there (FLOW 85): at cost from hour 50 on, never below it
+  const L = mk({ floorBps: 10000, saleFloorBps: 10000 }); const ls = L.compose(1, 'eth', 0, 1);
+  near(L.curvePrice(ls, 50 * H), 1, 1e-12, 'launch curve at cost at hour 50'); near(L.curvePrice(ls, 5000 * H), 1, 1e-12, 'and at cost long after'); near(L.curvePrice(ls, 49 * H), 1.01, 1e-12, 'one hour before 101 percent');
+  assert.equal(L.exitReady(ls, 49.5 * H), false); assert.equal(L.exitReady(ls, 50 * H), true); n += 2;
+  // the pause holds the age, so eligibility holds its value through a pause: not at cost when paused at hour 40, at cost 50 hours of age after the resume
+  const pz = mk({ floorBps: 10000, saleFloorBps: 10000 }); const ps = pz.compose(1, 'eth', 0, 1);
+  pz.setPaused(true, 40 * H); assert.equal(pz.exitReady(ps, 90 * H), false); pz.setPaused(false, 100 * H); assert.equal(pz.exitReady(ps, 109 * H), false); assert.equal(pz.exitReady(ps, 110 * H), true); n += 3;
+  // the value floor does not move eligibility, which reads the curve price
+  const vf = mk({ exitPoolSet: true }); const vs = vf.compose(1, 'eth', 0, 1e6);
+  ok(vf.askingPrice(vs, 60 * H) > 1, 'the asking price is above cost'); assert.equal(vf.exitReady(vs, 60 * H), true); n++;
+}
+// Core.exitStatement: the module returns rating * xpPerPoint, at least rating * xpPerPoint * (1 - exitSlippageBps / 10000) or it reverts. the Core keeps all of it in xPot.
+// an eth lane redemption moves redeemBurnBps of the redeem burn reserve to the buyback pot
+{
+  const mk = (over = {}) => { const c = fresh(Object.assign({ exitMode: 2, feeToRedeemBurnBps: 1000 }, over), 0); c.setExitModule(0, 1e-5); c.addFees(100, 0); return c; };
+  const c = mk();
+  near(c.ethRedeemBurn, 10, 1e-12, 'reserve'); near(c.ethPot, 90, 1e-12, 'pot');
+  const r1 = c.exitStatement(c.compose(1, 'eth', 0, 35200), 60 * H);
+  near(r1.received, 0.352, 1e-12, 'the module returns rating * xpPerPoint'); near(c.xPot, 0.352, 1e-12, 'all of it in xPot');
+  near(r1.toBurn, 2, 1e-12, '20 percent of the reserve'); near(c.ethRedeemBurn, 8, 1e-12, 'the reserve falls'); near(c.ethToBuyback, 2, 1e-12, 'the buyback pot gets it'); near(c.redeemBurnMoved, 2, 1e-12, 'booked');
+  const r2 = c.exitStatement(c.compose(1, 'eth', 0, 100), 60 * H);
+  near(r2.toBurn, 1.6, 1e-12, '20 percent of what is left'); near(c.ethRedeemBurn, 6.4, 1e-12, 'reserve after two'); near(c.ethToBuyback, 3.6, 1e-12, 'buyback pot after two');
+  const r3 = c.exitStatement(c.compose(0, 'exit', 0, 100), 60 * H);
+  near(r3.toBurn, 0, 1e-12, 'an exit lane redemption moves nothing'); near(c.ethRedeemBurn, 6.4, 1e-12, 'reserve unchanged by the exit lane'); near(c.xPot, 0.352 + 0.001 + 0.001, 1e-12, 'exit token pot after three');
+  near(c.ethPot, 90, 1e-12, 'the eth pot is not touched by a redemption');
+  // slippage: 2 percent at launch. a module that returns 98 percent passes, 97 percent reverts and changes nothing
+  const lo = mk({ exitPayFrac: 0.98 }); ok(lo.exitStatement(lo.compose(1, 'eth', 0, 35200), 60 * H), 'a module under by exactly the tolerance passes');
+  near(lo.xPot, 0.352 * 0.98, 1e-12, 'the Core keeps what arrives');
+  const un = mk({ exitPayFrac: 0.97 }); const us = un.compose(1, 'eth', 0, 35200);
+  assert.equal(un.exitStatement(us, 60 * H), null); assert.equal(un.xPot, 0); near(un.ethRedeemBurn, 10, 1e-12, 'unchanged'); assert.equal(us.exited, undefined); n += 3;
+  const wide = mk({ exitPayFrac: 0.9, exitSlippageBps: 1000 }); ok(wide.exitStatement(wide.compose(1, 'eth', 0, 35200), 60 * H), 'the tolerance is the setting');
+  // exitMode 0 refuses, exitMode 1 redeems
+  const off = mk({ exitMode: 0 }); assert.equal(off.exitStatement(off.compose(1, 'eth', 0, 1), 60 * H), null); n++;
+  const hold = mk({ exitMode: 1 }); ok(hold.exitStatement(hold.compose(1, 'eth', 0, 1), 60 * H), 'hold mode redeems'); n++;
+  // a statement not yet at cost does not redeem
+  assert.equal(c.exitStatement(c.compose(1, 'eth', 0, 1), 10 * H), null); n++;
+  // redeemBurnBps is a setting read at once; 0 moves nothing, 10000 moves the whole reserve
+  const z = mk({ redeemBurnBps: 0 }); z.exitStatement(z.compose(1, 'eth', 0, 1), 60 * H); near(z.ethToBuyback, 0, 1e-12, 'redeemBurnBps 0'); near(z.ethRedeemBurn, 10, 1e-12, 'reserve stays');
+  const f = mk({ redeemBurnBps: 10000 }); f.exitStatement(f.compose(1, 'eth', 0, 1), 60 * H); near(f.ethToBuyback, 10, 1e-12, 'redeemBurnBps 10000'); near(f.ethRedeemBurn, 0, 1e-12, 'whole reserve');
+  const live = mk(); live.setSettings({ redeemBurnBps: 5000 }, 1); live.exitStatement(live.compose(1, 'eth', 0, 1), 60 * H); near(live.ethToBuyback, 5, 1e-12, 'the setting applies at once');
+}
+// the exit token bid (Core.sellForExitToken, FLOW 84): runs while exitMode is 2, pays score * unitPerPoint * (1 - exitBidMarginBps / 10000) per credit from xPot,
+// and a credit whose price is above the pot is refused. the eth bid stays flat per credit; this bid depends on the score
+{
+  const mk = (over = {}) => { const c = fresh(Object.assign({ exitMode: 2 }, over), 10); c.setExitModule(0, 1e-5); c.xPot = 1; return c; };
+  const c = mk();
+  near(c.xBidPrice(440), 440 * 1e-5 * 0.8, 1e-12, 'score times the per point amount less the 20 percent margin'); near(c.xBidPrice(80), 80 * 1e-5 * 0.8, 1e-12, 'a low score is paid less');
+  near(c.xBidPrice(800), 2 * c.xBidPrice(400), 1e-12, 'linear in the score');
+  near(c.xBuy(440), 440 * 1e-5 * 0.8, 1e-12, 'a buy pays the price'); near(c.xPot, 1 - 440 * 1e-5 * 0.8, 1e-12, 'from xPot'); near(c.xBuy(440), 440 * 1e-5 * 0.8, 1e-12, 'the price does not move with a fill');
+  const small = mk(); small.xPot = 0.003; assert.equal(small.xBuy(440), 0); near(small.xPot, 0.003, 1e-15, 'a price above the pot is refused and nothing moves'); n++;
+  near(small.xBuy(80), 80 * 1e-5 * 0.8, 1e-12, 'a cheaper credit fits'); 
+  for (const mode of [0, 1]) { const m = mk({ exitMode: mode }); assert.equal(m.exitBidActive(), false); assert.equal(m.xBuy(440), 0); near(m.xPot, 1, 1e-15, 'no bid in mode ' + mode); n += 2; }
+  assert.equal(fresh({ exitMode: 2 }, 10).exitBidActive(), false); n++; // no module, no bid
+  // the margin is a setting read at once
+  const g = mk(); assert.throws(() => g.setSettings({ exitBidMarginBps: 0 }, 1), /exitSlippageBps/); n++; g.setSettings({ exitSlippageBps: 0, exitBidMarginBps: 0 }, 1); near(g.xBidPrice(100), 100 * 1e-5, 1e-12, 'margin 0 pays the whole value'); g.setSettings({ exitBidMarginBps: 9000 }, 2); near(g.xBidPrice(100), 100 * 1e-5 * 0.1, 1e-12, 'margin 90 percent');
+  // buy at (1 - margin) and redeem at full value: the engine keeps the margin
+  const h = mk(); const px = h.xBuy(35200 / 80 * 1); const rec = h.exitStatement(h.compose(0, 'exit', 0, 440 * 80), 0);
+  near(rec.received, 440 * 80 * 1e-5, 1e-12, 'the redemption returns the full value'); ok(rec.received > 80 * px, 'more than the 80 credits were bought for');
+}
+// Core.sellForExitToken pays with min(stored, live) unitPerPoint, Core.refreshUnitPerPoint (owner) re-reads the stored unit from the module,
+// Core.releaseRedeemBurn (owner) moves reserve eth to the buyback pot
+{
+  const mk = (over = {}) => { const c = fresh(Object.assign({ exitMode: 2, feeToRedeemBurnBps: 1000 }, over), 0); c.setExitModule(0, 1e-5); c.addFees(100, 0); c.xPot = 1; return c; };
+  const c = mk();
+  near(c.xpLive, 1e-5, 1e-15, 'a module set stores the live unit'); n++;
+  // the module lowers its rate: the bid follows the live unit, the stored unit stays
+  c.moduleReports(6e-6);
+  near(c.xBidPrice(440), 440 * 6e-6 * 0.8, 1e-12, 'the bid pays the live unit when it is lower'); near(c.xpPerPoint, 1e-5, 1e-15, 'the stored unit is unchanged');
+  // the module raises its rate: the bid stays at the stored unit
+  c.moduleReports(2e-5);
+  near(c.xBidPrice(440), 440 * 1e-5 * 0.8, 1e-12, 'the bid pays the stored unit when the live unit is higher');
+  near(c.xBuy(440), 440 * 1e-5 * 0.8, 1e-12, 'a buy pays min(stored, live)');
+  // redemption: the module pays rating * live; the Core requires the slippage floor on the stored unit
+  const up = c.exitStatement(c.compose(1, 'eth', 0, 35200), 60 * H);
+  near(up.received, 35200 * 2e-5, 1e-12, 'the module pays at its live unit'); n++;
+  const lo = mk(); lo.moduleReports(9.9e-6); ok(lo.exitStatement(lo.compose(1, 'eth', 0, 35200), 60 * H), 'a live unit within the slippage of the stored one redeems');
+  const lo2 = mk(); lo2.moduleReports(9.7e-6); assert.equal(lo2.exitStatement(lo2.compose(1, 'eth', 0, 35200), 60 * H), null); n++; // 3 percent under: Underpaid
+  // refreshUnitPerPoint stores the live unit and restores a redemption
+  assert.equal(lo2.refreshUnitPerPoint(), 9.7e-6); near(lo2.xpPerPoint, 9.7e-6, 1e-15, 'stored follows live'); ok(lo2.exitStatement(lo2.compose(1, 'eth', 0, 35200), 60 * H), 'redeems after the refresh'); n++;
+  near(lo2.xBidPrice(100), 100 * 9.7e-6 * 0.8, 1e-12, 'the bid follows the refreshed unit');
+  const raised = mk(); raised.moduleReports(2e-5); raised.refreshUnitPerPoint(); near(raised.xBidPrice(100), 100 * 2e-5 * 0.8, 1e-12, 'a refresh raises the bid');
+  const none = fresh({ exitMode: 2 }, 10); assert.equal(none.refreshUnitPerPoint(), null); const zero = mk(); zero.moduleReports(0); assert.equal(zero.refreshUnitPerPoint(), null); near(zero.xpPerPoint, 1e-5, 1e-15, 'a zero unit reverts and changes nothing'); n += 2;
+  near(zero.xBidPrice(100), 0, 1e-15, 'a zero live unit pays nothing'); assert.equal(zero.xBuy(100), 0); n++;
+  // releaseRedeemBurn: min(amount, reserve) moves to the buyback pot, the totals hold
+  const r = mk(); near(r.ethRedeemBurn, 10, 1e-12, 'reserve');
+  near(r.releaseRedeemBurn(4), 4, 1e-12, 'moves the amount'); near(r.ethRedeemBurn, 6, 1e-12, 'reserve falls'); near(r.ethToBuyback, 4, 1e-12, 'buyback pot rises'); near(r.redeemBurnMoved, 4, 1e-12, 'booked');
+  near(r.releaseRedeemBurn(1e9), 6, 1e-12, 'capped at the reserve'); near(r.ethRedeemBurn, 0, 1e-12, 'reserve empty'); near(r.ethToBuyback, 10, 1e-12, 'whole reserve in the buyback pot');
+  assert.equal(r.releaseRedeemBurn(1), null); const z0 = mk(); assert.equal(z0.releaseRedeemBurn(0), null); n += 2;
+  near(r.ethPot, 90, 1e-12, 'the eth pot is untouched');
+  // in a run: the schedule applies the three owner calls, books close, the buyback pot is fed
+  const base = { days: 30, seed: 4, phase2Day: 5, xpPerPoint: 3e-5 / 440, feeToRedeemBurnBps: 1000 };
+  const mkRun = (schedule) => simulate(Object.assign({ stepSec: 3600 }, DEFAULTS, base, { schedule }));
+  const none2 = mkRun([]), rel = mkRun([{ day: 10, patch: { releaseRedeemBurn: 1e9 } }]);
+  const hr = 10 * 24 + 1; ok(none2.S.redeemBurn[hr] > 0 && rel.S.redeemBurn[hr] < 0.1 * none2.S.redeemBurn[hr] && rel.S.redeemBurnMoved[hr] > none2.S.redeemBurnMoved[hr], 'the owner release on day 10 drains the reserve to the buyback and books the move');
+  ok(Math.abs(rel.stats.buybackCheck) < 1e-9 && Math.abs(rel.stats.redeemCheck) < 1e-9 && Math.abs(rel.stats.potCheck) < 1e-6, 'books close after a release'); n += 2;
+  const low = mkRun([{ day: 8, patch: { moduleUnit: 3e-6 / 440 } }]), fix = mkRun([{ day: 8, patch: { moduleUnit: 3e-6 / 440 } }, { day: 9, patch: { refreshUnitPerPoint: true } }]);
+  near(low.core.xpPerPoint, 3e-5 / 440, 1e-18, 'the stored unit stays after the module lowers'); near(low.core.xpLive, 3e-6 / 440, 1e-18, 'the live unit is the new one'); near(fix.core.xpPerPoint, 3e-6 / 440, 1e-18, 'the refresh stores it'); n += 3;
+  ok(Math.abs(low.stats.potCheck) < 1e-6 && Math.abs(fix.stats.potCheck) < 1e-6, 'books close with a lowered module unit'); n++;
+}
+// the redemption value floor of the asking price (ControllerV1.priceOf, FLOW 87): max(curve price, rating * unitPerPoint at the pool price) once the pool key is set.
+// the anchor and the redemption test read the curve price. the hard floor and the pool key at launch: unset
+{
+  const st = { cost: 1, t0: 0, lane: 'eth', rating: 200000 }; // value 2 eth at 1e-5 per point
+  const unset = fresh({ exitMode: 2 }, 10); unset.setExitModule(0, 1e-5);
+  near(unset.askingPrice(st, 0), 1.5, 1e-12, 'pool key unset: the curve price');
+  const set = fresh({ exitMode: 2, exitPoolSet: true }, 10);
+  near(set.askingPrice(st, 0), 1.5, 1e-12, 'no exit module: the curve price'); set.setExitModule(0, 1e-5);
+  near(set.askingPrice(st, 0), 2, 1e-12, 'the redemption value when it is higher'); near(set.askingPrice(st, 40 * H), 2, 1e-12, 'still the value'); near(set.askingPrice(st, 100 * H), 2, 1e-12, 'at any age');
+  near(set.askingPrice({ cost: 1, t0: 0, lane: 'eth', rating: 1000 }, 0), 1.5, 1e-12, 'a low value leaves the curve price');
+  near(set.lowestPrice(st), 2, 1e-12, 'the lowest price is the value');
+  near(set.curvePrice(st, 0), 1.5, 1e-12, 'the curve price ignores the value');
+  const r = set.buy(set.compose(1, 'eth', 0, 200000), 0);
+  near(r.price, 2, 1e-12, 'the buyer pays the value'); assert.equal(r.saleBps, 15000); assert.equal(set.anchorAt(0), 12500); n += 2; // the anchor moves to the curve price, not the value
+  near(set.ethPot + set.ethToBuyback, 10 + 2, 1e-12, 'the Core books the whole payment');
+  // a value under the hard floor cannot lower the price: the bound is cost * saleFloorBps
+  const lowv = fresh({ exitPoolSet: true }, 10); lowv.setExitModule(0, 1e-9);
+  near(lowv.askingPrice({ cost: 1, t0: 0, lane: 'eth', rating: 10 }, 5000 * H), 0.75, 1e-12, 'the hard floor holds under a small value');
+  const launch = fresh({ exitPoolSet: true, floorBps: 10000, saleFloorBps: 10000 }, 10); launch.setExitModule(0, 1e-9);
+  near(launch.askingPrice({ cost: 1, t0: 0, lane: 'eth', rating: 10 }, 5000 * H), 1, 1e-12, 'at the launch floors the price never goes under cost');
 }
 // buyback slice and the caller payment (docs/FLOW.md 61): the caller is paid 270,000 gas at min(basefee, keeperMaxBaseFee) plus keeperFee out of the slice.
 // the swap budget is the slice less the largest payment (600,000 gas at the capped rate plus keeperFee), the unspent part of that reserve goes back to the pot
@@ -565,9 +664,10 @@ const R0 = 6.668e15;
   const a = simL({ days: 20, seed: 3 }), b = simL({ days: 20, seed: 3 }), c = simL({ days: 20, seed: 4 });
   assert.deepEqual(a.S.pot, b.S.pot); n++;
   assert.notDeepEqual(a.S.pot, c.S.pot); n++;
-  for (const r of [a, simL({ days: 40, floorBps: 6000, saleFloorBps: 6000, seed: 5 }), simL({ days: 40, feeToBuybackBps: 2500, seed: 6 }), simL({ days: 40, basefeeGwei: 40, seed: 9 }), simL({ days: 40, buyerWaits: 'floor', feeToBuybackBps: 10000, seed: 8 }), simL({ days: 40, phase2Day: 12, xp: 3e-5, stmtPick: 'random' })]) {
+  for (const r of [a, simL({ days: 40, floorBps: 6000, saleFloorBps: 6000, seed: 5 }), simL({ days: 40, feeToBuybackBps: 2500, seed: 6 }), simL({ days: 40, basefeeGwei: 40, seed: 9 }), simL({ days: 40, buyerWaits: 'floor', feeToBuybackBps: 10000, seed: 8 }), simL({ days: 40, phase2Day: 12, xpPerPoint: 3e-5 / 440, stmtPick: 'random' }), simL({ days: 40, phase2Day: 12, phase2ExitMode: 1, feeToRedeemBurnBps: 1000, seed: 11 }), simL({ days: 40, phase2Day: 12, exitPoolSet: true, feeToRedeemBurnBps: 1000, feeToBuybackBps: 2000, seed: 12 })]) {
     ok(Math.abs(r.stats.potCheck) < 1e-6, 'pot accounting ' + r.stats.potCheck);
     ok(Math.abs(r.stats.buybackCheck) < 1e-9, 'buyback accounting ' + r.stats.buybackCheck);
+    ok(Math.abs(r.stats.redeemCheck) < 1e-9, 'redeem burn reserve accounting ' + r.stats.redeemCheck);
     ok(Math.abs(r.stats.saleCheck) < 1e-9, 'sale accounting ' + r.stats.saleCheck);
     for (const k of ['pot', 'toBuyback', 'locked', 'burned']) ok(r.S[k].every((x) => x >= -1e-12), k + ' negative');
     ok(r.S.burned[r.H] <= 1e9);
@@ -600,9 +700,47 @@ const R0 = 6.668e15;
   ok(w55.T.sold > 0 && w55.T.sold < 0.7 * w100.T.sold, 'a lower willingness to pay sells fewer statements at the same asking prices');
   const w55low = simL({ days: 30, seed: 3, wtpMult: 0.55, markupBps: 10000, floorBps: 3000, saleFloorBps: 3000 });
   ok(w55low.T.sold > 1.8 * w55.T.sold, 'the same buyers buy more when the asking curve is lower'); ok(w55low.stats.saleOverCost < 0.5, 'and they pay a lower share of cost');
-  const p2 = simL({ days: 30, phase2Day: 10, xp: 3e-5, seed: 3 });
-  ok(p2.T.exited > 0 && p2.T.exitedAge > 0, 'held statements exit through the exitModule');
+  const p2 = simL({ days: 30, phase2Day: 10, xpPerPoint: 3e-5 / 440, seed: 3 });
+  ok(p2.T.exited > 0 && p2.T.exitedAge > 0, 'held statements are redeemed through the exitModule');
   const s = summary(a); ok(s.credits > 0 && s.potGoneDay > 1 && s.statements > 0, 'summary reads the run');
+}
+// whole runs at the launch values (FLOW 85, 86): statements fall to cost and wait there while exitMode is 0, the redeem burn reserve takes 10 percent of the fees,
+// phase 2 in hold mode redeems at cost and stops the bid, phase 2 on adds the exit token bid and the exit lane
+{
+  const base = { days: 30, seed: 3, stepSec: 300 };
+  const L = simulate(base);
+  const closes = (r, tag) => { ok(Math.abs(r.stats.potCheck) < 1e-6 && Math.abs(r.stats.saleCheck) < 1e-9 && Math.abs(r.stats.buybackCheck) < 1e-9 && Math.abs(r.stats.redeemCheck) < 1e-9, 'accounting closes ' + tag); };
+  closes(L, 'at launch');
+  ok(L.core.s.exitMode === 0 && L.T.exited === 0 && L.T.exitedX === 0 && L.T.boughtX === 0 && L.T.composedX === 0 && L.core.xPot === 0, 'exitMode 0: no redemption, no exit token bid');
+  ok(L.T.sold > 0 && L.T.soldPrice >= L.T.soldCost * (1 - 1e-9), 'every sale clears at or above cost (the launch hard floor)');
+  // the start price follows the anchor, so the curve reaches cost (startBps - 10000) / 100 hours after listing
+  const endSec = L.H * 3600, hoursToCost = (L.core.startBps(endSec) - 10000) / 100, old = L.unbid.filter((st) => endSec - st.t0 >= hoursToCost * H);
+  ok(L.unbid.length > 100 && old.length > 20, 'statements wait'); ok(old.every((st) => Math.abs(L.core.askingPrice(st, endSec) - st.cost) < 1e-12 * st.cost), 'and every one past that age is asked at its cost');
+  ok(L.unbid.every((st) => L.core.askingPrice(st, endSec) >= st.cost * (1 - 1e-12)), 'none is asked under its cost');
+  near(L.core.feeToRedeemBurn, 0.1 * (L.T.fees + L.T.feesBuyback), 1e-9, 'the reserve takes 10 percent of the fees booked'); near(L.core.ethRedeemBurn, L.core.feeToRedeemBurn, 1e-12, 'and nothing leaves it without a redemption');
+  ok(L.core.redeemBurnMoved === 0, 'no redemption, no move to the buyback');
+  // the pot buys with the other 90 percent
+  const noRes = simulate(Object.assign({ feeToRedeemBurnBps: 0 }, base));
+  ok(noRes.S.credits[noRes.H] > L.S.credits[L.H] * 0.99 - 1, 'a reserve share of 0 leaves the pot with the whole fee stream, at least as many credits');
+  // hold: redemptions at cost, the bid stopped, no exit lane
+  const hold = simulate(Object.assign({ phase2Day: 10, phase2ExitMode: 1 }, base));
+  closes(hold, 'in hold');
+  ok(hold.T.exited > 0 && hold.T.boughtX === 0 && hold.T.composedX === 0 && hold.core.xPot > 0, 'hold mode redeems and keeps the exit token without a bid');
+  ok(hold.core.redeemBurnMoved > 0 && hold.core.ethRedeemBurn < hold.core.feeToRedeemBurn, 'each redemption moves part of the reserve to the buyback');
+  ok(hold.T.exitedAge / hold.T.exited >= 50 * H - 1, 'a statement redeems no earlier than its curve reaches cost (hour 50)');
+  ok(hold.T.exitedValue > 0 && hold.core.xPot === hold.T.xRecv, 'the exit token pot is what the redemptions returned');
+  // on: the bid buys credits at the margin under their value, the exit lane statements redeem
+  const on = simulate(Object.assign({ phase2Day: 10 }, base));
+  closes(on, 'with the bid');
+  ok(on.T.boughtX > 0 && on.T.composedX > 0 && on.T.exitedX > 0 && on.core.redeemBurnMoved > 0, 'the bid buys, the exit lane composes and redeems');
+  ok(on.T.exited > 0 && on.core.xPot > 0, 'eth lane statements redeem');
+  ok(on.S.credits[on.H] > hold.S.credits[hold.H], 'the bid adds credits');
+  // a later switch off stops the bid at once
+  const off = simulate(Object.assign({ phase2Day: 10, schedule: [{ day: 12, patch: { exitMode: 0 } }] }, base));
+  ok(off.T.boughtX > 0 && off.S.xBought[off.H] === off.S.xBought[12 * 24 + 1], 'exitMode 0 on day 12 ends the bid and the redemptions'); ok(off.S.exited[off.H] === off.S.exited[12 * 24 + 1], 'no redemption after the switch off'); closes(off, 'after a switch off');
+  // the pool key (value floor) raises the price a buyer pays and changes nothing else about eligibility
+  const pool = simulate(Object.assign({ phase2Day: 10, phase2ExitMode: 1, exitPoolSet: true, xpPerPoint: 4e-4 }, base));
+  closes(pool, 'with the value floor');
 }
 // sub-hour step: the default is the hourly step, minute and five minute steps give the same economy within sampling noise, and the books close
 {
@@ -656,6 +794,14 @@ const R0 = 6.668e15;
     const d = mk({ bidRule: 'stepped', climbPerMin: 2, ceilPct: 110 });
     near(d.ethRate(1000 * MIN), R * 1.1, 1e-12, 'opening ceiling is rateStart times ceilPct');
     near(d.ethRate(3 * MIN), R * Math.pow(1.02, 3), 1e-12, 'climb 2 percent a minute');
+  }
+  // CoreLib.drop: the minute floor belongs to the bucket now / 60. fills at seconds 0 and 59 share one floor, a fill at second 60 starts a new one
+  {
+    const c = mk({ bidRule: 'stepped', dropPerCreditPct: 10, dropToPct: 80, climbPerMin: 0.1, recoveryClimbPerMin: 0.1, ceilPct: 300 });
+    c.spend(0.001, 0); c.spend(0.001, 30); c.spend(0.001, 59); // 0.9, 0.81, then the floor 0.8 of the first fill
+    near(c.rateAtCheckpoint, R * 0.8, 1e-12, 'seconds 0 to 59 are one bucket, the floor holds at 80 percent of the first fill');
+    const first = c.rateAtCheckpoint; c.spend(0.001, 60);
+    near(c.rateAtCheckpoint, first * Math.pow(1.001, 1 / 60) * 0.9, 1e-6, 'second 60 is a new bucket: no floor from the earlier fills');
   }
   // stepped recovery: after a fill the price state is below the remembered peak and climbs at recoveryClimbPerMin until it
   // reaches the peak, then at climbPerMin. the peak decays over peakHalfLifeHours and anchors the ceiling

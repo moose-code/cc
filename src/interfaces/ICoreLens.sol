@@ -16,8 +16,8 @@ interface ICoreLens {
         bool exitPageReady;
         uint256 ethPot;
         uint256 ethToBuyback;
+        uint256 ethRedeemBurn;
         uint256 xPot;
-        uint256 xToBuyback;
         uint256 unbookedEth;
         uint256 routerBalance;
         uint256 routerOwed;
@@ -25,6 +25,10 @@ interface ICoreLens {
         uint256 flushToPayees;
         address controller;
         address successor;
+        address exitModule;
+        address exitToken;
+        uint256 exitMode;
+        uint256 unitPerPoint;
         bool controllerLocked;
         bool exitModuleLocked;
         bool targetsLocked;
@@ -37,7 +41,9 @@ interface ICoreLens {
         Lane lane;
         uint256 cost;
         uint64 composedAt;
+        uint256 rating;
         uint256 askingPrice;
+        bool exitEligible;
     }
 
     function CORE() external view returns (address);
@@ -45,6 +51,7 @@ interface ICoreLens {
     function ROUTER() external view returns (address);
     function STATEMENTS() external view returns (address);
     function controller() external view returns (address);
+    function exitBidOf(uint256 id) external view returns (uint256);
     function snapshot() external view returns (Snapshot memory s);
     function statementsPage(uint256 start, uint256 n) external view returns (StatementView[] memory);
 }

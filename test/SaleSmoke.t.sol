@@ -27,9 +27,9 @@ contract SaleSmokeTest is Fixture {
         _warp(25 hours);
         assertEq(ctl.priceOf(sid), cost, "at the knee at hour 50: 100 percent");
         _warp(100 hours);
-        assertEq(ctl.priceOf(sid), cost * 7_500 / 10_000, "at the floor at hour 150");
+        assertEq(ctl.priceOf(sid), cost * 10_000 / 10_000, "at the floor at hour 150");
         _warp(100 hours);
-        assertEq(ctl.priceOf(sid), cost * 7_500 / 10_000, "never below the floor");
+        assertEq(ctl.priceOf(sid), cost * 10_000 / 10_000, "never below the floor");
     }
 
     function test_buy_sells_at_once_and_refunds_the_excess() public {
@@ -89,6 +89,10 @@ contract SaleSmokeTest is Fixture {
     }
 
     function test_pool_fees_split_by_feeToBuybackBps() public {
+        // this test isolates the feeToBuybackBps split, so the redeem burn share is zeroed
+        Settings memory s0 = core.settings();
+        s0.feeToRedeemBurnBps = 0;
+        _setSettings(s0);
         address hook = lc.stack.feeSource;
         vm.deal(hook, 10 ether);
         uint256 pot = core.ethPot();
@@ -116,7 +120,7 @@ contract SaleSmokeTest is Fixture {
         st.callerFee = 0.0005 ether;
         st.callerMaxBaseFee = 10 gwei;
         _setSettings(st);
-        _warp(core.settings().exitAfter);
+        _makeEligible(sid);
         vm.fee(composeBasefee);
         uint256 pot = core.ethPot();
         uint256 before_ = keeper.balance;

@@ -17,7 +17,7 @@ import {SettingsFields} from "../script/SettingsFields.sol";
 contract FlowTest is Fixture {
     using FixedPointMathLib for uint256;
 
-    uint256 internal constant N = 27;
+    uint256 internal constant N = 23;
 
     // ------------------------------------------------------------------ helpers
 
@@ -47,34 +47,35 @@ contract FlowTest is Fixture {
         SettingsFields.set(s, i, v);
     }
 
-    function _lo() internal pure returns (uint256[27] memory) {
+    function _lo() internal pure returns (uint256[23] memory) {
         return SettingsFields.lo();
     }
 
-    function _hi() internal pure returns (uint256[27] memory) {
+    function _hi() internal pure returns (uint256[23] memory) {
         return SettingsFields.hi();
     }
 
-    function _names() internal pure returns (bytes32[27] memory) {
+    function _names() internal pure returns (bytes32[23] memory) {
         return SettingsFields.names();
     }
 
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
-        uint256[27] memory lo = _lo();
-        uint256[27] memory hi = _hi();
+        uint256[23] memory lo = _lo();
+        uint256[23] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
             uint256 b = hi[i];
-            // recoveryClimbPerMinBps (field 10) is bounded below by climbPerMinBps (field 2), xRateFloor (field 16) above by xRateCap (field 15)
-            if (i == 10 && s.climbPerMinBps > a) a = s.climbPerMinBps;
-            if (i == 16) b = s.xRateCap;
+            // recoveryClimbPerMinBps (field 7) is bounded below by climbPerMinBps (field 2), feeToRedeemBurnBps
+            // (field 22) above by 10_000 - feeToBuybackBps (field 21)
+            if (i == 7 && s.climbPerMinBps > a) a = s.climbPerMinBps;
+            if (i == 22) b = 10_000 - s.feeToBuybackBps;
             _set(s, i, a + (b > a ? x % (b - a + 1) : 0));
         }
-        // the slice is at least twice the largest buyback payment (field 11 is `buybackSlice`)
+        // the slice is at least twice the largest buyback payment (field 15 is `buybackSlice`)
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
-        if (s.buybackSlice < minSlice) _set(s, 11, minSlice);
+        if (s.buybackSlice < minSlice) _set(s, 15, minSlice);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -87,23 +88,19 @@ contract FlowTest is Fixture {
         assertEq(s.climbPerMinBps, 50);
         assertEq(s.ceilBps, 11_000);
         assertEq(s.idleLoosenBps, 200);
-        assertEq(s.saleFloorBps, 7_500);
-        assertEq(s.exitAfter, 105 hours);
+        assertEq(s.saleFloorBps, 10_000);
         assertEq(s.saleToBuybackBps, 5_000);
-        assertEq(s.exitToBuybackBps, 5_000);
         assertEq(s.buybackSlice, 0.5 ether);
         assertEq(s.buybackDelay, 25);
         assertEq(s.keeperFee, 0.0005 ether);
         assertEq(s.keeperMaxBaseFee, 10 gwei);
-        assertEq(s.xRateCap, 9_700);
-        assertEq(s.xRateFloor, 3_000);
-        assertEq(s.xRateClimbPerHour, 100);
-        assertEq(s.xRateDropPerCredit, 20);
-        assertEq(s.xAuctionHalfLife, 6 hours);
-        assertEq(s.exitSliceCredits, 20);
+        assertEq(s.exitMode, 0);
+        assertEq(s.exitSlippageBps, 200);
+        assertEq(s.exitBidMarginBps, 2_000);
+        assertEq(s.redeemBurnBps, 2_000);
         assertEq(s.rateCap, 26_700_000_000_000_000);
-        assertEq(s.exitLaneToBuybackBps, 0);
         assertEq(s.feeToBuybackBps, 0);
+        assertEq(s.feeToRedeemBurnBps, 1_000);
         assertEq(s.callerFee, 0);
         assertEq(s.callerMaxBaseFee, 0);
     }
@@ -118,21 +115,21 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundEdgeIsAccepted() public {
-        uint256[27] memory lo = _lo();
-        uint256[27] memory hi = _hi();
+        uint256[23] memory lo = _lo();
+        uint256[23] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             for (uint256 k; k < 2; ++k) {
                 Settings memory s = Mainnet.defaultSettings();
                 uint256 v = k == 0 ? lo[i] : hi[i];
                 // the fields bounded by another field
-                if (i == 15 && k == 0) s.xRateFloor = 0;
-                if (i == 16 && k == 1) v = s.xRateCap;
+                // feeToBuybackBps at its top needs feeToRedeemBurnBps at zero to keep the sum at 10_000
+                if (i == 21 && k == 1) s.feeToRedeemBurnBps = 0;
                 // the lowest recoveryClimbPerMinBps the config affords is climbPerMinBps
-                if (i == 10 && k == 0) v = s.climbPerMinBps;
+                if (i == 7 && k == 0) v = s.climbPerMinBps;
                 // climbPerMinBps at its top needs recoveryClimbPerMinBps raised to stay at or above it
                 if (i == 2 && k == 1) s.recoveryClimbPerMinBps = 1_000;
                 // the smallest slice needs the cheapest buyback payment: 2 * (600,000 gas * 1 gwei + 0) is 0.0012 ether
-                if (i == 11 && k == 0) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
+                if (i == 15 && k == 0) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -141,27 +138,23 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundViolationReverts() public {
-        uint256[27] memory lo = _lo();
-        uint256[27] memory hi = _hi();
-        bytes32[27] memory names = _names();
+        uint256[23] memory lo = _lo();
+        uint256[23] memory hi = _hi();
+        bytes32[23] memory names = _names();
         for (uint256 i; i < N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
+            // feeToBuybackBps at its top with the default feeToRedeemBurnBps would break the sum bound, not the single
+            // field bound; zero the partner so the single field bound is the first violation
+            if (i == 21) s.feeToRedeemBurnBps = 0;
             // above the top
             _set(s, i, hi[i] + 1);
-            // an xRateFloor above the cap names the floor
             vm.prank(owner);
             vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, names[i]));
             core.setSettings(s);
             // below the bottom (fields whose bottom is zero have none)
-            if (lo[i] == 0 && i != 16) continue;
+            if (lo[i] == 0) continue;
             s = Mainnet.defaultSettings();
-            if (i == 16) {
-                // the floor is bounded by the cap, so a cap below the floor is the violation, and it names the floor
-                _set(s, 15, s.xRateFloor - 1);
-                names[i] = "xRateFloor";
-            } else {
-                _set(s, i, lo[i] - 1);
-            }
+            _set(s, i, lo[i] - 1);
             vm.prank(owner);
             vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, names[i]));
             core.setSettings(s);
@@ -343,48 +336,6 @@ contract FlowTest is Fixture {
         assertEq(core.rateAtCheckpoint(), OPEN_RATE, "the price state the change stored");
     }
 
-    function test_checkpoint_exitRateKeepsOldClimb() public {
-        _enterPhase2();
-        xt.mint(address(core), 1e18);
-        core.skim();
-        assertEq(core.xRate(), 6_000);
-        _warp(5 hours);
-        assertEq(core.xRate(), 6_500);
-        Settings memory s = core.settings();
-        s.xRateClimbPerHour = 300;
-        _owner(s);
-        assertEq(core.xRate(), 6_500, "stored at the old climb");
-        _warp(2 hours);
-        assertEq(core.xRate(), 7_100, "2 hours at 300 bps");
-    }
-
-    function test_checkpoint_exitRateIsHeldInsideTheNewBand() public {
-        Settings memory s = core.settings();
-        s.xRateCap = 5_000;
-        _owner(s);
-        assertEq(core.xRate(), 5_000, "cap below the rate");
-        s = core.settings();
-        s.xRateCap = 9_700;
-        s.xRateFloor = 5_500;
-        _owner(s);
-        assertEq(core.xRate(), 5_500, "floor above the rate");
-    }
-
-    function test_checkpoint_exitAuctionKeepsItsPriceWhenTheHalfLifeChanges() public {
-        _enterPhase2();
-        xt.mint(address(core), 0);
-        uint256 got = _fillExitBuyback();
-        assertGt(got, 0);
-        _warp(9 hours);
-        uint256 price = core.exitAuctionPrice();
-        Settings memory s = core.settings();
-        s.xAuctionHalfLife = 1 hours;
-        _owner(s);
-        assertEq(core.exitAuctionPrice(), price, "same price at the moment of the change");
-        _warp(1 hours);
-        assertApproxEqAbs(core.exitAuctionPrice(), price / 2, price / 1e6, "now halves every hour");
-    }
-
     // ------------------------------------------------------------------ the price of a credit
 
     function _sellOne(uint256 id) internal returns (uint256 paid) {
@@ -483,25 +434,32 @@ contract FlowTest is Fixture {
     /// the removed auction surface answers with an empty revert (no function, no fallback), where a live function
     /// would revert with its own error
     function test_noAuctionSurfaceRemains() public {
-        string[8] memory sigs = [
+        // the auction house surface and the exit token auction surface are both gone from the core
+        string[13] memory coreSigs = [
             "collectSales()",
             "syncStatement(uint256)",
             "repriceStatement(uint256)",
             "statementStatus(uint256)",
             "HOUSE()",
             "AUCTION_FACTORY()",
-            "buyOnly()",
-            "statementPrice(uint256,uint256,uint64)"
+            "buybackExit(uint256)",
+            "exitAuctionPrice()",
+            "exitAuctionQuote()",
+            "xToBuyback()",
+            "SUPPLY()",
+            "XRATE_START()",
+            "xRate()"
         ];
-        for (uint256 i; i < sigs.length; ++i) {
-            bytes memory data = abi.encodeWithSignature(sigs[i], uint256(1), uint256(1), uint64(1));
-            (bool ok, bytes memory why) = address(core).call(data);
-            assertFalse(ok, sigs[i]);
-            assertEq(why.length, 0, sigs[i]);
-            if (i < 6) continue;
-            (ok, why) = address(ctl).call(data);
-            assertFalse(ok, sigs[i]);
-            assertEq(why.length, 0, sigs[i]);
+        for (uint256 i; i < coreSigs.length; ++i) {
+            (bool ok, bytes memory why) = address(core).call(abi.encodeWithSignature(coreSigs[i], uint256(1)));
+            assertFalse(ok, coreSigs[i]);
+            assertEq(why.length, 0, coreSigs[i]);
+        }
+        string[2] memory ctlSigs = ["buyOnly()", "statementPrice(uint256,uint256,uint64)"];
+        for (uint256 i; i < ctlSigs.length; ++i) {
+            (bool ok, bytes memory why) = address(ctl).call(abi.encodeWithSignature(ctlSigs[i], uint256(1), uint256(1), uint64(1)));
+            assertFalse(ok, ctlSigs[i]);
+            assertEq(why.length, 0, ctlSigs[i]);
         }
         (bool ok2,) = address(ctl).call(abi.encodeWithSignature("setBuyOnly(bool)", true));
         assertFalse(ok2);
@@ -580,7 +538,7 @@ contract FlowTest is Fixture {
     // ------------------------------------------------------------------ skim never double books sale proceeds
 
     function _booked() internal view returns (uint256) {
-        return core.ethPot() + core.ethToBuyback();
+        return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
     }
 
     function test_skim_findsNothingAfterASale() public {
@@ -616,19 +574,16 @@ contract FlowTest is Fixture {
 
     // ------------------------------------------------------------------ phase 2 exit
 
-    function _exitSplit(uint256 bps) internal {
-        Settings memory s = core.settings();
-        // forge-lint: disable-next-line(unsafe-typecast)
-        s.exitToBuybackBps = uint16(bps);
-        _owner(s);
+    /// an eth lane statement is redeemable once its asking price falls to its cost; the exit token received goes to the
+    /// bid pot whole, and the redeem burn reserve releases redeemBurnBps into the coin buyback
+    function test_exit_ethLaneRedeemsAtCostAllToTheBidPot() public {
         _enterPhase2();
         Composed memory c = _composeOnce();
-        (,,, uint64 composedAt) = core.statementInfo(c.sid);
-        vm.warp(composedAt + 105 hours - 1);
-        vm.expectRevert(ICore.TooEarly.selector);
+        // before the price falls to cost the statement is not eligible
+        vm.expectRevert(ICore.NotEligible.selector);
         core.exitStatement(c.sid);
-        vm.warp(composedAt + 105 hours);
-        uint256 rating = STATEMENTS.creditsOf(c.sid);
+        _makeEligible(c.sid);
+        uint256 rating = core.ratingOf(c.sid);
         uint256 before = xt.balanceOf(address(core));
         uint256 pot = core.xPot();
         vm.expectEmit(address(core));
@@ -637,61 +592,70 @@ contract FlowTest is Fixture {
         core.exitStatement(c.sid);
         uint256 got = xt.balanceOf(address(core)) - before;
         assertEq(got, rating * UNIT, "the module paid rating times the unit");
-        assertEq(core.xToBuyback(), got * bps / 10_000, "buyback share of the exit token");
-        assertEq(core.xPot() - pot, got - got * bps / 10_000, "bid share of the exit token");
+        assertEq(core.xPot() - pot, got, "the whole received amount goes to the bid pot");
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "in the module");
         assertEq(core.heldStatements().length, 0);
         _solvent();
     }
 
-    function test_exit_afterExitAfterExitsSplitHalf() public {
-        _exitSplit(5_000);
-    }
-
-    function test_exit_splitAllToTheBid() public {
-        _exitSplit(0);
-    }
-
-    function test_exit_splitAllToTheBuyback() public {
-        _exitSplit(10_000);
-    }
-
-    function test_exit_splitOddShare() public {
-        _exitSplit(3_333);
-    }
-
-    function test_exit_exitAfterIsASetting() public {
+    /// each eth lane redemption moves redeemBurnBps of the reserve into the coin buyback
+    function test_exit_redeemReleasesTheReserveToTheBuyback() public {
         _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        Settings memory s = core.settings();
-        s.exitAfter = 365 days;
-        _owner(s);
-        vm.warp(block.timestamp + 100 days);
-        vm.expectRevert(ICore.TooEarly.selector);
-        core.exitStatement(sid);
-        s.exitAfter = 1 hours;
-        _owner(s);
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod));
+        Composed memory c = _composeOnce();
+        _makeEligible(c.sid);
+        // fund the reserve directly and back it with real eth so the pots stay solvent (slot 8 is ethRedeemBurn,
+        // test/CoreLayout.t.sol pins it)
+        vm.deal(address(core), address(core).balance + 1 ether);
+        vm.store(address(core), bytes32(uint256(8)), bytes32(uint256(1 ether)));
+        assertEq(core.ethRedeemBurn(), 1 ether);
+        uint256 buyback = core.ethToBuyback();
+        uint256 released = uint256(1 ether) * core.settings().redeemBurnBps / 10_000;
+        assertGt(released, 0, "there is something to release");
+        core.exitStatement(c.sid);
+        assertEq(core.ethRedeemBurn(), 1 ether - released, "the reserve fell by redeemBurnBps");
+        assertEq(core.ethToBuyback(), buyback + released, "the release reached the coin buyback");
+        _solvent();
+    }
+
+    /// a module that pays less than rating * unit * (1 - slippage) reverts the redemption
+    function test_exit_underpaymentBelowSlippageReverts() public {
+        _enterPhase2();
+        Composed memory c = _composeOnce();
+        _makeEligible(c.sid);
+        // pay just under the slippage floor
+        mod.setPayBps(10_000 - core.settings().exitSlippageBps - 1);
+        vm.expectRevert(ICore.Underpaid.selector);
+        core.exitStatement(c.sid);
+        // within the slippage floor passes
+        mod.setPayBps(10_000 - core.settings().exitSlippageBps);
+        core.exitStatement(c.sid);
+        assertEq(STATEMENTS.ownerOf(c.sid), address(mod));
     }
 
     function test_exit_needsTheModule() public {
         uint256 sid = _composeOnce().sid;
-        _warp(105 hours);
         vm.expectRevert(ICore.NoExitModule.selector);
         core.exitStatement(sid);
+    }
+
+    function test_exit_offWhenExitModeZero() public {
+        _enterPhase2();
+        _setExitMode(0);
+        Composed memory c = _composeOnce();
+        _makeEligible(c.sid);
+        vm.expectRevert(ICore.ExitModeOff.selector);
+        core.exitStatement(c.sid);
     }
 
     function test_exit_aSoldStatementIsNotExited() public {
         _enterPhase2();
         (uint256 sid,) = _sellStatement(alice);
-        _warp(105 hours);
         vm.expectRevert(ICore.NotHeld.selector);
         core.exitStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), alice);
     }
 
-    function test_exit_exitLaneIsUnchanged() public {
+    function test_exit_exitLaneRedeemsAtOnce() public {
         _enterPhase2();
         uint256[] memory ids = _credits(seller, 80);
         xt.mint(address(core), 5e19);
@@ -701,13 +665,13 @@ contract FlowTest is Fixture {
         vm.fee(composeBasefee);
         core.composeExit();
         uint256 sid = STATEMENTS.supply();
-        uint256 rating = STATEMENTS.creditsOf(sid);
+        uint256 rating = core.ratingOf(sid);
         uint256 before = xt.balanceOf(address(core));
-        uint256 buyback = core.xToBuyback();
-        // at once, no wait
+        uint256 pot = core.xPot();
+        // at once, no wait, no eligibility check for the exit lane
         core.exitStatement(sid);
         assertEq(xt.balanceOf(address(core)) - before, rating * UNIT);
-        assertEq(core.xToBuyback(), buyback, "an exit lane exit adds nothing to the buyback");
+        assertEq(core.xPot() - pot, rating * UNIT, "the whole received amount goes to the bid pot");
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
     }
 
@@ -754,6 +718,8 @@ contract FlowTest is Fixture {
         s.recoveryClimbPerMinBps = uint16(climbPerMin);
         s.ceilBps = uint16(ceilBps);
         s.idleLoosenBps = uint16(loosen);
+        // the whole fee receipt goes to the pot here, so the booking delta is the full amount
+        s.feeToRedeemBurnBps = 0;
         _owner(s);
         _potTo(1 ether);
         _warp(gap);
@@ -863,8 +829,7 @@ contract FlowTest is Fixture {
         st.callerMaxBaseFee = 10 gwei;
         _setSettings(st);
         _potTo(1 ether);
-        (,,, uint64 composedAt) = core.statementInfo(c.sid);
-        vm.warp(composedAt + 105 hours);
+        _makeEligible(c.sid);
         uint256 cap = 1_500_000 * uint256(st.callerMaxBaseFee) + st.callerFee;
         uint256 pot = core.ethPot();
         uint256 coreEth = address(core).balance;
@@ -891,7 +856,9 @@ contract FlowTest is Fixture {
             core.setRate(bound(r >> 8, 1e13, core.settings().rateCap));
         } else if (kind == 2) {
             Settings memory s = core.settings();
-            _storeXRate(bound(r >> 8, s.xRateFloor, s.xRateCap));
+            // forge-lint: disable-next-line(unsafe-typecast)
+            s.exitMode = uint8(bound(r >> 8, 0, 2));
+            core.setSettings(s);
         } else if (kind == 3) {
             address t = address(uint160(r >> 8));
             try core.addTarget(t) {} catch {}

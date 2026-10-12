@@ -30,10 +30,11 @@ contract PullFeesTest is CoreBase {
     struct Parts {
         uint256 shared;
         uint256 toBuyback;
+        uint256 toRedeemBurn;
         uint256 toPot;
     }
 
-    /// what `flush` does with `amount` now: payee shares, the engine part and its split into buyback and pot
+    /// what `flush` does with `amount` now: payee shares, the engine part and its split into buyback, redeem burn and pot
     function _parts(uint256 amount) internal view returns (Parts memory x) {
         (, uint32[] memory ppm) = feeRouter.payees();
         for (uint256 i; i < ppm.length; ++i) {
@@ -41,7 +42,8 @@ contract PullFeesTest is CoreBase {
         }
         uint256 toEngine = amount - x.shared;
         x.toBuyback = toEngine * core.settings().feeToBuybackBps / 10_000;
-        x.toPot = toEngine - x.toBuyback;
+        x.toRedeemBurn = toEngine * core.settings().feeToRedeemBurnBps / 10_000;
+        x.toPot = toEngine - x.toBuyback - x.toRedeemBurn;
     }
 
     function _payeeBalance() internal view returns (uint256) {
@@ -164,7 +166,7 @@ contract PullFeesTest is CoreBase {
         emit log_named_uint("gas sellForEth 1 credit, router 1 eth", loaded);
         // the figures of docs/FLOW.md 10.8
         assertApproxEqAbs(empty, 334_600, 5_000, "gas, router empty");
-        assertApproxEqAbs(loaded - empty, 61_195, 5_000, "gas of the flush");
+        assertApproxEqAbs(loaded - empty, 67_674, 5_000, "gas of the flush");
         assertEq(address(feeRouter).balance, 0);
     }
 
@@ -317,7 +319,7 @@ contract PullFeesTest is CoreBase {
         uint256 paid = alice.balance - before;
         assertGt(paid, 0, "paid");
         assertEq(core.ethPot(), pot - paid, "the pot paid exactly the price");
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "balance equals the pots");
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "balance equals the pots");
     }
 
     /// the real router with an engine that refuses the eth: the flush fails whole, the door still works and the fees
@@ -383,7 +385,7 @@ contract PullFeesTest is CoreBase {
         caller.sell(ids);
         assertGt(address(caller).balance, 0, "the sale paid the caller");
         assertEq(address(feeRouter).balance, feeRouter.totalOwed(), "pulled, burned shares owed");
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "fees booked");
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "fees booked");
         assertEq(CREDITS.ownerOf(ids[0]), address(core));
     }
 

@@ -138,11 +138,11 @@ a successor Core (section 9) receives credits without records and adopts them th
 |---|---|---|
 | `setSuccessor(address)` | names the contract that `migrate` sends to. zero or an address with code other than the Core, the exit module, the exit token, the fee source, the coin, Credits or Statements | `OnlyOwner`, `Locked("successor")`, `NoCode`, `BadSuccessor` |
 | `lockSuccessor()` | closes `setSuccessor` permanently. allowed while the successor is zero, which disables `migrate` | `OnlyOwner` |
-| `migrate(maxCredits)` | the first call sets `retired` (view `retired()`, event `EngineRetired`). moves in batches: `ethPot` by one plain call, `xPot` by `transfer`, up to `maxCredits` from the head of each pile by `transferFrom`. `ethToBuyback` and `xToBuyback` stay in the Core. an exit token `transfer` that reverts or returns false leaves `xPot` in the Core, logs `ExitTokenMigrationSkipped(successor, amount)` and the other legs go on (`Migrated` shows 0 exit tokens). the held statements and their records stay in the Core | `OnlyOwner`, `NoSuccessor`, `Reentrancy`, `CallFailed` |
+| `migrate(maxCredits)` | the first call sets `retired` (view `retired()`, event `EngineRetired`). moves in batches: `ethPot` by one plain call, `xPot` by `transfer`, up to `maxCredits` from the head of each pile by `transferFrom`. `ethToBuyback` and `ethRedeemBurn` stay in the Core. an exit token `transfer` that reverts or returns false leaves `xPot` in the Core, logs `ExitTokenMigrationSkipped(successor, amount)` and the other legs go on (`Migrated` shows 0 exit tokens). the held statements and their records stay in the Core | `OnlyOwner`, `NoSuccessor`, `Reentrancy`, `CallFailed` |
 | `rescueCoin(to, amount)` | sends coin the Core holds to `to`. coin an allowlisted holder sent to the Core is the only coin it holds | `OnlyOwner`, `ZeroAddress` |
 | `rescueNft(token, id, to)` | sends an ERC721 the Core holds to `to`: a credit only while it is outside both piles, a statement only while the Core has no record of it, any other ERC721 freely | `OnlyOwner`, `ZeroAddress`, `InPile`, `Held`, `NotHolder` |
 
-what a successor has to implement: a `receive()` that accepts a plain eth call, and an exit token and Credits that it accepts by `transfer` and `transferFrom`, so the `onERC721Received` of the successor is skipped. `migrate` transfers eth, exit token and credits. the old Core is retired by the first `migrate`; an integrator that sells credits to a Core reads `core.retired()` first. `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`, `compose` and `composeExit` revert `Retired`, and `retired()` reads true. it keeps its statements and sells them out itself, so `buy` and `exitStatement` still work there, and call `migrate` again to move the proceeds, until it moves nothing. it keeps `sellTo`, `skim`, `buyback` and `buybackExit`, and books the fees that still arrive. `buybackExit` there sells the `xToBuyback` that stayed at the migration and whatever later exits add. `exitStatement` there repays its caller from what is left in `ethPot`, capped at the pot, so the repayment is often 0 after a `migrate`. point the fee router at the successor with `router.setEngine` before the first `migrate`: the retired Core calls no `flush`. `maxCredits` applies to each pile, and 0 moves the pots only. the successor builds its pile with `adopt`.
+what a successor has to implement: a `receive()` that accepts a plain eth call, and an exit token and Credits that it accepts by `transfer` and `transferFrom`, so the `onERC721Received` of the successor is skipped. `migrate` transfers eth, exit token and credits. the old Core is retired by the first `migrate`; an integrator that sells credits to a Core reads `core.retired()` first. `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`, `compose` and `composeExit` revert `Retired`, and `retired()` reads true. it keeps its statements and sells them out itself, so `buy` and `exitStatement` still work there, and call `migrate` again to move the proceeds, until it moves nothing. it keeps `sellTo`, `skim` and `buyback`, and books the fees that still arrive. `buyback` there burns the `ethToBuyback` that stayed at the migration and whatever later fees and redemptions add. `exitStatement` there repays its caller from what is left in `ethPot`, capped at the pot, so the repayment is often 0 after a `migrate`. point the fee router at the successor with `router.setEngine` before the first `migrate`: the retired Core calls no `flush`. `maxCredits` applies to each pile, and 0 moves the pots only. the successor builds its pile with `adopt`.
 
 ## 10. the lens
 
@@ -161,7 +161,7 @@ what a successor has to implement: a `receive()` that accepts a plain eth call, 
 | `ethPrice` | the price state before the clamp |
 | `ethPileSize`, `ethPileHead`, `exitPileSize`, `exitPileHead` | size and oldest credit of each pile |
 | `ethPageReady`, `exitPageReady` | the controller answers `nextPage` for the lane with a ready flag and the full answer size (82 words) that `compose` requires |
-| `ethPot`, `ethToBuyback`, `xPot`, `xToBuyback` | the four pots. `ethToBuyback` leaves only through a `buyback()` whose swap completes: a pool or hook failure reverts the call and the pot stays |
+| `ethPot`, `ethToBuyback`, `ethRedeemBurn`, `xPot` | the four pots. `ethToBuyback` leaves only through a `buyback()` whose swap completes: a pool or hook failure reverts the call and the pot stays. `ethRedeemBurn` is the redeem burn reserve, filled by `feeToRedeemBurnBps` of fee income and drawn into `ethToBuyback` on each eth lane redemption |
 | `unbookedEth` | Core balance above the booked pots. `skim()` books it |
 | `routerBalance`, `routerOwed` | eth in the router, and the part owed to payees |
 | `flushToCore`, `flushToPayees` | what `flush()` sends now |
@@ -172,7 +172,7 @@ what a successor has to implement: a `receive()` that accepts a plain eth call, 
 | `StatementView` field | meaning |
 |---|---|
 | `id`, `lane`, `cost` | statement id, lane and cost basis |
-| `composedAt` | the compose time. an eth lane statement may exit after `composedAt + exitAfter` |
+| `composedAt` | the compose time. an eth lane statement may exit once the controller reports `atCost(sid)`, with `exitMode` at least 1 |
 | `askingPrice` | the controller's `priceOf(id)` in wei for an eth lane statement. 0 for an exit lane statement and for a controller that does not answer |
 
 `snapshot()` costs about 120,000 gas plus 25,000 per held statement. a list of several hundred statements exceeds the gas that a public node allows for one `eth_call`, so a keeper reads them with `statementsPage` in pages of a few hundred.
@@ -190,11 +190,11 @@ the Core (`src/interfaces/ICore.sol`):
 | `CreditAdopted` | `uint256 indexed id, uint256 cost` | `adopt`, one per credit. `cost` is the cost basis written |
 | `CreditBought` | `uint256 indexed id, address indexed from, Lane lane, uint256 cost` | one per credit of `sellForEth` or `sellForExitToken`. `lane` 0 is the eth lane, 1 the exit lane. `cost` is the payout and the cost basis |
 | `EthRateFill` | `uint256 spent, uint256 rate, uint256 pot` | every spend from `ethPot`: `spent`, the price state after the drop (`rate`) and the pot after the spend |
-| `ExitBuyback` | `address indexed caller, uint256 slice, uint256 coinIn` | `buybackExit` (phase 2): `slice` sold to `caller` for `coinIn` coin, which is burned |
 | `ExitModuleLocked` | (empty) | `lockExitModule` |
-| `ExitModuleSet` | `address exitModule, address exitToken, uint256 unitPerCredit` | `setExitModule` |
-| `ExitRateFill` | `uint256 rate, uint256 pot` | phase 2 spend of the exit pot by `sellForExitToken`: the exit rate and the pot after |
-| `FeesAdded` | `uint256 amount` | `receive()` booked a flush of the fee router: `feeToBuybackBps` of it to the coin buyback pot, the rest to `ethPot` |
+| `ExitModuleSet` | `address exitModule, address exitToken, uint256 unitPerPoint` | `setExitModule` |
+| `UnitPerPointRefreshed` | `address exitModule, uint256 unitPerPoint` | `refreshUnitPerPoint`: the stored unit re-read from the current module, which works after `lockExitModule` |
+| `RedeemBurnReleased` | `uint256 amount` | `releaseRedeemBurn`: `amount` moved from the redeem burn reserve (`ethRedeemBurn`) into the coin buyback pot (`ethToBuyback`) |
+| `FeesAdded` | `uint256 amount` | `receive()` booked a flush of the fee router: `feeToBuybackBps` of it to the coin buyback pot, `feeToRedeemBurnBps` to the redeem burn reserve, the rest to `ethPot` |
 | `ListingBought` | `uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate` | `buyListing`. `cost` is the eth the target took, `paid` the payment to the caller, `rate` the price state after the fill. the cost basis of the credit is `cost + paid` |
 | `EngineRetired` | `address indexed successor` | the first `migrate`, once. the Core refuses the six doors from then on |
 | `Migrated` | `address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits` | `migrate`: eth moved (`ethPot`), exit token moved (`xPot`), credits moved |
@@ -285,7 +285,7 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `NotOwner()` | `sellForEth`, `sellForExitToken` | the caller does not own the credit |
 | `NotReady()` | `compose`, `composeExit` | the controller reports no page, or the read fails |
 | `NothingBought()` | `buyback` | the swap bought no coin |
-| `NothingToBuy()` | `buyback`, `buybackExit` | the buyback pot is empty |
+| `NothingToBuy()` | `buyback` | the buyback pot `ethToBuyback` is empty |
 | `OnlyController()` | `sellTo` | the caller is not the controller |
 | `OnlyOwner()` | owner functions | the caller is not `owner` |
 | `OnlyPendingOwner()` | `acceptOwnership` | the caller is not the pending owner |
@@ -293,12 +293,13 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `PotTooSmall()` | `sellForEth`, `buyListing`, `sellForExitToken` | the spend is larger than the pot |
 | `Reentrancy()` | guarded functions | a guarded function was entered while another guarded call runs |
 | `SliceTooSmall()` | `buyback` | the slice is under twice the largest payment to the caller: 600,000 gas at the capped base fee plus `keeperFee` |
-| `Slippage()` | `sellForEth`, `sellForExitToken`, `buybackExit` | total payout below `minOut`, or the coin cost above `maxCoinIn` |
+| `Slippage()` | `sellForEth`, `sellForExitToken` | total payout below `minOut` |
 | `TargetNotAllowed()` | `buyListing` | the target is not on the allowlist, or it is a forbidden contract |
 | `NotForSale()` | `sellTo` | the Core does not hold the statement, or it is on the exit lane |
-| `TooEarly()` | `exitStatement` | the eth lane statement was composed less than `exitAfter` ago |
+| `NotEligible()` | `exitStatement` | the eth lane statement is not yet at cost: the controller's asking price is above its cost |
+| `ExitModeOff()` | `exitStatement`, `composeExit`, `sellForExitToken` | `exitMode` is 0 (off), or below 2 for the exit token bid and `composeExit` |
 | `TooSoon()` | `buyback` | fewer than `buybackDelay` blocks since the last buyback |
-| `Underpaid()` | `exitStatement` | the module returned less than the credit count times the unit |
+| `Underpaid()` | `exitStatement` | the module returned less exitToken than `rating * unitPerPoint * (10_000 - exitSlippageBps) / 10_000` |
 | `ZeroAddress()` | constructor, `rescueCoin`, `rescueNft`, `setController` | a zero address argument |
 | `ZeroAmount()` | `sellForEth` | a spend of 0 wei: the bid is 0 (empty pot) for that credit |
 | `ZeroId()` | `sellForEth`, `buyListing`, `adopt` | credit id 0 |

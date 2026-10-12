@@ -151,10 +151,9 @@ contract OwnerFormerQueueTest is OwnerBase {
         _setExitModule(address(spareMod));
         assertEq(core.exitModule(), address(spareMod));
         assertEq(core.exitToken(), address(spareToken));
-        assertEq(core.unitPerCredit(), UNIT);
-        assertEq(core.xStartTime(), block.timestamp, "the exit auction opens now");
-        assertGt(core.xStartPrice(), 0);
-        // the exit side is live in the same block
+        assertEq(core.unitPerPoint(), UNIT);
+        // the exit side is live in the same block once the bid is turned on
+        _setExitMode(2);
         uint256[] memory ids = _credits(seller, 1);
         spareToken.mint(address(core), 5e19);
         core.skim();
@@ -181,7 +180,7 @@ contract OwnerFormerQueueTest is OwnerBase {
         m = new MockExitModule(address(CREDITS), UNIT);
         vm.expectRevert(ICore.BadModule.selector);
         core.setExitModule(address(m));
-        // a zero unit, a unit above uint128, a unit read that reverts, a unit the opening price cannot carry
+        // a zero unit, a unit above uint128, a unit read that reverts
         m = new MockExitModule(address(spareToken), 0);
         vm.expectRevert(ICore.BadModule.selector);
         core.setExitModule(address(m));
@@ -192,13 +191,10 @@ contract OwnerFormerQueueTest is OwnerBase {
         m.setRevertUnit(true);
         vm.expectRevert(ICore.BadModule.selector);
         core.setExitModule(address(m));
-        m = new MockExitModule(address(spareToken), 1e34);
-        vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(m));
         vm.stopPrank();
         assertEq(core.exitModule(), address(0), "every refused set changed nothing");
         assertEq(core.exitToken(), address(0));
-        assertEq(core.unitPerCredit(), 0);
+        assertEq(core.unitPerPoint(), 0);
         vm.prank(stranger);
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setExitModule(address(spareMod));
@@ -209,18 +205,18 @@ contract OwnerFormerQueueTest is OwnerBase {
         MockExitModule second = new MockExitModule(address(spareToken), 3 * UNIT);
         _setExitModule(address(second));
         assertEq(core.exitModule(), address(second));
-        assertEq(core.unitPerCredit(), 3 * UNIT, "the unit of the new module");
+        assertEq(core.unitPerPoint(), 3 * UNIT, "the unit of the new module");
         // the same module again after its unit changed
-        second.setUnitPerCredit(4 * UNIT);
+        second.setUnitPerPoint(4 * UNIT);
         _setExitModule(address(second));
-        assertEq(core.unitPerCredit(), 4 * UNIT, "the unit is read again");
+        assertEq(core.unitPerPoint(), 4 * UNIT, "the unit is read again");
         // another exit token is refused
         MockExitModule other = new MockExitModule(address(new MockExitToken("Other", "OTH")), UNIT);
         vm.prank(owner);
         vm.expectRevert(ICore.ExitTokenChanged.selector);
         core.setExitModule(address(other));
         assertEq(core.exitModule(), address(second));
-        assertEq(core.unitPerCredit(), 4 * UNIT);
+        assertEq(core.unitPerPoint(), 4 * UNIT);
     }
 
     // ------------------------------------------------------------------ addTarget
@@ -383,7 +379,7 @@ contract OwnerLocksTest is OwnerBase {
         assertFalse(core.controllerLocked());
         assertFalse(core.targetsLocked());
         address m = core.exitModule();
-        mod.setUnitPerCredit(9 * UNIT);
+        mod.setUnitPerPoint(9 * UNIT);
         vm.startPrank(owner);
         vm.expectRevert(_lockedErr("exitModule"));
         core.setExitModule(address(spareMod));
@@ -395,7 +391,7 @@ contract OwnerLocksTest is OwnerBase {
         core.setExitModule(address(0xBEEF));
         vm.stopPrank();
         assertEq(core.exitModule(), m);
-        assertEq(core.unitPerCredit(), UNIT, "the unit cannot be updated any more");
+        assertEq(core.unitPerPoint(), UNIT, "the unit cannot be updated any more");
         _openExcept(D_MODULE, owner);
     }
 
