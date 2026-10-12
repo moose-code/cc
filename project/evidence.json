@@ -51,11 +51,11 @@
       "checked": "2026-10-10"
     },
     "A-OWNER-DECISIONS": {
-      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 71. v8 (2026-10-11): decisions 57 to 71 on top of v7 (decisions 1 to 56): the keeper payment rule of buyback, compose, exit and buyListing (61, 66, 67, 71), the statement sale by a falling price with an anchor and the removal of the auction house (62, 64, 65, 68, 70), the launch bid values (69), the payee share (59), compose unpaid at launch (63)",
+      "statement": "behavior the tests assert follows docs/FLOW.md decisions 1 to 78. v9 (2026-10-12): decisions 72 to 78 on top of v8 (decisions 1 to 71): the unsold-statement property accepted (72), no Seaport adapter for buyListing (73), the remembered peak and fast recovery climb after a large sale (74), the recovery gap, 200 then 1_000 at launch (75, 77), the per credit pricing lane paused (76), launch on the AI-run reviews (78)",
       "kind": "owner-decision",
       "source": "docs/FLOW.md",
-      "version": 8,
-      "checked": "2026-10-11"
+      "version": 9,
+      "checked": "2026-10-12"
     },
     "A-OWNER-DELEGATE": {
       "statement": "the owner 0xCB43 delegates to 0x612373d7003d694220f7800eeaf8e3924c0951d3 (Uniswap Calibur 1.0.0, code hash 0xff0357b5...d631) with no registered keys",
@@ -1867,6 +1867,554 @@
         "revision": "483be308cc48f4af17837bc62bda4b518bac162c"
       },
       "dependsOn": [],
+      "invalidated": null
+    },
+    "E-SUITE-267139b": {
+      "claim": "full suite at the candidate 267139b: 1011 tests passed, 0 failed, 8 skipped (the Deep suites) in 105 test suites",
+      "kind": "test",
+      "sourceRevision": "267139b2df38cb24e40c04bf8113d0288ca94668",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 9,
+        "A-OWNER-DELEGATE": 1
+      },
+      "inputs": "candidate 267139b; MAINNET_RPC_URL and FORK_BLOCK from the environment (pin 26158000, docs/HANDOFF.md section 7)",
+      "method": "CANDIDATE_RUN=1 REHEARSAL=1 forge test -j 6, foundry 1.8.1; log docs/SUITE-267139b.log; node sim/engine.test.mjs 1303 checks (from the brief)",
+      "author": "director, 2026-10-12",
+      "result": "pass",
+      "limitations": "the log omits the fork block and the endpoint. the 8 skipped tests are the Deep suites (E-DEEP-267139b). the sim check count comes from the brief",
+      "report": {
+        "path": "docs/SUITE-267139b.log",
+        "sha256": "05761ec612a3ac16d1ae7d2179fb12c5df662efdf724e805db6c3e5398cfc9fe",
+        "revision": "6ea44f570cc7cad7812a8c4a7147d465fcf858db"
+      },
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-DEEP-267139b": {
+      "claim": "the 7 Deep invariant suites pass at 267139b (InvariantsPhase1Deep, InvariantsPhase1WindowDeep, InvariantsPhase2Deep, InvariantsHostileControllerDeep, InvariantsSalePhase1Deep, InvariantsHostileOwnerDeep, InvariantsSalePhase2Deep): every suite exits 0 with 0 failed tests, 64 runs at depth 200",
+      "kind": "test",
+      "sourceRevision": "267139b2df38cb24e40c04bf8113d0288ca94668",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 9
+      },
+      "inputs": "candidate 267139b; MAINNET_RPC_URL and FORK_BLOCK from the environment (pin 26158000)",
+      "method": "INVARIANT_DEEP=1 with 64 runs at depth 200 (docs/HANDOFF.md section 7), one suite at a time, 420 to 533 seconds each; log docs/DEEP-RUN-267139b.log",
+      "author": "director, 2026-10-12",
+      "result": "pass",
+      "limitations": "runs on the fork pin with the exitModule stand in",
+      "report": {
+        "path": "docs/DEEP-RUN-267139b.log",
+        "sha256": "485db9e23c25db5c1d39fde2f86eb0b76038a03f2f0a0092bda1a30e4fbaedb8",
+        "revision": "6ea44f570cc7cad7812a8c4a7147d465fcf858db"
+      },
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-REHEARSAL-267139b": {
+      "claim": "rehearsal of docs/DEPLOY.md at the frozen candidate 267139b (branch tip 55a44ad) with the placeholder config script/config/rehearsal.json, nothing sent, latest block 26176937: preflight 113 of 116 with exactly the three expected rows failing; the Rehearsal test passes (115 of 116 after the owner command, postflight 96 of 96 after the launch and after the lock); Deploy, Resume, Postflight and Lock dry forms refuse as designed; gas for the nine transactions 17,100,193",
+      "kind": "rehearsal",
+      "sourceRevision": "55a44adf6f3784bdb9f482f18c26ca607cee1ff1",
+      "scope": [
+        "src/**",
+        "script/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt",
+        "test/Rehearsal.t.sol",
+        "docs/DEPLOY.md"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 9,
+        "A-OWNER-DELEGATE": 1
+      },
+      "inputs": "clone /private/tmp/cand-267139b at 55a44ad; mainnet through publicnode, rehearsal test forked at block 26176766; owner nonce 3846, balance 0.126388 eth",
+      "method": "the steps of docs/DEPLOY.md in dry form, result table in docs/REHEARSAL-267139b.md",
+      "author": "rehearsal agent (not named in the report), recorded by the director 2026-10-12",
+      "result": "pass",
+      "limitations": "placeholder image and description; DEPLOY step 3 open; the library CoreLib has no code on chain. the Deploy dry run reads the owner balance 0.5001 eth above the chain balance (cause unknown; the step 4 row and a cast balance read before the broadcast are the funding checks). the rehearsal listed runbook corrections, applied in 6ea44f5 and not walked again",
+      "report": {
+        "path": "docs/REHEARSAL-267139b.md",
+        "sha256": "1eba7a6660c8dbd59441a8d128339d0ad32df3746c4658cd61cabd8534ef0b63",
+        "revision": "6ea44f570cc7cad7812a8c4a7147d465fcf858db"
+      },
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-SUITE-CARRY-6ea44f5": {
+      "claim": "the result of E-SUITE-267139b holds at the candidate 6ea44f5",
+      "kind": "analysis",
+      "sourceRevision": "6ea44f570cc7cad7812a8c4a7147d465fcf858db",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 9,
+        "A-OWNER-DELEGATE": 1
+      },
+      "carries": [
+        "E-SUITE-267139b"
+      ],
+      "carriedChanges": [
+        "test/Recovery.t.sol",
+        "test/RecoveryOracle.t.sol"
+      ],
+      "inputs": "git diff 267139b 6ea44f5",
+      "method": "the diff holds documents, the run records and two test files, test/Recovery.t.sol and test/RecoveryOracle.t.sol, changed in comments and docstrings (review notes of 267139b). src, script and config are identical",
+      "author": "director, 2026-10-12",
+      "result": "pass",
+      "limitations": "the carried campaign stays as run at 267139b. the two test files are not recompiled and rerun",
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-DEEP-CARRY-6ea44f5": {
+      "claim": "the result of E-DEEP-267139b holds at the candidate 6ea44f5",
+      "kind": "analysis",
+      "sourceRevision": "6ea44f570cc7cad7812a8c4a7147d465fcf858db",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 9
+      },
+      "carries": [
+        "E-DEEP-267139b"
+      ],
+      "carriedChanges": [
+        "test/Recovery.t.sol",
+        "test/RecoveryOracle.t.sol"
+      ],
+      "inputs": "git diff 267139b 6ea44f5",
+      "method": "the diff in the deep scope is test/Recovery.t.sol and test/RecoveryOracle.t.sol (comments and docstrings); neither is an invariant suite",
+      "author": "director, 2026-10-12",
+      "result": "pass",
+      "limitations": "the carried campaign stays as run at 267139b",
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-REHEARSAL-CARRY-6ea44f5": {
+      "claim": "the rehearsal E-REHEARSAL-267139b holds at the candidate 6ea44f5 for the code, the configuration and the commands; the runbook text of docs/DEPLOY.md is newer than the rehearsal",
+      "kind": "analysis",
+      "sourceRevision": "6ea44f570cc7cad7812a8c4a7147d465fcf858db",
+      "scope": [
+        "src/**",
+        "script/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt",
+        "test/Rehearsal.t.sol",
+        "docs/DEPLOY.md"
+      ],
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 9,
+        "A-OWNER-DELEGATE": 1
+      },
+      "carries": [
+        "E-REHEARSAL-267139b"
+      ],
+      "carriedChanges": [
+        "docs/DEPLOY.md"
+      ],
+      "inputs": "git diff 55a44ad 6ea44f5",
+      "method": "the rehearsal ran at 55a44ad (candidate 267139b plus its freeze commit). docs/DEPLOY.md differs by the corrections the rehearsal listed: volatile figures moved to the rehearsal record and a cast balance read of the signer before the broadcast. src, script and config are identical",
+      "author": "director, 2026-10-12",
+      "result": "pass",
+      "limitations": "the corrected DEPLOY.md text waits for a second walk",
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-REVIEW-0c3ecd2-KEPT": {
+      "claim": "full independent security review of the source at 0c3ecd2 (docs/REVIEW-security-0c3ecd2.md), the portion unchanged at 6ea44f5: ControllerV1, FeeRouter, CoreLens, Halving, SettingsStore, the interfaces ICore, ICoreLens, IControllerV1 and ICoreLib, the deploy and resume scripts, Builder, Lock, NewProd, Postflight, PostflightV2, PostflightPool, Report and check-preflight.sh. no critical, high or medium finding. L1 (buyListing tips) is decision 73, L2 (metadata guard) was fixed and re-reviewed in the later windows",
+      "kind": "review",
+      "sourceRevision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be",
+      "scope": [
+        "script/Builder.sol",
+        "script/Deploy.s.sol",
+        "script/Lock.s.sol",
+        "script/NewProd.sol",
+        "script/Postflight.s.sol",
+        "script/PostflightPool.sol",
+        "script/PostflightV2.sol",
+        "script/Preflight.s.sol",
+        "script/Report.sol",
+        "script/Resume.s.sol",
+        "script/SystemDeployer.sol",
+        "script/SystemResumer.sol",
+        "script/tools/check-preflight.sh",
+        "src/ControllerV1.sol",
+        "src/CoreLens.sol",
+        "src/FeeRouter.sol",
+        "src/interfaces/IControllerV1.sol",
+        "src/interfaces/ICore.sol",
+        "src/interfaces/ICoreLens.sol",
+        "src/interfaces/ICoreLib.sol",
+        "src/lib/Halving.sol",
+        "src/lib/SettingsStore.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 9
+      },
+      "inputs": "candidate 0c3ecd2, ARCHITECTURE, FLOW decisions 56 to 71, the earlier reviews",
+      "method": "read only line by line review against attacker models, one fork proof of concept, targeted forge test --match-path runs on the fork",
+      "author": "implementers and director",
+      "reviewer": "independent read only security reviewer, 2026-10-11",
+      "result": "pass",
+      "limitations": "scope lists the files the report read that have not changed since 0c3ecd2. Core, CoreLib, RateStore, SettingsBounds, Interfaces, LaunchConfig, SetSettings, SettingsFields, Checks, PostflightChecks and the two configs changed later and are covered by the later windows. the report was written against decisions through 71",
+      "report": {
+        "path": "docs/REVIEW-security-0c3ecd2.md",
+        "sha256": "e3c0600d0beee605143e1fa3700a89c55fb4e4a742c9a02eb54b9656f4b10ff6",
+        "revision": "483be308cc48f4af17837bc62bda4b518bac162c"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-483be30": {
+      "claim": "review of 0c3ecd2..483be30 over src, script and test (docs/REVIEW-483be30.md), the portion unchanged at 6ea44f5: script/PostflightChecks.sol (row text, 13 immutable sites). no critical, high or medium finding; two low findings on the metadata guard (whitespace, shape) fixed in 45cfc62 and cb7cb9d, three info",
+      "kind": "review",
+      "sourceRevision": "483be308cc48f4af17837bc62bda4b518bac162c",
+      "scope": [
+        "script/PostflightChecks.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 9
+      },
+      "inputs": "git diff 0c3ecd2 483be30 -- src script test",
+      "method": "read only review in its own clone: the diff, bytecode hashes of Core and ControllerV1 at both commits (equal), Config 32 and GasCap runs on the fork",
+      "author": "implementers and director",
+      "reviewer": "independent read only reviewer, 2026-10-11",
+      "result": "pass",
+      "limitations": "src/Core.sol and script/Checks.sol changed again after 483be30 and are covered by the later windows. test/Rehearsal.t.sol, the rest of the suite and INVARIANT_DEEP are outside the report",
+      "report": {
+        "path": "docs/REVIEW-483be30.md",
+        "sha256": "86e111de70185ab6dbad77e5eb580417c5a2346152cbda521f51d8cdd1033108",
+        "revision": "45cfc62efb682a98a7ffa6f11a4dd0d066f624ed"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-45cfc62": {
+      "claim": "security review of 483be30..45cfc62 (docs/REVIEW-security-45cfc62.md): the remembered peak and dual speed climb, RateStore at 4 words, Settings at 26 fields, the metadata guard. no critical or high finding; M1 (medium, economic: the fast climb applies after every fill) was answered in cb7cb9d (the fast climb only below the recovery level)",
+      "kind": "review",
+      "sourceRevision": "45cfc62efb682a98a7ffa6f11a4dd0d066f624ed",
+      "scope": [
+        "script/Checks.sol",
+        "script/LaunchConfig.sol",
+        "script/SetSettings.s.sol",
+        "script/SettingsFields.sol",
+        "script/config/mainnet.json",
+        "script/config/rehearsal.json",
+        "src/Core.sol",
+        "src/interfaces/Interfaces.sol",
+        "src/lib/CoreLib.sol",
+        "src/lib/RateStore.sol",
+        "src/lib/SettingsBounds.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 9
+      },
+      "inputs": "git diff 483be30 45cfc62 -- src script test",
+      "method": "read only review in its own clone: diff, 7 scratch proof of concept tests, Recovery 5, CallerPay 12, Config 32, Flow 46, CoreLayout 3 on the fork",
+      "author": "implementers and director",
+      "reviewer": "independent read only security reviewer, 2026-10-11",
+      "result": "pass",
+      "limitations": "every file in scope changed again after 45cfc62 (the fix of cb7cb9d, the settings of 2b21fbf and 267139b), so this record is invalid at 6ea44f5 and stays out of the chain. the full suite, the deep run and the rehearsal are outside the report",
+      "report": {
+        "path": "docs/REVIEW-security-45cfc62.md",
+        "sha256": "88d0735c7c912444723e3d9d4514a830ce93b06b30cb78ebec98edf6af04a445",
+        "revision": "cb7cb9d6c10382f2239b6c5acf622ee5298a68db"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-cb7cb9d": {
+      "claim": "security review of 45cfc62..cb7cb9d (part 1 of docs/REVIEW-cb7cb9d.md), the portion unchanged at 6ea44f5: Core (comment), CoreLib (recovery level, peak checkpoint on a half life change), RateStore, SettingsBounds (gap bound), SettingsFields, SetSettings, LaunchConfig. no critical or high finding; M1 (medium, owner intent: recovery slower than the rejected figure) was answered by decisions 75 and 77; fuzz and oracle tests for monotone, revert freedom and path independence pass",
+      "kind": "review",
+      "sourceRevision": "cb7cb9d6c10382f2239b6c5acf622ee5298a68db",
+      "scope": [
+        "script/LaunchConfig.sol",
+        "script/SetSettings.s.sol",
+        "script/SettingsFields.sol",
+        "src/Core.sol",
+        "src/lib/CoreLib.sol",
+        "src/lib/RateStore.sol",
+        "src/lib/SettingsBounds.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 9
+      },
+      "inputs": "git diff 45cfc62 cb7cb9d -- src script test",
+      "method": "read only review in its own clone at 588d70f: the diff, 12 scratch proof of concept tests, Recovery 8, RecoveryOracle 2, BuildIdentity 5, Config 32, Flow 46, ReviewFlowCore 16, ReviewMatrix 11, ReviewSale 47, RateFuzz 6",
+      "author": "implementers and director",
+      "reviewer": "independent read only security reviewer, 2026-10-11",
+      "result": "pass",
+      "limitations": "sim/ is outside the report, with the full suite and the deep run. part 2 of the report (the deploy path at the latest block) is not recorded here. the info items I1 to I4 follow in 2b21fbf and later",
+      "report": {
+        "path": "docs/REVIEW-cb7cb9d.md",
+        "sha256": "a3373ecaef90b90ba8019d5cd35a958dd568c44afd19197d14ac0ac940db4d7c",
+        "revision": "2b21fbfed17f35786962f4e8f31366ae67e48233"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-2b21fbf": {
+      "claim": "review of cb7cb9d..2b21fbf (docs/REVIEW-2b21fbf.md), the portion unchanged at 6ea44f5: script/Checks.sol (the metadata guard compares the stored bytes). identical runtime and creation bytecode of Core, CoreLib, ControllerV1, CoreLens and FeeRouter between the two commits. one medium finding (owner information: decision 75 rested on a lone seller of one credit) answered by decision 77; lows on test pinning, metadata shape and citations",
+      "kind": "review",
+      "sourceRevision": "2b21fbfed17f35786962f4e8f31366ae67e48233",
+      "scope": [
+        "script/Checks.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 9
+      },
+      "inputs": "git diff cb7cb9d 2b21fbf -- src script test",
+      "method": "read only review in its own clone with a base clone at cb7cb9d: bytecode hash comparison, a batch size probe on the real contracts, Recovery 8, RecoveryOracle 4, PullFees 17, Config 32, Gate 2, BuildIdentity 5, sim 1303 checks",
+      "author": "implementers and director",
+      "reviewer": "independent read only reviewer, 2026-10-12",
+      "result": "pass",
+      "limitations": "Interfaces.sol and the configs changed in 267139b and are covered by that window. the finding on malformed images that the guard cannot judge stays a human sign off. Seaport.t.sol, the full suite and the deep run are outside the report",
+      "report": {
+        "path": "docs/REVIEW-2b21fbf.md",
+        "sha256": "dfad77a18571e2a00595bbd6df4ceefdc376b89f4c6e08dd02013efe42592b10",
+        "revision": "267139b2df38cb24e40c04bf8113d0288ca94668"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-267139b": {
+      "claim": "review of 2b21fbf..267139b (docs/REVIEW-267139b.md): src/interfaces/Interfaces.sol (Mainnet.defaultSettings recoveryGapBps 1_000), script/config/mainnet.json and rehearsal.json. no critical, high or medium finding; the lows are test docstrings and a missing ARCHITECTURE item for decision 76, fixed in 6ea44f5",
+      "kind": "review",
+      "sourceRevision": "267139b2df38cb24e40c04bf8113d0288ca94668",
+      "scope": [
+        "script/config/mainnet.json",
+        "script/config/rehearsal.json",
+        "src/interfaces/Interfaces.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 9
+      },
+      "inputs": "git diff 2b21fbf 267139b -- src script test sim",
+      "method": "read only review in its own clone: the one line src diff, gap mutation runs at 200 and 1_100 (6 and 3 failures), Recovery 12, RecoveryOracle 4, Config 32, BuildIdentity 5, sim 1303 checks",
+      "author": "implementers and director",
+      "reviewer": "independent read only reviewer, 2026-10-12",
+      "result": "pass",
+      "limitations": "the report did not diff bytecode between the two commits (the Mainnet library is not linked by the deployed contracts). the suite and deep run logs and REHEARSAL-267139b.md are outside the report",
+      "report": {
+        "path": "docs/REVIEW-267139b.md",
+        "sha256": "194704c4222f369c1e7ccf54c273fbb4928dfa60d51cd84923479b83d42563f9",
+        "revision": "6ea44f570cc7cad7812a8c4a7147d465fcf858db"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-REVIEW-CARRY-6ea44f5": {
+      "claim": "independent review of the source at 6ea44f5 by window: the full review of 0c3ecd2 for the files it read that are unchanged, then the delta reviews 0c3ecd2..483be30, 45cfc62..cb7cb9d, cb7cb9d..2b21fbf and 2b21fbf..267139b, with 267139b..6ea44f5 holding no change under src, script or config. each file under src/**, script/*.sol, script/config/** and script/tools/** is covered by the review whose window holds its last change",
+      "kind": "analysis",
+      "sourceRevision": "6ea44f570cc7cad7812a8c4a7147d465fcf858db",
+      "scope": [
+        "*"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 9
+      },
+      "carries": [
+        "E-REVIEW-0c3ecd2-KEPT",
+        "E-REVIEW-483be30",
+        "E-REVIEW-cb7cb9d",
+        "E-REVIEW-2b21fbf",
+        "E-REVIEW-267139b"
+      ],
+      "carriedChanges": [],
+      "inputs": "last change of each of the 40 files in the domain at 6ea44f5 (git log -1 per file), mapped to the review windows",
+      "method": "files per window: 0c3ecd2 22, 483be30 1, 45cfc62 0 (every file it changed changed again), cb7cb9d 7, 2b21fbf 1, 267139b 3, 6ea44f5 0. 34 files covered. 6 files are outside every report's file list: script/config/v2-mainnet.json, src/interfaces/ArtCoinsV2.sol, src/interfaces/IFeeRouter.sol and the tools script/tools/fix-interface.py, gen-interfaces.sh, guard-forge-test.sh",
+      "author": "director, 2026-10-12",
+      "result": "pass",
+      "limitations": "E-REVIEW-45cfc62 is invalid and stays out of the chain, its window is covered by the later windows. the delta reviews read diffs with surrounding code; a file is covered by the review of its last change. the 6 files listed have no review since 1e2c4b3 and were read in no report of the chain. the lows of the delta reviews are test and document items with fixes by commit message in 45cfc62 to 6ea44f5, not rechecked line by line",
+      "dependsOn": [],
+      "reviewer": "",
+      "invalidated": null
+    },
+    "E-ACCEPT-0c3ecd2-KEPT": {
+      "claim": "acceptance review of 0c3ecd2 (docs/ACCEPTANCE-0c3ecd2.md) against owner decisions 1 to 71 and the 9 required paths, the portion unchanged at 6ea44f5: ACCEPT, no critical, high or medium code defect, 69 of 71 decisions ok and decisions 47 and 57 not verifiable from the repository; the goal risks R1 and R2 became owner decisions 72 and 74 to 77",
+      "kind": "acceptance",
+      "sourceRevision": "0c3ecd2d7447d05a23e26b1afabf5635e86575be",
+      "scope": [
+        "script/Builder.sol",
+        "script/Deploy.s.sol",
+        "script/Lock.s.sol",
+        "script/NewProd.sol",
+        "script/Postflight.s.sol",
+        "script/PostflightPool.sol",
+        "script/PostflightV2.sol",
+        "script/Preflight.s.sol",
+        "script/Report.sol",
+        "script/Resume.s.sol",
+        "script/SystemDeployer.sol",
+        "script/SystemResumer.sol",
+        "script/tools/check-preflight.sh",
+        "src/ControllerV1.sol",
+        "src/CoreLens.sol",
+        "src/FeeRouter.sol",
+        "src/interfaces/IControllerV1.sol",
+        "src/interfaces/ICore.sol",
+        "src/interfaces/ICoreLens.sol",
+        "src/interfaces/ICoreLib.sol",
+        "src/lib/Halving.sol",
+        "src/lib/SettingsStore.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 9
+      },
+      "inputs": "FLOW decisions 1 to 71, ARCHITECTURE section 1, script/config/mainnet.json at launch settings, SUITE-97c1866.log and DEEP-RUN-97c1866.log read",
+      "method": "read only acceptance in its own clone: decision table, path table, goal risks by scratch test on the real contracts, 620 targeted tests, Rehearsal test, Preflight at the pin block",
+      "author": "implementers and director",
+      "reviewer": "independent read only acceptance reviewer, 2026-10-11",
+      "result": "pass",
+      "limitations": "scope lists the files unchanged at 6ea44f5. the bid rule, the settings struct, the metadata guard and the configs changed after 0c3ecd2; decisions 72 to 78 are accepted by E-ACCEPT-2b21fbf and E-ACCEPT-267139b. outside the report: the owner keeper (decision 57), burn router readiness (decision 47), the real exitModule, market data behind R1 to R3",
+      "report": {
+        "path": "docs/ACCEPTANCE-0c3ecd2.md",
+        "sha256": "9b90bf8cd1227999a86ad666413563e17e7e133783ad79905c1bdc2b07a28203",
+        "revision": "483be308cc48f4af17837bc62bda4b518bac162c"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-ACCEPT-2b21fbf": {
+      "claim": "acceptance of owner decisions 72 to 75 at 2b21fbf (the acceptance part of docs/REVIEW-2b21fbf.md): 72 holds (saleFloorBps 7500, controller floor 7500), 73 holds (buyListing pays at most its bid, no Seaport adapter), 74 holds (peakHalfLife 21600, recoveryClimbPerMinBps 200), 75 holds for its numbers; the gap value 200 is superseded by decision 77. finding 1 (batch sellers start the fast climb at gap 200) is answered by decision 77",
+      "kind": "acceptance",
+      "sourceRevision": "2b21fbfed17f35786962f4e8f31366ae67e48233",
+      "scope": [
+        "src/ControllerV1.sol",
+        "src/Core.sol",
+        "src/lib/CoreLib.sol",
+        "src/lib/RateStore.sol",
+        "src/lib/SettingsBounds.sol",
+        "script/Checks.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 9
+      },
+      "inputs": "FLOW decisions 72 to 75, mainnet.json, Recovery tests with -vv logs",
+      "method": "decision table against code and config at 2b21fbf, Recovery 8, RecoveryOracle 4, PullFees 17, Config 32, Gate 2, BuildIdentity 5",
+      "author": "implementers and director",
+      "reviewer": "independent read only reviewer, 2026-10-12",
+      "result": "pass",
+      "limitations": "scope lists the files named by the decision rows that are unchanged at 6ea44f5 (ControllerV1, Core, CoreLib, RateStore, SettingsBounds, Checks). the configs and Interfaces.sol changed in 267139b. the lows are citation and stale figure items in documents",
+      "report": {
+        "path": "docs/REVIEW-2b21fbf.md",
+        "sha256": "dfad77a18571e2a00595bbd6df4ceefdc376b89f4c6e08dd02013efe42592b10",
+        "revision": "267139b2df38cb24e40c04bf8113d0288ca94668"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-ACCEPT-267139b": {
+      "claim": "acceptance of owner decisions 76 to 78 at 267139b (docs/REVIEW-267139b.md): FLOW rows 77 and 78 match the owner quotes, 1_000 stands in every launch pin (mainnet.json, rehearsal.json, Interfaces.sol, sim) and the figures 59, 146, 60 and 76 agree with the mutation runs; decision 76 text agrees across FLOW, DEPLOY and HANDOFF",
+      "kind": "acceptance",
+      "sourceRevision": "267139b2df38cb24e40c04bf8113d0288ca94668",
+      "scope": [
+        "script/config/mainnet.json",
+        "script/config/rehearsal.json",
+        "src/interfaces/Interfaces.sol"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 9
+      },
+      "inputs": "FLOW decisions 76 to 78, the configs, Interfaces.sol, sim",
+      "method": "read only decision table against code, configs and documents, gap mutation runs, Recovery 12, RecoveryOracle 4, Config 32, BuildIdentity 5, sim 1303 checks",
+      "author": "implementers and director",
+      "reviewer": "independent read only reviewer, 2026-10-12",
+      "result": "pass",
+      "limitations": "decision 76 is a pause and 78 is a process decision; their acceptance is document agreement. the lows (test docstrings, the decision 76 item of section 14) were fixed in 6ea44f5",
+      "report": {
+        "path": "docs/REVIEW-267139b.md",
+        "sha256": "194704c4222f369c1e7ccf54c273fbb4928dfa60d51cd84923479b83d42563f9",
+        "revision": "6ea44f570cc7cad7812a8c4a7147d465fcf858db"
+      },
+      "dependsOn": [],
+      "invalidated": null
+    },
+    "E-ACCEPT-CARRY-6ea44f5": {
+      "claim": "product acceptance coverage at 6ea44f5: decisions 1 to 71 and the 9 paths by E-ACCEPT-0c3ecd2-KEPT, decisions 72 to 75 by E-ACCEPT-2b21fbf, decisions 76 to 78 by E-ACCEPT-267139b",
+      "kind": "analysis",
+      "sourceRevision": "6ea44f570cc7cad7812a8c4a7147d465fcf858db",
+      "scope": [
+        "*"
+      ],
+      "assumptions": {
+        "A-OWNER-DECISIONS": 9
+      },
+      "carries": [
+        "E-ACCEPT-0c3ecd2-KEPT",
+        "E-ACCEPT-2b21fbf",
+        "E-ACCEPT-267139b"
+      ],
+      "carriedChanges": [],
+      "inputs": "docs/ACCEPTANCE-0c3ecd2.md, docs/REVIEW-2b21fbf.md, docs/REVIEW-267139b.md, docs/FLOW.md decisions 1 to 78",
+      "method": "each record covers the files named by its decisions that are unchanged at 6ea44f5; decisions 72 to 78 are the decisions after the first acceptance",
+      "author": "director, 2026-10-12",
+      "result": "pass",
+      "limitations": "the path table of the first acceptance dates from 0c3ecd2; later changes to the bid rule are accepted decision by decision, not by a second path trace. decisions 47 and 57 are not verifiable from the repository",
+      "dependsOn": [],
+      "reviewer": "",
       "invalidated": null
     }
   }

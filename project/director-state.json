@@ -27,8 +27,8 @@
         "description": "pool skim, FeeRouter flush, payee and protocol legs, Core receive and fee pulls at the five doors",
         "status": "verified",
         "evidence": [
-          "E-ACCEPT-0c3ecd2",
-          "E-SUITE-CARRY-483be30"
+          "E-ACCEPT-CARRY-6ea44f5",
+          "E-SUITE-CARRY-6ea44f5"
         ]
       },
       {
@@ -36,8 +36,8 @@
         "description": "bid rule (drop, climb, ceiling, clamp, rateCap), sellForEth, buyListing and its caller payment, adopt",
         "status": "verified",
         "evidence": [
-          "E-ACCEPT-0c3ecd2",
-          "E-SUITE-CARRY-483be30"
+          "E-ACCEPT-CARRY-6ea44f5",
+          "E-SUITE-CARRY-6ea44f5"
         ]
       },
       {
@@ -45,8 +45,8 @@
         "description": "compose and composeExit with an optional caller payment (0 at launch), statement cost basis and compose time, controller pricing",
         "status": "verified",
         "evidence": [
-          "E-ACCEPT-0c3ecd2",
-          "E-SUITE-CARRY-483be30"
+          "E-ACCEPT-CARRY-6ea44f5",
+          "E-SUITE-CARRY-6ea44f5"
         ]
       },
       {
@@ -54,8 +54,8 @@
         "description": "sellTo through the controller, proceeds split, buyback and burn",
         "status": "verified",
         "evidence": [
-          "E-ACCEPT-0c3ecd2",
-          "E-SUITE-CARRY-483be30"
+          "E-ACCEPT-CARRY-6ea44f5",
+          "E-SUITE-CARRY-6ea44f5"
         ]
       },
       {
@@ -63,8 +63,8 @@
         "description": "exitStatement and its optional caller payment, exit lane, exit token bid and auction, module replacement",
         "status": "verified",
         "evidence": [
-          "E-ACCEPT-0c3ecd2",
-          "E-SUITE-CARRY-483be30"
+          "E-ACCEPT-CARRY-6ea44f5",
+          "E-SUITE-CARRY-6ea44f5"
         ]
       },
       {
@@ -72,8 +72,8 @@
         "description": "settings, setRate, controller, targets, the four Core locks, router owner, handover, rescueCoin, rescueNft",
         "status": "verified",
         "evidence": [
-          "E-ACCEPT-0c3ecd2",
-          "E-SUITE-CARRY-483be30"
+          "E-ACCEPT-CARRY-6ea44f5",
+          "E-SUITE-CARRY-6ea44f5"
         ]
       },
       {
@@ -81,16 +81,17 @@
         "description": "setSuccessor, migrate in batches, the old engine after migrate, successor adopt",
         "status": "verified",
         "evidence": [
-          "E-ACCEPT-0c3ecd2",
-          "E-SUITE-CARRY-483be30"
+          "E-ACCEPT-CARRY-6ea44f5",
+          "E-SUITE-CARRY-6ea44f5"
         ]
       },
       {
         "id": "launch-runbook",
         "description": "config, preflight, deploy, resume, postflight, lock, settings changes after launch",
-        "status": "in-progress",
+        "status": "verified",
         "evidence": [
-          "E-ACCEPT-0c3ecd2"
+          "E-ACCEPT-CARRY-6ea44f5",
+          "E-REHEARSAL-CARRY-6ea44f5"
         ]
       },
       {
@@ -98,7 +99,7 @@
         "description": "sellers, coin holders, statement buyers, owner payee and backstop composer, protocol, under matched demand and cost ranges",
         "status": "in-progress",
         "evidence": [
-          "E-ACCEPT-0c3ecd2"
+          "E-ACCEPT-CARRY-6ea44f5"
         ]
       }
     ],
@@ -108,7 +109,7 @@
         "description": "one maintained reading of current intent with decision provenance",
         "status": "in-progress",
         "evidence": [
-          "E-ACCEPT-0c3ecd2"
+          "E-ACCEPT-CARRY-6ea44f5"
         ]
       },
       {
@@ -116,7 +117,7 @@
         "description": "material decisions classified supported, unproved, contradicted or superseded",
         "status": "verified",
         "evidence": [
-          "E-ACCEPT-0c3ecd2"
+          "E-ACCEPT-CARRY-6ea44f5"
         ]
       },
       {
@@ -124,15 +125,15 @@
         "description": "OD-1 decided and implemented if needed",
         "status": "verified",
         "evidence": [
-          "E-ACCEPT-0c3ecd2"
+          "E-ACCEPT-CARRY-6ea44f5"
         ]
       },
       {
         "id": "independent-security-review",
         "description": "fresh reviewer on the frozen candidate",
-        "status": "in-progress",
+        "status": "verified",
         "evidence": [
-          "E-REVIEW-CARRY-483be30"
+          "E-REVIEW-CARRY-6ea44f5"
         ]
       },
       {
@@ -140,16 +141,16 @@
         "description": "full suite and the 7 Deep suites on the frozen candidate",
         "status": "verified",
         "evidence": [
-          "E-SUITE-CARRY-483be30",
-          "E-DEEP-CARRY-483be30"
+          "E-SUITE-CARRY-6ea44f5",
+          "E-DEEP-CARRY-6ea44f5"
         ]
       },
       {
         "id": "rehearsal",
         "description": "exact release path from a clean checkout of the candidate on the owner's host",
-        "status": "in-progress",
+        "status": "verified",
         "evidence": [
-          "E-REHEARSAL-CARRY-483be30"
+          "E-REHEARSAL-CARRY-6ea44f5"
         ]
       }
     ]
@@ -205,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "Launch day, the owner sends every transaction (docs/DEPLOY.md section 1): fill image and description in the local config and set rateStart from the credit price (step 1); fund the owner address; step 3 setMinProtocolSkimShareBps(362) on the factory; step 4 preflight at the latest block (check-preflight.sh with FORK_BLOCK=<latest> and no IGNORE_BALANCE); step 5 Deploy dry run; step 6 Deploy broadcast with --slow after `python3 script/director.py check --gate deploy` passes at the branch tip; step 7 Resume; step 8 verify; step 9 Postflight. Before launch the open items are a review of the 483be30 delta (gate independentReview), the owner's confirmation of R1, R2 and the reading C1, and the owner keeper.",
+  "nextAction": "Owner sign-off, then launch day (docs/HANDOFF.md section 6, docs/DEPLOY.md section 1), the owner sends every transaction: fill image and description in script/config/local.json and set rateStart and rateCap from the credit price; fund the owner address and read the balance with cast before the broadcast; step 3 setMinProtocolSkimShareBps(362); keeper running; step 4 check-preflight.sh at the latest block; step 5 Deploy dry run; step 6 Deploy broadcast with --slow after `python3 script/director.py check --gate deploy` passes at the branch tip; step 7 Resume; step 8 etherscan verify; step 9 Postflight; then Lock. Open: the objective sign-off, the owner keeper, decisions 47 and OD-2, participant-economics.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
@@ -227,7 +228,7 @@
   "gates": {
     "productRules": {
       "evidence": [
-        "E-ACCEPT-0c3ecd2"
+        "E-ACCEPT-CARRY-6ea44f5"
       ],
       "kinds": [
         "acceptance",
@@ -236,8 +237,8 @@
     },
     "focusedTests": {
       "evidence": [
-        "E-SUITE-CARRY-483be30",
-        "E-DEEP-CARRY-483be30"
+        "E-SUITE-CARRY-6ea44f5",
+        "E-DEEP-CARRY-6ea44f5"
       ],
       "kinds": [
         "test"
@@ -252,8 +253,8 @@
     },
     "localLifecycle": {
       "evidence": [
-        "E-SUITE-CARRY-483be30",
-        "E-DEEP-CARRY-483be30"
+        "E-SUITE-CARRY-6ea44f5",
+        "E-DEEP-CARRY-6ea44f5"
       ],
       "kinds": [
         "test",
@@ -262,8 +263,8 @@
     },
     "fullSuite": {
       "evidence": [
-        "E-SUITE-CARRY-483be30",
-        "E-DEEP-CARRY-483be30"
+        "E-SUITE-CARRY-6ea44f5",
+        "E-DEEP-CARRY-6ea44f5"
       ],
       "kinds": [
         "test"
@@ -271,7 +272,7 @@
     },
     "independentReview": {
       "evidence": [
-        "E-REVIEW-CARRY-483be30"
+        "E-REVIEW-CARRY-6ea44f5"
       ],
       "kinds": [
         "review"
@@ -279,7 +280,7 @@
     },
     "deploymentRehearsal": {
       "evidence": [
-        "E-REHEARSAL-CARRY-483be30"
+        "E-REHEARSAL-CARRY-6ea44f5"
       ],
       "kinds": [
         "rehearsal"
