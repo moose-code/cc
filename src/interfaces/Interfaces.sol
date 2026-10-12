@@ -234,7 +234,7 @@ library Mainnet {
             feeToBuybackBps: 0,
             callerFee: 0,
             callerMaxBaseFee: 0,
-            recoveryGapBps: 200
+            recoveryGapBps: 1_000
         });
     }
 

@@ -80,16 +80,24 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 ## 6. next action
 
-launch day, in the order of docs/DEPLOY.md section 1. the owner sends every transaction.
+launch day, in the order of docs/DEPLOY.md section 1. the owner sends every transaction and each one is confirmed (receipt read, state read back) before the next command runs.
 
-1. step 1: copy the config to `script/config/local.json`, fill `image` and `description`, set `rateStart` from the credit price and `rateCap` to 3 times it.
-2. fund the owner address 0xCB43 (section 3). no owner transaction between step 4 and the last step 6 transaction.
-3. step 3: `setMinProtocolSkimShareBps(362)` on the v2 factory (owner command).
-4. step 4: preflight at the latest block (`check-preflight.sh` with `FORK_BLOCK=<latest>` and no `IGNORE_BALANCE`); take `CONFIG_HASH` and `CONTROLLER_NONCE` from it.
-5. step 5: Deploy dry run. step 6: `git checkout foundry.lock lib/solady`, `python3 script/director.py check --gate deploy` from the branch tip, then the Deploy broadcast with `--slow`.
-6. steps 7 to 9: Resume, etherscan verify, Postflight; then `Lock.s.sol` and the section 4 duties.
+1. image and description: copy the config to `script/config/local.json` and fill `image` (an `ipfs://`, `https://`, `ar://` or `data:` url) and `description`. the metadata row of preflight fails until both hold real values.
+2. `rateStart` at the market price of one credit on launch day and `rateCap` at 3 times it (DEPLOY section 1, the launch day rule). `recoveryGapBps` is 1_000 (decision 77).
+3. funding: the owner address 0xCB43 holds the factory deploy fee plus gas (section 3). no owner transaction between step 4 and the last step 6 transaction.
+4. factory: `setMinProtocolSkimShareBps(362)` before the launch (step 3), `setMinProtocolSkimShareBps(1000)` after the last step 6 transaction, each confirmed with a read of `minProtocolSkimShareBps()`.
+5. backup keeper: the owner keeper is running before the broadcast with the 3 minute delay and a private relay (Flashbots Protect or MEV Blocker). it is a separate project (section 3).
+6. sign off and broadcast: preflight at the latest block (`check-preflight.sh` with `FORK_BLOCK=<latest>`, no `IGNORE_BALANCE`), take `CONFIG_HASH` and `CONTROLLER_NONCE`, the Deploy dry run, `git checkout foundry.lock lib/solady`, `python3 script/director.py check --gate deploy` from the branch tip, then the Deploy broadcast with `--slow` (the owner address is an EIP 7702 delegated account). then Resume, etherscan verify, Postflight (steps 7 to 9).
 
-open before step 6: a reviewer pass over the 483be30 delta (gate `independentReview`), the owner's confirmations of section 4, the owner keeper (section 3), the objective status (owner's call), and any change outside `docs/HANDOFF.md`, `project/director-state.json` and `project/evidence.json`, which needs a new freeze (`python3 script/director.py freeze <commit>`).
+after launch:
+
+1. `Lock.s.sol` (`coin.lockRecipients()`, step 10).
+2. the metadata renderer (DEPLOY section 4, the coin's metadata after launch).
+3. the weekly slice check: the postflight and the pool depth against the buyback slice (DEPLOY section 4, watching the buyback after a price fall).
+4. phase 2 per decision 76: before the first `setExitModule`, set `exitToBuybackBps` to 10_000 unless the engine has per credit pricing (DEPLOY section 4, changing the exit module or its unit). the per credit pricing redesign is paused.
+5. open and not blocking: decision 47 (burn router readiness) and OD-2 (`coin.lockAllowlist()` and `router.lock()`).
+
+open before step 6: the owner keeper (section 3), the objective status (owner's call), and any change outside `docs/HANDOFF.md`, `project/director-state.json` and `project/evidence.json`, which needs a new freeze (`python3 script/director.py freeze <commit>`). the engine launches on the AI-run reviews recorded in docs/ with no human audit (decision 78).
 
 ## 7. how to work in this repo
 

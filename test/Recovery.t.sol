@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
-import {Settings} from "../src/interfaces/Interfaces.sol";
+import {Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {Halving} from "../src/lib/Halving.sol";
 
 /// @notice decision 74: after a large sale walks the bid down, the remembered peak keeps the ceiling high and the price
@@ -10,6 +10,17 @@ import {Halving} from "../src/lib/Halving.sol";
 /// overshoot after a market fall, and check that `setRate` restates the peak and the climb is monotone between fills.
 contract RecoveryTest is Fixture {
     address internal seller_;
+
+    /// the launch values these tests measure. the config file, `Mainnet.defaultSettings()` and the fixture core agree, and
+    /// every measured value below is pinned at this gap, so a change of the launch gap changes them
+    function test_launchGapIs1000() public view {
+        string memory json = vm.readFile("script/config/mainnet.json");
+        assertEq(vm.parseJsonUint(json, ".settings.recoveryGapBps"), 1_000, "shipped config");
+        assertEq(vm.parseJsonUint(json, ".settings.recoveryClimbPerMinBps"), 200, "shipped config climb");
+        assertEq(Mainnet.defaultSettings().recoveryGapBps, 1_000, "defaultSettings");
+        assertEq(core.settings().recoveryGapBps, 1_000, "fixture core");
+        assertEq(core.settings().recoveryClimbPerMinBps, 200, "fixture core climb");
+    }
 
     function setUp() public override {
         super.setUp();
@@ -39,7 +50,7 @@ contract RecoveryTest is Fixture {
     }
 
     /// a one minute dump of 140 credits halves the bid; the recovery climb brings it back to the pre dump price in about
-    /// 47 minutes at the launch gap (fast from the 50 percent floor up to the recovery level, then the slow climb over
+    /// 59 minutes at the launch gap (fast from the 50 percent floor up to the recovery level, then the slow climb over
     /// the last `recoveryGapBps` to the peak). the exact minute is asserted and logged
     function test_oneMinuteDumpRecovers() public {
         vm.prank(owner);
@@ -52,12 +63,11 @@ contract RecoveryTest is Fixture {
         assertGe(dropped, pre * 45 / 100, "the dump did not fall below the minute floor");
         uint256 m = _minutesToRecover(pre);
         emit log_named_uint("one minute dump: minutes to recover to the pre dump price", m);
-        assertGe(m, 45);
-        assertLe(m, 75);
+        assertEq(m, 59, "one minute dump: minutes to recover at the launch gap");
     }
 
     /// a three minute dump of about 420 credits walks the bid down by half each minute, to about an eighth of the pre
-    /// dump price; the recovery climb brings it back in about 2.2 hours at the launch gap
+    /// dump price; the recovery climb brings it back in 146 minutes at the launch gap
     function test_threeMinuteDumpRecovers() public {
         vm.prank(owner);
         core.setRate(OPEN_RATE);
@@ -70,8 +80,7 @@ contract RecoveryTest is Fixture {
         assertLt(dropped, pre * 20 / 100, "three minutes of dumping cut the bid to about an eighth");
         uint256 m = _minutesToRecover(pre);
         emit log_named_uint("three minute dump: minutes to recover to the pre dump price", m);
-        assertGe(m, 110);
-        assertLe(m, 180);
+        assertEq(m, 146, "three minute dump: minutes to recover at the launch gap");
     }
 
     /// a real market fall: the seller keeps filling at the new lower price, so the peak decays and the bid follows the
@@ -80,10 +89,9 @@ contract RecoveryTest is Fixture {
     function test_marketFallOvershootBounded() public {
         vm.prank(owner);
         core.setRate(OPEN_RATE);
-        // the market falls: each step a batch of fills drops the bid about 7 percent below the remembered peak, past
-        // the 2 percent gap, then nobody sells for 3 minutes (the keeper window). the price state is below the recovery
-        // level, so it climbs at the fast recovery rate, and the overshoot over the fill price is capped by 3 minutes of
-        // that climb (about 6 percent)
+        // the market falls: each step a batch of 15 credits drops the bid 7.2 percent, then nobody sells for 3 minutes
+        // (the keeper window). the overshoot over the fill price is bounded by 3 minutes of the recovery climb
+        // (6.12 percent at 2 percent a minute)
         uint256 overshoot;
         uint256 last = OPEN_RATE;
         for (uint256 step; step < 10; ++step) {
@@ -100,35 +108,68 @@ contract RecoveryTest is Fixture {
             }
         }
         emit log_named_uint("market fall overshoot over the fill price, bps", overshoot);
-        // within the keeper's 3 minute window the recovery climb lifts the bid at most about 6 percent over the fill
-        assertLe(overshoot, 700, "the overshoot stays within about 6 percent");
+        assertEq(overshoot, 612, "market fall overshoot over the fill price within 3 minutes, bps, at the launch gap");
     }
 
-    /// a lone seller selling one credit whenever the read is at least the opening price: at the launch gap (200 bps) a
-    /// single credit drop of 0.5 percent stays inside the gap, so the bid climbs at the normal rate and the throughput
-    /// is the slow climb's, not the recovery climb's. the count over one hour and the eth paid are logged
-    function test_loneSellerFlatPriceThroughput() public {
+    /// @dev a seller of `k` credits per sale over one hour: whenever the read is at least the opening price, sells `k`
+    /// credits in one call. polled every 3 seconds, 400 credit supply, 5 eth pot
+    function _batchSeller(uint256 k) internal returns (uint256 sold, uint256 paid) {
         _fundPot(5 ether);
         vm.prank(owner);
         core.setRate(OPEN_RATE);
         uint256[] memory ids = _credits(seller_, 400);
-        uint256 sold;
-        uint256 paid;
         for (uint256 t; t < 1 hours; t += 3) {
             if (core.ethRate() >= OPEN_RATE) {
+                uint256[] memory batch = new uint256[](k);
+                for (uint256 j; j < k; ++j) {
+                    batch[j] = ids[sold + j];
+                }
                 uint256 b = seller_.balance;
                 vm.prank(seller_);
-                core.sellForEth(_one(ids[sold]));
+                core.sellForEth(batch);
                 paid += seller_.balance - b;
-                ++sold;
+                sold += k;
             }
             _warp(3);
         }
-        emit log_named_uint("lone seller at launch gap 200: credits sold at >= opening price in 1h", sold);
-        emit log_named_uint("lone seller at launch gap 200: wei paid", paid);
-        // the single credit drop is inside the gap, so the climb is the slow rate: the throughput is near the old
-        // recovery = climb case (about 60 credits an hour), far below the ungapped recovery (about 188)
-        assertLe(sold, 90, "a single credit drop climbs at the normal rate, not the recovery rate");
+    }
+
+    function _logBatch(uint256 k, uint256 sold, uint256 paid) internal {
+        emit log_named_uint(string.concat("batches of ", vm.toString(k), " at launch gap: credits sold at >= opening price in 1h"), sold);
+        emit log_named_uint(string.concat("batches of ", vm.toString(k), " at launch gap: wei paid"), paid);
+    }
+
+    /// a lone seller of one credit at a time: the single credit drop of 0.5 percent stays inside the launch gap, so the
+    /// bid climbs at `climbPerMinBps` and the throughput is the slow climb's (the ungapped recovery climb gives 188)
+    function test_loneSellerFlatPriceThroughput() public {
+        (uint256 sold, uint256 paid) = _batchSeller(1);
+        _logBatch(1, sold, paid);
+        assertEq(sold, 60, "batches of 1: credits an hour at the opening price");
+        assertEq(paid, 103_933_630_716_331_355, "batches of 1: wei paid");
+    }
+
+    /// batches of 5 credits drop the bid 2.5 percent, inside the launch gap
+    function test_batchSeller5() public {
+        (uint256 sold, uint256 paid) = _batchSeller(5);
+        _logBatch(5, sold, paid);
+        assertEq(sold, 60, "batches of 5: credits an hour at the opening price");
+        assertEq(paid, 102_902_912_528_907_621, "batches of 5: wei paid");
+    }
+
+    /// batches of 10 credits drop the bid 4.9 percent, inside the launch gap
+    function test_batchSeller10() public {
+        (uint256 sold, uint256 paid) = _batchSeller(10);
+        _logBatch(10, sold, paid);
+        assertEq(sold, 60, "batches of 10: credits an hour at the opening price");
+        assertEq(paid, 101_633_664_963_187_848, "batches of 10: wei paid");
+    }
+
+    /// batches of 19 credits drop the bid 9.1 percent, the largest batch inside the launch gap of 10 percent
+    function test_batchSeller19() public {
+        (uint256 sold, uint256 paid) = _batchSeller(19);
+        _logBatch(19, sold, paid);
+        assertEq(sold, 76, "batches of 19: credits an hour at the opening price");
+        assertEq(paid, 125_877_567_966_787_262, "batches of 19: wei paid");
     }
 
     /// `setRate` restates the remembered peak and its time, so a later climb treats the restated rate as the peak
