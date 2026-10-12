@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getStatement } from "@/lib/sample";
-import { StatementTile, CreditTile } from "@/components/Tiles";
+import { StatementTile } from "@/components/Tiles";
 import { StatusBadge } from "@/components/Cards";
 import { Addr } from "@/components/Addr";
 import { agoLabel, signedPct } from "@/lib/format";
@@ -17,14 +17,14 @@ export default function StatementDetail({ params }: { params: { id: string } }) 
   const overCostList = (s.start / s.cost - 1) * 100;
 
   return (
-    <main className="page detail">
+    <main className="page detail statement-detail">
       <Link href="/statements" className="back">
         {"← statements"}
       </Link>
 
       <div className="detail-grid">
         <div className="detail-art">
-          <StatementTile id={s.id} />
+          <StatementTile id={s.id} linkCredits />
         </div>
 
         <div className="detail-main">
@@ -112,19 +112,6 @@ export default function StatementDetail({ params }: { params: { id: string } }) 
           </section>
         </div>
       </div>
-
-      <section className="section">
-        <h2>composed credits</h2>
-        <span className="muted">the 80 credits in this statement</span>
-        {/* CONNECT: the actual composed credit ids (Core compose record). */}
-        <div className="credit-mini-grid">
-          {s.creditIds.map((id) => (
-            <Link key={id} href={`/credits/${id}`} title={`credit #${id}`}>
-              <CreditTile id={id} />
-            </Link>
-          ))}
-        </div>
-      </section>
     </main>
   );
 }

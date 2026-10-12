@@ -718,6 +718,13 @@ a {
 .detail {
   max-width: 920px;
 }
+/* statement detail: a large Issued sheet beside the facts */
+.statement-detail {
+  max-width: 1320px;
+}
+.statement-detail .detail-grid {
+  grid-template-columns: 600px 1fr;
+}
 .back {
   display: inline-block;
   margin-bottom: 1.25rem;
@@ -739,9 +746,36 @@ a {
   display: flex;
   justify-content: center;
 }
-.detail-art .tile-statement {
+.detail-art .tile-statement,
+.detail-art .tile-statement-wrap {
   width: 100%;
   height: auto;
+}
+
+/* clickable credits over the Issued sheet. inset matches the canvas margin
+   (8/144 x, 8/186 y); the inner area splits evenly 8x10 into the cells. */
+.tile-statement-wrap {
+  position: relative;
+  display: block;
+  line-height: 0;
+}
+.statement-links {
+  position: absolute;
+  left: 5.556%;
+  right: 5.556%;
+  top: 4.301%;
+  bottom: 4.301%;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(10, 1fr);
+}
+.statement-links a {
+  display: block;
+}
+.statement-links a:hover {
+  outline: 1.5px solid rgba(17, 17, 17, 0.6);
+  outline-offset: -1.5px;
+  background: rgba(17, 17, 17, 0.05);
 }
 .credit-art .tile-credit {
   width: 180px;
@@ -837,7 +871,8 @@ a {
 }
 
 @media (max-width: 640px) {
-  .detail-grid {
+  .detail-grid,
+  .statement-detail .detail-grid {
     grid-template-columns: 1fr;
     gap: 1.25rem;
   }
