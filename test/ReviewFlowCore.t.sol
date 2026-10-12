@@ -135,6 +135,8 @@ contract ReviewFlowCoreTest is Fixture {
         m.idleLoosenBps = 1;
         m.saleFloorBps = 1_000;
         m.exitAfter = 1 hours;
+        m.peakHalfLife = 600;
+        m.recoveryClimbPerMinBps = 1;
         m.rateCap = uint64(RATE_START_MIN_WEI);
         m.buybackSlice = 0.01 ether;
         m.buybackDelay = 1;
@@ -154,6 +156,8 @@ contract ReviewFlowCoreTest is Fixture {
             365 days,
             10_000,
             10_000,
+            604_800,
+            1_000,
             1 ether,
             7_200,
             0.005 ether,
@@ -191,9 +195,11 @@ contract ReviewFlowCoreTest is Fixture {
             // the four raw words hold exactly the values and nothing else
             bytes32 slot = 0xb5805f89ef62cd999f965a45fb6f4c11141caa04e5c4acba9c2552ef76902804;
             uint256 w0 = uint256(vm.load(address(core), slot));
-            assertEq(w0 >> 160, 0, "slot 0 top bits clear");
+            assertEq(w0 >> 208, 0, "slot 0 top bits clear");
             assertEq(uint16(w0 >> 80), two[i].saleFloorBps, "the sale floor sits at bits 80 to 95");
             assertEq(uint16(w0 >> 144), two[i].exitToBuybackBps, "the exit eth lane share sits at bits 144 to 159");
+            assertEq(uint32(w0 >> 160), two[i].peakHalfLife, "the peak half life sits at bits 160 to 191");
+            assertEq(uint16(w0 >> 192), two[i].recoveryClimbPerMinBps, "the recovery climb sits at bits 192 to 207");
             uint256 w1 = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
             assertEq(uint64(w1 >> 144), two[i].keeperFee, "the keeper fee sits at bits 144 to 207");
             assertEq(uint48(w1 >> 208), two[i].keeperMaxBaseFee, "the keeper base fee ceiling sits at bits 208 to 255");
@@ -382,8 +388,8 @@ contract ReviewFlowCoreTest is Fixture {
     function test_dirtyCalldataWordsAreRefused() public {
         Settings memory base = core.settings();
         bytes memory good = abi.encodeCall(ICore.setSettings, (base));
-        assertEq(good.length, 4 + 24 * 32);
-        for (uint256 i; i < 24; ++i) {
+        assertEq(good.length, 4 + 26 * 32);
+        for (uint256 i; i < 26; ++i) {
             bytes memory bad = bytes.concat(good);
             uint256 off = 32 + 4 + i * 32;
             uint256 w;
@@ -418,6 +424,7 @@ contract ReviewFlowCoreTest is Fixture {
             if (j == 1) {
                 Settings memory s = core.settings();
                 s.climbPerMinBps = 1_000;
+                s.recoveryClimbPerMinBps = 1_000;
                 s.idleLoosenBps = 2_000;
                 s.ceilBps = 30_000;
                 _setSettings(s);

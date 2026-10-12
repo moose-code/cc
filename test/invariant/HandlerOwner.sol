@@ -68,6 +68,9 @@ abstract contract HandlerOwner is HandlerBase {
         s.callerFee = uint64(_f(_r(seed, 10), 0, 0.005 ether, c.callerFee));
         s.callerMaxBaseFee = uint48(_f(_r(seed, 11), 0, 100 gwei, c.callerMaxBaseFee));
         _corner(s, corner);
+        // recoveryClimbPerMinBps is at least the final climbPerMinBps, set after the corners so it stays valid
+        s.recoveryClimbPerMinBps = uint16(_f(_r(seed, 31), s.climbPerMinBps, 1_000, c.recoveryClimbPerMinBps));
+        s.peakHalfLife = uint32(_f(_r(seed, 32), 600, 604_800, c.peakHalfLife));
         // the slice stays at or above twice the largest buyback payment
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
         if (s.buybackSlice < minSlice) s.buybackSlice = uint128(minSlice);
@@ -223,13 +226,8 @@ abstract contract HandlerOwner is HandlerBase {
         // found. the read under the new settings is that price state, bounded by the new ceiling and rate cap and, while
         // funded, lowered to the new clamp
         {
-            (uint256 anchor,,) = _anchorState();
             uint256 stored = core.rateAtCheckpoint();
-            uint256 want = BidModel.read(
-                ns,
-                core.ethPot(),
-                BidModel.price(ns, stored, core.ethPot(), anchor, block.timestamp - core.lastFillTime(), 0)
-            );
+            uint256 want = BidModel.read(ns, core.ethPot(), _priceNow(ns));
             if (stored != p.price) _flag(V_RATE_BOUND, "a settings call moved the stored eth rate");
             if (core.ethRate() != want) _flag(V_RATE_BOUND, "a settings call moved the eth rate");
         }
@@ -257,6 +255,10 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.exitAfter < 1 hours || s.exitAfter > 365 days) return "exitAfter";
         if (s.saleToBuybackBps > 10_000) return "saleToBuybackBps";
         if (s.exitToBuybackBps > 10_000) return "exitToBuybackBps";
+        if (s.peakHalfLife < 600 || s.peakHalfLife > 604_800) return "peakHalfLife";
+        if (s.recoveryClimbPerMinBps < s.climbPerMinBps || s.recoveryClimbPerMinBps > 1_000) {
+            return "recoveryClimbPerMinBps";
+        }
         if (s.buybackSlice < 0.01 ether || s.buybackSlice > 1 ether) return "buybackSlice";
         if (s.buybackDelay < 1 || s.buybackDelay > 7_200) return "buybackDelay";
         if (s.keeperFee > 0.005 ether) return "keeperFee";
@@ -283,7 +285,7 @@ abstract contract HandlerOwner is HandlerBase {
     /// breaks exactly one field of valid settings, `which` picks it. returns the name the library must report
     function _break(Settings memory s, uint256 which) internal pure returns (bytes32 name) {
         // forge-lint: disable-start(unsafe-typecast)
-        which = which % 41;
+        which = which % 44;
         if (which == 0) {
             (s.dropPerCreditBps, name) = (1_001, "dropPerCreditBps");
         } else if (which == 1) {
@@ -364,8 +366,15 @@ abstract contract HandlerOwner is HandlerBase {
             (s.idleLoosenBps, name) = (0, "idleLoosenBps");
         } else if (which == 39) {
             (s.keeperMaxBaseFee, name) = (1 gwei - 1, "keeperMaxBaseFee");
-        } else {
+        } else if (which == 40) {
             (s.keeperMaxBaseFee, name) = (100 gwei + 1, "keeperMaxBaseFee");
+        } else if (which == 41) {
+            (s.peakHalfLife, name) = (599, "peakHalfLife");
+        } else if (which == 42) {
+            (s.peakHalfLife, name) = (604_801, "peakHalfLife");
+        } else {
+            // below climbPerMinBps, which a valid struct keeps at least 1, so zero always violates
+            (s.recoveryClimbPerMinBps, name) = (0, "recoveryClimbPerMinBps");
         }
         // forge-lint: disable-end(unsafe-typecast)
     }
@@ -441,13 +450,13 @@ abstract contract HandlerOwner is HandlerBase {
             _opost(p, "setRate");
             Settings memory cs = core.settings();
             (uint256 anchor,,) = _anchorState();
-            uint256 want = BidModel.read(
-                cs,
-                core.ethPot(),
-                BidModel.price(cs, rate, core.ethPot(), rate, block.timestamp - core.lastFillTime(), 0)
-            );
+            (uint256 peakRate, uint256 peakTime) = _peakState();
+            uint256 want = BidModel.read(cs, core.ethPot(), _priceNow(cs));
             if (core.ethRate() != want || core.rateAtCheckpoint() != rate || anchor != rate) {
                 _flag(V_RATE_BOUND, "setRate did not land on the rate and the anchor");
+            }
+            if (peakRate != rate || peakTime != block.timestamp) {
+                _flag(V_RATE_BOUND, "setRate did not restate the remembered peak");
             }
             if (core.checkpointTime() != block.timestamp) {
                 _flag(V_RATE_BOUND, "setRate did not restart the climb clock");

@@ -170,6 +170,8 @@ abstract contract ConfigReader is CommonBase {
         s.exitAfter = _u32(j, ".settings.exitAfter");
         s.saleToBuybackBps = _u16(j, ".settings.saleToBuybackBps");
         s.exitToBuybackBps = _u16(j, ".settings.exitToBuybackBps");
+        s.peakHalfLife = _u32(j, ".settings.peakHalfLife");
+        s.recoveryClimbPerMinBps = _u16(j, ".settings.recoveryClimbPerMinBps");
         // forge-lint: disable-next-line(unsafe-typecast)
         s.buybackSlice = uint128(_uint(j, ".settings.buybackSlice", type(uint128).max));
         s.buybackDelay = _u16(j, ".settings.buybackDelay");

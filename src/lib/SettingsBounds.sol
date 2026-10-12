@@ -18,6 +18,10 @@ library SettingsBounds {
         if (s.exitAfter < 1 hours || s.exitAfter > 365 days) return "exitAfter";
         if (s.saleToBuybackBps > 10_000) return "saleToBuybackBps";
         if (s.exitToBuybackBps > 10_000) return "exitToBuybackBps";
+        if (s.peakHalfLife < 600 || s.peakHalfLife > 604_800) return "peakHalfLife";
+        if (s.recoveryClimbPerMinBps < s.climbPerMinBps || s.recoveryClimbPerMinBps > 1_000) {
+            return "recoveryClimbPerMinBps";
+        }
         if (s.buybackSlice < 0.01 ether || s.buybackSlice > 1 ether) return "buybackSlice";
         if (s.buybackDelay < 1 || s.buybackDelay > 7_200) return "buybackDelay";
         if (s.keeperFee > 0.005 ether) return "keeperFee";

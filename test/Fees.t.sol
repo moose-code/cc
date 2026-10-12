@@ -630,6 +630,8 @@ contract ReceiveSettingsTest is FeeBase {
         s.dropPerCreditBps = uint16(_pick(seed, 2, 1, 1_000));
         s.dropFloorBps = uint16(_pick(seed, 3, 5_000, 10_000));
         s.climbPerMinBps = uint16(_pick(seed, 4, 1, 1_000));
+        s.recoveryClimbPerMinBps = uint16(_pick(seed, 12, s.climbPerMinBps, 1_000));
+        s.peakHalfLife = uint32(_pick(seed, 13, 600, 604_800));
         s.ceilBps = uint16(_pick(seed, 5, 10_000, 30_000));
         s.idleLoosenBps = uint16(_pick(seed, 9, 1, 2_000));
         s.saleToBuybackBps = uint16(_pick(seed, 7, 0, 10_000));
@@ -672,6 +674,7 @@ contract ReceiveSettingsTest is FeeBase {
         core.setRate(1e13);
         Settings memory s = core.settings();
         s.climbPerMinBps = 1_000;
+        s.recoveryClimbPerMinBps = 1_000;
         s.ceilBps = 30_000;
         s.idleLoosenBps = 2_000;
         _setSettings(s);

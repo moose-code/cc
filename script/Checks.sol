@@ -57,8 +57,10 @@ abstract contract LaunchChecks is PostflightChecks {
     /// `MAX_DESCRIPTION_BYTES`, the factory reverts above them)
     uint256 internal constant MAX_IMAGE_BYTES = 2048;
     uint256 internal constant MAX_DESCRIPTION_BYTES = 4096;
-    /// @dev the text the rehearsal config holds in `image` and `description`. on chain id 1 the metadata row also fails for a
-    /// value that is empty after trimming spaces, or that contains `placeholder` in any letter case, or is `todo` or `tbd`
+    /// @dev the text the rehearsal config holds in `image` and `description`. on chain id 1 the metadata row fails for a
+    /// value that is empty after trimming (spaces, tabs, newlines, carriage returns, NBSP), that contains `placeholder`
+    /// in any letter case, or is `todo` or `tbd`, and for an `image` that does not start with `ipfs://`, `https://` or
+    /// `ar://` with content past the scheme
     string internal constant PLACEHOLDER_MARKER = "PLACEHOLDER";
     // the pinned launch rules (docs/DEPLOY.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
@@ -71,13 +73,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x0d4b78012aef376a1879fbdf3e8a0d1b15370c0981d9f583faf1e4c845807054;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0xef0cafa27d8e02efc63a72853cb7599c3d517f49efcb07c09021b444ad8110b4;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xefc7a0c18bbb502185f9b9ff92b0dd02df1c8e7317bfd095ebd9bd1e80d8fac3;
+    bytes32 internal constant BUILD_HASH_CORE = 0x0c963c8e3ad24cdb5bb8713a03fb3d7813d977a1d70924ecce597af006717c69;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x9245b825f122e8ad94216781a0492a8bf6bc7c6ee93c6b57eda122548379ee8b;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x6098dee23db6791c4c28277410a14b941db26c707cb376c524b94dfdc4e95ba2;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0xea2e602937d074c8ae7ca1d9f671c2486982afd670e076cd570ffc4879c47c83;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x204fce18e86b33bb34fc4f883391bed1077dd8f6cd364f6f35b67500f345b3ca;
+        0xddfa4fbefa5f88acda986f25c8190194432f674bb8b3cd98cd060f07532204b8;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -299,26 +301,48 @@ abstract contract LaunchChecks is PostflightChecks {
                 "image ", vm.toString(bytes(c.image).length), " bytes description ", vm.toString(bytes(c.description).length), " bytes"
             )
         );
-        bool filled = !_blank(c.image) && !_blank(c.description);
-        bool marked = _marked(c.image) || _marked(c.description);
+        (bool metaOk, string memory filledDetail) = _metadataRow(c.image, c.description);
         string memory filledName = "rule: image and description are filled and are not placeholders";
-        string memory filledDetail = !filled
-            ? "empty: fill both in the config before step 4"
-            : marked ? "a value contains placeholder or is todo or tbd" : "both set in the launch transaction";
-        if (block.chainid == 1) _check(filledName, filled && !marked, filledDetail);
-        else _warn(filledName, filled && !marked, filledDetail);
+        if (block.chainid == 1) _check(filledName, metaOk, filledDetail);
+        else _warn(filledName, metaOk, filledDetail);
         bool set = c.owner != address(0) && c.creator != address(0);
         _warn("warn: owner differs from creator", !set || c.owner != c.creator, "one party takes both roles");
         deployer;
     }
 
-    /// @dev true when `s` is empty or holds only spaces
+    /// @notice whether `image` and `description` pass the metadata row, and the row detail. both must be non blank after
+    /// trimming, hold no placeholder marker, and `image` must start with a known scheme. the deploy test, the rehearsal
+    /// and the preflight share this one rule
+    function metadataRowPasses(string memory image, string memory description) public view returns (bool) {
+        (bool ok,) = _metadataRow(image, description);
+        return ok;
+    }
+
+    /// @dev both fields non blank and free of markers, and `image` carrying a scheme. the detail names the first reason
+    /// it fails
+    function _metadataRow(string memory image, string memory description)
+        private
+        view
+        returns (bool ok, string memory detail)
+    {
+        bool filled = !_blank(image) && !_blank(description);
+        bool marked = _marked(image) || _marked(description);
+        bool scheme = _hasScheme(image);
+        ok = filled && !marked && scheme;
+        detail = !filled
+            ? "empty: fill image and description in the config before step 4"
+            : marked
+                ? "a value contains placeholder or is todo or tbd"
+                : !scheme
+                    ? "image must start with ipfs://, https:// or ar:// and be longer than the scheme"
+                    : "both set in the launch transaction";
+    }
+
+    /// @dev true when `s` is empty or trims to nothing. `vm.trim` strips spaces, tabs, newlines, carriage returns and
+    /// NBSP. a value whose only content after trim is a zero width character (U+200B and the like) is not caught and
+    /// stays the admin's to repair with `updateImage` and `updateDescription`
     function _blank(string memory s) private pure returns (bool) {
-        bytes memory b = bytes(s);
-        for (uint256 i; i < b.length; ++i) {
-            if (b[i] != 0x20) return false;
-        }
-        return true;
+        return bytes(vm.trim(s)).length == 0;
     }
 
     /// @dev true when `s` contains `placeholder` in any letter case, or is `todo` or `tbd` after trimming. the short
@@ -326,6 +350,21 @@ abstract contract LaunchChecks is PostflightChecks {
     function _marked(string memory s) private view returns (bool) {
         string memory l = vm.trim(vm.toLowercase(s));
         return vm.contains(l, "placeholder") || keccak256(bytes(l)) == keccak256("todo") || keccak256(bytes(l)) == keccak256("tbd");
+    }
+
+    /// @dev true when `s` starts with `ipfs://`, `https://` or `ar://` and holds at least one byte past the scheme, so a
+    /// scheme with no content (for example `ipfs://`) is refused
+    function _hasScheme(string memory s) private pure returns (bool) {
+        bytes memory b = bytes(s);
+        return _startsPastPrefix(b, "ipfs://") || _startsPastPrefix(b, "https://") || _startsPastPrefix(b, "ar://");
+    }
+
+    function _startsPastPrefix(bytes memory b, bytes memory p) private pure returns (bool) {
+        if (b.length <= p.length) return false;
+        for (uint256 i; i < p.length; ++i) {
+            if (b[i] != p[i]) return false;
+        }
+        return true;
     }
 
     /// @dev the router forwards the payee share with a plain call. a payee that reverts or needs more gas sends its share

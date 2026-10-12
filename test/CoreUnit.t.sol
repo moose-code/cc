@@ -431,6 +431,11 @@ contract CoreUnitTest is CoreBase {
 
     /// a fill drops the rate by `dropPerCreditBps`, makes the rate paid the ceiling anchor and restarts the climb clock
     function test_rate_dropAndClockResetOnFill() public {
+        // the post fill climb is checked against the single rate formula; match the recovery rate to the climb rate so a
+        // fill does not switch to the faster recovery climb (that is covered in test/Recovery.t.sol)
+        Settings memory cs = core.settings();
+        cs.recoveryClimbPerMinBps = cs.climbPerMinBps;
+        _setSettings(cs);
         _fund(10 ether);
         _warp(30 hours);
         uint256 id = _credits(alice, 1)[0];
@@ -1461,6 +1466,7 @@ contract CoreUnitTest is CoreBase {
         if (mode % 2 == 1) {
             Settings memory s = core.settings();
             s.climbPerMinBps = 1_000;
+            s.recoveryClimbPerMinBps = 1_000;
             s.ceilBps = 30_000;
             _setSettings(s);
         }
@@ -1470,7 +1476,10 @@ contract CoreUnitTest is CoreBase {
             uint256 r0 = core.ethRate();
             _warp(bound(waits[i], 0, 120 hours));
             uint256 r1 = core.ethRate();
-            assertGe(r1, r0, "the read does not fall with time");
+            // the read is at most the price state and at most the clamp of the pot. it can fall with time as the
+            // remembered peak decays and pulls the ceiling anchor down toward the last fill rate (decision 74), so no
+            // lower bound on the read across a warp holds
+            assertLe(r1, core.ethPrice(), "the read is at most the price state");
             assertLe(r1, r0.max(BidModel.clamp(st, core.ethPot())), "never above the clamp");
 
             uint256 amount = bound(amounts[i], 0, 0.05 ether);

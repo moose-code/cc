@@ -469,6 +469,14 @@ abstract contract Fixture is Test, ProdDeployer {
         minuteBucket = uint64(uint256(vm.load(address(core), bytes32(uint256(slot) + 2))));
     }
 
+    /// @notice the remembered peak state of the Core, read from its storage: `peakRate` and `peakTime` (peakTime is the
+    /// high 64 bits of the word that holds the minute bucket)
+    function _peak() internal view returns (uint256 peakRate, uint256 peakTime) {
+        bytes32 slot = RateStore.SLOT;
+        peakTime = uint64(uint256(vm.load(address(core), bytes32(uint256(slot) + 2))) >> 64);
+        peakRate = uint256(vm.load(address(core), bytes32(uint256(slot) + 3)));
+    }
+
     /// @notice the eth spent in the swap and the eth paid to the caller, from the `Buyback` event of `logs`
     function _buybackEvent(Vm.Log[] memory logs) internal view returns (uint256 spent, uint256 paid) {
         bytes32 sig = ICore.Buyback.selector;

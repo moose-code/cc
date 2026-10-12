@@ -198,6 +198,8 @@ contract RateModelFuzz is ReviewEconBase {
     uint256 internal mTime;
     uint256 internal mLast;
     uint256 internal mAnchor;
+    uint256 internal mPeakRate;
+    uint256 internal mPeakTime;
     uint256 internal mMinuteStart;
     uint256 internal mBucket;
     bool internal mFunded;
@@ -208,11 +210,25 @@ contract RateModelFuzz is ReviewEconBase {
         mTime = core.checkpointTime();
         mLast = core.lastFillTime();
         mAnchor = core.RATE_START();
+        mPeakRate = core.RATE_START();
+        mPeakTime = mLast;
     }
 
-    /// the model price state at `to`, from its checkpoint, under the settings now
+    /// the model price state at `to`, from its checkpoint and peak, under the settings now
     function _priceAt(uint256 to) internal view returns (uint256) {
-        return BidModel.price(core.settings(), mRate, core.ethPot(), mAnchor, to - mLast, to - mTime);
+        return BidModel.priceNow(
+            core.settings(),
+            BidModel.Bid({
+                r: mRate,
+                pot: core.ethPot(),
+                lastFillRate: mAnchor,
+                peakRate: mPeakRate,
+                peakTime: mPeakTime,
+                lastFillTime: mLast,
+                checkpointTime: mTime,
+                nowTs: to
+            })
+        );
     }
 
     /// the model read at `to`: the price state lowered to the clamp while funded
@@ -241,6 +257,9 @@ contract RateModelFuzz is ReviewEconBase {
                 mMinuteStart = mRate;
             }
             mAnchor = mRate;
+            uint256 pk = BidModel.peakNow(core.settings(), mPeakRate, mPeakTime, block.timestamp);
+            mPeakRate = mRate > pk ? mRate : pk;
+            mPeakTime = block.timestamp;
             mRate = BidModel.dropOnce(core.settings(), mRate, mMinuteStart);
             mLast = block.timestamp;
             _syncFunded();
@@ -258,6 +277,9 @@ contract RateModelFuzz is ReviewEconBase {
         s.dropPerCreditBps = uint16(1 + (seed >> 96) % 1_000);
         s.dropFloorBps = uint16(5_000 + (seed >> 108) % 5_001);
         s.rateCap = uint64(1e15 + (seed >> 120) % (1e17 - 1e15 + 1));
+        // recoveryClimbPerMinBps is at least climbPerMinBps and at most 1_000
+        s.recoveryClimbPerMinBps = uint16(uint256(s.climbPerMinBps) + (seed >> 40) % (1_001 - uint256(s.climbPerMinBps)));
+        s.peakHalfLife = uint32(600 + (seed >> 60) % (604_800 - 600 + 1));
         // forge-lint: disable-end(unsafe-typecast)
         _setSettings(s);
         _syncFunded();

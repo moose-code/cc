@@ -818,7 +818,7 @@ contract ReviewSaleTest is Fixture {
     // ------------------------------------------------------------------ settings, config, scripts
 
     function _withAll(bool high) internal view returns (Settings memory s) {
-        uint256[24] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
+        uint256[26] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
         for (uint256 i; i < SettingsFields.N; ++i) {
             SettingsFields.set(s, i, v[i]);
         }
@@ -838,9 +838,9 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_settings_everyFieldBoundMatchesTheScriptTable() public {
-        bytes32[24] memory names = SettingsFields.names();
-        uint256[24] memory lo = SettingsFields.lo();
-        uint256[24] memory hi = SettingsFields.hi();
+        bytes32[26] memory names = SettingsFields.names();
+        uint256[26] memory lo = SettingsFields.lo();
+        uint256[26] memory hi = SettingsFields.hi();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = core.settings();
             SettingsFields.set(s, i, hi[i] + 1);
@@ -886,7 +886,7 @@ contract ReviewSaleTest is Fixture {
     function test_OK_config_jsonCarriesEveryFieldAndTheSaleBlock() public view {
         string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
         string[] memory keys = vm.parseJsonKeys(j, ".settings");
-        bytes32[24] memory names = SettingsFields.names();
+        bytes32[26] memory names = SettingsFields.names();
         assertEq(keys.length, SettingsFields.N, "the settings block has exactly the fields of the struct");
         for (uint256 i; i < SettingsFields.N; ++i) {
             assertTrue(_has(keys, _nm(names[i])), _nm(names[i]));

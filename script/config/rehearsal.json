@@ -27,6 +27,8 @@
     "exitAfter": 378000,
     "saleToBuybackBps": 5000,
     "exitToBuybackBps": 5000,
+    "peakHalfLife": 21600,
+    "recoveryClimbPerMinBps": 200,
     "buybackSlice": 500000000000000000,
     "buybackDelay": 25,
     "keeperFee": 500000000000000,

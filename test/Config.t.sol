@@ -609,6 +609,26 @@ contract ConfigTest is Fixture {
         _pre(c, d2);
         assertEq(_failedNames(), "", "short markers inside a value pass");
 
+        // the same rule, checked directly through the shared helper (the full preflight above exercises it end to end).
+        // a value that trims to nothing by a tab, a newline or NBSP counts as empty
+        string memory okDesc = "Credits engine coin.";
+        string memory okImage = "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        string[3] memory whitespace = ["\n", "\t", unicode" "];
+        for (uint256 i; i < whitespace.length; ++i) {
+            assertFalse(metadataRowPasses(whitespace[i], okDesc), "a whitespace only image fails");
+            assertFalse(metadataRowPasses(okImage, whitespace[i]), "a whitespace only description fails");
+        }
+        // the image must carry a scheme with content past it: a bare scheme or a value without one fails
+        string[4] memory badScheme =
+            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", "ipfs://", "https://", "ar://"];
+        for (uint256 i; i < badScheme.length; ++i) {
+            assertFalse(metadataRowPasses(badScheme[i], okDesc), string.concat("an image without a scheme and content fails: ", badScheme[i]));
+        }
+        // an ipfs, https or ar image with content, and a plain description, pass; a scheme on the description is not required
+        assertTrue(metadataRowPasses(okImage, okDesc), "an ipfs image passes");
+        assertTrue(metadataRowPasses("https://example.com/cc.png", okDesc), "an https image passes");
+        assertTrue(metadataRowPasses("ar://abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHI", okDesc), "an ar image passes");
+
         // another chain id: the row warns and never fails (the chain id row fails there)
         vm.chainId(11155111);
         c = lc;
@@ -637,11 +657,12 @@ contract ConfigTest is Fixture {
         vm.chainId(1);
 
         c = lc;
-        c.image = _bytesOf(MAX_IMAGE_BYTES);
+        // the image fills the cap with a scheme and content past it, the description fills its cap with plain text
+        c.image = string.concat("ipfs://", _bytesOf(MAX_IMAGE_BYTES - 7));
         c.description = _bytesOf(MAX_DESCRIPTION_BYTES);
         _pre(c, d2);
         assertEq(_failedNames(), "", "both at the cap pass");
-        c.image = _bytesOf(MAX_IMAGE_BYTES + 1);
+        c.image = string.concat("ipfs://", _bytesOf(MAX_IMAGE_BYTES + 1 - 7));
         _pre(c, d2);
         assertEq(_failedNames(), both, "an image above the cap fails");
         c.image = lc.image;
@@ -733,29 +754,30 @@ contract ConfigTest is Fixture {
 
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[24] memory lo = SettingsFields.lo();
-        uint256[24] memory hi = SettingsFields.hi();
-        bytes32[24] memory names = SettingsFields.names();
+        uint256[26] memory lo = SettingsFields.lo();
+        uint256[26] memory hi = SettingsFields.hi();
+        bytes32[26] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
-            // above the top, and the top itself (the two bound by another field start from a free partner)
-            if (i == 14) s.xRateCap = 10_000;
+            // above the top, and the top itself (the fields bound by another field start from a free partner)
+            if (i == 16) s.xRateCap = 10_000;
+            if (i == 2) s.recoveryClimbPerMinBps = 1_000;
             SettingsFields.set(s, i, hi[i]);
             assertEq(SettingsBounds.firstViolation(s), bytes32(0), "the top edge is inside");
             s = Mainnet.defaultSettings();
             SettingsFields.set(s, i, hi[i] + 1);
             assertEq(SettingsBounds.firstViolation(s), names[i], "above the top");
             // below the bottom, for the fields that have one
-            if (lo[i] == 0 && i != 14) continue;
+            if (lo[i] == 0 && i != 16) continue;
             s = Mainnet.defaultSettings();
-            if (i == 14) {
-                SettingsFields.set(s, 13, s.xRateFloor - 1);
+            if (i == 16) {
+                SettingsFields.set(s, 15, s.xRateFloor - 1);
             } else {
                 SettingsFields.set(s, i, lo[i] - 1);
             }
             bytes32 got = SettingsBounds.firstViolation(s);
             // the cap below the floor names the floor, as the Core does
-            assertEq(got, i == 14 ? bytes32("xRateFloor") : names[i], "below the bottom");
+            assertEq(got, i == 16 ? bytes32("xRateFloor") : names[i], "below the bottom");
         }
     }
 

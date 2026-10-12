@@ -113,10 +113,11 @@ contract RehearsalTest is Test, ProdDeployer {
         assertEq(_failedNames(), "", "postflight after the lock step");
     }
 
-    /// @dev the metadata row fails on chain id 1 while a value holds the placeholder marker, as the rehearsal file does.
-    /// it is the first row of the preflight table
+    /// @dev the metadata row fails on chain id 1 when the config's image and description do not pass the shared rule
+    /// (blank, a placeholder marker, or an image without a scheme), as the rehearsal file does with its PLACEHOLDER
+    /// values. it is the first row of the preflight table. uses the one rule in `script/Checks.sol`
     function _marked() internal view returns (bool) {
-        return vm.contains(c.image, PLACEHOLDER_MARKER) || vm.contains(c.description, PLACEHOLDER_MARKER);
+        return !metadataRowPasses(c.image, c.description);
     }
 
     function _metadataRow() internal view returns (string memory) {

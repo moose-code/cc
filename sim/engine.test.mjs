@@ -15,7 +15,11 @@ const H = 3600;
 const LEGACY = { stepSec: 3600, bidRule: 'built', rateStart: 6.668e15, climbPerMin: 1, idleLoosenPct: 0, reimburseBps: 11000, rateCap: 53344000000000000 };
 const simL = (o = {}) => simulate(Object.assign({}, LEGACY, o));
 const fresh = (over = {}, pot = 1000) => {
-  const c = new Core(Object.assign({}, DEFAULTS, LEGACY, over), 0);
+  const p = Object.assign({}, DEFAULTS, LEGACY, over);
+  // the ported single rate climb tests set only climbPerMin; match the recovery rate to it unless a test opts into the
+  // dual speed, so a fill below the peak climbs at the same rate the assertions were written for
+  if (over.recoveryClimbPerMin === undefined) p.recoveryClimbPerMin = p.climbPerMin;
+  const c = new Core(p, 0);
   c.addFees(pot, 0);
   return c;
 };
@@ -28,7 +32,7 @@ const R0 = 6.668e15;
   const moved = cfg.settings.reserveBps !== undefined; // the config still on the old rules: the new fields are not there yet
   const newFields = ['saleFloorBps', 'feeToBuybackBps'];
   // the stepped bid rule fields of the Core are sim parameters of the bidRule stepped (setting B of docs/archive/BID-STUDY.md), under other names. the built rule fields are sim only
-  const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 5000, climbPerMinBps: 50, ceilBps: 11000, idleLoosenBps: 200 };
+  const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 5000, climbPerMinBps: 50, ceilBps: 11000, idleLoosenBps: 200, peakHalfLife: 21600, recoveryClimbPerMinBps: 200 };
   const BUILT_ONLY = ['climbBaseBps', 'climbDoubleEvery', 'climbMaxBps', 'dropBps'];
   for (const [k, v] of Object.entries(STEPPED)) if (cfg.settings[k] !== undefined) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
   // the sim defaults are the launch bid rule: stepped, field for field with the config (bps to percent)
@@ -38,6 +42,8 @@ const R0 = 6.668e15;
   near(DEFAULTS.climbPerMin, cfg.settings.climbPerMinBps / 100, 1e-12, 'default climbPerMin');
   near(DEFAULTS.ceilPct, cfg.settings.ceilBps / 100, 1e-12, 'default ceilPct');
   near(DEFAULTS.idleLoosenPct, cfg.settings.idleLoosenBps / 100, 1e-12, 'default idleLoosenPct');
+  near(DEFAULTS.recoveryClimbPerMin, cfg.settings.recoveryClimbPerMinBps / 100, 1e-12, 'default recoveryClimbPerMin');
+  near(DEFAULTS.peakHalfLifeHours, cfg.settings.peakHalfLife / 3600, 1e-12, 'default peakHalfLifeHours');
   ok(cfg.settings.clampCredits === undefined && DEFAULTS.clampCredits === undefined, 'the clamp divisor is gone from the config and the model');
   near(DEFAULTS.rateStart, cfg.rateStart, 1e-12, 'default rateStart');
   for (const [k, v] of Object.entries(cfg.settings)) {
@@ -629,6 +635,24 @@ const R0 = 6.668e15;
     const d = mk({ bidRule: 'stepped', climbPerMin: 2, ceilPct: 110 });
     near(d.ethRate(1000 * MIN), R * 1.1, 1e-12, 'opening ceiling is rateStart times ceilPct');
     near(d.ethRate(3 * MIN), R * Math.pow(1.02, 3), 1e-12, 'climb 2 percent a minute');
+  }
+  // stepped recovery: after a fill the price state is below the remembered peak and climbs at recoveryClimbPerMin until it
+  // reaches the peak, then at climbPerMin. the peak decays over peakHalfLifeHours and anchors the ceiling
+  {
+    const R = 1e13, MIN = 60;
+    const c = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 2, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 50 }, 1000);
+    // one fill drops the bid to 50 percent of R, the peak stays at R
+    ok(c.spend(0.001, 0));
+    near(c.rateAtCheckpoint, R * 0.5, 1e-12, 'the fill halves the bid');
+    near(c.peakRate, R, 1e-12, 'the peak stays at the pre fill price');
+    // one minute later the bid climbs at the fast recovery rate (2 percent), not the slow rate
+    near(c.ethRate(MIN), R * 0.5 * 1.02, 1e-9, 'below the peak the bid climbs at recoveryClimbPerMin');
+    // the fast climb reaches the peak, then the slow rate takes over: faster than a pure slow climb would be
+    const slowOnly = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 0.5, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 50 }, 1000);
+    ok(slowOnly.spend(0.001, 0));
+    ok(c.ethRate(30 * MIN) > slowOnly.ethRate(30 * MIN), 'recovery reaches the pre fill price sooner than the slow climb');
+    // the ceiling anchors on the peak, so right after the fill the bid may climb back toward the pre fill level
+    ok(c.stepCeil(MIN) > R, 'the ceiling anchors on the remembered peak, above the dropped rate');
   }
   // the built rule is unchanged by the new params
   {

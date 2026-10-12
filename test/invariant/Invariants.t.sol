@@ -7,6 +7,7 @@ import {Lane, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {ICoreLens} from "../../src/interfaces/ICoreLens.sol";
 import {RateStore} from "../../src/lib/RateStore.sol";
+import {Halving} from "../../src/lib/Halving.sol";
 import {IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {InvariantFixture} from "./InvariantFixture.sol";
 import {HandlerBase} from "./HandlerBase.sol";
@@ -468,8 +469,8 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// 19. the price state and the read stay inside the bounds the settings and the state give, with no model of the
     /// climb. the read never exceeds the price state. the price state never exceeds `rateCap` and the ceiling, which is
-    /// `ceilBps` of the last fill rate grown by `idleLoosenBps` per full 10 minutes since the last fill. the read is
-    /// the price state lowered to the pot.
+    /// `ceilBps` of `max(last fill rate, peak now)` grown by `idleLoosenBps` per full 10 minutes since the last fill,
+    /// where the peak is `peakRate` halved over the time since `peakTime`. the read is the price state lowered to the pot.
     function invariant_19_bidBounds() public view {
         Settings memory st = core.settings();
         uint256 rate = core.ethRate();
@@ -478,7 +479,11 @@ abstract contract InvariantsBase is InvariantFixture {
         uint256 lastFill = core.lastFillTime();
         uint256 idle = block.timestamp > lastFill ? block.timestamp - lastFill : 0;
         uint256 lastFillRate = uint256(vm.load(address(core), RateStore.SLOT));
-        uint256 ceiling = lastFillRate * (10_000 + uint256(st.idleLoosenBps) * (idle / 600)) * st.ceilBps / 1e8;
+        uint256 peakTime = uint64(uint256(vm.load(address(core), bytes32(uint256(RateStore.SLOT) + 2))) >> 64);
+        uint256 peakRate = uint256(vm.load(address(core), bytes32(uint256(RateStore.SLOT) + 3)));
+        uint256 peakNow = Halving.halve(peakRate, block.timestamp > peakTime ? block.timestamp - peakTime : 0, st.peakHalfLife);
+        uint256 anchor = lastFillRate > peakNow ? lastFillRate : peakNow;
+        uint256 ceiling = anchor * (10_000 + uint256(st.idleLoosenBps) * (idle / 600)) * st.ceilBps / 1e8;
         uint256 cap = ceiling < st.rateCap ? ceiling : st.rateCap;
         assertLe(price, cap, "the price state is above the rate cap and the ceiling");
         uint256 pot = core.ethPot();

@@ -26,6 +26,10 @@ contract BidRuleTest is Fixture {
     function _with(function(Settings memory) pure f) internal {
         Settings memory s = core.settings();
         f(s);
+        // these hand arithmetic tests predate the recovery climb (decision 74) and assert a single rate climb; match the
+        // recovery rate to the climb rate so a fill does not switch the climb to the faster recovery rate. the recovery
+        // itself is covered in test/Recovery.t.sol
+        s.recoveryClimbPerMinBps = s.climbPerMinBps;
         _setSettings(s);
     }
 
@@ -128,6 +132,11 @@ contract BidRuleTest is Fixture {
 
     /// after a fill the rate climbs 0.5 percent a minute compounded, 10 minutes is 1.005^10
     function test_climbAfterTenMinutesMatchesTheFormula() public {
+        // match the recovery rate to the climb rate so the post fill climb is the single rate this formula asserts; the
+        // faster recovery below the peak is covered in test/Recovery.t.sol
+        Settings memory cs = core.settings();
+        cs.recoveryClimbPerMinBps = cs.climbPerMinBps;
+        _setSettings(cs);
         _potTo(20 ether);
         _sellOne();
         uint256 r1 = core.rateAtCheckpoint();
@@ -326,15 +335,19 @@ contract BidRuleTest is Fixture {
         s.dropPerCreditBps = 1;
         s.dropFloorBps = 5_000;
         s.climbPerMinBps = 1;
+        s.recoveryClimbPerMinBps = 1;
         s.ceilBps = 10_000;
         s.idleLoosenBps = 1;
+        s.peakHalfLife = 600;
         _setSettings(s);
         assertEq(abi.encode(core.settings()), abi.encode(s));
         s.dropPerCreditBps = 1_000;
         s.dropFloorBps = 10_000;
         s.climbPerMinBps = 1_000;
+        s.recoveryClimbPerMinBps = 1_000;
         s.ceilBps = 30_000;
         s.idleLoosenBps = 2_000;
+        s.peakHalfLife = 604_800;
         _setSettings(s);
         assertEq(abi.encode(core.settings()), abi.encode(s));
     }

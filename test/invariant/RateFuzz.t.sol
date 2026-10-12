@@ -77,6 +77,8 @@ contract RateFuzzTest is Fixture {
             s.climbPerMinBps = uint16(bound(_r(seed, 4), 1, 1_000));
             s.ceilBps = uint16(bound(_r(seed, 5), 10_000, 30_000));
             s.idleLoosenBps = uint16(bound(_r(seed, 6), 1, 2_000));
+            s.recoveryClimbPerMinBps = uint16(bound(_r(seed, 12), s.climbPerMinBps, 1_000));
+            s.peakHalfLife = uint32(bound(_r(seed, 13), 600, 604_800));
         }
         // forge-lint: disable-end(unsafe-typecast)
     }
@@ -207,11 +209,25 @@ contract RateFuzzTest is Fixture {
         }
     }
 
-    /// the anchor restarted: ten minutes later the climb is the base, unless the price state sits at its limit
+    /// ten minutes after the fill the price state climbs from the dropped rate toward the remembered peak at the
+    /// recovery rate, then slow above it. the expected value is the model read from the Core's own checkpoint and peak
     function _climbAfterFill(Settings memory s, uint256 rn, uint256 anchor) internal {
         _warp(10 minutes);
         uint256 pot = core.ethPot();
-        uint256 p = _priceAfter(s, rn, pot, anchor, 10 minutes, 10);
+        (uint256 peakRate, uint256 peakTime) = _peak();
+        uint256 p = BidModel.priceNow(
+            s,
+            BidModel.Bid({
+                r: rn,
+                pot: pot,
+                lastFillRate: anchor,
+                peakRate: peakRate,
+                peakTime: peakTime,
+                lastFillTime: core.lastFillTime(),
+                checkpointTime: core.checkpointTime(),
+                nowTs: block.timestamp
+            })
+        );
         assertApproxEqRel(core.ethRate(), _readOf(s, pot, p), 1e-7 ether);
     }
 

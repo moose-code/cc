@@ -3,15 +3,15 @@ pragma solidity ^0.8.28;
 
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
 
-/// @notice the 24 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
-/// docs/FLOW.md section 2, for the settings script and the config and deploy tests. the two fields bounded by another
-/// field (xRateCap, xRateFloor) have the bounds of the other field in the callers' hands
+/// @notice the 26 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
+/// docs/FLOW.md section 2, for the settings script and the config and deploy tests. the fields bounded by another
+/// field (xRateCap, xRateFloor, recoveryClimbPerMinBps) have the bounds of the other field in the callers' hands
 library SettingsFields {
-    uint256 internal constant N = 24;
+    uint256 internal constant N = 26;
 
     /// @dev field i of the settings struct, in declaration order
     function get(Settings memory s, uint256 i) internal pure returns (uint256) {
-        uint256[24] memory f = [
+        uint256[26] memory f = [
             uint256(s.dropPerCreditBps),
             s.dropFloorBps,
             s.climbPerMinBps,
@@ -21,6 +21,8 @@ library SettingsFields {
             s.exitAfter,
             s.saleToBuybackBps,
             s.exitToBuybackBps,
+            s.peakHalfLife,
+            s.recoveryClimbPerMinBps,
             s.buybackSlice,
             s.buybackDelay,
             s.keeperFee,
@@ -52,27 +54,29 @@ library SettingsFields {
         else if (i == 6) s.exitAfter = uint32(v);
         else if (i == 7) s.saleToBuybackBps = uint16(v);
         else if (i == 8) s.exitToBuybackBps = uint16(v);
-        else if (i == 9) s.buybackSlice = uint128(v);
-        else if (i == 10) s.buybackDelay = uint16(v);
-        else if (i == 11) s.keeperFee = uint64(v);
-        else if (i == 12) s.keeperMaxBaseFee = uint48(v);
-        else if (i == 13) s.xRateCap = uint16(v);
-        else if (i == 14) s.xRateFloor = uint16(v);
-        else if (i == 15) s.xRateClimbPerHour = uint16(v);
-        else if (i == 16) s.xRateDropPerCredit = uint16(v);
-        else if (i == 17) s.xAuctionHalfLife = uint32(v);
-        else if (i == 18) s.exitSliceCredits = uint16(v);
-        else if (i == 19) s.rateCap = uint64(v);
-        else if (i == 20) s.exitLaneToBuybackBps = uint16(v);
-        else if (i == 21) s.feeToBuybackBps = uint16(v);
-        else if (i == 22) s.callerFee = uint64(v);
+        else if (i == 9) s.peakHalfLife = uint32(v);
+        else if (i == 10) s.recoveryClimbPerMinBps = uint16(v);
+        else if (i == 11) s.buybackSlice = uint128(v);
+        else if (i == 12) s.buybackDelay = uint16(v);
+        else if (i == 13) s.keeperFee = uint64(v);
+        else if (i == 14) s.keeperMaxBaseFee = uint48(v);
+        else if (i == 15) s.xRateCap = uint16(v);
+        else if (i == 16) s.xRateFloor = uint16(v);
+        else if (i == 17) s.xRateClimbPerHour = uint16(v);
+        else if (i == 18) s.xRateDropPerCredit = uint16(v);
+        else if (i == 19) s.xAuctionHalfLife = uint32(v);
+        else if (i == 20) s.exitSliceCredits = uint16(v);
+        else if (i == 21) s.rateCap = uint64(v);
+        else if (i == 22) s.exitLaneToBuybackBps = uint16(v);
+        else if (i == 23) s.feeToBuybackBps = uint16(v);
+        else if (i == 24) s.callerFee = uint64(v);
         else s.callerMaxBaseFee = uint48(v);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
-    /// @dev the documented lower bound of every field. xRateFloor and xRateCap are bounded by each other, those two are
-    /// handled by the callers
-    function lo() internal pure returns (uint256[24] memory) {
+    /// @dev the documented lower bound of every field. xRateFloor and xRateCap bound each other, and
+    /// recoveryClimbPerMinBps is bounded below by climbPerMinBps, handled by the callers
+    function lo() internal pure returns (uint256[26] memory) {
         return [
             uint256(1),
             5_000,
@@ -83,6 +87,8 @@ library SettingsFields {
             1 hours,
             0,
             0,
+            600,
+            1,
             0.01 ether,
             1,
             0,
@@ -101,7 +107,7 @@ library SettingsFields {
         ];
     }
 
-    function hi() internal pure returns (uint256[24] memory) {
+    function hi() internal pure returns (uint256[26] memory) {
         return [
             uint256(1_000),
             10_000,
@@ -112,6 +118,8 @@ library SettingsFields {
             365 days,
             10_000,
             10_000,
+            604_800,
+            1_000,
             1 ether,
             7_200,
             0.005 ether,
@@ -130,7 +138,7 @@ library SettingsFields {
         ];
     }
 
-    function names() internal pure returns (bytes32[24] memory) {
+    function names() internal pure returns (bytes32[26] memory) {
         return [
             bytes32("dropPerCreditBps"),
             "dropFloorBps",
@@ -141,6 +149,8 @@ library SettingsFields {
             "exitAfter",
             "saleToBuybackBps",
             "exitToBuybackBps",
+            "peakHalfLife",
+            "recoveryClimbPerMinBps",
             "buybackSlice",
             "buybackDelay",
             "keeperFee",

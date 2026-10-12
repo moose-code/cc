@@ -656,6 +656,8 @@ abstract contract HandlerBase is Test {
         uint256 lastFill;
         uint256 stored;
         uint256 cp;
+        uint256 peakRate;
+        uint256 peakTime;
     }
 
     function _rs() internal view returns (RS memory s) {
@@ -665,6 +667,7 @@ abstract contract HandlerBase is Test {
         s.stored = core.rateAtCheckpoint();
         s.cp = core.checkpointTime();
         (s.anchor,,) = _anchorState();
+        (s.peakRate, s.peakTime) = _peakState();
         s.lastFill = core.lastFillTime();
     }
 
@@ -677,6 +680,30 @@ abstract contract HandlerBase is Test {
         bucket = uint64(uint256(vm.load(address(core), bytes32(uint256(slot) + 2))));
     }
 
+    /// the remembered peak state: `peakRate` and `peakTime`, in the third and fourth words of `RateStore` (peakTime is
+    /// the high 64 bits of the word that holds the minute bucket)
+    function _peakState() internal view returns (uint256 peakRate, uint256 peakTime) {
+        bytes32 slot = RateStore.SLOT;
+        peakTime = uint64(uint256(vm.load(address(core), bytes32(uint256(slot) + 2))) >> 64);
+        peakRate = uint256(vm.load(address(core), bytes32(uint256(slot) + 3)));
+    }
+
+    /// the price state right now, from the core's checkpoint and peak state
+    function _priceBid(Settings memory st) internal view returns (BidModel.Bid memory) {
+        (uint256 peakRate, uint256 peakTime) = _peakState();
+        (uint256 anchor,,) = _anchorState();
+        return BidModel.Bid({
+            r: core.rateAtCheckpoint(),
+            pot: core.ethPot(),
+            lastFillRate: anchor,
+            peakRate: peakRate,
+            peakTime: peakTime,
+            lastFillTime: core.lastFillTime(),
+            checkpointTime: core.checkpointTime(),
+            nowTs: block.timestamp
+        });
+    }
+
     /// the rate a fill in the next transaction starts its minute from: the stored start inside the current minute
     /// bucket, `rate` (the price state at the fill) when the bucket is new
     function _minuteStartNow(uint256 rate) internal view returns (uint256) {
@@ -684,18 +711,10 @@ abstract contract HandlerBase is Test {
         return bucket == block.timestamp / 60 ? start : rate;
     }
 
-    /// the price state of the eth rate right now, from the stored rate and the anchor: bounded by the ceiling and `rateCap`,
-    /// climbing up to the clamp
+    /// the price state of the eth rate right now, from the stored rate, the anchor and the peak: bounded by the ceiling
+    /// and `rateCap`, climbing up to the clamp
     function _priceNow(Settings memory st) internal view returns (uint256) {
-        (uint256 anchor,,) = _anchorState();
-        return BidModel.price(
-            st,
-            core.rateAtCheckpoint(),
-            core.ethPot(),
-            anchor,
-            block.timestamp - core.lastFillTime(),
-            block.timestamp - core.checkpointTime()
-        );
+        return BidModel.priceNow(st, _priceBid(st));
     }
 
     /// invariant 6 and its companions, against the settings in force over the interval (they cannot change inside
@@ -706,8 +725,19 @@ abstract contract HandlerBase is Test {
     /// settings at the end.
     function _rsCheck(RS memory s, uint256 dt) internal {
         uint256 rate1 = core.ethRate();
-        uint256 p =
-            BidModel.price(s.st, s.stored, s.pot, s.anchor, block.timestamp - s.lastFill, block.timestamp - s.cp);
+        uint256 p = BidModel.priceNow(
+            s.st,
+            BidModel.Bid({
+                r: s.stored,
+                pot: s.pot,
+                lastFillRate: s.anchor,
+                peakRate: s.peakRate,
+                peakTime: s.peakTime,
+                lastFillTime: s.lastFill,
+                checkpointTime: s.cp,
+                nowTs: block.timestamp
+            })
+        );
         if (dt != 0) {
             if (rate1 != BidModel.read(s.st, s.pot, p)) {
                 _flag(V_RATE_BOUND, "the rate after a warp differs from the model");

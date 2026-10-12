@@ -165,7 +165,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant READ_GAS = 200_000;
     /// gas of the work after the end of `compose` and `composeExit` that the caller payment counts, with the
     /// transaction base cost
-    uint256 private constant COMPOSE_OVERHEAD_GAS = 60_000;
+    uint256 private constant COMPOSE_OVERHEAD_GAS = 50_000;
     /// the most gas of a compose the caller payment counts. above the largest metered compose, 11.1 million with a loaded
     /// fee router of four gas burning payees, so a gas burning controller or router cannot inflate the payment
     uint256 private constant COMPOSE_GAS = 13_700_000;
@@ -178,8 +178,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// gas of the work after the count in `buyListing` (the spend, the pile record, the event and the payment, about
     /// 200,000), the transaction base cost and typical calldata
     uint256 private constant BUYLISTING_OVERHEAD_GAS = 250_000;
-    /// gas the controller's `nextPage` may use, in both lanes. a full page of ControllerV1 costs 238,062 gas on a cold
-    /// read (test/GasCap.t.sol `test_gas_readCaps_nextPage`)
+    /// gas the controller's `nextPage` may use, in both lanes. a full page of ControllerV1 costs under 250,000 gas on a
+    /// cold read
     uint256 private constant PAGE_GAS = 500_000;
     address private constant DEAD = Mainnet.DEAD;
     bytes32 private constant MEASURING_SLOT = keccak256("core.measuring");
@@ -301,7 +301,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         rateAtCheckpoint = rateStart_;
         checkpointTime = uint64(block.timestamp);
         lastFillTime = uint64(block.timestamp);
-        RateStore.load().lastFillRate = rateStart_;
+        RateStore.Anchor storage a = RateStore.load();
+        a.lastFillRate = rateStart_;
+        a.peakRate = rateStart_;
+        a.peakTime = uint64(block.timestamp);
         xRateAtCheckpoint = uint256(XRATE_START).min(settings_.xRateCap).max(settings_.xRateFloor);
         CREDITS.setApprovalForAll(address(STATEMENTS), true);
         emit OwnershipTransferred(address(0), owner_);
@@ -644,12 +647,16 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// pays the caller of `compose`, `composeExit` and `exitStatement` from `ethPot`, at most the pot, by the
-    /// `callerFee` and `callerMaxBaseFee` settings. the last action of the door, after all state is final
+    /// `callerFee` and `callerMaxBaseFee` settings. the last action of the door, after all state is final. the
+    /// checkpoint runs before the payment is metered, so the caller is repaid for it and the overhead constant does not
+    /// track the climb's gas. both settings zero (the launch value) is the only case that pays nothing, and it skips the
+    /// checkpoint and the metering
     function _payCaller(uint256 gasStart, uint256 overhead, uint256 gasCap) private {
         Settings storage s = _st();
+        if (s.callerMaxBaseFee == 0 && s.callerFee == 0) return;
+        _checkpoint();
         uint256 pay = _payment(gasStart, overhead, gasCap, s.callerMaxBaseFee, s.callerFee).min(ethPot);
         if (pay == 0) return;
-        _checkpoint();
         ethPot -= pay;
         SafeTransferLib.safeTransferETH(msg.sender, pay);
     }
@@ -983,11 +990,15 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (module) _syncXFunded();
     }
 
-    /// restates the eth rate (wei per credit) as `rate`, within the rate bounds. the stored rate and the ceiling
-    /// anchor are both `rate`, the fill clock is unchanged. the clamp and the ceiling still bound the rate on read
+    /// restates the eth rate (wei per credit) as `rate`, within the rate bounds. the stored rate, the last fill rate and
+    /// the remembered peak are all `rate`, the fill clock is unchanged. the clamp and the ceiling still bound the rate
+    /// on read
     function setRate(uint256 rate) external onlyOwner nonReentrant {
         if (!SettingsBounds.rateInBounds(rate) || rate > _st().rateCap) revert BadRate();
-        RateStore.load().lastFillRate = rate;
+        RateStore.Anchor storage a = RateStore.load();
+        a.lastFillRate = rate;
+        a.peakRate = rate;
+        a.peakTime = uint64(block.timestamp);
         rateAtCheckpoint = rate;
         checkpointTime = uint64(block.timestamp);
         emit RateSet(rate);

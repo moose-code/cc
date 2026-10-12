@@ -142,6 +142,8 @@ library CoreLib {
         s.exitAfter = ns.exitAfter;
         s.saleToBuybackBps = ns.saleToBuybackBps;
         s.exitToBuybackBps = ns.exitToBuybackBps;
+        s.peakHalfLife = ns.peakHalfLife;
+        s.recoveryClimbPerMinBps = ns.recoveryClimbPerMinBps;
         s.buybackSlice = ns.buybackSlice;
         s.buybackDelay = ns.buybackDelay;
         s.keeperFee = ns.keeperFee;
@@ -174,6 +176,8 @@ library CoreLib {
         s.exitAfter = uint32(a >> 96);
         s.saleToBuybackBps = uint16(a >> 128);
         s.exitToBuybackBps = uint16(a >> 144);
+        s.peakHalfLife = uint32(a >> 160);
+        s.recoveryClimbPerMinBps = uint16(a >> 192);
         s.buybackSlice = uint128(b);
         s.buybackDelay = uint16(b >> 128);
         s.keeperFee = uint64(b >> 144);
@@ -193,10 +197,12 @@ library CoreLib {
     }
 
     /// @notice the price state and the read of the eth rate (wei per credit) at `nowTs`, from the stored rate `r` of
-    /// checkpoint time `t`. The price state compounds `climbPerMinBps` per minute up to min(`rateCap`, ceiling, pot)
-    /// and holds a value above that bound. The ceiling is `ceilBps` of the last fill rate grown by `idleLoosenBps` per
-    /// full 10 minutes since `anchorTime`. The clamp is `pot`, the price of one credit that the pot affords. The read is
-    /// min(price state, pot). Never reverts: the Core calls it from `receive()`
+    /// checkpoint time `t`. The price state climbs toward min(`rateCap`, ceiling, pot) and holds a value above that
+    /// bound. Below the remembered peak it compounds `recoveryClimbPerMinBps` per minute, at or above it
+    /// `climbPerMinBps`. The ceiling is `ceilBps` of `max(last fill rate, peak now)` grown by `idleLoosenBps` per full
+    /// 10 minutes since `anchorTime`, where `peak now` is `peakRate` halved over the time since `peakTime`. The clamp is
+    /// `pot`, the price of one credit the pot affords. The read is min(price state, pot). Never reverts: the Core calls
+    /// it from `receive()`
     function climb(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
         external
         view
@@ -211,30 +217,62 @@ library CoreLib {
         returns (uint256 price, uint256 read)
     {
         Settings storage s = SettingsStore.load();
+        RateStore.Anchor storage a = RateStore.load();
+        uint256 peakNow = Halving.halve(a.peakRate, nowTs.zeroFloorSub(a.peakTime), s.peakHalfLife);
+        uint256 anchor = a.lastFillRate.max(peakNow);
         uint256 loosened = 10_000 + uint256(s.idleLoosenBps) * (nowTs.zeroFloorSub(anchorTime) / 10 minutes);
-        uint256 cap = RateStore.load().lastFillRate * loosened * s.ceilBps / 1e8;
-        cap = cap.min(s.rateCap);
+        uint256 cap = (anchor * loosened * s.ceilBps / 1e8).min(s.rateCap);
         price = r;
         if (r >= cap) {
             price = cap;
-        } else if (nowTs > t && r != 0 && r < cap.min(pot)) {
+        } else if (nowTs > t && r != 0) {
             uint256 target = cap.min(pot);
-            // forge-lint: disable-start(unsafe-typecast)
-            int256 x = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.climbPerMinBps) * 1e14))
-                * int256((nowTs - t) * 1e18 / 1 minutes) / 1e18;
-            // growing past the target: the target decides, and the exponential cannot overflow
-            price = x >= FixedPointMathLib.lnWad(int256(target * 1e18 / r))
-                ? target
-                : r.mulWad(uint256(FixedPointMathLib.expWad(x))).min(target);
-            // forge-lint: disable-end(unsafe-typecast)
+            if (r < target) price = _recover(r, target, t, nowTs, a, s);
         }
         read = price.min(pot);
+    }
+
+    /// @notice the price state climbed from `r` at time `t` to `nowTs`, clamped to `target`. Below the decaying peak the
+    /// climb is `recoveryClimbPerMinBps` a minute, at or above it `climbPerMinBps`. The crossing is the time the fast
+    /// climb meets the decaying peak, solved in log space where both are linear in time, so it does not move with the
+    /// evaluation time: the trajectory is continuous at the crossing and monotone in `nowTs`. The ceiling clamp can fall
+    /// as the peak decays, which lowers the clamped result; the unclamped climb never does
+    function _recover(uint256 r, uint256 target, uint256 t, uint256 nowTs, RateStore.Anchor storage a, Settings storage s)
+        private
+        view
+        returns (uint256)
+    {
+        // forge-lint: disable-start(unsafe-typecast)
+        int256 lnFast = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.recoveryClimbPerMinBps) * 1e14));
+        int256 lnSlow = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.climbPerMinBps) * 1e14));
+        uint256 peakT = Halving.halve(a.peakRate, t.zeroFloorSub(a.peakTime), s.peakHalfLife);
+        uint256 fullWadSec = (nowTs - t) * 1e18;
+        if (peakT <= r) return _climbTo(r, lnSlow, fullWadSec, target);
+        // crossing elapsed (wad seconds): ln(peakT / r) / (lnFast per second + ln2 per second)
+        uint256 denom = uint256(lnFast) / 1 minutes + uint256(FixedPointMathLib.lnWad(2e18)) / s.peakHalfLife;
+        uint256 crossWadSec = uint256(FixedPointMathLib.lnWad(int256(peakT * 1e18 / r))) * 1e18 / denom;
+        if (fullWadSec <= crossWadSec) return _climbTo(r, lnFast, fullWadSec, target);
+        uint256 priceCross = _climbTo(r, lnFast, crossWadSec, target);
+        if (priceCross >= target) return target;
+        return _climbTo(priceCross, lnSlow, fullWadSec - crossWadSec, target);
+        // forge-lint: disable-end(unsafe-typecast)
+    }
+
+    /// @notice `base` compounded at `lnRate` (the wad log of one minute's growth) over `wadSec` wad seconds, at most
+    /// `target`. `base` is below `target`, so the log of the ratio is positive and the exponential cannot overflow
+    function _climbTo(uint256 base, int256 lnRate, uint256 wadSec, uint256 target) private pure returns (uint256) {
+        // forge-lint: disable-start(unsafe-typecast)
+        int256 x = lnRate * int256(wadSec / 1 minutes) / 1e18;
+        if (x >= FixedPointMathLib.lnWad(int256(target * 1e18 / base))) return target;
+        return base.mulWad(uint256(FixedPointMathLib.expWad(x))).min(target);
+        // forge-lint: disable-end(unsafe-typecast)
     }
 
     /// @notice the rate after one credit is bought with the price state `price` at the fill, and the anchor update of
     /// that fill. The rate falls `dropPerCreditBps` below `price` and stays at or above `dropFloorBps` of the price state
     /// at the first fill of the current minute bucket (`nowTs / 60`). A `price` already below that floor (restated by
-    /// `setRate` or lowered by a bound) starts a new floor at `price`. `price` becomes the ceiling anchor
+    /// `setRate` or lowered by a bound) starts a new floor at `price`. `price` becomes the last fill rate, and the
+    /// remembered peak becomes `max(price, peak now)` with `peakTime` set to `nowTs`
     function drop(uint256 price, uint256 nowTs) external returns (uint256) {
         Settings storage s = SettingsStore.load();
         RateStore.Anchor storage a = RateStore.load();
@@ -245,6 +283,10 @@ library CoreLib {
             a.minuteStartRate = price;
         }
         a.lastFillRate = price;
+        uint256 peakNow = Halving.halve(a.peakRate, nowTs.zeroFloorSub(a.peakTime), s.peakHalfLife);
+        a.peakRate = price.max(peakNow);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        a.peakTime = uint64(nowTs);
         return (price * (10_000 - s.dropPerCreditBps) / 10_000).max(a.minuteStartRate * s.dropFloorBps / 10_000);
     }
 

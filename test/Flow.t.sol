@@ -17,7 +17,7 @@ import {SettingsFields} from "../script/SettingsFields.sol";
 contract FlowTest is Fixture {
     using FixedPointMathLib for uint256;
 
-    uint256 internal constant N = 24;
+    uint256 internal constant N = 26;
 
     // ------------------------------------------------------------------ helpers
 
@@ -38,7 +38,7 @@ contract FlowTest is Fixture {
         return keccak256(abi.encode(s));
     }
 
-    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 24 fields in declaration order
+    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 26 fields in declaration order
     function _get(Settings memory s, uint256 i) internal pure returns (uint256) {
         return SettingsFields.get(s, i);
     }
@@ -47,32 +47,34 @@ contract FlowTest is Fixture {
         SettingsFields.set(s, i, v);
     }
 
-    function _lo() internal pure returns (uint256[24] memory) {
+    function _lo() internal pure returns (uint256[26] memory) {
         return SettingsFields.lo();
     }
 
-    function _hi() internal pure returns (uint256[24] memory) {
+    function _hi() internal pure returns (uint256[26] memory) {
         return SettingsFields.hi();
     }
 
-    function _names() internal pure returns (bytes32[24] memory) {
+    function _names() internal pure returns (bytes32[26] memory) {
         return SettingsFields.names();
     }
 
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
-        uint256[24] memory lo = _lo();
-        uint256[24] memory hi = _hi();
+        uint256[26] memory lo = _lo();
+        uint256[26] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
             uint256 b = hi[i];
-            if (i == 14) b = s.xRateCap;
+            // recoveryClimbPerMinBps (field 10) is bounded below by climbPerMinBps (field 2), xRateFloor (field 16) above by xRateCap (field 15)
+            if (i == 10 && s.climbPerMinBps > a) a = s.climbPerMinBps;
+            if (i == 16) b = s.xRateCap;
             _set(s, i, a + (b > a ? x % (b - a + 1) : 0));
         }
-        // the slice is at least twice the largest buyback payment (field 9 is `buybackSlice`)
+        // the slice is at least twice the largest buyback payment (field 11 is `buybackSlice`)
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
-        if (s.buybackSlice < minSlice) _set(s, 9, minSlice);
+        if (s.buybackSlice < minSlice) _set(s, 11, minSlice);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -116,17 +118,21 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundEdgeIsAccepted() public {
-        uint256[24] memory lo = _lo();
-        uint256[24] memory hi = _hi();
+        uint256[26] memory lo = _lo();
+        uint256[26] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             for (uint256 k; k < 2; ++k) {
                 Settings memory s = Mainnet.defaultSettings();
                 uint256 v = k == 0 ? lo[i] : hi[i];
-                // the two fields bounded by another field
-                if (i == 13 && k == 0) s.xRateFloor = 0;
-                if (i == 14 && k == 1) v = s.xRateCap;
+                // the fields bounded by another field
+                if (i == 15 && k == 0) s.xRateFloor = 0;
+                if (i == 16 && k == 1) v = s.xRateCap;
+                // the lowest recoveryClimbPerMinBps the config affords is climbPerMinBps
+                if (i == 10 && k == 0) v = s.climbPerMinBps;
+                // climbPerMinBps at its top needs recoveryClimbPerMinBps raised to stay at or above it
+                if (i == 2 && k == 1) s.recoveryClimbPerMinBps = 1_000;
                 // the smallest slice needs the cheapest buyback payment: 2 * (600,000 gas * 1 gwei + 0) is 0.0012 ether
-                if (i == 9 && k == 0) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
+                if (i == 11 && k == 0) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -135,9 +141,9 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundViolationReverts() public {
-        uint256[24] memory lo = _lo();
-        uint256[24] memory hi = _hi();
-        bytes32[24] memory names = _names();
+        uint256[26] memory lo = _lo();
+        uint256[26] memory hi = _hi();
+        bytes32[26] memory names = _names();
         for (uint256 i; i < N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // above the top
@@ -147,11 +153,11 @@ contract FlowTest is Fixture {
             vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, names[i]));
             core.setSettings(s);
             // below the bottom (fields whose bottom is zero have none)
-            if (lo[i] == 0 && i != 14) continue;
+            if (lo[i] == 0 && i != 16) continue;
             s = Mainnet.defaultSettings();
-            if (i == 14) {
+            if (i == 16) {
                 // the floor is bounded by the cap, so a cap below the floor is the violation, and it names the floor
-                _set(s, 13, s.xRateFloor - 1);
+                _set(s, 15, s.xRateFloor - 1);
                 names[i] = "xRateFloor";
             } else {
                 _set(s, i, lo[i] - 1);
@@ -330,6 +336,7 @@ contract FlowTest is Fixture {
         assertEq(core.ethRate(), held, "bounded by the clamp");
         Settings memory s = core.settings();
         s.climbPerMinBps = 1_000;
+        s.recoveryClimbPerMinBps = 1_000;
         _owner(s);
         _warp(100 hours);
         assertEq(core.ethRate(), held, "the clamp is the pot under the new numbers");
@@ -744,6 +751,7 @@ contract FlowTest is Fixture {
     function _longGap(uint256 climbPerMin, uint256 ceilBps, uint256 loosen, uint256 gap) internal {
         Settings memory s = core.settings();
         s.climbPerMinBps = uint16(climbPerMin);
+        s.recoveryClimbPerMinBps = uint16(climbPerMin);
         s.ceilBps = uint16(ceilBps);
         s.idleLoosenBps = uint16(loosen);
         _owner(s);

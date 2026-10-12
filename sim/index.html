@@ -259,6 +259,8 @@ const SIM_DEFAULTS = {
   bidRule: 'stepped',
   dropToPct: 50,
   climbPerMin: 0.5,
+  recoveryClimbPerMin: 2, // stepped: percent per minute while the price state is below the remembered peak (launch recoveryClimbPerMinBps 200); at or above the peak the climb is climbPerMin
+  peakHalfLifeHours: 6, // stepped: the remembered peak (the ceiling anchor, with the last fill rate) halves in this many hours (launch peakHalfLife 21600 seconds)
   dropPerCreditPct: 0.5,
   ceilPct: 110,
   // seller model toggle: one seller with an unlimited supply sells one credit per step whenever the bid has reached throttleFrac of the market price
@@ -394,28 +396,48 @@ class Core {
     this.lastBuybackTime = -1e12;
     this.clampTime = 0;
     this.lastPaidRate = p.rateStart; this.burstTime = -1; this.burstBase = 0; // bidRule stepped
+    this.peakRate = p.rateStart; this.peakTime = t0; // bidRule stepped: the remembered peak
+  }
+  // the remembered peak now: peakRate halved over the time since peakTime (stepped rule)
+  peakAt(now) {
+    return this.peakRate * Math.pow(0.5, (now - this.peakTime) / (this.p.peakHalfLifeHours * 3600));
   }
   // the climb stops where the pot no longer affords one credit at the rate, or at rateCap, whichever is lower
   clamp() {
     return Math.min(this.ethPot * W, this.s.rateCap);
   }
-  // stepped rule: the ceiling in rate terms, ceilPct of the anchor (the last rate paid), the anchor loosened while idle
+  // stepped rule: the ceiling in rate terms, ceilPct of the anchor, the anchor loosened while idle. the anchor is
+  // max(last rate paid, peak now)
   stepCeil(now) {
     const p = this.p;
-    // ceilDecayHours > 0: the headroom above the last rate paid halves every ceilDecayHours since the last fill
+    // ceilDecayHours > 0: the headroom above the anchor halves every ceilDecayHours since the last fill
     const decay = p.ceilDecayHours > 0 ? Math.pow(0.5, (now - this.lastFillTime) / (p.ceilDecayHours * 3600)) : 1;
     // idleLoosenPct: the anchor grows linearly, by that percent of the anchor for every full idleLoosenMin minutes since the last fill (CoreLib.climb)
     const loosen = p.idleLoosenPct > 0 ? 1 + (p.idleLoosenPct / 100) * Math.floor((now - this.lastFillTime) / (p.idleLoosenMin * 60)) : 1;
-    return this.lastPaidRate * loosen * (1 + (p.ceilPct / 100 - 1) * decay);
+    const anchor = Math.max(this.lastPaidRate, this.peakAt(now));
+    return anchor * loosen * (1 + (p.ceilPct / 100 - 1) * decay);
   }
-  // stepped rule, price state: the stored rate climbed per minute toward min(ceiling, rateCap, clamp). A stored rate above the ceiling or rateCap reads as
-  // that bound; a stored rate above the clamp holds its value (the clamp stops the climb and never lowers the price state)
+  // stepped rule, price state: the stored rate climbed per minute toward min(ceiling, rateCap, clamp). Below the
+  // remembered peak the climb is recoveryClimbPerMin, at or above it climbPerMin; the crossing is solved so the trajectory
+  // is continuous and monotone in time (CoreLib._recover). A stored rate above the ceiling or rateCap reads as that bound;
+  // a stored rate above the clamp holds its value
   priceRate(now) {
     const r = this.rateAtCheckpoint, cap = Math.min(this.s.rateCap, this.stepCeil(now));
     if (r >= cap) return cap;
     const target = Math.min(cap, this.clamp());
-    if (r >= target) return r;
-    return Math.min(r * Math.pow(1 + this.p.climbPerMin / 100, (now - this.checkpointTime) / 60), target);
+    if (r >= target || now <= this.checkpointTime) return r;
+    const fast = this.p.recoveryClimbPerMin / 100, slow = this.p.climbPerMin / 100;
+    const lnFast = Math.log(1 + fast), lnSlow = Math.log(1 + slow);
+    const elapsed = now - this.checkpointTime;
+    const peakT = this.peakRate * Math.pow(0.5, (this.checkpointTime - this.peakTime) / (this.p.peakHalfLifeHours * 3600));
+    const climb = (base, lnRate, sec) => Math.min(base * Math.exp(lnRate * sec / 60), target);
+    if (peakT <= r) return climb(r, lnSlow, elapsed);
+    const denom = lnFast / 60 + Math.LN2 / (this.p.peakHalfLifeHours * 3600);
+    const crossSec = Math.log(peakT / r) / denom;
+    if (elapsed <= crossSec) return climb(r, lnFast, elapsed);
+    const priceCross = climb(r, lnFast, crossSec);
+    if (priceCross >= target) return target;
+    return climb(priceCross, lnSlow, elapsed - crossSec);
   }
   // the bid read by a seller. stepped: the price state bid, lowered to the clamp (the pot). the clamp bounds
   // what is paid and is never stored: checkpoint, the drop and the anchor all use the price state rate
@@ -468,7 +490,11 @@ class Core {
     if (anchor && next.xAuctionHalfLife !== half) { this.xStartPrice = Math.max(price, 1e-12); this.xStartTime = now; }
     this.xRateAtCheckpoint = Math.max(Math.min(this.xRateAtCheckpoint, next.xRateCap), next.xRateFloor);
     this.rateAtCheckpoint = Math.min(this.rateAtCheckpoint, next.rateCap); // a lower cap pulls the rate down now
-    if (rate !== undefined) { this.rateAtCheckpoint = rate; this.checkpointTime = now; }
+    if (rate !== undefined) {
+      this.rateAtCheckpoint = rate; this.checkpointTime = now;
+      // setRate restates the last fill rate and the remembered peak (CoreLib / Core.setRate)
+      if (this.p.bidRule === 'stepped') { this.lastPaidRate = rate; this.peakRate = rate; this.peakTime = now; }
+    }
     this.syncFunded();
     if (this.moduleSet) this.syncXFunded();
   }
@@ -486,6 +512,7 @@ class Core {
       r = Math.max(paid * (1 - this.p.dropPerCreditPct / 100), Math.min((this.burstBase * this.p.dropToPct) / 100, paid));
     } else r -= (r * this.s.dropBps * Math.min(x, pot)) / (BPS * pot);
     if (rule !== 'built') this.lastPaidRate = paid;
+    if (rule === 'stepped') { this.peakRate = Math.max(paid, this.peakAt(now)); this.peakTime = now; }
     this.rateAtCheckpoint = r;
     this.lastFillTime = now;
     this.ethPot = pot - x;

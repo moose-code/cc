@@ -107,6 +107,11 @@ struct Settings {
     uint16 saleToBuybackBps;
     /// share of exit token from eth lane exits that goes to the coin buyback, bps
     uint16 exitToBuybackBps;
+    /// seconds in which the remembered peak halves. the ceiling anchor is `max(last fill rate, peak now)`
+    uint32 peakHalfLife;
+    /// climb of the eth rate per minute while the price state is below the remembered peak, bps, compounded. at or above
+    /// the peak the rate climbs `climbPerMinBps`. at least `climbPerMinBps`
+    uint16 recoveryClimbPerMinBps;
     uint128 buybackSlice;
     /// blocks between two coin buybacks
     uint16 buybackDelay;
@@ -207,6 +212,8 @@ library Mainnet {
             exitAfter: 105 hours,
             saleToBuybackBps: 5_000,
             exitToBuybackBps: 5_000,
+            peakHalfLife: 21_600,
+            recoveryClimbPerMinBps: 200,
             buybackSlice: 0.5 ether,
             buybackDelay: 25,
             keeperFee: 0.0005 ether,
