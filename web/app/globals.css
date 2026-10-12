@@ -511,3 +511,79 @@ a {
     border-left: 0;
   }
 }
+
+/* phones: the 5-column table is too cramped. Stack each event as a card. */
+@media (max-width: 640px) {
+  .feed-table thead {
+    display: none;
+  }
+  .feed-table,
+  .feed-table tbody,
+  .feed-table tr,
+  .feed-table td {
+    display: block;
+  }
+  .feed-table tr,
+  .feed-table tr.hl {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "event time"
+      "detail detail"
+      "foot foot";
+    column-gap: 0.75rem;
+    row-gap: 0.45rem;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .feed-table tr.hl {
+    background: var(--rowalt);
+  }
+  .feed-table tr.hl:hover {
+    background: #f1f1f1;
+  }
+  .feed-table td,
+  .feed-table td:first-child,
+  .feed-table td:last-child {
+    padding: 0;
+    border: 0;
+    width: auto;
+  }
+  .feed-table td.col-event {
+    grid-area: event;
+  }
+  .feed-table td.col-time {
+    grid-area: time;
+    text-align: right;
+    align-self: center;
+  }
+  .feed-table td.col-detail {
+    grid-area: detail;
+  }
+  /* eth + tx share one footer line: eth left, tx right */
+  .feed-table td.col-eth {
+    grid-area: foot;
+    text-align: left;
+    color: var(--muted);
+  }
+  .feed-table td.col-tx {
+    grid-area: foot;
+    justify-self: end;
+    text-align: right;
+  }
+
+  .detail-cell {
+    align-items: flex-start;
+  }
+
+  /* keep the progress-bar labels on one line, let the row wrap as a whole */
+  .nextcredit,
+  .nextstatement {
+    flex-wrap: wrap;
+    gap: 0.4rem 0.6rem;
+  }
+  .nextcredit > span,
+  .nextstatement > span {
+    white-space: nowrap;
+  }
+}

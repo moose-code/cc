@@ -79,7 +79,7 @@ export function EngineFeed() {
           <tr>
             <th className="col-time">time</th>
             <th className="col-event">event</th>
-            <th>detail</th>
+            <th className="col-detail">detail</th>
             <th className="col-eth">eth</th>
             <th className="col-tx">tx</th>
           </tr>
@@ -109,7 +109,7 @@ function Row({ e }: { e: FeedEvent }) {
           <span className="name">{EVENT_NAME[e.kind]}</span>
         </span>
       </td>
-      <td>
+      <td className="col-detail">
         <div className="detail-cell">
           {e.tile?.kind === "credit" && <CreditTile id={e.tile.id} />}
           {e.tile?.kind === "statement" && <StatementTile id={e.tile.id} />}
