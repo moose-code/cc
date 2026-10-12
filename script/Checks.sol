@@ -73,13 +73,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x0c963c8e3ad24cdb5bb8713a03fb3d7813d977a1d70924ecce597af006717c69;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x9245b825f122e8ad94216781a0492a8bf6bc7c6ee93c6b57eda122548379ee8b;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x6098dee23db6791c4c28277410a14b941db26c707cb376c524b94dfdc4e95ba2;
+    bytes32 internal constant BUILD_HASH_CORE = 0xaf44690ea8f217e0a7a98f93df4ec91c95e16613940a126e2fcd35ea6db2a919;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x5d31b8fb1cc3fcf7a79e926b0db67f3b1329ffaccc9b4eb53f29b4c0009de305;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x8262813d4ca893d32b0806657e5e9ac414e3d00505b7b0d00929429ecb6c91d8;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0xea2e602937d074c8ae7ca1d9f671c2486982afd670e076cd570ffc4879c47c83;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0xddfa4fbefa5f88acda986f25c8190194432f674bb8b3cd98cd060f07532204b8;
+        0x78fe9a743fb93e550279a1ca00bf82178976f34e59d2d5f3efe1b53dc4d0bc15;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -334,7 +334,7 @@ abstract contract LaunchChecks is PostflightChecks {
             : marked
                 ? "a value contains placeholder or is todo or tbd"
                 : !scheme
-                    ? "image must start with ipfs://, https:// or ar:// and be longer than the scheme"
+                    ? "image must start with ipfs://, https://, ar:// or data: and be longer than the scheme"
                     : "both set in the launch transaction";
     }
 
@@ -352,11 +352,13 @@ abstract contract LaunchChecks is PostflightChecks {
         return vm.contains(l, "placeholder") || keccak256(bytes(l)) == keccak256("todo") || keccak256(bytes(l)) == keccak256("tbd");
     }
 
-    /// @dev true when `s` starts with `ipfs://`, `https://` or `ar://` and holds at least one byte past the scheme, so a
-    /// scheme with no content (for example `ipfs://`) is refused
-    function _hasScheme(string memory s) private pure returns (bool) {
-        bytes memory b = bytes(s);
-        return _startsPastPrefix(b, "ipfs://") || _startsPastPrefix(b, "https://") || _startsPastPrefix(b, "ar://");
+    /// @dev true when `s`, trimmed and lowercased, starts with `ipfs://`, `https://`, `ar://` or `data:` and holds at
+    /// least one byte past the scheme, so a scheme with no content (for example `ipfs://`) is refused. the scheme match
+    /// is case insensitive and ignores leading whitespace; `http://` is refused
+    function _hasScheme(string memory s) private view returns (bool) {
+        bytes memory b = bytes(vm.toLowercase(vm.trim(s)));
+        return _startsPastPrefix(b, "ipfs://") || _startsPastPrefix(b, "https://") || _startsPastPrefix(b, "ar://")
+            || _startsPastPrefix(b, "data:");
     }
 
     function _startsPastPrefix(bytes memory b, bytes memory p) private pure returns (bool) {

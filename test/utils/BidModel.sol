@@ -61,9 +61,10 @@ library BidModel {
         return anchor * (10_000 + uint256(s.idleLoosenBps) * (idle / 10 minutes)) * s.ceilBps / 1e8;
     }
 
-    /// @dev the price state now from the checkpoint state `b`: at most `rateCap` and the ceiling, below the peak the
-    /// climb is `recoveryClimbPerMinBps` a minute and at or above it `climbPerMinBps`, up to the clamp (a price state
-    /// above the clamp holds). reproduces `CoreLib._climb` so the read matches exactly
+    /// @dev the price state now from the checkpoint state `b`: at most `rateCap` and the ceiling, below the recovery
+    /// level (`recoveryGapBps` under the peak) the climb is `recoveryClimbPerMinBps` a minute and at or above it
+    /// `climbPerMinBps`, up to the clamp (a price state above the clamp holds). reproduces `CoreLib._climb` so the read
+    /// matches exactly
     function priceNow(Settings memory s, Bid memory b) internal pure returns (uint256) {
         uint256 anchor = b.lastFillRate.max(peakNow(s, b.peakRate, b.peakTime, b.nowTs));
         uint256 idle = b.nowTs > b.lastFillTime ? b.nowTs - b.lastFillTime : 0;
@@ -82,10 +83,11 @@ library BidModel {
         uint256 peakT = Halving.halve(
             b.peakRate, b.checkpointTime > b.peakTime ? b.checkpointTime - b.peakTime : 0, s.peakHalfLife
         );
+        uint256 levelT = peakT * (10_000 - s.recoveryGapBps) / 10_000;
         uint256 fullWadSec = (b.nowTs - b.checkpointTime) * 1e18;
-        if (peakT <= b.r) return _climbTo(b.r, lnSlow, fullWadSec, target);
+        if (levelT <= b.r) return _climbTo(b.r, lnSlow, fullWadSec, target);
         uint256 denom = uint256(lnFast) / 1 minutes + uint256(FixedPointMathLib.lnWad(2e18)) / s.peakHalfLife;
-        uint256 crossWadSec = uint256(FixedPointMathLib.lnWad(int256(peakT * 1e18 / b.r))) * 1e18 / denom;
+        uint256 crossWadSec = uint256(FixedPointMathLib.lnWad(int256(levelT * 1e18 / b.r))) * 1e18 / denom;
         if (fullWadSec <= crossWadSec) return _climbTo(b.r, lnFast, fullWadSec, target);
         uint256 priceCross = _climbTo(b.r, lnFast, crossWadSec, target);
         if (priceCross >= target) return target;

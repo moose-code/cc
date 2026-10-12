@@ -22,6 +22,7 @@ library SettingsBounds {
         if (s.recoveryClimbPerMinBps < s.climbPerMinBps || s.recoveryClimbPerMinBps > 1_000) {
             return "recoveryClimbPerMinBps";
         }
+        if (s.recoveryGapBps > 5_000) return "recoveryGapBps";
         if (s.buybackSlice < 0.01 ether || s.buybackSlice > 1 ether) return "buybackSlice";
         if (s.buybackDelay < 1 || s.buybackDelay > 7_200) return "buybackDelay";
         if (s.keeperFee > 0.005 ether) return "keeperFee";

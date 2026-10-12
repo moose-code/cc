@@ -19,7 +19,8 @@ library RateStore {
         uint64 peakTime;
         /// the remembered peak: `max(fill price, peak decayed to the fill time)` at the last fill, `setRate`'s rate, or
         /// `rateStart` at deploy. it halves every `peakHalfLife` since `peakTime`. the ceiling anchors on
-        /// `max(lastFillRate, peak now)`, and the price state climbs at `recoveryClimbPerMinBps` while below it
+        /// `max(lastFillRate, peak now)`, and the price state climbs at `recoveryClimbPerMinBps` while below the
+        /// recovery level `peak now * (10_000 - recoveryGapBps) / 10_000`
         uint256 peakRate;
     }
 

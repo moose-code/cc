@@ -142,6 +142,10 @@ struct Settings {
     uint64 callerFee;
     /// base fee ceiling of the gas refund of `compose`, `composeExit` and `exitStatement`, wei. zero refunds no gas
     uint48 callerMaxBaseFee;
+    /// the recovery climb applies only while the price state is below `recoveryGapBps` of the remembered peak, bps of
+    /// the peak. at or above `peak * (10_000 - recoveryGapBps) / 10_000` the climb is `climbPerMinBps`. 0 makes every
+    /// fill start the recovery climb
+    uint16 recoveryGapBps;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -228,7 +232,8 @@ library Mainnet {
             exitLaneToBuybackBps: 0,
             feeToBuybackBps: 0,
             callerFee: 0,
-            callerMaxBaseFee: 0
+            callerMaxBaseFee: 0,
+            recoveryGapBps: 1_000
         });
     }
 

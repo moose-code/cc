@@ -32,7 +32,7 @@ const R0 = 6.668e15;
   const moved = cfg.settings.reserveBps !== undefined; // the config still on the old rules: the new fields are not there yet
   const newFields = ['saleFloorBps', 'feeToBuybackBps'];
   // the stepped bid rule fields of the Core are sim parameters of the bidRule stepped (setting B of docs/archive/BID-STUDY.md), under other names. the built rule fields are sim only
-  const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 5000, climbPerMinBps: 50, ceilBps: 11000, idleLoosenBps: 200, peakHalfLife: 21600, recoveryClimbPerMinBps: 200 };
+  const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 5000, climbPerMinBps: 50, ceilBps: 11000, idleLoosenBps: 200, peakHalfLife: 21600, recoveryClimbPerMinBps: 200, recoveryGapBps: 1000 };
   const BUILT_ONLY = ['climbBaseBps', 'climbDoubleEvery', 'climbMaxBps', 'dropBps'];
   for (const [k, v] of Object.entries(STEPPED)) if (cfg.settings[k] !== undefined) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
   // the sim defaults are the launch bid rule: stepped, field for field with the config (bps to percent)
@@ -43,6 +43,7 @@ const R0 = 6.668e15;
   near(DEFAULTS.ceilPct, cfg.settings.ceilBps / 100, 1e-12, 'default ceilPct');
   near(DEFAULTS.idleLoosenPct, cfg.settings.idleLoosenBps / 100, 1e-12, 'default idleLoosenPct');
   near(DEFAULTS.recoveryClimbPerMin, cfg.settings.recoveryClimbPerMinBps / 100, 1e-12, 'default recoveryClimbPerMin');
+  near(DEFAULTS.recoveryGapPct, cfg.settings.recoveryGapBps / 100, 1e-12, 'default recoveryGapPct');
   near(DEFAULTS.peakHalfLifeHours, cfg.settings.peakHalfLife / 3600, 1e-12, 'default peakHalfLifeHours');
   ok(cfg.settings.clampCredits === undefined && DEFAULTS.clampCredits === undefined, 'the clamp divisor is gone from the config and the model');
   near(DEFAULTS.rateStart, cfg.rateStart, 1e-12, 'default rateStart');
@@ -653,6 +654,21 @@ const R0 = 6.668e15;
     ok(c.ethRate(30 * MIN) > slowOnly.ethRate(30 * MIN), 'recovery reaches the pre fill price sooner than the slow climb');
     // the ceiling anchors on the peak, so right after the fill the bid may climb back toward the pre fill level
     ok(c.stepCeil(MIN) > R, 'the ceiling anchors on the remembered peak, above the dropped rate');
+  }
+  // the recovery gap: a fill that walks the bid down less than recoveryGapPct leaves the bid above the recovery level,
+  // so it climbs at the slow rate, not the recovery rate (CoreLib._recover gapped level, review M1)
+  {
+    const R = 1e13, MIN = 60;
+    // a single credit drop of 0.5 percent stays inside the 10 percent gap: the climb is the slow climbPerMin
+    const c = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 2, recoveryGapPct: 10, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 0.5 }, 1000);
+    ok(c.spend(0.001, 0));
+    near(c.rateAtCheckpoint, R * 0.995, 1e-12, 'the single credit drop is 0.5 percent');
+    near(c.ethRate(MIN), R * 0.995 * 1.005, 1e-9, 'inside the gap the bid climbs at the slow rate');
+    // a zero gap restores the old rule: the same small drop starts on the fast recovery climb, so a minute later the
+    // bid is higher than under the gap (the fast leg here is short because the drop is only 0.5 percent under the peak)
+    const g0 = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 2, recoveryGapPct: 0, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 0.5 }, 1000);
+    ok(g0.spend(0.001, 0));
+    ok(g0.ethRate(MIN) > c.ethRate(MIN), 'with no gap the small drop climbs faster than under the gap');
   }
   // the built rule is unchanged by the new params
   {

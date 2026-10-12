@@ -128,11 +128,23 @@ library CoreLib {
     event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
 
     /// @notice validates the settings, stores them and logs them. the Core forwards its own `setSettings` call here
-    /// untouched (same selector), after it checkpointed both rates. the constructor calls it too
+    /// untouched (same selector), after it checkpointed both rates. the constructor calls it too. a change of
+    /// `peakHalfLife` restates the remembered peak at the old half life before storing the new one, so the new half
+    /// life decays the peak forward only
     function setSettings(Settings calldata ns) external {
         bytes32 bad = SettingsBounds.firstViolation(ns);
         if (bad != 0) revert BadSetting(bad);
         Settings storage s = SettingsStore.load();
+        // a change of the peak half life applies forward only: restate the remembered peak at the old half life before
+        // the new one is stored, so the elapsed decay is not rescaled. skipped at the first set (old half life zero,
+        // the constructor, where the peak was just written)
+        uint256 oldHalf = s.peakHalfLife;
+        if (oldHalf != 0 && ns.peakHalfLife != oldHalf) {
+            RateStore.Anchor storage a = RateStore.load();
+            a.peakRate = Halving.halve(a.peakRate, block.timestamp.zeroFloorSub(a.peakTime), oldHalf);
+            // forge-lint: disable-next-line(unsafe-typecast)
+            a.peakTime = uint64(block.timestamp);
+        }
         s.dropPerCreditBps = ns.dropPerCreditBps;
         s.dropFloorBps = ns.dropFloorBps;
         s.climbPerMinBps = ns.climbPerMinBps;
@@ -159,6 +171,7 @@ library CoreLib {
         s.feeToBuybackBps = ns.feeToBuybackBps;
         s.callerFee = ns.callerFee;
         s.callerMaxBaseFee = ns.callerMaxBaseFee;
+        s.recoveryGapBps = ns.recoveryGapBps;
         emit SettingsSet(ns);
     }
 
@@ -193,13 +206,15 @@ library CoreLib {
         s.feeToBuybackBps = uint16(c >> 192);
         s.callerFee = uint64(d);
         s.callerMaxBaseFee = uint48(d >> 64);
+        s.recoveryGapBps = uint16(d >> 112);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
     /// @notice the price state and the read of the eth rate (wei per credit) at `nowTs`, from the stored rate `r` of
     /// checkpoint time `t`. The price state climbs toward min(`rateCap`, ceiling, pot) and holds a value above that
-    /// bound. Below the remembered peak it compounds `recoveryClimbPerMinBps` per minute, at or above it
-    /// `climbPerMinBps`. The ceiling is `ceilBps` of `max(last fill rate, peak now)` grown by `idleLoosenBps` per full
+    /// bound. Below the recovery level `peak * (10_000 - recoveryGapBps) / 10_000` it compounds
+    /// `recoveryClimbPerMinBps` per minute, at or above the level `climbPerMinBps`. The ceiling is `ceilBps` of
+    /// `max(last fill rate, peak now)` grown by `idleLoosenBps` per full
     /// 10 minutes since `anchorTime`, where `peak now` is `peakRate` halved over the time since `peakTime`. The clamp is
     /// `pot`, the price of one credit the pot affords. The read is min(price state, pot). Never reverts: the Core calls
     /// it from `receive()`
@@ -232,11 +247,13 @@ library CoreLib {
         read = price.min(pot);
     }
 
-    /// @notice the price state climbed from `r` at time `t` to `nowTs`, clamped to `target`. Below the decaying peak the
-    /// climb is `recoveryClimbPerMinBps` a minute, at or above it `climbPerMinBps`. The crossing is the time the fast
-    /// climb meets the decaying peak, solved in log space where both are linear in time, so it does not move with the
-    /// evaluation time: the trajectory is continuous at the crossing and monotone in `nowTs`. The ceiling clamp can fall
-    /// as the peak decays, which lowers the clamped result; the unclamped climb never does
+    /// @notice the price state climbed from `r` at time `t` to `nowTs`, clamped to `target`. Below the recovery level
+    /// (`recoveryGapBps` under the decaying peak) the climb is `recoveryClimbPerMinBps` a minute, at or above it
+    /// `climbPerMinBps`. The recovery level decays at the peak's rate, so the crossing where the fast climb meets it
+    /// is the solution of `r * fast^(s/60) = levelT * 2^(-s/H)`, `crossWadSec = ln(levelT / r) / (lnFast/60 + ln2/H)`
+    /// in wad seconds: closed form, linear in log time, so it does not move with the evaluation time. The trajectory is
+    /// continuous at the crossing and monotone in `nowTs`. The ceiling clamp can fall as the peak decays, which lowers
+    /// the clamped result; the unclamped climb never does
     function _recover(uint256 r, uint256 target, uint256 t, uint256 nowTs, RateStore.Anchor storage a, Settings storage s)
         private
         view
@@ -246,11 +263,12 @@ library CoreLib {
         int256 lnFast = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.recoveryClimbPerMinBps) * 1e14));
         int256 lnSlow = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.climbPerMinBps) * 1e14));
         uint256 peakT = Halving.halve(a.peakRate, t.zeroFloorSub(a.peakTime), s.peakHalfLife);
+        uint256 levelT = peakT * (10_000 - s.recoveryGapBps) / 10_000;
         uint256 fullWadSec = (nowTs - t) * 1e18;
-        if (peakT <= r) return _climbTo(r, lnSlow, fullWadSec, target);
-        // crossing elapsed (wad seconds): ln(peakT / r) / (lnFast per second + ln2 per second)
+        if (levelT <= r) return _climbTo(r, lnSlow, fullWadSec, target);
+        // crossing elapsed (wad seconds): ln(levelT / r) / (lnFast per second + ln2 per second)
         uint256 denom = uint256(lnFast) / 1 minutes + uint256(FixedPointMathLib.lnWad(2e18)) / s.peakHalfLife;
-        uint256 crossWadSec = uint256(FixedPointMathLib.lnWad(int256(peakT * 1e18 / r))) * 1e18 / denom;
+        uint256 crossWadSec = uint256(FixedPointMathLib.lnWad(int256(levelT * 1e18 / r))) * 1e18 / denom;
         if (fullWadSec <= crossWadSec) return _climbTo(r, lnFast, fullWadSec, target);
         uint256 priceCross = _climbTo(r, lnFast, crossWadSec, target);
         if (priceCross >= target) return target;

@@ -79,6 +79,7 @@ contract RateFuzzTest is Fixture {
             s.idleLoosenBps = uint16(bound(_r(seed, 6), 1, 2_000));
             s.recoveryClimbPerMinBps = uint16(bound(_r(seed, 12), s.climbPerMinBps, 1_000));
             s.peakHalfLife = uint32(bound(_r(seed, 13), 600, 604_800));
+            s.recoveryGapBps = uint16(bound(_r(seed, 14), 0, 5_000));
         }
         // forge-lint: disable-end(unsafe-typecast)
     }

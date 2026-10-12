@@ -71,6 +71,7 @@ abstract contract HandlerOwner is HandlerBase {
         // recoveryClimbPerMinBps is at least the final climbPerMinBps, set after the corners so it stays valid
         s.recoveryClimbPerMinBps = uint16(_f(_r(seed, 31), s.climbPerMinBps, 1_000, c.recoveryClimbPerMinBps));
         s.peakHalfLife = uint32(_f(_r(seed, 32), 600, 604_800, c.peakHalfLife));
+        s.recoveryGapBps = uint16(_f(_r(seed, 33), 0, 5_000, c.recoveryGapBps));
         // the slice stays at or above twice the largest buyback payment
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
         if (s.buybackSlice < minSlice) s.buybackSlice = uint128(minSlice);
@@ -259,6 +260,7 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.recoveryClimbPerMinBps < s.climbPerMinBps || s.recoveryClimbPerMinBps > 1_000) {
             return "recoveryClimbPerMinBps";
         }
+        if (s.recoveryGapBps > 5_000) return "recoveryGapBps";
         if (s.buybackSlice < 0.01 ether || s.buybackSlice > 1 ether) return "buybackSlice";
         if (s.buybackDelay < 1 || s.buybackDelay > 7_200) return "buybackDelay";
         if (s.keeperFee > 0.005 ether) return "keeperFee";
@@ -285,7 +287,7 @@ abstract contract HandlerOwner is HandlerBase {
     /// breaks exactly one field of valid settings, `which` picks it. returns the name the library must report
     function _break(Settings memory s, uint256 which) internal pure returns (bytes32 name) {
         // forge-lint: disable-start(unsafe-typecast)
-        which = which % 44;
+        which = which % 45;
         if (which == 0) {
             (s.dropPerCreditBps, name) = (1_001, "dropPerCreditBps");
         } else if (which == 1) {
@@ -372,9 +374,11 @@ abstract contract HandlerOwner is HandlerBase {
             (s.peakHalfLife, name) = (599, "peakHalfLife");
         } else if (which == 42) {
             (s.peakHalfLife, name) = (604_801, "peakHalfLife");
-        } else {
+        } else if (which == 43) {
             // below climbPerMinBps, which a valid struct keeps at least 1, so zero always violates
             (s.recoveryClimbPerMinBps, name) = (0, "recoveryClimbPerMinBps");
+        } else {
+            (s.recoveryGapBps, name) = (5_001, "recoveryGapBps");
         }
         // forge-lint: disable-end(unsafe-typecast)
     }

@@ -191,6 +191,7 @@ abstract contract ConfigReader is CommonBase {
         s.rateCap = uint64(_uint(j, ".settings.rateCap", type(uint64).max));
         s.exitLaneToBuybackBps = _u16(j, ".settings.exitLaneToBuybackBps");
         s.feeToBuybackBps = _u16(j, ".settings.feeToBuybackBps");
+        s.recoveryGapBps = _u16(j, ".settings.recoveryGapBps");
     }
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {

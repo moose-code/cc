@@ -960,7 +960,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// sets every economic setting at once, effective now. the eth rate and the exit rate are checkpointed first, so no
     /// climb is credited under the wrong numbers, then the call is handed to the library untouched: it checks every
     /// field against its bounds, stores them and logs them. the exit funded flag is recomputed after, the exit rate is
-    /// held inside the new band, and the exit auction is re anchored at its price now when its half life changes
+    /// held inside the new band, and the exit auction is re anchored at its price now when its half life changes. a
+    /// change of `peakHalfLife` restates the remembered peak at the old half life first, so the new one decays forward only
     function setSettings(Settings calldata) external onlyOwner nonReentrant {
         _checkpoint();
         _xCheckpoint();

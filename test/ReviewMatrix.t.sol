@@ -495,10 +495,10 @@ contract ReviewMatrixConfigTest is ReviewHarness {
 /// @notice the config mutation matrix, part two: every field of the settings, above the top, below the bottom, a plausible
 /// wrong value and both edges
 contract ReviewMatrixSettingsTest is ReviewHarness {
-    uint256 internal constant N_SETTINGS = 130;
+    uint256 internal constant N_SETTINGS = 135;
 
     /// @dev a plausible value that is not the launch value, inside the bounds, for each field
-    function _wrong() internal pure returns (uint256[26] memory) {
+    function _wrong() internal pure returns (uint256[27] memory) {
         return [
             uint256(100),
             9000,
@@ -525,7 +525,8 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
             5000,
             5000,
             0.002 ether,
-            50 gwei
+            50 gwei,
+            2000
         ];
     }
 
@@ -542,10 +543,10 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
     /// @dev kinds: 0 above the top, 1 below the bottom, 2 a plausible wrong value, 3 the top edge, 4 the bottom edge.
     /// an empty label means the field has no such case
     function _mutSettings(uint256 k) internal view returns (Mut memory m) {
-        uint256 f = k % 26;
-        uint256 kind = k / 26;
-        uint256[26] memory lo = SettingsFields.lo();
-        uint256[26] memory hi = SettingsFields.hi();
+        uint256 f = k % 27;
+        uint256 kind = k / 27;
+        uint256[27] memory lo = SettingsFields.lo();
+        uint256[27] memory hi = SettingsFields.hi();
         string memory nm = _trim(SettingsFields.names()[f]);
         // a rateCap other than 3 times the launch rateStart is stopped by its own preflight row
         m = _m("", kind <= 1 || f == 21 ? Class.Pre : Class.Hash);

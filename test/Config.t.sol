@@ -628,6 +628,11 @@ contract ConfigTest is Fixture {
         assertTrue(metadataRowPasses(okImage, okDesc), "an ipfs image passes");
         assertTrue(metadataRowPasses("https://example.com/cc.png", okDesc), "an https image passes");
         assertTrue(metadataRowPasses("ar://abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHI", okDesc), "an ar image passes");
+        // the scheme match is case insensitive, ignores leading whitespace, and accepts an onchain data uri; http is refused
+        assertTrue(metadataRowPasses("IPFS://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", okDesc), "an upper case scheme passes");
+        assertTrue(metadataRowPasses("  ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", okDesc), "leading whitespace before the scheme passes");
+        assertTrue(metadataRowPasses("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", okDesc), "a data uri passes");
+        assertFalse(metadataRowPasses("http://example.com/cc.png", okDesc), "an http image fails");
 
         // another chain id: the row warns and never fails (the chain id row fails there)
         vm.chainId(11155111);
@@ -754,9 +759,9 @@ contract ConfigTest is Fixture {
 
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[26] memory lo = SettingsFields.lo();
-        uint256[26] memory hi = SettingsFields.hi();
-        bytes32[26] memory names = SettingsFields.names();
+        uint256[27] memory lo = SettingsFields.lo();
+        uint256[27] memory hi = SettingsFields.hi();
+        bytes32[27] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // above the top, and the top itself (the fields bound by another field start from a free partner)
