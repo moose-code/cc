@@ -309,7 +309,7 @@ a {
 }
 .tile-statement {
   width: 56px;
-  height: 70px;
+  height: auto;
 }
 
 /* ---- trade panel ---------------------------------------------------------- */
@@ -663,7 +663,6 @@ a {
 .card-statement .tile-statement {
   width: 100%;
   height: auto;
-  aspect-ratio: 8 / 10;
   border-bottom: 1px solid var(--line);
 }
 .card-statement .card-body {
@@ -741,8 +740,8 @@ a {
   justify-content: center;
 }
 .detail-art .tile-statement {
-  width: 268px;
-  height: 335px;
+  width: 100%;
+  height: auto;
 }
 .credit-art .tile-credit {
   width: 180px;
@@ -844,7 +843,7 @@ a {
   }
   .detail-art .tile-statement {
     width: 220px;
-    height: 275px;
+    height: auto;
   }
 }
 
