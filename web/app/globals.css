@@ -770,12 +770,28 @@ a {
   grid-template-rows: repeat(10, 1fr);
 }
 .statement-links a {
+  position: relative;
   display: block;
 }
 .statement-links a:hover {
-  outline: 1.5px solid rgba(17, 17, 17, 0.6);
-  outline-offset: -1.5px;
-  background: rgba(17, 17, 17, 0.05);
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+}
+.statement-links a:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 4px;
+  padding: 3px 6px;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 0.7rem;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 5;
 }
 .credit-art .tile-credit {
   width: 180px;

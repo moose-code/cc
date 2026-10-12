@@ -71,7 +71,7 @@ export function StatementTile({
           <Link
             key={cid}
             href={`/credits/${cid}`}
-            title={`credit #${cid}`}
+            data-tip={`credit #${cid}`}
             aria-label={`credit #${cid}`}
           />
         ))}
