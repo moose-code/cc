@@ -52,9 +52,9 @@ export function shortHash(h: string): string {
   return `${h.slice(0, 6)}…`;
 }
 
-// relative time from a unix seconds timestamp: "just now", "5s ago", "3m ago".
-export function relTime(ts: number): string {
-  const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+// "just now", "5s ago", "3m ago" from an elapsed-seconds count.
+export function agoLabel(s: number): string {
+  s = Math.max(0, Math.floor(s));
   if (s < 5) return "just now";
   if (s < 60) return `${s}s ago`;
   const m = Math.floor(s / 60);
@@ -62,4 +62,9 @@ export function relTime(ts: number): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+// relative time from a unix seconds timestamp.
+export function relTime(ts: number): string {
+  return agoLabel(Math.floor(Date.now() / 1000) - ts);
 }
