@@ -89,6 +89,7 @@ library CoreLib {
     /// the same declarations as the Core, so the library's reverts and logs decode against the Core abi
     error Empty();
     error NoExitModule();
+    error BadModule();
     error ZeroId();
     error NotOwner();
     error ZeroAmount();
@@ -575,7 +576,7 @@ library CoreLib {
     /// the lower of the stored `unitPerPoint` and the module's live `unitPerPoint()`, so a module that lowered its rate
     /// after the owner set it cannot make the bid overpay. reads the score from the credit score contract. runs only
     /// while `exitMode` is 2. each credit's price must not exceed the remaining pot. the credit record keeps the exit
-    /// token paid as its cost. a failing or short live unit read reverts the whole bid
+    /// token paid as its cost. a failing, short or zero live unit read reverts the whole bid (`BadModule`)
     function _sellForExitToken(uint256[] calldata ids, uint256 minOut) private {
         CoreState storage c = state();
         if (c.retired) revert Retired();
@@ -584,7 +585,7 @@ library CoreLib {
         if (ids.length == 0) revert Empty();
         if (c.exitModule == address(0)) revert NoExitModule();
         uint256 unit = c.unitPerPoint;
-        uint256 live = IExitModule(c.exitModule).unitPerPoint();
+        uint256 live = _liveUnit(c.exitModule);
         if (live < unit) unit = live;
         uint256 net = BPS - s.exitBidMarginBps;
         uint256 pot = c.xPot;
@@ -604,6 +605,23 @@ library CoreLib {
         c.xPot = pot;
         if (total < minOut) revert Slippage();
         SafeTransferLib.safeTransfer(c.exitToken, msg.sender, total);
+    }
+
+    /// gas forwarded to the live `unitPerPoint()` read of the exit token bid
+    uint256 internal constant READ_GAS = 200_000;
+
+    /// bounded read of `unitPerPoint()` of `module`: at most `READ_GAS`, exactly 32 bytes returned or more (a long
+    /// answer is cut off). a revert, a short answer or a zero unit reverts `BadModule`
+    function _liveUnit(address module) private view returns (uint256 unit) {
+        bytes4 sel = IExitModule.unitPerPoint.selector;
+        bool ok;
+        assembly ("memory-safe") {
+            mstore(0, sel)
+            ok := staticcall(READ_GAS, module, 0, 4, 0, 32)
+            ok := and(ok, iszero(lt(returndatasize(), 32)))
+            unit := mload(0)
+        }
+        if (!ok || unit == 0) revert BadModule();
     }
 
     /// gas forwarded to the router flush of `pullFees`. the most expensive flush (four payees that burn all their

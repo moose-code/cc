@@ -11,6 +11,8 @@ contract MockExitModule is IExitModule {
     address public immutable exitToken;
     uint256 internal _unit;
     bool public revertUnit;
+    /// makes unitPerPoint loop until its gas runs out
+    bool public burnUnitRead;
     /// payout as bps of the owed amount. 10_000 pays exactly the owed amount
     uint256 public payBps = 10_000;
     /// gas to burn inside `exit`, and a call to make to some address while the core is inside the exit. a test or a
@@ -30,6 +32,7 @@ contract MockExitModule is IExitModule {
     /// the unit, exit token base units per stored score unit (one ten-thousandth of a point). reverts when asked to.
     function unitPerPoint() public view returns (uint256) {
         if (revertUnit) revert();
+        if (burnUnitRead) while (true) {}
         return _unit;
     }
 
@@ -41,6 +44,11 @@ contract MockExitModule is IExitModule {
     /// makes unitPerPoint revert.
     function setRevertUnit(bool on) external {
         revertUnit = on;
+    }
+
+    /// makes unitPerPoint burn all the gas it is given.
+    function setBurnUnitRead(bool on) external {
+        burnUnitRead = on;
     }
 
     /// sets the payout as bps of the owed amount. below 10_000 underpays, above overpays.

@@ -5,7 +5,7 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "./interfaces/ICore.sol";
 import {IControllerV1} from "./interfaces/IControllerV1.sol";
 import {IFeeRouter} from "./interfaces/IFeeRouter.sol";
-import {Lane, ICredits, ICreditScore, Settings, Mainnet} from "./interfaces/Interfaces.sol";
+import {Lane, ICredits, ICreditScore, IExitModule, Settings, Mainnet} from "./interfaces/Interfaces.sol";
 
 /// read only view of the Core, the controller and the fee router in one call. it has no storage and no state changing
 /// function. the Core and the router are immutable pointers fixed at creation (the router is the Core fee source). the
@@ -171,8 +171,15 @@ contract CoreLens {
         return ok && out.length == 32 && abi.decode(out, (bool));
     }
 
+    /// the module's `unitPerPoint()` read with the gas the Core uses. a revert or a short answer reads as 0
+    function _liveUnit(address module) private view returns (uint256) {
+        (bool ok, bytes memory out) = module.staticcall{gas: ASK_GAS}(abi.encodeCall(IExitModule.unitPerPoint, ()));
+        return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
+    }
+
     /// the exit token the bid pays for a live credit now, zero when the bid is off: no module set, `exitMode` other
-    /// than 2, or the engine retired. the bid is capped at `xPot`, the most `sellForExitToken` can pay for one credit.
+    /// than 2, or the engine retired. the unit is the lower of the stored and the live `unitPerPoint()`, as in
+    /// `sellForExitToken`, and a failed live read gives 0. the bid is capped at `xPot`, the most `sellForExitToken` can pay for one credit.
     /// the Core reads the same score from the credit score contract in `sellForExitToken`
     function exitBidOf(uint256 id) external view returns (uint256) {
         ICore core = CORE;
@@ -180,7 +187,10 @@ contract CoreLens {
         Settings memory st = core.settings();
         if (st.exitMode != 2) return 0;
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(ICredits(CREDITS).seedOf(id), ICredits(CREDITS).timestampOf(id));
-        uint256 bid = score * core.unitPerPoint() * (10_000 - st.exitBidMarginBps) / 10_000;
+        uint256 unit = core.unitPerPoint();
+        uint256 live = _liveUnit(core.exitModule());
+        if (live < unit) unit = live;
+        uint256 bid = score * unit * (10_000 - st.exitBidMarginBps) / 10_000;
         uint256 pot = core.xPot();
         return bid > pot ? pot : bid;
     }

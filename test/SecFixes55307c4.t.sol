@@ -5,7 +5,22 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditScore, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {MockExitModule} from "./standins/MockExitModule.sol";
+import {MockExitToken} from "./standins/MockExitToken.sol";
 import {MigrationSink} from "./standins/MigrationSink.sol";
+
+/// exit module whose `exitToken()` can be changed after it is set
+contract TokenSwitchModule {
+    address public exitToken;
+    uint256 public unitPerPoint = 1e10;
+
+    constructor(address token) {
+        exitToken = token;
+    }
+
+    function setExitToken(address token) external {
+        exitToken = token;
+    }
+}
 
 /// fixes of the security review of 55307c4 (docs/REVIEW-security-55307c4.md).
 /// M1: the stored unit is the exit check basis, the exit token bid pays by the lower of the stored and the live unit,
@@ -57,7 +72,30 @@ contract SecFixes55307c4 is Fixture {
         mod.setRevertUnit(true);
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
-        vm.expectRevert();
+        vm.expectRevert(ICore.BadModule.selector);
+        core.sellForExitToken(ids);
+    }
+
+    /// a live unit read that burns its gas is cut at the read cap, so the bid reverts `BadModule` with the gas left
+    /// to return the error
+    function test_bidRevertsWhenLiveUnitReadBurnsGas() public {
+        _enterPhase2();
+        _fillExitBuyback();
+        mod.setBurnUnitRead(true);
+        uint256[] memory ids = _credits(seller, 1);
+        vm.prank(seller);
+        vm.expectRevert(ICore.BadModule.selector);
+        core.sellForExitToken{gas: 2_000_000}(ids);
+    }
+
+    /// a live unit of zero reverts the bid
+    function test_bidRevertsWhenLiveUnitIsZero() public {
+        _enterPhase2();
+        _fillExitBuyback();
+        mod.setUnitPerPoint(0);
+        uint256[] memory ids = _credits(seller, 1);
+        vm.prank(seller);
+        vm.expectRevert(ICore.BadModule.selector);
         core.sellForExitToken(ids);
     }
 
@@ -105,6 +143,50 @@ contract SecFixes55307c4 is Fixture {
         mod.setUnitPerPoint(0);
         vm.prank(owner);
         vm.expectRevert(ICore.BadModule.selector);
+        core.refreshUnitPerPoint();
+    }
+
+    function test_refreshRejectsAFailingRead() public {
+        _enterPhase2();
+        mod.setRevertUnit(true);
+        vm.prank(owner);
+        vm.expectRevert(ICore.BadModule.selector);
+        core.refreshUnitPerPoint();
+    }
+
+    function test_refreshRejectsAUnitAboveUint128() public {
+        _enterPhase2();
+        mod.setUnitPerPoint(uint256(type(uint128).max) + 1);
+        vm.prank(owner);
+        vm.expectRevert(ICore.BadModule.selector);
+        core.refreshUnitPerPoint();
+        // the edge is accepted
+        mod.setUnitPerPoint(type(uint128).max);
+        vm.prank(owner);
+        core.refreshUnitPerPoint();
+        assertEq(core.unitPerPoint(), type(uint128).max, "the largest unit is accepted");
+    }
+
+    function test_refreshLeavesModuleAndTokenUnchanged() public {
+        _enterPhase2();
+        address m = core.exitModule();
+        address t = core.exitToken();
+        mod.setUnitPerPoint(UNIT * 3);
+        vm.prank(owner);
+        core.refreshUnitPerPoint();
+        assertEq(core.unitPerPoint(), UNIT * 3, "the unit is the refreshed one");
+        assertEq(core.exitModule(), m, "the module is unchanged");
+        assertEq(core.exitToken(), t, "the exit token is unchanged");
+    }
+
+    function test_refreshRevertsWhenTheModuleChangedItsExitToken() public {
+        _enterPhase2();
+        TokenSwitchModule sw = new TokenSwitchModule(address(xt));
+        vm.prank(owner);
+        core.setExitModule(address(sw));
+        sw.setExitToken(address(new MockExitToken("Other", "OTH")));
+        vm.prank(owner);
+        vm.expectRevert(ICore.ExitTokenChanged.selector);
         core.refreshUnitPerPoint();
     }
 
@@ -193,6 +275,22 @@ contract SecFixes55307c4 is Fixture {
         assertEq(lens.exitBidOf(ids[0]), 0, "mode 1 gives no bid");
         _setExitMode(0);
         assertEq(lens.exitBidOf(ids[0]), 0, "mode 0 gives no bid");
+    }
+
+    /// after the module lowers its rate the quote equals the payout, and a failing live read quotes 0
+    function test_lensBidFollowsTheLiveUnit() public {
+        _enterPhase2();
+        _fillExitBuyback();
+        mod.setUnitPerPoint(UNIT / 2);
+        uint256[] memory ids = _credits(seller, 1);
+        uint256 quote = lens.exitBidOf(ids[0]);
+        assertGt(quote, 0, "the quote is live");
+        uint256 pot = core.xPot();
+        vm.prank(seller);
+        core.sellForExitToken(ids);
+        assertEq(pot - core.xPot(), quote, "the quote equals the payout");
+        mod.setRevertUnit(true);
+        assertEq(lens.exitBidOf(ids[0]), 0, "a failing live read quotes 0");
     }
 
     function test_lensBidCapsAtThePot() public {

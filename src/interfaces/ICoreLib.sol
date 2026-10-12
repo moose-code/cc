@@ -6,6 +6,7 @@ import {Lane, Settings} from "./Interfaces.sol";
 
 interface ICoreLib {
 
+    error BadModule();
     error BadSetting(bytes32 field);
     error BadSuccessor(address who);
     error BadSwap();

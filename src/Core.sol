@@ -809,11 +809,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// re-reads `unitPerPoint` from the current module and stores it. works after `lockExitModule`, and changes
-    /// neither the module nor the exit token. the unit must be nonzero and at most `type(uint128).max`, the same check
+    /// neither the module nor the exit token. the module's `exitToken()` must equal the stored exit token
+    /// (`ExitTokenChanged`). the unit must be nonzero and at most `type(uint128).max`, the same check
     /// a module set makes. the owner calls it after the module reports a new redeem rate
     function refreshUnitPerPoint() external onlyOwner nonReentrant {
         address module = exitModule;
         if (module == address(0)) revert NoExitModule();
+        if (IExitModule(module).exitToken() != exitToken) revert ExitTokenChanged();
         (bool ok, bytes memory out) = _ask(module, abi.encodeCall(IExitModule.unitPerPoint, ()), READ_GAS, 32);
         uint256 unit = ok ? abi.decode(out, (uint256)) : 0;
         if (unit == 0 || unit > type(uint128).max) revert BadModule();

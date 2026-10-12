@@ -70,6 +70,29 @@ contract ExitValueFloorTest is Fixture {
         assertEq(ctl.priceOf(sid), value, "the asking price is the value floor");
     }
 
+    /// after the module lowers its rate the floor uses the live unit, and a failing live read gives value 0 so the
+    /// curve is the asking price. a higher live unit leaves the floor at the stored unit
+    function test_valueFloorUsesTheLowerOfStoredAndLiveUnit() public {
+        _enterPhase2();
+        uint256 sid = _composeOnce().sid;
+        uint256 curve = ctl.priceOf(sid);
+        uint160 sp = _lowSqrtPrice();
+        _initAndSet(sp, 3000, 60);
+        uint256 full = _value(sid, sp);
+        assertEq(ctl.priceOf(sid), full, "the floor starts at the stored unit");
+        mod.setUnitPerPoint(core.unitPerPoint() * 2);
+        assertEq(ctl.priceOf(sid), full, "a higher live unit keeps the stored unit");
+        mod.setUnitPerPoint(core.unitPerPoint() / 2);
+        uint256 half = ctl.priceOf(sid);
+        assertLt(half, full, "a lower live unit lowers the floor");
+        assertGt(half, curve, "the lowered floor still binds above the curve");
+        uint256 owed = core.ratingOf(sid) * (core.unitPerPoint() / 2);
+        uint256 q = FixedPoint96.Q96;
+        assertEq(half, FullMath.mulDiv(FullMath.mulDiv(owed, q, sp), q, sp), "the floor is the live unit's value");
+        mod.setRevertUnit(true);
+        assertEq(ctl.priceOf(sid), curve, "a failing live read leaves the curve");
+    }
+
     function test_buyPaysTheValueFloorAndTheAnchorStaysOnTheCurve() public {
         _enterPhase2();
         vm.prank(owner);
