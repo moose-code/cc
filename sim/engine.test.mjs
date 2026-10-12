@@ -418,6 +418,8 @@ const R0 = 6.668e15;
   bad({ rateCap: 1e13 - 1e6 }, 'rateCap'); bad({ rateCap: 1.1e18 }, 'rateCap');
   // the exit side (FLOW 84, 86): exitMode 0 to 2, slippage at most 10 percent, margin at most 90 percent, the reserve shares at most 100 percent, and the fee shares together at most 100 percent
   bad({ exitMode: 3 }, 'exitMode'); bad({ exitMode: -1 }, 'exitMode'); bad({ exitSlippageBps: 1001 }, 'exitSlippageBps'); bad({ exitBidMarginBps: 9001 }, 'exitBidMarginBps');
+  bad({ exitSlippageBps: 201, exitBidMarginBps: 200 }, 'exitSlippageBps'); bad({ exitBidMarginBps: 0 }, 'exitSlippageBps'); // slippage at most the bid margin
+  assert.equal(firstViolation(Object.assign({}, SETTINGS, { exitSlippageBps: 200, exitBidMarginBps: 200 })), null); assert.equal(firstViolation(Object.assign({}, SETTINGS, { exitSlippageBps: 0, exitBidMarginBps: 0 })), null); n += 2;
   bad({ redeemBurnBps: 10001 }, 'redeemBurnBps'); bad({ feeToRedeemBurnBps: 10001 }, 'feeToRedeemBurnBps');
   bad({ feeToBuybackBps: 9001, feeToRedeemBurnBps: 1000 }, 'feeToRedeemBurnBps'); bad({ feeToBuybackBps: 5000, feeToRedeemBurnBps: 5001 }, 'feeToRedeemBurnBps');
   assert.equal(firstViolation(Object.assign({}, SETTINGS, { feeToBuybackBps: 9000, feeToRedeemBurnBps: 1000 })), null); n++;
@@ -528,10 +530,50 @@ const R0 = 6.668e15;
   for (const mode of [0, 1]) { const m = mk({ exitMode: mode }); assert.equal(m.exitBidActive(), false); assert.equal(m.xBuy(440), 0); near(m.xPot, 1, 1e-15, 'no bid in mode ' + mode); n += 2; }
   assert.equal(fresh({ exitMode: 2 }, 10).exitBidActive(), false); n++; // no module, no bid
   // the margin is a setting read at once
-  const g = mk(); g.setSettings({ exitBidMarginBps: 0 }, 1); near(g.xBidPrice(100), 100 * 1e-5, 1e-12, 'margin 0 pays the whole value'); g.setSettings({ exitBidMarginBps: 9000 }, 2); near(g.xBidPrice(100), 100 * 1e-5 * 0.1, 1e-12, 'margin 90 percent');
+  const g = mk(); assert.throws(() => g.setSettings({ exitBidMarginBps: 0 }, 1), /exitSlippageBps/); n++; g.setSettings({ exitSlippageBps: 0, exitBidMarginBps: 0 }, 1); near(g.xBidPrice(100), 100 * 1e-5, 1e-12, 'margin 0 pays the whole value'); g.setSettings({ exitBidMarginBps: 9000 }, 2); near(g.xBidPrice(100), 100 * 1e-5 * 0.1, 1e-12, 'margin 90 percent');
   // buy at (1 - margin) and redeem at full value: the engine keeps the margin
   const h = mk(); const px = h.xBuy(35200 / 80 * 1); const rec = h.exitStatement(h.compose(0, 'exit', 0, 440 * 80), 0);
   near(rec.received, 440 * 80 * 1e-5, 1e-12, 'the redemption returns the full value'); ok(rec.received > 80 * px, 'more than the 80 credits were bought for');
+}
+// Core.sellForExitToken pays with min(stored, live) unitPerPoint, Core.refreshUnitPerPoint (owner) re-reads the stored unit from the module,
+// Core.releaseRedeemBurn (owner) moves reserve eth to the buyback pot
+{
+  const mk = (over = {}) => { const c = fresh(Object.assign({ exitMode: 2, feeToRedeemBurnBps: 1000 }, over), 0); c.setExitModule(0, 1e-5); c.addFees(100, 0); c.xPot = 1; return c; };
+  const c = mk();
+  near(c.xpLive, 1e-5, 1e-15, 'a module set stores the live unit'); n++;
+  // the module lowers its rate: the bid follows the live unit, the stored unit stays
+  c.moduleReports(6e-6);
+  near(c.xBidPrice(440), 440 * 6e-6 * 0.8, 1e-12, 'the bid pays the live unit when it is lower'); near(c.xpPerPoint, 1e-5, 1e-15, 'the stored unit is unchanged');
+  // the module raises its rate: the bid stays at the stored unit
+  c.moduleReports(2e-5);
+  near(c.xBidPrice(440), 440 * 1e-5 * 0.8, 1e-12, 'the bid pays the stored unit when the live unit is higher');
+  near(c.xBuy(440), 440 * 1e-5 * 0.8, 1e-12, 'a buy pays min(stored, live)');
+  // redemption: the module pays rating * live; the Core requires the slippage floor on the stored unit
+  const up = c.exitStatement(c.compose(1, 'eth', 0, 35200), 60 * H);
+  near(up.received, 35200 * 2e-5, 1e-12, 'the module pays at its live unit'); n++;
+  const lo = mk(); lo.moduleReports(9.9e-6); ok(lo.exitStatement(lo.compose(1, 'eth', 0, 35200), 60 * H), 'a live unit within the slippage of the stored one redeems');
+  const lo2 = mk(); lo2.moduleReports(9.7e-6); assert.equal(lo2.exitStatement(lo2.compose(1, 'eth', 0, 35200), 60 * H), null); n++; // 3 percent under: Underpaid
+  // refreshUnitPerPoint stores the live unit and restores a redemption
+  assert.equal(lo2.refreshUnitPerPoint(), 9.7e-6); near(lo2.xpPerPoint, 9.7e-6, 1e-15, 'stored follows live'); ok(lo2.exitStatement(lo2.compose(1, 'eth', 0, 35200), 60 * H), 'redeems after the refresh'); n++;
+  near(lo2.xBidPrice(100), 100 * 9.7e-6 * 0.8, 1e-12, 'the bid follows the refreshed unit');
+  const raised = mk(); raised.moduleReports(2e-5); raised.refreshUnitPerPoint(); near(raised.xBidPrice(100), 100 * 2e-5 * 0.8, 1e-12, 'a refresh raises the bid');
+  const none = fresh({ exitMode: 2 }, 10); assert.equal(none.refreshUnitPerPoint(), null); const zero = mk(); zero.moduleReports(0); assert.equal(zero.refreshUnitPerPoint(), null); near(zero.xpPerPoint, 1e-5, 1e-15, 'a zero unit reverts and changes nothing'); n += 2;
+  near(zero.xBidPrice(100), 0, 1e-15, 'a zero live unit pays nothing'); assert.equal(zero.xBuy(100), 0); n++;
+  // releaseRedeemBurn: min(amount, reserve) moves to the buyback pot, the totals hold
+  const r = mk(); near(r.ethRedeemBurn, 10, 1e-12, 'reserve');
+  near(r.releaseRedeemBurn(4), 4, 1e-12, 'moves the amount'); near(r.ethRedeemBurn, 6, 1e-12, 'reserve falls'); near(r.ethToBuyback, 4, 1e-12, 'buyback pot rises'); near(r.redeemBurnMoved, 4, 1e-12, 'booked');
+  near(r.releaseRedeemBurn(1e9), 6, 1e-12, 'capped at the reserve'); near(r.ethRedeemBurn, 0, 1e-12, 'reserve empty'); near(r.ethToBuyback, 10, 1e-12, 'whole reserve in the buyback pot');
+  assert.equal(r.releaseRedeemBurn(1), null); const z0 = mk(); assert.equal(z0.releaseRedeemBurn(0), null); n += 2;
+  near(r.ethPot, 90, 1e-12, 'the eth pot is untouched');
+  // in a run: the schedule applies the three owner calls, books close, the buyback pot is fed
+  const base = { days: 30, seed: 4, phase2Day: 5, xpPerPoint: 3e-5 / 440, feeToRedeemBurnBps: 1000 };
+  const mkRun = (schedule) => simulate(Object.assign({ stepSec: 3600 }, DEFAULTS, base, { schedule }));
+  const none2 = mkRun([]), rel = mkRun([{ day: 10, patch: { releaseRedeemBurn: 1e9 } }]);
+  const hr = 10 * 24 + 1; ok(none2.S.redeemBurn[hr] > 0 && rel.S.redeemBurn[hr] < 0.1 * none2.S.redeemBurn[hr] && rel.S.redeemBurnMoved[hr] > none2.S.redeemBurnMoved[hr], 'the owner release on day 10 drains the reserve to the buyback and books the move');
+  ok(Math.abs(rel.stats.buybackCheck) < 1e-9 && Math.abs(rel.stats.redeemCheck) < 1e-9 && Math.abs(rel.stats.potCheck) < 1e-6, 'books close after a release'); n += 2;
+  const low = mkRun([{ day: 8, patch: { moduleUnit: 3e-6 / 440 } }]), fix = mkRun([{ day: 8, patch: { moduleUnit: 3e-6 / 440 } }, { day: 9, patch: { refreshUnitPerPoint: true } }]);
+  near(low.core.xpPerPoint, 3e-5 / 440, 1e-18, 'the stored unit stays after the module lowers'); near(low.core.xpLive, 3e-6 / 440, 1e-18, 'the live unit is the new one'); near(fix.core.xpPerPoint, 3e-6 / 440, 1e-18, 'the refresh stores it'); n += 3;
+  ok(Math.abs(low.stats.potCheck) < 1e-6 && Math.abs(fix.stats.potCheck) < 1e-6, 'books close with a lowered module unit'); n++;
 }
 // the redemption value floor of the asking price (ControllerV1.priceOf, FLOW 87): max(curve price, rating * unitPerPoint at the pool price) once the pool key is set.
 // the anchor and the redemption test read the curve price. the hard floor and the pool key at launch: unset

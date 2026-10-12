@@ -94,6 +94,7 @@ export function firstViolation(s) {
   if (s.exitMode !== 0 && s.exitMode !== 1 && s.exitMode !== 2) return 'exitMode';
   if (s.exitSlippageBps > 1000) return 'exitSlippageBps';
   if (s.exitBidMarginBps > 9000) return 'exitBidMarginBps';
+  if (s.exitSlippageBps > s.exitBidMarginBps) return 'exitSlippageBps'; // the exit lane cycle (bid then redeem) cannot lose more than its margin
   if (s.redeemBurnBps > 10000) return 'redeemBurnBps';
   return null;
 }
@@ -144,7 +145,7 @@ export const SIM_DEFAULTS = {
   holdPot: 0, // test hook: eth. the pot is topped up to this level after every step (accounting checks do not hold)
   gateAt: 20, // counterfactual only: hours with at least this many unsold statements held are counted in gateClosedHours
   whipsawStartDay: 2, // pricePath 'whipsaw': day the fall starts
-  schedule: [], // [{ day, patch }]: owner changes settings on that day. patch may hold any setting and `rate` (setRate, wei per credit)
+  schedule: [], // [{ day, patch }]: owner changes settings on that day. patch may hold any setting and `rate` (setRate, wei per credit), `moduleUnit` (the exit module reports a new eth value per point), `refreshUnitPerPoint: true`, `releaseRedeemBurn: eth`
   baselineSkimBps: 690, // bps of volume: 6.9 points (script/config/mainnet.json launch.baselineSkimBps)
   bountyBps: 9638, // of the baseline skim, to the fee router. the other 362 of 10000 is the protocol leg, not the engine's
   sniperStartBps: 9000,
@@ -193,9 +194,9 @@ export const SIM_DEFAULTS = {
   // reaches the statement cost, a rating per statement, a per point exit token bid, no exit token auction. exit token amounts are held as eth value
   phase2Day: null, // day the exit module is set. the same step sets exitMode to phase2ExitMode (the owner switches the state on)
   phase2ExitMode: 2, // exitMode set at phase2Day: 1 hold or 2 on
-  xpPerPoint: 0.0108 / 440, // eth value of the exit token a redemption returns per score point (unitPerPoint at the exit token price). a 440 point credit redeems 0.0108 eth
+  xpPerPoint: 0.0108 / 440, // eth value of the exit token a redemption returns per score point (unitPerPoint at the exit token price). a 440 point credit redeems 0.0108 eth. the unit the Core stores when the module is set
   exitPayFrac: 1, // share of rating * xpPerPoint the exit module returns. the Core requires at least 1 - exitSlippageBps / 10000, else the exit reverts
-  exitPoolSet: false, // ControllerV1.setExitPoolKey done: a statement's asking price is at least rating * xpPerPoint (its redemption value), unset at launch
+  exitPoolSet: false, // ControllerV1.setExitPoolKey done (native eth as currency0, the exit token as currency1, pool initialized): a statement's asking price is at least rating * xpPerPoint (its redemption value), unset at launch
   exitMinRatio: 0, // a keeper redeems only when rating * xpPerPoint is at least this times the asking price
   keeperBuyback: true,
   basefeeGwei: 1, // the block base fee of the buyback calls, gwei (the refunds use min(basefee, keeperMaxBaseFee))
@@ -263,7 +264,7 @@ export class Core {
     this.redeemBurnMoved = 0; // cumulative eth moved from the reserve to the buyback pot by redemptions
     this.ethPot = 0; this.ethToBuyback = 0; this.ethRedeemBurn = 0; this.xPot = 0; // xPot holds the eth value of the exit token
     this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0; this.funded = false;
-    this.xpPerPoint = 0; this.moduleSet = false; // the exit module is set by setExitModule
+    this.xpPerPoint = 0; this.xpLive = 0; this.moduleSet = false; // the exit module is set by setExitModule
     this.lastBuybackTime = -1e12;
     this.clampTime = 0;
     this.lastPaidRate = p.rateStart; this.burstTime = -1; this.burstBase = 0; // bidRule stepped
@@ -501,13 +502,30 @@ export class Core {
   }
 
   // ---- phase 2. the exit module returns exit token worth rating * xpPerPoint (eth value) for a statement. pots here hold the eth value of the exit token
+  // xpPerPoint is the unit the Core stores, xpLive the unit the module reports now (the module's unitPerPoint())
   setExitModule(now, xpPerPoint) {
-    this.moduleSet = true; this.xpPerPoint = xpPerPoint;
+    this.moduleSet = true; this.xpPerPoint = xpPerPoint; this.xpLive = xpPerPoint;
+  }
+  // the module reports a new unit; the Core stored unit is unchanged until refreshUnitPerPoint
+  moduleReports(xpLive) { this.xpLive = xpLive; }
+  // Core.refreshUnitPerPoint (owner): stores the module's live unit. reverts BadModule (null) without a module or at a zero unit. allowed after lockExitModule
+  refreshUnitPerPoint() {
+    if (!this.moduleSet || !(this.xpLive > 0)) return null;
+    this.xpPerPoint = this.xpLive;
+    return this.xpPerPoint;
+  }
+  // Core.releaseRedeemBurn (owner): moves min(amount, reserve) from the redeem burn reserve to the buyback pot. returns the amount moved, null when 0 (ZeroAmount)
+  releaseRedeemBurn(amount) {
+    const move = Math.min(amount, this.ethRedeemBurn);
+    if (!(move > 0)) return null;
+    this.ethRedeemBurn -= move; this.ethToBuyback += move; this.redeemBurnMoved += move;
+    return move;
   }
   // Core.sellForExitToken runs while exitMode is 2
   exitBidActive() { return this.moduleSet && this.s.exitMode === 2; }
-  // the exit token bid for a credit of `pts` points: score * unitPerPoint * (10000 - exitBidMarginBps) / 10000, in eth value. the same price for any credit of that score
-  xBidPrice(pts) { return (pts * this.xpPerPoint * (BPS - this.s.exitBidMarginBps)) / BPS; }
+  // the exit token bid for a credit of `pts` points: score * unit * (10000 - exitBidMarginBps) / 10000, in eth value, where unit is the lower of the stored
+  // and the live unitPerPoint. the same price for any credit of that score
+  xBidPrice(pts) { return (pts * Math.min(this.xpPerPoint, this.xpLive) * (BPS - this.s.exitBidMarginBps)) / BPS; }
   // sellForExitToken for one credit: pays xBidPrice from xPot. returns the price, or 0 when the Core would revert (mode not 2, price 0, price above the pot)
   xBuy(pts) {
     const price = this.exitBidActive() ? this.xBidPrice(pts) : 0;
@@ -521,12 +539,12 @@ export class Core {
   exitReady(st, now) {
     return this.moduleSet && this.s.exitMode >= 1 && !st.sold && !st.exited && (st.lane === 'exit' || this.atCost(st, now));
   }
-  // Core.exitStatement: the module returns rating * xpPerPoint * exitPayFrac; the Core requires at least rating * xpPerPoint * (10000 - exitSlippageBps) / 10000 and keeps all of it in xPot.
+  // Core.exitStatement: the module returns rating * xpLive * exitPayFrac; the Core requires at least rating * xpPerPoint (stored) * (10000 - exitSlippageBps) / 10000 and keeps all of it in xPot.
   // an eth lane redemption moves redeemBurnBps of the redeem burn reserve to the buyback pot. returns {received, toBurn}, or null when the Core would revert
   exitStatement(st, now) {
     const s = this.s, value = st.rating * this.xpPerPoint;
     if (!this.exitReady(st, now)) return null;
-    const received = value * this.p.exitPayFrac;
+    const received = st.rating * this.xpLive * this.p.exitPayFrac;
     if (received < (value * (BPS - s.exitSlippageBps)) / BPS * (1 - 1e-12)) return null; // Underpaid
     st.exited = true;
     this.xPot += received;
@@ -988,7 +1006,12 @@ export function simulate(userParams = {}) {
     for (const e of sched) {
       if (e.done || e.at > t0) continue;
       e.done = true; T.settingsChanges++;
-      core.setSettings(e.patch, t0);
+      // owner calls that are not settings: the module reports a unit, refreshUnitPerPoint, releaseRedeemBurn (a revert changes nothing)
+      const { moduleUnit, refreshUnitPerPoint, releaseRedeemBurn, ...rest } = e.patch;
+      if (Object.keys(rest).length) core.setSettings(rest, t0);
+      if (moduleUnit !== undefined) core.moduleReports(moduleUnit);
+      if (refreshUnitPerPoint) core.refreshUnitPerPoint();
+      if (releaseRedeemBurn !== undefined) core.releaseRedeemBurn(releaseRedeemBurn);
     }
   }
 

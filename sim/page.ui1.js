@@ -16,7 +16,10 @@ const CHG = {
   feeToRedeemBurnBps: { label: 'feeToRedeemBurnBps (fee share to the redeem burn reserve)', unit: 'bps, 0 to 10000, with feeToBuybackBps at most 10000', to: 2500 },
   redeemBurnBps: { label: 'redeemBurnBps (reserve share released by a redemption)', unit: 'bps, 0 to 10000', to: 5000 },
   exitMode: { label: 'exitMode (needs phase 2 switched on to have an effect)', unit: '0 off, 1 hold, 2 on', to: 0 },
-  exitBidMarginBps: { label: 'exitBidMarginBps (margin under the redeemable value)', unit: 'bps, 0 to 9000', to: 4000 },
+  exitBidMarginBps: { label: 'exitBidMarginBps (margin under the redeemable value)', unit: 'bps, 200 to 9000 (at least exitSlippageBps, 200 at launch)', to: 4000 },
+  moduleUnit: { label: 'exit module reports a new unitPerPoint (the Core stored unit is unchanged)', unit: 'eth per score point. the bid pays the lower of the stored and live unit', to: 1e-5 },
+  refreshUnitPerPoint: { label: 'owner calls refreshUnitPerPoint (stores the module unit)', unit: 'any nonzero value', to: 1 },
+  releaseRedeemBurn: { label: 'owner calls releaseRedeemBurn (reserve to the buyback pot)', unit: 'eth, capped at the reserve', to: 1 },
   rateCap: { label: 'rateCap (most the eth rate can be)', unit: 'wei per credit, 1e13 to 1e18', to: 2.2e16 },
 };
 // every control: key in the state object, how to show it. launch values are the Core's (script/config/mainnet.json)
@@ -87,8 +90,8 @@ const GROUPS = [
     { k: 'phase2Day', t: 'range', label: 'on day', min: 1, max: 89, step: 1, fmt: (v) => 'day ' + v, hint: 'the owner sets the exit module and exitMode that day. exitMode is 0 at launch: unsold statements sit at cost and nothing redeems' },
     { k: 'phase2ExitMode', t: 'select', label: 'exitMode that day', opts: [[1, '1 hold: redemptions at cost, no exit token bid'], [2, '2 on: redemptions and the exit token bid']] },
     { k: 'xpPerPoint', t: 'range', label: 'exit token value per score point, eth', min: 2e-6, max: 3e-4, log: true, fmt: fmtSci, hint: 'unitPerPoint at the exit token price. a statement of 80 credits at 440 points redeems 35,200 times this', hintFn: (s) => (s.xpPerPoint * 35200).toFixed(2) + ' eth' },
-    { k: 'exitPoolSet', t: 'check', label: 'exit token pool key set in the controller', hint: 'asking price is at least the redeemable value. unset at launch' },
-    { k: 'exitBidMarginBps', t: 'range', label: 'exitBidMarginBps', min: 0, max: 9000, step: 500, fmt: (v) => v, hint: 'the bid pays the redeemable value of a credit less this share. launch 2000' },
+    { k: 'exitPoolSet', t: 'check', label: 'exit token pool key set in the controller', hint: 'asking price is at least the redeemable value. the pool is native eth / exit token and initialized. unset at launch' },
+    { k: 'exitBidMarginBps', t: 'range', label: 'exitBidMarginBps', min: 0, max: 9000, step: 500, fmt: (v) => v, hint: 'the bid pays the redeemable value of a credit less this share, at the lower of the stored and live unit. exitSlippageBps follows it down when it is under 200. launch 2000' },
     { k: 'redeemBurnBps', t: 'range', label: 'redeemBurnBps', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of the redeem burn reserve moved to buy and burn $CC by each redemption of an eth lane statement. launch 2000' },
   ] },
   { title: 'run', open: false, ctl: [
@@ -178,7 +181,7 @@ function toParams(s) {
     recoveryClimbPerMin: Math.max(s.recoveryClimbPerMin, s.climbPerMin), recoveryGapPct: s.recoveryGapPct, peakHalfLifeHours: s.peakHalfLifeHours, // the Core needs the recovery climb at least the climb
     stepSec: 300, // 5 minute steps keep a live page responsive, credits within 1 percent of the 60 second steps of the batches
     rateCap: Math.max(s.rateCap, rateOf(s)), // the Core refuses a deploy with rateStart above rateCap
-    phase2Day: s.phase2On ? s.phase2Day : null, phase2ExitMode: +s.phase2ExitMode, xpPerPoint: s.xpPerPoint, exitPoolSet: !!s.exitPoolSet, exitBidMarginBps: s.exitBidMarginBps, redeemBurnBps: s.redeemBurnBps,
+    phase2Day: s.phase2On ? s.phase2Day : null, phase2ExitMode: +s.phase2ExitMode, xpPerPoint: s.xpPerPoint, exitPoolSet: !!s.exitPoolSet, exitBidMarginBps: s.exitBidMarginBps, exitSlippageBps: Math.min(200, s.exitBidMarginBps), redeemBurnBps: s.redeemBurnBps,
     days: +s.days, seed: s.seed,
   };
   if (p.phase2Day != null && p.phase2Day >= p.days) p.phase2Day = null;
