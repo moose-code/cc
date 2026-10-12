@@ -77,3 +77,7 @@ export function getCredit(id: number): SampleCredit | undefined {
 }
 
 export const engineBid = 0.0071; // eth per credit (the rate)
+export const enginePot = 8.2; // eth available in the pot to buy credits now
+
+// a connected holder's credits, eligible to sell into the bid (sample).
+export const yourSampleCredits: number[] = [51004, 51003, 51002, 51001];

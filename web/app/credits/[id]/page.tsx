@@ -1,15 +1,17 @@
 import Link from "next/link";
-import { getCredit, engineBid, type SampleCredit } from "@/lib/sample";
+import { getCredit, type SampleCredit } from "@/lib/sample";
 import { CreditTile } from "@/components/Tiles";
 import { agoLabel } from "@/lib/format";
 
-// CONNECT: load the credit by id. A held credit comes from the engine's pile;
-// a composed one maps to its statement. The user action is selling a credit to
-// the engine: Core.sellForEth([ids]) pays the bid (snapshot.ethRate), or the
-// engine takes a listing via buyListing. Gate on who owns the credit.
+// A credit the engine owns. Either held in the pile awaiting the next compose,
+// or already composed into a statement. No user action here — the engine owns
+// it. Selling a credit TO the engine happens on /sell.
+//
+// CONNECT: load the credit by id. Held credits come from the pile; a composed
+// credit maps to its statement via the Core compose record. `cost` is the price
+// the engine paid, from the CreditBought event.
 export default function CreditDetail({ params }: { params: { id: string } }) {
-  const id = Number(params.id);
-  const c = resolveCredit(id);
+  const c = resolveCredit(Number(params.id));
 
   return (
     <main className="page detail">
@@ -27,30 +29,32 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
             <h1>credit #{c.id}</h1>
           </div>
 
-          {/* CONNECT: sell-to-engine -> Core.sellForEth([id]) for the bid, or
-              buyListing for a listed credit. Show the bid, min out, who owns it. */}
-          <div className="buybox">
-            <div className="buybox-price">
-              <span className="muted">engine bid</span>
-              <span className="big">{engineBid} eth</span>
-            </div>
-            <button className="action" disabled>
-              sell to engine
-            </button>
-            <p className="muted small">
-              the engine buys every credit at the bid, then composes 80 into a
-              statement.
-            </p>
+          <div className="statuspanel">
+            {c.composed ? (
+              <p>
+                composed into{" "}
+                <Link href={`/statements/${c.statementId}`} className="xlink-inline">
+                  statement #{c.statementId}
+                </Link>
+                .
+              </p>
+            ) : (
+              <p>
+                held by the engine, awaiting compose into statement #
+                {c.statementId}. the engine composes 80 credits into a
+                statement.
+              </p>
+            )}
           </div>
 
           <div className="facts">
+            <Fact k="owner" v="engine" />
             <Fact k="lane" v={c.lane} />
             <Fact k="paid by engine" v={c.cost ? `${c.cost} eth` : "—"} />
             <Fact
-              k="statement"
-              v={c.statementId ? `#${c.statementId}` : "pending"}
+              k={c.composed ? "composed" : "bought"}
+              v={agoLabel(c.boughtAgo)}
             />
-            <Fact k="bought" v={agoLabel(c.boughtAgo)} />
           </div>
 
           {c.statementId && (
@@ -64,13 +68,19 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
   );
 }
 
-// Held credits exist in the sample; a composed credit is synthesized from its
-// id so any tile in a statement's grid links somewhere real.
-function resolveCredit(id: number): Omit<SampleCredit, "cost"> & { cost: number | null } {
+type ResolvedCredit = Omit<SampleCredit, "cost"> & {
+  cost: number | null;
+  composed: boolean;
+};
+
+// Held credits exist in the sample (awaiting compose). A credit id drawn from a
+// statement's grid is synthesized and marked composed, so every tile links to a
+// real page.
+function resolveCredit(id: number): ResolvedCredit {
   const held = getCredit(id);
-  if (held) return { ...held, cost: held.cost };
+  if (held) return { ...held, cost: held.cost, composed: false };
   const sid = id >= 40000 ? Math.floor((id - 40000) / 80) : null;
-  return { id, lane: "eth", cost: null, statementId: sid, boughtAgo: 3600 };
+  return { id, lane: "eth", cost: null, statementId: sid, boughtAgo: 3600, composed: true };
 }
 
 function Fact({ k, v }: { k: string; v: string }) {

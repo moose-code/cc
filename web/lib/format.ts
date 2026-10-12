@@ -1,5 +1,11 @@
 import { formatUnits } from "viem";
 
+// "+58%" / "-12%" for a percentage number.
+export function signedPct(n: number): string {
+  const r = Math.round(n);
+  return `${r >= 0 ? "+" : ""}${r}%`;
+}
+
 export function commas(n: number, max = 0): string {
   return n.toLocaleString("en-US", { maximumFractionDigits: max });
 }

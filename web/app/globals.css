@@ -835,3 +835,222 @@ a {
     height: 220px;
   }
 }
+
+/* ---- row-list feed (credits) --------------------------------------------- */
+
+.rowlist {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+.rowlist-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  border-bottom: 1px solid var(--line);
+}
+.rowlink {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--line2);
+  text-decoration: none;
+  color: var(--fg);
+}
+.rowlink:hover {
+  background: var(--rowhover);
+}
+.rl-credit {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+.rl-id {
+  font-weight: 600;
+}
+.rl-meta {
+  width: 90px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.rl-lane {
+  width: 70px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.rl-time {
+  width: 90px;
+  text-align: right;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+/* ---- statement history --------------------------------------------------- */
+
+.history-section {
+  margin-top: 1.75rem;
+}
+.history-section h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+.history {
+  display: flex;
+  flex-direction: column;
+}
+.hrow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line2);
+}
+.hlabel {
+  width: 120px;
+  color: var(--muted);
+}
+.hval {
+  flex: 1;
+}
+.hago {
+  margin-left: auto;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* ---- credit status panel ------------------------------------------------- */
+
+.statuspanel {
+  border: 1px solid var(--line);
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
+}
+.statuspanel p {
+  margin: 0;
+}
+.xlink-inline {
+  color: var(--fg);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---- sell page ------------------------------------------------------------ */
+
+.sell-intro {
+  margin: 0 0 1.5rem;
+  max-width: 560px;
+}
+.sell-grid {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+.bidcard {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+}
+.sell-connect {
+  display: grid;
+  gap: 1rem;
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+}
+.sell-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.link-btn {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-btn:hover {
+  color: var(--fg);
+}
+.sell-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+  margin-bottom: 1rem;
+}
+.sell-item {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  width: 100%;
+  padding: 0.6rem 0.25rem;
+  border: 0;
+  border-bottom: 1px solid var(--line2);
+  background: none;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+.sell-item:hover {
+  background: var(--rowhover);
+}
+.sell-item.on {
+  background: var(--rowalt);
+}
+.sell-item .rl-id {
+  flex: 1;
+}
+.sell-check {
+  width: 20px;
+  text-align: center;
+  color: var(--sold);
+}
+.sell-summary {
+  display: grid;
+  gap: 0.4rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+  margin-bottom: 1rem;
+}
+.sell-summary .r {
+  display: flex;
+  justify-content: space-between;
+}
+.big-sm {
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .rowlist-head {
+    display: none;
+  }
+  .rowlink {
+    flex-wrap: wrap;
+  }
+  .rl-meta,
+  .rl-lane {
+    width: auto;
+  }
+  .rl-time {
+    margin-left: auto;
+    width: auto;
+  }
+  .sell-grid {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+}

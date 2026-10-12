@@ -10,6 +10,7 @@ import {
 import { isLive } from "@/lib/config";
 import { relTime, eth, evmNowTx } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
+import { Addr } from "./Addr";
 
 const EVENT_NAME: Record<FeedKind, string> = {
   fee: "fee in",
@@ -111,6 +112,12 @@ function Row({ e }: { e: FeedEvent }) {
           {e.tile?.kind === "statement" && <StatementTile id={e.tile.id} />}
           <span className="label">
             {BOLD.has(e.kind) ? <b>{e.detail}</b> : e.detail}
+            {e.addr && (
+              <>
+                {" "}
+                <Addr address={e.addr} />
+              </>
+            )}
           </span>
         </div>
       </td>

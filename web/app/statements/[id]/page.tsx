@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { getStatement } from "@/lib/sample";
 import { StatementTile, CreditTile } from "@/components/Tiles";
 import { StatusBadge } from "@/components/Cards";
-import { agoLabel } from "@/lib/format";
+import { Addr } from "@/components/Addr";
+import { agoLabel, signedPct } from "@/lib/format";
 
 // CONNECT: load the statement from CoreLens (snapshot/statementsPage) by id, or
 // 404. askingPrice falls over time — poll ControllerV1.priceOf(id) / Core.
@@ -12,6 +13,8 @@ export default function StatementDetail({ params }: { params: { id: string } }) 
   if (!s) notFound();
 
   const dropPct = Math.round(((s.start - s.ask) / (s.start - s.floor)) * 100);
+  const overCostNow = (s.ask / s.cost - 1) * 100;
+  const overCostList = (s.start / s.cost - 1) * 100;
 
   return (
     <main className="page detail">
@@ -56,12 +59,6 @@ export default function StatementDetail({ params }: { params: { id: string } }) 
                 </p>
               </>
             )}
-            {s.status === "sold" && (
-              <p className="muted small">
-                bought by {s.buyer?.slice(0, 10)}
-                {"…"}
-              </p>
-            )}
             {s.status === "held" && (
               <p className="muted small">
                 {"composing · not yet listed for sale."}
@@ -75,6 +72,44 @@ export default function StatementDetail({ params }: { params: { id: string } }) 
             <Fact k="credits" v="80" />
             <Fact k="composed" v={agoLabel(s.composedAgo)} />
           </div>
+
+          <section className="section history-section">
+            <h2>history</h2>
+            {/* CONNECT: build from events — Composed, the listing, StatementSoldTo
+                (price + buyer). % over cost = price / cost - 1. */}
+            <div className="history">
+              <HistRow
+                label="composed"
+                value={`${s.cost} eth cost`}
+                ago={agoLabel(s.composedAgo)}
+              />
+              {s.status !== "held" && (
+                <HistRow
+                  label="listed"
+                  value={`${s.start} eth`}
+                  note={`${signedPct(overCostList)} over cost`}
+                />
+              )}
+              {s.status === "listed" && (
+                <HistRow
+                  label="current price"
+                  value={`${s.ask} eth`}
+                  note={`${signedPct(overCostNow)} over cost`}
+                />
+              )}
+              {s.status === "sold" && (
+                <HistRow
+                  label="sold"
+                  value={`${s.ask} eth`}
+                  note={`${signedPct(overCostNow)} over cost`}
+                  addr={s.buyer}
+                />
+              )}
+              {s.status === "held" && (
+                <HistRow label="awaiting listing" value={"—"} />
+              )}
+            </div>
+          </section>
         </div>
       </div>
 
@@ -99,6 +134,37 @@ function Fact({ k, v }: { k: string; v: string }) {
     <div className="fact">
       <span className="muted">{k}</span>
       <span>{v}</span>
+    </div>
+  );
+}
+
+function HistRow({
+  label,
+  value,
+  note,
+  ago,
+  addr,
+}: {
+  label: string;
+  value: string;
+  note?: string;
+  ago?: string;
+  addr?: string;
+}) {
+  return (
+    <div className="hrow">
+      <span className="hlabel">{label}</span>
+      <span className="hval">
+        {value}
+        {note && <span className="muted"> ({note})</span>}
+        {addr && (
+          <>
+            {" by "}
+            <Addr address={addr} />
+          </>
+        )}
+      </span>
+      {ago && <span className="muted hago">{ago}</span>}
     </div>
   );
 }

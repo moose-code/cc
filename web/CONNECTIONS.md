@@ -26,25 +26,45 @@ then cache, then RPC; `CoreLens.snapshot()` returns most of this in one call.
 - **buy** (disabled button) — `ControllerV1.buy(id)` payable at `priceOf(id)`
   (or the Core buy path). Need: live price, slippage/exact value, wallet
   balance check, tx state.
+- **history** — build from events: `Composed` (cost), the listing (start/markup),
+  `StatementSoldTo` (price + buyer). % over cost = price / cost - 1. Buyer runs
+  through `<Addr>` (ENS).
 - **composed credits** — `creditIds` is synthesized; use the real compose record
   from the Core.
 
-## credits index — `app/credits/page.tsx`
+## credits index — `app/credits/page.tsx` (feed layout)
 
 - **list** — `credits` → the engine's held pile. Count is
   `CoreLens.snapshot().ethPileSize`; enumerate ids from `CreditBought` logs or
   the credits NFT `balanceOf(Core)` + enumeration.
 - **bid** — `engineBid` → `snapshot().ethRate` (wei per credit).
 
-## credit detail — `app/credits/[id]/page.tsx`
+## credit detail — `app/credits/[id]/page.tsx` (engine-owned, no action)
 
 - **load** — `getCredit(id)`; a held credit comes from the pile, a composed one
-  maps to its statement.
-- **sell to engine** (disabled button) — `Core.sellForEth([id])` pays the bid
-  (`ethRate`); or `buyListing` when the engine takes a listed credit. Gate on
-  who owns the credit (only the owner can sell). Need: the bid, min out, owner
-  check, tx state.
+  maps to its statement. The engine owns the credit, so there is no action here.
 - **paid by engine** — real `cost` from the `CreditBought` event.
+- **state** — held (awaiting compose) vs composed (into statement #X), from the
+  Core compose record.
+
+## sell — `app/sell/page.tsx` (holder sells into the bid)
+
+- **your credits** — enumerate the connected wallet's Credits NFTs
+  (`balanceOf` + `tokenOfOwnerByIndex`, or `Transfer` logs). `addresses.credits`.
+- **bid** — `snapshot().ethRate` (wei per credit).
+- **buyable now** — `ethPot / rate` caps how many the engine can buy this call;
+  there may also be a per-call pace bound.
+- **approve** (disabled) — `Credits.setApprovalForAll(Core, true)` once.
+- **sell** (disabled) — `Core.sellForEth(ids, minOut)`. `minOut` guards the rate
+  moving down between build and mine. Total received = count * rate.
+
+## ENS (global) — `lib/ens.ts`, `components/Addr.tsx`
+
+- `<Addr address>` shows the ENS name when one resolves, else a short address,
+  linked to evm.now. Reverse lookups are cached in localStorage **forever**
+  (hits and misses) so the RPC is never touched twice for the same address.
+- Used on: the feed's sold rows, the statement history buyer. The connected
+  wallet's own name comes from RainbowKit.
 
 ## already wired (for reference)
 

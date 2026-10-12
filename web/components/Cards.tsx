@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { StatementTile, CreditTile } from "./Tiles";
+import { signedPct } from "@/lib/format";
 import type { SampleStatement, SampleCredit } from "@/lib/sample";
 
 export function StatementCard({ s }: { s: SampleStatement }) {
+  const overCost = (s.ask / s.cost - 1) * 100;
   return (
     <Link href={`/statements/${s.id}`} className="card">
       <StatementTile id={s.id} />
@@ -12,8 +14,11 @@ export function StatementCard({ s }: { s: SampleStatement }) {
           <StatusBadge status={s.status} />
         </div>
         <div className="card-rows">
-          <Row k={s.status === "sold" ? "sold for" : "price"} v={`${s.ask} eth`} />
-          <Row k="cost" v={`${s.cost} eth`} />
+          <Row
+            k={s.status === "sold" ? "sold for" : s.status === "held" ? "cost" : "price"}
+            v={`${s.status === "held" ? s.cost : s.ask} eth`}
+          />
+          {s.status !== "held" && <Row k="vs cost" v={signedPct(overCost)} />}
           <Row k="credits" v="80" />
         </div>
       </div>

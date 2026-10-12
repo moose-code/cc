@@ -24,6 +24,7 @@ export interface FeedEvent {
   tx: string; // short display label
   txHash?: string; // full hash, present on live rows, drives the evm.now link
   tile?: { kind: "credit" | "statement"; id: number };
+  addr?: string; // an address in the detail (e.g. the statement buyer), ENS-ified
 }
 
 export interface Stats {
@@ -63,7 +64,7 @@ function sampleFeed(now: number): FeedEvent[] {
     { back: 59, kind: "credit", detail: "bought credit #48190 → statement 213", eth: "0.0069", tx: "0x9b02", tile: { kind: "credit", id: 48190 } },
     { back: 69, kind: "fee", detail: "swap fee to engine", eth: "0.0255", tx: "0x44c8" },
     { back: 68, kind: "credit", detail: "bought credit #48188 → statement 213", eth: "0.0071", tx: "0x7d5e", tile: { kind: "credit", id: 48188 } },
-    { back: 116, kind: "sold", detail: "statement 208 bought by 0x91ac…44de", eth: "1.40", tx: "0x3a90", tile: { kind: "statement", id: 208 } },
+    { back: 116, kind: "sold", detail: "statement 208 bought by", addr: "0x91ac4df2a1e8b7c3d5f6a9e0b2c4d6e8f0a244de", eth: "1.40", tx: "0x3a90", tile: { kind: "statement", id: 208 } },
     { back: 116, kind: "burn", detail: "burned 310,000 cc", tx: "0x3a90" },
     { back: 115, kind: "credit", detail: "bought credit #48161 → statement 213", eth: "0.0068", tx: "0xe6f1", tile: { kind: "credit", id: 48161 } },
     { back: 179, kind: "fee", detail: "swap fee to engine", eth: "0.0759", tx: "0xb3a4" },
@@ -77,6 +78,7 @@ function sampleFeed(now: number): FeedEvent[] {
     eth: r.eth,
     tx: r.tx,
     tile: r.tile,
+    addr: r.addr,
   }));
 }
 
@@ -276,7 +278,7 @@ export function useFeed() {
           else if (name === "Composed")
             out.push({ ...base, kind: "composed", detail: `statement ${a.sid} · cost ${fmt(a.cost)} eth`, tile: { kind: "statement", id: Number(a.sid) } });
           else if (name === "StatementSoldTo")
-            out.push({ ...base, kind: "sold", detail: `statement ${a.sid} bought by ${short(a.buyer)}`, eth: fmt(a.price), tile: { kind: "statement", id: Number(a.sid) } });
+            out.push({ ...base, kind: "sold", detail: `statement ${a.sid} bought by`, addr: a.buyer as string, eth: fmt(a.price), tile: { kind: "statement", id: Number(a.sid) } });
           else if (name === "Buyback")
             out.push({ ...base, kind: "burn", detail: `burned ${Math.floor(Number(formatUnits(a.amountIn, 18))).toLocaleString()} cc` });
         }
@@ -296,7 +298,4 @@ function fmt(wei?: bigint): string {
     minimumFractionDigits: 4,
     maximumFractionDigits: 4,
   });
-}
-function short(a: string): string {
-  return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
