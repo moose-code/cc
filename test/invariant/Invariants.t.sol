@@ -653,7 +653,8 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// dispatches one handler action by number. the arguments mean what the action needs.
     function _act(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) internal virtual {
-        a = a % 36;
+        a = a % 37;
+        if (a == 36) return handler.pause(w, x);
         if (a == 35) return handler.adopt(w, x, y);
         if (a == 34) return handler.migrate(w, x);
         if (a == 33) return handler.rescueNft(w, x);
@@ -757,6 +758,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     function _available(uint256 a) internal view returns (bool) {
+        if (a == 36) return false;
         if (a >= 31 || a == 25) return true;
         if (a >= 26) return _saleSuite();
         if ((a >= 14 && a <= 18 || a == 24) && !handler.phase2()) return false;

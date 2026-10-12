@@ -260,6 +260,7 @@ export class Core {
     for (const k of CONTROLLER_KEYS) this.c[k] = p[k];
     this.anchorStored = 10000; // the controller's storedAnchorBps: the anchor at anchorTime, bps of cost
     this.anchorTime = t0;
+    this.pauses = []; // the controller's pause windows {start, end} in seconds, end null while open
     this.feeToBuyback = 0; // cumulative swap fee eth sent to the buyback pot by feeToBuybackBps
     this.ethPot = 0; this.ethToBuyback = 0; this.xPot = 0; this.xToBuyback = 0;
     this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0; this.funded = false;
@@ -343,10 +344,11 @@ export class Core {
     this.funded = this.ethPot * W >= this.rateAtCheckpoint;
   }
   // owner: setSettings. validates, checkpoints both rates first, then applies at once. patch.rate is setRate.
-  // the patch may also hold controller settings (markupBps, startCapBps, fastDecayBpsPerHour, kneeBps, slowDecayBpsPerHour, floorBps, anchorHalfLife, anchorMinCost) and anchorBps (setAnchorBps): the controller reads them live.
+  // the patch may also hold `paused` (ControllerV1.setPaused: true opens a pause window, false closes it) and controller settings (markupBps, startCapBps, fastDecayBpsPerHour, kneeBps, slowDecayBpsPerHour, floorBps, anchorHalfLife, anchorMinCost) and anchorBps (setAnchorBps): the controller reads them live.
   // a new anchorHalfLife stores the anchor now first, and a start cap below the anchor now lowers the anchor to the cap
   setSettings(patch, now) {
     const rate = patch.rate;
+    if (patch.paused !== undefined && typeof patch.paused !== 'boolean') throw new Error('BadSetting paused');
     const next = Object.assign({}, this.s), nextC = Object.assign({}, this.c);
     for (const k of SETTING_KEYS) if (patch[k] !== undefined) next[k] = patch[k];
     for (const k of CONTROLLER_KEYS) if (patch[k] !== undefined) nextC[k] = patch[k];
@@ -360,6 +362,7 @@ export class Core {
     if (patch.anchorHalfLife !== undefined) this.setAnchor(anchorNow, now);
     if (this.c.startCapBps < anchorNow) this.setAnchor(this.c.startCapBps, now);
     if (patch.anchorBps !== undefined) this.setAnchor(patch.anchorBps, now);
+    if (patch.paused !== undefined) this.setPaused(patch.paused, now);
     if (anchor && next.xAuctionHalfLife !== half) { this.xStartPrice = Math.max(price, 1e-12); this.xStartTime = now; }
     this.xRateAtCheckpoint = Math.max(Math.min(this.xRateAtCheckpoint, next.xRateCap), next.xRateFloor);
     this.rateAtCheckpoint = Math.min(this.rateAtCheckpoint, next.rateCap); // a lower cap pulls the rate down now
@@ -438,10 +441,27 @@ export class Core {
     const c = this.c;
     return Math.min(Math.floor((this.anchorAt(now) * c.markupBps) / BPS), c.startCapBps);
   }
+  // ControllerV1.setPaused: a pause opens a window at `now`, a resume closes it. a call that repeats the state opens no window
+  setPaused(v, now) {
+    const open = this.pauses.length > 0 && this.pauses[this.pauses.length - 1].end === null;
+    if (v === open) return;
+    if (v) this.pauses.push({ start: now, end: null });
+    else this.pauses[this.pauses.length - 1].end = now;
+  }
+  isPausedAt(now) { return this.pauses.some((w) => now >= w.start && (w.end === null || now < w.end)); }
+  // the seconds of [from, to] inside the pause windows (an open window counts to `to`)
+  pausedBetween(from, to) {
+    let total = 0;
+    for (const w of this.pauses) {
+      const s = Math.max(w.start, from), e = Math.min(w.end === null ? to : w.end, to);
+      if (e > s) total += e - s;
+    }
+    return total;
+  }
   // ControllerV1.statementPrice(sid, cost, listedAt): askBps at the age of the listing from the current anchor and settings, in wei of the cost.
-  // the price is relative to what the engine PAID (the statement cost), not to the market price of its parts
+  // the age is the time since the listing outside the pause windows. the price is relative to what the engine PAID (the statement cost), not to the market price of its parts
   statementPrice(cost, listedAt, now) {
-    return (cost * askBps(this.c, this.startBps(now), Math.max(0, now - listedAt))) / BPS;
+    return (cost * askBps(this.c, this.startBps(now), Math.max(0, now - listedAt - this.pausedBetween(listedAt, now)))) / BPS;
   }
   // the Core's hard floor: no sale below cost * saleFloorBps / 10000
   floorPrice(st) { return (st.cost * this.s.saleFloorBps) / BPS; }
@@ -469,6 +489,7 @@ export class Core {
   // ControllerV1.buy: pays the asking price now through sellTo. a sale price in bps of cost (rounded up) above the anchor now moves the anchor
   // to the mean of the two, not above startCapBps. a sale at or below the anchor leaves it, and so does a statement that costs less than anchorMinCost. returns the booking, or null when the Core would revert
   buy(st, now) {
+    if (this.isPausedAt(now)) return null;
     const price = this.askingPrice(st, now);
     const res = this.sellTo(st, price, now);
     if (!res) return null;
@@ -899,6 +920,7 @@ export function simulate(userParams = {}) {
     const waits = p.buyerWaits === 'floor';
     for (const ta of times) {
       T.stmtArrivals++;
+      if (core.isPausedAt(ta)) { T.stmtMiss++; continue; } // ControllerV1.buy reverts Paused
       const wtp = interp(WTP_Q, rng()) * p.wtpMult * p.PAGE * Pe;
       const opts = [];
       for (const st of unbid) {

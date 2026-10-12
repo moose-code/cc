@@ -71,6 +71,26 @@ const R0 = 6.668e15;
   assert.deepEqual(CONTROLLER, { markupBps: 15000, startCapBps: 100000, fastDecayBpsPerHour: 100, kneeBps: 10000, slowDecayBpsPerHour: 25, floorBps: 7500, anchorHalfLife: 7 * 24 * H, anchorMinCost: 0.1 }); n++;
   assert.equal(SETTINGS.saleFloorBps, 7500); assert.equal(SETTINGS.exitAfter, 105 * H); assert.equal(SETTINGS.feeToBuybackBps, 0); n += 3;
 }
+// the owner pause (ControllerV1.setPaused): the age a price falls with excludes every paused window, a buy refuses while paused, a repeat opens no window
+{
+  const c = fresh({}, 10);
+  const st = { cost: 1, t0: 0, lane: 'eth' };
+  const before = c.askingPrice(st, 20 * H);
+  near(before, 1.30, 1e-12, 'hour 20 of the launch curve');
+  c.setSettings({ paused: true }, 20 * H);
+  assert.equal(c.isPausedAt(21 * H), true); assert.equal(c.buy(st, 30 * H), null); assert.equal(st.sold, undefined);
+  near(c.askingPrice(st, 90 * H), before, 1e-12, 'the price is held through the pause');
+  c.setPaused(true, 40 * H); assert.equal(c.pauses.length, 1); // a repeat opens no window
+  c.setSettings({ paused: false }, 100 * H); c.setPaused(false, 101 * H); assert.equal(c.pauses.length, 1);
+  near(c.askingPrice(st, 100 * H), before, 1e-12, 'the price at the resume is the price at the pause');
+  near(c.askingPrice(st, 101 * H), 1.29, 1e-12, 'the fall continues an hour after the resume');
+  const during = { cost: 1, t0: 50 * H, lane: 'eth' }; // composed inside the window: age zero at the resume
+  near(c.askingPrice(during, 100 * H), 1.50, 1e-12, 'a statement composed during the pause starts aging at the resume');
+  c.setPaused(true, 110 * H); c.setPaused(false, 112 * H);
+  near(c.askingPrice(st, 120 * H), 1.12, 1e-12, 'two windows (80 and 2 hours): age 38 hours at hour 120');
+  assert.throws(() => c.setSettings({ paused: 'yes' }, 0), /paused/);
+  assert.equal(c.buy(st, 130 * H) !== null, true); n += 10;
+}
 // no inventory gate and no dutch statement auction anywhere
 {
   const src = fs.readFileSync(new URL('./engine.js', import.meta.url), 'utf8');

@@ -340,6 +340,7 @@ abstract contract InvariantFixture is Fixture {
             s[n++] = HandlerSale.hostileOwner.selector;
             s[n++] = HandlerSale.lockDoor.selector;
             s[n++] = HandlerSale.handover.selector;
+            s[n++] = HandlerSale.pause.selector;
         }
         // the owner as an adversary: settings anywhere in the bounds, rates, invalid calls, the other owner doors
         for (uint256 k; k < _ownerWeight(); ++k) {

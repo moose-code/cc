@@ -23,7 +23,7 @@ abstract contract SaleSuite is InvariantsBase {
 
     /// the base actions as before, then the five of `HandlerSale` after `buy`
     function _act(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) internal override {
-        a = a % 36;
+        a = a % 37;
         if (a < 26 || a > 30) return super._act(a, w, x, y, z);
         if (a == 26) handler.ownerSell(w, x, y, z);
         else if (a == 27) handler.saleSettings(w, x);
@@ -61,6 +61,11 @@ abstract contract SaleSuite is InvariantsBase {
         assertTrue(_try(28, 40), "no owner swap");
         assertTrue(_try(30, 160), "no handover");
         assertTrue(_try(29, 160), "no lock");
+        for (uint256 i; i < 120 && (handler.pauseCount() == 0 || ctl.paused()); ++i) {
+            _try(36, 1);
+        }
+        assertGt(handler.pauseCount(), 0, "no pause window");
+        assertFalse(ctl.paused(), "no resume");
         assertGt(handler.gSoldTo(), 0, "no statement was sold at once");
         for (uint256 i = 1; i < handler.violationCount(); ++i) {
             assertEq(handler.viol(i), 0, handler.violMsg(i));
@@ -68,6 +73,7 @@ abstract contract SaleSuite is InvariantsBase {
         for (uint256 a = 25; a < 31; ++a) {
             assertEq(handler.unexpectedFails(a), 0, handler.actionName(a));
         }
+        assertEq(handler.unexpectedFails(36), 0, handler.actionName(36));
     }
 
     /// the seeds at the top of the range must not overflow inside a handler action
@@ -77,6 +83,8 @@ abstract contract SaleSuite is InvariantsBase {
             _act(a, m, m, m, m);
             _act(a, 0, m, m - 1, m - 2);
         }
+        _act(36, m, m, m, m);
+        _act(36, 0, m, m - 1, m - 2);
         for (uint256 i = 1; i < handler.violationCount(); ++i) {
             assertEq(handler.viol(i), 0, handler.violMsg(i));
         }
@@ -85,7 +93,8 @@ abstract contract SaleSuite is InvariantsBase {
     /// the hostile owner path with every sale action in a long fixed sequence of mixed calls: nothing reverts, no violation
     /// forge-config: default.gas_limit = 9223372036854775807
     function testFuzz_saleActionsNeverRevert(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) public {
-        _act(25 + a % 6, w, x, y, z);
+        uint256 k = a % 7;
+        _act(k == 6 ? 36 : 25 + k, w, x, y, z);
         for (uint256 i = 1; i < handler.violationCount(); ++i) {
             assertEq(handler.viol(i), 0, handler.violMsg(i));
         }

@@ -75,7 +75,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0xaf44690ea8f217e0a7a98f93df4ec91c95e16613940a126e2fcd35ea6db2a919;
     bytes32 internal constant BUILD_HASH_CORELIB = 0x5d31b8fb1cc3fcf7a79e926b0db67f3b1329ffaccc9b4eb53f29b4c0009de305;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x8262813d4ca893d32b0806657e5e9ac414e3d00505b7b0d00929429ecb6c91d8;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x8aaaa979d0acab606695913700299f932d1dd0cbb19d0041347d3368ecc641dd;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0xea2e602937d074c8ae7ca1d9f671c2486982afd670e076cd570ffc4879c47c83;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =

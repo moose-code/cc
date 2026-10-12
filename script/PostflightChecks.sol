@@ -235,7 +235,7 @@ abstract contract PostflightChecks is PostflightPool {
         _check(
             "controller: every CORE slot of the runtime code is the Core",
             runtimeSlotsMatch(ctl, "ControllerV1", address(0), ctlWant),
-            "the 13 immutable sites of the controller runtime code"
+            "the 14 immutable sites of the controller runtime code"
         );
         // after launch the owner may lock or set the exit module: LOCKS_CHANGED=1 turns the row into a report line
         bool launchState = !core.controllerLocked() && !core.exitModuleLocked() && !core.targetsLocked()
@@ -298,6 +298,12 @@ abstract contract PostflightChecks is PostflightPool {
             _warn("warn: controller anchor is 10_000", anchored, "SETTINGS_CHANGED=1, sales or the owner moved it since launch");
         } else {
             _check("controller: anchor is 10_000", anchored, vm.toString(k.anchorBps()));
+        }
+        // sales are open until the owner pauses them
+        if (_settingsChanged()) {
+            _warn("warn: controller is not paused", !k.paused(), "SETTINGS_CHANGED=1, the owner paused sales since launch");
+        } else {
+            _check("controller: not paused", !k.paused(), k.paused() ? "paused" : "not paused");
         }
         _info(
             "controller: sale",
