@@ -212,6 +212,17 @@ export const permit2Abi = [
   },
 ] as const;
 
+// Core actions the UI calls directly.
+export const coreAbi = [
+  {
+    type: "function",
+    name: "compose",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+] as const;
+
 // Events the engine feed decodes from Core / ControllerV1 logs.
 export const coreEventsAbi = [
   {

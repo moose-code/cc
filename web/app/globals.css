@@ -1054,3 +1054,56 @@ a {
     gap: 1.25rem;
   }
 }
+
+/* ---- compose page --------------------------------------------------------- */
+
+.compose-bar {
+  height: 10px;
+  background: var(--line);
+  position: relative;
+  margin-bottom: 1.5rem;
+}
+.compose-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--composed);
+}
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 0.5rem;
+}
+.slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+}
+.slot.filled {
+  text-decoration: none;
+}
+.slot.filled:hover {
+  border-color: var(--muted2);
+  background: var(--rowhover);
+}
+.slot.filled .tile-credit {
+  height: 60%;
+  gap: 2px;
+}
+.slot.filled .tile-credit i {
+  width: 5px;
+}
+.slot.empty {
+  border-style: dashed;
+  background: var(--line2);
+}
+.compose-action {
+  display: grid;
+  gap: 1rem;
+  max-width: 440px;
+  margin-top: 2rem;
+}
+.compose-action p {
+  margin: 0;
+}

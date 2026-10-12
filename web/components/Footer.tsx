@@ -26,7 +26,7 @@ export function Footer() {
             ))}
           </span>
         )}
-        <span>{"independent · not affiliated with credits or artcoins"}</span>
+        <span>{"independent · not affiliated with credits"}</span>
         <span>
           by{" "}
           <a href="https://x.com/ripe0x" target="_blank" rel="noreferrer">

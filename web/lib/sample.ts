@@ -56,14 +56,18 @@ export const statements: SampleStatement[] = Array.from({ length: 12 }, (_, i) =
   };
 });
 
-// held credits = the engine's current pile, bought and awaiting the next compose.
-export const credits: SampleCredit[] = Array.from({ length: 24 }, (_, i) => {
+export const statementSize = 80; // credits composed into one statement
+export const nextStatementId = 213; // the statement currently composing
+
+// held credits = the engine's current pile, bought and awaiting the next
+// compose. This is the in-progress statement's filled slots.
+export const credits: SampleCredit[] = Array.from({ length: 56 }, (_, i) => {
   const id = 48213 - i;
   return {
     id,
     lane: "eth",
     cost: round4(0.0068 + ((id % 7) / 10000)),
-    statementId: 213, // the statement currently composing
+    statementId: nextStatementId,
     boughtAgo: 2 + i * 11,
   };
 });

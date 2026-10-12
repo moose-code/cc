@@ -11,6 +11,7 @@ const LOGO_BARS = ["#0a9b41", "#16b6d8", "#f5c400", "#ff0080"];
 const NAV = [
   { href: "/", label: "feed" },
   { href: "/statements", label: "statements" },
+  { href: "/compose", label: "compose" },
   { href: "/credits", label: "credits" },
   { href: "/sell", label: "sell" },
 ];

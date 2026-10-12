@@ -47,6 +47,15 @@ then cache, then RPC; `CoreLens.snapshot()` returns most of this in one call.
 - **state** — held (awaiting compose) vs composed (into statement #X), from the
   Core compose record.
 
+## compose — `app/compose/page.tsx` (the in-progress statement)
+
+- **filled slots** — `credits` (the pile) → the pile's credit ids (CreditBought
+  logs not yet composed, or a Core pile view). Count = `snapshot().ethPileSize`.
+- **next statement id** — the id the next compose mints.
+- **compose** (button) — `Core.compose()`. Permissionless: anyone can call once
+  >= 80 credits are in the pile. Enabled only when full and the Core is
+  deployed. Exit lane uses `composeExit`.
+
 ## sell — `app/sell/page.tsx` (holder sells into the bid)
 
 - **your credits** — enumerate the connected wallet's Credits NFTs
