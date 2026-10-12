@@ -39,7 +39,7 @@ contract RecoveryTest is Fixture {
     }
 
     /// a one minute dump of 140 credits halves the bid; the recovery climb brings it back to the pre dump price in about
-    /// 59 minutes at the launch gap (fast from the 50 percent floor up to the recovery level, then the slow climb over
+    /// 47 minutes at the launch gap (fast from the 50 percent floor up to the recovery level, then the slow climb over
     /// the last `recoveryGapBps` to the peak). the exact minute is asserted and logged
     function test_oneMinuteDumpRecovers() public {
         vm.prank(owner);
@@ -57,7 +57,7 @@ contract RecoveryTest is Fixture {
     }
 
     /// a three minute dump of about 420 credits walks the bid down by half each minute, to about an eighth of the pre
-    /// dump price; the recovery climb brings it back in about 2.4 hours at the launch gap
+    /// dump price; the recovery climb brings it back in about 2.2 hours at the launch gap
     function test_threeMinuteDumpRecovers() public {
         vm.prank(owner);
         core.setRate(OPEN_RATE);
@@ -80,9 +80,10 @@ contract RecoveryTest is Fixture {
     function test_marketFallOvershootBounded() public {
         vm.prank(owner);
         core.setRate(OPEN_RATE);
-        // the market falls: each step a batch of fills drops the bid about 7 percent below the remembered peak, then
-        // nobody sells for 3 minutes (the keeper window). the price state is below the peak, so it climbs at the fast
-        // recovery rate, and the overshoot over the fill price is capped by 3 minutes of that climb (about 6 percent)
+        // the market falls: each step a batch of fills drops the bid about 7 percent below the remembered peak, past
+        // the 2 percent gap, then nobody sells for 3 minutes (the keeper window). the price state is below the recovery
+        // level, so it climbs at the fast recovery rate, and the overshoot over the fill price is capped by 3 minutes of
+        // that climb (about 6 percent)
         uint256 overshoot;
         uint256 last = OPEN_RATE;
         for (uint256 step; step < 10; ++step) {
@@ -103,7 +104,7 @@ contract RecoveryTest is Fixture {
         assertLe(overshoot, 700, "the overshoot stays within about 6 percent");
     }
 
-    /// a lone seller selling one credit whenever the read is at least the opening price: at the launch gap (1000 bps) a
+    /// a lone seller selling one credit whenever the read is at least the opening price: at the launch gap (200 bps) a
     /// single credit drop of 0.5 percent stays inside the gap, so the bid climbs at the normal rate and the throughput
     /// is the slow climb's, not the recovery climb's. the count over one hour and the eth paid are logged
     function test_loneSellerFlatPriceThroughput() public {
@@ -123,8 +124,8 @@ contract RecoveryTest is Fixture {
             }
             _warp(3);
         }
-        emit log_named_uint("lone seller at launch gap 1000: credits sold at >= opening price in 1h", sold);
-        emit log_named_uint("lone seller at launch gap 1000: wei paid", paid);
+        emit log_named_uint("lone seller at launch gap 200: credits sold at >= opening price in 1h", sold);
+        emit log_named_uint("lone seller at launch gap 200: wei paid", paid);
         // the single credit drop is inside the gap, so the climb is the slow rate: the throughput is near the old
         // recovery = climb case (about 60 credits an hour), far below the ungapped recovery (about 188)
         assertLe(sold, 90, "a single credit drop climbs at the normal rate, not the recovery rate");

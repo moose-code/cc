@@ -62,6 +62,8 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 **intent gap, decision 47.** what "ready for when burn router and $balance drop" requires of the engine is not written down. the director drafts it from the v2 burn router source and brings the owner one question if a real choice remains.
 
+**phase 2 fit (owner information, 2026-10-12).** the exit side will wrap the redeem contract that burns a statement for an erc-20. owner: "it's not restricted ifaik. instant payout, yes". the payout arrives in the redeem transaction and the token is not transfer restricted, to the owner's knowledge. still to confirm from the contract source when it is published: a contract that owns the statement may redeem it, the token is a plain erc-20 (no fee on transfer, no rebase), its address is fixed, and the payout per statement has a known minimum (the module's `unitPerCredit` is set at or below it). a fork test with a draft module follows once the source exists.
+
 ## 5. evidence
 
 `python3 script/director.py evidence` lists every record with its validity. what a new session must know:

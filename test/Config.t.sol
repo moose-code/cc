@@ -628,9 +628,11 @@ contract ConfigTest is Fixture {
         assertTrue(metadataRowPasses(okImage, okDesc), "an ipfs image passes");
         assertTrue(metadataRowPasses("https://example.com/cc.png", okDesc), "an https image passes");
         assertTrue(metadataRowPasses("ar://abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHI", okDesc), "an ar image passes");
-        // the scheme match is case insensitive, ignores leading whitespace, and accepts an onchain data uri; http is refused
-        assertTrue(metadataRowPasses("IPFS://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", okDesc), "an upper case scheme passes");
-        assertTrue(metadataRowPasses("  ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", okDesc), "leading whitespace before the scheme passes");
+        // the scheme is matched on the raw bytes that go on chain: an upper case scheme or surrounding whitespace fails,
+        // an onchain data uri passes, http is refused
+        assertFalse(metadataRowPasses("IPFS://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", okDesc), "an upper case scheme fails");
+        assertFalse(metadataRowPasses("  ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", okDesc), "leading whitespace before the scheme fails");
+        assertFalse(metadataRowPasses("ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi  ", okDesc), "trailing whitespace fails");
         assertTrue(metadataRowPasses("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", okDesc), "a data uri passes");
         assertFalse(metadataRowPasses("http://example.com/cc.png", okDesc), "an http image fails");
 

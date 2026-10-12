@@ -94,6 +94,7 @@ contract GateFuzzTest is Fixture {
             s.climbPerMinBps = uint16(1 + (seed >> 16) % 1_000);
             s.ceilBps = uint16(10_000 + (seed >> 32) % 20_001);
             s.idleLoosenBps = uint16(1 + (seed >> 48) % 2_000);
+            if (s.climbPerMinBps > s.recoveryClimbPerMinBps) s.recoveryClimbPerMinBps = s.climbPerMinBps;
         }
         // forge-lint: disable-end(unsafe-typecast)
         _setSettings(s);

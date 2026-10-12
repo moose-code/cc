@@ -131,7 +131,7 @@ export const SIM_DEFAULTS = {
   dropToPct: 50,
   climbPerMin: 0.5,
   recoveryClimbPerMin: 2, // stepped: percent per minute while the price state is below the recovery level (recoveryGapPct under the remembered peak) (launch recoveryClimbPerMinBps 200); at or above the level the climb is climbPerMin
-  recoveryGapPct: 10, // stepped: the recovery climb applies only below peak * (1 - recoveryGapPct / 100) (launch recoveryGapBps 1000); 0 makes every fill start the recovery climb
+  recoveryGapPct: 2, // stepped: the recovery climb applies only below peak * (1 - recoveryGapPct / 100) (launch recoveryGapBps 200); 0 makes every fill start the recovery climb
   peakHalfLifeHours: 6, // stepped: the remembered peak (the ceiling anchor, with the last fill rate) halves in this many hours (launch peakHalfLife 21600 seconds)
   dropPerCreditPct: 0.5,
   ceilPct: 110,

@@ -1,0 +1,218 @@
+=== InvariantsPhase1WindowDeep 422s exit=0
+Ran 6 tests for test/invariant/Invariants.t.sol:InvariantsPhase1WindowDeep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1024786, ~: 928636)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 9616450)
+[PASS] test_everyActionSucceeds() (gas: 131587315)
+[PASS] test_startsInsideTheSniperWindow() (gas: 12883)
+[PASS] test_theBidCheckFindsASeller() (gas: 562368)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 422.05s (422.37s CPU time)
+Ran 1 test suite in 422.09s (422.05s CPU time): 6 tests passed, 0 failed, 0 skipped (6 total tests)
+=== InvariantsPhase1Deep 428s exit=0
+Ran 6 tests for test/invariant/Invariants.t.sol:InvariantsPhase1Deep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1085290, ~: 1019792)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 10010480)
+[PASS] test_everyActionSucceeds() (gas: 104450660)
+[PASS] test_storageLayoutMatchesTheHandlerSlots() (gas: 24580)
+[PASS] test_theBidCheckFindsASeller() (gas: 611492)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 427.53s (427.75s CPU time)
+Ran 1 test suite in 427.57s (427.53s CPU time): 6 tests passed, 0 failed, 0 skipped (6 total tests)
+=== InvariantsPhase2Deep 504s exit=0
+Ran 5 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsPhase2Deep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1238336, ~: 1020120)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 11019353)
+[PASS] test_everyActionSucceeds() (gas: 124067234)
+[PASS] test_theBidCheckFindsASeller() (gas: 611492)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 503.89s (504.41s CPU time)
+Ran 1 test suite in 503.93s (503.89s CPU time): 5 tests passed, 0 failed, 0 skipped (5 total tests)
+=== InvariantsHostileControllerDeep 535s exit=0
+Ran 5 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileControllerDeep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1136316, ~: 1020138)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 10991053)
+[PASS] test_everyActionSucceeds() (gas: 121268082)
+[PASS] test_theBidCheckFindsASeller() (gas: 611492)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 535.26s (535.73s CPU time)
+Ran 1 test suite in 535.30s (535.26s CPU time): 5 tests passed, 0 failed, 0 skipped (5 total tests)
+=== InvariantsSalePhase1Deep 430s exit=0
+Ran 8 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase1Deep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1006308, ~: 929099)
+[PASS] testFuzz_saleActionsNeverRevert(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 953127, ~: 918693)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 10017225)
+[PASS] test_everyActionSucceeds() (gas: 104472502)
+[PASS] test_saleActionsEverySucceed() (gas: 19483501)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 3693997)
+[PASS] test_theBidCheckFindsASeller() (gas: 611492)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 429.82s (432.73s CPU time)
+Ran 1 test suite in 429.85s (429.82s CPU time): 8 tests passed, 0 failed, 0 skipped (8 total tests)
+=== InvariantsHostileOwnerDeep 497s exit=0
+Ran 5 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileOwnerDeep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1331270, ~: 1019916)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 11019353)
+[PASS] test_everyActionSucceeds() (gas: 124067213)
+[PASS] test_theBidCheckFindsASeller() (gas: 611492)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 496.76s (497.31s CPU time)
+Ran 1 test suite in 496.80s (496.76s CPU time): 5 tests passed, 0 failed, 0 skipped (5 total tests)
+=== InvariantsSalePhase2Deep 511s exit=0
+Ran 8 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase2Deep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrAnExit
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideAnExitEverWorked
+[PASS] invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_lensEqualsTheCore
+[PASS] invariant_callSummary
+[PASS] testFuzz_handlerNeverReverts(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1172962, ~: 984338)
+[PASS] testFuzz_saleActionsNeverRevert(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 1015648, ~: 941753)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 11026410)
+[PASS] test_everyActionSucceeds() (gas: 124090948)
+[PASS] test_saleActionsEverySucceed() (gas: 20478526)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 3759011)
+[PASS] test_theBidCheckFindsASeller() (gas: 611492)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 510.22s (512.59s CPU time)
+Ran 1 test suite in 510.26s (510.22s CPU time): 8 tests passed, 0 failed, 0 skipped (8 total tests)

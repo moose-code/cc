@@ -109,8 +109,9 @@ struct Settings {
     uint16 exitToBuybackBps;
     /// seconds in which the remembered peak halves. the ceiling anchor is `max(last fill rate, peak now)`
     uint32 peakHalfLife;
-    /// climb of the eth rate per minute while the price state is below the remembered peak, bps, compounded. at or above
-    /// the peak the rate climbs `climbPerMinBps`. at least `climbPerMinBps`
+    /// climb of the eth rate per minute while the price state is below the recovery level
+    /// `peak * (10_000 - recoveryGapBps) / 10_000`, bps, compounded. at or above the level the rate climbs
+    /// `climbPerMinBps`. at least `climbPerMinBps`
     uint16 recoveryClimbPerMinBps;
     uint128 buybackSlice;
     /// blocks between two coin buybacks
@@ -142,9 +143,9 @@ struct Settings {
     uint64 callerFee;
     /// base fee ceiling of the gas refund of `compose`, `composeExit` and `exitStatement`, wei. zero refunds no gas
     uint48 callerMaxBaseFee;
-    /// the recovery climb applies only while the price state is below `recoveryGapBps` of the remembered peak, bps of
-    /// the peak. at or above `peak * (10_000 - recoveryGapBps) / 10_000` the climb is `climbPerMinBps`. 0 makes every
-    /// fill start the recovery climb
+    /// the recovery climb applies only while the price state is more than `recoveryGapBps` below the remembered peak,
+    /// bps of the peak: below `peak * (10_000 - recoveryGapBps) / 10_000`. at or above that level the climb is
+    /// `climbPerMinBps`. 0 makes every fill start the recovery climb
     uint16 recoveryGapBps;
 }
 
@@ -233,7 +234,7 @@ library Mainnet {
             feeToBuybackBps: 0,
             callerFee: 0,
             callerMaxBaseFee: 0,
-            recoveryGapBps: 1_000
+            recoveryGapBps: 200
         });
     }
 

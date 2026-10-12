@@ -101,7 +101,7 @@ contract RecoveryOracleTest is Fixture {
         else assertApproxEqRel(got, sim, 0.003e18, "closed form vs step simulation");
     }
 
-    /// the launch settings (recovery 200, climb 50, half life 6 h, gap 1000): the closed form matches a tenth of a
+    /// the launch settings (recovery 200, climb 50, half life 6 h, gap 200): the closed form matches a tenth of a
     /// second step simulation within 50 ppm over a range of elapsed times, well past the crossing
     function test_closedFormLaunchErr() public {
         uint256[6] memory el = [uint256(60), 600, 1800, 2700, 3600, 7200];
@@ -125,5 +125,45 @@ contract RecoveryOracleTest is Fixture {
             assertLe(ppm, 50, "closed form within 50 ppm of the step simulation at launch settings");
             vm.revertToState(snap);
         }
+    }
+
+    /// the recovery level is at or below the price state (the fill sits inside the gap of the peak), so `_recover`
+    /// takes the `levelT <= r` branch and climbs at the slow rate only. the step simulation agrees
+    function test_recoverSlowWhenLevelAtOrBelowRate() public {
+        Settings memory s = core.settings();
+        s.ceilBps = 30_000;
+        s.rateCap = uint64(1e18);
+        _setSettings(s);
+        s = core.settings();
+        uint256 now0 = block.timestamp;
+        uint256 r = 1e15;
+        uint256 peakT = 1e15; // levelT = peakT * (10_000 - 200) / 10_000 < r
+        _storeState(r, now0, now0, 3e17, peakT, now0, 1_000_000 ether);
+        vm.warp(now0 + 1800);
+        uint256 got = core.ethPrice();
+        uint256 sim = _stepSim(s, r, peakT, 1800, 1e24, 10);
+        assertGt(got, r, "the price state climbed");
+        assertApproxEqRel(got, sim, 0.003e18, "slow climb when the level is at or below the rate");
+    }
+
+    /// the recovery level is above a low target (the pot bounds the climb) and enough time passes that the fast leg
+    /// reaches the target before the crossing, so `_recover` takes the `priceCross >= target` branch and returns the
+    /// target. the step simulation clamps to the same value
+    function test_recoverClampsAtTargetThroughTheFastLeg() public {
+        Settings memory s = core.settings();
+        s.ceilBps = 30_000;
+        s.rateCap = uint64(1e18);
+        _setSettings(s);
+        s = core.settings();
+        uint256 now0 = block.timestamp;
+        uint256 r = 1e15;
+        uint256 peakT = 20e15; // levelT = 19.6e15, far above the pot bound
+        uint256 pot = 2e15; // target = cap.min(pot) = pot, below the level
+        _storeState(r, now0, now0, 1e15, peakT, now0, pot);
+        vm.warp(now0 + 3 hours);
+        uint256 got = core.ethPrice();
+        assertEq(got, pot, "the price state clamps at the target through the fast leg");
+        uint256 sim = _stepSim(s, r, peakT, 3 hours, pot, 10);
+        assertApproxEqRel(got, sim, 0.003e18, "closed form matches the step simulation at the clamp");
     }
 }

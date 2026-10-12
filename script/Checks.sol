@@ -59,8 +59,8 @@ abstract contract LaunchChecks is PostflightChecks {
     uint256 internal constant MAX_DESCRIPTION_BYTES = 4096;
     /// @dev the text the rehearsal config holds in `image` and `description`. on chain id 1 the metadata row fails for a
     /// value that is empty after trimming (spaces, tabs, newlines, carriage returns, NBSP), that contains `placeholder`
-    /// in any letter case, or is `todo` or `tbd`, and for an `image` that does not start with `ipfs://`, `https://` or
-    /// `ar://` with content past the scheme
+    /// in any letter case, or is `todo` or `tbd`, and for an `image` that does not start with a lowercase `ipfs://`,
+    /// `https://`, `ar://` or `data:` scheme with content past it and no surrounding whitespace
     string internal constant PLACEHOLDER_MARKER = "PLACEHOLDER";
     // the pinned launch rules (docs/DEPLOY.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
@@ -334,7 +334,7 @@ abstract contract LaunchChecks is PostflightChecks {
             : marked
                 ? "a value contains placeholder or is todo or tbd"
                 : !scheme
-                    ? "image must start with ipfs://, https://, ar:// or data: and be longer than the scheme"
+                    ? "image must start with a lowercase ipfs://, https://, ar:// or data: scheme with content past it and no surrounding whitespace"
                     : "both set in the launch transaction";
     }
 
@@ -352,11 +352,13 @@ abstract contract LaunchChecks is PostflightChecks {
         return vm.contains(l, "placeholder") || keccak256(bytes(l)) == keccak256("todo") || keccak256(bytes(l)) == keccak256("tbd");
     }
 
-    /// @dev true when `s`, trimmed and lowercased, starts with `ipfs://`, `https://`, `ar://` or `data:` and holds at
-    /// least one byte past the scheme, so a scheme with no content (for example `ipfs://`) is refused. the scheme match
-    /// is case insensitive and ignores leading whitespace; `http://` is refused
+    /// @dev true when `s` starts with a lowercase `ipfs://`, `https://`, `ar://` or `data:` scheme, holds at least one
+    /// byte past the scheme, and carries no surrounding whitespace, so a scheme with no content (for example `ipfs://`)
+    /// is refused. the match is on the raw bytes that go on chain: an upper case scheme or leading whitespace is
+    /// refused, and `http://` is refused
     function _hasScheme(string memory s) private view returns (bool) {
-        bytes memory b = bytes(vm.toLowercase(vm.trim(s)));
+        if (keccak256(bytes(s)) != keccak256(bytes(vm.trim(s)))) return false;
+        bytes memory b = bytes(s);
         return _startsPastPrefix(b, "ipfs://") || _startsPastPrefix(b, "https://") || _startsPastPrefix(b, "ar://")
             || _startsPastPrefix(b, "data:");
     }
