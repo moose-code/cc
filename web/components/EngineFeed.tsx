@@ -8,7 +8,7 @@ import {
   type FeedKind,
 } from "@/lib/engine";
 import { isLive } from "@/lib/config";
-import { clock, eth } from "@/lib/format";
+import { relTime, eth, evmNowTx } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
 
 const EVENT_NAME: Record<FeedKind, string> = {
@@ -77,11 +77,10 @@ export function EngineFeed() {
       <table className="feed-table">
         <thead>
           <tr>
-            <th className="col-time">time</th>
             <th className="col-event">event</th>
             <th className="col-detail">detail</th>
             <th className="col-eth">eth</th>
-            <th className="col-tx">tx</th>
+            <th className="col-time">time</th>
           </tr>
         </thead>
         <tbody>
@@ -97,9 +96,6 @@ export function EngineFeed() {
 function Row({ e }: { e: FeedEvent }) {
   return (
     <tr className={HL.has(e.kind) ? "hl" : undefined}>
-      <td className="col-time" suppressHydrationWarning>
-        {clock(e.ts)}
-      </td>
       <td className="col-event">
         <span className="event">
           <span
@@ -119,21 +115,13 @@ function Row({ e }: { e: FeedEvent }) {
         </div>
       </td>
       <td className="col-eth">{e.eth ?? ""}</td>
-      <td className="col-tx tx">
+      <td className="col-time" suppressHydrationWarning>
         {e.txHash ? (
-          <a
-            href={`https://evm.now/tx/${e.txHash}?chainId=1`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {e.tx}
-            {"…"}
+          <a href={evmNowTx(e.txHash)} target="_blank" rel="noreferrer">
+            {relTime(e.ts)}
           </a>
         ) : (
-          <span>
-            {e.tx}
-            {"…"}
-          </span>
+          relTime(e.ts)
         )}
       </td>
     </tr>

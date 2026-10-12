@@ -44,13 +44,22 @@ export function evmNowAddress(a: string): string {
   return `https://evm.now/address/${a}?chainId=1`;
 }
 
+export function evmNowTx(h: string): string {
+  return `https://evm.now/tx/${h}?chainId=1`;
+}
+
 export function shortHash(h: string): string {
   return `${h.slice(0, 6)}…`;
 }
 
-// clock time HH:MM:SS from a unix seconds timestamp.
-export function clock(ts: number): string {
-  const d = new Date(ts * 1000);
-  const p = (x: number) => String(x).padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+// relative time from a unix seconds timestamp: "just now", "5s ago", "3m ago".
+export function relTime(ts: number): string {
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }

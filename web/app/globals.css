@@ -245,15 +245,25 @@ a {
 
 .col-time {
   color: var(--muted);
-  width: 90px;
+  width: 110px;
+  text-align: right;
+  white-space: nowrap;
+}
+.feed-table th.col-time {
+  text-align: right;
+}
+.col-time a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.col-time a:hover {
+  color: var(--fg);
 }
 .col-event {
   width: 170px;
 }
 .col-eth {
-  width: 90px;
-}
-.col-tx {
   width: 90px;
 }
 
@@ -282,15 +292,6 @@ a {
 }
 .detail-cell .label b {
   font-weight: 600;
-}
-
-.tx a {
-  color: var(--muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.tx a:hover {
-  color: var(--fg);
 }
 
 /* tiles */
@@ -560,16 +561,10 @@ a {
   .feed-table td.col-detail {
     grid-area: detail;
   }
-  /* eth + tx share one footer line: eth left, tx right */
   .feed-table td.col-eth {
     grid-area: foot;
     text-align: left;
     color: var(--muted);
-  }
-  .feed-table td.col-tx {
-    grid-area: foot;
-    justify-self: end;
-    text-align: right;
   }
 
   .detail-cell {
