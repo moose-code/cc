@@ -188,6 +188,50 @@ contract PauseTest is SaleBase {
         assertEq(ctl.anchorBps(), 20_000);
     }
 
+    /// with the anchor above 10_000 the price at the resume is at or below the price at the pause: the age is held, the
+    /// start follows the decayed anchor
+    function test_anchorAboveParDecaysAcrossAPause() public {
+        uint256 sid = _composeOnce().sid;
+        uint256 cost = _cost(sid);
+        _anchor(30_000);
+        _age(sid, 5 * H);
+        uint256 atPause = ctl.priceOf(sid);
+        uint256 anchorAtPause = ctl.anchorBps();
+        assertGt(anchorAtPause, 10_000);
+        _setPaused(true);
+        vm.warp(block.timestamp + 2 * ctl.anchorHalfLife());
+        _setPaused(false);
+        assertLt(ctl.anchorBps(), anchorAtPause, "the anchor decayed in the pause");
+        uint256 atResume = ctl.priceOf(sid);
+        assertLe(atResume, atPause, "the price at the resume is at or below the price at the pause");
+        assertEq(
+            atResume,
+            _curve(cost, ctl.startBps(), 10_000, 100, 25, 7_500, 5 * H),
+            "the held age on the decayed anchor"
+        );
+    }
+
+    /// `priceOf` against the real core with 1_000 closed windows, every account and slot cold, from the oldest statement
+    function test_gas_priceOfWithManyWindowsOnTheRealCore() public {
+        uint256 sid = _composeOnce().sid;
+        uint256 cost = _cost(sid);
+        uint256 n = 1_000;
+        for (uint256 i; i < n; ++i) {
+            vm.warp(block.timestamp + 100);
+            _setPaused(true);
+            vm.warp(block.timestamp + 100);
+            _setPaused(false);
+        }
+        vm.cool(address(ctl));
+        vm.cool(address(core));
+        uint256 g = gasleft();
+        uint256 price = ctl.priceOf(sid);
+        uint256 used = g - gasleft();
+        emit log_named_uint("priceOf gas, real core, 1000 closed windows, oldest statement, cold", used);
+        assertEq(price, _launch(cost, n * 100), "the price is the curve at the age outside every window");
+        assertLt(used, 200_000, "inside the 200_000 gas the lens gives a priceOf read");
+    }
+
     /// the eth bid is unaffected: credits sell into it while paused
     function test_sellForEth_worksWhilePaused() public {
         _setPaused(true);

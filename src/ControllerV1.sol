@@ -18,8 +18,9 @@ import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Inter
 /// the decay at the call. the price is computed from the current anchor at every call, so held statements follow it.
 /// `buy` sells a held eth lane statement at once at the asking price.
 /// the owner can pause sales (`setPaused`). while paused `buy` reverts `Paused`, `priceOf` answers, and the age of a
-/// statement excludes every paused second, so the asking price of a held statement stops falling for the length of a
-/// pause and continues from the same age at resume. the anchor decays with wall time in both states.
+/// statement excludes every paused second, so the age of a held statement stops advancing for the length of a pause
+/// and continues from the same age at resume. the anchor decays with wall time in both states, so the start of the
+/// curve, and with it the asking price, can still fall in a pause while the anchor is above 10_000.
 /// it holds no funds between calls. its settings belong to the live owner of the core (`core.owner()`), there is no
 /// second owner. the core enforces its own hard floor whatever this contract answers
 contract ControllerV1 is IController {
