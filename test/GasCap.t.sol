@@ -408,7 +408,7 @@ contract GasCapTest is SeaportBase {
     function test_gas_exitStatement_ethLane() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        _warp(core.settings().exitAfter);
+        _makeEligible(sid);
         _cool(address(core));
         vm.prank(keeper);
         uint256 g = gasleft();
@@ -598,27 +598,6 @@ contract GasCapTest is SeaportBase {
         _row("buyback (swaps, burns), cold", g, abi.encodeCall(core.buyback, ()));
     }
 
-    function test_gas_buybackExit() public {
-        _enterPhase2();
-        _fillExitBuyback();
-        _buyCoin(taker, 20 ether);
-        vm.prank(taker);
-        coin.approve(address(core), type(uint256).max);
-        uint256 coinIn;
-        for (uint256 i; i < 2000; ++i) {
-            (, coinIn) = core.exitAuctionQuote();
-            if (coinIn <= coin.balanceOf(taker)) break;
-            _warp(1 hours);
-        }
-        assertLe(coinIn, coin.balanceOf(taker), "affordable");
-        _cool(address(core));
-        vm.prank(taker);
-        uint256 g = gasleft();
-        core.buybackExit(coinIn);
-        g -= gasleft();
-        _row("buybackExit, cold", g, abi.encodeCall(core.buybackExit, (coinIn)));
-    }
-
     // ------------------------------------------------------------------ statements: sellTo
 
     function _cost(uint256 sid) internal view returns (uint256 c) {
@@ -641,8 +620,7 @@ contract GasCapTest is SeaportBase {
 
     // ------------------------------------------------------------------ owner doors
 
-    /// @dev phase 2 on, an exit buyback running: setSettings then takes its longest path (re anchors the exit auction
-    /// when the half life changes) and every field is rewritten
+    /// @dev phase 2 on with exit token in the bid pot: setSettings checkpoints the eth rate and rewrites every field
     function test_gas_setSettings() public {
         _enterPhase2();
         _fillExitBuyback();
@@ -652,8 +630,8 @@ contract GasCapTest is SeaportBase {
         s.saleFloorBps = 8_000;
         s.saleToBuybackBps = 4_000;
         s.buybackSlice = 1 ether;
-        s.xAuctionHalfLife = 12 hours;
-        s.xRateFloor = 3_500;
+        s.exitSlippageBps = 500;
+        s.redeemBurnBps = 3_500;
         bytes memory data = abi.encodeCall(core.setSettings, (s));
         _cool(address(core));
         vm.prank(owner);

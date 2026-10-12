@@ -49,7 +49,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 **OD-5, decided 2026-10-10 (FLOW 51).** buyback slice 0.5 eth at launch, upper bound 1 eth. built at dfd6001 (NEXT item 26).
 
-**OD-4, decided 2026-10-10 (FLOW 52).** `xToBuyback` stays in the old engine on `migrate`. built at b2118fd (NEXT item 27).
+**OD-4, decided 2026-10-10 (FLOW 52), superseded by decision 86.** the exit token dutch auction and its `xToBuyback` pot are removed. on `migrate` the old engine keeps `ethToBuyback` and `ethRedeemBurn` and the successor takes `xPot`, where all redeemed exit token now accumulates.
 
 **metadata, decided 2026-10-10 (FLOW 53, 54).** the name `CC` is final. `image` and `description` become launch config parameters, built at 70d88be (NEXT item 28). the owner supplies the image url and the description text before launch.
 
@@ -63,7 +63,7 @@ authority: reconstructed by the director on 2026-10-10 from the owner's launch p
 
 **intent gap, decision 47.** what "ready for when burn router and $balance drop" requires of the engine is not written down. the director drafts it from the v2 burn router source and brings the owner one question if a real choice remains.
 
-**phase 2 fit (owner information, 2026-10-12).** the exit side will wrap the redeem contract that burns a statement for an erc-20. owner: "it's not restricted ifaik. instant payout, yes". the payout arrives in the redeem transaction and the token is not transfer restricted, to the owner's knowledge. still to confirm from the contract source when it is published: a contract that owns the statement may redeem it, the token is a plain erc-20 (no fee on transfer, no rebase), its address is fixed, and the payout per statement has a known minimum (the module's `unitPerCredit` is set at or below it). a fork test with a draft module follows once the source exists.
+**phase 2 fit (owner information, 2026-10-12).** the exit side will wrap the redeem contract that burns a statement for an erc-20. owner: "it's not restricted ifaik. instant payout, yes". the payout arrives in the redeem transaction and the token is not transfer restricted, to the owner's knowledge. still to confirm from the contract source when it is published: a contract that owns the statement may redeem it, the token is a plain erc-20 (no fee on transfer, no rebase), its address is fixed, and the payout per statement has a known minimum (the module's `unitPerPoint`, times the statement's rating, is set at or below it). a fork test with a draft module follows once the source exists.
 
 ## 5. evidence
 
@@ -97,7 +97,7 @@ after launch:
 1. `Lock.s.sol` (`coin.lockRecipients()`, step 10).
 2. the metadata renderer (DEPLOY section 4, the coin's metadata after launch).
 3. the weekly slice check: the postflight and the pool depth against the buyback slice (DEPLOY section 4, watching the buyback after a price fall).
-4. phase 2 per decision 82: do not set the exit module at the exit token's launch; the redemption policy is decided later. if a module is ever set before the engine has per credit pricing, `exitToBuybackBps` stays at 10_000 (DEPLOY section 4, changing the exit module or its unit). the per credit pricing redesign is paused (decision 76).
+4. phase 2 per decision 82: `exitMode` is 0 at launch (the exit side off); the redemption policy is decided later. the exit side now prices each credit by its score (decision 84): the exit token bid pays per the credit's live score and a statement's redemption floor is its rating (the sum of its credits' scores) times `unitPerPoint`, after the slippage margin. turning it on is the DEPLOY runbook, section 4.
 5. when the exit token's auction is announced: `setPaused(true)` on the controller, re-price with the live sale settings, `setPaused(false)` (DEPLOY section 4, when the exit token's auction is announced).
 6. open and not blocking: decision 47 (burn router readiness) and OD-2 (`coin.lockAllowlist()` and `router.lock()`).
 

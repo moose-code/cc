@@ -483,7 +483,7 @@ abstract contract HandlerSale is HandlerOwner {
         else if (k == 8) data = abi.encodeWithSignature("sellForEth(uint256[])", ids);
         else if (k == 9) data = abi.encodeCall(ICore.buyListing, (1, "", seed >> 8, address(next)));
         else if (k == 10) data = abi.encodeCall(ICore.sellTo, (sid, address(next)));
-        else if (k == 11) data = abi.encodeCall(ICore.buybackExit, (type(uint256).max));
+        else if (k == 11) data = abi.encodeWithSignature("sellForExitToken(uint256[])", ids);
         else {
             target = address(selling);
             data = abi.encodeCall(SellingController.sell, (sid, address(next)));
@@ -526,7 +526,7 @@ abstract contract HandlerSale is HandlerOwner {
             if (okM) {
                 module = next;
                 modulesEver.push(next);
-                if (core.unitPerCredit() != next.currentUnit()) _flag(V_OWNER, "the unit was not read from the new module");
+                if (core.unitPerPoint() != next.currentUnit()) _flag(V_OWNER, "the unit was not read from the new module");
             }
         }
         _opost(pre, "hostileOwner");

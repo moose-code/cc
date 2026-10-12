@@ -5,6 +5,15 @@ pragma solidity ^0.8.28;
 import {Lane} from "./Interfaces.sol";
 
 interface IControllerV1 {
+    type Currency is address;
+
+    struct PoolKey {
+        Currency currency0;
+        Currency currency1;
+        uint24 fee;
+        int24 tickSpacing;
+        address hooks;
+    }
 
     error BadSetting(bytes32 field);
     error NotForSale();
@@ -18,6 +27,7 @@ interface IControllerV1 {
     event AnchorMinCostSet(uint128 anchorMinCost);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
+    event ExitPoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
     event FastDecayBpsPerHourSet(uint16 fastDecayBpsPerHour);
     event FloorBpsSet(uint16 floorBps);
     event KneeBpsSet(uint32 kneeBps);
@@ -31,7 +41,13 @@ interface IControllerV1 {
     function anchorHalfLife() external view returns (uint32);
     function anchorMinCost() external view returns (uint128);
     function anchorTime() external view returns (uint40);
+    function atCost(uint256 sid) external view returns (bool);
     function buy(uint256 sid) external payable;
+    function exitPoolKey()
+        external
+        view
+        returns (Currency currency0, Currency currency1, uint24 fee, int24 tickSpacing, address hooks);
+    function exitPoolKeySet() external view returns (bool);
     function fastDecayBpsPerHour() external view returns (uint16);
     function floorBps() external view returns (uint16);
     function kneeBps() external view returns (uint32);
@@ -42,6 +58,7 @@ interface IControllerV1 {
     function setAnchorBps(uint32 v) external;
     function setAnchorHalfLife(uint32 v) external;
     function setAnchorMinCost(uint128 v) external;
+    function setExitPoolKey(PoolKey memory key) external;
     function setFastDecayBpsPerHour(uint16 v) external;
     function setFloorBps(uint16 v) external;
     function setKneeBps(uint32 v) external;

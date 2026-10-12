@@ -6,7 +6,7 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, ICreditStrategy, Stack, Mainnet, Settings, BUYLISTING_GAS} from "../src/interfaces/Interfaces.sol";
+import {Lane, ICreditStrategy, ICreditScore, Stack, Mainnet, Settings, BUYLISTING_GAS} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {HostileTarget} from "./attackers/HostileTarget.sol";
 import {ProbeTarget} from "./attackers/ProbeTarget.sol";
@@ -82,11 +82,6 @@ contract CoreUnitTest is CoreBase {
     //////////////////////////////////////////////////////////////*/
 
     /// the constants that are left. every other economic number is a setting, covered in Flow.t.sol
-    function test_parameters() public view {
-        assertEq(core.SUPPLY(), 1_000_000_000e18);
-        assertEq(core.XRATE_START(), 6000);
-    }
-
     function test_constructorState() public view {
         assertEq(core.owner(), owner);
         assertEq(core.pendingOwner(), address(0));
@@ -98,13 +93,11 @@ contract CoreUnitTest is CoreBase {
         assertTrue(CREDITS.isApprovedForAll(address(core), address(STATEMENTS)));
         assertEq(core.rateAtCheckpoint(), OPEN_RATE);
         assertEq(core.ethRate(), 0, "an empty pot reads zero");
-        assertEq(core.xRate(), 6000);
         assertEq(core.lastFillTime(), launchTime);
         assertEq(core.ethPot(), 0);
         assertEq(core.exitModule(), address(0));
         assertEq(core.exitToken(), address(0));
-        assertEq(core.unitPerCredit(), 0);
-        assertEq(core.xStartPrice(), 0);
+        assertEq(core.unitPerPoint(), 0);
         assertFalse(core.controllerLocked());
         assertFalse(core.exitModuleLocked());
         assertFalse(core.targetsLocked());
@@ -201,7 +194,10 @@ contract CoreUnitTest is CoreBase {
         for (uint160 a = 0x1111; a <= 0x6666; a += 0x1111) {
             vm.etch(address(a), hex"00");
         }
-        ICore c2 = this.mk(owner, address(coin), address(ctl), other, lc.rateStart, lc.settings);
+        // the whole fee receipt goes to the pot here, so the booking is the full amount
+        Settings memory st = lc.settings;
+        st.feeToRedeemBurnBps = 0;
+        ICore c2 = this.mk(owner, address(coin), address(ctl), other, lc.rateStart, st);
         assertEq(address(c2.MANAGER()), address(0x1111));
         assertEq(c2.HOOK(), address(0x2222));
         assertEq(c2.TICK_SPACING(), 60);
@@ -235,6 +231,10 @@ contract CoreUnitTest is CoreBase {
     /// eth the router flushes after a real swap is booked at once. eth from anyone else waits for `skim`
     function test_receiveBooksHookEth_skimBooksTheRest() public {
         _skipSniperWindow();
+        // the whole fee receipt goes to the pot here, so the pot equals the full router inflow
+        Settings memory s0 = core.settings();
+        s0.feeToRedeemBurnBps = 0;
+        _setSettings(s0);
         _buyCoin(funder, 1 ether);
         uint256 pot = core.ethPot();
         assertEq(pot, 0.0665022 ether, "6.65022 points of a 1 eth buy");
@@ -1110,17 +1110,14 @@ contract CoreUnitTest is CoreBase {
         _enterPhase2();
         assertEq(core.exitModule(), address(mod));
         assertEq(core.exitToken(), address(xt));
-        assertEq(core.unitPerCredit(), UNIT);
-        assertEq(core.xRate(), 6000);
-        assertEq(core.xStartPrice(), core.SUPPLY() * 1e18 / (20 * UNIT), "opening auction price");
-        assertEq(core.xStartTime(), block.timestamp);
+        assertEq(core.unitPerPoint(), UNIT);
 
         // a second set with the same exit token goes through and reads the unit again
         MockExitModule other = new MockExitModule(address(xt), 1 * UNIT);
         _setExitModule(address(other));
         assertEq(core.exitModule(), address(other));
         assertEq(core.exitToken(), address(xt));
-        assertEq(core.unitPerCredit(), 1 * UNIT);
+        assertEq(core.unitPerPoint(), 1 * UNIT);
 
         // a module with another exit token reverts, and the state stays
         MockExitModule alien = new MockExitModule(address(new MockExitToken("x", "x")), 1 * UNIT);
@@ -1224,20 +1221,6 @@ contract CoreUnitTest is CoreBase {
         core.buyListing(1, "", LISTED_A, address(mod));
     }
 
-    /// the opening price of the exit auction asks the whole supply for one full slice, and a full slice is
-    /// `exitSliceCredits` credits of the settings at the moment the module is set
-    function test_exitModuleOpeningPriceFollowsTheSettings() public {
-        Settings memory s = core.settings();
-        s.exitSliceCredits = 100;
-        _setSettings(s);
-        _enterPhase2();
-        assertEq(core.xStartPrice(), core.SUPPLY() * 1e18 / (100 * UNIT));
-        // a later change of the slice does not move the price already set
-        s.exitSliceCredits = 1;
-        _setSettings(s);
-        assertEq(core.xStartPrice(), core.SUPPLY() * 1e18 / (100 * UNIT));
-    }
-
     /*//////////////////////////////////////////////////////////////
                                   views
     //////////////////////////////////////////////////////////////*/
@@ -1291,6 +1274,7 @@ contract CoreUnitTest is CoreBase {
     //////////////////////////////////////////////////////////////*/
 
     function test_compose_notReady() public {
+        _setExitMode(2); // so composeExit reaches the page check instead of the mode gate
         vm.expectRevert(ICore.NotReady.selector);
         core.compose();
         vm.expectRevert(ICore.NotReady.selector);
@@ -1303,6 +1287,7 @@ contract CoreUnitTest is CoreBase {
     }
 
     function test_compose_controllerCannotNameBadPages() public {
+        _setExitMode(2); // so composeExit reaches the page check instead of the mode gate
         ScriptedController scripted = new ScriptedController();
         _setController(address(scripted));
         uint256[] memory ids = _sellN(alice, 2);
@@ -1412,19 +1397,21 @@ contract CoreUnitTest is CoreBase {
         assertEq(core.ethToBuyback(), 0);
     }
 
-    function test_exitDoorsClosedWithoutModule() public {
+    /// with exitMode at its launch value 0 the exit token bid and composeExit are closed; the redemption door reverts
+    /// NoExitModule once mode is on but no module is set
+    function test_exitDoorsClosedAtLaunch() public {
         vm.prank(alice);
-        vm.expectRevert(ICore.NoExitModule.selector);
+        vm.expectRevert(ICore.ExitModeOff.selector);
         core.sellForExitToken(_one(1));
         vm.prank(alice);
-        vm.expectRevert(ICore.NoExitModule.selector);
+        vm.expectRevert(ICore.ExitModeOff.selector);
         core.sellForExitToken(_one(1), 0);
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.buybackExit(type(uint256).max);
-        vm.expectRevert(ICore.NotReady.selector);
+        vm.expectRevert(ICore.ExitModeOff.selector);
         core.composeExit();
+        // exitStatement reverts NoExitModule whatever the mode while no module is set
+        vm.expectRevert(ICore.NoExitModule.selector);
+        core.exitStatement(1);
         core.skim();
-        assertEq(core.exitAuctionPrice(), 0);
     }
 
     function test_buyback_guards() public {
@@ -1595,222 +1582,89 @@ contract CoreComposedTest is CoreBase {
         Composed memory c = _composeOnce();
         vm.expectRevert(ICore.NotHeld.selector);
         core.exitStatement(c.sid + 100);
-        vm.expectRevert(ICore.TooEarly.selector);
+        // an eth lane statement is not eligible until its asking price falls to its cost
+        vm.expectRevert(ICore.NotEligible.selector);
         core.exitStatement(c.sid);
-        _warp(105 hours - 1);
-        vm.expectRevert(ICore.TooEarly.selector);
-        core.exitStatement(c.sid);
-        _warp(1);
+        _makeEligible(c.sid);
         core.exitStatement(c.sid);
         vm.expectRevert(ICore.NotHeld.selector);
         core.exitStatement(c.sid);
     }
 
-    function test_exit_splitsEthLaneStatement() public {
+    /// an eth lane redemption books the whole received amount into the bid pot
+    function test_exit_ethLaneAllToTheBidPot() public {
         Composed memory c = _composeOnce();
-        _warp(105 hours);
-        uint256 out = STATEMENTS.creditsOf(c.sid) * UNIT;
+        _makeEligible(c.sid);
+        uint256 out = core.ratingOf(c.sid) * UNIT;
+        uint256 pot = core.xPot();
         core.exitStatement(c.sid);
-
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "the module keeps the statement");
         assertEq(xt.balanceOf(address(core)), out);
-        assertEq(core.xToBuyback(), out * 5000 / 10_000);
-        assertEq(core.xPot(), out - out * 5000 / 10_000);
+        assertEq(core.xPot() - pot, out, "all received to the bid pot");
         assertEq(_held().length, 0);
-        (bool held,,,) = core.statementInfo(c.sid);
-        assertFalse(held);
-        assertEq(core.xRate(), 6000);
-        assertEq(core.xStartTime(), block.timestamp, "the exit auction clock starts when there is something to sell");
-        _solvent();
+        assertFalse(_isHeld(c.sid));
     }
 
     function test_exit_moduleThatUnderpaysReverts() public {
         Composed memory c = _composeOnce();
-        _warp(105 hours);
-        mod.setShortfallBps(1);
+        _makeEligible(c.sid);
+        mod.setPayBps(10_000 - core.settings().exitSlippageBps - 1);
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(c.sid);
-        mod.setShortfallBps(5000);
+        mod.setPayBps(5000);
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement never left");
         assertTrue(_isHeld(c.sid));
-        assertEq(_held().length, 1);
-
-        mod.setShortfallBps(0);
+        // a payment within the slippage floor passes
+        mod.setPayBps(10_000 - core.settings().exitSlippageBps);
         core.exitStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod));
     }
 
-    /// the unit is fixed when the module is set. a module that pays by a lower unit later is refused by the stored
-    /// one, and one that pays more is simply paid
+    /// the unit is fixed when the module is set. a module that reports a lower unit later is held to the stored one, and
+    /// one that pays by a higher unit is simply paid
     function test_exit_unitIsFixedAtSetTime() public {
         Composed memory c = _composeOnce();
-        assertEq(core.unitPerCredit(), UNIT);
-        _warp(105 hours);
-        mod.setUnitPerCredit(0);
+        assertEq(core.unitPerPoint(), UNIT);
+        _makeEligible(c.sid);
+        mod.setUnitPerPoint(0);
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(c.sid);
-
-        mod.setUnitPerCredit(3 * UNIT);
-        uint256 out = STATEMENTS.creditsOf(c.sid) * 3 * UNIT;
+        mod.setUnitPerPoint(3 * UNIT);
+        uint256 out = core.ratingOf(c.sid) * 3 * UNIT;
         core.exitStatement(c.sid);
         assertEq(xt.balanceOf(address(core)), out);
-        assertEq(core.unitPerCredit(), UNIT, "the stored unit did not follow the module");
+        assertEq(core.unitPerPoint(), UNIT, "the stored unit did not follow the module");
     }
 
     /*//////////////////////////////////////////////////////////////
                               exit token bid
     //////////////////////////////////////////////////////////////*/
 
-    /// whatever the module reports later changes nothing. fee intake, the rate, the bid and the buyback slice all use
-    /// the stored unit
-    function test_exit_laterModuleUnitsChangeNothing() public {
+    /// the per point bid pays each credit its score times the unit less the margin
+    function test_xBid_paysScoreTimesUnit() public {
         _fillExitBuyback();
-        uint256 pot = core.xPot();
-        _warp(1 hours);
-        assertEq(core.xRate(), 6100);
-
-        for (uint256 round; round < 2; ++round) {
-            if (round == 0) {
-                mod.setRevertUnit(true);
-            } else {
-                mod.setRevertUnit(false);
-                mod.setUnitPerCredit(type(uint256).max);
-            }
-            xt.mint(address(core), 1e18);
-            core.skim();
-            xt.mint(address(core), 1e18);
-            core.skim();
-            assertEq(core.xRate(), 6100, "the rate follows the stored unit");
-            _solvent();
-        }
-        assertEq(core.xPot(), pot + 4e18);
-
-        uint256[] memory ids = _credits(alice, 1);
-        uint256 price = core.xRate() * UNIT / 10_000;
-        vm.prank(alice);
-        core.sellForExitToken(ids);
-        assertEq(xt.balanceOf(alice), price, "paid at the stored unit");
-        _solvent();
-    }
-
-    function test_xBid_rateClimbsAndDropsPerCredit() public {
-        _fillExitBuyback();
-        uint256 pot = core.xPot();
-        _warp(10 hours);
-        assertEq(core.xRate(), 7000, "one point (100 bps) an hour while funded");
-
-        uint256[] memory ids = _credits(alice, 3);
-        uint256 r = 7000;
-        uint256 total;
-        for (uint256 i; i < 3; ++i) {
-            total += r * UNIT / 10_000;
-            r -= 20;
-        }
-        vm.prank(alice);
-        vm.expectRevert(ICore.Slippage.selector);
-        core.sellForExitToken(ids, total + 1);
-
-        vm.prank(alice);
-        core.sellForExitToken(ids, total);
-        assertEq(xt.balanceOf(alice), total);
-        assertEq(core.xPot(), pot - total);
-        assertEq(core.xRate(), 6940, "0.2 point (20 bps) per credit");
-        assertEq(core.pileSize(Lane.Exit), 3);
-        assertEq(core.pileSize(Lane.Eth), 0);
-        (bool inPile, Lane lane, uint256 cost,) = core.creditInfo(ids[2]);
-        assertTrue(inPile);
-        assertEq(uint8(lane), uint8(Lane.Exit));
-        assertEq(cost, 6960 * UNIT / 10_000, "cost basis in exit token");
-        assertEq(CREDITS.ownerOf(ids[0]), address(core));
-        _solvent();
-
-        _warp(5 hours);
-        assertEq(core.xRate(), 7440);
-    }
-
-    /// every credit is paid the same: `xRate * unitPerCredit / 1e4`, less `xRateDropPerCredit` per credit before it
-    function test_xBid_paysEveryCreditTheSame() public {
-        _fillExitBuyback();
+        xt.mint(address(core), 1e22);
+        core.skim();
         uint256[] memory ids = _credits(alice, 2);
-        uint256 p0 = 6000 * UNIT / 10_000;
-        uint256 p1 = 5980 * UNIT / 10_000;
+        uint256 net = 10_000 - core.settings().exitBidMarginBps;
+        uint256 expect;
+        for (uint256 i; i < 2; ++i) {
+            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(ids[i]), CREDITS.timestampOf(ids[i]));
+            expect += score * UNIT * net / 10_000;
+        }
+        uint256 before = xt.balanceOf(alice);
         vm.prank(alice);
         core.sellForExitToken(ids);
-        assertEq(xt.balanceOf(alice), p0 + p1);
-        uint256[] memory more = _credits(alice, 1);
-        uint256 p2 = 5960 * UNIT / 10_000;
-        vm.prank(alice);
-        core.sellForExitToken(more);
-        assertEq(xt.balanceOf(alice), p0 + p1 + p2);
-    }
-
-    /// the exit bid dials: climb 250 an hour, drop 100 per credit, cap 8000, floor 4000
-    function test_xBid_atChangedSettings() public {
-        Settings memory s = core.settings();
-        s.xRateClimbPerHour = 250;
-        s.xRateDropPerCredit = 100;
-        s.xRateCap = 8000;
-        s.xRateFloor = 4000;
-        _setSettings(s);
-        _fillExitBuyback();
-        _warp(4 hours);
-        assertEq(core.xRate(), 7000, "6000 + 4 * 250");
-        _warp(100 hours);
-        assertEq(core.xRate(), 8000, "the lower cap");
-        uint256[] memory ids = _credits(alice, 3);
-        uint256 total = 8000 * UNIT / 10_000 + 7900 * UNIT / 10_000 + 7800 * UNIT / 10_000;
-        vm.prank(alice);
-        core.sellForExitToken(ids, total);
-        assertEq(xt.balanceOf(alice), total);
-        assertEq(core.xRate(), 7700, "100 bps per credit");
-        xt.mint(address(core), 1_000_000e18);
-        core.skim();
-        for (uint256 b; b < 2; ++b) {
-            uint256[] memory page = _credits(alice, 80);
-            vm.prank(alice);
-            core.sellForExitToken(page);
-        }
-        assertEq(core.xRate(), 4000, "the floor of the settings");
-    }
-
-    /// the pot slot is forced to sizes that real fees cannot hit exactly, the balance of exit token covers it. the
-    /// clamp is `xPot * 1e4 / unit`
-    function _xClamp() internal {
-        _fillExitBuyback();
-        _warp(100 hours);
-        assertEq(core.xRate(), 9700, "never above the cap");
-
-        // a pot that only affords 70 percent of a credit's exit value stops the climb there.
-        uint256 pot = 7000 * UNIT / 10_000;
-        stdstore.target(address(core)).sig("xPot()").checked_write(pot);
-        assertEq(core.xRate(), 7000);
-
-        // below one credit at the current rate the climb stops and the rate holds.
-        stdstore.target(address(core)).sig("xPot()").checked_write(pot / 10);
-        assertEq(core.xRate(), 6000);
-    }
-
-    function test_xBid_capAndAffordabilityClamp() public {
-        _xClamp();
-    }
-
-    function test_xBid_floor() public {
-        _fillExitBuyback();
-        xt.mint(address(core), 1_000_000e18);
-        core.skim();
-        for (uint256 b; b < 2; ++b) {
-            uint256[] memory ids = _credits(alice, 80);
-            vm.prank(alice);
-            core.sellForExitToken(ids);
-        }
-        assertEq(core.xRate(), 3000, "160 credits at 0.2 point each hit the floor and stop");
+        assertEq(xt.balanceOf(alice) - before, expect, "paid score times the unit less the margin");
         _solvent();
     }
 
     function test_xBid_guards() public {
         _fillExitBuyback();
+        xt.mint(address(core), 1e22);
+        core.skim();
         uint256[] memory ids = _credits(alice, 1);
         uint256[] memory none = new uint256[](0);
         vm.prank(alice);
@@ -1822,25 +1676,34 @@ contract CoreComposedTest is CoreBase {
         vm.prank(keeper);
         vm.expectRevert(ICore.NotOwner.selector);
         core.sellForExitToken(ids);
-
         stdstore.target(address(core)).sig("xPot()").checked_write(uint256(1));
         vm.prank(alice);
         vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForExitToken(ids);
     }
 
-    /// exit token that arrives outside an exit is booked only by `skim`, and never into the buyback pot
+    /// the bid and composeExit are closed unless exitMode is 2
+    function test_xBid_needsModeTwo() public {
+        _fillExitBuyback();
+        xt.mint(address(core), 1e22);
+        core.skim();
+        _setExitMode(1);
+        uint256[] memory ids = _credits(alice, 1);
+        vm.prank(alice);
+        vm.expectRevert(ICore.ExitModeOff.selector);
+        core.sellForExitToken(ids);
+    }
+
+    /// exit token that arrives outside an exit is booked only by `skim`, into the bid pot
     function test_xFees_skimBooksPlainTransfers() public {
         _fillExitBuyback();
         uint256 pot = core.xPot();
-        uint256 bb = core.xToBuyback();
         core.skim();
-        assertEq(core.xPot(), pot, "nothing above the pots");
+        assertEq(core.xPot(), pot, "nothing above the pot");
         xt.mint(address(core), 3e18);
         assertEq(core.xPot(), pot);
         core.skim();
         assertEq(core.xPot(), pot + 3e18);
-        assertEq(core.xToBuyback(), bb);
         _solvent();
     }
 
@@ -1850,7 +1713,7 @@ contract CoreComposedTest is CoreBase {
 
     function test_exitLane_composeThenImmediateExit() public {
         _fillExitBuyback();
-        xt.mint(address(core), 100e18);
+        xt.mint(address(core), 1e23);
         core.skim();
 
         uint256[] memory ids = _credits(alice, 80);
@@ -1882,27 +1745,12 @@ contract CoreComposedTest is CoreBase {
         vm.expectRevert(ICore.NotForSale.selector);
         core.sellTo(sidX, alice);
 
-        // no auction in the exit lane, so it exits at once and everything returns to the bid pot, none of it to the
-        // buyback, which also keeps its auction clock
+        // the exit lane exits at once and everything returns to the bid pot
         uint256 xPotBefore = core.xPot();
-        uint256 xbbBefore = core.xToBuyback();
-        uint64 startTime = core.xStartTime();
-        uint256 out = STATEMENTS.creditsOf(sidX) * UNIT;
+        uint256 out = core.ratingOf(sidX) * UNIT;
         core.exitStatement(sidX);
         assertEq(core.xPot(), xPotBefore + out);
-        assertEq(core.xToBuyback(), xbbBefore);
-        assertEq(core.xStartTime(), startTime);
         assertEq(STATEMENTS.ownerOf(sidX), address(mod));
         _solvent();
-    }
-
-    /// @dev sells 80 fresh credits into the exit bid and returns them as a page
-    function _exitPage() internal returns (uint256[80] memory page) {
-        uint256[] memory ids = _credits(alice, 80);
-        vm.prank(alice);
-        core.sellForExitToken(ids);
-        for (uint256 i; i < 80; ++i) {
-            page[i] = ids[i];
-        }
     }
 }

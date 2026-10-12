@@ -21,6 +21,7 @@ interface ICore {
     error BelowFloor();
     error CallFailed();
     error Empty();
+    error ExitModeOff();
     error ExitTokenChanged();
     error ForbiddenTarget();
     error Held();
@@ -31,6 +32,7 @@ interface ICore {
     error NoCredit();
     error NoExitModule();
     error NoSuccessor();
+    error NotEligible();
     error NotForSale();
     error NotHeld();
     error NotHolder();
@@ -49,7 +51,6 @@ interface ICore {
     error SliceTooSmall();
     error Slippage();
     error TargetNotAllowed();
-    error TooEarly();
     error TooSoon();
     error Underpaid();
     error ZeroAddress();
@@ -65,10 +66,8 @@ interface ICore {
     event CreditBought(uint256 indexed id, address indexed from, Lane lane, uint256 cost);
     event EngineRetired(address indexed successor);
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
-    event ExitBuyback(address indexed caller, uint256 slice, uint256 coinIn);
     event ExitModuleLocked();
-    event ExitModuleSet(address exitModule, address exitToken, uint256 unitPerCredit);
-    event ExitRateFill(uint256 rate, uint256 pot);
+    event ExitModuleSet(address exitModule, address exitToken, uint256 unitPerPoint);
     event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
     event FeesAdded(uint256 amount);
     event ListingBought(
@@ -100,16 +99,13 @@ interface ICore {
     function MANAGER() external view returns (address);
     function POOL_FEE() external view returns (uint24);
     function RATE_START() external view returns (uint256);
-    function SUPPLY() external view returns (uint256);
     function TICK_SPACING() external view returns (int24);
-    function XRATE_START() external view returns (uint256);
     function acceptOwnership() external;
     function addTarget(address t) external;
     function adopt(uint256[] memory) external;
     function allowedTarget(address) external view returns (bool);
     function buyListing(uint256 value, bytes memory data, uint256 id, address target) external;
     function buyback() external;
-    function buybackExit(uint256 maxCoinIn) external;
     function checkpointTime() external view returns (uint64);
     function compose() external;
     function composeExit() external;
@@ -119,9 +115,8 @@ interface ICore {
     function ethPot() external view returns (uint256);
     function ethPrice() external view returns (uint256 price);
     function ethRate() external view returns (uint256 read);
+    function ethRedeemBurn() external view returns (uint256);
     function ethToBuyback() external view returns (uint256);
-    function exitAuctionPrice() external view returns (uint256);
-    function exitAuctionQuote() external view returns (uint256 slice, uint256 coinIn);
     function exitModule() external view returns (address);
     function exitModuleLocked() external view returns (bool);
     function exitStatement(uint256 sid) external;
@@ -140,6 +135,7 @@ interface ICore {
     function pilePage(Lane lane, uint256 startAfter, uint256 n) external view returns (uint256[] memory ids);
     function pileSize(Lane lane) external view returns (uint256);
     function rateAtCheckpoint() external view returns (uint256);
+    function ratingOf(uint256 sid) external view returns (uint256);
     function removeTarget(address target) external;
     function rescueCoin(address, uint256) external;
     function rescueNft(address, uint256, address) external;
@@ -161,11 +157,7 @@ interface ICore {
     function successorLocked() external view returns (bool);
     function targetsLocked() external view returns (bool);
     function transferOwnership(address to) external;
-    function unitPerCredit() external view returns (uint256);
+    function unitPerPoint() external view returns (uint256);
     function unlockCallback(bytes memory data) external returns (bytes memory);
     function xPot() external view returns (uint256);
-    function xRate() external view returns (uint256 r);
-    function xStartPrice() external view returns (uint256);
-    function xStartTime() external view returns (uint64);
-    function xToBuyback() external view returns (uint256);
 }

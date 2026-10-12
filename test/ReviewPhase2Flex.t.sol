@@ -4,14 +4,13 @@ pragma solidity ^0.8.28;
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {ICoreLib} from "../src/interfaces/ICoreLib.sol";
 import {SettingsStore} from "../src/lib/SettingsStore.sol";
-import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
-import {Lane, Settings, Mainnet, IExitModule, IStatements} from "../src/interfaces/Interfaces.sol";
+import {Lane, Settings, Mainnet, IExitModule, IStatements, ICreditScore, ICredits} from "../src/interfaces/Interfaces.sol";
 import {MockExitToken} from "./standins/MockExitToken.sol";
 import {MockExitModule} from "./standins/MockExitModule.sol";
 
-/// @notice a module that tries to reenter the core from every callback the core gives it
+/// @notice a module that tries to re enter every core door from inside its exit callback. it pays the statement rating
+/// times the unit
 contract ReenteringModule is IExitModule {
     address public exitToken;
     uint256 public unit;
@@ -26,7 +25,7 @@ contract ReenteringModule is IExitModule {
         core = core_;
     }
 
-    function unitPerCredit() external view returns (uint256) {
+    function unitPerPoint() external view returns (uint256) {
         return unit;
     }
 
@@ -45,7 +44,6 @@ contract ReenteringModule is IExitModule {
         _try(abi.encodeWithSignature("composeExit()"));
         _try(abi.encodeWithSignature("compose()"));
         _try(abi.encodeWithSignature("buyback()"));
-        _try(abi.encodeWithSignature("buybackExit(uint256)", type(uint256).max));
         _try(abi.encodeWithSignature("sellForEth(uint256[])", ids));
         _try(abi.encodeWithSignature("sellForExitToken(uint256[])", ids));
         _try(abi.encodeWithSignature("exitStatement(uint256)", 1));
@@ -55,6 +53,7 @@ contract ReenteringModule is IExitModule {
         _try(abi.encodeWithSignature("addTarget(address)", address(this)));
         _try(abi.encodeWithSignature("transferOwnership(address)", address(this)));
         _try(abi.encodeWithSignature("sellTo(uint256,address)", 1, address(this)));
+        _try(abi.encodeWithSignature("adopt(uint256[])", ids));
     }
 
     /// the same skim from outside any callback, the control
@@ -64,8 +63,7 @@ contract ReenteringModule is IExitModule {
 
     function exit(uint256 sid) external returns (uint256 out) {
         _poke();
-        uint256 rating = IStatements(Mainnet.STATEMENTS).creditsOf(sid);
-        out = rating * unit;
+        out = IStatements(Mainnet.STATEMENTS).creditScoreOf(sid) * unit;
         MockExitToken(exitToken).mint(msg.sender, out);
     }
 }
@@ -88,12 +86,12 @@ contract FlipModule is IExitModule {
         unit = u;
     }
 
-    function unitPerCredit() external view returns (uint256) {
+    function unitPerPoint() external view returns (uint256) {
         return unit;
     }
 
     function exit(uint256 sid) external returns (uint256 out) {
-        out = IStatements(Mainnet.STATEMENTS).creditsOf(sid) * unit;
+        out = IStatements(Mainnet.STATEMENTS).creditScoreOf(sid) * unit;
         MockExitToken(exitToken).mint(msg.sender, out);
     }
 }
@@ -108,83 +106,47 @@ contract PackHarness {
         s.ceilBps = type(uint16).max;
         s.idleLoosenBps = type(uint16).max;
         s.saleFloorBps = type(uint16).max;
-        s.exitAfter = type(uint32).max;
         s.saleToBuybackBps = type(uint16).max;
-        s.exitToBuybackBps = type(uint16).max;
-        s.buybackSlice = type(uint128).max;
+        s.recoveryClimbPerMinBps = type(uint16).max;
+        s.recoveryGapBps = type(uint16).max;
+        s.peakHalfLife = type(uint32).max;
         s.buybackDelay = type(uint16).max;
+        s.exitMode = type(uint8).max;
+        s.exitSlippageBps = type(uint16).max;
+        s.exitBidMarginBps = type(uint16).max;
+        s.redeemBurnBps = type(uint16).max;
+        s.buybackSlice = type(uint128).max;
         s.keeperFee = type(uint64).max;
         s.keeperMaxBaseFee = type(uint48).max;
-        s.xRateCap = type(uint16).max;
-        s.xRateFloor = type(uint16).max;
-        s.xRateClimbPerHour = type(uint16).max;
-        s.xRateDropPerCredit = type(uint16).max;
-        s.xAuctionHalfLife = type(uint32).max;
-        s.exitSliceCredits = type(uint16).max;
         s.rateCap = type(uint64).max;
-        s.exitLaneToBuybackBps = type(uint16).max;
-        s.feeToBuybackBps = type(uint16).max;
         s.callerFee = type(uint64).max;
         s.callerMaxBaseFee = type(uint48).max;
+        s.feeToBuybackBps = type(uint16).max;
+        s.feeToRedeemBurnBps = type(uint16).max;
     }
 
-    function onlyLane() external {
-        SettingsStore.load().exitLaneToBuybackBps = type(uint16).max;
-    }
-
-    function onlyFee() external {
-        SettingsStore.load().feeToBuybackBps = type(uint16).max;
-    }
-
-    function onlyCallerFee() external {
-        SettingsStore.load().callerFee = type(uint64).max;
-    }
-
-    function onlyCallerMaxBaseFee() external {
-        SettingsStore.load().callerMaxBaseFee = type(uint48).max;
-    }
-
-    function words() external view returns (uint256 a, uint256 b, uint256 c, uint256 d) {
+    function words() external view returns (uint256 a, uint256 b, uint256 c) {
         bytes32 slot = SettingsStore.SLOT;
         assembly {
             a := sload(slot)
             b := sload(add(slot, 1))
             c := sload(add(slot, 2))
-            d := sload(add(slot, 3))
         }
     }
 }
 
-/// @notice independent review of commit a970943 (docs/archive/REVIEW-phase2flex.md). test_FINDING_ tests pass today and assert
-/// the behavior the review reports as a finding. test_OK_ tests confirm a property that holds
+/// @notice review of the phase 2 exit side after the per point rebuild: the module is replaceable, a hostile module
+/// cannot re enter any door, a module that flips its reported token only bricks itself, the per point bid takes one
+/// unit across a set with minOut protection, and the settings pack into three words
 contract ReviewPhase2FlexTest is Fixture {
     using FixedPointMathLib for uint256;
-
-
-    // ------------------------------------------------------------------ helpers
 
     function _mod(uint256 unit) internal returns (MockExitModule) {
         return new MockExitModule(address(xt), unit);
     }
 
-    /// @dev the owner sets the module at once. `_setCall` only builds the call data and `eta` is now, so a test can
-    /// keep the order of its steps (build the call, look at the state, send it)
-    function _setCall(address m) internal view returns (bytes memory data, uint256 eta) {
-        data = abi.encode(m);
-        eta = block.timestamp;
-    }
-
-    function _runSet(bytes memory data) internal {
-        vm.prank(owner);
-        core.setExitModule(abi.decode(data, (address)));
-    }
-
     function _replace(address m) internal {
         _setExitModule(m);
-    }
-
-    function _full(uint256 unit) internal view returns (uint256) {
-        return uint256(core.settings().exitSliceCredits) * unit;
     }
 
     function _potX(uint256 amount) internal {
@@ -192,219 +154,31 @@ contract ReviewPhase2FlexTest is Fixture {
         core.skim();
     }
 
-    function _xFunded() internal view returns (bool) {
-        return (uint256(vm.load(address(core), bytes32(uint256(13)))) >> 64) & 0xff != 0;
+    function _bid(uint256 id, uint256 unit) internal view returns (uint256) {
+        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id));
+        return score * unit * (10_000 - core.settings().exitBidMarginBps) / 10_000;
     }
 
-    function _xRateAtCp() internal view returns (uint256) {
-        return uint256(vm.load(address(core), bytes32(uint256(12))));
-    }
-
-    /// @dev owner edit of two settings in one call
-    function _edit(uint16 exitBps, uint16 laneBps, uint32 half) internal {
-        Settings memory s = core.settings();
-        s.exitToBuybackBps = exitBps;
-        s.exitLaneToBuybackBps = laneBps;
-        s.xAuctionHalfLife = half;
-        _setSettings(s);
-    }
-
-    /// @dev a taker burns coin for every slice until the exit buyback pot is empty. returns the coin paid and the
-    /// exit token received. the coin is conjured, the price is what is under test
-    function _drain() internal returns (uint256 paid, uint256 got) {
-        address taker = _user("drainer");
-        vm.prank(taker);
-        coin.approve(address(core), type(uint256).max);
-        for (uint256 i; i < 64 && core.xToBuyback() != 0; ++i) {
-            (uint256 slice, uint256 coinIn) = core.exitAuctionQuote();
-            deal(address(coin), taker, coinIn);
-            vm.prank(taker);
-            core.buybackExit(coinIn);
-            paid += coinIn;
-            got += slice;
-        }
-        assertEq(core.xToBuyback(), 0, "drained");
-    }
-
-    /// @dev phase 2 with every exit proceed going to the buyback pot, a slow half life, one statement exited, and a
-    /// replacement to `unit` prepared. returns the call data of the set, which the test sends when it wants
-    function _setupDrain(uint256 unit) internal returns (bytes memory data) {
-        _enterPhase2();
-        _edit(10_000, 0, 30 days);
-        _fillExitBuyback();
-        assertGt(core.xToBuyback(), 0);
-        address next = address(_mod(unit));
-        uint256 eta;
-        (data, eta) = _setCall(next);
-        vm.warp(eta);
-    }
-
-    function _coin() internal view returns (uint256 c) {
-        (, c) = core.exitAuctionQuote();
-    }
-
-    // ------------------------------------------------------------------ slice size against the price
-
-    /// ACCEPTED RP-1 (see the runbook in docs/DEPLOY.md, changing the exit module or its unit): the price per exit token is kept across a set but the slice follows the unit, and the price
-    /// doubles per fill. after a unit rise the whole pot goes in fewer, bigger fills, so draining it costs less per exit
-    /// token than the moment before. a buyer who sees the owner's set in the mempool can take the pot in the block of the set
-    function test_ACCEPTED_unitRiseDrainsThePotCheaperPerExitToken() public {
-        bytes memory data = _setupDrain(100 * UNIT);
-        uint256 snap = vm.snapshotState();
-        (uint256 paid0, uint256 got0) = _drain();
-        vm.revertToState(snap);
-        _runSet(data);
-        (uint256 paid1, uint256 got1) = _drain();
-        assertEq(got0, got1, "the same exit token leaves the pot");
-        uint256 avg0 = paid0 * 1e18 / got0;
-        uint256 avg1 = paid1 * 1e18 / got1;
-        emit log_named_uint("avg coin per exit token before, wad", avg0);
-        emit log_named_uint("avg coin per exit token after a 100x unit rise, wad", avg1);
-        emit log_named_uint("saving in percent", (avg0 - avg1) * 100 / avg0);
-        assertLt(avg1, avg0, "cheaper per exit token for the same pot");
-    }
-
-    /// ACCEPTED RP-1b (runbook in docs/DEPLOY.md): a unit fall shrinks the slice at the same price per exit token, so one full slice costs less coin
-    /// by the same factor as the unit fell, while each exit token now stands for more points
-    function test_ACCEPTED_unitFallCutsTheCoinCostOfAFullSlice() public {
-        bytes memory data = _setupDrain(UNIT / 10);
-        (, uint256 coinBefore) = core.exitAuctionQuote();
-        (uint256 sliceBefore,) = core.exitAuctionQuote();
-        assertEq(sliceBefore, _full(UNIT).min(core.xToBuyback()));
-        _runSet(data);
-        (uint256 sliceAfter, uint256 coinAfter) = core.exitAuctionQuote();
-        emit log_named_uint("coin for a slice before", coinBefore);
-        emit log_named_uint("coin for a slice after a 10x unit fall", coinAfter);
-        assertEq(sliceAfter, _full(1 * UNIT / 10).min(core.xToBuyback()));
-        assertApproxEqRel(coinAfter * 10, coinBefore, 1e15, "a slice costs a tenth of the coin");
-    }
-
-    // ------------------------------------------------------------------ a later set never touches the start price
-
-    /// FIXED RP-2: a later set never touches the stored start price or the clock, so a mistaken low unit leaves no
-    /// poison behind and the repair to the right unit is exact. the first injection anchors at the price the first set
-    /// opened with, and a full slice never asks more than the whole coin supply
-    function test_FIXED_startPriceIsNeverTouchedByALaterSet() public {
-        _enterPhase2();
-        uint256 good = core.xStartPrice();
-        uint64 at = core.xStartTime();
-        _warp(1 days);
-        _replace(address(_mod(1)));
-        assertEq(core.xStartPrice(), good, "a mistaken low unit does not move the start");
-        assertEq(core.xStartTime(), at, "nor the clock");
-        _replace(address(_mod(UNIT)));
-        assertEq(core.unitPerCredit(), UNIT, "repaired");
-        assertEq(core.xStartPrice(), good, "start price is the one of the first set");
-        assertEq(core.xStartTime(), at);
-        _fillExitBuyback();
-        assertEq(core.xStartPrice(), good, "anchored at the first price");
-        (uint256 slice, uint256 coinIn) = core.exitAuctionQuote();
-        assertEq(slice, _full(UNIT).min(core.xToBuyback()));
-        assertLe(coinIn, core.SUPPLY(), "a slice never asks more than the whole coin supply");
-    }
-
-    // ------------------------------------------------------------------ targets after a replacement
-
-    /// FIXED RP-3: an allowed target flag set while an address was not yet the module is cleared when it becomes the
-    /// module, so it does not come back to life when a later set replaces it
-    function test_FIXED_dormantAllowedTargetIsClearedWhenItBecomesTheModule() public {
-        _enterPhase2();
-        MockExitModule b = _mod(UNIT);
-        _allow(address(b));
-        assertTrue(core.allowedTarget(address(b)), "added while it was not the module");
-        _replace(address(b));
-        assertFalse(core.allowedTarget(address(b)), "cleared by the set");
-        uint256 id = _credits(seller, 1)[0];
-        bytes memory data = abi.encodeCall(MockExitModule.setUnitPerCredit, (7));
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(0, data, id, address(b));
-        _replace(address(_mod(UNIT)));
-        // no longer the module, and the stale approval is gone: it needs a new `addTarget`
-        assertFalse(core.allowedTarget(address(b)));
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(0, data, id, address(b));
-        assertEq(b.currentUnit(), UNIT, "reverted, so nothing changed");
-    }
-
-    function test_OK_forbiddenSetsAfterAReplacement() public {
-        _enterPhase2();
-        MockExitModule a = mod;
-        MockExitModule b = _mod(UNIT);
-        _replace(address(b));
-        // the old module may be added again, the new module and the exit token may not
-        _allow(address(a));
-        assertTrue(core.allowedTarget(address(a)));
-        vm.startPrank(owner);
-        vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(b));
-        vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(xt));
-        vm.stopPrank();
-        // a as target pulls nothing: exit on it mints to the core in the stand in, then the credit check unwinds it
-        uint256 id = _credits(seller, 1)[0];
-        uint256 bal = xt.balanceOf(address(core));
-        vm.expectRevert(ICore.NoCredit.selector);
-        core.buyListing(0, abi.encodeCall(MockExitModule.exit, (1)), id, address(a));
-        assertEq(xt.balanceOf(address(core)), bal, "nothing kept");
-        // the exit token and the new module are blocked at call time even when flagged before
-        assertFalse(core.allowedTarget(address(xt)));
-    }
-
-    /// the module must not be a stack member, in a replacement as in the first set
-    function test_OK_replacementStillRefusesStackMembersAndNonContracts() public {
-        _enterPhase2();
-        (bytes memory d, uint256 eta) = _setCall(address(coin));
-        vm.warp(eta);
-        vm.expectRevert();
-        _runSet(d);
-        (d, eta) = _setCall(address(0xdead));
-        vm.warp(eta);
-        vm.expectRevert(ICore.BadModule.selector);
-        _runSet(d);
-    }
-
-    // ------------------------------------------------------------------ the bounds of the opening price on a set
-
-    /// INFO RP-4: the opening price floor of the first set also blocks a later unit rise even when the stored price is
-    /// high and nothing would break: the repair of a huge unit is refused with BadModule
-    function test_FINDING_hugeUnitRepairRefusedByOpeningPriceFloor() public {
-        _enterPhase2();
-        _fillExitBuyback();
-        assertGt(core.xToBuyback(), 0);
-        uint256 ceiling = core.SUPPLY() * 1e18 / 1e12 / _full(1);
-        emit log_named_uint("highest unit the floor allows", ceiling);
-        (bytes memory d, uint256 eta) = _setCall(address(_mod(ceiling + 1)));
-        vm.warp(eta);
-        vm.expectRevert(ICore.BadModule.selector);
-        _runSet(d);
-        // the same unit is fine as long as the floor holds
-        _replace(address(_mod(ceiling)));
-        assertEq(core.unitPerCredit(), ceiling);
-    }
-
-    // ------------------------------------------------------------------ hostile and shifting modules
-
-    /// OK: a new module that calls every door of the core from inside `exit` is refused each time by the guard, and the
-    /// exit books exactly what arrived. the module hooks `exitToken` and `unitPerCredit` are static calls: no state
-    /// change is possible there at all
+    /// a hostile module cannot re enter any door from its exit callback, and the exit books exactly what arrived
     function test_OK_hostileModuleCannotReenterAnyDoor() public {
         _enterPhase2();
         ReenteringModule rm = new ReenteringModule(address(xt), UNIT, address(core));
         _replace(address(rm));
         assertTrue(rm.skimOutside(), "control: the same skim works outside a callback");
         uint256 sid = _composeOnce().sid;
-        _warp(105 hours);
+        _makeEligible(sid);
         uint256 before = xt.balanceOf(address(core));
         core.exitStatement(sid);
         assertGt(rm.attempts(), 13, "tried every door");
         assertEq(rm.succeeded(), 0, "none got through");
         assertFalse(rm.skimInside(), "the guard refused skim inside the callback");
-        assertEq(core.xPot() + core.xToBuyback(), xt.balanceOf(address(core)) - before);
+        assertGt(xt.balanceOf(address(core)), before, "the exit booked the received token");
+        assertEq(core.xPot(), xt.balanceOf(address(core)), "all the core's exit token is in the bid pot");
         _solvent();
     }
 
-    /// OK: a module that reports another exit token after it was set cannot move the core's token. its exits come
-    /// back Underpaid, the same address cannot be set again, a good module replaces it and the pots stay solvent
+    /// a module that reports another exit token after it was set cannot move the core's token: its exits come back
+    /// Underpaid, the same address cannot be set again, and a good module replaces it
     function test_OK_moduleThatChangesItsReportedTokenOnlyBricksItself() public {
         _enterPhase2();
         FlipModule fm = new FlipModule(address(xt), UNIT);
@@ -413,351 +187,116 @@ contract ReviewPhase2FlexTest is Fixture {
         fm.setToken(address(other));
         assertEq(core.exitToken(), address(xt), "the core kept its own copy");
         uint256 sid = _composeOnce().sid;
-        _warp(105 hours);
+        _makeEligible(sid);
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(sid);
-        (bytes memory d, uint256 eta) = _setCall(address(fm));
-        vm.warp(eta);
+        vm.prank(owner);
         vm.expectRevert(ICore.ExitTokenChanged.selector);
-        _runSet(d);
+        core.setExitModule(address(fm));
         // a unit change reported later is ignored until a set reads it
         fm.setToken(address(xt));
         fm.setUnit(5 * UNIT);
-        assertEq(core.unitPerCredit(), UNIT);
+        assertEq(core.unitPerPoint(), UNIT);
         _replace(address(_mod(UNIT)));
         core.exitStatement(sid);
         _solvent();
     }
 
-    // ------------------------------------------------------------------ selling across a set
-
-    /// OK: a seller in the block of the set is paid with one unit and one rate, never a mix. before the set the old
-    /// unit, after it the new unit at the rate that was checkpointed, and `minOut` in exit token units is what protects
-    /// a seller who quoted the old unit from the drop
-    function test_OK_sellInTheBlockOfTheSetUsesOneUnitAndMinOutProtectsAFall() public {
+    /// a seller in the block of the set is paid by one unit; minOut in exit token units protects a seller who quoted the
+    /// old unit from a drop to a lower new unit
+    function test_OK_sellInTheBlockOfTheSetUsesOneUnitAndMinOutProtects() public {
         _enterPhase2();
-        _potX(5e19);
-        uint256[] memory ids = _credits(seller, 3);
-        (bytes memory d, uint256 eta) = _setCall(address(_mod(UNIT / 10)));
-        vm.warp(eta);
-        uint256 rate = core.xRate();
-        uint256 quoteOld = rate * UNIT / 10_000;
-        // the sell that lands after the set with a floor from the old quote
-        _runSet(d);
-        assertEq(core.xRate(), rate, "same rate right after the set");
+        _potX(5e21);
+        uint256[] memory ids = _credits(seller, 1);
+        uint256 quoteOld = _bid(ids[0], UNIT);
+        // the owner drops the unit in the same block, then the seller sells with a floor from the old quote
+        _replace(address(_mod(UNIT / 10)));
+        uint256[] memory withFloor = ids;
         vm.prank(seller);
         vm.expectRevert(ICore.Slippage.selector);
-        core.sellForExitToken(_one(ids[0]), quoteOld);
-        // without a floor the seller takes what the new unit pays
-        uint256 b = xt.balanceOf(seller);
-        vm.prank(seller);
-        core.sellForExitToken(_one(ids[1]));
-        uint256 got = xt.balanceOf(seller) - b;
-        assertEq(got, rate * (UNIT / 10) / 10_000, "new unit at the checkpointed rate");
-        assertLe(got * 10, quoteOld + 10, "a tenth of the old quote");
-        _solvent();
-    }
-
-    /// OK: across a set the exit rate is continuous, credited under the old unit, and the funded flag always equals its
-    /// definition under the new unit, for a rise and a fall of the unit, the rate at the floor, in the middle and at the
-    /// cap, a pot that carries the bid and a pot that does not
-    function test_OK_rateCheckpointAcrossAUnitChangeMatrix() public {
-        _enterPhase2();
-        Settings memory st = core.settings();
-        uint256[3] memory rates = [uint256(st.xRateFloor), (uint256(st.xRateFloor) + st.xRateCap) / 2, st.xRateCap];
-        uint256[2] memory pots = [uint256(1e12), 1e20];
-        uint256[2] memory units = [UNIT * 1000, UNIT / 1000];
-        uint256 base = vm.snapshotState();
-        for (uint256 a; a < 3; ++a) {
-            for (uint256 b; b < 2; ++b) {
-                for (uint256 c; c < 2; ++c) {
-                    vm.revertToState(base);
-                    base = vm.snapshotState();
-                    _potX(pots[b]);
-                    _storeXRate(rates[a]);
-                    (bytes memory d, uint256 eta) = _setCall(address(_mod(units[c])));
-                    vm.warp(eta);
-                    uint256 before = core.xRate();
-                    _runSet(d);
-                    assertEq(core.xRate(), before, "continuous in the block of the set");
-                    assertEq(_xRateAtCp(), before);
-                    bool want = core.xPot() * 1e4 >= before * units[c];
-                    assertEq(_xFunded(), want, "funded flag follows its definition under the new unit");
-                    _warp(30 days);
-                    uint256 later = core.xRate();
-                    uint256 cap = uint256(st.xRateCap).min(core.xPot() * 1e4 / units[c]);
-                    assertLe(later, before.max(cap), "never climbs past the cap of the new unit");
-                    assertGe(later, before, "never falls from time alone");
-                    if (!want) assertEq(later, before, "unfunded: flat");
-                }
-            }
-        }
-    }
-
-    /// FINDING RP-5 (operational): the exit bid pays the old unit until the set is mined. after a unit fall (each exit
-    /// token now stands for more points) a seller who sells in the blocks before the set (a mempool front run, there is
-    /// no delay any more) is paid ten times what the new unit pays, and the statement composed from those credits exits
-    /// for a tenth: the pot loses the difference. the runbook lowers `xRateCap` and the rate in the same batch
-    function test_FINDING_bidPaysTheOldUnitUntilTheSetBlockSoAFallIsFrontRunnable() public {
-        _enterPhase2();
-        _potX(5e19);
-        (bytes memory d,) = _setCall(address(_mod(UNIT / 10)));
-        // a week of climb, then before the set: 80 credits sold at the old unit at the cap of the bid
-        _warp(7 days);
-        uint256[] memory ids = _credits(seller, 80);
-        uint256 b0 = xt.balanceOf(seller);
+        core.sellForExitToken(withFloor, quoteOld);
+        // without the floor the sale goes through at the new unit
+        uint256 before = xt.balanceOf(seller);
         vm.prank(seller);
         core.sellForExitToken(ids);
-        uint256 paid = xt.balanceOf(seller) - b0;
-        _runSet(d);
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.composeExit();
-        uint256 sid = STATEMENTS.supply();
-        uint256 xb = xt.balanceOf(address(core));
-        core.exitStatement(sid);
-        uint256 returned = xt.balanceOf(address(core)) - xb;
-        emit log_named_uint("paid to the seller at the old unit", paid);
-        emit log_named_uint("returned by the exit at the new unit", returned);
-        assertGt(paid, returned * 8, "paid about ten times what the statement returns");
-        assertLt(core.xPot() + core.xToBuyback(), 5e19, "the pot is net down");
+        assertEq(xt.balanceOf(seller) - before, _bid(ids[0], UNIT / 10), "paid by the new unit");
         _solvent();
     }
 
-    // ------------------------------------------------------------------ the exit lane share
-
-    function _exitLane() internal returns (uint256 sid) {
-        uint256[] memory ids = _credits(seller, 80);
-        _potX(5e19);
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.composeExit();
-        sid = STATEMENTS.supply();
-    }
-
-    /// OK: at 10_000 the bid pot never refills from the exit lane, nothing divides by zero, the bid runs dry with a
-    /// plain PotTooSmall, and every unit of the exit goes to the buyback pot
-    function test_OK_exitLaneShareAtMaxIsHarmless() public {
+    /// after a replacement the old module may be a target and the new one may not, and the stack members and non
+    /// contracts are refused as modules
+    function test_OK_forbiddenSetsAndStackMembersAfterAReplacement() public {
         _enterPhase2();
-        _edit(5_000, 10_000, 6 hours);
-        uint256 sid = _exitLane();
-        uint256 pot = core.xPot();
-        uint256 xb = xt.balanceOf(address(core));
-        core.exitStatement(sid);
-        uint256 got = xt.balanceOf(address(core)) - xb;
-        assertEq(core.xPot(), pot, "the bid pot is not refilled");
-        assertEq(core.xToBuyback(), got, "all of it to the buyback");
-        // run the bid dry: views never revert, the next sale fails cleanly
-        core.xRate();
-        core.exitAuctionPrice();
-        uint256[] memory more = _credits(seller, 1);
-        _storeXRate(core.settings().xRateCap);
-        _solvent();
-        vm.prank(seller);
-        core.sellForExitToken(more);
-        for (uint256 i; i < 40 && core.xPot() > 1e6; ++i) {
-            uint256[] memory x = _credits(seller, 1);
-            vm.prank(seller);
-            try core.sellForExitToken(x) {} catch {
-                break;
-            }
-        }
-        uint256[] memory last = _credits(seller, 1);
-        vm.prank(seller);
-        try core.sellForExitToken(last) {} catch (bytes memory err) {
-            assertEq(bytes4(err), ICore.PotTooSmall.selector);
-        }
-        _solvent();
+        MockExitModule m2 = _mod(2 * UNIT);
+        _replace(address(m2));
+        _allow(address(mod));
+        assertTrue(core.allowedTarget(address(mod)));
+        vm.startPrank(owner);
+        vm.expectRevert(ICore.ForbiddenTarget.selector);
+        core.addTarget(address(m2));
+        // a non contract is never a module
+        vm.expectRevert(ICore.BadModule.selector);
+        core.setExitModule(address(0x1234));
+        // a module whose exit token is a stack member keeps the same token first, so the token change is caught
+        MockExitModule alien = new MockExitModule(Mainnet.CREDITS, UNIT);
+        vm.expectRevert(ICore.ExitTokenChanged.selector);
+        core.setExitModule(address(alien));
+        vm.stopPrank();
     }
 
-    /// OK: the share is read at the exit, not at the compose. a statement composed at 0 and exited at 10_000 goes whole
-    /// to the buyback and the other way round, and the eth lane ignores the setting
-    function test_OK_exitLaneShareChangedBetweenComposeAndExit() public {
-        _enterPhase2();
-        uint256 sid = _exitLane();
-        _edit(5_000, 10_000, 6 hours);
-        uint256 pot = core.xPot();
-        uint256 b = xt.balanceOf(address(core));
-        core.exitStatement(sid);
-        uint256 got = xt.balanceOf(address(core)) - b;
-        assertEq(core.xToBuyback(), got);
-        assertEq(core.xPot(), pot);
-        _solvent();
-    }
-
-    /// OK: solvency and no unbooked value around the first set and a replacement. a gift before the first set is booked
-    /// by skim, and after every step the pots equal the balance
-    function test_OK_nothingUnbookedAroundSets() public {
-        xt = new MockExitToken("Exit Token", "XT");
-        xt.mint(address(core), 1e18);
-        mod = new MockExitModule(address(xt), UNIT);
-        _setExitModule(address(mod));
-        assertEq(core.xPot(), 0);
-        core.skim();
-        assertEq(core.xPot(), 1e18, "the early gift is booked after the first set");
-        xt.mint(address(core), 7);
-        _replace(address(_mod(3 * UNIT)));
-        core.skim();
-        assertEq(core.xPot() + core.xToBuyback(), xt.balanceOf(address(core)));
-        uint256 sid = _composeOnce().sid;
-        _warp(105 hours);
-        xt.mint(address(core), 5);
-        core.exitStatement(sid);
-        core.skim();
-        assertEq(core.xPot() + core.xToBuyback(), xt.balanceOf(address(core)), "everything booked");
-        _replace(address(_mod(UNIT)));
-        assertEq(core.xPot() + core.xToBuyback(), xt.balanceOf(address(core)), "a set moves nothing");
-    }
-
-    /// OK: with nothing for sale the price after a set is the price before, for a rise, a fall and the same unit, and
-    /// the stored start is the price while the clock is stopped
-    function test_OK_emptyBuybackPotPriceNeverFallsAcrossASet() public {
-        _enterPhase2();
-        uint256[3] memory units = [UNIT * 7, UNIT / 7, UNIT];
-        for (uint256 i; i < 3; ++i) {
-            uint256 p = core.exitAuctionPrice();
-            _replace(address(_mod(units[i])));
-            assertEq(core.exitAuctionPrice(), p, "a set never moves the price");
-            assertEq(core.exitAuctionPrice(), core.xStartPrice());
-        }
-    }
-
-    // ------------------------------------------------------------------ packing and bounds
-
-    function _maxStruct() internal pure returns (Settings memory m) {
-        m.dropPerCreditBps = type(uint16).max;
-        m.dropFloorBps = type(uint16).max;
-        m.climbPerMinBps = type(uint16).max;
-        m.ceilBps = type(uint16).max;
-        m.idleLoosenBps = type(uint16).max;
-        m.saleFloorBps = type(uint16).max;
-        m.exitAfter = type(uint32).max;
-        m.saleToBuybackBps = type(uint16).max;
-        m.exitToBuybackBps = type(uint16).max;
-        m.buybackSlice = type(uint128).max;
-        m.buybackDelay = type(uint16).max;
-        m.keeperFee = type(uint64).max;
-        m.keeperMaxBaseFee = type(uint48).max;
-        m.xRateCap = type(uint16).max;
-        m.xRateFloor = type(uint16).max;
-        m.xRateClimbPerHour = type(uint16).max;
-        m.xRateDropPerCredit = type(uint16).max;
-        m.xAuctionHalfLife = type(uint32).max;
-        m.exitSliceCredits = type(uint16).max;
-        m.rateCap = type(uint64).max;
-        m.exitLaneToBuybackBps = type(uint16).max;
-        m.feeToBuybackBps = type(uint16).max;
-        m.callerFee = type(uint64).max;
-        m.callerMaxBaseFee = type(uint48).max;
-    }
-
-    /// OK: with every field at the max of its TYPE (past the bounds, so a stray bit would show) the compiler layout and
-    /// the library's decode agree, the two last share fields sit at bits 176 to 207 of the third word, the two caller
-    /// payment fields fill bits 0 to 111 of the fourth word, and a write to one touches nothing else
+    /// the settings pack into three storage words: every field at its type max reads back at its type max
     function test_OK_packingEveryFieldAtTypeMaxRoundTrips() public {
         PackHarness h = new PackHarness();
         h.maxAll();
-        (uint256 a, uint256 b, uint256 c, uint256 d) = h.words();
-        assertEq(a, (1 << 160) - 1, "word 0: 160 bits, the top 96 are free");
-        assertEq(b, type(uint256).max, "word 1");
-        assertEq(c, (1 << 208) - 1, "word 2: 176 bits of neighbors then the two 16 bit shares");
-        assertEq(d, (1 << 112) - 1, "word 3: callerFee 64 bits then callerMaxBaseFee 48 bits");
-        bytes32 slot = SettingsStore.SLOT;
-        vm.store(address(core), slot, bytes32(a));
-        vm.store(address(core), bytes32(uint256(slot) + 1), bytes32(b));
-        vm.store(address(core), bytes32(uint256(slot) + 2), bytes32(c));
-        vm.store(address(core), bytes32(uint256(slot) + 3), bytes32(d));
-        assertEq(keccak256(abi.encode(core.settings())), keccak256(abi.encode(_maxStruct())), "decode(encode(x)) == x");
-        PackHarness g = new PackHarness();
-        g.onlyLane();
-        (a, b, c, d) = g.words();
-        assertEq(a, 0);
-        assertEq(b, 0);
-        assertEq(c, uint256(type(uint16).max) << 176, "the share alone");
-        assertEq(d, 0);
-        ICoreLib clib = ICoreLib(findLibrary(address(core).code));
-        Settings memory u = clib.unpack(a, b, c, d);
-        assertEq(u.exitLaneToBuybackBps, type(uint16).max);
-        assertEq(u.rateCap, 0);
-        assertEq(u.exitSliceCredits, 0);
-        PackHarness f = new PackHarness();
-        f.onlyFee();
-        (a, b, c, d) = f.words();
-        assertEq(a, 0);
-        assertEq(b, 0);
-        assertEq(c, uint256(type(uint16).max) << 192, "the fee share alone");
-        assertEq(d, 0);
-        u = clib.unpack(a, b, c, d);
-        assertEq(u.feeToBuybackBps, type(uint16).max);
-        assertEq(u.exitLaneToBuybackBps, 0);
-        PackHarness p = new PackHarness();
-        p.onlyCallerFee();
-        (a, b, c, d) = p.words();
-        assertEq(a | b | c, 0);
-        assertEq(d, uint256(type(uint64).max), "callerFee alone");
-        u = clib.unpack(a, b, c, d);
-        assertEq(u.callerFee, type(uint64).max);
-        assertEq(u.callerMaxBaseFee, 0);
-        PackHarness q = new PackHarness();
-        q.onlyCallerMaxBaseFee();
-        (a, b, c, d) = q.words();
-        assertEq(a | b | c, 0);
-        assertEq(d, uint256(type(uint48).max) << 64, "callerMaxBaseFee alone");
-        u = clib.unpack(a, b, c, d);
-        assertEq(u.callerFee, 0);
-        assertEq(u.callerMaxBaseFee, type(uint48).max);
+        (uint256 a, uint256 b, uint256 c) = h.words();
+        // slot 0
+        assertEq(uint16(a), type(uint16).max, "dropPerCreditBps");
+        assertEq(uint16(a >> 16), type(uint16).max, "dropFloorBps");
+        assertEq(uint16(a >> 32), type(uint16).max, "climbPerMinBps");
+        assertEq(uint16(a >> 48), type(uint16).max, "ceilBps");
+        assertEq(uint16(a >> 64), type(uint16).max, "idleLoosenBps");
+        assertEq(uint16(a >> 80), type(uint16).max, "saleFloorBps");
+        assertEq(uint16(a >> 96), type(uint16).max, "saleToBuybackBps");
+        assertEq(uint16(a >> 112), type(uint16).max, "recoveryClimbPerMinBps");
+        assertEq(uint16(a >> 128), type(uint16).max, "recoveryGapBps");
+        assertEq(uint32(a >> 144), type(uint32).max, "peakHalfLife");
+        assertEq(uint16(a >> 176), type(uint16).max, "buybackDelay");
+        assertEq(uint8(a >> 192), type(uint8).max, "exitMode");
+        assertEq(uint16(a >> 200), type(uint16).max, "exitSlippageBps");
+        assertEq(uint16(a >> 216), type(uint16).max, "exitBidMarginBps");
+        assertEq(uint16(a >> 232), type(uint16).max, "redeemBurnBps");
+        // slot 1
+        assertEq(uint128(b), type(uint128).max, "buybackSlice");
+        assertEq(uint64(b >> 128), type(uint64).max, "keeperFee");
+        assertEq(uint48(b >> 192), type(uint48).max, "keeperMaxBaseFee");
+        // slot 2
+        assertEq(uint64(c), type(uint64).max, "rateCap");
+        assertEq(uint64(c >> 64), type(uint64).max, "callerFee");
+        assertEq(uint48(c >> 128), type(uint48).max, "callerMaxBaseFee");
+        assertEq(uint16(c >> 176), type(uint16).max, "feeToBuybackBps");
+        assertEq(uint16(c >> 192), type(uint16).max, "feeToRedeemBurnBps");
+        // nothing above bit 208 of slot 2
+        assertEq(c >> 208, 0, "no field above feeToRedeemBurnBps");
     }
 
-    function test_OK_exitLaneShareBounds() public {
-        Settings memory s = core.settings();
-        s.exitLaneToBuybackBps = 10_001;
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICoreLib.BadSetting.selector, bytes32("exitLaneToBuybackBps")));
-        core.setSettings(s);
-        s.exitLaneToBuybackBps = 10_000;
-        _setSettings(s);
-        assertEq(core.settings().exitLaneToBuybackBps, 10_000);
-        assertEq(SettingsBounds.firstViolation(s), bytes32(0));
-        s.exitLaneToBuybackBps = 0;
-        _setSettings(s);
-        assertEq(core.settings().exitLaneToBuybackBps, 0);
-        // the field sits last in the check order: an earlier violation is reported first
-        s.exitLaneToBuybackBps = 10_001;
-        s.dropPerCreditBps = 1_001;
-        assertEq(SettingsBounds.firstViolation(s), bytes32("dropPerCreditBps"));
-    }
-
-    /// INFO RP-6: a unit rise does not clamp the exit rate to what the pot carries under the new unit. the rate stays
-    /// where it was, flat, and every credit the pot cannot pay reverts PotTooSmall until the owner lowers the rate
-    function test_FINDING_unitRiseLeavesTheRateAbovePotAndFlat() public {
+    /// nothing of the core's eth or exit token moves when the owner replaces the module
+    function test_OK_nothingUnbookedAroundSets() public {
         _enterPhase2();
+        _composeOnce();
         _potX(2e19);
-        (bytes memory d,) = _setCall(address(_mod(UNIT * 1000)));
-        _warp(2 days);
-        uint256 rate = core.xRate();
-        assertGt(rate, 6_000, "climbed under the old unit before the set");
-        _runSet(d);
-        assertEq(core.xRate(), rate, "not clamped");
-        assertFalse(_xFunded());
-        _warp(30 days);
-        assertEq(core.xRate(), rate, "and flat, it does not recover by itself");
-        uint256[] memory ids = _credits(seller, 1);
-        vm.prank(seller);
-        vm.expectRevert(ICore.PotTooSmall.selector);
-        core.sellForExitToken(ids);
-        // the owner lowers it at once
-        _storeXRate(core.settings().xRateFloor);
+        uint256 bal = address(core).balance;
+        uint256 xbal = xt.balanceOf(address(core));
+        uint256 ep = core.ethPot();
+        uint256 eb = core.ethToBuyback();
+        uint256 reserve = core.ethRedeemBurn();
+        uint256 xp = core.xPot();
+        _replace(address(_mod(2 * UNIT)));
+        assertEq(address(core).balance, bal);
+        assertEq(xt.balanceOf(address(core)), xbal);
+        assertEq(core.ethPot(), ep);
+        assertEq(core.ethToBuyback(), eb);
+        assertEq(core.ethRedeemBurn(), reserve);
+        assertEq(core.xPot(), xp);
         _solvent();
-    }
-
-    /// OK: a repaired mistaken unit leaves a price that is usable at once (RP-2 is fixed, there is nothing to work off)
-    function test_OK_repairedMistakenUnitLeavesAUsablePrice() public {
-        _enterPhase2();
-        _replace(address(_mod(1)));
-        _replace(address(_mod(UNIT)));
-        _fillExitBuyback();
-        assertLe(_coin(), core.SUPPLY());
     }
 }

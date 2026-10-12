@@ -51,8 +51,8 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the gas of the nine deploy transactions as the launch rehearsal measures it (17,581,727), rounded up with margin.
     /// `test/Rehearsal.t.sol` asserts that the measured total stays under it
     uint256 internal constant DEPLOY_GAS_ESTIMATE = 19_200_000;
-    /// @dev the Core SUPPLY constant, the coin supply its exit auction is priced against. test/Config.t.sol checks it
-    uint256 internal constant CORE_SUPPLY = 1_000_000_000e18;
+    /// @dev the coin supply of the launch. test/Config.t.sol checks the config against it
+    uint256 internal constant COIN_SUPPLY = 1_000_000_000e18;
     /// @dev the byte caps of the coin's `image` and `description` (`ArtCoinsTokenV2.MAX_IMAGE_BYTES` and
     /// `MAX_DESCRIPTION_BYTES`, the factory reverts above them)
     uint256 internal constant MAX_IMAGE_BYTES = 2048;
@@ -73,13 +73,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0xaf44690ea8f217e0a7a98f93df4ec91c95e16613940a126e2fcd35ea6db2a919;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x5d31b8fb1cc3fcf7a79e926b0db67f3b1329ffaccc9b4eb53f29b4c0009de305;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x8aaaa979d0acab606695913700299f932d1dd0cbb19d0041347d3368ecc641dd;
+    bytes32 internal constant BUILD_HASH_CORE = 0x91b46f22813af17a7c1b55e984720866018df0e3ae757d15edda318e431bf4dc;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xc25270c96a8a7727555e72bb144ff005318b3b323df1b27af331d68cc25c19ea;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x46057493ff133ace355b0e5e004cca36e0d6bcea19f201a9c88a097120baee8f;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
-    bytes32 internal constant BUILD_HASH_LENS = 0xea2e602937d074c8ae7ca1d9f671c2486982afd670e076cd570ffc4879c47c83;
+    bytes32 internal constant BUILD_HASH_LENS = 0xc96886d3d5d2387d3006879c63a9466d3ca091d3e5b5f137baff0ad74d28c30d;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x78fe9a743fb93e550279a1ca00bf82178976f34e59d2d5f3efe1b53dc4d0bc15;
+        0x5a7edd1b7a89e0069af2838cfb769638adf2d086adcdbe86d8487a467e51f378;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -201,7 +201,7 @@ abstract contract LaunchChecks is PostflightChecks {
             c.sale.floorBps >= c.settings.saleFloorBps,
             "the core takes no sale below saleFloorBps, so the lower asking price is never reached"
         );
-        _eq("supply equals the Core SUPPLY constant", c.supply, CORE_SUPPLY);
+        _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);
     }
 
     /// @dev the pinned rules. each is one row, so a failure names the rule
@@ -837,12 +837,22 @@ abstract contract LaunchChecks is PostflightChecks {
         );
         _info(
             "signoff: statement sale",
+            string.concat("saleFloorBps ", vm.toString(c.settings.saleFloorBps))
+        );
+        _info(
+            "signoff: phase 2",
             string.concat(
-                "saleFloorBps ",
-                vm.toString(c.settings.saleFloorBps),
-                " exitAfter ",
-                vm.toString(c.settings.exitAfter),
-                "s"
+                "exitMode ",
+                vm.toString(c.settings.exitMode),
+                " exit slippage ",
+                vm.toString(c.settings.exitSlippageBps),
+                " exit bid margin ",
+                vm.toString(c.settings.exitBidMarginBps),
+                " redeem burn ",
+                vm.toString(c.settings.redeemBurnBps),
+                " fee to redeem burn ",
+                vm.toString(c.settings.feeToRedeemBurnBps),
+                " (bps)"
             )
         );
         _info(
@@ -850,10 +860,6 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat(
                 "sale to buyback ",
                 vm.toString(c.settings.saleToBuybackBps),
-                " exit to buyback ",
-                vm.toString(c.settings.exitToBuybackBps),
-                " exit lane to buyback ",
-                vm.toString(c.settings.exitLaneToBuybackBps),
                 " fee to buyback ",
                 vm.toString(c.settings.feeToBuybackBps),
                 " buyback slice ",

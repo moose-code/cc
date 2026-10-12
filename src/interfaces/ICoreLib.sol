@@ -11,6 +11,7 @@ interface ICoreLib {
     error BadSwap();
     error CallFailed();
     error Empty();
+    error ExitModeOff();
     error Held();
     error InPile();
     error Locked(bytes32 what);
@@ -31,7 +32,6 @@ interface ICoreLib {
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, Lane lane, uint256 cost);
     event EngineRetired(address indexed successor);
-    event ExitRateFill(uint256 rate, uint256 pot);
     event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
     event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
@@ -43,8 +43,7 @@ interface ICoreLib {
         external
         view
         returns (uint256 price, uint256 read);
-    function decay(uint256 start, uint256 elapsed, uint256 halfLife) external pure returns (uint256 p);
-    function unpack(uint256 a, uint256 b, uint256 c, uint256 d) external pure returns (Settings memory s);
+    function unpack(uint256 a, uint256 b, uint256 c) external pure returns (Settings memory s);
 
     function swapIn(address manager, address coin, uint24 fee, int24 spacing, address hook, uint256 amountIn)
         external

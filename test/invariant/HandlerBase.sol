@@ -15,6 +15,7 @@ import {ICore} from "../../src/interfaces/ICore.sol";
 import {
     Lane,
     ICredits,
+    ICreditScore,
     ICreditStrategy,
     IStatements,
     Mainnet,
@@ -418,7 +419,7 @@ abstract contract HandlerBase is Test {
     }
 
     function seedEthBooks() external {
-        gEthStart = core.ethPot() + core.ethToBuyback();
+        gEthStart = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
     }
 
     function everHeldCount() external view returns (uint256) {
@@ -756,14 +757,6 @@ abstract contract HandlerBase is Test {
         }
     }
 
-    /// the exit side of the same rule, read from the core's storage (slots 12 and 13, `forge inspect Core
-    /// storage-layout`): the stored flag is what the stored rate, the exit pot and the unit say
-    function _xFundedCheck() internal {
-        uint256 rate = uint256(vm.load(address(core), bytes32(uint256(12))));
-        bool stored = (uint256(vm.load(address(core), bytes32(uint256(13)))) >> 64) & 0xff != 0;
-        bool want = core.xPot() * 10_000 >= rate * core.unitPerCredit();
-        if (stored != want) _flag(V_FUNDED_STALE, "exit funded flag disagrees with pot, stored rate and unit");
-    }
 
     /// eth booked into the pots (the pot share and the buyback share) enters the ledger
     function _booked(uint256 amount) internal {
@@ -1144,9 +1137,11 @@ abstract contract HandlerBase is Test {
         (uint256 held, uint256 toCore) = _flushRouter();
         if (held != bounty) _flag(V_POT, "the router received other than the hook bounty leg");
         _eth(p.bal, 0, toCore, what);
-        // the router's eth is split by feeToBuybackBps in the core: that share to the coin buyback, the rest to the pot
+        // the router's eth is split in the core: feeToBuybackBps to the coin buyback, feeToRedeemBurnBps to the redeem
+        // burn reserve, the rest to the pot
         uint256 fee = toCore * core.settings().feeToBuybackBps / 10_000;
-        if (core.ethPot() != p.pot + toCore - fee || core.ethToBuyback() != p.tb + fee) {
+        uint256 rb = toCore * core.settings().feeToRedeemBurnBps / 10_000;
+        if (core.ethPot() != p.pot + toCore - fee - rb || core.ethToBuyback() != p.tb + fee) {
             _flag(V_POT, "swap skim not booked by the fee split");
         }
         if (volume != 0) {
@@ -1471,12 +1466,9 @@ abstract contract HandlerBase is Test {
 
     function _advance(uint256 dt, uint256 blocks_) internal {
         RS memory s = _rs();
-        uint256 xp0 = phase2() ? core.exitAuctionPrice() : 0;
         vm.warp(block.timestamp + dt);
         vm.roll(block.number + (blocks_ == 0 ? dt / 12 + 1 : blocks_));
         _rsCheck(s, dt);
-        // time alone never raises the exit token auction price
-        if (phase2() && core.exitAuctionPrice() > xp0) _flag(V_AUCTION, "the auction price rose with time alone");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1532,7 +1524,8 @@ abstract contract HandlerBase is Test {
     }
 
     function _compose(uint8 a, Lane lane, uint256 gate, uint256 feeSeed) internal {
-        if (lane == Lane.Exit && !phase2()) return _skip(a);
+        // composeExit feeds the exit token bid lane, which runs only while exitMode is 2
+        if (lane == Lane.Exit && (!phase2() || core.settings().exitMode != 2)) return _skip(a);
         bytes4 sel = lane == Lane.Eth ? ICore.compose.selector : ICore.composeExit.selector;
         if (_retiredRefusal(a, keeper, abi.encodeWithSelector(sel))) return;
         (bool ready, uint256[] memory ids, uint256 format) = _peekPage(lane);
@@ -1745,7 +1738,8 @@ abstract contract HandlerBase is Test {
         }
         // eth leaves as the swap input plus the payment. the skim of the swap comes back as an inflow after the flush
         _eth(p.bal, spent + tip, toCore, "buyback");
-        if (core.ethPot() != p.pot + toCore - feeShare) _flag(V_POT, "buyback skim not booked to the pot");
+        uint256 rb = toCore * core.settings().feeToRedeemBurnBps / 10_000;
+        if (core.ethPot() != p.pot + toCore - feeShare - rb) _flag(V_POT, "buyback skim not booked to the pot");
     }
 
     /// @dev the skim and burn checks of a buyback (a helper so the locals of `_afterBuyback` fit the stack)
@@ -1775,22 +1769,22 @@ abstract contract HandlerBase is Test {
         uint256 tb0 = core.ethToBuyback();
         uint256 xb0 = _xBal(address(core));
         uint256 xp0 = core.xPot();
-        uint256 xt0 = core.xToBuyback();
+        uint256 reserve0 = core.ethRedeemBurn();
         uint256 rate0 = core.ethRate();
         RS memory rs = _rs();
         _att(a);
         vm.prank(who);
         try core.skim() {
             _ok(a);
-            uint256 booked = b0 > pot0 + tb0 ? b0 - pot0 - tb0 : 0;
-            if (core.ethPot() != pot0 + booked || core.ethToBuyback() != tb0) {
+            uint256 booked = b0 > pot0 + tb0 + reserve0 ? b0 - pot0 - tb0 - reserve0 : 0;
+            if (core.ethPot() != pot0 + booked || core.ethToBuyback() != tb0 || core.ethRedeemBurn() != reserve0) {
                 _flag(V_POT, "skim booked the wrong eth");
             }
             _booked(booked);
             _eth(b0, 0, 0, "skim");
             if (core.exitToken() != address(0)) {
-                uint256 xbooked = xb0 > xp0 + xt0 ? xb0 - xp0 - xt0 : 0;
-                if (core.xPot() != xp0 + xbooked || core.xToBuyback() != xt0) {
+                uint256 xbooked = xb0 > xp0 ? xb0 - xp0 : 0;
+                if (core.xPot() != xp0 + xbooked) {
                     _flag(V_POT, "skim booked the wrong exit token");
                 }
                 _x(xb0, 0, 0, "skim");
@@ -1821,6 +1815,7 @@ abstract contract HandlerBase is Test {
         receiveSends++;
         uint256 expectIn = amt;
         uint256 fee;
+        uint256 rb;
         bool ok;
         if (fromHook) {
             // eth sent to the router and flushed: the engine share is booked as fees
@@ -1829,6 +1824,7 @@ abstract contract HandlerBase is Test {
             if (ok) {
                 (, expectIn) = _flushRouter();
                 fee = expectIn * core.settings().feeToBuybackBps / 10_000;
+                rb = expectIn * core.settings().feeToRedeemBurnBps / 10_000;
             }
         } else {
             vm.prank(sender);
@@ -1837,7 +1833,7 @@ abstract contract HandlerBase is Test {
         if (ok) {
             _ok(a);
             _eth(b0, 0, expectIn, "donate");
-            if (core.ethPot() != pot0 + (fromHook ? expectIn - fee : 0) || core.ethToBuyback() != tb0 + fee) {
+            if (core.ethPot() != pot0 + (fromHook ? expectIn - fee - rb : 0) || core.ethToBuyback() != tb0 + fee) {
                 _flag(V_POT, "a donation was booked wrongly");
             }
         } else {
@@ -2017,8 +2013,9 @@ abstract contract HandlerBase is Test {
         RS memory rs = _rs();
         (, uint256 toCore) = _flushRouter();
         uint256 fee = toCore * core.settings().feeToBuybackBps / 10_000;
+        uint256 rb = toCore * core.settings().feeToRedeemBurnBps / 10_000;
         _eth(b0, 0, toCore, "flush");
-        if (core.ethPot() != pot0 + toCore - fee || core.ethToBuyback() != tb0 + fee) {
+        if (core.ethPot() != pot0 + toCore - fee - rb || core.ethToBuyback() != tb0 + fee) {
             _flag(V_POT, "a flush was booked wrongly");
         }
         _rsCheck(rs, 0);
@@ -2155,6 +2152,13 @@ abstract contract HandlerBase is Test {
         uint256 actorX;
     }
 
+    /// @dev the exit token the per point bid pays for credit `id`: `score * unitPerPoint * (10_000 - exitBidMarginBps)
+    /// / 10_000`, the same figure the core computes in `sellForExitToken`
+    function _exitBid(uint256 id, uint256 unit, uint256 net) internal view returns (uint256) {
+        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
+        return score * unit * net / 10_000;
+    }
+
     /// @dev the ids `sellForExit` offers: walks the actor inventory from a picked offset while the exit prices fit the pot
     function _pickExitIds(address who, uint256 len, uint256 want, uint256 pick, uint256 unit)
         internal
@@ -2163,16 +2167,12 @@ abstract contract HandlerBase is Test {
     {
         ids = new uint256[](want);
         uint256 pot = core.xPot();
-        uint256 r = core.xRate();
-        Settings memory st = core.settings();
+        uint256 net = 10_000 - core.settings().exitBidMarginBps;
         for (uint256 k; k < len && k < want * 3 + 4 && n < want; ++k) {
             uint256 id = inventory[who][(pick % len + k) % len];
-            uint256 price = r * unit / 10_000;
-            // a credit the exit bid prices at zero (an exit rate of zero, which the owner may set) is refused
+            uint256 price = _exitBid(id, unit, net);
             if (price != 0 && price <= pot) {
                 pot -= price;
-                r = r > st.xRateDropPerCredit ? r - st.xRateDropPerCredit : 0;
-                if (r < st.xRateFloor) r = st.xRateFloor;
                 ids[n++] = id;
             }
         }
@@ -2181,7 +2181,7 @@ abstract contract HandlerBase is Test {
     /// sells credits into the exit token bid. ids are picked so the prices fit the pot.
     function sellForExit(uint256 aSeed, uint256 nSeed, uint256 pick) external checked {
         uint8 a = A_SELL_FOR_EXIT;
-        if (!phase2()) return _skip(a);
+        if (!phase2() || core.settings().exitMode != 2) return _skip(a);
         address who = _actor(aSeed);
         if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForExitToken(uint256[])", _firstOf(who)))) return;
         uint256 len = inventory[who].length;
@@ -2197,13 +2197,12 @@ abstract contract HandlerBase is Test {
         XPre memory p;
         p.xbal = _xBal(address(core));
         p.xpot = core.xPot();
-        p.xto = core.xToBuyback();
         p.unit = unit;
-        p.rate = core.xRate();
         p.actorX = _xBal(who);
+        uint256 net = 10_000 - core.settings().exitBidMarginBps;
         uint256 bound_;
         for (uint256 i; i < n; ++i) {
-            bound_ += p.rate * unit / 10_000;
+            bound_ += _exitBid(ids[i], unit, net);
         }
         uint256 b0 = address(core).balance;
         uint256 pot0 = core.ethPot();
@@ -2237,8 +2236,8 @@ abstract contract HandlerBase is Test {
         }
         uint256 paid = _xBal(who) - p.actorX;
         if (paid != total) _flag(V_MODEL, "sellForExit paid differs from the sum of its events");
-        // no credit is bought above xRate * unit read before, the rate only falls within the call
-        if (paid > bound_) _flag(V_ABOVE_CAP, "sellForExit paid above xRate * unit read before");
+        // each credit is paid exactly score * unit * net / 10_000, so the total equals the figure read before
+        if (paid != bound_) _flag(V_ABOVE_CAP, "sellForExit paid differs from the per point bid read before");
         _x(p.xbal, paid, 0, "sellForExit");
         if (core.xPot() != p.xpot - paid) _flag(V_POT, "sellForExit exit pot not reduced by the price");
         _eth(b0, 0, 0, "sellForExit");
@@ -2247,22 +2246,28 @@ abstract contract HandlerBase is Test {
     /// the unit the core stored when the module was last set. the module can change what it reports, the core reads
     /// it again only when a module is set
     function _unitOf() internal view returns (uint256 u) {
-        return core.unitPerCredit();
+        return core.unitPerPoint();
+    }
+
+    /// the controller's eligibility answer read the way the core reads it: a revert, a short answer or a false reads as
+    /// not eligible
+    function _ctlAtCost(uint256 sid) internal view returns (bool) {
+        (bool ok, bytes memory out) =
+            core.controller().staticcall{gas: 200_000}(abi.encodeWithSignature("atCost(uint256)", sid));
+        return ok && out.length == 32 && abi.decode(out, (bool));
     }
 
     struct EPre {
         uint256 xbal;
         uint256 xpot;
-        uint256 xto;
         uint256 b0;
         uint256 pot0;
         uint256 rate0;
+        uint256 toBuyback0;
+        uint256 reserve0;
         uint256 rating;
         uint256 unit;
         uint256 required;
-        uint256 startPrice;
-        uint256 startTime;
-        uint256 priceNow;
         uint256 callerBal;
         uint256 gasUsed;
         uint256 cost;
@@ -2273,35 +2278,37 @@ abstract contract HandlerBase is Test {
         Settings st;
     }
 
-    /// exits a held statement through the module. eth lane statements only after `exitAfter` since their compose.
-    /// the module may be set to underpay, and then the exit must revert.
+    /// exits a held statement through the module. an eth lane statement is eligible when its asking price is at or below
+    /// its cost; an exit lane statement is eligible at once. redemption runs only while `exitMode` is at least 1. the
+    /// module may be set to underpay, and then the exit must revert
     function exitStatement(uint256 sIdx, uint256 aSeed) external checked {
         uint8 a = A_EXIT_STATEMENT;
         if (!phase2()) return _skip(a);
         uint256[] memory held = core.heldStatements();
         if (held.length == 0) return _skip(a);
         uint256 sid = held[sIdx % held.length];
-        (, Lane lane,, uint64 composedAt) = core.statementInfo(sid);
+        (, Lane lane,,) = core.statementInfo(sid);
         EPre memory p;
         p.st = core.settings();
         p.lane = uint8(lane);
         SG storage g = _sg[sid];
-        p.ripe = lane == Lane.Exit || block.timestamp >= uint256(composedAt) + p.st.exitAfter;
-        if (!p.ripe) p.refusal = ICore.TooEarly.selector;
-        // an unripe eth lane statement is only tried now and then, to see the refusal
+        bool modeOn = p.st.exitMode >= 1;
+        bool eligible = lane == Lane.Exit || _ctlAtCost(sid);
+        p.ripe = modeOn && eligible;
+        if (!modeOn) p.refusal = ICore.ExitModeOff.selector;
+        else if (!eligible) p.refusal = ICore.NotEligible.selector;
+        // an ineligible statement is only tried now and then, to see the refusal
         if (!p.ripe && aSeed % 6 != 0) return _skip(a);
         p.xbal = _xBal(address(core));
         p.xpot = core.xPot();
-        p.xto = core.xToBuyback();
         p.b0 = address(core).balance;
         p.pot0 = core.ethPot();
         p.rate0 = core.ethRate();
-        p.startPrice = core.xStartPrice();
-        p.startTime = core.xStartTime();
-        p.priceNow = core.exitAuctionPrice();
-        p.rating = STATEMENTS.creditsOf(sid);
+        p.toBuyback0 = core.ethToBuyback();
+        p.reserve0 = core.ethRedeemBurn();
+        p.rating = core.ratingOf(sid);
         p.unit = _unitOf();
-        p.required = p.rating * p.unit;
+        p.required = p.rating * p.unit * (10_000 - p.st.exitSlippageBps) / 10_000;
         p.callerBal = keeper.balance;
         p.cost = g.cost;
         RS memory rs = _rs();
@@ -2319,8 +2326,8 @@ abstract contract HandlerBase is Test {
             }
             if (p.refusal != 0 && bytes4(why) != p.refusal) {
                 _unexpected(a, why);
-            } else if (p.refusal == 0 && p.unit != 0 && module.shortfallBps() == 0) {
-                // the module pays by what it reports now. a payout below the stored unit must be refused
+            } else if (p.refusal == 0 && p.unit != 0 && module.payBps() >= 10_000) {
+                // the module overpays or pays exactly, so the required amount arrives: the exit must not revert
                 if (module.currentUnit() >= p.unit) _unexpected(a, why);
             }
         }
@@ -2328,27 +2335,18 @@ abstract contract HandlerBase is Test {
     }
 
     function _afterExit(uint256 sid, EPre memory p) internal {
-        if (!p.ripe) _flag(V_DEPART, "an eth lane statement exited before exitAfter");
+        if (!p.ripe) _flag(V_DEPART, "an ineligible statement exited");
         uint256 received = _xBal(address(core)) - p.xbal;
-        if (received < p.required) _flag(V_EXIT_SHORT, "exit returned less than credits * unitPerCredit");
-        if (p.unit == 0) _flag(V_EXIT_SHORT, "exit with an unreadable unit per credit");
-        uint256 share = p.lane == uint8(Lane.Eth) ? p.st.exitToBuybackBps : p.st.exitLaneToBuybackBps;
-        uint256 toBuyback = received * share / 10_000;
-        if (core.xToBuyback() != p.xto + toBuyback) _flag(V_POT, "exit buyback share wrong");
-        if (core.xPot() != p.xpot + received - toBuyback) _flag(V_POT, "exit pot share wrong");
+        if (received < p.required) _flag(V_EXIT_SHORT, "exit returned less than rating * unitPerPoint less slippage");
+        if (p.unit == 0) _flag(V_EXIT_SHORT, "exit with an unreadable unit per point");
+        // every exit token received goes to the exit bid pot
+        if (core.xPot() != p.xpot + received) _flag(V_POT, "exit pot did not take the whole received amount");
         _x(p.xbal, 0, received, "exitStatement");
+        // an eth lane redemption moves redeemBurnBps of the reserve into the coin buyback
+        uint256 released = p.lane == uint8(Lane.Eth) ? p.reserve0 * p.st.redeemBurnBps / 10_000 : 0;
+        if (core.ethRedeemBurn() != p.reserve0 - released) _flag(V_POT, "redeem burn reserve not reduced by redeemBurnBps");
+        if (core.ethToBuyback() != p.toBuyback0 + released) _flag(V_POT, "the released reserve did not reach the coin buyback");
         _callerPayment(V_EXIT_SHORT, p.st, EXIT_GAS, p.pot0, p.b0, p.callerBal, "exitStatement");
-        // every injection into the buyback pot re anchors the curve at max(price now, start / 4) and restarts the
-        // clock. an exit that adds nothing to the pot changes neither
-        uint256 wantPrice = p.startPrice;
-        uint256 wantStart = p.startTime;
-        if (toBuyback != 0) {
-            wantPrice = p.priceNow > p.startPrice / 4 ? p.priceNow : p.startPrice / 4;
-            if (wantPrice == 0) wantPrice = 1;
-            wantStart = block.timestamp;
-        }
-        if (core.xStartPrice() != wantPrice) _flag(V_AUCTION, "an exit did not re anchor the auction start price");
-        if (core.xStartTime() != wantStart) _flag(V_AUCTION, "an exit did not restart the auction clock on injection");
         if (_ownerOf(sid) != address(module)) _flag(V_DEPART, "exited statement is not with the module");
         SG storage g = _sg[sid];
         g.status = S_EXITED;
@@ -2357,157 +2355,9 @@ abstract contract HandlerBase is Test {
         g.module = address(module);
     }
 
-    struct XbPre {
-        uint256 xbal;
-        uint256 xpot;
-        uint256 xto;
-        uint256 startPrice;
-        uint256 startTime;
-        uint256 slice;
-        uint256 price;
-        uint256 coinIn;
-        uint256 maxIn;
-        uint256 takerCoin;
-        uint256 takerX;
-        uint256 b0;
-        uint256 pot0;
-        uint256 rate0;
-    }
-
-    /// buys exactly `coinOut` coin for `who` in the real pool, exact out, with the swap books checked like any other
-    function _buyExact(address who, uint256 coinOut) internal returns (bool) {
-        SwapPre memory p;
-        p.bps = _skimBps();
-        p.bal = address(core).balance;
-        p.pot = core.ethPot();
-        p.tb = core.ethToBuyback();
-        p.rate = core.ethRate();
-        uint256 value = _ethFor(coinOut) * 3 * 10_000 / (10_000 - p.bps) + 1e12;
-        vm.deal(who, who.balance + value);
-        vm.recordLogs();
-        vm.prank(who);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        try router.swap{value: value}(launchKey, true, int256(coinOut), who) {
-            _afterSwap(p, vm.getRecordedLogs(), 0, "auction coin buy");
-            return true;
-        } catch (bytes memory why) {
-            _failed(p.bal, p.pot, p.rate, "auction coin buy");
-            _swapFailed(why);
-            return false;
-        }
-    }
-
-    /// the auction price written out again: the start price halved once per whole half life elapsed, and
-    /// the part of a half life left over taken off with a plain exponential
-    function _modelPrice(uint256 startPrice, uint256 dt, uint256 hl) internal pure returns (uint256 p) {
-        uint256 halvings = dt / hl;
-        if (halvings >= 256) return 0;
-        p = startPrice >> halvings;
-        // forge-lint: disable-next-line(unsafe-typecast)
-        int256 e = -int256(693_147_180_559_945_309 * (dt % hl) / hl);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        p = p * uint256(FixedPointMathLib.expWad(e)) / 1e18;
-    }
-
-    /// the exit token buyback is a dutch auction. a taker buys coin in the real pool when the price has fallen far
-    /// enough for that to be cheap, approves the core and fills. now and then it bounds the fill one wei short
-    function buybackExit(uint256 aSeed, uint256 mode) external checked {
-        uint8 a = A_BUYBACK_EXIT;
-        if (!phase2()) return _skip(a);
-        XbPre memory p;
-        p.xto = core.xToBuyback();
-        if (p.xto == 0) return _skip(a);
-        address who = _actor(aSeed);
-        (p.slice, p.coinIn) = core.exitAuctionQuote();
-        p.price = core.exitAuctionPrice();
-        p.takerCoin = coin.balanceOf(who);
-        if (p.takerCoin < p.coinIn) {
-            uint256 need = p.coinIn - p.takerCoin;
-            uint256 afford = _coinFor(2 ether);
-            if (need > afford && mode % 2 == 0) {
-                // the taker waits for the price to fall to what a little coin from the real pool can pay: one half
-                // life per halving
-                uint256 h = 1;
-                while ((need >> h) > afford && h < 200) ++h;
-                uint256 dt = h * core.settings().xAuctionHalfLife;
-                _advance(dt > 30 days ? 30 days : dt, 0);
-                (p.slice, p.coinIn) = core.exitAuctionQuote();
-                p.price = core.exitAuctionPrice();
-                need = p.coinIn > p.takerCoin ? p.coinIn - p.takerCoin : 0;
-            }
-            if (need > afford || (need != 0 && !_buyExact(who, need))) return _skip(a);
-            p.takerCoin = coin.balanceOf(who);
-        }
-        vm.prank(who);
-        coin.approve(address(core), type(uint256).max);
-        p.maxIn = mode % 5 == 0 && p.coinIn != 0 ? p.coinIn - 1 : (mode % 3 == 0 ? p.coinIn : type(uint256).max);
-        p.xbal = _xBal(address(core));
-        p.xpot = core.xPot();
-        p.startPrice = core.xStartPrice();
-        p.startTime = core.xStartTime();
-        p.takerX = _xBal(who);
-        p.b0 = address(core).balance;
-        p.pot0 = core.ethPot();
-        p.rate0 = core.ethRate();
-        RS memory rs = _rs();
-        vm.recordLogs();
-        _att(a);
-        vm.prank(who);
-        try core.buybackExit(p.maxIn) {
-            _ok(a);
-            _afterAuction(who, p, vm.getRecordedLogs());
-        } catch (bytes memory why) {
-            _failed(p.b0, p.pot0, p.rate0, "buybackExit");
-            _x(p.xbal, 0, 0, "buybackExit failed");
-            if (core.xToBuyback() != p.xto || coin.balanceOf(who) != p.takerCoin) {
-                _flag(V_REVERT_CHANGED, "a failed exit auction fill moved the pot or the taker's coin");
-            }
-            if (p.maxIn >= p.coinIn) _unexpected(a, why);
-        }
-        _rsCheck(rs, 0);
-    }
-
-    function _afterAuction(address who, XbPre memory p, Vm.Log[] memory logs) internal {
-        uint256 slice;
-        uint256 coinIn;
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].emitter == address(core) && logs[i].topics[0] == ICore.ExitBuyback.selector) {
-                (slice, coinIn) = abi.decode(logs[i].data, (uint256, uint256));
-            }
-        }
-        if (p.maxIn < p.coinIn) _flag(V_AUCTION, "a fill went through above the caller's maxCoinIn");
-        // the slice is one full slice or what is left
-        Settings memory st = core.settings();
-        uint256 full = uint256(st.exitSliceCredits) * core.unitPerCredit();
-        if (slice != (p.xto < full ? p.xto : full) || slice != p.slice) {
-            _flag(V_AUCTION, "auction slice is not min(pot, exitSliceCredits credits of exit token)");
-        }
-        // the price: the quote read before, and the halving model written out again
-        uint256 model = _modelPrice(p.startPrice, block.timestamp - p.startTime, st.xAuctionHalfLife);
-        uint256 dp = model > p.price ? model - p.price : p.price - model;
-        if (dp > p.price / 1e9 + 2) {
-            _flag(V_AUCTION, "auction price is not the start price halved every xAuctionHalfLife");
-        }
-        // the exit token left the core only as this slice, paid for in coin at or above the quoted price
-        uint256 owed = slice.mulDivUp(p.price, 1e18);
-        if (coinIn < owed || coinIn != p.coinIn) _flag(V_AUCTION, "auction fill below the quoted coin price");
-        if (p.coinIn == 0 && p.price != 0) _flag(V_AUCTION, "a free fill while the price is above zero");
-        _x(p.xbal, slice, 0, "buybackExit");
-        if (_xBal(who) != p.takerX + slice) _flag(V_X_OUT, "the taker did not receive exactly the slice");
-        if (coin.balanceOf(who) != p.takerCoin - coinIn) _flag(V_SUPPLY, "the taker's coin did not fall by the fill");
-        if (core.xToBuyback() != p.xto - slice) _flag(V_POT, "auction pot not reduced by the slice");
-        if (core.xPot() != p.xpot) _flag(V_POT, "an auction fill touched the exit bid pot");
-        // after a fill the auction restarts at max(2 * clearing, previous start / 4), never zero
-        uint256 restart = (2 * p.price).max(p.startPrice / 4).max(1);
-        if (core.xStartPrice() != restart || core.xStartTime() != block.timestamp) {
-            _flag(V_AUCTION, "auction did not restart at max(2 * clearing, previous start / 4)");
-        }
-        if (core.xStartPrice() < p.startPrice / 4) {
-            _flag(V_AUCTION, "auction restarted below a quarter of the last start");
-        }
-        _eth(p.b0, 0, 0, "buybackExit");
-        gSupply -= coinIn;
-        gBurnedByAuction += coinIn;
+    /// the exit token auction was removed, so this action is a no op that keeps the action index stable
+    function buybackExit(uint256, uint256) external checked {
+        _skip(A_BUYBACK_EXIT);
     }
 
     /// sets the module to underpay, to fail unit reads, to change its unit, or back to normal.
@@ -2517,14 +2367,15 @@ abstract contract HandlerBase is Test {
         _att(a);
         uint256 m = s % 8;
         if (m < 4) {
-            module.setShortfallBps(0);
+            module.setPayBps(10_000);
             module.setRevertUnit(false);
         } else if (m == 4) {
-            module.setShortfallBps(1 + (s >> 8) % 5000);
+            // underpay below the slippage floor so the exit must revert
+            module.setPayBps(10_000 - (1 + (s >> 8) % 5000));
         } else if (m == 5) {
             module.setRevertUnit(true);
         } else {
-            module.setUnitPerCredit(_logBound(s >> 8, 5e9, 2e10));
+            module.setUnitPerPoint(_logBound(s >> 8, 5e6, 2e7));
         }
         _ok(a);
     }

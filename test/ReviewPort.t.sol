@@ -187,121 +187,6 @@ contract ReviewPort is Fixture {
         assertEq(_burnOneSlice(), base, "the slice buys the same coin with the attempt made");
     }
 
-    // ------------------------------------------------------------------ P-2 exit auction: stale clock prices injected funds
-
-    function _composeNext() internal returns (uint256 sid) {
-        _fillEthPile(80);
-        vm.prank(keeper);
-        core.compose();
-        sid = STATEMENTS.supply();
-    }
-
-    function _take(address who) internal returns (uint256 slice, uint256 coinIn) {
-        (slice, coinIn) = core.exitAuctionQuote();
-        vm.startPrank(who);
-        coin.approve(address(core), type(uint256).max);
-        core.buybackExit(type(uint256).max);
-        vm.stopPrank();
-    }
-
-    /// regression for P-2. the clock used to restart only at an exactly empty pot, so an unsold remainder carried a
-    /// decayed clock into injected funds. every injection now re anchors the curve at max(price now, start / 4) and
-    /// restarts the clock, so the two arms price the injected slice the same
-    function test_FIXED_staleClockNoLongerPricesInjectedFunds() public {
-        _enterPhase2();
-        // an exit pays 80 units and half of it goes to the buyback: a slice of 30 credits leaves a remainder after a take
-        Settings memory sl = core.settings();
-        sl.exitSliceCredits = 30;
-        _setSettings(sl);
-        _stockPool();
-        Composed memory c1 = _composeOnce();
-        uint256 sid2 = _composeNext();
-        address taker = _user("taker");
-        _buyCoin(taker, 5 ether);
-        vm.warp(block.timestamp + 105 hours);
-        core.exitStatement(c1.sid);
-        uint256 full = uint256(core.settings().exitSliceCredits) * core.unitPerCredit();
-        emit log_named_uint("xToBuyback after first exit, in slices x1000", core.xToBuyback() * 1000 / full);
-        // the taker takes one full slice at an honest decayed price and the remainder stays unsold
-        vm.warp(block.timestamp + 200 hours);
-        _take(taker);
-        uint256 remainder = core.xToBuyback();
-        emit log_named_uint("remainder left, in slices x1000", remainder * 1000 / full);
-        assertGt(remainder, 0);
-        assertLt(remainder, full);
-        uint256 snap = vm.snapshotState();
-
-        // arm A: the remainder stays unsold, a matured statement is exited by anyone much later
-        vm.warp(block.timestamp + 400 hours);
-        uint256 startBefore = core.xStartPrice();
-        assertLt(core.exitAuctionPrice(), startBefore / 1e6, "the leftover price decayed far below its start");
-        core.exitStatement(sid2);
-        assertEq(core.xStartTime(), block.timestamp, "the injection restarted the clock");
-        assertEq(core.xStartPrice(), startBefore / 4, "the curve re anchored at the quarter floor");
-        (uint256 sliceA, uint256 coinA) = core.exitAuctionQuote();
-        emit log_named_uint("arm A: slice", sliceA);
-        emit log_named_uint("arm A: coin the taker burns for a full slice", coinA);
-        vm.revertToState(snap);
-
-        // arm B: the remainder is sold first, so the pot hits zero and the injection restarts the clock
-        vm.warp(block.timestamp + 400 hours);
-        _take(taker);
-        assertEq(core.xToBuyback(), 0);
-        core.exitStatement(sid2);
-        (uint256 sliceB, uint256 coinB) = core.exitAuctionQuote();
-        emit log_named_uint("arm B: slice", sliceB);
-        emit log_named_uint("arm B: coin the taker would burn for a full slice", coinB);
-        assertEq(sliceA, sliceB, "same slice");
-        assertEq(coinA, coinB, "injected funds are priced the same with or without a leftover remainder");
-        assertGt(coinA, 1e24, "no longer sold at the stale decayed price");
-    }
-
-    // ------------------------------------------------------------------ P-3 opening price has no floor of precision
-
-    function _phase2With(uint256 unit) internal {
-        xt = new MockExitToken("Exit Token", "XT");
-        mod = new MockExitModule(address(xt), unit);
-        _setExitModule(address(mod));
-    }
-
-    function _setExitModuleReverts(uint256 unit) internal {
-        xt = new MockExitToken("Exit Token", "XT");
-        mod = new MockExitModule(address(xt), unit);
-        vm.prank(owner);
-        vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(mod));
-    }
-
-    /// the opening price is `SUPPLY * 1e18 / (exitSliceCredits * unit)`. setting the module reverts `BadModule`
-    /// when it is below 1e12
-    function test_FIXED_hugeUnitIsRejectedAtSetTime() public {
-        _setExitModuleReverts(2e37);
-        assertEq(core.exitModule(), address(0));
-    }
-
-    function test_FIXED_largeUnitIsRejectedAtSetTime() public {
-        _setExitModuleReverts(1e36);
-        assertEq(core.exitModule(), address(0));
-    }
-
-    function test_FIXED_unitAtTheBoundaryStillWorks() public {
-        _phase2With(1e25);
-        assertGe(core.xStartPrice(), 1e12);
-    }
-
-    /// the bound moves with the slice of the settings: at 1000 credits a slice a unit that was fine is too large
-    function test_FIXED_theBoundFollowsTheSliceSetting() public {
-        Settings memory s = core.settings();
-        s.exitSliceCredits = 1000;
-        _setSettings(s);
-        // 1e45 / (1000 * 1e31) is 1e11, below 1e12
-        _setExitModuleReverts(1e31);
-        s.exitSliceCredits = 1;
-        _setSettings(s);
-        _phase2With(1e31);
-        assertGe(core.xStartPrice(), 1e12);
-    }
-
     // ------------------------------------------------------------------ P-5 forbidden targets
 
     /// regression for P-5: permit2, the v4 position manager and the universal router cannot become targets
@@ -355,7 +240,7 @@ contract ReviewPort is Fixture {
     // ------------------------------------------------------------------ held: hook push inside the core's own payouts
 
     function _assertClean(string memory what) internal view {
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), what);
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), what);
     }
 
     /// a swap fired from the eth callback of a sell payout and the payment to the caller of the coin buyback. the

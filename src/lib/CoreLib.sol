@@ -10,7 +10,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {Lane, ICredits, IStatements, Settings, Mainnet} from "../interfaces/Interfaces.sol";
+import {Lane, ICredits, ICreditScore, IStatements, Settings, Mainnet} from "../interfaces/Interfaces.sol";
 import {Halving} from "./Halving.sol";
 import {SettingsBounds} from "./SettingsBounds.sol";
 import {SettingsStore} from "./SettingsStore.sol";
@@ -31,22 +31,17 @@ struct CoreState {
     address pendingOwner;
     uint256 ethPot;
     uint256 ethToBuyback;
+    uint256 ethRedeemBurn;
     uint256 xPot;
-    uint256 xToBuyback;
     uint256 rateAtCheckpoint;
     uint64 checkpointTime;
     uint64 lastFillTime;
-    uint256 xRateAtCheckpoint;
-    uint64 xCheckpointTime;
-    bool xFunded;
     uint256 lastBuybackBlock;
     mapping(Lane => CoreLib.Pile) piles;
     mapping(uint256 => CoreLib.Credit) credits;
     mapping(uint256 => CoreLib.Statement) statements;
     uint256[] heldIds;
-    uint256 unitPerCredit;
-    uint256 xStartPrice;
-    uint64 xStartTime;
+    uint256 unitPerPoint;
     address successor;
     bool successorLocked;
     bool retired;
@@ -76,11 +71,13 @@ library CoreLib {
     }
 
     /// a statement the Core holds for sale or exit. `composedAt` is the time of the compose, `slot` the index in
-    /// `heldIds`. the record is deleted when the statement leaves
+    /// `heldIds`, `rating` the sum of its credits' scores read from Statements at compose. the record is deleted when
+    /// the statement leaves
     struct Statement {
         uint256 cost;
         uint64 composedAt;
         uint64 slot;
+        uint32 rating;
         Lane lane;
         bool held;
     }
@@ -97,8 +94,9 @@ library CoreLib {
     error ZeroAmount();
     error PotTooSmall();
     error Slippage();
+    /// the action is not allowed in the current `exitMode`
+    error ExitModeOff();
     event CreditBought(uint256 indexed id, address indexed from, Lane lane, uint256 cost);
-    event ExitRateFill(uint256 rate, uint256 pot);
     error BadSetting(bytes32 field);
     event SettingsSet(Settings settings);
     error BadSwap();
@@ -151,34 +149,30 @@ library CoreLib {
         s.ceilBps = ns.ceilBps;
         s.idleLoosenBps = ns.idleLoosenBps;
         s.saleFloorBps = ns.saleFloorBps;
-        s.exitAfter = ns.exitAfter;
         s.saleToBuybackBps = ns.saleToBuybackBps;
-        s.exitToBuybackBps = ns.exitToBuybackBps;
-        s.peakHalfLife = ns.peakHalfLife;
         s.recoveryClimbPerMinBps = ns.recoveryClimbPerMinBps;
-        s.buybackSlice = ns.buybackSlice;
+        s.recoveryGapBps = ns.recoveryGapBps;
+        s.peakHalfLife = ns.peakHalfLife;
         s.buybackDelay = ns.buybackDelay;
+        s.exitMode = ns.exitMode;
+        s.exitSlippageBps = ns.exitSlippageBps;
+        s.exitBidMarginBps = ns.exitBidMarginBps;
+        s.redeemBurnBps = ns.redeemBurnBps;
+        s.buybackSlice = ns.buybackSlice;
         s.keeperFee = ns.keeperFee;
         s.keeperMaxBaseFee = ns.keeperMaxBaseFee;
-        s.xRateCap = ns.xRateCap;
-        s.xRateFloor = ns.xRateFloor;
-        s.xRateClimbPerHour = ns.xRateClimbPerHour;
-        s.xRateDropPerCredit = ns.xRateDropPerCredit;
-        s.xAuctionHalfLife = ns.xAuctionHalfLife;
-        s.exitSliceCredits = ns.exitSliceCredits;
         s.rateCap = ns.rateCap;
-        s.exitLaneToBuybackBps = ns.exitLaneToBuybackBps;
-        s.feeToBuybackBps = ns.feeToBuybackBps;
         s.callerFee = ns.callerFee;
         s.callerMaxBaseFee = ns.callerMaxBaseFee;
-        s.recoveryGapBps = ns.recoveryGapBps;
+        s.feeToBuybackBps = ns.feeToBuybackBps;
+        s.feeToRedeemBurnBps = ns.feeToRedeemBurnBps;
         emit SettingsSet(ns);
     }
 
-    /// @notice the settings as a struct, from the four packed storage words they sit in. the layout is the one the
+    /// @notice the settings as a struct, from the three packed storage words they sit in. the layout is the one the
     /// compiler gives `Settings` (fields packed in order, a field never straddles a slot), which test/Flow.t.sol
     /// checks against a write and a read
-    function unpack(uint256 a, uint256 b, uint256 c, uint256 d) external pure returns (Settings memory s) {
+    function unpack(uint256 a, uint256 b, uint256 c) external pure returns (Settings memory s) {
         // forge-lint: disable-start(unsafe-typecast)
         s.dropPerCreditBps = uint16(a);
         s.dropFloorBps = uint16(a >> 16);
@@ -186,27 +180,23 @@ library CoreLib {
         s.ceilBps = uint16(a >> 48);
         s.idleLoosenBps = uint16(a >> 64);
         s.saleFloorBps = uint16(a >> 80);
-        s.exitAfter = uint32(a >> 96);
-        s.saleToBuybackBps = uint16(a >> 128);
-        s.exitToBuybackBps = uint16(a >> 144);
-        s.peakHalfLife = uint32(a >> 160);
-        s.recoveryClimbPerMinBps = uint16(a >> 192);
+        s.saleToBuybackBps = uint16(a >> 96);
+        s.recoveryClimbPerMinBps = uint16(a >> 112);
+        s.recoveryGapBps = uint16(a >> 128);
+        s.peakHalfLife = uint32(a >> 144);
+        s.buybackDelay = uint16(a >> 176);
+        s.exitMode = uint8(a >> 192);
+        s.exitSlippageBps = uint16(a >> 200);
+        s.exitBidMarginBps = uint16(a >> 216);
+        s.redeemBurnBps = uint16(a >> 232);
         s.buybackSlice = uint128(b);
-        s.buybackDelay = uint16(b >> 128);
-        s.keeperFee = uint64(b >> 144);
-        s.keeperMaxBaseFee = uint48(b >> 208);
-        s.xRateCap = uint16(c);
-        s.xRateFloor = uint16(c >> 16);
-        s.xRateClimbPerHour = uint16(c >> 32);
-        s.xRateDropPerCredit = uint16(c >> 48);
-        s.xAuctionHalfLife = uint32(c >> 64);
-        s.exitSliceCredits = uint16(c >> 96);
-        s.rateCap = uint64(c >> 112);
-        s.exitLaneToBuybackBps = uint16(c >> 176);
-        s.feeToBuybackBps = uint16(c >> 192);
-        s.callerFee = uint64(d);
-        s.callerMaxBaseFee = uint48(d >> 64);
-        s.recoveryGapBps = uint16(d >> 112);
+        s.keeperFee = uint64(b >> 128);
+        s.keeperMaxBaseFee = uint48(b >> 192);
+        s.rateCap = uint64(c);
+        s.callerFee = uint64(c >> 64);
+        s.callerMaxBaseFee = uint48(c >> 128);
+        s.feeToBuybackBps = uint16(c >> 176);
+        s.feeToRedeemBurnBps = uint16(c >> 192);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
@@ -306,12 +296,6 @@ library CoreLib {
         // forge-lint: disable-next-line(unsafe-typecast)
         a.peakTime = uint64(nowTs);
         return (price * (10_000 - s.dropPerCreditBps) / 10_000).max(a.minuteStartRate * s.dropFloorBps / 10_000);
-    }
-
-    /// @notice `start` halved `elapsed / halfLife` times, with the fraction of a half life by the exponential. zero
-    /// after 256 half lives
-    function decay(uint256 start, uint256 elapsed, uint256 halfLife) external pure returns (uint256 p) {
-        p = Halving.halve(start, elapsed, halfLife);
     }
 
     /// @notice the swap of the coin buyback, run inside the pool manager unlock callback of the Core: exact eth in for
@@ -437,13 +421,13 @@ library CoreLib {
     /// `compose` and `composeExit` then revert `Retired`. logs `EngineRetired` once.
     /// eth: `ethPot`, by one plain call, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
     /// trackers stays.
-    /// exit token: `xPot`, by `transfer`, the tracker zeroed. `xToBuyback` stays for the exit token burn auction. a
-    /// transfer that reverts, returns false or returns less than a word leaves the pot and rates as they are, logs
-    /// `ExitTokenMigrationSkipped` and the call goes on; a later `migrate` retries. the coin stays.
+    /// exit token: `xPot`, by `transfer`, the tracker zeroed. a transfer that reverts, returns false or returns less
+    /// than a word leaves the pot as it is, logs `ExitTokenMigrationSkipped` and the call goes on; a later `migrate`
+    /// retries. the coin stays. `ethToBuyback` and `ethRedeemBurn` stay for the coin buyback.
     /// credits: up to `maxCredits` from the head of each pile, by `transferFrom`, the pile membership cleared (the
     /// cost, lane and arrival time of the record stay). zero moves the pots only.
     /// the held statements and their records stay with the Core, which sells or exits them itself.
-    /// the rates are checkpointed before a pot is zeroed. a call with nothing left to move logs zeros
+    /// the eth rate is checkpointed before `ethPot` is zeroed. a call with nothing left to move logs zeros
     function migrate(uint256 maxCredits) external {
         _onlyOwner();
         CoreState storage c = state();
@@ -471,8 +455,8 @@ library CoreLib {
         if (!ok) revert CallFailed();
     }
 
-    /// the transfer is a low level call that accepts no return data or `true`. on failure the pots and the rate state
-    /// stay as they are and `ExitTokenMigrationSkipped` is logged
+    /// the transfer is a low level call that accepts no return data or `true`. on failure the pot stays as it is and
+    /// `ExitTokenMigrationSkipped` is logged
     function _moveExitToken(CoreState storage c, address to) private returns (uint256 amount) {
         amount = c.xPot;
         if (amount == 0) return 0;
@@ -492,12 +476,7 @@ library CoreLib {
             emit ExitTokenMigrationSkipped(to, amount);
             return 0;
         }
-        Settings storage s = SettingsStore.load();
-        uint256 unit = c.unitPerCredit;
-        c.xRateAtCheckpoint = xRateOf(c.xRateAtCheckpoint, c.xFunded, c.xPot, unit, c.xCheckpointTime, s);
-        c.xCheckpointTime = uint64(block.timestamp);
         c.xPot = 0;
-        c.xFunded = xFundedOf(0, c.xRateAtCheckpoint, unit);
     }
 
     /// pops up to `max` credits from the head of each pile
@@ -581,25 +560,6 @@ library CoreLib {
         return id;
     }
 
-    /// the exit token bid in bps of one credit's exit value (`unit`, exit token base units per credit): the stored rate
-    /// `r` climbs `xRateClimbPerHour` per hour since `since`, up to the cap `min(xRateCap, pot * BPS / unit)`, while the
-    /// pot funds the bid (`funded`)
-    function xRateOf(uint256 r, bool funded, uint256 pot, uint256 unit, uint256 since, Settings storage s)
-        internal
-        view
-        returns (uint256)
-    {
-        if (!funded) return r;
-        uint256 cap = uint256(s.xRateCap).min(pot * BPS / unit);
-        if (cap <= r) return r;
-        return (r + uint256(s.xRateClimbPerHour) * (block.timestamp - since) / 1 hours).min(cap);
-    }
-
-    /// whether the exit pot `pot` pays one credit at the exit rate `r`
-    function xFundedOf(uint256 pot, uint256 r, uint256 unit) internal pure returns (bool) {
-        return pot * BPS >= r * unit;
-    }
-
     /// @notice sells the credits `ids` of the caller into the exit token bid. the Core's `sellForExitToken` forwards its
     /// call here untouched, under its own reentrancy guard
     function sellForExitToken(uint256[] calldata ids) external {
@@ -611,36 +571,33 @@ library CoreLib {
         _sellForExitToken(ids, minOut);
     }
 
+    /// pays each credit `score * unitPerPoint * (10_000 - exitBidMarginBps) / 10_000` in exit token from `xPot`, reading
+    /// the score from the credit score contract. runs only while `exitMode` is 2. each credit's price must not exceed the
+    /// remaining pot. the credit record keeps the exit token paid as its cost
     function _sellForExitToken(uint256[] calldata ids, uint256 minOut) private {
         CoreState storage c = state();
         if (c.retired) revert Retired();
         Settings storage s = SettingsStore.load();
+        if (s.exitMode != 2) revert ExitModeOff();
         if (ids.length == 0) revert Empty();
         if (c.exitModule == address(0)) revert NoExitModule();
-        uint256 unit = c.unitPerCredit;
-        uint256 dropBps = s.xRateDropPerCredit;
-        uint256 floor = s.xRateFloor;
-        c.xRateAtCheckpoint = xRateOf(c.xRateAtCheckpoint, c.xFunded, c.xPot, unit, c.xCheckpointTime, s);
-        c.xCheckpointTime = uint64(block.timestamp);
-        uint256 r = c.xRateAtCheckpoint;
+        uint256 unit = c.unitPerPoint;
+        uint256 net = BPS - s.exitBidMarginBps;
         uint256 pot = c.xPot;
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = owned(ids[i]);
-            uint256 price = r * unit / BPS;
+            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
+            uint256 price = score * unit * net / BPS;
             if (price == 0) revert ZeroAmount();
             if (price > pot) revert PotTooSmall();
             pot -= price;
             total += price;
-            r = r.zeroFloorSub(dropBps).max(floor);
             push(c.piles[Lane.Exit], c.credits, Lane.Exit, id, price);
             CREDITS.transferFrom(msg.sender, address(this), id);
             emit CreditBought(id, msg.sender, Lane.Exit, price);
         }
         c.xPot = pot;
-        c.xRateAtCheckpoint = r;
-        c.xFunded = xFundedOf(pot, r, unit);
-        emit ExitRateFill(r, pot);
         if (total < minOut) revert Slippage();
         SafeTransferLib.safeTransfer(c.exitToken, msg.sender, total);
     }

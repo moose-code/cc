@@ -21,6 +21,7 @@ contract V2PortFeeTest is FeeBase {
     function _share(uint16 bps) internal {
         Settings memory s = core.settings();
         s.feeToBuybackBps = bps;
+        s.feeToRedeemBurnBps = 0; // isolate the buyback share from the redeem burn share
         _setSettings(s);
     }
 
@@ -158,17 +159,22 @@ contract V2PortFeeTest is FeeBase {
         MockExitToken token = new MockExitToken("Exit Token", "XT");
         ClaimMidExit m = new ClaimMidExit(token, UNIT, v2.escrow, address(core));
         _setExitModule(address(m));
+        _setExitMode(2);
         Composed memory c = _composeOnce();
-        vm.warp(block.timestamp + core.settings().exitAfter);
+        _makeEligible(c.sid);
         _creditCore(0.2 ether);
         uint256 pot = core.ethPot();
         uint256 gas0 = address(this).balance;
         core.exitStatement(c.sid);
         assertEq(core.ethPot(), pot - (address(this).balance - gas0), "only the gas repay left the pot");
-        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), 0.2 ether, "the claim is unbooked");
+        assertEq(
+            address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(),
+            0.2 ether,
+            "the claim is unbooked"
+        );
         _solvent();
         core.skim();
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback());
+        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
     }
 
     /// lpFee is 0 at launch: the locker has nothing to pay and no reward slot reaches the router or the Core

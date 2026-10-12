@@ -15,9 +15,7 @@ library SettingsBounds {
         if (s.ceilBps < 10_000 || s.ceilBps > 30_000) return "ceilBps";
         if (s.idleLoosenBps < 1 || s.idleLoosenBps > 2_000) return "idleLoosenBps";
         if (s.saleFloorBps < 1_000 || s.saleFloorBps > 40_000) return "saleFloorBps";
-        if (s.exitAfter < 1 hours || s.exitAfter > 365 days) return "exitAfter";
         if (s.saleToBuybackBps > 10_000) return "saleToBuybackBps";
-        if (s.exitToBuybackBps > 10_000) return "exitToBuybackBps";
         if (s.peakHalfLife < 600 || s.peakHalfLife > 604_800) return "peakHalfLife";
         if (s.recoveryClimbPerMinBps < s.climbPerMinBps || s.recoveryClimbPerMinBps > 1_000) {
             return "recoveryClimbPerMinBps";
@@ -29,17 +27,16 @@ library SettingsBounds {
         if (s.keeperMaxBaseFee < 1 gwei || s.keeperMaxBaseFee > 100 gwei) return "keeperMaxBaseFee";
         // the largest buyback payment is at most half the slice, so the swap budget is never empty
         if (s.buybackSlice < 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee)) return "buybackSlice";
-        if (s.xRateCap > 10_000) return "xRateCap";
-        if (s.xRateFloor > s.xRateCap) return "xRateFloor";
-        if (s.xRateClimbPerHour > 1_000) return "xRateClimbPerHour";
-        if (s.xRateDropPerCredit > 1_000) return "xRateDropPerCredit";
-        if (s.xAuctionHalfLife < 10 minutes || s.xAuctionHalfLife > 30 days) return "xAuctionHalfLife";
-        if (s.exitSliceCredits < 1 || s.exitSliceCredits > 1_000) return "exitSliceCredits";
         if (!rateInBounds(s.rateCap)) return "rateCap";
-        if (s.exitLaneToBuybackBps > 10_000) return "exitLaneToBuybackBps";
         if (s.feeToBuybackBps > 10_000) return "feeToBuybackBps";
+        if (s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
+        if (uint256(s.feeToBuybackBps) + s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
         if (s.callerFee > 0.005 ether) return "callerFee";
         if (s.callerMaxBaseFee > 100 gwei) return "callerMaxBaseFee";
+        if (s.exitMode > 2) return "exitMode";
+        if (s.exitSlippageBps > 1_000) return "exitSlippageBps";
+        if (s.exitBidMarginBps > 9_000) return "exitBidMarginBps";
+        if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         return bytes32(0);
     }
 

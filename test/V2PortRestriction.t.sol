@@ -63,35 +63,6 @@ contract V2PortRestrictionTest is FeeBase {
         assertTrue(coin.restricted());
     }
 
-    /// a buyer acquires coin in the home pool, approves the Core and `buybackExit` burns it from them
-    function test_buybackExitBurnsCoinBoughtInTheHomePool() public {
-        _enterPhase2();
-        _fillExitBuyback();
-        assertGt(core.xToBuyback(), 0);
-        address taker = _user("exit taker");
-        _buyCoin(taker, 5 ether);
-        vm.prank(taker);
-        coin.approve(address(core), type(uint256).max);
-        uint256 slice;
-        uint256 coinIn;
-        for (uint256 i; i < 3000; ++i) {
-            (slice, coinIn) = core.exitAuctionQuote();
-            if (coinIn <= coin.balanceOf(taker)) break;
-            vm.warp(block.timestamp + 1 hours);
-        }
-        assertLe(coinIn, coin.balanceOf(taker), "affordable");
-        uint256 held = coin.balanceOf(taker);
-        uint256 supply0 = coin.totalSupply();
-        uint256 dead0 = coin.balanceOf(DEAD);
-        vm.prank(taker);
-        core.buybackExit(held);
-        assertEq(held - coin.balanceOf(taker), coinIn, "the quoted coin left the taker");
-        assertEq(supply0 - coin.totalSupply(), coinIn, "and was burned");
-        assertEq(coin.balanceOf(DEAD), dead0);
-        assertEq(xt.balanceOf(taker), slice, "the taker got the slice");
-        _solvent();
-    }
-
     /// a holder that is not on the allowlist cannot send coin to the Core: the Core is not on it either
     function test_aWalletCannotSendCoinToTheCore() public {
         uint256 pot = core.ethPot();

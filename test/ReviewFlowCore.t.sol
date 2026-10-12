@@ -86,23 +86,6 @@ contract ReviewFlowCoreTest is Fixture {
         assertEq(STATEMENTS.ownerOf(sid), buyer);
     }
 
-    /// FC-7 (fixed by bounds): exitAfter 0 is refused, the floor is one hour, and an exit inside it reverts
-    function test_FIXED_exitAfterFloorKeepsTheStatementForSale() public {
-        _enterPhase2();
-        Settings memory s = core.settings();
-        s.exitAfter = 0;
-        _expectBad(s, "exitAfter");
-        s.exitAfter = 1 hours;
-        _setSettings(s);
-        Composed memory c = _composeOnce();
-        assertTrue(_isHeld(c.sid));
-        vm.expectRevert(ICore.TooEarly.selector);
-        core.exitStatement(c.sid);
-        _warp(1 hours);
-        core.exitStatement(c.sid);
-        assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "after the hour the module holds the statement");
-    }
-
     /// held: a constructor against a library address with no code reverts (the delegatecall has a code check)
     function test_constructorRefusesAnEmptyLibraryAddress() public {
         address lib = findLibrary(address(core).code);
@@ -134,46 +117,40 @@ contract ReviewFlowCoreTest is Fixture {
         m.ceilBps = 10_000;
         m.idleLoosenBps = 1;
         m.saleFloorBps = 1_000;
-        m.exitAfter = 1 hours;
         m.peakHalfLife = 600;
         m.recoveryClimbPerMinBps = 1;
         m.rateCap = uint64(RATE_START_MIN_WEI);
         m.buybackSlice = 0.01 ether;
         m.buybackDelay = 1;
         m.keeperMaxBaseFee = 1 gwei;
-        m.xAuctionHalfLife = 10 minutes;
-        m.exitSliceCredits = 1;
     }
 
+    /// every field at the top of its bound, except feeToRedeemBurnBps which must leave room under the 10_000 fee sum
     function _allMax() internal pure returns (Settings memory m) {
         m = Settings(
-            1_000,
-            10_000,
-            1_000,
-            30_000,
-            2_000,
-            40_000,
-            365 days,
-            10_000,
-            10_000,
-            604_800,
-            1_000,
-            1 ether,
-            7_200,
-            0.005 ether,
-            100 gwei,
-            10_000,
-            10_000,
-            1_000,
-            1_000,
-            30 days,
-            1_000,
-            uint64(RATE_START_MAX_WEI),
-            10_000,
-            10_000,
-            0.005 ether,
-            100 gwei,
-            5_000
+            1_000, // dropPerCreditBps
+            10_000, // dropFloorBps
+            1_000, // climbPerMinBps
+            30_000, // ceilBps
+            2_000, // idleLoosenBps
+            40_000, // saleFloorBps
+            10_000, // saleToBuybackBps
+            1_000, // recoveryClimbPerMinBps
+            5_000, // recoveryGapBps
+            604_800, // peakHalfLife
+            7_200, // buybackDelay
+            2, // exitMode
+            1_000, // exitSlippageBps
+            9_000, // exitBidMarginBps
+            10_000, // redeemBurnBps
+            1 ether, // buybackSlice
+            0.005 ether, // keeperFee
+            100 gwei, // keeperMaxBaseFee
+            uint64(RATE_START_MAX_WEI), // rateCap
+            0.005 ether, // callerFee
+            100 gwei, // callerMaxBaseFee
+            10_000, // feeToBuybackBps
+            0 // feeToRedeemBurnBps (the sum with feeToBuybackBps is at most 10_000)
         );
     }
 
@@ -193,35 +170,35 @@ contract ReviewFlowCoreTest is Fixture {
         for (uint256 i; i < 2; ++i) {
             _setSettings(two[i]);
             assertEq(keccak256(abi.encode(core.settings())), keccak256(abi.encode(two[i])), "round trip");
-            // the four raw words hold exactly the values and nothing else
+            // the three raw words hold exactly the values and nothing else
             bytes32 slot = 0xb5805f89ef62cd999f965a45fb6f4c11141caa04e5c4acba9c2552ef76902804;
             uint256 w0 = uint256(vm.load(address(core), slot));
-            assertEq(w0 >> 208, 0, "slot 0 top bits clear");
+            assertEq(w0 >> 248, 0, "slot 0 top bits clear");
             assertEq(uint16(w0 >> 80), two[i].saleFloorBps, "the sale floor sits at bits 80 to 95");
-            assertEq(uint16(w0 >> 144), two[i].exitToBuybackBps, "the exit eth lane share sits at bits 144 to 159");
-            assertEq(uint32(w0 >> 160), two[i].peakHalfLife, "the peak half life sits at bits 160 to 191");
-            assertEq(uint16(w0 >> 192), two[i].recoveryClimbPerMinBps, "the recovery climb sits at bits 192 to 207");
+            assertEq(uint16(w0 >> 96), two[i].saleToBuybackBps, "the sale buyback share sits at bits 96 to 111");
+            assertEq(uint32(w0 >> 144), two[i].peakHalfLife, "the peak half life sits at bits 144 to 175");
+            assertEq(uint8(w0 >> 192), two[i].exitMode, "the exit mode sits at bits 192 to 199");
+            assertEq(uint16(w0 >> 232), two[i].redeemBurnBps, "the redeem burn share sits at bits 232 to 247");
             uint256 w1 = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
-            assertEq(uint64(w1 >> 144), two[i].keeperFee, "the keeper fee sits at bits 144 to 207");
-            assertEq(uint48(w1 >> 208), two[i].keeperMaxBaseFee, "the keeper base fee ceiling sits at bits 208 to 255");
+            assertEq(w1 >> 240, 0, "slot 1 top bits clear");
+            assertEq(uint128(w1), two[i].buybackSlice, "the buyback slice sits at bits 0 to 127");
+            assertEq(uint64(w1 >> 128), two[i].keeperFee, "the keeper fee sits at bits 128 to 191");
+            assertEq(uint48(w1 >> 192), two[i].keeperMaxBaseFee, "the keeper base fee ceiling sits at bits 192 to 239");
             uint256 w2 = uint256(vm.load(address(core), bytes32(uint256(slot) + 2)));
             assertEq(w2 >> 208, 0, "slot 2 top bits clear");
-            assertEq(uint16(w2 >> 192), two[i].feeToBuybackBps, "the fee share sits at bits 192 to 207");
-            assertEq(uint64(w2 >> 112), two[i].rateCap, "the rate cap sits at bits 112 to 175");
-            assertEq(uint16(w2 >> 176), two[i].exitLaneToBuybackBps, "the exit lane share sits at bits 176 to 191");
-            uint256 w3 = uint256(vm.load(address(core), bytes32(uint256(slot) + 3)));
-            assertEq(w3 >> 128, 0, "slot 3 top bits clear");
-            assertEq(uint64(w3), two[i].callerFee, "the caller fee sits at bits 0 to 63");
-            assertEq(uint48(w3 >> 64), two[i].callerMaxBaseFee, "the caller base fee ceiling sits at bits 64 to 111");
-            assertEq(uint16(w3 >> 112), two[i].recoveryGapBps, "the recovery gap sits at bits 112 to 127");
+            assertEq(uint64(w2), two[i].rateCap, "the rate cap sits at bits 0 to 63");
+            assertEq(uint64(w2 >> 64), two[i].callerFee, "the caller fee sits at bits 64 to 127");
+            assertEq(uint48(w2 >> 128), two[i].callerMaxBaseFee, "the caller base fee ceiling sits at bits 128 to 175");
+            assertEq(uint16(w2 >> 176), two[i].feeToBuybackBps, "the fee buyback share sits at bits 176 to 191");
+            assertEq(uint16(w2 >> 192), two[i].feeToRedeemBurnBps, "the fee redeem burn share sits at bits 192 to 207");
         }
     }
 
     function _hostileMix() internal pure returns (Settings memory m) {
         m = _allMax();
-        m.xAuctionHalfLife = 10 minutes;
-        m.xRateFloor = 0;
-        m.xRateCap = 0;
+        m.exitMode = 2;
+        m.exitSlippageBps = 0;
+        m.exitBidMarginBps = 0;
         m.saleFloorBps = 3_000;
     }
 
@@ -245,22 +222,24 @@ contract ReviewFlowCoreTest is Fixture {
         }
     }
 
-    /// the exit auction and the exit rate at the extremes, and a half life change on a live auction
+    /// the exit side at the extremes of the bounds: the bid pot stays backed and no setting stops a redemption or a bid
     function test_extremeSettingsPhase2() public {
         _skipSniperWindow();
         _enterPhase2();
         _fillExitBuyback();
-        assertGt(core.xToBuyback(), 0);
+        assertGt(core.xPot(), 0);
         Settings[3] memory three = [_allMin(), _allMax(), _hostileMix()];
         for (uint256 i; i < 3; ++i) {
-            uint256 p0 = core.exitAuctionPrice();
-            _setSettings(three[i]);
-            assertApproxEqRel(core.exitAuctionPrice(), p0, 1e15, "price continuous over the change");
+            // _allMin and _allMax leave exitMode 0 or 2; force the bid on so the extremes exercise it
+            Settings memory s = three[i];
+            s.exitMode = 2;
+            _setSettings(s);
             vm.warp(block.timestamp + (i == 0 ? 1 hours : 100 days));
-            core.exitAuctionPrice();
-            core.exitAuctionQuote();
-            core.xRate();
             core.skim();
+            uint256[] memory ids = _credits(seller, 1);
+            vm.prank(seller);
+            try core.sellForExitToken(ids) {} catch {}
+            _solvent();
         }
     }
 
@@ -390,8 +369,8 @@ contract ReviewFlowCoreTest is Fixture {
     function test_dirtyCalldataWordsAreRefused() public {
         Settings memory base = core.settings();
         bytes memory good = abi.encodeCall(ICore.setSettings, (base));
-        assertEq(good.length, 4 + 27 * 32);
-        for (uint256 i; i < 27; ++i) {
+        assertEq(good.length, 4 + 23 * 32);
+        for (uint256 i; i < 23; ++i) {
             bytes memory bad = bytes.concat(good);
             uint256 off = 32 + 4 + i * 32;
             uint256 w;
@@ -496,18 +475,16 @@ contract ReviewFlowCoreTest is Fixture {
         assertEq(STATEMENTS.supply(), supply + 1, "the page under the cut composes");
     }
 
-    /// held: the exit bid at 100 percent of one credit's exit value pays exactly what the module pays back for the
-    /// same credits, so selling credits for exit token and exiting them leaves the exit pot whole
+    /// held: the exit bid at a zero margin pays exactly what the module pays back for the same credits, so selling
+    /// credits for exit token and exiting them leaves the exit pot whole
     function test_exitBidAtParIsAWash() public {
         _skipSniperWindow();
         _enterPhase2();
         _fundPot(3 ether);
         Settings memory s = core.settings();
-        s.xRateCap = 10_000;
-        s.xRateFloor = 10_000;
-        s.xRateDropPerCredit = 0;
+        s.exitBidMarginBps = 0;
         _setSettings(s);
-        xt.mint(address(core), 1e20);
+        xt.mint(address(core), 1e22);
         core.skim();
         uint256 xBefore = core.xPot();
         uint256[] memory ids = _credits(seller, 80);
@@ -548,5 +525,9 @@ contract BurnController {
             ids[i] = page[i];
         }
         return (true, ids, 0);
+    }
+
+    function atCost(uint256) external pure returns (bool) {
+        return false;
     }
 }

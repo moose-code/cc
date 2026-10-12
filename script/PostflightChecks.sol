@@ -190,7 +190,6 @@ abstract contract PostflightChecks is PostflightPool {
         } else {
             _eq("core: owner", core.owner(), c.owner);
         }
-        _eq("core: SUPPLY constant equals the config supply", core.SUPPLY(), c.supply);
         _eq("core: RATE_START", core.RATE_START(), c.rateStart);
         _postSettings(c, core);
         _postLibrary(core);
@@ -366,15 +365,24 @@ abstract contract PostflightChecks is PostflightPool {
             string.concat(
                 "sale to buyback ",
                 vm.toString(live.saleToBuybackBps),
-                " exit to buyback ",
-                vm.toString(live.exitToBuybackBps),
-                " exit lane to buyback ",
-                vm.toString(live.exitLaneToBuybackBps),
                 " fee to buyback ",
                 vm.toString(live.feeToBuybackBps),
-                " exitAfter ",
-                vm.toString(live.exitAfter),
-                "s"
+                " fee to redeem burn ",
+                vm.toString(live.feeToRedeemBurnBps)
+            )
+        );
+        _info(
+            "core: phase 2",
+            string.concat(
+                "exitMode ",
+                vm.toString(live.exitMode),
+                " exit slippage ",
+                vm.toString(live.exitSlippageBps),
+                " exit bid margin ",
+                vm.toString(live.exitBidMarginBps),
+                " redeem burn ",
+                vm.toString(live.redeemBurnBps),
+                " (bps)"
             )
         );
     }
