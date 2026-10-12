@@ -1,0 +1,513 @@
+:root {
+  --bg: #ffffff;
+  --fg: #111111;
+  --muted: #9b9b9b;
+  --muted2: #c2c2c2;
+  --line: #ececec;
+  --line2: #f5f5f5;
+  --rowhover: #fafafa;
+  --rowalt: #f7f7f7;
+
+  --fee: #16b6d8;
+  --credit: #ff0080;
+  --composed: #e8b200;
+  --listed: #ffffff;
+  --sold: #0a9b41;
+  --burn: #000000;
+
+  --mono: ui-monospace, "SF Mono", "Menlo", "Monaco", "Cascadia Code",
+    "Roboto Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ---- header --------------------------------------------------------------- */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 2.5rem;
+  padding: 0 1.5rem;
+  height: 64px;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: 0.01em;
+}
+
+.brand .bars {
+  display: flex;
+  gap: 2px;
+  height: 20px;
+  align-items: flex-end;
+}
+.brand .bars i {
+  display: block;
+  width: 3px;
+}
+
+.stats {
+  display: flex;
+  gap: 2.25rem;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.stat {
+  display: flex;
+  gap: 0.55rem;
+  align-items: baseline;
+  white-space: nowrap;
+}
+.stat .label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.stat .value {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* rainbowkit connect button sits at the right */
+.header .connect {
+  margin-left: auto;
+}
+
+/* ---- body split ----------------------------------------------------------- */
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.feed {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.trade {
+  width: 360px;
+  flex: none;
+  border-left: 1px solid var(--line);
+  padding: 1.25rem 1.5rem;
+}
+
+/* ---- feed ----------------------------------------------------------------- */
+
+.feed-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.feed-title {
+  font-weight: 600;
+}
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.live .dot {
+  width: 8px;
+  height: 8px;
+  background: var(--sold);
+  display: inline-block;
+}
+.live.sample .dot {
+  background: var(--composed);
+}
+
+.nextcredit,
+.nextstatement {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.nextcredit {
+  margin-left: auto;
+}
+.nextstatement {
+  padding-left: 1.25rem;
+  margin-left: 1.25rem;
+  border-left: 1px solid var(--line);
+}
+.nextcredit .track,
+.nextstatement .track {
+  width: 120px;
+  height: 8px;
+  background: var(--line);
+  position: relative;
+}
+.nextcredit .track i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--credit);
+}
+.nextstatement .track i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--composed);
+}
+.nextcredit .amt,
+.nextstatement .amt {
+  color: var(--fg);
+}
+.nextcredit .bid {
+  color: var(--muted);
+}
+.nextcredit .bid b {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* table */
+.feed-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.feed-table thead th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.8rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+.feed-table th.col-eth,
+.feed-table td.col-eth {
+  text-align: right;
+}
+.feed-table th:first-child,
+.feed-table td:first-child {
+  padding-left: 1.5rem;
+}
+.feed-table th:last-child,
+.feed-table td:last-child {
+  padding-right: 1.5rem;
+}
+.feed-table tbody td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--line2);
+  vertical-align: middle;
+}
+.feed-table tbody tr:hover {
+  background: var(--rowhover);
+}
+.feed-table tr.hl td {
+  background: var(--rowalt);
+}
+.feed-table tr.hl:hover td {
+  background: #f1f1f1;
+}
+
+.col-time {
+  color: var(--muted);
+  width: 90px;
+}
+.col-event {
+  width: 170px;
+}
+.col-eth {
+  width: 90px;
+}
+.col-tx {
+  width: 90px;
+}
+
+.event {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.event .chip {
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
+.event .chip.listed {
+  background: var(--listed);
+  border: 1px solid var(--fg);
+}
+.event .name {
+  font-weight: 500;
+}
+
+.detail-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.detail-cell .label b {
+  font-weight: 600;
+}
+
+.tx a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tx a:hover {
+  color: var(--fg);
+}
+
+/* tiles */
+.tile-credit {
+  display: flex;
+  gap: 2px;
+  height: 30px;
+  align-items: flex-end;
+}
+.tile-credit i {
+  display: block;
+  width: 7px;
+  height: 100%;
+}
+.tile-statement {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  gap: 0;
+}
+.tile-statement i {
+  display: block;
+}
+
+/* ---- trade panel ---------------------------------------------------------- */
+
+.price-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-weight: 600;
+}
+.price-row .pair {
+  font-weight: 600;
+}
+.price-small {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.price-small .r {
+  display: flex;
+  justify-content: space-between;
+}
+
+.tabs {
+  display: flex;
+  margin: 1.25rem 0 1rem;
+  border: 1px solid var(--fg);
+}
+.tabs button {
+  flex: 1;
+  padding: 0.65rem;
+  background: var(--bg);
+  border: 0;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  cursor: pointer;
+  color: var(--fg);
+}
+.tabs button.active {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.field {
+  margin-bottom: 1rem;
+}
+.field label {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-bottom: 0.35rem;
+}
+.field .box {
+  border: 1px solid var(--line);
+  padding: 0.75rem 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.field input {
+  border: 0;
+  outline: 0;
+  font-family: var(--mono);
+  font-size: 1.6rem;
+  width: 100%;
+  background: transparent;
+  color: var(--fg);
+}
+.field .unit {
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding-left: 0.5rem;
+}
+.field .out {
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.quote {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0.25rem 0 1.25rem;
+}
+.quote .r {
+  display: flex;
+  justify-content: space-between;
+}
+.quote .r b {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.action {
+  width: 100%;
+  padding: 0.95rem;
+  background: var(--fg);
+  color: var(--bg);
+  border: 0;
+  font-family: var(--mono);
+  font-size: 1rem;
+  cursor: pointer;
+  text-transform: lowercase;
+}
+.action:disabled {
+  background: var(--muted2);
+  cursor: not-allowed;
+}
+
+.panel-note {
+  margin-top: 1rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.balances {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.balances .r {
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ---- footer --------------------------------------------------------------- */
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.9rem 1.5rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+.footer-right .contracts {
+  display: inline-flex;
+  gap: 0.6rem;
+}
+.footer a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.footer a:hover {
+  color: var(--fg);
+}
+
+/* ---- responsive ----------------------------------------------------------- */
+
+@media (max-width: 860px) {
+  .header {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 0.75rem 1rem;
+    gap: 1rem;
+  }
+  .stats {
+    order: 3;
+    width: 100%;
+    gap: 1.25rem;
+  }
+  .body {
+    flex-direction: column;
+  }
+  .trade {
+    width: 100%;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .nextcredit .track,
+  .nextstatement .track {
+    width: 60px;
+  }
+  .nextstatement {
+    padding-left: 0;
+    margin-left: auto;
+    border-left: 0;
+  }
+}
