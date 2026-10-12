@@ -137,9 +137,10 @@ abstract contract HandlerSale is HandlerOwner {
                          buy (the first controller)
     //////////////////////////////////////////////////////////////*/
 
-    /// the refusal of `ControllerV1.buy` in the order of its checks: the record `priceOf` reads, the payment, the
+    /// the refusal of `ControllerV1.buy` in the order of its checks: the pause, the record `priceOf` reads, the payment, the
     /// controller in force (the core takes `sellTo` from the controller only), then what `sellTo` checks
     function _buyRefusal(uint256 sid, SalePre memory p, bool short_) internal view returns (bytes4) {
+        if (IControllerV1(v1).paused()) return IControllerV1.Paused.selector;
         (bool held, Lane lane,,) = core.statementInfo(sid);
         if (!held || lane != Lane.Eth) return IControllerV1.NotForSale.selector;
         if (short_) return IControllerV1.Underpaid.selector;
@@ -184,6 +185,9 @@ abstract contract HandlerSale is HandlerOwner {
             price = pr;
             priced = true;
         } catch {}
+        if (priced && price != _modelAsk(sid)) {
+            _flag(V_SALE_PATH, "the asking price differs from the curve at the age outside every pause window");
+        }
         bool short_ = priced && price != 0 && xSeed % 7 == 0;
         uint256 value = !priced ? 1 ether : (short_ ? price - 1 : price + (xSeed % 3 == 0 ? 0 : _logBound(xSeed, 1, 1 ether)));
         SalePre memory p = _salePre(sid, who, who, value);
@@ -218,6 +222,93 @@ abstract contract HandlerSale is HandlerOwner {
             _saleRefused(sid, p, why, a);
         }
         _rsCheck(rs, 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    the pause of the first controller
+    //////////////////////////////////////////////////////////////*/
+
+    /// the pause windows the handler applied to the first controller: start and end, an end of 0 for the open window
+    uint256[] internal _pauseStart;
+    uint256[] internal _pauseEnd;
+
+    function pauseCount() external view returns (uint256) {
+        return _pauseStart.length;
+    }
+
+    function _modelPaused() internal view returns (bool) {
+        uint256 n = _pauseEnd.length;
+        return n != 0 && _pauseEnd[n - 1] == 0;
+    }
+
+    /// the age of a statement composed at `composedAt`: the seconds to now outside every pause window
+    function _modelAge(uint256 composedAt) internal view returns (uint256 age) {
+        age = block.timestamp - composedAt;
+        for (uint256 i; i < _pauseStart.length; ++i) {
+            uint256 s = _pauseStart[i] > composedAt ? _pauseStart[i] : composedAt;
+            uint256 e = _pauseEnd[i] == 0 ? block.timestamp : _pauseEnd[i];
+            if (e > s) age -= e - s;
+        }
+    }
+
+    /// the asking price of statement `sid` written out again from docs/ARCHITECTURE.md section 7: the price in units of
+    /// 1/3600 bps falls `fastDecayBpsPerHour` a second to the knee and `slowDecayBpsPerHour` after it (rounded up), at
+    /// the age outside every pause window, at least `floorBps` and at least the hard floor of the core
+    function _modelAsk(uint256 sid) internal view returns (uint256) {
+        (,, uint256 cost, uint64 at) = core.statementInfo(sid);
+        uint256 n = _modelUnits(_modelAge(at));
+        uint256 ask = cost * n / (3600 * 10_000);
+        uint256 hard = cost * core.settings().saleFloorBps / 10_000;
+        return ask < hard ? hard : ask;
+    }
+
+    function _modelUnits(uint256 age) internal view returns (uint256 n) {
+        IControllerV1 c = IControllerV1(v1);
+        uint256 start = c.startBps() * 3600;
+        uint256 knee = uint256(c.kneeBps()) * 3600;
+        uint256 fast = c.fastDecayBpsPerHour();
+        uint256 span = start > knee ? start - knee : 0;
+        if (age * fast <= span) {
+            n = start - age * fast;
+        } else {
+            uint256 drop = (c.slowDecayBpsPerHour() * (age * fast - span) + fast - 1) / fast;
+            uint256 base = start < knee ? start : knee;
+            n = base > drop ? base - drop : 0;
+        }
+        uint256 low = uint256(c.floorBps()) * 3600;
+        if (n < low) n = low;
+    }
+
+    /// the owner pauses or resumes sales of the first controller, or a stranger tries. a repeat of the current state is
+    /// accepted and changes nothing. a stranger gets OnlyOwner. the state reads back as the model says, and no asset or
+    /// pot moves
+    function pause(uint256 seed, uint256 mode) external checked {
+        uint8 a = A_PAUSE;
+        IControllerV1 c = IControllerV1(v1);
+        bool stranger = mode % 5 == 0;
+        bool want = (mode >> 4) % 8 < 2;
+        bool was = c.paused();
+        if (was != _modelPaused()) _flag(V_SALE_PATH, "the pause state differs from the model");
+        OPre memory pre = _opre();
+        _att(a);
+        vm.prank(stranger ? address(uint160(uint256(keccak256(abi.encode("stranger", seed))))) : owner);
+        (bool ok, bytes memory out) = address(c).call(abi.encodeCall(IControllerV1.setPaused, (want)));
+        if (stranger) {
+            if (ok) _flag(V_OWNER, "a stranger changed the pause");
+            else if (bytes4(out) != IControllerV1.OnlyOwner.selector) _unexpected(a, out);
+        } else if (!ok) {
+            _unexpected(a, out);
+        } else if (want != was) {
+            if (want) {
+                _pauseStart.push(block.timestamp);
+                _pauseEnd.push(0);
+            } else {
+                _pauseEnd[_pauseEnd.length - 1] = block.timestamp;
+            }
+        }
+        if (c.paused() != (stranger || !ok ? was : want)) _flag(V_SALE_PATH, "the pause state differs from the model");
+        _opost(pre, "pause");
+        _ok(a);
     }
 
     /// the owner's controller, when the owner has installed the selling one, sells at the payment the caller sends: below

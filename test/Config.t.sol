@@ -836,6 +836,22 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "", "SETTINGS_CHANGED turns the row into a warning");
     }
 
+    /// sales are open after a launch. paused sales fail the row until the operator says the owner changed the state since launch
+    function test_postflightWhileSalesArePaused() public {
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), "");
+        assertTrue(_warnClean("controller: not paused"), "the row exists and passes on a fresh launch");
+        vm.prank(owner);
+        ctl.setPaused(true);
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), "controller: not paused");
+        assertEq(_rowDetail("controller: not paused"), "paused");
+        changedFlag = true;
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), "", "SETTINGS_CHANGED turns the row into a warning");
+        assertFalse(_warnClean("warn: controller is not paused"), "the warning row reports the pause");
+    }
+
     /// NEXT 26: the owner account is an EIP 7702 delegation to Calibur with an empty key registry. each of the three
     /// rows fails alone for its own change of state
     function test_preflightPinsTheOwnerDelegation() public {

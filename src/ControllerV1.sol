@@ -17,6 +17,9 @@ import {Lane, Sale, IController, ICoreViews, ICoreSale} from "./interfaces/Inter
 /// continuously. the controller stores the anchor at its last change (`storedAnchorBps`, `anchorTime`) and evaluates
 /// the decay at the call. the price is computed from the current anchor at every call, so held statements follow it.
 /// `buy` sells a held eth lane statement at once at the asking price.
+/// the owner can pause sales (`setPaused`). while paused `buy` reverts `Paused`, `priceOf` answers, and the age of a
+/// statement excludes every paused second, so the asking price of a held statement stops falling for the length of a
+/// pause and continues from the same age at resume. the anchor decays with wall time in both states.
 /// it holds no funds between calls. its settings belong to the live owner of the core (`core.owner()`), there is no
 /// second owner. the core enforces its own hard floor whatever this contract answers
 contract ControllerV1 is IController {
@@ -29,6 +32,7 @@ contract ControllerV1 is IController {
     error NotForSale();
     error Underpaid();
     error Reentrant();
+    error Paused();
 
     event MarkupBpsSet(uint16 markupBps);
     event StartCapBpsSet(uint32 startCapBps);
@@ -39,8 +43,16 @@ contract ControllerV1 is IController {
     event AnchorBpsSet(uint32 anchorBps);
     event AnchorHalfLifeSet(uint32 anchorHalfLife);
     event AnchorMinCostSet(uint128 anchorMinCost);
+    event PausedSet(bool paused);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
+
+    /// one pause of sales: a single storage slot
+    struct PauseWindow {
+        uint40 start;
+        uint40 end;
+        uint40 pausedBefore;
+    }
 
     ICoreViews public immutable CORE;
 
@@ -65,6 +77,11 @@ contract ControllerV1 is IController {
     /// the least statement cost, in wei, whose `buy` moves the anchor. 0 to 10 ether
     uint128 public anchorMinCost;
     bool private _busy;
+    /// whether sales are paused. launch value false
+    bool public paused;
+    /// the pause windows in time order, disjoint. window `i` is paused from `start` until `end`. while `paused` is true the
+    /// last window is open and its `end` is 0. `pausedBefore` is the paused seconds of windows `0` to `i - 1`
+    PauseWindow[] private _pauses;
 
     constructor(address core, Sale memory sale) {
         CORE = ICoreViews(core);
@@ -161,6 +178,28 @@ contract ControllerV1 is IController {
         emit AnchorMinCostSet(v);
     }
 
+    /// pauses or resumes sales at once. a call that repeats the current state changes nothing. a pause opens a window at
+    /// the current time and a resume closes it. each window costs one storage slot, and `priceOf` and `buy` read
+    /// `log2(windows)` slots of them
+    function setPaused(bool v) external onlyOwner {
+        if (v == paused) return;
+        paused = v;
+        uint256 n = _pauses.length;
+        if (v) {
+            uint256 closed;
+            if (n != 0) {
+                PauseWindow memory last = _pauses[n - 1];
+                closed = last.pausedBefore + last.end - last.start;
+            }
+            // forge-lint: disable-next-line(unsafe-typecast)
+            _pauses.push(PauseWindow(uint40(block.timestamp), 0, uint40(closed)));
+        } else {
+            // forge-lint: disable-next-line(unsafe-typecast)
+            _pauses[n - 1].end = uint40(block.timestamp);
+        }
+        emit PausedSet(v);
+    }
+
     // ------------------------------------------------------------------ pricing and sale
 
     /// the running level of sale prices now, bps of cost: 10_000 plus the part of `storedAnchorBps` above 10_000,
@@ -178,7 +217,7 @@ contract ControllerV1 is IController {
     }
 
     /// the asking price of statement `sid` now, read from the core. never below the core hard floor
-    /// `cost * saleFloorBps / 10_000`, so the quote is always a price `sellTo` takes
+    /// `cost * saleFloorBps / 10_000`, so the quote is always a price `sellTo` takes. answers while paused
     function priceOf(uint256 sid) public view returns (uint256 price) {
         (price,) = _quote(sid);
     }
@@ -186,6 +225,7 @@ contract ControllerV1 is IController {
     /// pays the asking price, gets the statement at once, and moves the anchor halfway to the sale price in bps of
     /// cost when the cost is at least `anchorMinCost`. the excess of `msg.value` is refunded to the caller last
     function buy(uint256 sid) external payable {
+        if (paused) revert Paused();
         if (_busy) revert Reentrant();
         _busy = true;
         (uint256 price, uint256 cost) = _quote(sid);
@@ -203,9 +243,34 @@ contract ControllerV1 is IController {
         uint64 composedAt;
         (held, lane, cost, composedAt) = CORE.statementInfo(sid);
         if (!held || lane != Lane.Eth) revert NotForSale();
-        price = _ask(cost, block.timestamp - composedAt);
+        price = _ask(cost, _age(composedAt));
         uint256 floor = cost * ICoreSale(address(CORE)).settings().saleFloorBps / BPS;
         if (price < floor) price = floor;
+    }
+
+    /// the age of a statement composed at `composedAt`: the seconds from then to now outside every pause window. a
+    /// statement composed inside a window ages from the end of that window
+    function _age(uint256 composedAt) private view returns (uint256) {
+        uint256 n = _pauses.length;
+        uint256 wall = block.timestamp - composedAt;
+        if (n == 0) return wall;
+        return wall - (_pausedUntil(block.timestamp, n) - _pausedUntil(composedAt, n));
+    }
+
+    /// the paused seconds from time 0 to `t`, with `t` at most now and `n` the window count. a binary search finds the
+    /// last window that starts at or before `t`. that window adds its clipped length to `pausedBefore`
+    function _pausedUntil(uint256 t, uint256 n) private view returns (uint256) {
+        uint256 lo;
+        uint256 hi = n;
+        while (lo < hi) {
+            uint256 mid = (lo + hi) / 2;
+            if (_pauses[mid].start <= t) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo == 0) return 0;
+        PauseWindow memory w = _pauses[lo - 1];
+        uint256 end = ((paused && lo == n) || w.end > t) ? t : w.end;
+        return w.pausedBefore + end - w.start;
     }
 
     /// with `cost` at least `anchorMinCost`, a sale price in bps of cost (rounded up) above the anchor sets the anchor to

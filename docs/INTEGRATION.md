@@ -98,9 +98,12 @@ send at least 12,000,000 gas: the live Statements contract needs about 8.7 milli
 
 a statement stays in the Core after compose and sells only through `ControllerV1.buy`. `lens.snapshot().statements` lists every held statement with its lane, cost, compose time and `askingPrice`. the asking price of a statement of cost `c` at `age` seconds since its compose is `c * price / 10,000`, with `price` in bps of cost falling at a fixed rate and changing every second: `start` less `fastDecayBpsPerHour` (100) per hour while above `kneeBps` (10,000), then `kneeBps` less `slowDecayBpsPerHour` (25) per hour from the second the knee is reached, never below `floorBps` (7,500). a `start` at or below `kneeBps` falls at the slow rate from compose. at the launch anchor the price is 15,000 at compose, 10,000 at hour 50, 9,000 at hour 90 and 7,500 from hour 150. `start` is `controller.startBps()`, which is `min(anchorBps * markupBps / 10,000, startCapBps)`, 15,000 at the launch anchor of 10,000. `anchorBps` is the running level of sale prices in bps of cost. a `buy` of a statement whose cost is at least `controller.anchorMinCost()` (0.1 eth at launch, an owner setting from 0 to 10 eth) and whose sale price in bps of cost is above the anchor sets it to the mean of the anchor now and the sale price, at most `startCapBps` (100,000). every other `buy` completes and leaves the anchor and `anchorTime` unchanged. the part of the anchor above 10,000 halves every `anchorHalfLife` (604,800 seconds, 7 days at launch), continuously, so the anchor falls with time and `controller.anchorBps()` returns the value now. the price is computed from the age, the anchor now and the current settings at every call, so the price of a held statement rises when another statement sells above the anchor, falls as the anchor decays, and changes at once when the owner changes `markupBps`, `startCapBps`, `anchorHalfLife`, `anchorMinCost`, either rate, `kneeBps`, `floorBps` or `saleFloorBps`. `sellTo` takes at least `saleFloorBps` (7,500) of the cost, and `controller.priceOf(sid)` returns the asking price now, never below that floor.
 
+the owner can pause sales (`setPaused(bool)`, effective at once, unpaused at launch). `controller.paused()` reports the state. while paused `buy` reverts `Paused()` and `priceOf` keeps answering. the age a price falls with excludes every paused second, so a pause holds the age of each held statement and the fall continues from the same age at the resume. a statement composed during a pause starts aging at the resume. the anchor decays with wall time in a pause, so the start price of a held statement follows it. composing, the eth bid, exits, buybacks and fees run in a pause.
+
 1. `controller.priceOf(sid)` returns the price in wei. `NotForSale` for a statement that is not held or is on the exit lane. the price falls with time and rises when the anchor rises, so a price read in an earlier block can be too low by the time the transaction lands. an indexer reads the anchor now from `controller.anchorBps()`. `storedAnchorBps()` and `anchorTime()` are the anchor at its last change.
 2. `controller.buy{value: v}(sid)` with `v` at least the quote from `priceOf`. a buy earlier in the same block can raise the price, and the call then reverts `Underpaid`. the controller records the sale at the asking price and refunds any excess of `v` to the caller last. the controller calls `core.sellTo(sid, buyer)`, which sends the statement to the buyer and books the payment at once: `saleToBuybackBps` to the coin buyback pot, the rest to `ethPot`.
 3. events `StatementSoldTo(sid, buyer, price, toBuyback)` on the Core, `AnchorMoved(sid, saleBps, anchorBps)` and `Bought(sid, buyer, price)` on the controller. read `controller.anchorBps()` and `controller.startBps()` for the level the next statement starts from. `AnchorMoved` is emitted only by a buy above the anchor.
+4. buyers read `controller.paused()` before a `buy`. a paused controller reverts every `buy` with `Paused()`, as the first check of the call. `PausedSet(bool paused)` is emitted on each change of the state, and a call that repeats the current state emits nothing.
 
 ## 7. the fee pull and flush()
 
@@ -226,6 +229,7 @@ the controller (`src/interfaces/IControllerV1.sol`):
 | `FloorBpsSet` | `uint16 floorBps` | sale setting changed |
 | `MarkupBpsSet` | `uint16 markupBps` | sale setting changed |
 | `StartCapBpsSet` | `uint32 startCapBps` | sale setting changed |
+| `PausedSet` | `bool paused` | the owner paused or resumed sales. not emitted by a call that repeats the state |
 
 the fee router (`src/interfaces/IFeeRouter.sol`):
 
@@ -305,7 +309,8 @@ the controller:
 |---|---|---|
 | `BadSetting(bytes32 field)` | sale setters, constructor | the setting `field` is outside its bounds |
 | `NotForSale()` | `buy`, `priceOf` | the statement is not held, or is on the exit lane |
-| `OnlyOwner()` | sale setters | the caller is not `core.owner()` |
+| `OnlyOwner()` | sale setters, `setPaused` | the caller is not `core.owner()` |
+| `Paused()` | `buy` | sales are paused (`controller.paused()`) |
 | `Reentrant()` | `buy` | `buy` was entered again |
 | `Underpaid()` | `buy` | `msg.value` is below `priceOf(sid)` |
 

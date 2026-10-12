@@ -107,7 +107,9 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_MIGRATE = 34;
     // anyone puts credits the core holds without a record into the eth pile
     uint8 internal constant A_ADOPT = 35;
-    uint256 internal constant N_ACTIONS = 36;
+    // the owner pauses and resumes sales in the sale controller
+    uint8 internal constant A_PAUSE = 36;
+    uint256 internal constant N_ACTIONS = 37;
 
     // violation codes
     uint256 internal constant V_ETH_OUT = 1; // eth left the core beyond what the action explains
@@ -333,7 +335,8 @@ abstract contract HandlerBase is Test {
             "repoint",
             "rescueNft",
             "migrate",
-            "adopt"
+            "adopt",
+            "pause"
         ];
         names = n;
         controllers.push(w.v1);
