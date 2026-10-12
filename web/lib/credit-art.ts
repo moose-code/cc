@@ -58,23 +58,43 @@ function seedOf(id: number): number {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
+// A small registration slip, mostly within the 2px white border so the margin
+// survives: ~45% none, ~35% one cell, ~20% two cells.
+function slip(rnd: () => number): number {
+  const r = rnd();
+  if (r < 0.45) return 0;
+  const dir = rnd() < 0.5 ? -1 : 1;
+  return r < 0.8 ? dir : dir * 2;
+}
+
 // 12x12 raster of plate masks (0..15) for one credit, deterministic from id.
+// Sparse and airy to match real Credits: few plates print, moderate density,
+// an 8x8 core with a white margin and CMYK fringing from the slip.
 export function creditMask(id: number): Uint8Array {
   const rnd = mulberry32(seedOf(id));
-  const enabled = (Math.floor(rnd() * 15) + 1) & 0xf; // 1..15, >=1 plate prints
-  const density = 0.34 + rnd() * 0.34;
-  const slips: [number, number][] = [];
-  for (let p = 0; p < 4; p++) {
-    slips.push([Math.floor(rnd() * 5) - 2, Math.floor(rnd() * 5) - 2]); // -2..2
+
+  // how many plates print — weighted toward 1-2 (keeps credits light, not muddy)
+  const pr = rnd();
+  const plateCount = pr < 0.3 ? 1 : pr < 0.7 ? 2 : pr < 0.92 ? 3 : 4;
+  // pick which plates (Fisher-Yates on C,M,Y,K)
+  const order = [0, 1, 2, 3];
+  for (let i = 3; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
   }
+  const plates = order.slice(0, plateCount);
+
+  // density (weight trait): mostly sparse/lean
+  const dr = rnd();
+  const density = dr < 0.35 ? 0.22 : dr < 0.7 ? 0.32 : dr < 0.92 ? 0.42 : 0.55;
+
   const px = new Uint8Array(144);
-  for (let layer = 0; layer < 4; layer++) {
-    const prints = (enabled & (1 << layer)) !== 0;
-    const [dx, dy] = slips[layer];
+  for (const layer of plates) {
+    const dx = slip(rnd);
+    const dy = slip(rnd);
     for (let y = 0; y < 8; y++) {
       for (let x = 0; x < 8; x++) {
-        const on = rnd() < density; // consume stream regardless, keeps it stable
-        if (!prints || !on) continue;
+        if (rnd() >= density) continue;
         const X = 2 + dx + x;
         const Y = 2 + dy + y;
         if (X < 0 || X > 11 || Y < 0 || Y > 11) continue;

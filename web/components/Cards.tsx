@@ -6,7 +6,7 @@ import type { SampleStatement, SampleCredit } from "@/lib/sample";
 export function StatementCard({ s }: { s: SampleStatement }) {
   const overCost = (s.ask / s.cost - 1) * 100;
   return (
-    <Link href={`/statements/${s.id}`} className="card">
+    <Link href={`/statements/${s.id}`} className="card card-statement">
       <StatementTile id={s.id} />
       <div className="card-body">
         <div className="card-head">

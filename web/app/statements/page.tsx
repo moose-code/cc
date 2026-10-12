@@ -7,7 +7,7 @@ import { StatementCard } from "@/components/Cards";
 export default function StatementsPage() {
   const listed = statements.filter((s) => s.status === "listed").length;
   return (
-    <main className="page">
+    <main className="page wide">
       <div className="page-head">
         <h1>statements</h1>
         <span className="muted">
