@@ -4,6 +4,35 @@ for integrators and keepers: the contracts, the call sequences of each door, the
 
 units. a rate is wei per credit. every credit has the same price, the rate. a `Lane` is 0 for the eth lane and 1 for the exit lane. bps is out of 10,000, ppm out of 1,000,000. settings values quoted below are the launch values of `script/config/mainnet.json`; `core.settings()` returns the live ones.
 
+## CreditScoreLens: scores and traits by token id
+
+`CreditScoreLens` is a standalone read-only developer helper for Ethereum mainnet. Import `src/interfaces/ICreditScoreLens.sol` and call the deployed helper address. It has no constructor arguments, mutable storage, owner or payable functions. The helper address is not yet deployed; it is separate from the engine lens.
+
+Its sources are the on-chain Credits contract at `0x97630aA70AB14ed9883B41dAfccBc11349723043`, CreditScore at `0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7`, and Statements at `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b`. The addresses are fixed in the helper's bytecode.
+
+- `creditScore(creditId)`: score of one credit. Reads its seed and payment timestamp from Credits and passes them to CreditScore.
+- `creditScores(creditIds)`: the same read for a batch, preserving order and duplicates. Empty input returns an empty array. Any unknown credit id reverts the whole call with `UnknownCredit(creditId)`; source failures propagate. Calls grow linearly with the batch size, so chunk to the RPC's call gas limit.
+- `creditRarity(creditId)`: raw sum of rarity trait points, including CreditScore's doubled eights contribution. This is neither a percentile nor the 80-to-800 point score.
+- `creditTraits(creditId)`: `(mask, active, occupied, eights, band)` from CreditScore. These are the active plate bitmask (1 to 15), inked bits across those plates, occupied raster cells after misregistration, ASCII '8' count in the seed, and registration band (0 Registered, 1 Nudge, 2 Slip, 3 Skew, 4 Drift, 5 Loose).
+- `statementScore(statementId)`: the total stored by `Statements.creditScoreOf`, including all overprinted pages. Never-composed ids return zero. Pages burned into other pages retain their historical total. Later overprints are reflected immediately. This is neither an average nor proof of ownership or redeemability.
+
+All single credit methods reject never-minted ids with `UnknownCredit(creditId)` and support burned credits, whose mint records remain on-chain. Credit scores do not change on transfer or burn. Source failures propagate from every method.
+
+Credit and statement scores use ten-thousandths of a point: `1_324_012` means `132.4012` points. One credit scores from `800_000` to `8_000_000`; a statement's summed score can be larger. Preserve the raw integer for computation. For display, format the integer quotient and four-digit remainder after division by `10_000`; do not round to whole points.
+
+```solidity
+import {ICreditScoreLens} from "./src/interfaces/ICreditScoreLens.sol";
+
+ICreditScoreLens scoreLens = ICreditScoreLens(scoreLensAddress);
+uint256 score = scoreLens.creditScore(creditId);
+uint256[] memory scores = scoreLens.creditScores(creditIds);
+uint256 statementTotal = scoreLens.statementScore(statementId);
+```
+
+The contract and generated interface contain NatSpec for every method, input and output. Regenerate only this interface with `script/tools/gen-interfaces.sh write CreditScoreLens`; check it with `script/tools/gen-interfaces.sh --check CreditScoreLens`.
+
+`script/DeployCreditScoreLens.s.sol` checks chain id 1 and the three source runtime hashes before creating the compiled helper. A simulation uses `forge script script/DeployCreditScoreLens.s.sol --rpc-url "$MAINNET_RPC_URL" --fork-block-number 26158000`; it sends no transaction without `--broadcast`. Deployment needs an explicit owner instruction. Record the resulting helper address, receipt and runtime hash, verify its source, then compare a credit and statement read with the source contracts.
+
 ## 1. contracts and addresses
 
 | contract | address | where to read it |

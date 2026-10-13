@@ -156,7 +156,7 @@
     ]
   },
   "candidate": "6ea44f570cc7cad7812a8c4a7147d465fcf858db",
-  "activeChange": null,
+  "activeChange": "Implement CreditScoreLens (FLOW 91): five documented read-only methods, source contract fork tests and isolated deploy script. No engine behavior changes or deployment.",
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -206,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "Issue #3 CreditScoreLens specification is complete in docs/NEXT.md (FLOW 88, 89, 90), including the statementScoreOf view. If the owner requests implementation, use that bounded packet and keep the helper outside engine dependencies. No helper deployment is authorized. The engine launch objective remains active: before using the launch steps in docs/HANDOFF.md section 6, reconcile the current source and decisions 81 to 87, independently review and freeze a new candidate, and satisfy its configured gates. Candidate 6ea44f5 evidence is stale at the current HEAD; owner sign-off and launch prerequisites remain outstanding.",
+  "nextAction": "Finish CreditScoreLens implementation, exercise its focused fork tests, commit and independently review the immutable implementation. No mainnet deployment authorized. Engine candidate evidence remains stale and its launch objective stays active.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
