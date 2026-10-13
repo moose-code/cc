@@ -380,7 +380,7 @@ export const engineEventsAbi = parseAbi([
   "event CreditBought(uint256 indexed id, address indexed from, uint256 cost)",
   "event ListingBought(uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate)",
   "event EthRateFill(uint256 spent, uint256 rate, uint256 pot)",
-  "event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, address indexed caller)",
+  "event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, uint256 price, address indexed caller)",
   "event SettingsSet((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, uint8 exitMode, uint16 exitSlippageBps, uint16 exitBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToBuybackBps, uint16 feeToRedeemBurnBps) settings)",
   "event RateSet(uint256 rate)",
   "event StatementExited(uint256 indexed sid, uint256 received)",

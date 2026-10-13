@@ -6,7 +6,6 @@ import { decodeFunctionData, zeroAddress, type Address } from "viem";
 import { addresses, deployBlock, engineDeployed, poolReady, ethUsdFeed, pool } from "./config";
 import {
   coreAbi,
-  controllerAbi,
   coreLensAbi,
   engineEventsAbi,
   stateViewAbi,
@@ -99,15 +98,6 @@ async function modeOf(client: Client, hash: string): Promise<ComposeMode | null>
   }
   composeMode.set(hash, mode);
   return mode;
-}
-
-// Controller priceOf(sid) at the Composed block: the price the statement is listed at. Immutable once mined.
-const listedPrice = persistedMap<bigint>("listed");
-
-async function listedAtCompose(client: Client, sid: bigint, block: bigint): Promise<bigint | undefined> {
-  const core = addresses.core!;
-  const controller = await client.readContract({ address: core, abi: coreAbi, functionName: "controller", blockNumber: block });
-  return client.readContract({ address: controller, abi: controllerAbi, functionName: "priceOf", args: [sid], blockNumber: block });
 }
 
 const tokenInfo = new Map<string, ExitTokenInfo>();
@@ -247,22 +237,6 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
       })
   );
 
-  // listed price per Composed log
-  const listedAt = new Map<string, bigint>();
-  await Promise.all(
-    logs
-      .filter((l) => l.eventName === "Composed")
-      .map(async (l) => {
-        const k = `${l.transactionHash}:${Number(l.args.sid)}`;
-        let p = listedPrice.get(k);
-        if (p === undefined) {
-          p = await listedAtCompose(client, l.args.sid, l.blockNumber).catch(() => undefined);
-          if (p !== undefined) listedPrice.set(k, p);
-        }
-        if (p !== undefined) listedAt.set(k, p);
-      })
-  );
-
   // save when logs were added, else every 300 blocks
   const total = Object.values(st.logs).reduce((n, a) => n + a.length, 0);
   if (total !== saved.total || head - saved.head > 300n) {
@@ -279,7 +253,6 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
     modes,
     exitToken: st.exit,
     exitPaid,
-    listedAt,
   });
   // logs arrive oldest first; the feed is newest first
   return (lastGood = { feed: rows.reverse(), stats, credits, statements });

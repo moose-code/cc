@@ -90,7 +90,6 @@ export interface ScanInput {
   modes: Map<string, ComposeMode>; // Composed tx hash -> compose / composeChosen
   exitToken?: ExitTokenInfo;
   exitPaid: Map<string, bigint>; // `${tx}:${seller}` -> exit token sent by the core to the seller in that tx
-  listedAt: Map<string, bigint>; // `${tx}:${sid}` -> controller priceOf(sid) at the Composed block
 }
 
 function num(n: string | number): string {
@@ -185,7 +184,6 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const sid = Number(a.sid);
         const ids = (a.ids as readonly bigint[]).map(Number);
         const mode = inp.modes.get(tx);
-        const listed = inp.listedAt.get(`${tx}:${sid}`);
         st(sid).composed = { ids, format: Number(a.format), cost: a.cost, caller: a.caller, mode, block, tx };
         for (const id of ids) cr(id).push({ t: "composed", sid, block, tx });
         stats.composed++;
@@ -193,7 +191,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
           kind: "composed",
           label: mode === "chosen" ? "composed · chosen" : "statement composed",
           link: stmtLink(sid),
-          detail: `${listed != null ? `· listed at ${eth(listed)} eth ` : ""}· cost ${eth(a.cost)} eth`,
+          detail: `${a.price > 0n ? `· listed at ${eth(a.price)} eth ` : ""}· cost ${eth(a.cost)} eth`,
           tile: { kind: "statement", id: sid },
         });
         break;
