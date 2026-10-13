@@ -36,10 +36,10 @@ The contract and generated interface contain NatSpec for every method, input and
 Run the standalone helper from main with a clean Forge build:
 
 ```bash
-cd /Users/dd/CascadeProjects/cc/cc && git switch main && forge clean && forge build && bash script/deploy-credit-score-lens.sh
+cd /Users/dd/CascadeProjects/cc/cc && git switch main && forge clean && bash script/deploy-credit-score-lens.sh
 ```
 
-The script uses Tenderly (`TENDERLY_RPC_URL`, otherwise its public mainnet gateway) and the ripe0x keystore with public sender `0xCB43078C32423F5348Cab5885911C3B5faE217F9`. It checks the reviewed artifact, simulates against the mainnet source contracts and shows Foundry's gas fee estimate before asking to unlock the keystore. Declining the prompt sends nothing. Final fees can differ from the estimate as gas prices change.
+The script builds only the helper and its deployment/verification scripts. It uses Tenderly (`TENDERLY_RPC_URL`, otherwise its public mainnet gateway) and the ripe0x keystore with public sender `0xCB43078C32423F5348Cab5885911C3B5faE217F9`. It checks the reviewed artifact, simulates against the mainnet source contracts and shows Foundry's gas fee estimate before asking to unlock the keystore. Declining the prompt sends nothing. Final fees can differ from the estimate as gas prices change.
 
 It reuses `ETHERSCAN_API_KEY` or Foundry's configured mainnet key, including the project `.env`; if absent, it asks privately in the terminal. The key is kept in the process environment, never printed or written to a file. After a successful receipt, the script prints the address, compares all five methods directly with their on-chain sources, and verifies the source on Etherscan with the reviewed viair profile. The engine launch checker does not apply to this standalone helper; engine launch controls are untouched.
 

@@ -89,7 +89,7 @@ Owner-supplied independent bounded audit of ee0e649 against 79c79d1 is recorded 
 
 ### Deployment/verification tooling (FLOW 105, 107, 109, 110)
 
-The focused script is script/deploy-credit-score-lens.sh, with optional verify <address> retry. It replaces the oversized Python CLI. It runs from main, uses Tenderly/ripe0x, previews gas before wallet access, resolves the standard Etherscan key or asks privately, checks reviewed compiler/runtime/source identity and a fresh confirmed CREATE receipt, then compares the five results and publishes source. The engine deployment gate was incorrectly applied to this standalone helper and has been removed from this path; engine controls are untouched. Build, shell syntax and four focused CLI tests pass; live Tenderly preview/cancellation passed with no wallet access; independent repair review is next. Command is in docs/INTEGRATION.md.
+The focused script is script/deploy-credit-score-lens.sh, with optional verify <address> retry. It replaces the oversized Python CLI. It runs from main, uses Tenderly/ripe0x, previews gas before wallet access, resolves the standard Etherscan key or asks privately, checks reviewed compiler/runtime/source identity and a fresh confirmed CREATE receipt, then compares the five results and publishes source. The engine deployment gate was incorrectly applied to this standalone helper and has been removed from this path; engine controls are untouched. Build, shell syntax and four focused CLI tests pass; live Tenderly preview/cancellation passed with no wallet access; independent review of a0a0f53 complete, no actionable findings (docs/REVIEW-credit-score-lens-shell-a0a0f53.md). Command is in docs/INTEGRATION.md.
 
 ## Engine change list
 

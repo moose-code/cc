@@ -156,7 +156,7 @@
     ]
   },
   "candidate": "b12ca481fdbc415331e61e68efc6235b36c29fb2",
-  "activeChange": "FLOW 110: simplify standalone helper CLI and correct its mistakenly applied engine gate; engine policy unchanged, no broadcast authorized.",
+  "activeChange": null,
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -206,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "Exercise the simplified script through live preview/cancellation only, commit and independently review the immutable repair, then give the short clean/main command.",
+  "nextAction": "FLOW 110 helper repair is complete on main: focused shell deploy/verify, main/Tenderly/ripe0x, gas-before-keystore, standard/private-prompt Etherscan key, pinned artifact/sources and fresh receipt/results; four tests, live preview/cancellation and independent review pass. Give the owner the short main/forge-clean command. Engine release controls and objective unchanged. No agent wallet access, broadcast or source submission authorized/performed.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
