@@ -93,6 +93,10 @@ Owner-supplied independent bounded audit of ee0e649 against 79c79d1 is recorded 
 
 Verification: `forge build` passes; `forge test --match-path test/CreditScoreLens.t.sol -j 1 -vv` passes 21 tests with 256 differential fuzz cases; `python3 -m unittest script/test_credit_score_lens_tool.py -v` passes 9 safety tests. The actual Python simulate command passes at block 26158000 with the owner as simulated sender. Explorer standard compiler JSON was generated without submission and checked for solc 0.8.30, viaIR, optimizer 200, Cancun and no metadata hash. Helper runtime remains 1,478 bytes and its reviewed hash is unchanged. No wallet accessed, transaction broadcast or explorer submission performed. Successful source publication awaits a real deployed address. Independent tooling review of commit 7402455594f0d032f516de67db53281327592133 found no actionable issues; report: docs/REVIEW-credit-score-lens-tooling-7402455.md. The reviewer independently passed all 9 Python safety tests and mocked deployment/failure-retry checks; no live wallet, mined receipt or explorer acceptance was tested.
 
+### Fee preview and default wallet (FLOW 96, 2026-10-13)
+
+The CLI now defaults to Tenderly and keystore ripe0x with the documented public owner sender. Deploy previews the current-mainnet ETH gas fee budget before wallet access, reuses its max-fee/tip settings, privately prompts for an Etherscan key only when standard environment/Foundry configuration has none, and asks for confirmation before unlocking the keystore. An estimate mode provides the quote without credentials, release-gate acceptance or broadcast. The existing release gate remains enforced. Build and 18 focused Python safety tests pass. The actual Tenderly estimate passes with a deliberately nonexistent inherited keystore setting; the resulting gas budget is 484,845 and fee values are live estimates, not durable prices. Independent review follows the implementation commit. No wallet opened or broadcast authorized.
+
 ## Engine change list
 
 | # | change | state | notes |

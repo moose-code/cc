@@ -156,7 +156,7 @@
     ]
   },
   "candidate": "6ea44f570cc7cad7812a8c4a7147d465fcf858db",
-  "activeChange": null,
+  "activeChange": "FLOW 96: wallet-free fee preview before ripe0x unlock, Tenderly defaults and standard Etherscan key/private prompt; no broadcast authorized.",
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -206,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "CreditScoreLens helper has an owner-supplied bounded audit at ee0e649 with no actionable findings; later deployment/verification tooling is committed, focused tests/simulation pass and its separate independent review has no actionable findings. Automated security scan incomplete. No broadcast or explorer submission authorized; final artifact freeze/current-mainnet release checks remain outstanding and the configured deploy gate is unmet. Engine OBJ-LAUNCH-1 still requires valid release evidence before deployment.",
+  "nextAction": "Exercise the updated fee/key/default CLI paths, commit and independently review the immutable tooling delta; preserve the helper runtime and configured release gate.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",

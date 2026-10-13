@@ -33,14 +33,14 @@ The contract and generated interface contain NatSpec for every method, input and
 
 ### Deployment and verification commands
 
-Use `python3 script/tools/credit-score-lens.py`. `MAINNET_RPC_URL` selects the RPC; otherwise the tool uses the public Tenderly mainnet gateway. Etherscan verification requires `ETHERSCAN_API_KEY` in the environment. Select `--verifier sourcify` for verification without an Etherscan key.
+Use `python3 script/tools/credit-score-lens.py`. RPC defaults to `TENDERLY_RPC_URL` or the public Tenderly mainnet gateway. The default deployment keystore is `ripe0x`, with public sender `0xCB43078C32423F5348Cab5885911C3B5faE217F9`. Foundry checks the unlocked signer against the supplied sender. A different account needs its public `--sender`.
 
 ```bash
-# Simulate the deployment, with no wallet or broadcast.
-python3 script/tools/credit-score-lens.py simulate --fork-block 26158000 --sender 0xCB43078C32423F5348Cab5885911C3B5faE217F9
+# Show a current-mainnet gas fee budget without opening a wallet.
+python3 script/tools/credit-score-lens.py estimate
 
-# Broadcast, verify source, and check the deployed helper. Requires owner authorization and a passing release gate.
-python3 script/tools/credit-score-lens.py deploy --ledger --sender 0xYOUR_LEDGER_ADDRESS
+# Preview the fee, confirm, then unlock ripe0x, deploy and verify.
+python3 script/tools/credit-score-lens.py deploy
 
 # Retry source verification for an existing address, without deploying again.
 python3 script/tools/credit-score-lens.py verify --address 0xDEPLOYED_LENS
@@ -49,7 +49,13 @@ python3 script/tools/credit-score-lens.py verify --address 0xDEPLOYED_LENS
 python3 script/tools/credit-score-lens.py check --address 0xDEPLOYED_LENS
 ```
 
-For an encrypted Foundry keystore, replace `--ledger --sender ...` with `--account <name>`. The tool accepts no private-key argument. Each mode accepts `--rpc-url` to override the RPC; simulation reads latest state when `--fork-block` is omitted.
+Deploy first enforces the release gate. After building and checking artifact identity, it runs a current-mainnet deployment simulation without a signer. It prints the gas budget (Foundry's 30% buffer), maximum fee and priority fee in gwei, and their ETH fee budget before any keystore unlock. It reuses the quoted fee settings for broadcast. The ETH figure is an estimate, not a fixed total: mined gas used and base fee determine the actual fee, and a later base-fee increase can delay inclusion. `estimate` performs the same read-only quote without the release gate, credential prompts or broadcast.
+
+Etherscan credentials come from `ETHERSCAN_API_KEY`, then Foundry's resolved configuration (including the project `.env` and its mainnet explorer entry). If absent, the CLI prompts privately in a terminal and keeps the key only for this run. It passes the key through the verification subprocess environment, never a command-line argument or saved file. Noninteractive runs must configure the key beforehand. Select `--verifier sourcify` for verification without an Etherscan key.
+
+After displaying the fee and resolving verification credentials, deploy asks for `y` to continue. Only then does Foundry open `ripe0x` and ask for its password. Cancellation sends nothing. To use Ledger, pass `--ledger --sender <address>`; to use another encrypted keystore, pass `--account <name> --sender <address>`. The tool accepts no private-key argument.
+
+Each mode accepts `--rpc-url`. Use `simulate --fork-block 26158000` for a historical simulation; omitting `--fork-block` reads current state. Read-only script subprocesses omit wallet/broadcast arguments and remove inherited signer environment settings. They run from a temporary directory outside the project, with an explicit project root, so Foundry cannot reload signer settings from the project `.env` before the fee preview.
 
 Before signing, deploy mode calls `python3 script/director.py check --gate deploy`. The current repository gate is unmet and remains enforced; standalone helper tooling does not waive it. The user request authorized writing these scripts, not broadcasting a mainnet transaction.
 
