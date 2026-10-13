@@ -3,8 +3,9 @@
 
 import { formatUnits, type Address } from "viem";
 import { eth, shortAddr, commas } from "./format";
+import { EXIT_TOKEN_SYMBOL } from "./config";
 
-export type FeedKind = "fee" | "credit" | "composed" | "listed" | "sold" | "burn" | "exit" | "price" | "admin";
+export type FeedKind = "fee" | "credit" | "composed" | "listed" | "sold" | "burn" | "redeemed" | "price" | "admin";
 
 export interface FeedEvent {
   key: string;
@@ -17,12 +18,12 @@ export interface FeedEvent {
   txHash?: string; // full hash, drives the evm.now link
   tile?: { kind: "credit"; id: number } | { kind: "statement"; id: number };
   addr?: string; // an address closing the detail (buyer, seller, caller), ENS-ified
-  format?: number; // composed rows: the statement format index
+  link?: { text: string; href: string }; // opens the detail, linked page leads the detail cell
 }
 
 export interface Stats {
   creditsEth: number; // CreditBought through the eth bid
-  creditsExit: number; // CreditBought through the exit token bid
+  creditsExit: number; // CreditBought through the $BALANCE bid
   creditsListing: number; // ListingBought
   creditsAdopted: number; // CreditAdopted
   creditsSold: number; // CreditSold from the credit sale
@@ -33,7 +34,7 @@ export interface Stats {
   ccBurned: number;
 }
 
-export type CreditHow = "eth bid" | "exit token bid" | "listing" | "adopted";
+export type CreditHow = "eth bid" | `${typeof EXIT_TOKEN_SYMBOL} bid` | "listing" | "adopted";
 
 // One step in a credit's life, in log order.
 export type CreditEvt =
@@ -78,7 +79,7 @@ export interface Scan {
 }
 
 export interface ExitTokenInfo {
-  symbol: string;
+  address: Address;
   decimals: number;
 }
 
@@ -91,6 +92,8 @@ export interface ScanInput {
   modes: Map<string, ComposeMode>; // Composed tx hash -> compose / composeChosen
   prevSettings: Map<string, Record<string, unknown>>; // SettingsSet log key -> settings before it
   exitToken?: ExitTokenInfo;
+  exitPaid: Map<string, bigint>; // `${tx}:${seller}` -> exit token sent by the core to the seller in that tx
+  listedAt: Map<string, bigint>; // `${tx}:${sid}` -> controller priceOf(sid) at the Composed block
 }
 
 // Settings that carry a unit or a named value.
@@ -117,7 +120,7 @@ function num(n: string | number): string {
 
 // An exit token amount with its symbol; raw units until the token is read.
 export function formatExit(v: bigint, info?: ExitTokenInfo): string {
-  return info ? `${num(formatUnits(v, info.decimals))} ${info.symbol}` : `${v} exit token units`;
+  return info ? `${num(formatUnits(v, info.decimals))} ${EXIT_TOKEN_SYMBOL}` : `${v} ${EXIT_TOKEN_SYMBOL} units`;
 }
 
 export function settingValue(name: string, v: unknown): string {
@@ -222,6 +225,9 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
     const row = (r: Pick<FeedEvent, "kind" | "label" | "detail"> & Partial<FeedEvent>) => rows.push({ ...base, ...r });
     const fromRouter = inp.router != null && String(log.address).toLowerCase() === inp.router.toLowerCase();
     const admin = (label: string, detail: string, addr?: string) => row({ kind: "admin", label, detail, addr });
+    // Every way the engine gets a credit is one row: the credit, linked, and what it paid.
+    const creditRow = (id: number, amount?: string) =>
+      row({ kind: "credit", label: "credit acquired", detail: "", eth: amount, link: { text: `credit #${id}`, href: `/credits/${id}` }, tile: { kind: "credit", id } });
 
     if (fill && (fill.tx !== tx || (name !== "CreditBought" && name !== "ListingBought"))) flushFill();
 
@@ -268,19 +274,11 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const id = Number(a.id);
         const viaEth = fill?.tx === tx;
         const f = viaEth ? fill : undefined;
-        cr(id).push({ t: "bought", how: viaEth ? "eth bid" : "exit token bid", cost: a.cost, from: a.from, rate: f?.rate, pot: f?.pot, block, tx });
+        cr(id).push({ t: "bought", how: viaEth ? "eth bid" : `${EXIT_TOKEN_SYMBOL} bid`, cost: a.cost, from: a.from, rate: f?.rate, pot: f?.pot, block, tx });
         if (viaEth) stats.creditsEth++;
         else stats.creditsExit++;
-        row({
-          kind: "credit",
-          label: viaEth ? "credit · eth bid" : "credit · exit token bid",
-          detail: viaEth
-            ? `credit #${id} sold to the engine · rate after ${eth(f!.rate)} eth · pot ${eth(f!.pot)} eth · sold by`
-            : `credit #${id} sold to the engine · cost basis ${eth(a.cost)} eth · sold by`,
-          eth: viaEth ? eth(a.cost) : undefined,
-          addr: a.from,
-          tile: { kind: "credit", id },
-        });
+        const paid = inp.exitPaid.get(`${tx}:${String(a.from).toLowerCase()}`);
+        creditRow(id, viaEth ? eth(a.cost) : paid != null ? formatExit(paid, inp.exitToken) : undefined);
         fill = undefined;
         break;
       }
@@ -289,14 +287,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const total = a.cost + a.paid;
         cr(id).push({ t: "bought", how: "listing", cost: total, from: a.caller, paid: a.paid, target: a.target, rate: a.rate, block, tx });
         stats.creditsListing++;
-        row({
-          kind: "credit",
-          label: "credit · listing",
-          detail: `credit #${id} bought from ${shortAddr(a.target)} for ${eth(a.cost)} eth · keeper paid ${eth(a.paid)} eth · called by`,
-          eth: eth(total),
-          addr: a.caller,
-          tile: { kind: "credit", id },
-        });
+        creditRow(id, eth(total));
         fill = undefined;
         break;
       }
@@ -304,7 +295,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const id = Number(a.id);
         cr(id).push({ t: "bought", how: "adopted", cost: a.cost, block, tx });
         stats.creditsAdopted++;
-        row({ kind: "credit", label: "credit · adopted", detail: `credit #${id} adopted into the pile · cost basis ${eth(a.cost)} eth`, tile: { kind: "credit", id } });
+        creditRow(id, eth(a.cost));
         break;
       }
 
@@ -313,16 +304,16 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const sid = Number(a.sid);
         const ids = (a.ids as readonly bigint[]).map(Number);
         const mode = inp.modes.get(tx);
+        const listed = inp.listedAt.get(`${tx}:${sid}`);
         st(sid).composed = { ids, format: Number(a.format), cost: a.cost, caller: a.caller, mode, block, tx };
         for (const id of ids) cr(id).push({ t: "composed", sid, block, tx });
         stats.composed++;
         row({
           kind: "composed",
           label: mode === "chosen" ? "composed · chosen" : "statement composed",
-          detail: `statement ${sid} · ${ids.length} credits · cost ${eth(a.cost)} eth · composed by`,
+          detail: `statement ${sid}${listed != null ? ` · listed at ${eth(listed)} eth` : ""} · cost ${eth(a.cost)} eth · composed by`,
           addr: a.caller,
           tile: { kind: "statement", id: sid },
-          format: Number(a.format),
         });
         break;
       }
@@ -370,7 +361,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const sid = Number(a.sid);
         st(sid).exited = { received: a.received, block, tx };
         stats.redeemed++;
-        row({ kind: "exit", label: "statement redeemed", detail: `statement ${sid} exited · received ${xtok(a.received)}`, tile: { kind: "statement", id: sid } });
+        row({ kind: "redeemed", label: "statement redeemed", detail: `statement ${sid} redeemed · received ${xtok(a.received)}`, tile: { kind: "statement", id: sid } });
         break;
       }
 
@@ -440,7 +431,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         admin("engine retired", "core retired, successor", a.successor);
         break;
       case "ExitTokenMigrationSkipped":
-        admin("exit token migration skipped", `${xtok(a.amount)} stays in the pot, successor`, a.successor);
+        admin(`${EXIT_TOKEN_SYMBOL} migration skipped`, `${xtok(a.amount)} stays in the pot, successor`, a.successor);
         break;
       case "OwnershipTransferStarted":
         admin("ownership transfer started", `${fromRouter ? "fee router" : "core"} ownership offered to`, a.pending);

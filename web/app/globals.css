@@ -14,7 +14,7 @@
   --listed: #ffffff;
   --sold: #0a9b41;
   --burn: #000000;
-  --exit: #7a4dff;
+  --redeemed: #7a4dff;
   --price: #ff8a00;
 
   --mono: ui-monospace, "SF Mono", "Menlo", "Monaco", "Cascadia Code",
@@ -39,6 +39,11 @@ body {
 
 a {
   color: inherit;
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .app {
@@ -264,8 +269,6 @@ a {
 }
 .col-time a {
   color: var(--muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 .col-time a:hover {
   color: var(--fg);
@@ -493,8 +496,6 @@ a {
 }
 .footer a {
   color: var(--muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 .footer a:hover {
   color: var(--fg);
@@ -604,7 +605,6 @@ a {
 /* ---- nav ------------------------------------------------------------------ */
 
 .brand {
-  text-decoration: none;
   color: var(--fg);
 }
 .nav {
@@ -613,7 +613,6 @@ a {
 }
 .nav a {
   color: var(--muted);
-  text-decoration: none;
 }
 .nav a:hover {
   color: var(--fg);
@@ -770,8 +769,8 @@ a {
   border-color: var(--sold);
 }
 .badge-redeemed {
-  color: var(--exit);
-  border-color: var(--exit);
+  color: var(--redeemed);
+  border-color: var(--redeemed);
 }
 .badge-not-held {
   color: var(--muted);
@@ -797,7 +796,6 @@ a {
   display: inline-block;
   margin-bottom: 1.25rem;
   color: var(--muted);
-  text-decoration: none;
 }
 .back:hover {
   color: var(--fg);
@@ -886,8 +884,6 @@ a {
   display: inline-block;
   margin-top: 1.25rem;
   color: var(--fg);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 .section {
@@ -1024,8 +1020,6 @@ a {
 }
 .xlink-inline {
   color: var(--fg);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 /* ---- sell page ------------------------------------------------------------ */
@@ -1065,11 +1059,11 @@ a {
   font-family: var(--mono);
   font-size: 0.85rem;
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 .link-btn:hover {
   color: var(--fg);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .sell-list {
   display: flex;

@@ -8,7 +8,7 @@ import { engineDeployed } from "@/lib/config";
 
 // Every statement the Core composed. For sale: held by the Core, priced by
 // ControllerV1 (CoreLens.snapshot().statements). Sold: StatementSoldTo logs.
-// Redeemed: StatementExited logs. Not held: composed, with no sale or exit log.
+// Redeemed: StatementExited logs. Not held: composed, with no sale or redemption log.
 export default function StatementsPage() {
   const { data: snap } = useSnapshot();
   const { data: scan } = useScan();

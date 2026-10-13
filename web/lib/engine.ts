@@ -6,6 +6,7 @@ import { decodeFunctionData, zeroAddress, type Address } from "viem";
 import { addresses, deployBlock, engineDeployed, poolReady, ethUsdFeed, pool } from "./config";
 import {
   coreAbi,
+  controllerAbi,
   coreLensAbi,
   engineEventsAbi,
   stateViewAbi,
@@ -103,6 +104,15 @@ async function modeOf(client: Client, hash: string): Promise<ComposeMode | null>
 // Settings in force just before a SettingsSet log, cached per log key.
 const settingsBefore = persistedMap<Record<string, unknown>>("settings");
 
+// Controller priceOf(sid) at the Composed block: the price the statement is listed at. Immutable once mined.
+const listedPrice = persistedMap<bigint>("listed");
+
+async function listedAtCompose(client: Client, sid: bigint, block: bigint): Promise<bigint | undefined> {
+  const core = addresses.core!;
+  const controller = await client.readContract({ address: core, abi: coreAbi, functionName: "controller", blockNumber: block });
+  return client.readContract({ address: controller, abi: controllerAbi, functionName: "priceOf", args: [sid], blockNumber: block });
+}
+
 const tokenInfo = new Map<string, ExitTokenInfo>();
 
 async function exitTokenInfo(client: Client): Promise<ExitTokenInfo | undefined> {
@@ -110,11 +120,8 @@ async function exitTokenInfo(client: Client): Promise<ExitTokenInfo | undefined>
   if (token === zeroAddress) return undefined;
   const hit = tokenInfo.get(token);
   if (hit) return hit;
-  const [symbol, decimals] = await Promise.all([
-    client.readContract({ address: token, abi: erc20Abi, functionName: "symbol" }),
-    client.readContract({ address: token, abi: erc20Abi, functionName: "decimals" }),
-  ]);
-  const info = { symbol, decimals };
+  const decimals = await client.readContract({ address: token, abi: erc20Abi, functionName: "decimals" });
+  const info = { address: token, decimals };
   tokenInfo.set(token, info);
   return info;
 }
@@ -215,6 +222,19 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
     x.blockNumber === y.blockNumber ? Number(x.logIndex - y.logIndex) : x.blockNumber < y.blockNumber ? -1 : 1
   );
 
+  // exit token paid by the core to a credit seller, per transaction and seller
+  if (st.exit?.address) {
+    const token = st.exit.address;
+    await readSource(client, st, `xpay:${token.toLowerCase()}`, head, (fromBlock, toBlock) =>
+      client.getLogs({ address: token, event: transferEventAbi[0], args: { from: core }, fromBlock, toBlock })
+    );
+  }
+  const exitPaid = new Map<string, bigint>();
+  for (const t of st.exit?.address ? st.logs[`xpay:${st.exit.address.toLowerCase()}`] ?? [] : []) {
+    const k = `${t.transactionHash}:${String(t.args.to).toLowerCase()}`;
+    exitPaid.set(k, (exitPaid.get(k) ?? 0n) + (t.args.value ?? 0n));
+  }
+
   // coin burned per transaction: the Buyback event carries the eth spent only
   const burnedBy = new Map<string, bigint>();
   let burned = 0n;
@@ -232,6 +252,22 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
       .map(async (l) => {
         const m = await modeOf(client, l.transactionHash).catch(() => null);
         if (m) modes.set(l.transactionHash, m);
+      })
+  );
+
+  // listed price per Composed log
+  const listedAt = new Map<string, bigint>();
+  await Promise.all(
+    logs
+      .filter((l) => l.eventName === "Composed")
+      .map(async (l) => {
+        const k = `${l.transactionHash}:${Number(l.args.sid)}`;
+        let p = listedPrice.get(k);
+        if (p === undefined) {
+          p = await listedAtCompose(client, l.args.sid, l.blockNumber).catch(() => undefined);
+          if (p !== undefined) listedPrice.set(k, p);
+        }
+        if (p !== undefined) listedAt.set(k, p);
       })
   );
 
@@ -272,6 +308,8 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
     modes,
     prevSettings,
     exitToken: st.exit,
+    exitPaid,
+    listedAt,
   });
   // logs arrive oldest first; the feed is newest first
   return (lastGood = { feed: rows.reverse(), stats, credits, statements });

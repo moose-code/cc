@@ -121,7 +121,7 @@ export function LiveStatement({ id }: { id: number }) {
                     {exited && (
                       <HistRow
                         label="redeemed"
-                        value="through the exit module"
+                        value="by redemption"
                         note={`received ${formatExit(exited.received, xToken)}`}
                         block={exited.block}
                         tx={exited.tx}

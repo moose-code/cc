@@ -6,6 +6,9 @@ const addr = (v?: string): Address | undefined =>
 
 // NEXT_PUBLIC_CHAIN_ID=31337 selects the local anvil fork (foundry chain).
 // Every other value selects mainnet.
+// Display symbol of the exit token, used for every user-facing reference to it.
+export const EXIT_TOKEN_SYMBOL = "$BALANCE" as const;
+
 export const isLocal = process.env.NEXT_PUBLIC_CHAIN_ID === "31337";
 
 export const rpcUrl =

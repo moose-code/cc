@@ -11,9 +11,9 @@ import { engineDeployed } from "@/lib/config";
 import { useNow } from "@/lib/live";
 import { useBlockTs } from "@/lib/engine";
 import { useState } from "react";
+import Link from "next/link";
 import { relTime, eth, evmNowTx } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
-import { useTokenMeta } from "@/lib/art";
 import { Addr } from "./Addr";
 
 const CHIP_COLOR: Record<FeedKind, string> = {
@@ -23,15 +23,15 @@ const CHIP_COLOR: Record<FeedKind, string> = {
   listed: "var(--listed)",
   sold: "var(--sold)",
   burn: "var(--burn)",
-  exit: "var(--exit)",
+  redeemed: "var(--redeemed)",
   price: "var(--price)",
   admin: "var(--muted2)",
 };
 
 const PAGE = 100; // rows per page of the feed
 
-const BOLD = new Set<FeedKind>(["composed", "listed", "sold", "exit"]);
-const HL = new Set<FeedKind>(["composed", "listed", "sold", "burn", "exit"]);
+const BOLD = new Set<FeedKind>(["composed", "listed", "sold", "redeemed"]);
+const HL = new Set<FeedKind>(["composed", "listed", "sold", "burn", "redeemed"]);
 
 export function EngineFeed() {
   const { data: feed } = useFeed();
@@ -119,14 +119,14 @@ function Row({ e, now }: { e: FeedEvent; now: number }) {
           {e.tile?.kind === "credit" && <CreditTile id={e.tile.id} />}
           {e.tile?.kind === "statement" && <StatementTile id={e.tile.id} />}
           <span className="label">
-            {BOLD.has(e.kind) ? <b>{e.detail}</b> : e.detail}
+            {e.link && <Link href={e.link.href}>{e.link.text}</Link>}
+            {e.detail && (BOLD.has(e.kind) ? <b>{e.detail}</b> : e.detail)}
             {e.addr && (
               <>
                 {" "}
                 <Addr address={e.addr} />
               </>
             )}
-            {e.format != null && e.tile?.kind === "statement" && <FormatName sid={e.tile.id} index={e.format} />}
           </span>
         </div>
       </td>
@@ -142,10 +142,4 @@ function Row({ e, now }: { e: FeedEvent; now: number }) {
       </td>
     </tr>
   );
-}
-
-// " · format Consolidated": the name is the Format attribute of the statement's tokenURI.
-function FormatName({ sid, index }: { sid: number; index: number }) {
-  const { data } = useTokenMeta("statement", sid);
-  return <span className="muted"> · format {data?.attrs.Format ?? index}</span>;
 }
