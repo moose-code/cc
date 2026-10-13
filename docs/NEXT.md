@@ -4,11 +4,11 @@ kept by the director. an item is built only where its state says built. the owne
 
 ## Issue #3: credit lookup helper, proposed work spec (2026-10-13)
 
-Owner request (FLOW 88): review [issue #3](https://github.com/ripe0x/cc/issues/3) and spec the work; keep the contract simple, minimal and focused. This is a specification, not implementation or deployment approval. It is optional work outside the engine's launch prerequisites.
+Owner request (FLOW 88, 89, 90): review [issue #3](https://github.com/ripe0x/cc/issues/3) and spec the work; keep the contract simple, minimal and focused. This is a specification, not implementation or deployment approval. It is optional work outside the engine's launch prerequisites.
 
 ### Scope
 
-Build one standalone `CreditScoreLens` with four read-only functions. Its only job is to translate a credit id into the source scorer's inputs. The engine continues reading its source contracts directly.
+Build one standalone `CreditScoreLens` with five read-only functions. It translates credit ids into the source scorer's inputs and exposes the source's stored statement score. The engine continues reading its source contracts directly.
 
 ```solidity
 function scoreOfId(uint256 id) external view returns (uint256);
@@ -17,26 +17,30 @@ function rarityOfId(uint256 id) external view returns (uint256);
 function traitsOfId(uint256 id) external view returns (
     uint256 mask, uint256 active, uint256 occupied, uint256 eights, uint256 band
 );
+function statementScoreOf(uint256 statementId) external view returns (uint256);
 error UnknownCredit(uint256 id);
 ```
 
-Use two internal address constants, with no constructor arguments:
+Use three internal address constants, with no constructor arguments:
 
 - Credits: `0x97630aA70AB14ed9883B41dAfccBc11349723043`.
 - CreditScore: `0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7`.
+- Statements: `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b`.
 
 No owner, mutable storage, proxy, setters, events, payable functions, token receiver, cache, pricing logic, score math, extra batches or combined detail response. Fixed mainnet dependencies are the entire configuration. A different source deployment needs a different helper deployment.
 
 ### Exact behavior
 
 1. One internal input reader gets `Credits.timestampOf(id)`. If zero, revert `UnknownCredit(id)`; otherwise read `Credits.seedOf(id)`. Mint requires a nonzero timestamp and burn retains both mappings, so this rejects never-minted ids without excluding burned credits. Do not call `ownerOf`, which would reject burned credits.
-2. Single methods forward those inputs to the respective `CreditScore.scoreOf`, `rarityOf` or `traitsOf`. Return source values unchanged. Score units are ten-thousandths of a point: `1_324_012` means `132.4012`, range `800_000` to `8_000_000`. Rarity is the source's summed trait points, not a percentile or the score. Traits retain the source tuple order and numeric values; labels and formatting belong in the client.
+2. Single credit methods forward those inputs to the respective `CreditScore.scoreOf`, `rarityOf` or `traitsOf`. Return source values unchanged. Score units are ten-thousandths of a point: `1_324_012` means `132.4012`, range `800_000` to `8_000_000`. Rarity is the source's summed trait points, not a percentile or the score. Traits retain the source tuple order and numeric values; labels and formatting belong in the client.
 3. `scoresOf` loops through the same internal score reader, preserving order and duplicates. Empty input returns an empty array. Any unknown id or source revert reverts the whole call; there is no partial-success sentinel. Do not call `this.scoreOfId` inside the loop.
 4. No arbitrary contract batch cap. Work is linear in input length; callers chunk to their RPC's gas/response limit. Measure 1, 10 and 80 ids during implementation before giving client batch guidance. One RPC round trip still involves three source calls per credit, not a cheaper scoring algorithm.
 
-### Remove the redundant statement feature
+### Statement scores
 
-Do not add a statement dependency or rating wrapper. `Statements.creditScoreOf(uint256)` at `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b` already returns the stored total in the same units, including every overprinted page. It returns zero for never-composed ids and retains records for pages burned into other pages. Clients needing current ownership must query it separately.
+Owner requested statement support (FLOW 90), superseding the initial recommendation to omit the wrapper. Add only `statementScoreOf(statementId)`, a direct call to `Statements.creditScoreOf(statementId)`. Return the source value unchanged, in ten-thousandths of a point. This is the total score of all credits represented by that page, including every overprinted page, not an average and not limited to one page's 80 credits.
+
+Preserve the source's historical behavior: never-composed ids return zero; pages burned into other pages retain their last stored score. The view does not assert current ownership or redeemability. Clients needing those properties query ownership separately. Read on every call so later overprints are reflected; no cache, id enumeration, statement batch, or local summation.
 
 Summing only `Statements.composedFrom(id)` would omit overprints. Recursively rescoring all history duplicates existing source accounting and makes a constant-size read grow with statement history.
 
@@ -44,12 +48,14 @@ Summing only `Statements.composedFrom(id)` would omit overprints. Recursively re
 
 Deliver `src/CreditScoreLens.sol`, a narrow interface if required by the interface generator, `test/CreditScoreLens.t.sol`, one isolated deployment script, and a short consumer example in `docs/INTEGRATION.md`. Keep scorer-only rarity and trait declarations local to this helper or its narrow interface; do not expand engine interfaces for this feature. Generate the helper interface using the repository tool. Avoid changes to Core, CoreLib, CoreLens, controller, engine deploy scripts, launch config, or engine bytecode pins.
 
-The test file uses a small standalone mainnet fork fixture at block `26158000`, not the engine fixture. Real Credits and CreditScore only. Before implementing, check their runtime hashes at that pin against the verified sources, plus `Credits.isSealed()` and `Statements.score()` against the documented scorer address.
+The test file uses a small standalone mainnet fork fixture at block `26158000`, not the engine fixture. Real Credits, CreditScore and Statements only. Before implementing, check their runtime hashes at that pin against the verified sources, plus `Credits.isSealed()` and `Statements.score()` against the documented scorer address.
 
 - Differential checks: singles, rarity and all five traits equal direct source reads for multiple minted ids; scores stay in the source range and preserve full precision. Include credit #1 and bounded fuzz over the sealed edition's minted id range.
 - Historical checks: score, rarity and traits of a real burned credit equal their source values; burning a real held credit on the fork leaves helper results unchanged. A transfer likewise leaves them unchanged.
 - Batch checks: empty, one, out-of-order ids, duplicates, 80 ids, and a batch with a never-minted id in the middle. Compare each output with a direct source read.
-- Failure checks: id `0`, `supply + 1`, and `type(uint256).max` revert with `UnknownCredit(id)` across every single method and the batch.
+- Failure checks: id `0`, `supply + 1`, and `type(uint256).max` revert with `UnknownCredit(id)` across every single credit method and the credit batch.
+
+- Statement checks: compare `statementScoreOf` with the direct source for composed, overprinted and absorbed (burned) pages. A real overprint must update the base score by the top page's total; the helper reflects it immediately and the absorbed page remains queryable. Verify ids `0`, `Statements.supply() + 1` and `type(uint256).max` return zero. Statement totals retain full precision and are not constrained to the single-credit score range.
 
 Verify implementation with `forge build` and only `forge test --match-path test/CreditScoreLens.t.sol`, using the repository RPC environment. Record runtime size and measured deployment gas; the issue's "few hundred thousand gas" is an estimate, not an accepted budget or measurement. Commit the verified implementation, then independently review that immutable commit before deployment. Deployment requires a separate owner instruction and should record chain, addresses, source/runtime hashes, compiler settings, verified source and a direct-versus-helper read. This spec does not freeze or accept the engine candidate.
 
