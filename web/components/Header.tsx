@@ -9,8 +9,8 @@ const LOGO_BARS = ["#0a9b41", "#16b6d8", "#f5c400", "#ff0080"];
 
 // feed lives on the logo; compose sits at the end of the row.
 const NAV = [
-  { href: "/statements", label: "statements" },
   { href: "/credits", label: "credits" },
+  { href: "/statements", label: "statements" },
   { href: "/sell", label: "sell" },
   { href: "/compose", label: "compose" },
 ];
