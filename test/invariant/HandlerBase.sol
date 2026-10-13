@@ -106,7 +106,7 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_MIGRATE = 32;
     // anyone puts credits the core holds without a record into the eth pile
     uint8 internal constant A_ADOPT = 33;
-    // the owner pauses and resumes sales in the sale controller
+    // the owner pauses and resumes sales on the core
     uint8 internal constant A_PAUSE = 34;
     // the owner refreshes the stored unit from the module and releases part of the redeem burn reserve
     uint8 internal constant A_REFRESH_UNIT = 35;

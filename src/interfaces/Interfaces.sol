@@ -46,6 +46,8 @@ interface ICoreViews {
     /// read it
     function floorRate() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
+    /// the seconds a held statement has aged outside every pause. reverts `NotForSale` when the core does not hold it
+    function statementAge(uint256 sid) external view returns (uint256);
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose
     function ratingOf(uint256 sid) external view returns (uint256);
     function heldStatements() external view returns (uint256[] memory sids);

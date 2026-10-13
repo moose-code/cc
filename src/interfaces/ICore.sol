@@ -58,6 +58,7 @@ interface ICore {
     error OnlyOwner();
     error OnlyPendingOwner();
     error OnlyPoolManager();
+    error Paused();
     error PotTooSmall();
     error Reentrancy();
     error Retired();
@@ -94,6 +95,7 @@ interface ICore {
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
     event OwnershipTransferred(address indexed from, address indexed to);
+    event PausedSet(bool paused);
     event RateSet(uint256 rate);
     event RedeemBurnReleased(uint256 amount);
     event SettingsSet(Settings settings);
@@ -154,6 +156,9 @@ interface ICore {
     function minCcToChoose() external view returns (uint96);
     function onERC721Received(address, address, uint256, bytes memory) external view returns (bytes4);
     function owner() external view returns (address);
+    function paused() external view returns (bool);
+    function pausedSince() external view returns (uint40);
+    function pausedTotal() external view returns (uint40);
     function pendingOwner() external view returns (address);
     function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids);
     function pileSize() external view returns (uint256);
@@ -177,11 +182,13 @@ interface ICore {
     function setController(address c) external;
     function setCreditCostToPotBps(uint16 v) external;
     function setMinCcToChoose(uint96 v) external;
+    function setPaused(bool on) external;
     function setRate(uint256 rate) external;
     function setSettings(Settings memory) external;
     function setSuccessor(address) external;
     function settings() external view returns (Settings memory);
     function skim() external;
+    function statementAge(uint256 sid) external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     function successor() external view returns (address);
     function successorLocked() external view returns (bool);

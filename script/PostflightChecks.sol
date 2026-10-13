@@ -298,12 +298,6 @@ abstract contract PostflightChecks is PostflightPool {
         } else {
             _check("controller: anchor is 10_000", anchored, vm.toString(k.anchorBps()));
         }
-        // sales are open until the owner pauses them
-        if (_settingsChanged()) {
-            _warn("warn: controller is not paused", !k.paused(), "SETTINGS_CHANGED=1, the owner paused sales since launch");
-        } else {
-            _check("controller: not paused", !k.paused(), k.paused() ? "paused" : "not paused");
-        }
         bool creditSame = k.creditSaleOn() == c.credit.saleOn && k.creditWindow() == c.credit.window
             && k.creditFloorBps() == c.credit.floorBps && k.creditStartBps() == c.credit.startBps
             && k.refScore() == c.credit.refScore;
@@ -382,6 +376,12 @@ abstract contract PostflightChecks is PostflightPool {
                 creditSame,
                 "creditCostToPotBps chosenComposeOn minCcToChoose"
             );
+        }
+        // sales are open until the owner pauses them
+        if (_settingsChanged()) {
+            _warn("warn: core is not paused", !core.paused(), "SETTINGS_CHANGED=1, the owner paused sales since launch");
+        } else {
+            _check("core: not paused", !core.paused(), core.paused() ? "paused" : "not paused");
         }
         _info(
             "core: rate cap", string.concat("rateCap ", vm.toString(live.rateCap))

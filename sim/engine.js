@@ -298,7 +298,7 @@ export class Core {
     this.creditToBuyback = 0; // cumulative credit sale eth booked to the buyback pot
     this.anchorStored = 10000; // the controller's storedAnchorBps: the anchor at anchorTime, bps of the reference
     this.anchorTime = t0;
-    this.pauses = []; // the controller's pause windows {start, end} in seconds, end null while open
+    this.paused = false; this.pausedSince = 0; this.pausedTotal = 0; // the Core's pause clock: the flag, the start of the open pause, the seconds of closed pauses
     this.feeToBuyback = 0; // cumulative swap fee eth sent to the buyback pot by feeToBuybackBps
     this.feeToRedeemBurn = 0; // cumulative swap fee eth sent to the redeem burn reserve by feeToRedeemBurnBps
     this.redeemBurnMoved = 0; // cumulative eth moved from the reserve to the buyback pot by redemptions
@@ -391,7 +391,7 @@ export class Core {
     this.funded = this.ethPot * W >= this.rateAtCheckpoint;
   }
   // owner: setSettings. validates, checkpoints both rates first, then applies at once. patch.rate is setRate.
-  // the patch may also hold `paused` (ControllerV1.setPaused: true opens a pause window, false closes it), controller settings (markupBps, startCapBps, fastDecayBpsPerHour, kneeBps, slowDecayBpsPerHour, floorBps, anchorHalfLife, anchorMinCost), the credit settings (CREDIT) and anchorBps (setAnchorBps): the controller reads them live.
+  // the patch may also hold `paused` (Core.setPaused: true opens a pause, false closes it), controller settings (markupBps, startCapBps, fastDecayBpsPerHour, kneeBps, slowDecayBpsPerHour, floorBps, anchorHalfLife, anchorMinCost), the credit settings (CREDIT) and anchorBps (setAnchorBps): the controller reads them live.
   // a new anchorHalfLife stores the anchor now first, and a start cap below the anchor now lowers the anchor to the cap
   setSettings(patch, now) {
     const rate = patch.rate;
@@ -473,7 +473,7 @@ export class Core {
   // compose 80 credits (compose() and composeChosen() share this path). repays nothing: cost is the sum of their costs. returns the statement, held by the
   // Core from t0 = composedAt (asked at age zero, so at the start price). rating is the sum of the credits' scores, stored at compose (FLOW 84)
   compose(costSum, now, rating = 0) {
-    return { cost: costSum, t0: now, rating };
+    return { cost: costSum, t0: now, rating, pauseMark: this.pausedNow(now) };
   }
   // ControllerV1.referenceOf: the price reference of a statement, max(cost, floorRate * rating / refScore), where the
   // floor rate is the larger of the climbed price state and the decayed peak. ratings and scores are in points here,
@@ -496,33 +496,28 @@ export class Core {
     const c = this.c;
     return Math.min(Math.floor((this.anchorAt(now) * c.markupBps) / BPS), c.startCapBps);
   }
-  // ControllerV1.setPaused: a pause opens a window at `now`, a resume closes it. a call that repeats the state opens no window
+  // Core.setPaused: a pause records its start, a resume adds its length to pausedTotal. a call that repeats the state changes nothing
   setPaused(v, now) {
-    const open = this.pauses.length > 0 && this.pauses[this.pauses.length - 1].end === null;
-    if (v === open) return;
-    if (v) this.pauses.push({ start: now, end: null });
-    else this.pauses[this.pauses.length - 1].end = now;
+    if (v === this.paused) return;
+    this.paused = v;
+    if (v) this.pausedSince = now;
+    else { this.pausedTotal += now - this.pausedSince; this.pausedSince = 0; }
   }
-  isPausedAt(now) { return this.pauses.some((w) => now >= w.start && (w.end === null || now < w.end)); }
-  // the seconds of [from, to] inside the pause windows (an open window counts to `to`)
-  pausedBetween(from, to) {
-    let total = 0;
-    for (const w of this.pauses) {
-      const s = Math.max(w.start, from), e = Math.min(w.end === null ? to : w.end, to);
-      if (e > s) total += e - s;
-    }
-    return total;
-  }
+  isPaused() { return this.paused; }
+  // Core.pausedNow: the paused seconds from the start to `now`
+  pausedNow(now) { return this.pausedTotal + (this.paused ? now - this.pausedSince : 0); }
+  // Core.statementAge: the time since the compose minus the paused seconds since then. `pauseMark` is pausedNow at the compose
+  statementAge(st, now) { return Math.max(0, now - st.t0 - (this.pausedNow(now) - (st.pauseMark || 0))); }
   // ControllerV1._ask(ref, age): askBps at the age of the statement from the current anchor and settings, in wei of `ref`, the statement's price reference.
-  // the age is the time since the compose outside the pause windows. the price is relative to the reference, the larger of the cost and the rating priced at the eth
+  // the age is `statementAge`. the price is relative to the reference, the larger of the cost and the rating priced at the eth
   // bid rate, not to the market price of the statement's parts
-  statementPrice(ref, listedAt, now) {
-    return (ref * askBps(this.c, this.startBps(now), Math.max(0, now - listedAt - this.pausedBetween(listedAt, now)))) / BPS;
+  statementPrice(ref, st, now) {
+    return (ref * askBps(this.c, this.startBps(now), this.statementAge(st, now))) / BPS;
   }
   // the Core's hard floor: no sale below cost * saleFloorBps / 10000
   floorPrice(st) { return (st.cost * this.s.saleFloorBps) / BPS; }
   // ControllerV1._quote: the curve price, never below the hard floor. the anchor reads this price
-  curvePrice(st, now) { return Math.max(this.statementPrice(this.reference(st, now), st.t0, now), this.floorPrice(st)); }
+  curvePrice(st, now) { return Math.max(this.statementPrice(this.reference(st, now), st, now), this.floorPrice(st)); }
   // the unit the balance token bid, the redemption value and the credit baseline use: the lower of the stored and the live unitPerPoint
   unit() { return Math.min(this.xpPerPoint, this.xpLive); }
   // ControllerV1._value: the redemption value of the statement in eth, rating * min(stored, live unitPerPoint) at the balance token pool price. 0 while the pool key is unset or no module is set
@@ -553,7 +548,7 @@ export class Core {
   // (or has a zero reference).
   // returns the booking, or null when the Core would revert
   buy(st, now) {
-    if (this.isPausedAt(now)) return null;
+    if (this.isPaused()) return null;
     const curve = this.curvePrice(st, now), price = Math.max(curve, this.valueFloor(st));
     const res = this.sellTo(st, price, now);
     if (!res) return null;
@@ -593,7 +588,7 @@ export class Core {
   }
   // ControllerV1.buyCredit: pays creditPrice now through sellCreditTo. null while the sale is off or sales are paused, or when the Core would revert
   buyCredit(cr, now) {
-    if (!this.cr.creditSaleOn || this.isPausedAt(now)) return null;
+    if (!this.cr.creditSaleOn || this.isPaused()) return null;
     const price = this.creditPrice(cr, now), res = this.sellCreditTo(cr, price, now);
     return res ? Object.assign({ price }, res) : null;
   }
@@ -641,7 +636,7 @@ export class Core {
   // ControllerV1.atFloor: the curve price (without the hard floor and the redemption value floor) has reached its floor, floorBps of the reference
   atFloor(st, now) {
     const ref = this.reference(st, now);
-    return this.statementPrice(ref, st.t0, now) <= ((ref * this.c.floorBps) / BPS) * (1 + 1e-9);
+    return this.statementPrice(ref, st, now) <= ((ref * this.c.floorBps) / BPS) * (1 + 1e-9);
   }
   // Core.redeemStatement preconditions: a module is set, balanceMode is 1 or 2, and the statement's curve price has reached its floor
   redeemReady(st, now) {
@@ -1009,7 +1004,7 @@ export function simulate(userParams = {}) {
     times.sort((a, b) => a - b);
     for (const ta of times) {
       const wtp = Pe * p.creditWtpMult * Math.exp(p.askSigma * normal(rng));
-      if (core.isPausedAt(ta)) { T.creditMiss++; continue; }
+      if (core.isPaused()) { T.creditMiss++; continue; }
       let best = -1, bestPrice = Infinity;
       for (let i = 0; i < pile.length; i++) {
         if (pile[i].t0 > ta) break;
@@ -1045,7 +1040,7 @@ export function simulate(userParams = {}) {
     const waits = p.buyerWaits === 'floor';
     for (const ta of times) {
       T.stmtArrivals++;
-      if (core.isPausedAt(ta)) { T.stmtMiss++; continue; } // ControllerV1.buy reverts Paused
+      if (core.isPaused()) { T.stmtMiss++; continue; } // ControllerV1.buy reverts Paused
       const wtp = interp(WTP_Q, rng()) * p.wtpMult * p.PAGE * Pe;
       const opts = [];
       for (const st of unbid) {

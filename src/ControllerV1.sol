@@ -31,10 +31,11 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// current anchor at every call, so held statements follow it.
 /// `buy` sells a held statement at once at the asking price. `atFloor(sid)` is true once the statement's curve price has
 /// reached its floor, `floorBps` of the reference.
-/// the owner can pause sales (`setPaused`). while paused `buy` reverts `Paused`, `priceOf` answers, and the age of a
-/// statement excludes every paused second, so the age of a held statement stops advancing for the length of a pause
-/// and continues from the same age at resume. the anchor decays with wall time in both states, so the start of the
-/// curve, and with it the asking price, can still fall in a pause while the anchor is above 10_000.
+/// the owner of the core can pause sales (`core.setPaused`). while paused the core reverts `Paused` in `sellTo` and
+/// `sellCreditTo`, so `buy` and `buyCredit` revert, and `priceOf` answers. the age of a statement is
+/// `core.statementAge`, which excludes every paused second, so the age of a held statement stops advancing for the
+/// length of a pause and continues from the same age at resume. the anchor decays with wall time in both states, so the
+/// start of the curve, and with it the asking price, can still fall in a pause while the anchor is above 10_000.
 /// it holds no funds between calls. its settings belong to the live owner of the core (`core.owner()`), there is no
 /// second owner. the core enforces its own hard floor, `saleFloorBps` of cost, whatever this contract answers.
 /// once the owner sets the balance token pool (`setBalancePoolKey`), the asking price is also floored at the statement's
@@ -54,7 +55,6 @@ contract ControllerV1 is IController {
     error NotForSale();
     error Underpaid();
     error Reentrant();
-    error Paused();
     /// a credit sale door was called while the credit sale window is off
     error CreditSaleOff();
 
@@ -68,7 +68,6 @@ contract ControllerV1 is IController {
     event AnchorBpsSet(uint32 anchorBps);
     event AnchorHalfLifeSet(uint32 anchorHalfLife);
     event AnchorMinCostSet(uint128 anchorMinCost);
-    event PausedSet(bool paused);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
@@ -76,13 +75,6 @@ contract ControllerV1 is IController {
     event CreditWindowSet(uint32 creditWindow);
     event CreditFloorBpsSet(uint16 creditFloorBps);
     event CreditStartBpsSet(uint32 creditStartBps);
-
-    /// one pause of sales: a single storage slot
-    struct PauseWindow {
-        uint40 start;
-        uint40 end;
-        uint40 pausedBefore;
-    }
 
     ICoreViews public immutable CORE;
 
@@ -111,17 +103,12 @@ contract ControllerV1 is IController {
     /// the least statement cost, in wei, whose `buy` moves the anchor. 0 to 10 ether
     uint128 public anchorMinCost;
     bool private _busy;
-    /// whether sales are paused. launch value false
-    bool public paused;
     /// whether the balance token pool key is set. launch value false
     bool public balancePoolKeySet;
     /// the uniswap v4 pool of the balance token against native eth, used to price the redeemable value floor. native eth
     /// is `currency0` (the zero address) and the balance token is `currency1`, the only order a native eth pool sorts to.
     /// unset at launch
     PoolKey public balancePoolKey;
-    /// the pause windows in time order, disjoint. window `i` is paused from `start` until `end`. while `paused` is true the
-    /// last window is open and its `end` is 0. `pausedBefore` is the paused seconds of windows `0` to `i - 1`
-    PauseWindow[] private _pauses;
 
     /// whether pile credits are for sale from their acquisition time and compose waits for a credit's window to pass.
     /// launch value false
@@ -246,28 +233,6 @@ contract ControllerV1 is IController {
         emit AnchorMinCostSet(v);
     }
 
-    /// pauses or resumes sales at once. a call that repeats the current state changes nothing. a pause opens a window at
-    /// the current time and a resume closes it. each window costs one storage slot, and `priceOf` and `buy` read
-    /// `log2(windows)` slots of them
-    function setPaused(bool v) external onlyOwner {
-        if (v == paused) return;
-        paused = v;
-        uint256 n = _pauses.length;
-        if (v) {
-            uint256 closed;
-            if (n != 0) {
-                PauseWindow memory last = _pauses[n - 1];
-                closed = last.pausedBefore + last.end - last.start;
-            }
-            // forge-lint: disable-next-line(unsafe-typecast)
-            _pauses.push(PauseWindow(uint40(block.timestamp), 0, uint40(closed)));
-        } else {
-            // forge-lint: disable-next-line(unsafe-typecast)
-            _pauses[n - 1].end = uint40(block.timestamp);
-        }
-        emit PausedSet(v);
-    }
-
     /// sets the native eth / balance token pool whose sqrt price floors the asking price at a statement's redeemable value.
     /// `currency0` must be native eth (the zero address) and `currency1` the core's current balance token, the order a
     /// native eth pool sorts to. the pool must be initialized, so `_value` reads a live price at once. effective at once
@@ -361,16 +326,15 @@ contract ControllerV1 is IController {
     /// enter this, so a `saleFloorBps` above the curve floor does not block eligibility. the core reads it to gate a
     /// the balance side redemption
     function atFloor(uint256 sid) external view returns (bool) {
-        (bool held, uint256 cost, uint64 composedAt) = CORE.statementInfo(sid);
+        (bool held, uint256 cost,) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
         uint256 ref = _reference(cost, CORE.ratingOf(sid));
-        return _ask(ref, _age(composedAt)) <= ref * floorBps / BPS;
+        return _ask(ref, CORE.statementAge(sid)) <= ref * floorBps / BPS;
     }
 
     /// pays the asking price, gets the statement at once, and moves the anchor halfway to the sale price in bps of
     /// cost when the cost is at least `anchorMinCost`. the excess of `msg.value` is refunded to the caller last
     function buy(uint256 sid) external payable {
-        if (paused) revert Paused();
         if (_busy) revert Reentrant();
         _busy = true;
         (uint256 curve, uint256 cost, uint256 ref) = _quote(sid);
@@ -454,10 +418,9 @@ contract ControllerV1 is IController {
     }
 
     /// pays the sale price of credit `id`, gets the credit at once, and refunds the excess of `msg.value` last. reverts
-    /// `CreditSaleOff` while the sale is off and `Paused` while sales are paused
+    /// `CreditSaleOff` while the sale is off and, through the core, `Paused` while sales are paused
     function buyCredit(uint256 id) external payable {
         if (!creditSaleOn) revert CreditSaleOff();
-        if (paused) revert Paused();
         if (_busy) revert Reentrant();
         _busy = true;
         uint256 price = creditPrice(id);
@@ -470,10 +433,9 @@ contract ControllerV1 is IController {
     /// pays the sale prices of `ids` in order, gets the credits, and refunds the excess last. each credit is priced at
     /// the state left by the previous sale. the eth backstop reads the floor rate, which a credit sale leaves unchanged
     /// for the rest of the block, so within one batch a credit's price moves only through its own cost, baseline and age.
-    /// reverts `CreditSaleOff` while the sale is off and `Paused` while sales are paused
+    /// reverts `CreditSaleOff` while the sale is off and, through the core, `Paused` while sales are paused
     function buyCredits(uint256[] calldata ids) external payable {
         if (!creditSaleOn) revert CreditSaleOff();
-        if (paused) revert Paused();
         if (_busy) revert Reentrant();
         _busy = true;
         uint256 n = ids.length;
@@ -492,11 +454,10 @@ contract ControllerV1 is IController {
     /// start of the reference by the age curve, floored at the core hard floor `saleFloorBps` of cost
     function _quote(uint256 sid) private view returns (uint256 price, uint256 cost, uint256 ref) {
         bool held;
-        uint64 composedAt;
-        (held, cost, composedAt) = CORE.statementInfo(sid);
+        (held, cost,) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
         ref = _reference(cost, CORE.ratingOf(sid));
-        price = _ask(ref, _age(composedAt));
+        price = _ask(ref, CORE.statementAge(sid));
         uint256 floor = cost * ICoreSale(address(CORE)).settings().saleFloorBps / BPS;
         if (price < floor) price = floor;
     }
@@ -542,31 +503,6 @@ contract ControllerV1 is IController {
         uint256 p = sqrtPriceX96;
         priceWei = FullMath.mulDiv(FullMath.mulDiv(baseUnits, q, p), q, p);
         priced = true;
-    }
-
-    /// the age of a statement composed at `composedAt`: the seconds from then to now outside every pause window. a
-    /// statement composed inside a window ages from the end of that window
-    function _age(uint256 composedAt) private view returns (uint256) {
-        uint256 n = _pauses.length;
-        uint256 wall = block.timestamp - composedAt;
-        if (n == 0) return wall;
-        return wall - (_pausedUntil(block.timestamp, n) - _pausedUntil(composedAt, n));
-    }
-
-    /// the paused seconds from time 0 to `t`, with `t` at most now and `n` the window count. a binary search finds the
-    /// last window that starts at or before `t`. that window adds its clipped length to `pausedBefore`
-    function _pausedUntil(uint256 t, uint256 n) private view returns (uint256) {
-        uint256 lo;
-        uint256 hi = n;
-        while (lo < hi) {
-            uint256 mid = (lo + hi) / 2;
-            if (_pauses[mid].start <= t) lo = mid + 1;
-            else hi = mid;
-        }
-        if (lo == 0) return 0;
-        PauseWindow memory w = _pauses[lo - 1];
-        uint256 end = ((paused && lo == n) || w.end > t) ? t : w.end;
-        return w.pausedBefore + end - w.start;
     }
 
     /// with `cost` at least `anchorMinCost`, a sale price in bps of the reference (rounded up) above the anchor sets the

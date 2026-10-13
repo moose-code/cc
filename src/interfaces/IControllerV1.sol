@@ -29,7 +29,6 @@ interface IControllerV1 {
     error CreditSaleOff();
     error NotForSale();
     error OnlyOwner();
-    error Paused();
     error Reentrant();
     error Underpaid();
 
@@ -47,7 +46,6 @@ interface IControllerV1 {
     event FloorBpsSet(uint16 floorBps);
     event KneeBpsSet(uint32 kneeBps);
     event MarkupBpsSet(uint16 markupBps);
-    event PausedSet(bool paused);
     event RefScoreSet(uint32 refScore);
     event SlowDecayBpsPerHourSet(uint16 slowDecayBpsPerHour);
     event StartCapBpsSet(uint32 startCapBps);
@@ -77,7 +75,6 @@ interface IControllerV1 {
     function markupBps() external view returns (uint16);
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
     function pastWindow(uint64 acquiredAt) external view returns (bool);
-    function paused() external view returns (bool);
     function priceOf(uint256 sid) external view returns (uint256 price);
     function refScore() external view returns (uint32);
     function referenceOf(uint256 sid) external view returns (uint256);
@@ -93,7 +90,6 @@ interface IControllerV1 {
     function setFloorBps(uint16 v) external;
     function setKneeBps(uint32 v) external;
     function setMarkupBps(uint16 v) external;
-    function setPaused(bool v) external;
     function setRefScore(uint32 v) external;
     function setSlowDecayBpsPerHour(uint16 v) external;
     function setStartCapBps(uint32 v) external;

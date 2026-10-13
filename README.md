@@ -48,7 +48,7 @@ five contracts are ours. the artcoins v2 stack is live on mainnet (`script/confi
 |---|---|
 | Core | custody and every rule: pots, bid, the pile, doors, compose, `composeChosen`, `sellTo`, `sellCreditTo`, redeem, buyback, settings, owner doors, locks |
 | CoreLib | library of the Core called by delegatecall: settings write, bid math, the buyback swap, the balanceToken bid, `adopt`, `rescueCoin`, `rescueNft`, `migrate` |
-| ControllerV1 | statement sale: `priceOf`, `buy`, the price reference, the anchor, the pause, the balanceToken pool key for the redemption value floor. credit sale: `creditPrice`, `buyCredit`, `buyCredits` |
+| ControllerV1 | statement sale: `priceOf`, `buy`, the price reference, the anchor, the balanceToken pool key for the redemption value floor. credit sale: `creditPrice`, `buyCredit`, `buyCredits` |
 | CoreLens | read only view of the Core, the controller and the fee router in one call |
 | FeeRouter | bounty recipient of the pool: empty `receive`, `flush()` to the payees and the engine |
 | ArtCoinsTokenV2 and the v2 stack | the coin and its factory, hook, locker, escrow and anti sniper module (`script/config/v2-mainnet.json`) |
@@ -60,8 +60,8 @@ each runtime contract stays under 24,576 bytes (`forge build --sizes`).
 | caller | doors |
 |---|---|
 | anyone | `sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen` (when open), `sellForBalance` (balanceMode 2), `redeemStatement`, `buyback`, `skim`, `ControllerV1.buy`, `ControllerV1.buyCredit` and `buyCredits` (when the credit sale is on), `FeeRouter.flush` |
-| owner of the Core | `setSettings`, `setRate`, `setController`, `setBalanceModule`, `refreshUnitPerPoint`, `releaseRedeemBurn`, `setCreditCostToPotBps`, `setChosenComposeOn`, `setMinCcToChoose`, `addTarget`, `removeTarget`, `rescueCoin`, `rescueNft`, `setSuccessor`, `migrate`, two step `transferOwnership` |
-| owner on the controller | the sale settings, `setRefScore`, the credit sale settings (`setCreditSaleOn`, `setCreditWindow`, `setCreditFloorBps`, `setCreditStartBps`), `setAnchorBps`, `setBalancePoolKey`, `setPaused` (blocks `buy` and `buyCredit`, composing, the bid, redemptions and buybacks continue) |
+| owner of the Core | `setSettings`, `setRate`, `setController`, `setBalanceModule`, `refreshUnitPerPoint`, `releaseRedeemBurn`, `setCreditCostToPotBps`, `setChosenComposeOn`, `setMinCcToChoose`, `setPaused` (blocks `sellTo` and `sellCreditTo`, so `buy` and `buyCredit` revert; composing, the bid, redemptions and buybacks continue), `addTarget`, `removeTarget`, `rescueCoin`, `rescueNft`, `setSuccessor`, `migrate`, two step `transferOwnership` |
+| owner on the controller | the sale settings, `setRefScore`, the credit sale settings (`setCreditSaleOn`, `setCreditWindow`, `setCreditFloorBps`, `setCreditStartBps`), `setAnchorBps`, `setBalancePoolKey` |
 | owner of the router | `setEngine`, `setPayees`, `setSplitStart` |
 | locks, one way | `lockController`, `lockBalanceModule`, `lockTargets`, `lockSuccessor` on the Core, `lock` on the router |
 

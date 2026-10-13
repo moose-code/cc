@@ -103,13 +103,13 @@ contract RedeemTimingTest is RedeemBase {
         uint256 sid = _composeOnce().sid;
         // pause before the price reaches cost
         vm.prank(owner);
-        ctl.setPaused(true);
+        core.setPaused(true);
         _warp(300 hours);
         assertFalse(ctl.atFloor(sid), "a pause holds the age, so the price stays above cost");
         vm.expectRevert(ICore.NotEligible.selector);
         core.redeemStatement(sid);
         vm.prank(owner);
-        ctl.setPaused(false);
+        core.setPaused(false);
         _makeEligible(sid);
         core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));

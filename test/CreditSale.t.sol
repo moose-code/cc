@@ -549,11 +549,11 @@ contract CreditSaleTest is Fixture {
     function test_pause_blocksBuy() public {
         uint256[] memory ids = _armCostGoverns(1);
         vm.prank(owner);
-        ctl.setPaused(true);
+        core.setPaused(true);
         uint256 price = ctl.creditPrice(ids[0]);
         vm.deal(buyer, price);
         vm.prank(buyer);
-        vm.expectRevert(IControllerV1.Paused.selector);
+        vm.expectRevert(ICore.Paused.selector);
         ctl.buyCredit{value: price}(ids[0]);
     }
 
@@ -563,16 +563,16 @@ contract CreditSaleTest is Fixture {
         _warp(ctl.creditWindow());
         uint256 total = ctl.creditPrice(ids[0]) + ctl.creditPrice(ids[1]);
         vm.prank(owner);
-        ctl.setPaused(true);
+        core.setPaused(true);
         vm.deal(buyer, total);
         vm.prank(buyer);
-        vm.expectRevert(IControllerV1.Paused.selector);
+        vm.expectRevert(ICore.Paused.selector);
         ctl.buyCredits{value: total}(ids);
         assertEq(core.pileSize(), 2, "nothing moved while paused");
 
         // the window clock advanced during the pause: resume and the sale works
         vm.prank(owner);
-        ctl.setPaused(false);
+        core.setPaused(false);
         vm.prank(buyer);
         ctl.buyCredits{value: total}(ids);
         assertEq(core.pileSize(), 0, "the batch sells after resume");

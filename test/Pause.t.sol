@@ -1,36 +1,35 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Prod} from "./utils/Prod.sol";
-import {Vm} from "forge-std/Vm.sol";
-import {SaleBase, SaleShapeBase} from "./Sale.t.sol";
-import {Sale} from "../src/interfaces/Interfaces.sol";
+import {SaleShapeBase} from "./Sale.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {StatementInfoStub} from "./standins/StatementInfoStub.sol";
 
-/// the owner pause of the sale controller on the live fork: `buy` refuses while paused, `priceOf` answers, the age a
-/// statement's price falls with excludes every paused second, composing and the bid are unaffected
+/// the owner pause of the Core on the live fork: `sellTo` and `sellCreditTo` revert `Paused`, so `buy` and `buyCredit`
+/// refuse, `priceOf` answers, the age a statement's price falls with excludes every paused second, composing, the bids
+/// and redemptions are unaffected
 contract PauseTest is SaleShapeBase {
     address internal buyer = address(0xB0B);
 
     function _setPaused(bool v) internal {
         vm.prank(owner);
-        ctl.setPaused(v);
+        core.setPaused(v);
     }
 
     function test_launchValueIsUnpaused() public view {
-        assertFalse(ctl.paused());
+        assertFalse(core.paused());
+        assertEq(core.pausedSince(), 0);
+        assertEq(core.pausedTotal(), 0);
     }
 
     function test_setPaused_onlyTheLiveOwner() public {
         vm.prank(buyer);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setPaused(true);
+        vm.expectRevert(ICore.OnlyOwner.selector);
+        core.setPaused(true);
         vm.prank(keeper);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setPaused(false);
-        assertFalse(ctl.paused());
+        vm.expectRevert(ICore.OnlyOwner.selector);
+        core.setPaused(false);
+        assertFalse(core.paused());
 
         address heir = address(0x4E12);
         vm.prank(owner);
@@ -38,33 +37,40 @@ contract PauseTest is SaleShapeBase {
         vm.prank(heir);
         core.acceptOwnership();
         vm.prank(owner);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setPaused(true);
+        vm.expectRevert(ICore.OnlyOwner.selector);
+        core.setPaused(true);
         vm.prank(heir);
-        ctl.setPaused(true);
-        assertTrue(ctl.paused(), "the new owner pauses");
+        core.setPaused(true);
+        assertTrue(core.paused(), "the new owner pauses");
     }
 
     function test_setPaused_eventAndNoOpRepeats() public {
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.PausedSet(true);
+        vm.expectEmit(address(core));
+        emit ICore.PausedSet(true);
         _setPaused(true);
-        assertTrue(ctl.paused());
+        assertTrue(core.paused());
+        assertEq(core.pausedSince(), block.timestamp);
 
+        vm.warp(block.timestamp + 100);
         vm.recordLogs();
         _setPaused(true);
-        assertEq(vm.getRecordedLogs().length, 0, "pausing a paused controller emits nothing");
-        assertTrue(ctl.paused());
+        assertEq(vm.getRecordedLogs().length, 0, "pausing a paused core emits nothing");
+        assertTrue(core.paused());
+        assertEq(core.pausedSince(), block.timestamp - 100, "the repeat leaves the start of the pause");
 
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.PausedSet(false);
+        vm.expectEmit(address(core));
+        emit ICore.PausedSet(false);
         _setPaused(false);
-        assertFalse(ctl.paused());
+        assertFalse(core.paused());
+        assertEq(core.pausedSince(), 0);
+        assertEq(core.pausedTotal(), 100);
 
+        vm.warp(block.timestamp + 100);
         vm.recordLogs();
         _setPaused(false);
-        assertEq(vm.getRecordedLogs().length, 0, "resuming a running controller emits nothing");
-        assertFalse(ctl.paused());
+        assertEq(vm.getRecordedLogs().length, 0, "resuming a running core emits nothing");
+        assertFalse(core.paused());
+        assertEq(core.pausedTotal(), 100, "the repeat leaves the total");
     }
 
     function test_buy_revertsWhilePausedAndWorksAfterResume() public {
@@ -74,10 +80,10 @@ contract PauseTest is SaleShapeBase {
         assertGt(price, 0, "priceOf answers while paused");
         vm.deal(buyer, 10 ether);
         vm.prank(buyer);
-        vm.expectRevert(IControllerV1.Paused.selector);
+        vm.expectRevert(ICore.Paused.selector);
         ctl.buy{value: price}(sid);
         vm.prank(buyer);
-        vm.expectRevert(IControllerV1.Paused.selector);
+        vm.expectRevert(ICore.Paused.selector);
         ctl.buy{value: 10 ether}(sid);
         assertTrue(_held(sid), "the statement is still held");
         assertEq(buyer.balance, 10 ether, "nothing was taken");
@@ -87,14 +93,29 @@ contract PauseTest is SaleShapeBase {
         assertEq(STATEMENTS.ownerOf(sid), buyer, "sold after the resume");
     }
 
-    /// the pause check comes first: a statement the core does not hold reverts `Paused`, not `NotForSale`
-    function test_buy_pausedRefusesBeforeAnyOtherCheck() public {
+    /// the pause check follows the controller check and precedes every other check of both sale doors
+    function test_sellDoors_pausedRevertsAfterTheControllerCheck() public {
         _setPaused(true);
-        vm.expectRevert(IControllerV1.Paused.selector);
-        ctl.buy(123_456_789);
+        vm.expectRevert(ICore.OnlyController.selector);
+        core.sellTo(123_456_789, buyer);
+        vm.expectRevert(ICore.OnlyController.selector);
+        core.sellCreditTo(123_456_789, buyer);
+        vm.startPrank(address(ctl));
+        vm.expectRevert(ICore.Paused.selector);
+        core.sellTo(123_456_789, buyer);
+        vm.expectRevert(ICore.Paused.selector);
+        core.sellCreditTo(123_456_789, buyer);
+        vm.stopPrank();
         _setPaused(false);
-        vm.expectRevert(IControllerV1.NotForSale.selector);
-        ctl.buy(123_456_789);
+        vm.startPrank(address(ctl));
+        vm.expectRevert(ICore.NotForSale.selector);
+        core.sellTo(123_456_789, buyer);
+        vm.stopPrank();
+    }
+
+    function test_statementAge_revertsForAStatementTheCoreDoesNotHold() public {
+        vm.expectRevert(ICore.NotForSale.selector);
+        core.statementAge(123_456_789);
     }
 
     /// a statement 20 hours into its fall is at hour 20 of the fall after a pause of any length, and the fall goes on
@@ -115,7 +136,7 @@ contract PauseTest is SaleShapeBase {
         assertLt(ctl.priceOf(sid), before);
     }
 
-    function test_price_oneStatementAcrossTwoWindows() public {
+    function test_price_oneStatementAcrossTwoPauses() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
         _age(sid, 5 * H);
@@ -152,8 +173,8 @@ contract PauseTest is SaleShapeBase {
         assertEq(ctl.priceOf(first), _launch(_cost(first), 13 * H), "the older statement continues");
     }
 
-    /// pausing a paused controller and resuming a running one open no window
-    function test_noOpRepeatsOpenNoWindow() public {
+    /// pausing a paused core and resuming a running one change nothing
+    function test_noOpRepeatsChangeNothing() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
         _age(sid, 10 * H);
@@ -164,7 +185,9 @@ contract PauseTest is SaleShapeBase {
         vm.warp(block.timestamp + 1 days);
         _setPaused(false);
         _setPaused(false);
-        assertEq(ctl.priceOf(sid), _launch(cost, 10 * H), "one window of 2 days, the age is 10 hours");
+        assertEq(core.pausedTotal(), 2 days, "one pause of 2 days");
+        assertEq(core.statementAge(sid), 10 * H);
+        assertEq(ctl.priceOf(sid), _launch(cost, 10 * H), "one pause of 2 days, the age is 10 hours");
         vm.warp(block.timestamp + 1 hours);
         assertEq(ctl.priceOf(sid), _launch(cost, 11 * H));
     }
@@ -186,6 +209,33 @@ contract PauseTest is SaleShapeBase {
         );
         _setPaused(false);
         assertEq(ctl.anchorBps(), 20_000);
+    }
+
+    /// the credit window runs in wall time: a pause does not extend the time a credit must sit before compose
+    function test_creditWindowRunsInWallTimeWhilePaused() public {
+        vm.startPrank(owner);
+        ctl.setCreditSaleOn(true);
+        ctl.setCreditWindow(1 hours);
+        vm.stopPrank();
+        uint64 acquiredAt = uint64(block.timestamp);
+        assertFalse(ctl.pastWindow(acquiredAt));
+        _setPaused(true);
+        vm.warp(block.timestamp + 1 hours);
+        assertTrue(ctl.pastWindow(acquiredAt), "the window passed during the pause");
+    }
+
+    /// the redeem gate reads the paused age: a statement not yet at its floor stays ineligible through a pause
+    function test_atFloorHoldsItsValueThroughAPause() public {
+        uint256 sid = _composeOnce().sid;
+        _age(sid, 1 * H);
+        assertFalse(ctl.atFloor(sid));
+        _setPaused(true);
+        vm.warp(block.timestamp + 1_000 days);
+        assertFalse(ctl.atFloor(sid), "no age accrued in the pause");
+        _setPaused(false);
+        assertFalse(ctl.atFloor(sid));
+        vm.warp(block.timestamp + 1_000 days);
+        assertTrue(ctl.atFloor(sid));
     }
 
     /// with the anchor above 10_000 the price at the resume is at or below the price at the pause: the age is held, the
@@ -211,27 +261,6 @@ contract PauseTest is SaleShapeBase {
         );
     }
 
-    /// `priceOf` against the real core with 1_000 closed windows, every account and slot cold, from the oldest statement
-    function test_gas_priceOfWithManyWindowsOnTheRealCore() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        uint256 n = 1_000;
-        for (uint256 i; i < n; ++i) {
-            vm.warp(block.timestamp + 100);
-            _setPaused(true);
-            vm.warp(block.timestamp + 100);
-            _setPaused(false);
-        }
-        vm.cool(address(ctl));
-        vm.cool(address(core));
-        uint256 g = gasleft();
-        uint256 price = ctl.priceOf(sid);
-        uint256 used = g - gasleft();
-        emit log_named_uint("priceOf gas, real core, 1000 closed windows, oldest statement, cold", used);
-        assertEq(price, _launch(cost, n * 100), "the price is the curve at the age outside every window");
-        assertLt(used, 200_000, "inside the 200_000 gas the lens gives a priceOf read");
-    }
-
     /// the eth bid is unaffected: credits sell into it while paused
     function test_sellForEth_worksWhilePaused() public {
         _setPaused(true);
@@ -241,28 +270,10 @@ contract PauseTest is SaleShapeBase {
     }
 }
 
-/// the pause windows against an independent model, with a stand-in core that answers the three reads of the controller
-contract PauseWindowsTest is SaleBase {
-    uint256 internal constant COST = 1 ether;
-
-    StatementInfoStub internal stub;
-    IControllerV1 internal c;
-
-    function setUp() public override {
-        super.setUp();
-        stub = new StatementInfoStub(owner);
-        // the launch sale is flat at cost below hour 50; the model prices the two stage curve of `_launch`
-        Sale memory sale = lc.sale;
-        sale.floorBps = 7_500;
-        c = Prod.newController(address(stub), sale);
-    }
-
-    function _toggle(bool v) internal {
-        vm.prank(owner);
-        c.setPaused(v);
-    }
-
-    /// the seconds of [from, to] inside the windows `ws[i]` to `we[i]` (`we[i]` zero: still open, counted to `to`)
+/// the pause clock against an independent model on the real Core: statements composed before, during, between and after
+/// pauses, at the boundaries too (a step of 0 seconds is common). the model counts the overlap pause by pause
+contract PauseClockTest is SaleShapeBase {
+    /// the seconds of [from, to] inside the pauses `ws[i]` to `we[i]` (`we[i]` zero: still open, counted to `to`)
     function _overlap(uint256[] memory ws, uint256[] memory we, uint256 n, uint256 from, uint256 to)
         internal
         pure
@@ -275,36 +286,36 @@ contract PauseWindowsTest is SaleBase {
         }
     }
 
-    /// the price of every statement composed so far equals the launch curve at its age without the paused seconds
-    function _checkAll(uint256[] memory comp, uint256 nc, uint256[] memory ws, uint256[] memory we, uint256 nw)
+    /// the age and the price of every statement composed so far equal the wall time minus the paused seconds
+    function _checkAll(uint256[] memory sids, uint256 ns, uint256[] memory ws, uint256[] memory we, uint256 nw)
         internal
+        view
     {
-        for (uint256 j; j < nc; ++j) {
-            // forge-lint: disable-next-line(unsafe-typecast)
-            stub.set(COST, uint64(comp[j]));
-            uint256 age = block.timestamp - comp[j] - _overlap(ws, we, nw, comp[j], block.timestamp);
-            assertEq(c.priceOf(0), _launch(COST, age), "the price is the curve at the age outside every window");
+        for (uint256 j; j < ns; ++j) {
+            uint256 at = _composedAt(sids[j]);
+            uint256 age = block.timestamp - at - _overlap(ws, we, nw, at, block.timestamp);
+            assertEq(core.statementAge(sids[j]), age, "the age is wall time minus the paused seconds");
+            assertEq(ctl.priceOf(sids[j]), _launch(_cost(sids[j]), age), "the price is the curve at that age");
         }
     }
 
-    /// pause windows of random length with statements composed before, during, between and after them, at the
-    /// boundaries too (a step of 0 seconds is common). the model counts the overlap window by window
+    /// forge-config: default.fuzz.runs = 48
     function testFuzz_ageIsWallTimeMinusPausedTime(uint256 seed) public {
-        uint256[] memory comp = new uint256[](24);
-        uint256[] memory ws = new uint256[](24);
-        uint256[] memory we = new uint256[](24);
-        uint256 nc;
+        uint256[] memory sids = new uint256[](3);
+        uint256[] memory ws = new uint256[](16);
+        uint256[] memory we = new uint256[](16);
+        uint256 ns;
         uint256 nw;
         bool isPaused;
-        comp[nc++] = block.timestamp - 10_000;
-        comp[nc++] = block.timestamp;
-        for (uint256 i; i < 20; ++i) {
+        sids[ns++] = _composeOnce().sid;
+        for (uint256 i; i < 14; ++i) {
             uint256 h = uint256(keccak256(abi.encode(seed, i)));
             vm.warp(block.timestamp + ((h >> 64) % 4 == 0 ? 0 : h % 20_001));
             uint256 op = (h >> 32) % 4;
             if (op < 2) {
                 isPaused = !isPaused;
-                _toggle(isPaused);
+                vm.prank(owner);
+                core.setPaused(isPaused);
                 if (isPaused) {
                     ws[nw] = block.timestamp;
                     we[nw] = 0;
@@ -312,51 +323,57 @@ contract PauseWindowsTest is SaleBase {
                 } else {
                     we[nw - 1] = block.timestamp;
                 }
-            } else if (op == 2) {
-                comp[nc++] = block.timestamp;
+            } else if (op == 2 && ns < 3) {
+                sids[ns++] = _another();
             } else {
-                _toggle(isPaused);
+                vm.prank(owner);
+                core.setPaused(isPaused);
             }
-            assertEq(c.paused(), isPaused);
-            _checkAll(comp, nc, ws, we, nw);
+            assertEq(core.paused(), isPaused);
+            _checkAll(sids, ns, ws, we, nw);
         }
     }
 
-    /// the cost of a read with many windows: a binary search of one storage slot per halving, from the oldest statement
-    function test_gas_readCostWithManyWindows() public {
-        uint256 oldest = block.timestamp;
-        uint256 n = 1_000;
+    /// a pause opened and closed in one second adds no time and the later pauses stay exact
+    function test_zeroLengthPausesAddNoTime() public {
+        uint256 sid = _composeOnce().sid;
+        uint256 cost = _cost(sid);
+        vm.startPrank(owner);
+        core.setPaused(true);
+        core.setPaused(false);
+        core.setPaused(true);
+        core.setPaused(false);
+        vm.stopPrank();
+        assertEq(core.pausedTotal(), 0);
+        _age(sid, 3 * H);
+        assertEq(ctl.priceOf(sid), _launch(cost, 3 * H));
+        vm.prank(owner);
+        core.setPaused(true);
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(owner);
+        core.setPaused(false);
+        vm.warp(block.timestamp + 1 hours);
+        assertEq(ctl.priceOf(sid), _launch(cost, 4 * H));
+    }
+
+    /// the read cost of the age does not depend on the number of pauses
+    function test_gas_ageReadIsConstantAfterManyPauses() public {
+        uint256 sid = _composeOnce().sid;
+        uint256 n = 200;
         for (uint256 i; i < n; ++i) {
             vm.warp(block.timestamp + 100);
-            _toggle(true);
+            vm.prank(owner);
+            core.setPaused(true);
             vm.warp(block.timestamp + 100);
-            _toggle(false);
+            vm.prank(owner);
+            core.setPaused(false);
         }
-        // forge-lint: disable-next-line(unsafe-typecast)
-        stub.set(COST, uint64(oldest));
-        vm.cool(address(c));
+        vm.cool(address(core));
         uint256 g = gasleft();
-        uint256 price = c.priceOf(0);
+        uint256 age = core.statementAge(sid);
         uint256 used = g - gasleft();
-        emit log_named_uint("priceOf gas, 1000 closed windows, oldest statement, cold", used);
-        assertEq(price, _launch(COST, 1_000 * 100), "the price is the curve at the age outside every window");
-        assertLt(used, 100_000, "well inside the 200_000 gas the lens gives a priceOf read");
-    }
-
-    /// a window opened and closed in one second removes no time and the later windows stay exact
-    function test_zeroLengthWindowsRemoveNoTime() public {
-        uint64 at = uint64(block.timestamp);
-        stub.set(COST, at);
-        _toggle(true);
-        _toggle(false);
-        _toggle(true);
-        _toggle(false);
-        vm.warp(block.timestamp + 3 hours);
-        assertEq(c.priceOf(0), _launch(COST, 3 hours));
-        _toggle(true);
-        vm.warp(block.timestamp + 1 hours);
-        _toggle(false);
-        vm.warp(block.timestamp + 1 hours);
-        assertEq(c.priceOf(0), _launch(COST, 4 hours));
+        emit log_named_uint("statementAge gas, 200 closed pauses, cold", used);
+        assertEq(age, block.timestamp - _composedAt(sid) - n * 100);
+        assertLt(used, 15_000);
     }
 }

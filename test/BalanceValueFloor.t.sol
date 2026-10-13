@@ -226,7 +226,7 @@ contract BalanceValueFloorTest is Fixture {
         assertFalse(ctl.atFloor(sid), "the opening curve is above cost");
         uint256 priceBefore = ctl.priceOf(sid);
         vm.prank(owner);
-        ctl.setPaused(true);
+        core.setPaused(true);
         _warp(300 hours);
         assertFalse(ctl.atFloor(sid), "the curve is frozen by the pause, still above cost");
         assertEq(ctl.priceOf(sid), priceBefore, "the value floor is unchanged while nothing moved");

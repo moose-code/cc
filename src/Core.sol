@@ -103,6 +103,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error BadSetting(bytes32 field);
     /// `sellTo`: the statement is not held by the core
     error NotForSale();
+    /// `sellTo` or `sellCreditTo` while sales are paused
+    error Paused();
     /// a stack member that must be a contract has no code
     error NoCode(address who);
     /// `rescueNft`: the credit is in a pile
@@ -170,6 +172,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event ChosenComposeOnSet(bool on);
     /// least coin balance a caller of a chosen compose must hold (docs/FLOW.md 89)
     event MinCcToChooseSet(uint96 min);
+    event PausedSet(bool paused);
 
     /*//////////////////////////////////////////////////////////////
                               PARAMETERS
@@ -270,6 +273,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// least coin balance the caller of `composeChosen` must hold, checked against the caller's balance at the call.
     /// launch 0 (docs/FLOW.md 89)
     uint96 public minCcToChoose;
+
+    /// whether `sellTo` and `sellCreditTo` are paused. launch false
+    bool public paused;
+    /// when the open pause began, 0 while not paused
+    uint40 public pausedSince;
+    /// seconds of every closed pause. with the open pause, `pausedNow()` is the paused seconds so far
+    uint40 public pausedTotal;
 
     modifier onlyOwner() {
         _onlyOwner();
@@ -683,7 +693,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             composedAt: uint64(block.timestamp),
             slot: uint64(_heldIds.length - 1),
             rating: uint32(rating),
-            held: true
+            held: true,
+            pauseMark: pausedNow()
         });
         // forge-lint: disable-next-line(unsafe-typecast)
         emit Composed(sid, ids, uint8(format), cost, msg.sender);
@@ -736,6 +747,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// controller refunds its own caller
     function sellTo(uint256 sid, address buyer) external payable nonReentrant {
         if (msg.sender != controller) revert OnlyController();
+        if (paused) revert Paused();
         CoreLib.Statement storage st = _statements[sid];
         if (!st.held) revert NotForSale();
         if (msg.value < st.cost * _st().saleFloorBps / BPS) revert BelowFloor();
@@ -754,6 +766,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// buy and burn. the controller refunds its own caller
     function sellCreditTo(uint256 id, address buyer) external payable nonReentrant {
         if (msg.sender != controller) revert OnlyController();
+        if (paused) revert Paused();
         CoreLib.Credit storage c = _credits[id];
         if (!c.inPile) revert NotInPile(id);
         uint256 cost = c.cost;
@@ -1038,6 +1051,29 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit MinCcToChooseSet(v);
     }
 
+    /// pauses or resumes `sellTo` and `sellCreditTo` at once. a call that repeats the current state changes nothing.
+    /// a pause records its start in `pausedSince`, a resume adds the length of the pause to `pausedTotal`. compose,
+    /// the bids, redemptions, buybacks and fee booking run in a pause
+    function setPaused(bool on) external onlyOwner {
+        if (on == paused) return;
+        paused = on;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint40 t = uint40(block.timestamp);
+        if (on) {
+            pausedSince = t;
+        } else {
+            pausedTotal += t - pausedSince;
+            pausedSince = 0;
+        }
+        emit PausedSet(on);
+    }
+
+    /// the paused seconds from deployment to now: `pausedTotal` plus the open pause
+    function pausedNow() internal view returns (uint40) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return pausedTotal + (paused ? uint40(block.timestamp) - pausedSince : 0);
+    }
+
     /// sets every economic setting at once, effective now. the eth rate is checkpointed first, so no climb is credited
     /// under the wrong numbers, then the call is handed to the library untouched: it checks every field against its
     /// bounds, stores them and logs them. a change of `peakHalfLife` restates the remembered peak at the old half life
@@ -1125,6 +1161,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt) {
         CoreLib.Statement storage s = _statements[sid];
         return (s.held, s.cost, s.composedAt);
+    }
+
+    /// the seconds a held statement has aged outside every pause: the time since its compose minus the paused seconds
+    /// accumulated since. a statement composed in a pause has age 0 at the resume. the controller prices by this age
+    function statementAge(uint256 sid) external view returns (uint256) {
+        CoreLib.Statement storage s = _statements[sid];
+        if (!s.held) revert NotForSale();
+        return (block.timestamp - s.composedAt) - (pausedNow() - s.pauseMark);
     }
 
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose

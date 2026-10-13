@@ -86,6 +86,22 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(20, 24, 1), core.chosenComposeOn() ? 1 : 0, "chosenComposeOn");
         assertEq(_field(21, 0, 12), core.minCcToChoose(), "minCcToChoose");
         assertEq(core.minCcToChoose(), 123, "minCcToChoose value");
+        // the pause clock follows minCcToChoose in slot 21: paused (1 byte), pausedSince and pausedTotal (5 bytes each)
+        vm.prank(owner);
+        core.setPaused(true);
+        uint256 pausedAt = block.timestamp;
+        vm.warp(pausedAt + 777);
+        assertEq(_field(21, 12, 1), 1, "paused");
+        assertEq(_field(21, 13, 5), pausedAt, "pausedSince");
+        assertEq(_field(21, 13, 5), core.pausedSince(), "pausedSince getter");
+        assertEq(_field(21, 18, 5), 0, "pausedTotal while the first pause is open");
+        vm.prank(owner);
+        core.setPaused(false);
+        assertEq(_field(21, 12, 1), 0, "resumed");
+        assertEq(_field(21, 13, 5), 0, "pausedSince is cleared");
+        assertEq(_field(21, 18, 5), 777, "pausedTotal");
+        assertEq(_field(21, 18, 5), core.pausedTotal(), "pausedTotal getter");
+        assertEq(_field(21, 12, 1), core.paused() ? 1 : 0, "paused getter");
         // the first migrate sets retired. the call moves the pots, so it comes after the pot words are compared
         assertEq(_field(20, 21, 1), 0, "retired is false before a migrate");
         assertFalse(core.retired(), "retired value before");
@@ -112,7 +128,13 @@ contract CoreLayoutTest is Fixture {
             assertEq(word & type(uint64).max, at, "credit acquiredAt");
             assertEq((word >> 64) & 0xff, inPile ? 1 : 0, "credit inPile");
         }
-        // statement: cost, then composedAt | slot | rating | held; the held list at S_HELD
+        // statement: cost, then composedAt | slot | rating | held | pauseMark; the held list at S_HELD. a pause of 100
+        // seconds before the compose gives the record a nonzero pauseMark
+        vm.prank(owner);
+        core.setPaused(true);
+        vm.warp(block.timestamp + 100);
+        vm.prank(owner);
+        core.setPaused(false);
         Composed memory c = _composeOnce();
         (bool held, uint256 cost, uint64 composedAt) = core.statementInfo(c.sid);
         uint256 sbase = _mapSlot(c.sid, S_STATEMENTS);
@@ -127,7 +149,9 @@ contract CoreLayoutTest is Fixture {
         assertEq((sword >> 64) & type(uint64).max, at, "statement slot");
         assertEq((sword >> 128) & type(uint32).max, core.ratingOf(c.sid), "statement rating");
         assertEq((sword >> 160) & 0xff, held ? 1 : 0, "statement held");
-        assertEq(sword >> 161, 0, "no field above held");
+        assertEq((sword >> 168) & type(uint40).max, 100, "statement pauseMark");
+        assertEq((sword >> 168) & type(uint40).max, core.pausedTotal(), "statement pauseMark is pausedTotal at compose");
+        assertEq(sword >> 208, 0, "no field above pauseMark");
         assertEq(uint256(vm.load(address(core), bytes32(S_HELD))), core.heldStatements().length, "held length");
         assertEq(
             uint256(vm.load(address(core), bytes32(uint256(keccak256(abi.encode(S_HELD)))))),

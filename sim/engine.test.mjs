@@ -83,23 +83,23 @@ const R0 = 6.668e15;
   ok(!/\bLane\b|composeBalance|atCost|xHeld|xPile|ethPile|balanceLane|ethLane|creditScoreModule|scoreModule/.test(src), 'no lanes, no composeBalance, no atCost, no score module in the model');
   ok(Core.prototype.atFloor !== undefined && Core.prototype.atCost === undefined, 'atFloor replaces atCost');
 }
-// the owner pause (ControllerV1.setPaused): the age a price falls with excludes every paused window, a buy refuses while paused, a repeat opens no window
+// the owner pause (Core.setPaused): the age a price falls with excludes every paused second, a buy refuses while paused, a repeat changes nothing
 {
   const c = fresh({}, 10);
   const st = { cost: 1, t0: 0 };
   const before = c.askingPrice(st, 20 * H);
   near(before, 1.30, 1e-12, 'hour 20 of the launch curve');
   c.setSettings({ paused: true }, 20 * H);
-  assert.equal(c.isPausedAt(21 * H), true); assert.equal(c.buy(st, 30 * H), null); assert.equal(st.sold, undefined);
+  assert.equal(c.isPaused(), true); assert.equal(c.buy(st, 30 * H), null); assert.equal(st.sold, undefined);
   near(c.askingPrice(st, 90 * H), before, 1e-12, 'the price is held through the pause');
-  c.setPaused(true, 40 * H); assert.equal(c.pauses.length, 1); // a repeat opens no window
-  c.setSettings({ paused: false }, 100 * H); c.setPaused(false, 101 * H); assert.equal(c.pauses.length, 1);
+  c.setPaused(true, 40 * H); assert.equal(c.pausedSince, 20 * H); // a repeat leaves the start of the pause
+  c.setSettings({ paused: false }, 100 * H); c.setPaused(false, 101 * H); assert.equal(c.pausedTotal, 80 * H); // a repeat leaves the total
   near(c.askingPrice(st, 100 * H), before, 1e-12, 'the price at the resume is the price at the pause');
   near(c.askingPrice(st, 101 * H), 1.29, 1e-12, 'the fall continues an hour after the resume');
-  const during = { cost: 1, t0: 50 * H }; // composed inside the window: age zero at the resume
+  const during = { cost: 1, t0: 50 * H, pauseMark: 30 * H }; // composed inside the pause (30 paused hours before it): age zero at the resume
   near(c.askingPrice(during, 100 * H), 1.50, 1e-12, 'a statement composed during the pause starts aging at the resume');
   c.setPaused(true, 110 * H); c.setPaused(false, 112 * H);
-  near(c.askingPrice(st, 120 * H), 1.12, 1e-12, 'two windows (80 and 2 hours): age 38 hours at hour 120');
+  near(c.askingPrice(st, 120 * H), 1.12, 1e-12, 'two pauses (80 and 2 hours): age 38 hours at hour 120');
   assert.throws(() => c.setSettings({ paused: 'yes' }, 0), /paused/);
   assert.equal(c.buy(st, 130 * H) !== null, true); n += 10;
 }
@@ -314,7 +314,7 @@ const R0 = 6.668e15;
   near(a.askingPrice(st, 200 * H), 0.75, 1e-12, 'curve at 62.5 under the hard floor 75: the hard floor wins at hour 200');
   near(a.askingPrice(st, 300 * H), 0.75, 1e-12, 'and after the curve has reached 60');
   near(a.askingPrice(st, 52.5 * H), 0.99375, 1e-12, 'above the hard floor the curve decides');
-  near(a.statementPrice(1, 0, 300 * H), 0.60, 1e-12, 'the controller price alone reaches 60');
+  near(a.statementPrice(1, st, 300 * H), 0.60, 1e-12, 'the controller price alone reaches 60');
   const b = fresh({ saleFloorBps: 20000 }, 10);
   near(b.askingPrice(st, 0), 2.0, 1e-12, 'a start under the hard floor is lifted to it');
   const c = fresh({ floorBps: 6000, saleFloorBps: 6000 }, 10);
@@ -333,7 +333,7 @@ const R0 = 6.668e15;
   near(c.askingPrice(st, 0), st.cost * 1.5, 1e-12, 'asked at the start price, 150 percent of cost');
   near(fresh({ markupBps: 10000 }, 10).askingPrice({ cost: 1, t0: 0 }, 0), 1.0, 1e-12, 'markupBps 10000');
   near(fresh({ markupBps: 13000 }, 10).askingPrice({ cost: 1, t0: 0 }, 0), 1.3, 1e-12, 'markupBps 13000');
-  assert.deepEqual(Object.keys(st).sort(), ['cost', 'rating', 't0']); n++; // the record carries cost, composedAt and rating
+  assert.deepEqual(Object.keys(st).sort(), ['cost', 'pauseMark', 'rating', 't0']); n++; // the record carries cost, composedAt, rating and the pause mark
   assert.equal(c.compose(1, 0, 35200).rating, 35200); n++
   const a100 = c.askingPrice(st, 100);
   near(a100, 0.8 * 1.5 - 0.8 * 100 * 100 / (3600 * 10000), 1e-12, 'the asking price a hundred seconds in');

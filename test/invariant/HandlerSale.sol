@@ -79,9 +79,10 @@ abstract contract HandlerSale is HandlerOwner {
     }
 
     /// the refusal the core's own order of checks gives for a statement in ghost state `g` once the caller is the
-    /// controller (`sellTo`): the record (a held statement), then the hard floor. zero when the sale must go
+    /// controller (`sellTo`): the pause, the record (a held statement), then the hard floor. zero when the sale must go
     /// through
     function _sellToRefusal(SG storage g, uint256 value, uint256 floor) internal view returns (bytes4) {
+        if (core.paused()) return ICore.Paused.selector;
         if (g.status != S_HELD) return ICore.NotForSale.selector;
         if (value < floor) return ICore.BelowFloor.selector;
         return bytes4(0);
@@ -137,10 +138,9 @@ abstract contract HandlerSale is HandlerOwner {
                          buy (the first controller)
     //////////////////////////////////////////////////////////////*/
 
-    /// the refusal of `ControllerV1.buy` in the order of its checks: the pause, the record `priceOf` reads, the payment, the
-    /// controller in force (the core takes `sellTo` from the controller only), then what `sellTo` checks
+    /// the refusal of `ControllerV1.buy` in the order of its checks: the record `priceOf` reads, the payment, the
+    /// controller in force (the core takes `sellTo` from the controller only), then what `sellTo` checks, the pause first
     function _buyRefusal(uint256 sid, SalePre memory p, bool short_) internal view returns (bytes4) {
-        if (IControllerV1(v1).paused()) return IControllerV1.Paused.selector;
         (bool held,,) = core.statementInfo(sid);
         if (!held) return IControllerV1.NotForSale.selector;
         if (short_) return IControllerV1.Underpaid.selector;
@@ -191,7 +191,7 @@ abstract contract HandlerSale is HandlerOwner {
             priced = true;
         } catch {}
         if (priced && price != _modelAsk(sid)) {
-            _flag(V_SALE_PATH, "the asking price differs from the curve at the age outside every pause window");
+            _flag(V_SALE_PATH, "the asking price differs from the curve at the age outside every pause");
         }
         bool short_ = priced && price != 0 && xSeed % 7 == 0;
         uint256 value = !priced ? 1 ether : (short_ ? price - 1 : price + (xSeed % 3 == 0 ? 0 : _logBound(xSeed, 1, 1 ether)));
@@ -254,19 +254,19 @@ abstract contract HandlerSale is HandlerOwner {
         return (0, 0, false);
     }
 
-    /// the refusal of `ControllerV1.buyCredit` in the order of its checks: the sale window, the pause, the price read
+    /// the refusal of `ControllerV1.buyCredit` in the order of its checks: the sale window, the price read
     /// (`priceErr`, nonzero when `creditPrice` reverts, e.g. NotForSale for a credit not in the pile), the payment,
-    /// then the core's `sellCreditTo`, which refuses any controller but the one the core named
+    /// then the core's `sellCreditTo`, which refuses any controller but the one the core named, then a pause
     function _buyCreditRefusal(bool saleOn, bool paused_, bytes4 priceErr, bool short_, bool realCtl)
         internal
         pure
         returns (bytes4)
     {
         if (!saleOn) return IControllerV1.CreditSaleOff.selector;
-        if (paused_) return IControllerV1.Paused.selector;
         if (priceErr != 0) return priceErr;
         if (short_) return IControllerV1.Underpaid.selector;
         if (!realCtl) return ICore.OnlyController.selector;
+        if (paused_) return ICore.Paused.selector;
         return bytes4(0);
     }
 
@@ -297,7 +297,7 @@ abstract contract HandlerSale is HandlerOwner {
         }
         bool short_ = priced && q.price != 0 && xSeed % 7 == 0;
         q.value = _creditValue(priced, q.price, short_, xSeed);
-        q.want = _buyCreditRefusal(c.creditSaleOn(), c.paused(), priceErr, short_, core.controller() == v1);
+        q.want = _buyCreditRefusal(c.creditSaleOn(), core.paused(), priceErr, short_, core.controller() == v1);
     }
 
     function _quoteMany(uint256[] memory ids, uint256 xSeed) internal view returns (CQ memory q) {
@@ -316,14 +316,14 @@ abstract contract HandlerSale is HandlerOwner {
         }
         bool short_ = priced && q.price != 0 && xSeed % 6 == 0;
         q.value = _creditValue(priced, q.price, short_, xSeed);
-        q.want = _buyCreditsRefusal(c.creditSaleOn(), c.paused(), priceErr, short_, core.controller() == v1);
+        q.want = _buyCreditsRefusal(c.creditSaleOn(), core.paused(), priceErr, short_, core.controller() == v1);
     }
 
-    /// the refusal of `ControllerV1.buyCredits` in the order its one pass loop reaches: the sale window, the pause,
-    /// then per credit a price read, a payment check and the core's `sellCreditTo`. a price read that reverts on ids[0]
+    /// the refusal of `ControllerV1.buyCredits` in the order its one pass loop reaches: the sale window, then per
+    /// credit a price read, a payment check and the core's `sellCreditTo`. a price read that reverts on ids[0]
     /// precedes both. a short batch payment is `total - 1`, which clears the first credit's cumulative check, so a
-    /// wrong controller reverts `OnlyController` on the first sale before the short payment reverts `Underpaid` on the
-    /// last credit. this flips the payment and controller order of
+    /// wrong controller reverts `OnlyController` and a pause reverts `Paused` on the first sale before the short
+    /// payment reverts `Underpaid` on the last credit. this flips the payment and controller order of
     /// the single `buyCredit` refusal
     function _buyCreditsRefusal(bool saleOn, bool paused_, bytes4 priceErr, bool short_, bool realCtl)
         internal
@@ -331,11 +331,11 @@ abstract contract HandlerSale is HandlerOwner {
         returns (bytes4)
     {
         if (!saleOn) return IControllerV1.CreditSaleOff.selector;
-        if (paused_) return IControllerV1.Paused.selector;
         // the price read of ids[0] runs before its payment check and its `sellCreditTo`, so a price revert precedes the
         // wrong controller and the short payment
         if (priceErr != 0) return priceErr;
         if (!realCtl) return ICore.OnlyController.selector;
+        if (paused_) return ICore.Paused.selector;
         if (short_) return IControllerV1.Underpaid.selector;
         return bytes4(0);
     }
@@ -480,10 +480,12 @@ abstract contract HandlerSale is HandlerOwner {
     }
 
     /*//////////////////////////////////////////////////////////////
-                    the pause of the first controller
+                              the pause of the Core
     //////////////////////////////////////////////////////////////*/
 
-    /// the pause windows the handler applied to the first controller: start and end, an end of 0 for the open window
+    /// the pauses the handler applied to the Core: start and end, an end of 0 for the open pause. the ghost
+    /// integrates the overlap of a pause with a statement's life, so it is a model of the age that does not share the
+    /// accumulator arithmetic of the Core. the Core's `pausedTotal` and `pausedSince` are compared with it
     uint256[] internal _pauseStart;
     uint256[] internal _pauseEnd;
 
@@ -496,7 +498,7 @@ abstract contract HandlerSale is HandlerOwner {
         return n != 0 && _pauseEnd[n - 1] == 0;
     }
 
-    /// the age of a statement composed at `composedAt`: the seconds to now outside every pause window
+    /// the age of a statement composed at `composedAt`: the seconds to now outside every pause
     function _modelAge(uint256 composedAt) internal view returns (uint256 age) {
         age = block.timestamp - composedAt;
         for (uint256 i; i < _pauseStart.length; ++i) {
@@ -506,9 +508,22 @@ abstract contract HandlerSale is HandlerOwner {
         }
     }
 
+    /// the Core's accumulator against the ghost pauses: `pausedTotal` is the length of the closed pauses and
+    /// `pausedSince` the start of the open one
+    function _checkPauseClock() internal {
+        uint256 closed;
+        for (uint256 i; i < _pauseStart.length; ++i) {
+            if (_pauseEnd[i] != 0) closed += _pauseEnd[i] - _pauseStart[i];
+        }
+        uint256 open = _modelPaused() ? _pauseStart[_pauseStart.length - 1] : 0;
+        if (core.pausedTotal() != closed || core.pausedSince() != open) {
+            _flag(V_SALE_PATH, "the pause clock of the core differs from the model");
+        }
+    }
+
     /// the asking price of statement `sid` written out again from docs/SPEC.md section 7: the price in units of
     /// 1/3600 bps falls `fastDecayBpsPerHour` a second to the knee and `slowDecayBpsPerHour` after it (rounded up), at
-    /// the age outside every pause window, at least `floorBps` and at least the hard floor of the core
+    /// the age outside every pause, at least `floorBps` and at least the hard floor of the core
     function _modelAsk(uint256 sid) internal view returns (uint256) {
         (, uint256 cost, uint64 at) = core.statementInfo(sid);
         uint256 ref = _modelRef(sid, cost);
@@ -544,23 +559,22 @@ abstract contract HandlerSale is HandlerOwner {
         if (n < low) n = low;
     }
 
-    /// the owner pauses or resumes sales of the first controller, or a stranger tries. a repeat of the current state is
+    /// the owner pauses or resumes sales on the Core, or a stranger tries. a repeat of the current state is
     /// accepted and changes nothing. a stranger gets OnlyOwner. the state reads back as the model says, and no asset or
     /// pot moves
     function pause(uint256 seed, uint256 mode) external checked {
         uint8 a = A_PAUSE;
-        IControllerV1 c = IControllerV1(v1);
         bool stranger = mode % 5 == 0;
         bool want = (mode >> 4) % 8 < 2;
-        bool was = c.paused();
+        bool was = core.paused();
         if (was != _modelPaused()) _flag(V_SALE_PATH, "the pause state differs from the model");
         OPre memory pre = _opre();
         _att(a);
         vm.prank(stranger ? address(uint160(uint256(keccak256(abi.encode("stranger", seed))))) : owner);
-        (bool ok, bytes memory out) = address(c).call(abi.encodeCall(IControllerV1.setPaused, (want)));
+        (bool ok, bytes memory out) = address(core).call(abi.encodeCall(ICore.setPaused, (want)));
         if (stranger) {
             if (ok) _flag(V_OWNER, "a stranger changed the pause");
-            else if (bytes4(out) != IControllerV1.OnlyOwner.selector) _unexpected(a, out);
+            else if (bytes4(out) != ICore.OnlyOwner.selector) _unexpected(a, out);
         } else if (!ok) {
             _unexpected(a, out);
         } else if (want != was) {
@@ -571,7 +585,8 @@ abstract contract HandlerSale is HandlerOwner {
                 _pauseEnd[_pauseEnd.length - 1] = block.timestamp;
             }
         }
-        if (c.paused() != (stranger || !ok ? was : want)) _flag(V_SALE_PATH, "the pause state differs from the model");
+        if (core.paused() != (stranger || !ok ? was : want)) _flag(V_SALE_PATH, "the pause state differs from the model");
+        _checkPauseClock();
         _opost(pre, "pause");
         _ok(a);
     }

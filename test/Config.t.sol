@@ -838,16 +838,16 @@ contract ConfigTest is Fixture {
     function test_postflightWhileSalesArePaused() public {
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "");
-        assertTrue(_warnClean("controller: not paused"), "the row exists and passes on a fresh launch");
+        assertTrue(_warnClean("core: not paused"), "the row exists and passes on a fresh launch");
         vm.prank(owner);
-        ctl.setPaused(true);
+        core.setPaused(true);
         postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "controller: not paused");
-        assertEq(_rowDetail("controller: not paused"), "paused");
+        assertEq(_failedNames(), "core: not paused");
+        assertEq(_rowDetail("core: not paused"), "paused");
         changedFlag = true;
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "", "SETTINGS_CHANGED turns the row into a warning");
-        assertFalse(_warnClean("warn: controller is not paused"), "the warning row reports the pause");
+        assertFalse(_warnClean("warn: core is not paused"), "the warning row reports the pause");
     }
 
     /// NEXT 26: the owner account is an EIP 7702 delegation to Calibur with an empty key registry. each of the three

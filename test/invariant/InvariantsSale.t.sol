@@ -50,11 +50,11 @@ abstract contract SaleSuite is InvariantsBase {
         assertTrue(_try(26, 40), "no owner swap");
         assertTrue(_try(28, 160), "no handover");
         assertTrue(_try(27, 160), "no lock");
-        for (uint256 i; i < 120 && (handler.pauseCount() == 0 || ctl.paused()); ++i) {
+        for (uint256 i; i < 120 && (handler.pauseCount() == 0 || core.paused()); ++i) {
             _try(34, 1);
         }
-        assertGt(handler.pauseCount(), 0, "no pause window");
-        assertFalse(ctl.paused(), "no resume");
+        assertGt(handler.pauseCount(), 0, "no pause");
+        assertFalse(core.paused(), "no resume");
         assertGt(handler.gSoldTo(), 0, "no statement was sold at once");
         for (uint256 i = 1; i < handler.violationCount(); ++i) {
             assertEq(handler.viol(i), 0, handler.violMsg(i));

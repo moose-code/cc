@@ -55,6 +55,9 @@ struct CoreState {
     uint16 creditCostToPotBps;
     bool chosenComposeOn;
     uint96 minCcToChoose;
+    bool paused;
+    uint40 pausedSince;
+    uint40 pausedTotal;
 }
 
 /// the one linked library of the Core: the settings write (validation, storage, event), the eth rate (the climb with its
@@ -80,14 +83,15 @@ library CoreLib {
     }
 
     /// a statement the Core holds for sale or redemption. `composedAt` is the time of the compose, `slot` the index in
-    /// `heldIds`, `rating` the sum of its credits' scores read from Statements at compose. the record is deleted when
-    /// the statement leaves
+    /// `heldIds`, `rating` the sum of its credits' scores read from Statements at compose, `pauseMark` the paused
+    /// seconds accumulated at compose (`pausedNow()` of the Core). the record is deleted when the statement leaves
     struct Statement {
         uint256 cost;
         uint64 composedAt;
         uint64 slot;
         uint32 rating;
         bool held;
+        uint40 pauseMark;
     }
 
     uint256 internal constant BPS = 10_000;
