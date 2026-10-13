@@ -60,6 +60,8 @@ each packet is one builder, bounded to the files it names, with `forge build` an
 
 pre-existing failures found by packet 1 (they fail at main 35b78be too, before any change of this branch): `test/Lifecycle.t.sol` `test_narrative_theWholeLoopTwice`, `test_compose_unsoldStatementStaysHeldAtTheFloor`, `test_narrative_theOwnerAdaptsTheSystemLive`, and `test/SaleSmoke.t.sol` `test_price_falls_to_the_knee_then_to_the_floor`: sale price assertions. packet 5 (the pricing changes) must leave them green or delete them with a reason.
 
+also pre-existing at main: `test/invariant/ComposeHostileNotReady.t.sol` calls `nextPage(uint8)` while the fuzz controller has `nextPage()` (stale since the single pile, decision 92); packet 8 fixes it. `test/Rehearsal.t.sol` compares the deploy gas with `DEPLOY_GAS_ESTIMATE` (19,200,000), which the adapter transactions of packet 3 exceed; packet 7 re-measures the deploy and sets the constant.
+
 ## 6. known and not fixed
 
 | item | detail |
