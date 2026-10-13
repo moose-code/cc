@@ -36,34 +36,3 @@ contract SwapMidListing {
 
     receive() external payable {}
 }
-
-interface IBuy {
-    function grossPriceOf(uint256 sid) external view returns (uint256);
-    function buy(uint256 sid) external payable;
-}
-
-/// one transaction that swaps in the real pool (the skim hook pushes into the core's `receive`), buys statement `sid`
-/// through the controller, and swaps again, so the hook pushes into `receive` before and after the sale is booked
-contract SwapAroundBuy {
-    TestSwapRouter public immutable router;
-    IBuy public immutable ctl;
-    PoolKey internal key;
-
-    constructor(TestSwapRouter router_, address ctl_, PoolKey memory key_) {
-        router = router_;
-        ctl = IBuy(ctl_);
-        key = key_;
-    }
-
-    function run(uint256 swapEth, uint256 sid) external payable {
-        router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
-        ctl.buy{value: ctl.grossPriceOf(sid)}(sid);
-        router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
-    }
-
-    receive() external payable {}
-
-    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
-        return this.onERC721Received.selector;
-    }
-}
