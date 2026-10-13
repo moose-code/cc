@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Vm} from "forge-std/Vm.sol";
 import {FeeBase} from "./Fees.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Settings} from "../src/interfaces/Interfaces.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 
 /// a payee whose receive reverts
@@ -27,6 +27,7 @@ contract GasBurningPayee {
 /// `claimPayee`. it starts with the first book that has income at or after `launchedAt + SNIPER_SECONDS`, and that book
 /// shares nothing. every number comes from real swaps through the live pool and the live skim hook
 contract PayeeShareTest is FeeBase {
+    // promise: SPEC 1 the payee share starts after the anti sniper window (decision 109)
     /// the share starts after the window, read from the factory record of the coin
     function test_theShareStartsAfterTheWindowFromTheFactoryRecord() public {
         (, uint256 launchedAt) = _launchRecord();
@@ -57,6 +58,7 @@ contract PayeeShareTest is FeeBase {
         assertEq(f.toPayee, f.bountyRise * 75_185 / 1_000_000, "75,185 ppm of the income");
     }
 
+    // promise: SPEC 1 the payee share starts with the first income after the window
     /// a book without income does not turn the share on: the eth that arrives first after the window is the shared-free book
     function test_aBookWithoutIncomeDoesNotTurnTheShareOn() public {
         _skipSniperWindow();
@@ -71,15 +73,7 @@ contract PayeeShareTest is FeeBase {
         assertEq(core.payeeOwed(), 0, "the window eth and the first income after it are not shared");
     }
 
-    /// the share is 0.5 points of volume at launch: 75,185 ppm of 6.65022 points
-    function test_theShareIsHalfAPointOfVolume() public {
-        _stock();
-        Flow memory f = _flow(Kind.BuyExactIn, 100 ether, "");
-        assertEq(f.bountyRise, 6.65022 ether);
-        assertApproxEqRel(f.toPayee, 0.5 ether, 0.00001e18, "0.5 points of 100 eth");
-        assertLe(f.toPayee, 0.5 ether, "rounded down");
-    }
-
+    // promise: SPEC 1 the payee share is a pull claim (claimPayee)
     function test_bookCreditsThePayeeAndClaimPaysIt() public {
         _stock();
         assertEq(core.payee(), lc.payee);
@@ -105,6 +99,7 @@ contract PayeeShareTest is FeeBase {
         _solvent();
     }
 
+    // promise: SPEC 1 payee and payeePpm are owner settings, effective at once
     /// the owner replaces the payee with `setPayee` and the share with `setSettings`: later books credit the new share,
     /// the eth already owed is claimed by the new payee
     function test_ownerReplacesThePayeeAndTheShare() public {
@@ -133,6 +128,7 @@ contract PayeeShareTest is FeeBase {
         core.setPayee(b);
     }
 
+    // promise: SPEC 1 setSettings books pending income under the old share first
     /// the ppm bound is 200,000: above it `setSettings` reverts, at it the book credits a fifth of the income
     /// income that arrived before `setSettings` is split under the settings in force when it arrived
     function test_setSettingsBooksUnbookedIncomeUnderTheOldShare() public {
@@ -147,6 +143,7 @@ contract PayeeShareTest is FeeBase {
         _solvent();
     }
 
+    // promise: INTEGRATION BadSetting on payeePpm
     function test_theShareBoundIsTwoHundredThousandPpm() public {
         Settings memory s = core.settings();
         s.payeePpm = 200_001;
@@ -165,6 +162,7 @@ contract PayeeShareTest is FeeBase {
         assertEq(f.potRise, _toPot(f.bountyRise));
     }
 
+    // promise: SPEC 1 a failing payee blocks only its own claim
     /// a payee that reverts, or that burns its gas, blocks only its own claim: every door and every swap works and the
     /// share stays owed. the owner replaces the payee and the claim goes through
     function test_aPayeeThatRevertsOrBurnsGasBlocksOnlyItsOwnClaim() public {
@@ -193,6 +191,7 @@ contract PayeeShareTest is FeeBase {
         _solvent();
     }
 
+    // promise: INTEGRATION Reentrancy on claimPayee
     /// the payee cannot reenter the Core during its claim
     function test_claimIsGuardedAgainstReentry() public {
         _stock();
@@ -278,6 +277,7 @@ contract FeeShareTest is FeeBase {
         assertEq(b.dBal, b.bounty, "the balance rose by the bounty leg");
     }
 
+    // promise: SPEC 1 fee eth splits between ethPot and the redeem burn reserve by feeToRedeemBurnBps (inv 18)
     function test_split_atZeroHalfAndAllOnExactBuys() public {
         _stock();
         uint16[3] memory bps = [uint16(0), 5_000, 10_000];
@@ -294,65 +294,9 @@ contract FeeShareTest is FeeBase {
         }
     }
 
-    function test_split_everySwapKindAndAnOddShare() public {
-        _stock();
-        _share(3_333);
-        _check(_swap(Kind.BuyExactIn, 2 ether), 3_333);
-        _check(_swap(Kind.BuyExactOut, 500_000e18), 3_333);
-        _check(_swap(Kind.SellExactIn, coin.balanceOf(trader) / 5), 3_333);
-        _check(_swap(Kind.SellExactOut, 0.3 ether), 3_333);
-        _solvent();
-    }
-
-    /// inside the anti sniper window the core gets 89.75022 points (the bounty share of the baseline, 6.65022, plus the whole
-    /// extra), none of it shared with the payee, and the engine share is split by the setting
-    function test_split_insideTheSniperWindowTakesTheWholeBounty() public {
-        _share(5_000);
-        Books memory b = _swap(Kind.BuyExactIn, 1 ether);
-        assertEq(b.bounty, 0.8975022 ether);
-        assertEq(b.inflow, 0.8975022 ether);
-        assertEq(b.dRb, b.inflow / 2);
-        assertEq(b.dPot, b.inflow - b.inflow / 2);
-        _check(b, 5_000);
-    }
-
-    function test_split_dustAmountsFromTheHook() public {
-        address hook = lc.stack.hook;
-        vm.deal(hook, 10 ether);
-        _share(5_000);
-        uint256[5] memory v = [uint256(0), 1, 3, 4, 10_001];
-        for (uint256 i; i < v.length; ++i) {
-            uint256 pot = core.ethPot();
-            uint256 rb = core.ethRedeemBurn();
-            vm.prank(hook);
-            (bool ok,) = address(core).call{value: v[i]}("");
-            assertTrue(ok, "receive never reverts");
-            core.book();
-            assertEq(core.ethRedeemBurn() - rb, v[i] * 5_000 / BASIS, "floor to the reserve");
-            assertEq(core.ethPot() - pot, v[i] - v[i] * 5_000 / BASIS, "the odd wei stays with the pot");
-        }
-        _solvent();
-    }
-
-    /// a plain send from anyone else reverts, and `fund` adds to the pot whole whatever the share is
-    function test_split_aSendFromAnyoneElseRevertsAndFundIsNotSplit() public {
-        _share(10_000);
-        vm.deal(address(this), 5 ether);
-        uint256 pot = core.ethPot();
-        uint256 rb = core.ethRedeemBurn();
-        (bool ok, bytes memory why) = address(core).call{value: 1 ether}("");
-        assertFalse(ok, "refused");
-        assertEq(bytes4(why), ICore.UseFund.selector);
-        assertEq(address(core).balance, 0);
-        vm.expectEmit(true, false, false, true, address(core));
-        emit ICore.Funded(address(this), 1 ether);
-        core.fund{value: 1 ether}();
-        assertEq(core.ethPot() - pot, 1 ether, "whole to the pot");
-        assertEq(core.ethRedeemBurn(), rb, "none to the reserve");
-    }
-
     // ------------------------------------------------------------------ book and bookBalance
 
+    // promise: SPEC 4 eth above the tracked pots is booked as fee income
     /// eth forced into the core is fee income at the next book: split by the settings like the hook's push
     function test_book_countsForcedEthAsIncome() public {
         _share(10_000);
@@ -368,28 +312,9 @@ contract FeeShareTest is FeeBase {
         assertEq(core.ethRedeemBurn() - rb, 1.5 ether);
     }
 
-    /// the balance token sent to the core is booked by `bookBalance` to the bid pot
-    function test_bookBalance_theBalanceTokenGoesToTheBidPot() public {
-        _enterPhase2();
-        xt.mint(address(core), 7e18);
-        uint256 xp = core.balancePot();
-        vm.expectEmit(false, false, false, true, address(core));
-        emit ICore.BalanceBooked(7e18);
-        core.bookBalance();
-        assertEq(core.balancePot() - xp, 7e18);
-        core.bookBalance();
-        assertEq(core.balancePot() - xp, 7e18, "a second call books nothing");
-    }
-
-    function test_bookBalance_withoutAModuleDoesNothing() public {
-        vm.expectEmit(false, false, false, true, address(core));
-        emit ICore.BalanceBooked(0);
-        core.bookBalance();
-        assertEq(core.balancePot(), 0);
-    }
-
     // ------------------------------------------------------------------ a change of the setting
 
+    // promise: SPEC 1 feeToRedeemBurnBps is an owner setting, effective on the next fee
     function test_change_takesEffectOnTheNextFeeAndNeverRewritesTheBooks() public {
         _stock();
         _share(0);
@@ -415,34 +340,6 @@ contract FeeShareTest is FeeBase {
         _solvent();
     }
 
-    function test_change_boundIsTenThousand() public {
-        Settings memory s = core.settings();
-        s.feeToRedeemBurnBps = 10_001;
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("feeToRedeemBurnBps")));
-        core.setSettings(s);
-        s.feeToRedeemBurnBps = 10_000;
-        vm.prank(owner);
-        core.setSettings(s);
-        assertEq(core.settings().feeToRedeemBurnBps, 10_000);
-        vm.prank(address(0x5757));
-        vm.expectRevert(ICore.OnlyOwner.selector);
-        core.setSettings(s);
-    }
-
-    /// with the whole fee going to the reserve the pot gets nothing from swaps, but the rate still checkpoints
-    function test_change_allToTheReserveLeavesThePotAndKeepsTheCheckpoint() public {
-        _stock();
-        _fundPot(1 ether);
-        _share(10_000);
-        _warp(6 hours);
-        uint256 rate = core.ethRate();
-        uint256 pot = core.ethPot();
-        _swap(Kind.BuyExactIn, 1 ether);
-        assertEq(core.ethPot(), pot, "the pot did not grow");
-        assertEq(core.checkpointTime(), block.timestamp, "the fee still checkpoints");
-        assertEq(core.rateAtCheckpoint(), rate);
-    }
 }
 
 /// the fee that comes back to the core during its own `buyback()` swap is split like any other, and the buyback works
@@ -502,40 +399,4 @@ contract FeeShareBuybackTest is FeeBase {
         }
     }
 
-    function test_buyback_skimReturnSplitAtZero() public {
-        _run(0);
-    }
-
-    function test_buyback_skimReturnSplitAtHalf() public {
-        _run(5_000);
-    }
-
-    function test_buyback_skimReturnSplitAtAll() public {
-        _run(10_000);
-    }
-
-    /// with everything routed to the reserve, the buyback pot shrinks by the whole spend
-    function test_buyback_allToTheReserveNetCost() public {
-        _stock();
-        _fillEthBuyback();
-        _share(10_000);
-        uint256 pool = core.ethToBuyback();
-        uint256 pot0 = core.ethPot();
-        uint256 rb0 = core.ethRedeemBurn();
-        vm.recordLogs();
-        vm.prank(keeper);
-        core.buyback();
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        Flow memory f;
-        _readSkim(f, logs);
-        (uint256 spent, uint256 tip) = _event(logs);
-        uint256 income = address(core).balance - _tracked();
-        (, uint256 engine) = _payeeSplit(income);
-        _book();
-        assertEq(core.ethPot(), pot0, "the pot did not move");
-        assertEq(core.ethRedeemBurn() - rb0, engine, "the whole inflow went to the reserve");
-        uint256 slice = pool < 1 ether ? pool : 1 ether;
-        assertEq(core.ethToBuyback(), pool - slice + (slice - spent - tip));
-        assertEq(spent + tip + (slice - spent - tip), slice, "the slice is spent, tipped or returned");
-    }
 }

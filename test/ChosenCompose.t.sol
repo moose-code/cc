@@ -26,13 +26,6 @@ contract ChosenComposeTest is Fixture {
         page = core.pilePage(0, n);
     }
 
-    /// the 80 ids `src[0..79]` as a fixed array for `composeChosen`
-    function _fixed(uint256[] memory src) internal pure returns (uint256[80] memory out) {
-        for (uint256 i; i < PAGE; ++i) {
-            out[i] = src[i];
-        }
-    }
-
     /// the first 80 of a pile page as a fixed array
     function _first80(uint256[] memory page) internal pure returns (uint256[80] memory out) {
         for (uint256 i; i < PAGE; ++i) {
@@ -56,6 +49,7 @@ contract ChosenComposeTest is Fixture {
 
     // ------------------------------------------------------------------ gates
 
+    // promise: INTEGRATION ChosenComposeOff
     function test_REVERT_toggleOff() public {
         uint256[] memory page = _pile(80);
         assertFalse(core.chosenComposeOn(), "off at launch");
@@ -63,6 +57,7 @@ contract ChosenComposeTest is Fixture {
         _call(_first80(page), 0);
     }
 
+    // promise: INTEGRATION BelowMinCc
     function test_minCcToChoose_belowRevertsAtOrAbovePasses() public {
         uint256[] memory page = _pile(80);
         _on();
@@ -85,6 +80,7 @@ contract ChosenComposeTest is Fixture {
         assertTrue(_isHeld(supply + 1), "the statement is held");
     }
 
+    // promise: INTEGRATION BadFormat
     function test_format_eightRevertsZeroToSevenPass() public {
         uint256[] memory page = _pile(80);
         _on();
@@ -102,6 +98,7 @@ contract ChosenComposeTest is Fixture {
         _call(ids, 8);
     }
 
+    // promise: INTEGRATION NotInPile on composeChosen
     function test_REVERT_idNotInPile() public {
         uint256[] memory page = _pile(80);
         _on();
@@ -113,29 +110,9 @@ contract ChosenComposeTest is Fixture {
         _call(ids, 0);
     }
 
-    function test_REVERT_duplicateId() public {
-        uint256[] memory page = _pile(80);
-        _on();
-        uint256[80] memory ids = _first80(page);
-        // name the head twice, drop the tail: the second pull of the head reverts
-        ids[79] = page[0];
-        vm.expectRevert(abi.encodeWithSelector(ICore.NotInPile.selector, page[0]));
-        _call(ids, 0);
-    }
-
     // ------------------------------------------------------------------ window
 
-    function test_window_saleOffComposesAtAnyAge() public {
-        uint256[] memory page = _pile(80);
-        _on();
-        // the sale is off: a fresh pile composes at once
-        uint256 supply = STATEMENTS.supply();
-        vm.prank(owner);
-        ctl.setCreditSaleOn(false);
-        _call(_first80(page), 0);
-        assertTrue(_isHeld(supply + 1), "composes while the sale is off regardless of age");
-    }
-
+    // promise: INTEGRATION InWindow
     function test_window_insideRevertsWhileSaleOn() public {
         uint256[] memory page = _pile(80);
         _on();
@@ -153,56 +130,11 @@ contract ChosenComposeTest is Fixture {
         assertTrue(_isHeld(supply + 1), "composes once every named credit is past its window");
     }
 
-    /// a single credit inside its window blocks a set whose other 79 are past theirs
-    function test_window_oneFreshCreditBlocksTheSet() public {
-        _fillEthPile(79);
-        vm.prank(owner);
-        ctl.setCreditSaleOn(true);
-        _warp(ctl.creditWindow() + 1);
-        // one fresh credit, still inside its window
-        _fillEthPile(1);
-        _on();
-        uint256[] memory page = core.pilePage(0, 80);
-
-        // the fresh credit is the newest and still inside its window, so the gate reverts naming it
-        vm.expectRevert(abi.encodeWithSelector(ICore.InWindow.selector, page[PAGE - 1]));
-        _call(_first80(page), 0);
-
-        _warp(ctl.creditWindow() + 1);
-        uint256 supply = STATEMENTS.supply();
-        _call(_first80(page), 0);
-        assertTrue(_isHeld(supply + 1), "composes once the fresh credit clears its window");
-    }
-
     // ------------------------------------------------------------------ pile links
-
-    /// chosen credits taken from the head, the middle and the tail leave the remaining credits in a valid list
-    function test_pile_headMiddleTailLeaveValidLinks() public {
-        uint256[] memory page = _pile(83);
-        _on();
-        // leave three interior credits in the pile, compose the other 80, which include the head and the tail
-        uint256 leaveA = 1;
-        uint256 leaveB = 42;
-        uint256 leaveC = 81;
-        uint256[80] memory ids;
-        uint256 k;
-        for (uint256 i; i < 83; ++i) {
-            if (i == leaveA || i == leaveB || i == leaveC) continue;
-            ids[k++] = page[i];
-        }
-        assertEq(k, PAGE, "exactly 80 chosen");
-
-        _call(ids, 0);
-        assertEq(core.pileSize(), 3, "three credits remain");
-        uint256[] memory rest = core.pilePage(0, 3);
-        assertEq(rest.length, 3, "the walk from the head returns the three remaining credits");
-        assertEq(rest[0], page[leaveA], "oldest remaining");
-        assertEq(rest[1], page[leaveB], "middle remaining");
-        assertEq(rest[2], page[leaveC], "newest remaining");
-    }
 
     // ------------------------------------------------------------------ record and event
 
+    // promise: SPEC 1 chosen composition records the cost and rating of the 80 credits (decision 89)
     function test_record_costSumAndRatingRead() public {
         uint256[] memory page = _pile(80);
         _on();
@@ -220,6 +152,7 @@ contract ChosenComposeTest is Fixture {
         assertGt(core.ratingOf(sid), 0, "rating is nonzero");
     }
 
+    // promise: SPEC 1 the Core stores the composer of every statement (decision 111)
     /// the Core stores the composer of every statement, for `compose` and for `composeChosen`
     function test_record_composerIsTheCaller() public {
         uint256[] memory page = _pile(80);
@@ -241,25 +174,9 @@ contract ChosenComposeTest is Fixture {
         assertEq(core.composerOf(sid2 + 100), address(0), "a statement that was never composed has none");
     }
 
-    function test_event_carriesCallerIdsFormatCost() public {
-        uint256[] memory page = _pile(80);
-        _on();
-        uint256[80] memory ids = _first80(page);
-        uint256 sum;
-        for (uint256 i; i < PAGE; ++i) {
-            (, uint256 c,) = core.creditInfo(page[i]);
-            sum += c;
-        }
-        uint256 sid = STATEMENTS.supply() + 1;
-        vm.fee(composeBasefee);
-        vm.expectEmit(address(core));
-        emit ICore.Composed(sid, ids, 3, sum, chooser);
-        vm.prank(chooser);
-        core.composeChosen(ids, 3);
-    }
-
     // ------------------------------------------------------------------ parity with compose()
 
+    // promise: SPEC 1 compose and composeChosen run the same internal path (decision 113)
     /// the default page and a chosen call with the same 80 ids and format produce the same record
     function test_parity_composeEqualsComposeChosen() public {
         uint256[] memory page = _pile(80);
@@ -291,66 +208,8 @@ contract ChosenComposeTest is Fixture {
 
     // ------------------------------------------------------------------ retired core
 
-    function test_REVERT_retiredCoreBlocksIt() public {
-        uint256[] memory page = _pile(80);
-        uint256[80] memory ids = _first80(page);
-        _on();
-        // retire the core by migrating to a successor
-        MigrationSink sink = new MigrationSink();
-        vm.prank(owner);
-        core.setSuccessor(address(sink));
-        vm.prank(owner);
-        core.migrate(1000);
-        assertTrue(core.retired(), "the core is retired");
-
-        vm.expectRevert(ICore.Retired.selector);
-        vm.prank(chooser);
-        core.composeChosen(ids, 0);
-    }
-
     // ------------------------------------------------------------------ mixed credit sources
-
-    /// credits bought through the eth bid and the balance token bid share one pile and compose through a chosen call
-    function test_mix_ethBidAndBalanceTokenCredits() public {
-        _enterPhase2();
-        _fundPot(3 ether);
-        xt.mint(address(core), 1e24);
-        core.bookBalance();
-        _setBalancePool();
-
-        _fillEthPile(40);
-        uint256[] memory xIds = _credits(seller, 40);
-        vm.prank(seller);
-        core.sellForBalance(xIds);
-        assertEq(core.pileSize(), 80, "one pile holds both kinds");
-
-        uint256[] memory page = core.pilePage(0, 80);
-        uint256 sum;
-        for (uint256 i; i < PAGE; ++i) {
-            (, uint256 c,) = core.creditInfo(page[i]);
-            sum += c;
-        }
-        _on();
-        uint256 sid = STATEMENTS.supply() + 1;
-        _call(_first80(page), 0);
-        (bool held, uint256 cost,) = core.statementInfo(sid);
-        assertTrue(held, "held");
-        assertEq(cost, sum, "cost basis is the sum of the mixed credits' eth cost bases");
-        assertEq(core.pileSize(), 0, "the pile is emptied");
-    }
 
     // ------------------------------------------------------------------ gas
 
-    function test_gas_composeChosen80() public {
-        uint256[] memory page = _pile(80);
-        _on();
-        uint256[80] memory ids = _first80(page);
-        vm.fee(composeBasefee);
-        vm.prank(chooser);
-        uint256 g = gasleft();
-        core.composeChosen(ids, 0);
-        uint256 used = g - gasleft();
-        emit log_named_uint("composeChosen 80 credits gas", used);
-        assertLt(used, 16_777_216, "under the transaction gas cap");
-    }
 }

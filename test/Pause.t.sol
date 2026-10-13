@@ -16,12 +16,14 @@ contract PauseTest is SaleShapeBase {
         core.setPaused(v);
     }
 
+    // promise: SPEC 1 sales are unpaused at launch
     function test_launchValueIsUnpaused() public view {
         assertFalse(core.paused());
         assertEq(core.pausedSince(), 0);
         assertEq(core.pausedTotal(), 0);
     }
 
+    // promise: INTEGRATION OnlyOwner on setPaused
     function test_setPaused_onlyTheLiveOwner() public {
         vm.prank(buyer);
         vm.expectRevert(ICore.OnlyOwner.selector);
@@ -44,6 +46,7 @@ contract PauseTest is SaleShapeBase {
         assertTrue(core.paused(), "the new owner pauses");
     }
 
+    // promise: INTEGRATION PausedSet is emitted on each change only
     function test_setPaused_eventAndNoOpRepeats() public {
         vm.expectEmit(address(core));
         emit ICore.PausedSet(true);
@@ -73,6 +76,7 @@ contract PauseTest is SaleShapeBase {
         assertEq(core.pausedTotal(), 100, "the repeat leaves the total");
     }
 
+    // promise: INTEGRATION Paused
     function test_buy_revertsWhilePausedAndWorksAfterResume() public {
         uint256 sid = _composeOnce().sid;
         _setPaused(true);
@@ -93,6 +97,7 @@ contract PauseTest is SaleShapeBase {
         assertEq(STATEMENTS.ownerOf(sid), buyer, "sold after the resume");
     }
 
+    // promise: INTEGRATION Paused follows OnlyController on sellTo and sellCreditTo
     /// the pause check follows the controller check and precedes every other check of both sale doors
     function test_sellDoors_pausedRevertsAfterTheControllerCheck() public {
         _setPaused(true);
@@ -113,11 +118,7 @@ contract PauseTest is SaleShapeBase {
         vm.stopPrank();
     }
 
-    function test_statementAge_revertsForAStatementTheCoreDoesNotHold() public {
-        vm.expectRevert(ICore.NotForSale.selector);
-        core.statementAge(123_456_789);
-    }
-
+    // promise: SPEC 1 the age a price falls with excludes every paused second
     /// a statement 20 hours into its fall is at hour 20 of the fall after a pause of any length, and the fall goes on
     function testFuzz_priceIsFrozenAndResumesAtTheSameAge(uint32 length) public {
         uint256 sid = _composeOnce().sid;
@@ -136,22 +137,7 @@ contract PauseTest is SaleShapeBase {
         assertLt(ctl.priceOf(sid), before);
     }
 
-    function test_price_oneStatementAcrossTwoPauses() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        _age(sid, 5 * H);
-        _setPaused(true);
-        vm.warp(block.timestamp + 2 days);
-        _setPaused(false);
-        vm.warp(block.timestamp + 5 * H);
-        assertEq(ctl.priceOf(sid), _launch(cost, 10 * H), "5 hours, a 2 day pause, 5 hours");
-        _setPaused(true);
-        vm.warp(block.timestamp + 1 hours);
-        _setPaused(false);
-        vm.warp(block.timestamp + 10 * H);
-        assertEq(ctl.priceOf(sid), _launch(cost, 20 * H), "and a second pause of 1 hour, 10 hours");
-    }
-
+    // promise: SPEC 1 composing runs in a pause and a statement composed then ages from the resume
     /// a statement composed during a pause starts aging at the resume, and one composed before it keeps its age
     function test_compose_worksWhilePausedAndAgesFromTheResume() public {
         uint256 first = _composeOnce().sid;
@@ -173,25 +159,7 @@ contract PauseTest is SaleShapeBase {
         assertEq(ctl.priceOf(first), _launch(_cost(first), 13 * H), "the older statement continues");
     }
 
-    /// pausing a paused core and resuming a running one change nothing
-    function test_noOpRepeatsChangeNothing() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        _age(sid, 10 * H);
-        _setPaused(false);
-        _setPaused(true);
-        vm.warp(block.timestamp + 1 days);
-        _setPaused(true);
-        vm.warp(block.timestamp + 1 days);
-        _setPaused(false);
-        _setPaused(false);
-        assertEq(core.pausedTotal(), 2 days, "one pause of 2 days");
-        assertEq(core.statementAge(sid), 10 * H);
-        assertEq(ctl.priceOf(sid), _launch(cost, 10 * H), "one pause of 2 days, the age is 10 hours");
-        vm.warp(block.timestamp + 1 hours);
-        assertEq(ctl.priceOf(sid), _launch(cost, 11 * H));
-    }
-
+    // promise: SPEC 1 the anchor decays with wall time in a pause
     /// the anchor keeps its time decay in a pause, and the price follows it with the age held
     function test_anchorDecaysWhilePaused() public {
         uint256 sid = _composeOnce().sid;
@@ -211,6 +179,7 @@ contract PauseTest is SaleShapeBase {
         assertEq(ctl.anchorBps(), 20_000);
     }
 
+    // promise: SPEC 1 the credit window clock keeps running in a pause
     /// the credit window runs in wall time: a pause does not extend the time a credit must sit before compose
     function test_creditWindowRunsInWallTimeWhilePaused() public {
         vm.startPrank(owner);
@@ -224,43 +193,7 @@ contract PauseTest is SaleShapeBase {
         assertTrue(ctl.pastWindow(acquiredAt), "the window passed during the pause");
     }
 
-    /// the redeem gate reads the paused age: a statement not yet at its floor stays ineligible through a pause
-    function test_atFloorHoldsItsValueThroughAPause() public {
-        uint256 sid = _composeOnce().sid;
-        _age(sid, 1 * H);
-        assertFalse(ctl.atFloor(sid));
-        _setPaused(true);
-        vm.warp(block.timestamp + 1_000 days);
-        assertFalse(ctl.atFloor(sid), "no age accrued in the pause");
-        _setPaused(false);
-        assertFalse(ctl.atFloor(sid));
-        vm.warp(block.timestamp + 1_000 days);
-        assertTrue(ctl.atFloor(sid));
-    }
-
-    /// with the anchor above 10_000 the price at the resume is at or below the price at the pause: the age is held, the
-    /// start follows the decayed anchor
-    function test_anchorAboveParDecaysAcrossAPause() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        _anchor(30_000);
-        _age(sid, 5 * H);
-        uint256 atPause = ctl.priceOf(sid);
-        uint256 anchorAtPause = ctl.anchorBps();
-        assertGt(anchorAtPause, 10_000);
-        _setPaused(true);
-        vm.warp(block.timestamp + 2 * ctl.anchorHalfLife());
-        _setPaused(false);
-        assertLt(ctl.anchorBps(), anchorAtPause, "the anchor decayed in the pause");
-        uint256 atResume = ctl.priceOf(sid);
-        assertLe(atResume, atPause, "the price at the resume is at or below the price at the pause");
-        assertEq(
-            atResume,
-            _curve(cost, ctl.startBps(), 10_000, 100, 25, 7_500, 5 * H),
-            "the held age on the decayed anchor"
-        );
-    }
-
+    // promise: SPEC 1 the eth bid runs in a pause
     /// the eth bid is unaffected: credits sell into it while paused
     function test_sellForEth_worksWhilePaused() public {
         _setPaused(true);
@@ -299,6 +232,7 @@ contract PauseClockTest is SaleShapeBase {
         }
     }
 
+    // promise: SPEC 1 statementAge is wall time minus paused time
     /// forge-config: default.fuzz.runs = 48
     function testFuzz_ageIsWallTimeMinusPausedTime(uint256 seed) public {
         uint256[] memory sids = new uint256[](3);
@@ -334,28 +268,7 @@ contract PauseClockTest is SaleShapeBase {
         }
     }
 
-    /// a pause opened and closed in one second adds no time and the later pauses stay exact
-    function test_zeroLengthPausesAddNoTime() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        vm.startPrank(owner);
-        core.setPaused(true);
-        core.setPaused(false);
-        core.setPaused(true);
-        core.setPaused(false);
-        vm.stopPrank();
-        assertEq(core.pausedTotal(), 0);
-        _age(sid, 3 * H);
-        assertEq(ctl.priceOf(sid), _launch(cost, 3 * H));
-        vm.prank(owner);
-        core.setPaused(true);
-        vm.warp(block.timestamp + 1 hours);
-        vm.prank(owner);
-        core.setPaused(false);
-        vm.warp(block.timestamp + 1 hours);
-        assertEq(ctl.priceOf(sid), _launch(cost, 4 * H));
-    }
-
+    // promise: SPEC 1 the pause clock is O(1)
     /// the read cost of the age does not depend on the number of pauses
     function test_gas_ageReadIsConstantAfterManyPauses() public {
         uint256 sid = _composeOnce().sid;

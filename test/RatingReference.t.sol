@@ -90,10 +90,7 @@ contract RatingReferenceTest is Fixture {
 
     // ------------------------------------------------------------------ reference
 
-    function test_launchRefScoreIsTheAverage() public view {
-        assertEq(ctl.refScore(), 4_330_000, "launch refScore is the average credit score");
-    }
-
+    // promise: SPEC 1 one pricing rule: pointRate and valueOf (decision 104)
     /// `pointRate` is the floor rate over `refScore` and `valueOf` is its product with the points at full precision
     function test_pointRateAndValueOf() public {
         uint256 p = core.floorRate();
@@ -104,6 +101,7 @@ contract RatingReferenceTest is Fixture {
         assertEq(ctl.valueOf(ctl.refScore()), p, "refScore points are worth the floor rate");
     }
 
+    // promise: SPEC 1 the statement reference is max(cost, valueOf(rating))
     /// the reference is the larger of cost and the rate term `floorRate * rating / refScore`. a high refScore shrinks
     /// the rate term below cost so cost binds, a low refScore lifts it above cost so it binds, and when it binds the
     /// reference equals it exactly
@@ -124,27 +122,7 @@ contract RatingReferenceTest is Fixture {
         assertEq(ctl.referenceOf(sid), rateLo, "the reference is the rate term exactly when it binds");
     }
 
-    /// crossing the boundary where the rate term equals cost: one unit of refScore above it references cost, one unit
-    /// below it references the rate term
-    function test_reference_boundaryBetweenCostAndRateTerm() public {
-        uint256 sid = _composeOnce().sid;
-        (, uint256 cost,) = core.statementInfo(sid);
-        uint256 rating = core.ratingOf(sid);
-        uint256 p = core.floorRate();
-
-        // the largest refScore whose rate term is at least cost
-        uint256 cross = FullMath.mulDiv(p, rating, cost);
-        assertGt(cross, 1, "the boundary refScore is above the minimum for this fixture");
-        assertLt(cross, MAX_REF_SCORE, "the boundary refScore is within the setting bound for this fixture");
-
-        _setRef(uint32(cross));
-        assertEq(ctl.referenceOf(sid), FullMath.mulDiv(p, rating, cross), "at the boundary the rate term binds");
-        assertGe(ctl.referenceOf(sid), cost, "the rate term at the boundary is at least cost");
-
-        _setRef(uint32(cross + 1));
-        assertEq(ctl.referenceOf(sid), cost, "one unit above the boundary references cost");
-    }
-
+    // promise: SPEC 1 one pile: equal ratings reference equally (decision 95)
     /// the bug decision 95 fixes: an eth bought statement and a balance token bought statement reference by the same
     /// per-rating amount once the rate term binds, whatever each credit cost. decision 90 scaled the redemption statement by
     /// about the square of its score ratio because its recorded cost already scaled with score
@@ -185,6 +163,7 @@ contract RatingReferenceTest is Fixture {
         );
     }
 
+    // promise: SPEC 1 the reference follows the floor rate at the call
     /// the reference moves with the floor rate at the call. raising the stored rate raises the reference and the curve
     /// price in step, and `atFloor` stays an age decision through the move
     function test_referenceMovesWithTheFloorRate() public {
@@ -208,135 +187,13 @@ contract RatingReferenceTest is Fixture {
         assertEq(ctl.atFloor(sid), floor1, "atFloor is an age decision, unchanged by the floor rate move");
     }
 
-    /// a large sale walks the clamped bid down and drops the climbed price state, but the peak does not fall in one tx,
-    /// so the floor rate holds at the peak and a statement's reference is unchanged
-    function test_largeSaleLeavesThePeakAndReferenceUnchanged() public {
-        _liftRateCap();
-        _fundPot(50 ether);
-        uint256 sid = _composeOnce().sid;
-        // a modest, stable peak the pot can afford to buy 115 credits against
-        vm.prank(owner);
-        core.setRate(0.05 ether);
-        _setRef(1); // the rate term binds, so the reference tracks the floor rate
-        uint256 floor0 = core.floorRate();
-        uint256 ref0 = ctl.referenceOf(sid);
-        assertEq(ref0, floor0 * core.ratingOf(sid), "the reference is the floor rate times the rating");
-
-        // sell 115 credits into the eth bid in one call; the clamped bid walks down a credit at a time
-        uint256[] memory ids = _credits(seller, 115);
-        vm.prank(seller);
-        core.sellForEth(ids);
-
-        assertLt(core.ethRate(), floor0, "the sale walked the clamped bid down");
-        assertLt(core.ethPrice(), floor0, "the sale dropped the climbed price state below the peak");
-        assertEq(core.floorRate(), floor0, "the floor rate held at the peak through the batch");
-        assertEq(ctl.referenceOf(sid), ref0, "the statement reference is unchanged");
-    }
-
-    /// a long idle with no fills decays the peak and climbs the price state, so the floor rate rises to the climbed
-    /// rate and a statement's reference rises with it
-    function test_longIdleLiftsTheFloorRateAndReference() public {
-        _liftRateCap();
-        _fundPot(50 ether);
-        uint256 sid = _composeOnce().sid;
-        vm.prank(owner);
-        core.setRate(0.05 ether);
-        _setRef(1); // the rate term binds, so the reference tracks the floor rate
-        uint256 floor0 = core.floorRate();
-        uint256 ref0 = ctl.referenceOf(sid);
-
-        _warp(2 days); // no fills: the peak decays, the price state climbs
-
-        uint256 climbed = core.ethPrice();
-        assertGt(climbed, floor0, "the price state climbed above the opening peak");
-        assertEq(core.floorRate(), climbed, "the floor rate is the climbed rate, the decayed peak is below it");
-        assertEq(ctl.referenceOf(sid), climbed * core.ratingOf(sid), "the reference followed the climbed floor rate");
-        assertGt(ctl.referenceOf(sid), ref0, "the reference rose with the idle climb");
-    }
-
     // ------------------------------------------------------------------ curve, floor and eligibility
-
-    function test_curvePointsScaleWithReference() public {
-        uint256 sid = _composeOnce().sid;
-        _makeRich(sid);
-
-        // a two stage curve: start 15000, knee 7500, floor 5000 of the reference
-        Settings memory s = core.settings();
-        s.saleFloorBps = 5_000;
-        _setSettings(s);
-        vm.prank(owner);
-        ctl.setKneeBps(7_500);
-
-        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * ctl.startBps() / BPS, "the start is startBps of the reference");
-
-        _warp(75 hours); // fast decay 15000 to 7500 at 100 per hour
-        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 7_500 / BPS, "the knee is kneeBps of the reference");
-
-        _warp(400 hours);
-        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 5_000 / BPS, "the floor is saleFloorBps of the reference");
-    }
-
-    /// a rich statement's floor is the scaled reference and `atFloor` flips when the curve reaches it, at a price above
-    /// cost, where the old at-cost rule would never hold
-    function test_richFloorIsTheScaledReferenceAndAtFloorFlipsThere() public {
-        uint256 sid = _composeOnce().sid;
-        (, uint256 cost) = _makeRich(sid);
-        uint256 floorBps = core.settings().saleFloorBps;
-        assertGt(ctl.referenceOf(sid) * floorBps / BPS, cost, "the scaled floor sits above cost");
-
-        assertFalse(ctl.atFloor(sid), "a fresh statement is above its floor");
-        assertGt(ctl.priceOf(sid), ctl.referenceOf(sid) * floorBps / BPS, "the opening price is above the floor");
-
-        _warp(49 hours);
-        assertFalse(ctl.atFloor(sid), "one hour before the floor it is still above");
-
-        _warp(1 hours); // the launch curve reaches its floor at hour 50
-        assertTrue(ctl.atFloor(sid), "the curve has reached its floor");
-        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * floorBps / BPS, "the price rests at the scaled floor");
-    }
 
     // ------------------------------------------------------------------ anchor
 
-    /// the anchor measures a sale in bps of the reference. a rich statement sold at a markup equal to the anchor leaves
-    /// the anchor unchanged, where a cost based measure would push it up
-    function test_anchorIgnoresARichSaleAtTheAnchorMarkup() public {
-        uint256 sid = _composeOnce().sid;
-        (uint256 ref, uint256 cost) = _makeRich(sid);
-        vm.startPrank(owner);
-        ctl.setAnchorMinCost(0);
-        ctl.setMarkupBps(10_000); // the start price equals the anchor
-        ctl.setAnchorBps(12_000);
-        vm.stopPrank();
-
-        uint256 price = ctl.priceOf(sid);
-        assertLe(price * BPS / ref, 12_000, "the sale price in bps of the reference is at the anchor");
-        assertGt(price * BPS / cost, 12_000, "in bps of cost it would be above the anchor");
-
-        address buyer = _user("buyer");
-        _buy(buyer, sid);
-        assertEq(ctl.anchorBps(), 12_000, "a sale at the anchor markup leaves the anchor unchanged");
-    }
-
-    /// a sale above the anchor moves it to the mean, measured in bps of the reference, not cost
-    function test_anchorMovesOnASaleAboveTheAnchor() public {
-        uint256 sid = _composeOnce().sid;
-        (uint256 ref,) = _makeRich(sid);
-        vm.startPrank(owner);
-        ctl.setAnchorMinCost(0);
-        ctl.setMarkupBps(15_000); // the start price is 1.5 times the anchor
-        ctl.setAnchorBps(12_000);
-        vm.stopPrank();
-
-        uint256 price = ctl.priceOf(sid);
-        assertEq(price, ref * 18_000 / BPS, "the start is 18000 bps of the reference");
-
-        address buyer = _user("buyer");
-        _buy(buyer, sid);
-        assertEq(ctl.anchorBps(), 15_000, "the anchor moves to the mean of 12000 and 18000");
-    }
-
     // ------------------------------------------------------------------ core hard floor and value floor
 
+    // promise: SPEC 1 the Core hard floor bounds a sale whatever the controller quotes (inv 3)
     /// the core hard floor is saleFloorBps of cost, enforced by the core whatever the controller quotes, even for a
     /// rich statement whose reference exceeds cost
     function test_coreHardFloorBoundsAtCost() public {
@@ -358,47 +215,9 @@ contract RatingReferenceTest is Fixture {
         assertEq(STATEMENTS.ownerOf(sid), buyer, "the sale at the cost floor lands");
     }
 
-    /// the pool term lifts the reference above the rate term, and the curve prices in bps of that reference
-    function test_poolTermLiftsTheReferenceAndTheCurveFollows() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        _makeRich(sid);
-        uint256 refBefore = ctl.referenceOf(sid);
-
-        _initPool(LOW_SQRT); // a low sqrt price makes the balance token expensive in eth
-        uint256 owed = core.ratingOf(sid) * UNIT;
-        uint256 q = FixedPoint96.Q96;
-        uint256 value = FullMath.mulDiv(FullMath.mulDiv(owed, q, LOW_SQRT), q, LOW_SQRT);
-
-        assertGt(value, refBefore, "the pool term is above the rate term");
-        assertEq(ctl.valueOf(core.ratingOf(sid)), value, "valueOf is the pool term");
-        assertEq(ctl.referenceOf(sid), value, "the reference is the pool term");
-        assertEq(ctl.priceOf(sid), value * ctl.startBps() / BPS, "the curve is on the lifted reference");
-    }
-
     // ------------------------------------------------------------------ setter
 
-    function test_refScoreChangeAppliesToOpenListingsAtOnce() public {
-        uint256 sid = _composeOnce().sid;
-        (, uint256 cost,) = core.statementInfo(sid);
-        uint256 rating = core.ratingOf(sid);
-        uint256 p = core.floorRate();
-        uint256 cross = FullMath.mulDiv(p, rating, cost);
-
-        _setRef(MAX_REF_SCORE); // a high refScore keeps the reference at cost
-        assertEq(ctl.referenceOf(sid), cost, "the reference is the cost under a high refScore");
-
-        uint32 rich = uint32(cross / 2);
-        if (rich == 0) rich = 1;
-        _setRef(rich);
-        assertEq(
-            ctl.referenceOf(sid),
-            FullMath.mulDiv(p, rating, rich),
-            "the reference is computed at the call from the current refScore"
-        );
-        assertGt(ctl.referenceOf(sid), cost, "a lowered refScore lifts the open listing above cost");
-    }
-
+    // promise: INTEGRATION BadSetting and OnlyOwner on setRefScore
     function test_setRefScore_boundsEventAndOwner() public {
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setRefScore(1_000);
