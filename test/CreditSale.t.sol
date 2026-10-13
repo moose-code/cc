@@ -12,9 +12,9 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {ICreditScore, ICredits, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {LowballCreditController, ReentrantCreditBuyer} from "./attackers/CreditSaleAttackers.sol";
 
-/// decision 88 and 96, credit sale window. pile credits are for sale from acquisition at a price that falls linearly
-/// from a start to a floor over `creditWindow` and rests at the floor. the floor is the highest of the credit's cost,
-/// its exit token redemption baseline and the score-scaled eth backstop `peak * max(1, score / refScore)`, times
+/// credit sale window. pile credits are for sale from acquisition at a price that falls linearly from a start to a
+/// floor over `creditWindow` and rests at the floor. the floor is the highest of the credit's cost, its exit token
+/// redemption baseline and the score-scaled eth backstop `floorRate * max(1, score / refScore)`, times
 /// `creditFloorBps`; the start is the floor times `creditStartBps`. the baseline reads the live exit token pool and
 /// only lifts the floor: a missing or failed pool read leaves it at 0 and the sale never reverts for it. the core
 /// keeps a hard floor at the credit's cost. while the sale is on compose takes only credits past their window
@@ -87,12 +87,12 @@ contract CreditSaleTest is Fixture {
         return FullMath.mulDiv(FullMath.mulDiv(baseUnits, q, sp), q, sp);
     }
 
-    /// the score-scaled eth backstop the controller applies to `id`: `ethPeak` at or below `refScore`, else scaled
+    /// the score-scaled eth backstop the controller applies to `id`: the floor rate at or below `refScore`, else scaled
     function _backstop(uint256 id) internal view returns (uint256) {
-        uint256 peak = core.ethPeak();
+        uint256 floor = core.floorRate();
         uint256 rs = ctl.refScore();
         uint256 score = _creditScore(id);
-        return score <= rs ? peak : peak * score / rs;
+        return score <= rs ? floor : floor * score / rs;
     }
 
     // ------------------------------------------------------------------ toggle and gating
@@ -211,17 +211,17 @@ contract CreditSaleTest is Fixture {
         uint256[] memory ids = _fillEthPile(1);
         uint256 id = ids[0];
         (, uint256 cost,) = core.creditInfo(id);
-        // lift the peak far above the credit's cost
+        // lift the floor rate far above the credit's cost
         _liftRateCap();
         vm.prank(owner);
         core.setRate(cost * 4);
         _fundPot(cost * 20);
         vm.prank(owner);
-        ctl.setRefScore(8_000_000); // the score is at or below the reference, so the backstop is the unscaled peak
+        ctl.setRefScore(8_000_000); // the score is at or below the reference, so the backstop is the unscaled floor rate
         _on();
         _warp(ctl.creditWindow());
         uint256 back = _backstop(id);
-        assertEq(back, core.ethPeak(), "the backstop is the unscaled peak");
+        assertEq(back, core.floorRate(), "the backstop is the unscaled floor rate");
         assertGt(back, cost, "the backstop is the highest term");
         assertEq(ctl.creditPrice(id), back * ctl.creditFloorBps() / BPS, "floor is backstop based");
     }
@@ -233,7 +233,7 @@ contract CreditSaleTest is Fixture {
         // an expensive exit token pool makes the credit's exit token baseline the highest term
         _initExitPoolAt(HIGH_PRICE_SQRT);
         vm.prank(owner);
-        core.setRate(1e13); // keep the peak small
+        core.setRate(1e13); // keep the floor rate small
         _on();
         _warp(ctl.creditWindow());
 
@@ -314,9 +314,9 @@ contract CreditSaleTest is Fixture {
         _on();
         _warp(ctl.creditWindow());
         assertLe(_creditScore(id), ctl.refScore(), "the score is at or below the reference");
-        uint256 peak = core.ethPeak();
-        assertGt(peak, cost, "the backstop governs");
-        assertEq(ctl.creditPrice(id), peak * ctl.creditFloorBps() / BPS, "floor is the unscaled peak");
+        uint256 floor = core.floorRate();
+        assertGt(floor, cost, "the backstop governs");
+        assertEq(ctl.creditPrice(id), floor * ctl.creditFloorBps() / BPS, "floor is the unscaled floor rate");
     }
 
     /// a credit scored above `refScore` backstops at `bid * score / refScore`
@@ -335,9 +335,9 @@ contract CreditSaleTest is Fixture {
         ctl.setRefScore(rs);
         _on();
         _warp(ctl.creditWindow());
-        uint256 peak = core.ethPeak();
-        uint256 back = peak * score / rs;
-        assertGt(back, peak, "the backstop scales above the unscaled peak");
+        uint256 floor = core.floorRate();
+        uint256 back = floor * score / rs;
+        assertGt(back, floor, "the backstop scales above the unscaled floor rate");
         assertGt(back, cost, "the backstop governs");
         assertEq(ctl.creditPrice(id), back * ctl.creditFloorBps() / BPS, "floor is the scaled backstop");
     }
@@ -363,8 +363,8 @@ contract CreditSaleTest is Fixture {
         ctl.setRefScore(rs);
         _on();
         _warp(ctl.creditWindow());
-        uint256 peak = core.ethPeak();
-        uint256 back = peak * score / rs;
+        uint256 floor = core.floorRate();
+        uint256 back = floor * score / rs;
         uint256 baseline = _poolValueWei(score * core.unitPerPoint(), pushedDown);
         assertLt(baseline, back, "the pushed down pool values the credit below its backstop");
         assertGt(back, cost, "the backstop governs");
@@ -372,33 +372,33 @@ contract CreditSaleTest is Fixture {
         assertEq(ctl.creditPrice(id), back * ctl.creditFloorBps() / BPS, "floor is 1.1x the scaled backstop");
     }
 
-    // ------------------------------------------------------------------ the floor uses the peak
+    // ------------------------------------------------------------------ the floor uses the floor rate
 
-    /// the credit sale floor reads the peak of the eth bid, so a sale that enlarges the pot cannot push the rate the
-    /// credit is priced against down within the block
+    /// the credit sale floor reads the floor rate, so a sale that enlarges the pot cannot push the rate the credit is
+    /// priced against down within the block
     function test_floor_usesThePeakNotTheClampedRate() public {
         uint256[] memory ids = _fillEthPile(1);
         uint256 id = ids[0];
-        // raise the stored rate far above the pot so the clamp binds: the peak is above the clamped read
+        // raise the stored rate far above the pot so the clamp binds: the floor rate is above the clamped read
         _liftRateCap();
         uint256 big = core.ethPot() * 4;
         vm.prank(owner);
         core.setRate(big);
         vm.prank(owner);
-        ctl.setRefScore(8_000_000); // the score is at or below the reference, so the backstop is the unscaled peak
+        ctl.setRefScore(8_000_000); // the score is at or below the reference, so the backstop is the unscaled floor rate
         _on();
         _warp(ctl.creditWindow());
-        uint256 peak = core.ethPeak();
+        uint256 floor = core.floorRate();
         uint256 clamped = core.ethRate();
-        assertGt(peak, clamped, "the clamp binds, the peak is above the clamped read");
+        assertGt(floor, clamped, "the clamp binds, the floor rate is above the clamped read");
         (, uint256 cost,) = core.creditInfo(id);
-        uint256 hi = cost > peak ? cost : peak;
-        assertEq(ctl.creditPrice(id), hi * ctl.creditFloorBps() / BPS, "the floor uses the peak");
+        uint256 hi = cost > floor ? cost : floor;
+        assertEq(ctl.creditPrice(id), hi * ctl.creditFloorBps() / BPS, "the floor uses the floor rate");
         assertGt(ctl.creditPrice(id), clamped * ctl.creditFloorBps() / BPS, "the floor is above the clamped rate floor");
     }
 
     /// buying a credit then selling it straight back into the eth bid in the same flow is a loss: the purchase pays
-    /// the peak backed floor and the sell back pays the clamped rate
+    /// the floor rate backed floor and the sell back pays the clamped rate
     function test_h1_buyThenSellBackIsUnprofitable() public {
         uint256[] memory ids = _fillEthPile(1);
         uint256 id = ids[0];

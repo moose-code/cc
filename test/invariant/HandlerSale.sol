@@ -518,12 +518,12 @@ abstract contract HandlerSale is HandlerOwner {
         return ask < hard ? hard : ask;
     }
 
-    /// the price reference of statement `sid`: the larger of its cost and the peak of the eth bid times its rating over
+    /// the price reference of statement `sid`: the larger of its cost and the floor rate times its rating over
     /// `refScore`, the same value the controller prices against. the product cannot overflow a word, so the plain
     /// divide matches the controller `mulDiv`
     function _modelRef(uint256 sid, uint256 cost) internal view returns (uint256) {
         uint256 rating = core.ratingOf(sid);
-        uint256 rate = core.ethPeak() * rating / uint256(IControllerV1(v1).refScore());
+        uint256 rate = core.floorRate() * rating / uint256(IControllerV1(v1).refScore());
         return rate > cost ? rate : cost;
     }
 

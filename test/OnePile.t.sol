@@ -10,10 +10,11 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 
-/// decision 96: one pile for every credit. the exit token bid records an eth cost basis of the score-scaled eth
-/// backstop `peak * max(1, score / refScore)`, at least 1 wei, where `peak` is the remembered peak of the eth bid. the
-/// record reads no pool price, so a pushed up or pushed down pool cannot move it and the bid needs no pool key. every
-/// credit composes into the same statement. the three standalone settings have owner setters, bounds and events
+/// one pile for every credit. the exit token bid records an eth cost basis of the score-scaled eth backstop
+/// `floorRate * max(1, score / refScore)`, at least 1 wei, where the floor rate is the larger of the climbed price
+/// state and the decayed peak. the record reads no pool price, so a pushed up or pushed down pool cannot move it and
+/// the bid needs no pool key. every credit composes into the same statement. the three standalone settings have owner
+/// setters, bounds and events
 contract OnePileTest is Fixture {
     uint256 internal constant BPS = 10_000;
     /// a small sqrt price makes the exit token expensive in eth (a pushed up redemption value)
@@ -57,13 +58,14 @@ contract OnePileTest is Fixture {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
-    /// the score-scaled eth backstop the sale records for `id`: `peak` when the score is at or below `refScore`, else
-    /// `peak * score / refScore`, at least 1 wei. the peak is read at the current block, which the sale does not move
+    /// the score-scaled eth backstop the sale records for `id`: the floor rate when the score is at or below `refScore`,
+    /// else `floorRate * score / refScore`, at least 1 wei. the floor rate is read at the current block, which the sale
+    /// does not move
     function _backstop(uint256 id) internal view returns (uint256 b) {
-        uint256 peak = core.ethPeak();
+        uint256 floor = core.floorRate();
         uint256 rs = ctl.refScore();
         uint256 score = _score(id);
-        b = score <= rs ? peak : peak * score / rs;
+        b = score <= rs ? floor : floor * score / rs;
         if (b == 0) b = 1;
     }
 
@@ -81,11 +83,11 @@ contract OnePileTest is Fixture {
         vm.prank(seller);
         core.sellForExitToken(ids);
         (, uint256 cost,) = core.creditInfo(id);
-        assertGt(want, core.ethPeak(), "the backstop scales above the peak for a rich credit");
+        assertGt(want, core.floorRate(), "the backstop scales above the floor rate for a rich credit");
         assertEq(cost, want, "the recorded cost is the scaled backstop");
     }
 
-    /// a credit scored at or below `refScore` records the unscaled peak as its cost
+    /// a credit scored at or below `refScore` records the unscaled floor rate as its cost
     function test_sellForExit_costIsThePeakBelowRefScore() public {
         _ready();
         uint256[] memory ids = _credits(seller, 1);
@@ -96,8 +98,8 @@ contract OnePileTest is Fixture {
         vm.prank(seller);
         core.sellForExitToken(ids);
         (, uint256 cost,) = core.creditInfo(id);
-        assertEq(want, core.ethPeak(), "the backstop is the unscaled peak");
-        assertEq(cost, want, "the recorded cost is the peak");
+        assertEq(want, core.floorRate(), "the backstop is the unscaled floor rate");
+        assertEq(cost, want, "the recorded cost is the floor rate");
     }
 
     /// a pushed up pool price (an expensive exit token) does not move the recorded cost: it stays the backstop
@@ -130,16 +132,16 @@ contract OnePileTest is Fixture {
         assertEq(cost, want, "the recorded cost is the backstop, not the pushed down pool value");
     }
 
-    /// with an empty eth pot the recorded cost is still the peak backstop, nonzero, so a credit bought with the exit
-    /// token is never resellable into the eth bid at a profit. buying it back costs at least `creditFloorBps` of it
+    /// with an empty eth pot the recorded cost is still the floor rate backstop, nonzero, so a credit bought with the
+    /// exit token is never resellable into the eth bid at a profit. buying it back costs at least `creditFloorBps` of it
     function test_sellForExit_costIsThePeakWithAnEmptyPot() public {
         _enterPhase2();
         xt.mint(address(core), 1e24);
         core.skim();
         assertEq(core.ethPot(), 0, "the eth pot is empty");
         assertEq(core.ethRate(), 0, "the clamped bid is zero with an empty pot");
-        uint256 peak = core.ethPeak();
-        assertGt(peak, 0, "the peak is nonzero");
+        uint256 floor = core.floorRate();
+        assertGt(floor, 0, "the floor rate is nonzero");
 
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];
@@ -148,7 +150,7 @@ contract OnePileTest is Fixture {
         vm.prank(seller);
         core.sellForExitToken(ids);
         (, uint256 cost,) = core.creditInfo(id);
-        assertEq(cost, peak, "the recorded cost is the peak, not the clamped zero");
+        assertEq(cost, floor, "the recorded cost is the floor rate, not the clamped zero");
         assertGe(cost, 1, "the recorded cost is at least 1 wei");
 
         vm.prank(owner);

@@ -222,25 +222,30 @@ library CoreLib {
         view
         returns (uint256 price, uint256 read)
     {
-        return _climb(r, pot, anchorTime, t, nowTs);
+        (price, read,) = _climb(r, pot, anchorTime, t, nowTs);
     }
 
-    /// @notice the remembered peak of the eth bid decayed to `nowTs`: `peakRate` halved every `peakHalfLife` since
-    /// `peakTime`. it rises with fills and `setRate` and falls only with time. the engine's price floors read it
-    /// through `Core.ethPeak`
-    function peak(uint256 nowTs) external view returns (uint256) {
-        RateStore.Anchor storage a = RateStore.load();
-        return Halving.halve(a.peakRate, nowTs.zeroFloorSub(a.peakTime), SettingsStore.load().peakHalfLife);
+    /// @notice the floor rate at `nowTs` in wei per credit: the larger of the price state climbed before the pot clamp
+    /// and the remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays
+    /// between fills, so the maximum follows the climb and holds against a sale within the block. the engine's price
+    /// floors read it through `Core.floorRate`
+    function floorRate(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
+        external
+        view
+        returns (uint256)
+    {
+        (uint256 price,, uint256 peakNow) = _climb(r, pot, anchorTime, t, nowTs);
+        return price.max(peakNow);
     }
 
     function _climb(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
         private
         view
-        returns (uint256 price, uint256 read)
+        returns (uint256 price, uint256 read, uint256 peakNow)
     {
         Settings storage s = SettingsStore.load();
         RateStore.Anchor storage a = RateStore.load();
-        uint256 peakNow = Halving.halve(a.peakRate, nowTs.zeroFloorSub(a.peakTime), s.peakHalfLife);
+        peakNow = Halving.halve(a.peakRate, nowTs.zeroFloorSub(a.peakTime), s.peakHalfLife);
         uint256 anchor = a.lastFillRate.max(peakNow);
         uint256 loosened = 10_000 + uint256(s.idleLoosenBps) * (nowTs.zeroFloorSub(anchorTime) / 10 minutes);
         uint256 cap = (anchor * loosened * s.ceilBps / 1e8).min(s.rateCap);
@@ -394,7 +399,7 @@ library CoreLib {
     function adopt(uint256[] calldata ids) external {
         if (ids.length == 0) revert Empty();
         CoreState storage c = state();
-        (uint256 price,) = _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
+        (uint256 price,,) = _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = ids[i];
             if (id == 0) revert ZeroId();
@@ -465,7 +470,7 @@ library CoreLib {
     function _moveEth(CoreState storage c, address to) private returns (uint256 eth) {
         eth = c.ethPot;
         if (eth == 0) return 0;
-        (c.rateAtCheckpoint,) = _climb(c.rateAtCheckpoint, eth, c.lastFillTime, c.checkpointTime, block.timestamp);
+        (c.rateAtCheckpoint,,) = _climb(c.rateAtCheckpoint, eth, c.lastFillTime, c.checkpointTime, block.timestamp);
         c.checkpointTime = uint64(block.timestamp);
         c.ethPot = 0;
         (bool ok,) = to.call{value: eth}("");
@@ -604,9 +609,12 @@ library CoreLib {
         if (live < unit) unit = live;
         uint256 net = BPS - s.exitBidMarginBps;
         uint256 pot = c.xPot;
-        // the remembered peak of the eth bid decayed to now, the base of a credit's recorded eth cost basis. read only
-        RateStore.Anchor storage a = RateStore.load();
-        uint256 peak = Halving.halve(a.peakRate, block.timestamp.zeroFloorSub(a.peakTime), s.peakHalfLife);
+        // the floor rate now, the base of a credit's recorded eth cost basis: the larger of the price state climbed
+        // before the pot clamp and the decayed peak. selling credits lowers only the rate and the peak decays between
+        // fills, so the maximum follows the climb and holds against the walk down. read only
+        (uint256 price,, uint256 peakNow) =
+            _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
+        uint256 floor = price.max(peakNow);
         uint256 refScore = _refScore(c.controller);
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
@@ -617,7 +625,7 @@ library CoreLib {
             if (paid > pot) revert PotTooSmall();
             pot -= paid;
             total += paid;
-            uint256 backstop = (refScore == 0 || score <= refScore) ? peak : peak.mulDiv(score, refScore);
+            uint256 backstop = (refScore == 0 || score <= refScore) ? floor : floor.mulDiv(score, refScore);
             uint256 cost = backstop.max(1);
             push(c.pile, c.credits, id, cost);
             CREDITS.transferFrom(msg.sender, address(this), id);

@@ -405,12 +405,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         (price,) = _climb();
     }
 
-    /// wei per credit of the remembered peak of the eth bid decayed to now: `peakRate` halved every `peakHalfLife`
-    /// since `peakTime`. it rises with fills and `setRate` and falls only with time, so a sale within the block does
-    /// not lower it. the engine's price floors read it as the rate that a pot or pool move cannot push down. the math
-    /// is in `CoreLib.peak`
-    function ethPeak() external view returns (uint256) {
-        return CoreLib.peak(block.timestamp);
+    /// wei per credit of the floor rate now: the larger of `ethPrice`, the price state climbed before the pot clamp,
+    /// and the remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays
+    /// between fills, so the maximum follows the climb and holds against a sale within the block. the engine's price
+    /// floors read it. the math is in `CoreLib.floorRate`
+    function floorRate() external view returns (uint256) {
+        return CoreLib.floorRate(rateAtCheckpoint, ethPot, lastFillTime, checkpointTime, block.timestamp);
     }
 
     function _checkpoint() private {

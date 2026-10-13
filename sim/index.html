@@ -168,7 +168,7 @@ const SETTING_KEYS = Object.keys(SETTINGS);
 // mean of the anchor now and the sale price, a sale at or below it leaves it, and so does a sale of a statement that costs less than anchorMinCost (eth here, wei in the
 // contract). the part of the anchor above 10000 halves every anchorHalfLife, continuously.
 // a buyer pays the asking price and gets the statement at once through Core.sellTo.
-// the price reference of a statement is max(cost, ethPeak * rating / refScore) (FLOW 95, 96, ControllerV1.referenceOf), where ethPeak is the remembered peak of the eth bid and refScore is in CREDIT below
+// the price reference of a statement is max(cost, floorRate * rating / refScore) (ControllerV1.referenceOf), where the floor rate is the larger of the climbed price state and the decayed peak and refScore is in CREDIT below
 const CONTROLLER = {
   markupBps: 15000,
   startCapBps: 100000,
@@ -184,7 +184,7 @@ const CONTROLLER_KEYS = Object.keys(CONTROLLER);
 // (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditFloorBps, creditStartBps and refScore are controller
 // settings (FLOW 88 to 90, 93, 94). while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
 // start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, baseline, backstop) * creditFloorBps / 10000. the
-// baseline is score * min(stored, live unitPerPoint) at the exit token pool price and only lifts the floor, 0 while no module or pool key is set; the backstop is the remembered peak of the eth bid
+// baseline is score * min(stored, live unitPerPoint) at the exit token pool price and only lifts the floor, 0 while no module or pool key is set; the backstop is the floor rate (the larger of the climbed price state and the decayed peak)
 // times max(1, score / refScore), so a credit scored above refScore floors proportionally higher. Core.sellCreditTo takes at least the credit's cost, books creditCostToPotBps of the cost to the pot and the rest to the buyback pot.
 // compose waits for a credit's window while the sale is on (ControllerV1.pastWindow). refScore is the per-credit score of the statement price reference, in
 // ten-thousandths of a point (the model's scores are in points). minCcToChoose is a coin balance the model does not track: every composer passes it
@@ -510,10 +510,11 @@ class Core {
   // Core.ethPrice(): the price state before the pot clamp (wei per credit). the clamp is the read only lowering that ethRate applies. the cost floor of a credit
   // bought with the exit token and the eth bid term of the credit sale floor read it, so an empty pot does not zero them (FLOW 93)
   ethPrice(now) { return this.p.bidRule === 'stepped' ? this.priceRate(now) : this.ethRate(now); }
-  // Core.ethPeak(): the remembered peak of the eth bid decayed to now (wei per credit). it rises with fills and setRate
-  // and falls only with time, so a pot or pool move cannot push it down within the block. the statement reference, the
-  // credit backstop and the cost of a credit bought with the exit token read it (FLOW 96)
-  ethPeak(now) { return this.p.bidRule === 'stepped' ? this.peakAt(now) : this.ethRate(now); }
+  // Core.floorRate(): the floor rate now (wei per credit): the larger of ethPrice, the price state climbed before the
+  // pot clamp, and the remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak
+  // decays between fills, so the maximum follows the climb and holds against a sale within the block. the statement
+  // reference, the credit backstop and the cost of a credit bought with the exit token read it
+  floorRate(now) { return this.p.bidRule === 'stepped' ? Math.max(this.priceRate(now), this.peakAt(now)) : this.ethRate(now); }
   checkpoint(now) { this.rateAtCheckpoint = this.p.bidRule === 'stepped' ? this.priceRate(now) : this.ethRate(now); this.checkpointTime = now; }
   syncFunded() {
     this.funded = this.ethPot * W >= this.rateAtCheckpoint;
@@ -603,13 +604,13 @@ class Core {
   compose(costSum, now, rating = 0) {
     return { cost: costSum, t0: now, rating };
   }
-  // ControllerV1.referenceOf: the price reference of a statement, max(cost, ethPeak * rating / refScore) (FLOW 95, 96),
-  // where ethPeak is the remembered peak of the eth bid. ratings and scores are in points here, refScore in
-  // ten-thousandths of a point, so refScore/1e4 is the reference score in points and ethPeak/W is the per-credit rate
-  // in eth. a record without a rating references its cost
+  // ControllerV1.referenceOf: the price reference of a statement, max(cost, floorRate * rating / refScore), where the
+  // floor rate is the larger of the climbed price state and the decayed peak. ratings and scores are in points here,
+  // refScore in ten-thousandths of a point, so refScore/1e4 is the reference score in points and floorRate/W is the
+  // per-credit rate in eth. a record without a rating references its cost
   reference(st, now) {
     const refPts = this.cr.refScore / 1e4, rating = st.rating || 0;
-    const rateTerm = (this.ethPeak(now) / W) * (rating / refPts);
+    const rateTerm = (this.floorRate(now) / W) * (rating / refPts);
     return Math.max(st.cost, rateTerm);
   }
   // ControllerV1._setAnchorStored: the anchor at `now`
@@ -696,9 +697,10 @@ class Core {
   pastWindow(acquiredAt, now) { return !this.cr.creditSaleOn || acquiredAt + this.cr.creditWindow <= now; }
   // ControllerV1._baseline: the exit token value of the credit, score * min(stored, live unitPerPoint) at the exit token pool price. 0 until the pool key and the module are set
   creditBaseline(cr) { return this.p.exitPoolSet && this.moduleSet ? cr.pts * this.unit() * this.p.exitPoolMult : 0; }
-  // the score-scaled eth backstop of a credit (FLOW 94, 96): the remembered peak of the eth bid times max(1, score / refScore). refScore is in ten-thousandths
-  // of a point, so refScore/1e4 is the reference score in points; a credit scored at or below it backstops at the unscaled peak
-  creditBackstop(pts, now) { return (this.ethPeak(now) / W) * Math.max(1, pts / (this.cr.refScore / 1e4)); }
+  // the score-scaled eth backstop of a credit: the floor rate times max(1, score / refScore), where the floor rate is
+  // the larger of the climbed price state and the decayed peak. refScore is in ten-thousandths of a point, so
+  // refScore/1e4 is the reference score in points; a credit scored at or below it backstops at the unscaled floor rate
+  creditBackstop(pts, now) { return (this.floorRate(now) / W) * Math.max(1, pts / (this.cr.refScore / 1e4)); }
   // the credit sale floor: the highest of the credit's cost, its baseline and its score-scaled eth backstop, times creditFloorBps
   creditFloor(cr, now) { return (Math.max(cr.cost, this.creditBaseline(cr), this.creditBackstop(cr.pts, now)) * this.cr.creditFloorBps) / BPS; }
   // ControllerV1.creditPrice: falls linearly from floor * creditStartBps to the floor over creditWindow from the acquisition time and rests at the floor
@@ -745,8 +747,8 @@ class Core {
     this.ethRedeemBurn -= move; this.ethToBuyback += move; this.redeemBurnMoved += move;
     return move;
   }
-  // Core.sellForExitToken runs while exitMode is 2 and a module is set. it records the score-scaled peak backstop and
-  // reads no pool, so it needs no pool key (FLOW 96)
+  // Core.sellForExitToken runs while exitMode is 2 and a module is set. it records the score-scaled floor rate backstop
+  // and reads no pool, so it needs no pool key
   exitBidActive() { return this.moduleSet && this.s.exitMode === 2; }
   // the exit token bid for a credit of `pts` points: score * unit * (10000 - exitBidMarginBps) / 10000, in eth value, where unit is the lower of the stored
   // and the live unitPerPoint. the same price for any credit of that score
@@ -758,8 +760,8 @@ class Core {
     this.xPot -= price;
     return price;
   }
-  // sellForExitToken for one credit at `now`: the credit enters the pile at an eth cost of the score-scaled peak
-  // backstop, at least 1 wei, read from no pool (FLOW 96). returns {paid, cost}, or null when the bid would revert
+  // sellForExitToken for one credit at `now`: the credit enters the pile at an eth cost of the score-scaled floor rate
+  // backstop, at least 1 wei, read from no pool. returns {paid, cost}, or null when the bid would revert
   xBuyCredit(pts, now) {
     const paid = this.xBuy(pts);
     if (!(paid > 0)) return null;

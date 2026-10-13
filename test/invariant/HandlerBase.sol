@@ -2267,8 +2267,8 @@ abstract contract HandlerBase is Test {
     }
 
     /// sells credits into the exit token bid. ids are picked so the prices fit the pot. the recorded eth cost basis is
-    /// the score-scaled peak backstop and reads `refScore` from the core's controller, so the bid is exercised with
-    /// the real controller in force; a hostile controller swapped in is left alone so the backstop is modeled
+    /// the score-scaled floor rate backstop and reads `refScore` from the core's controller, so the bid is exercised
+    /// with the real controller in force; a hostile controller swapped in is left alone so the backstop is modeled
     function sellForExit(uint256 aSeed, uint256 nSeed, uint256 pick) external checked {
         uint8 a = A_SELL_FOR_EXIT;
         if (!phase2() || core.settings().exitMode != 2) return _skip(a);
@@ -2327,7 +2327,7 @@ abstract contract HandlerBase is Test {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.CreditBought.selector) continue;
             uint256 cost = abi.decode(logs[i].data, (uint256));
             uint256 id = uint256(logs[i].topics[1]);
-            // the recorded eth cost is the score-scaled peak backstop, at least 1 wei
+            // the recorded eth cost is the score-scaled floor rate backstop, at least 1 wei
             if (cost == 0) _flag(V_MODEL, "sellForExit recorded a zero eth cost basis");
             _addCredit(id, cost);
             _removeFrom(inventory[who], id);

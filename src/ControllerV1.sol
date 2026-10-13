@@ -339,11 +339,11 @@ contract ControllerV1 is IController {
         return _reference(cost, CORE.ratingOf(sid));
     }
 
-    /// the larger of `cost` and `CORE.ethPeak()` times `rating` over `refScore`. the peak rises with fills and falls
-    /// only with time, so a sale within the block cannot push this reference down. one `mulDiv`, so the rate term
-    /// divides at full precision
+    /// the larger of `cost` and `CORE.floorRate()` times `rating` over `refScore`. the floor rate is the larger of the
+    /// climbed price state and the decayed peak. selling credits lowers only the rate and the peak decays between fills,
+    /// so the maximum holds against a sale within the block. one `mulDiv`, so the rate term divides at full precision
     function _reference(uint256 cost, uint256 rating) private view returns (uint256) {
-        uint256 rate = FullMath.mulDiv(CORE.ethPeak(), rating, refScore);
+        uint256 rate = FullMath.mulDiv(CORE.floorRate(), rating, refScore);
         return rate > cost ? rate : cost;
     }
 
@@ -425,12 +425,13 @@ contract ControllerV1 is IController {
         return priced ? priceWei : 0;
     }
 
-    /// the score-scaled eth backstop of a credit in wei: `ethPeak` when `score` is at or below `refScore`, else
-    /// `ethPeak * score / refScore`, the scaling the statement reference applies. the peak rises with fills and falls
-    /// only with time, so neither a pot move nor a pool move can push the rate the credit is priced against down within
-    /// the block. a `score` of zero (a failed score read) gives the unscaled rate
+    /// the score-scaled eth backstop of a credit in wei: the floor rate when `score` is at or below `refScore`, else
+    /// `floorRate * score / refScore`, the scaling the statement reference applies. the floor rate is the larger of the
+    /// climbed price state and the decayed peak. selling credits lowers only the rate and the peak decays between fills,
+    /// so neither a pot move nor a pool move can push the rate down within the block. a `score` of zero (a failed score
+    /// read) gives the unscaled rate
     function _backstop(uint256 score) private view returns (uint256) {
-        uint256 eth = CORE.ethPeak();
+        uint256 eth = CORE.floorRate();
         uint256 rs = refScore;
         if (score <= rs) return eth;
         return FullMath.mulDiv(eth, score, rs);
@@ -467,8 +468,8 @@ contract ControllerV1 is IController {
     }
 
     /// pays the sale prices of `ids` in order, gets the credits, and refunds the excess last. each credit is priced at
-    /// the state left by the previous sale. the eth backstop reads `ethPeak`, which a credit sale leaves unchanged for
-    /// the rest of the block, so within one batch a credit's price moves only through its own cost, baseline and age.
+    /// the state left by the previous sale. the eth backstop reads the floor rate, which a credit sale leaves unchanged
+    /// for the rest of the block, so within one batch a credit's price moves only through its own cost, baseline and age.
     /// reverts `CreditSaleOff` while the sale is off and `Paused` while sales are paused
     function buyCredits(uint256[] calldata ids) external payable {
         if (!creditSaleOn) revert CreditSaleOff();
