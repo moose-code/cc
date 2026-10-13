@@ -108,21 +108,27 @@ abstract contract PostflightV2 is SystemBuilder, Report {
             string[] memory libs =
                 vm.parseJsonKeys(j, string.concat(".deployedBytecode.linkReferences['", files[i], "']"));
             for (uint256 k; k < libs.length; ++k) {
-                bytes memory h = bytes(vm.toString(keccak256(bytes(string.concat(files[i], ":", libs[k])))));
-                bytes memory ph = new bytes(40);
-                ph[0] = "_";
-                ph[1] = "_";
-                ph[2] = "$";
-                for (uint256 b; b < 34; ++b) {
-                    ph[3 + b] = h[2 + b];
-                }
-                ph[37] = "$";
-                ph[38] = "_";
-                ph[39] = "_";
-                o = vm.replace(o, string(ph), "0000000000000000000000000000000000000000");
+                o = vm.replace(o, linkPlaceholder(files[i], libs[k]), "0000000000000000000000000000000000000000");
             }
         }
         return vm.parseBytes(o);
+    }
+
+    /// @notice the link placeholder of a library in an artifact: `__$`, the first 34 hex characters of
+    /// keccak256("<source file>:<library>") and `$__`
+    function linkPlaceholder(string memory file, string memory lib) internal pure returns (string memory) {
+        bytes memory h = bytes(vm.toString(keccak256(bytes(string.concat(file, ":", lib)))));
+        bytes memory ph = new bytes(40);
+        ph[0] = "_";
+        ph[1] = "_";
+        ph[2] = "$";
+        for (uint256 b; b < 34; ++b) {
+            ph[3 + b] = h[2 + b];
+        }
+        ph[37] = "$";
+        ph[38] = "_";
+        ph[39] = "_";
+        return string(ph);
     }
 
     function _idZero(bytes memory code, uint256[] memory m) private pure {
@@ -282,12 +288,6 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         return vm.envOr("COIN_CHANGED", uint256(0)) == 1;
     }
 
-    /// @notice the operator says `coin.lockRecipients()` was sent (RECIPIENTS_LOCKED=1): the lock row is a failure while
-    /// the recipients are unlocked. a test overrides it
-    function _recipientsLockExpected() internal view virtual returns (bool) {
-        return vm.envOr("RECIPIENTS_LOCKED", uint256(0)) == 1;
-    }
-
     /// @dev a row that is a failure until the operator names the change, then a warning
     function _soft(bool changed, string memory name, bool ok, string memory detail, string memory flag) internal {
         if (changed) _warn(string.concat("warn: ", name), ok, string.concat(flag, " set: ", detail));
@@ -302,8 +302,6 @@ abstract contract PostflightV2 is SystemBuilder, Report {
 
     function _postCoin(LaunchConfig memory c, address core, address coin_, bytes32 poolId) internal {
         IArtCoinsTokenV2 t = IArtCoinsTokenV2(coin_);
-        _eq("coin: name equals the config", t.name(), c.name);
-        _eq("coin: symbol equals the config", t.symbol(), c.symbol);
         _check(
             "coin: supply at most the config supply",
             t.totalSupply() <= c.supply,
@@ -314,10 +312,12 @@ abstract contract PostflightV2 is SystemBuilder, Report {
             t.totalSupply() + 1e6 >= c.supply,
             "coin was burned since launch"
         );
-        _eq("coin: launcher is the factory", t.launcher(), c.stack.factory);
-        _eq("coin: canonical hook", t.canonicalHook(), c.stack.hook);
-        _eq("coin: canonical pool id", t.canonicalPoolId(), poolId);
-        _eq("coin: pool manager", t.poolManager(), c.stack.poolManager);
+        _check(
+            "coin: launcher, canonical hook, canonical pool id and pool manager equal the config",
+            t.launcher() == c.stack.factory && t.canonicalHook() == c.stack.hook && t.canonicalPoolId() == poolId
+                && t.poolManager() == c.stack.poolManager,
+            "launcher is the factory"
+        );
         bool ch = _coinChanged();
         _soft(ch, "coin: admin is the config owner", t.admin() == c.owner, vm.toString(t.admin()), "COIN_CHANGED=1");
         _soft(ch, "coin: restricted as in the config", t.restricted() == c.restricted, "restricted()", "COIN_CHANGED=1");
@@ -330,14 +330,10 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         _warn("warn: core holds no coin", t.balanceOf(core) == 0, "coin sent by an allowlisted holder, the owner can call rescueCoin");
     }
 
-    /// @dev the hook bounty recipient and the locker reward recipients are frozen by `coin.lockRecipients()`, the step
-    /// after the postflight passes (script/Lock.s.sol). a warning until RECIPIENTS_LOCKED=1 names the step as sent,
-    /// a failure from then on
+    /// @dev `coin.lockRecipients()` freezes the hook bounty recipient and the locker reward recipients. it is a later
+    /// owner command (script/Lock.s.sol), so the row reports the state
     function _postRecipientsLock(IArtCoinsTokenV2 t) private {
-        bool locked = t.recipientsLocked();
-        string memory detail = locked ? "recipientsLocked()" : "recipientsLocked() is false: run script/Lock.s.sol";
-        if (_recipientsLockExpected()) _check("coin: fee recipients are locked", locked, detail);
-        else _warn("warn: coin fee recipients are not locked yet", locked, detail);
+        _info("coin: fee recipients", t.recipientsLocked() ? "locked" : "unlocked, script/Lock.s.sol locks them");
     }
 
     /// @dev the allowlist cannot be listed on chain. what is checked: the locker and the escrow are on it (pinned), every

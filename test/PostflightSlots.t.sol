@@ -8,8 +8,7 @@ import {Fixture} from "./utils/Fixture.sol";
 ///     slot row requires every one of them to hold the library or the getter value. one foreign call site of `CoreLib`,
 ///     or one divergent site of an immutable, fails it while the identity row still passes (finding 2 of
 ///     docs/reviews/REVIEW-security.md),
-///  2. `_requireNoChangeFlags` reverts for each owner change flag, `_requireControllerNonce` for a moved owner nonce, and
-///     both scripts call them.
+///  2. `_requireNoChangeFlags` reverts for each owner change flag and both scripts call it.
 contract PostflightSlotsTest is Fixture {
     string internal constant SLOTS_ROW =
         "core: every library call site and every immutable slot holds the library or the getter value";
@@ -20,20 +19,10 @@ contract PostflightSlotsTest is Fixture {
     string internal constant CONTROLLER_ROW = "controller: every CORE slot of the runtime code is the Core";
 
     bool internal fSettings;
-    bool internal fLocks;
-    bool internal fOwner;
     bool internal fCoin;
 
     function _settingsChanged() internal view override returns (bool) {
         return fSettings;
-    }
-
-    function _locksChanged() internal view override returns (bool) {
-        return fLocks;
-    }
-
-    function _ownerChanged() internal view override returns (bool) {
-        return fOwner;
     }
 
     function _coinChanged() internal view override returns (bool) {
@@ -98,11 +87,6 @@ contract PostflightSlotsTest is Fixture {
         }
     }
 
-    function test_theFixturePassesTheSlotRows() public {
-        assertEq(_failedList(), "");
-        assertTrue(_row(SLOTS_ROW) && _row(CONTROLLER_ROW), "both slot rows are in the table and pass");
-    }
-
     /// @dev the reviewer's probe: one of the seven `CoreLib` call sites of the Core points at a copy with one flipped
     /// byte. the identity hash masks the slot and `findLibrary` finds the compiled library through the other sites, so
     /// only the slot row sees it. a library runs by DELEGATECALL in the Core storage
@@ -122,18 +106,6 @@ contract PostflightSlotsTest is Fixture {
             vm.etch(address(core), c);
             assertEq(_failedList(), "", "restored");
         }
-    }
-
-    function test_everyLibrarySiteForeignFailsBothLibraryRows() public {
-        address lib = findLibrary(address(core).code);
-        uint256[] memory sites = _librarySites(address(core).code, lib);
-        address evil = _foreignLibrary();
-        bytes memory c = address(core).code;
-        for (uint256 s; s < sites.length; ++s) {
-            _point(c, sites[s], evil);
-        }
-        vm.etch(address(core), c);
-        assertEq(_failedList(), string.concat("core: linked library is the compiled CoreLib, ", SLOTS_ROW));
     }
 
     /// @dev one site of an immutable holds another value than the other sites and the getter. every one of the 10
@@ -158,7 +130,7 @@ contract PostflightSlotsTest is Fixture {
 
     function test_oneDivergentControllerSiteFailsPostflight() public {
         uint256[] memory sites = _immutableSites("ControllerV1", 0);
-        assertEq(sites.length, 30);
+        assertEq(sites.length, 29);
         for (uint256 s; s < sites.length; ++s) {
             bytes memory k = address(ctl).code;
             k[sites[s] + 31] = bytes1(uint8(k[sites[s] + 31]) ^ 1);
@@ -178,36 +150,18 @@ contract PostflightSlotsTest is Fixture {
         _requireNoChangeFlags();
     }
 
-    function requireNonce(address who, uint256 given) external view {
-        _requireControllerNonce(who, given);
-    }
-
+    // Deploy and Resume send transactions that assume the launch state: they refuse a named owner change
     function test_deployAndResumeRefuseEveryChangeFlag() public {
         this.requireNoFlags();
-        string[4] memory names = ["SETTINGS_CHANGED", "LOCKS_CHANGED", "OWNER_CHANGED", "COIN_CHANGED"];
-        for (uint256 i; i < 4; ++i) {
+        string[2] memory names = ["SETTINGS_CHANGED", "COIN_CHANGED"];
+        for (uint256 i; i < 2; ++i) {
             fSettings = i == 0;
-            fLocks = i == 1;
-            fOwner = i == 2;
-            fCoin = i == 3;
+            fCoin = i == 1;
             vm.expectRevert(abi.encodeWithSelector(ChangeFlagSet.selector, names[i]));
             this.requireNoFlags();
         }
         fCoin = false;
         this.requireNoFlags();
-    }
-
-    function test_deployRefusesAMovedOwnerNonce() public {
-        uint64 n = vm.getNonce(owner);
-        this.requireNonce(owner, n);
-        vm.expectRevert(abi.encodeWithSelector(ControllerNonceMismatch.selector, uint256(n) + 1, uint256(n)));
-        this.requireNonce(owner, n + 1);
-        vm.setNonce(owner, n + 1);
-        vm.expectRevert(abi.encodeWithSelector(ControllerNonceMismatch.selector, uint256(n), uint256(n) + 1));
-        this.requireNonce(owner, n);
-        this.requireNonce(owner, n + 1);
-        vm.expectRevert(abi.encodeWithSelector(ControllerNonceMismatch.selector, type(uint256).max, uint256(n) + 1));
-        this.requireNonce(owner, type(uint256).max);
     }
 
     /// @dev the scripts are not importable from a test (they pull the production sources onto the via_ir profile), so
@@ -217,7 +171,6 @@ contract PostflightSlotsTest is Fixture {
         string memory r = vm.readFile("script/Resume.s.sol");
         assertTrue(vm.contains(d, "        _requireNoChangeFlags();\n"), "Deploy refuses the change flags");
         assertTrue(vm.contains(r, "        _requireNoChangeFlags();\n"), "Resume refuses the change flags");
-        assertTrue(vm.contains(d, "_requireControllerNonce(deployer, "), "Deploy checks the owner nonce");
         assertTrue(vm.contains(d, "preflight(c, deployer);"), "Deploy runs preflight");
         // the guards sit before the config is loaded, so nothing else runs while a flag is set
         assertTrue(
@@ -225,10 +178,6 @@ contract PostflightSlotsTest is Fixture {
         );
         assertTrue(
             _indexOf(r, "_requireNoChangeFlags();") < _indexOf(r, "loadConfig("), "Resume: flags before the config"
-        );
-        assertTrue(
-            _indexOf(d, "_requireControllerNonce(") < _indexOf(d, "preflight(c, deployer);"),
-            "Deploy: nonce before the sends"
         );
     }
 

@@ -13,14 +13,14 @@ units. a rate is wei per credit. every credit has the same price, the rate. ever
 | CreditStrategy | 0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6 | venue of `CreditStrategyAdapter` |
 | Seaport 1.6 | 0x0000000000000068F116a894984e2DB1123eB395 | venue of `SeaportBasicAdapter` |
 | pool manager | 0x000000000004444c5dc75cB358380D2e3dE08A90 | uniswap v4, holds the coin pool |
-| Core | the `core` line of the `Deploy` output | custody and every rule |
+| Core | the `core` line of the `Deploy` output (the CREATE2 address of the config and the deployer) | custody and every rule |
 | coin | `core.COIN()` | launched through the artcoins v2 factory |
 | controller | `core.controller()` | ControllerV1 at launch. the owner can replace it until `lockController` |
 | fee recipient | `core.COIN()`, `core.payee()` | the Core is the bounty recipient of the pool. `payee` is the address `claimPayee()` pays |
 | lens | the `lens` line of the `Deploy` output, or the CREATE2 address derived from the Core | `CoreLens`. `lens.CORE()` names the Core it reads |
 | balanceModule, balanceToken | `core.balanceModule()`, `core.balanceToken()` | zero until the owner sets them (unset at launch, decision 82) |
 
-the record of a launch is the output of `script/Deploy.s.sol` (core, coin, controller, lens), the broadcast file `broadcast/Deploy.s.sol/1/run-latest.json`, and the table that `script/Postflight.s.sol` prints after reading every address back (docs/RUNBOOK.md steps 6 and 8). a keeper needs the Core address and reads the rest from it. the lens address is a function of the Core (CREATE2 through the deterministic deployer, salt `keccak256("credits.core.lens.v1")`, the Core as constructor argument), which `Postflight` derives from `CORE`.
+the record of a launch is the output of `script/Deploy.s.sol` (core, coin, controller, lens, the two adapters), the broadcast file `broadcast/Deploy.s.sol/1/run-latest.json`, and the table that `script/Postflight.s.sol` prints after reading every address back (docs/RUNBOOK.md steps 6 and 8). a keeper needs the Core address and reads the rest from it. every contract of the deploy sits at a CREATE2 address (deterministic deployer, a fixed salt per contract): the Core is a function of the config and the deployer, the controller and the lens of the Core, the Seaport adapter of the Core and the recipient list. `Postflight` derives them from `CORE` and the config.
 
 ## 2. quoting a credit
 

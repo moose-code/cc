@@ -974,58 +974,6 @@ contract ReviewSaleTest is Fixture {
         assertGe(24_576 - size, 60, "the brief asks for a margin of at least 60");
     }
 
-    bool internal ownerChangedFlag;
-    bool internal coinChangedFlag;
-
-    function _coinChanged() internal view override returns (bool) {
-        return coinChangedFlag;
-    }
-
-    function _ownerChanged() internal view override returns (bool) {
-        return ownerChangedFlag;
-    }
-
-    /// S-6 fixed (postflight half, the Resume half is in test/Resume.t.sol): RUNBOOK.md hands the Core to a multisig with
-    /// OWNER_CHANGED=1 and the token admin with updateAdmin, named by COIN_CHANGED=1 (decision: v2 has its own flag)
-    function test_FIXED_ownerChangedFlagRelaxesTheCoinAdminRow() public {
-        ownerChangedFlag = true;
-        coinChangedFlag = true;
-        vm.prank(owner);
-        core.transferOwnership(alice);
-        vm.prank(alice);
-        core.acceptOwnership();
-        vm.prank(owner);
-        (bool ok,) = address(coin).call(abi.encodeWithSignature("updateAdmin(address)", alice));
-        assertTrue(ok, "the coin admin hands over");
-        postflightAs(lc, address(core), owner);
-        (string memory failed, uint256 n) = _failed();
-        assertEq(n, 0, failed);
-        coinChangedFlag = false;
-        postflightAs(lc, address(core), owner);
-        (failed,) = _failed();
-        assertTrue(vm.contains(failed, "coin: admin is the config owner"), "without the flag the row still fails");
-    }
-
-    bool internal locksChangedFlag;
-
-    function _locksChanged() internal view override returns (bool) {
-        return locksChangedFlag;
-    }
-
-    /// S-10 fixed: LOCKS_CHANGED=1 turns the launch state row into a report line
-    function test_FIXED_locksChangedFlagTurnsTheLockRowIntoAReportLine() public {
-        vm.prank(owner);
-        core.lockAdapters();
-        postflightAs(lc, address(core), owner);
-        (string memory failed, uint256 n) = _failed();
-        assertGt(n, 0);
-        assertTrue(vm.contains(failed, "core: no locks, no balance module"), failed);
-        locksChangedFlag = true;
-        postflightAs(lc, address(core), owner);
-        (failed, n) = _failed();
-        assertEq(n, 0, failed);
-    }
-
     function test_OK_priceOf_refusesWhatIsNotForSale() public {
         vm.expectRevert(IControllerV1.NotForSale.selector);
         ctl.priceOf(777_777);

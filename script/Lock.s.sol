@@ -12,7 +12,7 @@ import {LaunchChecks} from "./Checks.sol";
 /// stream only by `Core.migrate`. one way. an owner command for later: the deploy leaves the recipients unlocked. runs
 /// the postflight first and stops on any failed row, requires the hook bounty recipient to be the Core whatever
 /// COIN_CHANGED says, sends nothing unless SEND=1 and the run has `--broadcast` and a signer that is the coin admin. the lock read back at the end is read in forge's
-/// simulation, the confirmation is Postflight with RECIPIENTS_LOCKED=1 against the chain.
+/// simulation, the confirmation is the `coin: fee recipients` row of Postflight against the chain.
 /// `CORE=0x... forge script script/Lock.s.sol --rpc-url $MAINNET_RPC_URL` (add `SEND=1 --broadcast --ledger` or
 /// `--account <name>` to send). docs/RUNBOOK.md section 4
 contract Lock is Script, LaunchChecks {
@@ -51,7 +51,7 @@ contract Lock is Script, LaunchChecks {
         vm.stopBroadcast();
         if (!t.recipientsLocked()) revert NotLocked();
         console.log("simulated: the fee recipients read as locked after the transaction");
-        console.log("confirm on chain once it is mined: Postflight with RECIPIENTS_LOCKED=1");
+        console.log("confirm on chain once it is mined: the coin: fee recipients row of Postflight");
     }
 
     /// @dev the launch config (LAUNCH_CONFIG or the shipped file), the Core (CORE), the broadcast flag (SEND=1) and the

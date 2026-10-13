@@ -114,7 +114,6 @@ abstract contract PostflightPool is PostflightV2 {
         );
         address fa = c.stack.factory;
         (bool ok, address live) = _addr(fa, abi.encodeCall(IArtCoinsFactoryV2.protocolRecipient, ()));
-        _info("hook: protocol recipient (the launcher protocol, not the engine owner)", vm.toString(k.protocolRecipient));
         _warn("warn: protocol recipient equals the factory protocol recipient", ok && live == k.protocolRecipient, vm.toString(live));
     }
 
@@ -137,13 +136,6 @@ abstract contract PostflightPool is PostflightV2 {
                 vm.toString(s.windowSeconds)
             )
         );
-        (uint256 now_, uint256 active) = _skimNow(c.mevModule, poolId);
-        _info("mev: skim now", string.concat(vm.toString(now_), active == 1 ? " (window open)" : " (window over)"));
-    }
-
-    function _skimNow(address mev, bytes32 poolId) private view returns (uint256 bps, uint256 active) {
-        (bool ok, bytes memory out) = mev.staticcall(abi.encodeCall(IArtCoinsMevSkimV2.currentSkimBps, (poolId)));
-        if (ok && out.length == 64) (bps, active) = abi.decode(out, (uint256, uint256));
     }
 
     /// @dev the locker rewards: one project slot to the creator, the protocol slot at the end, summing to 10_000
@@ -162,9 +154,6 @@ abstract contract PostflightPool is PostflightV2 {
             string.concat("slots ", vm.toString(r.rewardRecipients.length), " positions ", vm.toString(r.numPositions))
         );
         _check("locker: pool key equals the launch key", keccak256(abi.encode(r.poolKey)) == keccak256(abi.encode(key)), "poolKey");
-        if (slots == 2 && r.rewardRecipients.length == 2) {
-            _info("locker: protocol reward slot recipient", vm.toString(r.rewardRecipients[1]));
-        }
         _postPosition(c, r);
     }
 

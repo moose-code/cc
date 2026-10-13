@@ -6,16 +6,24 @@ import {ControllerV1} from "../src/ControllerV1.sol";
 import {CoreLens} from "../src/CoreLens.sol";
 import {SeaportBasicAdapter} from "../src/adapters/SeaportBasicAdapter.sol";
 import {CreditStrategyAdapter} from "../src/adapters/CreditStrategyAdapter.sol";
-import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemDeployer} from "./SystemDeployer.sol";
 
-/// @notice the broadcast creation of the controller and the core with `new`, so `forge script` links `CoreLib` and
-/// sends it through the deterministic deployer. only the scripts import this file: it pulls the production sources, so
-/// it (and every script that inherits it) compiles on the via_ir profile. tests use `Prod` and `deployCode` instead
+/// @notice the broadcast creation of every contract of ours with `new` and a salt, so `forge script` links `CoreLib` and
+/// sends each creation through the deterministic deployer. only the scripts import this file: it pulls the production
+/// sources, so it (and every script that inherits it) compiles on the via_ir profile. tests use `Prod` and `deployCode`
+/// instead
 abstract contract NewProd is SystemDeployer {
+    function _newCore(LaunchConfig memory c, address launcher) internal virtual override returns (address) {
+        return address(
+            new Core{salt: CORE_SALT}(
+                c.owner, buildConfig(c, c.owner, address(0)), launcher, address(0), c.payee, c.stack, c.rateStart, c.settings, c.credit
+            )
+        );
+    }
+
     function _newController(address core, LaunchConfig memory c) internal virtual override returns (address) {
-        return address(new ControllerV1(core, c.sale, c.credit));
+        return address(new ControllerV1{salt: CONTROLLER_SALT}(core, c.sale, c.credit));
     }
 
     function _newLens(address core) internal virtual override returns (address) {
@@ -28,16 +36,5 @@ abstract contract NewProd is SystemDeployer {
 
     function _newStrategyAdapter() internal virtual override returns (address) {
         return address(new CreditStrategyAdapter{salt: STRATEGY_ADAPTER_SALT}());
-    }
-
-    function _newCore(
-        address owner,
-        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg,
-        address launcher,
-        address controller,
-        LaunchConfig memory c,
-        address[] memory adapters
-    ) internal virtual override returns (address) {
-        return address(new Core(owner, cfg, launcher, address(0), controller, c.payee, c.stack, c.rateStart, c.settings, c.credit, adapters));
     }
 }

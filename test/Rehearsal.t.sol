@@ -41,7 +41,6 @@ contract RehearsalTest is Test, ProdDeployer {
     Deployed internal d;
     address internal deployer;
     address internal trader;
-    bool internal lockSent;
 
     function _user(string memory label) internal returns (address a) {
         a = makeAddr(string.concat("rehearsal.", label, ".7d3a"));
@@ -97,16 +96,11 @@ contract RehearsalTest is Test, ProdDeployer {
         c.mevModule = v2.mev;
     }
 
-    function _recipientsLockExpected() internal view override returns (bool) {
-        return lockSent;
-    }
-
     /// @dev the lock step after the postflight passes: the coin admin freezes the fee recipients, and the postflight then
     /// requires the lock
     function _lock() internal {
         vm.prank(deployer);
         IArtCoinsTokenV2(d.coin).lockRecipients();
-        lockSent = true;
         postflightAs(c, d.core, deployer);
         _print("postflight after the lock step");
         assertEq(_failedNames(), "", "postflight after the lock step");
@@ -157,55 +151,84 @@ contract RehearsalTest is Test, ProdDeployer {
         assertEq(_failedNames(), _metadataRowOnly(), "preflight after the owner command");
     }
 
+    /// @dev gas of one creation through the deterministic deployer, from a call frame of its own. the frame of the test
+    /// holds the memory of the preflight, so a measurement inside it also pays the expansion of that memory
+    function createGas(bytes memory init, bytes32 salt) external returns (uint256 used) {
+        bytes memory data = abi.encodePacked(salt, init);
+        uint256 g = gasleft();
+        (bool ok,) = CREATE2_DEPLOYER.call(data);
+        used = g - gasleft();
+        require(ok, "create2 failed");
+    }
+
+    /// @dev gas of the six creations (the library, the core, the controller, the lens and the two adapters) with the
+    /// calldata and the intrinsic gas of their transactions, each from a clean frame
+    function _creationGas(Deployed memory first) internal returns (uint256[6] memory tx_) {
+        bytes32[6] memory salts =
+            [bytes32(uint256(1)), CORE_SALT, CONTROLLER_SALT, LENS_SALT, SEAPORT_ADAPTER_SALT, STRATEGY_ADAPTER_SALT];
+        bytes[6] memory inits = [
+            vm.getCode("CoreLib.sol:CoreLib"),
+            coreInitCode(c, deployer),
+            abi.encodePacked(vm.getCode("ControllerV1.sol:ControllerV1"), abi.encode(first.core, c.sale, c.credit)),
+            abi.encodePacked(vm.getCode("CoreLens.sol:CoreLens"), abi.encode(first.core)),
+            abi.encodePacked(
+                vm.getCode("SeaportBasicAdapter.sol:SeaportBasicAdapter"), abi.encode(first.core, c.seaportRecipients)
+            ),
+            vm.getCode("CreditStrategyAdapter.sol:CreditStrategyAdapter")
+        ];
+        for (uint256 i; i < 6; ++i) {
+            // 21000 intrinsic and the calldata (4 gas per zero byte, 16 per other byte)
+            tx_[i] = this.createGas(inits[i], salts[i]) + 21_000 + _calldataGas(abi.encodePacked(salts[i], inits[i]));
+        }
+    }
+
     function _deploy() internal {
         uint256 balBefore = deployer.balance;
-        // the linked library is deployed before the controller, once, by the same deployer
-        uint256 lg = gasleft();
+        // the linked library is deployed first, once, by the same deployer
         address lib = deployCode("CoreLib.sol:CoreLib");
-        uint256 libGas = lg - gasleft();
+        uint256 snap = vm.snapshotState();
         vm.startPrank(deployer);
         d = deploySystem(deployer, c);
         vm.stopPrank();
-        // each transaction costs its execution gas, 21000 intrinsic and its calldata (4 gas per zero byte, 16 per other byte)
-        bytes memory libCode = vm.getCode("CoreLib.sol:CoreLib");
-        uint256[7] memory txGas = [
-            libGas + 21_000 + _calldataGas(libCode) + 512,
-            stepGas[0] + _createGas("ControllerV1.sol:ControllerV1") + 512,
-            stepGas[1] + _createGas("Core.sol:Core") + 16_384,
-            // sent through the deterministic deployer: the measured call includes the create and the code deposit
-            stepGas[3] + 21_000 + _calldataGas(abi.encodePacked(LENS_SALT, vm.getCode("CoreLens.sol:CoreLens"), abi.encode(d.core))) + 512,
-            stepGas[4] + 21_000
-                + _calldataGas(
-                    abi.encodePacked(
-                        SEAPORT_ADAPTER_SALT,
-                        vm.getCode("SeaportBasicAdapter.sol:SeaportBasicAdapter"),
-                        abi.encode(d.core, c.seaportRecipients)
-                    )
-                ) + 512,
-            stepGas[5] + 21_000
-                + _calldataGas(
-                    abi.encodePacked(
-                        STRATEGY_ADAPTER_SALT, vm.getCode("CreditStrategyAdapter.sol:CreditStrategyAdapter")
-                    )
-                ) + 512,
-            stepGas[2] + 21_000
-                + _calldataGas(
-                    abi.encodeCall(
-                        IArtCoinsFactoryV2.deployTokenAsOwner, (buildConfig(c, c.owner, d.core), c.protocolBps)
-                    )
-                )
-        ];
-        string[7] memory names = [
+        uint256[9] memory used = stepGas;
+        Deployed memory first = d;
+        // the creations are measured again from a clean frame on the state before the deploy; the deploy then continues
+        // from there (the contracts that exist are skipped)
+        vm.revertToState(snap);
+        uint256[10] memory txGas;
+        {
+            uint256[6] memory cg = _creationGas(first);
+            for (uint256 i; i < 6; ++i) {
+                txGas[i] = cg[i];
+            }
+        }
+        vm.startPrank(deployer);
+        d = deploySystem(deployer, c);
+        vm.stopPrank();
+        assertEq(d.core, first.core);
+        assertEq(d.coin, first.coin);
+        ICore core = ICore(payable(d.core));
+        txGas[6] = used[5] + 21_000 + _calldataGas(abi.encodeCall(core.setController, (d.controller)));
+        txGas[7] = used[6] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.seaportAdapter)));
+        txGas[8] = used[7] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.strategyAdapter)));
+        txGas[9] = used[8] + 21_000
+            + _calldataGas(
+                abi.encodeCall(IArtCoinsFactoryV2.deployTokenAsOwner, (buildConfig(c, c.owner, d.core), c.protocolBps))
+            );
+        string[10] memory names = [
             "1 library CoreLib (create2 deployer)",
-            "2 controller",
-            "3 core",
-            "4 lens (read only)",
+            "2 core (create2 deployer)",
+            "3 controller (create2 deployer)",
+            "4 lens (create2 deployer)",
             "5 seaport adapter (create2 deployer)",
             "6 strategy adapter (create2 deployer)",
-            "7 launch through the factory (deployTokenAsOwner)"
+            "7 setController",
+            "8 addAdapter seaport adapter",
+            "9 addAdapter strategy adapter",
+            "10 launch through the factory (deployTokenAsOwner)"
         ];
         uint256 total;
-        for (uint256 i; i < 7; ++i) {
+        for (uint256 i; i < 10; ++i) {
             total += txGas[i];
             console.log(string.concat("deploy gas, tx ", names[i]), txGas[i]);
             assertLt(txGas[i], TX_GAS_CAP, string.concat("over the per transaction gas cap: ", names[i]));
@@ -215,9 +238,9 @@ contract RehearsalTest is Test, ProdDeployer {
         assertLe(total, DEPLOY_GAS_ESTIMATE, "the measured deploy gas is above DEPLOY_GAS_ESTIMATE");
         console.log("DEPLOY_GAS_ESTIMATE", DEPLOY_GAS_ESTIMATE);
         console.log("library at", lib);
-        console.log("total deploy gas, seven transactions", total);
+        console.log("total deploy gas, ten transactions", total);
         console.log("per transaction gas cap", TX_GAS_CAP);
-        console.log("factory deploy fee (wei, sent as value of tx 7)", fee);
+        console.log("factory deploy fee (wei, sent as value of tx 10)", fee);
         uint256[3] memory gwei_ = [uint256(1), 5, 20];
         for (uint256 i; i < 3; ++i) {
             uint256 cost = total * gwei_[i] * 1 gwei;

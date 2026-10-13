@@ -138,13 +138,11 @@ contract GasCapTest is SeaportBase {
             buildConfig(lc, owner, address(0)),
             owner,
             address(0),
-            address(ctl),
             lc.payee,
             lc.stack,
             lc.rateStart,
             lc.settings,
-            lc.credit,
-            launchAdapters(address(core), lc)
+            lc.credit
         );
         bytes memory code = bytes.concat(vm.getCode("Core.sol:Core"), args);
         _cool(address(this));

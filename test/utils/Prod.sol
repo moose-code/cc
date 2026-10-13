@@ -42,11 +42,9 @@ library Prod {
         uint256 rateStart,
         Settings memory settings
     ) internal returns (ICore) {
-        bytes memory args = abi.encode(
-            owner, cfg, address(0), coin, controller, payee, stack, rateStart, settings, Mainnet.defaultCredit(),
-            new address[](0)
-        );
-        return ICore(payable(vm.deployCode("Core.sol:Core", args)));
+        bytes memory args =
+            abi.encode(owner, cfg, address(0), coin, payee, stack, rateStart, settings, Mainnet.defaultCredit());
+        return _wire(ICore(payable(vm.deployCode("Core.sol:Core", args))), owner, controller, new address[](0));
     }
 
     /// @dev a Core with no approved adapter
@@ -76,10 +74,22 @@ library Prod {
         Credit memory credit,
         address[] memory adapters
     ) internal returns (ICore) {
-        bytes memory args = abi.encode(
-            owner, cfg, launcher, address(0), controller, payee, stack, rateStart, settings, credit, adapters
-        );
-        return ICore(payable(vm.deployCode("Core.sol:Core", args)));
+        bytes memory args = abi.encode(owner, cfg, launcher, address(0), payee, stack, rateStart, settings, credit);
+        return _wire(ICore(payable(vm.deployCode("Core.sol:Core", args))), owner, controller, adapters);
+    }
+
+    /// @dev the owner sets the controller and the adapters after the construction, as the deploy does
+    function _wire(ICore core, address owner, address controller, address[] memory adapters)
+        private
+        returns (ICore)
+    {
+        vm.startPrank(owner);
+        if (controller != address(0)) core.setController(controller);
+        for (uint256 i; i < adapters.length; ++i) {
+            core.addAdapter(adapters[i]);
+        }
+        vm.stopPrank();
+        return core;
     }
 
     function newController(address core, Sale memory sale) internal returns (IControllerV1) {
@@ -89,6 +99,13 @@ library Prod {
     function newController(address core, Sale memory sale, Credit memory credit) internal returns (IControllerV1) {
         if (credit.royaltyRecipient == address(0)) credit.royaltyRecipient = ROYALTY_RECIPIENT;
         return IControllerV1(vm.deployCode("ControllerV1.sol:ControllerV1", abi.encode(core, sale, credit)));
+    }
+
+    /// @dev sends `init` through the deterministic deployer with `salt`
+    function create2(bytes memory init, bytes32 salt, address create2Deployer) internal returns (address created) {
+        (bool ok, bytes memory out) = create2Deployer.call(abi.encodePacked(salt, init));
+        require(ok && out.length == 20, "create2 failed");
+        created = address(bytes20(out));
     }
 
     /// @dev creates the Seaport adapter through the deterministic deployer, as `forge script` does with

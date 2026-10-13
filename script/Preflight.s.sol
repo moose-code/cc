@@ -18,8 +18,6 @@ contract Preflight is Script, LaunchChecks {
         _print("preflight");
         console.log("sign off this value, Deploy needs it in CONFIG_HASH");
         console.log(string.concat("CONFIG_HASH=", vm.toString(configHash(c))));
-        console.log("Deploy also needs the owner nonce the controller is created at; the owner sends no transaction before it");
-        console.log(string.concat("CONTROLLER_NONCE=", vm.toString(uint256(_controllerNonce(deployer)))));
         _require();
     }
 }

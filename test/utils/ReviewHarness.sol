@@ -24,13 +24,6 @@ abstract contract ReviewHarness is Test, ProdDeployer {
     address internal owner;
     address internal creator;
     LaunchConfig internal base;
-    /// @dev what `_scriptContext` answers: false is a test run (no library transaction), true rehearses `forge script`
-    bool internal scriptMode;
-
-    function _scriptContext() internal view override returns (bool) {
-        return scriptMode;
-    }
-
     function setUp() public {
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envUint("FORK_BLOCK"));
         v2 = V2Stack.attach();
@@ -58,6 +51,14 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         base.stack.locker = v2.locker;
         base.stack.escrow = v2.escrow;
         base.mevModule = v2.mev;
+        // the artifact data of the build rows is read once into the process environment. a mutation (preflight and
+        // deploy) runs in one call under the block gas limit, so the cold read happens here
+        string[6] memory names =
+            ["Core", "CoreLib", "ControllerV1", "CoreLens", "SeaportBasicAdapter", "CreditStrategyAdapter"];
+        for (uint256 i; i < names.length; ++i) {
+            artifactHash(names[i]);
+        }
+        coreAddress(base, deployer);
     }
 
     // ------------------------------------------------------------------ matrix harness
@@ -202,12 +203,8 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         (l, w) = ("", Class.Slip);
     }
 
-    function _controllerAt() internal view returns (address) {
-        return vm.computeCreateAddress(deployer, vm.getNonce(deployer));
-    }
-
-    function _coreAt() internal view returns (address) {
-        return vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
+    function _coreAt() internal returns (address) {
+        return coreAddress(base, deployer);
     }
 
     /// @dev the library address the test build links the Core against

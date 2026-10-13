@@ -50,16 +50,11 @@ contract LockProbe is Lock {
 /// the owner command that freezes the fee recipients (docs/RUNBOOK.md section 4) and the postflight rows around it
 contract LockTest is Fixture {
     LockProbe internal probe;
-    bool internal lockExpected;
     bool internal coinChangedFlag;
 
     function setUp() public override {
         super.setUp();
         probe = new LockProbe();
-    }
-
-    function _recipientsLockExpected() internal view override returns (bool) {
-        return lockExpected;
     }
 
     function _coinChanged() internal view override returns (bool) {
@@ -114,24 +109,18 @@ contract LockTest is Fixture {
     /// the run stops before it sends when the postflight has a failed row
     function test_aFailedPostflightStopsTheLock() public {
         LaunchConfig memory c = lc;
-        c.rateStart = lc.rateStart + 1;
+        c.owner = creator;
         probe.configure(c, address(core), owner, true);
         vm.expectRevert();
         probe.run();
         assertFalse(coin.recipientsLocked());
     }
 
-    /// unlocked recipients are a warning until the operator names the lock as sent, a failure from then on, and the row
-    /// passes once the recipients are locked
-    function test_theLockRowIsSoftBeforeAndHardAfter() public {
+    /// postflight prints the state of the recipients as an info row and passes before and after the lock
+    function test_thePostflightPassesBeforeAndAfterTheLock() public {
         postflightAs(lc, address(core), owner);
         (string memory failed, uint256 n) = _failed();
         assertEq(n, 0, failed);
-
-        lockExpected = true;
-        postflightAs(lc, address(core), owner);
-        (failed,) = _failed();
-        assertTrue(vm.contains(failed, "coin: fee recipients are locked"), "hard once the lock is expected");
 
         vm.prank(owner);
         coin.lockRecipients();
