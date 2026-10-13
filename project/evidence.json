@@ -79,10 +79,10 @@
       "checked": "2026-10-13"
     },
     "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": {
-      "statement": "FLOW 94 authorizes CreditScoreLens deployment/verification tooling, not broadcast or source publication. Deploy must enforce the configured repository gate, reviewed compiler/runtime identity and a fresh successful CREATE receipt; verify/check compare all five native-unit methods with pinned source contracts.",
+      "statement": "FLOW 94 authorizes CreditScoreLens deployment/verification tooling, not broadcast or source publication. Deploy must enforce the configured repository gate, reviewed compiler/runtime identity and a fresh successful CREATE receipt; verify/check compare all five native-unit methods with pinned source contracts. FLOW 96 adds a wallet-free current-mainnet fee preview before unlock, quoted EIP-1559 settings reused for broadcast, Tenderly/ripe0x defaults and standard Etherscan configuration or private terminal prompt.",
       "kind": "owner-decision",
-      "source": "docs/FLOW.md decision 94; docs/INTEGRATION.md helper tooling",
-      "version": 1,
+      "source": "docs/FLOW.md decisions 94 and 96; docs/INTEGRATION.md helper tooling",
+      "version": 2,
       "checked": "2026-10-13"
     }
   },
@@ -2689,6 +2689,71 @@
         "sha256": "877c34a4f6110585ad9f2d139716e4a5fd9b4567dcb98496569d6218937bd7a4",
         "revision": "9bd0e87b797cc2da27bcec12df28ba578c7f0e76"
       }
+    },
+    "E-CREDIT-SCORE-LENS-FORK-UNCHANGED-2fc334c": {
+      "claim": "The 21 focused Solidity fork test results (including 256 fuzz cases) recorded at 7402455 carry on byte-for-byte unchanged Solidity/test/build inputs at 2fc334c; this claim excludes changed Python driver behavior.",
+      "kind": "analysis",
+      "sourceRevision": "2fc334c0c44aaefd932dadb1cf5d31b9147348bd",
+      "scope": [
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "src/interfaces/Interfaces.sol",
+        "test/CreditScoreLens.t.sol",
+        "test/utils/CreditIds.sol",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/VerifyCreditScoreLens.s.sol",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-FORK-BLOCK": 1,
+        "A-TOOLCHAIN": 1
+      },
+      "dependsOn": [],
+      "inputs": "21-test focused fork execution at 7402455, recorded in docs/REVIEW-credit-score-lens-tooling-7402455.md and docs/NEXT.md; block 26158000; unchanged helper artifact.",
+      "method": "git diff --name-only 7402455594f0d032f516de67db53281327592133 HEAD -- scoped Solidity source, tests, fixtures, dependencies and build settings is empty; forge build passes and live fee preview validates the same compiler/runtime identity.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "No repeated Solidity fork test execution. Python tooling has fresh focused tests and needs independent delta review. No new current-mainnet result readback of a deployed helper, broadcast or release acceptance.",
+      "invalidated": null
+    },
+    "E-CREDIT-SCORE-LENS-FEE-TEST-25c2adc": {
+      "claim": "Updated CLI build and 19 focused safety tests pass; actual wallet-free estimate on current Tenderly mainnet passes with a nonexistent inherited keystore setting, showing fee budget before any credentials or wallet access.",
+      "kind": "test",
+      "sourceRevision": "25c2adcd4698df40f3b5041e3696bf41a39a4202",
+      "scope": [
+        "script/tools/credit-score-lens.py",
+        "script/test_credit_score_lens_tool.py",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/VerifyCreditScoreLens.s.sol",
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "src/interfaces/Interfaces.sol",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt",
+        "lib/**",
+        "script/director.py"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": 2,
+        "A-TOOLCHAIN": 1
+      },
+      "dependsOn": [],
+      "inputs": "Current Ethereum mainnet via https://mainnet.gateway.tenderly.co; simulated public sender 0xCB43078C32423F5348Cab5885911C3B5faE217F9; ETH_KEYSTORE_ACCOUNT deliberately nonexistent; no signing wallet or real credentials. Existing compiled helper artifact, unchanged 1478-byte runtime hash.",
+      "method": "forge build pass; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest script/test_credit_score_lens_tool.py -v: 19 passed. Actual driver estimate passes with ETH_KEYSTORE_ACCOUNT=__must_not_unlock__, gas budget 484845 including 30% margin, live max-fee/tip parsed exactly to wei and ETH. Local ephemeral forge config probe proved standard .env Etherscan key resolution. Failed native --unlocked probes demonstrated that flag does not suppress inherited account initialization; final driver instead sanitizes signer env and runs from an external temporary cwd with --root. CLI tests exercise gate failure, estimate failure, cancellation, prompt ordering, config key reuse/private prompt, environment isolation, quoted fee reuse and existing receipt/runtime protections; mocked broadcast only. Whitespace checks pass. Independent-review M1 fixed by a disposable .git boundary; a real Foundry --help regression confirms that project-local TMPDIR cannot restore an ancestor .env signer. Final repaired live quote passes.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "No wallet unlock, signing, broadcast, mined receipt or explorer submission. Actual interactive password/key input and Etherscan acceptance remain untested; prompts are unit-tested with fixtures/mocks. Fee quotes change with mainnet state and are estimates, not guaranteed costs. Focused Solidity tests were not repeated because their sources, inputs and compiled helper are unchanged. No engine release acceptance or deploy-gate waiver.",
+      "invalidated": null
     }
   }
 }

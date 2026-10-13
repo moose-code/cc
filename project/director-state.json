@@ -156,7 +156,7 @@
     ]
   },
   "candidate": "6ea44f570cc7cad7812a8c4a7147d465fcf858db",
-  "activeChange": "FLOW 96: wallet-free fee preview before ripe0x unlock, Tenderly defaults and standard Etherscan key/private prompt; no broadcast authorized.",
+  "activeChange": null,
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -206,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "Exercise the updated fee/key/default CLI paths, commit and independently review the immutable tooling delta; preserve the helper runtime and configured release gate.",
+  "nextAction": "FLOW 96 CLI is complete at 25c2adc: Tenderly/ripe0x defaults, fee before keystore unlock, standard/private-prompt Etherscan key, 19 passing safety tests and independent review with M1 fixed and no open findings. Give the owner the script and command concisely (FLOW 97). No wallet/broadcast/source submission performed; configured deploy gate remains unmet and no waiver or agent broadcast authorized.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
