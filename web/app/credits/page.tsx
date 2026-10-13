@@ -6,8 +6,8 @@ import { useAccount, usePublicClient } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CreditTile } from "@/components/Tiles";
-import { engineBid } from "@/lib/sample";
-import { chain } from "@/lib/config";
+import { NotDeployed } from "@/components/NotDeployed";
+import { chain, engineDeployed } from "@/lib/config";
 import { controllerAbi } from "@/lib/abis";
 import { countdown, errMsg, useNow, usePile, useSnapshot } from "@/lib/live";
 import { agoLabel, eth } from "@/lib/format";
@@ -30,7 +30,7 @@ export default function CreditsPage() {
   const [err, setErr] = useState<string | null>(null);
 
   const controller = snap?.controller;
-  const bid = snap ? eth(snap.ethRate) : String(engineBid);
+  const bid = snap ? eth(snap.ethRate) : "—";
   const selected = pile.items.filter((c) => sel.has(c.id));
   const total = selected.reduce((a, c) => a + c.price, 0n);
 
@@ -58,6 +58,8 @@ export default function CreditsPage() {
       setErr(errMsg(e));
     }
   }
+
+  if (!engineDeployed) return <NotDeployed />;
 
   return (
     <main className="page">
@@ -118,7 +120,7 @@ export default function CreditsPage() {
               className="action"
               onClick={onBuy}
               disabled={isPending || selected.length === 0 || !controller}
-              title={!controller ? "engine not deployed yet" : undefined}
+              title={!controller ? "controller address not read yet" : undefined}
             >
               {isPending ? "confirm in wallet…" : `buy ${selected.length || ""} credit${selected.length === 1 ? "" : "s"}`}
             </button>

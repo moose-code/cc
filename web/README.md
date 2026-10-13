@@ -24,10 +24,10 @@ mapping: `CONNECTIONS.md`.
 
 ## data
 
-The engine is **not deployed yet**, so by default the UI renders
-representative sample activity (the "sample" indicator by the feed title).
+Every value comes from the chain. Without the engine addresses the engine
+pages render "engine not deployed".
 
-Set the engine addresses in `.env` to read live:
+Set the engine addresses in `.env`:
 
 - `NEXT_PUBLIC_CORE_LENS` + `NEXT_PUBLIC_CORE` — turns the feed and stats
   on-chain. Stats aggregate the scanned log window (recent, not genesis

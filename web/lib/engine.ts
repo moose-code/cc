@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient, useBlockNumber } from "wagmi";
 import { formatUnits, zeroAddress, type Address } from "viem";
-import { addresses, deployBlock, isLive, poolReady, ethUsdFeed } from "./config";
+import { addresses, deployBlock, engineDeployed, poolReady, ethUsdFeed } from "./config";
 import {
   coreLensAbi,
   coreEventsAbi,
@@ -23,8 +23,8 @@ export interface FeedEvent {
   detail: string;
   eth?: string; // pre-formatted for the eth column
   tx: string; // short display label
-  txHash?: string; // full hash, present on live rows, drives the evm.now link
-  tile?: { kind: "credit" | "statement"; id: number };
+  txHash?: string; // full hash, drives the evm.now link
+  tile?: { kind: "credit"; id: number } | { kind: "statement"; id: number; ids: number[] };
   addr?: string; // an address in the detail (e.g. the statement buyer), ENS-ified
 }
 
@@ -38,81 +38,13 @@ export interface Stats {
 export const STATEMENT_SIZE = 80; // credits composed into one statement
 
 export interface Market {
-  live: boolean;
-  ccPerEth: number; // tokens per 1 eth
-  nextCreditPaid: bigint; // wei toward the next credit
-  bid: bigint; // wei the engine pays per credit (rate)
+  ccPerEth: number; // tokens per 1 eth, from the v4 pool slot0
+  bid: bigint; // wei the engine pays per credit (snapshot.ethRate)
+  pot: bigint; // wei available to buy credits (snapshot.ethPot)
   creditsReady: number; // credits in the pile toward the next statement
-  balances?: { cc: bigint; engine: bigint; pool: bigint };
 }
 
-// ---- sample data (engine not deployed) -------------------------------------
-
-const SAMPLE_BID = 7100000000000000n; // 0.0071 eth
-
-function sampleFeed(now: number): FeedEvent[] {
-  // one rolling window mirroring a live engine: fees flush in, credits get
-  // bought at the bid, 80 compose into a statement, statements list and sell,
-  // proceeds buy and burn the coin.
-  const rows: Array<Omit<FeedEvent, "ts" | "key"> & { back: number }> = [
-    { back: 2, kind: "fee", detail: "swap fee to engine", eth: "0.0345", tx: "0x8e1f" },
-    { back: 3, kind: "credit", detail: "bought credit #48213 → statement 213", eth: "0.0071", tx: "0x2c94", tile: { kind: "credit", id: 48213 } },
-    { back: 3, kind: "credit", detail: "bought credit #48207 → statement 213", eth: "0.0070", tx: "0x2c94", tile: { kind: "credit", id: 48207 } },
-    { back: 3, kind: "credit", detail: "bought credit #48204 → statement 213", eth: "0.0072", tx: "0x2c94", tile: { kind: "credit", id: 48204 } },
-    { back: 20, kind: "fee", detail: "swap fee to engine", eth: "0.0052", tx: "0x61ad" },
-    { back: 31, kind: "composed", detail: "statement 212 · 80 credits · cost 0.562 eth", tx: "0x0f37", tile: { kind: "statement", id: 212 } },
-    { back: 31, kind: "listed", detail: "statement 212 for sale, price falling", eth: "2.10", tx: "0x0f37" },
-    { back: 59, kind: "credit", detail: "bought credit #48190 → statement 213", eth: "0.0069", tx: "0x9b02", tile: { kind: "credit", id: 48190 } },
-    { back: 69, kind: "fee", detail: "swap fee to engine", eth: "0.0255", tx: "0x44c8" },
-    { back: 68, kind: "credit", detail: "bought credit #48188 → statement 213", eth: "0.0071", tx: "0x7d5e", tile: { kind: "credit", id: 48188 } },
-    { back: 116, kind: "sold", detail: "statement 208 bought by", addr: "0x91ac4df2a1e8b7c3d5f6a9e0b2c4d6e8f0a244de", eth: "1.40", tx: "0x3a90", tile: { kind: "statement", id: 208 } },
-    { back: 116, kind: "burn", detail: "burned 310,000 cc", tx: "0x3a90" },
-    { back: 115, kind: "credit", detail: "bought credit #48161 → statement 213", eth: "0.0068", tx: "0xe6f1", tile: { kind: "credit", id: 48161 } },
-    { back: 179, kind: "fee", detail: "swap fee to engine", eth: "0.0759", tx: "0xb3a4" },
-    { back: 178, kind: "credit", detail: "bought credit #48151 → statement 213", eth: "0.0070", tx: "0x5c2d", tile: { kind: "credit", id: 48151 } },
-  ];
-  return rows.map((r, i) => ({
-    key: `${r.tx}-${i}`,
-    ts: now - r.back,
-    kind: r.kind,
-    detail: r.detail,
-    eth: r.eth,
-    tx: r.tx,
-    // sample rows link like live rows (placeholder hash, dead link)
-    txHash: r.tx.padEnd(66, "0"),
-    tile: r.tile,
-    addr: r.addr,
-  }));
-}
-
-const SAMPLE_STATS: Stats = {
-  creditsBought: 17017,
-  statements: 212,
-  ethIntoCredits: 119.4,
-  ccBurned: 41820000,
-};
-
-const SAMPLE_MARKET: Market = {
-  live: false,
-  ccPerEth: 2564900,
-  nextCreditPaid: 1200000000000000n, // 0.0012 eth
-  bid: SAMPLE_BID,
-  creditsReady: 56, // 56 of 80 toward the next statement
-  balances: { cc: 0n, engine: 0n, pool: 0n },
-};
-
-// live mode starts from zeros until the first read lands
-const EMPTY_MARKET: Market = {
-  live: true,
-  ccPerEth: 0,
-  nextCreditPaid: 0n,
-  bid: 0n,
-  creditsReady: 0,
-  balances: { cc: 0n, engine: 0n, pool: 0n },
-};
-const BASE_MARKET = isLive ? EMPTY_MARKET : SAMPLE_MARKET;
-
-// ---- hooks ------------------------------------------------------------------
+const EMPTY_MARKET: Market = { ccPerEth: 0, bid: 0n, pot: 0n, creditsReady: 0 };
 
 // ---- event scan --------------------------------------------------------------
 
@@ -120,6 +52,15 @@ export interface StatementSale {
   id: number;
   buyer: string;
   price: bigint; // wei
+  block: bigint;
+}
+
+// A Composed event: the statement's 80 credit ids in burn order.
+export interface ComposedStatement {
+  sid: number;
+  ids: number[];
+  cost: bigint; // wei
+  block: bigint;
 }
 
 // One pass over the Core logs (and the coin burn transfers) since the deploy
@@ -127,15 +68,22 @@ export interface StatementSale {
 export interface Scan {
   feed: FeedEvent[];
   stats: Stats; // statements = Composed events; ccBurned = coin burned by the core
+  composed: Record<number, ComposedStatement>; // by statement id
+  creditStatement: Record<number, number>; // credit id -> statement id it composed into
+  bought: Record<number, { cost: bigint; block: bigint }>; // CreditBought, latest per credit
+  creditSold: Record<number, { buyer: string; price: bigint; block: bigint }>; // CreditSold, latest per credit
   sold: StatementSale[]; // StatementSoldTo
   exited: number[]; // StatementExited sids
 }
 
 const FEED_ROWS = 60;
-const SAMPLE_SCAN = (now: number): Scan => ({ feed: sampleFeed(now), stats: SAMPLE_STATS, sold: [], exited: [] });
 const EMPTY_SCAN: Scan = {
   feed: [],
   stats: { creditsBought: 0, statements: 0, ethIntoCredits: 0, ccBurned: 0 },
+  composed: {},
+  creditStatement: {},
+  bought: {},
+  creditSold: {},
   sold: [],
   exited: [],
 };
@@ -143,17 +91,34 @@ const EMPTY_SCAN: Scan = {
 // block number -> timestamp. A mined block's timestamp does not change.
 const blockTime = new Map<bigint, number>();
 
-function useScan() {
+async function timestampOf(client: NonNullable<ReturnType<typeof usePublicClient>>, n: bigint): Promise<number> {
+  const cached = blockTime.get(n);
+  if (cached != null) return cached;
+  const ts = Number((await client.getBlock({ blockNumber: n })).timestamp);
+  blockTime.set(n, ts);
+  return ts;
+}
+
+// Timestamp of one block, undefined until read.
+export function useBlockTs(block?: bigint) {
   const client = usePublicClient();
-  const { data: head } = useBlockNumber({ watch: isLive });
+  return useQuery<number | undefined>({
+    queryKey: ["block-ts", block?.toString()],
+    enabled: block != null,
+    staleTime: Infinity,
+    queryFn: () => timestampOf(client!, block!),
+  });
+}
+
+export function useScan() {
+  const client = usePublicClient();
+  const { data: head } = useBlockNumber({ watch: engineDeployed });
   const q = useQuery<Scan>({
-    queryKey: ["scan", isLive, head?.toString()],
-    enabled: !isLive || Boolean(head),
-    refetchInterval: isLive ? 12000 : 30000,
+    queryKey: ["scan", head?.toString()],
+    enabled: engineDeployed && Boolean(head),
+    refetchInterval: 12000,
     placeholderData: (prev) => prev,
     queryFn: async () => {
-      const now = Math.floor(Date.now() / 1000);
-      if (!isLive) return SAMPLE_SCAN(now);
       if (!client || !addresses.core || !head) return EMPTY_SCAN;
       try {
         // bounded scan: from the deploy block, else the last ~50k blocks.
@@ -185,6 +150,10 @@ function useScan() {
         }
 
         const stats: Stats = { creditsBought: 0, statements: 0, ethIntoCredits: 0, ccBurned: Number(formatUnits(burned, 18)) };
+        const composed: Scan["composed"] = {};
+        const creditStatement: Scan["creditStatement"] = {};
+        const bought: Scan["bought"] = {};
+        const creditSold: Scan["creditSold"] = {};
         const sold: StatementSale[] = [];
         const exited: number[] = [];
         const rows: Array<FeedEvent & { block: bigint }> = [];
@@ -199,15 +168,22 @@ function useScan() {
           else if (name === "CreditBought") {
             stats.creditsBought++;
             stats.ethIntoCredits += Number(formatUnits(a.cost, 18));
+            bought[Number(a.id)] = { cost: a.cost, block };
             rows.push({ ...base, kind: "credit", detail: `bought credit #${a.id}`, eth: fmt(a.cost), tile: { kind: "credit", id: Number(a.id) } });
           } else if (name === "Composed") {
             stats.statements++;
-            rows.push({ ...base, kind: "composed", detail: `statement ${a.sid} · ${STATEMENT_SIZE} credits · cost ${fmt(a.cost)} eth`, tile: { kind: "statement", id: Number(a.sid) } });
-          } else if (name === "CreditSold")
+            const sid = Number(a.sid);
+            const ids = (a.ids as readonly bigint[]).map(Number);
+            composed[sid] = { sid, ids, cost: a.cost, block };
+            for (const id of ids) creditStatement[id] = sid;
+            rows.push({ ...base, kind: "composed", detail: `statement ${a.sid} · ${STATEMENT_SIZE} credits · cost ${fmt(a.cost)} eth`, tile: { kind: "statement", id: sid, ids } });
+          } else if (name === "CreditSold") {
+            creditSold[Number(a.id)] = { buyer: a.buyer as string, price: a.price, block };
             rows.push({ ...base, kind: "sold", detail: `credit #${a.id} bought by`, addr: a.buyer as string, eth: fmt(a.price), tile: { kind: "credit", id: Number(a.id) } });
-          else if (name === "StatementSoldTo") {
-            sold.push({ id: Number(a.sid), buyer: a.buyer as string, price: a.price });
-            rows.push({ ...base, kind: "sold", detail: `statement ${a.sid} bought by`, addr: a.buyer as string, eth: fmt(a.price), tile: { kind: "statement", id: Number(a.sid) } });
+          } else if (name === "StatementSoldTo") {
+            const sid = Number(a.sid);
+            sold.push({ id: sid, buyer: a.buyer as string, price: a.price, block });
+            rows.push({ ...base, kind: "sold", detail: `statement ${a.sid} bought by`, addr: a.buyer as string, eth: fmt(a.price), tile: { kind: "statement", id: sid, ids: composed[sid]?.ids ?? [] } });
           } else if (name === "StatementExited")
             exited.push(Number(a.sid));
           else if (name === "Buyback")
@@ -216,19 +192,15 @@ function useScan() {
         // logs arrive oldest first; the feed is newest first
         const feed = rows.reverse().slice(0, FEED_ROWS);
         // exact block timestamps for the shown rows (cached per block)
-        await Promise.all(
-          [...new Set(feed.map((r) => r.block))]
-            .filter((n) => !blockTime.has(n))
-            .map(async (n) => blockTime.set(n, Number((await client.getBlock({ blockNumber: n })).timestamp)))
-        );
+        await Promise.all([...new Set(feed.map((r) => r.block))].map((n) => timestampOf(client, n)));
         for (const r of feed) r.ts = blockTime.get(r.block) ?? 0;
-        return { feed, stats, sold, exited };
+        return { feed, stats, composed, creditStatement, bought, creditSold, sold, exited };
       } catch {
         return EMPTY_SCAN;
       }
     },
   });
-  return { ...q, data: q.data ?? (isLive ? EMPTY_SCAN : SAMPLE_SCAN(Math.floor(Date.now() / 1000))) };
+  return { ...q, data: q.data ?? EMPTY_SCAN };
 }
 
 export const useStats = () => {
@@ -239,23 +211,23 @@ export const useStats = () => {
 // Statements that left the engine: sold by StatementSoldTo, redeemed by StatementExited.
 export const useStatementHistory = () => {
   const { data, ...q } = useScan();
-  return { ...q, data: { total: data.stats.statements, sold: data.sold, exited: data.exited } };
+  return { ...q, data: { total: data.stats.statements, sold: data.sold, exited: data.exited, composed: data.composed } };
 };
 
 export function useMarket() {
   const client = usePublicClient();
-  const { data: head } = useBlockNumber({ watch: isLive || poolReady });
+  const { data: head } = useBlockNumber({ watch: engineDeployed || poolReady });
   return useQuery<Market>({
-    queryKey: ["market", isLive, poolReady, head?.toString()],
+    queryKey: ["market", engineDeployed, poolReady, head?.toString()],
     refetchInterval: 15000,
     queryFn: async () => {
-      if (!client || (!isLive && !poolReady)) return SAMPLE_MARKET;
-      let ccPerEth = BASE_MARKET.ccPerEth;
-      let bid = BASE_MARKET.bid;
-      let engine = 0n;
-      let creditsReady = BASE_MARKET.creditsReady;
+      if (!client) return EMPTY_MARKET;
+      let ccPerEth = 0;
+      let bid = 0n;
+      let pot = 0n;
+      let creditsReady = 0;
 
-      // real cc/eth spot from the v4 pool slot0 (coin deployed).
+      // cc/eth spot from the v4 pool slot0 (coin deployed).
       if (poolReady && addresses.cc) {
         try {
           const slot0 = (await client.readContract({
@@ -264,39 +236,31 @@ export function useMarket() {
             functionName: "getSlot0",
             args: [poolId(addresses.cc)],
           })) as readonly [bigint, number, number, number];
-          const spot = ccPerEthFromSqrt(slot0[0]);
-          if (spot > 0) ccPerEth = spot;
+          ccPerEth = Math.max(0, ccPerEthFromSqrt(slot0[0]));
         } catch {
-          /* pool not live yet */
+          /* pool not initialized */
         }
       }
 
-      // engine state (bid, pot) from the lens.
-      if (isLive && addresses.coreLens) {
+      // engine state (bid, pot, pile) from the lens.
+      if (engineDeployed && addresses.coreLens) {
         try {
-          const s = (await client.readContract({
+          const s = await client.readContract({
             address: addresses.coreLens,
             abi: coreLensAbi,
             functionName: "snapshot",
-          })) as any;
-          bid = s.ethRate as bigint;
-          engine = s.ethPot as bigint;
-          creditsReady = Number(s.pileSize as bigint) % STATEMENT_SIZE;
+          });
+          bid = s.ethRate;
+          pot = s.ethPot;
+          creditsReady = Number(s.pileSize % BigInt(STATEMENT_SIZE));
         } catch {
-          /* engine not live yet */
+          /* lens not readable */
         }
       }
 
-      return {
-        live: true,
-        ccPerEth,
-        nextCreditPaid: 0n,
-        bid,
-        creditsReady,
-        balances: { cc: 0n, engine, pool: 0n },
-      };
+      return { ccPerEth, bid, pot, creditsReady };
     },
-    initialData: BASE_MARKET,
+    initialData: EMPTY_MARKET,
   });
 }
 

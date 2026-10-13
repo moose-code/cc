@@ -7,7 +7,7 @@ import {
   type FeedEvent,
   type FeedKind,
 } from "@/lib/engine";
-import { isLive } from "@/lib/config";
+import { engineDeployed } from "@/lib/config";
 import { useNow } from "@/lib/live";
 import { relTime, eth, evmNowTx } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
@@ -39,28 +39,27 @@ export function EngineFeed() {
   const { data: market } = useMarket();
   const now = useNow();
 
-  const pct = market.bid > 0n
-    ? Math.min(100, Number((market.nextCreditPaid * 100n) / market.bid))
-    : 0;
   const stmtPct = Math.min(100, (market.creditsReady / STATEMENT_SIZE) * 100);
+
+  if (!engineDeployed)
+    return (
+      <section className="feed">
+        <p className="muted">engine not deployed.</p>
+      </section>
+    );
 
   return (
     <section className="feed">
       <div className="feed-head">
         <span className="feed-title">engine feed</span>
-        <span className={`live${isLive ? "" : " sample"}`}>
+        <span className="live">
           <span className="dot" />
-          {isLive ? "live" : "sample"}
+          live
         </span>
 
         <div className="nextcredit">
-          <span>next credit</span>
-          <span className="track">
-            <i style={{ width: `${pct}%` }} />
-          </span>
-          <span className="amt">
-            {eth(market.nextCreditPaid)} / {eth(market.bid)} eth
-          </span>
+          <span>pot</span>
+          <span className="amt">{eth(market.pot)} eth</span>
           <span className="bid">
             bid <b>{eth(market.bid)} eth</b>
           </span>
@@ -111,7 +110,7 @@ function Row({ e, now }: { e: FeedEvent; now: number }) {
       <td className="col-detail">
         <div className="detail-cell">
           {e.tile?.kind === "credit" && <CreditTile id={e.tile.id} />}
-          {e.tile?.kind === "statement" && <StatementTile id={e.tile.id} />}
+          {e.tile?.kind === "statement" && <StatementTile ids={e.tile.ids} />}
           <span className="label">
             {BOLD.has(e.kind) ? <b>{e.detail}</b> : e.detail}
             {e.addr && (

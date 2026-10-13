@@ -4,10 +4,9 @@ import { useState } from "react";
 import { useAccount, usePublicClient, useReadContract } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { parseEther } from "viem";
 import { CreditTile } from "@/components/Tiles";
-import { engineBid, enginePot, yourSampleCredits } from "@/lib/sample";
-import { addresses, chain } from "@/lib/config";
+import { NotDeployed } from "@/components/NotDeployed";
+import { addresses, chain, engineDeployed } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
 import { errMsg, sellQuote, useNow, useSellQuote, useSnapshot } from "@/lib/live";
 import { commas, eth } from "@/lib/format";
@@ -27,8 +26,8 @@ export default function SellPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [err, setErr] = useState<string | null>(null);
 
-  const bid = snap?.ethRate ?? parseEther(String(engineBid));
-  const pot = snap?.ethPot ?? parseEther(String(enginePot));
+  const bid = snap?.ethRate ?? 0n;
+  const pot = snap?.ethPot ?? 0n;
   const buyableNow = bid > 0n ? Number(pot / bid) : 0;
   const now = useNow(5000);
   const quote = useSellQuote(selected.size, now);
@@ -41,7 +40,7 @@ export default function SellPage() {
     args: address ? [address] : undefined,
     query: { enabled: Boolean(addresses.credits && address) },
   });
-  const mine: number[] = addresses.credits ? (held ?? []).map(Number) : yourSampleCredits;
+  const mine: number[] = (held ?? []).map(Number);
 
   const toggle = (id: number) =>
     setSelected((prev) => {
@@ -90,6 +89,8 @@ export default function SellPage() {
       setErr(errMsg(e));
     }
   }
+
+  if (!engineDeployed) return <NotDeployed />;
 
   return (
     <main className="page detail">
@@ -178,7 +179,7 @@ export default function SellPage() {
                 className="action"
                 onClick={onSell}
                 disabled={isPending || selected.size === 0 || !addresses.core || !addresses.credits}
-                title={!addresses.core ? "engine not deployed yet" : undefined}
+                title={!addresses.core ? "core address not set" : undefined}
               >
                 {isPending ? "confirm in wallet…" : `approve & sell ${selected.size || ""} credits`}
               </button>

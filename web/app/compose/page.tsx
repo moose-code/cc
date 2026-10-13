@@ -7,8 +7,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { formatUnits } from "viem";
 import { CreditTile } from "@/components/Tiles";
-import { statementSize, nextStatementId } from "@/lib/sample";
-import { addresses, chain } from "@/lib/config";
+import { NotDeployed } from "@/components/NotDeployed";
+import { STATEMENT_SIZE } from "@/lib/engine";
+import { addresses, chain, engineDeployed } from "@/lib/config";
 import { coreAbi, erc20Abi } from "@/lib/abis";
 import { errMsg, usePile, useSnapshot } from "@/lib/live";
 import { useWriteWithBuffer } from "@/lib/tx";
@@ -30,15 +31,15 @@ export default function ComposePage() {
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [format, setFormat] = useState(0);
 
-  const size = statementSize;
+  const size = STATEMENT_SIZE;
   const items = pile.items;
   const filled = snap ? Number(snap.pileSize) : items.length;
   const remaining = Math.max(0, size - filled);
-  const full = snap ? snap.pageReady : filled >= size;
+  const full = snap ? snap.pageReady : false;
   const pct = Math.min(100, (filled / size) * 100);
   const slots = Array.from({ length: size }, (_, i) => items[i] ?? null);
 
-  const chosenOn = snap ? snap.chosenComposeOn : true;
+  const chosenOn = snap ? snap.chosenComposeOn : false;
   const minCc = snap?.minCcToChoose ?? 0n;
   const { data: ccBal } = useReadContract({
     address: addresses.cc,
@@ -86,10 +87,12 @@ export default function ComposePage() {
       })
     );
 
+  if (!engineDeployed) return <NotDeployed />;
+
   return (
     <main className="page compose">
       <div className="page-head">
-        <h1>{snap ? "composing next statement" : `composing statement #${nextStatementId}`}</h1>
+        <h1>composing next statement</h1>
         <span className="muted">
           {filled} / {size} credits
         </span>
@@ -120,7 +123,7 @@ export default function ComposePage() {
             </p>
             {isConnected ? (
               <button className="action" onClick={onCompose} disabled={isPending || !addresses.core}
-                title={!addresses.core ? "engine not deployed yet" : undefined}>
+                title={!addresses.core ? "core address not set" : undefined}>
                 {isPending ? "confirm in wallet…" : "compose statement"}
               </button>
             ) : (
@@ -132,7 +135,9 @@ export default function ComposePage() {
         ) : (
           <>
             <p className="muted">
-              {filled >= size
+              {!snap
+                ? "loading…"
+                : filled >= size
                 ? `the newest of the ${size} oldest credits is still inside its sale window.`
                 : `${remaining} more ${remaining === 1 ? "credit" : "credits"} needed. the engine buys credits from swap fees until the statement is full, then anyone can compose it.`}
             </p>
@@ -202,7 +207,7 @@ export default function ComposePage() {
                 className="action"
                 onClick={onComposeChosen}
                 disabled={isPending || sel.size !== size || !ccOk || !addresses.core}
-                title={!addresses.core ? "engine not deployed yet" : !ccOk ? "coin balance below the minimum" : undefined}
+                title={!addresses.core ? "core address not set" : !ccOk ? "coin balance below the minimum" : undefined}
               >
                 {isPending ? "confirm in wallet…" : "compose chosen"}
               </button>

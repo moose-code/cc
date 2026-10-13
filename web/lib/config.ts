@@ -63,9 +63,9 @@ export const poolReady = Boolean(addresses.cc);
 export const ethUsdFeed =
   "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" as Address;
 
-// The feed and stats read on-chain only when a lens address is set. Until the
-// engine deploys, the UI renders representative sample activity instead.
-export const isLive = Boolean(addresses.coreLens && addresses.core);
+// True when the core and lens addresses are configured. Every engine read and
+// page needs both; without them the pages render an "engine not deployed" state.
+export const engineDeployed = Boolean(addresses.coreLens && addresses.core);
 
 export const wcProjectId =
-  process.env.NEXT_PUBLIC_WC_PROJECT_ID || "credits_engine_demo";
+  process.env.NEXT_PUBLIC_WC_PROJECT_ID || "credits_engine";

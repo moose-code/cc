@@ -40,7 +40,7 @@ export function TradePanel() {
     ethUsd != null && market.ccPerEth > 0 ? ethUsd / market.ccPerEth : undefined;
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [pay, setPay] = useState("0.50");
+  const [pay, setPay] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const amount = Number(pay) || 0;
@@ -205,6 +205,7 @@ export function TradePanel() {
         <div className="box">
           <input
             inputMode="decimal"
+            placeholder="0"
             value={pay}
             onChange={(e) => setPay(e.target.value.replace(/[^0-9.]/g, ""))}
           />
@@ -215,7 +216,7 @@ export function TradePanel() {
       <div className="field">
         <label>
           <span>receive</span>
-          <span>{quoteOut != null ? "quoted" : poolReady ? "" : "estimate"}</span>
+          <span>{quoteOut != null ? "quoted" : ""}</span>
         </label>
         <div className="box">
           <span className="out">
@@ -255,7 +256,7 @@ export function TradePanel() {
           className="action"
           onClick={onAction}
           disabled={!canExecute && !needsErc20Approve && !needsP2Approve}
-          title={!poolReady ? "engine not deployed yet" : undefined}
+          title={!poolReady ? "coin not deployed" : undefined}
         >
           {actionLabel}
         </button>
@@ -263,12 +264,7 @@ export function TradePanel() {
 
       {err && <p className="panel-note" style={{ color: "var(--credit)" }}>{err}</p>}
 
-      {!poolReady && (
-        <p className="panel-note">
-          engine not deployed yet. quotes are illustrative; swaps go live when the
-          coin and pool launch on mainnet.
-        </p>
-      )}
+      {!poolReady && <p className="panel-note">coin not deployed.</p>}
 
       <div className="balances">
         <div className="r">
@@ -283,7 +279,7 @@ export function TradePanel() {
         )}
         <div className="r">
           <span>engine</span>
-          <span>{market.balances ? `${ethShort(market.balances.engine)} eth` : "—"}</span>
+          <span>{ethShort(market.pot)} eth</span>
         </div>
         <div className="r">
           <span>pool</span>

@@ -1,15 +1,14 @@
 "use client";
 
 // On-chain reads shared by the credits, compose, sell and statement pages.
-// Every hook returns sample data while no engine is configured (isLive false).
+// Hooks read nothing and return empty data while no engine is configured.
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
-import { numberToHex, parseEther, type ContractFunctionReturnType } from "viem";
-import { addresses, isLive, poolReady } from "./config";
+import { numberToHex, type ContractFunctionReturnType } from "viem";
+import { addresses, engineDeployed, poolReady } from "./config";
 import { coreAbi, coreLensAbi } from "./abis";
-import { credits as sampleCredits } from "./sample";
 
 export type Snapshot = ContractFunctionReturnType<typeof coreLensAbi, "view", "snapshot">;
 
@@ -19,14 +18,14 @@ const PILE_PAGE = 200n; // ponytail: first 200 pile credits only, page with pile
 // Chain time: the latest block's timestamp, run forward by the wall seconds
 // since that block was first seen. Every countdown and "ago" label reads this,
 // so a chain whose clock is ahead of the browser's (local anvil after time
-// warps) shows the times the contracts use. Wall clock in sample mode.
+// warps) shows the times the contracts use. Wall clock until the first block is read.
 let blockSeen: { n: bigint; ts: number; at: number } | undefined;
 
 function useChainBlock() {
   const client = usePublicClient();
   return useQuery({
-    queryKey: ["chain-block", isLive || poolReady],
-    enabled: isLive || poolReady,
+    queryKey: ["chain-block", engineDeployed || poolReady],
+    enabled: engineDeployed || poolReady,
     refetchInterval: 15000,
     queryFn: async () => {
       const b = await client!.getBlock();
@@ -49,12 +48,12 @@ export function useNow(ms = 1000): number {
   return now;
 }
 
-// lens.snapshot(). undefined until loaded, and always undefined in sample mode.
+// lens.snapshot(). undefined until loaded.
 export function useSnapshot() {
   const client = usePublicClient();
   return useQuery<Snapshot | undefined>({
-    queryKey: ["snapshot", isLive],
-    enabled: isLive,
+    queryKey: ["snapshot"],
+    enabled: engineDeployed,
     refetchInterval: 15000,
     queryFn: async () => {
       if (!client || !addresses.coreLens) return undefined;
@@ -76,39 +75,23 @@ export interface PileCredit {
 }
 
 export interface Pile {
-  live: boolean;
   items: PileCredit[];
   saleOn: boolean;
   window: number; // seconds
 }
 
-const SAMPLE_WINDOW = 14400;
-
-// sample pile: the credit sale on, price falling from 3x the floor (1.1x cost)
-// to the floor across the window, same shape as the controller's curve.
-function samplePile(now: number): Pile {
-  const items = sampleCredits.map((c) => {
-    const cost = parseEther(String(c.cost));
-    const acquiredAt = now - c.boughtAgo;
-    const floor = (cost * 11000n) / 10000n;
-    const left = Math.max(0, SAMPLE_WINDOW - c.boughtAgo);
-    const price = floor + (floor * 2n * BigInt(left)) / BigInt(SAMPLE_WINDOW);
-    return { id: c.id, cost, acquiredAt, price, choosable: left === 0 };
-  });
-  return { live: false, items, saleOn: true, window: SAMPLE_WINDOW };
-}
+const EMPTY_PILE: Pile = { items: [], saleOn: false, window: 0 };
 
 export function usePile() {
   const client = usePublicClient();
   const snap = useSnapshot();
   const s = snap.data;
   const q = useQuery<Pile>({
-    queryKey: ["pile", isLive, s?.pileSize?.toString(), s?.creditSaleOn],
-    enabled: !isLive || Boolean(s),
+    queryKey: ["pile", s?.pileSize?.toString(), s?.creditSaleOn],
+    enabled: Boolean(s),
     refetchInterval: 15000,
     queryFn: async (): Promise<Pile> => {
-      if (!isLive || !client || !s || !addresses.core || !addresses.coreLens)
-        return samplePile(Math.floor(Date.now() / 1000));
+      if (!client || !s || !addresses.core || !addresses.coreLens) return EMPTY_PILE;
       const core = addresses.core;
       const lens = addresses.coreLens;
       const ids = await client.readContract({
@@ -135,7 +118,6 @@ export function usePile() {
           : Promise.resolve(ids.map(() => 0n)),
       ]);
       return {
-        live: true,
         saleOn: s.creditSaleOn,
         window: Number(s.creditWindow),
         items: ids.map((id, i) => ({
@@ -149,7 +131,7 @@ export function usePile() {
     },
   });
   // empty until the first read lands
-  return { ...q, data: q.data ?? { live: isLive, items: [], saleOn: false, window: 0 } };
+  return { ...q, data: q.data ?? EMPTY_PILE };
 }
 
 // RateStore.SLOT: Anchor { lastFillRate, minuteStartRate, minuteBucket (uint64), ... }
@@ -200,7 +182,7 @@ export function useSellQuote(n: number, now: number) {
   const minute = Math.floor(now / 60);
   return useQuery<bigint | undefined>({
     queryKey: ["sell-quote", n, minute],
-    enabled: isLive && n > 0,
+    enabled: engineDeployed && n > 0,
     refetchInterval: 15000,
     queryFn: () => sellQuote(client!, n, now),
   });

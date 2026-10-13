@@ -5,9 +5,8 @@
 // slipped by a small misregistration into a 12x12 raster, blended subtractively
 // on white. A Statement is 80 Credits laid out 8 wide x 10 tall (burn order).
 //
-// This is a faithful look-alike seeded by id — not the real on-chain hash art.
-// At wiring time, draw the real raster from Credits.seedOf(id) / the art
-// contract instead (see web/CONNECTIONS.md).
+// The raster is drawn from the credit id with a seeded PRNG. It renders the
+// Credits format; it does not read the on-chain hash art.
 
 export const STATEMENT_COLS = 8;
 export const STATEMENT_ROWS = 10;
@@ -103,11 +102,4 @@ export function creditMask(id: number): Uint8Array {
     }
   }
   return px;
-}
-
-// The 80 credit ids a statement composed, deterministic from the statement id.
-// CONNECT: replace with the real composed ids from the Core compose record.
-export function statementCreditIds(sid: number): number[] {
-  const base = 40000 + sid * STATEMENT_COUNT;
-  return Array.from({ length: STATEMENT_COUNT }, (_, i) => base + i);
 }

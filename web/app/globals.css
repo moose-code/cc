@@ -161,9 +161,6 @@ a {
   background: var(--sold);
   display: inline-block;
 }
-.live.sample .dot {
-  background: var(--composed);
-}
 
 .nextcredit,
 .nextstatement {

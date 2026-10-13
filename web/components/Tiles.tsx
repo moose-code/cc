@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useRef } from "react";
 import {
   creditMask,
-  statementCreditIds,
   PALETTE_RGB,
   STATEMENT_COLS,
   STATEMENT_ROWS,
@@ -33,17 +32,19 @@ const PAD_X = 2;
 const PAD_Y = 2;
 const MARGIN = 8;
 
+// `ids` are the credit ids of the statement's Composed event; an empty list
+// renders blank paper.
 export function StatementTile({
-  id,
+  ids,
   linkCredits = false,
 }: {
-  id: number;
+  ids: number[];
   linkCredits?: boolean;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const w = MARGIN * 2 + STATEMENT_COLS * CELL_W; // 144
   const h = MARGIN * 2 + STATEMENT_ROWS * CELL_H; // 186
-  const ids = statementCreditIds(id);
+  const key = ids.join(",");
   useEffect(() => {
     const ctx = ref.current?.getContext("2d");
     if (!ctx) return;
@@ -55,7 +56,8 @@ export function StatementTile({
       writeCredit(img.data, w, ox, oy, ids[c]);
     }
     ctx.putImageData(img, 0, 0);
-  }, [id, w, h, ids]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [w, h, key]);
 
   const canvas = (
     <canvas ref={ref} width={w} height={h} className="tile-statement" />

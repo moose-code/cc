@@ -6,20 +6,34 @@ import { useAccount, usePublicClient, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { StatementTile } from "./Tiles";
-import { chain } from "@/lib/config";
+import { StatusBadge } from "./Cards";
+import { Addr } from "./Addr";
+import { NotDeployed } from "./NotDeployed";
+import { chain, engineDeployed } from "@/lib/config";
+import { STATEMENT_SIZE, useBlockTs, useStatementHistory } from "@/lib/engine";
 import { controllerAbi } from "@/lib/abis";
 import { errMsg, useNow, useSnapshot } from "@/lib/live";
-import { agoLabel, commas, eth } from "@/lib/format";
+import { agoLabel, commas, eth, signedPct } from "@/lib/format";
 import { useWriteWithBuffer } from "@/lib/tx";
 
 const BUFFER_BPS = 100n; // value above the quote; the controller refunds the excess
 
-// Statement detail read from the chain: ControllerV1 price, reference and
-// floor state, and buy(sid).
+// Statement detail read from the chain: the lens snapshot for a statement the
+// Core holds (ControllerV1 price, reference and floor state, buy(sid)), and the
+// Composed, StatementSoldTo and StatementExited logs for its history.
 export function LiveStatement({ id }: { id: number }) {
   const { data: snap } = useSnapshot();
+  const { data: hist } = useStatementHistory();
   const now = useNow();
   const s = snap?.statements.find((x) => x.id === BigInt(id));
+  const rec = hist.composed[id];
+  const sale = hist.sold.find((x) => x.id === id);
+  const exited = hist.exited.includes(id);
+  const { data: composedTs } = useBlockTs(rec?.block);
+  const { data: soldTs } = useBlockTs(sale?.block);
+  if (!engineDeployed) return <NotDeployed />;
+  const cost = s?.cost ?? rec?.cost;
+  const known = Boolean(s || rec || sale || exited);
   return (
     <main className="page detail statement-detail">
       <Link href="/statements" className="back">
@@ -27,31 +41,102 @@ export function LiveStatement({ id }: { id: number }) {
       </Link>
       <div className="detail-grid">
         <div className="detail-art">
-          <StatementTile id={id} linkCredits />
+          <StatementTile ids={rec?.ids ?? []} linkCredits />
         </div>
         <div className="detail-main">
           <div className="detail-title">
             <h1>statement {id}</h1>
+            {s ? <StatusBadge status="listed" /> : sale ? <StatusBadge status="sold" /> : null}
           </div>
           {!snap ? (
             <p className="muted">loading…</p>
-          ) : !s ? (
-            <p className="muted">this statement is not held by the engine.</p>
           ) : (
             <>
-              <StatementBuyBox sid={id} controller={snap.controller} />
-              <div className="facts">
-                <Fact k="cost" v={`${eth(s.cost)} eth`} />
-                <Fact k="credits" v="80" />
-                <Fact k="credit score" v={commas(Math.round(Number(s.rating) / 10000))} />
-                <Fact k="composed" v={agoLabel(now - Number(s.composedAt))} />
-                <Fact k="redeemable" v={s.exitEligible ? "yes" : "no"} />
-              </div>
+              {s && <StatementBuyBox sid={id} controller={snap.controller} />}
+              {!known && <p className="muted">no record of this statement on the engine.</p>}
+              {known && (
+                <div className="facts">
+                  {cost != null && <Fact k="cost" v={`${eth(cost)} eth`} />}
+                  <Fact k="credits" v={String(STATEMENT_SIZE)} />
+                  {s && <Fact k="credit score" v={commas(Math.round(Number(s.rating) / 10000))} />}
+                  {s ? (
+                    <Fact k="composed" v={agoLabel(now - Number(s.composedAt))} />
+                  ) : (
+                    composedTs != null && <Fact k="composed" v={agoLabel(now - composedTs)} />
+                  )}
+                  {s && <Fact k="redeemable" v={s.exitEligible ? "yes" : "no"} />}
+                </div>
+              )}
+              {known && (
+                <section className="section history-section">
+                  <h2>history</h2>
+                  <div className="history">
+                    {cost != null && (
+                      <HistRow
+                        label="composed"
+                        value={`${eth(cost)} eth cost`}
+                        ago={composedTs != null ? agoLabel(now - composedTs) : undefined}
+                      />
+                    )}
+                    {s && (
+                      <HistRow
+                        label="listed"
+                        value={`${eth(s.askingPrice)} eth now`}
+                        note={cost ? `${signedPct(overCost(s.askingPrice, cost))} over cost` : undefined}
+                      />
+                    )}
+                    {sale && (
+                      <HistRow
+                        label="sold"
+                        value={`${eth(sale.price)} eth`}
+                        note={cost ? `${signedPct(overCost(sale.price, cost))} over cost` : undefined}
+                        ago={soldTs != null ? agoLabel(now - soldTs) : undefined}
+                        addr={sale.buyer}
+                      />
+                    )}
+                    {exited && <HistRow label="redeemed" value="through the exit module" />}
+                  </div>
+                </section>
+              )}
             </>
           )}
         </div>
       </div>
     </main>
+  );
+}
+
+// price over cost, in percent
+const overCost = (price: bigint, cost: bigint) => (Number(price) / Number(cost) - 1) * 100;
+
+function HistRow({
+  label,
+  value,
+  note,
+  ago,
+  addr,
+}: {
+  label: string;
+  value: string;
+  note?: string;
+  ago?: string;
+  addr?: string;
+}) {
+  return (
+    <div className="hrow">
+      <span className="hlabel">{label}</span>
+      <span className="hval">
+        {value}
+        {note && <span className="muted"> ({note})</span>}
+        {addr && (
+          <>
+            {" by "}
+            <Addr address={addr} />
+          </>
+        )}
+      </span>
+      {ago && <span className="muted hago">{ago}</span>}
+    </div>
   );
 }
 
