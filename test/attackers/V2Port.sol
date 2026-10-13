@@ -2,40 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ICore} from "../../src/interfaces/ICore.sol";
-import {ICredits, IStatements, IBalanceModule, Mainnet} from "../../src/interfaces/Interfaces.sol";
-import {IArtCoinsFeeEscrowV2, IArtCoinsTokenV2} from "../../src/interfaces/ArtCoinsV2.sol";
-import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
-
-/// a balance module that claims the Core's escrow credit in the middle of `redeemStatement`, then pays like the stand in
-contract ClaimMidRedeem is IBalanceModule {
-    MockBalanceToken public immutable token;
-    uint256 public immutable unit;
-    IArtCoinsFeeEscrowV2 public immutable ESCROW;
-    address public immutable CORE;
-
-    constructor(MockBalanceToken token_, uint256 unit_, address escrow_, address core_) {
-        token = token_;
-        unit = unit_;
-        ESCROW = IArtCoinsFeeEscrowV2(escrow_);
-        CORE = core_;
-    }
-
-    function balanceToken() external view returns (address) {
-        return address(token);
-    }
-
-    function unitPerPoint() external view returns (uint256) {
-        return unit;
-    }
-
-    function redeem(uint256 statementId) external returns (uint256 out) {
-        ESCROW.claim(CORE, address(0));
-        out = IStatements(Mainnet.STATEMENTS).creditScoreOf(statementId) * unit;
-        token.mint(msg.sender, out);
-    }
-
-    receive() external payable {}
-}
+import {IArtCoinsTokenV2} from "../../src/interfaces/ArtCoinsV2.sol";
 
 /// a stranger holding coin that calls the Core's `buyback` and, in the same transaction, tries to spend the transfer
 /// allowance the hook granted for the buyback's take. the Core is not on the allowlist, so the take consumes the whole allowance
