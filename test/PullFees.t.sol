@@ -9,6 +9,7 @@ import {ICreditStrategy} from "../src/interfaces/Interfaces.sol";
 import {RefusingEngine, GasBurnerEngine} from "./attackers/FlushEngines.sol";
 import {RevertingRouter} from "./attackers/RevertingRouter.sol";
 import {GasBurningPayee, ContractSeller} from "./attackers/GasBurners.sol";
+import {ComposeCall} from "./utils/ComposeCall.sol";
 
 /// the Core pulls the fee router's balance at the start of its eth pot entry points (`sellForEth`, `buyListing`,
 /// `compose`). real pool, real router, real credits. the router is loaded with `vm.deal`, which is the state a swap
@@ -205,7 +206,7 @@ contract PullFeesTest is CoreBase {
         uint256 size = core.pileSize();
         if (size < 80) _fillEthPile(80 - size);
         vm.fee(composeBasefee);
-        _doorGas("compose", keeper, abi.encodeWithSignature("compose()"));
+        _doorGas("compose", keeper, ComposeCall.noArgs());
     }
 
     function test_gasOfThePullPerDoor_adopt() public {

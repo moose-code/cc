@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ICredits, Mainnet} from "../../src/interfaces/Interfaces.sol";
+import {ComposeCall} from "../utils/ComposeCall.sol";
 
 /// a listing target with several hostile behaviours, selected by `mode`. it holds credits so it can deliver the
 /// right one, a wrong one or two at once. modes 0 to 4 and 6 must make the core revert the buy. modes 5, 7 and 8
@@ -80,7 +81,7 @@ contract ProbeTarget {
         ids[0] = 1;
         bytes[7] memory calls = [
             abi.encodeWithSignature("sellForEth(uint256[])", ids),
-            abi.encodeWithSignature("compose()"),
+            ComposeCall.noArgs(),
             abi.encodeWithSignature("skim()"),
             abi.encodeWithSignature("buyback()"),
             abi.encodeWithSignature("sellTo(uint256,address)", uint256(1), address(this)),

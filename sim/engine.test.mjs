@@ -66,7 +66,7 @@ const R0 = 6.668e15;
   // the credit block (the Credit struct of the launch config) is the model's CREDIT, field for field, and the launch values are the ones of FLOW 88 to 90
   assert.deepEqual(Object.keys(cfg.credit).sort(), [...Object.values(CREDIT_CONFIG_KEY), 'royaltyRecipient'].sort()); n++; // the recipient is an address the model has no use for
   for (const [k, ck] of Object.entries(CREDIT_CONFIG_KEY)) near(+CREDIT[k], +cfg.credit[ck], 1e-12, 'credit ' + k);
-  assert.deepEqual(CREDIT, { creditCostToPotBps: 10000, chosenComposeOn: false, minCcToChoose: 0, creditSaleOn: false, creditWindow: 4 * H, creditFloorBps: 11000, creditStartBps: 30000, refScore: 4330000, royaltyBps: 250 }); n++;
+  assert.deepEqual(CREDIT, { creditCostToPotBps: 10000, chosenComposeOn: false, minCcToChoose: 1e18, creditSaleOn: false, creditWindow: 4 * H, creditFloorBps: 11000, creditStartBps: 30000, refScore: 4330000, royaltyBps: 250 }); n++;
   assert.equal(creditViolation(CREDIT), null); n++;
   assert.equal(firstViolation(SETTINGS), null); n++;
   assert.equal(controllerViolation(CONTROLLER), null); n++;

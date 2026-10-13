@@ -6,6 +6,7 @@ import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {IBalanceModule, IStatements, Mainnet} from "../../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./ScriptedController.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
+import {ComposeCall} from "../utils/ComposeCall.sol";
 
 /// a scripted controller that can also sell: it is the one address `sellTo` accepts once the owner installs it. it
 /// forwards a sale as it is told and can try the sale twice or from inside a reentry
@@ -190,7 +191,7 @@ contract RepaidCaller {
         repaid += msg.value;
         if (hits++ != 0) return;
         _try(abi.encodeCall(ICore.redeemStatement, (other)));
-        _try(abi.encodeWithSignature("compose()"));
+        _try(ComposeCall.noArgs());
         _try(abi.encodeCall(ICore.skim, ()));
         _try(abi.encodeCall(ICore.buyback, ()));
     }

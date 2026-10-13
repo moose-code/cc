@@ -13,6 +13,7 @@ import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {SeaportBase} from "./Seaport.t.sol";
 import {OrderComponents} from "./utils/SeaportTypes.sol";
 import {GasBurningPayee} from "./attackers/GasBurners.sol";
+import {ComposeCall} from "./utils/ComposeCall.sol";
 
 /// @notice every transaction this system needs, against the per transaction gas cap of mainnet (EIP-7825, since the
 /// fusaka upgrade): 16,777,216 gas. one test per transaction, real contracts on the pinned fork, from an EOA style
@@ -281,7 +282,7 @@ contract GasCapTest is SeaportBase {
         g -= gasleft();
         assertEq(core.heldStatements().length, held + 1, "composed");
         assertEq(keeper.balance, kb, "the compose pays the caller nothing");
-        _row(name, g, abi.encodeWithSignature("compose()"));
+        _row(name, g, ComposeCall.noArgs());
     }
 
     /// @dev full page of 80, nothing warmed by earlier work
@@ -338,7 +339,7 @@ contract GasCapTest is SeaportBase {
         _row(
             burning ? "compose eth lane, router 1 eth, four burning payees, cold" : "compose eth lane, router 1 eth, cold",
             g,
-            abi.encodeWithSignature("compose()")
+            ComposeCall.noArgs()
         );
     }
 

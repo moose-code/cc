@@ -95,7 +95,7 @@ what the call does:
 
 send at least 12,000,000 gas: the live Statements contract needs about 8.7 million for 80 credits, and the gas the transaction needs is the gas before the refund of the cleared credit records, 10.6 million, or 11.1 million with a loaded fee router of four gas burning payees (section 13).
 
-`setHeldFormat(uint256 sid, uint8 format)` sets the format of a statement the Core holds for sale, through `Statements.setFormat`. anyone may call. reverts: `NotForSale` when the Core does not hold `sid`, `BadFormat` for a format above 7, `BelowMinCc` when the caller holds less than `minCcToChoose` coin (1 coin at launch). emits `HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller)`. a buyer sets the format of an owned statement on Statements itself. the current format reads from `Statements.formatOf(sid)`.
+`setHeldFormat(uint256 sid, uint8 format)` sets the format of a statement the Core holds for sale, through `Statements.setFormat`. anyone may call. reverts: `NotForSale` when the Core does not hold `sid`, `BadFormat` for a format above 7, `BelowMinCc` when the caller holds less than `minCcToChoose` coin (1 coin at launch). emits `HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller)`. the coin minimum is a balance read at the call, so a flash balance passes it, and the call works while paused and after `migrate` (a retired engine keeps its held statements and sells them). a restyle can land before a purchase of that statement. a buyer sets the format of an owned statement on Statements itself. the current format reads from `Statements.formatOf(sid)`.
 
 ## 6. statements and credits: buying
 

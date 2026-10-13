@@ -639,6 +639,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// composes the controller's page as `compose` does, with the given format (0 to 7, else `BadFormat`)
     function compose(uint8 format) external nonReentrant {
+        if (format > MAX_FORMAT) revert BadFormat();
         _composePage(format, false, gasleft());
     }
 
@@ -653,7 +654,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// sets the render format of a statement the core holds for sale. anyone holding at least `minCcToChoose` coin may
     /// call. reverts `NotForSale` for a statement that is not held, `BadFormat` above 7 and `BelowMinCc` below the
-    /// coin minimum
+    /// coin minimum. callable while paused and after `migrate`: statements held by a retired engine stay with it and
+    /// are sold by it. the coin minimum is a balance read at the call, so a flash balance passes it. the gate is a
+    /// speed bump on a cosmetic door
     function setHeldFormat(uint256 sid, uint8 format) external nonReentrant {
         if (!_statements[sid].held) revert NotForSale();
         if (format > MAX_FORMAT) revert BadFormat();

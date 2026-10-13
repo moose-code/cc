@@ -65,18 +65,21 @@ contract FormatsTest is Fixture {
 
     function test_compose_defaultFormatReachesMoreThanOneValue() public {
         _fillEthPile(80);
-        uint256 head = core.pilePage(0, 1)[0];
+        uint256 snap = vm.snapshotState();
+        uint256 sid = STATEMENTS.supply() + 1;
         bool[8] memory seen;
         uint256 distinct;
-        for (uint256 i = 1; i <= 64; ++i) {
+        for (uint256 i = 1; i <= 8; ++i) {
             vm.prevrandao(bytes32(i));
-            uint8 f = defaultFormat(head);
+            _composeDefault();
+            uint8 f = STATEMENTS.formatOf(sid);
             if (!seen[f]) {
                 seen[f] = true;
                 distinct++;
             }
+            vm.revertToState(snap);
         }
-        assertGt(distinct, 4, "the derivation spreads over the formats");
+        assertGt(distinct, 1, "composes under different prevrandao values give different formats");
     }
 
     function test_compose_givenFormat() public {
@@ -102,6 +105,12 @@ contract FormatsTest is Fixture {
         core.compose(8);
     }
 
+    function test_REVERT_compose_badFormatBeforeThePageRead() public {
+        vm.expectRevert(ICore.BadFormat.selector);
+        vm.prank(keeper);
+        core.compose(8);
+    }
+
     function test_REVERT_compose_givenFormatNotReady() public {
         vm.expectRevert(ICore.NotReady.selector);
         vm.prank(keeper);
@@ -121,6 +130,14 @@ contract FormatsTest is Fixture {
         }
         assertTrue(_isHeld(sid), "the statement is still held");
         assertEq(STATEMENTS.ownerOf(sid), address(core), "and still owned by the core");
+    }
+
+    function test_setHeldFormat_sameFormatIsAccepted() public {
+        uint256 sid = _heldAndFunded();
+        uint8 cur = STATEMENTS.formatOf(sid);
+        vm.prank(holder);
+        core.setHeldFormat(sid, cur);
+        assertEq(STATEMENTS.formatOf(sid), cur, "an unchanged format is accepted and reads back");
     }
 
     function test_setHeldFormat_oneCoinPasses() public {

@@ -30,6 +30,7 @@ import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {ProbeTarget} from "../attackers/ProbeTarget.sol";
 import {FuzzController} from "../attackers/FuzzController.sol";
 import {TestSwapRouter} from "../utils/TestSwapRouter.sol";
+import {ComposeCall} from "../utils/ComposeCall.sol";
 
 /// everything the handler needs to know about the system under test.
 struct Wiring {
@@ -220,6 +221,8 @@ abstract contract HandlerBase is Test {
     // per action counters. the handler never reverts, so these survive failing core calls.
     uint256[N_ACTIONS] public attempts;
     uint256[N_ACTIONS] public successes;
+    /// `setHeldFormat` calls by a funded caller that restyled a held statement to a format different from its own
+    uint256 public fundedRestyles;
     uint256[N_ACTIONS] public skips;
     /// attempts the ghost model expected to succeed that reverted anyway
     uint256[N_ACTIONS] public unexpectedFails;
@@ -1484,21 +1487,20 @@ abstract contract HandlerBase is Test {
     //////////////////////////////////////////////////////////////*/
 
     /// the page the controller would answer, asked the way the core asks it.
-    function _peekPage() internal view returns (bool ready, uint256[] memory ids, uint256 format) {
+    function _peekPage() internal view returns (bool ready, uint256[] memory ids) {
         ids = new uint256[](80);
         // the core reads the controller under a fixed gas cap of 500_000, and so does the model
         (bool ok, bytes memory out) =
             core.controller().staticcall{gas: 500_000}(abi.encodeWithSignature("nextPage()"));
-        if (!ok || out.length < 82 * 32) return (false, ids, 0);
-        (uint256 flag, uint256[80] memory p, uint256 f) = abi.decode(out, (uint256, uint256[80], uint256));
+        if (!ok || out.length < 82 * 32) return (false, ids);
+        (uint256 flag, uint256[80] memory p,) = abi.decode(out, (uint256, uint256[80], uint256));
         for (uint256 i; i < 80; ++i) {
             ids[i] = p[i];
         }
-        return (flag == 1, ids, f);
+        return (flag == 1, ids);
     }
 
-    function _validPage(uint256[] memory ids, uint256 format) internal view returns (bool) {
-        if (format > 7) return false;
+    function _validPage(uint256[] memory ids) internal view returns (bool) {
         for (uint256 i; i < 80; ++i) {
             CG storage c = cg[ids[i]];
             if (!c.inPile) return false;
@@ -1522,13 +1524,15 @@ abstract contract HandlerBase is Test {
         Pull pull;
         /// the acquisition time of each credit on the page, read before the compose for the window ghost check
         uint64[] acq;
+        /// the format a chosen compose names
+        uint256 fmt;
     }
 
     /// composes the controller's page. rare by gate, because it costs about 8m gas.
     function compose(uint256 gate, uint256 feeSeed) external checked {
         uint8 a = A_COMPOSE;
-        if (_retiredRefusal(a, keeper, abi.encodeWithSignature("compose()"))) return;
-        (bool ready, uint256[] memory ids, uint256 format) = _peekPage();
+        if (_retiredRefusal(a, keeper, ComposeCall.noArgs())) return;
+        (bool ready, uint256[] memory ids) = _peekPage();
         // a pile of 80 is composed on one gate in two. a short pile only now and then, to see NotReady
         if (ready ? gate % 2 != 0 : gate % 13 != 0) return _skip(a);
         CPre memory p;
@@ -1536,7 +1540,7 @@ abstract contract HandlerBase is Test {
         p.basefee = _logBound(feeSeed, 0.05 gwei, 300 gwei);
         vm.fee(p.basefee);
         p.pull = _beginPull();
-        p.valid = ready && _validPage(ids, format);
+        p.valid = ready && _validPage(ids);
         p.st = core.settings();
         p.pot = core.ethPot();
         p.rate = core.ethRate();
@@ -1611,6 +1615,7 @@ abstract contract HandlerBase is Test {
         p.supply = STATEMENTS.supply();
         p.sum = sum;
         p.acq = acq;
+        p.fmt = format;
         RS memory rs = _rs();
         _endPull(p.pull);
         vm.recordLogs();
@@ -1648,12 +1653,14 @@ abstract contract HandlerBase is Test {
                 break;
             }
         }
+        bool changed = STATEMENTS.formatOf(sid) != format;
         _att(a);
         vm.prank(caller);
         try core.setHeldFormat(sid, format) {
             _ok(a);
             if (!funded) _flag(V_MODEL, "setHeldFormat took a caller below minCcToChoose");
             if (STATEMENTS.formatOf(sid) != format) _flag(V_MODEL, "formatOf differs from the format set");
+            else if (funded && changed) fundedRestyles++;
         } catch (bytes memory why) {
             if (funded || bytes4(why) != ICore.BelowMinCc.selector) _unexpected(a, why);
             else _ok(a);
@@ -1666,6 +1673,7 @@ abstract contract HandlerBase is Test {
     function _afterComposeChosen(uint256[80] memory ids, CPre memory p) internal {
         _pullChecks(p.pull, vm.getRecordedLogs());
         uint256 sid = STATEMENTS.supply();
+        if (STATEMENTS.formatOf(sid) != p.fmt) _flag(V_COMPOSE, "the chosen statement format differs from the one named");
         if (sid != p.supply + 1 || STATEMENTS.ownerOf(sid) != address(core)) {
             _flag(V_COMPOSE, "chosen compose statement id is not supply + 1 or not held by the core");
         }
@@ -1732,6 +1740,9 @@ abstract contract HandlerBase is Test {
         _pullChecks(p.pull, logs);
         if (!p.valid) _flag(V_COMPOSE, "composed a page the ghost model considers invalid");
         uint256 sid = STATEMENTS.supply();
+        // the core ignores the controller's format: the default is derived from prevrandao and the head credit id
+        uint256 want = uint256(keccak256(abi.encode(block.prevrandao, ids[0]))) % 8;
+        if (STATEMENTS.formatOf(sid) != want) _flag(V_COMPOSE, "the composed statement format differs from the default");
         if (sid != p.supply + 1 || STATEMENTS.ownerOf(sid) != address(core)) {
             _flag(V_COMPOSE, "new statement id is not supply + 1 or not held by the core");
         }

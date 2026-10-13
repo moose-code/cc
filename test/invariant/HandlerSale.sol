@@ -9,6 +9,7 @@ import {HandlerBase} from "./HandlerBase.sol";
 import {HandlerOwner} from "./HandlerOwner.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {SellingController} from "../attackers/SaleAttackers.sol";
+import {ComposeCall} from "../utils/ComposeCall.sol";
 
 /// @notice the sale controller and the owner as an adversary. actions: `buy` through the first controller, the
 /// controller's own `sellTo` through a selling controller the owner installs, the controller's sale settings, the owner
@@ -813,7 +814,7 @@ abstract contract HandlerSale is HandlerOwner {
         uint256 sid = n == 0 ? 1 : everHeld[seed % n];
         uint256[] memory ids = new uint256[](1);
         ids[0] = seed >> 8;
-        if (k == 1) data = abi.encodeWithSignature("compose()");
+        if (k == 1) data = ComposeCall.noArgs();
         else if (k == 2) data = abi.encodeCall(ICore.skim, ());
         else if (k == 3) data = abi.encodeCall(ICore.buyback, ());
         else if (k == 4) data = abi.encodeCall(ICore.redeemStatement, (sid));

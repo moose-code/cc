@@ -8,6 +8,7 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {SellingController, HostileModule, RepaidCaller} from "./attackers/SaleAttackers.sol";
+import {ComposeCall} from "./utils/ComposeCall.sol";
 
 /// the balance side redemption: when a statement may be redeemed, what stops it, and the payment to the caller from
 /// the eth pot. real Core, Statements. the stand in module and token, and the attacker modules
@@ -422,7 +423,7 @@ contract RedeemRepayTest is RedeemBase {
             _setController(address(sc));
             bytes memory data;
             address target = address(core);
-            if (k == 0) data = abi.encodeWithSignature("compose()");
+            if (k == 0) data = ComposeCall.noArgs();
             else if (k == 1) data = abi.encodeCall(ICore.skim, ());
             else if (k == 2) data = abi.encodeCall(ICore.redeemStatement, (b));
             else if (k == 3) data = abi.encodeCall(ICore.buyback, ());

@@ -824,6 +824,12 @@ abstract contract InvariantsBase is InvariantFixture {
         // (5e-5 at the lower end of the measured p).
         assertTrue(_try(7, 400), "compose never succeeded");
         assertTrue(_try(41, 40), "no held format set");
+        // a funded caller must restyle a held statement to a different format, not only meet BelowMinCc
+        uint256 restyles = handler.fundedRestyles();
+        for (uint256 i; i < 40 && handler.fundedRestyles() == restyles; ++i) {
+            _try(41, 1);
+        }
+        assertGt(handler.fundedRestyles(), restyles, "no funded restyle changed a format");
         // the statement sale through the controller
         assertTrue(_try(23, 80), "no sale of a held statement");
         if (handler.phase2()) _phase2Smoke();

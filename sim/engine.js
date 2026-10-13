@@ -63,7 +63,7 @@ export const CONTROLLER_KEYS = Object.keys(CONTROLLER);
 export const CREDIT = {
   creditCostToPotBps: 10000,
   chosenComposeOn: false,
-  minCcToChoose: 0,
+  minCcToChoose: 1e18,
   creditSaleOn: false,
   creditWindow: 14400, // seconds (4 hours)
   creditFloorBps: 11000,

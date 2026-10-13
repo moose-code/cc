@@ -11,6 +11,7 @@ import {FeeBase} from "./Fees.t.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {OrderComponents} from "./utils/SeaportTypes.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
+import {ComposeCall} from "./utils/ComposeCall.sol";
 
 /// independent review of the v2 port (REVIEW-v2port.md, git history before packet 0). `test_FINDING_*` asserts a real defect as it behaves
 /// today. `test_FIXED_*` proves a finding is closed, `test_ACCEPTED_*` pins a behavior the owner accepted, `test_OK_*`
@@ -477,7 +478,7 @@ contract ReviewFlushInPayoutTest is FeeBase {
         uint256 pot0 = core.ethPot();
         (, uint256 toEngine) = _routerSplit(address(feeRouter).balance);
         uint256 a0 = address(atk).balance;
-        atk.go(address(core), abi.encodeWithSignature("compose()"));
+        atk.go(address(core), ComposeCall.noArgs());
         assertEq(address(atk).balance, a0, "the compose pays the caller nothing");
         assertEq(core.ethPot(), pot0 + _toPot(toEngine), "pot = old + the booked fees");
         _consistent();

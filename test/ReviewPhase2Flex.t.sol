@@ -8,6 +8,7 @@ import {SettingsStore} from "../src/lib/SettingsStore.sol";
 import {Settings, Mainnet, IBalanceModule, IStatements, ICreditScore, ICredits} from "../src/interfaces/Interfaces.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
+import {ComposeCall} from "./utils/ComposeCall.sol";
 
 /// @notice a module that tries to re enter every core door from inside its redeem callback. it pays the statement rating
 /// times the unit
@@ -41,7 +42,7 @@ contract ReenteringModule is IBalanceModule {
         ids[0] = 1;
         (skimInside,) = core.call(abi.encodeWithSignature("skim()"));
         _try(abi.encodeWithSignature("skim()"));
-        _try(abi.encodeWithSignature("compose()"));
+        _try(ComposeCall.noArgs());
         _try(abi.encodeWithSignature("buyback()"));
         _try(abi.encodeWithSignature("sellForEth(uint256[])", ids));
         _try(abi.encodeWithSignature("sellForBalance(uint256[])", ids));
