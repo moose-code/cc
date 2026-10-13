@@ -21,7 +21,7 @@ each packet is one builder, bounded to the files it names, with `forge build` an
 | 6 | one `State` struct; CoreLens deleted; the bid quote view after pending income; statement formats (decision 113: `compose(format)`, random default, `setHeldFormat`, `minCcToChoose` 1 coin) | CoreState, fixed slots, the lens, 8 postflight rows | 4, 5 | pending |
 | 6a | statement formats (decision 113): `compose(format)`, a random default from `prevrandao` and the head id, `setHeldFormat`, `minCcToChoose` 1 coin at launch | none | 5 | done |
 | 7 | CREATE2 deploy, `setController` before launch, preflight and postflight trimmed, env vars trimmed, the Lock run becomes a later owner command | nonce pinning, Resume, config echo rows | 6 | pending |
-| 8 | tests follow: delete the files of SIMPLIFICATION-v1 section 5, rewrite fixtures to the five transaction deploy, invariants 15 and 20 out, 10 restated, gas rows re-measured | about 5,000 LOC | 7 | pending |
+| 8 | the test cut: a test stays only when it names the promise it protects (a docs/SPEC.md section 1 row, a docs/INTEGRATION.md revert or an invariant); the reviewer era files, narratives and duplicate cases are deleted and a survivor carries a `// promise:` line. test/**/*.sol before and after: 94 to 75 files (test/*.sol 56 to 39), 34,964 to 23,432 lines, 983 to 452 test functions; the 12 files of packet 7 (4,474 lines, 130 test functions) are untouched. the 20 invariants, 9 suites and 7 Deep variants are kept | 11,532 lines, 531 test functions | 7 | done |
 | 9 | sim follows: the fee fraction without a router, `pointValue`; the page kept (the pause clock is done in packet 2) | none | 5 | pending |
 | 10 | docs content rewrite: SPEC, RUNBOOK, INTEGRATION, README and STATUS describe the built design; `src/` comments naming old paths fixed and the build pins re-pinned; the UI branch's one lens read replaced by a multicall | the stale text of the old design | 8 | pending |
 | 11 | freeze: full suite, the deep runs, the rehearsal on the latest block, a security review of the candidate, the acceptance of decisions 99 to 108; section 4 filled | none | all | pending |
@@ -59,7 +59,7 @@ each packet is one builder, bounded to the files it names, with `forge build` an
 | safety | no mainnet broadcast, deploy, push or private key without the owner's explicit instruction |
 | fork env | `set -a; source <path to a .env with MAINNET_RPC_URL and FORK_BLOCK>; set +a` before fork tests; this worktree has none, the owner's lives outside it |
 
-pre-existing failures found by packet 1 (they fail at main 35b78be too, before any change of this branch): `test/Lifecycle.t.sol` `test_narrative_theWholeLoopTwice`, `test_compose_unsoldStatementStaysHeldAtTheFloor`, `test_narrative_theOwnerAdaptsTheSystemLive`, and `test/SaleSmoke.t.sol` `test_price_falls_to_the_knee_then_to_the_floor`: sale price assertions. packet 5 re-derived them and they pass.
+`test/Lifecycle.t.sol` and `test/SaleSmoke.t.sol`, which held four failures at main 35b78be, were deleted by packet 8.
 
 also pre-existing at main: `test/Rehearsal.t.sol` compares the deploy gas with `DEPLOY_GAS_ESTIMATE` (19,200,000), which the adapter transactions of packet 3 exceed; packet 7 re-measures the deploy and sets the constant.
 
@@ -69,4 +69,5 @@ also pre-existing at main: `test/Rehearsal.t.sol` compares the deploy gas with `
 |---|---|
 | balanceModule gas | `redeemStatement` forwards gas to a contract that does not exist yet. measure it against the gas cap when it does |
 | v2 audit | pending. preflight pins the code hash of nine live v2 contracts read at block 26158000. a changed stack means new addresses and pins |
+| invariant 6 flake | `invariant_06_rateFollowsTheModel` fails in some runs of `InvariantsSalePhase2` in `test/invariant/InvariantsSale.t.sol` (shrunk sequence: `setSettings`, `setRate`, `sellForEth`, `donate`, `composeChosen`) with "the read differs from the price state lowered to the clamp of the end pot: 1 != 0". it fails at d100be9 too (three of three runs there), so packet 8 did not cause it. the cause is open: a model edge in the handler or a one wei edge in the read |
 | owner key | a stolen owner key moves everything at once (docs/SPEC.md section 10). a multisig owner and watching `SuccessorSet` and `Migrated` are the mitigations |
