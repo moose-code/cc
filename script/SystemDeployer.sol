@@ -20,7 +20,7 @@ struct Deployed {
 
 /// @notice the deploy routine, shared by the script and by tests. call it from a broadcast or from a prank of
 /// `owner`, who must be the v2 factory owner and the config owner (a deprecated v2 factory takes only its owner, through
-/// `deployTokenAsOwner`). order (docs/FLOW.md 10.4): the library `CoreLib` (linked by `forge script` before `run`), the
+/// `deployTokenAsOwner`). order (docs/DECISIONS.md 10.4): the library `CoreLib` (linked by `forge script` before `run`), the
 /// controller, the router (engine unset), the Core (fee source the router, coin predicted by the factory), the lens
 /// `CoreLens` (read only, pointing at the Core), the launch, then the router is set up in three transactions: engine, payees, tip. the fourth, the split start, is a separate step
 /// that runs after the launch is mined (`startSplitAfterLaunch`, the Resume script): it reads the launch time from the chain.

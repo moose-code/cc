@@ -11,7 +11,7 @@ import {NewProd} from "./NewProd.sol";
 /// --private-key $KEY`. reverts while any of SETTINGS_CHANGED, LOCKS_CHANGED, OWNER_CHANGED, COIN_CHANGED or
 /// ROUTER_CHANGED is set. run it as the same deployer as the original run. reads the stage from the chain and sends
 /// only what is missing: the launch (if the core exists and the coin does not), then the router setup (engine, payees) and, once the launch is mined, the split start (launch time from the factory plus the anti sniper window).
-/// then runs postflight. prints the stage it found. the runbook is docs/DEPLOY.md section 6
+/// then runs postflight. prints the stage it found. the runbook is docs/RUNBOOK.md section 6
 contract Resume is Script, SystemResumer, NewProd {
     function run() external {
         _requireNoChangeFlags();

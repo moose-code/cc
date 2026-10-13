@@ -12,7 +12,7 @@ import {IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {InvariantFixture} from "./InvariantFixture.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 
-/// @notice SPEC section 10 as reworked by docs/FLOW.md, one `invariant_` function per item, against the real system on
+/// @notice SPEC section 10 as reworked by docs/DECISIONS.md, one `invariant_` function per item, against the real system on
 /// the mainnet fork: the real Core, the live Credits, Statements,
 /// CreditStrategy, pool manager and artcoins stack. only the exit module and exit token are stand ins.
 ///
@@ -235,7 +235,7 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// 12. docs/FLOW.md 9.2: a statement leaves the core only by `sellTo` or by an exit. every ever held statement has
+    /// 12. docs/DECISIONS.md 9.2: a statement leaves the core only by `sellTo` or by an exit. every ever held statement has
     /// one of the ghost statuses Held, Sold or Exited, a sale through `sellTo` paid at least the hard floor (cost *
     /// saleFloorBps of the settings in force at the sale), and the handler's departure and sale path violation codes
     /// (codes 7, 8 and 26: price, booking by saleToBuybackBps, holder and record of each sale) stay at zero.

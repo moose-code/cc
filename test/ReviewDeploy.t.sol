@@ -17,7 +17,7 @@ import {SystemDeployer, Deployed} from "../script/SystemDeployer.sol";
 import {LaunchConfig, ConfigReader} from "../script/LaunchConfig.sol";
 import {Report} from "../script/Report.sol";
 
-/// @notice independent review of the deploy package (docs/archive/REVIEW-deploy.md), ported to the v2 stack: the state
+/// @notice independent review of the deploy package (REVIEW-deploy.md, git history before packet 0), ported to the v2 stack: the state
 /// mutations that need their own assertions (deployer swap, library), proofs of the readbacks and a fuzz of the
 /// funded rule. the mutation matrix is in test/ReviewMatrix.t.sol. forks mainnet at FORK_BLOCK
 contract ReviewDeployTest is ReviewHarness {
@@ -506,7 +506,7 @@ contract ReviewDeployTest is ReviewHarness {
         assertEq(_failedNames(), "");
     }
 
-    /// DEPLOY.md: the token admin is the owner from the first block. it can change the allowlist and leave the
+    /// RUNBOOK.md: the token admin is the owner from the first block. it can change the allowlist and leave the
     /// restriction (one way). nothing else is its to change: the skim, the referral cap and the lp fee are frozen
     function test_signoffAdminPowers() public {
         vm.startPrank(deployer);

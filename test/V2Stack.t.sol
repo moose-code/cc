@@ -236,7 +236,7 @@ contract V2StackTest is Test {
         console.log("lp fee coin to creator", t.balanceOf(creator));
     }
 
-    /// the v1 launch values do not fit the mainnet env knobs (docs/archive/V2-PORT.md section 5.1): bounty 9500
+    /// the v1 launch values do not fit the mainnet env knobs (V2-PORT.md, git history before packet 0 section 5.1): bounty 9500
     /// reverts, and a launch with no fee on either leg (lp fee and baseline skim both 0) reverts
     function test_v1LaunchValuesRevert() public {
         EmptyRecipient r = new EmptyRecipient();

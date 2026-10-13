@@ -743,7 +743,7 @@ contract SeaportColdTest is SeaportBase {
 /// the gas of the call measured cold, through a basic Seaport order. the caller pays gas at the base fee and no
 /// priority fee. profit is the payment less the transaction gas (21,000, the call, the calldata) at the base fee
 contract SeaportCallerPayTest is SeaportBase {
-    /// the opening bid of docs/FLOW.md section 2, wei per credit
+    /// the opening bid of docs/DECISIONS.md section 2, wei per credit
     uint256 internal constant P0 = 8_900_000_000_000_000;
 
     function setUp() public override {

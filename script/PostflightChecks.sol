@@ -154,7 +154,7 @@ abstract contract PostflightChecks is PostflightPool {
 
     /// @notice prints what etherscan verification needs: the library address and the exact `--libraries` flag, the
     /// constructor arguments of the Core (from the config, see `coreConstructorArgs`) and of the controller, then the
-    /// live controller and settings on separate lines labelled as live. docs/DEPLOY.md section 3. `deployer` is the
+    /// live controller and settings on separate lines labelled as live. docs/RUNBOOK.md section 3. `deployer` is the
     /// address that sent the deploy, it finds the first controller
     function printVerifyInputs(ICore core, LaunchConfig memory c, address deployer) internal view {
         address lib = findLibrary(address(core).code);

@@ -22,7 +22,7 @@ contract TokenSwitchModule {
     }
 }
 
-/// fixes of the security review of 55307c4 (docs/REVIEW-security-55307c4.md).
+/// fixes of the security review of 55307c4 (docs/reviews/REVIEW-security-55307c4.md).
 /// M1: the stored unit is the exit check basis, the exit token bid pays by the lower of the stored and the live unit,
 /// and `refreshUnitPerPoint` re-reads the unit after `lockExitModule`. M2: `releaseRedeemBurn` moves the reserve into
 /// the coin buyback. L4: slippage is bounded by the bid margin. I3: the lens bid reads retired, mode and the pot

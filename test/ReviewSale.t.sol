@@ -99,7 +99,7 @@ contract TupleProbe is SetSettings {
     }
 }
 
-/// independent review of the sale controller, the owner doors and the fee share (docs/archive/REVIEW-sale.md). test_FIXED asserts
+/// independent review of the sale controller, the owner doors and the fee share (REVIEW-sale.md, git history before packet 0). test_FIXED asserts
 /// the behavior after the fix of a finding, test_ACCEPTED pins a finding that was accepted or documented, every test_OK
 /// confirms a safety property
 contract ReviewSaleTest is Fixture {
@@ -965,7 +965,7 @@ contract ReviewSaleTest is Fixture {
     function test_OK_sizeMarginOfTheCore() public {
         uint256 size = vm.getDeployedCode("Core.sol:Core").length;
         emit log_named_uint("core runtime bytes", size);
-        // the v2 brief (docs/FLOW.md 10.6) asks for at least 60 bytes of headroom
+        // the v2 brief (docs/DECISIONS.md 10.6) asks for at least 60 bytes of headroom
         assertGe(24_576 - size, 60, "the brief asks for a margin of at least 60");
     }
 
@@ -980,7 +980,7 @@ contract ReviewSaleTest is Fixture {
         return ownerChangedFlag;
     }
 
-    /// S-6 fixed (postflight half, the Resume half is in test/Resume.t.sol): DEPLOY.md hands the Core to a multisig with
+    /// S-6 fixed (postflight half, the Resume half is in test/Resume.t.sol): RUNBOOK.md hands the Core to a multisig with
     /// OWNER_CHANGED=1 and the token admin with updateAdmin, named by COIN_CHANGED=1 (decision: v2 has its own flag)
     function test_FIXED_ownerChangedFlagRelaxesTheCoinAdminRow() public {
         ownerChangedFlag = true;

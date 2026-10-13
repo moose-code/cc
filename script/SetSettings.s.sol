@@ -18,7 +18,7 @@ interface ICoreOwner {
 
 /// @notice changes the settings of a live Core without touching the fields you do not name. it reads the live struct, applies
 /// your overrides, checks the sanity bounds, prints a before and after table and the calldata, and sends nothing
-/// unless SEND=1 and the run has `--broadcast` and a signer that is the Core owner. docs/DEPLOY.md section 7.
+/// unless SEND=1 and the run has `--broadcast` and a signer that is the Core owner. docs/RUNBOOK.md section 7.
 ///
 /// overrides, both may be used, the patch is applied first and the single variables win:
 /// * `SET_<field>=<value>`, one variable per field of `Settings`, for example `SET_saleFloorBps=8000`

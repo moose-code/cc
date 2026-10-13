@@ -12,7 +12,7 @@ import {SellingController} from "../attackers/SaleAttackers.sol";
 
 /// @notice the sale controller and the owner as an adversary. actions: `buy` through the first controller, the
 /// controller's own `sellTo` through a selling controller the owner installs, the controller's sale settings, the owner
-/// swapping the controller and the exit module in one go, the three one way locks and the two step handover. every call is checked against a model written from docs/FLOW.md: who may
+/// swapping the controller and the exit module in one go, the three one way locks and the two step handover. every call is checked against a model written from docs/DECISIONS.md: who may
 /// sell, at what least price, what is booked where, who holds the statement after. a refusal must carry the selector
 /// the model names. nothing here reverts, a violation goes to `viol`.
 abstract contract HandlerSale is HandlerOwner {
@@ -506,7 +506,7 @@ abstract contract HandlerSale is HandlerOwner {
         }
     }
 
-    /// the asking price of statement `sid` written out again from docs/ARCHITECTURE.md section 7: the price in units of
+    /// the asking price of statement `sid` written out again from docs/SPEC.md section 7: the price in units of
     /// 1/3600 bps falls `fastDecayBpsPerHour` a second to the knee and `slowDecayBpsPerHour` after it (rounded up), at
     /// the age outside every pause window, at least `floorBps` and at least the hard floor of the core
     function _modelAsk(uint256 sid) internal view returns (uint256) {
@@ -694,7 +694,7 @@ abstract contract HandlerSale is HandlerOwner {
     }
 
     /// the owner sets one of the nine sale numbers of the first controller to a value inside or outside the bounds of
-    /// docs/FLOW.md 9.3 (written out again here), or a stranger tries. inside: it goes through and reads back. outside:
+    /// docs/DECISIONS.md 9.3 (written out again here), or a stranger tries. inside: it goes through and reads back. outside:
     /// BadSetting with the field. a stranger: OnlyOwner. no asset or pot moves
     function saleSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_SALE_SETTINGS;

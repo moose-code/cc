@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
 
 /// @notice the 23 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
-/// docs/FLOW.md section 2, for the settings script and the config and deploy tests. the fields bounded by another
+/// docs/DECISIONS.md section 2, for the settings script and the config and deploy tests. the fields bounded by another
 /// field (recoveryClimbPerMinBps by climbPerMinBps, feeToRedeemBurnBps by the sum with feeToBuybackBps) have those
 /// bounds in the callers' hands
 library SettingsFields {

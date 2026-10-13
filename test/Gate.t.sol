@@ -6,7 +6,7 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 
-/// @notice the inventory gate is gone (docs/FLOW.md decision 2): the engine never stops buying because statements are
+/// @notice the inventory gate is gone (docs/DECISIONS.md decision 2): the engine never stops buying because statements are
 /// unsold. what is left of its suite is the rate property that never depended on the gate (the rate does not rise
 /// across an interval that was unfunded at its start) under a random walk over the doors, the clock, the fees, the
 /// statement sales and the settings, and a proof that held and unsold statements change nothing about the bid

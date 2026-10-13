@@ -164,7 +164,7 @@ contract PullFeesTest is CoreBase {
         uint256 loaded = g - gasleft();
         emit log_named_uint("gas sellForEth 1 credit, router empty", empty);
         emit log_named_uint("gas sellForEth 1 credit, router 1 eth", loaded);
-        // the figures of docs/FLOW.md 10.8
+        // the figures of docs/DECISIONS.md 10.8
         assertApproxEqAbs(empty, 334_600, 5_000, "gas, router empty");
         assertApproxEqAbs(loaded - empty, 67_674, 5_000, "gas of the flush");
         assertEq(address(feeRouter).balance, 0);

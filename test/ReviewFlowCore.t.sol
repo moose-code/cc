@@ -14,7 +14,7 @@ import {
 } from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 
-/// @notice independent review of the flow rework, settings and the library split (docs/archive/REVIEW-flow-core.md).
+/// @notice independent review of the flow rework, settings and the library split (REVIEW-flow-core.md, git history before packet 0).
 /// every test_POC_ test passes and shows the bad outcome on the fork
 contract ReviewFlowCoreTest is Fixture {
     /// @dev what one credit costs on the open market at the pin, used only to price what an accomplice paid

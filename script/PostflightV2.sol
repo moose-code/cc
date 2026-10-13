@@ -6,7 +6,7 @@ import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemBuilder} from "./Builder.sol";
 import {Report} from "./Report.sol";
 
-/// @notice the safe readers and the coin side of the postflight (docs/FLOW.md 10.4): every read is a staticcall that
+/// @notice the safe readers and the coin side of the postflight (docs/DECISIONS.md 10.4): every read is a staticcall that
 /// reports a failure instead of reverting, so a wrong address turns into a failed row and never aborts the table
 abstract contract PostflightV2 is SystemBuilder, Report {
     // ------------------------------------------------------------------ runtime code identity

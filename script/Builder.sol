@@ -9,7 +9,7 @@ import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {LaunchConfig, ConfigReader} from "./LaunchConfig.sol";
 
 /// @notice builds the v2 factory config and the coin address prediction of a launch from a `LaunchConfig`
-/// (docs/FLOW.md 10.4). shared by the deploy, the preflight, the postflight and the tests
+/// (docs/DECISIONS.md 10.4). shared by the deploy, the preflight, the postflight and the tests
 abstract contract SystemBuilder is ConfigReader {
     /// @notice the pool key of a coin: native eth against the coin, dynamic fee flag, spacing 200, the v2 hook
     function poolKeyOf(address coin, Stack memory s) internal pure returns (PoolKey memory) {
@@ -26,7 +26,7 @@ abstract contract SystemBuilder is ConfigReader {
     /// router and the one project locker slot is the creator (the lp fee is 0, so it earns nothing today). the protocol
     /// slot is appended by the factory, so the project slot is `10_000 - protocolBps`. the coin is restricted and its
     /// allowlist is `l.allowed` plus the entries the factory seeds. the Core is not listed: the buyback take reaches it through the
-    /// transfer allowance the hook grants for the swap (docs/FLOW.md decision 29)
+    /// transfer allowance the hook grants for the swap (docs/DECISIONS.md decision 29)
     function buildConfig(LaunchConfig memory l, address tokenAdmin, address router)
         internal
         pure

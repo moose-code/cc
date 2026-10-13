@@ -8,7 +8,7 @@ import {Settings, Mainnet, ICreditScore, ICredits} from "../src/interfaces/Inter
 import {MockExitToken} from "./standins/MockExitToken.sol";
 import {MockExitModule} from "./standins/MockExitModule.sol";
 
-/// @notice phase 2 flexibility (docs/FLOW.md section 8) on the real stack: the exit module is replaceable at once, the
+/// @notice phase 2 flexibility (docs/DECISIONS.md section 8) on the real stack: the exit module is replaceable at once, the
 /// unit is read again on every set, and the per point exit token bid and the redemption read the current unit. the only
 /// doubles are the two exit stand ins
 contract Phase2FlexTest is Fixture {

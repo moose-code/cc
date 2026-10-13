@@ -12,7 +12,7 @@ import {
     GatePayee
 } from "./attackers/FlushEngines.sol";
 
-/// unit tests of the fee router (docs/FLOW.md 10.2 and 10.6). no fork: the router touches nothing outside itself
+/// unit tests of the fee router (docs/DECISIONS.md 10.2 and 10.6). no fork: the router touches nothing outside itself
 /// a payee that does real work on receipt, like a splitter that writes three fresh slots (about 66k gas)
 contract WorkingPayee {
     uint256 public a;

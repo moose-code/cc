@@ -236,7 +236,7 @@ abstract contract HandlerOwner is HandlerBase {
         }
     }
 
-    /// the bounds of docs/FLOW.md section 2, written out again. the name of the first field out of bounds, or zero
+    /// the bounds of docs/DECISIONS.md section 2, written out again. the name of the first field out of bounds, or zero
     function _firstViolation(Settings memory s) internal pure returns (bytes32) {
         if (s.dropPerCreditBps < 1 || s.dropPerCreditBps > 1_000) return "dropPerCreditBps";
         if (s.dropFloorBps < 5_000 || s.dropFloorBps > 10_000) return "dropFloorBps";
@@ -526,7 +526,7 @@ abstract contract HandlerOwner is HandlerBase {
                               REPLACE THE EXIT MODULE
     //////////////////////////////////////////////////////////////*/
 
-    /// the owner replaces the exit module at once (docs/FLOW.md section 8): a new module with the same
+    /// the owner replaces the exit module at once (docs/DECISIONS.md section 8): a new module with the same
     /// exit token and a new unit, the same address again after its unit changed, the same address and unit, and the
     /// refused ones (another exit token, no unit, a unit above the uint128 bound, no code). a good set keeps the pots,
     /// the balances and the exit token pot, reads the unit again and switches the handler to the new module. a refused

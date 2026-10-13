@@ -47,7 +47,7 @@ contract LockProbe is Lock {
     }
 }
 
-/// the launch step that freezes the fee recipients (docs/DEPLOY.md section 4) and the postflight rows around it
+/// the launch step that freezes the fee recipients (docs/RUNBOOK.md section 4) and the postflight rows around it
 contract LockTest is Fixture {
     LockProbe internal probe;
     bool internal lockExpected;

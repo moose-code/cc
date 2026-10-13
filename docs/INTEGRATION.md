@@ -1,6 +1,6 @@
 # integration
 
-for integrators and keepers: the contracts, the call sequences of each door, the events, the reverts and the measured gas. the rules behind the numbers are in docs/ARCHITECTURE.md (the bid, the doors, the settings) and docs/FLOW.md (the decisions). the owner commands are in docs/DEPLOY.md.
+for integrators and keepers: the contracts, the call sequences of each door, the events, the reverts and the measured gas. the rules behind the numbers are in docs/SPEC.md (the bid, the doors, the settings) and docs/DECISIONS.md (the decisions). the owner commands are in docs/RUNBOOK.md.
 
 units. a rate is wei per credit. every credit has the same price, the rate. every credit sits in one pile and carries a cost basis in eth. bps is out of 10,000, ppm out of 1,000,000. settings values quoted below are the launch values of `script/config/mainnet.json`; `core.settings()` returns the live ones.
 
@@ -20,7 +20,7 @@ units. a rate is wei per credit. every credit has the same price, the rate. ever
 | lens | the `lens` line of the `Deploy` output, or the CREATE2 address derived from the Core | `CoreLens`. `lens.CORE()` names the Core it reads |
 | exitModule, exitToken | `core.exitModule()`, `core.exitToken()` | zero until the owner sets them (unset at launch, decision 82) |
 
-the record of a launch is the output of `script/Deploy.s.sol` (core, coin, controller, router, lens), the broadcast file `broadcast/Deploy.s.sol/1/run-latest.json`, and the table that `script/Postflight.s.sol` prints after reading every address back (docs/DEPLOY.md steps 6 and 9). a keeper needs the Core address and reads the rest from it. the lens address is a function of the Core (CREATE2 through the deterministic deployer, salt `keccak256("credits.core.lens.v1")`, the Core as constructor argument), which `Postflight` derives from `CORE`.
+the record of a launch is the output of `script/Deploy.s.sol` (core, coin, controller, router, lens), the broadcast file `broadcast/Deploy.s.sol/1/run-latest.json`, and the table that `script/Postflight.s.sol` prints after reading every address back (docs/RUNBOOK.md steps 6 and 9). a keeper needs the Core address and reads the rest from it. the lens address is a function of the Core (CREATE2 through the deterministic deployer, salt `keccak256("credits.core.lens.v1")`, the Core as constructor argument), which `Postflight` derives from `CORE`.
 
 ## 2. quoting a credit
 
@@ -56,7 +56,7 @@ what the caller receives: the total payout.
 
 the batch size is bounded by the transaction gas cap: the largest batch under 16,777,216 gas is 115 credits at the launch settings (section 13).
 
-`sellForExitToken(ids)` and `(ids, minOut)` are the phase 2 door (docs/ARCHITECTURE.md section 9). they run at `exitMode` 2 and pay each credit `score * unit * (10_000 - exitBidMarginBps) / 10_000` in exit token from `xPot`, with `unit` the lower of the stored and the live `unitPerPoint()`. the credit enters the pile with an eth cost basis of the score-scaled eth backstop, the remembered peak of the eth bid times `max(1, score / refScore)`, at least 1 wei, and `CreditBought(id, caller, cost)` carries that basis. the basis reads no pool, so the bid needs no pool key and records the same basis whatever the pool price. they revert `ExitModeOff` below mode 2 and `Retired` after `migrate`; `lens.exitBidOf(id)` quotes the payout.
+`sellForExitToken(ids)` and `(ids, minOut)` are the phase 2 door (docs/SPEC.md section 9). they run at `exitMode` 2 and pay each credit `score * unit * (10_000 - exitBidMarginBps) / 10_000` in exit token from `xPot`, with `unit` the lower of the stored and the live `unitPerPoint()`. the credit enters the pile with an eth cost basis of the score-scaled eth backstop, the remembered peak of the eth bid times `max(1, score / refScore)`, at least 1 wei, and `CreditBought(id, caller, cost)` carries that basis. the basis reads no pool, so the bid needs no pool key and records the same basis whatever the pool price. they revert `ExitModeOff` below mode 2 and `Retired` after `migrate`; `lens.exitBidOf(id)` quotes the payout.
 
 ## 4. door 2: buy a listed credit through an allowed marketplace
 

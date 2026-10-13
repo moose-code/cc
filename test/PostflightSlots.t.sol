@@ -7,7 +7,7 @@ import {Fixture} from "./utils/Fixture.sol";
 ///  1. the identity hash of the Core and the controller masks the library address slots and the immutable slots. the
 ///     slot row requires every one of them to hold the library or the getter value. one foreign call site of `CoreLib`,
 ///     or one divergent site of an immutable, fails it while the identity row still passes (finding 2 of
-///     docs/REVIEW-security.md),
+///     docs/reviews/REVIEW-security.md),
 ///  2. `_requireNoChangeFlags` reverts for each owner change flag, `_requireControllerNonce` for a moved owner nonce, and
 ///     both scripts call them.
 contract PostflightSlotsTest is Fixture {

@@ -62,7 +62,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// in any letter case, or is `todo` or `tbd`, and for an `image` that does not start with a lowercase `ipfs://`,
     /// `https://`, `ar://` or `data:` scheme with content past it and no surrounding whitespace
     string internal constant PLACEHOLDER_MARKER = "PLACEHOLDER";
-    // the pinned launch rules (docs/DEPLOY.md section 2). a value outside them fails preflight. the three overrides in
+    // the pinned launch rules (docs/RUNBOOK.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
     uint24 internal constant PIN_BASELINE_SKIM = 690;
     uint16 internal constant PIN_BOUNTY_BPS = 9638;
@@ -71,7 +71,7 @@ abstract contract LaunchChecks is PostflightChecks {
     uint256 internal constant PIN_DEPLOY_FEE_MAX = 0.1 ether;
     /// @dev the pinned build: the keccak256 of the runtime code of each production artifact in `out/`, the immutable slots
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
-    /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
+    /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0x24b30651289e03ad99d9d2b286e5e7160b018b1cd1b865c14d9769aa5d490799;
     bytes32 internal constant BUILD_HASH_CORELIB = 0xbcfd50ac6b19d0da4eb516cd8ec4a74181d1f7cce97195b6bf8e990062365331;
@@ -219,7 +219,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _rulePeople(c, deployer);
     }
 
-    /// @dev the coin and router values that are pinned or bounded (docs/FLOW.md 10.6): restricted with the Core as the only
+    /// @dev the coin and router values that are pinned or bounded (docs/DECISIONS.md 10.6): restricted with the Core as the only
     /// listed account, the factory default protocol slot, the router bounds
     function _ruleLaunch(LaunchConfig memory c) private {
         _check(

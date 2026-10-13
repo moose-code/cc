@@ -5,7 +5,7 @@ import {Fixture} from "./utils/Fixture.sol";
 import {IArtCoinsHookV2, IArtCoinsLpLockerV2, IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 
 /// the launch the builder makes on the live v2 stack, read back from the real factory, hook, locker and coin
-/// (docs/FLOW.md 10.1 with the 10.6 amendment). the fixture launches through `deploySystem`
+/// (docs/DECISIONS.md 10.1 with the 10.6 amendment). the fixture launches through `deploySystem`
 contract LaunchV2Test is Fixture {
     function test_theCoinIsRestrictedAndTheCoreIsNotAllowed() public view {
         assertTrue(coin.restricted(), "restricted");

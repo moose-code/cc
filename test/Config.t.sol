@@ -73,7 +73,7 @@ contract ConfigTest is Fixture {
         assertEq(f.rateStart, 8.9e15);
         assertEq(f.supply, 1_000_000_000e18);
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()), "settings block is the launch values");
-        // the launch values of docs/FLOW.md 10.1 and 10.6
+        // the launch values of docs/DECISIONS.md 10.1 and 10.6
         assertEq(f.baselineSkimBps, 690);
         assertEq(f.bountyBps, 9_638);
         assertEq(f.lpFeePips, 0);
@@ -232,7 +232,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "");
         _print("preflight");
         // every launch input has a row: the count is part of the report
-        assertEq(rows.length, 120, "preflight rows: docs/DEPLOY.md step 4");
+        assertEq(rows.length, 120, "preflight rows: docs/RUNBOOK.md step 4");
     }
 
     /// each pinned code hash has a row. appending one byte of code to a contract fails exactly its row

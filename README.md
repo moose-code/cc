@@ -12,7 +12,7 @@ an erc20 on ethereum mainnet whose swap fees buy Credits nfts, compose them into
 * **the redeem burn reserve.** each redemption of a statement moves 20 percent of the reserve (`redeemBurnBps`) to the buyback, so every statement that leaves the engine, sold or redeemed, funds a buy and burn.
 * **phase 2.** the owner sets an exitModule and switches `exitMode` from 0 (off) to 1 (hold) or 2 (on). from mode 1, `exitStatement` redeems a held statement once its curve price has reached its floor. a redemption must return at least `rating * unitPerPoint` of the exitToken less `exitSlippageBps`, and the Core keeps what arrives. in mode 2 the Core also buys credits with the exitToken, per point: `score * unitPerPoint` less `exitBidMarginBps` (20 percent at launch). such a credit enters the same pile with an eth cost basis of its score-scaled eth backstop (the floor rate times `max(1, score / refScore)`, where the floor rate is the larger of the climbed eth bid rate and the remembered peak), read from no pool, so the bid needs no pool key. once the exitToken trades, the owner sets its v4 pool key on the controller, and a statement's asking price is at least the higher of its curve price and its redemption value in eth.
 
-the full rules and the settings table are in docs/ARCHITECTURE.md. the owner decisions behind them are in docs/FLOW.md.
+the full rules and the settings table are in docs/SPEC.md. the owner decisions behind them are in docs/DECISIONS.md.
 
 ```mermaid
 graph LR
@@ -65,7 +65,7 @@ each runtime contract stays under 24,576 bytes (`forge build --sizes`).
 | owner of the router | `setEngine`, `setPayees`, `setSplitStart` |
 | locks, one way | `lockController`, `lockExitModule`, `lockTargets`, `lockSuccessor` on the Core, `lock` on the router |
 
-eth, credits and exitToken leave the Core at the owner's call only through `migrate` to the successor. coin leaves through `rescueCoin` and NFTs off the books through `rescueNft`. the owner sets the price the engine pays and the exitModule that redeems statements, so holders trust the owner key (docs/ARCHITECTURE.md section 10).
+eth, credits and exitToken leave the Core at the owner's call only through `migrate` to the successor. coin leaves through `rescueCoin` and NFTs off the books through `rescueNft`. the owner sets the price the engine pays and the exitModule that redeems statements, so holders trust the owner key (docs/SPEC.md section 10).
 
 ## build and test
 
@@ -87,26 +87,29 @@ forge test --match-path test/Sale.t.sol
 * stand ins are in `test/standins/`, attack contracts in `test/attackers/`.
 * the simulator runs on node: `node sim/engine.test.mjs`, `node sim/build.mjs`, `node sim/run.mjs q1`.
 
-toolchain notes and timings: docs/HANDOFF.md section 7.
+toolchain notes and timings: docs/STATUS.md section 5.
 
 ## deploy
 
-one script, `script/Deploy.s.sol`, deploys the system and launches the coin through the v2 factory, driven by one config file (`script/config/mainnet.json`, copied to the gitignored `script/config/local.json`). the factory owner key signs everything, and `Resume.s.sol` sets the router split start after the launch. read-only `Preflight.s.sol` and `Postflight.s.sol` check the system before and after, and `Lock.s.sol` sends `coin.lockRecipients()`. the owner address is an EIP 7702 delegated account, so broadcasts use `--slow`. the owner decisions in docs/HANDOFF.md are settled before launch.
+one script, `script/Deploy.s.sol`, deploys the system and launches the coin through the v2 factory, driven by one config file (`script/config/mainnet.json`, copied to the gitignored `script/config/local.json`). the factory owner key signs everything, and `Resume.s.sol` sets the router split start after the launch. read-only `Preflight.s.sol` and `Postflight.s.sol` check the system before and after, and `Lock.s.sol` sends `coin.lockRecipients()`. the owner address is an EIP 7702 delegated account, so broadcasts use `--slow`. the owner decisions in docs/STATUS.md are settled before launch.
 
-the runbook, with the commands in order, is docs/DEPLOY.md.
+the runbook, with the commands in order, is docs/RUNBOOK.md.
 
 ## docs
 
 | file | what |
 |---|---|
-| docs/ARCHITECTURE.md | the system as built: intent at a glance, settings, rules, owner powers, accepted risks |
-| docs/FLOW.md | the dated owner decision log |
+| docs/SPEC.md | the system as built: intent at a glance, settings, rules, owner powers, accepted risks |
+| docs/DECISIONS.md | the dated owner decision log |
+| docs/STATUS.md | where we are, the packet plan, open items, the freeze table, how to work in this repo |
+| docs/RUNBOOK.md | the launch runbook, the parameter sign off table, owner commands after launch |
 | docs/INTEGRATION.md | call sequences, events, reverts and gas for integrators and keepers |
-| docs/DEPLOY.md | the launch runbook, the parameter sign off table, owner commands after launch |
-| docs/HANDOFF.md | the objective, open owner decisions, evidence state, how to work in this repo |
-| docs/SIMULATION.md, sim/index.html | the simulator study and the offline simulator |
-| docs/REVIEW-*.md, docs/REHEARSAL-*.md | independent reviews and rehearsals, each pinned to the commit it examined |
-| docs/archive/ | history (see docs/archive/README.md) |
+| docs/SIMPLIFICATION-v1.md | the simplification review and the packet plan |
+| sim/README.md, sim/index.html | the simulator study and the offline simulator |
+| docs/reviews/ | independent reviews, rehearsals and acceptances, each pinned to the commit it examined |
+| docs/notes/ | reference notes and the bid study |
+
+`script/tools/check-freeze.sh` checks the freeze table of docs/STATUS.md before the deploy step.
 
 ## license
 

@@ -27,10 +27,10 @@ const fresh = (over = {}, pot = 1000) => {
 const R0 = 6.668e15;
 
 // the launch values are the ones in script/config/mainnet.json, field for field. the file is the other half of the launch package: where it already
-// carries a field of the rules in docs/FLOW.md section 9 it must match, and a field of the old rules (reserveBps) must be gone from the model
+// carries a field of the rules in docs/DECISIONS.md section 9 it must match, and a field of the old rules (reserveBps) must be gone from the model
 {
   const cfg = JSON.parse(fs.readFileSync(new URL('../script/config/mainnet.json', import.meta.url), 'utf8'));
-  // the stepped bid rule fields of the Core are sim parameters of the bidRule stepped (setting B of docs/archive/BID-STUDY.md), under other names. the built rule fields are sim only
+  // the stepped bid rule fields of the Core are sim parameters of the bidRule stepped (setting B of docs/notes/BID-STUDY.md), under other names. the built rule fields are sim only
   const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 5000, climbPerMinBps: 50, ceilBps: 11000, idleLoosenBps: 200, peakHalfLife: 21600, recoveryClimbPerMinBps: 200, recoveryGapBps: 1000 };
   const BUILT_ONLY = ['climbBaseBps', 'climbDoubleEvery', 'climbMaxBps', 'dropBps'];
   for (const [k, v] of Object.entries(STEPPED)) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
@@ -167,7 +167,7 @@ const R0 = 6.668e15;
   ok(c.spend(500, 0) && c.spend(499.9, 0), 'a spend of most of the pot passes, there is no hourly cap');
   assert.equal(c.spend(1, 0), false); n++; // more than the pot left
 }
-// buyListing payment (docs/FLOW.md 71): counted gas (at most BUYLISTING_GAS) at min(basefee, keeperMaxBaseFee) plus keeperFee, at most the bid less the ask, booked as spend with the cost
+// buyListing payment (docs/DECISIONS.md 71): counted gas (at most BUYLISTING_GAS) at min(basefee, keeperMaxBaseFee) plus keeperFee, at most the bid less the ask, booked as spend with the cost
 {
   const c = fresh({}, 10);
   c.rateAtCheckpoint = 1e16; // ceiling 0.01 eth, base fee 1 gwei, keeperFee 0.0005
@@ -692,7 +692,7 @@ const R0 = 6.668e15;
   assert.equal(c.cr.creditSaleOn, false); assert.equal(c.cr.creditWindow, 7200); assert.equal(c.cr.chosenComposeOn, true); n += 3;
 }
 
-// buyback slice and the caller payment (docs/FLOW.md 61): the caller is paid 270,000 gas at min(basefee, keeperMaxBaseFee) plus keeperFee out of the slice.
+// buyback slice and the caller payment (docs/DECISIONS.md 61): the caller is paid 270,000 gas at min(basefee, keeperMaxBaseFee) plus keeperFee out of the slice.
 // the swap budget is the slice less the largest payment (600,000 gas at the capped rate plus keeperFee), the unspent part of that reserve goes back to the pot
 {
   const c = fresh(); c.ethToBuyback = 2.5; // 1 gwei base fee, keeperFee 0.0005, keeperMaxBaseFee 10 gwei
@@ -746,7 +746,7 @@ const R0 = 6.668e15;
   near(skimFraction(DEFAULTS, 1800), 0.069, 1e-12, 'end of window'); near(skimFraction(DEFAULTS, 99999), 0.069, 1e-12, 'baseline');
   near(routerFeeFraction(DEFAULTS, 0.069), 0.0665022, 1e-12, 'router 6.65022 points'); near(routerFeeFraction(DEFAULTS, 0.9), 0.0665022 + 0.831, 1e-12, 'extra to the router');
   near(engineFeeFraction(DEFAULTS, 0.069, 3600), 0.0665022 * (1 - 112778 / 1e6), 1e-12, 'engine share after the split start');
-  near(engineFeeFraction(DEFAULTS, 0.069, 3600) * 1e3, 59.00221, 1e-4, 'engine 5.90022 points of 100 eth (docs/FLOW.md 10.9) is 59.00 finney of 1 eth');
+  near(engineFeeFraction(DEFAULTS, 0.069, 3600) * 1e3, 59.00221, 1e-4, 'engine 5.90022 points of 100 eth (docs/DECISIONS.md 10.9) is 59.00 finney of 1 eth');
   near(engineFeeFraction(DEFAULTS, 0.9, 0), (0.0665022 + 0.831), 1e-12, 'the window is not shared with the payee');
   near(engineFeeFraction(DEFAULTS, 0.069, 1799), 0.0665022, 1e-12, 'nor is anything before the split start');
   let d0 = 0;

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# runs `forge script script/Preflight.s.sol` on a fork of the pin block, the way docs/DEPLOY.md step 4 runs it, and
+# runs `forge script script/Preflight.s.sol` on a fork of the pin block, the way docs/RUNBOOK.md step 4 runs it, and
 # compares the failed rows with the expected ones. a script only failure (a cheatcode that is refused in a script
 # context, a revert outside the rows) leaves the table unprinted and fails here. tests call the checks through a test
 # contract and cannot see that class of failure.
 # it also checks what forge cannot (ffi is off): the git tree is clean and HEAD contains the frozen candidate recorded
-# in project/director-state.json (docs/DEPLOY.md step 4). the build pins are preflight rows (script/Checks.sol).
+# in the freeze table of docs/STATUS.md (docs/RUNBOOK.md step 4). a pending candidate row skips the containment check. the build pins are preflight rows (script/Checks.sol).
 # usage: script/tools/check-preflight.sh [config.json]
 #        the config defaults to script/config/mainnet.json, the file the launch uses. the rehearsal passes
 #        script/config/rehearsal.json explicitly.
@@ -22,13 +22,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 cfg="${1:-script/config/mainnet.json}"
-candidate="$(jq -r .candidate project/director-state.json)"
+candidate="$(awk -F'|' '$2 ~ /^ *candidate *$/ {gsub(/ /,"",$3); print $3}' docs/STATUS.md)"
 dirty="$(git status --porcelain)"
 if [ -n "$dirty" ]; then echo "git tree is not clean:"; head -10 <<<"$dirty"; exit 1; fi
-if ! git merge-base --is-ancestor "$candidate" HEAD; then
+if [ "$candidate" = pending ] || [ -z "$candidate" ]; then
+  echo "ok: git tree clean, no frozen candidate recorded yet (docs/STATUS.md)"
+elif ! git merge-base --is-ancestor "$candidate" HEAD; then
   echo "HEAD $(git rev-parse --short HEAD) does not contain the frozen candidate ${candidate:0:7}"; exit 1
+else
+  echo "ok: git tree clean, HEAD $(git rev-parse --short HEAD) contains the frozen candidate ${candidate:0:7}"
 fi
-echo "ok: git tree clean, HEAD $(git rev-parse --short HEAD) contains the frozen candidate ${candidate:0:7}"
 rpc="${MAINNET_RPC_URL:-https://mainnet.gateway.tenderly.co}"
 block="${FORK_BLOCK:-26158000}"
 deployer="${DEPLOYER:-$(jq -r .owner "$cfg")}"

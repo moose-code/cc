@@ -14,7 +14,7 @@ import {LaunchChecks} from "./Checks.sol";
 /// the run has `--broadcast` and a signer that is the coin admin. the lock read back at the end is read in forge's
 /// simulation, the confirmation is Postflight with RECIPIENTS_LOCKED=1 against the chain.
 /// `CORE=0x... forge script script/Lock.s.sol --rpc-url $MAINNET_RPC_URL` (add `SEND=1 --broadcast --ledger` or
-/// `--account <name>` to send). docs/DEPLOY.md section 4
+/// `--account <name>` to send). docs/RUNBOOK.md section 4
 contract Lock is Script, LaunchChecks {
     /// @dev the signer is not the admin of the coin
     error NotCoinAdmin(address admin, address signer);

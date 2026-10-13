@@ -6,7 +6,7 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings, ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 
-/// regressions and attack tests for docs/archive/REVIEW-core.md, on the real stack. the exit token buyback is the dutch
+/// regressions and attack tests for REVIEW-core.md (git history before packet 0), on the real stack. the exit token buyback is the dutch
 /// auction inside the core (unchanged by the flow rework, its half life and slice are settings now), so its attacks
 /// are written against that: nobody gets exit token for less coin than the
 /// quote, nothing but the clock lowers the price, a fill never takes more than `xToBuyback`, and every fill restarts

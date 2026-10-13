@@ -12,7 +12,7 @@ import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {MockExitToken} from "./standins/MockExitToken.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 
-/// @notice the flow rework (docs/FLOW.md) on the real stack: settings, the flat bid, statement sales through the
+/// @notice the flow rework (docs/DECISIONS.md) on the real stack: settings, the flat bid, statement sales through the
 /// controller, the phase 2 exit, and the hard rule that the owner can never move assets out under any settings
 contract FlowTest is Fixture {
     using FixedPointMathLib for uint256;

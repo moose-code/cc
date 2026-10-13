@@ -1,0 +1,23 @@
+# review 267139b (diff 2b21fbf..267139b: src script test sim, docs 76 to 78)
+
+## findings
+test/RecoveryOracle.t.sol:104: low: docstring of `test_closedFormLaunchErr` says "(recovery 200, climb 50, half life 6 h, gap 200)". The test reads `core.settings()`, so it now runs at gap 1_000. Fix: change "gap 200" to "gap 1_000".
+test/Recovery.t.sol:13-14: low: docstring says "every measured value below is pinned at this gap, so a change of the launch gap changes them". Not true for two tests. Mutation: `Mainnet.defaultSettings` gap set to 200 and to 1_100, `test_marketFallOvershootBounded` (612) and `test_loneSellerFlatPriceThroughput` (60 and the wei figure) pass unchanged in both runs. Only `test_launchGapIs1000`, the two dump tests and batch 5, 10, 19 fail. The launch gap is still guarded, by `test_launchGapIs1000`. Fix: reword to name the tests that move with the gap.
+test/Recovery.t.sol:167 (`test_batchSeller19` docstring): nit: "19 credits drop the bid 9.1 percent, the largest batch inside the launch gap of 10 percent" is wrong. At 0.995 per credit, 20 drops 9.5 percent and 21 drops 9.99 percent, both under 10. Fix: drop "the largest batch inside", say "a batch inside the gap". docs/SPEC.md:100 "up to about 19 credits" has the same low estimate (about 21).
+docs/SPEC.md (section 14, 41 to 52): low: decision 76 has no item. It appears in DECISIONS.md:411, RUNBOOK.md:492 and STATUS.md:97 only. SPEC.md:40 still says "no credit scores anywhere, phase 2 included" with no pointer to the redeem-contract caveat of decision 76. Fix: add a section 14 item (paused per credit pricing, `exitToBuybackBps` 10_000 before the first `setExitModule`) or a pointer in the :40 row.
+
+## verified correct
+- Source: `git diff 2b21fbf 267139b -- src` is one line, `Mainnet.defaultSettings` `recoveryGapBps: 1_000` (Interfaces.sol:237). `Mainnet` is a library the deployed contracts do not link (Core, CoreLib, ControllerV1, CoreLens and FeeRouter are untouched). I did not diff bytecode between the two commits. `forge test --match-path test/BuildIdentity.t.sol` passes 5 of 5 after compiling the clone, with `test/BuildIdentity.t.sol` and `script/Checks.sol` pins unchanged in the diff.
+- 1_000 in every launch pin: mainnet.json:47, rehearsal.json:47, Interfaces.sol:237, sim/engine.js:134 (recoveryGapPct 10), sim/index.html:263, sim/engine.test.mjs:35. mainnet.json and rehearsal.json differ only in `description` and `image`, compared after key sorting. `node sim/engine.test.mjs`: 1303 checks ok. `test/Config.t.sol` 32 of 32 and `test/RecoveryOracle.t.sol` 4 of 4 pass.
+- `forge test --match-path test/Recovery.t.sol`: 12 of 12 pass.
+- Mutation, `Mainnet.defaultSettings` gap 200: 6 failures. batch10 110 != 60, batch19 133 != 76, batch5 70 != 60, one minute dump 47 != 59, three minute dump 134 != 146, launch gap test. Gap 1_100: one minute dump 61 != 59, three minute dump 147 != 146, launch gap test. The 200 figures match decision 75 and REVIEW-2b21fbf finding 1 (110 and 133), and the 59 and 146 figures match FLOW row 75.
+- Pinned values are measurements: they come from the real Core via `_minutesToRecover`, `_dump` and `_batchSeller`. They are not constants copied from src. Lone seller wei 103_933_630_716_331_355 is about 60 credits times OPEN_RATE 1.732e15, a plausible figure. `_batchSeller(1)` selling `ids[sold]` equals the old `_one` path in count.
+- No assertion weakened: the three range asserts become `assertEq`. The old `sold <= 90` becomes `== 60`. New tests were added (batch 5, 10, 19 and the launch gap).
+- FLOW rows 77 and 78 match the owner quotes ("10% (Recommended)", "No, launch on current reviews"). Row 77 figures (110 and 133 at 200, 60 and 76 at 1_000, 59 and 146) agree with the mutation run and REVIEW-2b21fbf finding 1.
+- SPEC.md rows :35, :100, :113, :350 and section 14 item 52 (decision 78); RUNBOOK.md recoveryGapBps row 171, :435, :492 (decision 76: `Core.sol:723` sends `exitToBuybackBps` share of eth lane exits to the buyback, the rest to `xPot`, so 10_000 leaves `xPot` empty); INTEGRATION.md:34; STATUS.md:86, 97, 100: 1_000, 59, 146, 60, 60, 76 and decisions 76 to 78 are stated accurately. The DEPLOY dry run balance range "0.07 to 0.17 eth" matches 0.2915 less 0.1264.
+
+## not examined
+- The 2b21fbf rehearsal log, the suite and deep run logs and REHEARSAL-267139b.md (untracked in the source worktree, not in the clone).
+- Full suite and INVARIANT_DEEP (not run, per instruction). Fork tests other than the four files above.
+- Bytecode byte-for-byte between the two commits (inferred from the one-line library diff and the BuildIdentity pass).
+- Whether FLOW row 74's inline "1_000 at launch" amendment (a pre-existing line) should carry a pointer to rows 75 and 77.

@@ -143,7 +143,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @notice state right before the compose, valid while `isComposed`. revert to it to compose again
     uint256 internal preComposeSnap;
 
-    /// @notice the settings the fixture core is deployed with. the default is the launch values of docs/FLOW.md. a
+    /// @notice the settings the fixture core is deployed with. the default is the launch values of docs/DECISIONS.md. a
     /// suite that tests another set overrides this
     function _settings() internal view virtual returns (Settings memory) {
         return Mainnet.defaultSettings();
@@ -198,7 +198,7 @@ abstract contract Fixture is Test, ProdDeployer {
         flusher = _user("flusher");
         router = new TestSwapRouter();
 
-        // the launch bounty needs the factory minimum protocol skim share at 362: the owner command of docs/DEPLOY.md step 3
+        // the launch bounty needs the factory minimum protocol skim share at 362: the owner command of docs/RUNBOOK.md step 3
         FACTORY = IArtCoinsFactoryV2(v2.factory);
         ESCROW = IArtCoinsFeeEscrowV2(v2.escrow);
         vm.startPrank(owner);

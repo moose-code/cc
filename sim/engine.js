@@ -14,7 +14,7 @@ export const SETTINGS = {
   saleToBuybackBps: 5000, // share of sale proceeds to the coin buyback, rest to the pot
   buybackSlice: 0.5,
   buybackDelay: 25, // blocks, 12 s each
-  keeperFee: 0.0005, // eth. the buyback caller is paid BUYBACK_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the slice (docs/FLOW.md 61), the buyListing caller BUYLISTING_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the pot (docs/FLOW.md 71)
+  keeperFee: 0.0005, // eth. the buyback caller is paid BUYBACK_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the slice (docs/DECISIONS.md 61), the buyListing caller BUYLISTING_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the pot (docs/DECISIONS.md 71)
   keeperMaxBaseFee: 10, // gwei, the cap on the base fee the refunds use
   rateCap: 26700000000000000, // wei per credit, 3 times rateStart: the eth rate never passes it (climb clamp, setRate)
   callerFee: 0, // eth. paid to the caller of compose, composeChosen and exitStatement from the pot, with the gas refund below. launch 0: the simulator does not model these payments
@@ -149,7 +149,7 @@ export const SIM_DEFAULTS = {
   stepSec: 60, // time step after the first hour, seconds. a divisor of 3600. 60 matches the minute bucket of the contract's drop floor and climb; hourly steps distort the stepped rule (bid up to 3x market). rates quoted per hour or per day, the hourly cap and arrival counts scale with the step
   rateStart: 8900000000000000, // launch opening rate (script/config/mainnet.json rateStart): 100 percent of the market price of one credit, 0.0089e18
   // bid rule. 'stepped' is the launch rule (src/lib/CoreLib.sol climb and drop) and the default. 'built' is the earlier rule, kept for the
-  // comparison in docs/archive/BID-STUDY.md: climbs per hour (doubling per idle day), drops dropBps times the share of the pot spent.
+  // comparison in docs/notes/BID-STUDY.md: climbs per hour (doubling per idle day), drops dropBps times the share of the pot spent.
   // 'dropToLast': after a fill the bid is dropToPct of the rate that fill paid, then climbs climbPerMin percent per minute, no ceiling.
   // 'stepped': a fill drops the bid dropPerCreditPct, not below dropToPct of the bid at the first fill of that timestamp; climbs climbPerMin
   // percent per minute, never above ceilPct of the rate of the last fill (of rateStart before any fill). the funded clamp and rateCap apply to all rules
@@ -182,7 +182,7 @@ export const SIM_DEFAULTS = {
   sniperStartBps: 9000,
   sniperEndBps: 690, // falls to the baseline
   sniperSeconds: 1800,
-  // the fee router (docs/FLOW.md 10.6, 10.7): once the split has started a flush pays the
+  // the fee router (docs/DECISIONS.md 10.6, 10.7): once the split has started a flush pays the
   // payee its parts per million of the gross inflow. everything before the split start goes to the engine. no lp fee, no lp income
   routerPayeePpm: 112778, // the one launch payee, 0.75 points of volume at the baseline (of the gross router inflow)
   routerSplitStartSec: 1800, // the mined launch time plus the 30 minute window, no margin

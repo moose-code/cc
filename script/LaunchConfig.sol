@@ -26,7 +26,7 @@ bytes32 constant V2_CODEHASH_BURN_ROUTER = 0x937f1a92e636aed39eb430bd3be28822014
 
 // the EIP 7702 delegation of the owner account, read at V2_PIN_BLOCK. the account runs the code of OWNER_DELEGATE
 // (Uniswap Calibur, 24,504 bytes, no proxy). preflight requires the account code, the delegate code hash and an empty
-// key registry (`keyCount()` 0), so no registered key can act as the owner. docs/REVIEW-sandwich-delegate.md section 2
+// key registry (`keyCount()` 0), so no registered key can act as the owner. docs/reviews/REVIEW-sandwich-delegate.md section 2
 bytes constant OWNER_DELEGATION_CODE = hex"ef0100612373d7003d694220f7800eeaf8e3924c0951d3";
 address constant OWNER_DELEGATE = 0x612373D7003d694220f7800EeaF8E3924c0951D3;
 bytes32 constant OWNER_DELEGATE_CODEHASH = 0xff0357b543bbb94845b6791a8becac5e87d467814f86538a62649c877227d631;
@@ -45,7 +45,7 @@ struct LaunchConfig {
     address creator;
     string name;
     string symbol;
-    /// the coin's image url and description, set in the launch transaction (docs/FLOW.md decision 54). bytes are capped
+    /// the coin's image url and description, set in the launch transaction (docs/DECISIONS.md decision 54). bytes are capped
     /// by the coin (`MAX_IMAGE_BYTES` 2048, `MAX_DESCRIPTION_BYTES` 4096). empty is allowed, the coin admin sets them
     /// later with `updateImage` and `updateDescription`
     string image;
@@ -77,11 +77,11 @@ struct LaunchConfig {
     uint32 sniperSeconds;
     /// the protocol's share of the locker rewards, bps. 0 appends no protocol slot. the factory default is 2_000
     uint16 protocolBps;
-    /// the coin is launched restricted (docs/FLOW.md 18) and the extra allowlist entries beyond the factory's own seeds.
-    /// the Core is not listed (docs/FLOW.md 29)
+    /// the coin is launched restricted (docs/DECISIONS.md 18) and the extra allowlist entries beyond the factory's own seeds.
+    /// the Core is not listed (docs/DECISIONS.md 29)
     bool restricted;
     address[] allowed;
-    // the fee router (docs/FLOW.md 10.6): one payee at launch, by parts per million of a flush. later payees are set
+    // the fee router (docs/DECISIONS.md 10.6): one payee at launch, by parts per million of a flush. later payees are set
     // through `setPayees`
     address creatorPayee;
     /// the payee's share of the gross flush, ppm. the router receives bountyBps / 10_000 of the baseline skim: 9_638 / 10_000
@@ -106,7 +106,7 @@ abstract contract ConfigReader is CommonBase {
     uint256 internal constant RATE_START_MAX = RATE_START_MAX_WEI;
 
     /// @notice the default config in memory: the fixed mainnet parts and the launch parameters of
-    /// docs/FLOW.md sections 10.1 and 10.6, with the v2 stack addresses, owner, creator, payees, name and salt left unset (the symbol is CC). tests fill them
+    /// docs/DECISIONS.md sections 10.1 and 10.6, with the v2 stack addresses, owner, creator, payees, name and salt left unset (the symbol is CC). tests fill them
     function defaultConfig() internal pure returns (LaunchConfig memory c) {
         c.stack = Mainnet.defaultStack();
         c.symbol = "CC";

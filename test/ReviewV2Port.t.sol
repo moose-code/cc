@@ -12,7 +12,7 @@ import {Fixture} from "./utils/Fixture.sol";
 import {OrderComponents} from "./utils/SeaportTypes.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 
-/// independent review of the v2 port (docs/archive/REVIEW-v2port.md). `test_FINDING_*` asserts a real defect as it behaves
+/// independent review of the v2 port (REVIEW-v2port.md, git history before packet 0). `test_FINDING_*` asserts a real defect as it behaves
 /// today. `test_FIXED_*` proves a finding is closed, `test_ACCEPTED_*` pins a behavior the owner accepted, `test_OK_*`
 /// confirms a property that holds. real contracts on the pinned fork, attacker contracts only where a third party needs code
 

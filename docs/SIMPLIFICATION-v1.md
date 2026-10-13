@@ -1,6 +1,6 @@
 # simplification review: the agreed product, built today
 
-date 2026-10-13. basis: docs/FLOW.md section 11 (the product agreement, decisions 99 to 108). method: four read-only measurement sweeps of src, script, test, sim and docs, a clean sheet design, an independent adversarial challenge of that design against the code, and this report with the challenge's fixes folded in. nothing is changed yet. "measured" means read from the tree today; "projected" means an estimate for the design.
+date 2026-10-13. basis: docs/DECISIONS.md section 11 (the product agreement, decisions 99 to 108). method: four read-only measurement sweeps of src, script, test, sim and docs, a clean sheet design, an independent adversarial challenge of that design against the code, and this report with the challenge's fixes folded in. nothing is changed yet. "measured" means read from the tree today; "projected" means an estimate for the design.
 
 ## 0. summary
 
@@ -20,7 +20,7 @@ recommendation: one coherent design (section 2), delivered by pruning the curren
 
 ## 1. the agreed product
 
-docs/FLOW.md section 11. in one line: fees fund a permanent public bid for Credits; cheaper listings are swept through priced adapters with the gap kept; 80 Credits become a Statement sold from above cost down to an owner floor; half of every sale burns CC; the balance side redeems by rating, buys by score and burns from a reserve, built and off until the balance token is live; the owner sets every number at once; one way locks and a successor migration; the bid as built; one `pointValue` pricing rule; one Statement floor; pause; the anchor; the credit sale window and chosen composition off; the paid compose path off.
+docs/DECISIONS.md section 11. in one line: fees fund a permanent public bid for Credits; cheaper listings are swept through priced adapters with the gap kept; 80 Credits become a Statement sold from above cost down to an owner floor; half of every sale burns CC; the balance side redeems by rating, buys by score and burns from a reserve, built and off until the balance token is live; the owner sets every number at once; one way locks and a successor migration; the bid as built; one `pointValue` pricing rule; one Statement floor; pause; the anchor; the credit sale window and chosen composition off; the paid compose path off.
 
 ## 2. the design
 
