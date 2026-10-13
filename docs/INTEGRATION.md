@@ -31,7 +31,31 @@ uint256 statementTotal = scoreLens.statementScore(statementId);
 
 The contract and generated interface contain NatSpec for every method, input and output. Regenerate only this interface with `script/tools/gen-interfaces.sh write CreditScoreLens`; check it with `script/tools/gen-interfaces.sh --check CreditScoreLens`.
 
-`script/DeployCreditScoreLens.s.sol` checks chain id 1 and the three source runtime hashes before creating the compiled helper. A simulation uses `forge script script/DeployCreditScoreLens.s.sol --rpc-url "$MAINNET_RPC_URL" --fork-block-number 26158000`; it sends no transaction without `--broadcast`. Deployment needs an explicit owner instruction. Record the resulting helper address, receipt and runtime hash, verify its source, then compare a credit and statement read with the source contracts.
+### Deployment and verification commands
+
+Use `python3 script/tools/credit-score-lens.py`. `MAINNET_RPC_URL` selects the RPC; otherwise the tool uses the public Tenderly mainnet gateway. Etherscan verification requires `ETHERSCAN_API_KEY` in the environment. Select `--verifier sourcify` for verification without an Etherscan key.
+
+```bash
+# Simulate the deployment, with no wallet or broadcast.
+python3 script/tools/credit-score-lens.py simulate --fork-block 26158000 --sender 0xCB43078C32423F5348Cab5885911C3B5faE217F9
+
+# Broadcast, verify source, and check the deployed helper. Requires owner authorization and a passing release gate.
+python3 script/tools/credit-score-lens.py deploy --ledger --sender 0xYOUR_LEDGER_ADDRESS
+
+# Retry source verification for an existing address, without deploying again.
+python3 script/tools/credit-score-lens.py verify --address 0xDEPLOYED_LENS
+
+# Read-only bytecode and source-result checks, with no explorer submission or wallet.
+python3 script/tools/credit-score-lens.py check --address 0xDEPLOYED_LENS
+```
+
+For an encrypted Foundry keystore, replace `--ledger --sender ...` with `--account <name>`. The tool accepts no private-key argument. Each mode accepts `--rpc-url` to override the RPC; simulation reads latest state when `--fork-block` is omitted.
+
+Before signing, deploy mode calls `python3 script/director.py check --gate deploy`. The current repository gate is unmet and remains enforced; standalone helper tooling does not waive it. The user request authorized writing these scripts, not broadcasting a mainnet transaction.
+
+The tool compiles the helper and checks its reviewed runtime hash and compiler settings. `DeployCreditScoreLens.s.sol` checks chain 1 and all three source runtime hashes. A broadcast creates exactly one zero-value helper deployment and gets its own record directory under `broadcast/credit-score-lens-*`; only its successful, matching receipt supplies the address. The tool prints the address and transaction hash before explorer verification. If verification fails after deployment, use `verify --address`, not another `deploy`.
+
+`VerifyCreditScoreLens.s.sol` checks exact deployed/helper-artifact bytecode, the three source identities, and every method against direct source reads for credit ids `[1,2,3]` and statement id `1`. Results are native integers. The source-verification command uses the `viair` compilation profile and waits for Etherscan or Sourcify to report the result. Live readbacks run before and after source verification.
 
 ## 1. contracts and addresses
 

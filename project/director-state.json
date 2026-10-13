@@ -156,7 +156,7 @@
     ]
   },
   "candidate": "6ea44f570cc7cad7812a8c4a7147d465fcf858db",
-  "activeChange": null,
+  "activeChange": "CreditScoreLens deployment/verification tooling (FLOW 94), no broadcast: explorer verification, exact runtime and five source-view readbacks; configured deploy gate required.",
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -206,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "CreditScoreLens implementation and independent review are complete (FLOW 88 to 91; docs/REVIEW-credit-score-lens-abd4c20.md). No helper deployment is authorized. A future owner-authorized broadcast first requires a scoped helper release control, exact approved command, artifact/source identity checks and mined readbacks. Engine OBJ-LAUNCH-1 stays active; candidate 6ea44f5 evidence is stale, and engine launch requires reconciliation, a new frozen candidate, its configured gates and owner sign-off.",
+  "nextAction": "Implement and exercise the focused CreditScoreLens deployment/verification tooling, commit and independently review it. No broadcast or engine deploy-gate waiver authorized.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",

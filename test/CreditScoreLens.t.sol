@@ -6,6 +6,7 @@ import {ICreditScoreLens} from "../src/interfaces/ICreditScoreLens.sol";
 import {ICredits, IStatements, ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {DeployCreditScoreLens} from "../script/DeployCreditScoreLens.s.sol";
+import {VerifyCreditScoreLens} from "../script/VerifyCreditScoreLens.s.sol";
 
 interface IScoreSource {
     function rarityOf(bytes21 seed, uint64 paidAt) external view returns (uint256);
@@ -235,6 +236,30 @@ contract CreditScoreLensTest is Test {
         vm.chainId(2);
         vm.expectRevert(abi.encodeWithSelector(DeployCreditScoreLens.UnsupportedChain.selector, 2));
         deployer.run();
+    }
+
+    function test_verificationScriptChecksTheHelperAndAllFiveViews() public {
+        new VerifyCreditScoreLens().verify(address(lens));
+    }
+
+    function test_verificationScriptReadsLensAddressFromEnvironment() public {
+        string memory previous = vm.envOr("LENS_ADDRESS", string(""));
+        vm.setEnv("LENS_ADDRESS", vm.toString(address(lens)));
+        new VerifyCreditScoreLens().run();
+        vm.setEnv("LENS_ADDRESS", previous);
+    }
+
+    function test_verificationScriptRejectsOtherBytecode() public {
+        VerifyCreditScoreLens verifier = new VerifyCreditScoreLens();
+        vm.expectRevert(abi.encodeWithSelector(VerifyCreditScoreLens.CodeMismatch.selector, Mainnet.CREDITS));
+        verifier.verify(Mainnet.CREDITS);
+    }
+
+    function test_verificationScriptRejectsAnotherChain() public {
+        VerifyCreditScoreLens verifier = new VerifyCreditScoreLens();
+        vm.chainId(2);
+        vm.expectRevert(abi.encodeWithSelector(VerifyCreditScoreLens.UnsupportedChain.selector, 2));
+        verifier.verify(address(lens));
     }
 
     function test_gas_creditScoresOne() public {

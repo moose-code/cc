@@ -85,6 +85,12 @@ Implemented the five documented views in `src/CreditScoreLens.sol`, its generate
 
 Independent review of implementation 135a216 and NatSpec-only follow-up abd4c20 is complete: no open implementation findings (docs/REVIEW-credit-score-lens-abd4c20.md). The one Low wording issue was corrected without asset-handling functions. Fork results carry on exactly unchanged creation/runtime bytes and ABI; the final NatSpec interface compiled and checked. Engine release evidence remains stale; this helper does not complete the engine launch objective. Unrelated `.DS_Store` is preserved.
 
+### Deployment/verification tooling (FLOW 94, 2026-10-13)
+
+`script/tools/credit-score-lens.py` provides simulate, deploy, check and verify modes. Deploy enforces the configured repository gate before building, accessing a wallet or broadcasting; the gate is currently unmet. It pins the reviewed helper compiler settings and runtime hash, uses one fresh broadcast-record directory per run, validates the successful CREATE receipt against the artifact, then checks live bytecode/results and waits for Etherscan or Sourcify source verification. A failed explorer submission can be retried by address without another deployment. `script/VerifyCreditScoreLens.s.sol` checks chain, helper/source bytecode and all five native-unit results. Usage is in docs/INTEGRATION.md.
+
+Verification: `forge build` passes; `forge test --match-path test/CreditScoreLens.t.sol -j 1 -vv` passes 21 tests with 256 differential fuzz cases; `python3 -m unittest script/test_credit_score_lens_tool.py -v` passes 9 safety tests. The actual Python simulate command passes at block 26158000 with the owner as simulated sender. Explorer standard compiler JSON was generated without submission and checked for solc 0.8.30, viaIR, optimizer 200, Cancun and no metadata hash. Helper runtime remains 1,478 bytes and its reviewed hash is unchanged. No wallet accessed, transaction broadcast or explorer submission performed. Successful source publication awaits a real deployed address; independent tooling review follows the implementation commit.
+
 ## Engine change list
 
 | # | change | state | notes |
