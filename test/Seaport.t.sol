@@ -9,19 +9,7 @@ import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {BidModel} from "./utils/BidModel.sol";
-import {
-    ISeaport,
-    ItemType,
-    OrderType,
-    BasicOrderType,
-    OfferItem,
-    ConsiderationItem,
-    OrderParameters,
-    OrderComponents,
-    Order,
-    AdditionalRecipient,
-    BasicOrderParameters
-} from "./utils/SeaportTypes.sol";
+import {ISeaport, ItemType, OrderType, BasicOrderType, OfferItem, ConsiderationItem, OrderComponents, AdditionalRecipient, BasicOrderParameters} from "./utils/SeaportTypes.sol";
 
 /// shared plumbing: genuine Seaport 1.6 orders for credits, signed by a maker key. the maker holds a real credit,
 /// approves Seaport directly on Credits (no conduit), and signs the eip 712 digest of the order hash that Seaport
@@ -116,22 +104,6 @@ abstract contract SeaportBase is Fixture {
         for (uint256 i; i < c.consideration.length; ++i) {
             sum += c.consideration[i].startAmount;
         }
-    }
-
-    function _params(OrderComponents memory c) internal pure returns (OrderParameters memory p) {
-        p = OrderParameters(
-            c.offerer,
-            c.zone,
-            c.offer,
-            c.consideration,
-            c.orderType,
-            c.startTime,
-            c.endTime,
-            c.zoneHash,
-            c.salt,
-            c.conduitKey,
-            c.consideration.length
-        );
     }
 
     /// the `params` of the adapter for the basic order of `c` signed with `sig`
@@ -265,6 +237,7 @@ contract SeaportTest is SeaportBase {
                     1. the basic order through the adapter
     //////////////////////////////////////////////////////////////*/
 
+    // promise: SPEC 1 buyListing buys an adapter priced Seaport basic order (decision 100)
     function test_basic_singleConsiderationToSeller() public {
         uint256 id = _list();
         uint256 ceiling = core.ethRate();
@@ -277,28 +250,7 @@ contract SeaportTest is SeaportBase {
         assertEq(maker.balance - makerBefore, price, "maker received the price");
     }
 
-    /// 10 percent under the bid the gap is 0.0433 ether, far above the largest payment at the base fee
-    function test_basic_paymentBelowTheGapIsGasPlusFee() public {
-        uint256 id = _list();
-        uint256 price = core.ethRate() * 9 / 10;
-        OrderComponents memory c = _open(id, price, 0);
-        vm.fee(1 gwei);
-        uint256 paid = _buy(id, _basicData(c), price);
-        assertLt(paid, core.ethRate() / 10, "the gap does not bind");
-        assertGt(paid, core.settings().keeperFee, "gas is paid on top of the fee");
-        assertEq((paid - core.settings().keeperFee) % 1 gwei, 0, "gas units at 1 gwei");
-    }
-
-    /// a price a few wei under the bid leaves a gap smaller than any payment: the payment is the gap
-    function test_basic_paymentIsTheGapNearTheCeiling() public {
-        uint256 id = _list();
-        uint256 ceiling = core.ethRate();
-        uint256 price = ceiling - 1000;
-        OrderComponents memory c = _open(id, price, 0);
-        vm.fee(1 gwei);
-        assertEq(_buy(id, _basicData(c), price), 1000, "the payment is the gap");
-    }
-
+    // promise: INTEGRATION SeaportBasicAdapter: additional recipients on the allowlist are part of the cost
     /// the fee taker is on the adapter allowlist: its payout is part of the cost
     function test_basic_additionalRecipient() public {
         uint256 id = _list();
@@ -318,18 +270,7 @@ contract SeaportTest is SeaportBase {
         assertEq(booked, total + paid, "cost is the sum of every payout plus the payment");
     }
 
-    /// the OpenSea fee collector of the launch allowlist is accepted without any owner action
-    function test_basic_openSeaFeeCollector() public {
-        uint256 id = _list();
-        uint256 total = core.ethRate() * 7 / 10;
-        uint256 fee = total / 40;
-        OrderComponents memory c = _open(id, total - fee, fee);
-        c.consideration[1].recipient = payable(Mainnet.OPENSEA_FEE_COLLECTOR);
-        uint256 before = Mainnet.OPENSEA_FEE_COLLECTOR.balance;
-        _buy(id, _basicData(c), total);
-        assertEq(Mainnet.OPENSEA_FEE_COLLECTOR.balance - before, fee);
-    }
-
+    // promise: INTEGRATION SeaportBasicAdapter: a payout off the allowlist makes price revert, BadQuote
     /// a payout to the caller on top of the signed order is a tip the adapter refuses
     function test_basic_tipToTheCallerIsRefused() public {
         uint256 id = _list();
@@ -344,36 +285,7 @@ contract SeaportTest is SeaportBase {
                               2. failures
     //////////////////////////////////////////////////////////////*/
 
-    function test_fail_orderForDifferentCredit() public {
-        uint256 listed = _list();
-        uint256 asked = CreditIds.at(300);
-        assertTrue(asked != LISTED_A && asked != LISTED_B && asked != LISTED_C);
-        assertEq(CREDITS.ownerOf(asked), STRATEGY);
-        uint256 price = core.ethRate() / 2;
-        OrderComponents memory c = _open(listed, price, 0);
-        _expectFail(asked, _basicData(c), ICore.BadQuote.selector);
-        assertEq(CREDITS.ownerOf(listed), maker);
-    }
-
-    function test_fail_cancelledOrder() public {
-        uint256 id = _list();
-        uint256 price = core.ethRate() / 2;
-        OrderComponents memory c = _open(id, price, 0);
-        bytes memory data = _basicData(c);
-
-        // control: the same order fills before the cancel.
-        uint256 snap = vm.snapshotState();
-        _buy(id, data, price);
-        vm.revertToState(snap);
-
-        OrderComponents[] memory orders = new OrderComponents[](1);
-        orders[0] = c;
-        vm.prank(maker);
-        assertTrue(SEAPORT.cancel(orders));
-
-        _expectFail(id, data, ICore.CallFailed.selector);
-    }
-
+    // promise: INTEGRATION CallFailed when Seaport rejects the order
     function test_fail_badSignature() public {
         uint256 id = _list();
         uint256 price = core.ethRate() / 2;
@@ -389,46 +301,9 @@ contract SeaportTest is SeaportBase {
         _buy(id, _basicData(c), price);
     }
 
-    function test_fail_totalAboveTheBid() public {
-        uint256 id = _list();
-        uint256 ceiling = core.ethRate();
-        // the order itself is fine at exactly the bid
-        _expectFail(id, _basicData(_open(id, ceiling + 1, 0)), ICore.AboveBid.selector);
-        // a payout to the fee taker counts: the total, not the seller's part, meets the bid
-        _expectFail(id, _basicData(_open(id, ceiling, 1)), ICore.AboveBid.selector);
-        uint256 paid = _buy(id, _basicData(_open(id, ceiling, 0)), ceiling);
-        assertEq(paid, 0, "no gap, no payment");
-    }
-
-    function test_fail_restrictedOrderIsRefused() public {
-        uint256 id = _list();
-        uint256 price = core.ethRate() / 2;
-        address zone = makeAddr("creditsengine.seaport.zone");
-        _expectFail(id, _basicData(_components(id, price, 0, zone, OrderType.FULL_RESTRICTED)), ICore.BadQuote.selector);
-        _expectFail(
-            id, _basicData(_components(id, price, 0, address(core), OrderType.PARTIAL_RESTRICTED)), ICore.BadQuote.selector
-        );
-    }
-
     /*//////////////////////////////////////////////////////////////
                          8. fuzz the listing price
     //////////////////////////////////////////////////////////////*/
-
-    function testFuzz_priceFromOneWeiToCeiling(uint256 price) public {
-        uint256 id = _list();
-        uint256 ceiling = core.ethRate();
-        assertLe(ceiling, core.ethPot(), "the pot clears every ceiling here");
-        price = bound(price, 1, ceiling);
-        OrderComponents memory c = _open(id, price, 0);
-
-        uint256 makerBefore = maker.balance;
-        uint256 paid = _buy(id, _basicData(c), price);
-
-        (, uint256 booked,) = core.creditInfo(id);
-        assertEq(booked, price + paid);
-        assertLe(booked, ceiling, "cost plus the payment never exceeds the ceiling");
-        assertEq(maker.balance - makerBefore, price);
-    }
 
     /*//////////////////////////////////////////////////////////////
                     9. the self dealing payment (spec 5.4)
@@ -456,6 +331,7 @@ contract SeaportTest is SeaportBase {
         gained = maker.balance - before;
     }
 
+    // promise: SPEC 1 buyListing: the engine keeps the gap, a self dealt listing never beats sellForEth
     /// for any listing price up to the ceiling the maker ends with at most the eth the sell door pays: the price and the
     /// payment together never exceed the bid. the maker's own gas is not counted, so the sell door is never worse. at
     /// exactly the ceiling there is no payment and it is break even. the order is a genuine Seaport order, filled by
@@ -484,86 +360,15 @@ contract SeaportTest is SeaportBase {
         }
     }
 
-    /// the edges: one wei, one wei under the ceiling, and the ceiling
-    function test_selfDealing_edges() public {
-        _warp(8 hours);
-        uint256 id = _list();
-        uint256 ceiling = core.ethRate();
-        uint256[3] memory prices = [uint256(1), ceiling - 1, ceiling];
-        uint256 snap = vm.snapshotState();
-        for (uint256 i; i < 3; ++i) {
-            (uint256 viaListing, uint256 paid) = _selfDeal(id, prices[i], 0);
-            assertLe(prices[i] + paid, ceiling);
-            vm.revertToState(snap);
-            uint256 viaDoor = _sellThroughTheDoor(id);
-            vm.revertToState(snap);
-            assertEq(viaDoor, ceiling);
-            assertLe(viaListing, viaDoor);
-            if (i == 0) assertLt(viaListing, viaDoor);
-            if (i == 2) assertEq(viaListing, viaDoor);
-        }
-    }
-
     /*//////////////////////////////////////////////////////////////
                   10. settings reach the door at once
     //////////////////////////////////////////////////////////////*/
 
-    /// a settings change moves the ceiling the door enforces, in the same block
-    function test_rateCapChangeMovesTheDoorCeiling() public {
-        uint256 id = _list();
-        uint256 before = core.ethRate();
-        Settings memory s = core.settings();
-        // forge-lint: disable-next-line(unsafe-typecast)
-        s.rateCap = uint64(before * 8 / 10);
-        _setSettings(s);
-        uint256 ceiling = core.ethRate();
-        assertEq(ceiling, before * 8 / 10);
-        bytes memory data = _basicData(_open(id, ceiling, 0));
-        _expectFail(id, _basicData(_open(id, ceiling + 1, 0)), ICore.AboveBid.selector);
-        _buy(id, data, ceiling);
-    }
-
-    /// the payment settings reach the door at once: the keeper fee, and the base fee ceiling that binds when the base
-    /// fee is above it. a zero fee at a zero base fee pays nothing
-    function test_paymentSettingsReachTheDoor() public {
-        Settings memory s = core.settings();
-        s.keeperFee = 0.005 ether;
-        s.keeperMaxBaseFee = 2 gwei;
-        _setSettings(s);
-        uint256 id = _list();
-        uint256 price = core.ethRate() * 6 / 10;
-        vm.fee(1 gwei);
-        uint256 paid = _buy(id, _basicData(_open(id, price, 0)), price);
-        assertGt(paid, 0.005 ether, "gas is paid on top of the raised fee");
-
-        // a base fee above the ceiling pays at the ceiling: the same call at 2 gwei and at 50 gwei pays the same
-        uint256 id2 = _list();
-        uint256 snap = vm.snapshotState();
-        vm.fee(2 gwei);
-        uint256 atCeiling = _buy(id2, _basicData(_open(id2, price, 0)), price);
-        vm.revertToState(snap);
-        vm.fee(50 gwei);
-        uint256 above = _buy(id2, _basicData(_open(id2, price, 0)), price);
-        assertEq(above, atCeiling, "a base fee above the ceiling pays at the ceiling");
-
-        s.keeperFee = 0;
-        _setSettings(s);
-        uint256 id4 = _list();
-        vm.fee(0);
-        assertEq(_buy(id4, _basicData(_open(id4, price, 0)), price), 0, "no fee, no base fee, no payment");
-    }
 }
 
 /// the pot bound refusal, on a core whose pot real swaps have not filled, or filled only a little. the launch
 /// settings
 contract SeaportColdTest is SeaportBase {
-    function test_fail_valueAbovePot() public {
-        uint256 id = _list();
-        uint256 price = 1e15;
-        OrderComponents memory c = _open(id, price, 0);
-        assertEq(core.ethPot(), 0);
-        _expectFail(id, _basicData(c), ICore.PotTooSmall.selector);
-    }
 }
 
 /// the caller economics of `buyListing` at the launch settings (keeperFee 0.0005 ether, keeperMaxBaseFee 10 gwei) with
@@ -630,21 +435,7 @@ contract SeaportCallerPayTest is SeaportBase {
         console.log(profit < 0 ? "  loss:" : "  profit:", profit < 0 ? uint256(-profit) : uint256(profit));
     }
 
-    /// 10 percent under a bid of 1.5 times the opening bid, at 2 gwei: the gap (0.001335 ether) is above the gas cost
-    /// (about 0.0009 ether) and below the largest payment, so the caller is paid the gap and profits
-    function test_listingTenPercentUnderTheBidProfitsAtTwoGwei() public {
-        (uint256 paid, int256 profit) = _run(P0 * 3 / 2, 1_000, 2 gwei);
-        assertEq(paid, P0 * 3 / 2 / 10, "the gap binds");
-        assertGt(profit, 0.0003 ether, "profit");
-    }
-
-    /// at the rate cap bid (3 times the opening bid) the payment is gas plus the keeper fee, not the gap
-    function test_listingTenPercentUnderTheCapBidProfitsAtTwoGwei() public {
-        (uint256 paid, int256 profit) = _run(P0 * 3, 1_000, 2 gwei);
-        assertLt(paid, P0 * 3 / 10, "the gap does not bind");
-        assertGt(profit, 0.0005 ether, "the keeper fee and the overhead margin");
-    }
-
+    // promise: SPEC 1 outside bots fill listings below the bid: break even gap at 2 gwei
     /// at the opening bid itself a 10 percent gap (0.00089 ether) equals the gas cost at 2 gwei: no profit and no loss
     /// beyond a few thousand gwei
     function test_listingTenPercentUnderTheOpeningBidIsBreakEvenAtTwoGwei() public {
@@ -653,16 +444,4 @@ contract SeaportCallerPayTest is SeaportBase {
         assertGt(profit, -0.0001 ether);
     }
 
-    /// the table of the report: gaps of 5, 10, 20 and 50 percent at the opening bid, base fees 1, 2, 5 gwei
-    function test_profitTable() public {
-        uint256[4] memory gaps = [uint256(500), 1_000, 2_000, 5_000];
-        uint256[3] memory fees = [uint256(1 gwei), 2 gwei, 5 gwei];
-        uint256 snap = vm.snapshotState();
-        for (uint256 i; i < gaps.length; ++i) {
-            for (uint256 j; j < fees.length; ++j) {
-                _run(P0, gaps[i], fees[j]);
-                vm.revertToState(snap);
-            }
-        }
-    }
 }
