@@ -15,16 +15,10 @@ export function Addr({
 }) {
   const ens = useEns(address);
   const label = ens ?? shortAddr(address);
-  const href = evmNowAddress(address);
-  if (!link || !href)
-    return (
-      <span title={address} suppressHydrationWarning>
-        {label}
-      </span>
-    );
+  if (!link) return <span suppressHydrationWarning>{label}</span>;
   return (
     <a
-      href={href}
+      href={evmNowAddress(address)}
       target="_blank"
       rel="noreferrer"
       suppressHydrationWarning

@@ -99,6 +99,17 @@ const SAMPLE_MARKET: Market = {
   balances: { cc: 0n, engine: 0n, pool: 0n },
 };
 
+// live mode starts from zeros until the first read lands
+const EMPTY_MARKET: Market = {
+  live: true,
+  ccPerEth: 0,
+  nextCreditPaid: 0n,
+  bid: 0n,
+  creditsReady: 0,
+  balances: { cc: 0n, engine: 0n, pool: 0n },
+};
+const BASE_MARKET = isLive ? EMPTY_MARKET : SAMPLE_MARKET;
+
 // ---- hooks ------------------------------------------------------------------
 
 // ---- event scan --------------------------------------------------------------
@@ -140,7 +151,8 @@ function useScan() {
     placeholderData: (prev) => prev,
     queryFn: async () => {
       const now = Math.floor(Date.now() / 1000);
-      if (!isLive || !client || !addresses.core || !head) return SAMPLE_SCAN(now);
+      if (!isLive) return SAMPLE_SCAN(now);
+      if (!client || !addresses.core || !head) return EMPTY_SCAN;
       try {
         // bounded scan: from the deploy block, else the last ~50k blocks.
         const from = deployBlock ?? (head > 50000n ? head - 50000n : 0n);
@@ -208,9 +220,9 @@ function useScan() {
             .map(async (n) => blockTime.set(n, Number((await client.getBlock({ blockNumber: n })).timestamp)))
         );
         for (const r of feed) r.ts = blockTime.get(r.block) ?? 0;
-        return { feed: feed.length ? feed : sampleFeed(now), stats, sold, exited };
+        return { feed, stats, sold, exited };
       } catch {
-        return SAMPLE_SCAN(now);
+        return EMPTY_SCAN;
       }
     },
   });
@@ -236,10 +248,10 @@ export function useMarket() {
     refetchInterval: 15000,
     queryFn: async () => {
       if (!client || (!isLive && !poolReady)) return SAMPLE_MARKET;
-      let ccPerEth = SAMPLE_MARKET.ccPerEth;
-      let bid = SAMPLE_MARKET.bid;
+      let ccPerEth = BASE_MARKET.ccPerEth;
+      let bid = BASE_MARKET.bid;
       let engine = 0n;
-      let creditsReady = SAMPLE_MARKET.creditsReady;
+      let creditsReady = BASE_MARKET.creditsReady;
 
       // real cc/eth spot from the v4 pool slot0 (coin deployed).
       if (poolReady && addresses.cc) {
@@ -282,7 +294,7 @@ export function useMarket() {
         balances: { cc: 0n, engine, pool: 0n },
       };
     },
-    initialData: SAMPLE_MARKET,
+    initialData: BASE_MARKET,
   });
 }
 

@@ -14,18 +14,16 @@ export function Footer() {
         {contracts.length > 0 && (
           <span className="contracts">
             contracts:{" "}
-            {contracts.map((c) => {
-              const href = evmNowAddress(c.address);
-              return href ? (
-                <a key={c.label} href={href} target="_blank" rel="noreferrer">
-                  {c.label}
-                </a>
-              ) : (
-                <span key={c.label} title={c.address}>
-                  {c.label} {c.address}
-                </span>
-              );
-            })}
+            {contracts.map((c) => (
+              <a
+                key={c.label}
+                href={evmNowAddress(c.address)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {c.label}
+              </a>
+            ))}
           </span>
         )}
         <span>{"independent · not affiliated with credits"}</span>
