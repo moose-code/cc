@@ -99,15 +99,23 @@ one wrapper, `script/deploy.sh <env>`, runs that path for every environment. it 
 
 ## local end to end
 
-one command deploys through the same path as mainnet on an anvil mainnet fork, seeds real Credits and the exit stand ins, and runs a full scenario (coin trades, the eth bid, compose and sell, the credit sale window, chosen composition, pause, buyback, the exit side) with a check after each stage:
+one command deploys through the same path as mainnet on an anvil mainnet fork, seeds real Credits and the exit stand ins, and runs a full scenario with a check after each stage:
 
 ```bash
-script/dev/e2e.sh
+script/dev/e2e.sh            # PHASE=post: the full engine including the exit side
+PHASE=pre script/dev/e2e.sh  # the engine before the exit token exists
+KEEP=1 script/dev/e2e.sh     # leave anvil running for the UI, print the UI command
 ```
 
-it starts anvil (block 26158000, chain id 31337, `--auto-impersonate`), runs `script/deploy.sh local`, seeds, warps the node between stages, prints a final report and the gas per stage, then stops anvil. no mainnet, no private key: the signer is the real v2 factory owner, impersonated on the fork.
+`PHASE` selects how far the engine is driven. `pre` is the engine before the exit token exists: no exit module, exitMode 0. The coin trades, the eth bid, the credit sale, composition, the statement sale, pause and the buyback all run. `post` (the default) adds the exit side: exit module, exit pool key, exitMode 2, a statement redemption and the exit token bid.
 
-to drive the UI against a running fork, start anvil and deploy, then point the UI at the record:
+Both phases fire every user facing and keeper transaction type the engine has in that phase at least once: coin buys and sells through the universal router, the fee flush, the payee split start, `sellForEth` (batch and single), `adopt`, `compose` and `composeChosen`, `buyCredit` and `buyCredits`, a statement buy at a curve point, the keeper buyback, pause and unpause, and owner settings changes (a sale setting, a credit setting, the rating reference, the rate and the settings struct). `post` also fires `sellForExitToken` (single and batch), `exitStatement` and `releaseRedeemBurn`. Both phases end with live content: at least two statements for sale (one composed early, one composed last) and at least three pile credits of mixed window status. After the stages the run prints an event inventory: every event the Core, the controller and the router emitted with its count, and every event in the ABI that never fired with a reason.
+
+`migrate` is excluded: it retires the engine, which would leave nothing for the UI to show. `buyListing` is not represented: the only local allowed target is the CreditStrategy, whose cheapest listing (0.036 eth) is about four times the rate cap, and the eth bid read is bounded by the cap, so no listing sits below the bid; a Seaport order needs an externally signed listing a bare fork cannot produce.
+
+The run starts anvil (block 26158000, chain id 31337, `--auto-impersonate`), runs `script/deploy.sh local`, seeds, warps the node between stages, prints a final report and the gas per stage, then stops anvil unless `KEEP=1`. No mainnet, no private key: the signer is the real v2 factory owner, impersonated on the fork. `PORT` and `E2E_RPC_URL` move it off the default 8545 (for example `PORT=8546 E2E_RPC_URL=http://127.0.0.1:8546`).
+
+To drive the UI against a running fork, run with `KEEP=1` (it prints the UI command and leaves the record at `deployments/31337.json`), or start anvil and deploy by hand:
 
 ```bash
 script/dev/anvil.sh &                 # fork on http://127.0.0.1:8545
