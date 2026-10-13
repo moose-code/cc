@@ -26,9 +26,7 @@ interface IControllerV1 {
     }
 
     error BadSetting(bytes32 field);
-    error BaselineOverflow();
     error CreditSaleOff();
-    error NoExitPrice();
     error NotForSale();
     error OnlyOwner();
     error Paused();
@@ -103,5 +101,4 @@ interface IControllerV1 {
     function startBps() external view returns (uint256);
     function startCapBps() external view returns (uint32);
     function storedAnchorBps() external view returns (uint32);
-    function valueWei(uint256 exitTokenBaseUnits) external view returns (uint256 priceWei);
 }

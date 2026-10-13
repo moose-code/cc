@@ -12,7 +12,7 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// the price reference of the sale controller on the live fork. `referenceOf(sid)` is the larger of a statement's cost
-/// and the eth bid rate before the pot clamp times its rating over `refScore`, computed at each call. the sale curve,
+/// and the peak of the eth bid times its rating over `refScore`, computed at each call. the sale curve,
 /// its floor, the anchor and `atFloor` all price in bps of the reference. the rate term prices the rating at the
 /// engine's average credit price, so two statements of the same rating reference the same amount once it binds,
 /// whatever each credit cost. real Core, ControllerV1, Statements
@@ -35,7 +35,7 @@ contract RatingReferenceTest is Fixture {
     function _makeRich(uint256 sid) internal returns (uint256 ref, uint256 cost) {
         (, cost,) = core.statementInfo(sid);
         uint256 rating = core.ratingOf(sid);
-        uint256 p = core.ethPrice();
+        uint256 p = core.ethPeak();
         // the refScore at which the rate term equals the cost, then a quarter of it so the rate term is about four
         // times the cost
         uint256 cross = FullMath.mulDiv(p, rating, cost);
@@ -93,15 +93,15 @@ contract RatingReferenceTest is Fixture {
         assertEq(ctl.refScore(), 4_330_000, "launch refScore is the average credit score");
     }
 
-    /// the reference is the larger of cost and the rate term `ethPrice * rating / refScore`. a high refScore shrinks the
+    /// the reference is the larger of cost and the rate term `ethPeak * rating / refScore`. a high refScore shrinks the
     /// rate term below cost so cost binds, a low refScore lifts it above cost so it binds, and when it binds the
     /// reference equals it exactly
     function test_reference_isMaxOfCostAndRateTerm() public {
         uint256 sid = _composeOnce().sid;
         (, uint256 cost,) = core.statementInfo(sid);
         uint256 rating = core.ratingOf(sid);
-        uint256 p = core.ethPrice();
-        assertGt(p, 0, "the eth price is nonzero");
+        uint256 p = core.ethPeak();
+        assertGt(p, 0, "the peak is nonzero");
 
         _setRef(MAX_REF_SCORE);
         uint256 rateHi = FullMath.mulDiv(p, rating, MAX_REF_SCORE);
@@ -119,7 +119,7 @@ contract RatingReferenceTest is Fixture {
         uint256 sid = _composeOnce().sid;
         (, uint256 cost,) = core.statementInfo(sid);
         uint256 rating = core.ratingOf(sid);
-        uint256 p = core.ethPrice();
+        uint256 p = core.ethPeak();
 
         // the largest refScore whose rate term is at least cost
         uint256 cross = FullMath.mulDiv(p, rating, cost);
@@ -155,7 +155,7 @@ contract RatingReferenceTest is Fixture {
 
         _setRef(1); // the smallest refScore, so the rate term binds for both lineages
 
-        uint256 p = core.ethPrice();
+        uint256 p = core.ethPeak();
         uint256 re = core.ratingOf(ethSid);
         uint256 rx = core.ratingOf(exitSid);
 
@@ -174,27 +174,51 @@ contract RatingReferenceTest is Fixture {
         );
     }
 
-    /// the reference moves with the eth price at the call. raising the stored rate raises the reference and the curve
+    /// the reference moves with the peak at the call. raising the stored rate raises the reference and the curve
     /// price in step, and `atFloor` stays an age decision through the move
-    function test_referenceMovesWithEthPrice() public {
+    function test_referenceMovesWithThePeak() public {
         uint256 sid = _composeOnce().sid;
         _setRef(1); // the rate term binds
         uint256 rating = core.ratingOf(sid);
 
-        uint256 p1 = core.ethPrice();
-        assertEq(ctl.referenceOf(sid), p1 * rating, "the reference is the rate term at the current eth price");
+        uint256 p1 = core.ethPeak();
+        assertEq(ctl.referenceOf(sid), p1 * rating, "the reference is the rate term at the current peak");
         uint256 price1 = ctl.priceOf(sid);
         bool floor1 = ctl.atFloor(sid);
 
         _liftRateCap();
         vm.prank(owner);
         core.setRate(p1 * 2);
-        uint256 p2 = core.ethPrice();
-        assertGt(p2, p1, "the eth price moved up");
+        uint256 p2 = core.ethPeak();
+        assertGt(p2, p1, "the peak moved up");
 
-        assertEq(ctl.referenceOf(sid), p2 * rating, "the reference followed the eth price at the call");
+        assertEq(ctl.referenceOf(sid), p2 * rating, "the reference followed the peak at the call");
         assertEq(ctl.priceOf(sid), price1 * p2 / p1, "the curve price followed the reference");
-        assertEq(ctl.atFloor(sid), floor1, "atFloor is an age decision, unchanged by the eth price move");
+        assertEq(ctl.atFloor(sid), floor1, "atFloor is an age decision, unchanged by the peak move");
+    }
+
+    /// decision 96: the peak does not fall when credits are sold into the bid in one tx, so a large sale that walks the
+    /// clamped bid down leaves a statement's reference unchanged, where the decision 95 bid-based reference fell with it
+    function test_largeSaleLeavesThePeakAndReferenceUnchanged() public {
+        _liftRateCap();
+        _fundPot(50 ether);
+        uint256 sid = _composeOnce().sid;
+        // a modest, stable peak the pot can afford to buy 115 credits against
+        vm.prank(owner);
+        core.setRate(0.05 ether);
+        _setRef(1); // the rate term binds, so the reference tracks the peak
+        uint256 peak0 = core.ethPeak();
+        uint256 ref0 = ctl.referenceOf(sid);
+        assertEq(ref0, peak0 * core.ratingOf(sid), "the reference is the peak times the rating");
+
+        // sell 115 credits into the eth bid in one call; the clamped bid walks down a credit at a time
+        uint256[] memory ids = _credits(seller, 115);
+        vm.prank(seller);
+        core.sellForEth(ids);
+
+        assertLt(core.ethRate(), peak0, "the sale walked the clamped bid down");
+        assertEq(core.ethPeak(), peak0, "the peak did not fall through the batch");
+        assertEq(ctl.referenceOf(sid), ref0, "the statement reference is unchanged");
     }
 
     // ------------------------------------------------------------------ curve, floor and eligibility
@@ -202,6 +226,12 @@ contract RatingReferenceTest is Fixture {
     function test_curvePointsScaleWithReference() public {
         uint256 sid = _composeOnce().sid;
         _makeRich(sid);
+
+        // lower the core hard floor so the long warps below (where the decaying peak pulls the reference back to cost)
+        // measure the curve, not the hard floor
+        Settings memory s = core.settings();
+        s.saleFloorBps = 1_000;
+        _setSettings(s);
 
         // a two stage curve: start 15000, knee 7500, floor 5000 of the reference
         vm.startPrank(owner);
@@ -325,7 +355,7 @@ contract RatingReferenceTest is Fixture {
         uint256 sid = _composeOnce().sid;
         (, uint256 cost,) = core.statementInfo(sid);
         uint256 rating = core.ratingOf(sid);
-        uint256 p = core.ethPrice();
+        uint256 p = core.ethPeak();
         uint256 cross = FullMath.mulDiv(p, rating, cost);
 
         _setRef(MAX_REF_SCORE); // a high refScore keeps the reference at cost

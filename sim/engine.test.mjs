@@ -537,25 +537,24 @@ const R0 = 6.668e15;
   near(small.xBuy(80), 80 * 1e-5 * 0.8, 1e-12, 'a cheaper credit fits'); 
   for (const mode of [0, 1]) { const m = mk({ exitMode: mode }); assert.equal(m.exitBidActive(), false); assert.equal(m.xBuy(440), 0); near(m.xPot, 1, 1e-15, 'no bid in mode ' + mode); n += 2; }
   assert.equal(fresh({ exitMode: 2, exitPoolSet: true }, 10).exitBidActive(), false); n++; // no module, no bid
-  { const np = fresh({ exitMode: 2 }, 10); np.setExitModule(0, 1e-5); np.xPot = 1; assert.equal(np.exitBidActive(), false); assert.equal(np.xBuy(440), 0); near(np.xPot, 1, 1e-15, 'no pool key, no bid'); n += 2; } // the bid values the tokens it pays at the pool price: no key reverts it (FLOW 92)
+  { const np = fresh({ exitMode: 2 }, 10); np.setExitModule(0, 1e-5); np.xPot = 1; assert.equal(np.exitBidActive(), true); near(np.xBuy(440), 440 * 1e-5 * 0.8, 1e-12, 'the bid works without the pool key'); n += 2; } // the bid records the peak backstop and reads no pool (FLOW 96)
   // the margin is a setting read at once
   const g = mk(); assert.throws(() => g.setSettings({ exitBidMarginBps: 0 }, 1), /exitSlippageBps/); n++; g.setSettings({ exitSlippageBps: 0, exitBidMarginBps: 0 }, 1); near(g.xBidPrice(100), 100 * 1e-5, 1e-12, 'margin 0 pays the whole value'); g.setSettings({ exitBidMarginBps: 9000 }, 2); near(g.xBidPrice(100), 100 * 1e-5 * 0.1, 1e-12, 'margin 90 percent');
   // buy at (1 - margin) and redeem at full value: the engine keeps the margin
   const h = mk(); const px = h.xBuy(35200 / 80 * 1); const rec = h.exitStatement(h.compose(0, 0, 440 * 80), 5000 * H); // redeemed once the curve has reached its floor
   near(rec.received, 440 * 80 * 1e-5, 1e-12, 'the redemption returns the full value'); ok(rec.received > 80 * px, 'more than the 80 credits were bought for');
 }
-// a credit bought with the exit token enters the one pile at an eth cost (FLOW 92, 93, 94): the higher of the tokens paid valued at the pool price and the score-scaled eth backstop,
-// at least 1 wei. a pool price pushed down (exitPoolMult under 1) records the backstop (the eth bid rate times max(1, score / refScore)), a price pushed up records the higher value
+// a credit bought with the exit token enters the one pile at an eth cost (FLOW 96): the score-scaled eth backstop,
+// the remembered peak of the eth bid times max(1, score / refScore), at least 1 wei. it reads no pool, so the pool
+// price never moves it and the bid needs no pool key
 {
   const mk = (over = {}, pot = 10) => { const c = fresh(Object.assign({ exitMode: 2, exitPoolSet: true, rateStart: 1e15, rateCap: 1e16, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 2, idleLoosenPct: 2, floorBps: 10000, saleFloorBps: 10000 }, over), pot); c.setExitModule(0, 1e-5); c.xPot = 1; return c; };
-  const c = mk(); // the bid pays 440 * 1e-5 * 0.8 = 0.00352, the eth bid is 0.001
-  const r = c.xBuyCredit(440, 0); near(r.paid, 0.00352, 1e-12, 'the tokens paid'); near(r.cost, 0.00352, 1e-12, 'valued at the pool price, over the eth bid'); n += 2;
-  // 440 points is above refScore (4330000/1e4 = 433), so the backstop scales to 0.001 * 440 / 433
-  const lo = mk({ exitPoolMult: 0.1 }), rl = lo.xBuyCredit(440, 0); near(rl.paid, 0.00352, 1e-12, 'the same tokens are paid'); near(rl.cost, 0.001 * 440 / 433, 1e-12, 'a pushed down pool price records the scaled backstop'); n += 2;
-  const hi = mk({ exitPoolMult: 3 }), rh = hi.xBuyCredit(440, 0); near(rh.cost, 0.00352 * 3, 1e-12, 'a pushed up pool price records a higher cost'); n++;
-  const empty = mk({ rateStart: 4e15 }, 0); empty.xPot = 1; const re = empty.xBuyCredit(1, 0); near(re.cost, 4e-3, 1e-12, 'an empty pot does not lower the floor: the unclamped price state'); n++;
-  const dust = mk({ exitPoolMult: 1e-12 }); dust.moduleReports(1e-5); const rd = dust.xBuyCredit(80, 0); near(rd.cost, 0.001, 1e-12, 'never below the eth bid'); n++;
-  const np = mk({ exitPoolSet: false }); assert.equal(np.xBuyCredit(440, 0), null); n++; // no pool key, no bid
+  // the peak is 0.001 eth per credit; 440 points is above refScore (4330000/1e4 = 433), so the backstop scales to 0.001 * 440 / 433
+  const c = mk(); const r = c.xBuyCredit(440, 0); near(r.paid, 0.00352, 1e-12, 'the tokens paid'); near(r.cost, 0.001 * 440 / 433, 1e-12, 'the cost is the scaled peak backstop'); n += 2;
+  const lo = mk({ exitPoolMult: 0.1 }), rl = lo.xBuyCredit(440, 0); near(rl.cost, 0.001 * 440 / 433, 1e-12, 'a pushed down pool price does not move the cost'); n++;
+  const hi = mk({ exitPoolMult: 3 }), rh = hi.xBuyCredit(440, 0); near(rh.cost, 0.001 * 440 / 433, 1e-12, 'a pushed up pool price does not move the cost'); n++;
+  const empty = mk({ rateStart: 4e15 }, 0); empty.xPot = 1; const re = empty.xBuyCredit(1, 0); near(re.cost, 4e-3, 1e-12, 'an empty pot does not lower the floor: the peak at the opening rate'); n++;
+  const np = mk({ exitPoolSet: false }); const rn = np.xBuyCredit(440, 0); near(rn.cost, 0.001 * 440 / 433, 1e-12, 'the bid works with no pool key and records the backstop'); n++;
   const off = mk({ exitMode: 1 }); assert.equal(off.xBuyCredit(440, 0), null); n++;
 }
 // Core.sellForExitToken pays with min(stored, live) unitPerPoint, Core.refreshUnitPerPoint (owner) re-reads the stored unit from the module,
@@ -666,7 +665,7 @@ const R0 = 6.668e15;
   ok(DEFAULTS.creditSaleOn === false && fresh({}, 10).cr.creditSaleOn === false, 'the credit sale is off at launch'); n++;
   near(c.ethPrice(0) / W, 1e-3, 1e-9, 'the eth bid before the clamp'); // the bid is under the cost here: the cost term wins
   near(c.creditFloor(cr, 0), 0.002 * 1.1, 1e-12, 'floor = cost * 11000 / 10000'); near(c.creditPrice(cr, 0), 0.002 * 1.1 * 3, 1e-12, 'start = floor * 30000 / 10000');
-  near(c.creditPrice(cr, W4 / 2), 0.002 * 1.1 * 2, 1e-12, 'half way down at half the window'); near(c.creditPrice(cr, W4), 0.002 * 1.1, 1e-12, 'the floor at the end of the window'); near(c.creditPrice(cr, W4 + 60), 0.002 * 1.1, 1e-12, 'and just after it'); near(c.creditPrice(cr, 1000 * H), (c.ethPrice(1000 * H) / W) * (440 / 433) * 1.1, 1e-12, 'long after it the floor follows the score-scaled backstop, whose bid has climbed over the cost');
+  near(c.creditPrice(cr, W4 / 2), 0.002 * 1.1 * 2, 1e-12, 'half way down at half the window'); near(c.creditPrice(cr, W4), 0.002 * 1.1, 1e-12, 'the floor at the end of the window'); near(c.creditPrice(cr, W4 + 60), 0.002 * 1.1, 1e-12, 'and just after it'); near(c.creditPrice(cr, 1000 * H), 0.002 * 1.1, 1e-12, 'long after it rests at the cost floor: the peak backstop has decayed below cost');
   n += 6;
   // the backstop term: a cost under the backstop is floored at it, read before the pot clamp (an empty pot does not zero it). 440 points scales it by 440 / 433
   const e = mk({ rateStart: 4e15, rateCap: 1e16 }, 0.0001);
@@ -826,13 +825,13 @@ const R0 = 6.668e15;
   ok(hold.core.redeemBurnMoved > 0 && hold.core.ethRedeemBurn < hold.core.feeToRedeemBurn, 'each redemption moves part of the reserve to the buyback');
   ok(hold.T.exitedAge / hold.T.exited >= 50 * H - 1, 'a statement redeems no earlier than its curve reaches its floor (hour 50)');
   ok(hold.T.exitedValue > 0 && hold.core.xPot === hold.T.xRecv, 'the exit token pot is what the redemptions returned');
-  // on: the bid buys credits at the margin under their value into the one pile and the statements built from them sell or redeem like the rest. the bid needs the pool key
+  // on: the bid buys credits at the margin under their value into the one pile and the statements built from them sell or redeem like the rest. the bid needs no pool key (FLOW 96)
   const on = simulate(Object.assign({ phase2Day: 10, exitPoolSet: true }, base));
   closes(on, 'with the bid');
   ok(on.T.boughtX > 0 && on.core.redeemBurnMoved > 0, 'the bid buys and redemptions release the reserve');
   ok(on.T.exited > 0 && on.core.xPot > 0, 'statements redeem');
   ok(on.S.credits[on.H] > hold.S.credits[hold.H], 'the bid adds credits'); ok(on.T.composed > hold.T.composed, 'and they compose into statements through the one pile');
-  const noKey = simulate(Object.assign({ phase2Day: 10 }, base)); ok(noKey.T.boughtX === 0 && noKey.T.exited > 0, 'without the pool key the bid buys nothing and redemptions run (FLOW 92)'); closes(noKey, 'without the pool key');
+  const noKey = simulate(Object.assign({ phase2Day: 10 }, base)); ok(noKey.T.boughtX > 0 && noKey.T.exited > 0, 'the bid buys without the pool key and redemptions run (FLOW 96)'); closes(noKey, 'without the pool key');
   // a later switch off stops the bid at once
   const off = simulate(Object.assign({ phase2Day: 10, exitPoolSet: true, schedule: [{ day: 12, patch: { exitMode: 0 } }] }, base));
   ok(off.T.boughtX > 0 && off.S.xBought[off.H] === off.S.xBought[12 * 24 + 1], 'exitMode 0 on day 12 ends the bid and the redemptions'); ok(off.S.exited[off.H] === off.S.exited[12 * 24 + 1], 'no redemption after the switch off'); closes(off, 'after a switch off');

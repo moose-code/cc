@@ -11,7 +11,6 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {
-    IController,
     ICredits,
     ICreditScore,
     IExitModule,
@@ -224,6 +223,14 @@ library CoreLib {
         returns (uint256 price, uint256 read)
     {
         return _climb(r, pot, anchorTime, t, nowTs);
+    }
+
+    /// @notice the remembered peak of the eth bid decayed to `nowTs`: `peakRate` halved every `peakHalfLife` since
+    /// `peakTime`. it rises with fills and `setRate` and falls only with time. the engine's price floors read it
+    /// through `Core.ethPeak`
+    function peak(uint256 nowTs) external view returns (uint256) {
+        RateStore.Anchor storage a = RateStore.load();
+        return Halving.halve(a.peakRate, nowTs.zeroFloorSub(a.peakTime), SettingsStore.load().peakHalfLife);
     }
 
     function _climb(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
@@ -580,12 +587,11 @@ library CoreLib {
     /// the lower of the stored `unitPerPoint` and the module's live `unitPerPoint()`, so a module that lowered its rate
     /// after the owner set it cannot make the bid overpay. reads the score from the credit score contract. runs only
     /// while `exitMode` is 2. each credit's price must not exceed the remaining pot. the credit enters the single pile
-    /// with an eth cost basis of the higher of the exit tokens paid valued in wei (`controller.valueWei`) and the
-    /// score-scaled eth backstop `ethBid * max(1, score / refScore)`, at least 1 wei, so a pushed down pool price cannot
-    /// record a cost below the score's eth value and an empty pot does not record a zero cost. a failing, short or zero
-    /// live unit read reverts the whole bid (`BadModule`). an unset pool key or a zero pool price reverts in `valueWei`.
-    /// `refScore` is read from the controller with a bounded staticcall. a failed read leaves the backstop unscaled at
-    /// `ethBid`
+    /// with an eth cost basis of the score-scaled eth backstop `peak * max(1, score / refScore)`, at least 1 wei, where
+    /// `peak` is the remembered peak of the eth bid decayed to now. the peak rises with fills and falls only with time,
+    /// so neither a pot move nor a pool move can push a recorded cost down, and no pool key is needed. a failing, short
+    /// or zero live unit read reverts the whole bid (`BadModule`). `refScore` is read from the controller with a
+    /// bounded staticcall. a failed read leaves the backstop unscaled at `peak`
     function _sellForExitToken(uint256[] calldata ids, uint256 minOut) private {
         CoreState storage c = state();
         if (c.retired) revert Retired();
@@ -598,10 +604,9 @@ library CoreLib {
         if (live < unit) unit = live;
         uint256 net = BPS - s.exitBidMarginBps;
         uint256 pot = c.xPot;
-        // the eth bid rate before the pot clamp, the base of a credit's recorded eth cost basis. the unclamped price
-        // state is read so an empty pot does not drop the base to zero. read only, no checkpoint
-        (uint256 ethBid,) = _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
-        IController ctl = IController(c.controller);
+        // the remembered peak of the eth bid decayed to now, the base of a credit's recorded eth cost basis. read only
+        RateStore.Anchor storage a = RateStore.load();
+        uint256 peak = Halving.halve(a.peakRate, block.timestamp.zeroFloorSub(a.peakTime), s.peakHalfLife);
         uint256 refScore = _refScore(c.controller);
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
@@ -612,9 +617,8 @@ library CoreLib {
             if (paid > pot) revert PotTooSmall();
             pot -= paid;
             total += paid;
-            uint256 valued = ctl.valueWei(paid);
-            uint256 backstop = (refScore == 0 || score <= refScore) ? ethBid : ethBid.mulDiv(score, refScore);
-            uint256 cost = valued.max(backstop).max(1);
+            uint256 backstop = (refScore == 0 || score <= refScore) ? peak : peak.mulDiv(score, refScore);
+            uint256 cost = backstop.max(1);
             push(c.pile, c.credits, id, cost);
             CREDITS.transferFrom(msg.sender, address(this), id);
             emit CreditBought(id, msg.sender, cost);

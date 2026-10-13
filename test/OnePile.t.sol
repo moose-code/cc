@@ -9,15 +9,17 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
-import {LowballCreditController} from "./attackers/CreditSaleAttackers.sol";
 
-/// decision 92: one pile for every credit. the exit token bid records an eth cost basis of the higher of the exit
-/// tokens paid valued in wei (the controller's `valueWei`, decision 87 pool math) and the current eth bid, so a
-/// pushed down pool price cannot record a cost below the eth market. every credit composes into the same statement.
-/// the three standalone settings have owner setters, bounds and events
+/// decision 96: one pile for every credit. the exit token bid records an eth cost basis of the score-scaled eth
+/// backstop `peak * max(1, score / refScore)`, at least 1 wei, where `peak` is the remembered peak of the eth bid. the
+/// record reads no pool price, so a pushed up or pushed down pool cannot move it and the bid needs no pool key. every
+/// credit composes into the same statement. the three standalone settings have owner setters, bounds and events
 contract OnePileTest is Fixture {
-    /// a small sqrt price makes the exit token expensive in eth, so `valueWei` is large and binds above the eth bid
+    uint256 internal constant BPS = 10_000;
+    /// a small sqrt price makes the exit token expensive in eth (a pushed up redemption value)
     uint160 internal constant LOW_SQRT = uint160(FixedPoint96.Q96 / 1000);
+    /// a large sqrt price makes the exit token cheap in eth (a pushed down redemption value)
+    uint160 internal constant HIGH_SQRT = uint160((uint256(1) << 96) * 1000);
 
     /// initializes the exit pool at `sp` and points the controller at it
     function _initPoolAt(uint160 sp) internal {
@@ -50,145 +52,124 @@ contract OnePileTest is Fixture {
 
     // ------------------------------------------------------------------ the exit bid's eth cost basis
 
-    /// the exit tokens paid valued in wei exceed the eth bid, so the recorded cost is that value
-    function test_sellForExit_costIsTheExitTokenValueWhenItBinds() public {
+    /// the credit score source the exit token bid reads: `scoreOf(seed, paidAt)` on the mainnet credit score contract
+    function _score(uint256 id) internal view returns (uint256) {
+        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
+    }
+
+    /// the score-scaled eth backstop the sale records for `id`: `peak` when the score is at or below `refScore`, else
+    /// `peak * score / refScore`, at least 1 wei. the peak is read at the current block, which the sale does not move
+    function _backstop(uint256 id) internal view returns (uint256 b) {
+        uint256 peak = core.ethPeak();
+        uint256 rs = ctl.refScore();
+        uint256 score = _score(id);
+        b = score <= rs ? peak : peak * score / rs;
+        if (b == 0) b = 1;
+    }
+
+    /// the recorded eth cost is the score-scaled backstop, with no pool key set
+    function test_sellForExit_costIsTheScaledBackstopWithoutAPoolKey() public {
+        _ready();
+        assertFalse(ctl.exitPoolKeySet(), "no pool key");
+        uint256[] memory ids = _credits(seller, 1);
+        uint256 id = ids[0];
+        uint32 rs = uint32(_score(id) / 4);
+        if (rs == 0) rs = 1;
+        vm.prank(owner);
+        ctl.setRefScore(rs);
+        uint256 want = _backstop(id);
+        vm.prank(seller);
+        core.sellForExitToken(ids);
+        (, uint256 cost,) = core.creditInfo(id);
+        assertGt(want, core.ethPeak(), "the backstop scales above the peak for a rich credit");
+        assertEq(cost, want, "the recorded cost is the scaled backstop");
+    }
+
+    /// a credit scored at or below `refScore` records the unscaled peak as its cost
+    function test_sellForExit_costIsThePeakBelowRefScore() public {
+        _ready();
+        uint256[] memory ids = _credits(seller, 1);
+        uint256 id = ids[0];
+        vm.prank(owner);
+        ctl.setRefScore(8_000_000); // the max, so the score is at or below it
+        uint256 want = _backstop(id);
+        vm.prank(seller);
+        core.sellForExitToken(ids);
+        (, uint256 cost,) = core.creditInfo(id);
+        assertEq(want, core.ethPeak(), "the backstop is the unscaled peak");
+        assertEq(cost, want, "the recorded cost is the peak");
+    }
+
+    /// a pushed up pool price (an expensive exit token) does not move the recorded cost: it stays the backstop
+    function test_sellForExit_costUnaffectedByAPushedUpPool() public {
         _ready();
         _initPoolAt(LOW_SQRT);
         uint256[] memory ids = _credits(seller, 1);
-        uint256 ethBid = core.ethRate();
-        uint256 xBefore = core.xPot();
+        uint256 id = ids[0];
+        uint256 want = _backstop(id);
         vm.prank(seller);
         core.sellForExitToken(ids);
-        uint256 exitPaid = xBefore - core.xPot();
-        uint256 valued = ctl.valueWei(exitPaid);
-        (, uint256 cost,) = core.creditInfo(ids[0]);
-        assertGt(valued, ethBid, "the exit token value binds above the eth bid");
-        assertEq(cost, valued, "the recorded eth cost is the exit tokens valued in wei");
+        (, uint256 cost,) = core.creditInfo(id);
+        assertEq(cost, want, "the recorded cost is the backstop, not the inflated pool value");
     }
 
-    /// a cheap exit token (a pushed down pool price) values the exit tokens below the eth bid, so the recorded cost
-    /// floors at the eth bid rate before the pot clamp and cannot go lower
-    function test_sellForExit_costFloorsAtTheEthBidWhenThePoolPriceIsPushedDown() public {
+    /// a pushed down pool price (a cheap exit token) does not move the recorded cost: it stays the backstop
+    function test_sellForExit_costUnaffectedByAPushedDownPool() public {
         _ready();
-        // the fixture pool is at a high sqrt price: the exit token is cheap, so its wei value is near zero
-        _setExitPool();
+        _initPoolAt(HIGH_SQRT);
         uint256[] memory ids = _credits(seller, 1);
-        uint256 ethBid = core.ethPrice();
-        assertGt(ethBid, 0, "the eth bid is nonzero");
-        uint256 xBefore = core.xPot();
+        uint256 id = ids[0];
+        uint32 rs = uint32(_score(id) / 4);
+        if (rs == 0) rs = 1;
+        vm.prank(owner);
+        ctl.setRefScore(rs);
+        uint256 want = _backstop(id);
         vm.prank(seller);
         core.sellForExitToken(ids);
-        uint256 exitPaid = xBefore - core.xPot();
-        uint256 valued = ctl.valueWei(exitPaid);
-        (, uint256 cost,) = core.creditInfo(ids[0]);
-        assertLt(valued, ethBid, "the pushed down pool price values the exit tokens below the eth bid");
-        assertEq(cost, ethBid, "the recorded eth cost floors at the eth bid rate before the clamp");
+        (, uint256 cost,) = core.creditInfo(id);
+        assertEq(cost, want, "the recorded cost is the backstop, not the pushed down pool value");
     }
 
-    /// with an empty eth pot the clamped bid is zero, but the recorded cost floors at the unclamped price state, not
-    /// zero, so a credit bought with the exit token is never resellable into the eth bid at a profit (H2). buying it
-    /// back costs at least `creditFloorBps` (1.1x) of that unclamped rate
-    function test_sellForExit_costFloorsAtTheUnclampedRateWithAnEmptyPot() public {
+    /// with an empty eth pot the recorded cost is still the peak backstop, nonzero, so a credit bought with the exit
+    /// token is never resellable into the eth bid at a profit. buying it back costs at least `creditFloorBps` of it
+    function test_sellForExit_costIsThePeakWithAnEmptyPot() public {
         _enterPhase2();
         xt.mint(address(core), 1e24);
         core.skim();
-        _setExitPool();
         assertEq(core.ethPot(), 0, "the eth pot is empty");
         assertEq(core.ethRate(), 0, "the clamped bid is zero with an empty pot");
-        uint256 priceState = core.ethPrice();
-        assertGt(priceState, 0, "the unclamped price state is nonzero");
+        uint256 peak = core.ethPeak();
+        assertGt(peak, 0, "the peak is nonzero");
 
         uint256[] memory ids = _credits(seller, 1);
-        uint256 xBefore = core.xPot();
+        uint256 id = ids[0];
+        vm.prank(owner);
+        ctl.setRefScore(8_000_000);
         vm.prank(seller);
         core.sellForExitToken(ids);
-        uint256 exitPaid = xBefore - core.xPot();
-        uint256 valued = ctl.valueWei(exitPaid);
-        (, uint256 cost,) = core.creditInfo(ids[0]);
-        assertLt(valued, priceState, "the cheap pool values the exit tokens below the price state");
-        assertEq(cost, priceState, "the recorded cost floors at the unclamped rate, not the clamped zero");
+        (, uint256 cost,) = core.creditInfo(id);
+        assertEq(cost, peak, "the recorded cost is the peak, not the clamped zero");
         assertGe(cost, 1, "the recorded cost is at least 1 wei");
 
         vm.prank(owner);
         ctl.setCreditSaleOn(true);
         vm.warp(block.timestamp + ctl.creditWindow());
-        uint256 floor = cost * ctl.creditFloorBps() / 10_000;
-        assertEq(ctl.creditPrice(ids[0]), floor, "the sale floor is 1.1x the recorded cost");
-        assertGe(ctl.creditPrice(ids[0]), priceState * 11_000 / 10_000, "buy back costs at least 1.1x the unclamped rate");
+        assertEq(ctl.creditPrice(id), cost * ctl.creditFloorBps() / BPS, "the sale floor is 1.1x the recorded cost");
     }
 
-    /// a pushed down pool price values a rich credit's exit tokens below its scaled eth backstop, so the recorded eth
-    /// cost is the backstop `ethBid * score / refScore`, not the manipulated pool value
-    function test_sellForExit_costRecordsTheScaledBackstop() public {
-        _ready();
-        _setExitPool(); // the fixture pool is cheap, so the exit tokens value below the eth bid
-        uint256[] memory ids = _credits(seller, 1);
-        uint256 id = ids[0];
-        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
-        uint32 rs = uint32(score / 4);
-        if (rs == 0) rs = 1;
-        vm.prank(owner);
-        ctl.setRefScore(rs);
-        uint256 ethBid = core.ethPrice();
-        uint256 xBefore = core.xPot();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        uint256 exitPaid = xBefore - core.xPot();
-        uint256 valued = ctl.valueWei(exitPaid);
-        (, uint256 cost,) = core.creditInfo(id);
-        uint256 backstop = ethBid * score / rs;
-        assertGt(backstop, ethBid, "the backstop scales above the unscaled bid for a rich credit");
-        assertLt(valued, backstop, "the pushed down pool values the exit tokens below the backstop");
-        assertEq(cost, backstop, "the recorded cost is the scaled backstop");
-    }
-
-    /// an inflated pool price records an inflated eth cost (an accepted residual, M1): the credit's sale is floored at
-    /// that cost by the core hard floor, so a sale below it reverts BelowFloor, and the statement built from the credit
-    /// still leaves the engine through redemption once its curve reaches the floor
-    function test_sellForExit_inflatedCostStillRedeems() public {
-        address buyer = _user("onepileBuyer");
-        _ready();
-        _initPoolAt(LOW_SQRT); // expensive exit token: the recorded cost is far above the eth market
-        uint256[] memory xIds = _credits(seller, 1);
-        vm.prank(seller);
-        core.sellForExitToken(xIds);
-        (, uint256 inflated,) = core.creditInfo(xIds[0]);
-        assertGt(inflated, core.ethPrice() * 100, "the recorded cost is far above the eth bid");
-
-        // a controller that quotes below the inflated cost is refused by the core hard floor
-        IControllerV1 saved = ctl;
-        LowballCreditController lowball = new LowballCreditController(address(core));
-        _setController(address(lowball));
-        vm.deal(address(lowball), inflated);
-        vm.expectRevert(ICore.BelowFloor.selector);
-        lowball.sell{value: inflated - 1}(xIds[0], buyer);
-        _setController(address(saved));
-
-        // compose the inflated credit with 79 eth credits into a statement, then redeem it once it is at its floor
-        _fillEthPile(79);
-        assertEq(core.pileSize(), 80, "a full page including the inflated credit");
-        uint256 supply = STATEMENTS.supply();
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.compose();
-        uint256 sid = supply + 1;
-        _makeEligible(sid);
-        assertTrue(ctl.atFloor(sid), "the statement reached its floor");
-        uint256 xBefore = core.xPot();
-        core.exitStatement(sid);
-        assertGt(core.xPot(), xBefore, "the statement left the engine through redemption");
-        (bool held,,) = core.statementInfo(sid);
-        assertFalse(held, "the statement is no longer held");
-    }
-
-    /// without the exit pool key the bid cannot value its cost basis, so it reverts
-    function test_sellForExit_revertsWithoutThePoolKey() public {
+    /// the bid works with no pool key set: the credit enters the pile and records its backstop
+    function test_sellForExit_worksWithoutThePoolKey() public {
         _ready();
         assertFalse(ctl.exitPoolKeySet(), "no pool key");
         uint256[] memory ids = _credits(seller, 1);
+        uint256 id = ids[0];
+        uint256 want = _backstop(id);
         vm.prank(seller);
-        vm.expectRevert(IControllerV1.NoExitPrice.selector);
         core.sellForExitToken(ids);
+        assertEq(CREDITS.ownerOf(id), address(core), "the credit entered the pile");
+        (bool inPile, uint256 cost,) = core.creditInfo(id);
+        assertTrue(inPile, "the credit is in the pile");
+        assertEq(cost, want, "the recorded cost is the backstop");
     }
 
     // ------------------------------------------------------------------ one pile, one compose

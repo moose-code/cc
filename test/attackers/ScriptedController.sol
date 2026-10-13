@@ -11,9 +11,6 @@ contract ScriptedController is IController {
     bool public revertPage;
     /// the eligibility answer the core reads for a phase 2 redemption
     bool public atFloorFlag;
-    /// the answer of `valueWei`, and whether the call reverts (an unset pool key)
-    uint256 public valueWeiAnswer;
-    bool public valueWeiReverts = true;
     /// the window answer the core reads for a chosen compose, and whether the call reverts
     bool public pastWindowFlag = true;
     bool public pastWindowReverts;
@@ -25,22 +22,6 @@ contract ScriptedController is IController {
 
     function atFloor(uint256) external view returns (bool) {
         return atFloorFlag;
-    }
-
-    /// sets the exit token value answer and clears the revert flag.
-    function setValueWei(uint256 v) external {
-        valueWeiAnswer = v;
-        valueWeiReverts = false;
-    }
-
-    /// makes `valueWei` revert, as an unset pool key does.
-    function setValueWeiReverts(bool on) external {
-        valueWeiReverts = on;
-    }
-
-    function valueWei(uint256) external view returns (uint256) {
-        if (valueWeiReverts) revert NoExitPrice();
-        return valueWeiAnswer;
     }
 
     /// sets the window answer.
@@ -74,6 +55,4 @@ contract ScriptedController is IController {
         if (revertPage) revert();
         return (pageReady, _pageIds, pageFormat);
     }
-
-    error NoExitPrice();
 }

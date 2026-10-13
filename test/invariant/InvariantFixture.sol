@@ -141,8 +141,8 @@ abstract contract InvariantFixture is Fixture {
             Settings memory es = core.settings();
             es.exitMode = 2;
             core.setSettings(es);
-            // the exit token / native eth pool prices the exit bid's eth cost basis and the statement value floor. a
-            // real initialized pool at a 1:1 sqrt price, pointed at by the real controller (`valueWei`, decision 92)
+            // the exit token / native eth pool prices the statement value floor and the credit sale baseline. a
+            // real initialized pool at a 1:1 sqrt price, pointed at by the real controller
             PoolKey memory vk = PoolKey({
                 currency0: Currency.wrap(address(0)),
                 currency1: Currency.wrap(address(xt)),
@@ -238,7 +238,7 @@ abstract contract InvariantFixture is Fixture {
             for (uint256 i; i < 80; ++i) {
                 exitIds[i] = ids[ethN + i];
             }
-            // the exit bid reads `valueWei` from the core's controller, so the real one must be in force (the hostile
+            // the exit bid reads `refScore` from the core's controller, so the real one is put in force (the hostile
             // suite set the fuzz controller). the credits enter the single pile with an eth cost basis
             address current = core.controller();
             if (current != address(ctl)) {

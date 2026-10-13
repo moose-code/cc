@@ -9,9 +9,6 @@ interface IController {
     /// excludes paused seconds, so eligibility is frozen while sales are paused. the core reads it to gate a phase 2
     /// redemption
     function atFloor(uint256 sid) external view returns (bool);
-    /// `exitTokenBaseUnits` priced in wei at the exit token pool. reverts when the pool key is
-    /// unset or the pool price reads zero. the core reads it in `sellForExitToken` to value the exit tokens paid
-    function valueWei(uint256 exitTokenBaseUnits) external view returns (uint256 priceWei);
     /// true when a credit acquired at `acquiredAt` may be composed: always while the credit sale is off, otherwise once
     /// the credit window has passed. the core reads it to gate a chosen compose
     function pastWindow(uint64 acquiredAt) external view returns (bool);
@@ -40,11 +37,13 @@ interface ICoreViews {
     function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
     /// wei per credit the eth bid pays now, the price state lowered to the pot
     function ethRate() external view returns (uint256);
-    /// wei per credit of the price state now, before the pot clamp `ethRate` applies. the credit sale floor reads it.
-    /// a sale that enlarges the pot cannot raise the rate the credit is priced against within the sale's block, because
-    /// `sellCreditTo` checkpoints the climbed rate before the pot grows. in later blocks the climb heads toward the
-    /// larger pot
+    /// wei per credit of the price state now, before the pot clamp `ethRate` applies. the cost basis of an adopted
+    /// credit is this price. in later blocks the climb heads toward the larger pot
     function ethPrice() external view returns (uint256);
+    /// wei per credit of the remembered peak of the eth bid decayed to now. it rises with fills and `setRate` and
+    /// falls only with time, so a pot or pool move cannot push it down within the block. the statement reference and
+    /// the credit backstop read it
+    function ethPeak() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose
     function ratingOf(uint256 sid) external view returns (uint256);
@@ -211,7 +210,8 @@ struct Sale {
 /// controller reads `saleOn`, `window`, `floorBps`, `startBps` and `refScore`
 struct Credit {
     // core
-    /// share of credit sale proceeds routed to the buying pot, bps. the rest funds the coin buyback. 0 to 10_000
+    /// share of the sold credit's cost booked to the buying pot, bps. the rest of the payment funds the coin buyback.
+    /// 0 to 10_000
     uint16 costToPotBps;
     /// whether a caller may name the 80 credits and the format of a compose through `composeChosen`
     bool chosenComposeOn;

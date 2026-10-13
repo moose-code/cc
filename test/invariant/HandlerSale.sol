@@ -255,8 +255,8 @@ abstract contract HandlerSale is HandlerOwner {
     }
 
     /// the refusal of `ControllerV1.buyCredit` in the order of its checks: the sale window, the pause, the price read
-    /// (`priceErr`, nonzero when `creditPrice` reverts, e.g. NoExitPrice while an exit module is set and the pool read
-    /// fails), the payment, then the core's `sellCreditTo`, which refuses any controller but the one the core named
+    /// (`priceErr`, nonzero when `creditPrice` reverts, e.g. NotForSale for a credit not in the pile), the payment,
+    /// then the core's `sellCreditTo`, which refuses any controller but the one the core named
     function _buyCreditRefusal(bool saleOn, bool paused_, bytes4 priceErr, bool short_, bool realCtl)
         internal
         pure
@@ -310,8 +310,7 @@ abstract contract HandlerSale is HandlerOwner {
             } catch (bytes memory reason) {
                 priced = false;
                 // the batch loop prices ids in order and reverts at the first credit whose price reverts, so the first
-                // reverting selector governs. the exit module and pool conditions behind the revert are the same for
-                // every credit, so that first credit is ids[0]
+                // reverting selector governs
                 if (priceErr == 0) priceErr = reason.length >= 4 ? bytes4(reason) : bytes4(0);
             }
         }
@@ -519,12 +518,12 @@ abstract contract HandlerSale is HandlerOwner {
         return ask < hard ? hard : ask;
     }
 
-    /// the price reference of statement `sid`: the larger of its cost and the eth bid rate before the pot clamp times
-    /// its rating over `refScore`, the same value the controller prices against. the product cannot overflow a word, so
-    /// the plain divide matches the controller `mulDiv`
+    /// the price reference of statement `sid`: the larger of its cost and the peak of the eth bid times its rating over
+    /// `refScore`, the same value the controller prices against. the product cannot overflow a word, so the plain
+    /// divide matches the controller `mulDiv`
     function _modelRef(uint256 sid, uint256 cost) internal view returns (uint256) {
         uint256 rating = core.ratingOf(sid);
-        uint256 rate = core.ethPrice() * rating / uint256(IControllerV1(v1).refScore());
+        uint256 rate = core.ethPeak() * rating / uint256(IControllerV1(v1).refScore());
         return rate > cost ? rate : cost;
     }
 

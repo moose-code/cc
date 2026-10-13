@@ -83,7 +83,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error ExitTokenChanged();
     /// the action is not allowed in the current `exitMode`
     error ExitModeOff();
-    /// `exitStatement`: the statement's asking price is above its stored cost, or the controller did not answer
+    /// `exitStatement`: the controller's `atFloor` is false (the curve price has not reached its floor) or the
+    /// controller did not answer
     error NotEligible();
     /// the door `what` ("controller", "exitModule" or "targets") was locked by the owner
     error Locked(bytes32 what);
@@ -112,7 +113,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error NotHolder();
     /// `migrate` with no successor set
     error NoSuccessor();
-    /// `sellForEth`, `buyListing`, `sellForExitToken`, `adopt` or `compose` after `migrate`
+    /// `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`, `compose` or `composeChosen` after `migrate`
     error Retired();
     /// `setSuccessor` with the core or a contract the core works with
     error BadSuccessor(address who);
@@ -257,7 +258,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     address public successor;
     bool public successorLocked;
     /// set by the first `migrate`, one way. a retired core refuses `sellForEth`, `buyListing`, `sellForExitToken`,
-    /// `adopt` and `compose` with `Retired`
+    /// `adopt`, `compose` and `composeChosen` with `Retired`
     bool public retired;
 
     /// share of a sold credit's cost booked to ethPot in `sellCreditTo`, the rest of the payment to ethToBuyback.
@@ -402,6 +403,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// price state does not climb. the cost basis of an adopted credit is this price
     function ethPrice() external view returns (uint256 price) {
         (price,) = _climb();
+    }
+
+    /// wei per credit of the remembered peak of the eth bid decayed to now: `peakRate` halved every `peakHalfLife`
+    /// since `peakTime`. it rises with fills and `setRate` and falls only with time, so a sale within the block does
+    /// not lower it. the engine's price floors read it as the rate that a pot or pool move cannot push down. the math
+    /// is in `CoreLib.peak`
+    function ethPeak() external view returns (uint256) {
+        return CoreLib.peak(block.timestamp);
     }
 
     function _checkpoint() private {
@@ -753,9 +762,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         CREDITS.transferFrom(address(this), buyer, id);
         uint256 toPot = cost * creditCostToPotBps / BPS;
         ethToBuyback += msg.value - toPot;
-        // checkpoint before the pot grows: `ethPrice` is `rateAtCheckpoint` climbed to now, and the climb is bounded by
-        // the pot. checkpointing freezes the climbed rate at this block, so `ethPot += toPot` cannot raise `ethPrice`
-        // within the block. the credit sale floor is priced against `ethPrice`
+        // checkpoint the climbed rate before the pot grows, so a credit sale cannot raise the eth bid read within its
+        // own block
         _checkpoint();
         ethPot += toPot;
         emit CreditSold(id, buyer, msg.value);

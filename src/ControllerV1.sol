@@ -13,8 +13,8 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// first policy module. composes the oldest 80 pile credits with format 0.
-/// it prices and sells statements. a statement's price reference is the larger of its cost and the eth bid rate before
-/// the pot clamp times its rating over `refScore`, computed at each call. the rate term prices the rating at the
+/// it prices and sells statements. a statement's price reference is the larger of its cost and the remembered peak of
+/// the eth bid times its rating over `refScore`, computed at each call. the rate term prices the rating at the
 /// engine's average credit price, so two statements of the same rating reference the same amount once the rate term
 /// binds, whatever each credit cost. `refScore` is an owner setting in the
 /// per-credit score unit (one ten-thousandth of a point). the asking price is a fraction of the reference in bps that
@@ -55,14 +55,8 @@ contract ControllerV1 is IController {
     error Underpaid();
     error Reentrant();
     error Paused();
-    /// the exit token baseline cannot be priced. `valueWei` reverts it for an unset pool key or a zero pool price. the
-    /// credit sale reverts it for the same two and, while an exit module is set, for a failed or zero live
-    /// `unitPerPoint` read
-    error NoExitPrice();
     /// a credit sale door was called while the credit sale window is off
     error CreditSaleOff();
-    /// a credit's score times the live unit overflows a 256 bit word
-    error BaselineOverflow();
 
     event MarkupBpsSet(uint16 markupBps);
     event StartCapBpsSet(uint32 startCapBps);
@@ -105,8 +99,8 @@ contract ControllerV1 is IController {
     /// lowest asking price, bps of the reference. 1_000 to the smaller of 10_000 and `kneeBps`
     uint16 public floorBps;
     /// the per-credit score the statement reference divides the rating by, in ten-thousandths of a point. the reference
-    /// is the larger of cost and the eth bid rate times rating over `refScore`, so a lower `refScore` lifts the rate
-    /// term. 1 to 8_000_000
+    /// is the larger of cost and the peak of the eth bid times rating over `refScore`, so a lower `refScore` lifts the
+    /// rate term. 1 to 8_000_000
     uint32 public refScore;
     /// the anchor at `anchorTime`, bps of the reference. 10_000 to `startCapBps`. `anchorBps()` is the value now
     uint32 public storedAnchorBps;
@@ -336,21 +330,20 @@ contract ControllerV1 is IController {
         return start < startCapBps ? start : startCapBps;
     }
 
-    /// the price reference of statement `sid`, wei: the larger of its cost and the eth bid rate before the pot clamp
-    /// times its rating over `refScore`. the curve prices in bps of this value. reverts `NotForSale` for a statement
-    /// the core does not hold
+    /// the price reference of statement `sid`, wei: the larger of its cost and the peak of the eth bid times its rating
+    /// over `refScore`. the curve prices in bps of this value. reverts `NotForSale` for a statement the core does not
+    /// hold
     function referenceOf(uint256 sid) public view returns (uint256) {
         (bool held, uint256 cost,) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
         return _reference(cost, CORE.ratingOf(sid));
     }
 
-    /// the larger of `cost` and `CORE.ethPrice()` times `rating` over `refScore`. `ethPrice` is the eth bid rate before
-    /// the pot clamp, so a `sellTo` that enlarges the pot leaves the rate this reads unchanged within the block: the
-    /// core checkpoints the climbed rate before the pot grows, and the climb heads toward the larger pot only in later
-    /// blocks. one `mulDiv`, so the rate term divides at full precision
+    /// the larger of `cost` and `CORE.ethPeak()` times `rating` over `refScore`. the peak rises with fills and falls
+    /// only with time, so a sale within the block cannot push this reference down. one `mulDiv`, so the rate term
+    /// divides at full precision
     function _reference(uint256 cost, uint256 rating) private view returns (uint256) {
-        uint256 rate = FullMath.mulDiv(CORE.ethPrice(), rating, refScore);
+        uint256 rate = FullMath.mulDiv(CORE.ethPeak(), rating, refScore);
         return rate > cost ? rate : cost;
     }
 
@@ -397,8 +390,8 @@ contract ControllerV1 is IController {
     /// baseline and the score-scaled eth backstop, times `creditFloorBps`. the start is the floor times
     /// `creditStartBps`. the price falls in a straight line from the start at the acquisition time to the floor at the
     /// acquisition time plus `creditWindow`, and rests at the floor after. reverts `NotForSale` for a credit not in the
-    /// pile and `NoExitPrice` while an exit module is set and the baseline cannot be priced. answers whether or not the
-    /// sale is on
+    /// pile. a missing or failed exit token price leaves the baseline at 0, so the sale never reverts for it. answers
+    /// whether or not the sale is on
     function creditPrice(uint256 id) public view returns (uint256 price) {
         (bool inPile, uint256 cost, uint64 acquiredAt) = CORE.creditInfo(id);
         if (!inPile) revert NotForSale();
@@ -415,50 +408,41 @@ contract ControllerV1 is IController {
         price = start - (start - floor) * age / creditWindow;
     }
 
-    /// the exit token baseline in wei: `score` times the lower of the stored and live `unitPerPoint`, priced at the
-    /// exit token pool, the same read the statement value floor uses. zero when no exit module is set. with a module
-    /// set it reverts `NoExitPrice` for a failed or zero live unit read, an unset pool key or a zero pool price, and
-    /// `BaselineOverflow` when `score` times unit overflows a word. a zero `score` or unit gives zero once the pool
-    /// prices, so a failed score read leaves the floor to the cost and backstop terms
+    /// the exit token redemption value of a credit of `score` in wei, read from the exit token pool, the same read the
+    /// statement value floor uses. it only lifts the credit floor. zero when no exit module is set, the pool key is
+    /// unset, the live unit read fails or is zero, the pool price reads zero, or `score` or the unit is zero. `score`
+    /// is at most 8_000_000 and the unit is taken as at most uint128.max, so `score * unit` is below 2^151 and the
+    /// pool pricing cannot overflow. never reverts: a missing or failed read gives 0
     function _baseline(uint256 score) private view returns (uint256) {
         address module = CORE.exitModule();
         if (module == address(0)) return 0;
-        uint256 unit = CORE.unitPerPoint();
         (uint256 live, bool ok) = _liveUnit(module);
-        if (!ok || live == 0) revert NoExitPrice();
+        if (!ok || live == 0) return 0;
+        uint256 unit = CORE.unitPerPoint();
         if (live < unit) unit = live;
-        uint256 owed;
-        if (score != 0 && unit != 0) {
-            if (unit > type(uint256).max / score) revert BaselineOverflow();
-            owed = score * unit;
-        }
-        (uint256 priceWei, bool priced) = _priceBaseUnits(owed);
-        if (!priced) revert NoExitPrice();
-        return priceWei;
+        if (unit > type(uint128).max) unit = type(uint128).max;
+        (uint256 priceWei, bool priced) = _priceBaseUnits(score * unit);
+        return priced ? priceWei : 0;
     }
 
-    /// the score-scaled eth backstop of a credit in wei: `ethPrice` when `score` is at or below `refScore`, else
-    /// `ethPrice * score / refScore`, the scaling the statement reference applies. `ethPrice` is the eth bid rate
-    /// before the pot clamp, so a sale through `sellCreditTo` that enlarges the pot cannot raise the rate the credit is
-    /// priced against within the block. a `score` of zero (a failed score read) gives the unscaled rate
+    /// the score-scaled eth backstop of a credit in wei: `ethPeak` when `score` is at or below `refScore`, else
+    /// `ethPeak * score / refScore`, the scaling the statement reference applies. the peak rises with fills and falls
+    /// only with time, so neither a pot move nor a pool move can push the rate the credit is priced against down within
+    /// the block. a `score` of zero (a failed score read) gives the unscaled rate
     function _backstop(uint256 score) private view returns (uint256) {
-        uint256 eth = CORE.ethPrice();
+        uint256 eth = CORE.ethPeak();
         uint256 rs = refScore;
         if (score <= rs) return eth;
         return FullMath.mulDiv(eth, score, rs);
     }
 
     /// the credit score of `id` from the credit score contract, the same `scoreOf(seed, paidAt)` source the exit token
-    /// bid reads in `sellForExitToken`, through a bounded staticcall of at most `READ_GAS`. a revert or a short answer
-    /// reads as 0. `seedOf` and `timestampOf` are read directly: `creditPrice` calls this only for a credit the core
-    /// holds in the pile, so those reads cannot revert
+    /// bid reads in `sellForExitToken`. `scoreOf` is pure on a fixed verified contract, so the call is direct.
+    /// `creditPrice` calls this only for a credit the core holds in the pile, so the reads cannot revert
     function _scoreOf(uint256 id) private view returns (uint256) {
-        bytes21 seed = ICredits(Mainnet.CREDITS).seedOf(id);
-        uint64 paidAt = ICredits(Mainnet.CREDITS).timestampOf(id);
-        (bool ok, bytes memory out) = Mainnet.CREDIT_SCORE.staticcall{gas: READ_GAS}(
-            abi.encodeWithSelector(ICreditScore.scoreOf.selector, seed, paidAt)
+        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(
+            ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id)
         );
-        return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
     }
 
     /// true when credit acquired at `acquiredAt` may be composed: always while the sale is off, otherwise once
@@ -483,7 +467,7 @@ contract ControllerV1 is IController {
     }
 
     /// pays the sale prices of `ids` in order, gets the credits, and refunds the excess last. each credit is priced at
-    /// the state left by the previous sale. the eth backstop reads `ethPrice`, which a credit sale leaves unchanged for
+    /// the state left by the previous sale. the eth backstop reads `ethPeak`, which a credit sale leaves unchanged for
     /// the rest of the block, so within one batch a credit's price moves only through its own cost, baseline and age.
     /// reverts `CreditSaleOff` while the sale is off and `Paused` while sales are paused
     function buyCredits(uint256[] calldata ids) external payable {
@@ -544,15 +528,6 @@ contract ControllerV1 is IController {
         if (owed == 0) return 0;
         (uint256 priceWei, bool priced) = _priceBaseUnits(owed);
         return priced ? priceWei : 0;
-    }
-
-    /// `exitTokenBaseUnits` priced in wei at the exit token pool. reverts `NoExitPrice` when the pool key is unset or
-    /// the pool sqrt price reads zero. the core reads it in `sellForExitToken` to value the exit tokens a credit was
-    /// bought for
-    function valueWei(uint256 exitTokenBaseUnits) external view returns (uint256 priceWei) {
-        bool priced;
-        (priceWei, priced) = _priceBaseUnits(exitTokenBaseUnits);
-        if (!priced) revert NoExitPrice();
     }
 
     /// `baseUnits` of the exit token priced in wei at the exit token pool. `priced` is false when the pool key is

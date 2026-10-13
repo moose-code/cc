@@ -43,6 +43,7 @@ interface ICoreLib {
         external
         view
         returns (uint256 price, uint256 read);
+    function peak(uint256 nowTs) external view returns (uint256);
     function unpack(uint256 a, uint256 b, uint256 c) external pure returns (Settings memory s);
 
     function swapIn(address manager, address coin, uint24 fee, int24 spacing, address hook, uint256 amountIn)

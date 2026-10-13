@@ -133,6 +133,7 @@ interface ICore {
     function controllerLocked() external view returns (bool);
     function creditCostToPotBps() external view returns (uint16);
     function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
+    function ethPeak() external view returns (uint256);
     function ethPot() external view returns (uint256);
     function ethPrice() external view returns (uint256 price);
     function ethRate() external view returns (uint256 read);

@@ -220,11 +220,12 @@ contract LensTest is Fixture {
             assertEq(v[i].askingPrice, ctl.priceOf(v[i].id), "the controller price");
             assertGt(v[i].askingPrice, 0);
         }
-        assertLt(ctl.priceOf(first) * 1e18 / _costOf(first), ctl.priceOf(second) * 1e18 / _costOf(second), "older is cheaper");
-    }
-
-    function _costOf(uint256 sid) internal view returns (uint256 cost) {
-        (, cost,) = core.statementInfo(sid);
+        // in fractions of each statement's reference (the age curve), the older statement is further down the curve
+        assertLt(
+            ctl.priceOf(first) * 1e18 / ctl.referenceOf(first),
+            ctl.priceOf(second) * 1e18 / ctl.referenceOf(second),
+            "older is cheaper"
+        );
     }
 
     /// the lens requires the answer size of `nextPage` that the Core requires, so both agree on a short answer
