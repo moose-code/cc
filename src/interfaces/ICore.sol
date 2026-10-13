@@ -66,6 +66,7 @@ interface ICore {
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event CreditCostToPotBpsSet(uint16 bps);
+    event CreditSold(uint256 indexed id, address indexed buyer, uint256 price);
     event EngineRetired(address indexed successor);
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     event ExitModuleLocked();
@@ -149,6 +150,7 @@ interface ICore {
     function rescueCoin(address, uint256) external;
     function rescueNft(address, uint256, address) external;
     function retired() external view returns (bool);
+    function sellCreditTo(uint256 id, address buyer) external payable;
     function sellForEth(uint256[] memory ids, uint256 minOut) external;
     function sellForEth(uint256[] memory ids) external;
     function sellForExitToken(uint256[] memory ids) external;

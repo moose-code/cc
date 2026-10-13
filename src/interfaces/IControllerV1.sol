@@ -15,6 +15,7 @@ interface IControllerV1 {
     }
 
     error BadSetting(bytes32 field);
+    error CreditSaleOff();
     error NoExitPrice();
     error NotForSale();
     error OnlyOwner();
@@ -27,6 +28,11 @@ interface IControllerV1 {
     event AnchorMinCostSet(uint128 anchorMinCost);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
+    event CreditFloorBpsSet(uint16 creditFloorBps);
+    event CreditSaleOnSet(bool on);
+    event CreditScoreModuleSet(address creditScoreModule);
+    event CreditStartBpsSet(uint32 creditStartBps);
+    event CreditWindowSet(uint32 creditWindow);
     event ExitPoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
     event FastDecayBpsPerHourSet(uint16 fastDecayBpsPerHour);
     event FloorBpsSet(uint16 floorBps);
@@ -43,6 +49,14 @@ interface IControllerV1 {
     function anchorTime() external view returns (uint40);
     function atCost(uint256 sid) external view returns (bool);
     function buy(uint256 sid) external payable;
+    function buyCredit(uint256 id) external payable;
+    function buyCredits(uint256[] memory ids) external payable;
+    function creditFloorBps() external view returns (uint16);
+    function creditPrice(uint256 id) external view returns (uint256 price);
+    function creditSaleOn() external view returns (bool);
+    function creditScoreModule() external view returns (address);
+    function creditStartBps() external view returns (uint32);
+    function creditWindow() external view returns (uint32);
     function exitPoolKey()
         external
         view
@@ -53,11 +67,17 @@ interface IControllerV1 {
     function kneeBps() external view returns (uint32);
     function markupBps() external view returns (uint16);
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
+    function pastWindow(uint64 acquiredAt) external view returns (bool);
     function paused() external view returns (bool);
     function priceOf(uint256 sid) external view returns (uint256 price);
     function setAnchorBps(uint32 v) external;
     function setAnchorHalfLife(uint32 v) external;
     function setAnchorMinCost(uint128 v) external;
+    function setCreditFloorBps(uint16 v) external;
+    function setCreditSaleOn(bool v) external;
+    function setCreditScoreModule(address v) external;
+    function setCreditStartBps(uint32 v) external;
+    function setCreditWindow(uint32 v) external;
     function setExitPoolKey(PoolKey memory key) external;
     function setFastDecayBpsPerHour(uint16 v) external;
     function setFloorBps(uint16 v) external;

@@ -163,7 +163,7 @@ contract PostflightSlotsTest is Fixture {
 
     function test_oneDivergentControllerSiteFailsPostflight() public {
         uint256[] memory sites = _immutableSites("ControllerV1", 0);
-        assertEq(sites.length, 16);
+        assertEq(sites.length, 25);
         for (uint256 s; s < sites.length; ++s) {
             bytes memory k = address(ctl).code;
             k[sites[s] + 31] = bytes1(uint8(k[sites[s] + 31]) ^ 1);

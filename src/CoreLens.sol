@@ -58,6 +58,9 @@ contract CoreLens {
         bool exitModuleLocked;
         bool targetsLocked;
         bool successorLocked;
+        /// whether the controller's credit sale window is on, and the seconds a credit's price falls over
+        bool creditSaleOn;
+        uint256 creditWindow;
         StatementView[] statements;
     }
 
@@ -118,6 +121,24 @@ contract CoreLens {
         s.exitModuleLocked = core.exitModuleLocked();
         s.targetsLocked = core.targetsLocked();
         s.successorLocked = core.successorLocked();
+        (s.creditSaleOn, s.creditWindow) = _creditWindow(s.controller);
+    }
+
+    /// the controller's credit sale state: whether the sale is on and the window length. a controller that does not
+    /// answer with one word reads as off with a zero window
+    function _creditWindow(address ctl) private view returns (bool on, uint256 window) {
+        (bool ok, bytes memory out) = ctl.staticcall{gas: ASK_GAS}(abi.encodeWithSignature("creditSaleOn()"));
+        on = ok && out.length == 32 && abi.decode(out, (bool));
+        (ok, out) = ctl.staticcall{gas: ASK_GAS}(abi.encodeWithSignature("creditWindow()"));
+        if (ok && out.length == 32) window = abi.decode(out, (uint256));
+    }
+
+    /// the controller's sale price of pile credit `id` now, wei. zero when the controller does not answer with one word
+    /// (a credit not in the pile, or a controller without the credit sale window)
+    function creditPriceOf(uint256 id) external view returns (uint256 price) {
+        (bool ok, bytes memory out) =
+            controller().staticcall{gas: ASK_GAS}(abi.encodeWithSignature("creditPrice(uint256)", id));
+        if (ok && out.length == 32) price = abi.decode(out, (uint256));
     }
 
     /// the oldest credit of the pile, zero when the pile is empty

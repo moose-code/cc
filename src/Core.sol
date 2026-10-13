@@ -128,6 +128,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the controller sold a statement: the buyer, the price paid and the part of it booked to the coin buyback (the
     /// rest went to the pot)
     event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback);
+    /// the controller sold a pile credit through the credit sale window: the buyer and the price paid
+    event CreditSold(uint256 indexed id, address indexed buyer, uint256 price);
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
     event OwnershipTransferred(address indexed from, address indexed to);
     event ControllerLocked();
@@ -683,6 +685,25 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _checkpoint();
         ethPot += msg.value - toBuyback;
         emit StatementSoldTo(sid, buyer, msg.value, toBuyback);
+    }
+
+    /// the controller sells pile credit `id` to `buyer` for `msg.value`. the payment is at least the credit's cost: no
+    /// credit leaves the pot for less than it was bought for, whatever the controller quotes. `creditCostToPotBps` of
+    /// the cost goes to the pot and the rest of the payment to the coin buyback, so the markup over cost funds a coin
+    /// buy and burn. the controller refunds its own caller
+    function sellCreditTo(uint256 id, address buyer) external payable nonReentrant {
+        if (msg.sender != controller) revert OnlyController();
+        CoreLib.Credit storage c = _credits[id];
+        if (!c.inPile) revert NotInPile(id);
+        uint256 cost = c.cost;
+        if (msg.value < cost) revert BelowFloor();
+        _pull(id);
+        CREDITS.transferFrom(address(this), buyer, id);
+        uint256 toPot = cost * creditCostToPotBps / BPS;
+        ethToBuyback += msg.value - toPot;
+        _checkpoint();
+        ethPot += toPot;
+        emit CreditSold(id, buyer, msg.value);
     }
 
     /*//////////////////////////////////////////////////////////////

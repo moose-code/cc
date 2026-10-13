@@ -49,6 +49,8 @@ contract ControllerV1 is IController {
     error Paused();
     /// `valueWei`: the exit token pool key is unset or the pool price reads zero
     error NoExitPrice();
+    /// a credit sale door was called while the credit sale window is off
+    error CreditSaleOff();
 
     event MarkupBpsSet(uint16 markupBps);
     event StartCapBpsSet(uint32 startCapBps);
@@ -63,6 +65,11 @@ contract ControllerV1 is IController {
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event ExitPoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
+    event CreditSaleOnSet(bool on);
+    event CreditWindowSet(uint32 creditWindow);
+    event CreditFloorBpsSet(uint16 creditFloorBps);
+    event CreditStartBpsSet(uint32 creditStartBps);
+    event CreditScoreModuleSet(address creditScoreModule);
 
     /// one pause of sales: a single storage slot
     struct PauseWindow {
@@ -106,6 +113,21 @@ contract ControllerV1 is IController {
     /// last window is open and its `end` is 0. `pausedBefore` is the paused seconds of windows `0` to `i - 1`
     PauseWindow[] private _pauses;
 
+    /// whether pile credits are for sale from their acquisition time and compose waits for a credit's window to pass.
+    /// launch value false
+    bool public creditSaleOn;
+    /// seconds a credit's price falls over before it rests at the floor, and the time a credit must sit before compose
+    /// may take it. 1 minute to 30 days
+    uint32 public creditWindow;
+    /// the credit sale floor over the highest of the credit's cost, its exit token baseline and the current eth bid,
+    /// bps. 10_000 to 40_000
+    uint16 public creditFloorBps;
+    /// the credit sale start price over the floor, bps. 10_000 to 200_000
+    uint32 public creditStartBps;
+    /// the module read for a credit's score in the exit token baseline, through `scoreOf(uint256)`. zero gives a zero
+    /// baseline. launch value zero
+    address public creditScoreModule;
+
     constructor(address core, Sale memory sale) {
         CORE = ICoreViews(core);
         if (sale.markupBps < BPS || sale.markupBps > 40_000) revert BadSetting("markupBps");
@@ -127,6 +149,10 @@ contract ControllerV1 is IController {
         storedAnchorBps = uint32(BPS);
         // forge-lint: disable-next-line(unsafe-typecast)
         anchorTime = uint40(block.timestamp);
+        // credit sale window launch values. the owner turns the sale on and adjusts these at once
+        creditWindow = 4 hours;
+        creditFloorBps = 11_000;
+        creditStartBps = 30_000;
     }
 
     modifier onlyOwner() {
@@ -239,6 +265,42 @@ contract ControllerV1 is IController {
         emit ExitPoolKeySet(c0, c1, key.fee, key.tickSpacing, address(key.hooks));
     }
 
+    // ------------------------------------------------------------------ credit sale settings, owner, at once
+
+    /// turns the credit sale window on or off. while on, pile credits are for sale through `buyCredit` and compose
+    /// takes only credits past their window
+    function setCreditSaleOn(bool v) external onlyOwner {
+        creditSaleOn = v;
+        emit CreditSaleOnSet(v);
+    }
+
+    /// 1 minute to 30 days
+    function setCreditWindow(uint32 v) external onlyOwner {
+        if (v < 1 minutes || v > 30 days) revert BadSetting("creditWindow");
+        creditWindow = v;
+        emit CreditWindowSet(v);
+    }
+
+    /// 10_000 to 40_000
+    function setCreditFloorBps(uint16 v) external onlyOwner {
+        if (v < BPS || v > 40_000) revert BadSetting("creditFloorBps");
+        creditFloorBps = v;
+        emit CreditFloorBpsSet(v);
+    }
+
+    /// 10_000 to 200_000
+    function setCreditStartBps(uint32 v) external onlyOwner {
+        if (v < BPS || v > 200_000) revert BadSetting("creditStartBps");
+        creditStartBps = v;
+        emit CreditStartBpsSet(v);
+    }
+
+    /// the module read for a credit's score in the exit token baseline. the zero address gives a zero baseline
+    function setCreditScoreModule(address v) external onlyOwner {
+        creditScoreModule = v;
+        emit CreditScoreModuleSet(v);
+    }
+
     // ------------------------------------------------------------------ pricing and sale
 
     /// the running level of sale prices now, bps of cost: 10_000 plus the part of `storedAnchorBps` above 10_000,
@@ -287,6 +349,97 @@ contract ControllerV1 is IController {
         ICoreSale(address(CORE)).sellTo{value: price}(sid, msg.sender);
         emit Bought(sid, msg.sender, price);
         if (msg.value > price) SafeTransferLib.safeTransferETH(msg.sender, msg.value - price);
+        _busy = false;
+    }
+
+    // ------------------------------------------------------------------ credit sale window
+
+    /// the sale price of pile credit `id` now, wei. the floor is the highest of the credit's cost, its exit token
+    /// baseline and the current eth bid, times `creditFloorBps`. the start is the floor times `creditStartBps`. the
+    /// price falls in a straight line from the start at the acquisition time to the floor at the acquisition time plus
+    /// `creditWindow`, and rests at the floor after. reverts `NotForSale` for a credit not in the pile. answers whether
+    /// or not the sale is on
+    function creditPrice(uint256 id) public view returns (uint256 price) {
+        (bool inPile, uint256 cost, uint64 acquiredAt) = CORE.creditInfo(id);
+        if (!inPile) revert NotForSale();
+        uint256 hi = cost;
+        uint256 base = _baseline(id);
+        if (base > hi) hi = base;
+        uint256 bid = CORE.ethRate();
+        if (bid > hi) hi = bid;
+        uint256 floor = hi * creditFloorBps / BPS;
+        uint256 start = floor * creditStartBps / BPS;
+        uint256 age = block.timestamp - acquiredAt;
+        if (age >= creditWindow) return floor;
+        price = start - (start - floor) * age / creditWindow;
+    }
+
+    /// the exit token baseline of credit `id` in wei: its score times the lower of the stored and live `unitPerPoint`,
+    /// priced at the exit token pool, the same read the statement value floor uses. zero when the credit score module
+    /// is unset, no exit module is set, the pool key is unset, the score reads zero, or the pool price reads zero. a
+    /// failing module call does not revert the sale
+    function _baseline(uint256 id) private view returns (uint256) {
+        address scoreMod = creditScoreModule;
+        if (scoreMod == address(0) || !exitPoolKeySet) return 0;
+        address module = CORE.exitModule();
+        if (module == address(0)) return 0;
+        uint256 unit = CORE.unitPerPoint();
+        uint256 live = _liveUnit(module);
+        if (live < unit) unit = live;
+        uint256 owed = _scoreOf(scoreMod, id) * unit;
+        if (owed == 0) return 0;
+        (uint256 priceWei, bool priced) = _priceBaseUnits(owed);
+        return priced ? priceWei : 0;
+    }
+
+    /// the score of credit `id` from the credit score module, read with at most `READ_GAS`. a revert or a short answer
+    /// reads as 0
+    function _scoreOf(address module, uint256 id) private view returns (uint256) {
+        (bool ok, bytes memory out) = module.staticcall{gas: READ_GAS}(abi.encodeWithSignature("scoreOf(uint256)", id));
+        return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
+    }
+
+    /// true when credit acquired at `acquiredAt` may be composed: always while the sale is off, otherwise once
+    /// `creditWindow` has passed since its acquisition. the core and chosen composition test one credit with it
+    function pastWindow(uint64 acquiredAt) public view returns (bool) {
+        if (!creditSaleOn) return true;
+        return uint256(acquiredAt) + creditWindow <= block.timestamp;
+    }
+
+    /// pays the sale price of credit `id`, gets the credit at once, and refunds the excess of `msg.value` last. reverts
+    /// `CreditSaleOff` while the sale is off and `Paused` while sales are paused
+    function buyCredit(uint256 id) external payable {
+        if (!creditSaleOn) revert CreditSaleOff();
+        if (paused) revert Paused();
+        if (_busy) revert Reentrant();
+        _busy = true;
+        uint256 price = creditPrice(id);
+        if (msg.value < price) revert Underpaid();
+        ICoreSale(address(CORE)).sellCreditTo{value: price}(id, msg.sender);
+        if (msg.value > price) SafeTransferLib.safeTransferETH(msg.sender, msg.value - price);
+        _busy = false;
+    }
+
+    /// pays the sum of the sale prices of `ids`, gets the credits, and refunds the excess last. each price is read
+    /// before any sale, so the batch total is fixed and a sale does not raise the price of a later credit in the same
+    /// batch. reverts `CreditSaleOff` while the sale is off and `Paused` while sales are paused
+    function buyCredits(uint256[] calldata ids) external payable {
+        if (!creditSaleOn) revert CreditSaleOff();
+        if (paused) revert Paused();
+        if (_busy) revert Reentrant();
+        _busy = true;
+        uint256 n = ids.length;
+        uint256[] memory prices = new uint256[](n);
+        uint256 total;
+        for (uint256 i; i < n; ++i) {
+            prices[i] = creditPrice(ids[i]);
+            total += prices[i];
+        }
+        if (msg.value < total) revert Underpaid();
+        for (uint256 i; i < n; ++i) {
+            ICoreSale(address(CORE)).sellCreditTo{value: prices[i]}(ids[i], msg.sender);
+        }
+        if (msg.value > total) SafeTransferLib.safeTransferETH(msg.sender, msg.value - total);
         _busy = false;
     }
 
@@ -423,10 +576,16 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ credit picking, unchanged
 
-    /// ready when the pile holds a full page. the page is the 80 oldest credits with format 0.
+    /// ready when the pile holds a full page. the page is the 80 oldest credits with format 0. while the credit sale is
+    /// on the page is ready only once the newest of its 80 credits is past its window; the pile is oldest first, so that
+    /// credit is the last of the page
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format) {
         if (CORE.pileSize() < PAGE) return (false, ids, 0);
         uint256[] memory page = CORE.pilePage(0, PAGE);
+        if (creditSaleOn) {
+            (,, uint64 acquiredAt) = CORE.creditInfo(page[PAGE - 1]);
+            if (!pastWindow(acquiredAt)) return (false, ids, 0);
+        }
         for (uint256 i; i < PAGE; ++i) {
             ids[i] = page[i];
         }

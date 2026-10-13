@@ -29,6 +29,8 @@ interface ICoreLens {
         bool exitModuleLocked;
         bool targetsLocked;
         bool successorLocked;
+        bool creditSaleOn;
+        uint256 creditWindow;
         StatementView[] statements;
     }
 
@@ -46,6 +48,7 @@ interface ICoreLens {
     function ROUTER() external view returns (address);
     function STATEMENTS() external view returns (address);
     function controller() external view returns (address);
+    function creditPriceOf(uint256 id) external view returns (uint256 price);
     function exitBidOf(uint256 id) external view returns (uint256);
     function snapshot() external view returns (Snapshot memory s);
     function statementsPage(uint256 start, uint256 n) external view returns (StatementView[] memory);

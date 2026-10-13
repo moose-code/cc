@@ -35,6 +35,8 @@ interface ICoreViews {
     function pileSize() external view returns (uint256);
     function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids); // startAfter 0 starts at head
     function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
+    /// wei per credit the eth bid pays now, the current bid used in the credit sale floor
+    function ethRate() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose
     function ratingOf(uint256 sid) external view returns (uint256);
@@ -45,11 +47,14 @@ interface ICoreViews {
     function unitPerPoint() external view returns (uint256);
 }
 
-/// what the controller needs of the core beyond the views: the live owner and the one door that sells a statement
+/// what the controller needs of the core beyond the views: the live owner and the two doors that sell custody out, a
+/// statement and a pile credit
 interface ICoreSale {
     function owner() external view returns (address);
     function settings() external view returns (Settings memory);
     function sellTo(uint256 sid, address buyer) external payable;
+    /// sends pile credit `id` to `buyer` for `msg.value`, at least the credit's cost. only the controller
+    function sellCreditTo(uint256 id, address buyer) external payable;
 }
 
 /// the coin calls the core makes. the live token burns from the caller or from an account that approved the caller
