@@ -8,7 +8,7 @@ the baton for the session that directs this project next. read this file, then r
 |---|---|
 | AGENTS.md | precedence between the sources below |
 | docs/ARCHITECTURE.md | the current reading of intent and of the system. section 1 "current intent at a glance" lists guarantees, behavior, parameters and accepted risks with their decision numbers and status |
-| docs/FLOW.md | the dated owner decision log, decisions 1 to 108. a later dated decision supersedes an earlier one |
+| docs/FLOW.md | the dated owner decision log, decisions 1 to 112. a later dated decision supersedes an earlier one |
 | docs/NEXT.md | the change list: decided, built, reviewed |
 | project/director-state.json | the objective, open owner decisions, gates. `python3 script/director.py status` |
 | project/evidence.json | the evidence ledger with the assumptions each record used. `python3 script/director.py evidence` |

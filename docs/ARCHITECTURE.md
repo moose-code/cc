@@ -61,6 +61,10 @@ each line cites the decision in docs/FLOW.md that records the owner's words. kin
 | parameter | `feeToBuybackBps` removed; fee eth splits into the reserve and the pot | 106 | decided, not built (docs/NEXT.md item 41) |
 | parameter | `exitMode` becomes `redeemOn` and `balanceBidOn` | 107 | decided, not built (docs/NEXT.md item 42) |
 | behavior | kept as built after being asked: paid compose and redeem path (0 at launch), `creditCostToPotBps`, chosen composition, pause, anchor, credit sale window, live pool reads, the EOA owner and the AI review launch. compose inside the sell doors rejected | 108 | built |
+| behavior | the Engine is the pool's bounty recipient, `receive` open to the hook only, booking on every door, `fund()` and `collectEscrow()` for pot eth, no FeeRouter, no `skim`, `lockRecipients` deferred to the successor decision | 109 | decided, not built (docs/SIMPLIFICATION-v1.md packet 4). sections 4 and 10 describe the router until then |
+| behavior | one freeze table in HANDOFF and a gate script replace the evidence ledger | 110 | decided, not built (packet 11) |
+| behavior | the Statement record stores its composer; payouts to composers and referrers come later through a controller | 111 | decided, not built (packet 5) |
+| parameter | royalty on every engine sale on top of the engine price, `royaltyBps` 250 and `royaltyRecipient` on the controller, effective at once; operator payee 0.5 points of volume, 75,185 ppm | 112 | decided, not built (packet 5 for the controller, packet 4 for the ppm) |
 
 we own five contracts. everything else is live, the v2 stack included, and is used as deployed.
 
