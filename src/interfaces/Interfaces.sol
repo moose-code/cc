@@ -40,8 +40,10 @@ interface ICoreViews {
     function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
     /// wei per credit the eth bid pays now, the price state lowered to the pot
     function ethRate() external view returns (uint256);
-    /// wei per credit of the price state now, before the pot clamp `ethRate` applies. the credit sale floor reads it
-    /// so a sale that enlarges the pot cannot raise the rate the credit is priced against
+    /// wei per credit of the price state now, before the pot clamp `ethRate` applies. the credit sale floor reads it.
+    /// a sale that enlarges the pot cannot raise the rate the credit is priced against within the sale's block, because
+    /// `sellCreditTo` checkpoints the climbed rate before the pot grows; in later blocks the climb heads toward the
+    /// larger pot
     function ethPrice() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose
@@ -148,7 +150,7 @@ struct Settings {
     /// blocks between two coin buybacks
     uint16 buybackDelay;
     /// phase 2 state. 0 off: no redemption and no exit token bid. 1 hold: redemptions run, the exit token bid is
-    /// stopped. 2 on: redemptions and the exit token bid run, `composeExit` is allowed
+    /// stopped. 2 on: redemptions and the exit token bid run
     uint8 exitMode;
     /// a redemption must raise the exit token balance by at least `rating * unitPerPoint * (10_000 - exitSlippageBps)
     /// / 10_000`, bps
@@ -168,10 +170,10 @@ struct Settings {
     /// the most the eth rate can be, wei per credit. the price state and the read stay at or below it, `setRate`
     /// refuses above it, and the rate bounds apply to it
     uint64 rateCap;
-    /// fixed fee paid to the caller of `compose`, `composeExit` and `exitStatement`, wei, from `ethPot`. zero turns the
-    /// whole payment of those doors off when `callerMaxBaseFee` is zero too
+    /// fixed fee paid to the caller of `compose` and `exitStatement`, wei, from `ethPot`. zero turns the whole payment
+    /// of those doors off when `callerMaxBaseFee` is zero too
     uint64 callerFee;
-    /// base fee ceiling of the gas refund of `compose`, `composeExit` and `exitStatement`, wei. zero refunds no gas
+    /// base fee ceiling of the gas refund of `compose` and `exitStatement`, wei. zero refunds no gas
     uint48 callerMaxBaseFee;
     /// share of the swap fee eth that the fee router flushes to the core (booked in `receive()`) that goes to the coin
     /// buyback, bps. the rest after `feeToRedeemBurnBps` goes to the pot. eth booked later by `skim` goes to the pot whole

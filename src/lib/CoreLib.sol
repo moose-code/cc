@@ -427,8 +427,8 @@ library CoreLib {
 
     /// @notice moves `ethPot`, `xPot` and the credits the Core tracks to the successor, in batches. the Core
     /// forwards its call here untouched, the owner check and the reentrancy guard are here.
-    /// the first call sets `retired`, which stays set: `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`,
-    /// `compose` and `composeExit` then revert `Retired`. logs `EngineRetired` once.
+    /// the first call sets `retired`, which stays set: `sellForEth`, `buyListing`, `sellForExitToken`, `adopt` and
+    /// `compose` then revert `Retired`. logs `EngineRetired` once.
     /// eth: `ethPot`, by one plain call, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
     /// trackers stays.
     /// exit token: `xPot`, by `transfer`, the tracker zeroed. a transfer that reverts, returns false or returns less
@@ -580,10 +580,12 @@ library CoreLib {
     /// the lower of the stored `unitPerPoint` and the module's live `unitPerPoint()`, so a module that lowered its rate
     /// after the owner set it cannot make the bid overpay. reads the score from the credit score contract. runs only
     /// while `exitMode` is 2. each credit's price must not exceed the remaining pot. the credit enters the single pile
-    /// with an eth cost basis of the higher of the exit tokens paid valued in wei (`controller.valueWei`) and the eth
-    /// bid rate before the pot clamp, at least 1 wei, so a pushed down pool price cannot record a cost below the eth
-    /// market and an empty pot does not record a zero cost (docs/FLOW.md 92). a failing, short or zero live unit read
-    /// reverts the whole bid (`BadModule`); an unset pool key or a zero pool price reverts in `valueWei`
+    /// with an eth cost basis of the higher of the exit tokens paid valued in wei (`controller.valueWei`) and the
+    /// score-scaled eth backstop `ethBid * max(1, score / refScore)`, at least 1 wei, so a pushed down pool price cannot
+    /// record a cost below the score's eth value and an empty pot does not record a zero cost (docs/FLOW.md 92, 94). a
+    /// failing, short or zero live unit read reverts the whole bid (`BadModule`); an unset pool key or a zero pool price
+    /// reverts in `valueWei`. `refScore` is read from the controller with a bounded staticcall; a failed read leaves the
+    /// backstop unscaled at `ethBid`
     function _sellForExitToken(uint256[] calldata ids, uint256 minOut) private {
         CoreState storage c = state();
         if (c.retired) revert Retired();
@@ -596,10 +598,11 @@ library CoreLib {
         if (live < unit) unit = live;
         uint256 net = BPS - s.exitBidMarginBps;
         uint256 pot = c.xPot;
-        // the eth bid rate before the pot clamp, the floor of a credit's recorded eth cost basis. the unclamped price
-        // state is read so an empty pot does not drop the floor to zero. read only, no checkpoint
+        // the eth bid rate before the pot clamp, the base of a credit's recorded eth cost basis. the unclamped price
+        // state is read so an empty pot does not drop the base to zero. read only, no checkpoint
         (uint256 ethBid,) = _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
         IController ctl = IController(c.controller);
+        uint256 refScore = _refScore(c.controller);
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = owned(ids[i]);
@@ -610,7 +613,8 @@ library CoreLib {
             pot -= paid;
             total += paid;
             uint256 valued = ctl.valueWei(paid);
-            uint256 cost = (valued > ethBid ? valued : ethBid).max(1);
+            uint256 backstop = (refScore == 0 || score <= refScore) ? ethBid : ethBid.mulDiv(score, refScore);
+            uint256 cost = valued.max(backstop).max(1);
             push(c.pile, c.credits, id, cost);
             CREDITS.transferFrom(msg.sender, address(this), id);
             emit CreditBought(id, msg.sender, cost);
@@ -635,6 +639,13 @@ library CoreLib {
             unit := mload(0)
         }
         if (!ok || unit == 0) revert BadModule();
+    }
+
+    /// the controller's `refScore()` through a bounded staticcall of at most `READ_GAS`. a revert or a short answer
+    /// reads as 0, which leaves the exit bid's backstop unscaled at the eth bid rate
+    function _refScore(address controller) private view returns (uint256) {
+        (bool ok, bytes memory out) = controller.staticcall{gas: READ_GAS}(abi.encodeWithSignature("refScore()"));
+        return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
     }
 
     /// gas forwarded to the router flush of `pullFees`. the most expensive flush (four payees that burn all their

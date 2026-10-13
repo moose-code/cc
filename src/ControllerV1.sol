@@ -45,7 +45,7 @@ contract ControllerV1 is IController {
 
     uint256 private constant PAGE = 80;
     uint256 private constant BPS = 10_000;
-    uint256 private constant READ_GAS = 50_000;
+    uint256 private constant READ_GAS = 200_000;
     uint256 private constant MAX_ANCHOR_MIN_COST = 10 ether;
 
     error OnlyOwner();
@@ -54,10 +54,14 @@ contract ControllerV1 is IController {
     error Underpaid();
     error Reentrant();
     error Paused();
-    /// `valueWei`: the exit token pool key is unset or the pool price reads zero
+    /// the exit token baseline cannot be priced: the pool key is unset, the pool price reads zero, or the module's
+    /// live `unitPerPoint()` read fails or returns zero. reverts `valueWei` and, while an exit module is set, the
+    /// credit sale
     error NoExitPrice();
     /// a credit sale door was called while the credit sale window is off
     error CreditSaleOff();
+    /// a credit's score times the live unit overflows a 256 bit word
+    error BaselineOverflow();
 
     event MarkupBpsSet(uint16 markupBps);
     event StartCapBpsSet(uint32 startCapBps);
@@ -388,21 +392,20 @@ contract ControllerV1 is IController {
     // ------------------------------------------------------------------ credit sale window
 
     /// the sale price of pile credit `id` now, wei. the floor is the highest of the credit's cost, its exit token
-    /// baseline and the current eth bid, times `creditFloorBps`. the start is the floor times `creditStartBps`. the
-    /// price falls in a straight line from the start at the acquisition time to the floor at the acquisition time plus
-    /// `creditWindow`, and rests at the floor after. reverts `NotForSale` for a credit not in the pile. answers whether
-    /// or not the sale is on
+    /// baseline and the score-scaled eth backstop, times `creditFloorBps`. the start is the floor times
+    /// `creditStartBps`. the price falls in a straight line from the start at the acquisition time to the floor at the
+    /// acquisition time plus `creditWindow`, and rests at the floor after. reverts `NotForSale` for a credit not in the
+    /// pile and `NoExitPrice` while an exit module is set and the baseline cannot be priced. answers whether or not the
+    /// sale is on
     function creditPrice(uint256 id) public view returns (uint256 price) {
         (bool inPile, uint256 cost, uint64 acquiredAt) = CORE.creditInfo(id);
         if (!inPile) revert NotForSale();
+        uint256 score = _scoreOf(id);
         uint256 hi = cost;
-        uint256 base = _baseline(id);
+        uint256 base = _baseline(score);
         if (base > hi) hi = base;
-        // the eth bid rate before the pot clamp. a sale through `sellCreditTo` adds the credit's cost to the pot, which
-        // raises the clamped rate; reading the rate before the clamp keeps the floor at or above the rate a buyer
-        // could resell the credit into, so a buy and resell in one transaction cannot profit
-        uint256 bid = CORE.ethPrice();
-        if (bid > hi) hi = bid;
+        uint256 back = _backstop(score);
+        if (back > hi) hi = back;
         uint256 floor = hi * creditFloorBps / BPS;
         uint256 start = floor * creditStartBps / BPS;
         uint256 age = block.timestamp - acquiredAt;
@@ -410,22 +413,38 @@ contract ControllerV1 is IController {
         price = start - (start - floor) * age / creditWindow;
     }
 
-    /// the exit token baseline of credit `id` in wei: its credit score times the lower of the stored and live
-    /// `unitPerPoint`, priced at the exit token pool, the same read the statement value floor uses. the credit score
-    /// comes from the same source the exit token bid reads (`sellForExitToken`). zero when no exit module is set, the
-    /// pool key is unset, the score or the unit reads zero, the product would overflow, or the pool price reads zero. a
-    /// failing score read gives zero and does not revert the sale
-    function _baseline(uint256 id) private view returns (uint256) {
-        if (!exitPoolKeySet) return 0;
+    /// the exit token baseline of credit `id` in wei: `score` times the lower of the stored and live `unitPerPoint`,
+    /// priced at the exit token pool, the same read the statement value floor uses. zero when no exit module is set.
+    /// while an exit module is set the baseline must price: a failed or zero live unit read, an unset pool key or a
+    /// zero pool price reverts `NoExitPrice`, and a `score` times unit that overflows a word reverts `BaselineOverflow`.
+    /// a `score` or unit of zero gives a baseline of zero without reverting, so a failed score read leaves the floor to
+    /// the cost and backstop terms
+    function _baseline(uint256 score) private view returns (uint256) {
         address module = CORE.exitModule();
         if (module == address(0)) return 0;
         uint256 unit = CORE.unitPerPoint();
-        uint256 live = _liveUnit(module);
+        (uint256 live, bool ok) = _liveUnit(module);
+        if (!ok || live == 0) revert NoExitPrice();
         if (live < unit) unit = live;
-        uint256 score = _scoreOf(id);
-        if (score == 0 || unit == 0 || unit > type(uint256).max / score) return 0;
-        (uint256 priceWei, bool priced) = _priceBaseUnits(score * unit);
-        return priced ? priceWei : 0;
+        uint256 owed;
+        if (score != 0 && unit != 0) {
+            if (unit > type(uint256).max / score) revert BaselineOverflow();
+            owed = score * unit;
+        }
+        (uint256 priceWei, bool priced) = _priceBaseUnits(owed);
+        if (!priced) revert NoExitPrice();
+        return priceWei;
+    }
+
+    /// the score-scaled eth backstop of a credit in wei: `ethPrice` when `score` is at or below `refScore`, else
+    /// `ethPrice * score / refScore`, the scaling decision 90 applies to statements. `ethPrice` is the eth bid rate
+    /// before the pot clamp, so a sale through `sellCreditTo` that enlarges the pot cannot raise the rate the credit is
+    /// priced against within the block. a `score` of zero (a failed score read) gives the unscaled rate
+    function _backstop(uint256 score) private view returns (uint256) {
+        uint256 eth = CORE.ethPrice();
+        uint256 rs = refScore;
+        if (score <= rs) return eth;
+        return FullMath.mulDiv(eth, score, rs);
     }
 
     /// the credit score of `id` from the credit score contract, the same `scoreOf(seed, paidAt)` source the exit token
@@ -462,9 +481,9 @@ contract ControllerV1 is IController {
         _busy = false;
     }
 
-    /// pays the sale prices of `ids` in order, gets the credits, and refunds the excess last. each credit is priced
-    /// after the previous sale in the same batch, so a sale's effect on the pot is already in the next credit's price.
-    /// reverts `CreditSaleOff` while the sale is off and `Paused` while sales are paused
+    /// pays the sale prices of `ids` in order, gets the credits, and refunds the excess last. each credit is priced and
+    /// paid in order, so a sale's effect on the pot is in the next credit's price. reverts `CreditSaleOff` while the
+    /// sale is off and `Paused` while sales are paused
     function buyCredits(uint256[] calldata ids) external payable {
         if (!creditSaleOn) revert CreditSaleOff();
         if (paused) revert Paused();
@@ -495,10 +514,13 @@ contract ControllerV1 is IController {
         if (price < floor) price = floor;
     }
 
-    /// the module's `unitPerPoint()` read with at most `READ_GAS`. a revert or a short answer reads as 0
-    function _liveUnit(address module) private view returns (uint256) {
-        (bool ok, bytes memory out) = module.staticcall{gas: READ_GAS}(abi.encodeWithSignature("unitPerPoint()"));
-        return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
+    /// the module's `unitPerPoint()` read with at most `READ_GAS`, the same gas the exit token bid forwards. `ok` is
+    /// false on a revert or a short answer, where the unit reads 0
+    function _liveUnit(address module) private view returns (uint256 unit, bool ok) {
+        bytes memory out;
+        (ok, out) = module.staticcall{gas: READ_GAS}(abi.encodeWithSignature("unitPerPoint()"));
+        if (ok && out.length >= 32) return (abi.decode(out, (uint256)), true);
+        return (0, false);
     }
 
     /// the redeemable value of statement `sid` in wei from the exit token pool: `rating * unit` exit token base units
@@ -509,7 +531,7 @@ contract ControllerV1 is IController {
         if (!exitPoolKeySet) return 0;
         if (CORE.exitModule() == address(0)) return 0;
         uint256 unit = CORE.unitPerPoint();
-        uint256 live = _liveUnit(CORE.exitModule());
+        (uint256 live,) = _liveUnit(CORE.exitModule());
         if (live < unit) unit = live;
         uint256 owed = CORE.ratingOf(sid) * unit;
         if (owed == 0) return 0;
@@ -570,9 +592,7 @@ contract ControllerV1 is IController {
     /// the anchor
     function _moveAnchor(uint256 sid, uint256 price, uint256 cost, uint256 ref) private {
         if (cost < anchorMinCost) return;
-        // `ref` is zero only when `cost` is zero (a statement whose credits all entered the pile at a zero eth rate).
-        // the return guards the division below. `_reference` divides by `80 * refScore`, at least 80, so it never
-        // divides by zero
+        // a zero reference would divide by zero below
         if (ref == 0) return;
         uint256 saleBps = (price * BPS + ref - 1) / ref;
         uint256 current = anchorBps();

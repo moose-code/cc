@@ -753,6 +753,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         CREDITS.transferFrom(address(this), buyer, id);
         uint256 toPot = cost * creditCostToPotBps / BPS;
         ethToBuyback += msg.value - toPot;
+        // checkpoint before the pot grows: `ethPrice` is `rateAtCheckpoint` climbed to now, and the climb is bounded by
+        // the pot. checkpointing freezes the climbed rate at this block, so `ethPot += toPot` cannot raise `ethPrice`
+        // within the block. the credit sale floor is priced against `ethPrice`
         _checkpoint();
         ethPot += toPot;
         emit CreditSold(id, buyer, msg.value);

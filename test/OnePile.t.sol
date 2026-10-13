@@ -8,6 +8,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
+import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {LowballCreditController} from "./attackers/CreditSaleAttackers.sol";
 
 /// decision 92: one pile for every credit. the exit token bid records an eth cost basis of the higher of the exit
@@ -114,6 +115,31 @@ contract OnePileTest is Fixture {
         uint256 floor = cost * ctl.creditFloorBps() / 10_000;
         assertEq(ctl.creditPrice(ids[0]), floor, "the sale floor is 1.1x the recorded cost");
         assertGe(ctl.creditPrice(ids[0]), priceState * 11_000 / 10_000, "buy back costs at least 1.1x the unclamped rate");
+    }
+
+    /// a pushed down pool price values a rich credit's exit tokens below its scaled eth backstop, so the recorded eth
+    /// cost is the backstop `ethBid * score / refScore`, not the manipulated pool value
+    function test_sellForExit_costRecordsTheScaledBackstop() public {
+        _ready();
+        _setExitPool(); // the fixture pool is cheap, so the exit tokens value below the eth bid
+        uint256[] memory ids = _credits(seller, 1);
+        uint256 id = ids[0];
+        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
+        uint32 rs = uint32(score / 4);
+        if (rs == 0) rs = 1;
+        vm.prank(owner);
+        ctl.setRefScore(rs);
+        uint256 ethBid = core.ethPrice();
+        uint256 xBefore = core.xPot();
+        vm.prank(seller);
+        core.sellForExitToken(ids);
+        uint256 exitPaid = xBefore - core.xPot();
+        uint256 valued = ctl.valueWei(exitPaid);
+        (, uint256 cost,) = core.creditInfo(id);
+        uint256 backstop = ethBid * score / rs;
+        assertGt(backstop, ethBid, "the backstop scales above the unscaled bid for a rich credit");
+        assertLt(valued, backstop, "the pushed down pool values the exit tokens below the backstop");
+        assertEq(cost, backstop, "the recorded cost is the scaled backstop");
     }
 
     /// an inflated pool price records an inflated eth cost (an accepted residual, M1): the credit's sale is floored at

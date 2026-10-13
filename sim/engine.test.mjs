@@ -544,13 +544,14 @@ const R0 = 6.668e15;
   const h = mk(); const px = h.xBuy(35200 / 80 * 1); const rec = h.exitStatement(h.compose(0, 0, 440 * 80), 0); // cost 0: a zero reference is at its floor at once
   near(rec.received, 440 * 80 * 1e-5, 1e-12, 'the redemption returns the full value'); ok(rec.received > 80 * px, 'more than the 80 credits were bought for');
 }
-// a credit bought with the exit token enters the one pile at an eth cost (FLOW 92, 93): the higher of the tokens paid valued at the pool price and the eth bid rate before the pot clamp,
-// at least 1 wei. a pool price pushed down (exitPoolMult under 1) records the eth bid rate, a price pushed up records the higher value
+// a credit bought with the exit token enters the one pile at an eth cost (FLOW 92, 93, 94): the higher of the tokens paid valued at the pool price and the score-scaled eth backstop,
+// at least 1 wei. a pool price pushed down (exitPoolMult under 1) records the backstop (the eth bid rate times max(1, score / refScore)), a price pushed up records the higher value
 {
   const mk = (over = {}, pot = 10) => { const c = fresh(Object.assign({ exitMode: 2, exitPoolSet: true, rateStart: 1e15, rateCap: 1e16, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 2, idleLoosenPct: 2, floorBps: 10000, saleFloorBps: 10000 }, over), pot); c.setExitModule(0, 1e-5); c.xPot = 1; return c; };
   const c = mk(); // the bid pays 440 * 1e-5 * 0.8 = 0.00352, the eth bid is 0.001
   const r = c.xBuyCredit(440, 0); near(r.paid, 0.00352, 1e-12, 'the tokens paid'); near(r.cost, 0.00352, 1e-12, 'valued at the pool price, over the eth bid'); n += 2;
-  const lo = mk({ exitPoolMult: 0.1 }), rl = lo.xBuyCredit(440, 0); near(rl.paid, 0.00352, 1e-12, 'the same tokens are paid'); near(rl.cost, 0.001, 1e-12, 'a pushed down pool price records the eth bid rate'); n += 2;
+  // 440 points is above refScore (4330000/1e4 = 433), so the backstop scales to 0.001 * 440 / 433
+  const lo = mk({ exitPoolMult: 0.1 }), rl = lo.xBuyCredit(440, 0); near(rl.paid, 0.00352, 1e-12, 'the same tokens are paid'); near(rl.cost, 0.001 * 440 / 433, 1e-12, 'a pushed down pool price records the scaled backstop'); n += 2;
   const hi = mk({ exitPoolMult: 3 }), rh = hi.xBuyCredit(440, 0); near(rh.cost, 0.00352 * 3, 1e-12, 'a pushed up pool price records a higher cost'); n++;
   const empty = mk({ rateStart: 4e15 }, 0); empty.xPot = 1; const re = empty.xBuyCredit(1, 0); near(re.cost, 4e-3, 1e-12, 'an empty pot does not lower the floor: the unclamped price state'); n++;
   const dust = mk({ exitPoolMult: 1e-12 }); dust.moduleReports(1e-5); const rd = dust.xBuyCredit(80, 0); near(rd.cost, 0.001, 1e-12, 'never below the eth bid'); n++;
@@ -645,7 +646,7 @@ const R0 = 6.668e15;
   const e = fresh(L, 10); near(e.reference({ cost: 1, rating: 80 * 433 * 1.5 }), 1.5, 1e-12, 'before the change'); e.setSettings({ refScore: 8000000 }, 1); near(e.reference({ cost: 1, rating: 80 * 433 * 1.5 }), 1, 1e-12, 'refScore 800 points: the statement is under the reference, which is its cost'); n += 2;
   assert.throws(() => e.setSettings({ refScore: 0 }, 2), /refScore/); assert.throws(() => e.setSettings({ refScore: 8000001 }, 2), /refScore/); n += 2;
 }
-// the credit sale window (ControllerV1.creditPrice, FLOW 88, 92, 93): off at launch. floor = max(cost, baseline, eth bid before the clamp) * creditFloorBps / 10000, start = floor *
+// the credit sale window (ControllerV1.creditPrice, FLOW 88, 92, 93, 94): off at launch. floor = max(cost, baseline, score-scaled backstop) * creditFloorBps / 10000, start = floor *
 // creditStartBps / 10000, a straight line over creditWindow from the acquisition time, resting at the floor. Core.sellCreditTo takes at least the cost, creditCostToPotBps of the cost
 // to the pot and the rest of the payment to the buyback pot. compose waits for the window while the sale is on
 {
@@ -655,11 +656,11 @@ const R0 = 6.668e15;
   ok(DEFAULTS.creditSaleOn === false && fresh({}, 10).cr.creditSaleOn === false, 'the credit sale is off at launch'); n++;
   near(c.ethPrice(0) / W, 1e-3, 1e-9, 'the eth bid before the clamp'); // the bid is under the cost here: the cost term wins
   near(c.creditFloor(cr, 0), 0.002 * 1.1, 1e-12, 'floor = cost * 11000 / 10000'); near(c.creditPrice(cr, 0), 0.002 * 1.1 * 3, 1e-12, 'start = floor * 30000 / 10000');
-  near(c.creditPrice(cr, W4 / 2), 0.002 * 1.1 * 2, 1e-12, 'half way down at half the window'); near(c.creditPrice(cr, W4), 0.002 * 1.1, 1e-12, 'the floor at the end of the window'); near(c.creditPrice(cr, W4 + 60), 0.002 * 1.1, 1e-12, 'and just after it'); near(c.creditPrice(cr, 1000 * H), (c.ethPrice(1000 * H) / W) * 1.1, 1e-12, 'long after it the floor follows the eth bid, which has climbed over the cost');
+  near(c.creditPrice(cr, W4 / 2), 0.002 * 1.1 * 2, 1e-12, 'half way down at half the window'); near(c.creditPrice(cr, W4), 0.002 * 1.1, 1e-12, 'the floor at the end of the window'); near(c.creditPrice(cr, W4 + 60), 0.002 * 1.1, 1e-12, 'and just after it'); near(c.creditPrice(cr, 1000 * H), (c.ethPrice(1000 * H) / W) * (440 / 433) * 1.1, 1e-12, 'long after it the floor follows the score-scaled backstop, whose bid has climbed over the cost');
   n += 6;
-  // the eth bid term: a cost under the bid is floored at the bid, read before the pot clamp (an empty pot does not zero it)
+  // the backstop term: a cost under the backstop is floored at it, read before the pot clamp (an empty pot does not zero it). 440 points scales it by 440 / 433
   const e = mk({ rateStart: 4e15, rateCap: 1e16 }, 0.0001);
-  near(e.ethRate(0), 0.0001 * W, 1e-12, 'the clamped read is the pot'); near(e.ethPrice(0) / W, 4e-3, 1e-12, 'the price state is unclamped'); near(e.creditFloor(cr, 0), 4e-3 * 1.1, 1e-12, 'the floor follows the unclamped bid'); n += 3;
+  near(e.ethRate(0), 0.0001 * W, 1e-12, 'the clamped read is the pot'); near(e.ethPrice(0) / W, 4e-3, 1e-12, 'the price state is unclamped'); near(e.creditFloor(cr, 0), 4e-3 * (440 / 433) * 1.1, 1e-12, 'the floor follows the unclamped scaled backstop'); n += 3;
   // the baseline: score * min(stored, live unit) at the pool price, 0 until the pool key and the module are set
   const b = mk({ exitMode: 2, exitPoolSet: true }); near(b.creditBaseline(cr), 0, 1e-15, 'no module: baseline 0'); b.setExitModule(0, 1e-5);
   near(b.creditBaseline(cr), 440 * 1e-5, 1e-12, 'baseline = score * unit'); near(b.creditFloor(cr, 0), 440 * 1e-5 * 1.1, 1e-12, 'a baseline over the cost sets the floor');

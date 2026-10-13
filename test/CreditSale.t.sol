@@ -224,9 +224,9 @@ contract CreditSaleTest is Fixture {
         assertEq(ctl.creditPrice(id), baseline * ctl.creditFloorBps() / BPS, "floor is baseline based");
     }
 
-    // ------------------------------------------------------------------ baseline is 0 and never reverts
+    // ------------------------------------------------------------------ baseline and the pool read
 
-    function test_baseline_zeroWithoutExitModuleOrPoolKey() public {
+    function test_baseline_zeroWithoutExitModule() public {
         uint256[] memory ids = _fillEthPile(1);
         uint256 id = ids[0];
         vm.prank(owner);
@@ -234,13 +234,137 @@ contract CreditSaleTest is Fixture {
         _on();
         _warp(ctl.creditWindow());
         (, uint256 cost,) = core.creditInfo(id);
-        // no exit module and no pool key: the baseline is 0 and the price does not revert
+        // no exit module: the baseline is 0 and the sale works
         assertEq(ctl.creditPrice(id), cost * ctl.creditFloorBps() / BPS, "no exit module, baseline 0");
+    }
 
-        // add the exit module but still no pool key: still 0
+    function test_creditPrice_revertsWithModuleSetAndPoolKeyUnset() public {
         _enterPhase2();
+        uint256[] memory ids = _fillEthPile(1);
+        uint256 id = ids[0];
+        vm.prank(owner);
+        core.setRate(1e13);
+        _on();
+        _warp(ctl.creditWindow());
         assertFalse(ctl.exitPoolKeySet(), "no pool key yet");
-        assertEq(ctl.creditPrice(id), cost * ctl.creditFloorBps() / BPS, "no pool key, baseline 0");
+        // an exit module is set but the pool key is unset, so the baseline cannot be priced and the sale reverts
+        vm.expectRevert(IControllerV1.NoExitPrice.selector);
+        ctl.creditPrice(id);
+    }
+
+    /// the score times the live unit that overflows a word reverts. the stored unit is capped at type(uint128).max and
+    /// a score is at most 8_000_000, so the product cannot overflow through core state; the test mocks both unit reads
+    /// above the cap to reach the guard
+    function test_baseline_overflowGuardReverts() public {
+        _enterPhase2();
+        uint256[] memory ids = _fillEthPile(1);
+        uint256 id = ids[0];
+        vm.prank(owner);
+        core.setRate(1e13);
+        _on();
+        _warp(ctl.creditWindow());
+        assertGt(_creditScore(id), 1, "the score is above 1 so the product overflows");
+        vm.mockCall(address(core), abi.encodeWithSignature("unitPerPoint()"), abi.encode(type(uint256).max));
+        vm.mockCall(address(mod), abi.encodeWithSignature("unitPerPoint()"), abi.encode(type(uint256).max));
+        vm.expectRevert(IControllerV1.BaselineOverflow.selector);
+        ctl.creditPrice(id);
+        vm.clearMockedCalls();
+    }
+
+    // ------------------------------------------------------------------ the score-scaled eth backstop
+
+    /// a credit scored at or below `refScore` backstops at the unscaled eth bid
+    function test_backstop_belowAverageEqualsTheEthBid() public {
+        uint256[] memory ids = _fillEthPile(1);
+        uint256 id = ids[0];
+        (, uint256 cost,) = core.creditInfo(id);
+        _liftRateCap();
+        vm.prank(owner);
+        core.setRate(cost * 4);
+        _fundPot(cost * 20);
+        vm.prank(owner);
+        ctl.setRefScore(8_000_000); // at the max, so the credit's score is at or below it
+        _on();
+        _warp(ctl.creditWindow());
+        assertLe(_creditScore(id), ctl.refScore(), "the score is at or below the reference");
+        uint256 bid = core.ethPrice();
+        assertGt(bid, cost, "the backstop governs");
+        assertEq(ctl.creditPrice(id), bid * ctl.creditFloorBps() / BPS, "floor is the unscaled bid");
+    }
+
+    /// a credit scored above `refScore` backstops at `bid * score / refScore`
+    function test_backstop_aboveAverageScalesExactly() public {
+        uint256[] memory ids = _fillEthPile(1);
+        uint256 id = ids[0];
+        (, uint256 cost,) = core.creditInfo(id);
+        _liftRateCap();
+        vm.prank(owner);
+        core.setRate(cost * 4);
+        _fundPot(cost * 20);
+        uint256 score = _creditScore(id);
+        uint32 rs = uint32(score / 2);
+        if (rs == 0) rs = 1;
+        vm.prank(owner);
+        ctl.setRefScore(rs);
+        _on();
+        _warp(ctl.creditWindow());
+        uint256 bid = core.ethPrice();
+        uint256 back = bid * score / rs;
+        assertGt(back, bid, "the backstop scales above the unscaled bid");
+        assertGt(back, cost, "the backstop governs");
+        assertEq(ctl.creditPrice(id), back * ctl.creditFloorBps() / BPS, "floor is the scaled backstop");
+    }
+
+    /// a pushed down pool price values a rich credit's exit tokens below its scaled eth backstop, so the floor rests at
+    /// `creditFloorBps` (1.1x) of the backstop, not the manipulated pool value
+    function test_backstop_pushedDownPoolLeavesRichCreditAtTheScaledBackstop() public {
+        _enterPhase2();
+        uint256[] memory ids = _fillEthPile(1);
+        uint256 id = ids[0];
+        // a large sqrt price makes the exit token cheap in eth, so the baseline is far below the backstop
+        _initExitPoolAt(uint160((uint256(1) << 96) * 1000));
+        (, uint256 cost,) = core.creditInfo(id);
+        _liftRateCap();
+        vm.prank(owner);
+        core.setRate(cost * 4);
+        _fundPot(cost * 20);
+        uint256 score = _creditScore(id);
+        uint32 rs = uint32(score / 4);
+        if (rs == 0) rs = 1;
+        vm.prank(owner);
+        ctl.setRefScore(rs);
+        _on();
+        _warp(ctl.creditWindow());
+        uint256 bid = core.ethPrice();
+        uint256 back = bid * score / rs;
+        uint256 baseline = ctl.valueWei(score * core.unitPerPoint());
+        assertLt(baseline, back, "the pushed down pool values the credit below its backstop");
+        assertGt(back, cost, "the backstop governs");
+        assertEq(ctl.creditFloorBps(), 11_000, "the floor multiplier is 1.1x");
+        assertEq(ctl.creditPrice(id), back * ctl.creditFloorBps() / BPS, "floor is 1.1x the scaled backstop");
+    }
+
+    /// a failed score read backstops at the unscaled eth bid, even where a good read would scale above it
+    function test_backstop_failedScoreReadIsUnscaled() public {
+        uint256[] memory ids = _fillEthPile(1);
+        uint256 id = ids[0];
+        (, uint256 cost,) = core.creditInfo(id);
+        _liftRateCap();
+        vm.prank(owner);
+        core.setRate(cost * 4);
+        _fundPot(cost * 20);
+        uint256 score = _creditScore(id);
+        uint32 rs = uint32(score / 2);
+        if (rs == 0) rs = 1;
+        vm.prank(owner);
+        ctl.setRefScore(rs);
+        _on();
+        _warp(ctl.creditWindow());
+        uint256 bid = core.ethPrice();
+        assertGt(bid * score / rs, bid, "a good read would scale above the unscaled bid");
+        vm.mockCallRevert(Mainnet.CREDIT_SCORE, abi.encodeWithSelector(ICreditScore.scoreOf.selector), bytes(""));
+        assertEq(ctl.creditPrice(id), bid * ctl.creditFloorBps() / BPS, "a failed score read leaves the backstop unscaled");
+        vm.clearMockedCalls();
     }
 
     function test_baseline_zeroWhenScoreReadReverts() public {

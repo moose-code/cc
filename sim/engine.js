@@ -53,10 +53,10 @@ export const CONTROLLER = {
 export const CONTROLLER_KEYS = Object.keys(CONTROLLER);
 // the credit settings (script/config/mainnet.json credit block, the Credit struct). creditCostToPotBps, chosenComposeOn and minCcToChoose are Core settings
 // (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditFloorBps, creditStartBps and refScore are controller
-// settings (FLOW 88 to 90, 93). while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
-// start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, baseline, eth bid) * creditFloorBps / 10000. the
-// baseline is score * min(stored, live unitPerPoint) at the exit token pool price, 0 until the pool key and the module are set; the eth bid is the price state
-// before the pot clamp. Core.sellCreditTo takes at least the credit's cost, books creditCostToPotBps of the cost to the pot and the rest to the buyback pot.
+// settings (FLOW 88 to 90, 93, 94). while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
+// start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, baseline, backstop) * creditFloorBps / 10000. the
+// baseline is score * min(stored, live unitPerPoint) at the exit token pool price, 0 while no module is set; the backstop is the eth bid rate before the pot
+// clamp times max(1, score / refScore), so a credit scored above refScore floors proportionally higher. Core.sellCreditTo takes at least the credit's cost, books creditCostToPotBps of the cost to the pot and the rest to the buyback pot.
 // compose waits for a credit's window while the sale is on (ControllerV1.pastWindow). refScore is the per-credit score of the statement price reference, in
 // ten-thousandths of a point (the model's scores are in points). minCcToChoose is a coin balance the model does not track: every composer passes it
 export const CREDIT = {
@@ -560,8 +560,11 @@ export class Core {
   pastWindow(acquiredAt, now) { return !this.cr.creditSaleOn || acquiredAt + this.cr.creditWindow <= now; }
   // ControllerV1._baseline: the exit token value of the credit, score * min(stored, live unitPerPoint) at the exit token pool price. 0 until the pool key and the module are set
   creditBaseline(cr) { return this.p.exitPoolSet && this.moduleSet ? cr.pts * this.unit() * this.p.exitPoolMult : 0; }
-  // the credit sale floor: the highest of the credit's cost, its baseline and the eth bid (the price state before the pot clamp), times creditFloorBps
-  creditFloor(cr, now) { return (Math.max(cr.cost, this.creditBaseline(cr), this.ethPrice(now) / W) * this.cr.creditFloorBps) / BPS; }
+  // the score-scaled eth backstop of a credit (FLOW 90, 94): the eth bid rate before the pot clamp times max(1, score / refScore). refScore is in ten-thousandths
+  // of a point, so refScore/1e4 is the reference score in points; a credit scored at or below it backstops at the unscaled bid
+  creditBackstop(pts, now) { return (this.ethPrice(now) / W) * Math.max(1, pts / (this.cr.refScore / 1e4)); }
+  // the credit sale floor: the highest of the credit's cost, its baseline and its score-scaled eth backstop, times creditFloorBps
+  creditFloor(cr, now) { return (Math.max(cr.cost, this.creditBaseline(cr), this.creditBackstop(cr.pts, now)) * this.cr.creditFloorBps) / BPS; }
   // ControllerV1.creditPrice: falls linearly from floor * creditStartBps to the floor over creditWindow from the acquisition time and rests at the floor
   creditPrice(cr, now) {
     const floor = this.creditFloor(cr, now), start = (floor * this.cr.creditStartBps) / BPS, age = Math.max(0, now - cr.t0);
@@ -619,11 +622,11 @@ export class Core {
     return price;
   }
   // sellForExitToken for one credit at `now`: the credit enters the pile at an eth cost of the higher of the tokens paid valued at the pool price (paid * exitPoolMult)
-  // and the eth bid rate before the pot clamp, at least 1 wei (FLOW 92, 93). returns {paid, cost}, or null when the bid would revert
+  // and the score-scaled eth backstop, at least 1 wei (FLOW 92, 93, 94). returns {paid, cost}, or null when the bid would revert
   xBuyCredit(pts, now) {
     const paid = this.xBuy(pts);
     if (!(paid > 0)) return null;
-    return { paid, cost: Math.max(paid * this.p.exitPoolMult, this.ethPrice(now) / W, 1e-18) };
+    return { paid, cost: Math.max(paid * this.p.exitPoolMult, this.creditBackstop(pts, now), 1e-18) };
   }
   // ControllerV1.atFloor: the curve price (without the hard floor and the redemption value floor) has reached its floor, floorBps of the reference
   atFloor(st, now) {

@@ -254,11 +254,17 @@ abstract contract HandlerSale is HandlerOwner {
         return (0, 0, false);
     }
 
-    /// the refusal of `ControllerV1.buyCredit` in the order of its checks: the sale window, the pause, the payment,
-    /// then the core's `sellCreditTo`, which refuses any controller but the one the core named
-    function _buyCreditRefusal(bool saleOn, bool paused_, bool short_, bool realCtl) internal pure returns (bytes4) {
+    /// the refusal of `ControllerV1.buyCredit` in the order of its checks: the sale window, the pause, the price read
+    /// (`priceErr`, nonzero when `creditPrice` reverts, e.g. NoExitPrice while an exit module is set and the pool read
+    /// fails), the payment, then the core's `sellCreditTo`, which refuses any controller but the one the core named
+    function _buyCreditRefusal(bool saleOn, bool paused_, bytes4 priceErr, bool short_, bool realCtl)
+        internal
+        pure
+        returns (bytes4)
+    {
         if (!saleOn) return IControllerV1.CreditSaleOff.selector;
         if (paused_) return IControllerV1.Paused.selector;
+        if (priceErr != 0) return priceErr;
         if (short_) return IControllerV1.Underpaid.selector;
         if (!realCtl) return ICore.OnlyController.selector;
         return bytes4(0);
@@ -282,38 +288,54 @@ abstract contract HandlerSale is HandlerOwner {
     function _quoteOne(uint256 id, uint256 xSeed) internal view returns (CQ memory q) {
         IControllerV1 c = IControllerV1(v1);
         bool priced;
+        bytes4 priceErr;
         try c.creditPrice(id) returns (uint256 pr) {
             q.price = pr;
             priced = true;
-        } catch {}
+        } catch (bytes memory reason) {
+            priceErr = reason.length >= 4 ? bytes4(reason) : bytes4(0);
+        }
         bool short_ = priced && q.price != 0 && xSeed % 7 == 0;
         q.value = _creditValue(priced, q.price, short_, xSeed);
-        q.want = _buyCreditRefusal(c.creditSaleOn(), c.paused(), short_, core.controller() == v1);
+        q.want = _buyCreditRefusal(c.creditSaleOn(), c.paused(), priceErr, short_, core.controller() == v1);
     }
 
     function _quoteMany(uint256[] memory ids, uint256 xSeed) internal view returns (CQ memory q) {
         IControllerV1 c = IControllerV1(v1);
         bool priced = true;
+        bytes4 priceErr;
         for (uint256 i; i < ids.length; ++i) {
             try c.creditPrice(ids[i]) returns (uint256 pr) {
                 q.price += pr;
-            } catch {
+            } catch (bytes memory reason) {
                 priced = false;
+                // the batch loop prices ids in order and reverts at the first credit whose price reverts, so the first
+                // reverting selector governs. the exit module and pool conditions behind the revert are the same for
+                // every credit, so that first credit is ids[0]
+                if (priceErr == 0) priceErr = reason.length >= 4 ? bytes4(reason) : bytes4(0);
             }
         }
         bool short_ = priced && q.price != 0 && xSeed % 6 == 0;
         q.value = _creditValue(priced, q.price, short_, xSeed);
-        q.want = _buyCreditsRefusal(c.creditSaleOn(), c.paused(), short_, core.controller() == v1);
+        q.want = _buyCreditsRefusal(c.creditSaleOn(), c.paused(), priceErr, short_, core.controller() == v1);
     }
 
     /// the refusal of `ControllerV1.buyCredits` in the order its one pass loop reaches: the sale window, the pause,
-    /// then per credit a payment check and the core's `sellCreditTo`. a short batch payment is `total - 1`, which
-    /// clears the first credit's cumulative check, so a wrong controller reverts `OnlyController` on the first sale
-    /// before the short payment reverts `Underpaid` on the last credit. this flips the payment and controller order of
+    /// then per credit a price read, a payment check and the core's `sellCreditTo`. a price read that reverts on ids[0]
+    /// precedes both. a short batch payment is `total - 1`, which clears the first credit's cumulative check, so a
+    /// wrong controller reverts `OnlyController` on the first sale before the short payment reverts `Underpaid` on the
+    /// last credit. this flips the payment and controller order of
     /// the single `buyCredit` refusal
-    function _buyCreditsRefusal(bool saleOn, bool paused_, bool short_, bool realCtl) internal pure returns (bytes4) {
+    function _buyCreditsRefusal(bool saleOn, bool paused_, bytes4 priceErr, bool short_, bool realCtl)
+        internal
+        pure
+        returns (bytes4)
+    {
         if (!saleOn) return IControllerV1.CreditSaleOff.selector;
         if (paused_) return IControllerV1.Paused.selector;
+        // the price read of ids[0] runs before its payment check and its `sellCreditTo`, so a price revert precedes the
+        // wrong controller and the short payment
+        if (priceErr != 0) return priceErr;
         if (!realCtl) return ICore.OnlyController.selector;
         if (short_) return IControllerV1.Underpaid.selector;
         return bytes4(0);

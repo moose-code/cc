@@ -26,6 +26,7 @@ interface IControllerV1 {
     }
 
     error BadSetting(bytes32 field);
+    error BaselineOverflow();
     error CreditSaleOff();
     error NoExitPrice();
     error NotForSale();
