@@ -24,7 +24,7 @@ contract ComposeHostileNotReadyTest is InvariantsHostileController {
         // from outside the core: ready, with a full page, inside the cap
         uint256 g = gasleft();
         (bool ok, bytes memory out) =
-            address(fuzz).staticcall{gas: 500_000}(abi.encodeWithSignature("nextPage(uint8)", uint8(0)));
+            address(fuzz).staticcall{gas: 500_000}(abi.encodeWithSignature("nextPage()"));
         uint256 used = g - gasleft();
         assertTrue(ok, "pre check read failed");
         assertEq(out.length, 82 * 32, "pre check read short");
