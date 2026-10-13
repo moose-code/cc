@@ -1,0 +1,82 @@
+No files changed, compilation skipped
+
+Ran 1 test for test/invariant/ComposeHostileNotReady.t.sol:ComposeHostileNotReadyTest
+[FAIL: pre check read failed] test_hostileControllerBurningTheReadGasIsNotReady() (block: 26158000) (gas: 2982221)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 653.83ms (8.37ms CPU time)
+Warning: Replayed invariant failure from persisted file. 
+Run `forge clean` or remove file to ignore failure and to continue invariant test campaign.
+
+Ran 1 test for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase1
+[FAIL: unexpected revert in saleSettings, selector 0x0000000000000000000000000000000000000000000000000000000000000000: 1 != 0]
+	[Sequence] (original: 2, shrunk: 2)
+		sender=0x64c47B8c7F8a9C08964bA4927A7fc74cd741B7F7 addr=[test/invariant/Handler.sol:Handler]0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9 calldata=saleSettings(uint256,uint256) args=[85, 4315]
+		sender=0x64c47B8c7F8a9C08964bA4927A7fc74cd741B7F7 addr=[test/invariant/Handler.sol:Handler]0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9 calldata=saleSettings(uint256,uint256) args=[214656243246643828107335033 [2.146e26], 72265924878831913572414678928834722292722335994776376850375393251495544407374 [7.226e76]]
+ invariant_11_noUnexpectedReverts() (block: 26158000) (runs: 1, calls: 2, reverts: 0)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 16.64s (16.03s CPU time)
+
+Ran 1 test for test/Lifecycle.t.sol:LifecycleComposeTest
+[FAIL: the asking price is at the floor: 1606364013256351039 != 1492905898626446932] test_compose_unsoldStatementStaysHeldAtTheFloor() (block: 26158000) (gas: 31605483)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 424.96ms (48.90ms CPU time)
+
+Ran 1 test for test/Lifecycle.t.sol:LifecycleNarrativeTest
+[FAIL: at the start price of the controller: 158262590400000000 != 121795576417764762] test_narrative_theWholeLoopTwice() (block: 26158000) (gas: 63793473)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 441.55ms (105.96ms CPU time)
+
+Ran 1 test for test/Lifecycle.t.sol:LifecycleOwnerAdaptsTest
+[FAIL: assertion failed: 188819249400000000 != 146980664490974346] test_narrative_theOwnerAdaptsTheSystemLive() (block: 26158000) (gas: 85538580)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 490.72ms (158.41ms CPU time)
+
+Ran 1 test for test/SaleSmoke.t.sol:SaleSmokeTest
+[FAIL: half way to the knee: 125 percent: 385715117745429831 != 143042493736243820] test_price_falls_to_the_knee_then_to_the_floor() (block: 26158000) (gas: 31855236)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 332.66ms (48.03ms CPU time)
+
+Ran 4 tests for test/V2PortMigration.t.sol:V2PortMigrationTest
+[FAIL: assertion failed: 53101993399560000 != 59002214888400000] test_lockFreezesTheEngine() (block: 26158000) (gas: 1018634)
+[FAIL: BadSetting(0x666565546f52656465656d4275726e4270730000000000000000000000000000)] test_newCoreWithoutAllowlistBuysBack() (block: 26158000) (gas: 655154)
+[FAIL: everything that waited reached the right engine: 600155044463651463 != 666838938292946070] test_refusingEngineNeverBlocksSwapsAndTheEthWaits() (block: 26158000) (gas: 2159783)
+[FAIL: the new Core booked the fees: 53101993399560000 != 59002214888400000] test_repointMovesTheFeesAndTheOldCoreKeepsWorking() (block: 26158000) (gas: 20451646)
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; finished in 317.63ms (13.99ms CPU time)
+
+Ran 1 test for test/Rehearsal.t.sol:RehearsalTest
+[FAIL: the measured deploy gas is above DEPLOY_GAS_ESTIMATE: 20134787 > 19200000] test_rehearsal() (block: 26184400) (gas: 97783990)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 7.32s (7.32s CPU time)
+
+Ran 8 test suites in 25.99s (26.62s CPU time): 0 tests passed, 11 failed, 0 skipped (11 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Lifecycle.t.sol:LifecycleComposeTest
+[FAIL: the asking price is at the floor: 1606364013256351039 != 1492905898626446932] test_compose_unsoldStatementStaysHeldAtTheFloor() (block: 26158000) (gas: 31605483)
+
+Encountered 1 failing test in test/Lifecycle.t.sol:LifecycleNarrativeTest
+[FAIL: at the start price of the controller: 158262590400000000 != 121795576417764762] test_narrative_theWholeLoopTwice() (block: 26158000) (gas: 63793473)
+
+Encountered 1 failing test in test/Lifecycle.t.sol:LifecycleOwnerAdaptsTest
+[FAIL: assertion failed: 188819249400000000 != 146980664490974346] test_narrative_theOwnerAdaptsTheSystemLive() (block: 26158000) (gas: 85538580)
+
+Encountered 1 failing test in test/Rehearsal.t.sol:RehearsalTest
+[FAIL: the measured deploy gas is above DEPLOY_GAS_ESTIMATE: 20134787 > 19200000] test_rehearsal() (block: 26184400) (gas: 97783990)
+
+Encountered 1 failing test in test/SaleSmoke.t.sol:SaleSmokeTest
+[FAIL: half way to the knee: 125 percent: 385715117745429831 != 143042493736243820] test_price_falls_to_the_knee_then_to_the_floor() (block: 26158000) (gas: 31855236)
+
+Encountered 4 failing tests in test/V2PortMigration.t.sol:V2PortMigrationTest
+[FAIL: assertion failed: 53101993399560000 != 59002214888400000] test_lockFreezesTheEngine() (block: 26158000) (gas: 1018634)
+[FAIL: BadSetting(0x666565546f52656465656d4275726e4270730000000000000000000000000000)] test_newCoreWithoutAllowlistBuysBack() (block: 26158000) (gas: 655154)
+[FAIL: everything that waited reached the right engine: 600155044463651463 != 666838938292946070] test_refusingEngineNeverBlocksSwapsAndTheEthWaits() (block: 26158000) (gas: 2159783)
+[FAIL: the new Core booked the fees: 53101993399560000 != 59002214888400000] test_repointMovesTheFeesAndTheOldCoreKeepsWorking() (block: 26158000) (gas: 20451646)
+
+Encountered 1 failing test in test/invariant/ComposeHostileNotReady.t.sol:ComposeHostileNotReadyTest
+[FAIL: pre check read failed] test_hostileControllerBurningTheReadGasIsNotReady() (block: 26158000) (gas: 2982221)
+
+Encountered 1 failing test in test/invariant/InvariantsSale.t.sol:InvariantsSalePhase1
+[FAIL: unexpected revert in saleSettings, selector 0x0000000000000000000000000000000000000000000000000000000000000000: 1 != 0]
+	[Sequence] (original: 2, shrunk: 2)
+		sender=0x64c47B8c7F8a9C08964bA4927A7fc74cd741B7F7 addr=[test/invariant/Handler.sol:Handler]0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9 calldata=saleSettings(uint256,uint256) args=[85, 4315]
+		sender=0x64c47B8c7F8a9C08964bA4927A7fc74cd741B7F7 addr=[test/invariant/Handler.sol:Handler]0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9 calldata=saleSettings(uint256,uint256) args=[214656243246643828107335033 [2.146e26], 72265924878831913572414678928834722292722335994776376850375393251495544407374 [7.226e76]]
+ invariant_11_noUnexpectedReverts() (block: 26158000) (runs: 1, calls: 2, reverts: 0)
+
+Encountered a total of 11 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 11 failed tests
+
+Fuzz seed: 0x3c7012326cebd55c6e03c0dba2772542e673ef5d3f98080081f9845fb8667a3d (use `--fuzz-seed` to reproduce)

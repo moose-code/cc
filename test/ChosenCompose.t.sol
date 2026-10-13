@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {MigrationSink} from "./standins/MigrationSink.sol";
+import {BadPriceController} from "./standins/BadPriceController.sol";
 
 /// decision 89: chosen composition. a caller names 80 pile credits and a format, gated by `chosenComposeOn`, a least
 /// coin balance `minCcToChoose`, and that every named credit is in the pile and past its window. `compose` shares the
@@ -228,10 +230,51 @@ contract ChosenComposeTest is Fixture {
         }
         uint256 sid = STATEMENTS.supply() + 1;
         vm.fee(composeBasefee);
-        vm.expectEmit(address(core));
-        emit ICore.Composed(sid, ids, 3, sum, chooser);
+        // the controller prices a statement only once it exists, so compose on a snapshot to read the listing price
+        uint256 snap = vm.snapshotState();
         vm.prank(chooser);
         core.composeChosen(ids, 3);
+        uint256 price = ctl.priceOf(sid);
+        vm.revertToState(snap);
+        assertGt(price, 0, "the statement is priced");
+        vm.expectEmit(address(core));
+        emit ICore.Composed(sid, ids, 3, sum, price, chooser);
+        vm.prank(chooser);
+        core.composeChosen(ids, 3);
+    }
+
+    /// a controller whose `priceOf` reverts still composes and the `Composed` price reads 0
+    function test_event_priceZeroWhenControllerReverts() public {
+        _composeWithBadPriceReadsZero(new BadPriceController(false));
+    }
+
+    /// a controller whose `priceOf` burns past the read gas cap still composes and the `Composed` price reads 0
+    function test_event_priceZeroWhenControllerBurnsGas() public {
+        _composeWithBadPriceReadsZero(new BadPriceController(true));
+    }
+
+    function _composeWithBadPriceReadsZero(BadPriceController bad) internal {
+        uint256[] memory page = _pile(80);
+        _on();
+        uint256[80] memory ids = _first80(page);
+        _setController(address(bad));
+        uint256 sid = STATEMENTS.supply() + 1;
+        vm.fee(composeBasefee);
+        vm.recordLogs();
+        vm.prank(chooser);
+        core.composeChosen(ids, 3);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 seen;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.Composed.selector) continue;
+            ++seen;
+            assertEq(uint256(logs[i].topics[1]), sid, "sid");
+            (,,, uint256 price) = abi.decode(logs[i].data, (uint256[80], uint8, uint256, uint256));
+            assertEq(price, 0, "price reads 0 when the controller price read fails");
+        }
+        assertEq(seen, 1, "one Composed");
+        (bool held,,) = core.statementInfo(sid);
+        assertTrue(held, "the statement is held");
     }
 
     // ------------------------------------------------------------------ parity with compose()

@@ -1,0 +1,88 @@
+{
+  "stack": {
+    "poolManager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+    "hook": "0x2f7976bf73dE8e1D49D4c687404e527a75b0e8Cc",
+    "tickSpacing": 200,
+    "poolFee": 8388608,
+    "factory": "0x9b17bf6f97F5429368E11028BC637479b4667f7b",
+    "locker": "0x1e2456861B864B96FFe6b34066b12FBD7EEb23fC",
+    "escrow": "0x32845df52436a737C9623Af1d461A1c9999BBc1e",
+    "mevModule": "0xFbb55b4C13b8517C000e2686efB12F0FAAFc9072"
+  },
+  "owner": "0xCB43078C32423F5348Cab5885911C3B5faE217F9",
+  "creator": "0xCB43078C32423F5348Cab5885911C3B5faE217F9",
+  "name": "CC",
+  "symbol": "CC",
+  "image": "ipfs://local-anvil-fork-cc",
+  "description": "credits engine local anvil fork end to end",
+  "salt": "0x56d96069d0c85d21b8d789da2cd39ba97ceec51143707e32ecb8343eb4258a9c",
+  "rateStart": 8900000000000000,
+  "settings": {
+    "dropPerCreditBps": 50,
+    "dropFloorBps": 5000,
+    "climbPerMinBps": 50,
+    "ceilBps": 11000,
+    "idleLoosenBps": 200,
+    "saleFloorBps": 10000,
+    "saleToBuybackBps": 5000,
+    "recoveryClimbPerMinBps": 200,
+    "recoveryGapBps": 1000,
+    "peakHalfLife": 21600,
+    "buybackDelay": 25,
+    "exitMode": 0,
+    "exitSlippageBps": 200,
+    "exitBidMarginBps": 2000,
+    "redeemBurnBps": 2000,
+    "buybackSlice": 500000000000000000,
+    "keeperFee": 500000000000000,
+    "keeperMaxBaseFee": 10000000000,
+    "rateCap": 26700000000000000,
+    "callerFee": 0,
+    "callerMaxBaseFee": 0,
+    "feeToBuybackBps": 0,
+    "feeToRedeemBurnBps": 1000
+  },
+  "sale": {
+    "markupBps": 15000,
+    "startCapBps": 100000,
+    "fastDecayBpsPerHour": 100,
+    "kneeBps": 10000,
+    "slowDecayBpsPerHour": 25,
+    "floorBps": 10000,
+    "anchorHalfLife": 604800,
+    "anchorMinCost": 100000000000000000
+  },
+  "credit": {
+    "costToPotBps": 10000,
+    "chosenComposeOn": false,
+    "minCcToChoose": "0",
+    "saleOn": false,
+    "window": 14400,
+    "floorBps": 11000,
+    "startBps": 30000,
+    "refScore": 4330000
+  },
+  "launch": {
+    "supply": "1000000000000000000000000000",
+    "startTick": -175000,
+    "positionLower": -175000,
+    "positionUpper": 887200,
+    "baselineSkimBps": 690,
+    "bountyBps": 9638,
+    "maxReferralBps": 0,
+    "lpFeePips": 0,
+    "sniperStartBps": 9000,
+    "sniperSeconds": 1800,
+    "protocolBps": 2000,
+    "restricted": true,
+    "allowed": []
+  },
+  "overrides": {
+    "bounty": false,
+    "openFactory": false
+  },
+  "router": {
+    "creatorPayee": "0xCB43078C32423F5348Cab5885911C3B5faE217F9",
+    "payeePpm": 112778
+  }
+}

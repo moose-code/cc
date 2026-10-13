@@ -10,6 +10,7 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {ICreditScore, ICredits, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {MockExitModule} from "./standins/MockExitModule.sol";
 import {LowballCreditController, ReentrantCreditBuyer} from "./attackers/CreditSaleAttackers.sol";
 
 /// credit sale window. pile credits are for sale from acquisition at a price that falls linearly from a start to a
@@ -22,6 +23,8 @@ contract CreditSaleTest is Fixture {
     uint256 internal constant BPS = 10_000;
     /// a small sqrt price makes the exit token expensive in eth, so the baseline is large
     uint160 internal constant HIGH_PRICE_SQRT = uint160(FixedPoint96.Q96 / 1000);
+    /// an extreme low sqrt price (2^40). the uncapped pool mulDiv overflows here, the 2^96 unit cap keeps it finite
+    uint160 internal constant EXTREME_LOW_SQRT = uint160(1) << 40;
 
     address internal buyer;
 
@@ -274,9 +277,9 @@ contract CreditSaleTest is Fixture {
         assertEq(ctl.creditPrice(id), hi * ctl.creditFloorBps() / BPS, "the sale prices with the baseline at 0");
     }
 
-    /// a live unit above type(uint128).max is capped before the pool pricing, so the baseline cannot overflow and the
-    /// sale does not revert. a score is at most 8_000_000, so the capped product is below 2^151
-    function test_baseline_unitCappedAtUint128() public {
+    /// a unit above 2^96 is capped before the pool pricing, so the baseline cannot overflow and the sale does not
+    /// revert. a score is at most 8_000_000, so the capped product is below 2^128
+    function test_baseline_unitCappedAtTwoPow96() public {
         _enterPhase2();
         uint256[] memory ids = _fillEthPile(1);
         uint256 id = ids[0];
@@ -289,13 +292,37 @@ contract CreditSaleTest is Fixture {
         vm.mockCall(address(core), abi.encodeWithSignature("unitPerPoint()"), abi.encode(type(uint256).max));
         vm.mockCall(address(mod), abi.encodeWithSignature("unitPerPoint()"), abi.encode(type(uint256).max));
         // the baseline uses the capped unit and the sale prices without reverting
-        uint256 baseline = _poolValueWei(_creditScore(id) * uint256(type(uint128).max), HIGH_PRICE_SQRT);
+        uint256 baseline = _poolValueWei(_creditScore(id) * (uint256(1) << 96), HIGH_PRICE_SQRT);
         uint256 hi = baseline;
         (, uint256 cost,) = core.creditInfo(id);
         if (cost > hi) hi = cost;
         if (_backstop(id) > hi) hi = _backstop(id);
         assertEq(ctl.creditPrice(id), hi * ctl.creditFloorBps() / BPS, "the floor uses the capped baseline");
         vm.clearMockedCalls();
+    }
+
+    /// the stored unit at the core maximum and a module answering type(uint256).max, at an extreme low pool price: the
+    /// unit is capped at 2^96, so the base units stay below 2^128 and the pool mulDiv prices the baseline without
+    /// reverting. without the cap the unit is uint128.max and the same pool mulDiv overflows at this price, so the cap
+    /// is what keeps the sale pricing. `EXTREME_LOW_SQRT` is 2^40, low enough that the uncapped mulDiv overflows and
+    /// high enough that the baseline fits the later `creditFloorBps` and `creditStartBps` scaling of `creditPrice`
+    function test_baseline_cappedUnitPricesAtAnExtremeLowPoolPrice() public {
+        _enterPhase2();
+        uint256[] memory ids = _fillEthPile(1);
+        uint256 id = ids[0];
+        // a module whose unit is the maximum the core stores; the core reads and stores it on the module set
+        MockExitModule big = new MockExitModule(address(xt), type(uint128).max);
+        _setExitModule(address(big));
+        assertEq(core.unitPerPoint(), type(uint128).max, "the core stored the maximum unit");
+        // the module then answers the maximum on the live read; the controller takes the lower of stored and live
+        big.setUnitPerPoint(type(uint256).max);
+        _initExitPoolAt(EXTREME_LOW_SQRT);
+        vm.prank(owner);
+        core.setRate(1e13);
+        _on();
+        _warp(ctl.creditWindow());
+        uint256 expected = _poolValueWei(_creditScore(id) * (uint256(1) << 96), EXTREME_LOW_SQRT);
+        assertEq(ctl.creditPrice(id), expected * ctl.creditFloorBps() / BPS, "the capped baseline prices without reverting");
     }
 
     // ------------------------------------------------------------------ the score-scaled eth backstop
