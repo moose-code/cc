@@ -39,7 +39,7 @@ contract SetSettings is Script {
     error NotOwner(address owner, address signer);
 
     string internal constant TUPLE =
-        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,uint8,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint16)";
+        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16)";
 
     function run() external {
         ICoreOwner core = ICoreOwner(_core());
@@ -168,7 +168,7 @@ contract SetSettings is Script {
 
     /// @dev one line per field: name, live value, new value, a mark when it changes, the bounds
     function _table(Settings memory a, Settings memory b) internal pure {
-        console.log("settings: field | live | new | bounds (a * marks a change; recoveryClimbPerMinBps >= climbPerMinBps, feeToBuybackBps + feeToRedeemBurnBps <= 10_000)");
+        console.log("settings: field | live | new | bounds (a * marks a change; recoveryClimbPerMinBps >= climbPerMinBps, redeemSlippageBps <= balanceBidMarginBps, the two switches are 0 or 1)");
         uint256[23] memory lo = SettingsFields.lo();
         uint256[23] memory hi = SettingsFields.hi();
         bytes32[23] memory names = SettingsFields.names();
@@ -196,7 +196,8 @@ contract SetSettings is Script {
     function _tuple(Settings memory s) internal pure returns (string memory out) {
         out = "(";
         for (uint256 i; i < SettingsFields.N; ++i) {
-            out = string.concat(out, i == 0 ? "" : ",", vm.toString(SettingsFields.get(s, i)));
+            uint256 v = SettingsFields.get(s, i);
+            out = string.concat(out, i == 0 ? "" : ",", i == 11 || i == 12 ? (v == 1 ? "true" : "false") : vm.toString(v));
         }
         out = string.concat(out, ")");
     }

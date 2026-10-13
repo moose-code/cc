@@ -69,11 +69,11 @@ contract LifecycleSwapsTest is Fixture {
         assertEq(core.ethRate(), clamp < core.settings().rateCap ? clamp : core.settings().rateCap);
     }
 
-    /// the balance side doors are shut while the balance module slot is empty and balanceMode is 0
+    /// the balance side doors are shut while the balance module slot is empty and both switches are false
     function test_phase1_balanceDoorsAreClosed() public {
         vm.expectRevert(ICore.NoBalanceModule.selector);
         core.redeemStatement(1);
-        vm.expectRevert(ICore.BalanceModeOff.selector);
+        vm.expectRevert(ICore.BalanceBidOff.selector);
         core.sellForBalance(_one(1));
         // the statement sale door belongs to the controller and needs no module
         vm.expectRevert(ICore.OnlyController.selector);
@@ -433,13 +433,16 @@ contract LifecycleComposeTest is Fixture {
     function test_compose_unsoldStatementStaysHeldAtTheFloor() public {
         _prepare();
         Composed memory c = _composeOnce();
-        (, uint256 basis,) = core.statementInfo(c.sid);
         uint256 pot = core.ethPot();
         _warp(60 days);
         assertEq(STATEMENTS.ownerOf(c.sid), address(core));
         assertEq(core.heldStatements().length, 1);
         assertEq(core.ethPot(), pot, "an unsold statement costs nothing and books nothing");
-        assertEq(ctl.priceOf(c.sid), basis * 10_000 / 10_000, "the asking price is at the floor");
+        assertEq(
+            ctl.priceOf(c.sid),
+            ctl.referenceOf(c.sid) * core.settings().saleFloorBps / 10_000,
+            "the asking price is at the floor of the reference"
+        );
         // two months later a buyer still gets it at the floor
         _buy(alice, c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), alice);
@@ -739,10 +742,10 @@ contract LifecyclePhase2Test is Fixture {
         vm.expectRevert(ICore.Underpaid.selector);
         core.redeemStatement(c.sid);
 
-        // a module that lowers the unit it pays by after it was set; the core holds the unit from set time
+        // a module that reports a zero unit is refused: the core reads the unit from the module in the call
         mod.setPayBps(10_000);
-        mod.setUnitPerPoint(1);
-        vm.expectRevert(ICore.Underpaid.selector);
+        mod.setUnitPerPoint(0);
+        vm.expectRevert(ICore.BadModule.selector);
         core.redeemStatement(c.sid);
 
         assertEq(keccak256(abi.encode(core.balancePot(), xt.balanceOf(address(core)))), before);
@@ -821,8 +824,7 @@ contract LifecycleNarrativeTest is Fixture {
         sid = supply + 1;
         assertEq(STATEMENTS.supply(), sid);
         assertEq(STATEMENTS.ownerOf(sid), address(core), "held by the core");
-        (, uint256 cost,) = core.statementInfo(sid);
-        assertEq(ctl.priceOf(sid), cost * ctl.startBps() / 10_000, "at the start price of the controller");
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * ctl.startBps() / 10_000, "at the start price of the controller");
         at = uint64(block.timestamp);
         _check();
     }
@@ -961,8 +963,10 @@ contract LifecycleOwnerAdaptsTest is Fixture {
         // two statements held under the old numbers
         (uint256 s1, uint256 cost1) = _composeFresh();
         (uint256 s2, uint256 cost2) = _composeFresh();
-        assertEq(ctl.priceOf(s1), cost1 * 15_000 / 10_000);
-        assertEq(ctl.priceOf(s2), cost2 * 15_000 / 10_000);
+        assertEq(ctl.priceOf(s1), ctl.referenceOf(s1) * 15_000 / 10_000);
+        assertEq(ctl.priceOf(s2), ctl.referenceOf(s2) * 15_000 / 10_000);
+        assertGe(ctl.referenceOf(s1), cost1);
+        assertGe(ctl.referenceOf(s2), cost2);
 
         // the owner changes three numbers in one call, effective at once
         Settings memory s = core.settings();
@@ -986,12 +990,13 @@ contract LifecycleOwnerAdaptsTest is Fixture {
         }
 
         // the held statements follow the new floor at once, nobody reprices anything
-        assertEq(ctl.priceOf(s1), cost1 * 20_000 / 10_000, "the old statement now asks 200 percent of its cost");
-        assertEq(ctl.priceOf(s2), cost2 * 20_000 / 10_000, "the old statement now asks 200 percent of its cost");
+        assertEq(ctl.priceOf(s1), ctl.referenceOf(s1) * 20_000 / 10_000, "the old statement now asks 200 percent of its reference");
+        assertEq(ctl.priceOf(s2), ctl.referenceOf(s2) * 20_000 / 10_000, "the old statement now asks 200 percent of its reference");
 
         // a statement composed after the change asks the new floor, from the credits bought on both numbers
         (uint256 s3, uint256 cost3) = _composeFresh();
-        assertEq(ctl.priceOf(s3), cost3 * 20_000 / 10_000);
+        assertEq(ctl.priceOf(s3), ctl.referenceOf(s3) * 20_000 / 10_000);
+        assertGe(ctl.referenceOf(s3), cost3);
         assertEq(core.heldStatements().length, 3);
 
         // sales under the new split: 80 percent of every sale, old statements included
@@ -1004,7 +1009,6 @@ contract LifecycleOwnerAdaptsTest is Fixture {
             assertEq(STATEMENTS.ownerOf(s1), alice);
             assertEq(STATEMENTS.ownerOf(s2), bob);
             assertEq(STATEMENTS.ownerOf(s3), carol);
-            assertEq(price1, cost1 * 20_000 / 10_000);
             uint256 total = price1 + price2 + price3;
             assertEq(core.ethToBuyback() - back0, price1 * 8_000 / 10_000 + price2 * 8_000 / 10_000 + price3 * 8_000 / 10_000, "80 percent to the buyback");
             assertEq(core.ethPot() - pot0, total - (price1 * 8_000 / 10_000 + price2 * 8_000 / 10_000 + price3 * 8_000 / 10_000), "the rest to the pot");

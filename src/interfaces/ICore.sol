@@ -14,6 +14,8 @@ interface ICore {
         uint16 floorBps;
         uint32 startBps;
         uint32 refScore;
+        uint16 royaltyBps;
+        address royaltyRecipient;
     }
 
     error AboveCeiling();
@@ -28,7 +30,7 @@ interface ICore {
     error BadStatement();
     error BadSuccessor(address who);
     error BadSwap();
-    error BalanceModeOff();
+    error BalanceBidOff();
     error BalanceTokenChanged();
     error BelowFloor();
     error BelowMinCc();
@@ -59,6 +61,7 @@ interface ICore {
     error OnlyPendingOwner();
     error OnlyPoolManager();
     error PotTooSmall();
+    error RedeemOff();
     error Reentrancy();
     error Retired();
     error SliceTooSmall();
@@ -105,7 +108,6 @@ interface ICore {
     event TargetAdded(address target);
     event TargetRemoved(address target);
     event TargetsLocked();
-    event UnitPerPointRefreshed(address balanceModule, uint256 unitPerPoint);
 
     receive() external payable;
 
@@ -133,6 +135,7 @@ interface ICore {
     function chosenComposeOn() external view returns (bool);
     function compose() external;
     function composeChosen(uint256[80] memory ids, uint8 format) external;
+    function composerOf(uint256) external view returns (address);
     function controller() external view returns (address);
     function controllerLocked() external view returns (bool);
     function creditCostToPotBps() external view returns (uint16);
@@ -160,7 +163,6 @@ interface ICore {
     function rateAtCheckpoint() external view returns (uint256);
     function ratingOf(uint256 sid) external view returns (uint256);
     function redeemStatement(uint256 sid) external;
-    function refreshUnitPerPoint() external;
     function releaseRedeemBurn(uint256 amount) external;
     function removeTarget(address target) external;
     function rescueCoin(address, uint256) external;
@@ -187,6 +189,5 @@ interface ICore {
     function successorLocked() external view returns (bool);
     function targetsLocked() external view returns (bool);
     function transferOwnership(address to) external;
-    function unitPerPoint() external view returns (uint256);
     function unlockCallback(bytes memory data) external returns (bytes memory);
 }

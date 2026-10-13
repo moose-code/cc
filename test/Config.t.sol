@@ -55,6 +55,7 @@ contract ConfigTest is Fixture {
         d.mevModule = live.mev;
         d.owner = v2.owner;
         d.creator = v2.owner;
+        d.credit.royaltyRecipient = v2.owner;
         d.creatorPayee = v2.owner;
         d.name = "CC";
         d.salt = keccak256("CC");
@@ -135,6 +136,9 @@ contract ConfigTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "creator"));
         this.requireExt(c);
         c.creator = creator;
+        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "credit.royaltyRecipient"));
+        this.requireExt(c);
+        c.credit.royaltyRecipient = creator;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "name"));
         this.requireExt(c);
         c.name = "Name";
@@ -767,14 +771,13 @@ contract ConfigTest is Fixture {
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // the top itself (the fields bound by another field start from a free partner)
-            // feeToBuybackBps at its top needs feeToRedeemBurnBps at zero to keep the sum at 10_000
-            if (i == 21) s.feeToRedeemBurnBps = 0;
             // climbPerMinBps at its top needs recoveryClimbPerMinBps raised to stay at or above it
             if (i == 2) s.recoveryClimbPerMinBps = 1_000;
             SettingsFields.set(s, i, hi[i]);
             assertEq(SettingsBounds.firstViolation(s), bytes32(0), "the top edge is inside");
+            // the two switches take 0 or 1, nothing is out of bounds
+            if (i == 11 || i == 12) continue;
             s = Mainnet.defaultSettings();
-            if (i == 21) s.feeToRedeemBurnBps = 0;
             SettingsFields.set(s, i, hi[i] + 1);
             assertEq(SettingsBounds.firstViolation(s), names[i], "above the top");
             // below the bottom, for the fields that have one
@@ -795,8 +798,7 @@ contract ConfigTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "settings"));
         this.requireExt(c);
         c = lc;
-        c.settings.feeToBuybackBps = 9_500;
-        c.settings.feeToRedeemBurnBps = 1_000;
+        c.settings.feeToRedeemBurnBps = 10_001;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "settings"));
         this.requireExt(c);
         c = lc;
@@ -805,7 +807,7 @@ contract ConfigTest is Fixture {
         this.requireExt(c);
         // the sale settings of the controller have their own row and guard
         c = lc;
-        c.sale.floorBps = 10_001;
+        c.sale.kneeBps = 999;
         _pre(c, d2);
         assertEq(_failedNames(), "sale settings inside the bounds");
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "sale"));

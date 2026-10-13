@@ -48,13 +48,13 @@ struct CoreState {
     mapping(uint256 => CoreLib.Credit) credits;
     mapping(uint256 => CoreLib.Statement) statements;
     uint256[] heldIds;
-    uint256 unitPerPoint;
     address successor;
     bool successorLocked;
     bool retired;
     uint16 creditCostToPotBps;
     bool chosenComposeOn;
     uint96 minCcToChoose;
+    mapping(uint256 => address) composerOf;
 }
 
 /// the one linked library of the Core: the settings write (validation, storage, event), the eth rate (the climb with its
@@ -103,8 +103,8 @@ library CoreLib {
     error ZeroAmount();
     error PotTooSmall();
     error Slippage();
-    /// the action is not allowed in the current `balanceMode`
-    error BalanceModeOff();
+    /// `sellForBalance` while `balanceBidOn` is false
+    error BalanceBidOff();
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     error BadSetting(bytes32 field);
     event SettingsSet(Settings settings);
@@ -163,7 +163,8 @@ library CoreLib {
         s.recoveryGapBps = ns.recoveryGapBps;
         s.peakHalfLife = ns.peakHalfLife;
         s.buybackDelay = ns.buybackDelay;
-        s.balanceMode = ns.balanceMode;
+        s.redeemOn = ns.redeemOn;
+        s.balanceBidOn = ns.balanceBidOn;
         s.redeemSlippageBps = ns.redeemSlippageBps;
         s.balanceBidMarginBps = ns.balanceBidMarginBps;
         s.redeemBurnBps = ns.redeemBurnBps;
@@ -173,7 +174,6 @@ library CoreLib {
         s.rateCap = ns.rateCap;
         s.callerFee = ns.callerFee;
         s.callerMaxBaseFee = ns.callerMaxBaseFee;
-        s.feeToBuybackBps = ns.feeToBuybackBps;
         s.feeToRedeemBurnBps = ns.feeToRedeemBurnBps;
         emit SettingsSet(ns);
     }
@@ -194,18 +194,18 @@ library CoreLib {
         s.recoveryGapBps = uint16(a >> 128);
         s.peakHalfLife = uint32(a >> 144);
         s.buybackDelay = uint16(a >> 176);
-        s.balanceMode = uint8(a >> 192);
-        s.redeemSlippageBps = uint16(a >> 200);
-        s.balanceBidMarginBps = uint16(a >> 216);
-        s.redeemBurnBps = uint16(a >> 232);
+        s.redeemOn = uint8(a >> 192) != 0;
+        s.balanceBidOn = uint8(a >> 200) != 0;
+        s.redeemSlippageBps = uint16(a >> 208);
+        s.balanceBidMarginBps = uint16(a >> 224);
+        s.redeemBurnBps = uint16(a >> 240);
         s.buybackSlice = uint128(b);
         s.keeperFee = uint64(b >> 128);
         s.keeperMaxBaseFee = uint48(b >> 192);
         s.rateCap = uint64(c);
         s.callerFee = uint64(c >> 64);
         s.callerMaxBaseFee = uint48(c >> 128);
-        s.feeToBuybackBps = uint16(c >> 176);
-        s.feeToRedeemBurnBps = uint16(c >> 192);
+        s.feeToRedeemBurnBps = uint16(c >> 176);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
@@ -588,10 +588,9 @@ library CoreLib {
         _sellForBalance(ids, minOut);
     }
 
-    /// pays each credit `score * unit * (10_000 - balanceBidMarginBps) / 10_000` in balance token from `balancePot`, where `unit` is
-    /// the lower of the stored `unitPerPoint` and the module's live `unitPerPoint()`, so a module that lowered its rate
-    /// after the owner set it cannot make the bid overpay. reads the score from the credit score contract. runs only
-    /// while `balanceMode` is 2. each credit's price must not exceed the remaining pot. the credit enters the single pile
+    /// pays each credit `score * unit * (10_000 - balanceBidMarginBps) / 10_000` in balance token from `balancePot`, where
+    /// `unit` is the module's `unitPerPoint()` read in the call. reads the score from the credit score contract. runs
+    /// only while `balanceBidOn` is true. each credit's price must not exceed the remaining pot. the credit enters the single pile
     /// with an eth cost basis of the score-scaled eth backstop `peak * max(1, score / refScore)`, at least 1 wei, where
     /// `peak` is the remembered peak of the eth bid decayed to now. the peak rises with fills and falls only with time,
     /// so neither a pot move nor a pool move can push a recorded cost down, and no pool key is needed. a failing, short
@@ -601,12 +600,10 @@ library CoreLib {
         CoreState storage c = state();
         if (c.retired) revert Retired();
         Settings storage s = SettingsStore.load();
-        if (s.balanceMode != 2) revert BalanceModeOff();
+        if (!s.balanceBidOn) revert BalanceBidOff();
         if (ids.length == 0) revert Empty();
         if (c.balanceModule == address(0)) revert NoBalanceModule();
-        uint256 unit = c.unitPerPoint;
-        uint256 live = _liveUnit(c.balanceModule);
-        if (live < unit) unit = live;
+        uint256 unit = _liveUnit(c.balanceModule);
         uint256 net = BPS - s.balanceBidMarginBps;
         uint256 pot = c.balancePot;
         // the floor rate now, the base of a credit's recorded eth cost basis: the larger of the price state climbed
@@ -640,7 +637,7 @@ library CoreLib {
     uint256 internal constant READ_GAS = 200_000;
 
     /// bounded read of `unitPerPoint()` of `module`: at most `READ_GAS`, exactly 32 bytes returned or more (a long
-    /// answer is cut off). a revert, a short answer or a zero unit reverts `BadModule`
+    /// answer is cut off). a revert, a short answer, a zero unit or a unit above `type(uint128).max` reverts `BadModule`
     function _liveUnit(address module) private view returns (uint256 unit) {
         bytes4 sel = IBalanceModule.unitPerPoint.selector;
         bool ok;
@@ -650,7 +647,7 @@ library CoreLib {
             ok := and(ok, iszero(lt(returndatasize(), 32)))
             unit := mload(0)
         }
-        if (!ok || unit == 0) revert BadModule();
+        if (!ok || unit == 0 || unit > type(uint128).max) revert BadModule();
     }
 
     /// the controller's `refScore()` through a bounded staticcall of at most `READ_GAS`, copying at most 32 bytes of

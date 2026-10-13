@@ -15,6 +15,8 @@ interface IControllerV1 {
         uint16 floorBps;
         uint32 startBps;
         uint32 refScore;
+        uint16 royaltyBps;
+        address royaltyRecipient;
     }
 
     struct PoolKey {
@@ -32,6 +34,7 @@ interface IControllerV1 {
     error Paused();
     error Reentrant();
     error Underpaid();
+    error ZeroAmount();
 
     event AnchorBpsSet(uint32 anchorBps);
     event AnchorHalfLifeSet(uint32 anchorHalfLife);
@@ -44,11 +47,13 @@ interface IControllerV1 {
     event CreditStartBpsSet(uint32 creditStartBps);
     event CreditWindowSet(uint32 creditWindow);
     event FastDecayBpsPerHourSet(uint16 fastDecayBpsPerHour);
-    event FloorBpsSet(uint16 floorBps);
     event KneeBpsSet(uint32 kneeBps);
     event MarkupBpsSet(uint16 markupBps);
     event PausedSet(bool paused);
     event RefScoreSet(uint32 refScore);
+    event RoyaltyBpsSet(uint16 royaltyBps);
+    event RoyaltyClaimed(address indexed to, uint256 amount);
+    event RoyaltyRecipientSet(address royaltyRecipient);
     event SlowDecayBpsPerHourSet(uint16 slowDecayBpsPerHour);
     event StartCapBpsSet(uint32 startCapBps);
 
@@ -66,21 +71,27 @@ interface IControllerV1 {
     function buy(uint256 sid) external payable;
     function buyCredit(uint256 id) external payable;
     function buyCredits(uint256[] memory ids) external payable;
+    function claimRoyalty() external;
     function creditFloorBps() external view returns (uint16);
     function creditPrice(uint256 id) external view returns (uint256 price);
     function creditSaleOn() external view returns (bool);
     function creditStartBps() external view returns (uint32);
     function creditWindow() external view returns (uint32);
     function fastDecayBpsPerHour() external view returns (uint16);
-    function floorBps() external view returns (uint16);
+    function grossCreditPrice(uint256 id) external view returns (uint256);
+    function grossPriceOf(uint256 sid) external view returns (uint256);
     function kneeBps() external view returns (uint32);
     function markupBps() external view returns (uint16);
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
     function pastWindow(uint64 acquiredAt) external view returns (bool);
     function paused() external view returns (bool);
+    function pointRate() external view returns (uint256);
     function priceOf(uint256 sid) external view returns (uint256 price);
     function refScore() external view returns (uint32);
     function referenceOf(uint256 sid) external view returns (uint256);
+    function royaltyBps() external view returns (uint16);
+    function royaltyOwed() external view returns (uint256);
+    function royaltyRecipient() external view returns (address);
     function setAnchorBps(uint32 v) external;
     function setAnchorHalfLife(uint32 v) external;
     function setAnchorMinCost(uint128 v) external;
@@ -90,15 +101,17 @@ interface IControllerV1 {
     function setCreditStartBps(uint32 v) external;
     function setCreditWindow(uint32 v) external;
     function setFastDecayBpsPerHour(uint16 v) external;
-    function setFloorBps(uint16 v) external;
     function setKneeBps(uint32 v) external;
     function setMarkupBps(uint16 v) external;
     function setPaused(bool v) external;
     function setRefScore(uint32 v) external;
+    function setRoyaltyBps(uint16 v) external;
+    function setRoyaltyRecipient(address v) external;
     function setSlowDecayBpsPerHour(uint16 v) external;
     function setStartCapBps(uint32 v) external;
     function slowDecayBpsPerHour() external view returns (uint16);
     function startBps() external view returns (uint256);
     function startCapBps() external view returns (uint32);
     function storedAnchorBps() external view returns (uint32);
+    function valueOf(uint256 points) external view returns (uint256);
 }

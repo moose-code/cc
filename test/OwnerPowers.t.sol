@@ -151,9 +151,8 @@ contract OwnerFormerQueueTest is OwnerBase {
         _setBalanceModule(address(spareMod));
         assertEq(core.balanceModule(), address(spareMod));
         assertEq(core.balanceToken(), address(spareToken));
-        assertEq(core.unitPerPoint(), UNIT);
         // the balance side is live in the same block once the bid is turned on
-        _setBalanceMode(2);
+        _setSwitches(true, true);
         _setBalancePoolFor(address(spareToken));
         uint256[] memory ids = _credits(seller, 1);
         spareToken.mint(address(core), 5e19);
@@ -195,29 +194,27 @@ contract OwnerFormerQueueTest is OwnerBase {
         vm.stopPrank();
         assertEq(core.balanceModule(), address(0), "every refused set changed nothing");
         assertEq(core.balanceToken(), address(0));
-        assertEq(core.unitPerPoint(), 0);
         vm.prank(stranger);
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setBalanceModule(address(spareMod));
     }
 
-    function test_module_replaceKeepsTheTokenAndReadsTheUnitAgain() public {
+    function test_module_replaceKeepsTheTokenAndTheUnitStaysWithTheModule() public {
         _setBalanceModule(address(spareMod));
         MockBalanceModule second = new MockBalanceModule(address(spareToken), 3 * UNIT);
         _setBalanceModule(address(second));
         assertEq(core.balanceModule(), address(second));
-        assertEq(core.unitPerPoint(), 3 * UNIT, "the unit of the new module");
+        assertEq(_moduleUnit(), 3 * UNIT, "the unit of the new module");
         // the same module again after its unit changed
         second.setUnitPerPoint(4 * UNIT);
         _setBalanceModule(address(second));
-        assertEq(core.unitPerPoint(), 4 * UNIT, "the unit is read again");
+        assertEq(_moduleUnit(), 4 * UNIT, "the module reports the new unit");
         // another balance token is refused
         MockBalanceModule other = new MockBalanceModule(address(new MockBalanceToken("Other", "OTH")), UNIT);
         vm.prank(owner);
         vm.expectRevert(ICore.BalanceTokenChanged.selector);
         core.setBalanceModule(address(other));
         assertEq(core.balanceModule(), address(second));
-        assertEq(core.unitPerPoint(), 4 * UNIT);
     }
 
     // ------------------------------------------------------------------ addTarget
@@ -352,7 +349,8 @@ contract OwnerLocksTest is OwnerBase {
         ctl.setFastDecayBpsPerHour(200);
         ctl.setSlowDecayBpsPerHour(50);
         ctl.setKneeBps(12_000);
-        ctl.setFloorBps(8_000);
+        ctl.setRoyaltyBps(300);
+        ctl.setRoyaltyRecipient(address(0xA27));
         ctl.setAnchorBps(11_000);
         vm.stopPrank();
         assertTrue(core.controllerLocked());
@@ -370,7 +368,7 @@ contract OwnerLocksTest is OwnerBase {
         assertTrue(core.balanceModuleLocked());
     }
 
-    function test_lockBalanceModule_blocksOnlyTheModuleSetterAndTheUnitStaysFixed() public {
+    function test_lockBalanceModule_blocksOnlyTheModuleSetterAndTheUnitFollowsTheModule() public {
         _enterPhase2();
         vm.expectEmit(address(core));
         emit ICore.BalanceModuleLocked();
@@ -384,7 +382,7 @@ contract OwnerLocksTest is OwnerBase {
         vm.startPrank(owner);
         vm.expectRevert(_lockedErr("balanceModule"));
         core.setBalanceModule(address(spareMod));
-        // the same module again, which is how the unit is updated: also locked
+        // the same module again: also locked
         vm.expectRevert(_lockedErr("balanceModule"));
         core.setBalanceModule(m);
         // a module that would be refused anyway is refused as locked first
@@ -392,7 +390,7 @@ contract OwnerLocksTest is OwnerBase {
         core.setBalanceModule(address(0xBEEF));
         vm.stopPrank();
         assertEq(core.balanceModule(), m);
-        assertEq(core.unitPerPoint(), UNIT, "the unit cannot be updated any more");
+        assertEq(_moduleUnit(), 9 * UNIT, "the unit follows the module after the lock");
         _openExcept(D_MODULE, owner);
     }
 
@@ -528,7 +526,9 @@ contract OwnerHandoverTest is OwnerBase {
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setKneeBps(12_000);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setFloorBps(8_000);
+        ctl.setRoyaltyBps(300);
+        vm.expectRevert(IControllerV1.OnlyOwner.selector);
+        ctl.setRoyaltyRecipient(address(0xA27));
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setAnchorBps(11_000);
         vm.stopPrank();
@@ -540,7 +540,8 @@ contract OwnerHandoverTest is OwnerBase {
         ctl.setFastDecayBpsPerHour(200);
         ctl.setSlowDecayBpsPerHour(50);
         ctl.setKneeBps(12_000);
-        ctl.setFloorBps(8_000);
+        ctl.setRoyaltyBps(300);
+        ctl.setRoyaltyRecipient(address(0xA27));
         ctl.setAnchorBps(11_000);
         core.lockController();
         core.lockBalanceModule();

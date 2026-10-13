@@ -278,8 +278,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("sale: fastDecayBpsPerHour 200 (valid, wrong)", Class.Hash);
             m.c.sale.fastDecayBpsPerHour = 200;
         } else if (i == 25) {
-            m = _m("sale: floorBps 8000 (valid, wrong)", Class.Hash);
-            m.c.sale.floorBps = 8000;
+            m = _m("sale: kneeBps 8000 (valid, wrong)", Class.Hash);
+            m.c.sale.kneeBps = 8000;
         } else if (i == 26) {
             m = _m("sale: markupBps 40001", Class.Pre);
             m.c.sale.markupBps = 40_001;
@@ -293,17 +293,17 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("sale: fastDecayBpsPerHour 0", Class.Pre);
             m.c.sale.fastDecayBpsPerHour = 0;
         } else if (i == 30) {
-            m = _m("sale: kneeBps below floorBps", Class.Pre);
-            m.c.sale.kneeBps = m.c.sale.floorBps - 1;
+            m = _m("sale: kneeBps 999", Class.Pre);
+            m.c.sale.kneeBps = 999;
         } else if (i == 31) {
             m = _m("sale: startCapBps below markupBps", Class.Pre);
             m.c.sale.startCapBps = m.c.sale.markupBps - 1;
         } else if (i == 32) {
-            m = _m("sale: floorBps 999", Class.Pre);
-            m.c.sale.floorBps = 999;
+            m = _m("credit: royaltyBps 1001", Class.Pre);
+            m.c.credit.royaltyBps = 1_001;
         } else {
-            m = _m("sale: floorBps 5000 (a valid change; the launch floor is the top edge)", Class.Hash);
-            m.c.sale.floorBps = 5_000;
+            m = _m("credit: royaltyBps 500 (valid, wrong)", Class.Hash);
+            m.c.credit.royaltyBps = 500;
         }
     }
 
@@ -512,6 +512,7 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
             43_200,
             50,
             1,
+            1,
             500,
             5000,
             5000,
@@ -521,7 +522,6 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
             40_000_000_000_000_000,
             0.002 ether,
             50 gwei,
-            5000,
             2000
         ];
     }
@@ -544,15 +544,14 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
         uint256[23] memory lo = SettingsFields.lo();
         uint256[23] memory hi = SettingsFields.hi();
         string memory nm = _trim(SettingsFields.names()[f]);
-        // rateCap is field 18. a rateCap other than 3 times the launch rateStart is stopped by its own preflight row
-        m = _m("", kind <= 1 || f == 18 ? Class.Pre : Class.Hash);
-        if (f == 18 && kind >= 2) m.pre = ROW_RATE_RATIO;
+        // rateCap is field 19. a rateCap other than 3 times the launch rateStart is stopped by its own preflight row
+        m = _m("", kind <= 1 || f == 19 ? Class.Pre : Class.Hash);
+        if (f == 19 && kind >= 2) m.pre = ROW_RATE_RATIO;
         Settings memory s = m.c.settings;
-        // feeToRedeemBurnBps (field 22) is bounded above by 10_000 - feeToBuybackBps (field 21). zero the partner so a
-        // single field edge of feeToBuybackBps is tested against its own bound, not the sum
-        if (f == 21) s.feeToRedeemBurnBps = 0;
+        // the two switches (fields 11 and 12) take 0 or 1: nothing is above their top
+        if (kind == 0 && (f == 11 || f == 12)) return m;
         if (kind == 0) {
-            if (f == 18) {
+            if (f == 19) {
                 // rateStart 3.3e17 + 1 is in bounds and 3 times it is the rateCap: only the settings bound fails
                 m.c.rateStart = hi[f] / 3 + 1;
                 s.rateCap = uint64(3 * m.c.rateStart);
@@ -561,11 +560,11 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
                 SettingsFields.set(s, f, hi[f] + 1);
             }
             m.label = string.concat(
-                "settings.", nm, " ", vm.toString(f == 18 ? uint256(s.rateCap) : hi[f] + 1), " above the top"
+                "settings.", nm, " ", vm.toString(f == 19 ? uint256(s.rateCap) : hi[f] + 1), " above the top"
             );
         } else if (kind == 1) {
             if (lo[f] == 0) return m;
-            if (f == 18) {
+            if (f == 19) {
                 // 3 times a rateStart of 1e13 / 3 - 1 is a rateCap under 1e13: the rateStart bound and the settings bound
                 // fail together, the ratio row passes
                 m.c.rateStart = lo[f] / 3 - 1;
@@ -575,7 +574,7 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
                 SettingsFields.set(s, f, lo[f] - 1);
             }
             m.label = string.concat(
-                "settings.", nm, f == 18 ? string.concat(" ", vm.toString(uint256(s.rateCap))) : " one", " below the bottom"
+                "settings.", nm, f == 19 ? string.concat(" ", vm.toString(uint256(s.rateCap))) : " one", " below the bottom"
             );
         } else if (kind == 2) {
             SettingsFields.set(s, f, _wrong()[f]);
@@ -588,12 +587,12 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
         } else {
             if (lo[f] == 0) return m;
             // the lowest rate cap that still holds the launch rate
-            if (f == 18) s.rateCap = uint64(base.rateStart);
+            if (f == 19) s.rateCap = uint64(base.rateStart);
             // recoveryClimbPerMinBps is bounded below by climbPerMinBps, not by its own table low
             else if (f == 7) SettingsFields.set(s, 7, s.climbPerMinBps);
             else SettingsFields.set(s, f, lo[f]);
             // the smallest slice needs the cheapest buyback payment
-            if (f == 15) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
+            if (f == 16) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
             m.label = string.concat("settings.", nm, " the bottom edge");
         }
         // an edge that is the launch value is no mutation

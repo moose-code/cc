@@ -252,9 +252,8 @@ contract PauseWindowsTest is SaleBase {
         super.setUp();
         stub = new StatementInfoStub(owner);
         // the launch sale is flat at cost below hour 50; the model prices the two stage curve of `_launch`
-        Sale memory sale = lc.sale;
-        sale.floorBps = 7_500;
-        c = Prod.newController(address(stub), sale);
+        stub.setSaleFloorBps(7_500);
+        c = Prod.newController(address(stub), lc.sale);
     }
 
     function _toggle(bool v) internal {

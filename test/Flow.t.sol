@@ -67,17 +67,15 @@ contract FlowTest is Fixture {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
             uint256 b = hi[i];
-            // recoveryClimbPerMinBps (field 7) is bounded below by climbPerMinBps (field 2), feeToRedeemBurnBps
-            // (field 22) above by 10_000 - feeToBuybackBps (field 21)
+            // recoveryClimbPerMinBps (field 7) is bounded below by climbPerMinBps (field 2)
             if (i == 7 && s.climbPerMinBps > a) a = s.climbPerMinBps;
-            if (i == 22) b = 10_000 - s.feeToBuybackBps;
             _set(s, i, a + (b > a ? x % (b - a + 1) : 0));
         }
-        // the slice is at least twice the largest buyback payment (field 15 is `buybackSlice`)
+        // the slice is at least twice the largest buyback payment (field 16 is `buybackSlice`)
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
-        if (s.buybackSlice < minSlice) _set(s, 15, minSlice);
-        // redeemSlippageBps (field 12) is bounded above by balanceBidMarginBps (field 13), set later in the loop
-        if (s.redeemSlippageBps > s.balanceBidMarginBps) _set(s, 12, s.balanceBidMarginBps);
+        if (s.buybackSlice < minSlice) _set(s, 16, minSlice);
+        // redeemSlippageBps (field 13) is bounded above by balanceBidMarginBps (field 14), set later in the loop
+        if (s.redeemSlippageBps > s.balanceBidMarginBps) _set(s, 13, s.balanceBidMarginBps);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -96,12 +94,12 @@ contract FlowTest is Fixture {
         assertEq(s.buybackDelay, 25);
         assertEq(s.keeperFee, 0.0005 ether);
         assertEq(s.keeperMaxBaseFee, 10 gwei);
-        assertEq(s.balanceMode, 0);
+        assertFalse(s.redeemOn);
+        assertFalse(s.balanceBidOn);
         assertEq(s.redeemSlippageBps, 200);
         assertEq(s.balanceBidMarginBps, 2_000);
         assertEq(s.redeemBurnBps, 2_000);
         assertEq(s.rateCap, 26_700_000_000_000_000);
-        assertEq(s.feeToBuybackBps, 0);
         assertEq(s.feeToRedeemBurnBps, 1_000);
         assertEq(s.callerFee, 0);
         assertEq(s.callerMaxBaseFee, 0);
@@ -124,16 +122,14 @@ contract FlowTest is Fixture {
                 Settings memory s = Mainnet.defaultSettings();
                 uint256 v = k == 0 ? lo[i] : hi[i];
                 // the fields bounded by another field
-                // feeToBuybackBps at its top needs feeToRedeemBurnBps at zero to keep the sum at 10_000
-                if (i == 21 && k == 1) s.feeToRedeemBurnBps = 0;
                 // the lowest recoveryClimbPerMinBps the config affords is climbPerMinBps
                 if (i == 7 && k == 0) v = s.climbPerMinBps;
                 // climbPerMinBps at its top needs recoveryClimbPerMinBps raised to stay at or above it
                 if (i == 2 && k == 1) s.recoveryClimbPerMinBps = 1_000;
                 // the smallest slice needs the cheapest buyback payment: 2 * (600,000 gas * 1 gwei + 0) is 0.0012 ether
-                if (i == 15 && k == 0) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
+                if (i == 16 && k == 0) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
                 // balanceBidMarginBps at its bottom (0) needs redeemSlippageBps lowered to it, which it bounds
-                if (i == 13 && k == 0) s.redeemSlippageBps = 0;
+                if (i == 14 && k == 0) s.redeemSlippageBps = 0;
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -146,10 +142,9 @@ contract FlowTest is Fixture {
         uint256[23] memory hi = _hi();
         bytes32[23] memory names = _names();
         for (uint256 i; i < N; ++i) {
+            // the two switches take 0 or 1, nothing is out of bounds
+            if (i == 11 || i == 12) continue;
             Settings memory s = Mainnet.defaultSettings();
-            // feeToBuybackBps at its top with the default feeToRedeemBurnBps would break the sum bound, not the single
-            // field bound; zero the partner so the single field bound is the first violation
-            if (i == 21) s.feeToRedeemBurnBps = 0;
             // above the top
             _set(s, i, hi[i] + 1);
             vm.prank(owner);
@@ -625,12 +620,12 @@ contract FlowTest is Fixture {
         core.redeemStatement(sid);
     }
 
-    function test_redeem_offWhenBalanceModeZero() public {
+    function test_redeem_offWhenRedeemOnIsFalse() public {
         _enterPhase2();
-        _setBalanceMode(0);
+        _setSwitches(false, true);
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
-        vm.expectRevert(ICore.BalanceModeOff.selector);
+        vm.expectRevert(ICore.RedeemOff.selector);
         core.redeemStatement(c.sid);
     }
 
@@ -823,8 +818,8 @@ contract FlowTest is Fixture {
             core.setRate(bound(r >> 8, 1e13, core.settings().rateCap));
         } else if (kind == 2) {
             Settings memory s = core.settings();
-            // forge-lint: disable-next-line(unsafe-typecast)
-            s.balanceMode = uint8(bound(r >> 8, 0, 2));
+            s.redeemOn = bound(r >> 8, 0, 1) == 1;
+            s.balanceBidOn = bound(r >> 16, 0, 1) == 1;
             core.setSettings(s);
         } else if (kind == 3) {
             address t = address(uint160(r >> 8));

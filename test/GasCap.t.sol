@@ -553,7 +553,7 @@ contract GasCapTest is SeaportBase {
     /// @dev ControllerV1.buy pays the asking price and takes the statement through Core.sellTo
     function test_gas_sellTo_throughControllerBuy() public {
         uint256 sid = _composeOnce().sid;
-        uint256 price = ctl.priceOf(sid);
+        uint256 price = ctl.grossPriceOf(sid);
         vm.deal(bidder, price);
         _cool(address(ctl));
         vm.prank(bidder);

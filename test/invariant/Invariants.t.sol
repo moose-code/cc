@@ -170,7 +170,8 @@ abstract contract InvariantsBase is InvariantFixture {
         for (uint256 i; i < n; ++i) {
             address c = handler.watched(i);
             (uint256 eth, uint256 coin_, uint256 credits_, uint256 statements_, uint256 xt_) = handler.baseOf(c);
-            assertLe(c.balance, eth, "owner or controller gained eth");
+            // the first controller holds the royalty it owes between claims, paid by buyers
+            assertLe(c.balance, eth + (c == handler.v1() ? IControllerV1(c).royaltyOwed() : 0), "owner or controller gained eth");
             assertLe(coin.balanceOf(c), coin_, "owner or controller gained coin");
             assertLe(CREDITS.balanceOf(c), credits_, "owner or controller gained credits");
             assertLe(_statementsBalance(c), statements_, "owner or controller gained statements");
@@ -683,7 +684,7 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 32) handler.migrate(w, x);
         else if (a == 33) handler.adopt(w, x, y);
         else if (a == 34) handler.pause(w, x);
-        else if (a == 35) handler.refreshUnit(w);
+        else if (a == 35) handler.changeUnit(w);
         else if (a == 36) handler.releaseRedeem(w, x);
         else if (a == 37) handler.buyCredit(w, x, y);
         else if (a == 38) handler.buyCredits(w, x, y);
@@ -763,7 +764,7 @@ abstract contract InvariantsBase is InvariantFixture {
         // pause and composeChosen are exercised by their own tests, not by test_everyActionSucceeds (a chosen compose
         // needs a fresh page of 80 pile credits, which its own test builds)
         if (a == 34 || a == 39) return false;
-        // refreshUnit reads the module, so it only lands in the balance side
+        // changeUnit moves the module's unit, so it only lands in the balance side
         if (a == 35) return handler.phase2();
         // the sale and owner door actions run only in the suites that list them
         if (a >= 24 && a <= 28) return _saleSuite();
@@ -922,7 +923,7 @@ abstract contract InvariantsBase is InvariantFixture {
         for (uint256 i; i < 8; ++i) {
             handler.replaceModule(i * 7919 + 1, i);
         }
-        assertTrue(_try(35, 20), "no unit refresh");
+        assertTrue(_try(35, 20), "no unit change");
     }
 
     /*//////////////////////////////////////////////////////////////

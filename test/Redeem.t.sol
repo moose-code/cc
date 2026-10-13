@@ -126,15 +126,15 @@ contract RedeemTimingTest is RedeemBase {
         core.redeemStatement(0);
     }
 
-    function test_timing_offWhenBalanceModeZero() public {
+    function test_timing_offWhenRedeemOnIsFalse() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
-        _setBalanceMode(0);
-        vm.expectRevert(ICore.BalanceModeOff.selector);
+        _setSwitches(false, false);
+        vm.expectRevert(ICore.RedeemOff.selector);
         core.redeemStatement(sid);
-        // mode 1 (hold) redeems
-        _setBalanceMode(1);
+        // redeemOn alone redeems
+        _setSwitches(true, false);
         core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
     }
@@ -142,10 +142,7 @@ contract RedeemTimingTest is RedeemBase {
     function test_timing_aBuyFirstMakesTheRedemptionRevert() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        uint256 price = ctl.priceOf(sid);
-        vm.deal(address(0xB0B), price);
-        vm.prank(address(0xB0B));
-        ctl.buy{value: price}(sid);
+        _buy(address(0xB0B), sid);
         vm.expectRevert(ICore.NotHeld.selector);
         core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(0xB0B));

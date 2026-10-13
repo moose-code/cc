@@ -45,6 +45,7 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         base = defaultConfig();
         base.owner = owner;
         base.creator = creator;
+        base.credit.royaltyRecipient = creator;
         base.creatorPayee = makeAddr("review.payee");
         base.name = "Review Coin";
         base.symbol = "REV";

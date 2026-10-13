@@ -9,7 +9,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {ICredits, IStatements, Mainnet, Settings, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
+import {ICredits, IStatements, IBalanceModule, Mainnet, Settings, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
 import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
 import {ICoreLens} from "../../src/interfaces/ICoreLens.sol";
 import {
@@ -212,6 +212,7 @@ abstract contract Fixture is Test, ProdDeployer {
         lc.settings = _settings();
         lc.owner = owner;
         lc.creator = creator;
+        lc.credit.royaltyRecipient = creator;
         lc.creatorPayee = _user("creatorPayee");
         lc.name = "Fixture Coin";
         lc.symbol = "FIXT";
@@ -453,9 +454,10 @@ abstract contract Fixture is Test, ProdDeployer {
     /// for it. returns the price paid
     function _buy(address who, uint256 sid) internal returns (uint256 price) {
         price = ctl.priceOf(sid);
-        vm.deal(who, who.balance + price);
+        uint256 gross = ctl.grossPriceOf(sid);
+        vm.deal(who, who.balance + gross);
         vm.prank(who);
-        ctl.buy{value: price}(sid);
+        ctl.buy{value: gross}(sid);
     }
 
     /// @notice the owner lifts `rateCap` to its upper bound, for suites that climb past the launch cap
@@ -511,6 +513,11 @@ abstract contract Fixture is Test, ProdDeployer {
 
     // ------------------------------------------------------------------ owner actions
 
+    /// @notice the `unitPerPoint()` the module set on the core reports now
+    function _moduleUnit() internal view returns (uint256) {
+        return IBalanceModule(core.balanceModule()).unitPerPoint();
+    }
+
     /// @notice the owner sets the controller at once
     function _setController(address c) internal {
         vm.prank(owner);
@@ -523,10 +530,11 @@ abstract contract Fixture is Test, ProdDeployer {
         core.setBalanceModule(m);
     }
 
-    /// @notice the owner sets the balance side mode (0 off, 1 hold, 2 on)
-    function _setBalanceMode(uint8 m) internal {
+    /// @notice the owner sets the two balance side switches
+    function _setSwitches(bool redeemOn, bool balanceBidOn) internal {
         Settings memory s = core.settings();
-        s.balanceMode = m;
+        s.redeemOn = redeemOn;
+        s.balanceBidOn = balanceBidOn;
         _setSettings(s);
     }
 
@@ -538,13 +546,13 @@ abstract contract Fixture is Test, ProdDeployer {
 
     // ------------------------------------------------------------------ the balance side
 
-    /// @notice sets the stand in balance module and balance token and turns the balance side on (balanceMode 2), so redemptions and the
+    /// @notice sets the stand in balance module and balance token and turns both balance side switches on, so redemptions and the
     /// balance token bid both run. the balance token the core receives from a redemption goes to `balancePot`
     function _enterPhase2() internal {
         xt = new MockBalanceToken("Balance Token", "XT");
         mod = new MockBalanceModule(address(xt), UNIT);
         _setBalanceModule(address(mod));
-        _setBalanceMode(2);
+        _setSwitches(true, true);
     }
 
     /// @notice initializes a native eth / balance token uniswap v4 pool and points the controller at it, so the balance bid

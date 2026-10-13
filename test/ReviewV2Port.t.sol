@@ -157,11 +157,10 @@ contract ReviewSeaportFlushTest is SeaportBase {
         (, uint256 booked,) = core.creditInfo(id);
         assertEq(cost, price, "the measured cost is the price");
         assertEq(booked, price + buyPaid, "the cost basis is the price plus the buy payment");
-        uint256 toBuyback = engine * core.settings().feeToBuybackBps / 10_000;
         uint256 toRedeemBurn = engine * core.settings().feeToRedeemBurnBps / 10_000;
         assertEq(
             core.ethPot(),
-            pot0 + engine - toBuyback - toRedeemBurn - price - buyPaid,
+            pot0 + engine - toRedeemBurn - price - buyPaid,
             "the pot took the held fees and paid the cost"
         );
         assertEq(
@@ -195,11 +194,11 @@ contract ReviewSeaportFlushTest is SeaportBase {
         assertEq(address(atk).balance, held, "the attacker kept its eth");
     }
 
-    /// the top up that waited in the router is booked by a normal flush right after, with the owner's buyback split:
+    /// the top up that waited in the router is booked by a normal flush right after, with the owner's fee split:
     /// the mid call attempt only delayed it
     function test_FIXED_aFlushRightAfterTheMeasuredCallBooksTheFeesWithTheSplit() public {
         Settings memory cs = core.settings();
-        cs.feeToBuybackBps = 5_000;
+        cs.feeToRedeemBurnBps = 5_000;
         _setSettings(cs);
         uint256 held = _queueFees(1.5 ether);
         uint256 id = _list();
@@ -218,11 +217,10 @@ contract ReviewSeaportFlushTest is SeaportBase {
         uint256 shared = feeRouter.splitOn() ? held * 112_778 / 1e6 : 0;
         uint256 delivered = _flush();
         assertEq(delivered, held - shared, "the engine part of the held fees arrived, exactly");
-        uint256 toBuyback = delivered * 5_000 / 10_000;
-        assertEq(core.ethToBuyback() - bb0, toBuyback, "half to the buyback pot");
-        uint256 toRedeemBurn = delivered * core.settings().feeToRedeemBurnBps / 10_000;
-        assertEq(core.ethRedeemBurn() - burn0, toRedeemBurn, "the redeem burn share to its reserve");
-        assertEq(core.ethPot() - pot0, delivered - toBuyback - toRedeemBurn, "the rest to the pot");
+        assertEq(core.ethToBuyback() - bb0, 0, "nothing to the buyback pot");
+        uint256 toRedeemBurn = delivered * 5_000 / 10_000;
+        assertEq(core.ethRedeemBurn() - burn0, toRedeemBurn, "half to the reserve");
+        assertEq(core.ethPot() - pot0, delivered - toRedeemBurn, "the rest to the pot");
         assertEq(
             address(core).balance,
             core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
@@ -256,7 +254,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
             uint256 delivered = _flush();
             assertGt(delivered, 0, "the keeper flush is not blocked");
             Settings memory cs = core.settings();
-            uint256 toPot = delivered - delivered * cs.feeToBuybackBps / 10_000 - delivered * cs.feeToRedeemBurnBps / 10_000;
+            uint256 toPot = delivered - delivered * cs.feeToRedeemBurnBps / 10_000;
             assertEq(core.ethPot() - pot0, toPot, "booked");
             assertEq(address(feeRouter).balance, 0);
             _warp(1 hours);

@@ -21,15 +21,15 @@ contract SaleSmokeTest is Fixture {
 
     function test_price_falls_to_the_knee_then_to_the_floor() public {
         uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
+        // the curve prices in bps of the reference, which follows the floor rate as time passes
         _warp(25 hours);
-        assertEq(ctl.priceOf(sid), cost * 12_500 / 10_000, "half way to the knee: 125 percent");
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 12_500 / 10_000, "half way to the knee: 125 percent");
         _warp(25 hours);
-        assertEq(ctl.priceOf(sid), cost, "at the knee at hour 50: 100 percent");
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid), "at the knee at hour 50: 100 percent");
         _warp(100 hours);
-        assertEq(ctl.priceOf(sid), cost * 10_000 / 10_000, "at the floor at hour 150");
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 10_000 / 10_000, "at the floor at hour 150");
         _warp(100 hours);
-        assertEq(ctl.priceOf(sid), cost * 10_000 / 10_000, "never below the floor");
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 10_000 / 10_000, "never below the floor");
     }
 
     function test_buy_sells_at_once_and_refunds_the_excess() public {
@@ -39,9 +39,10 @@ contract SaleSmokeTest is Fixture {
         uint256 potBefore = core.ethPot();
         uint256 bbBefore = core.ethToBuyback();
         address buyer = address(0xB0B);
-        vm.deal(buyer, price + 1 ether);
+        uint256 gross = ctl.grossPriceOf(sid);
+        vm.deal(buyer, gross + 1 ether);
         vm.prank(buyer);
-        ctl.buy{value: price + 1 ether}(sid);
+        ctl.buy{value: gross + 1 ether}(sid);
         assertEq(STATEMENTS.ownerOf(sid), buyer, "statement delivered");
         assertEq(buyer.balance, 1 ether, "excess refunded");
         uint256 toBuyback = price * core.settings().saleToBuybackBps / 10_000;
@@ -53,11 +54,11 @@ contract SaleSmokeTest is Fixture {
 
     function test_buy_below_the_price_reverts() public {
         uint256 sid = _composeOnce().sid;
-        uint256 price = ctl.priceOf(sid);
-        vm.deal(address(0xB0B), price);
+        uint256 gross = ctl.grossPriceOf(sid);
+        vm.deal(address(0xB0B), gross);
         vm.prank(address(0xB0B));
         vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buy{value: price - 1}(sid);
+        ctl.buy{value: gross - 1}(sid);
     }
 
     function test_sellTo_is_for_the_controller_only() public {
@@ -72,24 +73,25 @@ contract SaleSmokeTest is Fixture {
         core.sellTo{value: 10 ether}(sid, owner);
     }
 
-    function test_the_core_floor_binds_a_lower_controller_price() public {
+    function test_the_floor_setting_lifts_the_controller_price() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
         Settings memory s = core.settings();
         s.saleFloorBps = 20_000;
         _setSettings(s);
-        // the controller still asks 150 percent, the quote and the payment are lifted to the new floor of 200 percent
+        // the curve starts at 150 percent, the quote is lifted to the new floor of 200 percent of the reference
         address buyer = address(0xB0B);
         uint256 ask = ctl.priceOf(sid);
-        assertEq(ask, cost * 20_000 / 10_000, "the quote is the hard floor");
-        vm.deal(buyer, 10 ether);
+        assertEq(ask, ctl.referenceOf(sid) * 20_000 / 10_000, "the quote is the floor");
+        assertGe(ask, cost * 20_000 / 10_000, "and at least the cost based floor of the core");
+        uint256 gross = ctl.grossPriceOf(sid);
+        vm.deal(buyer, gross);
         vm.prank(buyer);
-        ctl.buy{value: ask}(sid);
+        ctl.buy{value: gross}(sid);
         assertEq(STATEMENTS.ownerOf(sid), buyer, "sold at the floor");
     }
 
-    function test_pool_fees_split_by_feeToBuybackBps() public {
-        // this test isolates the feeToBuybackBps split, so the redeem burn share is zeroed
+    function test_pool_fees_split_by_feeToRedeemBurnBps() public {
         Settings memory s0 = core.settings();
         s0.feeToRedeemBurnBps = 0;
         _setSettings(s0);
@@ -99,17 +101,18 @@ contract SaleSmokeTest is Fixture {
         vm.prank(hook);
         (bool ok,) = address(core).call{value: 1 ether}("");
         assertTrue(ok);
-        assertEq(core.ethPot() - pot, 1 ether, "launch value 0: all to the pot");
-        assertEq(core.ethToBuyback(), 0);
+        assertEq(core.ethPot() - pot, 1 ether, "share 0: all to the pot");
+        assertEq(core.ethRedeemBurn(), 0);
         Settings memory s = core.settings();
-        s.feeToBuybackBps = 4_000;
+        s.feeToRedeemBurnBps = 4_000;
         _setSettings(s);
         pot = core.ethPot();
         vm.prank(hook);
         (ok,) = address(core).call{value: 1 ether}("");
         assertTrue(ok);
-        assertEq(core.ethToBuyback(), 0.4 ether, "forty percent to the buyback");
+        assertEq(core.ethRedeemBurn(), 0.4 ether, "forty percent to the redeem burn reserve");
         assertEq(core.ethPot() - pot, 0.6 ether, "the rest to the pot");
+        assertEq(core.ethToBuyback(), 0, "nothing to the buyback pot");
         _solvent();
     }
 

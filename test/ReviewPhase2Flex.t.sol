@@ -110,7 +110,8 @@ contract PackHarness {
         s.recoveryGapBps = type(uint16).max;
         s.peakHalfLife = type(uint32).max;
         s.buybackDelay = type(uint16).max;
-        s.balanceMode = type(uint8).max;
+        s.redeemOn = true;
+        s.balanceBidOn = true;
         s.redeemSlippageBps = type(uint16).max;
         s.balanceBidMarginBps = type(uint16).max;
         s.redeemBurnBps = type(uint16).max;
@@ -120,7 +121,6 @@ contract PackHarness {
         s.rateCap = type(uint64).max;
         s.callerFee = type(uint64).max;
         s.callerMaxBaseFee = type(uint48).max;
-        s.feeToBuybackBps = type(uint16).max;
         s.feeToRedeemBurnBps = type(uint16).max;
     }
 
@@ -192,10 +192,8 @@ contract ReviewPhase2FlexTest is Fixture {
         vm.prank(owner);
         vm.expectRevert(ICore.BalanceTokenChanged.selector);
         core.setBalanceModule(address(fm));
-        // a unit change reported later is ignored until a set reads it
         fm.setToken(address(xt));
         fm.setUnit(5 * UNIT);
-        assertEq(core.unitPerPoint(), UNIT);
         _replace(address(_mod(UNIT)));
         core.redeemStatement(sid);
         _solvent();
@@ -261,10 +259,11 @@ contract ReviewPhase2FlexTest is Fixture {
         assertEq(uint16(a >> 128), type(uint16).max, "recoveryGapBps");
         assertEq(uint32(a >> 144), type(uint32).max, "peakHalfLife");
         assertEq(uint16(a >> 176), type(uint16).max, "buybackDelay");
-        assertEq(uint8(a >> 192), type(uint8).max, "balanceMode");
-        assertEq(uint16(a >> 200), type(uint16).max, "redeemSlippageBps");
-        assertEq(uint16(a >> 216), type(uint16).max, "balanceBidMarginBps");
-        assertEq(uint16(a >> 232), type(uint16).max, "redeemBurnBps");
+        assertEq(uint8(a >> 192), 1, "redeemOn");
+        assertEq(uint8(a >> 200), 1, "balanceBidOn");
+        assertEq(uint16(a >> 208), type(uint16).max, "redeemSlippageBps");
+        assertEq(uint16(a >> 224), type(uint16).max, "balanceBidMarginBps");
+        assertEq(uint16(a >> 240), type(uint16).max, "redeemBurnBps");
         // slot 1
         assertEq(uint128(b), type(uint128).max, "buybackSlice");
         assertEq(uint64(b >> 128), type(uint64).max, "keeperFee");
@@ -273,10 +272,9 @@ contract ReviewPhase2FlexTest is Fixture {
         assertEq(uint64(c), type(uint64).max, "rateCap");
         assertEq(uint64(c >> 64), type(uint64).max, "callerFee");
         assertEq(uint48(c >> 128), type(uint48).max, "callerMaxBaseFee");
-        assertEq(uint16(c >> 176), type(uint16).max, "feeToBuybackBps");
-        assertEq(uint16(c >> 192), type(uint16).max, "feeToRedeemBurnBps");
-        // nothing above bit 208 of slot 2
-        assertEq(c >> 208, 0, "no field above feeToRedeemBurnBps");
+        assertEq(uint16(c >> 176), type(uint16).max, "feeToRedeemBurnBps");
+        // the last field ends at bit 192 of slot 2
+        assertEq(c >> 192, 0, "no field above feeToRedeemBurnBps");
     }
 
     /// nothing of the core's eth or balance token moves when the owner replaces the module

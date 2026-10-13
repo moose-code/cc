@@ -73,13 +73,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x65b61ab7d4a83d34778925ceaf18aae53ab5e2c354efd068e7decb2f04d7ade2;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x918fc8bd7eeace40495a67eb672da397d637431845a180ed56b1be0c56fd0482;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x107427cbe9dbd3d19a1311a09784abdb01ddf54558c7faeec5c1804db38e009e;
+    bytes32 internal constant BUILD_HASH_CORE = 0x65b74546e3ab79db7972cb547132b7e9a37ea33c7fb9c90085f21d0ce2d909a9;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x8619e1386b019da1c49762f8de65b77ba2c2d75bdee3d6f5315d83f48cae4721;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xa98d10c93847354a4d0fa9eee992a9587af373a5a5ff49e23c8339e014b89053;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
-    bytes32 internal constant BUILD_HASH_LENS = 0x91e3a30775098db793b71839293b31c783ee23ea027c6bab91e3d48ff28fb04f;
+    bytes32 internal constant BUILD_HASH_LENS = 0x1f6f849a139ee7a86a5eeecae165dbeef938232e214f3f95a11ca19cb656bee8;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x8ac2c0bda2684838f2b79701dbb6f4e8c531e30503408712d276c7143b9ce262;
+        0xe34c52f48399a4008a7a40a2fdabb351a98d6a0d45b7dda555d2cdd4528d3aba;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -194,18 +194,13 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "sale settings inside the bounds",
             badSale == 0,
-            badSale == 0 ? "markupBps startCapBps floorBps kneeBps fastDecayBpsPerHour slowDecayBpsPerHour anchorHalfLife anchorMinCost" : string(abi.encodePacked("out of bounds: ", badSale))
-        );
-        _warn(
-            "warn: sale floor below the core hard floor",
-            c.sale.floorBps >= c.settings.saleFloorBps,
-            "the core takes no sale below saleFloorBps, so the lower asking price is never reached"
+            badSale == 0 ? "markupBps startCapBps kneeBps fastDecayBpsPerHour slowDecayBpsPerHour anchorHalfLife anchorMinCost" : string(abi.encodePacked("out of bounds: ", badSale))
         );
         bytes32 badCredit = creditViolation(c);
         _check(
             "credit settings inside the bounds",
             badCredit == 0,
-            badCredit == 0 ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps refScore" : string(abi.encodePacked("out of bounds: ", badCredit))
+            badCredit == 0 ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps refScore royaltyBps royaltyRecipient" : string(abi.encodePacked("out of bounds: ", badCredit))
         );
         _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);
     }
@@ -848,8 +843,10 @@ abstract contract LaunchChecks is PostflightChecks {
         _info(
             "signoff: balance side",
             string.concat(
-                "balanceMode ",
-                vm.toString(c.settings.balanceMode),
+                "redeemOn ",
+                c.settings.redeemOn ? "true" : "false",
+                " balanceBidOn ",
+                c.settings.balanceBidOn ? "true" : "false",
                 " redeem slippage ",
                 vm.toString(c.settings.redeemSlippageBps),
                 " balance bid margin ",
@@ -866,8 +863,6 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat(
                 "sale to buyback ",
                 vm.toString(c.settings.saleToBuybackBps),
-                " fee to buyback ",
-                vm.toString(c.settings.feeToBuybackBps),
                 " buyback slice ",
                 vm.toString(c.settings.buybackSlice),
                 " keeper fee ",
@@ -889,8 +884,8 @@ abstract contract LaunchChecks is PostflightChecks {
                 vm.toString(c.sale.kneeBps),
                 " then slow decay ",
                 vm.toString(c.sale.slowDecayBpsPerHour),
-                " bps/h to floor ",
-                vm.toString(c.sale.floorBps),
+                " bps/h to saleFloorBps ",
+                vm.toString(c.settings.saleFloorBps),
                 " anchor half life ",
                 vm.toString(c.sale.anchorHalfLife),
                 "s, the anchor moves on statements costing at least ",
@@ -913,6 +908,16 @@ abstract contract LaunchChecks is PostflightChecks {
                 vm.toString(c.credit.costToPotBps),
                 " bps, refScore ",
                 vm.toString(c.credit.refScore)
+            )
+        );
+        _info(
+            "signoff: royalty",
+            string.concat(
+                "royaltyBps ",
+                vm.toString(c.credit.royaltyBps),
+                " royaltyRecipient ",
+                vm.toString(c.credit.royaltyRecipient),
+                " (the config creator address until the owner names the artist address)"
             )
         );
         _info(

@@ -12,6 +12,7 @@ contract CoreLayoutTest is Fixture {
     uint256 internal constant S_CREDITS = 16;
     uint256 internal constant S_STATEMENTS = 17;
     uint256 internal constant S_HELD = 18;
+    uint256 internal constant S_COMPOSER = 21;
 
     /// the bytes `[offset, offset + size)` of storage slot `slot` of the core
     function _field(uint256 slot, uint256 offset, uint256 size) internal view returns (uint256) {
@@ -68,30 +69,29 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(11, 0, 8), core.checkpointTime(), "checkpointTime");
         assertEq(_field(11, 8, 8), core.lastFillTime(), "lastFillTime");
         assertEq(_field(12, 0, 32), core.lastBuybackBlock(), "lastBuybackBlock");
-        assertEq(_field(19, 0, 32), core.unitPerPoint(), "unitPerPoint");
-        assertEq(_field(20, 0, 20), uint256(uint160(core.successor())), "successor");
-        assertEq(_field(20, 20, 1), core.successorLocked() ? 1 : 0, "successorLocked");
+        assertEq(_field(19, 0, 20), uint256(uint160(core.successor())), "successor");
+        assertEq(_field(19, 20, 1), core.successorLocked() ? 1 : 0, "successorLocked");
         assertEq(core.successor(), address(this), "successor value");
         assertTrue(core.successorLocked(), "successorLocked value");
         assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.targetsLocked(), "locks");
-        // the standalone settings pack after retired: creditCostToPotBps and chosenComposeOn finish slot 20 (offsets
-        // 22 and 24), minCcToChoose (uint96, 12 bytes) cannot straddle so it starts slot 21
+        // the standalone settings pack after retired: creditCostToPotBps and chosenComposeOn finish slot 19 (offsets
+        // 22 and 24), minCcToChoose (uint96, 12 bytes) cannot straddle so it starts slot 20
         vm.startPrank(owner);
         core.setCreditCostToPotBps(6_000);
         core.setChosenComposeOn(true);
         core.setMinCcToChoose(123);
         vm.stopPrank();
-        assertEq(_field(20, 22, 2), core.creditCostToPotBps(), "creditCostToPotBps");
-        assertEq(_field(20, 22, 2), 6_000, "creditCostToPotBps value");
-        assertEq(_field(20, 24, 1), core.chosenComposeOn() ? 1 : 0, "chosenComposeOn");
-        assertEq(_field(21, 0, 12), core.minCcToChoose(), "minCcToChoose");
+        assertEq(_field(19, 22, 2), core.creditCostToPotBps(), "creditCostToPotBps");
+        assertEq(_field(19, 22, 2), 6_000, "creditCostToPotBps value");
+        assertEq(_field(19, 24, 1), core.chosenComposeOn() ? 1 : 0, "chosenComposeOn");
+        assertEq(_field(20, 0, 12), core.minCcToChoose(), "minCcToChoose");
         assertEq(core.minCcToChoose(), 123, "minCcToChoose value");
         // the first migrate sets retired. the call moves the pots, so it comes after the pot words are compared
-        assertEq(_field(20, 21, 1), 0, "retired is false before a migrate");
+        assertEq(_field(19, 21, 1), 0, "retired is false before a migrate");
         assertFalse(core.retired(), "retired value before");
         vm.prank(owner);
         core.migrate(0);
-        assertEq(_field(20, 21, 1), 1, "retired");
+        assertEq(_field(19, 21, 1), 1, "retired");
         assertTrue(core.retired(), "retired value");
     }
 
@@ -129,6 +129,9 @@ contract CoreLayoutTest is Fixture {
         assertEq((sword >> 160) & 0xff, held ? 1 : 0, "statement held");
         assertEq(sword >> 161, 0, "no field above held");
         assertEq(uint256(vm.load(address(core), bytes32(S_HELD))), core.heldStatements().length, "held length");
+        // composerOf: the compose caller, one word per statement, at the last declared slot
+        assertEq(uint256(vm.load(address(core), bytes32(_mapSlot(c.sid, S_COMPOSER)))), uint256(uint160(keeper)), "composer");
+        assertEq(core.composerOf(c.sid), keeper, "composerOf");
         assertEq(
             uint256(vm.load(address(core), bytes32(uint256(keccak256(abi.encode(S_HELD)))))),
             c.sid,

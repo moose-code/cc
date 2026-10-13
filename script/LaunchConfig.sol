@@ -179,7 +179,8 @@ abstract contract ConfigReader is CommonBase {
         s.peakHalfLife = _u32(j, ".settings.peakHalfLife");
         s.buybackDelay = _u16(j, ".settings.buybackDelay");
         // forge-lint: disable-start(unsafe-typecast)
-        s.balanceMode = uint8(_uint(j, ".settings.balanceMode", type(uint8).max));
+        s.redeemOn = vm.parseJsonBool(j, ".settings.redeemOn");
+        s.balanceBidOn = vm.parseJsonBool(j, ".settings.balanceBidOn");
         s.redeemSlippageBps = _u16(j, ".settings.redeemSlippageBps");
         s.balanceBidMarginBps = _u16(j, ".settings.balanceBidMarginBps");
         s.redeemBurnBps = _u16(j, ".settings.redeemBurnBps");
@@ -190,7 +191,6 @@ abstract contract ConfigReader is CommonBase {
         s.callerFee = uint64(_uint(j, ".settings.callerFee", type(uint64).max));
         s.callerMaxBaseFee = uint48(_uint(j, ".settings.callerMaxBaseFee", type(uint48).max));
         // forge-lint: disable-end(unsafe-typecast)
-        s.feeToBuybackBps = _u16(j, ".settings.feeToBuybackBps");
         s.feeToRedeemBurnBps = _u16(j, ".settings.feeToRedeemBurnBps");
     }
 
@@ -201,7 +201,6 @@ abstract contract ConfigReader is CommonBase {
             fastDecayBpsPerHour: _u16(j, ".sale.fastDecayBpsPerHour"),
             kneeBps: _u32(j, ".sale.kneeBps"),
             slowDecayBpsPerHour: _u16(j, ".sale.slowDecayBpsPerHour"),
-            floorBps: _u16(j, ".sale.floorBps"),
             anchorHalfLife: _u32(j, ".sale.anchorHalfLife"),
             anchorMinCost: _u128(j, ".sale.anchorMinCost")
         });
@@ -216,7 +215,9 @@ abstract contract ConfigReader is CommonBase {
             window: _u32(j, ".credit.window"),
             floorBps: _u16(j, ".credit.floorBps"),
             startBps: _u32(j, ".credit.startBps"),
-            refScore: _u32(j, ".credit.refScore")
+            refScore: _u32(j, ".credit.refScore"),
+            royaltyBps: _u16(j, ".credit.royaltyBps"),
+            royaltyRecipient: vm.parseJsonAddress(j, ".credit.royaltyRecipient")
         });
     }
 
@@ -283,10 +284,11 @@ abstract contract ConfigReader is CommonBase {
 
     /// @notice the placeholders every launch must fill: returns the names of those still unset
     function unsetFields(LaunchConfig memory c) internal pure returns (string[] memory out) {
-        string[] memory tmp = new string[](12);
+        string[] memory tmp = new string[](13);
         uint256 n;
         if (c.owner == address(0)) tmp[n++] = "owner";
         if (c.creator == address(0)) tmp[n++] = "creator";
+        if (c.credit.royaltyRecipient == address(0)) tmp[n++] = "credit.royaltyRecipient";
         if (bytes(c.name).length == 0) tmp[n++] = "name";
         if (bytes(c.symbol).length == 0) tmp[n++] = "symbol";
         if (c.salt == bytes32(0)) tmp[n++] = "salt";
@@ -312,8 +314,7 @@ abstract contract ConfigReader is CommonBase {
         Sale memory k = c.sale;
         if (k.markupBps < 10_000 || k.markupBps > 40_000) return "markupBps";
         if (k.startCapBps < k.markupBps || k.startCapBps > 200_000) return "startCapBps";
-        if (k.floorBps < 1_000 || k.floorBps > 10_000) return "floorBps";
-        if (k.kneeBps < k.floorBps || k.kneeBps > k.startCapBps) return "kneeBps";
+        if (k.kneeBps < 1_000 || k.kneeBps > k.startCapBps) return "kneeBps";
         if (k.fastDecayBpsPerHour < 1 || k.fastDecayBpsPerHour > 10_000) return "fastDecayBpsPerHour";
         if (k.slowDecayBpsPerHour < 1 || k.slowDecayBpsPerHour > 10_000) return "slowDecayBpsPerHour";
         if (k.anchorHalfLife < 1 days || k.anchorHalfLife > 90 days) return "anchorHalfLife";

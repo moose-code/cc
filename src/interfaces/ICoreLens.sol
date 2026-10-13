@@ -23,7 +23,8 @@ interface ICoreLens {
         address successor;
         address balanceModule;
         address balanceToken;
-        uint256 balanceMode;
+        bool redeemOn;
+        bool balanceBidOn;
         uint256 unitPerPoint;
         bool controllerLocked;
         bool balanceModuleLocked;
@@ -41,6 +42,7 @@ interface ICoreLens {
         uint256 id;
         uint256 cost;
         uint64 composedAt;
+        address composer;
         uint256 rating;
         uint256 priceReference;
         uint256 askingPrice;
@@ -55,6 +57,8 @@ interface ICoreLens {
     function choosable(uint256 id) external view returns (bool);
     function controller() external view returns (address);
     function creditPriceOf(uint256 id) external view returns (uint256 price);
+    function grossAskingPrice(uint256 sid) external view returns (uint256 price);
+    function grossCreditPriceOf(uint256 id) external view returns (uint256 price);
     function snapshot() external view returns (Snapshot memory s);
     function statementsPage(uint256 start, uint256 n) external view returns (StatementView[] memory);
 }

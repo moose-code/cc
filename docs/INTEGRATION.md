@@ -56,7 +56,7 @@ what the caller receives: the total payout.
 
 the batch size is bounded by the transaction gas cap: the largest batch under 16,777,216 gas is 115 credits at the launch settings (section 13).
 
-`sellForBalance(ids)` and `(ids, minOut)` are the balance side door (docs/SPEC.md section 9). they run at `balanceMode` 2 and pay each credit `score * unit * (10_000 - balanceBidMarginBps) / 10_000` in balance token from `balancePot`, with `unit` the lower of the stored and the live `unitPerPoint()`. the credit enters the pile with an eth cost basis of the score-scaled eth backstop, the remembered peak of the eth bid times `max(1, score / refScore)`, at least 1 wei, and `CreditBought(id, caller, cost)` carries that basis. the basis reads no pool, so the bid needs no pool key and records the same basis whatever the pool price. they revert `BalanceModeOff` below mode 2 and `Retired` after `migrate`; `lens.balanceBidOf(id)` quotes the payout.
+`sellForBalance(ids)` and `(ids, minOut)` are the balance side door (docs/SPEC.md section 9). they run while `balanceBidOn` is true and pay each credit `score * unit * (10_000 - balanceBidMarginBps) / 10_000` in balance token from `balancePot`, with `unit` the module's `unitPerPoint()` read in the call. the credit enters the pile with an eth cost basis of the floor rate times `max(1, score / refScore)`, at least 1 wei, and `CreditBought(id, caller, cost)` carries that basis. the basis reads no pool, so the bid needs no pool key and records the same basis whatever the pool price. they revert `BalanceBidOff` while `balanceBidOn` is false and `Retired` after `migrate`; `lens.balanceBidOf(id)` quotes the payout.
 
 ## 4. door 2: buy a listed credit through an allowed marketplace
 
@@ -101,8 +101,8 @@ a statement stays in the Core after compose and sells only through `ControllerV1
 
 the owner can pause sales (`setPaused(bool)`, effective at once, unpaused at launch). `controller.paused()` reports the state. while paused `buy` reverts `Paused()` and `priceOf` keeps answering. the age a price falls with excludes every paused second, so a pause holds the age of each held statement and the fall continues from the same age at the resume. a statement composed during a pause starts aging at the resume. the anchor decays with wall time in a pause, so the start price of a held statement follows it. composing, the eth bid, redemptions, buybacks and fees run in a pause.
 
-1. `controller.priceOf(sid)` returns the price in wei. `NotForSale` for a statement that is not held. the price falls with time and rises when the anchor rises, so a price read in an earlier block can be too low by the time the transaction lands. an indexer reads the anchor now from `controller.anchorBps()`. `storedAnchorBps()` and `anchorTime()` are the anchor at its last change.
-2. `controller.buy{value: v}(sid)` with `v` at least the quote from `priceOf`. a buy earlier in the same block can raise the price, and the call then reverts `Underpaid`. the controller records the sale at the asking price and refunds any excess of `v` to the caller last. the controller calls `core.sellTo(sid, buyer)`, which sends the statement to the buyer and books the payment at once: `saleToBuybackBps` to the coin buyback pot, the rest to `ethPot`.
+1. `controller.priceOf(sid)` returns the price in wei, and `controller.grossPriceOf(sid)` the amount `buy` takes (the price plus the royalty). `NotForSale` for a statement that is not held. the price falls with time and rises when the anchor rises, so a price read in an earlier block can be too low by the time the transaction lands. an indexer reads the anchor now from `controller.anchorBps()`. `storedAnchorBps()` and `anchorTime()` are the anchor at its last change.
+2. `controller.buy{value: v}(sid)` with `v` at least `grossPriceOf(sid)`, the quote from `priceOf` plus the royalty (`royaltyBps` of it, 250 at launch). a buy earlier in the same block can raise the price, and the call then reverts `Underpaid`. the controller records the sale at the asking price, forwards the asking price to the Core, owes the royalty to `royaltyRecipient` (`claimRoyalty()` pays it, anyone may call) and refunds any excess of `v` to the caller last. the controller calls `core.sellTo(sid, buyer)`, which sends the statement to the buyer and books the payment at once: `saleToBuybackBps` to the coin buyback pot, the rest to `ethPot`.
 3. events `StatementSoldTo(sid, buyer, price, toBuyback)` on the Core, `AnchorMoved(sid, saleBps, anchorBps)` and `Bought(sid, buyer, price)` on the controller. read `controller.anchorBps()` and `controller.startBps()` for the level the next statement starts from. `AnchorMoved` is emitted only by a buy above the anchor.
 4. buyers read `controller.paused()` before a `buy`. a paused controller reverts every `buy` with `Paused()`, as the first check of the call. `PausedSet(bool paused)` is emitted on each change of the state, and a call that repeats the current state emits nothing.
 
@@ -111,7 +111,7 @@ the owner can pause sales (`setPaused(bool)`, effective at once, unpaused at lau
 `controller.creditSaleOn()` is false at launch. while it is true every pile credit is for sale from its acquisition time (`core.creditInfo(id)`: `inPile`, cost, `acquiredAt`).
 
 1. `controller.creditPrice(id)` returns the price in wei, and `lens.creditPriceOf(id)` the same read with 0 for a controller that does not answer. `floor = max(cost, baseline, backstop) * creditFloorBps / 10,000` (11,000 at launch) and `start = floor * creditStartBps / 10,000` (30,000 at launch). the price falls in a straight line from `start` at `acquiredAt` to `floor` at `acquiredAt + creditWindow` (14,400 seconds at launch) and rests at `floor` after. `baseline` is the credit's score times the lower of the stored and the live `unitPerPoint` priced at the balance token pool key and only lifts the floor: it is 0 while no balance module is set, no pool key is set, the pool price reads zero or the live `unitPerPoint` read fails, so the price never reverts for a missing or failed pool read. `backstop` is `core.floorRate()` (the larger of the climbed eth bid rate and the remembered peak) times `max(1, score / refScore)`, so a credit scored above `refScore` floors proportionally higher and a credit at or below it floors at the unscaled floor rate. `NotForSale` is the only revert, for a credit that is not in the pile. the price changes with the floor rate, so a quote read in an earlier block can move by the time the transaction lands.
-2. `controller.buyCredit{value: v}(id)` and `controller.buyCredits{value: v}(ids)` with `v` at least the price (the sum of the prices for a batch, each credit priced after the previous sale). they revert `CreditSaleOff` while the sale is off, `Paused` while sales are paused, `Underpaid` for a short `v`, and refund the excess last. the controller calls `core.sellCreditTo(id, buyer)`, which requires the payment to be at least the credit's cost (`BelowFloor`), sends the credit to the buyer, books `creditCostToPotBps` of the cost (10,000 at launch) to `ethPot` and the rest of the payment to the coin buyback pot, and emits `CreditSold(id, buyer, price)`.
+2. `controller.buyCredit{value: v}(id)` and `controller.buyCredits{value: v}(ids)` with `v` at least `grossCreditPrice(id)`, the price plus the royalty (the sum of the gross prices for a batch, each credit priced after the previous sale). they revert `CreditSaleOff` while the sale is off, `Paused` while sales are paused, `Underpaid` for a short `v`, and refund the excess last. the controller calls `core.sellCreditTo(id, buyer)`, which requires the payment to be at least the credit's cost (`BelowFloor`), sends the credit to the buyer, books `creditCostToPotBps` of the cost (10,000 at launch) to `ethPot` and the rest of the payment to the coin buyback pot, and emits `CreditSold(id, buyer, price)`.
 3. a credit that sits past its window is composed by `compose` or `composeChosen`. with the sale off, a credit composes at once.
 
 ## 7. the fee pull and flush()
@@ -120,7 +120,7 @@ the pool sends fee eth to the fee router. the router holds it until `flush()`:
 
 * anyone may call. `amount = balance - totalOwed`.
 * while the split is on (`splitOn`, from `splitStart`), each payee receives `amount * ppm / 1_000_000` with 100,000 gas. a share that fails is recorded in `owed` and paid by `claim(payee)`.
-* the rest goes to the engine, the Core, whose `receive()` books it: `feeToBuybackBps` to the coin buyback pot, `feeToRedeemBurnBps` to the redeem burn reserve (`ethRedeemBurn`), the rest to `ethPot`. `FlushFailed` when the engine refuses it, and the fees stay in the router. `NoEngine` while no engine is set. an empty balance returns early.
+* the rest goes to the engine, the Core, whose `receive()` books it: `feeToRedeemBurnBps` to the redeem burn reserve (`ethRedeemBurn`), the rest to `ethPot`. `FlushFailed` when the engine refuses it, and the fees stay in the router. `NoEngine` while no engine is set. an empty balance returns early.
 
 the Core pulls the fees itself. `sellForEth` (both forms), `buyListing`, `compose`, `composeChosen` and `adopt` call `flush()` first. the gas of the flush is part of the gas counted for the caller payment of `compose`, `composeChosen` (section 5) and `buyListing` (section 4). `CoreLib.pullFees` uses at most 1,000,000 gas and ignores a failing router. `adopt` pulls as well, before it reads the price. `sellForBalance`, `redeemStatement`, `sellTo`, `skim` and `buyback` read no eth price and book on their own schedule. `lens.snapshot()` reports what a flush would send now: `flushToCore` and `flushToPayees`.
 
@@ -163,7 +163,8 @@ what a successor has to implement: a `receive()` that accepts a plain eth call, 
 | `statementsPage(start, n)` | `StatementView[]` for the held statements `start` to `start + n`, in the order of `core.heldStatements()` |
 | `choosable(id)` | whether credit `id` may be named in a chosen compose now: in the pile and past its window |
 | `creditPriceOf(id)` | the controller's `creditPrice(id)`, 0 when the controller does not answer |
-| `balanceBidOf(id)` | the balance token the bid pays for credit `id` now: `score * unit * (10_000 - balanceBidMarginBps) / 10_000`, `unit` the lower of the stored and the live `unitPerPoint()`, at most `balancePot`. 0 when no module is set, the Core is retired or `balanceMode` is not 2 |
+| `balanceBidOf(id)` | the balance token the bid pays for credit `id` now: `score * unit * (10_000 - balanceBidMarginBps) / 10_000`, `unit` the module's `unitPerPoint()` now, at most `balancePot`. 0 when no module is set, the Core is retired or `balanceBidOn` is false |
+| `grossAskingPrice(sid)` and `grossCreditPriceOf(id)` | the controller's `grossPriceOf(sid)` and `grossCreditPrice(id)`: the price plus the royalty, the amount `buy` and `buyCredit` take. 0 when the controller does not answer |
 | `controller()` | the controller of the Core now |
 | `CORE()`, `ROUTER()`, `CREDITS()`, `STATEMENTS()` | the pointers |
 
@@ -180,7 +181,7 @@ what a successor has to implement: a `receive()` that accepts a plain eth call, 
 | `routerBalance`, `routerOwed` | eth in the router, and the part owed to payees |
 | `flushToCore`, `flushToPayees` | what `flush()` sends now |
 | `controller`, `successor` | the addresses now |
-| `balanceModule`, `balanceToken`, `balanceMode`, `unitPerPoint` | the balance side module and token (zero until set), the mode (0 off, 1 hold, 2 on) and the stored unit |
+| `balanceModule`, `balanceToken`, `redeemOn`, `balanceBidOn`, `unitPerPoint` | the balance side module and token (zero until set), the two switches and the module's `unitPerPoint()` now (0 without a module) |
 | `controllerLocked`, `balanceModuleLocked`, `targetsLocked`, `successorLocked` | the four one way locks |
 | `statements` | `StatementView[]` |
 
@@ -189,9 +190,9 @@ what a successor has to implement: a `receive()` that accepts a plain eth call, 
 | `id`, `cost` | statement id and cost basis |
 | `composedAt` | the compose time |
 | `rating` | the stored rating: the sum of the credits' scores read at compose |
-| `priceReference` | the controller's `referenceOf(id)` in wei: the larger of cost and the eth bid rate times rating over `refScore`. 0 for a controller that does not answer |
+| `priceReference` | the controller's `referenceOf(id)` in wei: the larger of cost and `valueOf(rating)`. 0 for a controller that does not answer |
 | `askingPrice` | the controller's `priceOf(id)` in wei. 0 for a controller that does not answer |
-| `redeemEligible` | a redemption would pass the Core gates now: a module is set, `balanceMode` is at least 1 and the controller reports `atFloor(sid)` |
+| `redeemEligible` | a redemption would pass the Core gates now: a module is set, `redeemOn` is true and the controller reports `atFloor(sid)` |
 
 `snapshot()` costs about 120,000 gas plus 25,000 per held statement (measured before decisions 84 and 90 added the rating, `atFloor` and reference reads per statement; `test_GAS_snapshotPerStatement` logs the current figure). a list of several hundred statements exceeds the gas that a public node allows for one `eth_call`, so a keeper reads them with `statementsPage` in pages of a few hundred.
 
@@ -214,9 +215,8 @@ the Core (`src/interfaces/ICore.sol`):
 | `EthRateFill` | `uint256 spent, uint256 rate, uint256 pot` | every spend from `ethPot`: `spent`, the price state after the drop (`rate`) and the pot after the spend |
 | `BalanceModuleLocked` | (empty) | `lockBalanceModule` |
 | `BalanceModuleSet` | `address balanceModule, address balanceToken, uint256 unitPerPoint` | `setBalanceModule` |
-| `UnitPerPointRefreshed` | `address balanceModule, uint256 unitPerPoint` | `refreshUnitPerPoint`: the stored unit re-read from the current module, which works after `lockBalanceModule` |
 | `RedeemBurnReleased` | `uint256 amount` | `releaseRedeemBurn`: `amount` moved from the redeem burn reserve (`ethRedeemBurn`) into the coin buyback pot (`ethToBuyback`) |
-| `FeesAdded` | `uint256 amount` | `receive()` booked a flush of the fee router: `feeToBuybackBps` of it to the coin buyback pot, `feeToRedeemBurnBps` to the redeem burn reserve, the rest to `ethPot` |
+| `FeesAdded` | `uint256 amount` | `receive()` booked a flush of the fee router: `feeToRedeemBurnBps` of it to the redeem burn reserve, the rest to `ethPot` |
 | `ListingBought` | `uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate` | `buyListing`. `cost` is the eth the target took, `paid` the payment to the caller, `rate` the price state after the fill. the cost basis of the credit is `cost + paid` |
 | `EngineRetired` | `address indexed successor` | the first `migrate`, once. the Core refuses the six doors from then on |
 | `Migrated` | `address indexed successor, uint256 eth, uint256 balanceTokens, uint256 credits` | `migrate`: eth moved (`ethPot`), balance token moved (`balancePot`), credits moved |
@@ -248,7 +248,9 @@ the controller (`src/interfaces/IControllerV1.sol`):
 | `FastDecayBpsPerHourSet` | `uint16 fastDecayBpsPerHour` | sale setting changed |
 | `KneeBpsSet` | `uint32 kneeBps` | sale setting changed |
 | `SlowDecayBpsPerHourSet` | `uint16 slowDecayBpsPerHour` | sale setting changed |
-| `FloorBpsSet` | `uint16 floorBps` | sale setting changed |
+| `RoyaltyBpsSet` | `uint16 royaltyBps` | the owner changed the royalty |
+| `RoyaltyRecipientSet` | `address royaltyRecipient` | the owner changed the royalty recipient |
+| `RoyaltyClaimed` | `address indexed to, uint256 amount` | `claimRoyalty` paid the royalty owed |
 | `MarkupBpsSet` | `uint16 markupBps` | sale setting changed |
 | `StartCapBpsSet` | `uint32 startCapBps` | sale setting changed |
 | `RefScoreSet` | `uint32 refScore` | sale setting changed |
@@ -288,7 +290,7 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `BelowMinCc()` | `composeChosen` | the caller holds less coin than `minCcToChoose` |
 | `ChosenComposeOff()` | `composeChosen` | chosen composition is off |
 | `InWindow(uint256 id)` | `composeChosen` | the newest named credit (`id`) is inside its window while the credit sale is on |
-| `BadModule()` | `setBalanceModule`, `refreshUnitPerPoint`, `sellForBalance` | the module is rejected, or its `unitPerPoint()` read fails, returns short, returns 0, or (set and refresh) exceeds a uint128. the bid reverts on a failed, short or zero live read |
+| `BadModule()` | `setBalanceModule`, `redeemStatement`, `sellForBalance` | the module is rejected, or its `unitPerPoint()` read fails, returns short, returns 0 or exceeds a uint128. a redemption and the bid read the unit in the call and revert on a failed, short, zero or oversized read |
 | `BadRate()` | `setRate`, constructor | the rate is outside its bounds |
 | `BadSender()` | `onERC721Received` | an ERC721 other than Credits or Statements was safe transferred to the Core |
 | `BadSetting(bytes32 field)` | `setSettings`, `setCreditCostToPotBps`, constructor | the setting `field` is outside its bounds |
@@ -299,7 +301,7 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `BelowFloor()` | `sellTo`, `sellCreditTo` | `msg.value` is below the hard floor: `cost * saleFloorBps / 10_000` for a statement, the credit's cost for a credit |
 | `CallFailed()` | `buyListing`, `migrate` | the target call reverted, or the successor refused the eth |
 | `Empty()` | `sellForEth`, `sellForBalance`, `adopt` | an empty id list |
-| `BalanceTokenChanged()` | `setBalanceModule`, `refreshUnitPerPoint` | the module names another balanceToken |
+| `BalanceTokenChanged()` | `setBalanceModule` | the module names another balanceToken |
 | `ForbiddenTarget()` | `addTarget` | the target is a contract the Core refuses to call |
 | `Held()` | `rescueNft` | the statement is on the books of the Core |
 | `InPile()` | `adopt`, `rescueNft` | the credit is in the pile |
@@ -307,7 +309,7 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `Measuring()` | `receive` | the fee router sent eth while a measured external call of the Core was running |
 | `NoCode(address who)` | constructor, `setSuccessor` | the address has no code |
 | `NoCredit()` | `buyListing` | the target call did not deliver exactly the credit `id` to the Core |
-| `NoBalanceModule()` | `redeemStatement`, `sellForBalance`, `refreshUnitPerPoint`, `lockBalanceModule` | no balance module is set |
+| `NoBalanceModule()` | `redeemStatement`, `sellForBalance`, `lockBalanceModule` | no balance module is set |
 | `NoSuccessor()` | `migrate` | the successor is zero |
 | `Retired()` | `sellForEth`, `buyListing`, `sellForBalance`, `adopt`, `compose`, `composeChosen` | the Core ran `migrate` |
 | `NotHeld()` | `compose`, `composeChosen`, `redeemStatement` | the Core does not hold the credit of the page, or has no record of the statement |
@@ -328,11 +330,12 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `TargetNotAllowed()` | `buyListing` | the target is not on the allowlist, or it is a forbidden contract |
 | `NotForSale()` | `sellTo` | the Core does not hold the statement |
 | `NotEligible()` | `redeemStatement` | the statement's curve price has not reached its floor (`atFloor` is false), or the controller did not answer |
-| `BalanceModeOff()` | `redeemStatement`, `sellForBalance` | `balanceMode` is 0 (off), or below 2 for the balance token bid |
+| `RedeemOff()` | `redeemStatement` | `redeemOn` is false |
+| `BalanceBidOff()` | `sellForBalance` | `balanceBidOn` is false |
 | `TooSoon()` | `buyback` | fewer than `buybackDelay` blocks since the last buyback |
 | `Underpaid()` | `redeemStatement` | the module returned less balanceToken than `rating * unitPerPoint * (10_000 - redeemSlippageBps) / 10_000` |
 | `ZeroAddress()` | constructor, `rescueCoin`, `rescueNft`, `setController` | a zero address argument |
-| `ZeroAmount()` | `sellForEth`, `sellForBalance`, `releaseRedeemBurn` | a spend of 0: the bid is 0 for that credit (empty pot, or a zero balance token price), or the redeem burn reserve or the amount is 0 |
+| `ZeroAmount()` | `sellForEth`, `sellForBalance`, `releaseRedeemBurn`, `claimRoyalty` | a spend of 0: the bid is 0 for that credit (empty pot, or a zero balance token price), the redeem burn reserve or the amount is 0, or no royalty is owed |
 | `ZeroId()` | `sellForEth`, `buyListing`, `adopt` | credit id 0 |
 
 the controller:
@@ -345,7 +348,7 @@ the controller:
 | `Paused()` | `buy`, `buyCredit`, `buyCredits` | sales are paused (`controller.paused()`) |
 | `CreditSaleOff()` | `buyCredit`, `buyCredits` | the credit sale window is off |
 | `Reentrant()` | `buy`, `buyCredit`, `buyCredits` | a sale door was entered again |
-| `Underpaid()` | `buy`, `buyCredit`, `buyCredits` | `msg.value` is below `priceOf(sid)` or the credit price |
+| `Underpaid()` | `buy`, `buyCredit`, `buyCredits` | `msg.value` is below `grossPriceOf(sid)` or the gross credit price |
 
 the fee router:
 
