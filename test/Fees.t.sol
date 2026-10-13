@@ -959,6 +959,29 @@ contract BuybackTest is FeeBase {
         assertGt(core.ethPot() - b.pot, 0.4 ether);
         assertEq(address(core).balance, _tracked());
     }
+
+    // promise: SPEC 1 buyback slice parameter (decision 51): a sandwich around a buyback slice loses
+    function test_sandwichOfTheSliceLoses() public {
+        _skipSniperWindow();
+        _buyCoin(_user("trader"), 20 ether);
+        vm.deal(address(core), address(core).balance + 1 ether);
+        uint256 slot = stdstore.target(address(core)).sig("ethToBuyback()").find();
+        vm.store(address(core), bytes32(slot), bytes32(core.ethToBuyback() + 1 ether));
+        address attacker = _user("attacker");
+        uint256[3] memory xs = [uint256(5 ether), 20 ether, 100 ether];
+        for (uint256 i; i < 3; ++i) {
+            uint256 snap = vm.snapshotState();
+            vm.deal(attacker, xs[i]);
+            vm.prank(attacker);
+            router.swap{value: xs[i]}(launchKey, true, -int256(xs[i]), attacker);
+            uint256 coinGot = coin.balanceOf(attacker);
+            vm.roll(block.number + 30);
+            vm.prank(keeper);
+            core.buyback();
+            assertLt(_sellCoin(attacker, coinGot), xs[i], "sandwich loses");
+            vm.revertToState(snap);
+        }
+    }
 }
 
 /// pool manager stand in whose `unlock` burns gas, then reports the whole budget spent for `BOUGHT` coin
