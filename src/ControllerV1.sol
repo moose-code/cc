@@ -621,9 +621,9 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ credit picking
 
-    /// ready when the pile holds a full page. the page is the 80 oldest credits with format 0. while the credit sale is
-    /// on the page is ready only once the newest of its 80 credits is past its window; the pile is oldest first, so that
-    /// credit is the last of the page
+    /// ready when the pile holds a full page. the page is the 80 oldest credits. the returned format is 0 and the core
+    /// does not use it. while the credit sale is on the page is ready only once the newest of its 80 credits is past
+    /// its window; the pile is oldest first, so that credit is the last of the page
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format) {
         if (CORE.pileSize() < PAGE) return (false, ids, 0);
         uint256[] memory page = CORE.pilePage(0, PAGE);

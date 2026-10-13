@@ -54,7 +54,7 @@
   "credit": {
     "costToPotBps": 10000,
     "chosenComposeOn": false,
-    "minCcToChoose": "0",
+    "minCcToChoose": "1000000000000000000",
     "saleOn": false,
     "window": 14400,
     "floorBps": 11000,

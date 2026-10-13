@@ -4,6 +4,8 @@ pragma solidity ^0.8.28;
 /// shared interfaces. fixed by the project director. do not change signatures without sign off.
 
 interface IController {
+    /// the next page to compose. the core uses `ready` and `ids`; the returned `format` is not used, the core picks the
+    /// format of a system compose
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
     /// true when the curve price of statement `sid` has reached its floor, `saleFloorBps` of the reference. the curve age
     /// excludes paused seconds, so eligibility is frozen while sales are paused. the core reads it to gate the balance side
@@ -86,6 +88,8 @@ interface ICredits {
 interface IStatements {
     function compose(uint256[80] calldata creditIds, uint8 format) external returns (uint256 statementId);
     function creditsOf(uint256 statementId) external view returns (uint256);
+    function setFormat(uint256 statementId, uint8 format) external;
+    function formatOf(uint256 statementId) external view returns (uint8);
     /// the statement's rating, the sum of its credits' scores in ten-thousandths of a point
     function creditScoreOf(uint256 statementId) external view returns (uint256);
     function balanceOf(address owner) external view returns (uint256);
@@ -314,12 +318,12 @@ library Mainnet {
 
     /// the launch credit settings: the credit sale is off, its window is 4 hours, the floor is 110 percent and the
     /// start 300 percent of the floor, the reference per-credit score is the launch average, the whole credit cost
-    /// funds the pot, and chosen composition is off with no coin balance required
+    /// funds the pot, chosen composition is off, and the coin balance a caller needs to choose a compose or a held format is 1 coin
     function defaultCredit() internal pure returns (Credit memory) {
         return Credit({
             costToPotBps: 10_000,
             chosenComposeOn: false,
-            minCcToChoose: 0,
+            minCcToChoose: 1e18,
             saleOn: false,
             window: 4 hours,
             floorBps: 11_000,

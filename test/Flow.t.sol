@@ -406,7 +406,7 @@ contract FlowTest is Fixture {
             for (uint256 j; j < 80; ++j) {
                 assertEq(ids[j], page[j], "the 80 composed ids");
             }
-            assertEq(format, 0);
+            assertEq(format, defaultFormat(page[0]), "the derived format");
             assertEq(cost, sum, "cost is the sum of the 80 bases");
             assertEq(logs[i].data.length, (80 + 2) * 32, "ids, format and cost only");
         }

@@ -348,6 +348,7 @@ abstract contract InvariantFixture is Fixture {
         s[n++] = HandlerBase.roll.selector;
         s[n++] = HandlerBase.compose.selector;
         s[n++] = HandlerBase.composeChosen.selector;
+        s[n++] = HandlerBase.setHeldFormat.selector;
         s[n++] = HandlerSale.buy.selector;
         s[n++] = HandlerSale.buy.selector;
         s[n++] = HandlerSale.buyCredit.selector;

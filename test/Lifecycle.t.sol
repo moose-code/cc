@@ -373,7 +373,7 @@ contract LifecycleComposeTest is Fixture {
 
     // ------------------------------------------------------------------ compose
 
-    /// compose through ControllerV1: the 80 oldest credits, format 0, the id is the new supply, the cost basis
+    /// compose through ControllerV1: the 80 oldest credits, the id is the new supply, the cost basis
     /// and the statement is held by the core at an asking price of 150 percent of its cost
     function test_compose_throughControllerV1() public {
         _prepare();

@@ -1296,10 +1296,10 @@ contract CoreUnitTest is CoreBase {
         vm.expectRevert(abi.encodeWithSelector(ICore.NotInPile.selector, 0));
         core.compose();
 
-        // bad format
-        scripted.setPage(true, _page(ids[0], ids[1]), 8);
+        // a given format above 7
+        scripted.setPage(true, _page(ids[0], ids[1]), 0);
         vm.expectRevert(ICore.BadFormat.selector);
-        core.compose();
+        core.compose(8);
 
         // not ready and a reverting controller
         scripted.setPage(false, _page(ids[0], ids[1]), 0);
@@ -1317,7 +1317,8 @@ contract CoreUnitTest is CoreBase {
     }
 
     /// the one compose of this suite with a scripted page: credits from the middle of the pile, in a different
-    /// order than the pile, in format 7. the list stays intact around them
+    /// order than the pile. the controller's format 7 is ignored and the statement takes the derived format. the list
+    /// stays intact around them
     function test_compose_pullsFromTheMiddleAndKeepsTheListIntact() public {
         ScriptedController scripted = new ScriptedController();
         _setController(address(scripted));
@@ -1339,7 +1340,9 @@ contract CoreUnitTest is CoreBase {
         (page[0], page[79]) = (page[79], page[0]);
         scripted.setPage(true, page, 7);
         uint256 supply = STATEMENTS.supply();
-        vm.expectCall(address(STATEMENTS), abi.encodeWithSelector(STATEMENTS.compose.selector, page, uint8(7)));
+        vm.expectCall(
+            address(STATEMENTS), abi.encodeWithSelector(STATEMENTS.compose.selector, page, defaultFormat(page[0]))
+        );
         vm.prank(keeper);
         core.compose();
         assertEq(STATEMENTS.supply(), supply + 1);

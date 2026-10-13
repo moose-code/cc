@@ -40,9 +40,12 @@ contract ChosenComposeTest is Fixture {
         }
     }
 
+    /// opens the door and sets the coin minimum to zero (the launch value is 1 coin, which the chooser does not hold)
     function _on() internal {
-        vm.prank(owner);
+        vm.startPrank(owner);
         core.setChosenComposeOn(true);
+        core.setMinCcToChoose(0);
+        vm.stopPrank();
     }
 
     function _call(uint256[80] memory ids, uint8 format) internal {

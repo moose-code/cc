@@ -91,6 +91,7 @@ interface ICore {
     event EngineRetired(address indexed successor);
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     event FeesAdded(uint256 amount);
+    event HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller);
     event ListingBought(
         uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
@@ -137,6 +138,7 @@ interface ICore {
     function checkpointTime() external view returns (uint64);
     function chosenComposeOn() external view returns (bool);
     function compose() external;
+    function compose(uint8 format) external;
     function composeChosen(uint256[80] memory ids, uint8 format) external;
     function composerOf(uint256) external view returns (address);
     function controller() external view returns (address);
@@ -184,6 +186,7 @@ interface ICore {
     function setChosenComposeOn(bool v) external;
     function setController(address c) external;
     function setCreditCostToPotBps(uint16 v) external;
+    function setHeldFormat(uint256 sid, uint8 format) external;
     function setMinCcToChoose(uint96 v) external;
     function setPaused(bool on) external;
     function setRate(uint256 rate) external;

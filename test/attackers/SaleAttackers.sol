@@ -190,7 +190,7 @@ contract RepaidCaller {
         repaid += msg.value;
         if (hits++ != 0) return;
         _try(abi.encodeCall(ICore.redeemStatement, (other)));
-        _try(abi.encodeCall(ICore.compose, ()));
+        _try(abi.encodeWithSignature("compose()"));
         _try(abi.encodeCall(ICore.skim, ()));
         _try(abi.encodeCall(ICore.buyback, ()));
     }

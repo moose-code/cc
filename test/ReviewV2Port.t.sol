@@ -477,7 +477,7 @@ contract ReviewFlushInPayoutTest is FeeBase {
         uint256 pot0 = core.ethPot();
         (, uint256 toEngine) = _routerSplit(address(feeRouter).balance);
         uint256 a0 = address(atk).balance;
-        atk.go(address(core), abi.encodeCall(ICore.compose, ()));
+        atk.go(address(core), abi.encodeWithSignature("compose()"));
         assertEq(address(atk).balance, a0, "the compose pays the caller nothing");
         assertEq(core.ethPot(), pot0 + _toPot(toEngine), "pot = old + the booked fees");
         _consistent();

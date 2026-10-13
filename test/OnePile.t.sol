@@ -257,7 +257,7 @@ contract OnePileTest is Fixture {
     }
 
     function test_setter_minCcToChoose() public {
-        assertEq(core.minCcToChoose(), 0, "zero at launch");
+        assertEq(core.minCcToChoose(), 1e18, "1 coin at launch");
         vm.expectEmit(address(core));
         emit ICore.MinCcToChooseSet(123e18);
         vm.prank(owner);

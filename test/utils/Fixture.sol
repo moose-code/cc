@@ -136,6 +136,11 @@ abstract contract Fixture is Test, ProdDeployer {
         uint256 gasUsed;
     }
 
+    /// @notice the format `compose()` derives for a page whose first credit id is `headId`, at the current prevrandao
+    function defaultFormat(uint256 headId) internal view returns (uint8) {
+        return uint8(uint256(keccak256(abi.encode(block.prevrandao, headId))) % 8);
+    }
+
     /// @notice basefee of the compose call. low enough that the 5 percent cap does not bind
     uint256 internal composeBasefee = 0.2 gwei;
     Composed internal composed;
@@ -413,7 +418,8 @@ abstract contract Fixture is Test, ProdDeployer {
     }
 
     /// @notice composes the eth pile through the real controller, once per state lineage. fills the pile to 80
-    /// first. the call checks that the core hands Statements the 80 oldest credits with format 0. the state before the
+    /// first. the call checks that the core hands Statements the 80 oldest credits with the format `compose()` derives from
+    /// `prevrandao` and the first page id. the state before the
     /// compose is kept in `preComposeSnap`, so a test can revert to it and compose again under other conditions
     function _composeOnce() internal returns (Composed memory c) {
         if (isComposed) return composed;
@@ -431,7 +437,7 @@ abstract contract Fixture is Test, ProdDeployer {
         vm.fee(composeBasefee);
         preComposeSnap = vm.snapshotState();
 
-        vm.expectCall(address(STATEMENTS), abi.encodeWithSelector(IStatements.compose.selector, c.ids, uint8(0)));
+        vm.expectCall(address(STATEMENTS), abi.encodeWithSelector(IStatements.compose.selector, c.ids, defaultFormat(c.ids[0])));
         uint256 gasBefore = gasleft();
         vm.prank(keeper);
         core.compose();

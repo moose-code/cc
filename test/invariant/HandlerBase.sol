@@ -118,7 +118,9 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_COMPOSE_CHOSEN = 39;
     // the owner sets the credit sale, chosen compose and rating reference settings
     uint8 internal constant A_CREDIT_SETTINGS = 40;
-    uint256 internal constant N_ACTIONS = 41;
+    // a coin holder restyles a statement the core holds
+    uint8 internal constant A_SET_HELD_FORMAT = 41;
+    uint256 internal constant N_ACTIONS = 42;
 
     // violation codes
     uint256 internal constant V_ETH_OUT = 1; // eth left the core beyond what the action explains
@@ -347,7 +349,8 @@ abstract contract HandlerBase is Test {
             "buyCredit",
             "buyCredits",
             "composeChosen",
-            "creditSettings"
+            "creditSettings",
+            "setHeldFormat"
         ];
         names = n;
         controllers.push(w.v1);
@@ -1524,7 +1527,7 @@ abstract contract HandlerBase is Test {
     /// composes the controller's page. rare by gate, because it costs about 8m gas.
     function compose(uint256 gate, uint256 feeSeed) external checked {
         uint8 a = A_COMPOSE;
-        if (_retiredRefusal(a, keeper, abi.encodeWithSelector(ICore.compose.selector))) return;
+        if (_retiredRefusal(a, keeper, abi.encodeWithSignature("compose()"))) return;
         (bool ready, uint256[] memory ids, uint256 format) = _peekPage();
         // a pile of 80 is composed on one gate in two. a short pile only now and then, to see NotReady
         if (ready ? gate % 2 != 0 : gate % 13 != 0) return _skip(a);
@@ -1622,6 +1625,39 @@ abstract contract HandlerBase is Test {
             if (expect && !_hostileController()) _unexpected(a, why);
         }
         _rsCheck(rs, 0);
+    }
+
+    /// a coin holder sets the format of a held statement. the caller is the first actor from the seed that holds at
+    /// least `minCcToChoose` coin, and the call must succeed and read back through `formatOf`. when no actor holds that
+    /// much, the call is made by the seed's actor and must revert `BelowMinCc`. only held statements are named
+    function setHeldFormat(uint256 sSeed, uint256 fmtSeed) external checked {
+        uint8 a = A_SET_HELD_FORMAT;
+        (uint256 sid, bool found) = _pickBy(sSeed, K_HELD);
+        if (!found) return _skip(a);
+        (bool held,,) = core.statementInfo(sid);
+        if (!held) return _skip(a);
+        uint8 format = uint8(fmtSeed % 8);
+        uint256 min = core.minCcToChoose();
+        address caller = _actor(sSeed >> 8);
+        bool funded;
+        for (uint256 i; i < actors.length; ++i) {
+            address c = _actor((sSeed >> 8) + i);
+            if (coin.balanceOf(c) >= min) {
+                caller = c;
+                funded = true;
+                break;
+            }
+        }
+        _att(a);
+        vm.prank(caller);
+        try core.setHeldFormat(sid, format) {
+            _ok(a);
+            if (!funded) _flag(V_MODEL, "setHeldFormat took a caller below minCcToChoose");
+            if (STATEMENTS.formatOf(sid) != format) _flag(V_MODEL, "formatOf differs from the format set");
+        } catch (bytes memory why) {
+            if (funded || bytes4(why) != ICore.BelowMinCc.selector) _unexpected(a, why);
+            else _ok(a);
+        }
     }
 
     /// the checks after a chosen compose, the same as a regular compose: the new statement is the next id and held, the

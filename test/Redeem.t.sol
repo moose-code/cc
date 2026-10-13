@@ -422,7 +422,7 @@ contract RedeemRepayTest is RedeemBase {
             _setController(address(sc));
             bytes memory data;
             address target = address(core);
-            if (k == 0) data = abi.encodeCall(ICore.compose, ());
+            if (k == 0) data = abi.encodeWithSignature("compose()");
             else if (k == 1) data = abi.encodeCall(ICore.skim, ());
             else if (k == 2) data = abi.encodeCall(ICore.redeemStatement, (b));
             else if (k == 3) data = abi.encodeCall(ICore.buyback, ());

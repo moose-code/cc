@@ -136,6 +136,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     );
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, address indexed caller);
+    event HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller);
     event SettingsSet(Settings settings);
     event RateSet(uint256 rate);
     event StatementRedeemed(uint256 indexed sid, uint256 received);
@@ -629,15 +630,36 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                COMPOSING
     //////////////////////////////////////////////////////////////*/
 
-    /// composes the controller's page of the oldest 80 pile credits into a statement the core holds for sale with the
-    /// controller's default format. anyone may call. the gas counted for the caller payment includes the fee router
-    /// flush. reverts `Retired` after `migrate`
+    /// composes the controller's page of the oldest 80 pile credits into a statement the core holds for sale. the
+    /// format is `keccak256(abi.encode(block.prevrandao, first page id)) % 8`. anyone may call. the gas counted for the
+    /// caller payment includes the fee router flush. reverts `Retired` after `migrate`
     function compose() external nonReentrant {
-        uint256 gasStart = gasleft();
+        _composePage(0, true, gasleft());
+    }
+
+    /// composes the controller's page as `compose` does, with the given format (0 to 7, else `BadFormat`)
+    function compose(uint8 format) external nonReentrant {
+        _composePage(format, false, gasleft());
+    }
+
+    /// the shared body of the two system composes. the controller's `nextPage` format is not used
+    function _composePage(uint256 format, bool random, uint256 gasStart) private {
         _openDoor();
-        (bool ready, uint256[80] memory ids, uint256 format) = _nextPage();
+        (bool ready, uint256[80] memory ids,) = _nextPage();
         if (!ready) revert NotReady();
+        if (random) format = uint256(keccak256(abi.encode(block.prevrandao, ids[0]))) % (MAX_FORMAT + 1);
         _compose(ids, format, gasStart);
+    }
+
+    /// sets the render format of a statement the core holds for sale. anyone holding at least `minCcToChoose` coin may
+    /// call. reverts `NotForSale` for a statement that is not held, `BadFormat` above 7 and `BelowMinCc` below the
+    /// coin minimum
+    function setHeldFormat(uint256 sid, uint8 format) external nonReentrant {
+        if (!_statements[sid].held) revert NotForSale();
+        if (format > MAX_FORMAT) revert BadFormat();
+        if (SafeTransferLib.balanceOf(COIN, msg.sender) < minCcToChoose) revert BelowMinCc();
+        STATEMENTS.setFormat(sid, format);
+        emit HeldFormatSet(sid, format, msg.sender);
     }
 
     /// composes a statement from 80 pile credits the caller names and a format the caller picks. requires

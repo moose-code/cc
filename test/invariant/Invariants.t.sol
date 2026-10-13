@@ -689,7 +689,8 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 37) handler.buyCredit(w, x, y);
         else if (a == 38) handler.buyCredits(w, x, y);
         else if (a == 39) handler.composeChosen(w, x);
-        else handler.creditSettings(w, x);
+        else if (a == 40) handler.creditSettings(w, x);
+        else handler.setHeldFormat(w, x);
     }
 
     /// no action may revert, whatever the inputs. a reverting handler loses its ghost writes and hides violations.
@@ -822,6 +823,7 @@ abstract contract InvariantsBase is InvariantFixture {
         // so the success count is geometric with p = 0.0296. 400 tries fail with probability (1 - p)^400 = 6e-6
         // (5e-5 at the lower end of the measured p).
         assertTrue(_try(7, 400), "compose never succeeded");
+        assertTrue(_try(41, 40), "no held format set");
         // the statement sale through the controller
         assertTrue(_try(23, 80), "no sale of a held statement");
         if (handler.phase2()) _phase2Smoke();

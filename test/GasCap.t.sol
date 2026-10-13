@@ -281,7 +281,7 @@ contract GasCapTest is SeaportBase {
         g -= gasleft();
         assertEq(core.heldStatements().length, held + 1, "composed");
         assertEq(keeper.balance, kb, "the compose pays the caller nothing");
-        _row(name, g, abi.encodeCall(core.compose, ()));
+        _row(name, g, abi.encodeWithSignature("compose()"));
     }
 
     /// @dev full page of 80, nothing warmed by earlier work
@@ -338,7 +338,7 @@ contract GasCapTest is SeaportBase {
         _row(
             burning ? "compose eth lane, router 1 eth, four burning payees, cold" : "compose eth lane, router 1 eth, cold",
             g,
-            abi.encodeCall(core.compose, ())
+            abi.encodeWithSignature("compose()")
         );
     }
 

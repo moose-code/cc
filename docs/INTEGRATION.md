@@ -82,18 +82,20 @@ keeper economics: the caller's profit is the payment plus anything it appends to
 
 ## 5. compose
 
-`compose()` and `composeChosen(ids, format)`. anyone may call `compose()`. the controller decides the page: `ControllerV1.nextPage()` is ready when the pile holds 80 credits and returns the 80 oldest with format 0. while the credit sale window is on (section 6) it is ready only once the newest of the 80 has been in the pile for `creditWindow`. `lens.snapshot().pageReady` reports it. `composeChosen(uint256[80] ids, uint8 format)` composes the 80 credits and the format (0 to 7) that the caller names. it needs `chosenComposeOn` (off at launch), a caller coin balance of at least `minCcToChoose` (0 at launch) and every named credit past its window. `lens.choosable(id)` answers whether one credit may be named now.
+`compose()`, `compose(uint8 format)` and `composeChosen(ids, format)`. anyone may call `compose()` and `compose(format)`. the controller decides the page: `ControllerV1.nextPage()` is ready when the pile holds 80 credits and returns the 80 oldest; the Core ignores the format it returns. `compose()` sets the format to `keccak256(abi.encode(block.prevrandao, first page id)) % 8`; `compose(format)` sets the given format (0 to 7). while the credit sale window is on (section 6) it is ready only once the newest of the 80 has been in the pile for `creditWindow`. `lens.snapshot().pageReady` reports it. `composeChosen(uint256[80] ids, uint8 format)` composes the 80 credits and the format (0 to 7) that the caller names. it needs `chosenComposeOn` (off at launch), a caller coin balance of at least `minCcToChoose` (1 coin at launch) and every named credit past its window. `lens.choosable(id)` answers whether one credit may be named now.
 
 what the call does:
 
 1. the fee pull of section 7.
-2. `compose`: `NotReady` when the controller reports no page. `composeChosen`: `ChosenComposeOff` while the door is off, `BelowMinCc` when the caller holds less than `minCcToChoose` coin at the call, `InWindow(id)` when the newest named credit is inside its window. both: `BadFormat` for a format above 7.
+2. `compose` and `compose(format)`: `NotReady` when the controller reports no page. `composeChosen`: `ChosenComposeOff` while the door is off, `BelowMinCc` when the caller holds less than `minCcToChoose` coin at the call, `InWindow(id)` when the newest named credit is inside its window. all three: `BadFormat` for a format above 7.
 3. the 80 credits leave the pile (`NotInPile` for a credit that is absent or named twice, `NotHeld`) and go to `Statements.compose`. `BadStatement` when the result is not the next statement id held by the Core with 80 credits.
 4. the statement is booked with the sum of the cost bases of its 80 credits and its rating, the sum of the credits' scores that `Statements.creditScoreOf` reports at compose (`BadStatement` when it exceeds a uint32). holders of the coin and people in the project compose, and the owner composes when nobody does.
 5. event `Composed(sid, ids, format, cost, caller)` with `ids` the 80 credit ids. the statement stays in the Core with its compose time (`statementInfo(sid)`).
 6. the caller payment, last. `min(counted gas, 13,700,000) * min(block.basefee, callerMaxBaseFee) + callerFee`, from `ethPot`, at most `ethPot`. counted gas is the gas measured from the first line of the body, which includes the fee pull, plus 50,000 for the transaction base cost and the work after the measured part. `compose` and `composeChosen` pay by the same rule. `callerFee` and `callerMaxBaseFee` are 0 at launch, so the payment is 0 and no eth moves. the owner turns it on with `setSettings`. the payment goes to `msg.sender`, so a contract caller needs a `receive()` that accepts eth. `redeemStatement` pays its caller by the same rule and the same two settings, with a gas bound of 1,500,000 and 50,000 of overhead. the transfer is the last action of the door and the Core is locked against re entry while it runs.
 
 send at least 12,000,000 gas: the live Statements contract needs about 8.7 million for 80 credits, and the gas the transaction needs is the gas before the refund of the cleared credit records, 10.6 million, or 11.1 million with a loaded fee router of four gas burning payees (section 13).
+
+`setHeldFormat(uint256 sid, uint8 format)` sets the format of a statement the Core holds for sale, through `Statements.setFormat`. anyone may call. reverts: `NotForSale` when the Core does not hold `sid`, `BadFormat` for a format above 7, `BelowMinCc` when the caller holds less than `minCcToChoose` coin (1 coin at launch). emits `HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller)`. a buyer sets the format of an owned statement on Statements itself. the current format reads from `Statements.formatOf(sid)`.
 
 ## 6. statements and credits: buying
 
@@ -175,7 +177,7 @@ what a successor has to implement: a `receive()` that accepts a plain eth call, 
 | `pileSize`, `pileHead` | size and oldest credit of the pile |
 | `pageReady` | the controller answers `nextPage()` with a ready flag and the full answer size (82 words) that `compose` requires |
 | `creditSaleOn`, `creditWindow`, `refScore` | the controller's credit sale switch, the window in seconds and the reference score (0 and off for a controller that does not answer) |
-| `chosenComposeOn`, `minCcToChoose` | the Core's chosen composition switch and the least coin balance of its caller |
+| `chosenComposeOn`, `minCcToChoose` | the Core's chosen composition switch and the least coin balance of the caller of `composeChosen` and `setHeldFormat` |
 | `ethPot`, `ethToBuyback`, `ethRedeemBurn`, `balancePot` | the four pots. `ethToBuyback` leaves only through a `buyback()` whose swap completes: a pool or hook failure reverts the call and the pot stays. `ethRedeemBurn` is the redeem burn reserve, filled by `feeToRedeemBurnBps` of fee income and drawn into `ethToBuyback` on each redemption |
 | `unbookedEth` | Core balance above the booked pots. `skim()` books it |
 | `routerBalance`, `routerOwed` | eth in the router, and the part owed to payees |
@@ -211,7 +213,8 @@ the Core (`src/interfaces/ICore.sol`):
 | `CreditSold` | `uint256 indexed id, address indexed buyer, uint256 price` | `sellCreditTo` (the controller `buyCredit` path): the credit went to `buyer` for `price` |
 | `CreditCostToPotBpsSet` | `uint16 bps` | the owner set the share of a sold credit's cost booked to `ethPot` |
 | `ChosenComposeOnSet` | `bool on` | the owner switched chosen composition |
-| `MinCcToChooseSet` | `uint96 min` | the owner set the least coin balance of a chosen compose |
+| `MinCcToChooseSet` | `uint96 min` | the owner set the least coin balance of a chosen compose and a held format change |
+| `HeldFormatSet` | `uint256 indexed sid, uint8 format, address indexed caller` | a holder of `minCcToChoose` coin set the format of a held statement |
 | `EthRateFill` | `uint256 spent, uint256 rate, uint256 pot` | every spend from `ethPot`: `spent`, the price state after the drop (`rate`) and the pot after the spend |
 | `BalanceModuleLocked` | (empty) | `lockBalanceModule` |
 | `BalanceModuleSet` | `address balanceModule, address balanceToken, uint256 unitPerPoint` | `setBalanceModule` |
@@ -286,8 +289,8 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `AboveCeiling()` | `buyListing` | `value` is above `ethRate()` |
 | `AlreadyOwned()` | `buyListing` | the Core already owns the credit |
 | `BadCost()` | `buyListing` | the eth balance did not fall, or fell by more than `value` |
-| `BadFormat()` | `compose`, `composeChosen` | the format is above 7 |
-| `BelowMinCc()` | `composeChosen` | the caller holds less coin than `minCcToChoose` |
+| `BadFormat()` | `compose(format)`, `composeChosen`, `setHeldFormat` | the format is above 7 |
+| `BelowMinCc()` | `composeChosen`, `setHeldFormat` | the caller holds less coin than `minCcToChoose` |
 | `ChosenComposeOff()` | `composeChosen` | chosen composition is off |
 | `InWindow(uint256 id)` | `composeChosen` | the newest named credit (`id`) is inside its window while the credit sale is on |
 | `BadModule()` | `setBalanceModule`, `redeemStatement`, `sellForBalance` | the module is rejected, or its `unitPerPoint()` read fails, returns short, returns 0 or exceeds a uint128. a redemption and the bid read the unit in the call and revert on a failed, short, zero or oversized read |
@@ -328,7 +331,7 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `SliceTooSmall()` | `buyback` | the slice is under twice the largest payment to the caller: 600,000 gas at the capped base fee plus `keeperFee` |
 | `Slippage()` | `sellForEth`, `sellForBalance` | total payout below `minOut` |
 | `TargetNotAllowed()` | `buyListing` | the target is not on the allowlist, or it is a forbidden contract |
-| `NotForSale()` | `sellTo` | the Core does not hold the statement |
+| `NotForSale()` | `sellTo`, `setHeldFormat` | the Core does not hold the statement |
 | `NotEligible()` | `redeemStatement` | the statement's curve price has not reached its floor (`atFloor` is false), or the controller did not answer |
 | `RedeemOff()` | `redeemStatement` | `redeemOn` is false |
 | `BalanceBidOff()` | `sellForBalance` | `balanceBidOn` is false |

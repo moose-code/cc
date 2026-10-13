@@ -205,7 +205,7 @@ contract PullFeesTest is CoreBase {
         uint256 size = core.pileSize();
         if (size < 80) _fillEthPile(80 - size);
         vm.fee(composeBasefee);
-        _doorGas("compose", keeper, abi.encodeCall(core.compose, ()));
+        _doorGas("compose", keeper, abi.encodeWithSignature("compose()"));
     }
 
     function test_gasOfThePullPerDoor_adopt() public {
