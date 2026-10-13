@@ -5,10 +5,10 @@ pragma solidity ^0.8.28;
 
 interface IController {
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
-    /// true when the asking price of statement `sid` is at or below its stored cost. the asking price
+    /// true when the curve price of statement `sid` has reached its floor, `floorBps` of the reference. the curve age
     /// excludes paused seconds, so eligibility is frozen while sales are paused. the core reads it to gate a phase 2
     /// redemption
-    function atCost(uint256 sid) external view returns (bool);
+    function atFloor(uint256 sid) external view returns (bool);
     /// `exitTokenBaseUnits` priced in wei at the exit token pool (docs/FLOW.md 87). reverts when the pool key is
     /// unset or the pool price reads zero. the core reads it in `sellForExitToken` to value the exit tokens paid
     function valueWei(uint256 exitTokenBaseUnits) external view returns (uint256 priceWei);

@@ -16,15 +16,17 @@ import {ICredits, ICreditScore, IExitModule, Settings, Mainnet} from "./interfac
 contract CoreLens {
     using FixedPointMathLib for uint256;
 
-    /// the held statement `id` of the Core, with its cost basis, compose time and rating. `askingPrice` is the
-    /// controller price now in wei, 0 when the controller does not answer. `exitEligible` is true when a redemption of
-    /// this statement would pass the Core gates now: a module set, `exitMode` at least 1, and an asking price at or
-    /// below cost
+    /// the held statement `id` of the Core, with its cost basis, compose time and rating. `priceReference` is the
+    /// controller price reference in wei, the cost scaled by the rating, 0 when the controller does not answer.
+    /// `askingPrice` is the controller price now in wei, 0 when the controller does not answer. `exitEligible` is true
+    /// when a redemption of this statement would pass the Core gates now: a module set, `exitMode` at least 1, and a
+    /// curve price at its floor
     struct StatementView {
         uint256 id;
         uint256 cost;
         uint64 composedAt;
         uint256 rating;
+        uint256 priceReference;
         uint256 askingPrice;
         bool exitEligible;
     }
@@ -61,6 +63,8 @@ contract CoreLens {
         /// whether the controller's credit sale window is on, and the seconds a credit's price falls over
         bool creditSaleOn;
         uint256 creditWindow;
+        /// the controller's `refScore`, the per-credit score a statement's reference denominator is `80 *` of
+        uint32 refScore;
         /// whether a caller may pick the 80 credits and the format of a compose, and the least coin balance a caller
         /// of a chosen compose must hold
         bool chosenComposeOn;
@@ -126,6 +130,7 @@ contract CoreLens {
         s.targetsLocked = core.targetsLocked();
         s.successorLocked = core.successorLocked();
         (s.creditSaleOn, s.creditWindow) = _creditWindow(s.controller);
+        s.refScore = _refScore(s.controller);
         s.chosenComposeOn = core.chosenComposeOn();
         s.minCcToChoose = core.minCcToChoose();
     }
@@ -196,9 +201,22 @@ contract CoreLens {
 
     /// the controller's eligibility answer for a statement, read with the gas the Core uses. a revert, a
     /// short answer or a `false` reads as not eligible
-    function _atCost(address ctl, uint256 sid) private view returns (bool) {
-        (bool ok, bytes memory out) = ctl.staticcall{gas: ASK_GAS}(abi.encodeCall(IControllerV1.atCost, (sid)));
+    function _atFloor(address ctl, uint256 sid) private view returns (bool) {
+        (bool ok, bytes memory out) = ctl.staticcall{gas: ASK_GAS}(abi.encodeCall(IControllerV1.atFloor, (sid)));
         return ok && out.length == 32 && abi.decode(out, (bool));
+    }
+
+    /// the controller's price reference of a statement, read with the gas the Core uses. a revert or a short answer
+    /// reads as 0
+    function _reference(address ctl, uint256 sid) private view returns (uint256) {
+        (bool ok, bytes memory out) = ctl.staticcall{gas: ASK_GAS}(abi.encodeCall(IControllerV1.referenceOf, (sid)));
+        return ok && out.length == 32 ? abi.decode(out, (uint256)) : 0;
+    }
+
+    /// the controller's `refScore`, read with the gas the Core uses. a revert or a short answer reads as 0
+    function _refScore(address ctl) private view returns (uint32) {
+        (bool ok, bytes memory out) = ctl.staticcall{gas: ASK_GAS}(abi.encodeWithSignature("refScore()"));
+        return ok && out.length == 32 ? uint32(abi.decode(out, (uint256))) : 0;
     }
 
     /// the module's `unitPerPoint()` read with the gas the Core uses. a revert or a short answer reads as 0
@@ -242,7 +260,8 @@ contract CoreLens {
         v.id = sid;
         (, v.cost, v.composedAt) = CORE.statementInfo(sid);
         v.rating = CORE.ratingOf(sid);
+        v.priceReference = _reference(ctl, sid);
         v.askingPrice = _askingPrice(ctl, sid);
-        v.exitEligible = modeOn && _atCost(ctl, sid);
+        v.exitEligible = modeOn && _atFloor(ctl, sid);
     }
 }

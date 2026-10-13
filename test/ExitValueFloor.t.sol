@@ -14,7 +14,7 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// the redeemable value floor of the sale controller (decision 87). the asking price is floored at a statement's
 /// redeemable value in eth, read from the exit token / native eth uniswap v4 pool. the floor only raises the price:
-/// `atCost`, redemption eligibility and the anchor stay on the curve
+/// `atFloor`, redemption eligibility and the anchor stay on the curve
 contract ExitValueFloorTest is Fixture {
     /// initializes a native eth / exit token pool at sqrt price `sp` and points the controller at it. native eth is
     /// currency0
@@ -223,18 +223,18 @@ contract ExitValueFloorTest is Fixture {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         _initAndSet(_lowSqrtPrice(), 3000, 60);
-        assertFalse(ctl.atCost(sid), "the opening curve is above cost");
+        assertFalse(ctl.atFloor(sid), "the opening curve is above cost");
         uint256 priceBefore = ctl.priceOf(sid);
         vm.prank(owner);
         ctl.setPaused(true);
         _warp(300 hours);
-        assertFalse(ctl.atCost(sid), "the curve is frozen by the pause, still above cost");
+        assertFalse(ctl.atFloor(sid), "the curve is frozen by the pause, still above cost");
         assertEq(ctl.priceOf(sid), priceBefore, "the value floor is unchanged while nothing moved");
         // the owner raises the owed amount per point by naming a module with twice the unit: the live value floor
         // doubles while the curve stays frozen
         MockExitModule mod2 = new MockExitModule(address(xt), UNIT * 2);
         _setExitModule(address(mod2));
         assertEq(ctl.priceOf(sid), priceBefore * 2, "the value floor tracks the live unit during a pause");
-        assertFalse(ctl.atCost(sid), "the curve is still frozen");
+        assertFalse(ctl.atFloor(sid), "the curve is still frozen");
     }
 }

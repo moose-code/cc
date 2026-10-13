@@ -448,8 +448,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// bounded read of the controller's eligibility answer for a statement. a revert, a short answer or a
     /// `false` reads as not eligible
-    function _atCost(uint256 sid) private view returns (bool) {
-        (bool ok, bytes memory out) = _ask(controller, abi.encodeCall(IController.atCost, (sid)), READ_GAS, 32);
+    function _atFloor(uint256 sid) private view returns (bool) {
+        (bool ok, bytes memory out) = _ask(controller, abi.encodeCall(IController.atFloor, (sid)), READ_GAS, 32);
         return ok && abi.decode(out, (bool));
     }
 
@@ -755,8 +755,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// hands a held statement to the exit module and books the exit token it returns into `xPot`. requires `exitMode`
-    /// at least 1 and a module set. a statement is eligible when the controller's asking price is at or below its
-    /// stored cost. the exit must raise the exit token balance by at least
+    /// at least 1 and a module set. a statement is eligible when the controller's curve price has reached its floor.
+    /// the exit must raise the exit token balance by at least
     /// `rating * unitPerPoint * (10_000 - exitSlippageBps) / 10_000`. every redemption moves `redeemBurnBps` of the
     /// redeem burn reserve into the coin buyback
     function exitStatement(uint256 sid) external nonReentrant {
@@ -766,7 +766,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (_st().exitMode == 0) revert ExitModeOff();
         CoreLib.Statement memory s = _statements[sid];
         if (!s.held) revert NotHeld();
-        if (!_atCost(sid)) revert NotEligible();
+        if (!_atFloor(sid)) revert NotEligible();
         address token = exitToken;
         uint256 required = uint256(s.rating) * unitPerPoint * (BPS - _st().exitSlippageBps) / BPS;
         _unhold(sid);

@@ -464,7 +464,7 @@ contract ReviewSaleTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("exitModule")));
         core.setExitModule(fresh);
         SellProbe probe = new SellProbe(core);
-        probe.setAtCost(true); // the eth lane statement is eligible under this controller
+        probe.setAtFloor(true); // the eth lane statement is eligible under this controller
         core.setController(address(probe));
         core.addTarget(address(0x7A9));
         vm.stopPrank();

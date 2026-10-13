@@ -576,10 +576,10 @@ abstract contract Fixture is Test, ProdDeployer {
         ctl.setExitPoolKey(k);
     }
 
-    /// @notice warps until the controller's asking price of a statement is at or below its cost, which makes
-    /// it eligible for redemption. the launch curve falls from 150 percent to 100 percent of cost over 50 hours
+    /// @notice warps until the controller's curve price of a statement has reached its floor, which makes it eligible
+    /// for redemption. the launch curve falls from 150 percent to 100 percent of the reference over 50 hours
     function _makeEligible(uint256 sid) internal {
-        for (uint256 i; i < 400 && !ctl.atCost(sid); ++i) {
+        for (uint256 i; i < 400 && !ctl.atFloor(sid); ++i) {
             vm.warp(block.timestamp + 1 hours);
         }
     }

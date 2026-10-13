@@ -2250,9 +2250,9 @@ abstract contract HandlerBase is Test {
 
     /// the controller's eligibility answer read the way the core reads it: a revert, a short answer or a false reads as
     /// not eligible
-    function _ctlAtCost(uint256 sid) internal view returns (bool) {
+    function _ctlAtFloor(uint256 sid) internal view returns (bool) {
         (bool ok, bytes memory out) =
-            core.controller().staticcall{gas: 200_000}(abi.encodeWithSignature("atCost(uint256)", sid));
+            core.controller().staticcall{gas: 200_000}(abi.encodeWithSignature("atFloor(uint256)", sid));
         return ok && out.length == 32 && abi.decode(out, (bool));
     }
 
@@ -2289,7 +2289,7 @@ abstract contract HandlerBase is Test {
         p.st = core.settings();
         SG storage g = _sg[sid];
         bool modeOn = p.st.exitMode >= 1;
-        bool eligible = _ctlAtCost(sid);
+        bool eligible = _ctlAtFloor(sid);
         p.ripe = modeOn && eligible;
         if (!modeOn) p.refusal = ICore.ExitModeOff.selector;
         else if (!eligible) p.refusal = ICore.NotEligible.selector;

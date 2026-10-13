@@ -31,6 +31,7 @@ interface ICoreLens {
         bool successorLocked;
         bool creditSaleOn;
         uint256 creditWindow;
+        uint32 refScore;
         bool chosenComposeOn;
         uint256 minCcToChoose;
         StatementView[] statements;
@@ -41,6 +42,7 @@ interface ICoreLens {
         uint256 cost;
         uint64 composedAt;
         uint256 rating;
+        uint256 priceReference;
         uint256 askingPrice;
         bool exitEligible;
     }

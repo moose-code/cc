@@ -39,6 +39,7 @@ interface IControllerV1 {
     event KneeBpsSet(uint32 kneeBps);
     event MarkupBpsSet(uint16 markupBps);
     event PausedSet(bool paused);
+    event RefScoreSet(uint32 refScore);
     event SlowDecayBpsPerHourSet(uint16 slowDecayBpsPerHour);
     event StartCapBpsSet(uint32 startCapBps);
 
@@ -47,7 +48,7 @@ interface IControllerV1 {
     function anchorHalfLife() external view returns (uint32);
     function anchorMinCost() external view returns (uint128);
     function anchorTime() external view returns (uint40);
-    function atCost(uint256 sid) external view returns (bool);
+    function atFloor(uint256 sid) external view returns (bool);
     function buy(uint256 sid) external payable;
     function buyCredit(uint256 id) external payable;
     function buyCredits(uint256[] memory ids) external payable;
@@ -70,6 +71,8 @@ interface IControllerV1 {
     function pastWindow(uint64 acquiredAt) external view returns (bool);
     function paused() external view returns (bool);
     function priceOf(uint256 sid) external view returns (uint256 price);
+    function refScore() external view returns (uint32);
+    function referenceOf(uint256 sid) external view returns (uint256);
     function setAnchorBps(uint32 v) external;
     function setAnchorHalfLife(uint32 v) external;
     function setAnchorMinCost(uint128 v) external;
@@ -84,6 +87,7 @@ interface IControllerV1 {
     function setKneeBps(uint32 v) external;
     function setMarkupBps(uint16 v) external;
     function setPaused(bool v) external;
+    function setRefScore(uint32 v) external;
     function setSlowDecayBpsPerHour(uint16 v) external;
     function setStartCapBps(uint32 v) external;
     function slowDecayBpsPerHour() external view returns (uint16);

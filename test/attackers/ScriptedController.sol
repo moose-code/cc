@@ -10,7 +10,7 @@ contract ScriptedController is IController {
     uint8 public pageFormat;
     bool public revertPage;
     /// the eligibility answer the core reads for a phase 2 redemption
-    bool public atCostFlag;
+    bool public atFloorFlag;
     /// the answer of `valueWei`, and whether the call reverts (an unset pool key)
     uint256 public valueWeiAnswer;
     bool public valueWeiReverts = true;
@@ -19,12 +19,12 @@ contract ScriptedController is IController {
     bool public pastWindowReverts;
 
     /// sets the eligibility answer.
-    function setAtCost(bool on) external {
-        atCostFlag = on;
+    function setAtFloor(bool on) external {
+        atFloorFlag = on;
     }
 
-    function atCost(uint256) external view returns (bool) {
-        return atCostFlag;
+    function atFloor(uint256) external view returns (bool) {
+        return atFloorFlag;
     }
 
     /// sets the exit token value answer and clears the revert flag.

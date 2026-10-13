@@ -81,12 +81,12 @@ contract RedeemTimingTest is RedeemBase {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         // not eligible while the asking price is above cost
-        assertFalse(ctl.atCost(sid), "fresh statement starts above cost");
+        assertFalse(ctl.atFloor(sid), "fresh statement starts above cost");
         vm.expectRevert(ICore.NotEligible.selector);
         core.exitStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(core), "still held after the refused try");
         _makeEligible(sid);
-        assertTrue(ctl.atCost(sid), "the price has fallen to cost");
+        assertTrue(ctl.atFloor(sid), "the price has fallen to cost");
         uint256 owed = core.ratingOf(sid) * UNIT;
         core.exitStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
@@ -105,7 +105,7 @@ contract RedeemTimingTest is RedeemBase {
         vm.prank(owner);
         ctl.setPaused(true);
         _warp(300 hours);
-        assertFalse(ctl.atCost(sid), "a pause holds the age, so the price stays above cost");
+        assertFalse(ctl.atFloor(sid), "a pause holds the age, so the price stays above cost");
         vm.expectRevert(ICore.NotEligible.selector);
         core.exitStatement(sid);
         vm.prank(owner);
@@ -168,7 +168,7 @@ contract RedeemTimingTest is RedeemBase {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         ScriptedController sc = new ScriptedController();
-        sc.setRevertPage(true); // atCostFlag defaults false, so atCost returns false
+        sc.setRevertPage(true); // atFloorFlag defaults false, so atFloor returns false
         _setController(address(sc));
         vm.prank(owner);
         core.lockController();
@@ -393,7 +393,7 @@ contract RedeemRepayTest is RedeemBase {
             uint256 a = _composeOnce().sid;
             uint256 b = _another();
             SellingController sc = new SellingController(core);
-            sc.setAtCost(true); // the eth lane statement is eligible under this controller
+            sc.setAtFloor(true); // the eth lane statement is eligible under this controller
             _setController(address(sc));
             bytes memory data;
             address target = address(core);

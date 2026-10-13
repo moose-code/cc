@@ -12,25 +12,31 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// first policy module. composes the oldest 80 pile credits with format 0.
-/// it prices and sells statements. the asking price of a statement of cost `c` is a fraction of `c` in bps that starts at
-/// `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls at a fixed rate per second in two stages: at
-/// `fastDecayBpsPerHour` from `start` to `kneeBps`, then at `slowDecayBpsPerHour` to `floorBps`, where it stays. a `start`
-/// at or below `kneeBps` falls at the slow rate from the first second. the price is computed at every call from the age of
-/// statement (time since its compose) and the current settings, so a setting change applies to held statements at once.
-/// `anchorBps` (bps of cost, at least 10_000) is the running level of sale prices. it moves up with sales and down with
-/// time. a `buy` of a statement whose cost is at least `anchorMinCost` and whose sale price in bps of cost is above the
-/// anchor sets the anchor to the mean of the two. every other `buy` leaves the anchor unchanged. the part of the anchor above 10_000 halves every `anchorHalfLife`,
-/// continuously. the controller stores the anchor at its last change (`storedAnchorBps`, `anchorTime`) and evaluates
-/// the decay at the call. the price is computed from the current anchor at every call, so held statements follow it.
-/// `buy` sells a held statement at once at the asking price.
+/// it prices and sells statements. a statement's price reference is `cost * max(1, rating / (80 * refScore))`: `cost`
+/// for a statement whose rating is at or below `80 * refScore`, and `cost` scaled by `rating / (80 * refScore)` above
+/// that, so a statement richer than average references proportionally higher. `refScore` is an owner setting in the
+/// per-credit score unit (one ten-thousandth of a point). the asking price is a fraction of the reference in bps that
+/// starts at `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls at a fixed rate per second in two
+/// stages: at `fastDecayBpsPerHour` from `start` to `kneeBps`, then at `slowDecayBpsPerHour` to `floorBps`, where it
+/// stays. a `start` at or below `kneeBps` falls at the slow rate from the first second. the price is computed at every
+/// call from the age of the statement (time since its compose) and the current settings, so a setting change applies to
+/// held statements at once.
+/// `anchorBps` (at least 10_000) is the running level of sale prices in bps of the reference. it moves up with sales and
+/// down with time. a `buy` of a statement whose cost is at least `anchorMinCost` and whose sale price in bps of the
+/// reference is above the anchor sets the anchor to the mean of the two. every other `buy` leaves the anchor unchanged.
+/// the part of the anchor above 10_000 halves every `anchorHalfLife`, continuously. the controller stores the anchor at
+/// its last change (`storedAnchorBps`, `anchorTime`) and evaluates the decay at the call. the price is computed from the
+/// current anchor at every call, so held statements follow it.
+/// `buy` sells a held statement at once at the asking price. `atFloor(sid)` is true once the statement's curve price has
+/// reached its floor, `floorBps` of the reference.
 /// the owner can pause sales (`setPaused`). while paused `buy` reverts `Paused`, `priceOf` answers, and the age of a
 /// statement excludes every paused second, so the age of a held statement stops advancing for the length of a pause
 /// and continues from the same age at resume. the anchor decays with wall time in both states, so the start of the
 /// curve, and with it the asking price, can still fall in a pause while the anchor is above 10_000.
 /// it holds no funds between calls. its settings belong to the live owner of the core (`core.owner()`), there is no
-/// second owner. the core enforces its own hard floor whatever this contract answers.
+/// second owner. the core enforces its own hard floor, `saleFloorBps` of cost, whatever this contract answers.
 /// once the owner sets the exit token pool (`setExitPoolKey`), the asking price is also floored at the statement's
-/// redeemable value in eth, `rating * unit` exit token base units priced at the pool sqrt price, with `unit` the lower of the stored and the live `unitPerPoint()`. `atCost` and
+/// redeemable value in eth, `rating * unit` exit token base units priced at the pool sqrt price, with `unit` the lower of the stored and the live `unitPerPoint()`. `atFloor` and
 /// the anchor use the curve price, not this floor. with the pool key unset, no exit module set, or a zero pool read
 /// the value floor is 0 and the asking price is the curve price
 contract ControllerV1 is IController {
@@ -40,6 +46,9 @@ contract ControllerV1 is IController {
     uint256 private constant BPS = 10_000;
     uint256 private constant READ_GAS = 50_000;
     uint256 private constant MAX_ANCHOR_MIN_COST = 10 ether;
+    /// the largest per-credit score the rating type allows, in ten-thousandths of a point. `refScore` is at most this,
+    /// so `80 * refScore` is at most the largest rating of 80 credits
+    uint32 private constant MAX_REF_SCORE = 8_000_000;
 
     error OnlyOwner();
     error BadSetting(bytes32 field);
@@ -58,6 +67,7 @@ contract ControllerV1 is IController {
     event KneeBpsSet(uint32 kneeBps);
     event SlowDecayBpsPerHourSet(uint16 slowDecayBpsPerHour);
     event FloorBpsSet(uint16 floorBps);
+    event RefScoreSet(uint32 refScore);
     event AnchorBpsSet(uint32 anchorBps);
     event AnchorHalfLifeSet(uint32 anchorHalfLife);
     event AnchorMinCostSet(uint128 anchorMinCost);
@@ -82,17 +92,21 @@ contract ControllerV1 is IController {
 
     /// start price over the anchor, bps. 10_000 to 40_000, at most `startCapBps`
     uint16 public markupBps;
-    /// the most the start price can be, bps of cost. the larger of `markupBps` and `kneeBps` to 200_000
+    /// the most the start price can be, bps of the reference. the larger of `markupBps` and `kneeBps` to 200_000
     uint32 public startCapBps;
-    /// fall of the asking price per hour above `kneeBps`, bps of cost. 1 to 10_000
+    /// fall of the asking price per hour above `kneeBps`, bps of the reference. 1 to 10_000
     uint16 public fastDecayBpsPerHour;
-    /// fall of the asking price per hour at or below `kneeBps`, bps of cost. 1 to 10_000
+    /// fall of the asking price per hour at or below `kneeBps`, bps of the reference. 1 to 10_000
     uint16 public slowDecayBpsPerHour;
-    /// the price where the fast fall ends and the slow fall starts, bps of cost. `floorBps` to `startCapBps`
+    /// the price where the fast fall ends and the slow fall starts, bps of the reference. `floorBps` to `startCapBps`
     uint32 public kneeBps;
-    /// lowest asking price, bps of cost. 1_000 to the smaller of 10_000 and `kneeBps`
+    /// lowest asking price, bps of the reference. 1_000 to the smaller of 10_000 and `kneeBps`
     uint16 public floorBps;
-    /// the anchor at `anchorTime`, bps of cost. 10_000 to `startCapBps`. `anchorBps()` is the value now
+    /// the per-credit score at which `80 * refScore` equals a statement's reference denominator, in ten-thousandths of
+    /// a point. a statement whose rating is at or below `80 * refScore` references its cost; above it the reference
+    /// scales with the rating. 1 to `MAX_REF_SCORE`
+    uint32 public refScore;
+    /// the anchor at `anchorTime`, bps of the reference. 10_000 to `startCapBps`. `anchorBps()` is the value now
     uint32 public storedAnchorBps;
     /// when `storedAnchorBps` was last set
     uint40 public anchorTime;
@@ -149,6 +163,8 @@ contract ControllerV1 is IController {
         storedAnchorBps = uint32(BPS);
         // forge-lint: disable-next-line(unsafe-typecast)
         anchorTime = uint40(block.timestamp);
+        // the average per-credit score at launch, so an average statement references its cost. the owner adjusts it
+        refScore = 4_330_000;
         // credit sale window launch values. the owner turns the sale on and adjusts these at once
         creditWindow = 4 hours;
         creditFloorBps = 11_000;
@@ -204,6 +220,13 @@ contract ControllerV1 is IController {
         if (v < 1_000 || v > BPS || v > kneeBps) revert BadSetting("floorBps");
         floorBps = v;
         emit FloorBpsSet(v);
+    }
+
+    /// 1 to `MAX_REF_SCORE`. applies to the reference of every open listing at the next call
+    function setRefScore(uint32 v) external onlyOwner {
+        if (v == 0 || v > MAX_REF_SCORE) revert BadSetting("refScore");
+        refScore = v;
+        emit RefScoreSet(v);
     }
 
     /// 10_000 to `startCapBps`. replaces the running level of sale prices and restarts its decay
@@ -303,36 +326,55 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ pricing and sale
 
-    /// the running level of sale prices now, bps of cost: 10_000 plus the part of `storedAnchorBps` above 10_000,
-    /// halved every `anchorHalfLife` since `anchorTime`
+    /// the running level of sale prices now, bps of the reference: 10_000 plus the part of `storedAnchorBps` above
+    /// 10_000, halved every `anchorHalfLife` since `anchorTime`
     function anchorBps() public view returns (uint32) {
         uint256 excess = storedAnchorBps - BPS;
         // forge-lint: disable-next-line(unsafe-typecast)
         return uint32(BPS + Halving.halve(excess, block.timestamp - anchorTime, anchorHalfLife));
     }
 
-    /// the start price of a new statement, bps of cost: the anchor times `markupBps`, at most `startCapBps`
+    /// the start price of a new statement, bps of the reference: the anchor times `markupBps`, at most `startCapBps`
     function startBps() public view returns (uint256) {
         uint256 start = uint256(anchorBps()) * markupBps / BPS;
         return start < startCapBps ? start : startCapBps;
+    }
+
+    /// the price reference of statement `sid`, wei: `cost` when its rating is at or below `80 * refScore`, else
+    /// `cost * rating / (80 * refScore)`. the curve prices in bps of this value. reverts `NotForSale` for a statement
+    /// the core does not hold
+    function referenceOf(uint256 sid) public view returns (uint256) {
+        (bool held, uint256 cost,) = CORE.statementInfo(sid);
+        if (!held) revert NotForSale();
+        return _reference(cost, CORE.ratingOf(sid));
+    }
+
+    /// `cost` when `rating` is at or below `80 * refScore`, else `cost * rating / (80 * refScore)`. one `mulDiv`, so the
+    /// division carries no precision loss
+    function _reference(uint256 cost, uint256 rating) private view returns (uint256) {
+        uint256 denom = PAGE * refScore;
+        if (rating <= denom) return cost;
+        return FullMath.mulDiv(cost, rating, denom);
     }
 
     /// the asking price of statement `sid` now, read from the core. never below the core hard floor
     /// `cost * saleFloorBps / 10_000`, and never below the redeemable value floor once the exit token pool key is set,
     /// so the quote is always a price `sellTo` takes. answers while paused
     function priceOf(uint256 sid) public view returns (uint256 price) {
-        uint256 cost;
-        (price, cost) = _quote(sid);
+        (price,,) = _quote(sid);
         uint256 value = _value(sid);
         if (value > price) price = value;
     }
 
-    /// true when the asking price of statement `sid` is at or below its stored cost. the asking price excludes
-    /// paused seconds, so eligibility holds its value while sales are paused. the core reads it to gate a phase 2
-    /// redemption
-    function atCost(uint256 sid) external view returns (bool) {
-        (uint256 price, uint256 cost) = _quote(sid);
-        return price <= cost;
+    /// true when the curve price of statement `sid` has reached its floor, `floorBps` of the reference. the curve age
+    /// excludes paused seconds, so eligibility holds its value while sales are paused. the core hard floor does not
+    /// enter this, so a `saleFloorBps` above the curve floor does not block eligibility. the core reads it to gate a
+    /// phase 2 redemption
+    function atFloor(uint256 sid) external view returns (bool) {
+        (bool held, uint256 cost, uint64 composedAt) = CORE.statementInfo(sid);
+        if (!held) revert NotForSale();
+        uint256 ref = _reference(cost, CORE.ratingOf(sid));
+        return _ask(ref, _age(composedAt)) <= ref * floorBps / BPS;
     }
 
     /// pays the asking price, gets the statement at once, and moves the anchor halfway to the sale price in bps of
@@ -341,11 +383,11 @@ contract ControllerV1 is IController {
         if (paused) revert Paused();
         if (_busy) revert Reentrant();
         _busy = true;
-        (uint256 curve, uint256 cost) = _quote(sid);
+        (uint256 curve, uint256 cost, uint256 ref) = _quote(sid);
         uint256 value = _value(sid);
         uint256 price = value > curve ? value : curve;
         if (msg.value < price) revert Underpaid();
-        _moveAnchor(sid, curve, cost);
+        _moveAnchor(sid, curve, cost, ref);
         ICoreSale(address(CORE)).sellTo{value: price}(sid, msg.sender);
         emit Bought(sid, msg.sender, price);
         if (msg.value > price) SafeTransferLib.safeTransferETH(msg.sender, msg.value - price);
@@ -443,12 +485,15 @@ contract ControllerV1 is IController {
         _busy = false;
     }
 
-    function _quote(uint256 sid) private view returns (uint256 price, uint256 cost) {
+    /// the curve price of statement `sid` in wei with its cost basis and its reference. the price is `floorBps` to the
+    /// start of the reference by the age curve, floored at the core hard floor `saleFloorBps` of cost
+    function _quote(uint256 sid) private view returns (uint256 price, uint256 cost, uint256 ref) {
         bool held;
         uint64 composedAt;
         (held, cost, composedAt) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
-        price = _ask(cost, _age(composedAt));
+        ref = _reference(cost, CORE.ratingOf(sid));
+        price = _ask(ref, _age(composedAt));
         uint256 floor = cost * ICoreSale(address(CORE)).settings().saleFloorBps / BPS;
         if (price < floor) price = floor;
     }
@@ -522,12 +567,15 @@ contract ControllerV1 is IController {
         return w.pausedBefore + end - w.start;
     }
 
-    /// with `cost` at least `anchorMinCost`, a sale price in bps of cost (rounded up) above the anchor sets the anchor to
-    /// the mean of the two, at most `startCapBps`. every other sale leaves the stored anchor and `anchorTime` unchanged
-    function _moveAnchor(uint256 sid, uint256 price, uint256 cost) private {
+    /// with `cost` at least `anchorMinCost`, a sale price in bps of the reference (rounded up) above the anchor sets the
+    /// anchor to the mean of the two, at most `startCapBps`. every other sale leaves the stored anchor and `anchorTime`
+    /// unchanged. measuring in bps of the reference keeps a rating-rich statement sold at the normal markup from moving
+    /// the anchor
+    function _moveAnchor(uint256 sid, uint256 price, uint256 cost, uint256 ref) private {
         if (cost < anchorMinCost) return;
-        // cost is at least 80: every credit enters the pile through `_spend` (nonzero), `adopt` (at least 1 wei) or the exit bid
-        uint256 saleBps = (price * BPS + cost - 1) / cost;
+        // ref is at least cost, and cost is at least 80: every credit enters the pile through `_spend` (nonzero),
+        // `adopt` (at least 1 wei) or the exit bid
+        uint256 saleBps = (price * BPS + ref - 1) / ref;
         uint256 current = anchorBps();
         if (saleBps <= current) return;
         uint256 next = (current + saleBps) / 2;
@@ -550,12 +598,12 @@ contract ControllerV1 is IController {
         anchorTime = uint40(block.timestamp);
     }
 
-    /// the asking price in wei after `age` seconds. the price is held in units of 1/3600 bps so each stage is an integer
-    /// line of the second: it falls by `fastDecayBpsPerHour` units a second from the start to the knee and by
-    /// `slowDecayBpsPerHour` units a second after, never below `floorBps`. the slow stage starts at the second the fast
-    /// stage reaches the knee, which is `(start - knee) / fastDecayBpsPerHour` hours and need not be a whole second, so
-    /// its fall is rounded up. the rounding keeps the price non-increasing in `age`
-    function _ask(uint256 cost, uint256 age) private view returns (uint256) {
+    /// the asking price in wei after `age` seconds, a fraction of `ref` by the bps curve. the bps is held in units of
+    /// 1/3600 so each stage is an integer line of the second: it falls by `fastDecayBpsPerHour` units a second from the
+    /// start to the knee and by `slowDecayBpsPerHour` units a second after, never below `floorBps`. the slow stage
+    /// starts at the second the fast stage reaches the knee, which is `(start - knee) / fastDecayBpsPerHour` hours and
+    /// need not be a whole second, so its fall is rounded up. the rounding keeps the price non-increasing in `age`
+    function _ask(uint256 ref, uint256 age) private view returns (uint256) {
         uint256 start = startBps() * 1 hours;
         uint256 knee = uint256(kneeBps) * 1 hours;
         uint256 fast = fastDecayBpsPerHour;
@@ -571,7 +619,7 @@ contract ControllerV1 is IController {
         }
         uint256 low = uint256(floorBps) * 1 hours;
         if (n < low) n = low;
-        return cost * n / (1 hours * BPS);
+        return ref * n / (1 hours * BPS);
     }
 
     // ------------------------------------------------------------------ credit picking, unchanged

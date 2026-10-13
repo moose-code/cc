@@ -525,7 +525,7 @@ contract BurnController {
         return (true, ids, 0);
     }
 
-    function atCost(uint256) external pure returns (bool) {
+    function atFloor(uint256) external pure returns (bool) {
         return false;
     }
 }
