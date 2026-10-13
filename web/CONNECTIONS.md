@@ -8,6 +8,66 @@ Sample data lives in `lib/sample.ts` — swap its getters for reads, the pages
 stay the same. Reads should follow the project's RPC discipline: indexer first,
 then cache, then RPC; `CoreLens.snapshot()` returns most of this in one call.
 
+## local anvil (fork) mode
+
+`NEXT_PUBLIC_CHAIN_ID=31337` points every read and write at a local anvil
+mainnet fork (`http://127.0.0.1:8545`, viem `foundry` chain). Any other value
+selects mainnet. Local mode has no explorer: tx hashes and contract addresses
+render as raw text, and ENS lookups are skipped.
+
+Run (anvil up, contracts deployed, record written):
+
+```bash
+cd web
+npm run dev:local                          # reads ../deployments/31337.json
+RECORD=/path/to/31337.json npm run dev:local
+```
+
+`dev:local` runs `scripts/local-env.mjs <record> [rpcUrl]`, which writes the
+gitignored `web/.env.local`, then `next dev`.
+
+### deployment record: `deployments/<chainId>.json`
+
+Written by the contracts deploy wrapper, read by `scripts/local-env.mjs`:
+
+```json
+{
+  "chainId": 31337,
+  "block": 0,
+  "core": "0x..",
+  "coin": "0x..",
+  "controller": "0x..",
+  "router": "0x..",
+  "lens": "0x..",
+  "poolId": "0x..",
+  "credits": "0x..",
+  "statements": "0x..",
+  "creditScore": "0x..",
+  "exitToken": "0x..",
+  "exitModule": "0x.."
+}
+```
+
+`block` is the deploy block (number). `exitToken` and `exitModule` are an
+address or `null`. Optional `hook` (address of the pool's skim hook): the app
+builds the pool key from it (`NEXT_PUBLIC_POOL_HOOK`); without it the app uses
+the mainnet launch hook.
+
+| record field | env var |
+| --- | --- |
+| chainId | `NEXT_PUBLIC_CHAIN_ID` |
+| (flag or default) | `NEXT_PUBLIC_RPC_URL` |
+| core | `NEXT_PUBLIC_CORE` |
+| lens | `NEXT_PUBLIC_CORE_LENS` |
+| credits | `NEXT_PUBLIC_CREDITS` |
+| coin | `NEXT_PUBLIC_CC` |
+| router | `NEXT_PUBLIC_ROUTER` |
+| block | `NEXT_PUBLIC_DEPLOY_BLOCK` |
+| hook (optional) | `NEXT_PUBLIC_POOL_HOOK` |
+
+`controller`, `poolId`, `statements`, `creditScore`, `exitToken`, `exitModule`
+are not read by the app yet.
+
 ## statements index — `app/statements/page.tsx`
 
 - **list** — `statements` → `CoreLens.snapshot().statements` (held + listed) and

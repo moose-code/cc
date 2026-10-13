@@ -123,10 +123,14 @@ function Row({ e }: { e: FeedEvent }) {
       </td>
       <td className="col-eth">{e.eth ?? ""}</td>
       <td className="col-time" suppressHydrationWarning>
-        {e.txHash ? (
+        {e.txHash && evmNowTx(e.txHash) ? (
           <a href={evmNowTx(e.txHash)} target="_blank" rel="noreferrer">
             {relTime(e.ts)}
           </a>
+        ) : e.txHash ? (
+          <span title={e.txHash}>
+            {relTime(e.ts)} {e.txHash}
+          </span>
         ) : (
           relTime(e.ts)
         )}

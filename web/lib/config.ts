@@ -1,13 +1,17 @@
-import { mainnet } from "wagmi/chains";
+import { foundry, mainnet } from "wagmi/chains";
 import type { Address } from "viem";
 
 const addr = (v?: string): Address | undefined =>
   v && /^0x[0-9a-fA-F]{40}$/.test(v) ? (v as Address) : undefined;
 
-export const chain = mainnet;
+// NEXT_PUBLIC_CHAIN_ID=31337 selects the local anvil fork (foundry chain).
+// Every other value selects mainnet.
+export const isLocal = process.env.NEXT_PUBLIC_CHAIN_ID === "31337";
+export const chain = isLocal ? foundry : mainnet;
 
 export const rpcUrl =
-  process.env.NEXT_PUBLIC_RPC_URL || "https://eth.drpc.org";
+  process.env.NEXT_PUBLIC_RPC_URL ||
+  (isLocal ? "http://127.0.0.1:8545" : "https://eth.drpc.org");
 
 export const addresses = {
   core: addr(process.env.NEXT_PUBLIC_CORE),

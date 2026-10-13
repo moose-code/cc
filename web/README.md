@@ -15,6 +15,13 @@ npm install
 npm run dev            # http://localhost:3000
 ```
 
+## local anvil
+
+`npm run dev:local` runs the UI against a local anvil mainnet fork
+(chain 31337, `http://127.0.0.1:8545`) with addresses from
+`../deployments/31337.json` (`RECORD=<path>` overrides). Record format and env
+mapping: `CONNECTIONS.md`.
+
 ## data
 
 The engine is **not deployed yet**, so by default the UI renders

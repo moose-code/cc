@@ -6,7 +6,7 @@ import { useAccount, useWriteContract } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CreditTile } from "@/components/Tiles";
 import { credits, statementSize, nextStatementId } from "@/lib/sample";
-import { addresses } from "@/lib/config";
+import { addresses, chain } from "@/lib/config";
 import { coreAbi } from "@/lib/abis";
 
 // The in-progress statement: the engine's pile of bought credits, the empty
@@ -42,6 +42,7 @@ export default function ComposePage() {
         address: addresses.core,
         abi: coreAbi,
         functionName: "compose",
+        chainId: chain.id,
       });
     } catch (e: any) {
       setErr(e?.shortMessage || e?.message || "transaction failed");

@@ -16,7 +16,7 @@ import {
   type Address,
 } from "viem";
 import { useMarket, useQuote, useEthUsd } from "@/lib/engine";
-import { addresses, poolReady } from "@/lib/config";
+import { addresses, chain, poolReady } from "@/lib/config";
 import { erc20Abi, permit2Abi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
 import { commas, tokens, ethShort, usd } from "@/lib/format";
@@ -108,6 +108,7 @@ export function TradePanel() {
           address: addresses.cc,
           abi: erc20Abi,
           functionName: "approve",
+          chainId: chain.id,
           args: [V4.permit2, maxUint256],
         });
         return;
@@ -117,6 +118,7 @@ export function TradePanel() {
           address: V4.permit2,
           abi: permit2Abi,
           functionName: "approve",
+          chainId: chain.id,
           args: [addresses.cc, V4.universalRouter, PERMIT2_MAX, PERMIT2_EXP],
         });
         return;
@@ -131,6 +133,7 @@ export function TradePanel() {
         address: V4.universalRouter,
         abi: universalRouterAbi,
         functionName: "execute",
+        chainId: chain.id,
         args: [call.commands, call.inputs, deadline],
         value: call.value,
       });

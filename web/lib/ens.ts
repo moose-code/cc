@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePublicClient } from "wagmi";
 import type { Address } from "viem";
+import { isLocal } from "./config";
 
 // ENS reverse lookup with a persistent cache. Resolved names (and misses) are
 // kept in localStorage forever so we never re-hit the RPC for the same address
@@ -42,7 +43,7 @@ export function useEns(address?: string): string | null {
   const [name, setName] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!address) {
+    if (!address || isLocal) {
       setName(null);
       return;
     }
