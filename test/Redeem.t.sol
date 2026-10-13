@@ -446,4 +446,34 @@ contract RedeemRepayTest is RedeemBase {
             vm.revertToState(snap);
         }
     }
+
+    function test_releaseRedeemBurnMovesExactlyAndHoldsSolvency() public {
+        _fundPot(2 ether);
+        uint256 reserve = core.ethRedeemBurn();
+        assertGt(reserve, 0, "the reserve fills from fees at launch");
+        uint256 tb = core.ethToBuyback();
+        uint256 pot = core.ethPot();
+        uint256 bal = address(core).balance;
+        uint256 amount = reserve / 3;
+        vm.prank(owner);
+        core.releaseRedeemBurn(amount);
+        assertEq(core.ethRedeemBurn(), reserve - amount, "the reserve fell by the amount");
+        assertEq(core.ethToBuyback(), tb + amount, "the coin buyback rose by the amount");
+        assertEq(core.ethPot(), pot, "the pot is unchanged");
+        assertEq(address(core).balance, bal, "no eth left the core");
+        _solvent();
+    }
+
+    function test_releaseRedeemBurnCapsAtReserveAndRefusesEmpty() public {
+        _fundPot(2 ether);
+        uint256 reserve = core.ethRedeemBurn();
+        uint256 tb = core.ethToBuyback();
+        vm.prank(owner);
+        core.releaseRedeemBurn(reserve + 1 ether);
+        assertEq(core.ethRedeemBurn(), 0, "the whole reserve moved");
+        assertEq(core.ethToBuyback(), tb + reserve, "the coin buyback got the whole reserve");
+        vm.prank(owner);
+        vm.expectRevert(ICore.ZeroAmount.selector);
+        core.releaseRedeemBurn(1);
+    }
 }
