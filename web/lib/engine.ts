@@ -101,9 +101,6 @@ async function modeOf(client: Client, hash: string): Promise<ComposeMode | null>
   return mode;
 }
 
-// Settings in force just before a SettingsSet log, cached per log key.
-const settingsBefore = persistedMap<Record<string, unknown>>("settings");
-
 // Controller priceOf(sid) at the Composed block: the price the statement is listed at. Immutable once mined.
 const listedPrice = persistedMap<bigint>("listed");
 
@@ -235,14 +232,9 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
     exitPaid.set(k, (exitPaid.get(k) ?? 0n) + (t.args.value ?? 0n));
   }
 
-  // coin burned per transaction: the Buyback event carries the eth spent only
-  const burnedBy = new Map<string, bigint>();
+  // total coin burned by the core
   let burned = 0n;
-  for (const b of st.logs.burn ?? []) {
-    const v = b.args.value ?? 0n;
-    burned += v;
-    burnedBy.set(b.transactionHash, (burnedBy.get(b.transactionHash) ?? 0n) + v);
-  }
+  for (const b of st.logs.burn ?? []) burned += b.args.value ?? 0n;
 
   // compose mode per Composed transaction
   const modes = new Map<string, ComposeMode>();
@@ -271,25 +263,6 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
       })
   );
 
-  // settings before each SettingsSet: the previous event's value, the first from the chain
-  const prevSettings = new Map<string, Record<string, unknown>>();
-  let prev: Record<string, unknown> | undefined;
-  for (const l of logs) {
-    if (l.eventName !== "SettingsSet") continue;
-    const key = `${l.transactionHash}-${l.logIndex}`;
-    if (prev === undefined) {
-      prev = settingsBefore.get(key);
-      if (prev === undefined && l.blockNumber > 0n) {
-        prev = (await client
-          .readContract({ address: core, abi: coreAbi, functionName: "settings", blockNumber: l.blockNumber - 1n })
-          .catch(() => undefined)) as Record<string, unknown> | undefined;
-        if (prev) settingsBefore.set(key, prev);
-      }
-    }
-    if (prev) prevSettings.set(key, prev);
-    prev = l.args.settings;
-  }
-
   // save when logs were added, else every 300 blocks
   const total = Object.values(st.logs).reduce((n, a) => n + a.length, 0);
   if (total !== saved.total || head - saved.head > 300n) {
@@ -302,11 +275,8 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
   const { stats, credits, statements, rows } = processLogs({
     logs,
     head,
-    router: addresses.router,
-    burnedBy,
     burned,
     modes,
-    prevSettings,
     exitToken: st.exit,
     exitPaid,
     listedAt,

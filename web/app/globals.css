@@ -8,14 +8,10 @@
   --rowhover: #fafafa;
   --rowalt: #f7f7f7;
 
-  --fee: #16b6d8;
   --credit: #ff0080;
   --composed: #e8b200;
-  --listed: #ffffff;
   --sold: #0a9b41;
-  --burn: #000000;
   --redeemed: #7a4dff;
-  --price: #ff8a00;
 
   --mono: ui-monospace, "SF Mono", "Menlo", "Monaco", "Cascadia Code",
     "Roboto Mono", monospace;
@@ -277,7 +273,8 @@ a:hover {
   width: 210px;
 }
 .col-eth {
-  width: 90px;
+  width: 150px;
+  white-space: nowrap;
 }
 
 .event {
@@ -290,21 +287,14 @@ a:hover {
   height: 11px;
   flex: none;
 }
-.event .chip.listed {
-  background: var(--listed);
-  border: 1px solid var(--fg);
-}
 .event .name {
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .detail-cell {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-}
-.detail-cell .label b {
-  font-weight: 600;
 }
 
 /* tiles — the images of the contracts' tokenURI. credit is square,

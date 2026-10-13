@@ -17,21 +17,13 @@ import { CreditTile, StatementTile } from "./Tiles";
 import { Addr } from "./Addr";
 
 const CHIP_COLOR: Record<FeedKind, string> = {
-  fee: "var(--fee)",
   credit: "var(--credit)",
   composed: "var(--composed)",
-  listed: "var(--listed)",
   sold: "var(--sold)",
-  burn: "var(--burn)",
   redeemed: "var(--redeemed)",
-  price: "var(--price)",
-  admin: "var(--muted2)",
 };
 
 const PAGE = 100; // rows per page of the feed
-
-const BOLD = new Set<FeedKind>(["composed", "listed", "sold", "redeemed"]);
-const HL = new Set<FeedKind>(["composed", "listed", "sold", "burn", "redeemed"]);
 
 export function EngineFeed() {
   const { data: feed } = useFeed();
@@ -104,13 +96,10 @@ function Row({ e, now }: { e: FeedEvent; now: number }) {
   const { data: ts } = useBlockTs(e.block);
   const when = ts != null ? relTime(ts, now) : "—";
   return (
-    <tr className={HL.has(e.kind) ? "hl" : undefined}>
+    <tr className={e.kind === "credit" ? undefined : "hl"}>
       <td className="col-event">
         <span className="event">
-          <span
-            className={`chip${e.kind === "listed" ? " listed" : ""}`}
-            style={e.kind === "listed" ? undefined : { background: CHIP_COLOR[e.kind] }}
-          />
+          <span className="chip" style={{ background: CHIP_COLOR[e.kind] }} />
           <span className="name">{e.label}</span>
         </span>
       </td>
@@ -120,7 +109,8 @@ function Row({ e, now }: { e: FeedEvent; now: number }) {
           {e.tile?.kind === "statement" && <StatementTile id={e.tile.id} />}
           <span className="label">
             {e.link && <Link href={e.link.href}>{e.link.text}</Link>}
-            {e.detail && (BOLD.has(e.kind) ? <b>{e.detail}</b> : e.detail)}
+            {e.link && e.detail && " "}
+            {e.detail}
             {e.addr && (
               <>
                 {" "}
