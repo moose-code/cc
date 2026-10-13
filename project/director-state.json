@@ -156,7 +156,7 @@
     ]
   },
   "candidate": "b12ca481fdbc415331e61e68efc6235b36c29fb2",
-  "activeChange": null,
+  "activeChange": "FLOW 111: record owner helper deployment/Sourcify verification and repair Etherscan-only retry after explorer rate limits; no redeploy or agent signing.",
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -206,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "FLOW 110 helper repair is complete on main: focused shell deploy/verify, main/Tenderly/ripe0x, gas-before-keystore, standard/private-prompt Etherscan key, pinned artifact/sources and fresh receipt/results; four tests, live preview/cancellation and independent review pass. Give the owner the short main/forge-clean command. Engine release controls and objective unchanged. No agent wallet access, broadcast or source submission authorized/performed.",
+  "nextAction": "Verify and commit the focused explorer retry fix, give the owner its verify-address command for private key entry in their CLI if needed. Source already matched on Sourcify; Etherscan remains unconfirmed.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",

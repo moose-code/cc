@@ -81,4 +81,5 @@ RECEIPT
 fi
 LENS_ADDRESS="$lens" readonly_script VerifyCreditScoreLens.s.sol
 forge verify-contract "$lens" src/CreditScoreLens.sol:CreditScoreLens --chain 1 \
-  --rpc-url "$rpc" --compilation-profile viair --watch
+  --rpc-url "$rpc" --compilation-profile viair --verifier etherscan --skip-is-verified-check \
+  --watch --retries 5 --delay 10

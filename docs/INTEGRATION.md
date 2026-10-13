@@ -6,7 +6,7 @@ units. a rate is wei per credit. every credit has the same price, the rate. ever
 
 ## CreditScoreLens: scores and traits by token id
 
-`CreditScoreLens` is a standalone read-only developer helper for Ethereum mainnet. Import `src/interfaces/ICreditScoreLens.sol` and call the deployed helper address. It has no constructor arguments, mutable storage, owner or payable functions. The helper address is not yet deployed; it is separate from the engine lens.
+`CreditScoreLens` is a standalone read-only developer helper for Ethereum mainnet. Import `src/interfaces/ICreditScoreLens.sol` and call the deployed helper address. It has no constructor arguments, mutable storage, owner or payable functions. Deployed on Ethereum mainnet at `0x7a3f3967cBB63E8d56e3f093069C62A25eebBda6`, separate from the engine lens. Source is verified on Sourcify; Etherscan verification remains unconfirmed.
 
 Its sources are the on-chain Credits contract at `0x97630aA70AB14ed9883B41dAfccBc11349723043`, CreditScore at `0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7`, and Statements at `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b`. The addresses are fixed in the helper's bytecode.
 
@@ -43,10 +43,10 @@ The script builds only the helper and its deployment/verification scripts. It us
 
 It reuses `ETHERSCAN_API_KEY` or Foundry's configured mainnet key, including the project `.env`; if absent, it asks privately in the terminal. The key is kept in the process environment, never printed or written to a file. After a successful receipt, the script prints the address, compares all five methods directly with their on-chain sources, and verifies the source on Etherscan with the reviewed viair profile. The engine launch checker does not apply to this standalone helper; engine launch controls are untouched.
 
-If source verification fails after deployment, retry without deploying again:
+The Etherscan-only retry skips the ABI precheck and polls at 10-second intervals, up to five attempts. Retry without deploying again:
 
 ```bash
-bash script/deploy-credit-score-lens.sh verify 0xDEPLOYED_LENS
+bash script/deploy-credit-score-lens.sh verify 0x7a3f3967cbb63e8d56e3f093069c62a25eebbda6
 ```
 
 ## 1. contracts and addresses

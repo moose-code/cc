@@ -50,6 +50,9 @@ elif '--broadcast' in args:
     path.parent.mkdir(parents=True); path.write_text(json.dumps(record))
 elif args[0] == 'verify-contract':
     assert args[args.index('--compilation-profile') + 1] == 'viair'
+    assert args[args.index('--verifier') + 1] == 'etherscan'
+    assert '--skip-is-verified-check' in args
+    assert args[args.index('--delay') + 1] == '10'
     assert os.environ.get('ETHERSCAN_API_KEY') == 'test-api-key'
     print('Verified source.')
 ''')
