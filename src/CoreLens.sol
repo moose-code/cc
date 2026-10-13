@@ -61,6 +61,10 @@ contract CoreLens {
         /// whether the controller's credit sale window is on, and the seconds a credit's price falls over
         bool creditSaleOn;
         uint256 creditWindow;
+        /// whether a caller may pick the 80 credits and the format of a compose, and the least coin balance a caller
+        /// of a chosen compose must hold
+        bool chosenComposeOn;
+        uint256 minCcToChoose;
         StatementView[] statements;
     }
 
@@ -122,6 +126,18 @@ contract CoreLens {
         s.targetsLocked = core.targetsLocked();
         s.successorLocked = core.successorLocked();
         (s.creditSaleOn, s.creditWindow) = _creditWindow(s.controller);
+        s.chosenComposeOn = core.chosenComposeOn();
+        s.minCcToChoose = core.minCcToChoose();
+    }
+
+    /// whether credit `id` may be named in a chosen compose now: in the pile and past its window. a controller that
+    /// does not answer with one word reads as not past the window
+    function choosable(uint256 id) external view returns (bool) {
+        (bool inPile,, uint64 acquiredAt) = CORE.creditInfo(id);
+        if (!inPile) return false;
+        (bool ok, bytes memory out) =
+            controller().staticcall{gas: ASK_GAS}(abi.encodeWithSignature("pastWindow(uint64)", acquiredAt));
+        return ok && out.length == 32 && abi.decode(out, (bool));
     }
 
     /// the controller's credit sale state: whether the sale is on and the window length. a controller that does not

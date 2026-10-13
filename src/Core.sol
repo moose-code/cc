@@ -57,6 +57,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error NotInPile(uint256 id);
     error NotReady();
     error BadFormat();
+    /// a chosen compose while `chosenComposeOn` is false
+    error ChosenComposeOff();
+    /// the caller of a chosen compose holds less coin than `minCcToChoose`
+    error BelowMinCc();
+    /// a chosen compose names credit `id`, whose window has not passed while the credit sale is on
+    error InWindow(uint256 id);
     error BadStatement();
     error BadCost();
     error BadModule();
@@ -255,10 +261,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// share of credit sale proceeds routed to the buying pot, the rest to the coin buyback. launch 10_000, 0 to
     /// 10_000. phase 2 wires it (docs/FLOW.md 88)
     uint16 public creditCostToPotBps;
-    /// whether a caller may pick the 80 credits and the format of a compose. launch false. phase 3 wires it
+    /// whether a caller may pick the 80 credits and the format of a compose through `composeChosen`. launch false
     /// (docs/FLOW.md 89)
     bool public chosenComposeOn;
-    /// least coin balance a caller of a chosen compose must hold. launch 0. phase 3 wires it (docs/FLOW.md 89)
+    /// least coin balance a caller of `composeChosen` must hold. launch 0 (docs/FLOW.md 89)
     uint96 public minCcToChoose;
 
     modifier onlyOwner() {
@@ -447,6 +453,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return ok && abi.decode(out, (bool));
     }
 
+    /// bounded read of the controller's window answer for a credit acquired at `acquiredAt`. a revert, a short answer
+    /// or a `false` reads as not past the window
+    function _pastWindow(uint64 acquiredAt) private view returns (bool) {
+        (bool ok, bytes memory out) =
+            _ask(controller, abi.encodeCall(IController.pastWindow, (acquiredAt)), READ_GAS, 32);
+        return ok && abi.decode(out, (bool));
+    }
+
     /*//////////////////////////////////////////////////////////////
                                 PILES
     //////////////////////////////////////////////////////////////*/
@@ -588,14 +602,44 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                COMPOSING
     //////////////////////////////////////////////////////////////*/
 
-    /// composes the controller's page of the oldest 80 pile credits into a statement the core holds for sale. anyone
-    /// may call. the gas counted for the caller payment includes the fee router flush. reverts `Retired` after
-    /// `migrate`
+    /// composes the controller's page of the oldest 80 pile credits into a statement the core holds for sale with the
+    /// controller's default format. anyone may call. the gas counted for the caller payment includes the fee router
+    /// flush. reverts `Retired` after `migrate`
     function compose() external nonReentrant {
         uint256 gasStart = gasleft();
         _openDoor();
         (bool ready, uint256[80] memory ids, uint256 format) = _nextPage();
         if (!ready) revert NotReady();
+        _compose(ids, format, gasStart);
+    }
+
+    /// composes a statement from 80 pile credits the caller names and a format the caller picks. requires
+    /// `chosenComposeOn`, a caller coin balance at least `minCcToChoose`, and that every named credit is in the pile
+    /// and past its window. the window gate reads the controller with the acquisition time of the newest named credit:
+    /// `pastWindow` is monotonic in that time, so the newest passing means every named credit passes. every other
+    /// compose rule, the record and the event are the same as `compose`. reverts `Retired` after `migrate`
+    function composeChosen(uint256[80] calldata ids, uint8 format) external nonReentrant {
+        uint256 gasStart = gasleft();
+        _openDoor();
+        if (!chosenComposeOn) revert ChosenComposeOff();
+        if (SafeTransferLib.balanceOf(COIN, msg.sender) < minCcToChoose) revert BelowMinCc();
+        uint64 newest;
+        uint256 newestId;
+        for (uint256 i; i < PAGE; ++i) {
+            uint64 a = _credits[ids[i]].acquiredAt;
+            if (a > newest) {
+                newest = a;
+                newestId = ids[i];
+            }
+        }
+        if (!_pastWindow(newest)) revert InWindow(newestId);
+        _compose(ids, format, gasStart);
+    }
+
+    /// pulls the 80 named credits from the pile, composes the statement, stores its record and pays the caller. the
+    /// cost basis is the sum of the credits' costs. a credit named twice or absent reverts in `_pull`. shared by
+    /// `compose` and `composeChosen`
+    function _compose(uint256[80] memory ids, uint256 format, uint256 gasStart) private {
         if (format > MAX_FORMAT) revert BadFormat();
         uint256 cost;
         for (uint256 i; i < PAGE; ++i) {
@@ -963,13 +1007,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit CreditCostToPotBpsSet(v);
     }
 
-    /// turns chosen composition on or off. phase 3 wires it; `compose` is unaffected yet (docs/FLOW.md 89)
+    /// turns chosen composition on or off. gates `composeChosen`; `compose` is unaffected (docs/FLOW.md 89)
     function setChosenComposeOn(bool v) external onlyOwner {
         chosenComposeOn = v;
         emit ChosenComposeOnSet(v);
     }
 
-    /// sets the least coin balance a caller of a chosen compose must hold. phase 3 wires it (docs/FLOW.md 89)
+    /// sets the least coin balance a caller of `composeChosen` must hold (docs/FLOW.md 89)
     function setMinCcToChoose(uint96 v) external onlyOwner {
         minCcToChoose = v;
         emit MinCcToChooseSet(v);

@@ -19,13 +19,16 @@ interface ICore {
     error BadSuccessor(address who);
     error BadSwap();
     error BelowFloor();
+    error BelowMinCc();
     error CallFailed();
+    error ChosenComposeOff();
     error Empty();
     error ExitModeOff();
     error ExitTokenChanged();
     error ForbiddenTarget();
     error Held();
     error InPile();
+    error InWindow(uint256 id);
     error Locked(bytes32 what);
     error Measuring();
     error NoCode(address who);
@@ -115,6 +118,7 @@ interface ICore {
     function checkpointTime() external view returns (uint64);
     function chosenComposeOn() external view returns (bool);
     function compose() external;
+    function composeChosen(uint256[80] memory ids, uint8 format) external;
     function controller() external view returns (address);
     function controllerLocked() external view returns (bool);
     function creditCostToPotBps() external view returns (uint16);

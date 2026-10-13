@@ -14,6 +14,9 @@ contract ScriptedController is IController {
     /// the answer of `valueWei`, and whether the call reverts (an unset pool key)
     uint256 public valueWeiAnswer;
     bool public valueWeiReverts = true;
+    /// the window answer the core reads for a chosen compose, and whether the call reverts
+    bool public pastWindowFlag = true;
+    bool public pastWindowReverts;
 
     /// sets the eligibility answer.
     function setAtCost(bool on) external {
@@ -38,6 +41,21 @@ contract ScriptedController is IController {
     function valueWei(uint256) external view returns (uint256) {
         if (valueWeiReverts) revert NoExitPrice();
         return valueWeiAnswer;
+    }
+
+    /// sets the window answer.
+    function setPastWindow(bool on) external {
+        pastWindowFlag = on;
+    }
+
+    /// makes `pastWindow` revert.
+    function setPastWindowReverts(bool on) external {
+        pastWindowReverts = on;
+    }
+
+    function pastWindow(uint64) external view returns (bool) {
+        if (pastWindowReverts) revert();
+        return pastWindowFlag;
     }
 
     /// sets the page answer.

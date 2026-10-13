@@ -12,6 +12,9 @@ interface IController {
     /// `exitTokenBaseUnits` priced in wei at the exit token pool (docs/FLOW.md 87). reverts when the pool key is
     /// unset or the pool price reads zero. the core reads it in `sellForExitToken` to value the exit tokens paid
     function valueWei(uint256 exitTokenBaseUnits) external view returns (uint256 priceWei);
+    /// true when a credit acquired at `acquiredAt` may be composed: always while the credit sale is off, otherwise once
+    /// the credit window has passed. the core reads it to gate a chosen compose
+    function pastWindow(uint64 acquiredAt) external view returns (bool);
 }
 
 interface IExitModule {

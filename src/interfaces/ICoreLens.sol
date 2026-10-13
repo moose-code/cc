@@ -31,6 +31,8 @@ interface ICoreLens {
         bool successorLocked;
         bool creditSaleOn;
         uint256 creditWindow;
+        bool chosenComposeOn;
+        uint256 minCcToChoose;
         StatementView[] statements;
     }
 
@@ -47,6 +49,7 @@ interface ICoreLens {
     function CREDITS() external view returns (address);
     function ROUTER() external view returns (address);
     function STATEMENTS() external view returns (address);
+    function choosable(uint256 id) external view returns (bool);
     function controller() external view returns (address);
     function creditPriceOf(uint256 id) external view returns (uint256 price);
     function exitBidOf(uint256 id) external view returns (uint256);
