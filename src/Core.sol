@@ -406,9 +406,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// wei per credit of the floor rate now: the larger of `ethPrice`, the price state climbed before the pot clamp,
-    /// and the remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays
-    /// between fills, so the maximum follows the climb and holds against a sale within the block. the engine's price
-    /// floors read it. the math is in `CoreLib.floorRate`
+    /// and the remembered peak of the eth bid decayed to now. the engine's price floors read it. the math is in
+    /// `CoreLib.floorRate`
     function floorRate() external view returns (uint256) {
         return CoreLib.floorRate(rateAtCheckpoint, ethPot, lastFillTime, checkpointTime, block.timestamp);
     }

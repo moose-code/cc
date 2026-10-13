@@ -38,12 +38,10 @@ interface ICoreViews {
     /// wei per credit the eth bid pays now, the price state lowered to the pot
     function ethRate() external view returns (uint256);
     /// wei per credit of the price state now, before the pot clamp `ethRate` applies. the cost basis of an adopted
-    /// credit is this price. in later blocks the climb heads toward the larger pot
+    /// credit is this price
     function ethPrice() external view returns (uint256);
     /// wei per credit of the floor rate now: the larger of the price state climbed before the pot clamp and the
-    /// remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays between
-    /// fills, so the maximum holds against a sale within the block. the statement reference and the credit backstop
-    /// read it
+    /// remembered peak of the eth bid decayed to now. the statement reference and the credit backstop read it
     function floorRate() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose

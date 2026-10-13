@@ -219,6 +219,24 @@ contract ExitValueFloorTest is Fixture {
         assertEq(ctl.priceOf(sid), vHi > curve ? vHi : curve, "max sqrt price prices without reverting");
     }
 
+    /// the stored unit at the core maximum and a module answering type(uint256).max, at the minimum sqrt price: the
+    /// controller caps the unit at 2^96, so `rating * unit` stays below 2^128 and the pool mulDiv prices the value
+    /// floor without reverting
+    function test_valueFloorDoesNotOverflowAtTheMinimumSqrtPrice() public {
+        _enterPhase2();
+        // a module whose unit is the maximum the core stores; the core reads and stores it on the module set
+        MockExitModule big = new MockExitModule(address(xt), type(uint128).max);
+        _setExitModule(address(big));
+        assertEq(core.unitPerPoint(), type(uint128).max, "the core stored the maximum unit");
+        // the module then answers the maximum on the live read; the controller takes the lower of stored and live
+        big.setUnitPerPoint(type(uint256).max);
+        uint256 sid = _composeOnce().sid;
+        uint256 curve = ctl.priceOf(sid);
+        _initAndSet(TickMath.MIN_SQRT_PRICE + 1, 3000, 60);
+        uint256 price = ctl.priceOf(sid);
+        assertGt(price, curve, "the capped value floor binds without reverting at the minimum sqrt price");
+    }
+
     function test_pauseFreezesTheCurveWhileTheValueStaysLive() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;

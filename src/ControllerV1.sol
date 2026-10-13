@@ -13,8 +13,8 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// first policy module. composes the oldest 80 pile credits with format 0.
-/// it prices and sells statements. a statement's price reference is the larger of its cost and the remembered peak of
-/// the eth bid times its rating over `refScore`, computed at each call. the rate term prices the rating at the
+/// it prices and sells statements. a statement's price reference is the larger of its cost and the floor rate times its
+/// rating over `refScore`, computed at each call. the rate term prices the rating at the
 /// engine's average credit price, so two statements of the same rating reference the same amount once the rate term
 /// binds, whatever each credit cost. `refScore` is an owner setting in the
 /// per-credit score unit (one ten-thousandth of a point). the asking price is a fraction of the reference in bps that
@@ -48,6 +48,9 @@ contract ControllerV1 is IController {
     uint256 private constant BPS = 10_000;
     uint256 private constant READ_GAS = 200_000;
     uint256 private constant MAX_ANCHOR_MIN_COST = 10 ether;
+    /// cap on the exit token unit used to price the value floors. with rating at most uint32.max and score at most
+    /// 8_000_000, it keeps the priced base units below 2^128, so the pool mulDiv cannot overflow for any sqrt price
+    uint256 private constant MAX_UNIT = 1 << 96;
 
     error OnlyOwner();
     error BadSetting(bytes32 field);
@@ -99,8 +102,8 @@ contract ControllerV1 is IController {
     /// lowest asking price, bps of the reference. 1_000 to the smaller of 10_000 and `kneeBps`
     uint16 public floorBps;
     /// the per-credit score the statement reference divides the rating by, in ten-thousandths of a point. the reference
-    /// is the larger of cost and the peak of the eth bid times rating over `refScore`, so a lower `refScore` lifts the
-    /// rate term. 1 to 8_000_000
+    /// is the larger of cost and the floor rate times rating over `refScore`, so a lower `refScore` lifts the rate
+    /// term. 1 to 8_000_000
     uint32 public refScore;
     /// the anchor at `anchorTime`, bps of the reference. 10_000 to `startCapBps`. `anchorBps()` is the value now
     uint32 public storedAnchorBps;
@@ -330,18 +333,16 @@ contract ControllerV1 is IController {
         return start < startCapBps ? start : startCapBps;
     }
 
-    /// the price reference of statement `sid`, wei: the larger of its cost and the peak of the eth bid times its rating
-    /// over `refScore`. the curve prices in bps of this value. reverts `NotForSale` for a statement the core does not
-    /// hold
+    /// the price reference of statement `sid`, wei: the larger of its cost and the floor rate times its rating over
+    /// `refScore`. the curve prices in bps of this value. reverts `NotForSale` for a statement the core does not hold
     function referenceOf(uint256 sid) public view returns (uint256) {
         (bool held, uint256 cost,) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
         return _reference(cost, CORE.ratingOf(sid));
     }
 
-    /// the larger of `cost` and `CORE.floorRate()` times `rating` over `refScore`. the floor rate is the larger of the
-    /// climbed price state and the decayed peak. selling credits lowers only the rate and the peak decays between fills,
-    /// so the maximum holds against a sale within the block. one `mulDiv`, so the rate term divides at full precision
+    /// the larger of `cost` and `CORE.floorRate()` times `rating` over `refScore`. one `mulDiv`, so the rate term
+    /// divides at full precision
     function _reference(uint256 cost, uint256 rating) private view returns (uint256) {
         uint256 rate = FullMath.mulDiv(CORE.floorRate(), rating, refScore);
         return rate > cost ? rate : cost;
@@ -411,8 +412,8 @@ contract ControllerV1 is IController {
     /// the exit token redemption value of a credit of `score` in wei, read from the exit token pool, the same read the
     /// statement value floor uses. it only lifts the credit floor. zero when no exit module is set, the pool key is
     /// unset, the live unit read fails or is zero, the pool price reads zero, or `score` or the unit is zero. `score`
-    /// is at most 8_000_000 and the unit is taken as at most uint128.max, so `score * unit` is below 2^151 and the
-    /// pool pricing cannot overflow. never reverts: a missing or failed read gives 0
+    /// is at most 8_000_000 and the unit is capped at `MAX_UNIT` (2^96), so `score * unit` stays below 2^128 and the
+    /// pool mulDiv cannot overflow for any sqrt price. never reverts: a missing or failed read gives 0
     function _baseline(uint256 score) private view returns (uint256) {
         address module = CORE.exitModule();
         if (module == address(0)) return 0;
@@ -420,16 +421,13 @@ contract ControllerV1 is IController {
         if (!ok || live == 0) return 0;
         uint256 unit = CORE.unitPerPoint();
         if (live < unit) unit = live;
-        if (unit > type(uint128).max) unit = type(uint128).max;
+        if (unit > MAX_UNIT) unit = MAX_UNIT;
         (uint256 priceWei, bool priced) = _priceBaseUnits(score * unit);
         return priced ? priceWei : 0;
     }
 
     /// the score-scaled eth backstop of a credit in wei: the floor rate when `score` is at or below `refScore`, else
-    /// `floorRate * score / refScore`, the scaling the statement reference applies. the floor rate is the larger of the
-    /// climbed price state and the decayed peak. selling credits lowers only the rate and the peak decays between fills,
-    /// so neither a pot move nor a pool move can push the rate down within the block. a `score` of zero (a failed score
-    /// read) gives the unscaled rate
+    /// `floorRate * score / refScore`, the scaling the statement reference applies
     function _backstop(uint256 score) private view returns (uint256) {
         uint256 eth = CORE.floorRate();
         uint256 rs = refScore;
@@ -518,13 +516,15 @@ contract ControllerV1 is IController {
     /// the redeemable value of statement `sid` in wei from the exit token pool: `rating * unit` exit token base units
     /// priced at the pool sqrt price, where `unit` is the lower of the stored and the module's live `unitPerPoint()`
     /// (a failed live read gives 0). zero when the pool key is unset, no exit module is set, the owed amount is
-    /// zero, or the pool sqrt price reads zero
+    /// zero, or the pool sqrt price reads zero. the unit is capped at `MAX_UNIT` (2^96) and rating is at most
+    /// uint32.max, so `rating * unit` stays below 2^128 and the pool mulDiv cannot overflow for any sqrt price
     function _value(uint256 sid) private view returns (uint256) {
         if (!exitPoolKeySet) return 0;
         if (CORE.exitModule() == address(0)) return 0;
         uint256 unit = CORE.unitPerPoint();
         (uint256 live,) = _liveUnit(CORE.exitModule());
         if (live < unit) unit = live;
+        if (unit > MAX_UNIT) unit = MAX_UNIT;
         uint256 owed = CORE.ratingOf(sid) * unit;
         if (owed == 0) return 0;
         (uint256 priceWei, bool priced) = _priceBaseUnits(owed);

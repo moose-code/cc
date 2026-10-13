@@ -226,9 +226,9 @@ library CoreLib {
     }
 
     /// @notice the floor rate at `nowTs` in wei per credit: the larger of the price state climbed before the pot clamp
-    /// and the remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays
-    /// between fills, so the maximum follows the climb and holds against a sale within the block. the engine's price
-    /// floors read it through `Core.floorRate`
+    /// and the remembered peak of the eth bid decayed to now. a fill sets the peak to the larger of the price state and
+    /// the decayed peak, so the floor rate holds within a block. the idle climb is capped by `pot`, so with an empty
+    /// pot the floor rate follows the decaying peak. the engine's price floors read it through `Core.floorRate`
     function floorRate(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
         external
         view
@@ -610,8 +610,7 @@ library CoreLib {
         uint256 net = BPS - s.exitBidMarginBps;
         uint256 pot = c.xPot;
         // the floor rate now, the base of a credit's recorded eth cost basis: the larger of the price state climbed
-        // before the pot clamp and the decayed peak. selling credits lowers only the rate and the peak decays between
-        // fills, so the maximum follows the climb and holds against the walk down. read only
+        // before the pot clamp and the decayed peak. read only
         (uint256 price,, uint256 peakNow) =
             _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
         uint256 floor = price.max(peakNow);

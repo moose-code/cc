@@ -5,15 +5,19 @@
 # each. a failed stage or check stops the run with a clear message. no mainnet,
 # no private key: anvil --auto-impersonate and --unlocked.
 #
+# the node is always the local anvil at E2E_RPC_URL (default http://127.0.0.1:8545).
+# the shell RPC_URL is ignored so this never reaches a remote node.
+#
 #   script/dev/e2e.sh          start a fresh anvil, run end to end, stop it
-#   NO_ANVIL=1 script/dev/e2e.sh   reuse an anvil already on $RPC_URL
+#   NO_ANVIL=1 script/dev/e2e.sh   reuse an anvil already on E2E_RPC_URL
+#   PORT=8546 E2E_RPC_URL=http://127.0.0.1:8546 script/dev/e2e.sh   a fresh anvil on 8546
 #   STOP_AFTER=e script/dev/e2e.sh  stop after a stage (a b c d e f g) and leave anvil running for the UI
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-RPC_URL="${RPC_URL:-http://127.0.0.1:8545}"
+E2E_RPC_URL="${E2E_RPC_URL:-http://127.0.0.1:8545}"
 FORK_URL="${FORK_URL:-https://gateway.tenderly.co/public/mainnet}"
 FORK_BLOCK="${FORK_BLOCK:-26158000}"
 PORT="${PORT:-8545}"
@@ -27,7 +31,7 @@ TRADER=0x5555555555555555555555555555555555555555
 FUND=0x152d02c7e14af6800000   # 100000 ether
 
 say() { echo; echo "=== $* ==="; }
-rpc() { cast rpc "$@" --rpc-url "$RPC_URL" >/dev/null; }
+rpc() { cast rpc "$@" --rpc-url "$E2E_RPC_URL" >/dev/null; }
 warp() { rpc evm_increaseTime "$1"; rpc evm_mine; }
 
 ANVIL_PID=""
@@ -41,16 +45,20 @@ if [ "${NO_ANVIL:-0}" != "1" ]; then
   FORK_URL="$FORK_URL" FORK_BLOCK="$FORK_BLOCK" PORT="$PORT" "$ROOT/script/dev/anvil.sh" > /tmp/e2e-anvil.log 2>&1 &
   ANVIL_PID=$!
   for i in $(seq 1 60); do
-    cast block-number --rpc-url "$RPC_URL" >/dev/null 2>&1 && break
+    cast block-number --rpc-url "$E2E_RPC_URL" >/dev/null 2>&1 && break
     sleep 1
   done
-  cast block-number --rpc-url "$RPC_URL" >/dev/null 2>&1 || { echo "anvil did not come up"; tail -20 /tmp/e2e-anvil.log; exit 1; }
+  cast block-number --rpc-url "$E2E_RPC_URL" >/dev/null 2>&1 || { echo "anvil did not come up"; tail -20 /tmp/e2e-anvil.log; exit 1; }
 fi
+
+# the node must be the local fork before anything is sent
+CID="$(cast chain-id --rpc-url "$E2E_RPC_URL")" || { echo "could not read the chain id from $E2E_RPC_URL"; exit 1; }
+[ "$CID" = "31337" ] || { echo "e2e expects chain 31337 on $E2E_RPC_URL, got $CID"; exit 1; }
 
 # ------------------------------------------------------------------ deploy (same path as mainnet)
 
 say "deploy (script/deploy.sh local)"
-RPC_URL="$RPC_URL" ./script/deploy.sh local
+RPC_URL="$E2E_RPC_URL" ./script/deploy.sh local
 REC=deployments/31337.json
 CORE="$(jq -r .core $REC)"
 echo "core $CORE"
@@ -59,10 +67,10 @@ echo "core $CORE"
 
 say "fund actors and seed credits and the exit stand ins"
 for a in "$A1" "$A2" "$A3" "$KEEPER" "$TRADER"; do
-  cast rpc anvil_setBalance "$a" "$FUND" --rpc-url "$RPC_URL" >/dev/null
+  cast rpc anvil_setBalance "$a" "$FUND" --rpc-url "$E2E_RPC_URL" >/dev/null
 done
 SEED="$(A1=$A1 A2=$A2 A3=$A3 DEPLOYER=$OWNER \
-  forge script script/dev/Seed.s.sol --rpc-url "$RPC_URL" --broadcast --slow --unlocked --sender "$OWNER" 2>&1)" \
+  forge script script/dev/Seed.s.sol --rpc-url "$E2E_RPC_URL" --broadcast --slow --unlocked --sender "$OWNER" 2>&1)" \
   || { echo "$SEED" | tail -40; echo "seed failed"; exit 1; }
 EXIT_TOKEN="$(printf '%s\n' "$SEED" | grep -oE 'EXIT_TOKEN 0x[0-9a-fA-F]{40}' | tail -1 | grep -oE '0x[0-9a-fA-F]{40}')"
 EXIT_MODULE="$(printf '%s\n' "$SEED" | grep -oE 'EXIT_MODULE 0x[0-9a-fA-F]{40}' | tail -1 | grep -oE '0x[0-9a-fA-F]{40}')"
@@ -78,7 +86,7 @@ stage() {
   local out; out="$(mktemp)"
   if ! STAGE="$name" CORE="$CORE" OWNER="$OWNER" A1="$A1" A2="$A2" A3="$A3" KEEPER="$KEEPER" TRADER="$TRADER" \
     EXIT_TOKEN="$EXIT_TOKEN" EXIT_MODULE="$EXIT_MODULE" \
-    forge script script/dev/Scenario.s.sol --rpc-url "$RPC_URL" --broadcast --slow --unlocked --sender "$OWNER" \
+    forge script script/dev/Scenario.s.sol --rpc-url "$E2E_RPC_URL" --broadcast --slow --unlocked --sender "$OWNER" \
     > "$out" 2>&1; then
     echo "stage $name FAILED:"; tail -40 "$out"; exit 1
   fi
@@ -91,7 +99,7 @@ stage() {
 
 stop_if() {
   [ "${STOP_AFTER:-}" = "$1" ] || return 0
-  say "stopped after stage $1, anvil left running on $RPC_URL"
+  say "stopped after stage $1, anvil left running on $E2E_RPC_URL"
   trap - EXIT
   exit 0
 }
@@ -116,14 +124,14 @@ stop_if c
 
 say "stage d: open the credit sale, sell fresh credits in"
 DOPEN="$(STAGE=d-open CORE=$CORE OWNER=$OWNER A1=$A1 A2=$A2 A3=$A3 KEEPER=$KEEPER TRADER=$TRADER \
-  forge script script/dev/Scenario.s.sol --rpc-url "$RPC_URL" --broadcast --slow --unlocked --sender "$OWNER" 2>&1)" \
+  forge script script/dev/Scenario.s.sol --rpc-url "$E2E_RPC_URL" --broadcast --slow --unlocked --sender "$OWNER" 2>&1)" \
   || { echo "$DOPEN" | tail -30; echo "stage d-open FAILED"; exit 1; }
 printf '%s\n' "$DOPEN" | sed -n '/stage/p'
 CREDIT_ID="$(printf '%s\n' "$DOPEN" | grep -oE 'fresh credit id [0-9]+' | tail -1 | grep -oE '[0-9]+$')"
-P0="$(cast call "$(cast call $CORE 'controller()(address)' --rpc-url $RPC_URL)" 'creditPrice(uint256)(uint256)' "$CREDIT_ID" --rpc-url $RPC_URL | awk '{print $1}')"
+P0="$(cast call "$(cast call $CORE 'controller()(address)' --rpc-url $E2E_RPC_URL)" 'creditPrice(uint256)(uint256)' "$CREDIT_ID" --rpc-url $E2E_RPC_URL | awk '{print $1}')"
 warp 7200
-CTL="$(cast call $CORE 'controller()(address)' --rpc-url $RPC_URL)"
-P1="$(cast call "$CTL" 'creditPrice(uint256)(uint256)' "$CREDIT_ID" --rpc-url $RPC_URL | awk '{print $1}')"
+CTL="$(cast call $CORE 'controller()(address)' --rpc-url $E2E_RPC_URL)"
+P1="$(cast call "$CTL" 'creditPrice(uint256)(uint256)' "$CREDIT_ID" --rpc-url $E2E_RPC_URL | awk '{print $1}')"
 echo "creditPrice id $CREDIT_ID: before $P0 after 2h $P1"
 python3 -c "import sys; p0=int('$P0'); p1=int('$P1'); sys.exit(0 if p1<p0 else 1)" \
   || { echo "CHECK FAILED: creditPrice did not fall over the window"; exit 1; }
@@ -149,11 +157,11 @@ stop_if g
 say "stage h: exit side"
 stage h-setup
 say "warp until the held statement reaches its floor"
-CTL="$(cast call "$CORE" 'controller()(address)' --rpc-url "$RPC_URL")"
-SID="$(cast call "$CORE" 'heldStatements()(uint256[])' --rpc-url "$RPC_URL" | sed 's/[][]//g' | tr ',' '\n' | tail -1 | tr -d ' ')"
+CTL="$(cast call "$CORE" 'controller()(address)' --rpc-url "$E2E_RPC_URL")"
+SID="$(cast call "$CORE" 'heldStatements()(uint256[])' --rpc-url "$E2E_RPC_URL" | sed 's/[][]//g' | tr ',' '\n' | tail -1 | tr -d ' ')"
 AF=false
 for i in $(seq 1 40); do
-  AF="$(cast call "$CTL" 'atFloor(uint256)(bool)' "$SID" --rpc-url "$RPC_URL")"
+  AF="$(cast call "$CTL" 'atFloor(uint256)(bool)' "$SID" --rpc-url "$E2E_RPC_URL")"
   [ "$AF" = "true" ] && break
   warp 86400
 done
