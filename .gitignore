@@ -10,3 +10,4 @@ script/env/*.local.env
 # local anvil end to end: the fork deployment record and the state dumps are local
 deployments/31337.json
 script/dev/.anvil-state.json
+script/dev/.cache/
