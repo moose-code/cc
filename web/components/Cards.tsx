@@ -1,34 +1,39 @@
+"use client";
+
 import Link from "next/link";
 import { StatementTile } from "./Tiles";
 import { commas, eth } from "@/lib/format";
+import { useTokenMeta } from "@/lib/art";
 
-export type StatementStatus = "listed" | "sold";
+export type StatementStatus = "listed" | "sold" | "redeemed" | "not held";
 
 export function StatementCard({
   id,
-  ids,
   status,
   price,
-  score,
+  priceTag,
 }: {
   id: number;
-  ids: number[]; // the statement's composed credit ids
   status: StatementStatus;
-  price: bigint; // asking price while listed, sale price once sold
-  score: number; // credit score, 0 when not stored
+  price?: bigint; // asking price while listed, sale price once sold, cost otherwise
+  priceTag?: string; // small tag before the price
 }) {
+  // credit score: the Credit Rating attribute of the statement's tokenURI
+  const score = Number(useTokenMeta("statement", id).data?.attrs["Credit Rating"] ?? 0);
   return (
     <Link href={`/statements/${id}`} className="card card-statement">
-      <StatementTile ids={ids} />
+      <StatementTile id={id} />
       <div className="card-body">
         <div className="card-head">
           <span className="card-id">statement {id}</span>
           <StatusBadge status={status} />
         </div>
-        <div className="card-price">
-          {status === "sold" && <span className="card-price-tag">sold</span>}
-          {eth(price)} eth
-        </div>
+        {price != null && (
+          <div className="card-price">
+            {priceTag && <span className="card-price-tag">{priceTag}</span>}
+            {eth(price)} eth
+          </div>
+        )}
         {score > 0 && (
           <div className="card-sub">
             <span>credit score</span>
@@ -41,5 +46,5 @@ export function StatementCard({
 }
 
 export function StatusBadge({ status }: { status: StatementStatus }) {
-  return <span className={`badge badge-${status}`}>{status}</span>;
+  return <span className={`badge badge-${status.replace(" ", "-")}`}>{status === "listed" ? "for sale" : status}</span>;
 }

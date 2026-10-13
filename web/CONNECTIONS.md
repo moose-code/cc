@@ -70,30 +70,34 @@ the mainnet launch hook.
 | block | `NEXT_PUBLIC_DEPLOY_BLOCK` |
 | hook (optional) | `NEXT_PUBLIC_POOL_HOOK` |
 
-`controller`, `poolId`, `statements`, `creditScore`, `exitToken`, `exitModule`
+`creditScore` and `exitModule`
 are not read by the app yet.
 
 ## pages
 
 | page | source |
 | --- | --- |
-| feed, stats bar | `Core` logs from `NEXT_PUBLIC_DEPLOY_BLOCK` (`FeesAdded`, `CreditBought`, `Composed`, `CreditSold`, `StatementSoldTo`, `StatementExited`, `Buyback`) and coin `Transfer` logs from the core to the zero address (`lib/engine.ts` `useScan`) |
+| feed, stats bar | every event of the `Core`, the controller(s) (`Core.controller()` and each `ControllerSet`) and the fee router (`engineEventsAbi` in `lib/abis.ts`), from `NEXT_PUBLIC_DEPLOY_BLOCK`, and coin `Transfer` logs from the core to the zero address (`lib/engine.ts` `useScan`, rows built in `lib/events.ts`). Compose mode (default or chosen) comes from the Composed transaction's calldata; `SettingsSet` rows diff against the previous settings (the first against `Core.settings()` one block earlier); the exit token symbol and decimals come from `Core.exitToken()` |
 | pot, bid, next statement bar | `CoreLens.snapshot()` (`ethPot`, `ethRate`, `pileSize`) |
-| `/statements` | `snapshot().statements` (listed) and `StatementSoldTo` logs (sold); tile credit ids from the `Composed` logs |
-| `/statements/[id]` | `snapshot().statements` plus `ControllerV1.priceOf`, `referenceOf`, `atFloor`, `paused`; history from `Composed`, `StatementSoldTo`, `StatementExited` logs and block timestamps. An id with no record shows an empty state |
+| `/statements` | `snapshot().statements` (for sale), `StatementSoldTo` logs (sold), `StatementExited` logs (redeemed); composed statements with none of these show as not held |
+| `/statements/[id]` | `snapshot().statements` plus `ControllerV1.priceOf`, `referenceOf`, `atFloor`, `paused`; history from `Composed` (credits, format, caller, compose mode), `StatementSoldTo`, `AnchorMoved` and `StatementExited` logs and block timestamps. An id with no record shows an empty state |
 | `/credits` | `Core.pilePage`, `Core.creditInfo`, `CoreLens.choosable`, `CoreLens.creditPriceOf` |
-| `/credits/[id]` | `Core.creditInfo` (in pile), `Composed` logs (statement), `CreditBought` and `CreditSold` logs. An id with no record shows an empty state |
+| `/credits/[id]` | `Core.creditInfo` (in pile), `CoreLens.choosable`, `CoreLens.creditPriceOf` and `snapshot().creditWindow` (sale window), `CreditBought` (eth bid, or exit token bid when no `EthRateFill` precedes it in the transaction), `ListingBought`, `CreditAdopted`, `CreditSold` and `Composed` logs. An id with no record shows an empty state |
 | `/compose` | `snapshot()` (`pileSize`, `pageReady`, `chosenComposeOn`, `minCcToChoose`), the pile reads above, `Core.compose` and `composeChosen` |
 | `/sell` | `Credits.tokensOf(account)`, `snapshot()` (`ethRate`, `ethPot`), `Core.settings` and the rate storage slot for the batch quote, `Core.sellForEth` |
-| trade panel | v4 `StateView.getSlot0`, v4 `Quoter`, Universal Router; `$cc` price from the Chainlink ETH/USD feed (shows "—" when the read fails) |
+| trade panel | pool key from `Core.HOOK`, `POOL_FEE`, `TICK_SPACING`; fee from the hook's `skimConfig` and the MEV module's `currentSkimBps`; engine share from `skimConfig.bountyBps` less the router payee split (`splitOn`, `payeePpmTotal`); v4 `StateView.getSlot0`, v4 `Quoter`, Universal Router; `$cc` price from the Chainlink ETH/USD feed (shows "—" when the read fails) |
 
-## credit / statement art — `lib/credit-art.ts`, `components/Tiles.tsx`
+## credit / statement art — `lib/art.ts`, `components/Tiles.tsx`
 
-- Tiles render the Credits format: a Credit is a CMYK overprint
-  (cyan/magenta/yellow/black, subtractive on white) in a 12x12 raster; a
-  Statement is 80 Credits laid out 8 wide x 10 tall (burn order).
-- The raster is drawn from the credit id with a seeded PRNG. The statement
-  grid uses the credit ids of its `Composed` event.
+- Tiles show the `image` of `tokenURI(id)` of the Credits and Statements
+  contracts (addresses from `CoreLens.CREDITS()` and `STATEMENTS()`).
+  `data:application/json` metadata (base64, utf8 or percent-encoded) is
+  decoded in the browser; http and ipfs metadata is fetched. The image is a
+  data URI or a URL.
+- Reads of one render pass go out as one multicall per collection and are
+  cached per token id. A token whose `tokenURI` reverts (a credit burned in a
+  compose) shows an empty tile with its id.
+- Statement format name and credit rating come from the metadata attributes.
 
 ## ENS (global) — `lib/ens.ts`, `components/Addr.tsx`
 

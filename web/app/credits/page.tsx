@@ -10,6 +10,7 @@ import { NotDeployed } from "@/components/NotDeployed";
 import { chain, engineDeployed } from "@/lib/config";
 import { controllerAbi } from "@/lib/abis";
 import { countdown, errMsg, useNow, usePile, useSnapshot } from "@/lib/live";
+import { useScan, type CreditEvt } from "@/lib/engine";
 import { agoLabel, eth } from "@/lib/format";
 import { useWriteWithBuffer } from "@/lib/tx";
 
@@ -20,6 +21,7 @@ const BUFFER_BPS = 200n; // value above the summed quotes; the controller refund
 export default function CreditsPage() {
   const { data: pile } = usePile();
   const { data: snap } = useSnapshot();
+  const { data: scan } = useScan();
   const now = useNow();
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
@@ -76,6 +78,7 @@ export default function CreditsPage() {
           {pile.saleOn && <span className="rl-check" />}
           <span className="rl-credit">credit</span>
           <span className="rl-meta">paid</span>
+          <span className="rl-meta">got by</span>
           {pile.saleOn && <span className="rl-price">price</span>}
           {pile.saleOn && <span className="rl-price">window</span>}
           <span className="rl-time">bought</span>
@@ -99,6 +102,7 @@ export default function CreditsPage() {
                   <span className="rl-id">credit #{c.id}</span>
                 </span>
                 <span className="rl-meta">{eth(c.cost)} eth</span>
+                <span className="rl-meta muted">{gotBy(scan.credits[c.id])}</span>
                 {pile.saleOn && <span className="rl-price">{eth(c.price)} eth</span>}
                 {pile.saleOn && (
                   <span className="rl-price muted">{left > 0 ? countdown(left) : "past window"}</span>
@@ -134,4 +138,10 @@ export default function CreditsPage() {
       )}
     </main>
   );
+}
+
+// How the engine got a credit: the latest bought step in its history.
+function gotBy(evts?: CreditEvt[]): string {
+  const b = [...(evts ?? [])].reverse().find((e) => e.t === "bought");
+  return b && b.t === "bought" ? b.how : "—";
 }

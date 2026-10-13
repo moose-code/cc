@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useAccount, usePublicClient, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { StatementTile } from "./Tiles";
+import { StatementTile, CreditTile } from "./Tiles";
 import { StatusBadge } from "./Cards";
-import { Addr } from "./Addr";
+import { HistRow } from "./History";
 import { NotDeployed } from "./NotDeployed";
 import { chain, engineDeployed } from "@/lib/config";
-import { STATEMENT_SIZE, useBlockTs, useStatementHistory } from "@/lib/engine";
+import { STATEMENT_SIZE, useBlockTs, useExitToken, useScan } from "@/lib/engine";
+import { formatExit } from "@/lib/events";
+import { useTokenMeta } from "@/lib/art";
 import { controllerAbi } from "@/lib/abis";
 import { errMsg, useNow, useSnapshot } from "@/lib/live";
 import { agoLabel, commas, eth, signedPct } from "@/lib/format";
@@ -20,20 +22,25 @@ const BUFFER_BPS = 100n; // value above the quote; the controller refunds the ex
 
 // Statement detail read from the chain: the lens snapshot for a statement the
 // Core holds (ControllerV1 price, reference and floor state, buy(sid)), and the
-// Composed, StatementSoldTo and StatementExited logs for its history.
+// Core and controller logs for its history: Composed (credits, format, who,
+// default or chosen), StatementSoldTo, AnchorMoved and StatementExited.
 export function LiveStatement({ id }: { id: number }) {
   const { data: snap } = useSnapshot();
-  const { data: hist } = useStatementHistory();
+  const { data: scan } = useScan();
+  const { data: meta } = useTokenMeta("statement", id);
+  const { data: xToken } = useExitToken();
   const now = useNow();
   const s = snap?.statements.find((x) => x.id === BigInt(id));
-  const rec = hist.composed[id];
-  const sale = hist.sold.find((x) => x.id === id);
-  const exited = hist.exited.includes(id);
-  const { data: composedTs } = useBlockTs(rec?.block);
-  const { data: soldTs } = useBlockTs(sale?.block);
+  const rec = scan.statements[id];
+  const composed = rec?.composed;
+  const sale = rec?.sold;
+  const exited = rec?.exited;
+  const { data: composedTs } = useBlockTs(composed?.block);
   if (!engineDeployed) return <NotDeployed />;
-  const cost = s?.cost ?? rec?.cost;
-  const known = Boolean(s || rec || sale || exited);
+  const cost = s?.cost ?? composed?.cost;
+  const known = Boolean(s || rec);
+  const formatName = meta?.attrs.Format;
+  const score = meta?.attrs["Credit Rating"];
   return (
     <main className="page detail statement-detail">
       <Link href="/statements" className="back">
@@ -41,12 +48,12 @@ export function LiveStatement({ id }: { id: number }) {
       </Link>
       <div className="detail-grid">
         <div className="detail-art">
-          <StatementTile ids={rec?.ids ?? []} linkCredits />
+          <StatementTile id={id} />
         </div>
         <div className="detail-main">
           <div className="detail-title">
             <h1>statement {id}</h1>
-            {s ? <StatusBadge status="listed" /> : sale ? <StatusBadge status="sold" /> : null}
+            {s ? <StatusBadge status="listed" /> : sale ? <StatusBadge status="sold" /> : exited ? <StatusBadge status="redeemed" /> : known ? <StatusBadge status="not held" /> : null}
           </div>
           {!snap ? (
             <p className="muted">loading…</p>
@@ -57,12 +64,16 @@ export function LiveStatement({ id }: { id: number }) {
               {known && (
                 <div className="facts">
                   {cost != null && <Fact k="cost" v={`${eth(cost)} eth`} />}
-                  <Fact k="credits" v={String(STATEMENT_SIZE)} />
-                  {s && <Fact k="credit score" v={commas(Math.round(Number(s.rating) / 10000))} />}
-                  {s ? (
-                    <Fact k="composed" v={agoLabel(now - Number(s.composedAt))} />
-                  ) : (
-                    composedTs != null && <Fact k="composed" v={agoLabel(now - composedTs)} />
+                  <Fact k="credits" v={String(composed?.ids.length ?? STATEMENT_SIZE)} />
+                  {score != null && <Fact k="credit score" v={commas(Number(score))} />}
+                  {composed && <Fact k="format" v={`${formatName ?? "—"} (${composed.format})`} />}
+                  {composed && (
+                    <Fact
+                      k="composed"
+                      v={`${composedTs != null ? agoLabel(now - composedTs) : "—"} · ${
+                        composed.mode === "chosen" ? "chosen compose" : composed.mode === "default" ? "default compose" : "compose"
+                      }`}
+                    />
                   )}
                   {s && <Fact k="redeemable" v={s.exitEligible ? "yes" : "no"} />}
                 </div>
@@ -71,16 +82,19 @@ export function LiveStatement({ id }: { id: number }) {
                 <section className="section history-section">
                   <h2>history</h2>
                   <div className="history">
-                    {cost != null && (
+                    {composed && (
                       <HistRow
                         label="composed"
-                        value={`${eth(cost)} eth cost`}
-                        ago={composedTs != null ? agoLabel(now - composedTs) : undefined}
+                        value={`${eth(composed.cost)} eth cost`}
+                        note={composed.mode ? `${composed.mode} compose, format ${formatName ?? composed.format}` : `format ${formatName ?? composed.format}`}
+                        block={composed.block}
+                        tx={composed.tx}
+                        addr={composed.caller}
                       />
                     )}
                     {s && (
                       <HistRow
-                        label="listed"
+                        label="for sale"
                         value={`${eth(s.askingPrice)} eth now`}
                         note={cost ? `${signedPct(overCost(s.askingPrice, cost))} over cost` : undefined}
                       />
@@ -89,12 +103,42 @@ export function LiveStatement({ id }: { id: number }) {
                       <HistRow
                         label="sold"
                         value={`${eth(sale.price)} eth`}
-                        note={cost ? `${signedPct(overCost(sale.price, cost))} over cost` : undefined}
-                        ago={soldTs != null ? agoLabel(now - soldTs) : undefined}
+                        note={[cost ? `${signedPct(overCost(sale.price, cost))} over cost` : "", sale.toBuyback != null ? `${eth(sale.toBuyback)} eth to buyback` : ""].filter(Boolean).join(", ")}
+                        block={sale.block}
+                        tx={sale.tx}
                         addr={sale.buyer}
                       />
                     )}
-                    {exited && <HistRow label="redeemed" value="through the exit module" />}
+                    {rec?.anchor.map((m) => (
+                      <HistRow
+                        key={m.tx}
+                        label="anchor moved"
+                        value={`sale at ${pct(m.saleBps)} of reference, anchor now ${pct(m.anchorBps)}`}
+                        block={m.block}
+                        tx={m.tx}
+                      />
+                    ))}
+                    {exited && (
+                      <HistRow
+                        label="redeemed"
+                        value="through the exit module"
+                        note={`received ${formatExit(exited.received, xToken)}`}
+                        block={exited.block}
+                        tx={exited.tx}
+                      />
+                    )}
+                  </div>
+                </section>
+              )}
+              {composed && (
+                <section className="section">
+                  <h2>{composed.ids.length} credits</h2>
+                  <div className="credit-mini-grid">
+                    {composed.ids.map((cid) => (
+                      <Link key={cid} href={`/credits/${cid}`} title={`credit #${cid}`}>
+                        <CreditTile id={cid} />
+                      </Link>
+                    ))}
                   </div>
                 </section>
               )}
@@ -108,37 +152,7 @@ export function LiveStatement({ id }: { id: number }) {
 
 // price over cost, in percent
 const overCost = (price: bigint, cost: bigint) => (Number(price) / Number(cost) - 1) * 100;
-
-function HistRow({
-  label,
-  value,
-  note,
-  ago,
-  addr,
-}: {
-  label: string;
-  value: string;
-  note?: string;
-  ago?: string;
-  addr?: string;
-}) {
-  return (
-    <div className="hrow">
-      <span className="hlabel">{label}</span>
-      <span className="hval">
-        {value}
-        {note && <span className="muted"> ({note})</span>}
-        {addr && (
-          <>
-            {" by "}
-            <Addr address={addr} />
-          </>
-        )}
-      </span>
-      {ago && <span className="muted hago">{ago}</span>}
-    </div>
-  );
-}
+const pct = (bps: bigint | number) => `${(Number(bps) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
 
 function StatementBuyBox({ sid, controller }: { sid: number; controller: `0x${string}` }) {
   const { isConnected } = useAccount();

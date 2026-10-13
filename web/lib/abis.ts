@@ -1,6 +1,8 @@
-// Minimal hand-written ABIs. Only the members the UI reads/decodes, kept in sync
-// with src/interfaces/ICoreLens.sol, ICore.sol and IControllerV1.sol at c1fed1b.
-// Not the full generated interface on purpose.
+// Hand-written ABIs: the members the UI reads, and every event of the Core,
+// ControllerV1 and FeeRouter, kept in sync with src/interfaces/ICoreLens.sol,
+// ICore.sol, IControllerV1.sol and IFeeRouter.sol.
+
+import { parseAbi } from "viem";
 
 export const statementViewComponents = [
   { name: "id", type: "uint256" },
@@ -71,6 +73,8 @@ export const coreLensAbi = [
     inputs: [{ name: "id", type: "uint256" }],
     outputs: [{ name: "price", type: "uint256" }],
   },
+  { type: "function", name: "CREDITS", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "STATEMENTS", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
 ] as const;
 
 export const erc20Abi = [
@@ -94,6 +98,13 @@ export const erc20Abi = [
     stateMutability: "view",
     inputs: [],
     outputs: [{ type: "uint8" }],
+  },
+  {
+    type: "function",
+    name: "symbol",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "string" }],
   },
   {
     type: "function",
@@ -255,6 +266,11 @@ export const coreAbi = [
     ],
     outputs: [],
   },
+  { type: "function", name: "controller", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "exitToken", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "HOOK", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "POOL_FEE", stateMutability: "view", inputs: [], outputs: [{ type: "uint24" }] },
+  { type: "function", name: "TICK_SPACING", stateMutability: "view", inputs: [], outputs: [{ type: "int24" }] },
   { type: "function", name: "ethRate", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "ethPrice", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "ethPot", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
@@ -354,70 +370,91 @@ export const creditsAbi = [
   },
 ] as const;
 
-// Events the engine feed decodes from Core / ControllerV1 logs.
-export const coreEventsAbi = [
-  {
-    type: "event",
-    name: "FeesAdded",
-    inputs: [{ name: "amount", type: "uint256", indexed: false }],
-  },
-  {
-    type: "event",
-    name: "CreditBought",
-    inputs: [
-      { name: "id", type: "uint256", indexed: true },
-      { name: "from", type: "address", indexed: true },
-      { name: "cost", type: "uint256", indexed: false },
-    ],
-  },
-  {
-    type: "event",
-    name: "Composed",
-    inputs: [
-      { name: "sid", type: "uint256", indexed: true },
-      { name: "ids", type: "uint256[80]", indexed: false },
-      { name: "format", type: "uint8", indexed: false },
-      { name: "cost", type: "uint256", indexed: false },
-      { name: "caller", type: "address", indexed: true },
-    ],
-  },
-  {
-    type: "event",
-    name: "CreditSold",
-    inputs: [
-      { name: "id", type: "uint256", indexed: true },
-      { name: "buyer", type: "address", indexed: true },
-      { name: "price", type: "uint256", indexed: false },
-    ],
-  },
-  {
-    type: "event",
-    name: "StatementSoldTo",
-    inputs: [
-      { name: "sid", type: "uint256", indexed: true },
-      { name: "buyer", type: "address", indexed: true },
-      { name: "price", type: "uint256", indexed: false },
-      { name: "toBuyback", type: "uint256", indexed: false },
-    ],
-  },
-  {
-    type: "event",
-    name: "StatementExited",
-    inputs: [
-      { name: "sid", type: "uint256", indexed: true },
-      { name: "received", type: "uint256", indexed: false },
-    ],
-  },
-  {
-    type: "event",
-    name: "Buyback",
-    inputs: [
-      { name: "caller", type: "address", indexed: true },
-      { name: "amountIn", type: "uint256", indexed: false },
-      { name: "paid", type: "uint256", indexed: false },
-    ],
-  },
-] as const;
+// Every event of the Core, ControllerV1 and FeeRouter. The Core and the router
+// both emit OwnershipTransferStarted and OwnershipTransferred with one
+// signature, listed once.
+export const engineEventsAbi = parseAbi([
+  // Core
+  "event FeesAdded(uint256 amount)",
+  "event Skimmed(uint256 eth, uint256 exitToken)",
+  "event CreditBought(uint256 indexed id, address indexed from, uint256 cost)",
+  "event ListingBought(uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate)",
+  "event EthRateFill(uint256 spent, uint256 rate, uint256 pot)",
+  "event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, address indexed caller)",
+  "event SettingsSet((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, uint8 exitMode, uint16 exitSlippageBps, uint16 exitBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToBuybackBps, uint16 feeToRedeemBurnBps) settings)",
+  "event RateSet(uint256 rate)",
+  "event StatementExited(uint256 indexed sid, uint256 received)",
+  "event Buyback(address indexed caller, uint256 amountIn, uint256 paid)",
+  "event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback)",
+  "event CreditSold(uint256 indexed id, address indexed buyer, uint256 price)",
+  "event OwnershipTransferStarted(address indexed owner, address indexed pending)",
+  "event OwnershipTransferred(address indexed from, address indexed to)",
+  "event ControllerLocked()",
+  "event ExitModuleLocked()",
+  "event TargetsLocked()",
+  "event ControllerSet(address controller)",
+  "event ExitModuleSet(address exitModule, address exitToken, uint256 unitPerPoint)",
+  "event UnitPerPointRefreshed(address exitModule, uint256 unitPerPoint)",
+  "event RedeemBurnReleased(uint256 amount)",
+  "event TargetAdded(address target)",
+  "event TargetRemoved(address target)",
+  "event CoinRescued(address indexed to, uint256 amount)",
+  "event NftRescued(address indexed token, uint256 indexed id, address indexed to)",
+  "event SuccessorSet(address successor)",
+  "event SuccessorLocked()",
+  "event CreditAdopted(uint256 indexed id, uint256 cost)",
+  "event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits)",
+  "event EngineRetired(address indexed successor)",
+  "event ExitTokenMigrationSkipped(address indexed successor, uint256 amount)",
+  "event CreditCostToPotBpsSet(uint16 bps)",
+  "event ChosenComposeOnSet(bool on)",
+  "event MinCcToChooseSet(uint96 min)",
+  // ControllerV1
+  "event AnchorBpsSet(uint32 anchorBps)",
+  "event AnchorHalfLifeSet(uint32 anchorHalfLife)",
+  "event AnchorMinCostSet(uint128 anchorMinCost)",
+  "event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps)",
+  "event Bought(uint256 indexed sid, address indexed buyer, uint256 price)",
+  "event CreditFloorBpsSet(uint16 creditFloorBps)",
+  "event CreditSaleOnSet(bool on)",
+  "event CreditStartBpsSet(uint32 creditStartBps)",
+  "event CreditWindowSet(uint32 creditWindow)",
+  "event ExitPoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)",
+  "event FastDecayBpsPerHourSet(uint16 fastDecayBpsPerHour)",
+  "event FloorBpsSet(uint16 floorBps)",
+  "event KneeBpsSet(uint32 kneeBps)",
+  "event MarkupBpsSet(uint16 markupBps)",
+  "event PausedSet(bool paused)",
+  "event RefScoreSet(uint32 refScore)",
+  "event SlowDecayBpsPerHourSet(uint16 slowDecayBpsPerHour)",
+  "event StartCapBpsSet(uint32 startCapBps)",
+  // FeeRouter
+  "event Claimed(address indexed payee, uint256 amount)",
+  "event EngineSet(address indexed previous, address indexed engine)",
+  "event Flushed(address indexed engine, uint256 toEngine, uint256 toPayees)",
+  "event Locked(address indexed engine)",
+  "event PayeeOwed(address indexed payee, uint256 amount)",
+  "event PayeePaid(address indexed payee, uint256 amount)",
+  "event PayeesSet(address[] payees, uint32[] ppm)",
+  "event SplitStartSet(uint64 at)",
+  "event SplitStarted(uint256 at)",
+]);
+
+// ERC-721 metadata read for the token art.
+export const tokenUriAbi = parseAbi(["function tokenURI(uint256 id) view returns (string)"]);
+
+// Pool hook: fee schedule of the CC/ETH pool, and the pool's MEV skim module.
+export const hookAbi = parseAbi([
+  "function skimConfig(bytes32 poolId) view returns ((uint24 baselineSkimBps, uint16 bountyBps, uint24 maxReferralBpsOfVolume, uint24 lpFeePips, address bountyRecipient, address protocolRecipient))",
+  "function poolInfo(bytes32 poolId) view returns ((uint16 version, bool restricted, uint40 createdAt, address launcher, address token, address locker, address mevModule, address extension))",
+]);
+export const mevAbi = parseAbi(["function currentSkimBps(bytes32 poolId) view returns (uint24 skimBps, bool active)"]);
+
+// FeeRouter views: the payees' share of each flush.
+export const routerAbi = parseAbi([
+  "function payeePpmTotal() view returns (uint32)",
+  "function splitOn() view returns (bool)",
+]);
 
 // ERC-20 Transfer; the coin burn is Transfer(core, address(0), amount).
 export const transferEventAbi = [

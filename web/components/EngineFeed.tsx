@@ -9,18 +9,12 @@ import {
 } from "@/lib/engine";
 import { engineDeployed } from "@/lib/config";
 import { useNow } from "@/lib/live";
+import { useBlockTs } from "@/lib/engine";
+import { useState } from "react";
 import { relTime, eth, evmNowTx } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
+import { useTokenMeta } from "@/lib/art";
 import { Addr } from "./Addr";
-
-const EVENT_NAME: Record<FeedKind, string> = {
-  fee: "fee in",
-  credit: "credit",
-  composed: "composed",
-  listed: "listed",
-  sold: "sold",
-  burn: "burn",
-};
 
 const CHIP_COLOR: Record<FeedKind, string> = {
   fee: "var(--fee)",
@@ -29,15 +23,21 @@ const CHIP_COLOR: Record<FeedKind, string> = {
   listed: "var(--listed)",
   sold: "var(--sold)",
   burn: "var(--burn)",
+  exit: "var(--exit)",
+  price: "var(--price)",
+  admin: "var(--muted2)",
 };
 
-const BOLD = new Set<FeedKind>(["composed", "listed", "sold"]);
-const HL = new Set<FeedKind>(["composed", "listed", "sold", "burn"]);
+const PAGE = 100; // rows per page of the feed
+
+const BOLD = new Set<FeedKind>(["composed", "listed", "sold", "exit"]);
+const HL = new Set<FeedKind>(["composed", "listed", "sold", "burn", "exit"]);
 
 export function EngineFeed() {
   const { data: feed } = useFeed();
   const { data: market } = useMarket();
   const now = useNow();
+  const [limit, setLimit] = useState(PAGE);
 
   const stmtPct = Math.min(100, (market.creditsReady / STATEMENT_SIZE) * 100);
 
@@ -86,16 +86,23 @@ export function EngineFeed() {
           </tr>
         </thead>
         <tbody>
-          {feed.map((e) => (
+          {feed.slice(0, limit).map((e) => (
             <Row key={e.key} e={e} now={now} />
           ))}
         </tbody>
       </table>
+      {feed.length > limit && (
+        <button className="action more" onClick={() => setLimit(limit + PAGE)}>
+          {`show more (${feed.length - limit} older)`}
+        </button>
+      )}
     </section>
   );
 }
 
 function Row({ e, now }: { e: FeedEvent; now: number }) {
+  const { data: ts } = useBlockTs(e.block);
+  const when = ts != null ? relTime(ts, now) : "—";
   return (
     <tr className={HL.has(e.kind) ? "hl" : undefined}>
       <td className="col-event">
@@ -104,13 +111,13 @@ function Row({ e, now }: { e: FeedEvent; now: number }) {
             className={`chip${e.kind === "listed" ? " listed" : ""}`}
             style={e.kind === "listed" ? undefined : { background: CHIP_COLOR[e.kind] }}
           />
-          <span className="name">{EVENT_NAME[e.kind]}</span>
+          <span className="name">{e.label}</span>
         </span>
       </td>
       <td className="col-detail">
         <div className="detail-cell">
           {e.tile?.kind === "credit" && <CreditTile id={e.tile.id} />}
-          {e.tile?.kind === "statement" && <StatementTile ids={e.tile.ids} />}
+          {e.tile?.kind === "statement" && <StatementTile id={e.tile.id} />}
           <span className="label">
             {BOLD.has(e.kind) ? <b>{e.detail}</b> : e.detail}
             {e.addr && (
@@ -119,6 +126,7 @@ function Row({ e, now }: { e: FeedEvent; now: number }) {
                 <Addr address={e.addr} />
               </>
             )}
+            {e.format != null && e.tile?.kind === "statement" && <FormatName sid={e.tile.id} index={e.format} />}
           </span>
         </div>
       </td>
@@ -126,12 +134,18 @@ function Row({ e, now }: { e: FeedEvent; now: number }) {
       <td className="col-time" suppressHydrationWarning>
         {e.txHash ? (
           <a href={evmNowTx(e.txHash)} target="_blank" rel="noreferrer">
-            {relTime(e.ts, now)}
+            {when}
           </a>
         ) : (
-          relTime(e.ts, now)
+          when
         )}
       </td>
     </tr>
   );
+}
+
+// " · format Consolidated": the name is the Format attribute of the statement's tokenURI.
+function FormatName({ sid, index }: { sid: number; index: number }) {
+  const { data } = useTokenMeta("statement", sid);
+  return <span className="muted"> · format {data?.attrs.Format ?? index}</span>;
 }

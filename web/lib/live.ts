@@ -12,7 +12,7 @@ import { coreAbi, coreLensAbi } from "./abis";
 
 export type Snapshot = ContractFunctionReturnType<typeof coreLensAbi, "view", "snapshot">;
 
-const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11" as const;
+export const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11" as const;
 const PILE_PAGE = 200n; // ponytail: first 200 pile credits only, page with pilePage(startAfter) if the pile grows past it
 
 // Chain time: the latest block's timestamp, run forward by the wall seconds

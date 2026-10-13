@@ -31,8 +31,8 @@ Set the engine addresses in `.env`:
 
 - `NEXT_PUBLIC_CORE_LENS` + `NEXT_PUBLIC_CORE` — turns the feed and stats
   on-chain. Stats aggregate the scanned log window (recent, not genesis
-  cumulative). The feed decodes `FeesAdded`, `CreditBought`, `Composed`,
-  `StatementSoldTo`, `Buyback`.
+  cumulative). The feed decodes every event of the Core, ControllerV1 and
+  the FeeRouter.
 - `NEXT_PUBLIC_CREDITS`, `NEXT_PUBLIC_CC` — credits NFT and coin.
 - `NEXT_PUBLIC_DEPLOY_BLOCK` — speeds up the feed log scan.
 - `NEXT_PUBLIC_RPC_URL` — mainnet RPC (public fallback otherwise).
