@@ -206,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "Owner sign-off, then launch day (docs/HANDOFF.md section 6, docs/DEPLOY.md section 1), the owner sends every transaction: fill image and description in script/config/local.json and set rateStart and rateCap from the credit price; fund the owner address and read the balance with cast before the broadcast; step 3 setMinProtocolSkimShareBps(362); keeper running; step 4 check-preflight.sh at the latest block; step 5 Deploy dry run; step 6 Deploy broadcast with --slow after `python3 script/director.py check --gate deploy` passes at the branch tip; step 7 Resume; step 8 etherscan verify; step 9 Postflight; then Lock. Open: the objective sign-off, the owner keeper, decisions 47 and OD-2, participant-economics.",
+  "nextAction": "Issue #3 specification is complete in docs/NEXT.md (FLOW 88). If the owner requests implementation, use that bounded packet and keep the helper outside engine dependencies. No helper deployment is authorized. The engine launch objective remains active: before using the launch steps in docs/HANDOFF.md section 6, reconcile the current source and decisions 81 to 87, independently review and freeze a new candidate, and satisfy its configured gates. Candidate 6ea44f5 evidence is stale at the current HEAD; owner sign-off and launch prerequisites remain outstanding.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",

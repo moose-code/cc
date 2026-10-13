@@ -2,6 +2,71 @@
 
 kept by the director. an item is built only where its state says built. the owner said go on 2026-10-08 for every decided item.
 
+## Issue #3: credit lookup helper, proposed work spec (2026-10-13)
+
+Owner request (FLOW 88): review [issue #3](https://github.com/ripe0x/cc/issues/3) and spec the work; keep the contract simple, minimal and focused. This is a specification, not implementation or deployment approval. It is optional work outside the engine's launch prerequisites.
+
+### Scope
+
+Build one standalone `CreditLens` with four read-only functions. Its only job is to translate a credit id into the source scorer's inputs. The engine continues reading its source contracts directly.
+
+```solidity
+function scoreOfId(uint256 id) external view returns (uint256);
+function scoresOf(uint256[] calldata ids) external view returns (uint256[] memory);
+function rarityOfId(uint256 id) external view returns (uint256);
+function traitsOfId(uint256 id) external view returns (
+    uint256 mask, uint256 active, uint256 occupied, uint256 eights, uint256 band
+);
+error UnknownCredit(uint256 id);
+```
+
+Use two internal address constants, with no constructor arguments:
+
+- Credits: `0x97630aA70AB14ed9883B41dAfccBc11349723043`.
+- CreditScore: `0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7`.
+
+No owner, mutable storage, proxy, setters, events, payable functions, token receiver, cache, pricing logic, score math, extra batches or combined detail response. Fixed mainnet dependencies are the entire configuration. A different source deployment needs a different helper deployment.
+
+### Exact behavior
+
+1. One internal input reader gets `Credits.timestampOf(id)`. If zero, revert `UnknownCredit(id)`; otherwise read `Credits.seedOf(id)`. Mint requires a nonzero timestamp and burn retains both mappings, so this rejects never-minted ids without excluding burned credits. Do not call `ownerOf`, which would reject burned credits.
+2. Single methods forward those inputs to the respective `CreditScore.scoreOf`, `rarityOf` or `traitsOf`. Return source values unchanged. Score units are ten-thousandths of a point: `1_324_012` means `132.4012`, range `800_000` to `8_000_000`. Rarity is the source's summed trait points, not a percentile or the score. Traits retain the source tuple order and numeric values; labels and formatting belong in the client.
+3. `scoresOf` loops through the same internal score reader, preserving order and duplicates. Empty input returns an empty array. Any unknown id or source revert reverts the whole call; there is no partial-success sentinel. Do not call `this.scoreOfId` inside the loop.
+4. No arbitrary contract batch cap. Work is linear in input length; callers chunk to their RPC's gas/response limit. Measure 1, 10 and 80 ids during implementation before giving client batch guidance. One RPC round trip still involves three source calls per credit, not a cheaper scoring algorithm.
+
+### Remove the redundant statement feature
+
+Do not add a statement dependency or rating wrapper. `Statements.creditScoreOf(uint256)` at `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b` already returns the stored total in the same units, including every overprinted page. It returns zero for never-composed ids and retains records for pages burned into other pages. Clients needing current ownership must query it separately.
+
+Summing only `Statements.composedFrom(id)` would omit overprints. Recursively rescoring all history duplicates existing source accounting and makes a constant-size read grow with statement history.
+
+### Implementation packet and acceptance
+
+Deliver `src/CreditLens.sol`, a narrow interface if required by the interface generator, `test/CreditLens.t.sol`, one isolated deployment script, and a short consumer example in `docs/INTEGRATION.md`. Keep scorer-only rarity and trait declarations local to this helper or its narrow interface; do not expand engine interfaces for this feature. Generate the helper interface using the repository tool. Avoid changes to Core, CoreLib, CoreLens, controller, engine deploy scripts, launch config, or engine bytecode pins.
+
+The test file uses a small standalone mainnet fork fixture at block `26158000`, not the engine fixture. Real Credits and CreditScore only. Before implementing, check their runtime hashes at that pin against the verified sources, plus `Credits.isSealed()` and `Statements.score()` against the documented scorer address.
+
+- Differential checks: singles, rarity and all five traits equal direct source reads for multiple minted ids; scores stay in the source range and preserve full precision. Include credit #1 and bounded fuzz over the sealed edition's minted id range.
+- Historical checks: score, rarity and traits of a real burned credit equal their source values; burning a real held credit on the fork leaves helper results unchanged. A transfer likewise leaves them unchanged.
+- Batch checks: empty, one, out-of-order ids, duplicates, 80 ids, and a batch with a never-minted id in the middle. Compare each output with a direct source read.
+- Failure checks: id `0`, `supply + 1`, and `type(uint256).max` revert with `UnknownCredit(id)` across every single method and the batch.
+
+Verify implementation with `forge build` and only `forge test --match-path test/CreditLens.t.sol`, using the repository RPC environment. Record runtime size and measured deployment gas; the issue's "few hundred thousand gas" is an estimate, not an accepted budget or measurement. Commit the verified implementation, then independently review that immutable commit before deployment. Deployment requires a separate owner instruction and should record chain, addresses, source/runtime hashes, compiler settings, verified source and a direct-versus-helper read. This spec does not freeze or accept the engine candidate.
+
+### Source evidence and limits
+
+Reviewed on 2026-10-13 via Sourcify v2, chain 1, `fields=all`. All three returned `exact_match` for creation and runtime, compiler `0.8.28+commit.7893614a`, and no proxy. Repository comparison: `src/interfaces/Interfaces.sol` and `src/CoreLens.sol`.
+
+| Verified source | Findings used | SHA-256 of source content |
+|---|---|---|
+| [Credits.sol](https://sourcify.dev/server/v2/contract/1/0x97630aA70AB14ed9883B41dAfccBc11349723043?fields=all) | timestamp nonzero at mint; seed and timestamp survive burn; mappings return zero for unknown ids | `b2c916aa276ed04bc300b4aeb04e5482804739ec6d1f72b026a57f9e8f664176` |
+| [CreditScore.sol](https://sourcify.dev/server/v2/contract/1/0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7?fields=all) | exact input/output types, tuple order, units and pure computation | `713e3c873e8c419ee1c3c715cdb669c111b35786c26b9938318ee6329a591d89` |
+| [Statements.sol](https://sourcify.dev/server/v2/contract/1/0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b?fields=all) | rating stored at compose, increased on overprint, retained after burn; unknown rating returns zero | `1ae0e4903edf3f9a9b8ebc683bfbef7d31fd5898b829a4cb0bef1570395b3b35` |
+
+Source inspection establishes the proposed behavior; no helper has been compiled, tested or deployed. The current request changes no engine behavior or engine assumptions. Existing engine evidence validity is not restored by this spec; the checker already marks candidate evidence stale at HEAD `79c79d1`.
+
+## Engine change list
+
 | # | change | state | notes |
 |---|---|---|---|
 | 1 | the engine pulls its own fees: the Core calls the router's `flush` at the start of its own entry points (the two credit doors, compose), so fees arrive without a keeper | built, awaiting review | the Core has 75 bytes of headroom (at that commit): the call goes into `CoreLib`. a failing or reverting flush must never block the entry point (try, ignore). mind the measuring rule: flush before any measurement starts, never inside one. built: `CoreLib.pullFees(router)` (low level call, at most 1,000,000 gas, outcome ignored) behind `Core._openDoor()` (named `_pullFees` at that commit), first action of `sellForEth` (both overloads), `buyListing`, `compose` and `composeExit`, before anything else in compose and composeExit (they repay nothing, FLOW decision 41); `FeeRouter.flush()`; the router pointer is the existing immutable `FEE_SOURCE`; tests in `test/PullFees.t.sol`; docs/FLOW.md 10.8. `sellForExitToken` does not read the eth pot and does not pull |
