@@ -55,7 +55,7 @@ Etherscan credentials come from `ETHERSCAN_API_KEY`, then Foundry's resolved con
 
 After displaying the fee and resolving verification credentials, deploy asks for `y` to continue. Only then does Foundry open `ripe0x` and ask for its password. Cancellation sends nothing. To use Ledger, pass `--ledger --sender <address>`; to use another encrypted keystore, pass `--account <name> --sender <address>`. The tool accepts no private-key argument.
 
-Each mode accepts `--rpc-url`. Use `simulate --fork-block 26158000` for a historical simulation; omitting `--fork-block` reads current state. Read-only script subprocesses omit wallet/broadcast arguments and remove inherited signer environment settings. They run from a temporary directory outside the project, with an explicit project root, so Foundry cannot reload signer settings from the project `.env` before the fee preview.
+Each mode accepts `--rpc-url`. Use `simulate --fork-block 26158000` for a historical simulation; omitting `--fork-block` reads current state. Read-only script subprocesses omit wallet/broadcast arguments and remove inherited signer environment settings. They run from a fresh temporary directory with a `.git` marker that bounds Foundry project discovery, plus an explicit build root. This prevents ancestor `.env` signer settings from reappearing even when `TMPDIR` points inside a project.
 
 Before signing, deploy mode calls `python3 script/director.py check --gate deploy`. The current repository gate is unmet and remains enforced; standalone helper tooling does not waive it. The user request authorized writing these scripts, not broadcasting a mainnet transaction.
 

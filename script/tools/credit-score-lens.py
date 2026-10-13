@@ -46,9 +46,11 @@ def run(args, extra_env=None, wallet_free=False):
 
 def capture(args, extra_env=None, wallet_free=False):
     if wallet_free:
-        # Foundry loads .env before parsing --root. An external cwd prevents signer settings
+        # Foundry loads .env before parsing --root. An isolated cwd prevents signer settings
         # from being reintroduced by the project's .env after sanitizing the environment.
         with tempfile.TemporaryDirectory(prefix="credit-score-lens-read-") as directory:
+            # TMPDIR may itself be inside a project; this marker bounds Foundry's root search.
+            (Path(directory) / ".git").mkdir()
             command = list(args)
             command[2] = str(ROOT / command[2])
             command += ["--root", str(ROOT)]

@@ -217,6 +217,16 @@ class CreditScoreLensToolTest(unittest.TestCase):
             self.assertIn("Estimated gas fee budget", output.getvalue())
             self.assertEqual(run.call_count, 1)
 
+    def test_project_temp_directory_cannot_reload_dotenv_signer(self):
+        # Exercise Foundry startup, not a mock: --help loads dotenv but never opens a wallet.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "foundry.toml").write_text('[profile.default]\n')
+            (root / ".env").write_text('ETH_KEYSTORE_ACCOUNT=__dotenv_must_not_load__\n')
+            with patch.dict(tool.os.environ, {"TMPDIR": directory}), patch.object(tool.tempfile, "tempdir", directory):
+                output = tool.capture(["forge", "script", tool.DEPLOY_SCRIPT, "--help"], wallet_free=True)
+            self.assertNotIn("__dotenv_must_not_load__", output)
+
     def test_deploy_shows_fee_before_unlock_and_reuses_quoted_fees(self):
         args = tool.parser().parse_args(["deploy"])
         events = []
