@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Vm} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
-import {Lane, Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../../src/interfaces/Interfaces.sol";
+import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../../src/interfaces/Interfaces.sol";
 import {BidModel} from "../utils/BidModel.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 import {MockExitModule} from "../standins/MockExitModule.sol";
@@ -747,14 +747,14 @@ abstract contract HandlerOwner is HandlerBase {
         bytes4 want;
     }
 
-    /// the oldest credit of the pile of `lane`, zero when it is empty
-    function _head(Lane lane) internal view returns (uint256) {
-        uint256[] memory page = core.pilePage(lane, 0, 1);
+    /// the oldest credit of the pile, zero when it is empty
+    function _head() internal view returns (uint256) {
+        uint256[] memory page = core.pilePage(0, 1);
         return page.length == 0 ? 0 : page[0];
     }
 
     function _rescueBooks() internal view returns (uint256) {
-        return uint256(keccak256(abi.encode(core.pileSize(Lane.Eth), core.pileSize(Lane.Exit), core.heldStatements())));
+        return uint256(keccak256(abi.encode(core.pileSize(), core.heldStatements())));
     }
 
     /// the token and the caller of one `rescueNft` call, by kind. a stray credit is moved into the core here
@@ -762,8 +762,7 @@ abstract contract HandlerOwner is HandlerBase {
         r.who = owner;
         if (m == 0) {
             r.token = address(CREDITS);
-            r.id = _head(seed % 2 == 0 ? Lane.Eth : Lane.Exit);
-            if (r.id == 0) r.id = _head(seed % 2 == 0 ? Lane.Exit : Lane.Eth);
+            r.id = _head();
             r.ok = r.id != 0;
             r.want = ICore.InPile.selector;
         } else if (m == 1) {
@@ -794,7 +793,7 @@ abstract contract HandlerOwner is HandlerBase {
             r.want = ICore.NotHolder.selector;
         } else if (m == 4) {
             r.token = address(CREDITS);
-            r.id = _head(Lane.Eth);
+            r.id = _head();
             r.ok = r.id != 0;
             r.who = _actor(seed >> 16);
             r.want = ICore.OnlyOwner.selector;
@@ -943,17 +942,8 @@ abstract contract HandlerOwner is HandlerBase {
         q.sinkEth = to.balance;
         q.sinkX = _xBal(to);
         q.maxCredits = seed % 7 == 0 ? 0 : _logBound(seed >> 8, 1, 120);
-        uint256 e = core.pileSize(Lane.Eth);
-        uint256 x = core.pileSize(Lane.Exit);
-        uint256[] memory eth = core.pilePage(Lane.Eth, 0, q.maxCredits < e ? q.maxCredits : e);
-        uint256[] memory exit = core.pilePage(Lane.Exit, 0, q.maxCredits < x ? q.maxCredits : x);
-        q.credits = new uint256[](eth.length + exit.length);
-        for (uint256 i; i < eth.length; ++i) {
-            q.credits[i] = eth[i];
-        }
-        for (uint256 i; i < exit.length; ++i) {
-            q.credits[eth.length + i] = exit[i];
-        }
+        uint256 e = core.pileSize();
+        q.credits = core.pilePage(0, q.maxCredits < e ? q.maxCredits : e);
         q.statements = core.heldStatements();
     }
 
@@ -969,11 +959,11 @@ abstract contract HandlerOwner is HandlerBase {
         if (core.ethPot() != 0 || core.xPot() != 0) _flag(V_OWNER, "a tracker is not zero after a migration");
         if (core.ethToBuyback() != q.buyback) _flag(V_OWNER, "migrate moved the eth buyback pot");
         if (core.ethRedeemBurn() != q.reserve) _flag(V_OWNER, "migrate moved the redeem burn reserve");
-        // credits: the first of each pile
+        // credits: the first of the pile
         for (uint256 i; i < q.credits.length; ++i) {
             uint256 id = q.credits[i];
             if (CREDITS.ownerOf(id) != to) _flag(V_OWNER, "a credit of the batch did not reach the successor");
-            (bool inPile,,,) = core.creditInfo(id);
+            (bool inPile,,) = core.creditInfo(id);
             if (inPile) _flag(V_OWNER, "a migrated credit is still in a pile");
             CG storage c = cg[id];
             if (!c.inPile) {

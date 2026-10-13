@@ -13,7 +13,6 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {
-    Lane,
     ICredits,
     ICreditScore,
     ICreditStrategy,
@@ -245,7 +244,6 @@ abstract contract HandlerBase is Test {
     // ghost credits
     struct CG {
         bool inPile;
-        uint8 lane;
         uint256 cost;
     }
 
@@ -253,13 +251,12 @@ abstract contract HandlerBase is Test {
     uint256[] internal cgList;
 
     // ghost statements. status: the one place every statement ever composed sits at any time
-    uint8 public constant S_HELD = 1; // held by the core for sale (eth lane) or exit
-    uint8 public constant S_SOLD = 2; // eth lane, sold by the controller through `sellTo`, the buyer holds it
+    uint8 public constant S_HELD = 1; // held by the core for sale or exit
+    uint8 public constant S_SOLD = 2; // sold by the controller through `sellTo`, the buyer holds it
     uint8 public constant S_EXITED = 3; // handed to the exit module
 
     struct SG {
         uint8 status;
-        uint8 lane;
         uint256 cost;
         uint64 composedAt;
         uint256 floor; // sold: the hard floor (cost * saleFloorBps) in force at the sale
@@ -394,15 +391,14 @@ abstract contract HandlerBase is Test {
 
     /// the fixture reports credits it sold into the core and statements it composed before the run starts, so
     /// the ghost model starts in step with the core.
-    function seedGhostPile(uint256 id, uint8 lane, uint256 cost) external {
-        _addCredit(id, lane, cost);
+    function seedGhostPile(uint256 id, uint256 cost) external {
+        _addCredit(id, cost);
     }
 
     /// a statement the core held before the run began, read back from the core
     function seedGhostStatement(uint256 sid) external {
-        (, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
+        (, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
         SG storage g = _sg[sid];
-        g.lane = uint8(lane);
         g.cost = cost;
         g.composedAt = composedAt;
         g.status = S_HELD;
@@ -411,9 +407,8 @@ abstract contract HandlerBase is Test {
 
     /// a statement bought before the run began, with the buyer and the price paid
     function seedGhostSold(uint256 sid, address buyer, uint256 price) external {
-        (, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
+        (, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
         SG storage g = _sg[sid];
-        g.lane = uint8(lane);
         g.cost = cost;
         g.composedAt = composedAt;
         g.status = S_SOLD;
@@ -497,7 +492,7 @@ abstract contract HandlerBase is Test {
     }
 
     /// which ever composed statements a picker may return
-    uint256 internal constant K_ETH_HELD = 0; // held by the core on the eth lane
+    uint256 internal constant K_HELD = 0; // held by the core
     uint256 internal constant K_ANY = 1;
 
     /// a statement the ghost has seen, from `seed` on, of the kind asked. not found when there is none
@@ -507,7 +502,7 @@ abstract contract HandlerBase is Test {
             sid = everHeld[(seed % n + k) % n];
             SG storage g = _sg[sid];
             if (kind == K_ANY) return (sid, true);
-            if (g.status == S_HELD && g.lane == uint8(Lane.Eth)) return (sid, true);
+            if (g.status == S_HELD) return (sid, true);
         }
         return (0, false);
     }
@@ -582,9 +577,9 @@ abstract contract HandlerBase is Test {
         }
     }
 
-    function _addCredit(uint256 id, uint8 lane, uint256 cost) internal {
+    function _addCredit(uint256 id, uint256 cost) internal {
         if (!cg[id].inPile && cg[id].cost == 0) cgList.push(id);
-        cg[id] = CG(true, lane, cost);
+        cg[id] = CG(true, cost);
     }
 
     function _ownerOf(uint256 sid) internal view returns (address o) {
@@ -1264,8 +1259,7 @@ abstract contract HandlerBase is Test {
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.CreditBought.selector) continue;
             uint256 id = uint256(logs[i].topics[1]);
-            (uint256 lane, uint256 cost) = abi.decode(logs[i].data, (uint256, uint256));
-            if (lane != 0) _flag(V_MODEL, "sellForEth bought into the wrong lane");
+            uint256 cost = abi.decode(logs[i].data, (uint256));
             for (uint256 j; j < ids.length; ++j) {
                 if (ids[j] == id) {
                     costs[j] = cost;
@@ -1291,7 +1285,7 @@ abstract contract HandlerBase is Test {
 
         // the drop on each fill, independently: dropPerCreditBps per credit, no lower than the minute floor
         for (uint256 i; i < ids.length; ++i) {
-            _addCredit(ids[i], 0, costs[i]);
+            _addCredit(ids[i], costs[i]);
             _removeFrom(inventory[who], ids[i]);
         }
         (uint256 stored, uint256 r) = _rateAfterSells(st, p, costs);
@@ -1436,7 +1430,7 @@ abstract contract HandlerBase is Test {
         }
         if (CREDITS.ownerOf(id) != address(core)) _flag(V_MODEL, "listing did not deliver the credit");
         gone[id] = true;
-        _addCredit(id, 0, cost + paid);
+        _addCredit(id, cost + paid);
     }
 
     /// the payment of one `buyListing`: at most the bid less the cost, at most the gas cap at the capped base fee plus
@@ -1481,11 +1475,11 @@ abstract contract HandlerBase is Test {
     //////////////////////////////////////////////////////////////*/
 
     /// the page the controller would answer, asked the way the core asks it.
-    function _peekPage(Lane lane) internal view returns (bool ready, uint256[] memory ids, uint256 format) {
+    function _peekPage() internal view returns (bool ready, uint256[] memory ids, uint256 format) {
         ids = new uint256[](80);
-        // the core reads the controller under a fixed gas cap of 500_000 in both lanes, and so does the model
+        // the core reads the controller under a fixed gas cap of 500_000, and so does the model
         (bool ok, bytes memory out) =
-            core.controller().staticcall{gas: 500_000}(abi.encodeWithSignature("nextPage(uint8)", uint8(lane)));
+            core.controller().staticcall{gas: 500_000}(abi.encodeWithSignature("nextPage()"));
         if (!ok || out.length < 82 * 32) return (false, ids, 0);
         (uint256 flag, uint256[80] memory p, uint256 f) = abi.decode(out, (uint256, uint256[80], uint256));
         for (uint256 i; i < 80; ++i) {
@@ -1494,11 +1488,11 @@ abstract contract HandlerBase is Test {
         return (flag == 1, ids, f);
     }
 
-    function _validPage(Lane lane, uint256[] memory ids, uint256 format) internal view returns (bool) {
+    function _validPage(uint256[] memory ids, uint256 format) internal view returns (bool) {
         if (format > 7) return false;
         for (uint256 i; i < 80; ++i) {
             CG storage c = cg[ids[i]];
-            if (!c.inPile || c.lane != uint8(lane)) return false;
+            if (!c.inPile) return false;
             for (uint256 j; j < i; ++j) {
                 if (ids[j] == ids[i]) return false;
             }
@@ -1521,19 +1515,9 @@ abstract contract HandlerBase is Test {
 
     /// composes the controller's page. rare by gate, because it costs about 8m gas.
     function compose(uint256 gate, uint256 feeSeed) external checked {
-        _compose(A_COMPOSE, Lane.Eth, gate, feeSeed);
-    }
-
-    function composeExit(uint256 gate, uint256 feeSeed) external checked {
-        _compose(A_COMPOSE_EXIT, Lane.Exit, gate, feeSeed);
-    }
-
-    function _compose(uint8 a, Lane lane, uint256 gate, uint256 feeSeed) internal {
-        // composeExit feeds the exit token bid lane, which runs only while exitMode is 2
-        if (lane == Lane.Exit && (!phase2() || core.settings().exitMode != 2)) return _skip(a);
-        bytes4 sel = lane == Lane.Eth ? ICore.compose.selector : ICore.composeExit.selector;
-        if (_retiredRefusal(a, keeper, abi.encodeWithSelector(sel))) return;
-        (bool ready, uint256[] memory ids, uint256 format) = _peekPage(lane);
+        uint8 a = A_COMPOSE;
+        if (_retiredRefusal(a, keeper, abi.encodeWithSelector(ICore.compose.selector))) return;
+        (bool ready, uint256[] memory ids, uint256 format) = _peekPage();
         // a pile of 80 is composed on one gate in two. a short pile only now and then, to see NotReady
         if (ready ? gate % 2 != 0 : gate % 13 != 0) return _skip(a);
         CPre memory p;
@@ -1541,7 +1525,7 @@ abstract contract HandlerBase is Test {
         p.basefee = _logBound(feeSeed, 0.05 gwei, 300 gwei);
         vm.fee(p.basefee);
         p.pull = _beginPull();
-        p.valid = ready && _validPage(lane, ids, format);
+        p.valid = ready && _validPage(ids, format);
         p.st = core.settings();
         p.pot = core.ethPot();
         p.rate = core.ethRate();
@@ -1553,31 +1537,24 @@ abstract contract HandlerBase is Test {
                 p.sum += cg[ids[i]].cost;
             }
         }
-        uint256 xb0 = _xBal(address(core));
         RS memory rs = _rs();
         _endPull(p.pull);
         vm.recordLogs();
         _att(a);
         vm.prank(keeper);
-        if (lane == Lane.Eth) {
-            try core.compose() {
-                _ok(a);
-                _afterCompose(lane, ids, p);
-            } catch (bytes memory why) {
-                rs = p.pull.rs0;
-                _composeFailed(a, p, why);
-            }
-        } else {
-            try core.composeExit() {
-                _ok(a);
-                _afterCompose(lane, ids, p);
-            } catch (bytes memory why) {
-                rs = p.pull.rs0;
-                _composeFailed(a, p, why);
-            }
+        try core.compose() {
+            _ok(a);
+            _afterCompose(ids, p);
+        } catch (bytes memory why) {
+            rs = p.pull.rs0;
+            _composeFailed(a, p, why);
         }
-        _x(xb0, 0, 0, "compose exit token");
         _rsCheck(rs, 0);
+    }
+
+    /// the exit lane compose was removed: one pile, one compose. the action index stays stable as a no op
+    function composeExit(uint256, uint256) external checked {
+        _skip(A_COMPOSE_EXIT);
     }
 
     function _composeFailed(uint8 a, CPre memory p, bytes memory why) internal {
@@ -1610,7 +1587,7 @@ abstract contract HandlerBase is Test {
         _eth(bal0, pay, 0, what);
     }
 
-    function _afterCompose(Lane lane, uint256[] memory ids, CPre memory p) internal {
+    function _afterCompose(uint256[] memory ids, CPre memory p) internal {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         _pullChecks(p.pull, logs);
         if (!p.valid) _flag(V_COMPOSE, "composed a page the ghost model considers invalid");
@@ -1620,14 +1597,13 @@ abstract contract HandlerBase is Test {
         }
         _callerPayment(V_COMPOSE, p.st, COMPOSE_GAS, p.pot, p.bal, p.callerBal, "compose");
         uint256 cost = p.sum;
-        (bool held, Lane l, uint256 coreCost, uint64 composedAt) = core.statementInfo(sid);
-        if (!held || l != lane || coreCost != cost) _flag(V_MODEL, "statement cost basis differs from the ghost sum");
+        (bool held, uint256 coreCost, uint64 composedAt) = core.statementInfo(sid);
+        if (!held || coreCost != cost) _flag(V_MODEL, "statement cost basis differs from the ghost sum");
         if (composedAt != block.timestamp) _flag(V_MODEL, "the compose time is not the block time");
         for (uint256 i; i < 80; ++i) {
             cg[ids[i]].inPile = false;
         }
         SG storage g = _sg[sid];
-        g.lane = uint8(lane);
         g.cost = cost;
         g.composedAt = composedAt;
         g.status = S_HELD;
@@ -1940,7 +1916,7 @@ abstract contract HandlerBase is Test {
         p.rs = _rs();
         p.b0 = address(core).balance;
         p.tb0 = core.ethToBuyback();
-        p.size0 = core.pileSize(Lane.Eth);
+        p.size0 = core.pileSize();
         uint256 price = _priceNow(p.rs.st);
         p.costs = new uint256[](ids.length);
         for (uint256 k; k < ids.length; ++k) {
@@ -1954,22 +1930,22 @@ abstract contract HandlerBase is Test {
     /// are as before
     function _adoptPost(AdoptPre memory p, uint256[] memory ids, bool passes) internal {
         // a refused call reverted whole, pull included: the state is the one before the pull, which `_failed` checks
-        if (!passes && p.size0 != core.pileSize(Lane.Eth)) {
-            _flag(V_MODEL, "a refused adopt changed the eth pile");
+        if (!passes && p.size0 != core.pileSize()) {
+            _flag(V_MODEL, "a refused adopt changed the pile");
             return;
         }
         if (!passes) return;
-        uint256 grew = core.pileSize(Lane.Eth) - p.size0;
+        uint256 grew = core.pileSize() - p.size0;
         if (grew != (passes ? ids.length : 0)) {
-            _flag(V_MODEL, "adopt changed the eth pile by another number than its credits");
+            _flag(V_MODEL, "adopt changed the pile by another number than its credits");
         }
         if (passes && grew == ids.length) {
             for (uint256 k; k < ids.length; ++k) {
-                (bool inPile, Lane lane, uint256 cost, uint64 at) = core.creditInfo(ids[k]);
-                if (!inPile || lane != Lane.Eth || cost != p.costs[k] || at != block.timestamp) {
+                (bool inPile, uint256 cost, uint64 at) = core.creditInfo(ids[k]);
+                if (!inPile || cost != p.costs[k] || at != block.timestamp) {
                     _flag(V_MODEL, "an adopted credit has another record than the price state");
                 }
-                _addCredit(ids[k], 0, p.costs[k]);
+                _addCredit(ids[k], p.costs[k]);
             }
         }
         (uint256 anchor1, uint256 floor1, uint256 bucket1) = _anchorState();
@@ -2183,12 +2159,18 @@ abstract contract HandlerBase is Test {
         }
     }
 
-    /// sells credits into the exit token bid. ids are picked so the prices fit the pot.
+    /// sells credits into the exit token bid. ids are picked so the prices fit the pot. the recorded eth cost basis
+    /// reads `valueWei` from the core's controller, so the bid is only exercised with the real controller in force
+    /// (which has the exit pool key set); a hostile controller swapped in has no pool key and is left alone
     function sellForExit(uint256 aSeed, uint256 nSeed, uint256 pick) external checked {
         uint8 a = A_SELL_FOR_EXIT;
         if (!phase2() || core.settings().exitMode != 2) return _skip(a);
         address who = _actor(aSeed);
+        // the retired refusal is checked first: a retired core reverts before it reads the controller's valueWei
         if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForExitToken(uint256[])", _firstOf(who)))) return;
+        // the bid reads valueWei from the core's controller, so exercise it only with the real controller in force
+        // (which has the exit pool key); a hostile controller swapped in has no pool key and is left alone
+        if (core.controller() != v1) return _skip(a);
         uint256 len = inventory[who].length;
         if (len == 0) return _skip(a);
         // the bid pays by the lower of the stored unit and the module's live unit (`_bidUnit`), both nonzero here. a
@@ -2230,22 +2212,21 @@ abstract contract HandlerBase is Test {
         _rsCheck(rs, 0);
     }
 
-    /// @dev the checks after a successful `sellForExit` (a helper so the locals fit the stack)
+    /// @dev the checks after a successful `sellForExit` (a helper so the locals fit the stack). the credit enters the
+    /// one pile with an eth cost basis (the `CreditBought` event), the seller is paid exit tokens from `xPot`
     function _afterSellExit(address who, XPre memory p, uint256 bound_, uint256 b0) internal {
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        uint256 total;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.CreditBought.selector) continue;
-            (uint256 lane, uint256 cost) = abi.decode(logs[i].data, (uint256, uint256));
+            uint256 cost = abi.decode(logs[i].data, (uint256));
             uint256 id = uint256(logs[i].topics[1]);
-            if (lane != 1) _flag(V_MODEL, "sellForExit bought into the wrong lane");
-            total += cost;
-            _addCredit(id, 1, cost);
+            // the recorded eth cost is the higher of the exit tokens valued in wei and the eth bid, both positive
+            if (cost == 0) _flag(V_MODEL, "sellForExit recorded a zero eth cost basis");
+            _addCredit(id, cost);
             _removeFrom(inventory[who], id);
         }
         uint256 paid = _xBal(who) - p.actorX;
-        if (paid != total) _flag(V_MODEL, "sellForExit paid differs from the sum of its events");
-        // each credit is paid exactly score * unit * net / 10_000, so the total equals the figure read before
+        // the exit tokens paid are score * unit * net / 10_000 per credit, so they equal the figure read before
         if (paid != bound_) _flag(V_ABOVE_CAP, "sellForExit paid differs from the per point bid read before");
         _x(p.xbal, paid, 0, "sellForExit");
         if (core.xPot() != p.xpot - paid) _flag(V_POT, "sellForExit exit pot not reduced by the price");
@@ -2289,29 +2270,26 @@ abstract contract HandlerBase is Test {
         uint256 callerBal;
         uint256 gasUsed;
         uint256 cost;
-        uint8 lane;
         bool ripe;
         /// the selector the call must revert with when the model says it reverts, zero when the cause is the module
         bytes4 refusal;
         Settings st;
     }
 
-    /// exits a held statement through the module. an eth lane statement is eligible when its asking price is at or below
-    /// its cost; an exit lane statement is eligible at once. redemption runs only while `exitMode` is at least 1. the
-    /// module may be set to underpay, and then the exit must revert
+    /// exits a held statement through the module. a statement is eligible when its asking price is at or below its
+    /// cost. redemption runs only while `exitMode` is at least 1. the module may be set to underpay, and then the exit
+    /// must revert
     function exitStatement(uint256 sIdx, uint256 aSeed) external checked {
         uint8 a = A_EXIT_STATEMENT;
         if (!phase2()) return _skip(a);
         uint256[] memory held = core.heldStatements();
         if (held.length == 0) return _skip(a);
         uint256 sid = held[sIdx % held.length];
-        (, Lane lane,,) = core.statementInfo(sid);
         EPre memory p;
         p.st = core.settings();
-        p.lane = uint8(lane);
         SG storage g = _sg[sid];
         bool modeOn = p.st.exitMode >= 1;
-        bool eligible = lane == Lane.Exit || _ctlAtCost(sid);
+        bool eligible = _ctlAtCost(sid);
         p.ripe = modeOn && eligible;
         if (!modeOn) p.refusal = ICore.ExitModeOff.selector;
         else if (!eligible) p.refusal = ICore.NotEligible.selector;
@@ -2360,8 +2338,8 @@ abstract contract HandlerBase is Test {
         // every exit token received goes to the exit bid pot
         if (core.xPot() != p.xpot + received) _flag(V_POT, "exit pot did not take the whole received amount");
         _x(p.xbal, 0, received, "exitStatement");
-        // an eth lane redemption moves redeemBurnBps of the reserve into the coin buyback
-        uint256 released = p.lane == uint8(Lane.Eth) ? p.reserve0 * p.st.redeemBurnBps / 10_000 : 0;
+        // every redemption moves redeemBurnBps of the reserve into the coin buyback
+        uint256 released = p.reserve0 * p.st.redeemBurnBps / 10_000;
         if (core.ethRedeemBurn() != p.reserve0 - released) _flag(V_POT, "redeem burn reserve not reduced by redeemBurnBps");
         if (core.ethToBuyback() != p.toBuyback0 + released) _flag(V_POT, "the released reserve did not reach the coin buyback");
         _callerPayment(V_EXIT_SHORT, p.st, EXIT_GAS, p.pot0, p.b0, p.callerBal, "exitStatement");

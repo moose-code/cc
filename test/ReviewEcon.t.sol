@@ -7,7 +7,7 @@ import {Fixture} from "./utils/Fixture.sol";
 import {BidModel} from "./utils/BidModel.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
-import {Lane, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 
 /// @notice independent review of the economics (docs/archive/REVIEW-econ.md), on the real stack, after the flow rework. what
 /// survives: the `pilePage` fuzz against a reference walk, exact numbers at the launch settings (they replace the
@@ -24,7 +24,7 @@ abstract contract ReviewEconBase is Fixture {
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
-        (,, cost,) = core.statementInfo(sid);
+        (, cost,) = core.statementInfo(sid);
     }
 }
 
@@ -49,9 +49,8 @@ contract PilePageEquivalence is ReviewEconBase {
         return 0;
     }
 
-    /// the credits after `startAfter` in the pile of `lane`, at most n. the exit pile is empty
-    function _ref(Lane lane, uint256 startAfter, uint256 n) internal view returns (uint256[] memory out) {
-        if (lane == Lane.Exit) return new uint256[](0);
+    /// the credits after `startAfter` in the pile, at most n
+    function _ref(uint256 startAfter, uint256 n) internal view returns (uint256[] memory out) {
         uint256 first = startAfter == 0 ? 0 : _pos(startAfter);
         if (startAfter != 0 && first == 0) return new uint256[](0);
         uint256 c = pile.length - first < n ? pile.length - first : n;
@@ -62,16 +61,12 @@ contract PilePageEquivalence is ReviewEconBase {
     }
 
     /// forge-config: default.fuzz.runs = 300
-    function testFuzz_pilePageEqualsTheReference(uint8 laneRaw, uint256 pick, uint256 n, uint256 junk) public view {
-        Lane lane = laneRaw % 2 == 0 ? Lane.Eth : Lane.Exit;
+    function testFuzz_pilePageEqualsTheReference(uint256 pick, uint256 n, uint256 junk) public view {
         uint256 mode = pick % 4;
         uint256 startAfter = mode == 0 ? 0 : mode == 1 ? pile[(pick >> 8) % pile.length] : mode == 2 ? junk : pile[0];
-        // a start id of the other lane is not a valid input, see test_pilePageCrossLaneStartDiffers
-        // a junk id can collide with a member of the eth pile, which is the same cross lane input
-        if (lane == Lane.Exit && (mode == 1 || mode == 3 || _pos(startAfter) != 0)) startAfter = 0;
         n = (pick >> 40) % 3 == 0 ? n : n % 90;
-        uint256[] memory got = core.pilePage(lane, startAfter, n);
-        uint256[] memory want = _ref(lane, startAfter, n);
+        uint256[] memory got = core.pilePage(startAfter, n);
+        uint256[] memory want = _ref(startAfter, n);
         assertEq(got.length, want.length, "length");
         for (uint256 i; i < got.length; ++i) {
             assertEq(got[i], want[i], "id");
@@ -79,17 +74,11 @@ contract PilePageEquivalence is ReviewEconBase {
     }
 
     function test_pilePageEdges() public view {
-        assertEq(core.pilePage(Lane.Eth, 0, 0).length, 0, "n zero");
-        assertEq(core.pilePage(Lane.Eth, 0, type(uint256).max).length, 37, "huge n is the pile");
-        assertEq(core.pilePage(Lane.Eth, pile[36], 5).length, 0, "after the tail");
-        assertEq(core.pilePage(Lane.Eth, pile[35], 5).length, 1);
-        assertEq(core.pilePage(Lane.Exit, 0, 80).length, 0, "empty lane");
-        assertEq(core.pilePage(Lane.Eth, 0, 80).length, 37, "page of 80 over a pile of 37");
-    }
-
-    /// a start id taken from the other lane cuts at the size of the lane asked about
-    function test_pilePageCrossLaneStart() public view {
-        assertEq(core.pilePage(Lane.Exit, pile[0], 10).length, 0, "empty lane, empty page");
+        assertEq(core.pilePage(0, 0).length, 0, "n zero");
+        assertEq(core.pilePage(0, type(uint256).max).length, 37, "huge n is the pile");
+        assertEq(core.pilePage(pile[36], 5).length, 0, "after the tail");
+        assertEq(core.pilePage(pile[35], 5).length, 1);
+        assertEq(core.pilePage(0, 80).length, 37, "page of 80 over a pile of 37");
     }
 }
 
@@ -116,7 +105,7 @@ contract LaunchSettingsExactNumbers is ReviewEconBase {
         core.sellForEth(ids);
         assertEq(seller.balance - before, prices[0] + prices[1] + prices[2], "the three prices paid");
         for (uint256 i; i < 3; ++i) {
-            (,, uint256 cost,) = core.creditInfo(ids[i]);
+            (, uint256 cost,) = core.creditInfo(ids[i]);
             assertEq(cost, prices[i], "cost basis is the price paid");
         }
         assertEq(core.rateAtCheckpoint(), r3 * 9_950 / 10_000);
@@ -172,7 +161,7 @@ contract ReserveSaleAndOutsiders is ReviewEconBase {
         vm.prank(a);
         STATEMENTS.safeTransferFrom(a, address(core), sid);
         assertEq(STATEMENTS.ownerOf(sid), address(core));
-        (bool held,,,) = core.statementInfo(sid);
+        (bool held,,) = core.statementInfo(sid);
         assertFalse(held);
         assertEq(core.heldStatements().length, 0, "not counted");
         vm.prank(address(ctl));
@@ -185,7 +174,7 @@ contract ReserveSaleAndOutsiders is ReviewEconBase {
     }
 
     function _costOf(uint256 sid) internal view returns (uint256 cost) {
-        (,, cost,) = core.statementInfo(sid);
+        (, cost,) = core.statementInfo(sid);
     }
 }
 

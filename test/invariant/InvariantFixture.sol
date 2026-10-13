@@ -5,7 +5,8 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {Lane, ICreditStrategy, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
+import {ICreditStrategy, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
+import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Fixture} from "../utils/Fixture.sol";
 import {CreditIds} from "../utils/CreditIds.sol";
 import {MockExitModule} from "../standins/MockExitModule.sol";
@@ -135,13 +136,34 @@ abstract contract InvariantFixture is Fixture {
         if (!inWindow) vm.warp(block.timestamp + 7 days + 1);
         vm.startPrank(owner);
         core.addTarget(address(probeTarget));
-        if (hostile) core.setController(address(fuzz));
         if (phase2) {
             core.setExitModule(address(mod));
             Settings memory es = core.settings();
             es.exitMode = 2;
             core.setSettings(es);
+            // the exit token / native eth pool prices the exit bid's eth cost basis and the statement value floor. a
+            // real initialized pool at a 1:1 sqrt price, pointed at by the real controller (`valueWei`, decision 92)
+            PoolKey memory vk = PoolKey({
+                currency0: Currency.wrap(address(0)),
+                currency1: Currency.wrap(address(xt)),
+                fee: 3000,
+                tickSpacing: 60,
+                hooks: IHooks(address(0))
+            });
+            // the exit token is cheap in eth, so the exit bid's eth cost basis is the eth market bid and the decision
+            // 87 value floor stays below the sale curve
+            PM.initialize(vk, uint160((uint256(1) << 96) * 1000));
+            IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
+                currency0: IControllerV1.Currency.wrap(address(0)),
+                currency1: IControllerV1.Currency.wrap(address(xt)),
+                fee: 3000,
+                tickSpacing: 60,
+                hooks: address(0)
+            });
+            ctl.setExitPoolKey(k);
         }
+        // the hostile controller swap comes after the pool key is set on the real controller, so the key survives it
+        if (hostile) core.setController(address(fuzz));
         vm.stopPrank();
         assertTrue(core.allowedTarget(address(probeTarget)));
     }
@@ -202,7 +224,7 @@ abstract contract InvariantFixture is Fixture {
             vm.prank(keeper);
             core.compose();
         }
-        assertEq(core.pileSize(Lane.Eth), LEFT_IN_PILE);
+        assertEq(core.pileSize(), LEFT_IN_PILE);
         if (!inWindow) {
             (sold1, price1) = _saleOf(firstStatement);
             assertGt(core.ethToBuyback(), 0);
@@ -216,9 +238,20 @@ abstract contract InvariantFixture is Fixture {
             for (uint256 i; i < 80; ++i) {
                 exitIds[i] = ids[ethN + i];
             }
+            // the exit bid reads `valueWei` from the core's controller, so the real one must be in force (the hostile
+            // suite set the fuzz controller). the credits enter the single pile with an eth cost basis
+            address current = core.controller();
+            if (current != address(ctl)) {
+                vm.prank(owner);
+                core.setController(address(ctl));
+            }
             vm.prank(filler);
             core.sellForExitToken(exitIds);
-            assertEq(core.pileSize(Lane.Exit), 80);
+            if (current != address(ctl)) {
+                vm.prank(owner);
+                core.setController(current);
+            }
+            assertEq(core.pileSize(), LEFT_IN_PILE + 80);
         }
     }
 
@@ -276,9 +309,12 @@ abstract contract InvariantFixture is Fixture {
     }
 
     /// tells the handler what the fixture already did, so the ghost model starts level with the core.
-    function _seedGhosts(bool phase2) internal {
-        _seedLane(Lane.Eth);
-        if (phase2) _seedLane(Lane.Exit);
+    function _seedGhosts(bool) internal {
+        uint256[] memory ids = core.pilePage(0, 200);
+        for (uint256 i; i < ids.length; ++i) {
+            (, uint256 cost,) = core.creditInfo(ids[i]);
+            handler.seedGhostPile(ids[i], cost);
+        }
         uint256[] memory held = core.heldStatements();
         for (uint256 i; i < held.length; ++i) {
             handler.seedGhostStatement(held[i]);
@@ -286,14 +322,6 @@ abstract contract InvariantFixture is Fixture {
         if (sold1 != 0) handler.seedGhostSold(sold1, whale, price1);
         if (sold2 != 0) handler.seedGhostSold(sold2, whale, price2);
         handler.seedEthBooks();
-    }
-
-    function _seedLane(Lane lane) internal {
-        uint256[] memory ids = core.pilePage(lane, 0, 200);
-        for (uint256 i; i < ids.length; ++i) {
-            (,, uint256 cost,) = core.creditInfo(ids[i]);
-            handler.seedGhostPile(ids[i], uint8(lane), cost);
-        }
     }
 
     /// how many times each owner action appears in the fuzzer's list. the hostile owner suite raises it

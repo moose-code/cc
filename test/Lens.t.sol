@@ -4,7 +4,10 @@ pragma solidity ^0.8.28;
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICoreLens} from "../src/interfaces/ICoreLens.sol";
-import {Lane} from "../src/interfaces/Interfaces.sol";
+import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 /// `CoreLens` on the fork: the real Core, controller, router, Credits and Statements. every field of `snapshot` is
 /// compared with the direct reads on a populated system, and the flush split with an actual flush
@@ -22,25 +25,28 @@ contract LensTest is Fixture {
         sid = supply + 1;
     }
 
-    function _exitLaneStatement() internal returns (uint256 sid) {
+    /// a statement composed from credits bought through the exit token bid. one pile, so it is a normal statement
+    function _exitBidStatement() internal returns (uint256 sid) {
         uint256[] memory ids = _credits(seller, 80);
         xt.mint(address(core), 1_000_000_000e18);
         core.skim();
         vm.prank(seller);
         core.sellForExitToken(ids);
         uint256 supply = STATEMENTS.supply();
-        core.composeExit();
+        vm.prank(keeper);
+        core.compose();
         sid = supply + 1;
     }
 
-    /// two held eth lane statements, an exit lane statement, credits in both piles, pots in both currencies and a
-    /// router that holds fee eth with the split on
+    /// three held statements, credits in the pile, pots in both currencies and a router that holds fee eth with the
+    /// split on
     function _populate() internal {
         _enterPhase2();
+        _setExitPool();
         _fundPot(3 ether);
         sidFirst = _composedStatement();
         sidSecond = _composedStatement();
-        sidExit = _exitLaneStatement();
+        sidExit = _exitBidStatement();
         _fillEthPile(7);
         uint256[] memory ids = _credits(seller, 5);
         vm.prank(seller);
@@ -62,11 +68,10 @@ contract LensTest is Fixture {
             uint256 sid = held[offset + i];
             ICoreLens.StatementView memory s = v[i];
             assertEq(s.id, sid, "id");
-            (, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
-            assertEq(uint8(s.lane), uint8(lane), "lane");
+            (, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
             assertEq(s.cost, cost, "cost");
             assertEq(s.composedAt, composedAt, "compose time");
-            assertEq(s.askingPrice, lane == Lane.Eth ? ctl.priceOf(sid) : 0, "asking price");
+            assertEq(s.askingPrice, ctl.priceOf(sid), "asking price");
         }
     }
 
@@ -79,15 +84,11 @@ contract LensTest is Fixture {
         assertEq(s.ethRate, core.ethRate(), "ethRate");
         assertEq(s.ethPrice, core.ethPrice(), "ethPrice");
         assertGe(s.ethPrice, s.ethRate, "the read is the price state or the clamp below it");
-        assertEq(s.ethPileSize, 7, "eth pile size");
-        assertEq(s.ethPileSize, core.pileSize(Lane.Eth));
-        assertEq(s.ethPileHead, core.pilePage(Lane.Eth, 0, 1)[0]);
-        assertEq(s.exitPileSize, 5, "exit pile size");
-        assertEq(s.exitPileSize, core.pileSize(Lane.Exit));
-        assertEq(s.exitPileHead, core.pilePage(Lane.Exit, 0, 1)[0]);
-        assertTrue(s.ethPileHead != 0 && s.exitPileHead != 0, "heads");
-        assertFalse(s.ethPageReady, "7 credits are not a page");
-        assertFalse(s.exitPageReady, "5 credits are not a page");
+        assertEq(s.pileSize, 12, "pile size: 7 eth bid plus 5 exit bid");
+        assertEq(s.pileSize, core.pileSize());
+        assertEq(s.pileHead, core.pilePage(0, 1)[0]);
+        assertTrue(s.pileHead != 0, "head");
+        assertFalse(s.pageReady, "12 credits are not a page");
 
         assertEq(s.ethPot, core.ethPot(), "ethPot");
         assertEq(s.ethToBuyback, core.ethToBuyback(), "ethToBuyback");
@@ -118,13 +119,9 @@ contract LensTest is Fixture {
         _assertStatementViews(s.statements, 0);
         for (uint256 i; i < s.statements.length; ++i) {
             ICoreLens.StatementView memory v = s.statements[i];
-            if (v.id == sidExit) {
-                assertEq(uint8(v.lane), uint8(Lane.Exit));
-                assertEq(v.askingPrice, 0);
-            } else {
-                assertTrue(v.id == sidFirst || v.id == sidSecond);
-                assertGt(v.askingPrice, 0);
-            }
+            assertTrue(v.id == sidFirst || v.id == sidSecond || v.id == sidExit);
+            // every statement sells for eth on the curve, so each has an asking price
+            assertGt(v.askingPrice, 0);
         }
     }
 
@@ -166,8 +163,7 @@ contract LensTest is Fixture {
 
     function test_OK_aFullPageIsReady() public {
         _fillEthPile(80);
-        assertTrue(lens.snapshot().ethPageReady, "80 credits make a page");
-        assertFalse(lens.snapshot().exitPageReady);
+        assertTrue(lens.snapshot().pageReady, "80 credits make a page");
     }
 
     function test_OK_statementsPageEqualsTheSnapshotSlices() public {
@@ -209,9 +205,8 @@ contract LensTest is Fixture {
         assertLt((two - empty) / 2, 80_000, "per statement");
     }
 
-    /// the asking price of an eth lane statement is the controller price, a sold statement is no longer listed, an
-    /// exit lane statement has no asking price
-    function test_OK_askingPriceIsTheControllerPriceOfHeldEthLaneStatements() public {
+    /// the asking price of a held statement is the controller price, and a sold statement is no longer listed
+    function test_OK_askingPriceIsTheControllerPriceOfHeldStatements() public {
         _fundPot(3 ether);
         uint256 sold = _composedStatement();
         _buy(address(0xB2D), sold);
@@ -229,16 +224,16 @@ contract LensTest is Fixture {
     }
 
     function _costOf(uint256 sid) internal view returns (uint256 cost) {
-        (,, cost,) = core.statementInfo(sid);
+        (, cost,) = core.statementInfo(sid);
     }
 
     /// the lens requires the answer size of `nextPage` that the Core requires, so both agree on a short answer
     function test_OK_aShortNextPageAnswerIsNotReadyForTheLensAndForCompose() public {
         _fillEthPile(80);
-        uint256[] memory page = core.pilePage(Lane.Eth, 0, 80);
-        assertTrue(lens.snapshot().ethPageReady, "the real controller answers ready");
+        uint256[] memory page = core.pilePage(0, 80);
+        assertTrue(lens.snapshot().pageReady, "the real controller answers ready");
         vm.mockCall(address(ctl), abi.encodeWithSelector(ctl.nextPage.selector), abi.encode(uint256(1)));
-        assertFalse(lens.snapshot().ethPageReady, "one word is a short answer");
+        assertFalse(lens.snapshot().pageReady, "one word is a short answer");
         vm.expectRevert(ICore.NotReady.selector);
         vm.prank(keeper);
         core.compose();
@@ -247,7 +242,7 @@ contract LensTest is Fixture {
             ids[i] = page[i];
         }
         vm.mockCall(address(ctl), abi.encodeWithSelector(ctl.nextPage.selector), abi.encode(uint256(1), ids, uint256(0)));
-        assertTrue(lens.snapshot().ethPageReady, "the full size answer is ready");
+        assertTrue(lens.snapshot().pageReady, "the full size answer is ready");
         vm.clearMockedCalls();
     }
 
@@ -262,15 +257,15 @@ contract LensTest is Fixture {
         assertEq(lens.controller(), address(0xC0DE));
         ICoreLens.Snapshot memory s = lens.snapshot();
         assertEq(s.controller, address(0xC0DE));
-        assertFalse(s.ethPageReady);
+        assertFalse(s.pageReady);
     }
 
     function test_OK_theSnapshotReadsAnEmptySystem() public view {
         ICoreLens.Snapshot memory s = lens.snapshot();
         assertEq(s.ethRate, core.ethRate());
         assertEq(s.statements.length, 0);
-        assertEq(s.ethPileSize, 0);
-        assertEq(s.ethPileHead, 0);
+        assertEq(s.pileSize, 0);
+        assertEq(s.pileHead, 0);
         assertEq(s.successor, address(0));
     }
 }

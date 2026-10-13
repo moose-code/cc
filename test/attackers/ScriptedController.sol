@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Lane, IController} from "../../src/interfaces/Interfaces.sol";
+import {IController} from "../../src/interfaces/Interfaces.sol";
 
 /// settable controller for unit tests. it can also revert `nextPage`.
 contract ScriptedController is IController {
-    mapping(Lane => bool) public pageReady;
-    mapping(Lane => uint256[80]) internal _pageIds;
-    mapping(Lane => uint8) public pageFormat;
+    bool public pageReady;
+    uint256[80] internal _pageIds;
+    uint8 public pageFormat;
     bool public revertPage;
-    /// the eligibility answer the core reads for a phase 2 redemption of an eth lane statement
+    /// the eligibility answer the core reads for a phase 2 redemption
     bool public atCostFlag;
+    /// the answer of `valueWei`, and whether the call reverts (an unset pool key)
+    uint256 public valueWeiAnswer;
+    bool public valueWeiReverts = true;
 
     /// sets the eligibility answer.
     function setAtCost(bool on) external {
@@ -21,11 +24,27 @@ contract ScriptedController is IController {
         return atCostFlag;
     }
 
-    /// sets the page answer for a lane.
-    function setPage(Lane lane, bool ready, uint256[80] calldata ids, uint8 format) external {
-        pageReady[lane] = ready;
-        _pageIds[lane] = ids;
-        pageFormat[lane] = format;
+    /// sets the exit token value answer and clears the revert flag.
+    function setValueWei(uint256 v) external {
+        valueWeiAnswer = v;
+        valueWeiReverts = false;
+    }
+
+    /// makes `valueWei` revert, as an unset pool key does.
+    function setValueWeiReverts(bool on) external {
+        valueWeiReverts = on;
+    }
+
+    function valueWei(uint256) external view returns (uint256) {
+        if (valueWeiReverts) revert NoExitPrice();
+        return valueWeiAnswer;
+    }
+
+    /// sets the page answer.
+    function setPage(bool ready, uint256[80] calldata ids, uint8 format) external {
+        pageReady = ready;
+        _pageIds = ids;
+        pageFormat = format;
     }
 
     /// makes nextPage revert.
@@ -33,8 +52,10 @@ contract ScriptedController is IController {
         revertPage = on;
     }
 
-    function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format) {
+    function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format) {
         if (revertPage) revert();
-        return (pageReady[lane], _pageIds[lane], pageFormat[lane]);
+        return (pageReady, _pageIds, pageFormat);
     }
+
+    error NoExitPrice();
 }

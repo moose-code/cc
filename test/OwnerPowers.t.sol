@@ -5,7 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Lane, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {ProbeTarget} from "./attackers/ProbeTarget.sol";
 import {MockExitModule} from "./standins/MockExitModule.sol";
@@ -129,12 +129,12 @@ contract OwnerFormerQueueTest is OwnerBase {
     function test_controller_composeUsesTheNewControllerAtOnce() public {
         _fillEthPile(80);
         ScriptedController sc = _scripted();
-        uint256[] memory page = core.pilePage(Lane.Eth, 0, 80);
+        uint256[] memory page = core.pilePage(0, 80);
         uint256[80] memory p;
         for (uint256 i; i < 80; ++i) {
             p[i] = page[i];
         }
-        sc.setPage(Lane.Eth, true, p, 0);
+        sc.setPage(true, p, 0);
         _setController(address(sc));
         vm.fee(composeBasefee);
         vm.prank(keeper);
@@ -154,6 +154,7 @@ contract OwnerFormerQueueTest is OwnerBase {
         assertEq(core.unitPerPoint(), UNIT);
         // the exit side is live in the same block once the bid is turned on
         _setExitMode(2);
+        _setExitPoolFor(address(spareToken));
         uint256[] memory ids = _credits(seller, 1);
         spareToken.mint(address(core), 5e19);
         core.skim();

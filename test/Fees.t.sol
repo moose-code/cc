@@ -14,7 +14,7 @@ import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, Mainnet, Settings, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, Settings, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsMevSkimV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {SwapMidListing, SwapMidExit, SwapAroundBuy} from "./attackers/SwapMidCall.sol";
 import {MockExitToken} from "./standins/MockExitToken.sol";

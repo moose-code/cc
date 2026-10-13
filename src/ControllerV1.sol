@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {Halving} from "./lib/Halving.sol";
-import {Lane, Sale, IController, ICoreViews, ICoreSale, Mainnet} from "./interfaces/Interfaces.sol";
+import {Sale, IController, ICoreViews, ICoreSale, Mainnet} from "./interfaces/Interfaces.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
@@ -11,7 +11,7 @@ import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
-/// first policy module. composes the oldest 80 credits of a lane with format 0.
+/// first policy module. composes the oldest 80 pile credits with format 0.
 /// it prices and sells statements. the asking price of a statement of cost `c` is a fraction of `c` in bps that starts at
 /// `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls at a fixed rate per second in two stages: at
 /// `fastDecayBpsPerHour` from `start` to `kneeBps`, then at `slowDecayBpsPerHour` to `floorBps`, where it stays. a `start`
@@ -22,7 +22,7 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// anchor sets the anchor to the mean of the two. every other `buy` leaves the anchor unchanged. the part of the anchor above 10_000 halves every `anchorHalfLife`,
 /// continuously. the controller stores the anchor at its last change (`storedAnchorBps`, `anchorTime`) and evaluates
 /// the decay at the call. the price is computed from the current anchor at every call, so held statements follow it.
-/// `buy` sells a held eth lane statement at once at the asking price.
+/// `buy` sells a held statement at once at the asking price.
 /// the owner can pause sales (`setPaused`). while paused `buy` reverts `Paused`, `priceOf` answers, and the age of a
 /// statement excludes every paused second, so the age of a held statement stops advancing for the length of a pause
 /// and continues from the same age at resume. the anchor decays with wall time in both states, so the start of the
@@ -47,6 +47,8 @@ contract ControllerV1 is IController {
     error Underpaid();
     error Reentrant();
     error Paused();
+    /// `valueWei`: the exit token pool key is unset or the pool price reads zero
+    error NoExitPrice();
 
     event MarkupBpsSet(uint16 markupBps);
     event StartCapBpsSet(uint32 startCapBps);
@@ -263,9 +265,9 @@ contract ControllerV1 is IController {
         if (value > price) price = value;
     }
 
-    /// true when the asking price of eth lane statement `sid` is at or below its stored cost. the asking price excludes
+    /// true when the asking price of statement `sid` is at or below its stored cost. the asking price excludes
     /// paused seconds, so eligibility holds its value while sales are paused. the core reads it to gate a phase 2
-    /// redemption of an eth lane statement
+    /// redemption
     function atCost(uint256 sid) external view returns (bool) {
         (uint256 price, uint256 cost) = _quote(sid);
         return price <= cost;
@@ -290,10 +292,9 @@ contract ControllerV1 is IController {
 
     function _quote(uint256 sid) private view returns (uint256 price, uint256 cost) {
         bool held;
-        Lane lane;
         uint64 composedAt;
-        (held, lane, cost, composedAt) = CORE.statementInfo(sid);
-        if (!held || lane != Lane.Eth) revert NotForSale();
+        (held, cost, composedAt) = CORE.statementInfo(sid);
+        if (!held) revert NotForSale();
         price = _ask(cost, _age(composedAt));
         uint256 floor = cost * ICoreSale(address(CORE)).settings().saleFloorBps / BPS;
         if (price < floor) price = floor;
@@ -308,8 +309,7 @@ contract ControllerV1 is IController {
     /// the redeemable value of statement `sid` in wei from the exit token pool: `rating * unit` exit token base units
     /// priced at the pool sqrt price, where `unit` is the lower of the stored and the module's live `unitPerPoint()`
     /// (a failed live read gives 0). zero when the pool key is unset, no exit module is set, the owed amount is
-    /// zero, or the pool sqrt price reads zero. native eth is `currency0`, so wei per token base unit is
-    /// `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
+    /// zero, or the pool sqrt price reads zero
     function _value(uint256 sid) private view returns (uint256) {
         if (!exitPoolKeySet) return 0;
         if (CORE.exitModule() == address(0)) return 0;
@@ -318,11 +318,30 @@ contract ControllerV1 is IController {
         if (live < unit) unit = live;
         uint256 owed = CORE.ratingOf(sid) * unit;
         if (owed == 0) return 0;
+        (uint256 priceWei, bool priced) = _priceBaseUnits(owed);
+        return priced ? priceWei : 0;
+    }
+
+    /// `exitTokenBaseUnits` priced in wei at the exit token pool. reverts `NoExitPrice` when the pool key is unset or
+    /// the pool sqrt price reads zero. the core reads it in `sellForExitToken` to value the exit tokens a credit was
+    /// bought for (docs/FLOW.md 92)
+    function valueWei(uint256 exitTokenBaseUnits) external view returns (uint256 priceWei) {
+        bool priced;
+        (priceWei, priced) = _priceBaseUnits(exitTokenBaseUnits);
+        if (!priced) revert NoExitPrice();
+    }
+
+    /// `baseUnits` of the exit token priced in wei at the exit token pool. `priced` is false when the pool key is
+    /// unset or the pool sqrt price reads zero. native eth is `currency0`, so wei per token base unit is
+    /// `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
+    function _priceBaseUnits(uint256 baseUnits) private view returns (uint256 priceWei, bool priced) {
+        if (!exitPoolKeySet) return (0, false);
         (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(exitPoolKey.toId());
-        if (sqrtPriceX96 == 0) return 0;
+        if (sqrtPriceX96 == 0) return (0, false);
         uint256 q = FixedPoint96.Q96;
         uint256 p = sqrtPriceX96;
-        return FullMath.mulDiv(FullMath.mulDiv(owed, q, p), q, p);
+        priceWei = FullMath.mulDiv(FullMath.mulDiv(baseUnits, q, p), q, p);
+        priced = true;
     }
 
     /// the age of a statement composed at `composedAt`: the seconds from then to now outside every pause window. a
@@ -354,7 +373,7 @@ contract ControllerV1 is IController {
     /// the mean of the two, at most `startCapBps`. every other sale leaves the stored anchor and `anchorTime` unchanged
     function _moveAnchor(uint256 sid, uint256 price, uint256 cost) private {
         if (cost < anchorMinCost) return;
-        // cost is at least 80: every eth lane credit enters the pile through `_spend` (nonzero) or `adopt` (at least 1 wei)
+        // cost is at least 80: every credit enters the pile through `_spend` (nonzero), `adopt` (at least 1 wei) or the exit bid
         uint256 saleBps = (price * BPS + cost - 1) / cost;
         uint256 current = anchorBps();
         if (saleBps <= current) return;
@@ -404,10 +423,10 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ credit picking, unchanged
 
-    /// ready when the lane pile holds a full page. the page is the 80 oldest credits with format 0.
-    function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format) {
-        if (CORE.pileSize(lane) < PAGE) return (false, ids, 0);
-        uint256[] memory page = CORE.pilePage(lane, 0, PAGE);
+    /// ready when the pile holds a full page. the page is the 80 oldest credits with format 0.
+    function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format) {
+        if (CORE.pileSize() < PAGE) return (false, ids, 0);
+        uint256[] memory page = CORE.pilePage(0, PAGE);
         for (uint256 i; i < PAGE; ++i) {
             ids[i] = page[i];
         }

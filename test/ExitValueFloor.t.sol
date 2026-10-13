@@ -104,7 +104,7 @@ contract ExitValueFloorTest is Fixture {
         vm.deal(buyer, price);
         vm.prank(buyer);
         ctl.buy{value: price}(sid);
-        (bool held,,,) = core.statementInfo(sid);
+        (bool held,,) = core.statementInfo(sid);
         assertFalse(held, "the statement left the core");
         // the opening curve is 150 percent of cost: the anchor moves to the mean of 10_000 and 15_000, not to the
         // far larger value floor in bps of cost

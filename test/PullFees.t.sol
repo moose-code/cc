@@ -5,7 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {CoreBase} from "./CoreUnit.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
-import {Lane, ICreditStrategy} from "../src/interfaces/Interfaces.sol";
+import {ICreditStrategy} from "../src/interfaces/Interfaces.sol";
 import {RefusingEngine, GasBurnerEngine} from "./attackers/FlushEngines.sol";
 import {RevertingRouter} from "./attackers/RevertingRouter.sol";
 import {GasBurningPayee, ContractSeller} from "./attackers/GasBurners.sol";
@@ -121,7 +121,7 @@ contract PullFeesTest is CoreBase {
         uint256 sold;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].topics[0] == ICore.CreditBought.selector) {
-                (, sold) = abi.decode(logs[i].data, (uint8, uint256));
+                sold = abi.decode(logs[i].data, (uint256));
             }
         }
         assertEq(alice.balance - before, sold, "the seller gets the price");
@@ -204,22 +204,10 @@ contract PullFeesTest is CoreBase {
     }
 
     function test_gasOfThePullPerDoor_compose() public {
-        uint256 size = core.pileSize(Lane.Eth);
+        uint256 size = core.pileSize();
         if (size < 80) _fillEthPile(80 - size);
         vm.fee(composeBasefee);
         _doorGas("compose", keeper, abi.encodeCall(core.compose, ()));
-    }
-
-    function test_gasOfThePullPerDoor_composeExit() public {
-        _enterPhase2();
-        _fillExitBuyback();
-        xt.mint(address(core), 100e18);
-        core.skim();
-        uint256[] memory ids = _credits(alice, 80);
-        vm.prank(alice);
-        core.sellForExitToken(ids);
-        vm.fee(composeBasefee);
-        _doorGas("composeExit", keeper, abi.encodeCall(core.composeExit, ()));
     }
 
     function test_gasOfThePullPerDoor_adopt() public {
@@ -264,14 +252,14 @@ contract PullFeesTest is CoreBase {
         assertEq(keeper.balance - keeperBefore, buyPaid, "the buy payment to the buyer");
         assertEq(core.ethToBuyback() - buyback, x.toBuyback);
         assertEq(core.ethPot(), pot + x.toPot - price - buyPaid, "the pot took the fees and paid the purchase");
-        (,, uint256 basis,) = core.creditInfo(LISTED_A);
+        (, uint256 basis,) = core.creditInfo(LISTED_A);
         assertEq(basis, price + buyPaid, "cost basis is price plus the payment");
     }
 
     // ------------------------------------------------------------------ compose
 
     function test_composePullsAndPaysTheCallerNothing() public {
-        uint256 size = core.pileSize(Lane.Eth);
+        uint256 size = core.pileSize();
         if (size < 80) _fillEthPile(80 - size);
         vm.fee(composeBasefee);
         _load();

@@ -5,7 +5,7 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "./interfaces/ICore.sol";
 import {IControllerV1} from "./interfaces/IControllerV1.sol";
 import {IFeeRouter} from "./interfaces/IFeeRouter.sol";
-import {Lane, ICredits, ICreditScore, IExitModule, Settings, Mainnet} from "./interfaces/Interfaces.sol";
+import {ICredits, ICreditScore, IExitModule, Settings, Mainnet} from "./interfaces/Interfaces.sol";
 
 /// read only view of the Core, the controller and the fee router in one call. it has no storage and no state changing
 /// function. the Core and the router are immutable pointers fixed at creation (the router is the Core fee source). the
@@ -16,13 +16,12 @@ import {Lane, ICredits, ICreditScore, IExitModule, Settings, Mainnet} from "./in
 contract CoreLens {
     using FixedPointMathLib for uint256;
 
-    /// the held statement `id` of the Core, with its lane, cost basis, compose time and rating. `askingPrice` is the
-    /// controller price now in wei for an eth lane statement. it is 0 for an exit lane statement and when the
-    /// controller does not answer. `exitEligible` is true when a redemption of this statement would pass the Core gates
-    /// now: a module set, `exitMode` at least 1, and for an eth lane statement an asking price at or below cost
+    /// the held statement `id` of the Core, with its cost basis, compose time and rating. `askingPrice` is the
+    /// controller price now in wei, 0 when the controller does not answer. `exitEligible` is true when a redemption of
+    /// this statement would pass the Core gates now: a module set, `exitMode` at least 1, and an asking price at or
+    /// below cost
     struct StatementView {
         uint256 id;
-        Lane lane;
         uint256 cost;
         uint64 composedAt;
         uint256 rating;
@@ -37,12 +36,9 @@ contract CoreLens {
     struct Snapshot {
         uint256 ethRate;
         uint256 ethPrice;
-        uint256 ethPileSize;
-        uint256 ethPileHead;
-        uint256 exitPileSize;
-        uint256 exitPileHead;
-        bool ethPageReady;
-        bool exitPageReady;
+        uint256 pileSize;
+        uint256 pileHead;
+        bool pageReady;
         uint256 ethPot;
         uint256 ethToBuyback;
         uint256 ethRedeemBurn;
@@ -101,13 +97,10 @@ contract CoreLens {
         ICore core = CORE;
         s.ethRate = core.ethRate();
         s.ethPrice = core.ethPrice();
-        s.ethPileSize = core.pileSize(Lane.Eth);
-        s.ethPileHead = _head(Lane.Eth);
-        s.exitPileSize = core.pileSize(Lane.Exit);
-        s.exitPileHead = _head(Lane.Exit);
+        s.pileSize = core.pileSize();
+        s.pileHead = _head();
         s.controller = controller();
-        s.ethPageReady = _pageReady(s.controller, Lane.Eth);
-        s.exitPageReady = _pageReady(s.controller, Lane.Exit);
+        s.pageReady = _pageReady(s.controller);
         s.ethPot = core.ethPot();
         s.ethToBuyback = core.ethToBuyback();
         s.ethRedeemBurn = core.ethRedeemBurn();
@@ -127,9 +120,9 @@ contract CoreLens {
         s.successorLocked = core.successorLocked();
     }
 
-    /// the oldest credit of the pile of `lane`, zero when the pile is empty
-    function _head(Lane lane) private view returns (uint256) {
-        uint256[] memory ids = CORE.pilePage(lane, 0, 1);
+    /// the oldest credit of the pile, zero when the pile is empty
+    function _head() private view returns (uint256) {
+        uint256[] memory ids = CORE.pilePage(0, 1);
         return ids.length == 0 ? 0 : ids[0];
     }
 
@@ -150,11 +143,11 @@ contract CoreLens {
         toCore = amount - toPayees;
     }
 
-    /// whether the controller answers `nextPage` for `lane` with ready set, read with the gas and the answer size the
+    /// whether the controller answers `nextPage` with ready set, read with the gas and the answer size the
     /// Core requires of it in `compose`. a controller without code, a revert and an answer shorter than
     /// `NEXT_PAGE_BYTES` read as not ready
-    function _pageReady(address ctl, Lane lane) private view returns (bool ready) {
-        (bool ok, bytes memory out) = ctl.staticcall{gas: NEXT_PAGE_GAS}(abi.encodeCall(IControllerV1.nextPage, (lane)));
+    function _pageReady(address ctl) private view returns (bool ready) {
+        (bool ok, bytes memory out) = ctl.staticcall{gas: NEXT_PAGE_GAS}(abi.encodeCall(IControllerV1.nextPage, ()));
         ready = ok && out.length >= NEXT_PAGE_BYTES && abi.decode(out, (uint256)) == 1;
     }
 
@@ -164,7 +157,7 @@ contract CoreLens {
         if (ok && out.length == 32) price = abi.decode(out, (uint256));
     }
 
-    /// the controller's eligibility answer for an eth lane statement, read with the gas the Core uses. a revert, a
+    /// the controller's eligibility answer for a statement, read with the gas the Core uses. a revert, a
     /// short answer or a `false` reads as not eligible
     function _atCost(address ctl, uint256 sid) private view returns (bool) {
         (bool ok, bytes memory out) = ctl.staticcall{gas: ASK_GAS}(abi.encodeCall(IControllerV1.atCost, (sid)));
@@ -210,13 +203,9 @@ contract CoreLens {
 
     function _statement(uint256 sid, address ctl, bool modeOn) private view returns (StatementView memory v) {
         v.id = sid;
-        (, v.lane, v.cost, v.composedAt) = CORE.statementInfo(sid);
+        (, v.cost, v.composedAt) = CORE.statementInfo(sid);
         v.rating = CORE.ratingOf(sid);
-        if (v.lane == Lane.Eth) {
-            v.askingPrice = _askingPrice(ctl, sid);
-            v.exitEligible = modeOn && _atCost(ctl, sid);
-        } else {
-            v.exitEligible = modeOn;
-        }
+        v.askingPrice = _askingPrice(ctl, sid);
+        v.exitEligible = modeOn && _atCost(ctl, sid);
     }
 }

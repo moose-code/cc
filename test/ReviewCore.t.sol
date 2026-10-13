@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, Settings, ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {Settings, ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 
 /// regressions and attack tests for docs/archive/REVIEW-core.md, on the real stack. the exit token buyback is the dutch
@@ -47,6 +47,7 @@ contract ReviewCoreTest is Fixture {
     /// fair price
     function test_FIXED_raisedUnitCannotDrainBidPot() public {
         _enterPhase2();
+        _setExitPool();
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         core.exitStatement(c.sid);
@@ -70,7 +71,7 @@ contract ReviewCoreTest is Fixture {
     function test_held_thirdPartyCannotComposeCoreCredits() public {
         _fillEthPile(80);
         uint256[80] memory ids;
-        uint256[] memory page = core.pilePage(Lane.Eth, 0, 80);
+        uint256[] memory page = core.pilePage(0, 80);
         for (uint256 i; i < 80; ++i) {
             ids[i] = page[i];
         }

@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, Settings, Mainnet, ICreditScore, ICredits} from "../src/interfaces/Interfaces.sol";
+import {Settings, Mainnet, ICreditScore, ICredits} from "../src/interfaces/Interfaces.sol";
 import {MockExitToken} from "./standins/MockExitToken.sol";
 import {MockExitModule} from "./standins/MockExitModule.sol";
 
@@ -39,15 +39,15 @@ contract Phase2FlexTest is Fixture {
         return score * unit * (10_000 - core.settings().exitBidMarginBps) / 10_000;
     }
 
-    /// @dev an exit lane statement: the seller sells 80 credits into the exit bid, the core composes them
-    function _exitLaneStatement() internal returns (uint256 sid) {
+    /// @dev a statement composed from credits bought through the exit bid (one pile, exit pool key must be set)
+    function _exitBidStatement() internal returns (uint256 sid) {
         uint256[] memory ids = _credits(seller, 80);
         _potX(5e21);
         vm.prank(seller);
         core.sellForExitToken(ids);
         vm.fee(composeBasefee);
         vm.prank(keeper);
-        core.composeExit();
+        core.compose();
         sid = STATEMENTS.supply();
     }
 
@@ -88,14 +88,14 @@ contract Phase2FlexTest is Fixture {
         uint256 ep = core.ethPot();
         uint256 eb = core.ethToBuyback();
         uint256 reserve = core.ethRedeemBurn();
-        uint256 pile = core.pileSize(Lane.Eth);
+        uint256 pile = core.pileSize();
         uint256 held = core.heldStatements().length;
         _replace(address(m2));
         assertEq(core.xPot(), xPot);
         assertEq(core.ethPot(), ep);
         assertEq(core.ethToBuyback(), eb);
         assertEq(core.ethRedeemBurn(), reserve);
-        assertEq(core.pileSize(Lane.Eth), pile);
+        assertEq(core.pileSize(), pile);
         assertEq(core.heldStatements().length, held);
         assertTrue(core.allowedTarget(t), "the allowed targets are untouched");
         _solvent();
@@ -248,6 +248,7 @@ contract Phase2FlexTest is Fixture {
     /// @dev the per point bid pays by the current unit
     function test_unit_exitBidPaysByTheNewUnit() public {
         _enterPhase2();
+        _setExitPool();
         _potX(1e22);
         _replace(address(_mod(4 * UNIT)));
         uint256[] memory ids = _credits(seller, 1);
@@ -269,8 +270,6 @@ contract Phase2FlexTest is Fixture {
         vm.prank(seller);
         vm.expectRevert(ICore.ExitModeOff.selector);
         core.sellForExitToken(ids);
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.composeExit();
     }
 
     function test_mode_holdStillRedeems() public {
@@ -284,12 +283,15 @@ contract Phase2FlexTest is Fixture {
 
     // ------------------------------------------------------------------ solvency through replacements
 
-    /// @dev exits in both lanes and three module sets: the bid pot never exceeds the exit token the core holds
+    /// @dev redeems exit bid and eth bid statements through three module sets: the bid pot never exceeds the exit
+    /// token the core holds
     function test_solvency_potsStayBackedThroughReplacements() public {
         _enterPhase2();
+        _setExitPool();
         uint256 sid = _composeOnce().sid;
         _solvent();
-        uint256 lane = _exitLaneStatement();
+        uint256 lane = _exitBidStatement();
+        _makeEligible(lane);
         _solvent();
         core.exitStatement(lane);
         _solvent();
@@ -302,13 +304,15 @@ contract Phase2FlexTest is Fixture {
 
         m2.setUnitPerPoint(7 * UNIT / 10);
         _replace(address(m2));
-        uint256 lane2 = _exitLaneStatement();
+        uint256 lane2 = _exitBidStatement();
+        _makeEligible(lane2);
         core.exitStatement(lane2);
         _solvent();
 
         MockExitModule m3 = _mod(2 * UNIT);
         _replace(address(m3));
-        uint256 lane3 = _exitLaneStatement();
+        uint256 lane3 = _exitBidStatement();
+        _makeEligible(lane3);
         core.exitStatement(lane3);
         _solvent();
         assertEq(core.exitToken(), address(xt));

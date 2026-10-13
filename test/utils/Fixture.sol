@@ -5,9 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {Lane, ICredits, IStatements, Mainnet, Settings, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
+import {ICredits, IStatements, Mainnet, Settings, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
 import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
 import {ICoreLens} from "../../src/interfaces/ICoreLens.sol";
 import {
@@ -414,13 +416,13 @@ abstract contract Fixture is Test, ProdDeployer {
     /// compose is kept in `preComposeSnap`, so a test can revert to it and compose again under other conditions
     function _composeOnce() internal returns (Composed memory c) {
         if (isComposed) return composed;
-        uint256 size = core.pileSize(Lane.Eth);
+        uint256 size = core.pileSize();
         if (size < 80) _fillEthPile(80 - size);
 
-        uint256[] memory page = core.pilePage(Lane.Eth, 0, 80);
+        uint256[] memory page = core.pilePage(0, 80);
         for (uint256 i; i < 80; ++i) {
             c.ids[i] = page[i];
-            (,, uint256 cost,) = core.creditInfo(page[i]);
+            (, uint256 cost,) = core.creditInfo(page[i]);
             c.cost += cost;
         }
         c.potBefore = core.ethPot();
@@ -444,7 +446,7 @@ abstract contract Fixture is Test, ProdDeployer {
 
     /// @notice the core holds statement `sid` (its record exists)
     function _isHeld(uint256 sid) internal view returns (bool held) {
-        (held,,,) = core.statementInfo(sid);
+        (held,,) = core.statementInfo(sid);
     }
 
     /// @notice `who` buys statement `sid` through the controller at the asking price of this block. `who` is funded
@@ -545,7 +547,36 @@ abstract contract Fixture is Test, ProdDeployer {
         _setExitMode(2);
     }
 
-    /// @notice warps until the controller's asking price of an eth lane statement is at or below its cost, which makes
+    /// @notice initializes a native eth / exit token uniswap v4 pool and points the controller at it, so the exit bid
+    /// can price its eth cost basis (decision 92). the pool sqrt price makes the exit token cheap in eth, so the
+    /// decision 87 value floor is far below the sale curve and the exit bid's eth cost basis is the eth market bid.
+    /// a suite that needs the value floor to bind sets its own pool price. needs phase 2 (the exit token set)
+    function _setExitPool() internal {
+        _setExitPoolFor(address(xt));
+    }
+
+    /// @notice the same for an arbitrary exit token (a suite that sets a non default exit token on the core)
+    function _setExitPoolFor(address token) internal {
+        PoolKey memory vk = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(token),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(0))
+        });
+        PM.initialize(vk, uint160((uint256(1) << 96) * 1000));
+        IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
+            currency0: IControllerV1.Currency.wrap(address(0)),
+            currency1: IControllerV1.Currency.wrap(token),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: address(0)
+        });
+        vm.prank(owner);
+        ctl.setExitPoolKey(k);
+    }
+
+    /// @notice warps until the controller's asking price of a statement is at or below its cost, which makes
     /// it eligible for redemption. the launch curve falls from 150 percent to 100 percent of cost over 50 hours
     function _makeEligible(uint256 sid) internal {
         for (uint256 i; i < 400 && !ctl.atCost(sid); ++i) {

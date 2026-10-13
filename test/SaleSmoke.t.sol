@@ -4,13 +4,13 @@ pragma solidity ^0.8.28;
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Lane, Settings} from "../src/interfaces/Interfaces.sol";
+import {Settings} from "../src/interfaces/Interfaces.sol";
 
 /// the sale controller and the fee share on the live fork: the asking price and its decay, `buy` through
 /// `sellTo`, the hard floor, the pool fee split and the redeem caller payment
 contract SaleSmokeTest is Fixture {
     function _cost(uint256 sid) internal view returns (uint256 cost) {
-        (,, cost,) = core.statementInfo(sid);
+        (, cost,) = core.statementInfo(sid);
     }
 
     function test_statement_opens_at_the_start_price_of_the_controller() public {

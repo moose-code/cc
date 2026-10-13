@@ -6,7 +6,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Lane, Sale, Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {Sale, Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {SellingController, ReentrantBuyer, RefundRefuser} from "./attackers/SaleAttackers.sol";
 import {StatementInfoStub} from "./standins/StatementInfoStub.sol";
@@ -18,11 +18,11 @@ abstract contract SaleBase is Fixture {
     uint256 internal constant H = 1 hours;
 
     function _cost(uint256 sid) internal view returns (uint256 cost) {
-        (,, cost,) = core.statementInfo(sid);
+        (, cost,) = core.statementInfo(sid);
     }
 
     function _composedAt(uint256 sid) internal view returns (uint64 at) {
-        (,,, at) = core.statementInfo(sid);
+        (,, at) = core.statementInfo(sid);
     }
 
     /// the controller curve alone, below the hard floor too: `priceOf` read with the hard floor at its lowest bound,
@@ -319,19 +319,9 @@ contract SaleCurveTest is SaleBase {
     function test_curve_priceOfRefusesWhatIsNotForSale() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
+        assertGt(sid, 0, "a statement was composed");
         vm.expectRevert(IControllerV1.NotForSale.selector);
         ctl.priceOf(sid + 100);
-        // an exit lane statement is never for sale
-        uint256[] memory ids = _credits(seller, 80);
-        xt.mint(address(core), 5e19);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        vm.fee(composeBasefee);
-        core.composeExit();
-        uint256 xs = STATEMENTS.supply();
-        vm.expectRevert(IControllerV1.NotForSale.selector);
-        ctl.priceOf(xs);
     }
 }
 
@@ -369,7 +359,7 @@ contract SaleFloorTest is SaleBase {
     function test_broken_nextPageStopsTheComposeAndKeepsEverything() public {
         _fillEthPile(80);
         ScriptedController sc = new ScriptedController();
-        sc.setPage(Lane.Eth, true, _pages(core.pilePage(Lane.Eth, 0, 80)), 0);
+        sc.setPage(true, _pages(core.pilePage(0, 80)), 0);
         _setController(address(sc));
         sc.setRevertPage(true);
         vm.fee(composeBasefee);
@@ -379,7 +369,7 @@ contract SaleFloorTest is SaleBase {
         vm.expectRevert(ICore.NotReady.selector);
         core.compose();
         assertEq(STATEMENTS.supply(), supply, "nothing minted");
-        assertEq(core.pileSize(Lane.Eth), 80, "the pile is whole");
+        assertEq(core.pileSize(), 80, "the pile is whole");
         assertEq(core.ethPot(), pot, "no payment to the caller");
         assertEq(core.heldStatements().length, 0);
         // the same controller, repaired, composes
@@ -419,7 +409,7 @@ contract SaleBuyTest is SaleBase {
             assertEq(core.ethToBuyback() - bb0, price * shares[i] / 10_000);
             assertEq(core.ethPot() - pot0, price - price * shares[i] / 10_000);
             assertEq(address(ctl).balance, 0, "the controller holds nothing");
-            (bool held,,,) = core.statementInfo(sid);
+            (bool held,,) = core.statementInfo(sid);
             assertFalse(held, "the core record is cleared");
             assertEq(core.heldStatements().length, n - 1);
             assertFalse(_held(sid));
@@ -482,7 +472,7 @@ contract SaleBuyTest is SaleBase {
         assertFalse(_held(sid));
     }
 
-    function test_buy_aSecondBuyAndUnknownAndExitLaneRevert() public {
+    function test_buy_aSecondBuyAndUnknownRevert() public {
         _enterPhase2();
         (uint256 sid, uint256 price) = _buyAt(0);
         _pay(buyer, sid, price);
@@ -493,17 +483,6 @@ contract SaleBuyTest is SaleBase {
         vm.prank(buyer);
         vm.expectRevert(IControllerV1.NotForSale.selector);
         ctl.buy{value: 100 ether}(sid + 500);
-        uint256[] memory ids = _credits(seller, 80);
-        xt.mint(address(core), 5e19);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        vm.fee(composeBasefee);
-        core.composeExit();
-        uint256 xs = STATEMENTS.supply();
-        vm.prank(buyer);
-        vm.expectRevert(IControllerV1.NotForSale.selector);
-        ctl.buy{value: 100 ether}(xs);
     }
 
     /// the compaction of the held list: selling the first statement moves the last into its slot, and the moved
@@ -520,8 +499,8 @@ contract SaleBuyTest is SaleBase {
         assertFalse(_held(a));
         assertTrue(_held(b));
         assertTrue(_held(c));
-        (bool hb,, uint256 cb,) = core.statementInfo(b);
-        (bool hc,, uint256 cc,) = core.statementInfo(c);
+        (bool hb, uint256 cb,) = core.statementInfo(b);
+        (bool hc, uint256 cc,) = core.statementInfo(c);
         assertTrue(hb && hc && cb != 0 && cc != 0);
         _pay(address(0xB0B2), c, ctl.priceOf(c));
         assertEq(core.heldStatements().length, 1);
@@ -614,23 +593,12 @@ contract SaleSellToTest is SaleBase {
         assertEq(core.ethPot() - pot0, pay - pay * 2_500 / 10_000);
     }
 
-    function test_sellTo_exitLaneUnknownAndSoldRevert() public {
+    function test_sellTo_unknownAndSoldRevert() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        uint256[] memory ids = _credits(seller, 80);
-        xt.mint(address(core), 5e19);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        vm.fee(composeBasefee);
-        core.composeExit();
-        uint256 xs = STATEMENTS.supply();
         _install();
         vm.expectRevert(ICore.NotForSale.selector);
-        sc.sell{value: 100 ether}(xs, buyer);
-        vm.expectRevert(ICore.NotForSale.selector);
         sc.sell{value: 100 ether}(sid + 1000, buyer);
-        assertEq(STATEMENTS.ownerOf(xs), address(core), "the exit lane statement stays");
         // a statement that was sold has no record any more
         sc.sell{value: _floorOf(sid)}(sid, buyer);
         vm.expectRevert(ICore.NotForSale.selector);

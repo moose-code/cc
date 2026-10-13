@@ -3,17 +3,15 @@ pragma solidity ^0.8.28;
 
 /// shared interfaces. fixed by the project director. do not change signatures without sign off.
 
-enum Lane {
-    Eth,
-    Exit
-}
-
 interface IController {
-    function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format);
-    /// true when the asking price of eth lane statement `sid` is at or below its stored cost. the asking price
+    function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
+    /// true when the asking price of statement `sid` is at or below its stored cost. the asking price
     /// excludes paused seconds, so eligibility is frozen while sales are paused. the core reads it to gate a phase 2
-    /// redemption of an eth lane statement
+    /// redemption
     function atCost(uint256 sid) external view returns (bool);
+    /// `exitTokenBaseUnits` priced in wei at the exit token pool (docs/FLOW.md 87). reverts when the pool key is
+    /// unset or the pool price reads zero. the core reads it in `sellForExitToken` to value the exit tokens paid
+    function valueWei(uint256 exitTokenBaseUnits) external view returns (uint256 priceWei);
 }
 
 interface IExitModule {
@@ -32,12 +30,12 @@ interface ICreditScore {
     function scoreOf(bytes21 seed, uint64 paidAt) external view returns (uint256);
 }
 
-/// the surface controllers rely on. piles are insertion ordered linked lists, oldest first
+/// the surface controllers rely on. the pile is an insertion ordered linked list, oldest first
 interface ICoreViews {
-    function pileSize(Lane lane) external view returns (uint256);
-    function pilePage(Lane lane, uint256 startAfter, uint256 n) external view returns (uint256[] memory ids); // startAfter 0 starts at head
-    function creditInfo(uint256 id) external view returns (bool inPile, Lane lane, uint256 cost, uint64 acquiredAt);
-    function statementInfo(uint256 sid) external view returns (bool held, Lane lane, uint256 cost, uint64 composedAt);
+    function pileSize() external view returns (uint256);
+    function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids); // startAfter 0 starts at head
+    function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
+    function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose
     function ratingOf(uint256 sid) external view returns (uint256);
     function heldStatements() external view returns (uint256[] memory sids);
@@ -146,7 +144,7 @@ struct Settings {
     uint16 exitSlippageBps;
     /// the exit token bid pays `score * unitPerPoint * (10_000 - exitBidMarginBps) / 10_000` per credit, bps
     uint16 exitBidMarginBps;
-    /// share of `ethRedeemBurn` moved into the coin buyback on each eth lane redemption, bps
+    /// share of `ethRedeemBurn` moved into the coin buyback on each redemption, bps
     uint16 redeemBurnBps;
     // slot 1
     uint128 buybackSlice;

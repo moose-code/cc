@@ -7,7 +7,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Lane, Settings, Mainnet, Stack, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
+import {Settings, Mainnet, Stack, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {MockExitToken} from "./standins/MockExitToken.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
@@ -76,6 +76,8 @@ contract FlowTest is Fixture {
         // the slice is at least twice the largest buyback payment (field 15 is `buybackSlice`)
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
         if (s.buybackSlice < minSlice) _set(s, 15, minSlice);
+        // exitSlippageBps (field 12) is bounded above by exitBidMarginBps (field 13), set later in the loop
+        if (s.exitSlippageBps > s.exitBidMarginBps) _set(s, 12, s.exitBidMarginBps);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -130,6 +132,8 @@ contract FlowTest is Fixture {
                 if (i == 2 && k == 1) s.recoveryClimbPerMinBps = 1_000;
                 // the smallest slice needs the cheapest buyback payment: 2 * (600,000 gas * 1 gwei + 0) is 0.0012 ether
                 if (i == 15 && k == 0) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
+                // exitBidMarginBps at its bottom (0) needs exitSlippageBps lowered to it, which it bounds
+                if (i == 13 && k == 0) s.exitSlippageBps = 0;
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -361,9 +365,8 @@ contract FlowTest is Fixture {
 
     function test_compose_holdsTheStatementAndRecordsTheComposeTime() public {
         Composed memory c = _composeOnce();
-        (bool held, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(c.sid);
+        (bool held, uint256 cost, uint64 composedAt) = core.statementInfo(c.sid);
         assertTrue(held);
-        assertEq(uint256(lane), uint256(Lane.Eth));
         assertEq(cost, c.cost, "cost basis is the sum of the credits' cost bases");
         assertEq(composedAt, c.at);
         assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the core holds the statement");
@@ -374,21 +377,21 @@ contract FlowTest is Fixture {
 
     function test_compose_askingPriceReadsTheSettingsLive() public {
         Composed memory c = _composeOnce();
-        (,, uint256 cost,) = core.statementInfo(c.sid);
+        (, uint256 cost,) = core.statementInfo(c.sid);
         Settings memory s = core.settings();
         s.saleFloorBps = 20_000;
         _owner(s);
         assertEq(ctl.priceOf(c.sid), cost * 20_000 / 10_000, "the hard floor lifts the ask of the held statement");
     }
 
-    /// the `Composed` log: `sid` and `caller` are indexed, the data is `(lane, format, cost)` with the cost the sum of the
-    /// 80 bases of the page
+    /// the `Composed` log: `sid` and `caller` are indexed, the data is `(ids[80], format, cost)` with the cost the sum
+    /// of the 80 bases of the page and `ids` the 80 composed credits
     function test_compose_emitsComposedWithTheSumOfTheBases() public {
         _fillEthPile(80);
-        uint256[] memory page = core.pilePage(Lane.Eth, 0, 80);
+        uint256[] memory page = core.pilePage(0, 80);
         uint256 sum;
         for (uint256 i; i < 80; ++i) {
-            (,, uint256 base,) = core.creditInfo(page[i]);
+            (, uint256 base,) = core.creditInfo(page[i]);
             sum += base;
         }
         vm.fee(composeBasefee);
@@ -403,32 +406,16 @@ contract FlowTest is Fixture {
             assertEq(logs[i].topics.length, 3, "sid and caller are indexed");
             assertEq(uint256(logs[i].topics[1]), STATEMENTS.supply(), "sid");
             assertEq(address(uint160(uint256(logs[i].topics[2]))), keeper, "caller");
-            (uint8 lane, uint8 format, uint256 cost) = abi.decode(logs[i].data, (uint8, uint8, uint256));
-            assertEq(lane, uint8(Lane.Eth));
+            (uint256[80] memory ids, uint8 format, uint256 cost) =
+                abi.decode(logs[i].data, (uint256[80], uint8, uint256));
+            for (uint256 j; j < 80; ++j) {
+                assertEq(ids[j], page[j], "the 80 composed ids");
+            }
             assertEq(format, 0);
             assertEq(cost, sum, "cost is the sum of the 80 bases");
-            assertEq(logs[i].data.length, 96, "lane, format and cost only");
+            assertEq(logs[i].data.length, (80 + 2) * 32, "ids, format and cost only");
         }
         assertEq(seen, 1, "one Composed");
-    }
-
-    function test_compose_exitLaneStatementIsHeldAndNotForSale() public {
-        _enterPhase2();
-        uint256[] memory ids = _credits(seller, 80);
-        xt.mint(address(core), 5e19);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        vm.fee(composeBasefee);
-        core.composeExit();
-        uint256 sid = STATEMENTS.supply();
-        (bool held, Lane lane,, uint64 composedAt) = core.statementInfo(sid);
-        assertTrue(held);
-        assertEq(uint256(lane), uint256(Lane.Exit));
-        assertEq(composedAt, block.timestamp);
-        assertEq(STATEMENTS.ownerOf(sid), address(core), "held by the core");
-        vm.expectRevert(IControllerV1.NotForSale.selector);
-        ctl.priceOf(sid);
     }
 
     /// the removed auction surface answers with an empty revert (no function, no fallback), where a live function
@@ -574,9 +561,9 @@ contract FlowTest is Fixture {
 
     // ------------------------------------------------------------------ phase 2 exit
 
-    /// an eth lane statement is redeemable once its asking price falls to its cost; the exit token received goes to the
+    /// a statement is redeemable once its asking price falls to its cost; the exit token received goes to the
     /// bid pot whole, and the redeem burn reserve releases redeemBurnBps into the coin buyback
-    function test_exit_ethLaneRedeemsAtCostAllToTheBidPot() public {
+    function test_exit_redeemsAtCostAllToTheBidPot() public {
         _enterPhase2();
         Composed memory c = _composeOnce();
         // before the price falls to cost the statement is not eligible
@@ -587,7 +574,7 @@ contract FlowTest is Fixture {
         uint256 before = xt.balanceOf(address(core));
         uint256 pot = core.xPot();
         vm.expectEmit(address(core));
-        emit ICore.StatementExited(c.sid, Lane.Eth, rating * UNIT);
+        emit ICore.StatementExited(c.sid, rating * UNIT);
         vm.prank(bob);
         core.exitStatement(c.sid);
         uint256 got = xt.balanceOf(address(core)) - before;
@@ -653,26 +640,6 @@ contract FlowTest is Fixture {
         vm.expectRevert(ICore.NotHeld.selector);
         core.exitStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), alice);
-    }
-
-    function test_exit_exitLaneRedeemsAtOnce() public {
-        _enterPhase2();
-        uint256[] memory ids = _credits(seller, 80);
-        xt.mint(address(core), 5e19);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        vm.fee(composeBasefee);
-        core.composeExit();
-        uint256 sid = STATEMENTS.supply();
-        uint256 rating = core.ratingOf(sid);
-        uint256 before = xt.balanceOf(address(core));
-        uint256 pot = core.xPot();
-        // at once, no wait, no eligibility check for the exit lane
-        core.exitStatement(sid);
-        assertEq(xt.balanceOf(address(core)) - before, rating * UNIT);
-        assertEq(core.xPot() - pot, rating * UNIT, "the whole received amount goes to the bid pot");
-        assertEq(STATEMENTS.ownerOf(sid), address(mod));
     }
 
     // ------------------------------------------------------------------ the constructor

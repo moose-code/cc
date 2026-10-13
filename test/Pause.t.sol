@@ -6,7 +6,6 @@ import {Vm} from "forge-std/Vm.sol";
 import {SaleBase} from "./Sale.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Lane} from "../src/interfaces/Interfaces.sol";
 import {StatementInfoStub} from "./standins/StatementInfoStub.sol";
 
 /// the owner pause of the sale controller on the live fork: `buy` refuses while paused, `priceOf` answers, the age a
@@ -235,9 +234,9 @@ contract PauseTest is SaleBase {
     /// the eth bid is unaffected: credits sell into it while paused
     function test_sellForEth_worksWhilePaused() public {
         _setPaused(true);
-        uint256 size = core.pileSize(Lane.Eth);
+        uint256 size = core.pileSize();
         _fillEthPile(5);
-        assertEq(core.pileSize(Lane.Eth), size + 5, "the credits entered the pile");
+        assertEq(core.pileSize(), size + 5, "the credits entered the pile");
     }
 }
 

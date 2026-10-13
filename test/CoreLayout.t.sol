@@ -2,16 +2,16 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
-import {Lane} from "../src/interfaces/Interfaces.sol";
 
 /// `CoreState` in src/lib/CoreLib.sol mirrors the state variables of the Core in declaration order, and the library
 /// reaches the Core's storage through it. every field with a public getter is compared with the raw storage word the
-/// mirror assumes, the mappings and the held list by the slot arithmetic the compiler uses
+/// mirror assumes, the pile, the mappings and the held list by the slot arithmetic the compiler uses. the pile is a
+/// `Pile` struct stored inline (head, tail, size at slots 13, 14, 15), so the mappings and the held list follow it
 contract CoreLayoutTest is Fixture {
-    uint256 internal constant S_PILES = 13;
-    uint256 internal constant S_CREDITS = 14;
-    uint256 internal constant S_STATEMENTS = 15;
-    uint256 internal constant S_HELD = 16;
+    uint256 internal constant S_PILE = 13;
+    uint256 internal constant S_CREDITS = 16;
+    uint256 internal constant S_STATEMENTS = 17;
+    uint256 internal constant S_HELD = 18;
 
     /// the bytes `[offset, offset + size)` of storage slot `slot` of the core
     function _field(uint256 slot, uint256 offset, uint256 size) internal view returns (uint256) {
@@ -68,43 +68,53 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(11, 0, 8), core.checkpointTime(), "checkpointTime");
         assertEq(_field(11, 8, 8), core.lastFillTime(), "lastFillTime");
         assertEq(_field(12, 0, 32), core.lastBuybackBlock(), "lastBuybackBlock");
-        assertEq(_field(17, 0, 32), core.unitPerPoint(), "unitPerPoint");
-        assertEq(_field(18, 0, 20), uint256(uint160(core.successor())), "successor");
-        assertEq(_field(18, 20, 1), core.successorLocked() ? 1 : 0, "successorLocked");
+        assertEq(_field(19, 0, 32), core.unitPerPoint(), "unitPerPoint");
+        assertEq(_field(20, 0, 20), uint256(uint160(core.successor())), "successor");
+        assertEq(_field(20, 20, 1), core.successorLocked() ? 1 : 0, "successorLocked");
         assertEq(core.successor(), address(this), "successor value");
         assertTrue(core.successorLocked(), "successorLocked value");
         assertTrue(core.controllerLocked() && core.exitModuleLocked() && core.targetsLocked(), "locks");
+        // the standalone settings pack after retired: creditCostToPotBps and chosenComposeOn finish slot 20 (offsets
+        // 22 and 24), minCcToChoose (uint96, 12 bytes) cannot straddle so it starts slot 21
+        vm.startPrank(owner);
+        core.setCreditCostToPotBps(6_000);
+        core.setChosenComposeOn(true);
+        core.setMinCcToChoose(123);
+        vm.stopPrank();
+        assertEq(_field(20, 22, 2), core.creditCostToPotBps(), "creditCostToPotBps");
+        assertEq(_field(20, 22, 2), 6_000, "creditCostToPotBps value");
+        assertEq(_field(20, 24, 1), core.chosenComposeOn() ? 1 : 0, "chosenComposeOn");
+        assertEq(_field(21, 0, 12), core.minCcToChoose(), "minCcToChoose");
+        assertEq(core.minCcToChoose(), 123, "minCcToChoose value");
         // the first migrate sets retired. the call moves the pots, so it comes after the pot words are compared
-        assertEq(_field(18, 21, 1), 0, "retired is false before a migrate");
+        assertEq(_field(20, 21, 1), 0, "retired is false before a migrate");
         assertFalse(core.retired(), "retired value before");
         vm.prank(owner);
         core.migrate(0);
-        assertEq(_field(18, 21, 1), 1, "retired");
+        assertEq(_field(20, 21, 1), 1, "retired");
         assertTrue(core.retired(), "retired value");
     }
 
     function test_OK_pilesCreditsAndStatementsSitWhereTheMirrorSays() public {
         uint256[] memory ids = _fillEthPile(5);
-        // pile: head, tail, size
-        uint256 pile = _mapSlot(uint256(uint8(Lane.Eth)), S_PILES);
-        assertEq(uint256(vm.load(address(core), bytes32(pile))), core.pilePage(Lane.Eth, 0, 1)[0], "pile head");
-        assertEq(uint256(vm.load(address(core), bytes32(pile + 1))), ids[4], "pile tail");
-        assertEq(uint256(vm.load(address(core), bytes32(pile + 2))), core.pileSize(Lane.Eth), "pile size");
-        // credit: cost, prev, next, then acquiredAt | lane | inPile
+        // pile: head, tail, size inline at slots 13, 14, 15
+        assertEq(uint256(vm.load(address(core), bytes32(S_PILE))), core.pilePage(0, 1)[0], "pile head");
+        assertEq(uint256(vm.load(address(core), bytes32(S_PILE + 1))), ids[4], "pile tail");
+        assertEq(uint256(vm.load(address(core), bytes32(S_PILE + 2))), core.pileSize(), "pile size");
+        // credit: cost, prev, next, then acquiredAt | inPile
         for (uint256 i; i < 5; ++i) {
             uint256 base = _mapSlot(ids[i], S_CREDITS);
-            (bool inPile, Lane lane, uint256 cost, uint64 at) = core.creditInfo(ids[i]);
+            (bool inPile, uint256 cost, uint64 at) = core.creditInfo(ids[i]);
             assertEq(uint256(vm.load(address(core), bytes32(base))), cost, "credit cost");
             assertEq(uint256(vm.load(address(core), bytes32(base + 1))), i == 0 ? 0 : ids[i - 1], "credit prev");
             assertEq(uint256(vm.load(address(core), bytes32(base + 2))), i == 4 ? 0 : ids[i + 1], "credit next");
             uint256 word = uint256(vm.load(address(core), bytes32(base + 3)));
             assertEq(word & type(uint64).max, at, "credit acquiredAt");
-            assertEq((word >> 64) & 0xff, uint256(uint8(lane)), "credit lane");
-            assertEq((word >> 72) & 0xff, inPile ? 1 : 0, "credit inPile");
+            assertEq((word >> 64) & 0xff, inPile ? 1 : 0, "credit inPile");
         }
-        // statement: cost, then composedAt | slot | rating | lane | held; the held list at S_HELD
+        // statement: cost, then composedAt | slot | rating | held; the held list at S_HELD
         Composed memory c = _composeOnce();
-        (bool held, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(c.sid);
+        (bool held, uint256 cost, uint64 composedAt) = core.statementInfo(c.sid);
         uint256 sbase = _mapSlot(c.sid, S_STATEMENTS);
         assertEq(uint256(vm.load(address(core), bytes32(sbase))), cost, "statement cost");
         uint256 sword = uint256(vm.load(address(core), bytes32(sbase + 1)));
@@ -116,9 +126,8 @@ contract CoreLayoutTest is Fixture {
         }
         assertEq((sword >> 64) & type(uint64).max, at, "statement slot");
         assertEq((sword >> 128) & type(uint32).max, core.ratingOf(c.sid), "statement rating");
-        assertEq((sword >> 160) & 0xff, uint256(uint8(lane)), "statement lane");
-        assertEq((sword >> 168) & 0xff, held ? 1 : 0, "statement held");
-        assertEq(sword >> 169, 0, "no field above held");
+        assertEq((sword >> 160) & 0xff, held ? 1 : 0, "statement held");
+        assertEq(sword >> 161, 0, "no field above held");
         assertEq(uint256(vm.load(address(core), bytes32(S_HELD))), core.heldStatements().length, "held length");
         assertEq(
             uint256(vm.load(address(core), bytes32(uint256(keccak256(abi.encode(S_HELD)))))),

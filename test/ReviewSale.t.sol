@@ -5,7 +5,7 @@ import {Prod} from "./utils/Prod.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Lane, Settings, Sale, Mainnet, IExitModule, IStatements} from "../src/interfaces/Interfaces.sol";
+import {Settings, Sale, Mainnet, IExitModule, IStatements} from "../src/interfaces/Interfaces.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {SetSettings} from "../script/SetSettings.s.sol";
@@ -115,7 +115,7 @@ contract ReviewSaleTest is Fixture {
     // ------------------------------------------------------------------ helpers
 
     function _cost(uint256 sid) internal view returns (uint256 c) {
-        (,, c,) = core.statementInfo(sid);
+        (, c,) = core.statementInfo(sid);
     }
 
     function _floorOf(uint256 sid) internal view returns (uint256) {
@@ -125,18 +125,6 @@ contract ReviewSaleTest is Fixture {
     function _probe() internal returns (SellProbe p) {
         p = new SellProbe(core);
         _setController(address(p));
-    }
-
-    function _exitLaneStatement() internal returns (uint256 sid) {
-        uint256[] memory ids = _credits(seller, 80);
-        xt.mint(address(core), 5e19);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.composeExit();
-        sid = STATEMENTS.supply();
     }
 
     function _raise(uint16 floorBps) internal {
@@ -174,19 +162,6 @@ contract ReviewSaleTest is Fixture {
         p.sell{value: 0}(999_999, bob);
         vm.expectRevert(ICore.NotForSale.selector);
         p.sell{value: 0}(0, bob);
-    }
-
-    function test_OK_sellTo_exitLaneStatementReverts() public {
-        _enterPhase2();
-        uint256 sid = _exitLaneStatement();
-        (bool held, Lane lane,,) = core.statementInfo(sid);
-        assertTrue(held);
-        assertEq(uint256(lane), uint256(Lane.Exit));
-        SellProbe p = _probe();
-        vm.deal(address(this), 1000 ether);
-        vm.expectRevert(ICore.NotForSale.selector);
-        p.sell{value: 1000 ether}(sid, bob);
-        assertEq(STATEMENTS.ownerOf(sid), address(core));
     }
 
     function test_OK_sellTo_alreadySoldReverts() public {
@@ -262,7 +237,7 @@ contract ReviewSaleTest is Fixture {
         vm.deal(address(this), price + 1 ether);
         vm.expectRevert();
         b.buy{value: price + 1 ether}(sid);
-        (bool held,,,) = core.statementInfo(sid);
+        (bool held,,) = core.statementInfo(sid);
         assertTrue(held, "statement still held");
         assertEq(address(ctl).balance, 0);
         b.buy{value: price}(sid);
@@ -787,20 +762,8 @@ contract ReviewSaleTest is Fixture {
         core.exitStatement(sid);
         assertEq(keeper.balance, bal);
         assertEq(core.ethPot(), pot);
-        (bool held,,,) = core.statementInfo(sid);
+        (bool held,,) = core.statementInfo(sid);
         assertTrue(held);
-    }
-
-    function test_OK_exitPay_exitLanePaysByTheSameRule() public {
-        _enterPhase2();
-        _fundPot(1 ether);
-        uint256 sid = _exitLaneStatement();
-        _callerPayOn();
-        vm.fee(500 gwei);
-        (uint256 got,, uint256 drop) = _exitAndMeasure(sid);
-        assertEq(got, drop);
-        assertGt(got, 0.0005 ether);
-        assertLe(got, 1_500_000 * 10 gwei + 0.0005 ether);
     }
 
     /// the payment is the counted gas at the base fee. the counted gas is the metered gas of the call plus a fixed
@@ -1048,10 +1011,6 @@ contract ReviewSaleTest is Fixture {
     function test_OK_priceOf_refusesWhatIsNotForSale() public {
         vm.expectRevert(IControllerV1.NotForSale.selector);
         ctl.priceOf(777_777);
-        _enterPhase2();
-        uint256 x = _exitLaneStatement();
-        vm.expectRevert(IControllerV1.NotForSale.selector);
-        ctl.priceOf(x);
         (uint256 sid,) = _sellStatement(alice);
         vm.expectRevert(IControllerV1.NotForSale.selector);
         ctl.priceOf(sid);

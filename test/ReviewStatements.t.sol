@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
-import {Lane} from "../src/interfaces/Interfaces.sol";
 
 /// @notice probes of the statements the Core holds: no stranger can overprint or compose what the Core owns
 contract ReviewStatementsTest is Fixture {
@@ -42,7 +41,7 @@ contract ReviewStatementsTest is Fixture {
 
     function test_probe_strangerCannotComposeTheCoresCredits() public {
         _fillEthPile(80);
-        uint256[] memory page = core.pilePage(Lane.Eth, 0, 80);
+        uint256[] memory page = core.pilePage(0, 80);
         uint256[80] memory ids;
         for (uint256 i; i < 80; ++i) {
             ids[i] = page[i];

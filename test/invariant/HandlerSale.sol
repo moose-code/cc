@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Vm} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {Lane, Settings} from "../../src/interfaces/Interfaces.sol";
+import {Settings} from "../../src/interfaces/Interfaces.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 import {HandlerOwner} from "./HandlerOwner.sol";
 import {MockExitModule} from "../standins/MockExitModule.sol";
@@ -54,7 +54,7 @@ abstract contract HandlerSale is HandlerOwner {
     }
 
     function _hardFloor(uint256 sid) internal view returns (uint256) {
-        (,, uint256 cost,) = core.statementInfo(sid);
+        (, uint256 cost,) = core.statementInfo(sid);
         return cost * core.settings().saleFloorBps / 10_000;
     }
 
@@ -79,10 +79,10 @@ abstract contract HandlerSale is HandlerOwner {
     }
 
     /// the refusal the core's own order of checks gives for a statement in ghost state `g` once the caller is the
-    /// controller (`sellTo`): the record (a held eth lane statement), then the hard floor. zero when the sale must go
+    /// controller (`sellTo`): the record (a held statement), then the hard floor. zero when the sale must go
     /// through
     function _sellToRefusal(SG storage g, uint256 value, uint256 floor) internal view returns (bytes4) {
-        if (g.status != S_HELD || g.lane != uint8(Lane.Eth)) return ICore.NotForSale.selector;
+        if (g.status != S_HELD) return ICore.NotForSale.selector;
         if (value < floor) return ICore.BelowFloor.selector;
         return bytes4(0);
     }
@@ -115,7 +115,7 @@ abstract contract HandlerSale is HandlerOwner {
         }
         _booked(paid);
         if (_ownerOf(sid) != p.buyer) _flag(V_SALE_PATH, "the buyer does not hold the statement");
-        (bool held,,,) = core.statementInfo(sid);
+        (bool held,,) = core.statementInfo(sid);
         if (held || core.heldStatements().length != p.held - 1) _flag(V_SALE_PATH, "the core record was not cleared");
         g.status = S_SOLD;
         g.price = paid;
@@ -141,8 +141,8 @@ abstract contract HandlerSale is HandlerOwner {
     /// controller in force (the core takes `sellTo` from the controller only), then what `sellTo` checks
     function _buyRefusal(uint256 sid, SalePre memory p, bool short_) internal view returns (bytes4) {
         if (IControllerV1(v1).paused()) return IControllerV1.Paused.selector;
-        (bool held, Lane lane,,) = core.statementInfo(sid);
-        if (!held || lane != Lane.Eth) return IControllerV1.NotForSale.selector;
+        (bool held,,) = core.statementInfo(sid);
+        if (!held) return IControllerV1.NotForSale.selector;
         if (short_) return IControllerV1.Underpaid.selector;
         if (core.controller() != v1) return ICore.OnlyController.selector;
         return _sellToRefusal(_sg[sid], p.price, p.floor);
@@ -169,7 +169,7 @@ abstract contract HandlerSale is HandlerOwner {
     /// selector. a sale pays the ask exactly, the excess comes back
     function buy(uint256 sIdx, uint256 aSeed, uint256 xSeed, uint256 mode) external checked {
         uint8 a = A_BUY;
-        (uint256 sid, bool found) = _pickBy(sIdx, mode % 4 == 0 ? K_ANY : K_ETH_HELD);
+        (uint256 sid, bool found) = _pickBy(sIdx, mode % 4 == 0 ? K_ANY : K_HELD);
         if (!found) return _skip(a);
         // the owner, now and then, puts the first controller back in force: a legal owner move that keeps the buy path
         // busy under the fuzzer. a locked controller door is left alone
@@ -199,7 +199,7 @@ abstract contract HandlerSale is HandlerOwner {
         _anchor0 = IControllerV1(v1).anchorBps();
         _stored0 = IControllerV1(v1).storedAnchorBps();
         _anchorTime0 = IControllerV1(v1).anchorTime();
-        (,, _cost0,) = core.statementInfo(sid);
+        (, _cost0,) = core.statementInfo(sid);
         _att(a);
         vm.prank(who);
         try IControllerV1(v1).buy{value: value}(sid) {
@@ -255,7 +255,7 @@ abstract contract HandlerSale is HandlerOwner {
     /// 1/3600 bps falls `fastDecayBpsPerHour` a second to the knee and `slowDecayBpsPerHour` after it (rounded up), at
     /// the age outside every pause window, at least `floorBps` and at least the hard floor of the core
     function _modelAsk(uint256 sid) internal view returns (uint256) {
-        (,, uint256 cost, uint64 at) = core.statementInfo(sid);
+        (, uint256 cost, uint64 at) = core.statementInfo(sid);
         uint256 n = _modelUnits(_modelAge(at));
         uint256 ask = cost * n / (3600 * 10_000);
         uint256 hard = cost * core.settings().saleFloorBps / 10_000;
@@ -316,7 +316,7 @@ abstract contract HandlerSale is HandlerOwner {
     /// payment is booked. with another controller in force the call is refused for OnlyController
     function ownerSell(uint256 sIdx, uint256 aSeed, uint256 vSeed, uint256 mode) external checked {
         uint8 a = A_OWNER_SELL;
-        (uint256 sid, bool found) = _pickBy(sIdx, mode % 3 == 0 ? K_ANY : K_ETH_HELD);
+        (uint256 sid, bool found) = _pickBy(sIdx, mode % 3 == 0 ? K_ANY : K_HELD);
         if (!found) return _skip(a);
         if (mode % 2 == 0 && core.controller() != address(selling) && !core.controllerLocked()) {
             vm.prank(owner);
@@ -464,8 +464,8 @@ abstract contract HandlerSale is HandlerOwner {
     //////////////////////////////////////////////////////////////*/
 
     /// the call a hostile module makes from inside an exit: nothing, or one door of the core, or the selling controller.
-    /// k = 1..11 selects compose, skim, buyback, exitStatement, the selling controller's sell, adopt, composeExit,
-    /// sellForEth, buyListing, sellTo and buybackExit
+    /// k = 1..11 selects compose, skim, buyback, exitStatement, the selling controller's sell, adopt, releaseRedeemBurn,
+    /// sellForEth, buyListing, sellTo and sellForExitToken
     function _callout(uint256 k, uint256 seed, MockExitModule next) internal {
         if (k == 0) return;
         address target = address(core);
@@ -479,7 +479,7 @@ abstract contract HandlerSale is HandlerOwner {
         else if (k == 3) data = abi.encodeCall(ICore.buyback, ());
         else if (k == 4) data = abi.encodeCall(ICore.exitStatement, (sid));
         else if (k == 6) data = abi.encodeCall(ICore.adopt, (ids));
-        else if (k == 7) data = abi.encodeCall(ICore.composeExit, ());
+        else if (k == 7) data = abi.encodeCall(ICore.releaseRedeemBurn, (1));
         else if (k == 8) data = abi.encodeWithSignature("sellForEth(uint256[])", ids);
         else if (k == 9) data = abi.encodeCall(ICore.buyListing, (1, "", seed >> 8, address(next)));
         else if (k == 10) data = abi.encodeCall(ICore.sellTo, (sid, address(next)));

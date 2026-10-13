@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, Settings} from "../src/interfaces/Interfaces.sol";
+import {Settings} from "../src/interfaces/Interfaces.sol";
 import {BidModel} from "./utils/BidModel.sol";
 
 /// @notice the economic dials of the eth bid that act on fills: the rate drop per credit with its minute floor, and the pot as the limit of spending. their bounds

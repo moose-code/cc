@@ -5,7 +5,7 @@ import {Fixture} from "./utils/Fixture.sol";
 import {Prod} from "./utils/Prod.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Lane, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 
 /// a listing target that delivers the credit and then tries to adopt it inside the guarded call
 contract AdoptingTarget {
@@ -56,7 +56,7 @@ contract AdoptTest is Fixture {
     function test_OK_aCreditSentStraightToTheCoreIsAdoptedAtThePriceState() public {
         uint256[] memory ids = _gift(1);
         uint256 id = ids[0];
-        (bool inPile,, uint256 cost0,) = core.creditInfo(id);
+        (bool inPile, uint256 cost0,) = core.creditInfo(id);
         assertFalse(inPile);
         assertEq(cost0, 0, "no record");
         // the pot is empty: the read is clamped to zero while the price state is the opening rate
@@ -70,15 +70,13 @@ contract AdoptTest is Fixture {
         emit ICore.CreditAdopted(id, want);
         _adopt(ids);
 
-        (bool inPile1, Lane lane, uint256 cost, uint64 at) = core.creditInfo(id);
+        (bool inPile1, uint256 cost, uint64 at) = core.creditInfo(id);
         assertTrue(inPile1, "in the pile");
-        assertEq(uint8(lane), uint8(Lane.Eth), "eth lane");
         assertEq(cost, want, "cost basis");
         assertEq(at, block.timestamp, "acquiredAt");
-        assertEq(core.pileSize(Lane.Eth), 1);
-        assertEq(core.pilePage(Lane.Eth, 0, 1)[0], id);
+        assertEq(core.pileSize(), 1);
+        assertEq(core.pilePage(0, 1)[0], id);
         assertEq(CREDITS.ownerOf(id), address(core));
-        assertEq(core.pileSize(Lane.Exit), 0, "the exit pile is untouched");
     }
 
     function test_OK_theBasisFollowsThePriceStateAfterTheMarketMoved() public {
@@ -89,12 +87,12 @@ contract AdoptTest is Fixture {
         assertGe(price, core.ethRate());
         _adopt(ids);
         for (uint256 i; i < 3; ++i) {
-            (,, uint256 cost,) = core.creditInfo(ids[i]);
+            (, uint256 cost,) = core.creditInfo(ids[i]);
             assertEq(cost, price, "basis from the price state at that moment");
             assertGt(cost, 0);
         }
         // order of the pile is the order of the call
-        uint256[] memory page = core.pilePage(Lane.Eth, 0, 10);
+        uint256[] memory page = core.pilePage(0, 10);
         assertEq(page.length, 3);
         assertEq(page[0], ids[0]);
         assertEq(page[1], ids[1]);
@@ -112,7 +110,7 @@ contract AdoptTest is Fixture {
         both[1] = twice[0];
         vm.expectRevert(abi.encodeWithSignature("InPile()"));
         _adopt(both);
-        assertEq(core.pileSize(Lane.Eth), 1, "the failed call changed nothing");
+        assertEq(core.pileSize(), 1, "the failed call changed nothing");
     }
 
     function test_REVERT_aCreditTheCoreDoesNotHold() public {
@@ -123,7 +121,7 @@ contract AdoptTest is Fixture {
         gone[0] = type(uint128).max;
         vm.expectRevert();
         _adopt(gone);
-        assertEq(core.pileSize(Lane.Eth), 0);
+        assertEq(core.pileSize(), 0);
     }
 
     function test_REVERT_emptyAndZero() public {
@@ -151,8 +149,8 @@ contract AdoptTest is Fixture {
         mixed[2] = foreign[0];
         vm.expectRevert(abi.encodeWithSignature("NotHolder()"));
         _adopt(mixed);
-        assertEq(core.pileSize(Lane.Eth), 0);
-        (bool inPile,,,) = core.creditInfo(good[0]);
+        assertEq(core.pileSize(), 0);
+        (bool inPile,,) = core.creditInfo(good[0]);
         assertFalse(inPile);
     }
 
@@ -207,17 +205,17 @@ contract AdoptTest is Fixture {
         assertEq(b.lastFill, a.lastFill, "ceiling anchor");
         assertEq(b.minuteStart, a.minuteStart, "minute floor");
         assertEq(b.bucket, a.bucket, "minute bucket");
-        assertEq(core.pileSize(Lane.Eth), 4 + 5, "the sold and the adopted credits are in the pile");
+        assertEq(core.pileSize(), 4 + 5, "the sold and the adopted credits are in the pile");
     }
 
     function test_OK_aPageOfAdoptedCreditsComposesIntoAStatementWorthTheirBases() public {
         _fundPot(1 ether);
         uint256[] memory ids = _gift(80);
         _adopt(ids);
-        assertEq(core.pileSize(Lane.Eth), 80);
+        assertEq(core.pileSize(), 80);
         uint256 sum;
         for (uint256 i; i < 80; ++i) {
-            (,, uint256 cost,) = core.creditInfo(ids[i]);
+            (, uint256 cost,) = core.creditInfo(ids[i]);
             sum += cost;
         }
         assertGt(sum, 0);
@@ -226,11 +224,10 @@ contract AdoptTest is Fixture {
         vm.prank(keeper);
         core.compose();
         uint256 sid = supply + 1;
-        (bool held, Lane lane, uint256 cost,) = core.statementInfo(sid);
+        (bool held, uint256 cost,) = core.statementInfo(sid);
         assertTrue(held);
-        assertEq(uint8(lane), uint8(Lane.Eth));
         assertEq(cost, sum, "statement cost is the sum of the bases");
-        assertEq(core.pileSize(Lane.Eth), 0);
+        assertEq(core.pileSize(), 0);
         // the asking price is computed from that cost
         assertEq(ctl.priceOf(sid), cost * ctl.startBps() / 10_000, "asking price");
         assertGe(ctl.priceOf(sid), cost * core.settings().saleFloorBps / 10_000, "at or above the floor");
@@ -253,12 +250,11 @@ contract AdoptTest is Fixture {
         assertEq(price, lc.rateStart);
         vm.prank(stranger);
         succ.adopt(ids);
-        assertEq(succ.pileSize(Lane.Eth), ids.length, "the pile is restored");
-        assertEq(succ.pilePage(Lane.Eth, 0, 1)[0], ids[0], "in the order of the call");
+        assertEq(succ.pileSize(), ids.length, "the pile is restored");
+        assertEq(succ.pilePage(0, 1)[0], ids[0], "in the order of the call");
         for (uint256 i; i < ids.length; ++i) {
-            (bool p, Lane lane, uint256 cost,) = succ.creditInfo(ids[i]);
+            (bool p, uint256 cost,) = succ.creditInfo(ids[i]);
             assertTrue(p);
-            assertEq(uint8(lane), uint8(Lane.Eth));
             assertEq(cost, price);
             sum += cost;
         }
@@ -268,7 +264,7 @@ contract AdoptTest is Fixture {
     /// pile that composes
     function test_OK_migrateThenAdoptOnTheSuccessorRestoresThePile() public {
         _fillEthPile(80);
-        uint256[] memory ids = core.pilePage(Lane.Eth, 0, 80);
+        uint256[] memory ids = core.pilePage(0, 80);
         assertEq(ids.length, 80);
         ICore succ = _successor();
 
@@ -276,13 +272,13 @@ contract AdoptTest is Fixture {
         core.setSuccessor(address(succ));
         core.migrate(100);
         vm.stopPrank();
-        assertEq(core.pileSize(Lane.Eth), 0, "the old pile is empty");
+        assertEq(core.pileSize(), 0, "the old pile is empty");
         for (uint256 i; i < 80; ++i) {
             assertEq(CREDITS.ownerOf(ids[i]), address(succ), "moved to the successor");
         }
-        (bool inPile,,,) = succ.creditInfo(ids[0]);
+        (bool inPile,,) = succ.creditInfo(ids[0]);
         assertFalse(inPile, "the successor has no record yet");
-        assertEq(succ.pileSize(Lane.Eth), 0);
+        assertEq(succ.pileSize(), 0);
 
         uint256 sum = _adoptOnSuccessor(succ, ids);
 
@@ -290,17 +286,17 @@ contract AdoptTest is Fixture {
         vm.fee(composeBasefee);
         vm.prank(keeper);
         succ.compose();
-        (bool held,, uint256 stCost,) = succ.statementInfo(supply + 1);
+        (bool held, uint256 stCost,) = succ.statementInfo(supply + 1);
         assertTrue(held);
         assertEq(stCost, sum, "the pot of the successor is empty, so the cost is the sum of the bases");
-        assertEq(succ.pileSize(Lane.Eth), 0);
+        assertEq(succ.pileSize(), 0);
     }
 
     /// a credit that left through `migrate` keeps its old record with the pile flag cleared. the Core is retired by the
     /// migrate, so the credit cannot be adopted there again (a successor adopts it, see the test above)
     function test_REVERT_aMigratedCreditThatComesBackIsNotAdoptedByTheRetiredCore() public {
         uint256[] memory ids = _fillEthPile(3);
-        (,, uint256 oldCost,) = core.creditInfo(ids[0]);
+        (, uint256 oldCost,) = core.creditInfo(ids[0]);
         assertGt(oldCost, 0);
         address sink = address(0xA11CE);
         vm.etch(sink, hex"00");
@@ -308,7 +304,7 @@ contract AdoptTest is Fixture {
         core.setSuccessor(sink);
         core.migrate(10);
         vm.stopPrank();
-        (bool inPile,, uint256 stale,) = core.creditInfo(ids[0]);
+        (bool inPile, uint256 stale,) = core.creditInfo(ids[0]);
         assertFalse(inPile);
         assertEq(stale, oldCost, "the record stays");
         vm.prank(sink);
@@ -316,9 +312,9 @@ contract AdoptTest is Fixture {
         _warp(1 days);
         vm.expectRevert(ICore.Retired.selector);
         core.adopt(_one(ids[0]));
-        (bool p,,,) = core.creditInfo(ids[0]);
+        (bool p,,) = core.creditInfo(ids[0]);
         assertFalse(p, "a refused adopt booked the credit");
-        assertEq(core.pileSize(Lane.Eth), 0);
+        assertEq(core.pileSize(), 0);
     }
 
     /// inside a guarded call (a listing target mid buy) `adopt` is refused, so a credit being bought cannot be put in
@@ -335,9 +331,9 @@ contract AdoptTest is Fixture {
         core.buyListing(value, abi.encodeCall(AdoptingTarget.fill, (id)), id, address(t));
         assertFalse(t.adoptOk(), "adopt inside the buy failed");
         assertEq(bytes4(t.adoptOut()), bytes4(0xab143c06), "Reentrancy()");
-        assertEq(core.pileSize(Lane.Eth), 1, "the credit is in the pile once");
-        assertEq(core.pilePage(Lane.Eth, 0, 1)[0], id);
-        (bool p,,,) = core.creditInfo(id);
+        assertEq(core.pileSize(), 1, "the credit is in the pile once");
+        assertEq(core.pilePage(0, 1)[0], id);
+        (bool p,,) = core.creditInfo(id);
         assertTrue(p);
     }
 
@@ -354,7 +350,7 @@ contract AdoptTest is Fixture {
         _adopt(ids);
         assertEq(address(feeRouter).balance, 0, "the router was flushed");
         assertGt(core.ethPot(), pot, "the fees are in the pot");
-        (,, uint256 cost,) = core.creditInfo(ids[0]);
+        (, uint256 cost,) = core.creditInfo(ids[0]);
         assertEq(cost, core.ethPrice(), "the basis is read after the pull");
     }
 
@@ -363,7 +359,7 @@ contract AdoptTest is Fixture {
         vm.etch(address(feeRouter), hex"fe");
         uint256[] memory ids = _gift(1);
         _adopt(ids);
-        assertEq(core.pileSize(Lane.Eth), 1);
+        assertEq(core.pileSize(), 1);
     }
 
     /// `ethPrice()` is the value a real checkpoint stores: skim with 1 wei above the pots checkpoints
@@ -390,7 +386,7 @@ contract AdoptTest is Fixture {
         emit ICore.CreditAdopted(ids[0], 1);
         _adopt(ids);
         for (uint256 i; i < 2; ++i) {
-            (bool p,, uint256 cost,) = core.creditInfo(ids[i]);
+            (bool p, uint256 cost,) = core.creditInfo(ids[i]);
             assertTrue(p);
             assertEq(cost, 1, "1 wei");
         }
@@ -407,7 +403,7 @@ contract AdoptTest is Fixture {
         uint256[] memory ids = _gift(2);
         _adopt(ids);
         for (uint256 i; i < 2; ++i) {
-            (,, uint256 cost,) = core.creditInfo(ids[i]);
+            (, uint256 cost,) = core.creditInfo(ids[i]);
             assertEq(cost, st.rateCap, "basis at the cap");
         }
     }
@@ -429,7 +425,7 @@ contract AdoptTest is Fixture {
         assertEq(core.ethPrice(), bound, "the price state is the ceiling");
         uint256[] memory ids = _gift(1);
         _adopt(ids);
-        (,, uint256 cost,) = core.creditInfo(ids[0]);
+        (, uint256 cost,) = core.creditInfo(ids[0]);
         assertEq(cost, bound, "basis at the ceiling");
     }
 
@@ -446,7 +442,7 @@ contract AdoptTest is Fixture {
         assertGt(price, stored, "the stored rate is stale");
         uint256[] memory ids = _gift(1);
         _adopt(ids);
-        (,, uint256 cost,) = core.creditInfo(ids[0]);
+        (, uint256 cost,) = core.creditInfo(ids[0]);
         assertEq(cost, price, "the climbed state");
         assertTrue(cost != stored);
         assertEq(core.rateAtCheckpoint(), stored, "nothing was checkpointed by the adopt");
@@ -479,7 +475,7 @@ contract AdoptTest is Fixture {
         uint256 price = core.ethPrice();
         _adopt(ids);
         for (uint256 i; i < count; ++i) {
-            (,, uint256 cost,) = core.creditInfo(ids[i]);
+            (, uint256 cost,) = core.creditInfo(ids[i]);
             assertEq(cost, price, "basis");
             assertGt(cost, 0);
         }

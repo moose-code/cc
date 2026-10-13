@@ -5,7 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
-import {Lane, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {SeaportBase} from "./Seaport.t.sol";
 import {FeeBase} from "./Fees.t.sol";
 import {Fixture} from "./utils/Fixture.sol";
@@ -117,7 +117,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
         assertTrue(atk.tried(), "the attacker tried the flush");
         assertFalse(atk.flushOk(), "the flush inside the measured call reverted");
         assertEq(address(feeRouter).balance, held, "the attacker top up waits in the router, untouched");
-        (,, uint256 booked,) = core.creditInfo(id);
+        (, uint256 booked,) = core.creditInfo(id);
         assertEq(maker.balance - maker0, price - 1, "no payment at the ceiling");
         assertEq(booked, price, "the cost basis is the price paid");
         assertEq(core.ethPot(), pot0 - price, "the pot paid the exact cost");
@@ -150,7 +150,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
         assertTrue(atk.tried(), "the attacker tried the flush");
         assertFalse(atk.flushOk(), "the flush inside the measured call reverted");
         assertEq(address(feeRouter).balance, held, "only the attacker top up waits in the router");
-        (,, uint256 booked,) = core.creditInfo(id);
+        (, uint256 booked,) = core.creditInfo(id);
         assertEq(cost, price, "the measured cost is the price");
         assertEq(booked, price + buyPaid, "the cost basis is the price plus the buy payment");
         uint256 toBuyback = engine * core.settings().feeToBuybackBps / 10_000;
@@ -251,7 +251,7 @@ contract ReviewSeaportFlushTest is SeaportBase {
         uint256 maker0 = maker.balance;
         vm.prank(maker);
         core.buyListing(price, data, id, Mainnet.SEAPORT);
-        (,, uint256 booked,) = core.creditInfo(id);
+        (, uint256 booked,) = core.creditInfo(id);
         assertEq(maker.balance - maker0, price - 1, "no payment at the ceiling");
         assertEq(booked, price, "the cost basis is the price");
     }

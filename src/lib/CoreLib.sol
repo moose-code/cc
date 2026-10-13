@@ -10,7 +10,15 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {Lane, ICredits, ICreditScore, IExitModule, IStatements, Settings, Mainnet} from "../interfaces/Interfaces.sol";
+import {
+    IController,
+    ICredits,
+    ICreditScore,
+    IExitModule,
+    IStatements,
+    Settings,
+    Mainnet
+} from "../interfaces/Interfaces.sol";
 import {Halving} from "./Halving.sol";
 import {SettingsBounds} from "./SettingsBounds.sol";
 import {SettingsStore} from "./SettingsStore.sol";
@@ -37,7 +45,7 @@ struct CoreState {
     uint64 checkpointTime;
     uint64 lastFillTime;
     uint256 lastBuybackBlock;
-    mapping(Lane => CoreLib.Pile) piles;
+    CoreLib.Pile pile;
     mapping(uint256 => CoreLib.Credit) credits;
     mapping(uint256 => CoreLib.Statement) statements;
     uint256[] heldIds;
@@ -45,6 +53,9 @@ struct CoreState {
     address successor;
     bool successorLocked;
     bool retired;
+    uint16 creditCostToPotBps;
+    bool chosenComposeOn;
+    uint96 minCcToChoose;
 }
 
 /// the one linked library of the Core: the settings write (validation, storage, event), the eth rate (the climb with its
@@ -66,7 +77,6 @@ library CoreLib {
         uint256 prev;
         uint256 next;
         uint64 acquiredAt;
-        Lane lane;
         bool inPile;
     }
 
@@ -78,7 +88,6 @@ library CoreLib {
         uint64 composedAt;
         uint64 slot;
         uint32 rating;
-        Lane lane;
         bool held;
     }
 
@@ -97,7 +106,7 @@ library CoreLib {
     error Slippage();
     /// the action is not allowed in the current `exitMode`
     error ExitModeOff();
-    event CreditBought(uint256 indexed id, address indexed from, Lane lane, uint256 cost);
+    event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     error BadSetting(bytes32 field);
     event SettingsSet(Settings settings);
     error BadSwap();
@@ -385,7 +394,7 @@ library CoreLib {
             if (c.credits[id].inPile) revert InPile();
             if (CREDITS.ownerOf(id) != address(this)) revert NotHolder();
             uint256 cost = price.max(1);
-            push(c.piles[Lane.Eth], c.credits, Lane.Eth, id, cost);
+            push(c.pile, c.credits, id, cost);
             emit CreditAdopted(id, cost);
         }
     }
@@ -425,8 +434,8 @@ library CoreLib {
     /// exit token: `xPot`, by `transfer`, the tracker zeroed. a transfer that reverts, returns false or returns less
     /// than a word leaves the pot as it is, logs `ExitTokenMigrationSkipped` and the call goes on; a later `migrate`
     /// retries. the coin stays. `ethToBuyback` and `ethRedeemBurn` stay for the coin buyback.
-    /// credits: up to `maxCredits` from the head of each pile, by `transferFrom`, the pile membership cleared (the
-    /// cost, lane and arrival time of the record stay). zero moves the pots only.
+    /// credits: up to `maxCredits` from the head of the pile, by `transferFrom`, the pile membership cleared (the
+    /// cost and arrival time of the record stay). zero moves the pots only.
     /// the held statements and their records stay with the Core, which sells or exits them itself.
     /// the eth rate is checkpointed before `ethPot` is zeroed. a call with nothing left to move logs zeros
     function migrate(uint256 maxCredits) external {
@@ -480,29 +489,27 @@ library CoreLib {
         c.xPot = 0;
     }
 
-    /// pops up to `max` credits from the head of each pile
+    /// pops up to `max` credits from the head of the pile
     function _moveCredits(CoreState storage c, address to, uint256 max) private returns (uint256 moved) {
-        for (uint256 l; l < 2; ++l) {
-            Pile storage p = c.piles[Lane(l)];
-            uint256 id = p.head;
-            uint256 k;
-            while (id != 0 && k < max) {
-                Credit storage cr = c.credits[id];
-                uint256 next = cr.next;
-                cr.next = 0;
-                cr.prev = 0;
-                cr.inPile = false;
-                CREDITS.transferFrom(address(this), to, id);
-                id = next;
-                ++k;
-            }
-            if (k != 0) {
-                p.head = id;
-                p.size -= k;
-                if (id == 0) p.tail = 0;
-                else c.credits[id].prev = 0;
-                moved += k;
-            }
+        Pile storage p = c.pile;
+        uint256 id = p.head;
+        uint256 k;
+        while (id != 0 && k < max) {
+            Credit storage cr = c.credits[id];
+            uint256 next = cr.next;
+            cr.next = 0;
+            cr.prev = 0;
+            cr.inPile = false;
+            CREDITS.transferFrom(address(this), to, id);
+            id = next;
+            ++k;
+        }
+        if (k != 0) {
+            p.head = id;
+            p.size -= k;
+            if (id == 0) p.tail = 0;
+            else c.credits[id].prev = 0;
+            moved = k;
         }
     }
 
@@ -536,17 +543,14 @@ library CoreLib {
         }
     }
 
-    /// appends credit `id` with cost basis `cost` to the pile `p` of `lane`
-    function push(Pile storage p, mapping(uint256 => Credit) storage credits, Lane lane, uint256 id, uint256 cost)
-        internal
-    {
+    /// appends credit `id` with cost basis `cost` to the pile `p`
+    function push(Pile storage p, mapping(uint256 => Credit) storage credits, uint256 id, uint256 cost) internal {
         uint256 tail = p.tail;
         Credit storage c = credits[id];
         c.cost = cost;
         c.prev = tail;
         c.next = 0;
         c.acquiredAt = uint64(block.timestamp);
-        c.lane = lane;
         c.inPile = true;
         if (tail == 0) p.head = id;
         else credits[tail].next = id;
@@ -575,8 +579,11 @@ library CoreLib {
     /// pays each credit `score * unit * (10_000 - exitBidMarginBps) / 10_000` in exit token from `xPot`, where `unit` is
     /// the lower of the stored `unitPerPoint` and the module's live `unitPerPoint()`, so a module that lowered its rate
     /// after the owner set it cannot make the bid overpay. reads the score from the credit score contract. runs only
-    /// while `exitMode` is 2. each credit's price must not exceed the remaining pot. the credit record keeps the exit
-    /// token paid as its cost. a failing, short or zero live unit read reverts the whole bid (`BadModule`)
+    /// while `exitMode` is 2. each credit's price must not exceed the remaining pot. the credit enters the single pile
+    /// with an eth cost basis of the higher of the exit tokens paid valued in wei (`controller.valueWei`) and the
+    /// current eth bid, so a pushed down pool price cannot record a cost below the eth market (docs/FLOW.md 92). a
+    /// failing, short or zero live unit read reverts the whole bid (`BadModule`); an unset pool key or a zero pool
+    /// price reverts in `valueWei`
     function _sellForExitToken(uint256[] calldata ids, uint256 minOut) private {
         CoreState storage c = state();
         if (c.retired) revert Retired();
@@ -589,18 +596,23 @@ library CoreLib {
         if (live < unit) unit = live;
         uint256 net = BPS - s.exitBidMarginBps;
         uint256 pot = c.xPot;
+        // the current eth bid, the floor of a credit's recorded eth cost basis. read only, no checkpoint
+        (, uint256 ethBid) = _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
+        IController ctl = IController(c.controller);
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = owned(ids[i]);
             uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
-            uint256 price = score * unit * net / BPS;
-            if (price == 0) revert ZeroAmount();
-            if (price > pot) revert PotTooSmall();
-            pot -= price;
-            total += price;
-            push(c.piles[Lane.Exit], c.credits, Lane.Exit, id, price);
+            uint256 paid = score * unit * net / BPS;
+            if (paid == 0) revert ZeroAmount();
+            if (paid > pot) revert PotTooSmall();
+            pot -= paid;
+            total += paid;
+            uint256 valued = ctl.valueWei(paid);
+            uint256 cost = valued > ethBid ? valued : ethBid;
+            push(c.pile, c.credits, id, cost);
             CREDITS.transferFrom(msg.sender, address(this), id);
-            emit CreditBought(id, msg.sender, Lane.Exit, price);
+            emit CreditBought(id, msg.sender, cost);
         }
         c.xPot = pot;
         if (total < minOut) revert Slippage();

@@ -5,11 +5,11 @@ import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Lane, Settings} from "../src/interfaces/Interfaces.sol";
+import {Settings} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {SellingController, HostileModule, RepaidCaller} from "./attackers/SaleAttackers.sol";
 
-/// phase 2 redemption: when an eth lane statement may be exited, what stops it, and the payment to the caller from
+/// phase 2 redemption: when a statement may be exited, what stops it, and the payment to the caller from
 /// the eth pot. real Core, Statements. the stand in module and token, and the attacker modules
 abstract contract RedeemBase is Fixture {
     using stdStorage for StdStorage;
@@ -20,11 +20,11 @@ abstract contract RedeemBase is Fixture {
     HostileModule internal hm;
 
     function _cost(uint256 sid) internal view returns (uint256 cost) {
-        (,, cost,) = core.statementInfo(sid);
+        (, cost,) = core.statementInfo(sid);
     }
 
     function _composedAt(uint256 sid) internal view returns (uint64 at) {
-        (,,, at) = core.statementInfo(sid);
+        (,, at) = core.statementInfo(sid);
     }
 
     /// phase 2 with a module that can burn gas and call out, same exit token as the stand in
@@ -32,20 +32,6 @@ abstract contract RedeemBase is Fixture {
         _enterPhase2();
         hm = new HostileModule(address(xt), UNIT);
         _setExitModule(address(hm));
-    }
-
-    /// an exit lane statement: the seller sells 80 credits into the exit bid and the core composes them
-    function _exitLaneStatement() internal returns (uint256 sid) {
-        if (core.ethPot() < 1 ether) _fundPot(1 ether);
-        uint256[] memory ids = _credits(seller, 80);
-        xt.mint(address(core), 5e19);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.composeExit();
-        sid = STATEMENTS.supply();
     }
 
     function _another() internal returns (uint256 sid) {
@@ -104,7 +90,7 @@ contract RedeemTimingTest is RedeemBase {
         uint256 owed = core.ratingOf(sid) * UNIT;
         core.exitStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
-        (bool held,,,) = core.statementInfo(sid);
+        (bool held,,) = core.statementInfo(sid);
         assertFalse(held);
         assertEq(core.xPot(), owed);
         _solvent();
@@ -125,13 +111,6 @@ contract RedeemTimingTest is RedeemBase {
         vm.prank(owner);
         ctl.setPaused(false);
         _makeEligible(sid);
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod));
-    }
-
-    function test_timing_exitLaneIsImmediate() public {
-        _enterPhase2();
-        uint256 sid = _exitLaneStatement();
         core.exitStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
     }
@@ -183,22 +162,18 @@ contract RedeemTimingTest is RedeemBase {
         core.exitStatement(sid);
     }
 
-    /// an eth lane redemption needs the controller's eligibility answer: a controller that cannot answer makes eth lane
-    /// statements ineligible, while exit lane statements still redeem at once
-    function test_timing_ethLaneNeedsTheControllerButExitLaneDoesNot() public {
+    /// every redemption needs the controller's eligibility answer: a controller that cannot answer makes statements
+    /// ineligible
+    function test_timing_redemptionNeedsTheController() public {
         _enterPhase2();
-        uint256 ethSid = _composeOnce().sid;
-        uint256 exitSid = _exitLaneStatement();
+        uint256 sid = _composeOnce().sid;
         ScriptedController sc = new ScriptedController();
         sc.setRevertPage(true); // atCostFlag defaults false, so atCost returns false
         _setController(address(sc));
         vm.prank(owner);
         core.lockController();
         vm.expectRevert(ICore.NotEligible.selector);
-        core.exitStatement(ethSid);
-        // the exit lane does not read the controller
-        core.exitStatement(exitSid);
-        assertEq(STATEMENTS.ownerOf(exitSid), address(mod));
+        core.exitStatement(sid);
     }
 
     /// a module that pays less than rating times unit less slippage is refused: nothing moves and nothing is repaid
@@ -244,12 +219,6 @@ contract RedeemRepayTest is RedeemBase {
         assertEq(potLost, 0);
         assertEq(address(core).balance, bal - 0, "no eth moved");
         assertEq(STATEMENTS.ownerOf(sid), address(hm), "the exit went through");
-        uint256 lane = _exitLaneStatement();
-        bal = address(core).balance;
-        (repaid, potLost) = _exit(lane, HIGH);
-        assertEq(repaid, 0);
-        assertEq(potLost, 0);
-        assertEq(address(core).balance, bal);
     }
 
     /// the fee and the ceiling are separate: the fee alone pays the fee, the ceiling alone pays the gas
@@ -317,31 +286,6 @@ contract RedeemRepayTest is RedeemBase {
         assertEq(core.ethPot(), 0);
     }
 
-    function test_pay_exitLaneGasCountIsCappedExactly() public {
-        _phase2Hostile();
-        uint256 sid = _exitLaneStatement();
-        hm.setBurn(4_000_000);
-        _payOn();
-        uint256 want = _want(EXIT_GAS, LOW);
-        (uint256 repaid, uint256 potLost) = _exit(sid, LOW);
-        assertEq(repaid, want);
-        assertEq(potLost, want);
-    }
-
-    function test_pay_exitLanePotBindsAndZeroPotPaysZero() public {
-        _phase2Hostile();
-        uint256 sid = _exitLaneStatement();
-        uint256 sid2 = _exitLaneStatement();
-        _payOn();
-        _setPot(7_777);
-        (uint256 repaid,) = _exit(sid, HIGH);
-        assertEq(repaid, 7_777);
-        assertEq(core.ethPot(), 0);
-        (repaid,) = _exit(sid2, HIGH);
-        assertEq(repaid, 0);
-        assertEq(STATEMENTS.ownerOf(sid2), address(hm));
-    }
-
     /// the natural regime: the counted gas is what the exit used plus the fixed overhead, at most EXIT_GAS. with the
     /// fee at zero the payment is counted gas times basefee, so the count can be read back
     function _natural(uint256 sid) internal {
@@ -365,46 +309,34 @@ contract RedeemRepayTest is RedeemBase {
         assertLe(counted, gross + 20_000, "and the overhead is not oversized");
     }
 
-    function test_pay_naturalCountEthLane() public {
+    function test_pay_naturalCount() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
         _natural(sid);
     }
 
-    function test_pay_naturalCountExitLane() public {
-        _enterPhase2();
-        _natural(_exitLaneStatement());
-    }
-
     /// never above the gas bound at the ceiling plus the fee, and never above the pot, for any basefee, with a module
     /// that burns as much as it likes
     function test_pay_neverAboveTheBoundWithAGasBurningModule() public {
         uint256[8] memory fees = [uint256(0), 1, 1e6, 1e9, 1e10, 1e11, 1e12, 1e15];
-        for (uint256 lane; lane < 2; ++lane) {
-            for (uint256 i; i < fees.length; ++i) {
-                uint256 snap = vm.snapshotState();
-                _phase2Hostile();
-                uint256 sid;
-                if (lane == 0) {
-                    sid = _composeOnce().sid;
-                    _makeEligible(sid);
-                } else {
-                    sid = _exitLaneStatement();
-                }
-                _payOn();
-                hm.setBurn(20_000_000);
-                uint256 pot = core.ethPot();
-                uint256 want = _want(EXIT_GAS, fees[i]);
-                if (want > pot) want = pot;
-                (uint256 repaid, uint256 potLost) = _exit(sid, fees[i]);
-                assertEq(repaid, want, "min of the payment and the pot");
-                assertLe(repaid, EXIT_GAS * PAY_CEILING + PAY_FEE);
-                assertLe(repaid, pot);
-                assertEq(potLost, repaid);
-                _solvent();
-                vm.revertToState(snap);
-            }
+        for (uint256 i; i < fees.length; ++i) {
+            uint256 snap = vm.snapshotState();
+            _phase2Hostile();
+            uint256 sid = _composeOnce().sid;
+            _makeEligible(sid);
+            _payOn();
+            hm.setBurn(20_000_000);
+            uint256 pot = core.ethPot();
+            uint256 want = _want(EXIT_GAS, fees[i]);
+            if (want > pot) want = pot;
+            (uint256 repaid, uint256 potLost) = _exit(sid, fees[i]);
+            assertEq(repaid, want, "min of the payment and the pot");
+            assertLe(repaid, EXIT_GAS * PAY_CEILING + PAY_FEE);
+            assertLe(repaid, pot);
+            assertEq(potLost, repaid);
+            _solvent();
+            vm.revertToState(snap);
         }
     }
 
@@ -443,7 +375,7 @@ contract RedeemRepayTest is RedeemBase {
         uint256 bal = address(rc).balance;
         rc.exit(a, b);
         assertEq(rc.hits(), 1, "it was repaid once");
-        assertEq(rc.blocked(), 5, "all five doors refused it");
+        assertEq(rc.blocked(), 4, "all four doors refused it");
         assertEq(rc.ok(), 0);
         assertGt(address(rc).balance - bal, 0);
         assertEq(core.ethPot(), pot - rc.repaid(), "the pot paid it once");
