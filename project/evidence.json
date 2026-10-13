@@ -2754,6 +2754,40 @@
       "result": "pass",
       "limitations": "No wallet unlock, signing, broadcast, mined receipt or explorer submission. Actual interactive password/key input and Etherscan acceptance remain untested; prompts are unit-tested with fixtures/mocks. Fee quotes change with mainnet state and are estimates, not guaranteed costs. Focused Solidity tests were not repeated because their sources, inputs and compiled helper are unchanged. No engine release acceptance or deploy-gate waiver.",
       "invalidated": null
+    },
+    "E-CREDIT-SCORE-LENS-FEE-REVIEW-25c2adc": {
+      "claim": "Independent immutable review of the fee/default/key CLI at 25c2adc has no open findings; M1 project-local TMPDIR dotenv-signer restoration fixed and independently verified.",
+      "kind": "review",
+      "sourceRevision": "25c2adcd4698df40f3b5041e3696bf41a39a4202",
+      "scope": [
+        "script/tools/credit-score-lens.py",
+        "script/test_credit_score_lens_tool.py",
+        "docs/INTEGRATION.md",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/VerifyCreditScoreLens.s.sol",
+        "foundry.toml"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": 2,
+        "A-TOOLCHAIN": 1
+      },
+      "dependsOn": [
+        "E-CREDIT-SCORE-LENS-FEE-TEST-25c2adc"
+      ],
+      "inputs": "Clean detached independent checkout at 2fc334c, then 25c2adc; FLOW 96; supplied build/live-estimate logs and existing parent artifact.",
+      "method": "Independent read-only review of fee units and reuse, prompt/credential order, wallet defaults, gate and cancellation; all 19 unit tests independently passed. Actual local Foundry startup counterexample using synthetic TMPDIR/.env found M1 at 2fc334c; repaired disposable .git discovery boundary and actual startup regression independently verified at 25c2adc.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "Codex independent subagent /root/review_credit_score_lens, 2026-10-13",
+      "result": "pass",
+      "limitations": "No reviewer build/fork/network estimate/wallet/signing/broadcast/explorer submission; live password prompting, mined fees and explorer acceptance remain untested. Gate remains enforced, not satisfied or waived. Helper runtime unchanged; bounded tooling review only.",
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-credit-score-lens-fees-25c2adc.md",
+        "sha256": "d6c5030679b68c4d77de95eb308ca1475e4b20a79a834811e42163a6e2a4bd77",
+        "revision": "62a9a02fbded4e10d19fcf48eb574072ca537c41"
+      }
     }
   }
 }
