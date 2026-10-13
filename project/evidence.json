@@ -77,6 +77,13 @@
       "source": "test/CreditScoreLens.t.sol source hash assertions; docs/NEXT.md source SHA-256 table; script/DeployCreditScoreLens.s.sol",
       "version": 1,
       "checked": "2026-10-13"
+    },
+    "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": {
+      "statement": "FLOW 94 authorizes CreditScoreLens deployment/verification tooling, not broadcast or source publication. Deploy must enforce the configured repository gate, reviewed compiler/runtime identity and a fresh successful CREATE receipt; verify/check compare all five native-unit methods with pinned source contracts.",
+      "kind": "owner-decision",
+      "source": "docs/FLOW.md decision 94; docs/INTEGRATION.md helper tooling",
+      "version": 1,
+      "checked": "2026-10-13"
     }
   },
   "evidence": {
@@ -2574,6 +2581,42 @@
         "sha256": "7abe3bba5b3ee5675746088961b7c9b1e9646ae8fbca3cde408a54943734aa47",
         "revision": "566b68dcb4a265183d51370a1cdc202e06d376a0"
       }
+    },
+    "E-CREDIT-SCORE-LENS-TOOLING-TEST-7402455": {
+      "claim": "CreditScoreLens deployment and verification tooling compiles; 21 focused fork tests pass including 256 differential fuzz cases; all 9 Python driver safety tests pass; actual driver simulation passes without broadcast; explorer compiler input matches the reviewed build.",
+      "kind": "test",
+      "sourceRevision": "7402455594f0d032f516de67db53281327592133",
+      "scope": [
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "src/interfaces/Interfaces.sol",
+        "test/CreditScoreLens.t.sol",
+        "test/utils/CreditIds.sol",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/VerifyCreditScoreLens.s.sol",
+        "script/tools/credit-score-lens.py",
+        "script/test_credit_score_lens_tool.py",
+        "script/director.py",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": 1,
+        "A-TOOLCHAIN": 1,
+        "A-FORK-BLOCK": 1
+      },
+      "dependsOn": [],
+      "inputs": "Mainnet fork block 26158000 via public Tenderly RPC; no signing wallet; solc 0.8.30 viaIR, optimizer 200, Cancun, metadata hash none; runtime 1478 bytes, hash 0xb2477fe32da0dfde830387f29295c5ad83e3438a11ecfa8994d21a92d81e7058.",
+      "method": "forge build; forge test --match-path test/CreditScoreLens.t.sol -j 1 -vv (21 pass, 256 fuzz); PYTHONDONTWRITEBYTECODE=1 python3 -m unittest script/test_credit_score_lens_tool.py -v (9 pass); actual Python simulate --fork-block 26158000 --sender 0xCB43078C32423F5348Cab5885911C3B5faE217F9; forge verify-contract --compilation-profile viair --show-standard-json-input --skip-is-verified-check with dummy address, no submission; compiler settings inspected; formatting/whitespace checks; configured deploy gate rejects current release state.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "No full suite, engine rehearsal, wallet access, mainnet broadcast, actual mined receipt or explorer submission/acceptance. Receipt and failure handling use fixtures/mocks. Helper runtime unchanged. Does not restore engine launch evidence or waive its unmet deployment gate.",
+      "invalidated": null
     }
   }
 }

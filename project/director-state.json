@@ -156,7 +156,7 @@
     ]
   },
   "candidate": "6ea44f570cc7cad7812a8c4a7147d465fcf858db",
-  "activeChange": "CreditScoreLens deployment/verification tooling (FLOW 94), no broadcast: explorer verification, exact runtime and five source-view readbacks; configured deploy gate required.",
+  "activeChange": null,
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -206,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "Implement and exercise the focused CreditScoreLens deployment/verification tooling, commit and independently review it. No broadcast or engine deploy-gate waiver authorized.",
+  "nextAction": "CreditScoreLens deployment/verification tooling is committed, focused tests and simulation pass, and independent tooling review has no actionable findings. No broadcast or explorer submission authorized; configured deploy gate remains unmet. Engine OBJ-LAUNCH-1 still requires valid release evidence before deployment.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
