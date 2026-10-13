@@ -19,8 +19,7 @@ contract BidRuleTest is Fixture {
     function _potTo(uint256 eth) internal {
         uint256 have = core.ethPot();
         if (have >= eth) return;
-        vm.deal(address(core), address(core).balance + (eth - have));
-        core.skim();
+        _addToPot((eth - have));
     }
 
     function _with(function(Settings memory) pure f) internal {
@@ -153,8 +152,7 @@ contract BidRuleTest is Fixture {
         _potTo(1e15);
         _warp(2 hours);
         assertEq(core.ethRate(), 1e15, "the read is the clamp");
-        vm.deal(address(core), address(core).balance + 1);
-        core.skim();
+        _addToPot(1);
         assertEq(core.rateAtCheckpoint(), START, "the price state did not climb");
     }
 
@@ -383,9 +381,8 @@ contract BidRuleTest is Fixture {
     /// the opening rate at once
     function test_launch_smallPotDoesNotDragThePriceState() public {
         _potTo(0.0005 ether);
-        core.skim();
-        vm.deal(address(core), address(core).balance + 1);
-        core.skim();
+        core.book();
+        _addToPot(1);
         uint256 clamp = core.ethPot();
         assertLt(clamp, START / 3, "the clamp is a fraction of the opening rate");
         assertEq(core.ethRate(), clamp);
@@ -407,13 +404,12 @@ contract BidRuleTest is Fixture {
         // drain the pot to under one credit, then book 1 wei so that a checkpoint runs at the small pot
         stdstore.target(address(core)).sig("ethPot()").checked_write(uint256(1e15));
         vm.deal(address(core), 1e15 + 1);
-        core.skim();
+        core.book();
         assertEq(core.ethPot(), 1e15 + 1);
         assertEq(core.rateAtCheckpoint(), price, "the price state is not lowered by the small pot");
         _warp(10 hours);
         assertEq(core.ethRate(), core.ethPot(), "the read is the clamp of the small pot");
-        vm.deal(address(core), address(core).balance + 1);
-        core.skim();
+        _addToPot(1);
         assertEq(core.rateAtCheckpoint(), price, "and a starved pot does not raise the price state");
         _potTo(20 ether);
         assertEq(core.rateAtCheckpoint(), price, "the checkpoint at the refill stores the price from before");
@@ -569,8 +565,7 @@ contract BidRuleTest is Fixture {
         uint256 price = _forListing();
         _warpUntilCeiling(LISTED_A, price * 3);
         // store the price state, then leave a pot whose clamp is half of it
-        vm.deal(address(core), address(core).balance + 1);
-        core.skim();
+        _addToPot(1);
         uint256 state = core.rateAtCheckpoint();
         uint256 pot = state / 2;
         stdstore.target(address(core)).sig("ethPot()").checked_write(pot);

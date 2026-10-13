@@ -13,6 +13,7 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {IListingAdapter} from "./interfaces/IListingAdapter.sol";
+import {IArtCoinsFactoryV2, IArtCoinsFeeEscrowV2} from "./interfaces/ArtCoinsV2.sol";
 import {
     IController,
     IBalanceModule,
@@ -37,8 +38,9 @@ import {RateStore} from "./lib/RateStore.sol";
 /// once, can set a successor that receives the assets on `migrate`, and can close each of the controller, the balance
 /// module, the adapters and the successor door with a one way lock (docs/ARCHITECTURE.md).
 /// credits and statements sent to the core outside its doors are not tracked and stay in the core.
-/// the pool's bounty recipient is the fee router, which flushes the fee eth here: `receive()` books eth from the fee
-/// source (the router) into the pot.
+/// the Core is the bounty recipient of the pool. `receive()` accepts eth from the hook and the fee escrow only, and every
+/// door starts with `_book()`, which splits the eth above the tracked pots into the payee claim, the coin buyback, the
+/// redeem burn reserve and the pot.
 contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     using FixedPointMathLib for uint256;
 
@@ -66,6 +68,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error InWindow(uint256 id);
     error BadStatement();
     error BadCost();
+    /// a plain send from an address other than the hook and the escrow. eth enters through `fund()` or as pool fees
+    error UseFund();
     error BadModule();
     error BadSwap();
     /// `buyListing` names an adapter the owner has not approved
@@ -77,7 +81,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error CallFailed();
     error NoCredit();
     error PotTooSmall();
-    /// the quoted `value` of `buyListing` is above `ethRate()`
+    /// the quoted `value` of `buyListing` is above the bid
     error AboveBid();
     error Slippage();
     error Underpaid();
@@ -125,7 +129,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     event FeesAdded(uint256 amount);
-    event Skimmed(uint256 eth, uint256 balanceToken);
+    /// `fund` added `amount` to the pot
+    event Funded(address indexed from, uint256 amount);
+    /// `collectEscrow` claimed `amount` from the fee escrow into the pot
+    event EscrowCollected(uint256 amount);
+    /// `bookBalance` added `amount` of the balance token to `balancePot`
+    event BalanceBooked(uint256 amount);
+    event PayeeSet(address indexed payee);
+    event PayeeClaimed(address indexed payee, uint256 amount);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event ListingBought(
         uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate
@@ -177,13 +188,17 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     uint256 private constant BPS = 10_000;
+    uint256 private constant PPM = 1_000_000;
     uint256 private constant PAGE = 80;
     uint256 private constant MAX_FORMAT = 7;
     uint256 private constant READ_GAS = 200_000;
+    /// words of the `deploymentInfo` answer the Core reads: the offset word and the fields up to `launchedAt`, the 9th
+    uint256 private constant INFO_WORDS = 10;
+    uint256 private constant LAUNCHED_AT_WORD = 9;
     /// gas of the work after the end of `compose` that the caller payment counts, with the transaction base cost
     uint256 private constant COMPOSE_OVERHEAD_GAS = 50_000;
-    /// the most gas of a compose the caller payment counts. above the largest metered compose, 11.1 million with a loaded
-    /// fee router of four gas burning payees, so a gas burning controller or router cannot inflate the payment
+    /// the most gas of a compose the caller payment counts. above the largest metered compose, so a gas burning
+    /// controller cannot inflate the payment
     uint256 private constant COMPOSE_GAS = 13_700_000;
     /// gas of the work after the end of `redeemStatement` that the caller payment counts, with the transaction base cost
     uint256 private constant REDEEM_OVERHEAD_GAS = 50_000;
@@ -209,16 +224,16 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     address public immutable COIN;
     /// opening bid, wei per credit, fixed at deploy
     uint256 public immutable RATE_START;
-    /// the artcoins v2 stack this core launched on, fixed at deploy. FEE_SOURCE (the fee router) is the only sender whose
-    /// eth is booked as fees
+    /// the artcoins v2 stack this core launched on, fixed at deploy. `receive` accepts eth from HOOK and ESCROW only
     IPoolManager public immutable MANAGER;
     address public immutable HOOK;
-    address public immutable FEE_SOURCE;
     int24 public immutable TICK_SPACING;
     uint24 public immutable POOL_FEE;
     address public immutable FACTORY;
     address public immutable LOCKER;
     address public immutable ESCROW;
+    /// seconds from the launch to the start of the payee share, the window of the anti sniper skim
+    uint256 public immutable SNIPER_SECONDS;
 
     /*//////////////////////////////////////////////////////////////
                                 STATE
@@ -275,6 +290,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// launch 0 (docs/FLOW.md 89)
     uint96 public minCcToChoose;
 
+    /// the address `claimPayee` pays
+    address public payee;
+    /// eth credited to the payee by `_book` and not yet claimed
+    uint256 public payeeOwed;
+    /// true once the payee share runs. set by the first `_book` with income at or after `launchedAt + SNIPER_SECONDS`,
+    /// which shares nothing. one way
+    bool public payeeOn;
+
     modifier onlyOwner() {
         _onlyOwner();
         _;
@@ -284,38 +307,52 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (msg.sender != owner) revert OnlyOwner();
     }
 
+    /// `cfg_` is the launch config of the v2 factory. a zero `coin_` is a launch: the bounty recipient of `cfg_` is set
+    /// to this contract and `COIN` is the address the factory predicts for `launcher_` and that config, so the coin and
+    /// the Core refer to each other. a nonzero `coin_` is a successor of a Core of a coin that is launched already: it
+    /// must be a coin the factory recorded, and `cfg_` supplies the anti sniper window
     constructor(
         address owner_,
+        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg_,
+        address launcher_,
         address coin_,
         address controller_,
+        address payee_,
         Stack memory stack_,
         uint256 rateStart_,
         Settings memory settings_,
         Credit memory credit_,
         address[] memory adapters_
     ) {
-        if (owner_ == address(0) || coin_ == address(0) || controller_ == address(0)) {
-            revert ZeroAddress();
-        }
+        if (owner_ == address(0) || controller_ == address(0) || payee_ == address(0)) revert ZeroAddress();
         if (
             stack_.poolManager == address(0) || stack_.hook == address(0) || stack_.factory == address(0)
-                || stack_.locker == address(0) || stack_.escrow == address(0) || stack_.feeSource == address(0)
+                || stack_.locker == address(0) || stack_.escrow == address(0)
         ) revert ZeroAddress();
         if (stack_.tickSpacing <= 0 || stack_.tickSpacing > 32_767) revert BadStack();
         // the stack members must be contracts. the coin is not deployed yet when the core is created
         if (stack_.poolManager.code.length == 0) revert NoCode(stack_.poolManager);
         if (stack_.hook.code.length == 0) revert NoCode(stack_.hook);
-        if (stack_.feeSource.code.length == 0) revert NoCode(stack_.feeSource);
         if (stack_.factory.code.length == 0) revert NoCode(stack_.factory);
         if (stack_.locker.code.length == 0) revert NoCode(stack_.locker);
         if (stack_.escrow.code.length == 0) revert NoCode(stack_.escrow);
         if (!SettingsBounds.rateInBounds(rateStart_) || rateStart_ > settings_.rateCap) revert BadRate();
+        if (cfg_.pool.hook != stack_.hook) revert BadStack();
+        address coin = coin_;
+        if (coin == address(0)) {
+            cfg_.fee.bountyRecipient = payable(address(this));
+            coin = IArtCoinsFactoryV2(stack_.factory).predictToken(launcher_, cfg_);
+            if (coin == address(0)) revert ZeroAddress();
+        } else if (!IArtCoinsFactoryV2(stack_.factory).isCoin(coin)) {
+            revert BadStack();
+        }
         owner = owner_;
-        COIN = coin_;
+        payee = payee_;
+        COIN = coin;
+        SNIPER_SECONDS = cfg_.mev.windowSeconds;
         RATE_START = rateStart_;
         MANAGER = IPoolManager(stack_.poolManager);
         HOOK = stack_.hook;
-        FEE_SOURCE = stack_.feeSource;
         TICK_SPACING = stack_.tickSpacing;
         POOL_FEE = stack_.poolFee;
         FACTORY = stack_.factory;
@@ -343,24 +380,15 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         CREDITS.setApprovalForAll(address(STATEMENTS), true);
         emit OwnershipTransferred(address(0), owner_);
         emit ControllerSet(controller_);
+        emit PayeeSet(payee_);
         // validates, stores at the settings slot and logs, by delegatecall into the library
         CoreLib.setSettings(settings_);
     }
 
-    /// accepts eth from anyone but the fee source and leaves it unbooked (`skim` books it). eth from the fee source (the
-    /// router flushing the pool's fee eth) is booked: `feeToBuybackBps` to the coin buyback, `feeToRedeemBurnBps` to the
-    /// redeem burn reserve, the rest to the pot. every other sender is accepted unbooked, so a refund or a sale payout
-    /// can never fail a call
+    /// accepts eth from the hook (the pool's bounty) and the fee escrow (a claim). the hook pushes with 2,300 gas, so
+    /// the body is the sender compare. the eth is booked by the next `_book`
     receive() external payable {
-        if (msg.sender != FEE_SOURCE) return;
-        _checkpoint();
-        Settings storage s = _st();
-        uint256 toBuyback = msg.value * s.feeToBuybackBps / BPS;
-        uint256 toRedeemBurn = msg.value * s.feeToRedeemBurnBps / BPS;
-        if (toBuyback != 0) ethToBuyback += toBuyback;
-        if (toRedeemBurn != 0) ethRedeemBurn += toRedeemBurn;
-        ethPot += msg.value - toBuyback - toRedeemBurn;
-        emit FeesAdded(msg.value);
+        if (msg.sender != HOOK && msg.sender != ESCROW) revert UseFund();
     }
 
     /// accepts statements and credits from their own contracts only.
@@ -373,20 +401,110 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                               FEE INTAKE
     //////////////////////////////////////////////////////////////*/
 
-    /// books any eth or balance token held above the recorded pots into the buying pots. anyone may call.
-    function skim() external nonReentrant {
-        uint256 eth = address(this).balance.zeroFloorSub(ethPot + ethToBuyback + ethRedeemBurn);
-        if (eth != 0) {
+    /// books the eth above the tracked pots as fee income. anyone may call
+    function book() external nonReentrant {
+        _book();
+    }
+
+    /// adds `msg.value` to the pot. the eth above the tracked pots is booked first, so `msg.value` is never counted as
+    /// fee income
+    function fund() external payable nonReentrant {
+        _book();
+        _checkpoint();
+        ethPot += msg.value;
+        emit Funded(msg.sender, msg.value);
+    }
+
+    /// claims the eth credit of the Core in the fee escrow (the refund of a partial buyback fill) into the pot
+    function collectEscrow() external nonReentrant {
+        _book();
+        uint256 before = address(this).balance;
+        IArtCoinsFeeEscrowV2(ESCROW).claim(address(this), address(0));
+        uint256 amount = address(this).balance - before;
+        if (amount != 0) {
             _checkpoint();
-            ethPot += eth;
+            ethPot += amount;
         }
-        uint256 x;
+        emit EscrowCollected(amount);
+    }
+
+    /// sends the booked payee share to `payee`. a payee that reverts blocks only its own claim
+    function claimPayee() external nonReentrant {
+        uint256 amount = payeeOwed;
+        if (amount == 0) revert ZeroAmount();
+        payeeOwed = 0;
+        address to = payee;
+        (bool ok,) = to.call{value: amount}("");
+        if (!ok) revert CallFailed();
+        emit PayeeClaimed(to, amount);
+    }
+
+    /// adds the balance token held above `balancePot` to `balancePot`. no effect while no balance module is set
+    function bookBalance() external nonReentrant {
         address token = balanceToken;
+        uint256 amount;
         if (token != address(0)) {
-            x = SafeTransferLib.balanceOf(token, address(this)).zeroFloorSub(balancePot);
-            if (x != 0) balancePot += x;
+            amount = SafeTransferLib.balanceOf(token, address(this)).zeroFloorSub(balancePot);
+            balancePot += amount;
         }
-        emit Skimmed(eth, x);
+        emit BalanceBooked(amount);
+    }
+
+    /// the eth held above `ethPot`, `ethToBuyback`, `ethRedeemBurn` and `payeeOwed`, without `value` of the current call
+    function _income(uint256 value) private view returns (uint256) {
+        return (address(this).balance - value).zeroFloorSub(ethPot + ethToBuyback + ethRedeemBurn + payeeOwed);
+    }
+
+    /// the parts of `income` that go to the payee, the coin buyback and the redeem burn reserve. the rest goes to the pot.
+    /// the payee share is `payeePpm` of the income while `payeeOn`
+    function _split(uint256 income) private view returns (uint256 toPayee, uint256 toBuyback, uint256 toRedeemBurn) {
+        Settings storage s = _st();
+        if (payeeOn) {
+            toPayee = income * s.payeePpm / PPM;
+            income -= toPayee;
+        }
+        toBuyback = income * s.feeToBuybackBps / BPS;
+        toRedeemBurn = income * s.feeToRedeemBurnBps / BPS;
+    }
+
+    /// the share of the unbooked income that the next `_book` adds to the pot
+    function _pendingPot() private view returns (uint256) {
+        uint256 income = _income(0);
+        (uint256 toPayee, uint256 toBuyback, uint256 toRedeemBurn) = _split(income);
+        return income - toPayee - toBuyback - toRedeemBurn;
+    }
+
+    /// books the fee income. the first action of every door that reads or moves a pot, with `msg.value` of the door
+    /// excluded. the rate is checkpointed before the pot grows. the payee share starts with the first book at or after
+    /// `launchedAt + SNIPER_SECONDS` that has income, and that book shares nothing
+    function _book() private {
+        uint256 income = _income(msg.value);
+        if (income == 0) return;
+        _checkpoint();
+        (uint256 toPayee, uint256 toBuyback, uint256 toRedeemBurn) = _split(income);
+        if (payeeOn) {
+            if (toPayee != 0) payeeOwed += toPayee;
+        } else if (_sniperOver()) {
+            payeeOn = true;
+        }
+        if (toBuyback != 0) ethToBuyback += toBuyback;
+        if (toRedeemBurn != 0) ethRedeemBurn += toRedeemBurn;
+        income -= toPayee;
+        ethPot += income - toBuyback - toRedeemBurn;
+        emit FeesAdded(income);
+    }
+
+    /// whether the launch time recorded by the factory plus `SNIPER_SECONDS` has passed. a launch that is not recorded
+    /// or a factory that does not answer reads as not passed
+    function _sniperOver() private view returns (bool) {
+        (bool ok, bytes memory out) =
+            _ask(FACTORY, abi.encodeCall(IArtCoinsFactoryV2.deploymentInfo, (COIN)), READ_GAS, INFO_WORDS * 32);
+        if (!ok) return false;
+        uint256 launchedAt;
+        assembly ("memory-safe") {
+            launchedAt := mload(add(out, add(0x20, mul(LAUNCHED_AT_WORD, 0x20))))
+        }
+        return launchedAt != 0 && block.timestamp >= launchedAt + SNIPER_SECONDS;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -394,9 +512,16 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// wei per credit right now: the price state (`rateAtCheckpoint` climbed lazily, bounded by the ceiling and
-    /// `rateCap`) lowered to `ethPot`, the price of one credit that the pot affords. the clamp follows the current pot
-    /// and is not stored. the math is in `CoreLib.climb`
-    function ethRate() public view returns (uint256 read) {
+    /// `rateCap`) lowered to the pot, the price of one credit that the pot affords. the pot of the clamp is `ethPot`
+    /// plus the share of the unbooked fee income that the next `_book` adds to it. the clamp is not stored. the math is
+    /// in `CoreLib.climb`
+    function ethRate() external view returns (uint256) {
+        (uint256 price,) = _climb();
+        return price.min(ethPot + _pendingPot());
+    }
+
+    /// the rate of the booked pot, for the doors, which book first
+    function _bid() private view returns (uint256 read) {
         (, read) = _climb();
     }
 
@@ -506,13 +631,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         delete _credits[id];
     }
 
-    /// the first action of `sellForEth`, `buyListing`, `adopt` and `compose`. two steps in order:
+    /// the first action of `sellForEth`, `buyListing`, `adopt`, `compose` and `composeChosen`. two steps in order:
     /// 1. reverts `Retired` once `migrate` has run. `sellForBalance` checks the same flag in `CoreLib`.
-    /// 2. pulls the fee router: the router flushes its balance into `receive`, which books it, before the entry point
-    /// reads a rate or checkpoints. a failing router does not fail the entry point (docs/FLOW.md 10.8)
+    /// 2. books the fee income, before the entry point reads a rate or checkpoints
     function _openDoor() private {
         if (retired) revert Retired();
-        CoreLib.pullFees(FEE_SOURCE);
+        _book();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -536,7 +660,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = _owned(ids[i]);
-            uint256 price = ethRate();
+            uint256 price = _bid();
             _spend(price);
             _push(id, price);
             CREDITS.transferFrom(msg.sender, address(this), id);
@@ -552,8 +676,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// bytes. `value` is at most the bid (`ethRate()`) and at most `ethPot`. the Core must own `id` after the call and
     /// its credit balance must have risen by one. the caller is paid from `ethPot`: the gas of the call at the base fee,
     /// capped at `keeperMaxBaseFee` and `BUYLISTING_GAS`, plus `keeperFee`. the payment is at most the bid less
-    /// `value`, so the pot pays at most the bid for the credit. the gas counted includes the fee router flush. reverts
-    /// `Retired` after `migrate`
+    /// `value`, so the pot pays at most the bid for the credit. reverts `Retired` after `migrate`
     function buyListing(address adapter, uint256 id, bytes calldata params) external nonReentrant {
         uint256 gasStart = gasleft();
         _openDoor();
@@ -563,7 +686,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         (address target, uint256 value, bytes memory data) = _quote(adapter, id, params);
         if (_forbidden(target)) revert ForbiddenTarget();
         _checkpoint();
-        uint256 bid = ethRate();
+        uint256 bid = _bid();
         if (value == 0) revert ZeroAmount();
         if (value > ethPot) revert PotTooSmall();
         if (value > bid) revert AboveBid();
@@ -637,7 +760,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// every forbidden target except the balanceModule and the balanceToken, which a later set may name again
     function _forbiddenBase(address t) private view returns (bool) {
         return t == address(CREDITS) || t == address(STATEMENTS) || t == address(this) || t == COIN || t == HOOK
-            || t == address(MANAGER) || t == FACTORY || t == LOCKER || t == ESCROW || t == FEE_SOURCE
+            || t == address(MANAGER) || t == FACTORY || t == LOCKER || t == ESCROW
             || t == Mainnet.PERMIT2 || t == Mainnet.POSITION_MANAGER
             || t == Mainnet.UNIVERSAL_ROUTER;
     }
@@ -647,8 +770,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// composes the controller's page of the oldest 80 pile credits into a statement the core holds for sale with the
-    /// controller's default format. anyone may call. the gas counted for the caller payment includes the fee router
-    /// flush. reverts `Retired` after `migrate`
+    /// controller's default format. anyone may call. reverts `Retired` after `migrate`
     function compose() external nonReentrant {
         uint256 gasStart = gasleft();
         _openDoor();
@@ -764,6 +886,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// controller refunds its own caller
     function sellTo(uint256 sid, address buyer) external payable nonReentrant {
         if (msg.sender != controller) revert OnlyController();
+        _book();
         CoreLib.Statement storage st = _statements[sid];
         if (!st.held) revert NotForSale();
         if (msg.value < st.cost * _st().saleFloorBps / BPS) revert BelowFloor();
@@ -782,6 +905,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// buy and burn. the controller refunds its own caller
     function sellCreditTo(uint256 id, address buyer) external payable nonReentrant {
         if (msg.sender != controller) revert OnlyController();
+        _book();
         CoreLib.Credit storage c = _credits[id];
         if (!c.inPile) revert NotInPile(id);
         uint256 cost = c.cost;
@@ -808,6 +932,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// redeem burn reserve into the coin buyback
     function redeemStatement(uint256 sid) external nonReentrant {
         uint256 gasStart = gasleft();
+        _book();
         address module = balanceModule;
         if (module == address(0)) revert NoBalanceModule();
         if (_st().balanceMode == 0) revert BalanceModeOff();
@@ -844,10 +969,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// `keeperMaxBaseFee` and `BUYBACK_GAS`, plus `keeperFee` scaled by `spent` over the largest swap budget the
     /// `buybackSlice` setting allows. the largest payment is `BUYBACK_GAS * rate + keeperFee`, the swap budget is the
     /// slice less that payment, and a slice under twice that payment reverts, so the payment is at most half the slice.
-    /// the core's own bounty share of the hook's skim on this swap reaches the pot through the router (`flush`), and a
-    /// partial fill refund through the escrow (`skim`, after anyone claims it).
+    /// the eth spent is the pool delta of the swap. the bounty share of the hook's skim on this swap reaches the Core
+    /// during the swap and is booked by the next `_book`, and a partial fill refund through the escrow (`collectEscrow`).
     function buyback() external nonReentrant {
         uint256 gasStart = gasleft();
+        _book();
         uint256 pool = ethToBuyback;
         if (pool == 0) revert NothingToBuy();
         Settings storage s = _st();
@@ -874,7 +1000,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// pool manager callback of `buyback`. swaps exact eth in for coin, which comes to the core. returns the eth
-    /// spent, skim included, and the coin bought. the take of the coin from the pool manager passes the restriction of the
+    /// spent, hook skim included, and the coin bought. the take of the coin from the pool manager passes the restriction of the
     /// coin through the transfer allowance the hook grants for the swap.
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
         if (msg.sender != address(MANAGER)) revert OnlyPoolManager();
@@ -908,6 +1034,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (c == address(0)) revert ZeroAddress();
         controller = c;
         emit ControllerSet(c);
+    }
+
+    /// sets the address `claimPayee` pays. never zero. effective at once, applies to the eth already owed
+    function setPayee(address to) external onlyOwner {
+        if (to == address(0)) revert ZeroAddress();
+        payee = to;
+        emit PayeeSet(to);
     }
 
     /// sets or replaces the balance module at once (any number of times until `lockBalanceModule`)
@@ -989,7 +1122,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// sets the successor that `migrate` sends the assets to. the zero address means no migration. it must have code.
     /// reverts `Locked("successor")` after `lockSuccessor`, and `BadSuccessor` for the core, the balance module, the balance
-    /// token, the fee source, the coin, Credits and Statements. owner only, checked by the library, to which
+    /// token, the coin, Credits and Statements. owner only, checked by the library, to which
     /// the call is handed untouched. logs `SuccessorSet`
     function setSuccessor(address) external {
         _toLib();
@@ -1025,8 +1158,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
     }
 
-    /// puts credits the core holds without a record into the pile, anyone may call. the fee router is pulled first,
-    /// like at every door that reads the pot, so pending fee eth is booked before the price is read. the cost basis of
+    /// puts credits the core holds without a record into the pile, anyone may call. the fee income is booked first,
+    /// like at every door that reads the pot, so it is in the pot before the price is read. the cost basis of
     /// each credit is the price state per credit (`ethPrice`), at least 1 wei. the price
     /// state is the figure the engine pays with a funded pot, so a statement built from adopted credits is priced at
     /// that level; the clamp of a thin pot would book a basis of 1 wei. the basis is booked and the pile grows: eth,

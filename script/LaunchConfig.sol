@@ -36,7 +36,6 @@ bytes32 constant OWNER_DELEGATE_CODEHASH = 0xff0357b543bbb94845b6791a8becac5e87d
 /// arguments
 struct LaunchConfig {
     // the artcoins stack. the only block that changes when a new artcoins version ships
-    /// `feeSource` is not read from the config file: the deploy creates the fee router and fills it in
     Stack stack;
     address mevModule;
     // launch inputs. the shipped config file holds the live stack and every field below. test/Config.t.sol asserts that
@@ -83,13 +82,11 @@ struct LaunchConfig {
     address[] allowed;
     /// the recipients of additional payouts that `SeaportBasicAdapter` accepts at launch. the OpenSea fee collector
     address[] seaportRecipients;
-    // the fee router (docs/DECISIONS.md 10.6): one payee at launch, by parts per million of a flush. later payees are set
-    // through `setPayees`
-    address creatorPayee;
-    /// the payee's share of the gross flush, ppm. the router receives bountyBps / 10_000 of the baseline skim: 9_638 / 10_000
-    /// of 690 bps is 665.022 bps of volume (6.65022 points). 112_778 ppm of that is 0.75 points of volume:
-    /// 0.75 / 6.65022 * 1e6 = 112_778.2, rounded down
-    uint32 payeePpm;
+    /// the address `Core.claimPayee` pays at launch. the owner replaces it with `Core.setPayee`. its share is
+    /// `settings.payeePpm`: the Core receives bountyBps / 10_000 of the baseline skim, 9_638 / 10_000 of 690 bps is
+    /// 665.022 bps of volume (6.65022 points). 75_185 ppm of that is 0.5 points of volume:
+    /// 0.5 / 6.65022 * 1e6 = 75_185.2, rounded down
+    address payee;
     // explicit overrides of pinned preflight rules. all false by default. each one is part of the config hash
     /// allow a bountyBps other than 9638
     bool allowBounty;
@@ -130,7 +127,6 @@ abstract contract ConfigReader is CommonBase {
         c.restricted = true;
         c.seaportRecipients = new address[](1);
         c.seaportRecipients[0] = Mainnet.OPENSEA_FEE_COLLECTOR;
-        c.payeePpm = 112_778;
     }
 
     /// @notice parses a config file. a missing key reverts inside the cheatcode, a number that does not fit its field
@@ -148,8 +144,7 @@ abstract contract ConfigReader is CommonBase {
             poolFee: _u24(j, ".stack.poolFee"),
             factory: vm.parseJsonAddress(j, ".stack.factory"),
             locker: vm.parseJsonAddress(j, ".stack.locker"),
-            escrow: vm.parseJsonAddress(j, ".stack.escrow"),
-            feeSource: address(0)
+            escrow: vm.parseJsonAddress(j, ".stack.escrow")
         });
         c.mevModule = vm.parseJsonAddress(j, ".stack.mevModule");
         c.owner = vm.parseJsonAddress(j, ".owner");
@@ -196,6 +191,7 @@ abstract contract ConfigReader is CommonBase {
         // forge-lint: disable-end(unsafe-typecast)
         s.feeToBuybackBps = _u16(j, ".settings.feeToBuybackBps");
         s.feeToRedeemBurnBps = _u16(j, ".settings.feeToRedeemBurnBps");
+        s.payeePpm = _u24(j, ".settings.payeePpm");
     }
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {
@@ -240,8 +236,7 @@ abstract contract ConfigReader is CommonBase {
         c.restricted = vm.parseJsonBool(j, ".launch.restricted");
         c.allowed = vm.parseJsonAddressArray(j, ".launch.allowed");
         c.seaportRecipients = vm.parseJsonAddressArray(j, ".adapters.seaportRecipients");
-        c.creatorPayee = vm.parseJsonAddress(j, ".router.creatorPayee");
-        c.payeePpm = _u32(j, ".router.payeePpm");
+        c.payee = vm.parseJsonAddress(j, ".payee.address");
     }
 
     // every narrowing below follows a bounds check, so the casts cannot truncate
@@ -295,7 +290,7 @@ abstract contract ConfigReader is CommonBase {
         if (bytes(c.name).length == 0) tmp[n++] = "name";
         if (bytes(c.symbol).length == 0) tmp[n++] = "symbol";
         if (c.salt == bytes32(0)) tmp[n++] = "salt";
-        if (c.creatorPayee == address(0)) tmp[n++] = "router.creatorPayee";
+        if (c.payee == address(0)) tmp[n++] = "payee.address";
         // a config file that leaves a stack address at zero is refused
         if (c.stack.hook == address(0)) tmp[n++] = "stack.hook";
         if (c.stack.factory == address(0)) tmp[n++] = "stack.factory";

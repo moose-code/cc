@@ -157,7 +157,7 @@ contract OwnerFormerQueueTest is OwnerBase {
         _setBalancePoolFor(address(spareToken));
         uint256[] memory ids = _credits(seller, 1);
         spareToken.mint(address(core), 5e19);
-        core.skim();
+        core.bookBalance();
         vm.prank(seller);
         core.sellForBalance(ids);
         assertEq(CREDITS.ownerOf(ids[0]), address(core));
@@ -244,13 +244,12 @@ contract OwnerFormerQueueTest is OwnerBase {
     }
 
     function test_adapter_forbiddenAddressesAreRefused() public {
-        address[13] memory bad = [
+        address[12] memory bad = [
             address(CREDITS),
             address(STATEMENTS),
             address(core),
             address(coin),
             core.HOOK(),
-            core.FEE_SOURCE(),
             address(PM),
             core.FACTORY(),
             core.LOCKER(),

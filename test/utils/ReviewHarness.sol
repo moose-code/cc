@@ -45,7 +45,7 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         base = defaultConfig();
         base.owner = owner;
         base.creator = creator;
-        base.creatorPayee = makeAddr("review.payee");
+        base.payee = makeAddr("review.payee");
         base.name = "Review Coin";
         base.symbol = "REV";
         // a launch ready config: the tracked mainnet.json leaves both strings empty for the owner to fill
@@ -67,7 +67,6 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         vm.startPrank(who);
         d = deploySystem(who, c);
         vm.stopPrank();
-        splitStartPending = true;
         postflightAs(c, d.core, who);
         _require();
     }
@@ -152,6 +151,8 @@ abstract contract ReviewHarness is Test, ProdDeployer {
     /// reads (libraryAddress()), so a change to that code that preflight must not see is applied between the two
     address internal lateEtchAt;
     bytes internal lateEtchCode;
+    /// true: `lateEtchCode` is appended to the code at `lateEtchAt` when applied, so a large code is not stored
+    bool internal lateEtchAppend;
 
     /// @dev runs preflight, then the deploy, on a snapshot, as `Deploy.run` does: the hash gate first (a stale hash
     /// stops everything), then preflight, then the deploy. logs one matrix row. `signed` is the hash of the base config.
@@ -169,7 +170,9 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         if (bytes(detail).length != 0) {
             k = Class.Pre;
         } else {
-            if (lateEtchAt != address(0)) vm.etch(lateEtchAt, lateEtchCode);
+            if (lateEtchAt != address(0)) {
+                vm.etch(lateEtchAt, lateEtchAppend ? bytes.concat(lateEtchAt.code, lateEtchCode) : lateEtchCode);
+            }
             try this.tryDeploy(c, who) returns (Deployed memory) {
                 (k, detail) = (hashSame ? Class.Slip : Class.Hash, "DEPLOYED, every check passed");
             } catch (bytes memory why) {
@@ -202,12 +205,8 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         return vm.computeCreateAddress(deployer, vm.getNonce(deployer));
     }
 
-    function _routerAt() internal view returns (address) {
-        return vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
-    }
-
     function _coreAt() internal view returns (address) {
-        return vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 2);
+        return vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
     }
 
     /// @dev the library address the test build links the Core against

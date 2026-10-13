@@ -17,7 +17,7 @@ contract ReenteringModule is IBalanceModule {
     address public core;
     uint256 public attempts;
     uint256 public succeeded;
-    bool public skimInside;
+    bool public bookInside;
 
     constructor(address token, uint256 unit_, address core_) {
         balanceToken = token;
@@ -39,8 +39,8 @@ contract ReenteringModule is IBalanceModule {
     function _poke() internal {
         uint256[] memory ids = new uint256[](1);
         ids[0] = 1;
-        (skimInside,) = core.call(abi.encodeWithSignature("skim()"));
-        _try(abi.encodeWithSignature("skim()"));
+        (bookInside,) = core.call(abi.encodeWithSignature("bookBalance()"));
+        _try(abi.encodeWithSignature("bookBalance()"));
         _try(abi.encodeWithSignature("compose()"));
         _try(abi.encodeWithSignature("buyback()"));
         _try(abi.encodeWithSignature("sellForEth(uint256[])", ids));
@@ -55,9 +55,9 @@ contract ReenteringModule is IBalanceModule {
         _try(abi.encodeWithSignature("adopt(uint256[])", ids));
     }
 
-    /// the same skim from outside any callback, the control
-    function skimOutside() external returns (bool ok) {
-        (ok,) = core.call(abi.encodeWithSignature("skim()"));
+    /// the same book from outside any callback, the control
+    function bookOutside() external returns (bool ok) {
+        (ok,) = core.call(abi.encodeWithSignature("bookBalance()"));
     }
 
     function redeem(uint256 sid) external returns (uint256 out) {
@@ -150,7 +150,7 @@ contract ReviewPhase2FlexTest is Fixture {
 
     function _potX(uint256 amount) internal {
         xt.mint(address(core), amount);
-        core.skim();
+        core.bookBalance();
     }
 
     function _bid(uint256 id, uint256 unit) internal view returns (uint256) {
@@ -163,14 +163,14 @@ contract ReviewPhase2FlexTest is Fixture {
         _enterPhase2();
         ReenteringModule rm = new ReenteringModule(address(xt), UNIT, address(core));
         _replace(address(rm));
-        assertTrue(rm.skimOutside(), "control: the same skim works outside a callback");
+        assertTrue(rm.bookOutside(), "control: the same book works outside a callback");
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
         uint256 before = xt.balanceOf(address(core));
         core.redeemStatement(sid);
         assertGe(rm.attempts(), 13, "tried every door");
         assertEq(rm.succeeded(), 0, "none got through");
-        assertFalse(rm.skimInside(), "the guard refused skim inside the callback");
+        assertFalse(rm.bookInside(), "the guard refused bookBalance inside the callback");
         assertGt(xt.balanceOf(address(core)), before, "the redemption booked the received token");
         assertEq(core.balancePot(), xt.balanceOf(address(core)), "all the core's balance token is in the bid pot");
         _solvent();

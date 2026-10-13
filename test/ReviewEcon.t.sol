@@ -87,8 +87,7 @@ contract PilePageEquivalence is ReviewEconBase {
 /// minutes, clamp at the pot). the pot is booked by donation so every number is a closed form
 contract LaunchSettingsExactNumbers is ReviewEconBase {
     function test_scenarioAtTheLaunchSettings() public {
-        vm.deal(address(core), 10 ether);
-        core.skim();
+        _addToPot(10 ether);
         assertEq(core.ethPot(), 10 ether);
         assertEq(core.ethRate(), OPEN_RATE);
         // ten minutes at 0.5 percent a minute from the opening rate, OPEN_RATE * 1.005^10
@@ -284,8 +283,7 @@ contract RateModelFuzz is ReviewEconBase {
             _syncFunded();
         } else if (op == 3) {
             _checkpoint();
-            vm.deal(address(core), address(core).balance + 0.05 ether);
-            core.skim();
+            _addToPot(0.05 ether);
             _syncFunded();
         } else if (op == 4) {
             _sell(seed);

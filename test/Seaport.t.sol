@@ -579,7 +579,7 @@ contract SeaportCallerPayTest is SeaportBase {
     }
 
     function _coolAll() internal {
-        address[15] memory a = [
+        address[14] memory a = [
             address(core),
             address(ctl),
             address(STATEMENTS),
@@ -593,7 +593,6 @@ contract SeaportCallerPayTest is SeaportBase {
             v2.escrow,
             v2.factory,
             v2.mev,
-            address(feeRouter),
             STRATEGY
         ];
         for (uint256 i; i < a.length; ++i) {

@@ -10,7 +10,6 @@ import {HandlerBase} from "./HandlerBase.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {MigrationSink} from "../standins/MigrationSink.sol";
-import {CountingEngine, RefusingEngine} from "../attackers/FlushEngines.sol";
 
 /// @notice the owner as an adversarial actor. the owner calls `setSettings` with random valid settings across the
 /// whole allowed bounds, extreme corners included, `setRate` anywhere in its bounds, and invalid
@@ -63,6 +62,7 @@ abstract contract HandlerOwner is HandlerBase {
         s.feeToBuybackBps = uint16(_f(_r(seed, 28), 0, 10_000, c.feeToBuybackBps));
         // feeToBuybackBps + feeToRedeemBurnBps is at most 10_000
         s.feeToRedeemBurnBps = uint16(_f(_r(seed, 27), 0, 10_000 - s.feeToBuybackBps, c.feeToRedeemBurnBps));
+        s.payeePpm = uint24(_f(_r(seed, 40), 0, 200_000, c.payeePpm));
         s.callerFee = uint64(_f(_r(seed, 10), 0, 0.005 ether, c.callerFee));
         s.callerMaxBaseFee = uint48(_f(_r(seed, 11), 0, 100 gwei, c.callerMaxBaseFee));
         _corner(s, corner);
@@ -266,6 +266,7 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.balanceBidMarginBps > 9_000) return "balanceBidMarginBps";
         if (s.redeemSlippageBps > s.balanceBidMarginBps) return "redeemSlippageBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
+        if (s.payeePpm > 200_000) return "payeePpm";
         return bytes32(0);
     }
 
@@ -276,7 +277,7 @@ abstract contract HandlerOwner is HandlerBase {
     /// breaks exactly one field of valid settings, `which` picks it. returns the name the library must report
     function _break(Settings memory s, uint256 which) internal pure returns (bytes32 name) {
         // forge-lint: disable-start(unsafe-typecast)
-        which = which % 45;
+        which = which % 46;
         if (which == 0) {
             (s.dropPerCreditBps, name) = (1_001, "dropPerCreditBps");
         } else if (which == 1) {
@@ -368,6 +369,8 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 43) {
             // below climbPerMinBps, which a valid struct keeps at least 1, so zero always violates
             (s.recoveryClimbPerMinBps, name) = (0, "recoveryClimbPerMinBps");
+        } else if (which == 44) {
+            (s.payeePpm, name) = (200_001, "payeePpm");
         } else {
             (s.recoveryGapBps, name) = (5_001, "recoveryGapBps");
         }
@@ -657,54 +660,6 @@ abstract contract HandlerOwner is HandlerBase {
                 _flag(V_REVERT_CHANGED, "a refused release moved a pot");
             }
         }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                           REPOINT THE FEE ROUTER
-    //////////////////////////////////////////////////////////////*/
-
-    /// the router owner as an adversary: points the engine at the core, at an engine that takes eth, at one that refuses it,
-    /// at an address with no code or the zero address (both refused), and now and then locks the router while the core is
-    /// the engine. a good set takes effect at once and moves no eth, not the router's and not the core's. after the lock
-    /// every set reverts and the engine stays
-    function repoint(uint256 seed, uint256 mode) external checked {
-        uint8 a = A_REPOINT;
-        if (otherEngine == address(0)) {
-            otherEngine = address(new CountingEngine());
-            refusingEngine = address(new RefusingEngine());
-        }
-        address ro = feeRouter.owner();
-        uint256 m = mode % 6;
-        address target = m == 0 ? address(core) : (m == 1 ? otherEngine : (m == 2 ? refusingEngine : (m == 3 ? address(uint160(seed | 0x10000)) : (m == 4 ? address(0) : address(core)))));
-        OPre memory pre = _opre();
-        uint256 held = address(feeRouter).balance;
-        _att(a);
-        if (m == 5 && !gRouterLocked && seed % 25 == 0 && gEngine == address(core)) {
-            vm.prank(ro);
-            try feeRouter.lock() {
-                gRouterLocked = true;
-            } catch {
-                _flag(V_ROUTER, "the router owner could not lock with an engine set");
-            }
-        }
-        vm.prank(ro);
-        try feeRouter.setEngine(target) {
-            if (gRouterLocked) {
-                _flag(V_ROUTER, "setEngine worked on a locked router");
-            } else if (target == address(0) || target.code.length == 0) {
-                _flag(V_ROUTER, "setEngine took an address with no code");
-            } else {
-                gEngine = target;
-            }
-        } catch {
-            bool bad = !gRouterLocked && target != address(0) && target.code.length != 0;
-            if (bad) _flag(V_ROUTER, "setEngine refused a good engine");
-        }
-        if (feeRouter.engine() != gEngine) _flag(V_ROUTER, "the router engine is not the one set");
-        if (feeRouter.locked() != gRouterLocked) _flag(V_LOCK, "the router lock flag differs from the ghost");
-        if (address(feeRouter).balance != held) _flag(V_ROUTER, "setting the engine moved router eth");
-        _opost(pre, "repoint");
-        _ok(a);
     }
 
     /*//////////////////////////////////////////////////////////////

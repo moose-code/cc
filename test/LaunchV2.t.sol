@@ -10,19 +10,18 @@ contract LaunchV2Test is Fixture {
     function test_theCoinIsRestrictedAndTheCoreIsNotAllowed() public view {
         assertTrue(coin.restricted(), "restricted");
         assertFalse(coin.isAllowed(address(core)), "the core is not on the allowlist");
-        assertFalse(coin.isAllowed(address(feeRouter)), "the router is not");
         assertEq(coin.admin(), owner, "the token admin is the owner");
         assertEq(coin.canonicalHook(), lc.stack.hook);
         assertEq(coin.totalSupply(), lc.supply);
     }
 
-    function test_skimIsSixPointNineWithNoLpFeeAndTheRouterIsTheBountyRecipient() public view {
+    function test_skimIsSixPointNineWithNoLpFeeAndTheCoreIsTheBountyRecipient() public view {
         IArtCoinsHookV2.SkimConfig memory k = IArtCoinsHookV2(lc.stack.hook).skimConfig(poolId);
         assertEq(k.baselineSkimBps, 690);
         assertEq(k.bountyBps, 9_638);
         assertEq(k.lpFeePips, 0);
         assertEq(k.maxReferralBpsOfVolume, 0);
-        assertEq(k.bountyRecipient, address(feeRouter));
+        assertEq(k.bountyRecipient, address(core));
         assertEq(k.protocolRecipient, FACTORY.protocolRecipient());
         assertEq(launchKey.fee, lc.stack.poolFee);
     }
@@ -49,33 +48,29 @@ contract LaunchV2Test is Fixture {
     function test_theWholeSupplyStartsInThePool() public view {
         assertGe(coin.balanceOf(address(PM)), lc.supply - 1e6, "the supply sits in the pool manager");
         assertEq(coin.balanceOf(address(core)), 0);
-        assertEq(coin.balanceOf(address(feeRouter)), 0);
     }
 
-    function test_theRouterIsWiredAndOpenForTheOwner() public view {
-        assertEq(feeRouter.engine(), address(core));
-        assertFalse(feeRouter.locked(), "not locked by the deploy");
-        assertFalse(feeRouter.splitOn(), "the split starts when the window ends");
-        assertEq(feeRouter.splitStart(), launchTime + lc.sniperSeconds);
-        (address[] memory who, uint32[] memory ppm) = feeRouter.payees();
-        assertEq(who.length, 1);
-        assertEq(who[0], lc.creatorPayee);
-        assertEq(ppm[0], lc.payeePpm);
-        assertEq(core.FEE_SOURCE(), address(feeRouter));
+    function test_thePayeeIsSetAndTheShareStartsWhenTheWindowEnds() public view {
+        assertEq(core.payee(), lc.payee);
+        assertEq(core.settings().payeePpm, 75_185);
+        assertFalse(core.payeeOn(), "the share starts with the first book after the window");
+        assertEq(core.SNIPER_SECONDS(), lc.sniperSeconds);
+        assertEq(core.payeeOwed(), 0);
+        assertFalse(coin.recipientsLocked(), "not locked by the deploy");
     }
 
     function test_theAntiSniperSkimStartsHighAndFallsToTheBaseline() public {
         IArtCoinsHookV2.SkimConfig memory k = IArtCoinsHookV2(lc.stack.hook).skimConfig(poolId);
-        autoFlush = false; // keep the skim in the router so it can be read
-        uint256 bal = address(feeRouter).balance;
+        autoBook = false; // leave the skim unbooked so it can be read
+        uint256 bal = address(core).balance;
         _buyCoin(trader(), 1 ether);
-        uint256 early = address(feeRouter).balance - bal;
+        uint256 early = address(core).balance - bal;
         // the first block pays about the start rate, 90 points of the volume, 90 percent of it to the bounty leg
         assertGt(early, 0.7 ether, "the window skim is far above the baseline");
         _skipSniperWindow();
-        bal = address(feeRouter).balance;
+        bal = address(core).balance;
         _buyCoin(trader(), 1 ether);
-        uint256 late = address(feeRouter).balance - bal;
+        uint256 late = address(core).balance - bal;
         assertApproxEqRel(late, uint256(1 ether) * k.baselineSkimBps * k.bountyBps / 10_000 / 10_000, 0.01e18);
     }
 

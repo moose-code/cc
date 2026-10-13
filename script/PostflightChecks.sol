@@ -12,7 +12,6 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Mainnet, Stack, Settings} from "../src/interfaces/Interfaces.sol";
 import {ICoreLib} from "../src/interfaces/ICoreLib.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
-import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
 import {ICoreLens} from "../src/interfaces/ICoreLens.sol";
 import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
@@ -21,8 +20,8 @@ import {PostflightPool} from "./PostflightPool.sol";
 
 /// @notice reads a launched system back and compares it with the config. read only, safe against mainnet any time.
 /// run it right after the launch: the supply and rate rows are exact at launch and tolerant once trading started.
-/// the rows that the owner can change afterwards (settings, locks, owner, the coin, the router) turn into warnings when the
-/// operator names the change: SETTINGS_CHANGED, LOCKS_CHANGED, OWNER_CHANGED, COIN_CHANGED, ROUTER_CHANGED = 1
+/// the rows that the owner can change afterwards (settings, locks, owner, the coin) turn into warnings when the
+/// operator names the change: SETTINGS_CHANGED, LOCKS_CHANGED, OWNER_CHANGED, COIN_CHANGED = 1
 abstract contract PostflightChecks is PostflightPool {
     /// @notice the deployer of the launch from the environment (DEPLOYER), zero when not given. a test overrides it
     function _deployerEnv() internal view virtual returns (address) {
@@ -33,22 +32,20 @@ abstract contract PostflightChecks is PostflightPool {
         postflightAs(c, core_, _deployerEnv());
     }
 
-    /// @notice every postflight row. `deployer` (zero when unknown) adds the rows that need the creation nonces: the router
-    /// and the controller were created by it right before the Core, and the coin equals the factory prediction
+    /// @notice every postflight row. `deployer` (zero when unknown) adds the rows that need the creation nonces: the
+    /// controller was created by it right before the Core, and the coin equals the factory prediction
     function postflightAs(LaunchConfig memory c, address core_, address deployer) internal {
         _reset();
         _code("code: core", core_);
         if (core_.code.length == 0) return;
         ICore core = ICore(payable(core_));
-        // derived, never signed: the fee source is an immutable of the Core, and the config hash leaves it out
-        c.stack.feeSource = core.FEE_SOURCE();
         _postCore(c, core);
         address coin = core.COIN();
         _code("code: coin", coin);
         if (coin.code.length == 0) return;
-        bytes32 poolId = _postPool(c, coin);
+        bytes32 poolId = _postPool(c, core_, coin);
         _postCoin(c, core_, coin, poolId);
-        _postRouter(c, core, deployer, coin);
+        _postPayee(c, core);
         _postLens(core);
         _postAdapters(c, core);
         _postPrediction(c, coin, deployer, core_);
@@ -60,10 +57,9 @@ abstract contract PostflightChecks is PostflightPool {
     /// the coin was built with when the factory state is still the launch state
     function _postPrediction(LaunchConfig memory c, address coin, address deployer, address core_) private {
         if (deployer == address(0)) return;
-        (bool ok, uint256 n) = _coreNonce(core_, deployer);
+        (bool ok,) = _coreNonce(core_, deployer);
         if (!ok) return;
-        address routerAt = vm.computeCreateAddress(deployer, n - 1);
-        (bool okp, address want) = _predict(c, deployer, routerAt);
+        (bool okp, address want) = _predict(c, deployer, core_);
         _warn("warn: coin equals the factory prediction for the deployer", okp && want == coin, vm.toString(want));
     }
 
@@ -145,13 +141,12 @@ abstract contract PostflightChecks is PostflightPool {
             !core.allowedAdapter(c.stack.hook) && !core.allowedAdapter(c.stack.factory)
                 && !core.allowedAdapter(c.stack.locker) && !core.allowedAdapter(c.stack.escrow)
                 && !core.allowedAdapter(c.stack.poolManager) && !core.allowedAdapter(core.COIN())
-                && !core.allowedAdapter(core.FEE_SOURCE()),
-            "hook, factory, locker, escrow, pool manager, coin, router"
+                && !core.allowedAdapter(address(core)),
+            "hook, factory, locker, escrow, pool manager, coin, core"
         );
     }
 
-    /// @dev the lens at `lensAddress(core)` has code of the compiled size, points at this Core and at the router
-    /// the Core names, uses the Credits and Statements of mainnet, and answers `snapshot`. its controller is the Core's,
+    /// @dev the lens at `lensAddress(core)` has code of the compiled size, points at this Core, uses the Credits and Statements of mainnet, and answers `snapshot`. its controller is the Core's,
     /// read on every call
     function _postLens(ICore core) private {
         address lensAt = lensAddress(address(core));
@@ -162,18 +157,12 @@ abstract contract PostflightChecks is PostflightPool {
         _check("lens: code size is the compiled CoreLens", sized, vm.toString(lensAt));
         if (!sized) return;
         _eq("lens: core", lens.CORE(), address(core));
-        _eq("lens: router is the Core fee source", lens.ROUTER(), core.FEE_SOURCE());
         _eq("lens: credits", lens.CREDITS(), Mainnet.CREDITS);
         _eq("lens: statements", lens.STATEMENTS(), Mainnet.STATEMENTS);
         _eq("lens: controller is the Core controller", lens.controller(), core.controller());
         (bool ok,) = lensAt.staticcall(abi.encodeCall(ICoreLens.snapshot, ()));
         _check("lens: snapshot answers", ok, vm.toString(lensAt));
     }
-
-    /// @notice the postflight of a run that has not set the split start yet (the Deploy script, a Resume that launches)
-    /// reports a split start of zero as a warning, not a failure. the split start is set by the next Resume, after the
-    /// launch is mined
-    bool internal splitStartPending;
 
     /// @dev nonces to scan down from the deployer nonce when looking for the creation of the Core
     uint256 internal constant NONCE_SCAN = 4096;
@@ -185,24 +174,24 @@ abstract contract PostflightChecks is PostflightPool {
     }
 
     /// @notice the controller the Core was created with, never read from the Core: the deploy creates the controller at
-    /// the deployer nonce n, the router at n + 1 and the Core at n + 2 (`SystemDeployer.deploySystem`), so it is the create
-    /// address two nonces before the one that gives `core_`. scans down from the deployer nonce. `found` is false when the deployer is
+    /// the deployer nonce n and the Core at n + 1 (`SystemDeployer.deploySystem`), so it is the create
+    /// address one nonce before the one that gives `core_`. scans down from the deployer nonce. `found` is false when the deployer is
     /// unknown and FIRST_CONTROLLER is not set, or the scan finds nothing
     function firstController(address core_, address deployer) internal view returns (address ctl, bool found) {
         address named = _firstControllerEnv();
         if (named != address(0)) return (named, true);
         (bool ok, uint256 n) = _coreNonce(core_, deployer);
         if (!ok) return (address(0), false);
-        return (vm.computeCreateAddress(deployer, n - 2), true);
+        return (vm.computeCreateAddress(deployer, n - 1), true);
     }
 
     /// @notice the deployer nonce the Core was created at, scanning down from the deployer nonce. the deploy creates the
-    /// controller at n - 2, the router at n - 1 and the Core at n (`SystemDeployer.deploySystem`)
+    /// controller at n - 1 and the Core at n (`SystemDeployer.deploySystem`)
     function _coreNonce(address core_, address deployer) internal view returns (bool, uint256) {
         if (deployer == address(0)) return (false, 0);
         uint256 top = vm.getNonce(deployer);
-        uint256 stop = top > NONCE_SCAN ? top - NONCE_SCAN : 2;
-        if (stop < 2) stop = 2;
+        uint256 stop = top > NONCE_SCAN ? top - NONCE_SCAN : 1;
+        if (stop < 1) stop = 1;
         for (uint256 n = top; n >= stop; --n) {
             if (vm.computeCreateAddress(deployer, n) == core_) return (true, n);
         }
@@ -210,21 +199,22 @@ abstract contract PostflightChecks is PostflightPool {
     }
 
     /// @notice the constructor arguments of the Core as its creation transaction carried them, in the encoding etherscan
-    /// wants for verification: `(owner, coin, controller, stack, rateStart, settings, credit, adapters)`. built only from the signed
-    /// launch config and the first controller: the original owner `c.owner`, `c.stack`, `c.rateStart`, `c.settings` and
-    /// `c.credit`. the coin is the Core immutable `COIN`, which cannot change. nothing here reads the live `owner`,
-    /// `controller`, `settings` or credit settings, all of which the owner can change after launch (audit finding A02)
-    function coreConstructorArgs(ICore core, LaunchConfig memory c, address firstController_)
+    /// wants for verification: `(owner, cfg, launcher, controller, payee, stack, rateStart, settings, credit, adapters)`.
+    /// built only from the signed launch config, the deployer and the first controller: the original owner `c.owner`,
+    /// the launch config with the zero address as bounty recipient, `c.payee`, `c.stack`, `c.rateStart`, `c.settings` and
+    /// `c.credit`. nothing here reads the live `owner`, `controller`, `payee`, `settings` or credit settings, all of
+    /// which the owner can change after launch (audit finding A02)
+    function coreConstructorArgs(ICore core, LaunchConfig memory c, address firstController_, address deployer)
         internal
         view
         returns (bytes memory)
     {
-        // the fee source is an immutable of the Core: it cannot drift, so it is read from the Core (the config file has none)
-        c.stack.feeSource = core.FEE_SOURCE();
         return abi.encode(
             c.owner,
-            core.COIN(),
+            buildConfig(c, c.owner, address(0)),
+            deployer,
             firstController_,
+            c.payee,
             c.stack,
             c.rateStart,
             c.settings,
@@ -245,7 +235,7 @@ abstract contract PostflightChecks is PostflightPool {
         if (found) {
             console.log("verify: first controller (creation input)", first);
             console.log("verify: core constructor args");
-            console.logBytes(coreConstructorArgs(core, c, first));
+            console.logBytes(coreConstructorArgs(core, c, first, deployer));
             console.log("verify: controller constructor args");
             console.logBytes(abi.encode(address(core), c.sale, c.credit));
             console.log("verify: seaport adapter constructor args");
@@ -256,9 +246,6 @@ abstract contract PostflightChecks is PostflightPool {
             );
         }
         // the live values are not constructor inputs: the owner can change them at any time
-        console.log("verify: router (the fee source) at", core.FEE_SOURCE());
-        console.log("verify: router constructor args (the owner)");
-        console.logBytes(abi.encode(c.owner));
         console.log("verify: LIVE controller now, NOT a constructor input", core.controller());
         console.log("verify: LIVE settings now, NOT a constructor input, abi encoded");
         console.logBytes(abi.encode(core.settings()));
@@ -292,7 +279,6 @@ abstract contract PostflightChecks is PostflightPool {
         address ctl = core.controller();
         _code("code: controller", ctl);
         if (ctl.code.length != 0) _eq("controller: core", address(IControllerV1(ctl).CORE()), address(core));
-        _code("code: fee source (the router)", core.FEE_SOURCE());
         _check(
             "core: runtime code is the compiled Core (immutables and the library address masked)",
             runtimeMatchesArtifact(address(core), "Core"),
@@ -322,7 +308,7 @@ abstract contract PostflightChecks is PostflightPool {
         _postSale(c, ctl);
         _check(
             "core: pots covered by balance",
-            core.ethPot() + core.ethToBuyback() <= address(core).balance,
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed() <= address(core).balance,
             string.concat("balance ", vm.toString(address(core).balance))
         );
         // the stored price state moves once the pot is funded or a credit is bought, and the owner may reset it with
@@ -473,7 +459,9 @@ abstract contract PostflightChecks is PostflightPool {
                 " fee to buyback ",
                 vm.toString(live.feeToBuybackBps),
                 " fee to redeem burn ",
-                vm.toString(live.feeToRedeemBurnBps)
+                vm.toString(live.feeToRedeemBurnBps),
+                " payee ppm ",
+                vm.toString(live.payeePpm)
             )
         );
         _info(
@@ -508,12 +496,12 @@ abstract contract PostflightChecks is PostflightPool {
         want[1] = core.RATE_START();
         want[2] = uint256(uint160(address(core.MANAGER())));
         want[3] = uint256(uint160(core.HOOK()));
-        want[4] = uint256(uint160(core.FEE_SOURCE()));
-        want[5] = uint256(int256(core.TICK_SPACING()));
-        want[6] = uint256(core.POOL_FEE());
-        want[7] = uint256(uint160(core.FACTORY()));
-        want[8] = uint256(uint160(core.LOCKER()));
-        want[9] = uint256(uint160(core.ESCROW()));
+        want[4] = uint256(int256(core.TICK_SPACING()));
+        want[5] = uint256(core.POOL_FEE());
+        want[6] = uint256(uint160(core.FACTORY()));
+        want[7] = uint256(uint160(core.LOCKER()));
+        want[8] = uint256(uint160(core.ESCROW()));
+        want[9] = core.SNIPER_SECONDS();
         _check(
             "core: every library call site and every immutable slot holds the library or the getter value",
             found != address(0) && runtimeSlotsMatch(address(core), "Core", found, want),
@@ -527,11 +515,13 @@ abstract contract PostflightChecks is PostflightPool {
         bytes memory expected = vm.getDeployedCode("CoreLib.sol:CoreLib");
         bytes32 want = _tailHash(expected);
         for (uint256 i; i + 21 <= code.length; ++i) {
-            if (code[i] != 0x73) continue;
             address cand;
+            bool push20;
             assembly ("memory-safe") {
+                push20 := eq(byte(0, mload(add(add(code, 0x20), i))), 0x73)
                 cand := shr(96, mload(add(add(code, 0x21), i)))
             }
+            if (!push20) continue;
             // the size is read without copying the code: only a candidate of the right size is copied and hashed
             if (cand.code.length == expected.length && expected.length >= 39 && _tailHash(cand.code) == want) return cand;
         }
@@ -554,64 +544,23 @@ abstract contract PostflightChecks is PostflightPool {
         }
     }
 
-    /// @dev the router: the compiled code, created by the deployer right before the Core, the engine is the Core, the
-    /// owner is the config owner, payees and tip as signed, the split start exactly the launch time plus the anti sniper window, not locked by the
-    /// deploy. the owner can change every setting afterwards: ROUTER_CHANGED=1 turns those rows into warnings
-    function _postRouter(LaunchConfig memory c, ICore core, address deployer, address coin_) private {
-        IFeeRouter r = IFeeRouter(payable(core.FEE_SOURCE()));
-        address ra = address(r);
-        if (ra.code.length == 0) return;
-        _check(
-            "router: runtime code is the compiled FeeRouter",
-            keccak256(ra.code) == keccak256(vm.getDeployedCode("FeeRouter.sol:FeeRouter")),
-            vm.toString(ra)
-        );
-        if (deployer != address(0)) {
-            (bool ok, uint256 n) = _coreNonce(address(core), deployer);
-            _check(
-                "router: created by the deployer one nonce before the Core",
-                ok && vm.computeCreateAddress(deployer, n - 1) == ra,
-                vm.toString(ra)
-            );
-        }
-        bool ch = _routerChanged();
-        _soft(ch, "router: engine is the Core", r.engine() == address(core), vm.toString(r.engine()), "ROUTER_CHANGED=1");
-        _soft(ch, "router: owner is the config owner", r.owner() == c.owner, vm.toString(r.owner()), "ROUTER_CHANGED=1");
-        _soft(ch, "router: not locked", !r.locked(), "the deploy does not lock the router", "ROUTER_CHANGED=1");
-        _warn("warn: router has no pending owner", r.pendingOwner() == address(0), "an owner handover is offered");
-        _postRouterSettings(c, r, ch, coin_);
-    }
-
-    function _postRouterSettings(LaunchConfig memory c, IFeeRouter r, bool ch, address coin_) private {
-        (address[] memory who, uint32[] memory ppm) = r.payees();
-        bool payees = who.length == 1 && who[0] == c.creatorPayee && ppm[0] == c.payeePpm;
-        _soft(ch, "router: payee and share equal the config", payees, string.concat("payees ", vm.toString(who.length)), "ROUTER_CHANGED=1");
-        _postSplitStart(c, r, ch, coin_);
-        _info("router: split", r.splitOn() ? "on" : "not started, everything goes to the engine");
-        _info("router: eth held", string.concat(vm.toString(address(r).balance), " wei, owed to payees ", vm.toString(r.totalOwed())));
-    }
-
-    /// @dev the split start is the launch time recorded by the factory plus the anti sniper window, exactly. a difference
-    /// is a failure and is printed. zero (not set yet) is a warning only in a run that has not set it, i.e. the Deploy
-    /// script and a Resume that sent the launch (`splitStartPending`): the next Resume sets it from the mined launch time
-    function _postSplitStart(LaunchConfig memory c, IFeeRouter r, bool ch, address coin_) private {
-        (, IArtCoinsFactoryV2.DeploymentInfoV2 memory info) = _deployment(c.stack.factory, coin_);
-        uint256 want = uint256(info.launchedAt) + c.sniperSeconds;
-        uint256 got = r.splitStart();
-        string memory detail = string.concat("splitStart ", vm.toString(got), " want launchedAt plus window ", vm.toString(want));
-        if (got != want && got != 0) {
-            detail = string.concat(detail, got > want ? ", late by " : ", early by ", vm.toString(got > want ? got - want : want - got));
-        }
-        if (got == 0 && splitStartPending) {
-            _warn("warn: router split start is not set yet, run Resume after the launch is mined", false, detail);
-            return;
-        }
+    /// @dev the payee state of the Core: the payee is the config payee, the share starts after the launch window. the
+    /// owner can replace the payee afterwards (SETTINGS_CHANGED=1 turns the row into a warning). the share state and the
+    /// owed amount move once trading runs, so they are rows that are exact only at launch
+    function _postPayee(LaunchConfig memory c, ICore core) private {
         _soft(
-            ch || r.splitOn(),
-            "router: split start is the launch time plus the anti sniper window, exactly",
-            info.launchedAt != 0 && got == want,
-            detail,
-            "ROUTER_CHANGED=1 or the split is on"
+            _settingsChanged(),
+            "core: payee equals the config",
+            core.payee() == c.payee,
+            vm.toString(core.payee()),
+            "SETTINGS_CHANGED=1"
+        );
+        _warn("warn: payee share is not on yet", !core.payeeOn(), "payeeOn: the first book after the window turned it on");
+        _warn("warn: payee owes nothing", core.payeeOwed() == 0, string.concat("payeeOwed ", vm.toString(core.payeeOwed())));
+        _eq("core: SNIPER_SECONDS equals the config", core.SNIPER_SECONDS(), uint256(c.sniperSeconds));
+        _info(
+            "core: payee share",
+            string.concat(vm.toString(core.settings().payeePpm), " ppm of the fee income, unclaimed ", vm.toString(core.payeeOwed()), " wei")
         );
     }
 

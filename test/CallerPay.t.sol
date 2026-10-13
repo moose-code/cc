@@ -6,7 +6,6 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 import {RepaidCaller} from "./attackers/SaleAttackers.sol";
-import {GasBurningPayee} from "./attackers/GasBurners.sol";
 
 /// the caller payment of `compose`: counted gas at the capped base fee plus `callerFee`, from `ethPot`,
 /// at most the pot. real Core, real Statements, the stand in balance module and token. `redeemStatement` shares the helper
@@ -38,8 +37,11 @@ contract CallerPayTest is Fixture {
         _setSettings(s);
     }
 
+    /// sets the pot by slot and moves the eth with it, so no eth is left above the pots for the next book to count
     function _setPot(uint256 v) internal {
+        uint256 old = core.ethPot();
         stdstore.target(address(core)).sig("ethPot()").checked_write(v);
+        vm.deal(address(core), address(core).balance + v - old);
         assertEq(core.ethPot(), v);
     }
 
@@ -61,7 +63,7 @@ contract CallerPayTest is Fixture {
         r.gasUsed = g0 - gasleft();
         (r.gross, r.refund) = _lastCallGross();
         r.paid = keeper.balance - kb;
-        // a loaded router flushes into the pot during the call: the drops are meaningful only when it is empty
+        // unbooked income is booked into the pot during the call: the drops are meaningful only when there is none
         r.potDrop = pot > core.ethPot() ? pot - core.ethPot() : 0;
         r.balDrop = bal > address(core).balance ? bal - address(core).balance : 0;
     }
@@ -150,23 +152,21 @@ contract CallerPayTest is Fixture {
         assertEq(tipped.paid, plain.paid);
     }
 
-    /// the gas of the fee router flush is counted: the compose that pulls a loaded router is paid for more gas
-    function test_routerFlushIsCounted() public {
-        _skipToSplitStart();
-        vm.deal(address(feeRouter), 1 gwei);
-        _flush();
-        assertTrue(feeRouter.splitOn(), "the split is on");
+    /// the gas of the book is counted: the compose that books unbooked income is paid for more gas
+    function test_bookIsCounted() public {
+        _skipToPayeeStart();
+        _buyCoin(funder, 5 ether);
+        assertTrue(core.payeeOn(), "the payee share is on");
         _readyEth();
         _payOn();
         uint256 snap = vm.snapshotState();
         Run memory empty = _run(5 gwei, 5 gwei);
         vm.revertToState(snap);
-        vm.deal(address(feeRouter), 1 ether);
+        vm.deal(address(core), address(core).balance + 1 ether);
         Run memory loaded = _run(5 gwei, 5 gwei);
-        assertGt(address(core).balance, 0);
-        uint256 flushGas = _counted(loaded, 5 gwei) - _counted(empty, 5 gwei);
-        emit log_named_uint("counted gas of the flush", flushGas);
-        assertGt(flushGas, 20_000, "the flush is in the count");
+        uint256 bookGas = _counted(loaded, 5 gwei) - _counted(empty, 5 gwei);
+        emit log_named_uint("counted gas of the book", bookGas);
+        assertGt(bookGas, 10_000, "the book is in the count");
         assertGe(_counted(loaded, 5 gwei), loaded.gross);
     }
 
@@ -189,26 +189,12 @@ contract CallerPayTest is Fixture {
         assertEq(core.heldStatements().length, 1);
     }
 
-    /// @dev the router split on and four payees that burn all the gas they are given: the most expensive flush
-    function _burningRouter() internal {
-        _skipToSplitStart();
-        vm.deal(address(feeRouter), 1 gwei);
-        _flush();
-        address[] memory who = new address[](4);
-        uint32[] memory ppm = new uint32[](4);
-        for (uint256 i; i < 4; ++i) {
-            who[i] = address(new GasBurningPayee());
-            ppm[i] = 50_000;
-        }
-        vm.prank(owner);
-        feeRouter.setPayees(who, ppm);
-    }
-
     function test_worstCaseCountedGasIsUnderTheBound() public {
-        _burningRouter();
+        _skipToPayeeStart();
+        _buyCoin(funder, 5 ether);
         _readyEth();
         _payOn();
-        vm.deal(address(feeRouter), 1 ether);
+        vm.deal(address(core), address(core).balance + 1 ether);
         Run memory r = _run(1 gwei, 1 gwei);
         emit log_named_uint("eth lane worst case: counted", _counted(r, 1 gwei));
         emit log_named_uint("eth lane worst case: gross before refund", r.gross);

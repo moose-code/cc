@@ -1,10 +1,10 @@
 # credits engine
 
-an erc20 on ethereum mainnet whose swap fees buy Credits nfts, compose them into Statements and sell each statement at a falling price. the coin, pool, hook and fee flow run on the artcoins v2 stack (restricted coin, skim hook, lp locker, fee escrow), with a fee router between the hook and the engine. every economic number is an owner setting, effective at once. status: unaudited, not deployed. `main` is the working branch.
+an erc20 on ethereum mainnet whose swap fees buy Credits nfts, compose them into Statements and sell each statement at a falling price. the coin, pool, hook and fee flow run on the artcoins v2 stack (restricted coin, skim hook, lp locker, fee escrow), with the Core as the bounty recipient of the pool. every economic number is an owner setting, effective at once. status: unaudited, not deployed. `main` is the working branch.
 
 ## what the engine does
 
-* **fees buy credits.** the v2 hook skims 6.9 points of swap volume. 6.65022 points reach the FeeRouter, which pays its payee 0.75 points and sends the rest to the Core. the Core books the eth into the eth pot (90 percent) and the redeem burn reserve (10 percent). the pot funds a bid, the rate in wei per credit, and every credit is paid the same rate. a seller calls `sellForEth`, or a caller fills a marketplace listing below the bid with `buyListing`. each fill drops the rate, and between fills the rate climbs toward a ceiling. every bought credit enters one pile with a cost basis in eth.
+* **fees buy credits.** the v2 hook skims 6.9 points of swap volume. 6.65022 points reach the Core, which owes its payee 0.5 points once the anti sniper window has passed and books the rest into the eth pot (90 percent) and the redeem burn reserve (10 percent). the pot funds a bid, the rate in wei per credit, and every credit is paid the same rate. a seller calls `sellForEth`, or a caller fills a marketplace listing below the bid with `buyListing`. each fill drops the rate, and between fills the rate climbs toward a ceiling. every bought credit enters one pile with a cost basis in eth.
 * **credits compose into statements.** `compose()` takes the 80 oldest credits from the pile and mints a Statement. the Core holds it and records its cost, the sum of the 80 cost bases, and its rating, the sum of the credits' scores. `composeChosen(ids, format)` composes 80 credits the caller names with an art format 0 to 7. it is an owner switch (`chosenComposeOn`), off at launch.
 * **credits can sell before they compose.** the credit sale window is an owner switch (`creditSaleOn`), off at launch. while on, every pile credit is for sale through `ControllerV1.buyCredit` from its acquisition time. the price falls linearly from a start to a floor over `creditWindow` (4 hours at launch), and the floor is 1.1 times the highest of the credit's cost, its balance token baseline and its score-scaled eth backstop (the floor rate times `max(1, score / refScore)`, where the floor rate is the larger of the climbed eth bid rate and the remembered peak). the baseline reads the live balance token pool and only lifts the floor. the cost share of the proceeds refills the eth pot and the rest funds the coin buyback. compose waits for a credit's window.
 * **statements sell at a falling price.** `ControllerV1.buy` sells a held statement. the start price is 1.5 times an anchor (the anchor moves up with sales and decays with time). the price falls fast from the start to the knee, then slowly to the floor. the curve is in percent of the statement's price reference, the larger of its cost and the floor rate (the larger of the climbed eth bid rate and the remembered peak) times its rating over `refScore`. at launch the knee and the floor are both 100 percent of the reference, so the price reaches the reference at hour 50 and an unsold statement sits there.
@@ -18,7 +18,6 @@ the full rules and the settings table are in docs/SPEC.md. the owner decisions b
 graph LR
     swap["swap in the coin/eth pool"]
     hook["v2 skim hook<br/>6.9 points of volume"]
-    router["FeeRouter<br/>6.65022 points, flush<br/>payee, engine"]
     core["Core<br/>eth pot, redeem burn reserve"]
     buy["sellForEth, buyListing<br/>credits at the bid"]
     compose["compose<br/>80 credits, one Statement"]
@@ -29,7 +28,7 @@ graph LR
     burn["coin buy and burn"]
     redeem["redeemStatement<br/>balanceMode 1 or 2, at the floor"]
 
-    swap --> hook --> router --> core --> buy --> pile --> compose --> held
+    swap --> hook --> core --> buy --> pile --> compose --> held
     pile --> credsale
     held --> sold
     held --> redeem
@@ -49,8 +48,7 @@ five contracts are ours. the artcoins v2 stack is live on mainnet (`script/confi
 | Core | custody and every rule: pots, bid, the pile, doors, compose, `composeChosen`, `sellTo`, `sellCreditTo`, redeem, buyback, settings, owner doors, locks |
 | CoreLib | library of the Core called by delegatecall: settings write, bid math, the buyback swap, the balanceToken bid, `adopt`, `rescueCoin`, `rescueNft`, `migrate` |
 | ControllerV1 | statement sale: `priceOf`, `buy`, the price reference, the anchor, the pause, the balanceToken pool key for the redemption value floor. credit sale: `creditPrice`, `buyCredit`, `buyCredits` |
-| CoreLens | read only view of the Core, the controller and the fee router in one call |
-| FeeRouter | bounty recipient of the pool: empty `receive`, `flush()` to the payees and the engine |
+| CoreLens | read only view of the Core and the controller in one call |
 | ArtCoinsTokenV2 and the v2 stack | the coin and its factory, hook, locker, escrow and anti sniper module (`script/config/v2-mainnet.json`) |
 
 each runtime contract stays under 24,576 bytes (`forge build --sizes`).
@@ -59,11 +57,11 @@ each runtime contract stays under 24,576 bytes (`forge build --sizes`).
 
 | caller | doors |
 |---|---|
-| anyone | `sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen` (when open), `sellForBalance` (balanceMode 2), `redeemStatement`, `buyback`, `skim`, `ControllerV1.buy`, `ControllerV1.buyCredit` and `buyCredits` (when the credit sale is on), `FeeRouter.flush` |
+| anyone | `sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen` (when open), `sellForBalance` (balanceMode 2), `redeemStatement`, `buyback`, `book`, `fund`, `collectEscrow`, `claimPayee`, `ControllerV1.buy`, `ControllerV1.buyCredit` and `buyCredits` (when the credit sale is on) |
 | owner of the Core | `setSettings`, `setRate`, `setController`, `setBalanceModule`, `refreshUnitPerPoint`, `releaseRedeemBurn`, `setCreditCostToPotBps`, `setChosenComposeOn`, `setMinCcToChoose`, `addAdapter`, `removeAdapter`, `rescueCoin`, `rescueNft`, `setSuccessor`, `migrate`, two step `transferOwnership` |
 | owner on the controller | the sale settings, `setRefScore`, the credit sale settings (`setCreditSaleOn`, `setCreditWindow`, `setCreditFloorBps`, `setCreditStartBps`), `setAnchorBps`, `setBalancePoolKey`, `setPaused` (blocks `buy` and `buyCredit`, composing, the bid, redemptions and buybacks continue) |
-| owner of the router | `setEngine`, `setPayees`, `setSplitStart` |
-| locks, one way | `lockController`, `lockBalanceModule`, `lockAdapters`, `lockSuccessor` on the Core, `lock` on the router |
+| coin admin (the owner) | `setBountyRecipient` on the hook, `lockRecipients` on the coin |
+| locks, one way | `lockController`, `lockBalanceModule`, `lockAdapters`, `lockSuccessor` on the Core |
 
 eth, credits and balanceToken leave the Core at the owner's call only through `migrate` to the successor. coin leaves through `rescueCoin` and NFTs off the books through `rescueNft`. the owner sets the price the engine pays and the balanceModule that redeems statements, so holders trust the owner key (docs/SPEC.md section 10).
 
@@ -91,7 +89,7 @@ toolchain notes and timings: docs/STATUS.md section 5.
 
 ## deploy
 
-one script, `script/Deploy.s.sol`, deploys the system and launches the coin through the v2 factory, driven by one config file (`script/config/mainnet.json`, copied to the gitignored `script/config/local.json`). the factory owner key signs everything, and `Resume.s.sol` sets the router split start after the launch. read-only `Preflight.s.sol` and `Postflight.s.sol` check the system before and after, and `Lock.s.sol` sends `coin.lockRecipients()`. the owner address is an EIP 7702 delegated account, so broadcasts use `--slow`. the owner decisions in docs/STATUS.md are settled before launch.
+one script, `script/Deploy.s.sol`, deploys the system and launches the coin through the v2 factory, driven by one config file (`script/config/mainnet.json`, copied to the gitignored `script/config/local.json`). the factory owner key signs everything, and `Resume.s.sol` finishes a deploy that stopped half way. read-only `Preflight.s.sol` and `Postflight.s.sol` check the system before and after, and `Lock.s.sol` sends `coin.lockRecipients()` as an owner command after the launch. the owner address is an EIP 7702 delegated account, so broadcasts use `--slow`. the owner decisions in docs/STATUS.md are settled before launch.
 
 the runbook, with the commands in order, is docs/RUNBOOK.md.
 

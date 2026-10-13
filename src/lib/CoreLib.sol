@@ -55,11 +55,14 @@ struct CoreState {
     uint16 creditCostToPotBps;
     bool chosenComposeOn;
     uint96 minCcToChoose;
+    address payee;
+    uint256 payeeOwed;
+    bool payeeOn;
 }
 
 /// the one linked library of the Core: the settings write (validation, storage, event), the eth rate (the climb with its
 /// clamp and ceiling, and the drop on a fill), the pool manager swap of the coin buyback, the
-/// pull of the fee router's balance and the sale of credits into the balance token bid.
+/// sale of credits into the balance token bid.
 /// it holds no state of its own and is called by delegatecall, so it works on the Core's storage and balance, and the
 /// Core keeps its runtime under the size limit. deployed once before the Core (docs/DEPLOY.md)
 library CoreLib {
@@ -175,6 +178,7 @@ library CoreLib {
         s.callerMaxBaseFee = ns.callerMaxBaseFee;
         s.feeToBuybackBps = ns.feeToBuybackBps;
         s.feeToRedeemBurnBps = ns.feeToRedeemBurnBps;
+        s.payeePpm = ns.payeePpm;
         emit SettingsSet(ns);
     }
 
@@ -206,6 +210,7 @@ library CoreLib {
         s.callerMaxBaseFee = uint48(c >> 128);
         s.feeToBuybackBps = uint16(c >> 176);
         s.feeToRedeemBurnBps = uint16(c >> 192);
+        s.payeePpm = uint24(c >> 208);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
@@ -394,7 +399,7 @@ library CoreLib {
     /// basis of 1 wei. A donor who inflates the basis of a statement gives credits away. The basis is booked and the
     /// eth pile grows: the rate state and the pots keep their values. `acquiredAt` is the current
     /// time. Reverts `Empty` for an empty list, `ZeroId` for id zero, `InPile` for a credit that is in a pile (the same
-    /// id twice included), and `NotHolder` for a credit the Core does not hold. The Core pulls the fee router, then
+    /// id twice included), and `NotHolder` for a credit the Core does not hold. The Core books the fee income, then
     /// forwards its call here untouched, under its own reentrancy guard
     function adopt(uint256[] calldata ids) external {
         if (ids.length == 0) revert Empty();
@@ -412,7 +417,7 @@ library CoreLib {
     }
 
     /// @notice sets the successor to which `migrate` sends the assets. the zero address means no migration. reverts
-    /// after `lockSuccessor`, and for the Core itself, the balance module, the balance token, the fee source, the
+    /// after `lockSuccessor`, and for the Core itself, the balance module, the balance token, the
     /// coin, Credits and Statements. the Core forwards its call here untouched
     function setSuccessor(address next) external {
         _onlyOwner();
@@ -422,8 +427,8 @@ library CoreLib {
             if (next.code.length == 0) revert NoCode(next);
             ICoinOf core = ICoinOf(address(this));
             if (
-                next == address(this) || next == c.balanceModule || next == c.balanceToken || next == core.FEE_SOURCE()
-                    || next == core.COIN() || next == address(CREDITS) || next == address(STATEMENTS)
+                next == address(this) || next == c.balanceModule || next == c.balanceToken || next == core.COIN()
+                    || next == address(CREDITS) || next == address(STATEMENTS)
             ) revert BadSuccessor(next);
         }
         c.successor = next;
@@ -441,7 +446,7 @@ library CoreLib {
     /// forwards its call here untouched, the owner check and the reentrancy guard are here.
     /// the first call sets `retired`, which stays set: `sellForEth`, `buyListing`, `sellForBalance`, `adopt` and
     /// `compose` then revert `Retired`. logs `EngineRetired` once.
-    /// eth: `ethPot`, by one plain call, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
+    /// eth: `ethPot`, by `fund()` of the successor, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
     /// trackers stays.
     /// balance token: `balancePot`, by `transfer`, the tracker zeroed. a transfer that reverts, returns false or returns less
     /// than a word leaves the pot as it is, logs `BalanceTokenMigrationSkipped` and the call goes on; a later `migrate`
@@ -473,7 +478,7 @@ library CoreLib {
         (c.rateAtCheckpoint,,) = _climb(c.rateAtCheckpoint, eth, c.lastFillTime, c.checkpointTime, block.timestamp);
         c.checkpointTime = uint64(block.timestamp);
         c.ethPot = 0;
-        (bool ok,) = to.call{value: eth}("");
+        (bool ok,) = to.call{value: eth}(abi.encodeCall(IFund.fund, ()));
         if (!ok) revert CallFailed();
     }
 
@@ -667,27 +672,12 @@ library CoreLib {
         }
         if (!ok) refScore = 0;
     }
-
-    /// gas forwarded to the router flush of `pullFees`. the most expensive flush (four payees that burn all their
-    /// gas, the split on) measures 640,000 gas in test/PullFees.t.sol
-    uint256 internal constant PULL_GAS = 1_000_000;
-
-    /// @notice calls `flush()` on the fee router with at most `PULL_GAS` and ignores the outcome. the router sends
-    /// the fee eth to `Core.receive`, which books it. a router that reverts, burns its gas or has no code leaves the
-    /// caller's entry point unaffected and the fees in the router
-    function pullFees(address router) external {
-        bytes memory data = abi.encodeCall(IRouterFlush.flush, ());
-        assembly ("memory-safe") {
-            pop(call(PULL_GAS, router, 0, add(data, 0x20), mload(data), 0, 0))
-        }
-    }
-}
-
-interface IRouterFlush {
-    function flush() external;
 }
 
 interface ICoinOf {
     function COIN() external view returns (address);
-    function FEE_SOURCE() external view returns (address);
+}
+
+interface IFund {
+    function fund() external payable;
 }

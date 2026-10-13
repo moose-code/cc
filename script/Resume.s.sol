@@ -8,10 +8,10 @@ import {SystemResumer, Stage} from "./SystemResumer.sol";
 import {NewProd} from "./NewProd.sol";
 
 /// @notice `CORE=0x... CONFIG_HASH=0x... forge script script/Resume.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow
-/// --private-key $KEY`. reverts while any of SETTINGS_CHANGED, LOCKS_CHANGED, OWNER_CHANGED, COIN_CHANGED or
-/// ROUTER_CHANGED is set. run it as the same deployer as the original run. reads the stage from the chain and sends
-/// only what is missing: the launch (if the core exists and the coin does not), then the router setup (engine, payees) and, once the launch is mined, the split start (launch time from the factory plus the anti sniper window).
-/// then runs postflight. prints the stage it found. the runbook is docs/RUNBOOK.md section 6
+/// --private-key $KEY`. reverts while any of SETTINGS_CHANGED, LOCKS_CHANGED, OWNER_CHANGED or COIN_CHANGED is set.
+/// run it as the same deployer as the original run. reads the stage from the chain and sends only what is missing: the
+/// lens, the adapters and the launch (if the core exists and the coin does not). then runs postflight. prints the stage
+/// it found. the runbook is docs/RUNBOOK.md section 6
 contract Resume is Script, SystemResumer, NewProd {
     function run() external {
         _requireNoChangeFlags();
@@ -29,9 +29,7 @@ contract Resume is Script, SystemResumer, NewProd {
         Deployed memory d = resumeSend(deployer, c, core, from);
         vm.stopBroadcast();
         console.log("stage found", uint256(from));
-        console.log("0 no core, 1 core only, 2 launched, 3 router setup missing, 4 done");
+        console.log("0 no core, 1 core only, 2 done");
         console.log("coin", d.coin);
-        console.log("router", d.router);
-        if (splitStartPending) console.log("split start NOT set yet: run Resume again once the launch is mined");
     }
 }

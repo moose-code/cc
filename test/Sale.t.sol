@@ -1156,9 +1156,7 @@ contract SaleAnchorTest is SaleShapeBase {
             for (uint256 i; i < 80; ++i) {
                 vm.deal(attacker, attacker.balance + 1);
                 vm.prank(attacker);
-                (bool ok,) = address(core).call{value: 1}("");
-                assertTrue(ok);
-                core.skim();
+                core.fund{value: 1}();
                 uint256[] memory one = new uint256[](1);
                 one[0] = ids[i];
                 vm.prank(attacker);

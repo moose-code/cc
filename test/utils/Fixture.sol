@@ -9,8 +9,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {ICredits, IStatements, Mainnet, Settings, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
-import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
+import {ICredits, IStatements, Mainnet, Settings, Stack, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
 import {ICoreLens} from "../../src/interfaces/ICoreLens.sol";
 import {
     IArtCoinsFactoryV2,
@@ -27,13 +26,14 @@ import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {CreditIds} from "./CreditIds.sol";
 import {TestSwapRouter} from "./TestSwapRouter.sol";
 import {RateStore} from "../../src/lib/RateStore.sol";
+import {Prod} from "./Prod.sol";
 
 /// @notice the full system on a mainnet fork, built only from real contracts. the artcoins v2 stack is the live one
 /// (`V2Stack`, script/config/v2-mainnet.json), the factory owner (`owner`, who is also the engine owner) sets the
-/// factory minimum protocol skim share to 362 as the launch needs, then Core, ControllerV1 and the fee router are
+/// factory minimum protocol skim share to 362 as the launch needs, then Core and ControllerV1 are
 /// deployed through `SystemDeployer.deploySystem` and the coin is launched with `deployTokenAsOwner`. the pool lives in
-/// the live pool manager under the v2 hook. fees reach the Core through the fee router: `_buyCoin` and `_sellCoin`
-/// flush it right after the swap (set `autoFlush` false to hold the eth in the router), `_flush` does it on demand.
+/// the live pool manager under the v2 hook. the hook pushes the fees straight to the Core: `_buyCoin` and `_sellCoin`
+/// book them right after the swap (set `autoBook` false to leave the eth unbooked), `_book` does it on demand.
 /// the only stand ins are the balance module and balance token, which appear only after `_enterPhase2`.
 /// the sniper window is OPEN after setUp (the pool was just born). call `_skipSniperWindow` for steady state fees.
 /// @dev every address is namespaced because common labels are delegated accounts on mainnet that sweep eth
@@ -93,12 +93,8 @@ abstract contract Fixture is Test, ProdDeployer {
     V2Stack.Stack internal v2;
     IArtCoinsFactoryV2 internal FACTORY;
     IArtCoinsFeeEscrowV2 internal ESCROW;
-    /// @dev the fee router: the pool's bounty recipient. `_flush` forwards its eth to the Core
-    IFeeRouter internal feeRouter;
-    /// @dev the account that calls `flush` in the helpers
-    address internal flusher;
-    /// @dev when true the swap helpers flush the router right after the swap, so the Core books the fees at once
-    bool internal autoFlush = true;
+    /// @dev when true the swap helpers book the fees right after the swap (`core.book()`)
+    bool internal autoBook = true;
     IControllerV1 internal ctl;
     /// @dev the launch adapters `deploySystem` created and the Core approves
     address internal seaportAdapter;
@@ -200,7 +196,6 @@ abstract contract Fixture is Test, ProdDeployer {
         keeper = _user("keeper");
         seller = _user("seller");
         funder = _user("funder");
-        flusher = _user("flusher");
         router = new TestSwapRouter();
 
         // the launch bounty needs the factory minimum protocol skim share at 362: the owner command of docs/RUNBOOK.md step 3
@@ -217,7 +212,7 @@ abstract contract Fixture is Test, ProdDeployer {
         lc.settings = _settings();
         lc.owner = owner;
         lc.creator = creator;
-        lc.creatorPayee = _user("creatorPayee");
+        lc.payee = _user("payee");
         lc.name = "Fixture Coin";
         lc.symbol = "FIXT";
         lc.image = FIXTURE_IMAGE;
@@ -230,12 +225,8 @@ abstract contract Fixture is Test, ProdDeployer {
         lc.mevModule = v2.mev;
         vm.startPrank(owner);
         Deployed memory d = deploySystem(owner, lc);
-        // the launch is mined in this block: the split starts when the anti sniper window ends
-        startSplitAfterLaunch(lc, d.router, d.coin);
         vm.stopPrank();
 
-        // `deploySystem` filled the router into its own copy of the config
-        lc.stack.feeSource = d.router;
         core = ICore(payable(d.core));
         coin = IArtCoinsTokenV2(d.coin);
         ctl = IControllerV1(d.controller);
@@ -247,7 +238,6 @@ abstract contract Fixture is Test, ProdDeployer {
         vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
         vm.prank(owner);
         core.addAdapter(rawAdapter);
-        feeRouter = IFeeRouter(payable(d.router));
         launchKey = d.launchKey;
         poolId = d.poolId;
         launchTime = block.timestamp;
@@ -269,7 +259,7 @@ abstract contract Fixture is Test, ProdDeployer {
     {
         LaunchConfig memory l = _cfg(name, symbol, salt);
         l.owner = tokenAdmin;
-        return predictCoin(l, owner, address(feeRouter));
+        return predictCoin(l, owner, address(core));
     }
 
     function buildConfig(
@@ -281,7 +271,24 @@ abstract contract Fixture is Test, ProdDeployer {
     ) internal view returns (IArtCoinsFactoryV2.DeploymentConfigV2 memory) {
         LaunchConfig memory l = _cfg(name, symbol, salt);
         l.creator = creator_;
-        return buildConfig(l, tokenAdmin, address(feeRouter));
+        return buildConfig(l, tokenAdmin, address(core));
+    }
+
+    /// @notice a Core built as `deploySystem` builds it, on the stack `st`: the Core is the bounty recipient of its own
+    /// config, so its `COIN` is the factory prediction for that config and not the fixture coin
+    function _launchCore(address controller_, Stack memory st, uint256 rate, Settings memory s)
+        internal
+        returns (ICore)
+    {
+        return Prod.newCore(owner, buildConfig(lc, owner, address(0)), owner, controller_, lc.payee, st, rate, s);
+    }
+
+    /// @notice a successor Core of the fixture coin: it is bound to the launched coin, the bounty recipient of the pool
+    /// stays where it is until the coin admin repoints it
+    function _successorCore(address controller_, uint256 rate, Settings memory s) internal returns (ICore) {
+        return Prod.newCoreOf(
+            address(coin), owner, buildConfig(lc, owner, address(0)), controller_, lc.payee, lc.stack, rate, s
+        );
     }
 
     function poolKeyOf(address coin_) internal view returns (PoolKey memory) {
@@ -304,7 +311,7 @@ abstract contract Fixture is Test, ProdDeployer {
         vm.prank(who);
         router.swap{value: ethIn}(launchKey, true, -int256(ethIn), who);
         coinOut = coin.balanceOf(who) - before;
-        if (autoFlush) _flush();
+        if (autoBook) _book();
     }
 
     /// @notice sells `coinIn` coin for eth, exact in, through the real pool
@@ -316,16 +323,12 @@ abstract contract Fixture is Test, ProdDeployer {
         vm.prank(who);
         router.swap(launchKey, false, -int256(coinIn), who);
         ethOut = who.balance - before;
-        if (autoFlush) _flush();
+        if (autoBook) _book();
     }
 
-    /// @notice flushes the fee router as `flusher`. the Core books what the router sends.
-    /// returns the eth the Core received from the router (zero when the router held nothing)
-    function _flush() internal returns (uint256 toCore) {
-        uint256 before = address(core).balance;
-        vm.prank(flusher);
-        feeRouter.flush();
-        toCore = address(core).balance - before;
+    /// @notice books the fee income the pool pushed into the Core
+    function _book() internal {
+        core.book();
     }
 
     /// @notice swap hook data that names `referrer` and asks for `bps` of volume (100k denominator)
@@ -340,16 +343,13 @@ abstract contract Fixture is Test, ProdDeployer {
         if (block.timestamp < end) vm.warp(end);
     }
 
-    /// @notice moves past the sniper window and the router split start (the window end plus the deploy margin). the first
-    /// flush at or after the start turns the split on
-    function _skipToSplitStart() internal {
+    /// @notice moves past the sniper window. the first book with income after it turns the payee share on
+    function _skipToPayeeStart() internal {
         _skipSniperWindow();
-        uint256 at = feeRouter.splitStart();
-        if (block.timestamp < at) vm.warp(at);
     }
 
     /// @notice generates fees through real buys until the eth pot holds at least `eth`. in steady state about 5.90 percent
-    /// of every buy reaches the pot (6.9 points of skim, 96.38 percent to the router, minus the payee), inside
+    /// of every buy reaches the pot (6.9 points of skim, 96.38 percent to the Core, minus the payee), inside
     /// the sniper window more
     function _fundPot(uint256 eth) internal {
         // about 5.31 percent of a buy reaches the pot now (5.90 points to the engine, less the 10 percent redeem burn
@@ -361,7 +361,7 @@ abstract contract Fixture is Test, ProdDeployer {
         assertGe(core.ethPot(), eth, "pot not funded");
     }
 
-    /// @notice like `_fundPot` but never buys more than the gap needs (the guess is the first flush rate, the highest one),
+    /// @notice like `_fundPot` but never buys more than the gap needs (the guess is the first book rate, the highest one),
     /// so the pot lands just over `eth`. for tests that need a pot close to an exact figure
     function _fundPotNear(uint256 eth) internal {
         for (uint256 i; i < 16 && core.ethPot() < eth; ++i) {
@@ -618,10 +618,21 @@ abstract contract Fixture is Test, ProdDeployer {
 
     // ------------------------------------------------------------------ checks and small helpers
 
+    /// @notice adds `amount` to the eth pot whole through `fund`. the fee income above the pots is booked first
+    function _addToPot(uint256 amount) internal {
+        vm.deal(address(this), address(this).balance + amount);
+        core.fund{value: amount}();
+    }
+
+    /// @notice the eth the core tracks: the pots, the redeem burn reserve and the payee claim
+    function _tracked() internal view returns (uint256) {
+        return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed();
+    }
+
     /// @notice invariant 5 of the spec: the pots never exceed what the core holds
     function _solvent() internal view {
         assertLe(
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed(),
             address(core).balance,
             "eth pots exceed balance"
         );

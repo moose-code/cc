@@ -4,9 +4,9 @@ pragma solidity ^0.8.28;
 import {ICredits, Mainnet} from "../../src/interfaces/Interfaces.sol";
 
 /// a listing target with several hostile behaviours, selected by `mode`. it holds credits so it can deliver the
-/// right one, a wrong one or two at once. modes 0 to 3 and 6 must make the core revert the buy. modes 4, 5, 7 and 8
-/// end in an honest delivery and may succeed, after attempts to reenter the core or to pull the credit back,
-/// which the core and the credits must refuse.
+/// right one, a wrong one or two at once. modes 0 to 6 must make the core revert the buy (a refund is a plain send to
+/// the core, which `receive` refuses). modes 7 and 8 end in an honest delivery and may succeed, after attempts to
+/// reenter the core or to pull the credit back, which the core and the credits must refuse.
 contract ProbeTarget {
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
 
@@ -27,12 +27,12 @@ contract ProbeTarget {
 
     /// true when a success of the buy is acceptable for this mode.
     function honest(uint256 m) public pure returns (bool) {
-        return m == 4 || m == 5 || m == 7 || m == 8;
+        return m == 7 || m == 8;
     }
 
     /// 0 keeps the eth. 1 sends the wrong credit. 2 sends the right credit and a second one. 3 reenters the core
     /// and keeps the eth. 4 sends the right credit and returns more eth than it was paid. 5 sends the right credit
-    /// and refunds half. 6 reverts. 7 sends the right credit after failed reentry attempts. 8 sends the right
+    /// and refunds half. 6 reverts. the core refuses the refunds of 4 and 5. 7 sends the right credit after failed reentry attempts. 8 sends the right
     /// credit and then tries to pull it back out of the core.
     function fill(uint256 id, uint256 wrongId) external payable {
         uint256 m = mode;
@@ -81,7 +81,7 @@ contract ProbeTarget {
         bytes[7] memory calls = [
             abi.encodeWithSignature("sellForEth(uint256[])", ids),
             abi.encodeWithSignature("compose()"),
-            abi.encodeWithSignature("skim()"),
+            abi.encodeWithSignature("book()"),
             abi.encodeWithSignature("buyback()"),
             abi.encodeWithSignature("sellTo(uint256,address)", uint256(1), address(this)),
             abi.encodeWithSignature("redeemStatement(uint256)", uint256(1)),

@@ -93,12 +93,13 @@ contract SaleSmokeTest is Fixture {
         Settings memory s0 = core.settings();
         s0.feeToRedeemBurnBps = 0;
         _setSettings(s0);
-        address hook = lc.stack.feeSource;
+        address hook = lc.stack.hook;
         vm.deal(hook, 10 ether);
         uint256 pot = core.ethPot();
         vm.prank(hook);
         (bool ok,) = address(core).call{value: 1 ether}("");
         assertTrue(ok);
+        core.book();
         assertEq(core.ethPot() - pot, 1 ether, "launch value 0: all to the pot");
         assertEq(core.ethToBuyback(), 0);
         Settings memory s = core.settings();
@@ -108,6 +109,7 @@ contract SaleSmokeTest is Fixture {
         vm.prank(hook);
         (ok,) = address(core).call{value: 1 ether}("");
         assertTrue(ok);
+        core.book();
         assertEq(core.ethToBuyback(), 0.4 ether, "forty percent to the buyback");
         assertEq(core.ethPot() - pot, 0.6 ether, "the rest to the pot");
         _solvent();

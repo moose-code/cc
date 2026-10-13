@@ -729,7 +729,7 @@ abstract contract HandlerSale is HandlerOwner {
     //////////////////////////////////////////////////////////////*/
 
     /// the call a hostile module makes from inside a redemption: nothing, or one door of the core, or the selling controller.
-    /// k = 1..11 selects compose, skim, buyback, redeemStatement, the selling controller's sell, adopt, releaseRedeemBurn,
+    /// k = 1..11 selects compose, book, buyback, redeemStatement, the selling controller's sell, adopt, releaseRedeemBurn,
     /// sellForEth, buyListing, sellTo and sellForBalance
     function _callout(uint256 k, uint256 seed, MockBalanceModule next) internal {
         if (k == 0) return;
@@ -740,7 +740,7 @@ abstract contract HandlerSale is HandlerOwner {
         uint256[] memory ids = new uint256[](1);
         ids[0] = seed >> 8;
         if (k == 1) data = abi.encodeCall(ICore.compose, ());
-        else if (k == 2) data = abi.encodeCall(ICore.skim, ());
+        else if (k == 2) data = abi.encodeCall(ICore.book, ());
         else if (k == 3) data = abi.encodeCall(ICore.buyback, ());
         else if (k == 4) data = abi.encodeCall(ICore.redeemStatement, (sid));
         else if (k == 6) data = abi.encodeCall(ICore.adopt, (ids));

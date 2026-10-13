@@ -44,7 +44,6 @@ interface IFeeControllerV2 {
 /// @notice the read only checks run before a launch (`preflight`) and after it (`postflight`). they only read state,
 /// so they are safe to run against mainnet at any time
 abstract contract LaunchChecks is PostflightChecks {
-    /// @dev gas units of the deploy transactions (the library, controller, router, core, lens, launch, router setup) plus margin
     /// @dev the per transaction gas cap of the target chain (EIP 7825, 2^24). the launch is simulated with what is left of
     /// it, so a launch that does not fit fails the simulation row, and a collision cannot burn more than that
     uint256 internal constant TX_GAS_CAP = 16_777_216;
@@ -73,17 +72,16 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x970e646c12de69edff2342e055372481917e258127049cbfa57e5093e1d2b4e4;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x918fc8bd7eeace40495a67eb672da397d637431845a180ed56b1be0c56fd0482;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x107427cbe9dbd3d19a1311a09784abdb01ddf54558c7faeec5c1804db38e009e;
-    bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
-    bytes32 internal constant BUILD_HASH_LENS = 0xd1c3bff55bd0545cce6d1712949f04a9061ff483864eec4065b4c1ec83649239;
+    bytes32 internal constant BUILD_HASH_CORE = 0x26692d6e785e8baafdee7fde7e02d8e2bf4ee1320b1012d59829fe35daefe0a8;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x92b74390048878681f0e59f4ea40ec7f567980c6c4884789923d477fada55617;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x88a6db4ca1f0c528badb6264cf1f37a1516166722605b6fce6ce6e1d25ec6694;
+    bytes32 internal constant BUILD_HASH_LENS = 0xb40852a65fcd5ea21a31c076c999f5f4afc6ab75c923349dfa78ae755567ade2;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x5e67d695e48b1d52a96ff9a2a3fc0a542208b23ed22f6a1677b24686ddf1a4eb;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x8ac2c0bda2684838f2b79701dbb6f4e8c531e30503408712d276c7143b9ce262;
-    /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
-    uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
+        0xf3f90cf635b4980c796657fd5f806d889188b06588d7be19ef171b1d648669f0;
+    /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
+    uint24 internal constant PAYEE_MAX_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
     uint24 internal constant SNIPER_START_MAX = 9_000;
     uint32 internal constant SNIPER_SECONDS_MIN = 600;
@@ -124,7 +122,7 @@ abstract contract LaunchChecks is PostflightChecks {
 
     /// @notice the deployer nonce the controller will be created at: the live nonce plus the library transaction that
     /// still precedes it. inside `Deploy` the library is already on chain by the time `run` starts, so the live nonce
-    /// already counts it. the core is created at this nonce plus one
+    /// already counts it. the Core is created at this nonce plus one
     function _controllerNonce(address deployer) internal view returns (uint64) {
         return vm.getNonce(deployer) + (_libraryTxPending() ? 1 : 0);
     }
@@ -221,8 +219,8 @@ abstract contract LaunchChecks is PostflightChecks {
         _rulePeople(c, deployer);
     }
 
-    /// @dev the coin and router values that are pinned or bounded (docs/DECISIONS.md 10.6): restricted with the Core as the only
-    /// listed account, the factory default protocol slot, the router bounds
+    /// @dev the coin and payee values that are pinned or bounded (docs/DECISIONS.md 10.6): restricted with the Core as the only
+    /// listed account, the factory default protocol slot, the payee share bound
     function _ruleLaunch(LaunchConfig memory c) private {
         _check(
             "rule: coin is restricted with no extra allowlist entry",
@@ -230,11 +228,11 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat("restricted ", c.restricted ? "yes" : "no", " extra entries ", vm.toString(c.allowed.length))
         );
         _eq("rule: protocol bps is 2000", uint256(c.protocolBps), PIN_PROTOCOL_BPS);
-        bool routerOk = c.payeePpm != 0 && c.payeePpm <= ROUTER_MAX_PAYEE_PPM;
+        bool payeeOk = c.settings.payeePpm != 0 && c.settings.payeePpm <= PAYEE_MAX_PPM;
         _check(
-            "rule: router payee share inside the router bound",
-            routerOk,
-            string.concat("payee ppm ", vm.toString(c.payeePpm))
+            "rule: payee share is set and inside its bound",
+            payeeOk,
+            string.concat("payee ppm ", vm.toString(c.settings.payeePpm))
         );
     }
 
@@ -293,7 +291,7 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     function _rulePeople(LaunchConfig memory c, address deployer) private {
-        address[3] memory who = [c.owner, c.creator, c.creatorPayee];
+        address[3] memory who = [c.owner, c.creator, c.payee];
         bool bad;
         for (uint256 i; i < 3; ++i) {
             address a = who[i];
@@ -301,7 +299,7 @@ abstract contract LaunchChecks is PostflightChecks {
             bad = bad || a == Mainnet.DEAD || a == c.stack.poolManager || a == c.stack.hook || a == c.stack.factory
                 || a == c.stack.locker || a == c.stack.escrow || a == c.mevModule;
         }
-        _check("rule: owner, creator and payees are not dead or stack addresses", !bad, "dead, stack, mev module");
+        _check("rule: owner, creator and payee are not dead or stack addresses", !bad, "dead, stack, mev module");
         _check(
             "rule: image at most 2048 bytes, description at most 4096 bytes",
             bytes(c.image).length <= MAX_IMAGE_BYTES && bytes(c.description).length <= MAX_DESCRIPTION_BYTES,
@@ -379,10 +377,10 @@ abstract contract LaunchChecks is PostflightChecks {
         return true;
     }
 
-    /// @dev the router forwards the payee share with a plain call. a payee that reverts or needs more gas sends its share
-    /// to `owed`, which only a working payee can claim. the call runs on a snapshot, 0.001 eth with 100,000 gas
+    /// @dev `claimPayee` pays the payee with a plain call. a payee that reverts or needs more gas cannot claim its
+    /// share. the call runs on a snapshot, 0.001 eth with 100,000 gas
     function _prePayee(LaunchConfig memory c) private {
-        address payee = c.creatorPayee;
+        address payee = c.payee;
         if (payee == address(0)) return; // the placeholder row reports it
         address probe = address(uint160(uint256(keccak256("credits.preflight.payee.probe"))));
         uint256 snap = vm.snapshotState();
@@ -390,7 +388,7 @@ abstract contract LaunchChecks is PostflightChecks {
         vm.prank(probe);
         (bool ok,) = payee.call{value: 0.001 ether, gas: 100_000}("");
         vm.revertToState(snap);
-        _check("payee: the launch payee accepts 0.001 eth with a 100000 gas call (simulated)", ok, vm.toString(payee));
+        _check("payee: accepts eth with a 100000 gas call (simulated)", ok, vm.toString(payee));
     }
 
     /// @dev the owner account is an EIP 7702 delegation. the delegation code, the delegate code hash and an empty key
@@ -429,7 +427,6 @@ abstract contract LaunchChecks is PostflightChecks {
         _pinBuild("Core", BUILD_HASH_CORE);
         _pinBuild("CoreLib", BUILD_HASH_CORELIB);
         _pinBuild("ControllerV1", BUILD_HASH_CONTROLLER);
-        _pinBuild("FeeRouter", BUILD_HASH_ROUTER);
         _pinBuild("CoreLens", BUILD_HASH_LENS);
         _pinBuild("SeaportBasicAdapter", BUILD_HASH_SEAPORT_ADAPTER);
         _pinBuild("CreditStrategyAdapter", BUILD_HASH_STRATEGY_ADAPTER);
@@ -468,17 +465,15 @@ abstract contract LaunchChecks is PostflightChecks {
         );
     }
 
-    /// @dev the deploy order is controller, router, Core: the controller takes the deployer nonce after the library (when
-    /// the library still has to go out), the router the next, the Core the one after. the coin comes from the
-    /// factory's own `predictToken` for the deployer and the full config, read through a call that cannot revert here
+    /// @dev the deploy order is controller, Core: the controller takes the deployer nonce after the library (when
+    /// the library still has to go out), the Core the next. the coin comes from the factory's own `predictToken` for
+    /// the deployer and the full config with the Core as bounty recipient, read through a call that cannot revert here
     function _prePredictions(LaunchConfig memory c, address deployer) private {
         uint64 nonce = _controllerNonce(deployer);
-        address routerAt = vm.computeCreateAddress(deployer, nonce + 1);
-        address coreAt = vm.computeCreateAddress(deployer, nonce + 2);
-        _noCode("predicted router is empty", routerAt);
+        address coreAt = vm.computeCreateAddress(deployer, nonce + 1);
         _noCode("predicted controller is empty", vm.computeCreateAddress(deployer, nonce));
         _noCode("predicted core is empty", coreAt);
-        (bool ok, address coinAt) = _predict(c, deployer, routerAt);
+        (bool ok, address coinAt) = _predict(c, deployer, coreAt);
         _check(
             "predicted coin is empty",
             ok && coinAt.code.length == 0,
@@ -677,12 +672,12 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     /// @dev runs the launch as the factory owner on a snapshot and reverts the state again: the owner path works, the
-    /// factory and the hook accept the config (bounds, minimums, enabled stack, mev values, recipients). the router and
-    /// the Core need no code for it. the deployer gets the fee for the simulation only
+    /// factory and the hook accept the config (bounds, minimums, enabled stack, mev values, recipients). the Core needs no
+    /// code for it. the deployer gets the fee for the simulation only
     function _preSimulate(LaunchConfig memory c, address deployer) private {
         uint64 nonce = _controllerNonce(deployer);
-        address routerAt = vm.computeCreateAddress(deployer, nonce + 1);
-        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(c, c.owner, routerAt);
+        address coreAt = vm.computeCreateAddress(deployer, nonce + 1);
+        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(c, c.owner, coreAt);
         (bool ok, address coin, uint256 gas, bytes memory why) = _simulateLaunch(c, deployer, cfg);
         _check(
             "factory: deployTokenAsOwner accepts the config (simulated)",
@@ -765,18 +760,17 @@ abstract contract LaunchChecks is PostflightChecks {
     /// of the whole config is the single value the deploy needs back in CONFIG_HASH
     function _preSignoff(LaunchConfig memory c, address deployer) private {
         uint64 nonce = _controllerNonce(deployer);
-        _info("signoff: owner (core owner, token admin, router owner, factory owner)", vm.toString(c.owner));
+        _info("signoff: owner (core owner, token admin, factory owner)", vm.toString(c.owner));
         _info("signoff: creator (the one project locker reward slot, 80 percent of the lp rewards, none at lp fee 0)", vm.toString(c.creator));
         _info("signoff: deployer (sends the transactions, must be the factory owner)", vm.toString(deployer));
-        _info("signoff: router address (the bounty recipient of the pool)", vm.toString(vm.computeCreateAddress(deployer, nonce + 1)));
-        _info("signoff: core address (the router flushes to it)", vm.toString(vm.computeCreateAddress(deployer, nonce + 2)));
+        _info("signoff: core address (the bounty recipient of the pool)", vm.toString(vm.computeCreateAddress(deployer, nonce + 1)));
         _info(
-            "signoff: router payee (one at launch, owner replaces it later with setPayees)",
-            string.concat(vm.toString(c.creatorPayee), " ppm ", vm.toString(c.payeePpm), " of a flush")
+            "signoff: payee (one address, owner replaces it later with setPayee)",
+            string.concat(vm.toString(c.payee), " ppm ", vm.toString(c.settings.payeePpm), " of the fee income")
         );
         _info(
-            "signoff: router split",
-            "the split starts at the first flush after the anti sniper window, router not locked by the deploy"
+            "signoff: payee share",
+            "starts at the first book with income after the anti sniper window, the recipients are not locked by the deploy"
         );
         _info(
             "signoff: opening bid",
@@ -812,7 +806,7 @@ abstract contract LaunchChecks is PostflightChecks {
             "signoff: build (runtime code hashes of out/, slots masked)",
             string.concat(
                 "Core ", vm.toString(BUILD_HASH_CORE), " CoreLib ", vm.toString(BUILD_HASH_CORELIB), " ControllerV1 ",
-                vm.toString(BUILD_HASH_CONTROLLER), " FeeRouter ", vm.toString(BUILD_HASH_ROUTER), " CoreLens ",
+                vm.toString(BUILD_HASH_CONTROLLER), " CoreLens ",
                 vm.toString(BUILD_HASH_LENS), " SeaportBasicAdapter ", vm.toString(BUILD_HASH_SEAPORT_ADAPTER),
                 " CreditStrategyAdapter ", vm.toString(BUILD_HASH_STRATEGY_ADAPTER), " CoreLib creation ",
                 vm.toString(BUILD_CREATION_HASH_CORELIB)

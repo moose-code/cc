@@ -30,14 +30,14 @@ abstract contract FeeBase is Fixture {
         SellExactOut
     }
 
-    /// @dev what one swap did, through the fee router into the core. `routerRise` is the bounty leg the hook pushed to the
-    /// router, `potRise` what the core booked after the flush (the payees' split taken off)
+    /// @dev what one swap did. `bountyRise` is the bounty leg the hook pushed to the core, `potRise` what the core booked
+    /// to the pot at the book after the swap (the payee share, the buyback share and the redeem burn share taken off),
+    /// `toPayee` what the book credited to the payee
     struct Flow {
         uint256 gross;
         uint256 potRise;
-        uint256 balanceRise;
-        uint256 routerRise;
-        uint256 toPayees;
+        uint256 bountyRise;
+        uint256 toPayee;
         uint256 skimVolume;
         uint256 skimBounty;
         uint256 skimProtocol;
@@ -52,37 +52,31 @@ abstract contract FeeBase is Fixture {
         vm.deal(trader, 1000 ether);
     }
 
-    /// @dev what the router does with `amount` right now: the payees' split (only once the split is on) and what is
-    /// left for the engine. mirrors `FeeRouter.flush` from the router's own getters
-    function _routerSplit(uint256 amount) internal view returns (uint256 toPayees, uint256 toEngine) {
-        if (feeRouter.splitOn()) {
-            (, uint32[] memory ppm) = feeRouter.payees();
-            for (uint256 i; i < ppm.length; ++i) {
-                toPayees += amount * ppm[i] / 1_000_000;
-            }
-        }
-        toEngine = amount - toPayees;
+    /// @dev what the book does with income `amount` right now: the payee share (only once the payee share is on) and
+    /// the rest. mirrors `Core._book` from the core's own getters
+    function _payeeSplit(uint256 amount) internal view returns (uint256 toPayee, uint256 toEngine) {
+        if (core.payeeOn()) toPayee = amount * core.settings().payeePpm / 1_000_000;
+        toEngine = amount - toPayee;
     }
 
-    /// @dev the part of an engine inflow `toEngine` the core's `receive` books to the pot: the buyback share and the
-    /// redeem burn share, both bps of the inflow, are taken off first
+    /// @dev the part of an engine inflow `toEngine` (the income less the payee share) the book adds to the pot: the
+    /// buyback share and the redeem burn share, both bps of the inflow, are taken off first
     function _toPot(uint256 toEngine) internal view returns (uint256) {
         Settings memory s = core.settings();
         return toEngine - toEngine * s.feeToBuybackBps / 10_000 - toEngine * s.feeToRedeemBurnBps / 10_000;
     }
 
-    /// @dev the redeem burn share the core's `receive` books from an engine inflow `toEngine`
+    /// @dev the redeem burn share the book adds from an engine inflow `toEngine`
     function _toRedeemBurn(uint256 toEngine) internal view returns (uint256) {
         return toEngine * core.settings().feeToRedeemBurnBps / 10_000;
     }
 
-    /// @dev runs one swap of `kind`, then flushes the router. `amount` is eth in for BuyExactIn, coin out for
+    /// @dev runs one swap of `kind`, then books. `amount` is eth in for BuyExactIn, coin out for
     /// BuyExactOut, coin in for SellExactIn and eth out for SellExactOut. the gross eth notional is measured from the
     /// swap, not from the hook
     function _flow(Kind kind, uint256 amount, bytes memory data) internal returns (Flow memory f) {
         uint256 pot = core.ethPot();
         uint256 bal = address(core).balance;
-        uint256 rbal = address(feeRouter).balance;
         uint256 pm = address(PM).balance;
         if (kind == Kind.SellExactIn || kind == Kind.SellExactOut) {
             vm.prank(trader);
@@ -105,11 +99,11 @@ abstract contract FeeBase is Fixture {
         }
         vm.stopPrank();
         _readSkim(f, vm.getRecordedLogs());
-        f.routerRise = address(feeRouter).balance - rbal;
-        (f.toPayees,) = _routerSplit(address(feeRouter).balance);
-        _flush();
+        f.bountyRise = address(core).balance - bal;
+        uint256 owed = core.payeeOwed();
+        _book();
+        f.toPayee = core.payeeOwed() - owed;
         f.potRise = core.ethPot() - pot;
-        f.balanceRise = address(core).balance - bal;
     }
 
     function _readSkim(Flow memory f, Vm.Log[] memory logs) internal view {
@@ -123,16 +117,17 @@ abstract contract FeeBase is Fixture {
     }
 
     /// @dev steady state expectation for a gross eth notional: 6.9 points of skim, 96.38 percent of it (the bounty leg) to the
-    /// router, the rest the protocol leg
-    function _expected(uint256 gross) internal pure returns (uint256 toRouter, uint256 toProtocol) {
+    /// core, the rest the protocol leg
+    function _expected(uint256 gross) internal pure returns (uint256 toCore, uint256 toProtocol) {
         uint256 skim = gross * 690 / 10_000;
-        toRouter = skim * 9_638 / 10_000;
-        toProtocol = skim - toRouter;
+        toCore = skim * 9_638 / 10_000;
+        toProtocol = skim - toCore;
     }
 
-    /// @dev moves past the sniper window, then gives the trader coin and the pool about 18 eth of depth
+    /// @dev moves past the sniper window, then gives the trader coin and the pool about 18 eth of depth. the first book
+    /// after the window turns the payee share on
     function _stock() internal {
-        _skipToSplitStart();
+        _skipToPayeeStart();
         _buyCoin(trader, 20 ether);
     }
 
@@ -157,20 +152,21 @@ abstract contract FeeBase is Fixture {
     }
 }
 
-/// fee flow of the real v2 skim hook through the fee router into the core
+/// fee flow of the real v2 skim hook into the core
 contract FeeFlowTest is FeeBase {
     function _checkSteady(Kind kind, uint256 amount) internal {
+        uint256 owed = core.payeeOwed();
         Flow memory f = _flow(kind, amount, "");
-        (uint256 toRouter, uint256 toProtocol) = _expected(f.gross);
+        (uint256 toCore, uint256 toProtocol) = _expected(f.gross);
         // the formulas round down in two steps and the exact out kinds measure the notional after the skim
-        assertApproxEqAbs(f.routerRise, toRouter, 2, "router is 6.65022 points of the gross eth notional");
+        assertApproxEqAbs(f.bountyRise, toCore, 2, "the core gets 6.65022 points of the gross eth notional");
         assertApproxEqAbs(f.skimProtocol, toProtocol, 2, "protocol leg is 0.24978 points");
-        // the hook's own books agree to the wei with the router, and the core booked what the router split left
-        assertEq(f.routerRise, f.skimBounty, "router equals the hook bounty leg");
-        (, uint256 toEngine) = _routerSplit(f.routerRise);
+        // the hook's own books agree to the wei with the core, and the book split the income
+        assertEq(f.bountyRise, f.skimBounty, "the core equals the hook bounty leg");
+        (uint256 toPayee, uint256 toEngine) = _payeeSplit(f.bountyRise);
+        assertEq(f.toPayee, toPayee, "the payee share of the income");
+        assertEq(core.payeeOwed() - owed, toPayee);
         assertEq(f.potRise, _toPot(toEngine), "the pot got the engine inflow less the buyback and redeem burn shares");
-        assertEq(f.balanceRise, toEngine, "the core booked the whole engine inflow");
-        assertEq(address(feeRouter).balance, 0, "the flush emptied the router");
         assertEq(f.skimReferral, 0);
         assertGt(f.potRise, 0);
     }
@@ -178,41 +174,39 @@ contract FeeFlowTest is FeeBase {
     function test_feesBuyExactIn() public {
         _stock();
         _checkSteady(Kind.BuyExactIn, 3 ether);
-        // an exact figure: 1 eth in is 0.0665022 to the router (6.65022 points) and 0.0024978 to the protocol (0.24978
-        // points). the split is on after the stock buy, the one payee
-        // takes 112_778 ppm of the gross, the pot gets the remainder
+        // an exact figure: 1 eth in is 0.0665022 to the core (6.65022 points) and 0.0024978 to the protocol (0.24978
+        // points). the payee share is on after the stock buy: 75_185 ppm of the income is credited to the payee, the
+        // pot gets the remainder less the redeem burn share
         Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
-        assertEq(f.routerRise, 0.0665022 ether);
+        assertEq(f.bountyRise, 0.0665022 ether);
         assertEq(f.skimProtocol, 0.0024978 ether);
-        assertEq(f.potRise, _toPot(0.0665022 ether - 0.0665022 ether * 112_778 / 1_000_000));
-        // payee 66_502_200_000_000_000 * 112_778 / 1e6 = 7_499_985_111_600_000 (0.7499985 points),
-        // the engine inflow is the router inflow less the payee = 59_002_214_888_400_000 (5.9002215 points); the pot
-        // gets that less the redeem burn share
-        assertEq(f.toPayees, 7_499_985_111_600_000, "the payee: 0.7499985 points of the buy, its share of the inflow");
-        assertEq(f.potRise, _toPot(59_002_214_888_400_000));
-        assertEq(feeRouter.splitOn(), true);
+        assertEq(f.potRise, _toPot(0.0665022 ether - 0.0665022 ether * 75_185 / 1_000_000));
+        // payee 66_502_200_000_000_000 * 75_185 / 1e6 = 4_999_967_907_000_000 (0.4999968 points of the buy),
+        // the engine inflow is the income less the payee share = 61_502_232_093_000_000 (6.15 points); the pot gets
+        // that less the redeem burn share
+        assertEq(f.toPayee, 4_999_967_907_000_000, "the payee: 0.5 points of the buy");
+        assertEq(f.potRise, _toPot(61_502_232_093_000_000));
+        assertEq(core.payeeOn(), true);
     }
 
     /// the full split at launch values, per 1 eth of volume (multiply by 100 for 100 eth), steady state and inside the anti
-    /// sniper window. skim 6.9 points: protocol 0.24978 (bountyBps 9_638 leaves 362 of 10_000), router 6.65022.
-    /// steady state, out of the router's 66_502_200_000_000_000 wei: payee 112_778 ppm 0.74999851 points, engine
-    /// 5.9002215 points. window, skim 90 points (0.9 eth): the protocol keeps 0.24978 points, the router gets
+    /// sniper window. skim 6.9 points: protocol 0.24978 (bountyBps 9_638 leaves 362 of 10_000), core 6.65022.
+    /// steady state, out of the income of 66_502_200_000_000_000 wei: payee 75_185 ppm 0.49999 points, engine
+    /// 6.15 points. window, skim 90 points (0.9 eth): the protocol keeps 0.24978 points, the core gets
     /// 0.0665022 + 0.831 = 0.8975022 eth, the payee gets nothing and the engine the rest
     function test_launchSplitPerHundredEthOfVolume() public {
         Flow memory w = _flow(Kind.BuyExactIn, 1 ether, "");
         assertEq(w.skimProtocol * 100, 0.24978 ether, "window: protocol 0.24978 per 100 eth");
-        assertEq(w.routerRise * 100, 89.75022 ether, "window: router 89.75022 per 100 eth");
-        assertEq(w.toPayees, 0, "window: no payee share");
-        assertEq(w.balanceRise, w.routerRise, "window: the engine receives the whole router inflow");
+        assertEq(w.bountyRise * 100, 89.75022 ether, "window: core 89.75022 per 100 eth");
+        assertEq(w.toPayee, 0, "window: no payee share");
 
         _stock();
         Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
         assertEq(f.skimProtocol * 100, 0.24978 ether, "protocol 0.24978 per 100 eth");
-        assertEq(f.routerRise * 100, 6.65022 ether, "router 6.65022 per 100 eth");
-        assertEq(f.toPayees * 100, 0.74999851116 ether, "payee 0.74999851 per 100 eth");
-        assertEq(f.balanceRise * 100, 5.90022148884 ether, "engine 5.9002215 per 100 eth");
-        assertEq(f.skimProtocol + f.routerRise, 0.069 ether, "protocol and router are the 6.9 point skim");
-        assertEq(f.routerRise, f.toPayees + f.balanceRise, "the router pays out all it receives");
+        assertEq(f.bountyRise * 100, 6.65022 ether, "core 6.65022 per 100 eth");
+        assertApproxEqAbs(f.toPayee * 100, 0.5 ether, 0.0001 ether, "payee 0.5 points of volume");
+        assertEq(f.skimProtocol + f.bountyRise, 0.069 ether, "protocol and core are the 6.9 point skim");
+        assertEq(f.bountyRise - f.toPayee, uint256(66_502_200_000_000_000) - f.toPayee, "the engine part is the rest");
     }
 
     function test_feesBuyExactOut() public {
@@ -230,46 +224,6 @@ contract FeeFlowTest is FeeBase {
         _checkSteady(Kind.SellExactOut, 0.5 ether);
     }
 
-    /// the one launch payee is paid by the flush, 0.7499985 points of volume (112_778 ppm of the router inflow, 0.75 rounded down) (its share is of the gross
-    /// inflow)
-    function test_flushPaysThePayee() public {
-        _stock();
-        (address[] memory who, uint32[] memory ppm) = feeRouter.payees();
-        assertEq(who.length, 1, "one payee at launch");
-        assertEq(who[0], lc.creatorPayee);
-        assertEq(ppm[0], 112_778);
-        address a = lc.creatorPayee;
-        uint256 a0 = a.balance;
-        uint256 f0 = flusher.balance;
-        Flow memory f = _flow(Kind.BuyExactIn, 10 ether, "");
-        assertEq(a.balance - a0, f.routerRise * 112_778 / 1_000_000);
-        assertEq(flusher.balance, f0, "the flusher receives nothing");
-        assertApproxEqRel(a.balance - a0, 0.075 ether, 0.01e18);
-        assertEq(f.toPayees, f.routerRise * 112_778 / 1_000_000);
-    }
-
-    /// the owner replaces the payees through `setPayees` and the flush pays both of them, the pot gets the rest
-    function test_flushPaysTwoPayeesAfterSetPayees() public {
-        _stock();
-        address a = lc.creatorPayee;
-        address b = makeAddr("secondPayee");
-        address[] memory who = new address[](2);
-        who[0] = a;
-        who[1] = b;
-        uint32[] memory ppm = new uint32[](2);
-        ppm[0] = 80_515;
-        ppm[1] = 80_515;
-        vm.prank(owner);
-        feeRouter.setPayees(who, ppm);
-        uint256 a0 = a.balance;
-        Flow memory f = _flow(Kind.BuyExactIn, 10 ether, "");
-        uint256 gross = f.routerRise;
-        assertEq(a.balance - a0, gross * 80_515 / 1_000_000);
-        assertEq(b.balance, gross * 80_515 / 1_000_000);
-        assertEq(f.toPayees, 2 * (gross * 80_515 / 1_000_000));
-        assertEq(f.potRise, _toPot(gross - f.toPayees));
-    }
-
     /// the protocol leg of the skim (0.24978 points) is not the engine's: it goes to the v2 protocol controller, by push
     /// or by escrow credit
     function test_protocolLegGoesToTheProtocolController() public {
@@ -283,74 +237,97 @@ contract FeeFlowTest is FeeBase {
         assertEq(got, 5 ether * 690 / 10_000 * 362 / 10_000);
     }
 
-    /// the extra of the anti sniper window all reaches the router, and through it the pot, the payees take nothing of it
+    /// the extra of the anti sniper window all reaches the core, and through it the pot, the payee takes nothing of it
     function test_sniperWindowExtraLandsInThePot() public {
         (uint24 bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
         assertEq(bps, 9_000);
-        assertFalse(feeRouter.splitOn(), "no split in the window");
+        assertFalse(core.payeeOn(), "no payee share in the window");
         Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
         uint256 base = 1 ether * 690 / 10_000;
         uint256 bountyShare = base * 9_638 / 10_000;
         uint256 extra = 1 ether * uint256(bps) / 10_000 - base;
-        assertEq(f.routerRise, bountyShare + extra, "the whole extra goes to the bounty recipient");
+        assertEq(f.bountyRise, bountyShare + extra, "the whole extra goes to the bounty recipient");
         assertEq(f.skimProtocol, base - bountyShare, "the protocol leg does not grow in the window");
-        assertEq(f.toPayees, 0);
-        assertEq(f.potRise, _toPot(f.routerRise), "the pot gets the window inflow less the redeem burn share");
+        assertEq(f.toPayee, 0);
+        assertEq(f.potRise, _toPot(f.bountyRise), "the pot gets the window inflow less the redeem burn share");
         assertApproxEqAbs(f.potRise, _toPot(0.8975022 ether), 0.005 ether);
-        assertFalse(feeRouter.splitOn());
+        assertFalse(core.payeeOn());
 
         // halfway through the window the rate has decayed to 50 percent (linearly from 90 to the baseline, 6.9)
         vm.warp(launchTime + SNIPER_WINDOW / 2);
         (bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
         assertEq(bps, 9_000 - (9_000 - 690) / 2);
         f = _flow(Kind.BuyExactIn, 1 ether, "");
-        assertEq(f.routerRise, bountyShare + 1 ether * uint256(bps) / 10_000 - base);
-        assertEq(f.toPayees, 0);
+        assertEq(f.bountyRise, bountyShare + 1 ether * uint256(bps) / 10_000 - base);
+        assertEq(f.toPayee, 0);
 
         // sells pay the extra too
         f = _flow(Kind.SellExactIn, coin.balanceOf(trader) / 4, "");
         (bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
-        assertGt(f.routerRise, f.gross * 690 / 10_000 * 9_638 / 10_000);
+        assertGt(f.bountyRise, f.gross * 690 / 10_000 * 9_638 / 10_000);
 
         _skipSniperWindow();
         f = _flow(Kind.BuyExactIn, 1 ether, "");
-        assertEq(f.routerRise, 0.0665022 ether, "steady state after the window");
+        assertEq(f.bountyRise, 0.0665022 ether, "steady state after the window");
     }
 
-    /// eth the router received during the window is never shared: it waits in the router, one flush after the window
-    /// sends all of it to the pot and only then starts the split
+    /// eth the core received during the window is never shared: it waits unbooked, the first book after the window
+    /// sends all of it to the pot and only then starts the payee share
     function test_eth_from_the_windowIsNeverShared() public {
-        autoFlush = false;
+        autoBook = false;
         _buyCoin(trader, 20 ether);
-        uint256 held = address(feeRouter).balance;
-        assertGt(held, 10 ether, "the window skim waits in the router");
-        assertEq(core.ethPot(), 0, "nothing booked before a flush");
-        _skipToSplitStart();
-        uint256 a0 = lc.creatorPayee.balance;
-        (, uint256 toEngine) = _routerSplit(held);
-        assertEq(toEngine, held, "the split is off until the first flush after the window");
-        assertEq(_flush(), held);
+        uint256 held = address(core).balance;
+        assertGt(held, 10 ether, "the window skim waits in the core");
+        assertEq(core.ethPot(), 0, "nothing booked before a book");
+        _skipToPayeeStart();
+        (uint256 toPayee, uint256 toEngine) = _payeeSplit(held);
+        assertEq(toPayee, 0, "the payee share is off until the first book after the window");
+        assertEq(toEngine, held);
+        _book();
         assertEq(core.ethPot(), _toPot(held), "the pot got the window eth less the redeem burn share");
         assertEq(core.ethRedeemBurn(), _toRedeemBurn(held), "the redeem burn share of the window eth");
-        assertEq(lc.creatorPayee.balance, a0, "the payees got none of the window eth");
-        assertTrue(feeRouter.splitOn(), "the split is on now");
+        assertEq(core.payeeOwed(), 0, "the payee got none of the window eth");
+        assertTrue(core.payeeOn(), "the payee share is on now");
         // the next buy is shared
-        autoFlush = true;
+        autoBook = true;
         Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
-        assertGt(f.toPayees, 0);
-        assertGt(lc.creatorPayee.balance, a0);
+        assertGt(f.toPayee, 0);
+        assertGt(core.payeeOwed(), 0);
     }
 
-    /// without a flush the router just holds the eth, and the core books nothing
-    function test_feesWaitInTheRouterUntilFlushed() public {
+    /// without a book the core just holds the eth above its pots, and books nothing
+    function test_feesWaitUnbookedUntilTheNextBook() public {
         _stock();
-        autoFlush = false;
+        autoBook = false;
         uint256 pot = core.ethPot();
         _buyCoin(trader, 5 ether);
-        assertEq(core.ethPot(), pot, "no flush, no booking");
-        assertEq(address(feeRouter).balance, 5 ether * 690 / 10_000 * 9_638 / 10_000);
-        _flush();
+        assertEq(core.ethPot(), pot, "no book, no booking");
+        assertEq(core.ethRate() <= core.ethPrice(), true);
+        _book();
         assertGt(core.ethPot(), pot);
+    }
+
+    /// every door books first, and the quote of `ethRate()` counts the fees that reached the core and are not booked yet:
+    /// the sale at a door pays exactly the quoted rate
+    function test_aDoorBooksTheFeesFirstAndPaysTheQuote() public {
+        _stock();
+        autoBook = false;
+        uint256[] memory ids = _credits(seller, 1);
+        _buyCoin(trader, 5 ether);
+        uint256 booked = _tracked();
+        assertGt(address(core).balance, booked, "the fees are unbooked");
+        uint256 quote = core.ethRate();
+        uint256 owed = core.payeeOwed();
+        uint256 before = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(ids);
+        assertEq(seller.balance - before, quote, "the door paid the quote");
+        assertGt(core.payeeOwed(), owed, "the door booked the fees first");
+        assertEq(
+            address(core).balance,
+            _tracked(),
+            "every wei is booked"
+        );
     }
 
     /// the rate is checkpointed when the fee arrives, before the pot grows
@@ -380,11 +357,11 @@ contract FeeFlowTest is FeeBase {
         assertEq(f.potRise, plain.potRise);
         f = _flow(Kind.SellExactIn, coin.balanceOf(trader) / 4, _referralData(ref, 1000));
         assertEq(f.skimReferral, 0);
-        assertEq(f.potRise, _toPot(f.routerRise - f.toPayees));
+        assertEq(f.potRise, _toPot(f.bountyRise - f.toPayee));
     }
 
-    /// the split of a swap fee is fixed inside the pool and the router. the sale buyback share does not move it: a flush
-    /// books the engine inflow to the pot less the redeem burn share, and the fee buyback share stays 0 at launch
+    /// the split of a swap fee is fixed inside the pool and the book. the sale buyback share does not move it: a book
+    /// adds the engine inflow to the pot less the redeem burn share, and the fee buyback share stays 0 at launch
     function test_feeSplitIsNotASetting() public {
         _stock();
         uint256 back = core.ethToBuyback();
@@ -396,8 +373,8 @@ contract FeeFlowTest is FeeBase {
             s.saleFloorBps = 40_000;
             _setSettings(s);
             Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
-            (, uint256 toEngine) = _routerSplit(f.routerRise);
-            assertEq(f.potRise, _toPot(toEngine), "the flush to the pot less the redeem burn share");
+            (, uint256 toEngine) = _payeeSplit(f.bountyRise);
+            assertEq(f.potRise, _toPot(toEngine), "the book to the pot less the redeem burn share");
             assertEq(core.ethToBuyback(), back, "nothing to the fee buyback share");
         }
     }
@@ -425,14 +402,13 @@ contract FeeFlowTest is FeeBase {
     }
 }
 
-/// `receive()` is the hook's push target. a revert there bricks every swap in the pool, so it must never revert
+/// `receive()` is the hook's push target and the escrow's claim target. the hook pushes with 2,300 gas and a revert
+/// there makes it credit the escrow, so the body is the sender compare alone. the push is booked by the next book
 contract ReceiveTest is FeeBase {
-    /// a swap inside the target call of `buyListing`: the hook pushes fee eth to the router and the attacker flushes the
-    /// router inside the call. the Core books the push from its fee source, the buy succeeds, the cost is the price and
-    /// the books stay consistent
-    function test_swapInsideBuyListingBooksTheFee() public {
+    /// a swap inside the target call of `buyListing`: the hook pushes the bounty to the Core inside the call. the buy
+    /// succeeds, the cost is the price, the push stays unbooked until the next book and the books stay consistent
+    function test_swapInsideBuyListingLeavesTheFeeForTheNextBook() public {
         SwapMidListing t = new SwapMidListing(router, address(core), launchKey);
-        t.setFeeRouter(address(feeRouter));
         _stock();
         _fundPot(1 ether);
         uint256 id = _credits(address(t), 1)[0];
@@ -441,23 +417,20 @@ contract ReceiveTest is FeeBase {
         vm.deal(address(t), swapEth);
         t.arm(id, swapEth);
 
-        uint256 booked0 = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
+        uint256 booked0 = _tracked();
         uint256 balance = address(core).balance;
         vm.prank(keeper);
         _buyRaw(ceiling, hex"deadbeef", id, address(t));
         assertEq(CREDITS.ownerOf(id), address(core));
-        assertEq(t.flushes(), 1, "the attacker flushed inside the call");
-        assertEq(t.flushFailed(), 0, "the flush went through");
         (, uint256 booked,) = core.creditInfo(id);
         assertEq(booked, ceiling, "no gap, no payment: the cost basis is the price");
         uint256 fees = address(core).balance + ceiling - balance;
         assertGt(fees, 0, "the Core received the push");
-        assertEq(
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), booked0 + fees - ceiling, "the push is booked"
-        );
-        assertEq(
-            address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "every wei is booked"
-        );
+        assertEq(_tracked(), booked0 - ceiling, "the push is not booked inside the call");
+        assertEq(address(core).balance - _tracked(), fees, "it waits above the pots");
+        _book();
+        assertEq(_tracked(), booked0 + fees - ceiling, "the next book counts the push");
+        assertEq(address(core).balance, _tracked(), "every wei is booked");
     }
 
     using stdStorage for StdStorage;
@@ -466,17 +439,17 @@ contract ReceiveTest is FeeBase {
     uint256 internal constant TWENTY_YEARS = 20 * 365 days;
 
     function _hookSend(uint256 amount) internal returns (bool ok) {
-        vm.deal(core.FEE_SOURCE(), core.FEE_SOURCE().balance + amount);
-        vm.prank(core.FEE_SOURCE());
+        vm.deal(lc.stack.hook, lc.stack.hook.balance + amount);
+        vm.prank(lc.stack.hook);
         (ok,) = address(core).call{value: amount}("");
     }
 
     function _solventNow() internal view {
-        assertLe(core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance);
+        assertLe(_tracked(), address(core).balance);
     }
 
-    /// pots of any size, any gap in time, funded or not: the hook push is always accepted and booked in full across the
-    /// pot, the buyback share and the redeem burn share
+    /// pots of any size, any gap in time, funded or not: the hook push is always accepted, and one book counts all of it
+    /// across the pot, the buyback share and the redeem burn share (the first book after the window shares nothing)
     function testFuzz_receiveNeverReverts(uint96 a, uint32 gap1, uint96 b, uint256 gap2, uint96 c) public {
         gap2 = bound(gap2, 0, TWENTY_YEARS);
         assertTrue(_hookSend(a));
@@ -484,50 +457,55 @@ contract ReceiveTest is FeeBase {
         assertTrue(_hookSend(b));
         vm.warp(block.timestamp + gap2);
         assertTrue(_hookSend(c));
-        assertEq(
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
-            uint256(a) + b + c,
-            "every push booked"
-        );
-        assertEq(core.checkpointTime(), block.timestamp);
+        assertEq(_tracked(), 0, "the pushes are unbooked");
+        _book();
+        assertEq(_tracked(), uint256(a) + b + c, "one book counts every push");
+        if (uint256(a) + b + c != 0) assertEq(core.checkpointTime(), block.timestamp);
         _solventNow();
     }
 
+    /// the hook pushes with 2,300 gas: the receive of the Core fits it
+    function test_receiveFitsTheHookStipend() public {
+        vm.deal(lc.stack.hook, 1 ether);
+        vm.prank(lc.stack.hook);
+        (bool ok,) = address(core).call{value: 1 ether, gas: 2_300}("");
+        assertTrue(ok, "2,300 gas is enough");
+        assertEq(address(core).balance, 1 ether);
+    }
+
     /// the worst case for the rate loop: a huge pot, the rate pushed down to its smallest value, twenty years
-    /// without a checkpoint. the climb stops at the cap after a few dozen day long steps
-    function test_receiveGasAfterTwentyYearsAtTheWorstRate() public {
+    /// without a checkpoint. the climb stops at the cap after a few dozen day long steps. the checkpoint runs in the book
+    function test_bookGasAfterTwentyYearsAtTheWorstRate() public {
         assertTrue(_hookSend(1 ether));
+        _book();
         uint256 slot = stdstore.target(address(core)).sig("rateAtCheckpoint()").find();
         vm.store(address(core), bytes32(slot), bytes32(uint256(1)));
         assertTrue(_hookSend(100_000_000 ether));
+        _book();
         vm.warp(block.timestamp + TWENTY_YEARS);
-        vm.deal(core.FEE_SOURCE(), 1 ether);
-        vm.prank(core.FEE_SOURCE());
+        assertTrue(_hookSend(1 ether));
         uint256 g = gasleft();
-        (bool ok,) = address(core).call{value: 1 ether}("");
+        core.book();
         g -= gasleft();
-        assertTrue(ok);
-        emit log_named_uint("receive gas, 20 years, rate 1, pot 1e8 eth", g);
+        emit log_named_uint("book gas, 20 years, rate 1, pot 1e8 eth", g);
         assertLt(g, 400_000);
-        uint256 clamp = core.ethPot() - 1 ether;
-        assertEq(core.rateAtCheckpoint(), clamp < core.settings().rateCap ? clamp : core.settings().rateCap, "cap");
+        assertEq(core.rateAtCheckpoint(), core.settings().rateCap, "cap");
     }
 
-    function test_receiveGasRoutine() public {
+    function test_bookGasRoutine() public {
         assertTrue(_hookSend(1 ether));
+        _book();
         vm.warp(block.timestamp + 1 hours);
-        vm.deal(core.FEE_SOURCE(), 1 ether);
-        vm.prank(core.FEE_SOURCE());
+        assertTrue(_hookSend(0.1 ether));
         uint256 g = gasleft();
-        (bool ok,) = address(core).call{value: 0.1 ether}("");
+        core.book();
         g -= gasleft();
-        assertTrue(ok);
-        emit log_named_uint("receive gas, one hour since checkpoint", g);
-        vm.prank(core.FEE_SOURCE());
+        emit log_named_uint("book gas, one hour since checkpoint", g);
+        assertTrue(_hookSend(0.1 ether));
         g = gasleft();
-        (ok,) = address(core).call{value: 0.1 ether}("");
+        core.book();
         g -= gasleft();
-        emit log_named_uint("receive gas, same block", g);
+        emit log_named_uint("book gas, same block", g);
         assertLt(g, 100_000);
     }
 
@@ -547,7 +525,7 @@ contract ReceiveTest is FeeBase {
         emit log_named_uint("swap gas with the core", withCore);
         emit log_named_uint("swap gas with a bare receive", bare);
         emit log_named_uint("added by the core", withCore - bare);
-        assertLt(withCore - bare, 60_000);
+        assertLt(withCore - bare, 2_300);
     }
 
     function _swapGas() internal returns (uint256 g) {
@@ -558,11 +536,11 @@ contract ReceiveTest is FeeBase {
         g -= gasleft();
     }
 
-    /// anything that is not the fee source (the router) is accepted and books nothing until `skim`: a stranger, the hook
-    /// and the escrow included
-    function test_nonSourceEthIsAcceptedButNotBooked() public {
-        address[3] memory from = [_user("anyone"), lc.stack.hook, lc.stack.escrow];
-        for (uint256 i; i < 3; ++i) {
+    /// the hook and the escrow may send eth to `receive`, any other sender reverts `UseFund`. the eth waits above the
+    /// pots until the next book, `fund` adds to the pot whole
+    function test_onlyTheHookAndTheEscrowMaySend() public {
+        address[2] memory from = [lc.stack.hook, lc.stack.escrow];
+        for (uint256 i; i < 2; ++i) {
             vm.deal(from[i], 5 ether);
             vm.prank(from[i]);
             (bool ok,) = address(core).call{value: 1 ether}("");
@@ -570,39 +548,50 @@ contract ReceiveTest is FeeBase {
             assertEq(core.ethPot(), 0);
             assertEq(address(core).balance, (i + 1) * 1 ether);
         }
-        core.skim();
-        assertEq(core.ethPot(), 3 ether);
-        // zero value sends from anyone are fine too
-        vm.prank(from[0]);
-        (bool ok2,) = address(core).call("");
-        assertTrue(ok2);
+        address stranger = _user("anyone");
+        vm.deal(stranger, 5 ether);
+        vm.prank(stranger);
+        (bool sent, bytes memory why) = address(core).call{value: 1 ether}("");
+        assertFalse(sent);
+        assertEq(bytes4(why), ICore.UseFund.selector, "a stranger is told to use fund");
+        // a zero value send from a stranger reverts too
+        vm.prank(stranger);
+        (sent, why) = address(core).call("");
+        assertFalse(sent);
+        assertEq(bytes4(why), ICore.UseFund.selector);
         // the core has no fallback: unknown calls revert
-        (ok2,) = address(core).call(hex"deadbeef");
-        assertFalse(ok2);
+        (sent,) = address(core).call(hex"deadbeef");
+        assertFalse(sent);
+        assertEq(address(core).balance, 2 ether, "nothing else arrived");
+        core.book();
+        assertEq(_tracked(), 2 ether, "the book counts both sends");
+        // `fund` adds to the pot whole, from anyone
+        uint256 pot = core.ethPot();
+        vm.prank(stranger);
+        core.fund{value: 1 ether}();
+        assertEq(core.ethPot() - pot, 1 ether);
+        assertEq(address(core).balance, _tracked());
     }
 
-    /// swaps keep working while the core holds 0.01 eth, the pot a real run builds, and 1000 eth
+    /// swaps keep working while the core holds 0.01 eth, the pot a real run builds, and 1000 eth above its pots: the
+    /// first book counts the excess as income
     function test_swapsKeepWorkingWithALargeCoreBalance() public {
         _skipSniperWindow();
-        _flow(Kind.BuyExactIn, 1 ether, ""); // the first flush after the window turns the split on
+        _flow(Kind.BuyExactIn, 1 ether, ""); // the first book after the window turns the payee share on
         uint256[3] memory held = [uint256(0.01 ether), 0.5 ether, 1000 ether];
         for (uint256 i; i < held.length; ++i) {
-            vm.deal(address(core), held[i]);
+            vm.deal(address(core), address(core).balance + held[i]);
+            _book();
             Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
-            (, uint256 toEngine) = _routerSplit(0.0665022 ether);
+            (, uint256 toEngine) = _payeeSplit(0.0665022 ether);
             assertEq(f.potRise, _toPot(toEngine));
             uint256 coinBal = coin.balanceOf(trader);
             f = _flow(Kind.SellExactIn, coinBal / 10, "");
             assertGt(f.potRise, 0);
             assertGe(address(core).balance, held[i], "nothing left the core");
         }
-        core.skim();
         _solventNow();
-        assertEq(
-            address(core).balance,
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
-            "everything is booked"
-        );
+        assertEq(address(core).balance, _tracked(), "everything is booked");
     }
 
 }
@@ -612,8 +601,8 @@ contract ReceiveSettingsTest is FeeBase {
     using FixedPointMathLib for uint256;
 
     function _hookSend(uint256 amount) internal returns (bool ok) {
-        vm.deal(core.FEE_SOURCE(), core.FEE_SOURCE().balance + amount);
-        vm.prank(core.FEE_SOURCE());
+        vm.deal(lc.stack.hook, lc.stack.hook.balance + amount);
+        vm.prank(lc.stack.hook);
         (ok,) = address(core).call{value: amount}("");
     }
 
@@ -634,11 +623,12 @@ contract ReceiveSettingsTest is FeeBase {
         s.idleLoosenBps = uint16(_pick(seed, 9, 1, 2_000));
         s.saleToBuybackBps = uint16(_pick(seed, 7, 0, 10_000));
         s.rateCap = uint64(_pick(seed, 8, 1e13, 1e18));
+        s.payeePpm = uint24(_pick(seed, 14, 0, 200_000));
         // forge-lint: disable-end(unsafe-typecast)
     }
 
     /// pots of any size, settings that change between pushes, gaps of any length: the hook push is always accepted and
-    /// booked in full, the rate checkpoint moves to the push, and the books stay solvent
+    /// the book counts it in full, the rate checkpoint moves to the book, and the books stay solvent
     function testFuzz_receiveNeverRevertsAcrossSettings(uint256 seed, uint96 a, uint32 gap1, uint96 b, uint256 gap2)
         public
     {
@@ -656,20 +646,22 @@ contract ReceiveSettingsTest is FeeBase {
             vm.warp(block.timestamp + gaps[i]);
             uint256 rate = core.ethRate();
             assertTrue(_hookSend(amounts[i]), "receive does not revert");
+            _book();
             booked += amounts[i];
-            assertEq(
-                core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), booked, "every push booked"
-            );
-            assertEq(core.checkpointTime(), block.timestamp, "checkpointed at the push");
-            assertGe(core.rateAtCheckpoint(), rate, "the price state was locked in first, the read is at most that");
-            assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
+            assertEq(_tracked(), booked, "every push booked");
+            if (amounts[i] != 0) {
+                assertEq(core.checkpointTime(), block.timestamp, "checkpointed at the book");
+                assertGe(core.rateAtCheckpoint(), rate, "the price state was locked in first, the read is at most that");
+            }
+            assertEq(address(core).balance, _tracked());
         }
     }
 
     /// the same on the worst rate: a huge pot, the smallest rate, decades of gap, then a settings change that makes
-    /// the climb as steep as it can be, then a push
-    function test_receiveAfterTheSteepestSettingsAndTheLongestGap() public {
+    /// the climb as steep as it can be, then a book
+    function test_bookAfterTheSteepestSettingsAndTheLongestGap() public {
         assertTrue(_hookSend(100_000_000 ether));
+        _book();
         vm.prank(owner);
         core.setRate(1e13);
         Settings memory s = core.settings();
@@ -679,14 +671,15 @@ contract ReceiveSettingsTest is FeeBase {
         s.idleLoosenBps = 2_000;
         _setSettings(s);
         _warp(100 * 365 days);
-        uint256 g = gasleft();
         assertTrue(_hookSend(1 ether));
+        uint256 g = gasleft();
+        core.book();
         assertLt(g - gasleft(), 400_000, "bounded work");
-        assertLe(core.rateAtCheckpoint(), core.ethPot() - 1 ether, "clamped at the cap");
+        assertLe(core.rateAtCheckpoint(), core.ethPot() - 0.5 ether, "clamped at the cap");
     }
 
-    /// the hook pushes its skim into the core in the middle of `buyback`, under changed settings. the push is booked
-    /// by the receive that runs inside the unlock, and the spend, the payment and the pot stay exact
+    /// the hook pushes its skim into the core in the middle of `buyback`, under changed settings. the push waits above
+    /// the pots during the unlock, the next book counts it, and the spend, the payment and the pot stay exact
     function test_receiveMidBuybackAcrossSettings() public {
         _stock();
         vm.fee(1 gwei);
@@ -708,31 +701,34 @@ contract ReceiveSettingsTest is FeeBase {
             uint256 pool = core.ethToBuyback();
             uint256 keeper0 = keeper.balance;
             uint256 supply = coin.totalSupply();
-            uint256 rbal = address(feeRouter).balance;
+            uint256 bal = address(core).balance;
             vm.recordLogs();
             vm.prank(keeper);
             core.buyback();
             Flow memory f;
             Vm.Log[] memory logs = vm.getRecordedLogs();
             _readSkim(f, logs);
-            assertEq(core.ethPot(), pot, "the skim went to the router, nothing came back inside the unlock");
-            assertEq(address(feeRouter).balance - rbal, f.skimBounty, "the bounty leg reached the router");
-            _flush();
             (uint256 spent, uint256 paid) = _buybackEvent(logs);
+            assertEq(core.ethPot(), pot, "the skim is unbooked during the call");
+            assertEq(
+                address(core).balance, bal - spent - paid + f.skimBounty, "the bounty leg reached the core inside the unlock"
+            );
+            _book();
             assertApproxEqAbs(f.skimVolume + f.skimBounty + f.skimProtocol, spent, 2, "the swap spent the budget");
             assertGe(
                 paid, fees[i] * spent / (slice[i] - (600_000 gwei + fees[i])), "the payment holds the scaled fee"
             );
             assertEq(keeper.balance - keeper0, paid);
-            assertEq(core.ethToBuyback(), pool - spent - paid);
+            assertEq(core.ethToBuyback(), pool - spent - paid, "the fee buyback share is 0 at launch");
             assertLt(coin.totalSupply(), supply);
-            assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
+            assertEq(address(core).balance, _tracked(), "no surplus, no deficit");
         }
     }
 
     /// two statements are composed. one transaction swaps in the real pool (the skim hook pushes into `receive`), buys
-    /// a statement through the controller, and swaps again, so the hook pushes into `receive` before and after the sale
-    /// is booked. an unrelated donation sits unbooked throughout. every wei is booked once, in the right pot
+    /// a statement through the controller, and swaps again, so the hook pushes before and after the sale is booked.
+    /// an unrelated forced send sits above the pots: the book counts it as income. every wei is booked once, in the
+    /// right pot
     function test_receiveAroundABuyInOneTransaction() public {
         _stock();
         Settings memory s = core.settings();
@@ -743,33 +739,29 @@ contract ReceiveSettingsTest is FeeBase {
 
         vm.deal(address(core), address(core).balance + 0.5 ether);
         SwapAroundBuy w = new SwapAroundBuy(router, address(ctl), launchKey);
-        w.setFeeRouter(address(feeRouter));
         vm.deal(address(w), 4 ether + price);
         uint256 pot = core.ethPot();
         uint256 back = core.ethToBuyback();
         uint256 bal = address(core).balance;
         w.run(1 ether, sid);
-        (, uint256 bounty) = _routerSplit(1 ether * 690 / 10_000 * 9_638 / 10_000);
+        uint256 bounty = 1 ether * 690 / 10_000 * 9_638 / 10_000;
         assertEq(STATEMENTS.ownerOf(sid), address(w), "the statement went to the buyer");
         assertEq(core.ethToBuyback() - back, price * 3_333 / 10_000, "the split of the sale");
-        assertEq(
-            core.ethPot() - pot,
-            2 * _toPot(bounty) + price - price * 3_333 / 10_000,
-            "two pushes less their redeem burn share and the rest of the sale"
-        );
         assertEq(address(core).balance - bal, 2 * bounty + price, "the core gained the pushes and the proceeds only");
-        assertEq(
-            address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(),
-            0.5 ether,
-            "the donation is unbooked"
-        );
+        // the sale booked the first push and the forced send, the second push waits
+        (, uint256 e1) = _payeeSplit(bounty + 0.5 ether);
+        assertEq(core.ethPot() - pot, _toPot(e1) + price - price * 3_333 / 10_000, "the first book and the sale");
+        assertEq(address(core).balance - _tracked(), bounty, "the second push waits");
+        pot = core.ethPot();
+        (, uint256 e2) = _payeeSplit(bounty);
+        _book();
+        assertEq(core.ethPot() - pot, _toPot(e2), "the second push, less its redeem burn share");
         _solvent();
-        core.skim();
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
+        assertEq(address(core).balance, _tracked());
     }
 
-    /// the hook push never reverts and is always booked in full, whatever came before it: a random walk over settings
-    /// changes, long gaps, buybacks, skims and real swaps, from a state after a statement sale
+    /// the hook push never reverts and is counted in full by the next book, whatever came before it: a random walk over
+    /// settings changes, long gaps, buybacks, books and real swaps, from a state after a statement sale
     /// forge-config: default.fuzz.runs = 24
     function testFuzz_receiveInterleavedWithEverything(uint256 seed) public {
         _stock();
@@ -790,7 +782,7 @@ contract ReceiveSettingsTest is FeeBase {
                 vm.prank(keeper);
                 try core.buyback() {} catch {}
             } else if (kind == 3) {
-                core.skim();
+                core.book();
             } else if (kind == 4) {
                 vm.deal(trader, trader.balance + 1 ether);
                 vm.prank(trader);
@@ -800,9 +792,12 @@ contract ReceiveSettingsTest is FeeBase {
                 vm.prank(owner);
                 core.setRate(newRate);
             }
+            _book();
             uint256 pot = core.ethPot();
             assertTrue(_hookSend(0.1 ether), "the push is accepted");
-            assertEq(core.ethPot(), pot + _toPot(0.1 ether), "the pot got the push less the redeem burn share");
+            (, uint256 toEngine) = _payeeSplit(0.1 ether);
+            _book();
+            assertEq(core.ethPot(), pot + _toPot(toEngine), "the pot got the push less the shares");
             _solvent();
         }
     }
@@ -811,6 +806,7 @@ contract ReceiveSettingsTest is FeeBase {
 contract BareReceiver {
     receive() external payable {}
 }
+
 
 /// the eth buyback of the core against the real pool: it buys coin and burns it on the token
 contract BuybackTest is FeeBase {
@@ -823,7 +819,7 @@ contract BuybackTest is FeeBase {
         uint256 deadCoin;
         uint256 pot;
         uint256 pool;
-        uint256 routerBal;
+        uint256 coreBal;
         uint256 keeperEth;
     }
 
@@ -833,7 +829,7 @@ contract BuybackTest is FeeBase {
         b.deadCoin = coin.balanceOf(DEAD);
         b.pot = core.ethPot();
         b.pool = core.ethToBuyback();
-        b.routerBal = address(feeRouter).balance;
+        b.coreBal = address(core).balance;
         b.keeperEth = keeper.balance;
     }
 
@@ -853,7 +849,7 @@ contract BuybackTest is FeeBase {
         assertGt(toBuyback, 0);
         assertEq(
             address(core).balance,
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            _tracked(),
             "clean books before"
         );
         Before memory b = _before();
@@ -880,24 +876,24 @@ contract BuybackTest is FeeBase {
             / (core.settings().buybackSlice - (600_000 * 5 gwei + core.settings().keeperFee));
         assertGt(paid, feePart, "the gas refund is paid on top of the fee");
         assertEq((paid - feePart) % 5 gwei, 0, "the refund is counted gas at the base fee");
-        // the skim on the buyback goes to the router (6.65022 points of the eth spent), not to the core: the pot is unchanged
-        // until the router is flushed
-        (uint256 toRouter,) = _expected(budget);
+        // the skim on the buyback reaches the core inside the unlock (6.65022 points of the eth spent) and waits above
+        // the pots: the pot is unchanged until the next book
+        (uint256 toCore,) = _expected(budget);
         assertEq(core.ethPot(), b.pot, "the skim does not return inside the call");
-        assertEq(address(feeRouter).balance - b.routerBal, toRouter, "6.65022 points reached the router");
-        assertEq(address(feeRouter).balance - b.routerBal, f.skimBounty);
-        (, uint256 toEngine) = _routerSplit(address(feeRouter).balance);
-        _flush();
+        assertEq(address(core).balance, b.coreBal - budget - paid + f.skimBounty, "the bounty leg reached the core");
+        assertApproxEqAbs(f.skimBounty, toCore, 2, "6.65022 points of the eth spent");
+        (, uint256 toEngine) = _payeeSplit(f.skimBounty);
+        _book();
         assertEq(
             core.ethPot() - b.pot,
             _toPot(toEngine),
-            "the flush returns the engine share to the pot, less the buyback and redeem burn shares"
+            "the book adds the engine share to the pot, less the buyback and redeem burn shares"
         );
         // the v2 hook reports the volume net of its own skim, so volume plus both legs is the eth spent
         assertApproxEqAbs(f.skimVolume + f.skimBounty + f.skimProtocol, budget, 2);
         assertEq(
             address(core).balance,
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            _tracked(),
             "nothing left unbooked"
         );
     }
@@ -913,9 +909,10 @@ contract BuybackTest is FeeBase {
         vm.prank(keeper);
         core.buyback();
         uint256 residue = _residue(b.pool);
+        _book();
         assertEq(core.ethToBuyback(), residue, "the slice was the whole pot, the unused payment margin stays");
         assertEq(core.lastBuybackBlock(), block.number);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
+        assertEq(address(core).balance, _tracked());
 
         _anotherSale();
         assertGt(core.ethToBuyback(), 0);
@@ -932,10 +929,11 @@ contract BuybackTest is FeeBase {
         vm.prank(keeper);
         core.buyback();
         assertEq(core.ethToBuyback(), _residue(b.pool));
+        _book();
         vm.roll(block.number + core.settings().buybackDelay);
         vm.expectRevert(ICore.SliceTooSmall.selector);
         core.buyback();
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
+        assertEq(address(core).balance, _tracked());
     }
 
     /// @dev puts `eth` into the buyback pot, backed by real eth in the core: the one seam of this file. a statement sale
@@ -954,11 +952,11 @@ contract BuybackTest is FeeBase {
         core.buyback();
         assertGt(b.supply - coin.totalSupply(), 0);
         assertEq(coin.balanceOf(DEAD), b.deadCoin);
-        // inside the window 90 points of the spend (the 0.5 eth slice) go to the router (the protocol leg is 0.24978 points of the baseline)
-        assertGt(address(feeRouter).balance, 0.4 ether);
-        _flush();
+        // inside the window 90 points of the spend (the 0.5 eth slice) go to the core (the protocol leg is 0.24978 points of the baseline)
+        assertGt(address(core).balance - _tracked(), 0.4 ether);
+        _book();
         assertGt(core.ethPot() - b.pot, 0.4 ether);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
+        assertEq(address(core).balance, _tracked());
     }
 }
 
@@ -1014,6 +1012,7 @@ contract BuybackPaymentTest is FeeBase {
         core.buyback();
         r.gasUsed = g0 - gasleft();
         (r.spent, r.paid) = _buybackEvent(vm.getRecordedLogs());
+        _book();
         r.callerGain = keeper.balance - before;
         r.potAfter = core.ethToBuyback();
     }
@@ -1039,7 +1038,7 @@ contract BuybackPaymentTest is FeeBase {
         // a full slice spends the whole budget and pays the whole fee: the rest is whole gas at the base fee
         assertEq(r.spent, core.settings().buybackSlice - (BUYBACK_GAS * 7 gwei + core.settings().keeperFee));
         assertEq(r.potAfter, r.pool - r.spent - r.paid, "the pot fell by the spend and the payment");
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
+        assertEq(address(core).balance, _tracked(), "no surplus, no deficit");
     }
 
     /// a swap that the pool fills in part: the fee scales by the share of the budget spent, the gas refund is whole.
@@ -1089,7 +1088,7 @@ contract BuybackPaymentTest is FeeBase {
         assertEq(r.spent, maxPay, "the budget is half the slice");
         assertLe(r.paid, maxPay, "the payment is at most half the slice");
         assertEq(r.potAfter, r.pool - r.spent - r.paid);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
+        assertEq(address(core).balance, _tracked(), "no surplus, no deficit");
     }
 
     /// a slice just above twice the largest payment pays the gas whole and a fee in proportion to the swap: the budget
@@ -1108,7 +1107,7 @@ contract BuybackPaymentTest is FeeBase {
         assertGt((r.paid - feePart) / 5 gwei, BUYBACK_OVERHEAD_GAS, "the gas refund is whole");
         assertLe(r.paid, maxPay);
         assertEq(r.potAfter, r.pool - r.spent - r.paid, "the pot fell by the spend and the payment");
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
+        assertEq(address(core).balance, _tracked(), "no surplus, no deficit");
     }
 
     /// a slice equal to the setting spends the whole budget and pays the whole fee
@@ -1120,7 +1119,7 @@ contract BuybackPaymentTest is FeeBase {
         assertEq(r.spent, s.buybackSlice - maxPay, "the whole budget");
         assertEq((r.paid - s.keeperFee) % 5 gwei, 0, "the rest of the payment is whole gas at the base fee");
         assertEq(r.potAfter, r.pool - r.spent - r.paid);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
+        assertEq(address(core).balance, _tracked(), "no surplus, no deficit");
     }
 
     /// the swap path burns 3 million gas: the call uses more than `BUYBACK_GAS`, the counted gas stops at it
@@ -1174,7 +1173,7 @@ contract BuybackSettingsTest is FeeBase {
         _setSettings(s);
     }
 
-    /// what the last `_buyback` returned to the pot: the unused part of the slice, and the buyback share of the flush
+    /// what the last `_buyback` returned to the pot: the unused part of the slice, and the buyback share of the book
     uint256 internal lastMargin;
     uint256 internal lastFeeShare;
 
@@ -1186,7 +1185,7 @@ contract BuybackSettingsTest is FeeBase {
         uint256 supply = coin.totalSupply();
         uint256 keeper0 = keeper.balance;
         uint256 pot = core.ethPot();
-        uint256 rbal = address(feeRouter).balance;
+        uint256 unbooked = address(core).balance - _tracked();
         vm.recordLogs();
         vm.prank(keeper);
         core.buyback();
@@ -1198,15 +1197,15 @@ contract BuybackSettingsTest is FeeBase {
         assertEq(core.ethToBuyback(), pool - spent - paid, "the pot fell by the spend and the payment");
         assertLe(spent + paid, slice, "the slice bounds both");
         assertLt(coin.totalSupply(), supply, "burned");
-        assertEq(core.ethPot(), pot, "the skim of the swap went to the router");
-        assertGt(address(feeRouter).balance, rbal, "the skim of the swap reached the router");
-        (, uint256 toEngine) = _routerSplit(address(feeRouter).balance);
+        assertEq(core.ethPot(), pot, "the skim of the swap waits unbooked");
+        assertGt(address(core).balance - _tracked(), unbooked, "the skim of the swap reached the core");
+        (, uint256 toEngine) = _payeeSplit(address(core).balance - _tracked());
         lastMargin = slice - spent - paid;
         lastFeeShare = toEngine * s.feeToBuybackBps / 10_000;
-        _flush();
+        _book();
         assertEq(core.ethToBuyback(), pool - slice + lastMargin + lastFeeShare, "the unused payment and the fee share came back");
         assertEq(core.lastBuybackBlock(), block.number);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
+        assertEq(address(core).balance, _tracked(), "no surplus, no deficit");
     }
 
     function test_sliceDelayAndFeeFollowTheSettings() public {
@@ -1295,7 +1294,7 @@ interface IPermit2 {
 }
 
 /// the restricted v2 token, as far as the credits engine depends on it: the pool is the only way to move coin, the Core
-/// and the router are not on the allowlist
+/// is not on the allowlist
 contract RestrictedCoinTest is FeeBase {
     TestLiquidityHelper internal lp;
 
@@ -1308,7 +1307,6 @@ contract RestrictedCoinTest is FeeBase {
     function test_theLaunchIsRestrictedAndTheCoreIsNotAllowlisted() public view {
         assertTrue(coin.restricted());
         assertFalse(coin.isAllowed(address(core)), "the Core is not on the allowlist (FLOW 29)");
-        assertFalse(coin.isAllowed(address(feeRouter)), "the router is not");
         assertFalse(coin.isAllowed(owner));
         assertFalse(coin.isAllowed(trader));
         assertEq(coin.admin(), owner);
@@ -1437,11 +1435,11 @@ contract UniversalRouterTest is FeeBase {
         UR.execute{value: 1 ether}(hex"10", _v4Swap(true, 1 ether), block.timestamp + 1 hours);
         uint256 bought = coin.balanceOf(trader);
         assertEq(bought, viaRouter, "same amount out as the plain swapper");
-        assertEq(address(feeRouter).balance, 0.0665022 ether, "skim on the buy: 6.65022 points to the router");
-        (, uint256 toEngine) = _routerSplit(0.0665022 ether);
-        _flush();
+        assertEq(address(core).balance - _tracked(), 0.0665022 ether, "skim on the buy: 6.65022 points to the core");
+        (, uint256 toEngine) = _payeeSplit(0.0665022 ether);
+        _book();
         uint256 redeemBurn = toEngine * core.settings().feeToRedeemBurnBps / 10_000;
-        assertEq(core.ethPot() - pot, toEngine - redeemBurn, "and the flush books the engine share less the redeem burn");
+        assertEq(core.ethPot() - pot, toEngine - redeemBurn, "and the book adds the engine share less the redeem burn");
         assertEq(coin.balanceOf(DEAD), dead, "nothing burned");
 
         // sell half through permit2, the way the router pulls erc20 input
@@ -1460,12 +1458,12 @@ contract UniversalRouterTest is FeeBase {
         uint256 ethOut = trader.balance - ethBefore;
         assertEq(ethOut, ethViaRouter, "same eth out as the plain swapper");
         assertEq(coin.balanceOf(trader), bought - sellIn);
-        // a sell skims 6.9 points of the pool eth out, taken from the seller, 96.38 percent of it to the router
+        // a sell skims 6.9 points of the pool eth out, taken from the seller, 96.38 percent of it to the core
         uint256 gross = ethOut * 1000 / 931;
-        uint256 inflow = address(feeRouter).balance;
+        uint256 inflow = address(core).balance - _tracked();
         assertApproxEqAbs(inflow, gross * 69 / 1000 * 9_638 / 10_000, 3, "skim on the sell");
-        (, uint256 eng) = _routerSplit(inflow);
-        _flush();
+        (, uint256 eng) = _payeeSplit(inflow);
+        _book();
         assertEq(core.ethPot() - pot, _toPot(eng));
         assertEq(coin.balanceOf(DEAD), dead, "nothing burned on the sell either");
     }

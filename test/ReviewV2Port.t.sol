@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {ICore} from "../src/interfaces/ICore.sol";
-import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 import {FeeBase} from "./Fees.t.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
@@ -60,7 +59,7 @@ contract ReviewSandwichTest is FeeBase {
 
     /// V2R-2 fixed: the bound is 1 eth (FLOW decision 51), and a sandwich of a slice at the bound loses for every front run size
     function test_FIXED_sandwichOfTheSliceAtTheBoundLosesAtTheLaunchSkim() public {
-        _skipToSplitStart();
+        _skipToPayeeStart();
         Settings memory s = core.settings();
         s.buybackSlice = 1 ether + 1;
         vm.prank(core.owner());
@@ -72,7 +71,7 @@ contract ReviewSandwichTest is FeeBase {
 
     /// why the bound is not higher: a 3 eth slice (inside the old 5 eth bound) profited at the same state
     function test_OK_aThreeEthSliceWouldHaveProfited() public {
-        _skipToSplitStart();
+        _skipToPayeeStart();
         assertGt(_best(3 ether), 0, "3 eth slice profits, so it stays out of bounds");
     }
 }
@@ -91,52 +90,46 @@ contract HeavyPayee {
     }
 }
 
-/// F3. anyone chooses the gas of `flush`
-contract ReviewRouterGasTest is FeeBase {
+/// F3. anyone chooses the gas of `claimPayee`: a claim with too little gas for the payee reverts whole and leaves the
+/// share owed, a claim with enough pays all of it
+contract ReviewClaimGasTest is FeeBase {
     HeavyPayee internal heavy;
 
     function setUp() public override {
         super.setUp();
         heavy = new HeavyPayee();
-        _skipToSplitStart();
-        autoFlush = false;
-        _buyCoin(trader, 3 ether);
-        _flush(); // the first flush at the start turns the split on
-        assertTrue(feeRouter.splitOn());
-        address[] memory who = new address[](1);
-        who[0] = address(heavy);
-        uint32[] memory ppm = new uint32[](1);
-        ppm[0] = 112_778;
+        _stock();
         vm.prank(owner);
-        feeRouter.setPayees(who, ppm);
-    }
-
-    function _tryFlush(uint256 g) internal returns (bool ok) {
-        vm.prank(flusher);
-        (ok,) = address(feeRouter).call{gas: g}(abi.encodeCall(IFeeRouter.flush, ()));
-    }
-
-    function test_OK_aNormalFlushPaysTheHeavyPayeeDirectly() public {
+        core.setPayee(address(heavy));
         _buyCoin(trader, 3 ether);
-        assertTrue(_tryFlush(1_000_000));
-        assertGt(heavy.got(), 0, "paid within the 100k cap");
-        assertEq(feeRouter.owed(address(heavy)), 0);
+        assertGt(core.payeeOwed(), 0);
     }
 
-    /// the flusher picks the gas limit. starving the payee call burns the 63/64 it was given, which leaves too little
-    /// for the engine call, so the flush reverts as a whole: there is no gas limit at which the flush passes and the payee
-    /// is credited instead of paid
-    function test_OK_noGasLimitDivertsAPayeeIntoOwedWhileTheFlushPasses() public {
-        _buyCoin(trader, 3 ether);
+    function _tryClaim(uint256 g) internal returns (bool ok) {
+        (ok,) = address(core).call{gas: g}(abi.encodeCall(ICore.claimPayee, ()));
+    }
+
+    function test_OK_aNormalClaimPaysTheHeavyPayee() public {
+        uint256 owed = core.payeeOwed();
+        assertTrue(_tryClaim(1_000_000));
+        assertEq(heavy.got(), owed, "paid in full");
+        assertEq(core.payeeOwed(), 0);
+    }
+
+    /// the claimer picks the gas limit. a claim that starves the payee reverts as a whole and moves nothing: there is no
+    /// gas limit at which the claim passes and the payee gets less than it is owed
+    function test_OK_noGasLimitShortPaysThePayee() public {
+        uint256 owed = core.payeeOwed();
         uint256 snap = vm.snapshotState();
         uint256 passes;
-        for (uint256 g = 100_000; g <= 400_000; g += 2_500) {
-            if (_tryFlush(g)) {
+        for (uint256 g = 50_000; g <= 400_000; g += 2_500) {
+            if (_tryClaim(g)) {
                 ++passes;
-                assertEq(feeRouter.owed(address(heavy)), 0, "a passing flush paid the payee");
-                assertGt(heavy.got(), 0);
+                assertEq(heavy.got(), owed, "a passing claim paid it all");
+                assertEq(core.payeeOwed(), 0);
             } else {
-                assertEq(heavy.got(), 0, "a reverted flush paid nothing");
+                assertEq(heavy.got(), 0, "a reverted claim paid nothing");
+                assertEq(core.payeeOwed(), owed, "and left the share owed");
             }
             vm.revertToState(snap);
         }
@@ -144,13 +137,15 @@ contract ReviewRouterGasTest is FeeBase {
     }
 }
 
-/// calls a Core door and flushes the router once from its own `receive`, i.e. from inside the payout the door makes last
-contract FlushOnPayout {
-    IFeeRouter public immutable ROUTER;
+/// calls a Core door and tries to book from its own `receive`, i.e. from inside the payout the door makes last
+contract BookOnPayout {
+    address public immutable CORE;
     bool public armed;
+    uint256 public tried;
+    uint256 public blocked;
 
-    constructor(address router_) {
-        ROUTER = IFeeRouter(payable(router_));
+    constructor(address core_) {
+        CORE = core_;
     }
 
     function go(address target, bytes calldata data) external {
@@ -171,78 +166,82 @@ contract FlushOnPayout {
     receive() external payable {
         if (armed) {
             armed = false;
-            ROUTER.flush();
+            ++tried;
+            (bool ok,) = CORE.call(abi.encodeCall(ICore.book, ()));
+            if (!ok) ++blocked;
         }
     }
 }
 
-/// F4. a stranger flushes the router from inside the payout of every door that pays the caller. the doors pay last, so
-/// the booking lands on final state and the books stay exact
-contract ReviewFlushInPayoutTest is FeeBase {
-    FlushOnPayout internal atk;
+/// F4. a stranger books from inside the payout of every door that pays the caller. the doors pay last under the
+/// reentrancy guard, so the nested book is refused, the door books the fees first and the books stay exact
+contract ReviewBookInPayoutTest is FeeBase {
+    BookOnPayout internal atk;
 
     function setUp() public override {
         super.setUp();
-        atk = new FlushOnPayout(address(feeRouter));
+        atk = new BookOnPayout(address(core));
         _stock();
-        autoFlush = false;
+        autoBook = false;
     }
 
     function _queue() internal returns (uint256 held) {
         _buyCoin(trader, 4 ether);
-        held = address(feeRouter).balance;
+        held = address(core).balance - _tracked();
         assertGt(held, 0.1 ether);
     }
 
     function _consistent() internal view {
-        assertEq(
-            address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "every wei is booked"
-        );
-        assertEq(address(feeRouter).balance, 0, "the router was flushed");
+        assertEq(address(core).balance, _tracked(), "every wei is booked");
     }
 
-    function test_OK_flushInsideTheCompose() public {
-        autoFlush = true;
+    function test_OK_bookInsideTheCompose() public {
+        autoBook = true;
         _composeOnce(); // fills the pile and composes once; the state before is kept
         vm.revertToState(preComposeSnap);
-        autoFlush = false;
+        autoBook = false;
         vm.fee(composeBasefee);
         _queue();
         uint256 pot0 = core.ethPot();
-        (, uint256 toEngine) = _routerSplit(address(feeRouter).balance);
+        (, uint256 toEngine) = _payeeSplit(address(core).balance - _tracked());
         uint256 a0 = address(atk).balance;
         atk.go(address(core), abi.encodeCall(ICore.compose, ()));
         assertEq(address(atk).balance, a0, "the compose pays the caller nothing");
+        assertEq(atk.tried(), 0, "and has no payout to enter from");
         assertEq(core.ethPot(), pot0 + _toPot(toEngine), "pot = old + the booked fees");
         _consistent();
     }
 
-    function test_OK_flushInsideTheBuybackTip() public {
+    function test_OK_bookInsideTheBuybackTip() public {
         _fillEthBuyback();
         vm.roll(block.number + 30);
         _queue();
         uint256 bb0 = core.ethToBuyback();
         uint256 pot0 = core.ethPot();
         atk.go(address(core), abi.encodeCall(ICore.buyback, ()));
+        _book(); // the skim of the swap reached the core inside the call
         assertLt(core.ethToBuyback(), bb0, "the slice left the buyback pot");
-        assertGt(core.ethPot(), pot0, "the flushed fees were booked on top");
+        assertGt(core.ethPot(), pot0, "the fees were booked on top");
+        assertEq(atk.tried(), atk.blocked(), "the nested book was refused");
         _consistent();
     }
 
-    function test_OK_flushInsideTheSellForEthPayout() public {
-        autoFlush = true;
+    function test_OK_bookInsideTheSellForEthPayout() public {
+        autoBook = true;
         _fundPot(3 ether);
-        autoFlush = false;
+        autoBook = false;
         uint256[] memory ids = _credits(address(atk), 1);
         atk.approveAll(address(CREDITS), address(core));
         _queue();
         uint256 pot0 = core.ethPot();
-        (, uint256 toEngine) = _routerSplit(address(feeRouter).balance);
+        (, uint256 toEngine) = _payeeSplit(address(core).balance - _tracked());
         uint256 a0 = address(atk).balance;
         atk.go(address(core), abi.encodeWithSignature("sellForEth(uint256[])", ids));
         assertEq(CREDITS.ownerOf(ids[0]), address(core));
         uint256 price = address(atk).balance - a0;
         assertGt(price, 0);
+        assertEq(atk.tried(), 1);
+        assertEq(atk.blocked(), 1, "the nested book was refused");
         assertEq(core.ethPot(), pot0 - price + _toPot(toEngine), "pot = old - price + the booked fees");
         _consistent();
     }
@@ -266,35 +265,37 @@ contract Forcer {
     }
 }
 
-/// F6. the stipend push, forced eth, who can launch, who the Core books
+/// F6. the stipend push, forced eth, who can launch, who the Core takes eth from
 contract ReviewFeePathTest is FeeBase {
-    function test_OK_stipendPushReachesTheRouterTheCoreAndEveryStackSender() public {
-        StipendPusher p = new StipendPusher();
-        assertTrue(p.push{value: 1}(address(feeRouter)), "router receive fits the stipend");
-        assertTrue(p.push{value: 1}(address(core)), "the Core receive fits the stipend for a non source sender");
+    function test_OK_stipendPushFromTheHookAndTheEscrowReachesTheCore() public {
+        address[2] memory from = [lc.stack.hook, lc.stack.escrow];
+        for (uint256 i; i < 2; ++i) {
+            vm.deal(from[i], 1);
+            vm.prank(from[i]);
+            (bool ok,) = address(core).call{value: 1, gas: 2_300}("");
+            assertTrue(ok, "the Core receive fits the stipend");
+        }
         assertEq(core.ethPot(), 0, "and books nothing");
-        assertEq(address(feeRouter).balance, 1);
+        assertEq(address(core).balance, 2);
+        StipendPusher p = new StipendPusher();
+        assertFalse(p.push{value: 1}(address(core)), "any other sender is refused");
     }
 
-    function test_OK_forcedEthInTheRouterAndTheCoreIsBookedExactlyOnce() public {
-        _skipToSplitStart();
-        Forcer a = new Forcer{value: 2 ether}();
-        a.boom(payable(address(feeRouter)));
+    function test_OK_forcedEthInTheCoreIsBookedExactlyOnce() public {
+        _skipToPayeeStart();
         Forcer b = new Forcer{value: 1 ether}();
         b.boom(payable(address(core)));
-        uint256 held = address(feeRouter).balance;
-        assertGe(held, 2 ether);
-        assertLe(held, 2 ether + 10, "2 eth plus launch dust");
-        (, uint256 toEngine) = _routerSplit(held);
-        _flush(); // the first flush at the split start: everything to the engine
-        uint256 toPot = _toPot(toEngine);
-        assertEq(core.ethPot(), toPot, "the forced router eth was booked as fees");
-        assertEq(core.ethRedeemBurn(), _toRedeemBurn(toEngine), "and the redeem burn share to its reserve");
-        assertEq(address(core).balance, toEngine + 1 ether, "the forced Core eth is not booked yet");
-        core.skim();
-        assertEq(core.ethPot(), toPot + 1 ether);
-        core.skim();
-        assertEq(core.ethPot(), toPot + 1 ether, "a second skim books nothing");
+        uint256 held = address(core).balance;
+        assertGe(held, 1 ether);
+        assertLe(held, 1 ether + 10, "1 eth plus launch dust");
+        assertEq(core.ethPot(), 0, "the forced eth is not booked yet");
+        _book(); // the first book after the window shares nothing
+        assertEq(core.ethPot(), _toPot(held), "the forced eth was booked as fees");
+        assertEq(core.ethRedeemBurn(), _toRedeemBurn(held), "and the redeem burn share to its reserve");
+        assertEq(core.payeeOwed(), 0);
+        uint256 pot = core.ethPot();
+        _book();
+        assertEq(core.ethPot(), pot, "a second book counts nothing");
         _solvent();
     }
 

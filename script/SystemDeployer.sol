@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
-import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
+import {ICore} from "../src/interfaces/ICore.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {LaunchChecks} from "./Checks.sol";
 
@@ -12,7 +12,6 @@ struct Deployed {
     address core;
     address coin;
     address controller;
-    address router;
     address lens;
     address seaportAdapter;
     address strategyAdapter;
@@ -23,12 +22,11 @@ struct Deployed {
 /// @notice the deploy routine, shared by the script and by tests. call it from a broadcast or from a prank of
 /// `owner`, who must be the v2 factory owner and the config owner (a deprecated v2 factory takes only its owner, through
 /// `deployTokenAsOwner`). order (docs/DECISIONS.md 10.4): the library `CoreLib` (linked by `forge script` before `run`), the
-/// controller, the router (engine unset), the Core (fee source the router, coin predicted by the factory), the lens
-/// `CoreLens` (read only, pointing at the Core), the two listing adapters (CREATE2 through the deterministic deployer, their
-/// addresses are passed to the Core constructor), the launch, then the router is set up in three transactions: engine, payees, tip. the fourth, the split start, is a separate step
-/// that runs after the launch is mined (`startSplitAfterLaunch`, the Resume script): it reads the launch time from the chain.
-/// the router is NOT locked here, the owner closes it as a separate step. the controller, router, Core and coin addresses are predicted and every
-/// prediction is checked after creation
+/// controller, the Core (its constructor takes the launch config with the Core as bounty recipient and computes the coin
+/// address with the factory's `predictToken`), the lens `CoreLens` (read only, pointing at the Core), the two listing
+/// adapters (CREATE2 through the deterministic deployer, their addresses are passed to the Core constructor), then the
+/// launch. the controller and Core addresses are predicted and every prediction is checked after creation. the
+/// recipients of the coin are not locked here, the owner closes them as a separate step (`Lock`)
 abstract contract SystemDeployer is LaunchChecks {
     /// @notice a created contract did not land at its predicted address
     error AddressMismatch(string what);
@@ -51,21 +49,15 @@ abstract contract SystemDeployer is LaunchChecks {
     /// @dev what a transaction costs on top of the execution gas measured inside the call: the base 21_000 and the
     /// calldata of the largest creation (about 30 kb at 16 gas a byte, a bound)
     uint256 internal constant TX_OVERHEAD = 520_000;
-    /// @notice the launch is not recorded by the factory yet, so there is no launch time to derive the split start from
-    error LaunchNotMined();
-
     /// @dev the steps of `stepGas`, in the order they are sent
-    uint256 internal constant STEPS = 10;
+    uint256 internal constant STEPS = 6;
 
-    /// @notice execution gas of the transactions of the last `deploySystem`: controller, router, core, launch, setEngine,
-    /// setPayees, setSplitStart (measured by `startSplitAfterLaunch`, not by `deploySystem`), lens, Seaport adapter,
-    /// CreditStrategy adapter (sent right after the core). the library goes first and is measured by the rehearsal
-    uint256[10] internal stepGas;
+    /// @notice execution gas of the transactions of the last `deploySystem`: controller, core, launch, lens, Seaport
+    /// adapter, CreditStrategy adapter (sent right after the core). the library goes first and is measured by the rehearsal
+    uint256[6] internal stepGas;
 
-    /// @notice creates the router, the controller and the core. the script (`NewProd`) uses `new`, a test base uses
+    /// @notice creates the controller and the core. the script (`NewProd`) uses `new`, a test base uses
     /// `deployCode` on the artifacts, so the test contracts neither import the production sources nor embed their code
-    function _newRouter(address owner) internal virtual returns (address);
-
     function _newController(address core, LaunchConfig memory c) internal virtual returns (address);
 
     /// @notice creates the lens of `core` at `lensAddress(core)`: CREATE2 through the deterministic deployer with `LENS_SALT`
@@ -79,49 +71,44 @@ abstract contract SystemDeployer is LaunchChecks {
     /// with `STRATEGY_ADAPTER_SALT`
     function _newStrategyAdapter() internal virtual returns (address);
 
+    /// @notice creates the Core. `cfg` is the launch config with the zero address as bounty recipient (the Core sets
+    /// itself), `launcher` is the sender of the launch transaction
     function _newCore(
         address owner,
-        address coin,
+        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg,
+        address launcher,
         address controller,
         LaunchConfig memory c,
         address[] memory adapters
     ) internal virtual returns (address);
 
-    /// @notice deploys and launches the whole system. `c.stack.feeSource` is filled in with the new router
+    /// @notice deploys and launches the whole system
     /// @param owner the address that sends every transaction: the broadcaster or the active prank, the factory owner
-    /// and the first owner of the router and the Core
+    /// and the first owner of the Core
     function deploySystem(address owner, LaunchConfig memory c) internal returns (Deployed memory d) {
         _requireConfig(c);
         _requireOwner(c, owner);
         uint64 nonce = vm.getNonce(owner);
         address controllerAt = vm.computeCreateAddress(owner, nonce);
-        address routerAt = vm.computeCreateAddress(owner, nonce + 1);
-        address coreAt = vm.computeCreateAddress(owner, nonce + 2);
-        c.stack.feeSource = routerAt;
-        address coinAt = predictCoin(c, owner, routerAt);
+        address coreAt = vm.computeCreateAddress(owner, nonce + 1);
 
         uint256 g = gasleft();
         d.controller = _newController(coreAt, c);
         _step(0, g);
         g = gasleft();
-        d.router = _newRouter(owner);
+        d.core = _newCore(c.owner, buildConfig(c, c.owner, address(0)), owner, d.controller, c, launchAdapters(coreAt, c));
         _step(1, g);
-        g = gasleft();
-        d.core = _newCore(c.owner, coinAt, d.controller, c, launchAdapters(coreAt, c));
-        _step(2, g);
         if (d.controller != controllerAt) revert AddressMismatch("controller");
-        if (d.router != routerAt) revert AddressMismatch("router");
         if (d.core != coreAt) revert AddressMismatch("core");
         g = gasleft();
         d.lens = _newLens(d.core);
-        _step(7, g);
+        _step(3, g);
         if (d.lens != lensAddress(d.core)) revert AddressMismatch("lens");
         (d.seaportAdapter, d.strategyAdapter) = _ensureAdapters(d.core, c);
 
-        d.coin = _launch(c, coinAt, d.router);
+        d.coin = _launch(c, ICore(payable(d.core)).COIN(), d.core);
         d.launchKey = poolKeyOf(d.coin, c.stack);
         d.poolId = keccak256(abi.encode(d.launchKey));
-        _setupRouter(c, d.router, d.core);
     }
 
     /// @dev creates each adapter that has no code at its address. the addresses are functions of the Core and the config,
@@ -134,14 +121,14 @@ abstract contract SystemDeployer is LaunchChecks {
         if (seaportAt.code.length == 0) {
             uint256 g = gasleft();
             address made = _newSeaportAdapter(core_, c.seaportRecipients);
-            _step(8, g);
+            _step(4, g);
             if (made != seaportAt) revert AddressMismatch("seaport adapter");
         }
         strategyAt = strategyAdapterAddress();
         if (strategyAt.code.length == 0) {
             uint256 g = gasleft();
             address made = _newStrategyAdapter();
-            _step(9, g);
+            _step(5, g);
             if (made != strategyAt) revert AddressMismatch("strategy adapter");
         }
     }
@@ -158,50 +145,15 @@ abstract contract SystemDeployer is LaunchChecks {
         if (!ok || fo != sender || c.owner != sender) revert NotFactoryOwner(fo, sender);
     }
 
-    /// @notice the launch through the factory as its owner, paying the live deploy fee. checks the coin address
-    /// against the prediction the Core was built with
-    function _launch(LaunchConfig memory c, address coinAt, address router)
-        internal
-        returns (address coin)
-    {
+    /// @notice the launch through the factory as its owner, paying the live deploy fee, with the Core as bounty
+    /// recipient. checks the coin address against the one the Core computed
+    function _launch(LaunchConfig memory c, address coinAt, address core) internal returns (address coin) {
         IArtCoinsFactoryV2 factory = IArtCoinsFactoryV2(c.stack.factory);
         uint256 fee = factory.deployFee();
         uint256 g = gasleft();
-        coin = factory.deployTokenAsOwner{value: fee}(buildConfig(c, c.owner, router), c.protocolBps);
-        _step(3, g);
+        coin = factory.deployTokenAsOwner{value: fee}(buildConfig(c, c.owner, core), c.protocolBps);
+        _step(2, g);
         if (coin != coinAt) revert AddressMismatch("coin");
-    }
-
-    /// @notice the three router transactions, each one only when the router does not hold the value yet: engine, payees,
-    /// tip. the caller is the router owner. the split start is not here: it needs the mined launch time (`startSplitAfterLaunch`)
-    function _setupRouter(LaunchConfig memory c, address router, address core) internal {
-        IFeeRouter r = IFeeRouter(payable(router));
-        uint256 g = gasleft();
-        if (r.engine() != core) r.setEngine(core);
-        _step(4, g);
-        g = gasleft();
-        (address[] memory have, uint32[] memory havePpm) = r.payees();
-        if (have.length != 1 || have[0] != c.creatorPayee || havePpm[0] != c.payeePpm) {
-            address[] memory who = new address[](1);
-            who[0] = c.creatorPayee;
-            uint32[] memory ppm = new uint32[](1);
-            ppm[0] = c.payeePpm;
-            r.setPayees(who, ppm);
-        }
-        _step(5, g);
-    }
-
-    /// @notice the last router transaction, only after the launch transaction is mined: the split starts when the anti
-    /// sniper window ends, the launch time read from the factory record of the coin plus the window, no margin. only
-    /// when the router has no split start yet. the caller is the router owner
-    function startSplitAfterLaunch(LaunchConfig memory c, address router, address coin) internal {
-        (bool ok, IArtCoinsFactoryV2.DeploymentInfoV2 memory info) = _deployment(c.stack.factory, coin);
-        if (!ok || info.launchedAt == 0) revert LaunchNotMined();
-        uint256 g = gasleft();
-        IFeeRouter r = IFeeRouter(payable(router));
-        // forge-lint: disable-next-line(unsafe-typecast)
-        if (r.splitStart() == 0) r.setSplitStart(uint64(uint256(info.launchedAt) + c.sniperSeconds));
-        _step(6, g);
     }
 
     /// @notice reverts unless the signer is the deployer the operator named
@@ -209,18 +161,17 @@ abstract contract SystemDeployer is LaunchChecks {
         if (want == address(0) || want != got) revert DeployerMismatch(want, got);
     }
 
-    /// @notice reverts when any of SETTINGS_CHANGED, LOCKS_CHANGED, OWNER_CHANGED, COIN_CHANGED or ROUTER_CHANGED is set.
+    /// @notice reverts when any of SETTINGS_CHANGED, LOCKS_CHANGED, OWNER_CHANGED or COIN_CHANGED is set.
     /// `Deploy` and `Resume` send transactions that assume the launch state, and each flag turns failed rows into warnings
     function _requireNoChangeFlags() internal view {
         if (_settingsChanged()) revert ChangeFlagSet("SETTINGS_CHANGED");
         if (_locksChanged()) revert ChangeFlagSet("LOCKS_CHANGED");
         if (_ownerChanged()) revert ChangeFlagSet("OWNER_CHANGED");
         if (_coinChanged()) revert ChangeFlagSet("COIN_CHANGED");
-        if (_routerChanged()) revert ChangeFlagSet("ROUTER_CHANGED");
     }
 
     /// @notice reverts unless `given` is the nonce the controller is created at: the nonce preflight printed. any owner
-    /// transaction after preflight moves the predicted controller, router and core addresses
+    /// transaction after preflight moves the predicted controller and core addresses
     function _requireControllerNonce(address deployer, uint256 given) internal view {
         uint256 want = _controllerNonce(deployer);
         if (given != want) revert ControllerNonceMismatch(given, want);

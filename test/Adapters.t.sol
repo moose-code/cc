@@ -197,13 +197,12 @@ contract AdaptersTest is SeaportBase {
     //////////////////////////////////////////////////////////////*/
 
     function test_core_addAdapterRefusesAForbiddenAddress() public {
-        address[8] memory bad = [
+        address[7] memory bad = [
             address(CREDITS),
             address(STATEMENTS),
             address(core),
             address(coin),
             core.HOOK(),
-            core.FEE_SOURCE(),
             Mainnet.PERMIT2,
             Mainnet.UNIVERSAL_ROUTER
         ];
@@ -235,13 +234,26 @@ contract AdaptersTest is SeaportBase {
     function test_core_constructorRefusesAZeroOrForbiddenAdapter() public {
         address[] memory zero = new address[](1);
         vm.expectRevert(ICore.ZeroAddress.selector);
-        Prod.newCore(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit, zero);
+        Prod.newCore(
+            owner, buildConfig(lc, owner, address(0)), owner, address(ctl), lc.payee, lc.stack, lc.rateStart, lc.settings, lc.credit, zero
+        );
 
         address[] memory forbidden = new address[](2);
         forbidden[0] = seaportAdapter;
         forbidden[1] = address(CREDITS);
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        Prod.newCore(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit, forbidden);
+        Prod.newCore(
+            owner,
+            buildConfig(lc, owner, address(0)),
+            owner,
+            address(ctl),
+            lc.payee,
+            lc.stack,
+            lc.rateStart,
+            lc.settings,
+            lc.credit,
+            forbidden
+        );
     }
 
     function test_core_unapprovedAdapterReverts() public {
@@ -254,7 +266,7 @@ contract AdaptersTest is SeaportBase {
 
     function test_core_adapterThatQuotesAForbiddenTargetReverts() public {
         _fundPot(1 ether);
-        address[4] memory bad = [address(CREDITS), address(STATEMENTS), address(core), core.FEE_SOURCE()];
+        address[4] memory bad = [address(CREDITS), address(STATEMENTS), address(core), core.ESCROW()];
         for (uint256 i; i < bad.length; ++i) {
             vm.prank(keeper);
             vm.expectRevert(ICore.ForbiddenTarget.selector);

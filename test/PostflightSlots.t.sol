@@ -23,7 +23,6 @@ contract PostflightSlotsTest is Fixture {
     bool internal fLocks;
     bool internal fOwner;
     bool internal fCoin;
-    bool internal fRouter;
 
     function _settingsChanged() internal view override returns (bool) {
         return fSettings;
@@ -39,10 +38,6 @@ contract PostflightSlotsTest is Fixture {
 
     function _coinChanged() internal view override returns (bool) {
         return fCoin;
-    }
-
-    function _routerChanged() internal view override returns (bool) {
-        return fRouter;
     }
 
     function _row(string memory name) internal view returns (bool) {
@@ -108,14 +103,14 @@ contract PostflightSlotsTest is Fixture {
         assertTrue(_row(SLOTS_ROW) && _row(CONTROLLER_ROW), "both slot rows are in the table and pass");
     }
 
-    /// @dev the reviewer's probe: one of the eight `CoreLib` call sites of the Core points at a copy with one flipped
+    /// @dev the reviewer's probe: one of the seven `CoreLib` call sites of the Core points at a copy with one flipped
     /// byte. the identity hash masks the slot and `findLibrary` finds the compiled library through the other sites, so
     /// only the slot row sees it. a library runs by DELEGATECALL in the Core storage
     function test_oneForeignLibrarySiteFailsPostflight() public {
         address lib = findLibrary(address(core).code);
         assertTrue(lib != address(0));
         uint256[] memory sites = _librarySites(address(core).code, lib);
-        assertEq(sites.length, 8, "the Core calls CoreLib at eight sites");
+        assertEq(sites.length, 7, "the Core calls CoreLib at seven sites");
         address evil = _foreignLibrary();
         for (uint256 s; s < sites.length; ++s) {
             bytes memory c = address(core).code;
@@ -189,18 +184,16 @@ contract PostflightSlotsTest is Fixture {
 
     function test_deployAndResumeRefuseEveryChangeFlag() public {
         this.requireNoFlags();
-        string[5] memory names =
-            ["SETTINGS_CHANGED", "LOCKS_CHANGED", "OWNER_CHANGED", "COIN_CHANGED", "ROUTER_CHANGED"];
-        for (uint256 i; i < 5; ++i) {
+        string[4] memory names = ["SETTINGS_CHANGED", "LOCKS_CHANGED", "OWNER_CHANGED", "COIN_CHANGED"];
+        for (uint256 i; i < 4; ++i) {
             fSettings = i == 0;
             fLocks = i == 1;
             fOwner = i == 2;
             fCoin = i == 3;
-            fRouter = i == 4;
             vm.expectRevert(abi.encodeWithSelector(ChangeFlagSet.selector, names[i]));
             this.requireNoFlags();
         }
-        fRouter = false;
+        fCoin = false;
         this.requireNoFlags();
     }
 

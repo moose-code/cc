@@ -51,7 +51,7 @@ contract MigrateTest is Fixture {
     function _balanceBidStatement() internal returns (uint256 sid) {
         uint256[] memory ids = _credits(seller, 80);
         xt.mint(address(core), 1_000_000_000e18);
-        core.skim();
+        core.bookBalance();
         vm.prank(seller);
         core.sellForBalance(ids);
         uint256 supply = STATEMENTS.supply();
@@ -381,11 +381,12 @@ contract MigrateTest is Fixture {
         _migrate(10);
         assertEq(sink.ethReceived(), tracked);
         assertEq(address(core).balance, balance - tracked, "the forced eth moved");
-        // skim books it, and the next call moves it
-        core.skim();
-        assertGe(core.ethPot(), 1 ether - 1, "skim did not book the forced eth");
+        // the next book counts it as income, and the next call moves it
+        core.book();
+        uint256 toPot = 1 ether - uint256(1 ether) * core.settings().feeToRedeemBurnBps / 10_000;
+        assertEq(core.ethPot(), toPot, "the book did not count the forced eth");
         _migrate(10);
-        assertGe(sink.ethReceived(), tracked + 1 ether - 1, "the booked eth did not move");
+        assertEq(sink.ethReceived(), tracked + toPot, "the booked eth did not move");
     }
 
     // ------------------------------------------------------------------ a successor that misbehaves
@@ -632,8 +633,13 @@ contract MigrateTest is Fixture {
         assertGt(core.ethToBuyback(), retained, "fees were not booked to the buyback pot");
         uint256 pot = core.ethPot();
         vm.deal(address(core), address(core).balance + 1 ether);
-        core.skim();
-        assertGe(core.ethPot(), pot + 1 ether, "skim did not book the forced eth");
+        core.book();
+        assertEq(
+            core.ethPot(),
+            pot + 1 ether
+                - uint256(1 ether) * (uint256(core.settings().feeToBuybackBps) + core.settings().feeToRedeemBurnBps) / 10_000,
+            "the book counted the forced eth"
+        );
         _solvent();
     }
 
@@ -720,9 +726,8 @@ contract MigrateTest is Fixture {
 
     function test_REVERT_theSuccessorIsNotPartOfTheEngine() public {
         _enterPhase2();
-        address[7] memory bad = [
+        address[6] memory bad = [
             address(core),
-            address(feeRouter),
             address(coin),
             address(CREDITS),
             address(STATEMENTS),
@@ -753,7 +758,7 @@ contract MigrateTest is Fixture {
         _fillEthPile(80);
         uint256[] memory ids = _credits(seller, 80);
         xt.mint(address(core), 1_000_000_000e18);
-        core.skim();
+        core.bookBalance();
         vm.prank(seller);
         core.sellForBalance(ids);
         assertEq(core.pileSize(), 160, "setup: one pile of 80 eth bid plus 80 balance bid credits");

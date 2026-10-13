@@ -3,16 +3,16 @@ pragma solidity ^0.8.28;
 
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
 
-/// @notice the 23 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
+/// @notice the 24 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
 /// docs/DECISIONS.md section 2, for the settings script and the config and deploy tests. the fields bounded by another
 /// field (recoveryClimbPerMinBps by climbPerMinBps, feeToRedeemBurnBps by the sum with feeToBuybackBps) have those
 /// bounds in the callers' hands
 library SettingsFields {
-    uint256 internal constant N = 23;
+    uint256 internal constant N = 24;
 
     /// @dev field i of the settings struct, in declaration order
     function get(Settings memory s, uint256 i) internal pure returns (uint256) {
-        uint256[23] memory f = [
+        uint256[24] memory f = [
             uint256(s.dropPerCreditBps),
             s.dropFloorBps,
             s.climbPerMinBps,
@@ -35,7 +35,8 @@ library SettingsFields {
             s.callerFee,
             s.callerMaxBaseFee,
             s.feeToBuybackBps,
-            s.feeToRedeemBurnBps
+            s.feeToRedeemBurnBps,
+            s.payeePpm
         ];
         return f[i];
     }
@@ -65,13 +66,14 @@ library SettingsFields {
         else if (i == 19) s.callerFee = uint64(v);
         else if (i == 20) s.callerMaxBaseFee = uint48(v);
         else if (i == 21) s.feeToBuybackBps = uint16(v);
-        else s.feeToRedeemBurnBps = uint16(v);
+        else if (i == 22) s.feeToRedeemBurnBps = uint16(v);
+        else s.payeePpm = uint24(v);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
     /// @dev the documented lower bound of every field. recoveryClimbPerMinBps is bounded below by climbPerMinBps and
     /// feeToRedeemBurnBps by the sum with feeToBuybackBps, handled by the callers
-    function lo() internal pure returns (uint256[23] memory) {
+    function lo() internal pure returns (uint256[24] memory) {
         return [
             uint256(1),
             5_000,
@@ -95,11 +97,12 @@ library SettingsFields {
             0,
             0,
             0,
+            0,
             0
         ];
     }
 
-    function hi() internal pure returns (uint256[23] memory) {
+    function hi() internal pure returns (uint256[24] memory) {
         return [
             uint256(1_000),
             10_000,
@@ -123,11 +126,12 @@ library SettingsFields {
             0.005 ether,
             100 gwei,
             10_000,
-            10_000
+            10_000,
+            200_000
         ];
     }
 
-    function names() internal pure returns (bytes32[23] memory) {
+    function names() internal pure returns (bytes32[24] memory) {
         return [
             bytes32("dropPerCreditBps"),
             "dropFloorBps",
@@ -151,7 +155,8 @@ library SettingsFields {
             "callerFee",
             "callerMaxBaseFee",
             "feeToBuybackBps",
-            "feeToRedeemBurnBps"
+            "feeToRedeemBurnBps",
+            "payeePpm"
         ];
     }
 }

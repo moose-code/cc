@@ -37,7 +37,7 @@ contract LifecycleSwapsTest is Fixture {
 
         _sellCoin(trader, coinOut / 2);
         assertGt(core.ethPot(), pot, "a sell feeds the pot too");
-        assertEq(address(core).balance, core.ethPot() + core.ethRedeemBurn(), "the pot and reserve are the balance");
+        assertEq(address(core).balance, core.ethPot() + core.ethRedeemBurn() + core.payeeOwed(), "the pot, reserve and payee claim are the balance");
         assertEq(coin.totalSupply(), 1_000_000_000e18, "swaps burn nothing");
         _solvent();
     }
@@ -495,7 +495,7 @@ contract LifecycleComposeTest is Fixture {
         assertEq(spent, b.slice - maxPay, "the swap spends the whole budget");
         lastResidue = maxPay - paid;
         assertEq(core.ethToBuyback(), b.pool - b.slice + lastResidue, "the unused payment returned to the pot");
-        _flush();
+        _book();
         assertGt(core.ethPot(), b.pot, "the skim of the swap came back into the pot");
         assertEq(core.lastBuybackBlock(), block.number);
         assertLe(address(core).balance, b.balance, "the swap spent eth net of what came back");
@@ -655,7 +655,7 @@ contract LifecyclePhase2Test is Fixture {
         _redeemTheStatement();
         // top the bid pot up the way balance token fees would arrive: plain balance token booked by skim
         xt.mint(address(core), 1e22);
-        core.skim();
+        core.bookBalance();
         _solvent();
 
         uint256[] memory ids = _credits(xseller, 80);

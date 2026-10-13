@@ -11,14 +11,34 @@ import {ScriptedController} from "../attackers/ScriptedController.sol";
 contract PostflightInputsTest is Fixture {
     /// @dev the arguments the creation transaction of the fixture core carried
     function _creation() internal view returns (bytes memory) {
-        return abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit);
+        return abi.encode(
+            owner,
+            buildConfig(lc, owner, address(0)),
+            owner,
+            address(ctl),
+            lc.payee,
+            lc.stack,
+            lc.rateStart,
+            lc.settings,
+            lc.credit,
+            launchAdapters(address(core), lc)
+        );
     }
 
     /// @dev what the printed arguments were before the fix: every mutable member read from the live core. the credit
     /// settings are the signed launch ones, which this test does not change
     function _oldLiveArgs() internal view returns (bytes memory) {
         return abi.encode(
-            core.owner(), address(coin), core.controller(), lc.stack, core.RATE_START(), core.settings(), lc.credit
+            core.owner(),
+            buildConfig(lc, owner, address(0)),
+            owner,
+            core.controller(),
+            core.payee(),
+            lc.stack,
+            core.RATE_START(),
+            core.settings(),
+            lc.credit,
+            launchAdapters(address(core), lc)
         );
     }
 
@@ -26,7 +46,7 @@ contract PostflightInputsTest is Fixture {
         (address first, bool found) = firstController(address(core), owner);
         assertTrue(found, "the deployer finds the first controller");
         assertEq(first, address(ctl));
-        bytes memory before_ = coreConstructorArgs(core, lc, first);
+        bytes memory before_ = coreConstructorArgs(core, lc, first, owner);
         assertEq(before_, _creation(), "equal to the creation arguments");
         assertEq(before_, _oldLiveArgs(), "the old way agrees until something changes");
 
@@ -46,7 +66,7 @@ contract PostflightInputsTest is Fixture {
         (address again, bool foundAgain) = firstController(address(core), owner);
         assertTrue(foundAgain);
         assertEq(again, address(ctl), "the first controller does not move with setController");
-        bytes memory after_ = coreConstructorArgs(core, lc, again);
+        bytes memory after_ = coreConstructorArgs(core, lc, again, owner);
         assertEq(after_, before_, "the printed constructor arguments did not change");
         assertEq(after_, _creation());
         assertTrue(keccak256(_oldLiveArgs()) != keccak256(before_), "the live values drifted, the old print would too");

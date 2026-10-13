@@ -64,7 +64,7 @@ contract EvilBuyer {
         catch (bytes memory why) {
             lastWhy = bytes4(why);
         }
-        try core.skim() {} catch {}
+        try core.book() {} catch {}
     }
 }
 
@@ -218,9 +218,9 @@ contract ReviewSaleTest is Fixture {
         assertEq(address(core).balance - bal, pay, "balance rose by the payment");
         assertEq((core.ethPot() - pot) + (core.ethToBuyback() - bb), pay, "booked exactly once");
         assertEq(core.ethToBuyback() - bb, pay * core.settings().saleToBuybackBps / 10_000);
-        // skim and a later hook payment add nothing for this payment
-        core.skim();
-        assertEq((core.ethPot() - pot) + (core.ethToBuyback() - bb), pay, "skim finds nothing to add");
+        // a book and a later hook payment add nothing for this payment
+        core.book();
+        assertEq((core.ethPot() - pot) + (core.ethToBuyback() - bb), pay, "the book finds nothing to add");
         _solvent();
     }
 
@@ -283,7 +283,7 @@ contract ReviewSaleTest is Fixture {
         uint256 sid = _composeOnce().sid;
         uint256 q0 = ctl.priceOf(sid);
         // a stranger runs every permissionless door: none raises the ask
-        core.skim();
+        core.book();
         assertEq(ctl.priceOf(sid), q0);
         _warp(3 hours);
         uint256 q1 = ctl.priceOf(sid);
@@ -639,26 +639,28 @@ contract ReviewSaleTest is Fixture {
         _setSettings(s);
     }
 
-    /// the fee source (the router) pays the core, which is what `receive` books
+    /// the hook pays the core, and the book counts it
     function _hookPays(uint256 amount) internal {
-        address hook = lc.stack.feeSource;
+        address hook = lc.stack.hook;
         vm.deal(hook, hook.balance + amount);
         vm.prank(hook);
         (bool ok,) = address(core).call{value: amount}("");
         assertTrue(ok);
+        core.book();
     }
 
-    function test_OK_receive_onlyHookEthIsBookedAndSkimStaysWhole() public {
+    function test_OK_receive_onlyHookAndEscrowSendAndFundStaysWhole() public {
         _feeShare(5_000);
         vm.deal(bob, 10 ether);
         uint256 pot = core.ethPot();
         vm.prank(bob);
         (bool ok,) = address(core).call{value: 1 ether}("");
-        assertTrue(ok, "a stranger may pay, nothing reverts");
-        assertEq(core.ethPot(), pot, "not booked by receive");
+        assertFalse(ok, "a stranger send reverts");
+        assertEq(core.ethPot(), pot, "not booked");
         assertEq(core.ethToBuyback(), 0);
-        core.skim();
-        assertEq(core.ethPot() - pot, 1 ether, "skim books the whole amount to the pot, no split");
+        vm.prank(bob);
+        core.fund{value: 1 ether}();
+        assertEq(core.ethPot() - pot, 1 ether, "fund adds the whole amount to the pot, no split");
         assertEq(core.ethToBuyback(), 0);
         _solvent();
     }
@@ -800,7 +802,7 @@ contract ReviewSaleTest is Fixture {
     // ------------------------------------------------------------------ settings, config, scripts
 
     function _withAll(bool high) internal view returns (Settings memory s) {
-        uint256[23] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
+        uint256[24] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
         for (uint256 i; i < SettingsFields.N; ++i) {
             SettingsFields.set(s, i, v[i]);
         }
@@ -822,9 +824,9 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_settings_everyFieldBoundMatchesTheScriptTable() public {
-        bytes32[23] memory names = SettingsFields.names();
-        uint256[23] memory lo = SettingsFields.lo();
-        uint256[23] memory hi = SettingsFields.hi();
+        bytes32[24] memory names = SettingsFields.names();
+        uint256[24] memory lo = SettingsFields.lo();
+        uint256[24] memory hi = SettingsFields.hi();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = core.settings();
             SettingsFields.set(s, i, hi[i] + 1);
@@ -870,7 +872,7 @@ contract ReviewSaleTest is Fixture {
     function test_OK_config_jsonCarriesEveryFieldAndTheSaleBlock() public view {
         string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
         string[] memory keys = vm.parseJsonKeys(j, ".settings");
-        bytes32[23] memory names = SettingsFields.names();
+        bytes32[24] memory names = SettingsFields.names();
         assertEq(keys.length, SettingsFields.N, "the settings block has exactly the fields of the struct");
         for (uint256 i; i < SettingsFields.N; ++i) {
             assertTrue(_has(keys, _nm(names[i])), _nm(names[i]));
@@ -953,7 +955,7 @@ contract ReviewSaleTest is Fixture {
         v[20].fastDecayBpsPerHour = 1;
         v[21].slowDecayBpsPerHour = 10_000;
         v[22].anchorMinCost = 10 ether + 1;
-        v[23].anchorMinCost = 10 ether;
+        v[24].anchorMinCost = 10 ether;
         v[24].anchorMinCost = 0;
         for (uint256 i; i < v.length; ++i) {
             LaunchConfig memory c = lc;

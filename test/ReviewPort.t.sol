@@ -2,13 +2,13 @@
 pragma solidity ^0.8.28;
 
 import {Prod} from "./utils/Prod.sol";
+import {LaunchConfig} from "../script/LaunchConfig.sol";
 import {StdStorage, stdStorage} from "forge-std/Test.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
-import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
@@ -27,8 +27,8 @@ contract Sink {
     receive() external payable {}
 }
 
-/// swaps once in the real pool from inside the eth callback of a core payout, then flushes the fee router, so the
-/// router pushes the fees into the core while the core is in the middle of a door
+/// swaps once in the real pool from inside the eth callback of a core payout, so the hook pushes the fees into the core
+/// while the core is in the middle of a door
 contract SwapOnReceive {
     TestSwapRouter public immutable router;
     PoolKey internal key;
@@ -57,18 +57,10 @@ contract SwapOnReceive {
         return this.onERC721Received.selector;
     }
 
-    IFeeRouter public feeRouter;
-
-    function setFeeRouter(address r) external {
-        feeRouter = IFeeRouter(payable(r));
-    }
-
     receive() external payable {
         if (swapEth != 0 && !fired) {
             fired = true;
             router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
-            // the v2 hook pays the fee router, whose flush is what lands the eth in the core mid door
-            if (address(feeRouter) != address(0)) feeRouter.flush();
         }
     }
 }
@@ -99,20 +91,20 @@ contract ReviewPort is Fixture {
     // ------------------------------------------------------------------ P-1 open pool spoofs fee income (gone on v2)
 
     /// on v1 anyone could open a second pool on the live hook naming the core as bounty recipient, and the hook's push
-    /// was booked as fee income. on v2 only a launcher (the factory) can open a pool on the hook, and the core books eth
-    /// from the fee router only. nobody can open a pool on the hook, and eth the hook pushes to the core is not booked
+    /// was booked as fee income. on v2 only a launcher (the factory) can open a pool on the hook, so nobody else can
+    /// make it push eth to the core
     function test_FIXED_v2HookRefusesAPoolFromAStranger() public {
         PoolKey memory k =
             PoolKey(Currency.wrap(address(0)), Currency.wrap(address(coin)), 0x800000, 60, IHooks(lc.stack.hook));
         vm.prank(attacker);
         vm.expectRevert();
         PM.initialize(k, 79228162514264337593543950336);
-        // eth from the hook itself is accepted and left for skim
+        // eth from the hook itself is accepted and counted by the next book
         vm.deal(lc.stack.hook, 1 ether);
         vm.prank(lc.stack.hook);
         (bool ok,) = address(core).call{value: 1 ether}("");
         assertTrue(ok);
-        assertEq(core.ethPot(), 0, "a hook push is not fee income");
+        assertEq(core.ethPot(), 0, "a hook push waits for the next book");
     }
 
     // ------------------------------------------------------------------ held: sandwich and jit liquidity on the 1 eth slice
@@ -209,15 +201,27 @@ contract ReviewPort is Fixture {
     function test_FIXED_launchHijackCannotTakeThePredictedCoin() public {
         bytes32 salt = keccak256("hijack victim");
         address coreAt = vm.computeCreateAddress(owner, vm.getNonce(owner) + 1);
-        address coinAt = predictCoin(owner, "Victim", "VIC", salt);
+        LaunchConfig memory l = lc;
+        l.name = "Victim";
+        l.symbol = "VIC";
+        l.salt = salt;
         vm.startPrank(owner);
         ICore core2 = Prod.newCore(
-            owner, coinAt, address(Prod.newController(coreAt, lc.sale)), lc.stack, lc.rateStart, lc.settings
+            owner,
+            buildConfig(l, owner, address(0)),
+            owner,
+            address(Prod.newController(coreAt, lc.sale)),
+            lc.payee,
+            lc.stack,
+            lc.rateStart,
+            lc.settings
         );
         vm.stopPrank();
         assertEq(address(core2), coreAt);
+        address coinAt = core2.COIN();
+        assertEq(coinAt, predictCoin(l, owner, coreAt), "the Core computed the factory prediction");
 
-        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(owner, creator, "Victim", "VIC", salt);
+        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(l, owner, coreAt);
         uint256 fee = FACTORY.deployFee();
         vm.deal(attacker, 1 ether);
         vm.prank(attacker);
@@ -240,7 +244,7 @@ contract ReviewPort is Fixture {
     // ------------------------------------------------------------------ held: hook push inside the core's own payouts
 
     function _assertClean(string memory what) internal view {
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), what);
+        assertEq(address(core).balance, _tracked(), what);
     }
 
     /// a swap fired from the eth callback of a sell payout and the payment to the caller of the coin buyback. the
@@ -248,7 +252,6 @@ contract ReviewPort is Fixture {
     function test_held_swapInsidePayoutCallbacks() public {
         _stockPool();
         SwapOnReceive actor = new SwapOnReceive(router, launchKey);
-        actor.setFeeRouter(address(feeRouter));
         vm.deal(address(actor), 50 ether);
         _fundPot(2 ether);
         _assertClean("start");
@@ -259,6 +262,7 @@ contract ReviewPort is Fixture {
         uint256 pot0 = core.ethPot();
         actor.sell(core, _slice(ids, 0, 3));
         assertTrue(actor.fired(), "swap fired inside the payout");
+        core.book();
         assertGt(core.ethPot(), pot0 - 1 ether, "bounty booked");
         _assertClean("after sell");
 
@@ -271,6 +275,7 @@ contract ReviewPort is Fixture {
         actor.buyback(core);
         assertTrue(actor.fired(), "swap fired inside the caller payment");
         assertGt(address(actor).balance + 1 ether, payBefore, "the payment was paid");
+        core.book();
         assertGt(core.ethPot(), potB, "bounty booked");
         _assertClean("after buyback payment");
     }

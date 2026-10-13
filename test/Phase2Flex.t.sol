@@ -30,7 +30,7 @@ contract Phase2FlexTest is Fixture {
     /// @dev books `amount` of the balance token into the balance bid pot through the real `skim` door
     function _potX(uint256 amount) internal {
         xt.mint(address(core), amount);
-        core.skim();
+        core.bookBalance();
     }
 
     /// @dev the balance token the per point bid pays for credit `id` at unit `unit`

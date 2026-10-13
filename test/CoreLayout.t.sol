@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
+import {MigrationSink} from "./standins/MigrationSink.sol";
 
 /// `CoreState` in src/lib/CoreLib.sol mirrors the state variables of the Core in declaration order, and the library
 /// reaches the Core's storage through it. every field with a public getter is compared with the raw storage word the
@@ -25,6 +26,7 @@ contract CoreLayoutTest is Fixture {
     }
 
     function test_OK_scalarFieldsSitWhereTheMirrorSays() public {
+        MigrationSink sink = new MigrationSink();
         _enterPhase2();
         _fundPot(3 ether);
         uint256[] memory sold = _credits(seller, 3);
@@ -33,7 +35,7 @@ contract CoreLayoutTest is Fixture {
         // a large balance token balance is booked into the balance pot and the reserve holds fee eth, so both nonzero words
         // are compared
         xt.mint(address(core), 1_000_000_000e18);
-        core.skim();
+        core.bookBalance();
         vm.store(address(core), bytes32(uint256(8)), bytes32(uint256(1 ether)));
         vm.startPrank(owner);
         core.addAdapter(address(0xA110C));
@@ -47,7 +49,7 @@ contract CoreLayoutTest is Fixture {
         core.lockController();
         core.lockBalanceModule();
         core.lockAdapters();
-        core.setSuccessor(address(this));
+        core.setSuccessor(address(sink));
         core.lockSuccessor();
         vm.stopPrank();
 
@@ -71,7 +73,7 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(19, 0, 32), core.unitPerPoint(), "unitPerPoint");
         assertEq(_field(20, 0, 20), uint256(uint160(core.successor())), "successor");
         assertEq(_field(20, 20, 1), core.successorLocked() ? 1 : 0, "successorLocked");
-        assertEq(core.successor(), address(this), "successor value");
+        assertEq(core.successor(), address(sink), "successor value");
         assertTrue(core.successorLocked(), "successorLocked value");
         assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.adaptersLocked(), "locks");
         // the standalone settings pack after retired: creditCostToPotBps and chosenComposeOn finish slot 20 (offsets
@@ -86,6 +88,11 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(20, 24, 1), core.chosenComposeOn() ? 1 : 0, "chosenComposeOn");
         assertEq(_field(21, 0, 12), core.minCcToChoose(), "minCcToChoose");
         assertEq(core.minCcToChoose(), 123, "minCcToChoose value");
+        // payee (20 bytes) packs after minCcToChoose, payeeOwed and payeeOn follow in their own slots
+        assertEq(_field(21, 12, 20), uint256(uint160(core.payee())), "payee");
+        assertEq(core.payee(), lc.payee, "payee value");
+        assertEq(_field(22, 0, 32), core.payeeOwed(), "payeeOwed");
+        assertEq(_field(23, 0, 1), core.payeeOn() ? 1 : 0, "payeeOn");
         // the first migrate sets retired. the call moves the pots, so it comes after the pot words are compared
         assertEq(_field(20, 21, 1), 0, "retired is false before a migrate");
         assertFalse(core.retired(), "retired value before");

@@ -619,7 +619,7 @@ contract CreditSaleTest is Fixture {
         _enterPhase2();
         _fundPot(3 ether);
         xt.mint(address(core), 1e24);
-        core.skim();
+        core.bookBalance();
         _setBalancePool();
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];

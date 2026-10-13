@@ -299,7 +299,7 @@ contract SecFixes55307c4 is Fixture {
     function test_lensBidCapsAtThePot() public {
         _enterPhase2();
         xt.mint(address(core), 5);
-        core.skim();
+        core.bookBalance();
         uint256[] memory ids = _credits(seller, 1);
         assertEq(lens.balanceBidOf(ids[0]), 5, "the bid is capped at the balance token pot");
         assertEq(lens.balanceBidOf(ids[0]), core.balancePot(), "the cap is the pot");

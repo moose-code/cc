@@ -39,6 +39,7 @@ library SettingsBounds {
         // the balance cycle (bid then redeem) cannot lose more than its margin: slippage at most the bid margin
         if (s.redeemSlippageBps > s.balanceBidMarginBps) return "redeemSlippageBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
+        if (s.payeePpm > 200_000) return "payeePpm";
         return bytes32(0);
     }
 

@@ -24,7 +24,6 @@ import {
     BUYLISTING_GAS
 } from "../../src/interfaces/Interfaces.sol";
 import {IArtCoinsTokenV2, IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
-import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {ProbeTarget} from "../attackers/ProbeTarget.sol";
@@ -40,7 +39,6 @@ struct Wiring {
     bytes32 poolId;
     address hook;
     address mev;
-    IFeeRouter feeRouter;
     address owner;
     address v1;
     FuzzController fuzz;
@@ -58,7 +56,7 @@ struct Wiring {
 ///
 /// actors hold real credits moved out of the CreditStrategy by prank in the fixture. coin trades go through the
 /// real launch pool on the real PoolManager under the live skim hook, which pays its bounty into the core's
-/// `receive()`. the anti sniper window skims up to 90 percent of a swap, so the fee model reads the live skim rate.
+/// `receive()`, where it waits for the next book. the anti sniper window skims up to 90 percent of a swap, so the fee model reads the live skim rate.
 abstract contract HandlerBase is Test {
     using FixedPointMathLib for uint256;
     using StateLibrary for IPoolManager;
@@ -77,7 +75,7 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_ROLL = 6;
     uint8 internal constant A_COMPOSE = 7;
     uint8 internal constant A_BUYBACK = 8;
-    uint8 internal constant A_SKIM = 9;
+    uint8 internal constant A_BOOK_BALANCE = 9;
     uint8 internal constant A_DONATE = 10;
     uint8 internal constant A_CONTROLLER_SEED = 11;
     uint8 internal constant A_CONTROLLER_SWAP = 12;
@@ -98,9 +96,9 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_HOSTILE_OWNER = 26;
     uint8 internal constant A_LOCK = 27;
     uint8 internal constant A_HANDOVER = 28;
-    // the fee router: a stranger's flush, and the hostile owner repointing the engine
-    uint8 internal constant A_FLUSH = 29;
-    uint8 internal constant A_REPOINT = 30;
+    // anyone books the fee income, and the payee claim with the owner replacing the payee
+    uint8 internal constant A_BOOK = 29;
+    uint8 internal constant A_CLAIM_PAYEE = 30;
     // the owner takes a stray NFT out of the core
     uint8 internal constant A_RESCUE_NFT = 31;
     // the successor doors and the migration of everything the core tracks
@@ -152,7 +150,7 @@ abstract contract HandlerBase is Test {
     uint256 internal constant V_OWNER = 25; // an owner action moved assets or the books it must not touch
     uint256 internal constant V_SALE_PATH = 26; // a sellTo or buy sale outside the rules: price, booking, holder or record
     uint256 internal constant V_LOCK = 27; // a one way lock came undone, or a handover left a power behind
-    uint256 internal constant V_ROUTER = 28; // router eth went somewhere but the engine set at that time, or a flush broke its rule
+    uint256 internal constant V_PAYEE = 28; // the payee share, its latch or its claim broke the rule
     uint256 internal constant V_RETIRED = 29; // a retired core took a call at one of the six doors, or the retired flag disagrees with the ghost
     uint256 internal constant N_VIOL = 30;
 
@@ -173,19 +171,15 @@ abstract contract HandlerBase is Test {
     TestSwapRouter public router;
     PoolKey public launchKey;
     bytes32 public poolId;
-    /// the v2 hook, the mev module and the fee router of the launch. the hook pays the router, `flush` pays the core
+    /// the v2 hook and the mev module of the launch. the hook pushes its bounty to the core
     address internal HOOK;
     address internal mev;
-    IFeeRouter public feeRouter;
-    /// the account that flushes the router
-    address internal flusher;
-    /// the engine the handler last saw the router owner set, and the two other engines the hostile owner can point it at:
-    /// one that takes eth and one that refuses it. `parked` is the eth waiting in the router since a flush failed
-    address public gEngine;
-    address public otherEngine;
-    address public refusingEngine;
-    uint256 public parked;
-    bool public gRouterLocked;
+    /// the payee share ghosts: whether the share is on, the eth owed to the payee, the payee the owner last set and
+    /// the launch time of the factory record
+    bool public gPayeeOn;
+    uint256 public gPayeeOwed;
+    address public gPayee;
+    uint256 public gLaunchedAt;
     address public owner;
     address public v1;
     FuzzController public fuzz;
@@ -282,7 +276,7 @@ abstract contract HandlerBase is Test {
     bytes32 public gSettingsHash;
 
     /// ledger of the eth books: the pots (`ethPot + ethToBuyback`) when the run began, the eth the core booked into them
-    /// since (fee flushes, sale payments, skims) and the eth that left them (credit purchases, tips,
+    /// since (booked fees, sale payments, funded eth) and the eth that left them (credit purchases, tips,
     /// redemption repayments, buyback spends, migrations). each amount is the one measured at the recipient by the action
     uint256 public gEthStart;
     uint256 public gEthIn;
@@ -296,9 +290,10 @@ abstract contract HandlerBase is Test {
         poolId = w.poolId;
         HOOK = w.hook;
         mev = w.mev;
-        feeRouter = w.feeRouter;
-        flusher = makeAddr("credeng.inv.flusher");
-        gEngine = w.feeRouter.engine();
+        gPayeeOn = core.payeeOn();
+        gPayeeOwed = core.payeeOwed();
+        gPayee = core.payee();
+        gLaunchedAt = _launchedAt(core.FACTORY(), address(w.coin));
         owner = w.owner;
         v1 = w.v1;
         fuzz = w.fuzz;
@@ -319,7 +314,7 @@ abstract contract HandlerBase is Test {
             "roll",
             "compose",
             "buyback",
-            "skim",
+            "bookBalance",
             "donate",
             "controllerSeed",
             "controllerSwap",
@@ -339,8 +334,8 @@ abstract contract HandlerBase is Test {
             "hostileOwner",
             "lockDoor",
             "handover",
-            "flush",
-            "repoint",
+            "book",
+            "claimPayee",
             "rescueNft",
             "migrate",
             "adopt",
@@ -431,6 +426,8 @@ abstract contract HandlerBase is Test {
 
     function seedEthBooks() external {
         gEthStart = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
+        gPayeeOn = core.payeeOn();
+        gPayeeOwed = core.payeeOwed();
     }
 
     function everHeldCount() external view returns (uint256) {
@@ -487,7 +484,10 @@ abstract contract HandlerBase is Test {
         vm.setEnv(key, vm.toString(vm.envOr(key, uint256(0)) + 1));
     }
 
+    uint8 internal lastAct;
+
     function _att(uint8 a) internal {
+        lastAct = a;
         attempts[a]++;
         _bump(a, "att");
     }
@@ -842,8 +842,8 @@ abstract contract HandlerBase is Test {
     }
 
     /// the legs of a skim of `skim` eth at the rate `bps`, from the rules of the hook written out independently: the
-    /// baseline part of the skim (6.9 points over the live rate) splits 90 percent to the router (the bounty recipient)
-    /// and the rest to the protocol, and the whole extra above the baseline goes to the router
+    /// baseline part of the skim (6.9 points over the live rate) splits 90 percent to the bounty recipient (the Core)
+    /// and the rest to the protocol, and the whole extra above the baseline goes to the bounty recipient
     function _expectSkim(uint256 skim, uint256 bps) internal pure returns (uint256 bounty, uint256 protocol) {
         uint256 base = skim * 690 / bps;
         if (base > skim) base = skim;
@@ -866,54 +866,86 @@ abstract contract HandlerBase is Test {
         return skim + 2 >= gross && skim <= gross + 2;
     }
 
-    /// what the router sends to the engine out of `amount`, from its own getters before the flush: the payees'
-    /// parts per million of the gross amount (once the split is on) come out of it
-    function _routerEngine(uint256 amount) internal view returns (uint256) {
-        uint256 rest = amount;
-        if (feeRouter.splitOn()) {
-            (, uint32[] memory ppm) = feeRouter.payees();
-            for (uint256 i; i < ppm.length; ++i) {
-                rest -= amount * ppm[i] / 1_000_000;
-            }
+    /// the launch time of the factory record of `coin_`, zero when it is not recorded
+    function _launchedAt(address factory, address coin_) internal view returns (uint256 at) {
+        (bool ok, bytes memory out) = factory.staticcall(abi.encodeWithSignature("deploymentInfo(address)", coin_));
+        if (!ok || out.length < 320) return 0;
+        // word 0 is the offset of the record, word 9 is `launchedAt`
+        assembly ("memory-safe") {
+            at := mload(add(out, add(0x20, mul(9, 0x20))))
         }
-        return rest;
     }
 
-    /// flushes the fee router as the flusher. returns the eth that arrived since the last flush (the router held that plus
-    /// what a failed flush left waiting) and what the core must receive. the router's eth may only go to the engine set at
-    /// that time, by the flush rule: the payees' parts, the rest to the engine. an engine that
-    /// refuses makes the flush revert and the eth waits
-    function _flushRouter() internal returns (uint256 fresh, uint256 toCore) {
-        uint256 held = address(feeRouter).balance;
-        uint256 owed = feeRouter.totalOwed();
-        address eng = feeRouter.engine();
-        if (eng != gEngine) _flag(V_ROUTER, "the router engine is not the one the owner set last");
-        uint256 want = _routerEngine(held - owed);
-        uint256 e0 = eng.balance;
-        uint256 w0 = parked;
-        vm.prank(flusher);
-        try feeRouter.flush() {
-            if (held != owed && eng.balance - e0 != want) {
-                _flag(V_ROUTER, "the engine got other than the flush rule gives");
-            }
-            if (address(feeRouter).balance != owed) _flag(V_ROUTER, "a flush left eth in the router");
-            parked = 0;
-            toCore = eng == address(core) ? want : 0;
-            _booked(toCore);
-        } catch {
-            // only the core and the counting engine are known to take eth: `repoint` also sets an address built from the fuzz
-            // seed, which can be any contract of the run
-            if (eng == address(core) || eng == otherEngine) {
-                _flag(V_ROUTER, "a flush failed against an engine that takes eth");
-            }
-            if (address(feeRouter).balance != held || eng.balance != e0) _flag(V_ROUTER, "a failed flush moved eth");
-            parked = held - owed;
+    /// the eth the core tracks: the three pots and the payee claim
+    function _tracked() internal view returns (uint256) {
+        return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed();
+    }
+
+    /// the eth held above the tracked eth: what the next book counts as fee income
+    function _unbooked() internal view returns (uint256) {
+        uint256 t = _tracked();
+        uint256 b = address(core).balance;
+        return b > t ? b - t : 0;
+    }
+
+    /// the model of one book on the income `inc`, written out again here: nothing for no income, the payee share of
+    /// `payeePpm` once it is on, the first book with income at or after `launchedAt + SNIPER_SECONDS` turns it on and
+    /// shares nothing. updates the payee ghosts. returns the share and the part that goes to the three pots
+    function _bookModel(uint256 inc) internal returns (uint256 share, uint256 toPots) {
+        if (inc == 0) return (0, 0);
+        if (gPayeeOn) share = inc * core.settings().payeePpm / 1_000_000;
+        else if (block.timestamp >= gLaunchedAt + core.SNIPER_SECONDS()) gPayeeOn = true;
+        gPayeeOwed += share;
+        toPots = inc - share;
+    }
+
+    struct Pots {
+        uint256 pot;
+        uint256 tb;
+        uint256 rb;
+        uint256 owed;
+    }
+
+    function _pots() internal view returns (Pots memory p) {
+        p.pot = core.ethPot();
+        p.tb = core.ethToBuyback();
+        p.rb = core.ethRedeemBurn();
+        p.owed = core.payeeOwed();
+    }
+
+    /// the three pots and the payee claim after a book of `toPots` and `share`, against the state `p` before it: the
+    /// buyback share and the redeem burn share of the settings come off `toPots`, the rest goes to the pot
+    function _potsAfterBook(Pots memory p, uint256 share, uint256 toPots, string memory what) internal {
+        Settings memory st = core.settings();
+        uint256 fee = toPots * st.feeToBuybackBps / 10_000;
+        uint256 rb = toPots * st.feeToRedeemBurnBps / 10_000;
+        if (core.ethPot() != p.pot + toPots - fee - rb || core.ethToBuyback() != p.tb + fee
+                || core.ethRedeemBurn() != p.rb + rb) {
+            _flag(V_POT, string.concat("fee income not booked by the split: ", what));
         }
-        if (held - owed < w0) {
-            _flag(V_ROUTER, "the router holds less than what waited in it");
-            return (0, toCore);
+        if (core.payeeOwed() != p.owed + share) _flag(V_PAYEE, string.concat("payee share differs from the model: ", what));
+        if (core.payeeOn() != gPayeeOn) _flag(V_PAYEE, string.concat("payee latch differs from the model: ", what));
+    }
+
+    /// books the fee income with `core.book()` as `who` and checks it against the model: the pots, the payee claim and
+    /// the latch. returns the income counted and the part booked into the pots (the ledger takes it)
+    function _bookNow(address who, string memory what) internal returns (uint256 inc, uint256 toPots) {
+        inc = _unbooked();
+        Pots memory p = _pots();
+        vm.prank(who);
+        try core.book() {} catch {
+            _flag(V_POT, string.concat("book reverted: ", what));
+            return (inc, 0);
         }
-        fresh = held - owed - w0;
+        uint256 share;
+        (share, toPots) = _bookModel(inc);
+        _potsAfterBook(p, share, toPots, what);
+        _booked(toPots);
+    }
+
+    /// books the income left unbooked by the previous action before an action reads the books
+    function _settle() internal {
+        if (_unbooked() != 0) _bookNow(keeper, "settle");
     }
 
     /// the selector a failed swap really died of. the pool manager wraps a revert of the hook, so look inside
@@ -974,16 +1006,38 @@ abstract contract HandlerBase is Test {
         b.balanceToken = _xBal(who);
     }
 
+    /// every action starts from booked books, so its model reads the pot the core reads
     modifier checked() {
+        _settle();
         _;
+        _afterAction();
+    }
+
+    /// the actions that start with the door's own book (the paying doors that read the pot): the income waits for the
+    /// door, and `_beginPull` models the book the door makes
+    modifier pulls() {
+        _;
+        _afterAction();
+    }
+
+    function _afterAction() internal {
         _coinCheck();
         _settingsCheck();
         _potCheck();
+        if (core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + gEthOut != gEthStart + gEthIn) {
+            _flag(V_PAYEE, string.concat("the ledger is off after ", names[lastAct]));
+        }
+        if (core.payeeOwed() != gPayeeOwed || core.payeeOn() != gPayeeOn) {
+            _flag(V_PAYEE, "the payee claim or latch differs from the model after an action");
+        }
     }
 
-    /// the next fill pays the read, so the read at the end of every action is at most the pot
+    /// the next fill pays the read, so the read at the end of every action is at most the pot and the share of the
+    /// unbooked income that the next book adds to it
     function _potCheck() internal {
-        if (core.ethRate() > core.ethPot()) _flag(V_SPEND, "the read is above the pot, the next fill would overspend");
+        if (core.ethRate() > core.ethPot() + _unbooked()) {
+            _flag(V_SPEND, "the read is above the pot, the next fill would overspend");
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1000,8 +1054,8 @@ abstract contract HandlerBase is Test {
         bool buy;
     }
 
-    /// buys coin with eth through the launch pool. exact in or exact out. the skim of the live hook goes to the fee router
-    /// and the flush after the swap books it in the pot. inside the sniper window that is most of the swap
+    /// buys coin with eth through the launch pool. exact in or exact out. the skim of the live hook goes to the Core
+    /// and the next book puts it in the pot. inside the sniper window that is most of the swap
     function buyCoin(uint256 aSeed, uint256 amtSeed, uint256 mode) external checked {
         uint8 a = A_BUY_COIN;
         address who = _actor(aSeed);
@@ -1143,18 +1197,12 @@ abstract contract HandlerBase is Test {
     function _afterSwap(SwapPre memory p, Vm.Log[] memory logs, uint256 exactVolume, string memory what) internal {
         (uint256 volume, uint256 bounty, uint256 protocol) = _skimOf(logs);
         if (p.bps > 690) windowSwaps++;
-        // the hook paid the bounty leg to the router, nothing reached the core yet. the flush books the engine share
-        if (core.ethPot() != p.pot || address(core).balance != p.bal) _flag(V_POT, "the core booked before the flush");
-        (uint256 held, uint256 toCore) = _flushRouter();
-        if (held != bounty) _flag(V_POT, "the router received other than the hook bounty leg");
-        _eth(p.bal, 0, toCore, what);
-        // the router's eth is split in the core: feeToBuybackBps to the coin buyback, feeToRedeemBurnBps to the redeem
-        // burn reserve, the rest to the pot
-        uint256 fee = toCore * core.settings().feeToBuybackBps / 10_000;
-        uint256 rb = toCore * core.settings().feeToRedeemBurnBps / 10_000;
-        if (core.ethPot() != p.pot + toCore - fee - rb || core.ethToBuyback() != p.tb + fee) {
-            _flag(V_POT, "swap skim not booked by the fee split");
-        }
+        // the hook pushed the bounty leg to the core, which books nothing inside the swap. the book that follows counts it
+        if (core.ethPot() != p.pot || core.ethToBuyback() != p.tb) _flag(V_POT, "the core booked inside the swap");
+        if (address(core).balance != p.bal + bounty) _flag(V_POT, "the core received other than the hook bounty leg");
+        (uint256 held,) = _bookNow(keeper, what);
+        if (held != bounty) _flag(V_POT, "the book counted other than the hook bounty leg");
+        _eth(p.bal, 0, held, what);
         if (volume != 0) {
             (uint256 eb, uint256 ep) = _expectSkim(bounty + protocol, p.bps);
             if (bounty != eb) _flag(V_POT, "skim bounty differs from the hook rules at the live rate");
@@ -1215,7 +1263,7 @@ abstract contract HandlerBase is Test {
 
     /// sells credits the actor holds into the eth bid. ids are picked to fit the budget, so most calls pass,
     /// and now and then the call is made oversized or with a duplicate id to prove the core refuses it.
-    function sellForEth(uint256 aSeed, uint256 nSeed, uint256 pick, uint256 mode) external checked {
+    function sellForEth(uint256 aSeed, uint256 nSeed, uint256 pick, uint256 mode) external pulls {
         uint8 a = A_SELL_FOR_ETH;
         address who = _actor(aSeed);
         if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForEth(uint256[])", _firstOf(who)))) return;
@@ -1308,7 +1356,7 @@ abstract contract HandlerBase is Test {
 
     /// buy a listed credit from the real CreditStrategy when the ceiling allows. now and then the call is made
     /// with a wrong value or wrong calldata or above the ceiling, and must revert without moving eth.
-    function listingStrategy(uint256 pick, uint256 mode) external checked {
+    function listingStrategy(uint256 pick, uint256 mode) external pulls {
         uint8 a = A_LISTING_STRATEGY;
         if (_retiredListing(a, STRATEGY)) return;
         uint256 id;
@@ -1342,7 +1390,7 @@ abstract contract HandlerBase is Test {
 
     /// buy through a hostile target. only the honest modes may succeed, every other mode must revert and leave
     /// the core's eth where it was.
-    function listingHostile(uint256 pick, uint256 modeSeed) external checked {
+    function listingHostile(uint256 pick, uint256 modeSeed) external pulls {
         uint8 a = A_LISTING_HOSTILE;
         if (_retiredListing(a, address(probe))) return;
         uint256 n = probeIds.length;
@@ -1359,10 +1407,9 @@ abstract contract HandlerBase is Test {
         uint256 value = cap / 2 + 1;
         bytes memory data = abi.encodeCall(ProbeTarget.fill, (id, wrongId));
         uint256 t0 = address(probe).balance;
-        // the probe sends part of the value back in modes 4 and 5
-        uint256 refund = m == 4 ? value + 1 : (m == 5 ? value / 2 : 0);
+        // the probe sends part of the value back in modes 4 and 5, which the core refuses (a plain send reverts)
         bool hon = probe.honest(m);
-        _listing(a, id, value, data, address(probe), refund, hon);
+        _listing(a, id, value, data, address(probe), 0, hon);
         if (!hon && viol[V_HOSTILE_OK] == 0 && address(probe).balance != t0) {
             // a hostile mode that reverted must also leave the target's eth where it was
             _flag(V_REVERT_CHANGED, "hostile target eth moved without a buy");
@@ -1526,7 +1573,7 @@ abstract contract HandlerBase is Test {
     }
 
     /// composes the controller's page. rare by gate, because it costs about 8m gas.
-    function compose(uint256 gate, uint256 feeSeed) external checked {
+    function compose(uint256 gate, uint256 feeSeed) external pulls {
         uint8 a = A_COMPOSE;
         if (_retiredRefusal(a, keeper, abi.encodeWithSelector(ICore.compose.selector))) return;
         (bool ready, uint256[] memory ids, uint256 format) = _peekPage();
@@ -1569,7 +1616,7 @@ abstract contract HandlerBase is Test {
     /// a caller names 80 pile credits and a format for a compose. the handler names the oldest 80 ghost pile credits
     /// and a random format. the model expects success only with the real controller in force, chosen compose on, the
     /// caller's coin balance at least the minimum, and, while the credit sale is on, every named credit past its window
-    function composeChosen(uint256 fmtSeed, uint256 gate) external checked {
+    function composeChosen(uint256 fmtSeed, uint256 gate) external pulls {
         uint8 a = A_COMPOSE_CHOSEN;
         uint256[80] memory ids;
         uint64[] memory acq = new uint64[](80);
@@ -1817,19 +1864,20 @@ abstract contract HandlerBase is Test {
         _buybackSkimChecks(p, volume, bounty, protocol, spent, bought);
     }
 
-    /// @dev the router flush and pot checks of a buyback (a helper so the locals of `_afterBuyback` fit the stack)
+    /// @dev the book and pot checks of a buyback (a helper so the locals of `_afterBuyback` fit the stack)
     function _buybackPotChecks(BbPre memory p, uint256 spent, uint256 tip, uint256 bounty) internal {
-        // the skim of the swap went to the router. the flush books its engine share, split by feeToBuybackBps
-        (uint256 held, uint256 toCore) = _flushRouter();
-        if (held != bounty) _flag(V_BUYBACK, "the router received other than the hook bounty leg");
-        uint256 feeShare = toCore * core.settings().feeToBuybackBps / 10_000;
+        // the skim of the swap reached the core inside the unlock and waits for the book, which splits it by the settings
+        if (core.ethToBuyback() != p.pool - spent - tip) {
+            _flag(V_BUYBACK, "buyback pot is not the pot less what was spent and paid, before the book");
+        }
+        (uint256 held, uint256 toPots) = _bookNow(keeper, "buyback");
+        if (held != bounty) _flag(V_BUYBACK, "the book counted other than the hook bounty leg");
+        uint256 feeShare = toPots * core.settings().feeToBuybackBps / 10_000;
         if (core.ethToBuyback() != p.pool - spent - tip + feeShare) {
             _flag(V_BUYBACK, "buyback pot is not the pot less what was spent and paid, plus the fee share");
         }
-        // eth leaves as the swap input plus the payment. the skim of the swap comes back as an inflow after the flush
-        _eth(p.bal, spent + tip, toCore, "buyback");
-        uint256 rb = toCore * core.settings().feeToRedeemBurnBps / 10_000;
-        if (core.ethPot() != p.pot + toCore - feeShare - rb) _flag(V_POT, "buyback skim not booked to the pot");
+        // eth leaves as the swap input plus the payment. the skim of the swap comes back as an inflow
+        _eth(p.bal, spent + tip, held, "buyback");
     }
 
     /// @dev the skim and burn checks of a buyback (a helper so the locals of `_afterBuyback` fit the stack)
@@ -1851,88 +1899,99 @@ abstract contract HandlerBase is Test {
         gBurnedByBuyback += bought;
     }
 
-    function skim(uint256 aSeed) external checked {
-        uint8 a = A_SKIM;
+    /// anyone books the balance token held above `balancePot`. no effect before the balance side
+    function bookBalance(uint256 aSeed) external checked {
+        uint8 a = A_BOOK_BALANCE;
         address who = _actor(aSeed);
         uint256 b0 = address(core).balance;
         uint256 pot0 = core.ethPot();
-        uint256 tb0 = core.ethToBuyback();
         uint256 xb0 = _xBal(address(core));
         uint256 xp0 = core.balancePot();
-        uint256 reserve0 = core.ethRedeemBurn();
         uint256 rate0 = core.ethRate();
         RS memory rs = _rs();
         _att(a);
         vm.prank(who);
-        try core.skim() {
+        try core.bookBalance() {
             _ok(a);
-            uint256 booked = b0 > pot0 + tb0 + reserve0 ? b0 - pot0 - tb0 - reserve0 : 0;
-            if (core.ethPot() != pot0 + booked || core.ethToBuyback() != tb0 || core.ethRedeemBurn() != reserve0) {
-                _flag(V_POT, "skim booked the wrong eth");
-            }
-            _booked(booked);
-            _eth(b0, 0, 0, "skim");
+            if (core.ethPot() != pot0) _flag(V_POT, "bookBalance moved the eth pot");
+            _eth(b0, 0, 0, "bookBalance");
             if (core.balanceToken() != address(0)) {
                 uint256 xbooked = xb0 > xp0 ? xb0 - xp0 : 0;
                 if (core.balancePot() != xp0 + xbooked) {
-                    _flag(V_POT, "skim booked the wrong balance token");
+                    _flag(V_POT, "bookBalance booked the wrong balance token");
                 }
-                _x(xb0, 0, 0, "skim");
+                _x(xb0, 0, 0, "bookBalance");
             }
         } catch (bytes memory why) {
-            _failed(b0, pot0, rate0, "skim");
+            _failed(b0, pot0, rate0, "bookBalance");
             _unexpected(a, why);
         }
         _rsCheck(rs, 0);
     }
 
-    /// sends eth to the core's receive(), and in the balance side balance token. a send from an account is accepted and not
-    /// booked, the core books it only through skim. now and then the eth is sent to the fee router and flushed, which the
-    /// core books into the pot at once. receive() must accept every one of them
+    /// puts eth into the core five ways, and in the balance side balance token. by mode: a plain send from an account
+    /// (refused with UseFund), `fund` (added to the pot whole), a push from the hook or from the escrow (accepted, left for
+    /// the next book), and eth forced in without a call (left for the next book too). `receive()` must accept every
+    /// hook and escrow send and refuse every other
     function donate(uint256 aSeed, uint256 amtSeed) external checked {
         uint8 a = A_DONATE;
         address who = _actor(aSeed);
         uint256 amt = _logBound(amtSeed, 1, 5 ether);
-        bool fromHook = amtSeed % 4 == 1;
-        address sender = who;
+        uint256 mode = amtSeed % 5;
         uint256 b0 = address(core).balance;
         uint256 pot0 = core.ethPot();
         uint256 tb0 = core.ethToBuyback();
         uint256 rate0 = core.ethRate();
         RS memory rs = _rs();
-        vm.deal(sender, sender.balance + amt);
         _att(a);
-        receiveSends++;
-        uint256 expectIn = amt;
-        uint256 fee;
-        uint256 rb;
-        bool ok;
-        if (fromHook) {
-            // eth sent to the router and flushed: the engine share is booked as fees
-            vm.prank(sender);
-            (ok,) = address(feeRouter).call{value: amt}("");
-            if (ok) {
-                (, expectIn) = _flushRouter();
-                fee = expectIn * core.settings().feeToBuybackBps / 10_000;
-                rb = expectIn * core.settings().feeToRedeemBurnBps / 10_000;
-            }
-        } else {
-            vm.prank(sender);
-            (ok,) = address(core).call{value: amt}("");
-        }
-        if (ok) {
-            _ok(a);
-            _eth(b0, 0, expectIn, "donate");
-            if (core.ethPot() != pot0 + (fromHook ? expectIn - fee - rb : 0) || core.ethToBuyback() != tb0 + fee) {
-                _flag(V_POT, "a donation was booked wrongly");
-            }
-        } else {
-            receiveFails++;
-            _flag(V_RECEIVE, "a direct send to the core receive() reverted");
+        bool pending;
+        if (mode == 0) {
+            vm.deal(who, who.balance + amt);
+            receiveSends++;
+            vm.prank(who);
+            (bool sent, bytes memory why) = address(core).call{value: amt}("");
+            if (sent) _flag(V_RECEIVE, "a plain send from an account was accepted");
+            else if (bytes4(why) != ICore.UseFund.selector) _flag(V_RECEIVE, "a plain send reverted other than UseFund");
+            else _ok(a);
             _failed(b0, pot0, rate0, "donate");
+        } else if (mode == 1) {
+            vm.deal(who, who.balance + amt);
+            vm.prank(who);
+            try core.fund{value: amt}() {
+                _ok(a);
+                _booked(amt);
+                _eth(b0, 0, amt, "fund");
+                if (core.ethPot() != pot0 + amt || core.ethToBuyback() != tb0) _flag(V_POT, "fund did not add the whole amount to the pot");
+            } catch (bytes memory why) {
+                _failed(b0, pot0, rate0, "donate");
+                _unexpected(a, why);
+            }
+        } else if (mode == 2 || mode == 3) {
+            address sender = mode == 2 ? HOOK : core.ESCROW();
+            vm.deal(sender, sender.balance + amt);
+            receiveSends++;
+            vm.prank(sender);
+            (bool sent,) = address(core).call{value: amt}("");
+            if (!sent) {
+                receiveFails++;
+                _flag(V_RECEIVE, "a send from the hook or the escrow was refused");
+                _failed(b0, pot0, rate0, "donate");
+            } else {
+                _ok(a);
+                _eth(b0, 0, amt, "donate");
+                if (core.ethPot() != pot0 || core.ethToBuyback() != tb0) _flag(V_POT, "a push was booked by receive");
+                pending = true;
+            }
+        } else {
+            // eth forced in, as a selfdestruct would
+            vm.deal(address(core), address(core).balance + amt);
+            _ok(a);
+            _eth(b0, 0, amt, "forced eth");
+            pending = true;
         }
         if (phase2() && amtSeed % 3 == 0) _xt().mint(address(core), amt * 1000);
-        _rsCheck(rs, 0);
+        // pending income raises the read above the booked pot until the next book, so the model of the rate waits for it
+        if (!pending) _rsCheck(rs, 0);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1944,7 +2003,7 @@ abstract contract HandlerBase is Test {
     /// the rate state, the pots and the balance stay as they were), adopts a credit that is in a pile
     /// (`InPile`), adopts a credit an actor holds (`NotHolder`), adopts an empty list (`Empty`) or the zero id
     /// (`ZeroId`). a refused call changes nothing
-    function adopt(uint256 aSeed, uint256 nSeed, uint256 mode) external checked {
+    function adopt(uint256 aSeed, uint256 nSeed, uint256 mode) external pulls {
         uint8 a = A_ADOPT;
         address who = _actor(aSeed);
         if (_retiredRefusal(a, who, abi.encodeCall(ICore.adopt, (_firstOf(who))))) return;
@@ -1987,7 +2046,7 @@ abstract contract HandlerBase is Test {
             want = ids.length == 0 ? ICore.Empty.selector : ICore.ZeroId.selector;
         }
 
-        // the Core pulls the router first, so the state the call prices against is the state after that flush
+        // the door books first, so the state the call prices against is the state after that book
         address caller = _actor(aSeed >> 32);
         Pull memory pull = _beginPull();
         AdoptPre memory p = _adoptPre(ids);
@@ -2077,111 +2136,166 @@ abstract contract HandlerBase is Test {
         return false;
     }
 
-    /// anyone flushes the fee router, now and then after sending it some eth. whatever the engine is, only the engine set
-    /// at that time may receive router eth. with the core as engine the core books the engine share by the fee split, with
-    /// another engine the core's books do not move at all, with a refusing one nothing moves
-    function flush(uint256 aSeed, uint256 amtSeed) external checked {
-        uint8 a = A_FLUSH;
+    /// anyone books the fee income, now and then after the hook or the escrow pushed some eth. the book counts
+    /// everything above the tracked eth, splits it by the model and leaves nothing unbooked
+    function book(uint256 aSeed, uint256 amtSeed) external checked {
+        uint8 a = A_BOOK;
         address who = _actor(aSeed);
         _att(a);
         if (amtSeed % 3 == 0) {
             uint256 amt = _logBound(amtSeed >> 4, 1, 3 ether);
-            vm.deal(who, who.balance + amt);
-            vm.prank(who);
-            (bool ok,) = address(feeRouter).call{value: amt}("");
-            if (!ok) _flag(V_ROUTER, "the router refused plain eth");
+            address sender = amtSeed % 2 == 0 ? HOOK : core.ESCROW();
+            vm.deal(sender, sender.balance + amt);
+            vm.prank(sender);
+            (bool ok,) = address(core).call{value: amt}("");
+            if (!ok) _flag(V_RECEIVE, "a send from the hook or the escrow was refused");
         }
-        _flushChecked();
+        uint256 b0 = address(core).balance;
+        RS memory rs = _rs();
+        (uint256 inc,) = _bookNow(who, "book");
+        _eth(b0, 0, 0, "book");
+        if (_unbooked() != 0) _flag(V_POT, "a book left eth unbooked");
+        if (inc != 0) {
+            // the book checkpointed the rate before the pot grew
+            if (core.checkpointTime() != block.timestamp) _flag(V_RATE_BOUND, "a book with income did not checkpoint");
+        }
         _ok(a);
+        // the book moved the pot: the model of the rate follows from the state it left, which `_rs` read before
+        // the income was counted; the read before the book already included the share the book added
+        if (core.ethRate() != rs.rate) _flag(V_RATE_BOUND, "the quote before the book differs from the read after it");
     }
 
-    /// flushes the router as the flusher and checks the Core booked the fees with the buyback split
-    function _flushChecked() internal {
+    /// anyone claims the payee share. by mode the owner first points the payee at a fresh account, at a payee that reverts
+    /// or at one that burns its gas, or at the zero address (refused). a claim of nothing reverts `ZeroAmount`, a claim
+    /// to a payee that cannot take it reverts `CallFailed` and leaves the share owed, a good claim pays exactly the
+    /// share to the payee and nothing else moves
+    function claimPayee(uint256 aSeed, uint256 mode) external checked {
+        uint8 a = A_CLAIM_PAYEE;
+        address who = _actor(aSeed);
+        uint256 m = mode % 6;
+        _att(a);
+        if (m != 0 && m != 5) {
+            address next = m == 1
+                ? address(uint160(uint256(keccak256(abi.encode("payee", aSeed))) | 0x10000))
+                : (m == 2 ? _badPayee(false) : (m == 3 ? _badPayee(true) : address(0)));
+            bool mayOwn = owner == core.owner();
+            vm.prank(owner);
+            try core.setPayee(next) {
+                if (!mayOwn) _flag(V_OWNER, "setPayee worked for a caller that is not the owner");
+                else if (next == address(0)) _flag(V_PAYEE, "setPayee took the zero address");
+                else gPayee = next;
+            } catch (bytes memory why) {
+                bytes4 want = mayOwn ? ICore.ZeroAddress.selector : ICore.OnlyOwner.selector;
+                if (bytes4(why) != want || (mayOwn && next != address(0))) _unexpected(a, why);
+            }
+        }
+        if (core.payee() != gPayee) _flag(V_PAYEE, "the payee differs from the one the owner set last");
+        uint256 owed = core.payeeOwed();
         uint256 b0 = address(core).balance;
         uint256 pot0 = core.ethPot();
-        uint256 tb0 = core.ethToBuyback();
+        uint256 rate0 = core.ethRate();
+        address payee_ = core.payee();
+        uint256 p0 = payee_.balance;
         RS memory rs = _rs();
-        (, uint256 toCore) = _flushRouter();
-        uint256 fee = toCore * core.settings().feeToBuybackBps / 10_000;
-        uint256 rb = toCore * core.settings().feeToRedeemBurnBps / 10_000;
-        _eth(b0, 0, toCore, "flush");
-        if (core.ethPot() != pot0 + toCore - fee - rb || core.ethToBuyback() != tb0 + fee) {
-            _flag(V_POT, "a flush was booked wrongly");
+        vm.prank(who);
+        try core.claimPayee{gas: 3_000_000}() {
+            if (owed == 0) _flag(V_PAYEE, "a claim of nothing went through");
+            if (payee_.balance - p0 != owed && !_isBurner(payee_)) _flag(V_PAYEE, "the claim paid other than the share owed");
+            gPayeeOwed = 0;
+            _eth(b0, owed, 0, "claimPayee");
+            // the ledger holds the pots only: the payee share left it when it was booked
+            gEthOut -= owed;
+            if (core.payeeOwed() != 0) _flag(V_PAYEE, "a claim left eth owed");
+        } catch (bytes memory why) {
+            _failed(b0, pot0, rate0, "claimPayee");
+            if (owed == 0) {
+                if (bytes4(why) != ICore.ZeroAmount.selector) _unexpected(a, why);
+            } else if (bytes4(why) != ICore.CallFailed.selector || !_refuses(payee_)) {
+                _unexpected(a, why);
+            }
+            if (core.payeeOwed() != owed) _flag(V_PAYEE, "a refused claim moved the share");
         }
+        if (core.ethPot() != pot0) _flag(V_PAYEE, "a claim moved the pot");
+        _ok(a);
         _rsCheck(rs, 0);
     }
 
-    /// gas the Core forwards to the router flush of its pull (`CoreLib.PULL_GAS`)
-    uint256 internal constant PULL_GAS = 1_000_000;
+    /// a payee that reverts, or one that burns all its gas, created once each
+    address internal revertingPayee;
+    address internal burningPayee;
 
-    /// one door call with the router pull inside it. `*0` is the state before the pull (what a reverted door leaves),
-    /// the rest is what the pull does: eth booked by the Core and the router balance after
+    function _badPayee(bool burn) internal returns (address) {
+        if (revertingPayee == address(0)) {
+            revertingPayee = address(new RevertingPayee());
+            burningPayee = address(new BurningPayee());
+        }
+        return burn ? burningPayee : revertingPayee;
+    }
+
+    function _refuses(address who) internal view returns (bool) {
+        return who == revertingPayee || who == burningPayee;
+    }
+
+    function _isBurner(address who) internal view returns (bool) {
+        return who == burningPayee;
+    }
+
+    /// one door call with the book inside it. `*0` is the state before the book (what a reverted door leaves), the rest is
+    /// what the book does to the state: the income, the part booked into the pots and the share credited to the payee
     struct Pull {
         uint256 snap;
         uint256 bal0;
         uint256 pot0;
         uint256 rate0;
         RS rs0;
-        uint256 held;
-        uint256 owed;
-        uint256 want;
-        address engine;
-        uint256 toCore;
-        uint256 routerAfter;
-        bool ok;
+        uint256 income;
+        uint256 toPots;
+        uint256 share;
     }
 
-    /// the eth pot doors (`sellForEth`, `buyListing`, `compose`, `composeChosen`) start with the Core's pull of the
-    /// router. this runs the same flush now, under a snapshot, so the state read
-    /// between `_beginPull` and `_endPull` is the state the door prices against. the handler writes no storage in
-    /// between. `_endPull` restores the state before the pull, and the door then runs the pull itself
+    /// the eth pot doors (`sellForEth`, `buyListing`, `compose`, `composeChosen`, `adopt`) start with the core's book of the
+    /// fee income. this runs the same book now, under a snapshot, so the state read between `_beginPull` and `_endPull`
+    /// is the state the door prices against. the handler writes no storage in between. `_endPull` restores the state
+    /// before the book, and the door then runs the book itself
     function _beginPull() internal returns (Pull memory q) {
         q.bal0 = address(core).balance;
         q.pot0 = core.ethPot();
         q.rate0 = core.ethRate();
         q.rs0 = _rs();
-        q.held = address(feeRouter).balance;
-        q.owed = feeRouter.totalOwed();
-        q.engine = feeRouter.engine();
-        q.want = q.held > q.owed ? _routerEngine(q.held - q.owed) : 0;
+        q.income = _unbooked();
+        Pots memory p = _pots();
         q.snap = vm.snapshotState();
-        try feeRouter.flush{gas: PULL_GAS}() {
-            q.ok = true;
-        } catch {}
-        q.toCore = address(core).balance - q.bal0;
-        q.routerAfter = address(feeRouter).balance;
+        if (q.income != 0) {
+            try core.book() {} catch {}
+        }
+        q.toPots = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() - p.pot - p.tb - p.rb;
+        q.share = core.payeeOwed() - p.owed;
     }
 
     function _endPull(Pull memory q) internal {
         vm.revertToStateAndDelete(q.snap);
     }
 
-    /// after a door succeeded: the pull inside it did what the flush rule gives. the router holds what is owed to
-    /// payees and nothing else after a flush that went through, the engine got its part
+    /// after a door succeeded: the book inside it did what the model gives. the income was counted once (one `FeesAdded` of
+    /// the income less the payee share, none for no income), the payee share and the latch follow the model, and the
+    /// pots took the part the model gives
     function _pullChecks(Pull memory q, Vm.Log[] memory logs) internal {
-        _booked(q.toCore);
-        bool moved = q.ok && q.held > q.owed;
-        uint256 flushes;
-        uint256 toEngineSeen;
+        uint256 events;
+        uint256 seen;
         for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].emitter != address(feeRouter) || logs[i].topics[0] != IFeeRouter.Flushed.selector) continue;
-            flushes++;
-            (toEngineSeen,) = abi.decode(logs[i].data, (uint256, uint256));
+            if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.FeesAdded.selector) continue;
+            events++;
+            seen = abi.decode(logs[i].data, (uint256));
         }
-        if (flushes != (moved ? 1 : 0)) _flag(V_ROUTER, "the door pulled other than the flush rule gives");
-        if (moved && toEngineSeen != q.want) _flag(V_ROUTER, "the door pull sent the engine other than the flush rule gives");
-        if (q.engine != gEngine) _flag(V_ROUTER, "the router engine is not the one the owner set last");
-        if (moved && q.engine == address(core) && q.toCore != q.want) {
-            _flag(V_ROUTER, "the door pull booked other than the flush rule gives");
+        (uint256 share, uint256 toPots) = _bookModel(q.income);
+        if (events != (q.income != 0 ? 1 : 0)) _flag(V_PAYEE, "the door booked other than the book rule gives");
+        if (q.income != 0 && seen != toPots) _flag(V_PAYEE, "the door logged other than the income less the share");
+        if (share != q.share || toPots != q.toPots + q.share - share) {
+            _flag(V_PAYEE, "the door book differs from the model of the book");
         }
-        if (address(feeRouter).balance != q.routerAfter) _flag(V_ROUTER, "the router balance after the door differs");
-        if (q.ok && address(feeRouter).balance != feeRouter.totalOwed()) {
-            _flag(V_ROUTER, "a door pull left eth in the router");
-        }
-        if (q.ok) {
-            parked = 0;
-        } else if (q.held > q.owed) {
-            parked = q.held - q.owed;
+        _booked(toPots);
+        if (core.payeeOwed() != gPayeeOwed || core.payeeOn() != gPayeeOn) {
+            _flag(V_PAYEE, "the payee share after the door differs from the model");
         }
     }
 
@@ -2478,5 +2592,21 @@ abstract contract HandlerBase is Test {
             module.setUnitPerPoint(_logBound(s >> 8, 5e6, 2e7));
         }
         _ok(a);
+    }
+}
+
+/// a payee whose receive reverts
+contract RevertingPayee {
+    receive() external payable {
+        revert("no");
+    }
+}
+
+/// a payee whose receive burns all the gas it is given
+contract BurningPayee {
+    receive() external payable {
+        assembly {
+            invalid()
+        }
     }
 }

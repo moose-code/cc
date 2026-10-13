@@ -5,7 +5,6 @@ import {Prod} from "./utils/Prod.sol";
 import {console} from "forge-std/Test.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ReviewHarness} from "./utils/ReviewHarness.sol";
 import {TestSwapRouter} from "./utils/TestSwapRouter.sol";
@@ -39,7 +38,7 @@ contract ReviewDeployTest is ReviewHarness {
         assertEq(this.runPre(base, other), "factory: owner is the deployer, factory: deployTokenAsOwner accepts the config (simulated)");
         console.log("MUT deployer swap (another signer than the factory owner) || SAFE REVERT at deploy || NotFactoryOwner");
         // the coin address depends on the sender, so the swap would have launched somewhere else
-        assertTrue(predictCoin(base, deployer, _routerAt()) != predictCoin(base, other, _routerAt()));
+        assertTrue(predictCoin(base, deployer, _coreAt()) != predictCoin(base, other, _coreAt()));
     }
 
     /// the script rehearsal of the library: it goes through the deterministic deployer from the deployer, so it takes one
@@ -55,11 +54,9 @@ contract ReviewDeployTest is ReviewHarness {
         assertTrue(_libraryTxPending());
         assertEq(_controllerNonce(deployer), n + 1);
         assertEq(this.runPre(base, deployer), "", "preflight clean with the library still to send");
-        (bool found, bool ok, string memory detail) = _row("signoff: core address (the router flushes to it)");
+        (bool found, bool ok, string memory detail) = _row("signoff: core address (the bounty recipient of the pool)");
         assertTrue(found && ok);
-        assertEq(detail, vm.toString(vm.computeCreateAddress(deployer, n + 3)), "core at nonce + 3 after the library");
-        (,, detail) = _row("signoff: router address (the bounty recipient of the pool)");
-        assertEq(detail, vm.toString(vm.computeCreateAddress(deployer, n + 2)), "router at nonce + 2 after the library");
+        assertEq(detail, vm.toString(vm.computeCreateAddress(deployer, n + 2)), "core at nonce + 2 after the library");
         (,, detail) = _row("library: CoreLib at its create2 address is the compiled code or absent");
         assertTrue(vm.contains(detail, "not deployed"));
 
@@ -71,8 +68,8 @@ contract ReviewDeployTest is ReviewHarness {
         assertTrue(isCompiledLibrary(lib.code), "the create2 address holds the compiled code");
         assertFalse(_libraryTxPending());
         assertEq(this.runPre(base, deployer), "");
-        (found, ok, detail) = _row("signoff: core address (the router flushes to it)");
-        assertEq(detail, vm.toString(vm.computeCreateAddress(deployer, n + 3)), "the same core address");
+        (found, ok, detail) = _row("signoff: core address (the bounty recipient of the pool)");
+        assertEq(detail, vm.toString(vm.computeCreateAddress(deployer, n + 2)), "the same core address");
         (,, detail) = _row("library: CoreLib at its create2 address is the compiled code or absent");
         assertTrue(vm.contains(detail, "skips it"));
 
@@ -86,13 +83,11 @@ contract ReviewDeployTest is ReviewHarness {
     /// other code, changes the creation code of the Core but not where it lands
     function test_coreAddressIgnoresTheLibrary() public {
         address want = _coreAt();
-        address wantRouter = _routerAt();
         uint256 snap = vm.snapshotState();
         vm.startPrank(deployer);
         Deployed memory d = deploySystem(deployer, base);
         vm.stopPrank();
         assertEq(d.core, want);
-        assertEq(d.router, wantRouter);
         vm.revertToState(snap);
         vm.etch(_linked(), bytes.concat(_linked().code, hex"00"));
         // the postflight fails on the library row, the Core itself was created at the predicted address before that
@@ -109,77 +104,74 @@ contract ReviewDeployTest is ReviewHarness {
 
     struct Steps {
         address controller;
-        address router;
         address core;
         address coin;
         PoolKey key;
     }
 
-    function _newCoreOf(LaunchConfig memory c, address coinAt, address controller) private returns (address) {
-        return address(Prod.newCore(c.owner, coinAt, controller, c.stack, c.rateStart, c.settings));
+    function _newCoreOf(LaunchConfig memory c, address controller) private returns (address) {
+        return address(
+            Prod.newCore(c.owner, buildConfig(c, c.owner, address(0)), deployer, controller, c.payee, c.stack, c.rateStart, c.settings)
+        );
     }
 
-    /// @dev runs the first `n` of the four creating transactions after the library, by hand, as the deployer: 1 the
-    /// controller, 2 the router, 3 the core, 4 the launch
+    /// @dev runs the first `n` of the three creating transactions after the library, by hand, as the deployer: 1 the
+    /// controller, 2 the core, 3 the launch
     function _steps(LaunchConfig memory c, uint256 n) internal returns (Steps memory st) {
         uint64 nonce = vm.getNonce(deployer);
-        address routerAt = vm.computeCreateAddress(deployer, nonce + 1);
-        address coreAt = vm.computeCreateAddress(deployer, nonce + 2);
-        c.stack.feeSource = routerAt;
-        address coinAt = predictCoin(c, deployer, routerAt);
+        address coreAt = vm.computeCreateAddress(deployer, nonce + 1);
         vm.startPrank(deployer);
         st.controller = address(Prod.newController(coreAt, c.sale));
-        if (n >= 2) st.router = address(Prod.newRouter(deployer));
-        if (n >= 3) st.core = _newCoreOf(c, coinAt, st.controller);
-        if (n >= 4) {
-            st.coin = _launch(c, coinAt, st.router);
+        if (n >= 2) st.core = _newCoreOf(c, st.controller);
+        if (n >= 3) {
+            st.coin = _launch(c, ICore(payable(st.core)).COIN(), st.core);
             st.key = poolKeyOf(st.coin, c.stack);
         }
         vm.stopPrank();
     }
 
-    /// strangers cannot launch to the predicted coin or touch the router at any half way state
+    /// strangers cannot launch to the predicted coin or touch the owner doors of the Core at any half way state
     function test_partialStatesStayClosedToStrangers() public {
         uint256 snap = vm.snapshotState();
         address watcher = makeAddr("review.watcher");
         vm.deal(watcher, 1 ether);
         // after the core, before the launch: nothing at the coin address, the core holds nothing and is inert
-        Steps memory st = _steps(base, 3);
+        Steps memory st = _steps(base, 2);
         uint256 fee = FACTORY.deployFee();
         assertEq(ICore(payable(st.core)).COIN().code.length, 0, "no coin yet");
         assertEq(st.core.balance, 0, "the core holds nothing");
-        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(base, base.owner, st.router);
+        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(base, base.owner, st.core);
         vm.startPrank(watcher);
         vm.expectRevert();
         FACTORY.deployTokenAsOwner{value: fee}(cfg, base.protocolBps);
-        vm.expectRevert(IFeeRouter.OnlyOwner.selector);
-        IFeeRouter(payable(st.router)).setEngine(st.core);
+        vm.expectRevert(ICore.OnlyOwner.selector);
+        ICore(payable(st.core)).setPayee(watcher);
         vm.stopPrank();
         vm.revertToState(snap);
 
-        // after the launch, before the router setup: the router has no engine, a stranger cannot set one, eth waits
-        st = _steps(base, 4);
-        IFeeRouter r = IFeeRouter(payable(st.router));
+        // after the launch: a stranger cannot set the payee or send eth to the Core
+        st = _steps(base, 3);
+        ICore c = ICore(payable(st.core));
         vm.startPrank(watcher);
-        vm.expectRevert(IFeeRouter.OnlyOwner.selector);
-        r.setEngine(watcher);
-        vm.expectRevert(IFeeRouter.OnlyOwner.selector);
-        r.lock();
-        vm.expectRevert(IFeeRouter.NoEngine.selector);
-        r.flush();
+        vm.expectRevert(ICore.OnlyOwner.selector);
+        c.setPayee(watcher);
+        vm.expectRevert(ICore.OnlyOwner.selector);
+        c.lockController();
+        (bool sent,) = st.core.call{value: 1 ether}("");
+        assertFalse(sent, "a plain send from a stranger reverts UseFund");
         vm.stopPrank();
         vm.revertToState(snap);
     }
 
     /// a second run of the signed config by the same deployer is a second, independent system, not a collision: the coin
-    /// address includes the router and core addresses, so the same salt gives another coin. it is no mutation of the
+    /// address includes the core address, so the same salt gives another coin. it is no mutation of the
     /// config. the runbook says never rerun Deploy, this is what a rerun costs
     function test_secondRunOfTheSameConfigIsAnotherSystem() public {
         vm.startPrank(deployer);
         Deployed memory d1 = deploySystem(deployer, base);
         Deployed memory d2 = deploySystem(deployer, base);
         vm.stopPrank();
-        assertTrue(d1.core != d2.core && d1.coin != d2.coin && d1.router != d2.router, "two systems");
+        assertTrue(d1.core != d2.core && d1.coin != d2.coin, "two systems");
         console.log(
             "NOT A MUTATION a second run of the signed config || two independent systems, both pass every check"
         );
@@ -207,7 +199,6 @@ contract ReviewDeployTest is ReviewHarness {
     function test_postflightReadsThePositionBack() public {
         vm.startPrank(deployer);
         Deployed memory d = deploySystem(deployer, base);
-        startSplitAfterLaunch(base, d.router, d.coin);
         vm.stopPrank();
         postflightAs(base, d.core, deployer);
         assertEq(_failedNames(), "");
@@ -234,7 +225,6 @@ contract ReviewDeployTest is ReviewHarness {
     function test_postflightReadsTheSniperParamsBack() public {
         vm.startPrank(deployer);
         Deployed memory d = deploySystem(deployer, base);
-        startSplitAfterLaunch(base, d.router, d.coin);
         vm.stopPrank();
         postflightAs(base, d.core, deployer);
         assertEq(_failedNames(), "");
@@ -251,7 +241,7 @@ contract ReviewDeployTest is ReviewHarness {
         c = base;
         c.sniperSeconds = 3000;
         postflightAs(c, d.core, deployer);
-        assertEq(_failedNames(), string.concat(row, ", router: split start is the launch time plus the anti sniper window, exactly"));
+        assertEq(_failedNames(), string.concat(row, ", core: SNIPER_SECONDS equals the config"));
         c = base;
         c.baselineSkimBps = 500;
         postflightAs(c, d.core, deployer);
@@ -282,16 +272,15 @@ contract ReviewDeployTest is ReviewHarness {
             else if (i == 9) (c.sniperStartBps, what) = (8_000, "sniper start");
             else if (i == 10) (c.restricted, what) = (false, "restricted");
             else if (i == 11) (c.protocolBps, what) = (1000, "protocolBps");
-            else if (i == 12) (c.creatorPayee, what) = (creator, "payee");
-            else if (i == 13) (c.payeePpm, what) = (100_000, "payee ppm");
-            else (c.supply, what) = (c.supply + 1e7, "supply");
+            else if (i == 12) (c.payee, what) = (creator, "payee");
+            else if (i == 13) (c.settings.payeePpm, what) = (100_000, "payee ppm");
+            else (c.supply, what) = (c.supply - 1e7, "supply");
             postflightAs(c, d.core, deployer);
             assertTrue(bytes(_failedNames()).length != 0, what);
         }
     }
 
-    /// sign off row: at the launch block the whole skim of a buy reaches the engine through the router (no payee
-    /// share in the window)
+    /// sign off row: at the launch block the whole skim of a buy reaches the Core (no payee share in the window)
     function test_signoffSniperExtraGoesToTheCore() public {
         vm.startPrank(deployer);
         Deployed memory d = deploySystem(deployer, base);
@@ -301,22 +290,23 @@ contract ReviewDeployTest is ReviewHarness {
         vm.deal(buyer, 1 ether);
         vm.prank(buyer);
         r.swap{value: 1 ether}(d.launchKey, true, -1 ether, buyer);
-        IFeeRouter fr = IFeeRouter(payable(d.router));
-        uint256 held = d.router.balance;
+        uint256 held = d.core.balance;
         // 90 points of the buy, of which the part above the 6.9 point baseline goes whole to the bounty leg and 96.38 percent
         // of the baseline part (the protocol keeps the rest of the baseline): 0.831 + 0.0665022
-        assertApproxEqRel(held, 0.8975022 ether, 0.001e18, "the router holds the bounty leg");
+        assertApproxEqRel(held, 0.8975022 ether, 0.001e18, "the Core holds the bounty leg");
+        ICore dc = ICore(payable(d.core));
+        assertEq(dc.ethPot(), 0, "nothing is booked before the first book");
         address keeper2 = makeAddr("review.keeper");
         vm.prank(keeper2);
-        fr.flush();
+        dc.book();
         assertEq(keeper2.balance, 0);
-        // the engine books the redeem burn share of the flush to its reserve and the rest to the pot
-        ICore dc = ICore(payable(d.core));
+        // the Core books the redeem burn share of the income to its reserve and the rest to the pot
         uint256 toRedeemBurn = held * dc.settings().feeToRedeemBurnBps / 10_000;
         uint256 toBuyback = held * dc.settings().feeToBuybackBps / 10_000;
         assertEq(dc.ethRedeemBurn(), toRedeemBurn, "the redeem burn share reaches the reserve");
         assertEq(dc.ethPot(), held - toRedeemBurn - toBuyback, "everything else reaches the pot");
-        assertFalse(fr.splitOn(), "the window never shares");
+        assertFalse(dc.payeeOn(), "the window never shares");
+        assertEq(dc.payeeOwed(), 0);
     }
 
     /// the pool manager, the factory and the escrow are compared with what the hook reports, the factory with what the
@@ -346,24 +336,42 @@ contract ReviewDeployTest is ReviewHarness {
     }
 
     /// the constructor refuses a stack member without code, the coin is exempt (it does not exist yet). the auction
-    /// factory is one of them: without code, and as a contract that is not a factory. the fee source needs code too
+    /// factory is one of them: without code, and as a contract that is not a factory
     function test_coreRejectsAStackWithoutCode() public {
         Settings memory s = Mainnet.defaultSettings();
         Stack memory st = base.stack;
-        st.feeSource = address(new TestSwapRouter());
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), st, 4e13, s);
+        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(base, owner, address(0));
+        Prod.newCore(owner, cfg, owner, makeAddr("ctl"), base.payee, st, 4e13, s);
         Stack memory bad = st;
         bad.hook = makeAddr("hook");
         vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, bad.hook));
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e13, s);
+        Prod.newCore(owner, cfg, owner, makeAddr("ctl"), base.payee, bad, 4e13, s);
         bad = st;
         bad.escrow = makeAddr("escrow");
         vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, bad.escrow));
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e13, s);
-        bad = st;
-        bad.feeSource = makeAddr("router");
-        vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, bad.feeSource));
-        Prod.newCore(owner, makeAddr("coin"), makeAddr("ctl"), bad, 4e13, s);
+        Prod.newCore(owner, cfg, owner, makeAddr("ctl"), base.payee, bad, 4e13, s);
+        // a zero payee is refused
+        vm.expectRevert(ICore.ZeroAddress.selector);
+        Prod.newCore(owner, cfg, owner, makeAddr("ctl"), address(0), st, 4e13, s);
+        // a hook in the launch config other than the stack hook is refused
+        IArtCoinsFactoryV2.DeploymentConfigV2 memory other = cfg;
+        other.pool.hook = makeAddr("other hook");
+        vm.expectRevert(ICore.BadStack.selector);
+        Prod.newCore(owner, other, owner, makeAddr("ctl"), base.payee, st, 4e13, s);
+    }
+
+    /// the constructor computes the coin from the factory prediction with the Core as bounty recipient, and a successor
+    /// Core takes a recorded coin as it is
+    function test_coreCoinIsPredictedOrRecorded() public {
+        Settings memory s = Mainnet.defaultSettings();
+        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(base, owner, address(0));
+        ICore c = Prod.newCore(owner, cfg, owner, makeAddr("ctl"), base.payee, base.stack, 4e13, s);
+        assertEq(c.COIN(), predictCoin(base, owner, address(c)), "the coin is the prediction for the Core as recipient");
+        assertEq(c.SNIPER_SECONDS(), base.sniperSeconds);
+        assertEq(c.payee(), base.payee);
+        // a coin the factory did not record is refused for a successor
+        vm.expectRevert(ICore.BadStack.selector);
+        Prod.newCoreOf(makeAddr("unrecorded coin"), owner, cfg, makeAddr("ctl"), base.payee, base.stack, 4e13, s);
     }
 
     function parse(string memory j) external view returns (LaunchConfig memory) {
@@ -382,7 +390,7 @@ contract ReviewDeployTest is ReviewHarness {
         assertEq(this.parse(j).bountyBps, 9638, "the untouched file parses");
         string[11] memory from = [
             '"bountyBps": 9638',
-            '"payeePpm": 112778',
+            '"payeePpm": 75185',
             '"baselineSkimBps": 690',
             '"sniperSeconds": 1800',
             '"startTick": -175000',
@@ -395,7 +403,7 @@ contract ReviewDeployTest is ReviewHarness {
         ];
         string[11] memory to = [
             '"bountyBps": 65536',
-            '"payeePpm": 4294967296',
+            '"payeePpm": 16777216',
             '"baselineSkimBps": 16777216',
             '"sniperSeconds": 4294967296',
             '"startTick": -8388609',
@@ -408,7 +416,7 @@ contract ReviewDeployTest is ReviewHarness {
         ];
         string[11] memory keys = [
             ".launch.bountyBps",
-            ".router.payeePpm",
+            ".settings.payeePpm",
             ".launch.baselineSkimBps",
             ".launch.sniperSeconds",
             ".launch.startTick",
@@ -431,7 +439,7 @@ contract ReviewDeployTest is ReviewHarness {
         vm.expectRevert();
         this.parse(vm.replace(j, '"feeToRedeemBurnBps"', '"feeToRedeemBurnBpz"'));
         vm.expectRevert();
-        this.parse(vm.replace(j, '"creatorPayee"', '"creatorPayeee"'));
+        this.parse(vm.replace(j, '"payee"', '"payeee"'));
         // the overrides are optional and default to false
         LaunchConfig memory c = this.parse(vm.replace(j, '"overrides"', '"unused"'));
         assertFalse(c.allowBounty || c.allowOpenFactory);
@@ -454,7 +462,7 @@ contract ReviewDeployTest is ReviewHarness {
         s.mevModule = v2.mev;
         s.owner = v2.owner;
         s.creator = v2.owner;
-        s.creatorPayee = v2.owner;
+        s.payee = v2.owner;
         s.name = "CC";
         s.salt = keccak256("CC");
         // launch day inputs (FLOW decision 54): empty or filled in the file
@@ -471,7 +479,7 @@ contract ReviewDeployTest is ReviewHarness {
     }
 
     /// the one value the operator signs. preflight and postflight print the same hash, Deploy needs it and every change
-    /// of the config changes it. the router address the deploy creates is derived and not part of it
+    /// of the config changes it
     function test_configHashIsTheSignOffValue() public {
         bytes32 h = configHash(base);
         this.runPre(base, deployer);
@@ -481,7 +489,6 @@ contract ReviewDeployTest is ReviewHarness {
         vm.stopPrank();
         postflightAs(base, d.core, deployer);
         assertEq(_hashRow(), vm.toString(h), "postflight prints the same value");
-        assertEq(configHash(base), h, "the router the deploy filled in is outside the hash");
         this.requireHash(base, h);
         vm.expectRevert(abi.encodeWithSelector(SystemDeployer.ConfigHashMismatch.selector, bytes32(0), h));
         this.requireHash(base, bytes32(0));
@@ -543,16 +550,19 @@ contract ReviewFundedTest is Fixture {
         assertEq(address(c), predicted);
     }
 
+    /// @dev fee income at `c`: the hook pushes eth into the Core, the only address besides the escrow that `receive`
+    /// accepts, and the book counts it
     function _fees(ICore c, uint256 amt) internal {
-        address src = lc.stack.feeSource;
-        vm.deal(src, src.balance + amt);
-        vm.prank(src);
+        address hook = lc.stack.hook;
+        vm.deal(hook, hook.balance + amt);
+        vm.prank(hook);
         (bool ok,) = address(c).call{value: amt}("");
         assertTrue(ok);
+        c.book();
     }
 
     function _make(uint256 rate, address controller, Settings memory s) internal returns (ICore) {
-        return Prod.newCore(owner, address(coin), controller, lc.stack, rate, s);
+        return _launchCore(controller, lc.stack, rate, s);
     }
 
     function _check(ICore c) internal view {
@@ -601,7 +611,7 @@ contract ReviewFundedTest is Fixture {
                 }
                 vm.stopPrank();
             } else {
-                c.skim();
+                c.book();
             }
             _check(c);
         }
@@ -612,16 +622,16 @@ contract ReviewFundedTest is Fixture {
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
         Stack memory st = lc.stack;
         vm.expectRevert(ICore.BadRate.selector);
-        Prod.newCore(owner, address(coin), predicted, st, 1e13 - 1, Mainnet.defaultSettings());
+        _launchCore(predicted, st, 1e13 - 1, Mainnet.defaultSettings());
         vm.expectRevert(ICore.BadRate.selector);
-        Prod.newCore(owner, address(coin), predicted, st, 1e18 + 1, Mainnet.defaultSettings());
+        _launchCore(predicted, st, 1e18 + 1, Mainnet.defaultSettings());
         // the opening rate may not sit above the rate cap (2.67e16 at the launch values)
         vm.expectRevert(ICore.BadRate.selector);
-        Prod.newCore(owner, address(coin), predicted, st, 2.67e16 + 1, Mainnet.defaultSettings());
+        _launchCore(predicted, st, 2.67e16 + 1, Mainnet.defaultSettings());
         Settings memory top = Mainnet.defaultSettings();
         top.rateCap = uint64(1e18);
-        ICore lo = Prod.newCore(owner, address(coin), predicted, st, 1e13, top);
-        ICore hi = Prod.newCore(owner, address(coin), address(1), st, 1e18, top);
+        ICore lo = _launchCore(predicted, st, 1e13, top);
+        ICore hi = _launchCore(address(1), st, 1e18, top);
         assertEq(lo.rateAtCheckpoint(), 1e13);
         assertEq(hi.rateAtCheckpoint(), 1e18);
         // the pot at which the clamp equals the rate: one credit at the rate

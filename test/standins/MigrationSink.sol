@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-/// test double for a successor of the Core. it takes eth and records it. it can refuse eth, and it can call back into
-/// the Core from its `receive`, to show that a migration cannot be re entered
+/// test double for a successor of the Core. `fund()`, the call `migrate` makes, and a plain send take eth and record it.
+/// it can refuse eth, and it can call back into the Core from there, to show that a migration cannot be re entered
 contract MigrationSink {
     uint256 public ethReceived;
     uint256 public sends;
@@ -14,6 +14,14 @@ contract MigrationSink {
     bytes public calledOut;
 
     receive() external payable {
+        _take();
+    }
+
+    function fund() external payable {
+        _take();
+    }
+
+    function _take() private {
         if (refuse) revert("sink refuses");
         ethReceived += msg.value;
         ++sends;

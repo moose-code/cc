@@ -7,7 +7,6 @@ import {V2Stack} from "./utils/V2Stack.sol";
 import {Test} from "forge-std/Test.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {Deployed} from "../script/SystemDeployer.sol";
@@ -16,8 +15,8 @@ import {LaunchConfig} from "../script/LaunchConfig.sol";
 import {Report} from "../script/Report.sol";
 
 /// @notice `script/SystemResumer.sol` on the pinned fork with the live v2 stack: a deploy stopped after each of
-/// the transactions (the library, the controller, the router, the core, the launch, the router engine,
-/// the router payees, the split start) is finished by sending only the missing steps, as the original deployer, who is
+/// the transactions (the library, the controller, the core, the launch) is finished by sending only the missing steps,
+/// as the original deployer, who is
 /// the factory owner and the config owner. the library goes through the deterministic deployer in a broadcast and takes
 /// one deployer nonce, so the tests send it through that deployer too and bump the nonce by hand (a test prank sends no
 /// transaction)
@@ -26,7 +25,6 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     /// @dev the operator flags as bools here, so parallel tests never share an environment variable
     bool internal changedFlag;
     bool internal ownerFlag;
-    bool internal routerFlag;
 
     function _settingsChanged() internal view override returns (bool) {
         return changedFlag;
@@ -34,10 +32,6 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
 
     function _ownerChanged() internal view override returns (bool) {
         return ownerFlag;
-    }
-
-    function _routerChanged() internal view override returns (bool) {
-        return routerFlag;
     }
 
     function _scriptContext() internal view override returns (bool) {
@@ -70,7 +64,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         base = defaultConfig();
         base.owner = owner;
         base.creator = creator;
-        base.creatorPayee = makeAddr("resume.payee");
+        base.payee = makeAddr("resume.payee");
         base.name = "Resume Coin";
         base.symbol = "RSM";
         // a launch ready config: the tracked mainnet.json leaves both strings empty for the owner to fill
@@ -84,8 +78,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         base.mevModule = v2.mev;
     }
 
-    /// @dev the first `n` of the transactions, by hand, as the deployer: 1 library, 2 controller, 3 router, 4 core,
-    /// 5 launch, 6 router engine, 7 router payees, 8 router split start from the mined launch time
+    /// @dev the first `n` of the transactions, by hand, as the deployer: 1 library, 2 controller, 3 core, 4 launch
     /// @dev the lens is sent between the core and the launch, as `deploySystem` does. `skipLens` leaves it out of a
     /// deploy that went on to the launch, `lensEarly` sends it in a deploy that stopped right after it
     bool internal skipLens;
@@ -93,39 +86,34 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     /// @dev `skipAdapters` leaves the two adapters out of a deploy that went on to the launch
     bool internal skipAdapters;
 
-    function _steps(uint256 n) internal returns (address core, address coin, address router) {
+    function _steps(uint256 n) internal returns (address core, address coin) {
         scriptMode = true;
         if (n >= 1) _sendLibrary();
         uint64 nonce = vm.getNonce(deployer);
-        router = vm.computeCreateAddress(deployer, nonce + 1);
-        core = vm.computeCreateAddress(deployer, nonce + 2);
-        base.stack.feeSource = router;
-        address coinAt = predictCoin(base, deployer, router);
+        core = vm.computeCreateAddress(deployer, nonce + 1);
         vm.startPrank(deployer);
         address controller;
         if (n >= 2) controller = address(Prod.newController(core, base.sale));
-        if (n >= 3) address(Prod.newRouter(deployer));
-        if (n >= 4) {
+        if (n >= 3) {
             Prod.newCore(
-                owner, coinAt, controller, base.stack, base.rateStart, base.settings, base.credit, launchAdapters(core, base)
+                owner,
+                buildConfig(base, owner, address(0)),
+                deployer,
+                controller,
+                base.payee,
+                base.stack,
+                base.rateStart,
+                base.settings,
+                base.credit,
+                launchAdapters(core, base)
             );
         }
-        if ((n >= 5 && !skipLens) || (n >= 4 && lensEarly)) Prod.newLens(core, LENS_SALT, CREATE2_DEPLOYER);
-        if (n >= 5 && !skipAdapters) {
+        if ((n >= 4 && !skipLens) || (n >= 3 && lensEarly)) Prod.newLens(core, LENS_SALT, CREATE2_DEPLOYER);
+        if (n >= 4 && !skipAdapters) {
             Prod.newSeaportAdapter(core, base.seaportRecipients, SEAPORT_ADAPTER_SALT, CREATE2_DEPLOYER);
             Prod.newStrategyAdapter(STRATEGY_ADAPTER_SALT, CREATE2_DEPLOYER);
         }
-        if (n >= 5) coin = _launch(base, coinAt, router);
-        IFeeRouter r = IFeeRouter(payable(router));
-        if (n >= 6) r.setEngine(core);
-        if (n >= 7) {
-            address[] memory who = new address[](1);
-            who[0] = base.creatorPayee;
-            uint32[] memory ppm = new uint32[](1);
-            ppm[0] = base.payeePpm;
-            r.setPayees(who, ppm);
-        }
-        if (n >= 8) startSplitAfterLaunch(base, router, coin);
+        if (n >= 4) coin = _launch(base, ICore(payable(core)).COIN(), core);
         vm.stopPrank();
         scriptMode = false;
     }
@@ -155,12 +143,6 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     function _assertDone(address core, Stage expectFrom) internal {
         Stage from = this.resume(deployer, base, core);
         assertEq(uint256(from), uint256(expectFrom), "stage found");
-        if (expectFrom == Stage.CoreOnly) {
-            // the run that sent the launch leaves the split start for the next run, after the launch is mined
-            assertEq(uint256(detectStage(base, core)), uint256(Stage.Setup), "only the split start is missing");
-            vm.warp(block.timestamp + 1 hours);
-            assertEq(uint256(this.resume(deployer, base, core)), uint256(Stage.Setup), "the second run");
-        }
         assertEq(uint256(detectStage(base, core)), uint256(Stage.Done));
         address coin = ICore(payable(core)).COIN();
         assertEq(IArtCoinsTokenV2(coin).admin(), owner, "the owner is the token admin");
@@ -169,65 +151,9 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         assertEq(list, "", "postflight is clean");
     }
 
-    /// the split start needs the mined launch time: a run that sends the launch leaves it for the next run (V2R-7). the
-    /// postflight of the first run warns about it, the second run, hours later, sets launchedAt plus the window exactly
-    function test_FIXED_resumeAfterTheCoreLeavesTheSplitStartToTheNextRun() public {
-        (address core,,) = _steps(4);
-        assertEq(uint256(this.stageOf(core)), uint256(Stage.CoreOnly));
-        assertEq(uint256(this.resume(deployer, base, core)), uint256(Stage.CoreOnly));
-        IFeeRouter r = IFeeRouter(payable(ICore(payable(core)).FEE_SOURCE()));
-        assertEq(r.splitStart(), 0, "the launch run does not guess the split start");
-        assertEq(uint256(detectStage(base, core)), uint256(Stage.Setup), "only the split start is missing");
-        (string memory first,) = _failed();
-        assertEq(first, "", "the pending split start is a warning, not a failure");
-        vm.warp(block.timestamp + 5 hours);
-        _assertDone(core, Stage.Setup);
-        (, IArtCoinsFactoryV2.DeploymentInfoV2 memory info) = _deployment(base.stack.factory, ICore(payable(core)).COIN());
-        assertEq(r.splitStart(), uint256(info.launchedAt) + base.sniperSeconds, "launch time plus the window, no margin");
-        assertLt(r.splitStart(), block.timestamp, "derived from the launch, not from the clock of the run");
-    }
-
-    /// V2R-7: the launch mined hours before the setup run: the split start is still the launch time plus the window
-    function test_FIXED_aLateRunSetsTheSplitStartFromTheMinedLaunch() public {
-        (address core, address coin, address router) = _steps(7);
-        (, IArtCoinsFactoryV2.DeploymentInfoV2 memory info) = _deployment(base.stack.factory, coin);
-        vm.warp(block.timestamp + 3 hours);
-        _assertDone(core, Stage.Setup);
-        assertEq(IFeeRouter(payable(router)).splitStart(), uint256(info.launchedAt) + base.sniperSeconds);
-    }
-
-    /// a split start that is not launch time plus the window fails the postflight and prints the difference
-    function test_FIXED_postflightFailsAWrongSplitStartAndNamesTheDifference() public {
-        (address core, address coin, address router) = _steps(7);
-        (, IArtCoinsFactoryV2.DeploymentInfoV2 memory info) = _deployment(base.stack.factory, coin);
-        uint256 want = uint256(info.launchedAt) + base.sniperSeconds;
-        string memory row = "router: split start is the launch time plus the anti sniper window, exactly";
-        vm.startPrank(deployer);
-        IFeeRouter(payable(router)).setSplitStart(uint64(want + 900));
-        vm.stopPrank();
-        postflightAs(base, core, deployer);
-        (string memory list,) = _failed();
-        assertEq(list, row);
-        for (uint256 i; i < rows.length; ++i) {
-            if (keccak256(bytes(rows[i].name)) == keccak256(bytes(row))) {
-                assertEq(
-                    rows[i].detail,
-                    string.concat(
-                        "splitStart ", vm.toString(want + 900), " want launchedAt plus window ", vm.toString(want), ", late by 900"
-                    )
-                );
-            }
-        }
-        vm.prank(deployer);
-        IFeeRouter(payable(router)).setSplitStart(uint64(want - 1));
-        postflightAs(base, core, deployer);
-        (list,) = _failed();
-        assertEq(list, row, "early fails too");
-    }
-
     /// a run that stopped right after the core: the lens is the next transaction, then the launch
     function test_resumeCreatesAMissingLensBeforeTheLaunch() public {
-        (address core,,) = _steps(4);
+        (address core,) = _steps(3);
         address lensAt = lensAddress(core);
         assertTrue(lensAt != address(0) && lensAt.code.length == 0, "no lens yet");
         _assertDone(core, Stage.CoreOnly);
@@ -237,7 +163,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     /// a run that stopped after the lens and before the launch finds the lens and leaves it as it is
     function test_resumeKeepsTheLensItFinds() public {
         lensEarly = true;
-        (address core,,) = _steps(4);
+        (address core,) = _steps(3);
         address lensAt = lensAddress(core);
         assertGt(lensAt.code.length, 0);
         bytes32 hash = lensAt.code.length == 0 ? bytes32(0) : keccak256(lensAt.code);
@@ -249,47 +175,35 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     /// because the address depends on the Core only
     function test_resumeCreatesTheLensAfterTheLaunchAndTheNonceMovedOn() public {
         skipLens = true;
-        (address core,,) = _steps(5);
+        (address core,) = _steps(4);
         address lensAt = lensAddress(core);
         assertEq(lensAt.code.length, 0);
-        _assertDone(core, Stage.Launched);
+        _assertDone(core, Stage.Done);
         assertGt(lensAt.code.length, 0);
     }
 
     /// a system launched without the adapters: the resume creates them at the addresses the Core already approved
     function test_resumeCreatesTheAdaptersAfterTheLaunch() public {
         skipAdapters = true;
-        (address core,,) = _steps(5);
+        (address core,) = _steps(4);
         address seaportAt = seaportAdapterAddress(core, base.seaportRecipients);
         address strategyAt = strategyAdapterAddress();
         assertEq(seaportAt.code.length + strategyAt.code.length, 0);
         assertTrue(ICore(payable(core)).allowedAdapter(seaportAt) && ICore(payable(core)).allowedAdapter(strategyAt));
-        _assertDone(core, Stage.Launched);
+        _assertDone(core, Stage.Done);
         assertGt(seaportAt.code.length, 0);
         assertGt(strategyAt.code.length, 0);
     }
 
     function test_resumeAfterTheLaunch() public {
-        (address core,,) = _steps(5);
-        assertEq(uint256(this.stageOf(core)), uint256(Stage.Launched));
-        _assertDone(core, Stage.Launched);
-    }
-
-    function test_resumeAfterTheEngine() public {
-        (address core,,) = _steps(6);
-        assertEq(uint256(this.stageOf(core)), uint256(Stage.Setup));
-        _assertDone(core, Stage.Setup);
-    }
-
-    function test_resumeAfterThePayees() public {
-        (address core,,) = _steps(7);
-        assertEq(uint256(this.stageOf(core)), uint256(Stage.Setup));
-        _assertDone(core, Stage.Setup);
+        (address core,) = _steps(4);
+        assertEq(uint256(this.stageOf(core)), uint256(Stage.Done));
+        _assertDone(core, Stage.Done);
     }
 
     /// a finished deploy: nothing is sent, the nonce does not move
     function test_resumeWhenDoneSendsNothing() public {
-        (address core,,) = _steps(8);
+        (address core,) = _steps(4);
         assertEq(uint256(this.stageOf(core)), uint256(Stage.Done));
         uint64 nonce = vm.getNonce(deployer);
         uint256 bal = deployer.balance;
@@ -305,7 +219,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         );
         this.resume(deployer, base, makeAddr("nothing"));
 
-        (address core,,) = _steps(4);
+        (address core,) = _steps(3);
         // a core built from another config
         LaunchConfig memory c = base;
         c.owner = creator;
@@ -334,20 +248,9 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         _assertDone(core, Stage.CoreOnly);
     }
 
-    /// after the launch the factory is no longer needed, but the router owner is
-    function test_aStrangerCannotSetUpTheRouter() public {
-        (address core,, address router) = _steps(5);
-        address stranger = makeAddr("stranger");
-        vm.deal(stranger, 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(NotRouterOwner.selector, deployer, stranger));
-        this.resume(stranger, base, core);
-        _assertDone(core, Stage.Launched);
-        assertEq(IFeeRouter(payable(router)).engine(), core);
-    }
-
     /// the launch step needs the deployer to still be the factory owner
     function test_resumeLaunchNeedsTheFactoryOwner() public {
-        (address core,,) = _steps(4);
+        (address core,) = _steps(3);
         address next = makeAddr("next factory owner");
         vm.prank(deployer);
         IArtCoinsFactoryV2Owner(address(FACTORY)).transferOwnership(next);
@@ -360,7 +263,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
             )
         );
         this.resume(deployer, base, core);
-        // the owner path is the owner's: after the launch the router steps need no factory
+        // the owner path is the owner's: it is the factory owner again
         vm.prank(next);
         IArtCoinsFactoryV2Owner(address(FACTORY)).transferOwnership(deployer);
         vm.prank(deployer);
@@ -371,7 +274,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     /// the factory floor of the protocol skim share is the owner command: the launch step names the failed row when it
     /// is above 362
     function test_resumeLaunchNeedsTheMinProtocolSkimShareAt362() public {
-        (address core,,) = _steps(4);
+        (address core,) = _steps(3);
         vm.prank(deployer);
         FACTORY.setMinProtocolSkimShareBps(1_000);
         vm.expectRevert(
@@ -387,8 +290,8 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     }
 
     /// S-6 of the old review, ported: the owner moved on after the launch. OWNER_CHANGED=1 says so
-    function test_resumeOwnerChangedFinishesTheRouterAndWarns() public {
-        (address core,,) = _steps(8);
+    function test_resumeOwnerChangedFinishesAndWarns() public {
+        (address core,) = _steps(4);
         _assertDone(core, Stage.Done);
         address next = makeAddr("resume.next");
         vm.startPrank(owner);
@@ -404,35 +307,13 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         assertEq(list, "", "postflight reports the handover as warnings only");
     }
 
-    /// the owner changed the router after the launch (new payee, locked): ROUTER_CHANGED=1 makes it Done and sends nothing
-    function test_routerChangedIsDoneWhateverItHolds() public {
-        (address core,, address router) = _steps(8);
-        address[] memory who = new address[](1);
-        who[0] = makeAddr("splitter");
-        uint32[] memory ppm = new uint32[](1);
-        ppm[0] = 100_000;
-        vm.startPrank(owner);
-        IFeeRouter(payable(router)).setPayees(who, ppm);
-        IFeeRouter(payable(router)).lock();
-        vm.stopPrank();
-        assertEq(uint256(this.stageOf(core)), uint256(Stage.Setup), "without the flag the payee looks unfinished");
-        routerFlag = true;
-        assertEq(uint256(this.stageOf(core)), uint256(Stage.Done));
-        uint64 nonce = vm.getNonce(deployer);
-        Stage from = this.resume(deployer, base, core);
-        assertEq(uint256(from), uint256(Stage.Done));
-        assertEq(vm.getNonce(deployer), nonce);
-        (address[] memory have,) = IFeeRouter(payable(router)).payees();
-        assertEq(have[0], who[0], "the owner's payee is not touched");
-    }
-
     function requireDeployerExt(address want, address got) external pure {
         _requireDeployer(want, got);
     }
 
     /// the core is on chain at the first resume point
     function test_theCoreExistsAtTheFirstResumePoint() public {
-        (address core,,) = _steps(4);
+        (address core,) = _steps(3);
         assertTrue(core.code.length != 0, "no core");
         _assertDone(core, Stage.CoreOnly);
     }
@@ -441,7 +322,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     /// is skipped and takes no second nonce, so the addresses of a rerun are the ones preflight predicts now
     function test_libraryOnlyThenRerunDeploy() public {
         _steps(1);
-        address someCore = vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 2);
+        address someCore = vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
         vm.expectRevert(
             abi.encodeWithSelector(CoreMismatch.selector, "no code at the core address, run Deploy instead")
         );
@@ -456,25 +337,32 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         assertEq(d.core, someCore, "the rerun lands where the preflight said");
     }
 
-    /// resume points 0b and 0c: the controller, then the router are on chain, the core is not. both are inert. no
-    /// resume, the way on is a rerun of Deploy (new controller, router, core)
-    function test_orphanControllerAndRouterAreInert() public {
-        (address core,, address router) = _steps(3);
+    /// resume point 0b: the controller is on chain, the core is not. it is inert. no resume, the way on is a rerun of
+    /// Deploy (new controller, core)
+    function test_orphanControllerIsInert() public {
+        (address core,) = _steps(2);
         assertEq(core.code.length, 0, "no core");
-        address controller = vm.computeCreateAddress(deployer, vm.getNonce(deployer) - 2);
+        address controller = vm.computeCreateAddress(deployer, vm.getNonce(deployer) - 1);
         assertEq(address(IControllerV1(controller).CORE()), core, "it points at the core that never came");
         assertEq(controller.balance, 0);
-        assertEq(IFeeRouter(payable(router)).engine(), address(0), "the router has no engine");
         vm.expectRevert(
             abi.encodeWithSelector(CoreMismatch.selector, "no code at the core address, run Deploy instead")
         );
         this.resume(deployer, base, core);
         // sending the saved core creation at the next nonce gives the predicted core, and Resume goes on from there
-        address coinAt = predictCoin(base, deployer, router);
         vm.startPrank(deployer);
         address c2 = address(
             Prod.newCore(
-                owner, coinAt, controller, base.stack, base.rateStart, base.settings, base.credit, launchAdapters(core, base)
+                owner,
+                buildConfig(base, owner, address(0)),
+                deployer,
+                controller,
+                base.payee,
+                base.stack,
+                base.rateStart,
+                base.settings,
+                base.credit,
+                launchAdapters(core, base)
             )
         );
         vm.stopPrank();
@@ -485,7 +373,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     /// the owner can call setSettings the moment the core exists: Resume does not finish a core whose settings are not
     /// the signed ones unless the operator says so
     function test_resumeRefusesChangedSettings() public {
-        (address core,,) = _steps(5);
+        (address core,) = _steps(4);
         Settings memory s = ICore(payable(core)).settings();
         s.saleFloorBps = 8_000;
         vm.prank(owner);
@@ -497,7 +385,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         // on purpose: the rest is sent, and postflight reads the difference as a warning
         changedFlag = true;
         Stage from = this.resume(deployer, base, core);
-        assertEq(uint256(from), uint256(Stage.Launched));
+        assertEq(uint256(from), uint256(Stage.Done));
         assertEq(uint256(detectStage(base, core)), uint256(Stage.Done));
     }
 

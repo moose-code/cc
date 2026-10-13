@@ -90,7 +90,7 @@ contract ReviewFlowCoreTest is Fixture {
         address lib = findLibrary(address(core).code);
         assertTrue(lib != address(0), "library found");
         // control: the same construction works while the library has code
-        ICore ok = Prod.newCore(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings);
+        ICore ok = _launchCore(address(ctl), lc.stack, lc.rateStart, lc.settings);
         assertEq(ok.settings().dropPerCreditBps, lc.settings.dropPerCreditBps, "control builds");
         vm.etch(lib, "");
         bool built;
@@ -106,7 +106,7 @@ contract ReviewFlowCoreTest is Fixture {
 
     /// @dev an external wrapper so `try` can catch a constructor revert of the artifact deploy
     function buildCore() external returns (ICore) {
-        return Prod.newCore(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings);
+        return _launchCore(address(ctl), lc.stack, lc.rateStart, lc.settings);
     }
 
     function _allMin() internal pure returns (Settings memory m) {
@@ -149,7 +149,8 @@ contract ReviewFlowCoreTest is Fixture {
             0.005 ether, // callerFee
             100 gwei, // callerMaxBaseFee
             10_000, // feeToBuybackBps
-            0 // feeToRedeemBurnBps (the sum with feeToBuybackBps is at most 10_000)
+            0, // feeToRedeemBurnBps (the sum with feeToBuybackBps is at most 10_000)
+            200_000 // payeePpm
         );
     }
 
@@ -184,12 +185,13 @@ contract ReviewFlowCoreTest is Fixture {
             assertEq(uint64(w1 >> 128), two[i].keeperFee, "the keeper fee sits at bits 128 to 191");
             assertEq(uint48(w1 >> 192), two[i].keeperMaxBaseFee, "the keeper base fee ceiling sits at bits 192 to 239");
             uint256 w2 = uint256(vm.load(address(core), bytes32(uint256(slot) + 2)));
-            assertEq(w2 >> 208, 0, "slot 2 top bits clear");
+            assertEq(w2 >> 232, 0, "slot 2 top bits clear");
             assertEq(uint64(w2), two[i].rateCap, "the rate cap sits at bits 0 to 63");
             assertEq(uint64(w2 >> 64), two[i].callerFee, "the caller fee sits at bits 64 to 127");
             assertEq(uint48(w2 >> 128), two[i].callerMaxBaseFee, "the caller base fee ceiling sits at bits 128 to 175");
             assertEq(uint16(w2 >> 176), two[i].feeToBuybackBps, "the fee buyback share sits at bits 176 to 191");
             assertEq(uint16(w2 >> 192), two[i].feeToRedeemBurnBps, "the fee redeem burn share sits at bits 192 to 207");
+            assertEq(uint24(w2 >> 208), two[i].payeePpm, "the payee share sits at bits 208 to 231");
         }
     }
 
@@ -234,7 +236,7 @@ contract ReviewFlowCoreTest is Fixture {
             s.balanceMode = 2;
             _setSettings(s);
             vm.warp(block.timestamp + (i == 0 ? 1 hours : 100 days));
-            core.skim();
+            core.book();
             uint256[] memory ids = _credits(seller, 1);
             vm.prank(seller);
             try core.sellForBalance(ids) {} catch {}
@@ -284,8 +286,7 @@ contract ReviewFlowCoreTest is Fixture {
     /// the rate down at the checkpoint, and a higher cap lets the climb go on
     function test_FIXED_rateCapIsAHardCeiling() public {
         // a pot of 100 eth leaves the clamp above every rate in this test
-        vm.deal(address(core), address(core).balance + 100 ether);
-        core.skim();
+        _addToPot(100 ether);
         Settings memory s = core.settings();
         assertEq(s.rateCap, 26_700_000_000_000_000, "launch value");
         vm.prank(owner);
@@ -304,8 +305,7 @@ contract ReviewFlowCoreTest is Fixture {
         _setSettings(s);
         assertEq(core.ethRate(), 5e13, "the rate follows the cap down");
         // the next checkpoint stores the bounded rate
-        vm.deal(address(core), address(core).balance + 1);
-        core.skim();
+        _addToPot(1);
         assertEq(core.rateAtCheckpoint(), 5e13);
         // a rate cap above the rate does not touch the rate
         s.rateCap = 2e14;
@@ -368,8 +368,8 @@ contract ReviewFlowCoreTest is Fixture {
     function test_dirtyCalldataWordsAreRefused() public {
         Settings memory base = core.settings();
         bytes memory good = abi.encodeCall(ICore.setSettings, (base));
-        assertEq(good.length, 4 + 23 * 32);
-        for (uint256 i; i < 23; ++i) {
+        assertEq(good.length, 4 + 24 * 32);
+        for (uint256 i; i < 24; ++i) {
             bytes memory bad = bytes.concat(good);
             uint256 off = 32 + 4 + i * 32;
             uint256 w;
@@ -394,11 +394,12 @@ contract ReviewFlowCoreTest is Fixture {
         assertFalse(ok3);
     }
 
-    /// gas of the hook's push into receive() after idle gaps, at launch settings and at the fastest climb and loosening
-    function test_receiveGasByGap() public {
+    /// gas of the book that counts the hook's push after idle gaps, at launch settings and at the fastest climb and
+    /// loosening. the push itself is the sender compare
+    function test_bookGasByGap() public {
         _skipSniperWindow();
         _fundPot(5 ether);
-        address hook = core.FEE_SOURCE();
+        address hook = core.HOOK();
         uint256[4] memory gaps = [uint256(1 hours), 5 days, 400 days, 36_500 days];
         for (uint256 j; j < 2; ++j) {
             if (j == 1) {
@@ -414,10 +415,11 @@ contract ReviewFlowCoreTest is Fixture {
                 vm.warp(block.timestamp + gaps[i]);
                 vm.deal(hook, 1 ether);
                 vm.prank(hook);
-                uint256 g = gasleft();
                 (bool ok,) = address(core).call{value: 0.01 ether}("");
-                g -= gasleft();
                 assertTrue(ok);
+                uint256 g = gasleft();
+                core.book();
+                g -= gasleft();
                 emit log_named_uint(j == 0 ? "launch settings, gap" : "fastest climb and loosening, gap", gaps[i]);
                 emit log_named_uint("gas", g);
                 vm.revertToState(snap);
@@ -482,7 +484,7 @@ contract ReviewFlowCoreTest is Fixture {
         s.redeemSlippageBps = 0;
         _setSettings(s);
         xt.mint(address(core), 1e22);
-        core.skim();
+        core.bookBalance();
         uint256 xBefore = core.balancePot();
         uint256[] memory ids = _credits(seller, 80);
         vm.prank(seller);

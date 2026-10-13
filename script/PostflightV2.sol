@@ -69,7 +69,7 @@ abstract contract PostflightV2 is SystemBuilder, Report {
     function _idLoad(string memory name) private {
         string memory j = vm.readFile(string.concat("out/", name, ".sol/", name, ".json"));
         uint256[] memory imm = new uint256[](0);
-        // an artifact without immutables (FeeRouter) has no such key
+        // an artifact without immutables has no such key
         string[] memory ids = vm.keyExistsJson(j, ".deployedBytecode.immutableReferences")
             ? vm.parseJsonKeys(j, ".deployedBytecode.immutableReferences")
             : new string[](0);
@@ -147,7 +147,7 @@ abstract contract PostflightV2 is SystemBuilder, Report {
     }
 
     /// @notice the keccak256 of the runtime code of the compiled artifact `name` (`Core`, `CoreLib`, `ControllerV1`,
-    /// `FeeRouter`, `CoreLens`, `SeaportBasicAdapter`, `CreditStrategyAdapter`) with the immutable slots and the library address slots zeroed, as read from `out/`
+    /// `CoreLens`, `SeaportBasicAdapter`, `CreditStrategyAdapter`) with the immutable slots and the library address slots zeroed, as read from `out/`
     function artifactHash(string memory name) internal returns (bytes32) {
         _idEnsure(name);
         return vm.envBytes32(_idKey(name, "HASH"));
@@ -264,13 +264,13 @@ abstract contract PostflightV2 is SystemBuilder, Report {
     }
 
     /// @notice the factory's `predictToken` through a staticcall that reports a failure instead of reverting
-    function _predict(LaunchConfig memory c, address sender, address router)
+    function _predict(LaunchConfig memory c, address sender, address core)
         internal
         view
         returns (bool ok, address coin)
     {
         bytes memory data =
-            abi.encodeCall(IArtCoinsFactoryV2.predictToken, (sender, buildConfig(c, c.owner, router)));
+            abi.encodeCall(IArtCoinsFactoryV2.predictToken, (sender, buildConfig(c, c.owner, core)));
         uint256 w;
         (ok, w) = _word(c.stack.factory, data);
         coin = address(uint160(w));
@@ -280,12 +280,6 @@ abstract contract PostflightV2 is SystemBuilder, Report {
     /// allowlist (COIN_CHANGED=1). a test overrides it
     function _coinChanged() internal view virtual returns (bool) {
         return vm.envOr("COIN_CHANGED", uint256(0)) == 1;
-    }
-
-    /// @notice the operator says the owner set, repointed, locked or handed over the router since launch
-    /// (ROUTER_CHANGED=1). a test overrides it
-    function _routerChanged() internal view virtual returns (bool) {
-        return vm.envOr("ROUTER_CHANGED", uint256(0)) == 1;
     }
 
     /// @notice the operator says `coin.lockRecipients()` was sent (RECIPIENTS_LOCKED=1): the lock row is a failure while
@@ -360,12 +354,11 @@ abstract contract PostflightV2 is SystemBuilder, Report {
             t.isPinned(c.stack.locker) && t.isPinned(c.stack.escrow),
             "isPinned(locker), isPinned(escrow)"
         );
-        address[10] memory off = [
+        address[9] memory off = [
             core,
-            c.stack.feeSource,
             c.owner,
             c.creator,
-            c.creatorPayee,
+            c.payee,
             c.stack.hook,
             c.stack.poolManager,
             c.stack.factory,
@@ -376,7 +369,7 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         for (uint256 i; i < off.length; ++i) {
             none = none && !t.isAllowed(off[i]);
         }
-        _soft(ch, "coin: allowlist holds none of core, router, owner, creator, payee, hook, factory, mev module, controller", none, "isAllowed", "COIN_CHANGED=1");
+        _soft(ch, "coin: allowlist holds none of core, owner, creator, payee, hook, factory, mev module, controller", none, "isAllowed", "COIN_CHANGED=1");
     }
 }
 
