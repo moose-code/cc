@@ -74,7 +74,9 @@ contract AdaptersTest is SeaportBase {
         vm.expectRevert(abi.encodeWithSelector(ISeaportBasicAdapter.RecipientNotAllowed.selector, keeper));
         this._priceExt(id, p);
 
-        // the offerer is paid by the order itself and needs no entry
+        // the offerer needs no entry, as the order's own payee or as an additional recipient
+        p.additionalRecipients[0] = AdditionalRecipient(5, p.offerer);
+        _price(id, p);
         p.additionalRecipients = new AdditionalRecipient[](0);
         _price(id, p);
     }
@@ -225,6 +227,13 @@ contract AdaptersTest is SeaportBase {
         vm.prank(owner);
         core.lockAdapters();
         assertTrue(core.adaptersLocked());
+        // the lock also freezes who a sweep can pay: adding a recipient reverts, removing works
+        vm.prank(owner);
+        vm.expectRevert(ISeaportBasicAdapter.Locked.selector);
+        sea.setAllowedRecipient(keeper, true);
+        vm.prank(owner);
+        sea.setAllowedRecipient(Mainnet.OPENSEA_FEE_COLLECTOR, false);
+        assertFalse(sea.allowedRecipient(Mainnet.OPENSEA_FEE_COLLECTOR));
         vm.prank(owner);
         core.removeAdapter(seaportAdapter);
         assertFalse(core.allowedAdapter(seaportAdapter));

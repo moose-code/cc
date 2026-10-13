@@ -7,12 +7,13 @@ import {BasicOrderParameters, BasicOrderType, ISeaport} from "../interfaces/ISea
 
 interface ICoreOwner {
     function owner() external view returns (address);
+    function adaptersLocked() external view returns (bool);
 }
 
 /// prices a Seaport 1.6 basic order (`fulfillBasicOrder_efficient_6GL6yc`) that sells one credit for native eth.
 /// `params` is `abi.encode(BasicOrderParameters)`. the order must be an open route (`ETH_TO_ERC721_FULL_OPEN` or
 /// `ETH_TO_ERC721_PARTIAL_OPEN`), which ignore the order's zone. the eth goes to the order's offerer and to the additional
-/// recipients, each of which must be allowlisted. `value` is the sum of every payout. the allowlist is set at
+/// recipients, each of which is the offerer or an allowlisted address. `value` is the sum of every payout. the allowlist is set at
 /// construction and by the owner of the Core. read only.
 contract SeaportBasicAdapter is IListingAdapter {
     error WrongToken();
@@ -23,6 +24,7 @@ contract SeaportBasicAdapter is IListingAdapter {
     error RestrictedOrder();
     error RecipientNotAllowed(address recipient);
     error OnlyCoreOwner();
+    error Locked();
 
     event RecipientSet(address indexed recipient, bool allowed);
 
@@ -41,9 +43,11 @@ contract SeaportBasicAdapter is IListingAdapter {
         }
     }
 
-    /// allows or removes a recipient of additional payouts. owner of the Core only
+    /// allows or removes a recipient of additional payouts. owner of the Core only. once the Core's adapters are locked,
+    /// adding a recipient reverts and removing stays allowed
     function setAllowedRecipient(address recipient, bool allowed) external {
         if (msg.sender != ICoreOwner(CORE).owner()) revert OnlyCoreOwner();
+        if (allowed && ICoreOwner(CORE).adaptersLocked()) revert Locked();
         allowedRecipient[recipient] = allowed;
         emit RecipientSet(recipient, allowed);
     }
@@ -63,7 +67,7 @@ contract SeaportBasicAdapter is IListingAdapter {
         value = p.considerationAmount;
         for (uint256 i; i < p.additionalRecipients.length; ++i) {
             address recipient = p.additionalRecipients[i].recipient;
-            if (!allowedRecipient[recipient]) revert RecipientNotAllowed(recipient);
+            if (recipient != p.offerer && !allowedRecipient[recipient]) revert RecipientNotAllowed(recipient);
             value += p.additionalRecipients[i].amount;
         }
         return (SEAPORT, value, abi.encodeCall(ISeaport.fulfillBasicOrder_efficient_6GL6yc, (p)));

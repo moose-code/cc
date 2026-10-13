@@ -76,7 +76,7 @@ abstract contract LaunchChecks is PostflightChecks {
     bytes32 internal constant BUILD_HASH_CORELIB = 0x92b74390048878681f0e59f4ea40ec7f567980c6c4884789923d477fada55617;
     bytes32 internal constant BUILD_HASH_CONTROLLER = 0x88a6db4ca1f0c528badb6264cf1f37a1516166722605b6fce6ce6e1d25ec6694;
     bytes32 internal constant BUILD_HASH_LENS = 0xb40852a65fcd5ea21a31c076c999f5f4afc6ab75c923349dfa78ae755567ade2;
-    bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x5e67d695e48b1d52a96ff9a2a3fc0a542208b23ed22f6a1677b24686ddf1a4eb;
+    bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
         0xf3f90cf635b4980c796657fd5f806d889188b06588d7be19ef171b1d648669f0;
@@ -140,6 +140,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _prePayee(c);
         _preOwner(c);
         _prePredictions(c, deployer);
+        _preSeaportRecipients(c, deployer);
         _preLive();
         _preSignoff(c, deployer);
     }
@@ -481,6 +482,37 @@ abstract contract LaunchChecks is PostflightChecks {
         );
     }
 
+    /// @dev the Seaport adapter takes the list at construction and the lock freezes additions, so an entry is a permanent
+    /// payout address. none may be zero, repeated, or an address of the system (Core, controller, owner, payee, stack)
+    function _preSeaportRecipients(LaunchConfig memory c, address deployer) private {
+        uint64 nonce = _controllerNonce(deployer);
+        Stack memory s = c.stack;
+        address[9] memory system = [
+            vm.computeCreateAddress(deployer, nonce + 1),
+            vm.computeCreateAddress(deployer, nonce),
+            c.owner,
+            c.payee,
+            s.poolManager,
+            s.hook,
+            s.factory,
+            s.locker,
+            s.escrow
+        ];
+        address[] memory r = c.seaportRecipients;
+        bool zero;
+        bool dup;
+        bool sys;
+        for (uint256 i; i < r.length; ++i) {
+            zero = zero || r[i] == address(0);
+            for (uint256 j; j < i; ++j) dup = dup || r[i] == r[j];
+            for (uint256 k; k < system.length; ++k) sys = sys || r[i] == system[k];
+        }
+        _check("seaport recipients: at least one", r.length != 0, vm.toString(r.length));
+        _check("seaport recipients: none is the zero address", !zero, "a zero entry pays nobody");
+        _check("seaport recipients: no duplicates", !dup, "each entry once");
+        _check("seaport recipients: none is the Core, controller, owner, payee or a stack address", !sys, "see the signoff list");
+    }
+
     /// @dev the hook, locker, mev module and escrow checked against each other and against the stack of the config
     function _preStack(LaunchConfig memory c) private {
         Stack memory s = c.stack;
@@ -768,6 +800,11 @@ abstract contract LaunchChecks is PostflightChecks {
             "signoff: payee (one address, owner replaces it later with setPayee)",
             string.concat(vm.toString(c.payee), " ppm ", vm.toString(c.settings.payeePpm), " of the fee income")
         );
+        string memory list;
+        for (uint256 i; i < c.seaportRecipients.length; ++i) {
+            list = string.concat(list, i == 0 ? "" : " ", vm.toString(c.seaportRecipients[i]));
+        }
+        _info("signoff: seaport recipients (permanent payout addresses once the adapters are locked)", list);
         _info(
             "signoff: payee share",
             "starts at the first book with income after the anti sniper window, the recipients are not locked by the deploy"

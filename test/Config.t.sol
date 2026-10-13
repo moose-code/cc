@@ -236,7 +236,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "");
         _print("preflight");
         // every launch input has a row: the count is part of the report
-        assertEq(rows.length, 119, "preflight rows: docs/RUNBOOK.md step 4");
+        assertEq(rows.length, 124, "preflight rows: docs/RUNBOOK.md step 4");
     }
 
     /// each pinned code hash has a row. appending one byte of code to a contract fails exactly its row
@@ -348,6 +348,43 @@ contract ConfigTest is Fixture {
         c.payee = makeAddr("plain account payee");
         _pre(c, d2);
         assertEq(_failedNames(), "", "an account without code accepts eth");
+    }
+
+    function test_preflightSeaportRecipients() public {
+        address d2 = _funded();
+        LaunchConfig memory c = lc;
+        address ok = makeAddr("seaport recipient");
+        c.seaportRecipients = new address[](2);
+        c.seaportRecipients[0] = ok;
+        c.seaportRecipients[1] = makeAddr("second seaport recipient");
+        _pre(c, d2);
+        assertEq(_failedNames(), "", "two distinct plain recipients pass");
+        c.seaportRecipients = new address[](0);
+        _pre(c, d2);
+        assertEq(_failedNames(), "seaport recipients: at least one");
+        c.seaportRecipients = new address[](1);
+        _pre(c, d2);
+        assertEq(_failedNames(), "seaport recipients: none is the zero address");
+        c.seaportRecipients = new address[](2);
+        c.seaportRecipients[0] = ok;
+        c.seaportRecipients[1] = ok;
+        _pre(c, d2);
+        assertEq(_failedNames(), "seaport recipients: no duplicates");
+        address[3] memory system = [c.owner, c.payee, c.stack.factory];
+        for (uint256 i; i < system.length; ++i) {
+            c.seaportRecipients = new address[](1);
+            c.seaportRecipients[0] = system[i];
+            _pre(c, d2);
+            assertEq(_failedNames(), "seaport recipients: none is the Core, controller, owner, payee or a stack address");
+        }
+        c.seaportRecipients = new address[](1);
+        c.seaportRecipients[0] = vm.computeCreateAddress(d2, vm.getNonce(d2) + 1);
+        _pre(c, d2);
+        assertEq(
+            _failedNames(),
+            "seaport recipients: none is the Core, controller, owner, payee or a stack address",
+            "the predicted Core"
+        );
     }
 
     function test_preflightFailures() public {

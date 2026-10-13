@@ -24,7 +24,7 @@ contract BuildIdentityTest is Fixture {
     uint256 internal constant CONTROLLER_RUNTIME = 15_699;
     uint256 internal constant LIB_RUNTIME = 16_765;
     uint256 internal constant LENS_RUNTIME = 10_065;
-    uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_391;
+    uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_558;
     uint256 internal constant STRATEGY_ADAPTER_RUNTIME = 508;
 
     function _json(string memory name) internal view returns (string memory) {
