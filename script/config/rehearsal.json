@@ -52,6 +52,17 @@
     "anchorHalfLife": 604800,
     "anchorMinCost": 100000000000000000
   },
+  "credit": {
+    "costToPotBps": 10000,
+    "chosenComposeOn": false,
+    "minCcToChoose": "0",
+    "saleOn": false,
+    "window": 14400,
+    "floorBps": 11000,
+    "startBps": 30000,
+    "scoreModule": "0x0000000000000000000000000000000000000000",
+    "refScore": 4330000
+  },
   "launch": {
     "supply": "1000000000000000000000000000",
     "startTick": -175000,

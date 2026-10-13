@@ -11,12 +11,15 @@ import {ScriptedController} from "../attackers/ScriptedController.sol";
 contract PostflightInputsTest is Fixture {
     /// @dev the arguments the creation transaction of the fixture core carried
     function _creation() internal view returns (bytes memory) {
-        return abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings);
+        return abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit);
     }
 
-    /// @dev what the printed arguments were before the fix: every mutable member read from the live core
+    /// @dev what the printed arguments were before the fix: every mutable member read from the live core. the credit
+    /// settings are the signed launch ones, which this test does not change
     function _oldLiveArgs() internal view returns (bytes memory) {
-        return abi.encode(core.owner(), address(coin), core.controller(), lc.stack, core.RATE_START(), core.settings());
+        return abi.encode(
+            core.owner(), address(coin), core.controller(), lc.stack, core.RATE_START(), core.settings(), lc.credit
+        );
     }
 
     function test_FIXED_A02_verifyInputsDoNotChangeAfterSettingsOrControllerChange() public {

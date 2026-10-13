@@ -346,8 +346,12 @@ abstract contract InvariantFixture is Fixture {
         s[n++] = HandlerBase.warp.selector;
         s[n++] = HandlerBase.roll.selector;
         s[n++] = HandlerBase.compose.selector;
+        s[n++] = HandlerBase.composeChosen.selector;
         s[n++] = HandlerSale.buy.selector;
         s[n++] = HandlerSale.buy.selector;
+        s[n++] = HandlerSale.buyCredit.selector;
+        s[n++] = HandlerSale.buyCredit.selector;
+        s[n++] = HandlerSale.buyCredits.selector;
         s[n++] = HandlerBase.buyback.selector;
         s[n++] = HandlerBase.skim.selector;
         s[n++] = HandlerBase.donate.selector;
@@ -361,7 +365,6 @@ abstract contract InvariantFixture is Fixture {
         // the exit module is set in the phase 2 suites before the run starts, so the exit actions are listed only there
         if (phase2) {
             s[n++] = HandlerBase.sellForExit.selector;
-            s[n++] = HandlerBase.composeExit.selector;
             s[n++] = HandlerBase.exitStatement.selector;
             s[n++] = HandlerBase.moduleMode.selector;
         }
@@ -382,6 +385,7 @@ abstract contract InvariantFixture is Fixture {
             s[n++] = HandlerOwner.repoint.selector;
             s[n++] = HandlerOwner.rescueNft.selector;
             s[n++] = HandlerOwner.migrate.selector;
+            s[n++] = HandlerOwner.creditSettings.selector;
             if (phase2) s[n++] = HandlerOwner.replaceModule.selector;
         }
         bytes4[] memory sel = new bytes4[](n);

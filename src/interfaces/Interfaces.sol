@@ -200,6 +200,37 @@ struct Sale {
     uint128 anchorMinCost;
 }
 
+/// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
+/// window, chosen composition and the rating reference. owner adjustable afterwards, so the launch rules only check
+/// bounds (`src/lib/CreditBounds.sol`). the Core reads `costToPotBps`, `chosenComposeOn` and `minCcToChoose`; the
+/// controller reads `saleOn`, `window`, `floorBps`, `startBps`, `scoreModule` and `refScore`
+struct Credit {
+    // core
+    /// share of credit sale proceeds routed to the buying pot, bps. the rest funds the coin buyback. 0 to 10_000
+    uint16 costToPotBps;
+    /// whether a caller may name the 80 credits and the format of a compose through `composeChosen`
+    bool chosenComposeOn;
+    /// least coin balance a caller of `composeChosen` must hold
+    uint96 minCcToChoose;
+    // controller
+    /// whether pile credits are for sale from acquisition and compose waits for a credit's window to pass
+    bool saleOn;
+    /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
+    /// take it. 1 minute to 30 days
+    uint32 window;
+    /// the credit sale floor over the highest of the credit's cost, its exit token baseline and the current eth bid,
+    /// bps. 10_000 to 40_000
+    uint16 floorBps;
+    /// the credit sale start price over the floor, bps. 10_000 to 200_000
+    uint32 startBps;
+    /// the module read for a credit's score in the exit token baseline, through `scoreOf(uint256)`. zero gives a zero
+    /// baseline
+    address scoreModule;
+    /// the per-credit score at which `80 * refScore` equals a statement's reference denominator, in ten-thousandths of
+    /// a point. 1 to 8_000_000
+    uint32 refScore;
+}
+
 /// the artcoins stack a launch runs on. a deploy input of the Core, so a new artcoins version needs no code change.
 /// `feeSource` (the fee router) is the only address whose eth the Core books as fees. the rest feed the pool key and the
 /// forbidden targets
@@ -278,6 +309,23 @@ library Mainnet {
             floorBps: 10_000,
             anchorHalfLife: 7 days,
             anchorMinCost: 0.1 ether
+        });
+    }
+
+    /// the launch credit settings: the credit sale is off, its window is 4 hours, the floor is 110 percent and the
+    /// start 300 percent of the floor, the score module is unset, the reference per-credit score is the launch average,
+    /// the whole credit cost funds the pot, and chosen composition is off with no coin balance required
+    function defaultCredit() internal pure returns (Credit memory) {
+        return Credit({
+            costToPotBps: 10_000,
+            chosenComposeOn: false,
+            minCcToChoose: 0,
+            saleOn: false,
+            window: 4 hours,
+            floorBps: 11_000,
+            startBps: 30_000,
+            scoreModule: address(0),
+            refScore: 4_330_000
         });
     }
 

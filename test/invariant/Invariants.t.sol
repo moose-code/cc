@@ -64,7 +64,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 1. eth leaves the core only as a credit purchase within the ceiling, a `buyListing` payment within the bid less the
-    /// cost, keeperFee and keeperMaxBaseFee, the caller payment of `compose`, `composeExit` and `exitStatement` within callerFee,
+    /// cost, keeperFee and keeperMaxBaseFee, the caller payment of `compose`, `composeChosen` and `exitStatement` within callerFee,
     /// callerMaxBaseFee and the pot, a buyback slice (the swap input plus the payment to the caller), a refund of
     /// overpayment, or a migration to the successor. every action's balance change is matched to those flows, measured at the
     /// recipients, against the settings in force at that moment (the owner changes them throughout). the inflows are the
@@ -255,7 +255,7 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// 13. the four one way locks (controller, exit module, targets, successor) never come undone and the setter of a
     /// locked door always refuses. the retired flag set by the first `migrate` never clears, and from then on the six
-    /// doors (`sellForEth`, `buyListing`, `adopt`, `compose`, `composeExit`, `sellForExitToken`) revert `Retired`. every
+    /// doors (`sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen`, `sellForExitToken`) revert `Retired`. every
     /// former owner has no power over the core or over the controller's sale settings, and the core's owner is the one
     /// the handler last saw accept. the handler checks each of these again on every call to `lockCheck` and
     /// `formerOwnersCheck`.
@@ -279,8 +279,8 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 14. no exit module ever called the core, or the selling controller, successfully from inside an exit. the hostile
-    /// module's callouts are compose, composeExit, skim, buyback, buybackExit, exitStatement, adopt, sellForEth,
-    /// buyListing, sellTo and the selling controller's sell. every one of them
+    /// module's callouts are compose, skim, buyback, releaseRedeemBurn, exitStatement, adopt, sellForEth,
+    /// buyListing, sellTo and sellForExitToken, and the selling controller's sell. every one of them
     /// reverts while the core is inside `exitStatement`, whatever the module does with its gas
     function invariant_14_noCallFromInsideAnExitEverWorked() public view {
         uint256 n = handler.moduleEverCount();
@@ -371,12 +371,17 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(owned.length, piled.length + looseCount, "an owned credit is counted twice or missed");
         if (!core.retired()) _adoptable(loose, looseCount);
         uint256 everPiled = handler.everPiledCount();
+        uint256 inPileNow;
         for (uint256 i; i < everPiled; ++i) {
             uint256 id = handler.everPiled(i);
-            if (_creditOwner(id) == address(core)) continue;
             (bool inPile,,) = core.creditInfo(id);
+            if (inPile) inPileNow++;
+            if (_creditOwner(id) == address(core)) continue;
             assertTrue(!inPile, "a credit the core no longer owns still has a pile record");
         }
+        // every credit the core marks as in the pile is reached by the pile walk, so the count of in-pile credits is
+        // exactly the pile size
+        assertEq(inPileNow, core.pileSize(), "the count of in-pile credits differs from the pile size");
     }
 
     /// the owner of a credit, zero once the credit was burned into a statement
@@ -639,19 +644,10 @@ abstract contract InvariantsBase is InvariantFixture {
                          HANDLER SELF CHECKS
     //////////////////////////////////////////////////////////////*/
 
-    /// dispatches one handler action by number. the arguments mean what the action needs.
+    /// dispatches one handler action by number. the arguments mean what the action needs. the numbering follows the
+    /// handler's name and counter arrays
     function _act(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) internal virtual {
-        a = a % 39;
-        if (a == 38) return handler.releaseRedeem(w, x);
-        if (a == 37) return handler.refreshUnit(w);
-        if (a == 36) return handler.pause(w, x);
-        if (a == 35) return handler.adopt(w, x, y);
-        if (a == 34) return handler.migrate(w, x);
-        if (a == 33) return handler.rescueNft(w, x);
-        if (a == 31) return handler.flush(w, x);
-        if (a == 32) return handler.repoint(w, x);
-        if (a == 25) return handler.buy(w, x, y, z);
-        a = a % 25;
+        a = a % handler.actionCount();
         if (a == 0) handler.buyCoin(w, x, y);
         else if (a == 1) handler.sellCoin(w, x, y);
         else if (a == 2) handler.sellForEth(w, x, y, z);
@@ -667,16 +663,32 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 12) handler.controllerSwap(w);
         else if (a == 13) handler.probeController(w);
         else if (a == 14) handler.sellForExit(w, x, y);
-        else if (a == 15) handler.composeExit(w, x);
-        else if (a == 16) handler.exitStatement(w, x);
-        else if (a == 17) handler.buybackExit(w, x);
-        else if (a == 18) handler.moduleMode(w);
-        else if (a == 19) handler.walletMove(w, x);
-        else if (a == 20) handler.setSettings(w, x);
-        else if (a == 21) handler.setSettingsInvalid(w, x);
-        else if (a == 22) handler.setRate(w, x);
-        else if (a == 23) handler.ownerMisc(w, x);
-        else handler.replaceModule(w, x);
+        else if (a == 15) handler.exitStatement(w, x);
+        else if (a == 16) handler.moduleMode(w);
+        else if (a == 17) handler.walletMove(w, x);
+        else if (a == 18) handler.setSettings(w, x);
+        else if (a == 19) handler.setSettingsInvalid(w, x);
+        else if (a == 20) handler.setRate(w, x);
+        else if (a == 21) handler.ownerMisc(w, x);
+        else if (a == 22) handler.replaceModule(w, x);
+        else if (a == 23) handler.buy(w, x, y, z);
+        else if (a == 24) handler.ownerSell(w, x, y, z);
+        else if (a == 25) handler.saleSettings(w, x);
+        else if (a == 26) handler.hostileOwner(w, x);
+        else if (a == 27) handler.lockDoor(w, x);
+        else if (a == 28) handler.handover(w, x);
+        else if (a == 29) handler.flush(w, x);
+        else if (a == 30) handler.repoint(w, x);
+        else if (a == 31) handler.rescueNft(w, x);
+        else if (a == 32) handler.migrate(w, x);
+        else if (a == 33) handler.adopt(w, x, y);
+        else if (a == 34) handler.pause(w, x);
+        else if (a == 35) handler.refreshUnit(w);
+        else if (a == 36) handler.releaseRedeem(w, x);
+        else if (a == 37) handler.buyCredit(w, x, y);
+        else if (a == 38) handler.buyCredits(w, x, y);
+        else if (a == 39) handler.composeChosen(w, x);
+        else handler.creditSettings(w, x);
     }
 
     /// no action may revert, whatever the inputs. a reverting handler loses its ghost writes and hides violations.
@@ -724,12 +736,12 @@ abstract contract InvariantsBase is InvariantFixture {
     function test_aRetiredCoreRefusesTheSixDoorActions() public virtual {
         for (uint256 i; i < 300 && !handler.gRetired(); ++i) {
             uint256 s = uint256(keccak256(abi.encode("retire", i)));
-            _act(34, s, s >> 8, 0, 0);
+            _act(32, s, s >> 8, 0, 0);
         }
         assertTrue(handler.gRetired(), "the handler never migrated");
         assertTrue(core.retired(), "the core is not retired");
-        // sellForEth, listingStrategy, listingHostile, compose, adopt, then sellForExit and composeExit in phase 2
-        uint8[7] memory doors = [2, 3, 4, 7, 35, 14, 15];
+        // sellForEth, listingStrategy, listingHostile, compose, adopt, composeChosen, then sellForExit in phase 2
+        uint8[7] memory doors = [2, 3, 4, 7, 33, 39, 14];
         for (uint256 k; k < doors.length; ++k) {
             if (!_available(doors[k])) continue;
             assertTrue(_try(doors[k], 40), string.concat("no refusal checked: ", handler.actionName(doors[k])));
@@ -748,16 +760,17 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     function _available(uint256 a) internal view returns (bool) {
-        if (a == 36) return false;
-        // 15 (composeExit) is removed: one pile, one compose; 17 (buybackExit) is removed: the exit token dutch
-        // auction no longer exists, redeemed exit token goes to xPot. both actions are kept as no ops for index
-        // stability and never succeed
-        if (a == 15 || a == 17) return false;
+        // pause and composeChosen are exercised by their own tests, not by test_everyActionSucceeds (a chosen compose
+        // needs a fresh page of 80 pile credits, which its own test builds)
+        if (a == 34 || a == 39) return false;
         // refreshUnit reads the module, so it only lands in phase 2
-        if (a == 37) return handler.phase2();
-        if (a >= 31 || a == 25) return true;
-        if (a >= 26) return _saleSuite();
-        if ((a >= 14 && a <= 18 || a == 24) && !handler.phase2()) return false;
+        if (a == 35) return handler.phase2();
+        // the sale and owner door actions run only in the suites that list them
+        if (a >= 24 && a <= 28) return _saleSuite();
+        // flush through creditSettings, and buy, are available in every suite
+        if (a >= 29 || a == 23) return true;
+        // the exit actions and the module replacement need phase 2
+        if ((a >= 14 && a <= 16 || a == 22) && !handler.phase2()) return false;
         if (a == 12 && !handler.canSwapController()) return false;
         return true;
     }
@@ -775,7 +788,7 @@ abstract contract InvariantsBase is InvariantFixture {
         // plain actions
         _try(0, 20);
         _try(1, 20);
-        assertTrue(_try(19, 20), "no taxed side pool buy");
+        assertTrue(_try(17, 20), "no taxed side pool buy");
         _try(5, 5);
         _try(6, 5);
         _try(9, 5);
@@ -783,7 +796,7 @@ abstract contract InvariantsBase is InvariantFixture {
         _try(11, 5);
         _try(13, 5);
         // credits in, so the eth pile reaches 80
-        assertTrue(_try(35, 40), "no adopt");
+        assertTrue(_try(33, 40), "no adopt");
         _try(2, 40);
         _try(2, 40);
         _try(2, 40);
@@ -809,26 +822,70 @@ abstract contract InvariantsBase is InvariantFixture {
         // (5e-5 at the lower end of the measured p).
         assertTrue(_try(7, 400), "compose never succeeded");
         // the statement sale through the controller
-        assertTrue(_try(25, 80), "no sale of a held statement");
+        assertTrue(_try(23, 80), "no sale of a held statement");
         if (handler.phase2()) _phase2Smoke();
         // buyback needs buybackDelay blocks after the last one
         vm.roll(block.number + 200);
         assertTrue(_try(8, 60), "no buyback");
+        _creditSmoke();
         _ownerSmoke();
         _routerSmoke();
+    }
+
+    /// the owner's credit settings and the credit sale window. the real controller is put back in force first, so the
+    /// core takes the controller's sellCreditTo, then the sale is turned on and a page is refilled for the buyers.
+    /// chosen composition is covered by its own test, which builds the page of 80 it needs
+    function _creditSmoke() internal {
+        if (core.controller() != address(ctl) && !core.controllerLocked()) {
+            vm.prank(handler.owner());
+            core.setController(address(ctl));
+        }
+        assertTrue(_try(40, 20), "no credit setting");
+        vm.prank(handler.owner());
+        ctl.setCreditSaleOn(true);
+        for (uint256 i; i < 20 && core.pileSize() < 5; ++i) {
+            _try(2, 10);
+        }
+        assertTrue(_try(37, 40), "no credit buy");
+        assertTrue(_try(38, 40), "no credit batch buy");
+    }
+
+    /// a chosen compose: the owner turns it on, a page of 80 pile credits is built with the sale off (so the window is
+    /// trivially satisfied), and the oldest 80 are composed into a statement. runs in every concrete suite
+    function test_composeChosenComposesAPage() public {
+        if (core.controller() != address(ctl) && !core.controllerLocked()) {
+            vm.prank(handler.owner());
+            core.setController(address(ctl));
+        }
+        if (ctl.creditSaleOn()) {
+            vm.prank(handler.owner());
+            ctl.setCreditSaleOn(false);
+        }
+        vm.startPrank(handler.owner());
+        core.setChosenComposeOn(true);
+        core.setMinCcToChoose(0);
+        vm.stopPrank();
+        for (uint256 i; i < 40 && core.pileSize() < 80; ++i) {
+            _try(2, 10);
+        }
+        assertGe(core.pileSize(), 80, "the pile did not reach 80 for the chosen compose");
+        assertTrue(_try(39, 10), "chosen compose never succeeded");
+        for (uint256 i = 1; i < handler.violationCount(); ++i) {
+            assertEq(handler.viol(i), 0, handler.violMsg(i));
+        }
     }
 
     /// the router actions: flushes with the core as engine, then the router owner points the engine at every kind of
     /// target (the core, an engine that takes eth, one that refuses it, bad addresses), flushes against each, swaps keep
     /// working with an engine that refuses, and the engine goes back to the core
     function _routerSmoke() internal {
-        assertTrue(_try(31, 20), "no flush");
+        assertTrue(_try(29, 20), "no flush");
         for (uint256 m; m < 6; ++m) {
             handler.repoint(m + 6 * 7, m);
             handler.flush(m, 0);
             handler.buyCoin(m, 1, 0);
         }
-        assertTrue(_try(32, 20), "no repoint");
+        assertTrue(_try(30, 20), "no repoint");
         handler.repoint(0, 0);
         assertEq(feeRouter.engine(), address(core), "the engine is back at the core");
         handler.flush(1, 0);
@@ -836,16 +893,16 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// the owner's calls: valid settings across the bounds, refused ones, the rate and the other doors
     function _ownerSmoke() internal {
-        assertTrue(_try(20, 20), "no settings change");
-        assertTrue(_try(21, 20), "no refused settings");
-        assertTrue(_try(22, 20), "no setRate");
-        assertTrue(_try(23, 20), "no owner door");
-        assertTrue(_try(38, 20), "no reserve release");
-        assertTrue(_try(33, 60), "no rescue of an NFT");
-        assertTrue(_try(34, 120), "no migration");
+        assertTrue(_try(18, 20), "no settings change");
+        assertTrue(_try(19, 20), "no refused settings");
+        assertTrue(_try(20, 20), "no setRate");
+        assertTrue(_try(21, 20), "no owner door");
+        assertTrue(_try(36, 20), "no reserve release");
+        assertTrue(_try(31, 60), "no rescue of an NFT");
+        assertTrue(_try(32, 120), "no migration");
         // the books keep working under the new settings, whatever they are
         for (uint256 i; i < 6; ++i) {
-            _try(20, 5);
+            _try(18, 5);
             _try(5, 5);
             _try(2, 5);
         }
@@ -855,17 +912,17 @@ abstract contract InvariantsBase is InvariantFixture {
         // an eth lane statement is redeemable once its asking price falls to its cost; the long warp takes every held
         // statement there
         vm.warp(block.timestamp + 160 hours);
-        assertTrue(_try(16, 80), "no exit");
+        assertTrue(_try(15, 80), "no exit");
         assertTrue(_try(14, 60), "no exit token sale");
         _try(14, 60);
         // the exit bid credits sit in the single pile and compose through the regular compose, proven in _smoke
-        assertTrue(_try(18, 20), "no module mode");
+        assertTrue(_try(16, 20), "no module mode");
         // the owner replaces the exit module: a new one, the same one with a new unit, and the refusals
-        assertTrue(_try(24, 40), "no module replacement");
+        assertTrue(_try(22, 40), "no module replacement");
         for (uint256 i; i < 8; ++i) {
             handler.replaceModule(i * 7919 + 1, i);
         }
-        assertTrue(_try(37, 20), "no unit refresh");
+        assertTrue(_try(35, 20), "no unit refresh");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -948,7 +1005,7 @@ contract InvariantsPhase1Window is InvariantsBase {
         _try(10, 5);
         assertTrue(_try(7, 80), "no compose inside the window");
         // statements composed inside the window are for sale at once
-        assertTrue(_try(25, 80), "no sale inside the window");
+        assertTrue(_try(23, 80), "no sale inside the window");
         for (uint256 i; i < 5; ++i) {
             _try(0, 10);
         }

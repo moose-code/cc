@@ -75,7 +75,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0xe421b6c5114eb6605b739036aafa4c9aa1a40c9df4bda65f3a0f08485bf3438f;
     bytes32 internal constant BUILD_HASH_CORELIB = 0xf5916c265b20cb08879aca2b840911affa95db55d6bafcc36f6b9c8580a9b272;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x4a45cce138f6ed8fe34539293e61c78f6de69861124036b83974a6686bbbc272;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xa9d3de885181aacc186fe8830ed57779300ae593d0f576baaad3b5de049a59cd;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0x5aac42605b463b8938153f064736e5f4ae6f7d4f0ad15acf23221380ffd88555;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
@@ -200,6 +200,12 @@ abstract contract LaunchChecks is PostflightChecks {
             "warn: sale floor below the core hard floor",
             c.sale.floorBps >= c.settings.saleFloorBps,
             "the core takes no sale below saleFloorBps, so the lower asking price is never reached"
+        );
+        bytes32 badCredit = creditViolation(c);
+        _check(
+            "credit settings inside the bounds",
+            badCredit == 0,
+            badCredit == 0 ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps refScore" : string(abi.encodePacked("out of bounds: ", badCredit))
         );
         _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);
     }
@@ -890,6 +896,34 @@ abstract contract LaunchChecks is PostflightChecks {
                 "s, the anchor moves on statements costing at least ",
                 vm.toString(c.sale.anchorMinCost),
                 " wei"
+            )
+        );
+        _info(
+            "signoff: credit sale",
+            string.concat(
+                "sale ",
+                c.credit.saleOn ? "on" : "off",
+                " window ",
+                vm.toString(c.credit.window),
+                "s floor ",
+                vm.toString(c.credit.floorBps),
+                " start ",
+                vm.toString(c.credit.startBps),
+                " bps, cost to pot ",
+                vm.toString(c.credit.costToPotBps),
+                " bps, score module ",
+                vm.toString(c.credit.scoreModule),
+                " refScore ",
+                vm.toString(c.credit.refScore)
+            )
+        );
+        _info(
+            "signoff: chosen composition",
+            string.concat(
+                "chosen compose ",
+                c.credit.chosenComposeOn ? "on" : "off",
+                " min coin to choose ",
+                vm.toString(uint256(c.credit.minCcToChoose))
             )
         );
         _info("signoff: settings are adjustable", "the owner can change every setting at once after launch");

@@ -202,5 +202,6 @@ abstract contract SystemDeployer is LaunchChecks {
         if (!rateInBounds(c)) revert ConfigUnset("rateStart");
         if (settingsViolation(c) != 0) revert ConfigUnset("settings");
         if (saleViolation(c) != 0) revert ConfigUnset("sale");
+        if (creditViolation(c) != 0) revert ConfigUnset("credit");
     }
 }

@@ -124,7 +124,7 @@ contract GasCapTest is SeaportBase {
     }
 
     function test_gas_deploy_2_controller() public {
-        bytes memory args = abi.encode(address(core), lc.sale);
+        bytes memory args = abi.encode(address(core), lc.sale, lc.credit);
         bytes memory code = bytes.concat(vm.getCode("ControllerV1.sol:ControllerV1"), args);
         _cool(address(this));
         uint256 g = gasleft();
@@ -135,7 +135,7 @@ contract GasCapTest is SeaportBase {
 
     /// @dev tx 3, a second Core
     function test_gas_deploy_3_core() public {
-        bytes memory args = abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings);
+        bytes memory args = abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit);
         bytes memory code = bytes.concat(vm.getCode("Core.sol:Core"), args);
         _cool(address(this));
         uint256 g = gasleft();

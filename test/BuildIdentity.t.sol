@@ -21,7 +21,7 @@ import {ICore} from "../src/interfaces/ICore.sol";
 /// two library functions the abi does not list are pinned to the artifact selectors below.
 contract BuildIdentityTest is Fixture {
     uint256 internal constant CORE_RUNTIME = 18_481;
-    uint256 internal constant CONTROLLER_RUNTIME = 15_829;
+    uint256 internal constant CONTROLLER_RUNTIME = 15_837;
     uint256 internal constant LIB_RUNTIME = 16_464;
     uint256 internal constant LENS_RUNTIME = 10_866;
 

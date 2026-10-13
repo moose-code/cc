@@ -5,6 +5,17 @@ pragma solidity ^0.8.28;
 import {Settings} from "./Interfaces.sol";
 
 interface ICore {
+    struct Credit {
+        uint16 costToPotBps;
+        bool chosenComposeOn;
+        uint96 minCcToChoose;
+        bool saleOn;
+        uint32 window;
+        uint16 floorBps;
+        uint32 startBps;
+        address scoreModule;
+        uint32 refScore;
+    }
 
     error AboveCeiling();
     error AlreadyOwned();

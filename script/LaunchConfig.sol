@@ -2,8 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {CommonBase} from "forge-std/Base.sol";
-import {Stack, Settings, Sale, Mainnet, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
+import {Stack, Settings, Sale, Credit, Mainnet, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
+import {CreditBounds} from "../src/lib/CreditBounds.sol";
 
 // the `constantsHash()` the live v2 stack reports (hook, factory, locker, escrow, mev module and the rest). preflight
 // requires it of the hook and of the other four members the config names
@@ -56,6 +57,9 @@ struct LaunchConfig {
     Settings settings;
     /// the sale settings of the controller at launch (its constructor argument). owner adjustable afterwards
     Sale sale;
+    /// the credit settings of the Core and the controller at launch (their constructor argument). owner adjustable
+    /// afterwards
+    Credit credit;
     // launch parameters
     uint256 supply;
     int24 startTick;
@@ -109,6 +113,7 @@ abstract contract ConfigReader is CommonBase {
         c.rateStart = 8_900_000_000_000_000;
         c.settings = Mainnet.defaultSettings();
         c.sale = Mainnet.defaultSale();
+        c.credit = Mainnet.defaultCredit();
         c.supply = 1_000_000_000e18;
         c.startTick = -175_000;
         c.positionLower = -175_000;
@@ -153,6 +158,7 @@ abstract contract ConfigReader is CommonBase {
         c.rateStart = vm.parseJsonUint(j, ".rateStart");
         _loadSettings(c, j);
         _loadSale(c, j);
+        _loadCredit(c, j);
         _loadLaunch(c, j);
         // the overrides are optional, a missing key means false
         c.allowBounty = _flag(j, ".overrides.bounty");
@@ -201,6 +207,20 @@ abstract contract ConfigReader is CommonBase {
         });
     }
 
+    function _loadCredit(LaunchConfig memory c, string memory j) private pure {
+        c.credit = Credit({
+            costToPotBps: _u16(j, ".credit.costToPotBps"),
+            chosenComposeOn: vm.parseJsonBool(j, ".credit.chosenComposeOn"),
+            minCcToChoose: _u96(j, ".credit.minCcToChoose"),
+            saleOn: vm.parseJsonBool(j, ".credit.saleOn"),
+            window: _u32(j, ".credit.window"),
+            floorBps: _u16(j, ".credit.floorBps"),
+            startBps: _u32(j, ".credit.startBps"),
+            scoreModule: vm.parseJsonAddress(j, ".credit.scoreModule"),
+            refScore: _u32(j, ".credit.refScore")
+        });
+    }
+
     function _loadLaunch(LaunchConfig memory c, string memory j) private pure {
         // the supply is a decimal string, it does not fit a json number
         c.supply = vm.parseJsonUint(j, ".launch.supply");
@@ -239,6 +259,11 @@ abstract contract ConfigReader is CommonBase {
     function _u32(string memory j, string memory key) private pure returns (uint32) {
         // forge-lint: disable-next-line(unsafe-typecast)
         return uint32(_uint(j, key, type(uint32).max));
+    }
+
+    function _u96(string memory j, string memory key) private pure returns (uint96) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint96(_uint(j, key, type(uint96).max));
     }
 
     function _u128(string memory j, string memory key) private pure returns (uint128) {
@@ -300,5 +325,11 @@ abstract contract ConfigReader is CommonBase {
     /// @notice the name of the first launch setting outside the bounds the Core enforces, zero when all are inside
     function settingsViolation(LaunchConfig memory c) internal pure returns (bytes32) {
         return SettingsBounds.firstViolation(c.settings);
+    }
+
+    /// @notice the name of the first launch credit setting outside the bounds the Core and the controller enforce,
+    /// zero when all are inside
+    function creditViolation(LaunchConfig memory c) internal pure returns (bytes32) {
+        return CreditBounds.firstViolation(c.credit);
     }
 }

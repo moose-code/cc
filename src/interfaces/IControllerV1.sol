@@ -6,6 +6,18 @@ pragma solidity ^0.8.28;
 interface IControllerV1 {
     type Currency is address;
 
+    struct Credit {
+        uint16 costToPotBps;
+        bool chosenComposeOn;
+        uint96 minCcToChoose;
+        bool saleOn;
+        uint32 window;
+        uint16 floorBps;
+        uint32 startBps;
+        address scoreModule;
+        uint32 refScore;
+    }
+
     struct PoolKey {
         Currency currency0;
         Currency currency1;

@@ -138,10 +138,10 @@ abstract contract PostflightChecks is PostflightPool {
     }
 
     /// @notice the constructor arguments of the Core as its creation transaction carried them, in the encoding etherscan
-    /// wants for verification: `(owner, coin, controller, stack, rateStart, settings)`. built only from the signed launch
-    /// config and the first controller: the original owner `c.owner`, `c.stack`, `c.rateStart` and `c.settings`. the coin
-    /// is the Core immutable `COIN`, which cannot change. nothing here reads the live `owner`, `controller` or `settings`,
-    /// all of which the owner can change after launch (audit finding A02)
+    /// wants for verification: `(owner, coin, controller, stack, rateStart, settings, credit)`. built only from the signed
+    /// launch config and the first controller: the original owner `c.owner`, `c.stack`, `c.rateStart`, `c.settings` and
+    /// `c.credit`. the coin is the Core immutable `COIN`, which cannot change. nothing here reads the live `owner`,
+    /// `controller`, `settings` or credit settings, all of which the owner can change after launch (audit finding A02)
     function coreConstructorArgs(ICore core, LaunchConfig memory c, address firstController_)
         internal
         view
@@ -149,7 +149,7 @@ abstract contract PostflightChecks is PostflightPool {
     {
         // the fee source is an immutable of the Core: it cannot drift, so it is read from the Core (the config file has none)
         c.stack.feeSource = core.FEE_SOURCE();
-        return abi.encode(c.owner, core.COIN(), firstController_, c.stack, c.rateStart, c.settings);
+        return abi.encode(c.owner, core.COIN(), firstController_, c.stack, c.rateStart, c.settings, c.credit);
     }
 
     /// @notice prints what etherscan verification needs: the library address and the exact `--libraries` flag, the
@@ -166,7 +166,7 @@ abstract contract PostflightChecks is PostflightPool {
             console.log("verify: core constructor args");
             console.logBytes(coreConstructorArgs(core, c, first));
             console.log("verify: controller constructor args");
-            console.logBytes(abi.encode(address(core), c.sale));
+            console.logBytes(abi.encode(address(core), c.sale, c.credit));
         } else {
             console.log(
                 "verify: core constructor args NOT printed: set DEPLOYER (the deploy signer) or FIRST_CONTROLLER"
@@ -304,6 +304,22 @@ abstract contract PostflightChecks is PostflightPool {
         } else {
             _check("controller: not paused", !k.paused(), k.paused() ? "paused" : "not paused");
         }
+        bool creditSame = k.creditSaleOn() == c.credit.saleOn && k.creditWindow() == c.credit.window
+            && k.creditFloorBps() == c.credit.floorBps && k.creditStartBps() == c.credit.startBps
+            && k.creditScoreModule() == c.credit.scoreModule && k.refScore() == c.credit.refScore;
+        if (_settingsChanged()) {
+            _warn(
+                "warn: credit sale settings equal the config",
+                creditSame,
+                "SETTINGS_CHANGED=1, the owner changed them since launch"
+            );
+        } else {
+            _check(
+                "controller: credit sale settings equal the config",
+                creditSame,
+                "creditSaleOn creditWindow creditFloorBps creditStartBps creditScoreModule refScore"
+            );
+        }
         _info(
             "controller: sale",
             string.concat(
@@ -350,6 +366,21 @@ abstract contract PostflightChecks is PostflightPool {
                 "core: settings equal the config",
                 same,
                 "set SETTINGS_CHANGED=1 only after the owner called setSettings"
+            );
+        }
+        bool creditSame = core.creditCostToPotBps() == c.credit.costToPotBps
+            && core.chosenComposeOn() == c.credit.chosenComposeOn && core.minCcToChoose() == c.credit.minCcToChoose;
+        if (_settingsChanged()) {
+            _warn(
+                "warn: core credit settings equal the config",
+                creditSame,
+                "SETTINGS_CHANGED=1, the owner changed them since launch"
+            );
+        } else {
+            _check(
+                "core: credit settings equal the config",
+                creditSame,
+                "creditCostToPotBps chosenComposeOn minCcToChoose"
             );
         }
         _info(

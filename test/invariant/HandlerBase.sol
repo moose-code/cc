@@ -12,6 +12,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
+import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {
     ICredits,
     ICreditScore,
@@ -81,38 +82,43 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_CONTROLLER_SWAP = 12;
     uint8 internal constant A_PROBE_CONTROLLER = 13;
     uint8 internal constant A_SELL_FOR_EXIT = 14;
-    uint8 internal constant A_COMPOSE_EXIT = 15;
-    uint8 internal constant A_EXIT_STATEMENT = 16;
-    uint8 internal constant A_BUYBACK_EXIT = 17;
-    uint8 internal constant A_MODULE_MODE = 18;
-    uint8 internal constant A_WALLET_MOVE = 19;
-    uint8 internal constant A_SET_SETTINGS = 20;
-    uint8 internal constant A_SET_INVALID = 21;
-    uint8 internal constant A_SET_RATE = 22;
-    uint8 internal constant A_OWNER_MISC = 23;
-    uint8 internal constant A_REPLACE_MODULE = 24;
+    uint8 internal constant A_EXIT_STATEMENT = 15;
+    uint8 internal constant A_MODULE_MODE = 16;
+    uint8 internal constant A_WALLET_MOVE = 17;
+    uint8 internal constant A_SET_SETTINGS = 18;
+    uint8 internal constant A_SET_INVALID = 19;
+    uint8 internal constant A_SET_RATE = 20;
+    uint8 internal constant A_OWNER_MISC = 21;
+    uint8 internal constant A_REPLACE_MODULE = 22;
     // the sale and owner actions of HandlerSale
-    uint8 internal constant A_BUY = 25;
-    uint8 internal constant A_OWNER_SELL = 26;
-    uint8 internal constant A_SALE_SETTINGS = 27;
-    uint8 internal constant A_HOSTILE_OWNER = 28;
-    uint8 internal constant A_LOCK = 29;
-    uint8 internal constant A_HANDOVER = 30;
+    uint8 internal constant A_BUY = 23;
+    uint8 internal constant A_OWNER_SELL = 24;
+    uint8 internal constant A_SALE_SETTINGS = 25;
+    uint8 internal constant A_HOSTILE_OWNER = 26;
+    uint8 internal constant A_LOCK = 27;
+    uint8 internal constant A_HANDOVER = 28;
     // the fee router: a stranger's flush, and the hostile owner repointing the engine
-    uint8 internal constant A_FLUSH = 31;
-    uint8 internal constant A_REPOINT = 32;
+    uint8 internal constant A_FLUSH = 29;
+    uint8 internal constant A_REPOINT = 30;
     // the owner takes a stray NFT out of the core
-    uint8 internal constant A_RESCUE_NFT = 33;
+    uint8 internal constant A_RESCUE_NFT = 31;
     // the successor doors and the migration of everything the core tracks
-    uint8 internal constant A_MIGRATE = 34;
+    uint8 internal constant A_MIGRATE = 32;
     // anyone puts credits the core holds without a record into the eth pile
-    uint8 internal constant A_ADOPT = 35;
+    uint8 internal constant A_ADOPT = 33;
     // the owner pauses and resumes sales in the sale controller
-    uint8 internal constant A_PAUSE = 36;
+    uint8 internal constant A_PAUSE = 34;
     // the owner refreshes the stored unit from the module and releases part of the redeem burn reserve
-    uint8 internal constant A_REFRESH_UNIT = 37;
-    uint8 internal constant A_RELEASE_REDEEM = 38;
-    uint256 internal constant N_ACTIONS = 39;
+    uint8 internal constant A_REFRESH_UNIT = 35;
+    uint8 internal constant A_RELEASE_REDEEM = 36;
+    // the credit sale window: a buyer pays the curve price of one pile credit, or a batch of them
+    uint8 internal constant A_BUY_CREDIT = 37;
+    uint8 internal constant A_BUY_CREDITS = 38;
+    // a caller names the 80 pile credits and the format of a compose
+    uint8 internal constant A_COMPOSE_CHOSEN = 39;
+    // the owner sets the credit sale, chosen compose and rating reference settings
+    uint8 internal constant A_CREDIT_SETTINGS = 40;
+    uint256 internal constant N_ACTIONS = 41;
 
     // violation codes
     uint256 internal constant V_ETH_OUT = 1; // eth left the core beyond what the action explains
@@ -316,9 +322,7 @@ abstract contract HandlerBase is Test {
             "controllerSwap",
             "probeController",
             "sellForExit",
-            "composeExit",
             "exitStatement",
-            "buybackExit",
             "moduleMode",
             "walletMove",
             "setSettings",
@@ -339,7 +343,11 @@ abstract contract HandlerBase is Test {
             "adopt",
             "pause",
             "refreshUnit",
-            "releaseRedeem"
+            "releaseRedeem",
+            "buyCredit",
+            "buyCredits",
+            "composeChosen",
+            "creditSettings"
         ];
         names = n;
         controllers.push(w.v1);
@@ -527,7 +535,7 @@ abstract contract HandlerBase is Test {
         if (ids.length == 1) ids[0] = inventory[who][0];
     }
 
-    /// after a migrate the core is retired and `sellForEth`, `buyListing`, `adopt`, `compose`, `composeExit` and
+    /// after a migrate the core is retired and `sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen` and
     /// `sellForExitToken` revert `Retired`. the action sends its call instead of its own body, checks the selector and
     /// that the books stayed, and ends. returns false while the core is not retired
     function _retiredRefusal(uint8 a, address who, bytes memory data) internal returns (bool) {
@@ -1511,6 +1519,8 @@ abstract contract HandlerBase is Test {
         Settings st;
         bool valid;
         Pull pull;
+        /// the acquisition time of each credit on the page, read before the compose for the window ghost check
+        uint64[] acq;
     }
 
     /// composes the controller's page. rare by gate, because it costs about 8m gas.
@@ -1532,9 +1542,11 @@ abstract contract HandlerBase is Test {
         p.bal = address(core).balance;
         p.callerBal = keeper.balance;
         p.supply = STATEMENTS.supply();
+        p.acq = new uint64[](80);
         if (p.valid) {
             for (uint256 i; i < 80; ++i) {
                 p.sum += cg[ids[i]].cost;
+                (,, p.acq[i]) = core.creditInfo(ids[i]);
             }
         }
         RS memory rs = _rs();
@@ -1552,9 +1564,103 @@ abstract contract HandlerBase is Test {
         _rsCheck(rs, 0);
     }
 
-    /// the exit lane compose was removed: one pile, one compose. the action index stays stable as a no op
-    function composeExit(uint256, uint256) external checked {
-        _skip(A_COMPOSE_EXIT);
+    /// a caller names 80 pile credits and a format for a compose. the handler names the oldest 80 ghost pile credits
+    /// and a random format. the model expects success only with the real controller in force, chosen compose on, the
+    /// caller's coin balance at least the minimum, and, while the credit sale is on, every named credit past its window
+    function composeChosen(uint256 fmtSeed, uint256 gate) external checked {
+        uint8 a = A_COMPOSE_CHOSEN;
+        uint256[80] memory ids;
+        uint64[] memory acq = new uint64[](80);
+        uint256 sum;
+        uint256 got;
+        for (uint256 i; i < cgList.length && got < 80; ++i) {
+            uint256 id = cgList[i];
+            if (!cg[id].inPile) continue;
+            ids[got] = id;
+            (,, acq[got]) = core.creditInfo(id);
+            sum += cg[id].cost;
+            got++;
+        }
+        uint8 format = uint8(fmtSeed % 8);
+        if (_retiredRefusal(a, keeper, abi.encodeCall(ICore.composeChosen, (ids, format)))) return;
+        if (got < 80) return _skip(a);
+        // a compose of 80 costs several million gas: gate it so a run does not spend its depth here
+        if (gate % 2 != 0) return _skip(a);
+        bool ctlReal = core.controller() == v1;
+        bool windowOk = true;
+        if (ctlReal && IControllerV1(v1).creditSaleOn()) {
+            uint256 window = IControllerV1(v1).creditWindow();
+            uint64 newest;
+            for (uint256 i; i < 80; ++i) {
+                if (acq[i] > newest) newest = acq[i];
+            }
+            windowOk = uint256(newest) + window <= block.timestamp;
+        }
+        bool expect =
+            core.chosenComposeOn() && coin.balanceOf(keeper) >= core.minCcToChoose() && ctlReal && windowOk;
+        CPre memory p;
+        p.basefee = _logBound(fmtSeed, 0.05 gwei, 300 gwei);
+        vm.fee(p.basefee);
+        p.pull = _beginPull();
+        p.st = core.settings();
+        p.pot = core.ethPot();
+        p.rate = core.ethRate();
+        p.bal = address(core).balance;
+        p.callerBal = keeper.balance;
+        p.supply = STATEMENTS.supply();
+        p.sum = sum;
+        p.acq = acq;
+        RS memory rs = _rs();
+        _endPull(p.pull);
+        vm.recordLogs();
+        _att(a);
+        vm.prank(keeper);
+        try core.composeChosen(ids, format) {
+            _ok(a);
+            _afterComposeChosen(ids, p);
+        } catch (bytes memory why) {
+            rs = p.pull.rs0;
+            _failed(p.pull.bal0, p.pull.pot0, p.pull.rate0, "composeChosen");
+            if (expect && !_hostileController()) _unexpected(a, why);
+        }
+        _rsCheck(rs, 0);
+    }
+
+    /// the checks after a chosen compose, the same as a regular compose: the new statement is the next id and held, the
+    /// caller payment is inside the rule, the cost basis is the sum of the credits' costs, and no composed credit was
+    /// inside its credit sale window
+    function _afterComposeChosen(uint256[80] memory ids, CPre memory p) internal {
+        _pullChecks(p.pull, vm.getRecordedLogs());
+        uint256 sid = STATEMENTS.supply();
+        if (sid != p.supply + 1 || STATEMENTS.ownerOf(sid) != address(core)) {
+            _flag(V_COMPOSE, "chosen compose statement id is not supply + 1 or not held by the core");
+        }
+        _callerPayment(V_COMPOSE, p.st, COMPOSE_GAS, p.pot, p.bal, p.callerBal, "composeChosen");
+        (bool held, uint256 coreCost, uint64 composedAt) = core.statementInfo(sid);
+        if (!held || coreCost != p.sum) _flag(V_MODEL, "chosen statement cost basis differs from the ghost sum");
+        if (composedAt != block.timestamp) _flag(V_MODEL, "the chosen compose time is not the block time");
+        _windowGhost(p.acq, block.timestamp);
+        for (uint256 i; i < 80; ++i) {
+            cg[ids[i]].inPile = false;
+        }
+        SG storage g = _sg[sid];
+        g.cost = p.sum;
+        g.composedAt = composedAt;
+        g.status = S_HELD;
+        everHeld.push(sid);
+    }
+
+    /// while the credit sale is on and the real controller is in force, every composed credit must have sat past its
+    /// window at the compose: the core and the controller gate compose on it. a credit still inside its window reaching
+    /// a statement is a violation
+    function _windowGhost(uint64[] memory acq, uint256 composeTime) internal {
+        if (core.controller() != v1 || !IControllerV1(v1).creditSaleOn()) return;
+        uint256 window = IControllerV1(v1).creditWindow();
+        for (uint256 i; i < acq.length; ++i) {
+            if (acq[i] != 0 && uint256(acq[i]) + window > composeTime) {
+                _flag(V_COMPOSE, "a composed credit was inside its credit sale window");
+            }
+        }
     }
 
     function _composeFailed(uint8 a, CPre memory p, bytes memory why) internal {
@@ -1569,7 +1675,7 @@ abstract contract HandlerBase is Test {
         }
     }
 
-    /// @dev the caller payment of `compose`, `composeExit` and `exitStatement`: at most the counted gas bound at the base
+    /// @dev the caller payment of `compose`, `composeChosen` and `exitStatement`: at most the counted gas bound at the base
     /// fee capped by `callerMaxBaseFee` plus `callerFee`, at least the fee when the pot covers it, at most the pot,
     /// exactly zero when both settings are zero, and exactly the debit of the pot and the outflow of the core
     function _callerPayment(uint256 code, Settings memory st, uint256 gasBound, uint256 pot0, uint256 bal0, uint256 callerBal0, string memory what)
@@ -1600,6 +1706,7 @@ abstract contract HandlerBase is Test {
         (bool held, uint256 coreCost, uint64 composedAt) = core.statementInfo(sid);
         if (!held || coreCost != cost) _flag(V_MODEL, "statement cost basis differs from the ghost sum");
         if (composedAt != block.timestamp) _flag(V_MODEL, "the compose time is not the block time");
+        _windowGhost(p.acq, block.timestamp);
         for (uint256 i; i < 80; ++i) {
             cg[ids[i]].inPile = false;
         }
@@ -2022,7 +2129,7 @@ abstract contract HandlerBase is Test {
         bool ok;
     }
 
-    /// the eth pot doors (`sellForEth`, `buyListing`, `compose`, `composeExit`) start with the Core's pull of the
+    /// the eth pot doors (`sellForEth`, `buyListing`, `compose`, `composeChosen`) start with the Core's pull of the
     /// router. this runs the same flush now, under a snapshot, so the state read
     /// between `_beginPull` and `_endPull` is the state the door prices against. the handler writes no storage in
     /// between. `_endPull` restores the state before the pull, and the door then runs the pull itself
@@ -2349,11 +2456,6 @@ abstract contract HandlerBase is Test {
         g.required = p.required;
         g.received = received;
         g.module = address(module);
-    }
-
-    /// the exit token auction was removed, so this action is a no op that keeps the action index stable
-    function buybackExit(uint256, uint256) external checked {
-        _skip(A_BUYBACK_EXIT);
     }
 
     /// sets the module to underpay, to fail unit reads, to change its unit, or back to normal.

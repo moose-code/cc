@@ -22,12 +22,14 @@ import {
     IStatements,
     Stack,
     Settings,
+    Credit,
     Mainnet,
     BUYBACK_GAS,
     BUYLISTING_GAS
 } from "./interfaces/Interfaces.sol";
 import {CoreLib} from "./lib/CoreLib.sol";
 import {SettingsBounds} from "./lib/SettingsBounds.sol";
+import {CreditBounds} from "./lib/CreditBounds.sol";
 import {SettingsStore} from "./lib/SettingsStore.sol";
 import {RateStore} from "./lib/RateStore.sol";
 
@@ -282,7 +284,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         address controller_,
         Stack memory stack_,
         uint256 rateStart_,
-        Settings memory settings_
+        Settings memory settings_,
+        Credit memory credit_
     ) {
         if (owner_ == address(0) || coin_ == address(0) || controller_ == address(0)) {
             revert ZeroAddress();
@@ -312,7 +315,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         LOCKER = stack_.locker;
         ESCROW = stack_.escrow;
         controller = controller_;
-        creditCostToPotBps = uint16(BPS);
+        if (!CreditBounds.costToPotBpsOk(credit_.costToPotBps)) revert BadSetting("creditCostToPotBps");
+        creditCostToPotBps = credit_.costToPotBps;
+        chosenComposeOn = credit_.chosenComposeOn;
+        minCcToChoose = credit_.minCcToChoose;
         allowedTarget[Mainnet.SEAPORT] = true;
         allowedTarget[Mainnet.CREDIT_STRATEGY] = true;
         rateAtCheckpoint = rateStart_;
@@ -1002,7 +1008,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// sets the share of credit sale proceeds routed to the buying pot, the rest to the coin buyback. 0 to 10_000.
     /// phase 2 wires it; no behavior reads it yet (docs/FLOW.md 88)
     function setCreditCostToPotBps(uint16 v) external onlyOwner {
-        if (v > BPS) revert BadSetting("creditCostToPotBps");
+        if (!CreditBounds.costToPotBpsOk(v)) revert BadSetting("creditCostToPotBps");
         creditCostToPotBps = v;
         emit CreditCostToPotBpsSet(v);
     }

@@ -17,7 +17,7 @@ abstract contract NewProd is SystemDeployer {
     }
 
     function _newController(address core, LaunchConfig memory c) internal virtual override returns (address) {
-        return address(new ControllerV1(core, c.sale));
+        return address(new ControllerV1(core, c.sale, c.credit));
     }
 
     function _newLens(address core) internal virtual override returns (address) {
@@ -30,6 +30,6 @@ abstract contract NewProd is SystemDeployer {
         override
         returns (address)
     {
-        return address(new Core(owner, coin, controller, c.stack, c.rateStart, c.settings));
+        return address(new Core(owner, coin, controller, c.stack, c.rateStart, c.settings, c.credit));
     }
 }

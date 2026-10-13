@@ -150,14 +150,19 @@ abstract contract HandlerSale is HandlerOwner {
 
     uint256 internal _anchor0;
     uint256 internal _cost0;
+    uint256 internal _ref0;
     uint256 internal _stored0;
     uint256 internal _anchorTime0;
 
-    /// the anchor after a sale at `price` of a statement of `cost`, written out again from docs/FLOW.md 64 and 70: the
-    /// anchor now when `cost` is under `anchorMinCost` or the sale price in bps of cost (rounded up) is not above it,
-    /// otherwise the mean of the two, at most the start cap
-    function _anchorAfter(uint256 anchor0, uint256 price, uint256 cost) internal view returns (uint256 next) {
-        uint256 saleBps = (price * 10_000 + cost - 1) / cost;
+    /// the anchor after a sale at `price` of a statement of cost `cost` and reference `ref`: the anchor now when `cost`
+    /// is under `anchorMinCost` or the sale price in bps of the reference (rounded up) is not above it, otherwise the
+    /// mean of the two, at most the start cap
+    function _anchorAfter(uint256 anchor0, uint256 price, uint256 cost, uint256 ref)
+        internal
+        view
+        returns (uint256 next)
+    {
+        uint256 saleBps = (price * 10_000 + ref - 1) / ref;
         if (cost < IControllerV1(v1).anchorMinCost() || saleBps <= anchor0) return anchor0;
         next = (anchor0 + saleBps) / 2;
         uint256 cap = IControllerV1(v1).startCapBps();
@@ -200,15 +205,18 @@ abstract contract HandlerSale is HandlerOwner {
         _stored0 = IControllerV1(v1).storedAnchorBps();
         _anchorTime0 = IControllerV1(v1).anchorTime();
         (, _cost0,) = core.statementInfo(sid);
+        // referenceOf reverts for a statement the core no longer holds, so the reference is modelled here and matches
+        // the controller's for a held statement
+        _ref0 = _modelRef(sid, _cost0);
         _att(a);
         vm.prank(who);
         try IControllerV1(v1).buy{value: value}(sid) {
             _ok(a);
-            if (IControllerV1(v1).anchorBps() != _anchorAfter(_anchor0, price, _cost0)) {
+            if (IControllerV1(v1).anchorBps() != _anchorAfter(_anchor0, price, _cost0, _ref0)) {
                 _flag(V_SALE_PATH, "a buy did not move the anchor halfway to the sale price");
             }
             if (
-                ((price * 10_000 + _cost0 - 1) / _cost0 <= _anchor0 || _cost0 < IControllerV1(v1).anchorMinCost())
+                ((price * 10_000 + _ref0 - 1) / _ref0 <= _anchor0 || _cost0 < IControllerV1(v1).anchorMinCost())
                     && (IControllerV1(v1).storedAnchorBps() != _stored0 || IControllerV1(v1).anchorTime() != _anchorTime0)
             ) {
                 _flag(V_SALE_PATH, "a buy at or below the anchor, or of a statement under the minimum cost, stored the anchor");
@@ -222,6 +230,219 @@ abstract contract HandlerSale is HandlerOwner {
             _saleRefused(sid, p, why, a);
         }
         _rsCheck(rs, 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                         buyCredit (the credit sale window)
+    //////////////////////////////////////////////////////////////*/
+
+    /// the number of ghost credits in the pile now
+    function _piledCount() internal view returns (uint256 n) {
+        for (uint256 i; i < cgList.length; ++i) {
+            if (cg[cgList[i]].inPile) n++;
+        }
+    }
+
+    /// an in-pile ghost credit from `seed` on. not found when the pile is empty
+    function _pickPiled(uint256 seed) internal view returns (uint256 id, uint256 cost, bool found) {
+        uint256 n = cgList.length;
+        if (n == 0) return (0, 0, false);
+        for (uint256 k; k < n; ++k) {
+            uint256 cand = cgList[(seed % n + k) % n];
+            if (cg[cand].inPile) return (cand, cg[cand].cost, true);
+        }
+        return (0, 0, false);
+    }
+
+    /// the refusal of `ControllerV1.buyCredit` in the order of its checks: the sale window, the pause, the payment,
+    /// then the core's `sellCreditTo`, which refuses any controller but the one the core named
+    function _buyCreditRefusal(bool saleOn, bool paused_, bool short_, bool realCtl) internal pure returns (bytes4) {
+        if (!saleOn) return IControllerV1.CreditSaleOff.selector;
+        if (paused_) return IControllerV1.Paused.selector;
+        if (short_) return IControllerV1.Underpaid.selector;
+        if (!realCtl) return ICore.OnlyController.selector;
+        return bytes4(0);
+    }
+
+    /// the quote of a credit buy: the price (or batch total), the value the buyer sends, and the selector the model
+    /// expects when the call must revert
+    struct CQ {
+        uint256 price;
+        uint256 value;
+        bytes4 want;
+    }
+
+    /// the value a buyer sends: a placeholder when no price was read, a short payment, or the price with an excess
+    function _creditValue(bool priced, uint256 price, bool short_, uint256 xSeed) internal view returns (uint256) {
+        if (!priced) return 1 ether;
+        if (short_) return price - 1;
+        return price + (xSeed % 3 == 0 ? 0 : _logBound(xSeed, 1, 1 ether));
+    }
+
+    function _quoteOne(uint256 id, uint256 xSeed) internal view returns (CQ memory q) {
+        IControllerV1 c = IControllerV1(v1);
+        bool priced;
+        try c.creditPrice(id) returns (uint256 pr) {
+            q.price = pr;
+            priced = true;
+        } catch {}
+        bool short_ = priced && q.price != 0 && xSeed % 7 == 0;
+        q.value = _creditValue(priced, q.price, short_, xSeed);
+        q.want = _buyCreditRefusal(c.creditSaleOn(), c.paused(), short_, core.controller() == v1);
+    }
+
+    function _quoteMany(uint256[] memory ids, uint256 xSeed) internal view returns (CQ memory q) {
+        IControllerV1 c = IControllerV1(v1);
+        bool priced = true;
+        for (uint256 i; i < ids.length; ++i) {
+            try c.creditPrice(ids[i]) returns (uint256 pr) {
+                q.price += pr;
+            } catch {
+                priced = false;
+            }
+        }
+        bool short_ = priced && q.price != 0 && xSeed % 6 == 0;
+        q.value = _creditValue(priced, q.price, short_, xSeed);
+        q.want = _buyCreditRefusal(c.creditSaleOn(), c.paused(), short_, core.controller() == v1);
+    }
+
+    /// a buyer pays the curve price of one pile credit through the first controller, with an excess or a short payment
+    /// now and then. a sale pays the price exactly and refunds the rest, the credit leaves the pile to the buyer, the
+    /// cost share goes to the pot and the markup to the buyback, and no credit leaves for less than its recorded cost
+    function buyCredit(uint256 sSeed, uint256 aSeed, uint256 xSeed) external checked {
+        uint8 a = A_BUY_CREDIT;
+        (uint256 id, uint256 cost, bool found) = _pickPiled(sSeed);
+        if (!found) return _skip(a);
+        CQ memory q = _quoteOne(id, xSeed);
+        address who = _actor(aSeed);
+        CreditPre memory p = _creditPre(q.value);
+        vm.deal(who, who.balance + q.value);
+        p.payerBal = who.balance;
+        RS memory rs = _rs();
+        _att(a);
+        vm.prank(who);
+        try IControllerV1(v1).buyCredit{value: q.value}(id) {
+            _ok(a);
+            if (q.want != 0) _flag(V_SALE_PATH, "a credit sale the model refuses went through");
+            _afterCreditBuyOne(id, cost, q.price, p, who);
+        } catch (bytes memory why) {
+            _creditRefused(p, why, a, q.want);
+        }
+        _rsCheck(rs, 0);
+    }
+
+    /// a buyer pays the sum of the curve prices of a batch of pile credits. the batch total is read before any sale, so
+    /// a sale does not raise the price of a later credit in the same batch
+    function buyCredits(uint256 sSeed, uint256 aSeed, uint256 xSeed) external checked {
+        uint8 a = A_BUY_CREDITS;
+        uint256 avail = _piledCount();
+        if (avail < 2) return _skip(a);
+        (uint256[] memory ids, uint256[] memory costs) = _pickPiledMany(sSeed, bound(xSeed, 2, avail < 5 ? avail : 5));
+        if (ids.length < 2) return _skip(a);
+        CQ memory q = _quoteMany(ids, xSeed);
+        address who = _actor(aSeed);
+        CreditPre memory p = _creditPre(q.value);
+        vm.deal(who, who.balance + q.value);
+        p.payerBal = who.balance;
+        RS memory rs = _rs();
+        _att(a);
+        vm.prank(who);
+        try IControllerV1(v1).buyCredits{value: q.value}(ids) {
+            _ok(a);
+            if (q.want != 0) _flag(V_SALE_PATH, "a credit batch the model refuses went through");
+            _afterCreditBuy(ids, costs, q.price, p, who);
+        } catch (bytes memory why) {
+            _creditRefused(p, why, a, q.want);
+        }
+        _rsCheck(rs, 0);
+    }
+
+    /// up to `want` distinct in-pile ghost credits from `seed` on, with their recorded costs
+    function _pickPiledMany(uint256 seed, uint256 want_)
+        internal
+        view
+        returns (uint256[] memory ids, uint256[] memory costs)
+    {
+        uint256 cap = cgList.length;
+        uint256[] memory tmp = new uint256[](want_);
+        uint256[] memory tmpCost = new uint256[](want_);
+        uint256 got;
+        for (uint256 k; k < cap && got < want_; ++k) {
+            uint256 cand = cgList[(seed % cap + k) % cap];
+            if (!cg[cand].inPile) continue;
+            bool dup;
+            for (uint256 j; j < got; ++j) {
+                if (tmp[j] == cand) dup = true;
+            }
+            if (dup) continue;
+            tmp[got] = cand;
+            tmpCost[got] = cg[cand].cost;
+            got++;
+        }
+        ids = new uint256[](got);
+        costs = new uint256[](got);
+        for (uint256 i; i < got; ++i) {
+            ids[i] = tmp[i];
+            costs[i] = tmpCost[i];
+        }
+    }
+
+    struct CreditPre {
+        uint256 bal;
+        uint256 pot;
+        uint256 tb;
+        uint256 rate;
+        uint256 payerBal;
+        uint256 value;
+    }
+
+    function _creditPre(uint256 value) internal view returns (CreditPre memory p) {
+        p.bal = address(core).balance;
+        p.pot = core.ethPot();
+        p.tb = core.ethToBuyback();
+        p.rate = core.ethRate();
+        p.value = value;
+    }
+
+    function _afterCreditBuyOne(uint256 id, uint256 cost, uint256 price, CreditPre memory p, address who) internal {
+        uint256[] memory ids = new uint256[](1);
+        uint256[] memory costs = new uint256[](1);
+        ids[0] = id;
+        costs[0] = cost;
+        _afterCreditBuy(ids, costs, price, p, who);
+    }
+
+    /// a credit sale went through: the buyer paid the price exactly and got the excess back, the credits left the pile
+    /// to the buyer, the cost share went to the pot and the markup to the buyback, and no credit left for less than its
+    /// recorded cost
+    function _afterCreditBuy(uint256[] memory ids, uint256[] memory costs, uint256 price, CreditPre memory p, address who)
+        internal
+    {
+        if (p.payerBal - who.balance != price) _flag(V_SALE_PATH, "the credit buyer did not pay exactly the price");
+        uint256 toPotSum;
+        uint256 costSum;
+        for (uint256 i; i < ids.length; ++i) {
+            if (CREDITS.ownerOf(ids[i]) != who) _flag(V_SALE_PATH, "the credit buyer does not hold the credit");
+            (bool inPile,,) = core.creditInfo(ids[i]);
+            if (inPile) _flag(V_SALE_PATH, "a sold credit still has a pile record");
+            cg[ids[i]].inPile = false;
+            toPotSum += costs[i] * core.creditCostToPotBps() / 10_000;
+            costSum += costs[i];
+        }
+        // no credit leaves the pot for less than it was bought for: the price is at least the sum of the costs
+        if (price < costSum) _flag(V_SALE_PATH, "a credit was sold below its recorded cost");
+        if (core.ethPot() != p.pot + toPotSum || core.ethToBuyback() != p.tb + price - toPotSum) {
+            _flag(V_SALE_PATH, "the credit sale payment was not booked by creditCostToPotBps");
+        }
+        _eth(p.bal, 0, price, "credit buy");
+        _booked(price);
+        if (address(v1).balance != baseOf[v1].eth) _flag(V_SALE_PATH, "the controller kept eth after a credit buy");
+    }
+
+    function _creditRefused(CreditPre memory p, bytes memory why, uint8 a, bytes4 want) internal {
+        _failed(p.bal, p.pot, p.rate, "credit sale");
+        if (core.ethToBuyback() != p.tb) _flag(V_REVERT_CHANGED, "a refused credit sale moved the buyback pot");
+        if (want == 0 || bytes4(why) != want) _unexpected(a, why);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -256,10 +477,20 @@ abstract contract HandlerSale is HandlerOwner {
     /// the age outside every pause window, at least `floorBps` and at least the hard floor of the core
     function _modelAsk(uint256 sid) internal view returns (uint256) {
         (, uint256 cost, uint64 at) = core.statementInfo(sid);
+        uint256 ref = _modelRef(sid, cost);
         uint256 n = _modelUnits(_modelAge(at));
-        uint256 ask = cost * n / (3600 * 10_000);
+        uint256 ask = ref * n / (3600 * 10_000);
         uint256 hard = cost * core.settings().saleFloorBps / 10_000;
         return ask < hard ? hard : ask;
+    }
+
+    /// the price reference of statement `sid`: its cost when the rating is at or below `80 * refScore`, else the cost
+    /// scaled by the rating over that denominator, the same value the controller prices against
+    function _modelRef(uint256 sid, uint256 cost) internal view returns (uint256) {
+        uint256 rating = core.ratingOf(sid);
+        uint256 denom = 80 * uint256(IControllerV1(v1).refScore());
+        if (rating <= denom) return cost;
+        return cost * rating / denom;
     }
 
     function _modelUnits(uint256 age) internal view returns (uint256 n) {

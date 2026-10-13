@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Vm} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
+import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../../src/interfaces/Interfaces.sol";
 import {BidModel} from "../utils/BidModel.sol";
 import {HandlerBase} from "./HandlerBase.sol";
@@ -997,5 +998,125 @@ abstract contract HandlerOwner is HandlerBase {
         }
         if (!seen) _flag(V_OWNER, "migrate emitted no Migrated");
         if (retiredLogs != (q.wasRetired ? 0 : 1)) _flag(V_RETIRED, "EngineRetired is not logged exactly by the first migrate");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                      the credit sale, chosen compose and reference settings
+    //////////////////////////////////////////////////////////////*/
+
+    /// the owner sets one of the nine credit settings (three on the core, six on the controller) to a value inside or
+    /// outside its bounds, or a stranger tries. inside: it goes through and reads back. outside a bounded numeric field:
+    /// BadSetting. a stranger: OnlyOwner. no asset or pot moves
+    function creditSettings(uint256 seed, uint256 mode) external checked {
+        uint8 a = A_CREDIT_SETTINGS;
+        uint256 which = mode % 9;
+        bool stranger = (mode >> 8) % 6 == 0;
+        bool bad = (mode >> 12) % 4 == 0;
+        (address target, bytes memory data, bool valid, uint256 want, uint256 cur) = _creditCase(which, seed, bad);
+        address caller = stranger ? address(uint160(uint256(keccak256(abi.encode("creditStranger", seed))))) : owner;
+        OPre memory pre = _opre();
+        _att(a);
+        vm.prank(caller);
+        (bool ok, bytes memory out) = target.call(data);
+        bytes4 expect = stranger ? ICore.OnlyOwner.selector : (valid ? bytes4(0) : ICore.BadSetting.selector);
+        if (ok) {
+            if (expect != 0) _flag(V_OWNER, "a credit setting the model refuses was accepted");
+            if (_creditGot(which) != want) _flag(V_OWNER, "a credit setting did not read back");
+            gOwnerCalls++;
+        } else {
+            if (expect == 0 || bytes4(out) != expect) _unexpected(a, out);
+            if (_creditGot(which) != cur) _flag(V_OWNER, "a refused credit setting changed a value");
+            gOwnerRefused++;
+        }
+        _opost(pre, "creditSettings");
+        _ok(a);
+    }
+
+    /// the credit setting the handler tries: the target contract, the calldata, whether the model says it is inside the
+    /// bounds, the value as a uint (a bool is 0 or 1, an address is its uint160), and the live value
+    function _creditCase(uint256 which, uint256 seed, bool bad)
+        internal
+        view
+        returns (address target, bytes memory data, bool valid, uint256 want, uint256 cur)
+    {
+        IControllerV1 c = IControllerV1(v1);
+        if (which == 0) {
+            target = address(core);
+            cur = core.creditCostToPotBps();
+            uint256 v = bad ? 10_001 + seed % 100 : _f(seed, 0, 10_000, cur);
+            data = abi.encodeCall(ICore.setCreditCostToPotBps, (uint16(v)));
+            valid = v <= 10_000;
+            want = v;
+        } else if (which == 1) {
+            target = address(core);
+            cur = core.chosenComposeOn() ? 1 : 0;
+            bool bv = seed % 2 == 0;
+            data = abi.encodeCall(ICore.setChosenComposeOn, (bv));
+            valid = true;
+            want = bv ? 1 : 0;
+        } else if (which == 2) {
+            target = address(core);
+            cur = core.minCcToChoose();
+            uint256 v = _f(seed, 0, 1e24, cur);
+            data = abi.encodeCall(ICore.setMinCcToChoose, (uint96(v)));
+            valid = true;
+            want = v;
+        } else if (which == 3) {
+            target = v1;
+            cur = c.creditSaleOn() ? 1 : 0;
+            bool bv = seed % 2 == 0;
+            data = abi.encodeCall(IControllerV1.setCreditSaleOn, (bv));
+            valid = true;
+            want = bv ? 1 : 0;
+        } else if (which == 4) {
+            target = v1;
+            cur = c.creditWindow();
+            uint256 v = bad ? (seed % 2 == 0 ? 59 : 30 days + 1 + seed % 100) : _f(seed, 1 minutes, 30 days, cur);
+            data = abi.encodeCall(IControllerV1.setCreditWindow, (uint32(v)));
+            valid = v >= 1 minutes && v <= 30 days;
+            want = v;
+        } else if (which == 5) {
+            target = v1;
+            cur = c.creditFloorBps();
+            uint256 v = bad ? (seed % 2 == 0 ? 9_999 : 40_001) : _f(seed, 10_000, 40_000, cur);
+            data = abi.encodeCall(IControllerV1.setCreditFloorBps, (uint16(v)));
+            valid = v >= 10_000 && v <= 40_000;
+            want = v;
+        } else if (which == 6) {
+            target = v1;
+            cur = c.creditStartBps();
+            uint256 v = bad ? (seed % 2 == 0 ? 9_999 : 200_001) : _f(seed, 10_000, 200_000, cur);
+            data = abi.encodeCall(IControllerV1.setCreditStartBps, (uint32(v)));
+            valid = v >= 10_000 && v <= 200_000;
+            want = v;
+        } else if (which == 7) {
+            target = v1;
+            cur = uint160(c.creditScoreModule());
+            address m = seed % 2 == 0 ? address(0) : address(uint160(uint256(keccak256(abi.encode("scoreMod", seed)))));
+            data = abi.encodeCall(IControllerV1.setCreditScoreModule, (m));
+            valid = true;
+            want = uint160(m);
+        } else {
+            target = v1;
+            cur = c.refScore();
+            uint256 v = bad ? (seed % 2 == 0 ? 0 : 8_000_001) : _f(seed, 1, 8_000_000, cur);
+            data = abi.encodeCall(IControllerV1.setRefScore, (uint32(v)));
+            valid = v >= 1 && v <= 8_000_000;
+            want = v;
+        }
+    }
+
+    /// the live value of credit setting `which` as a uint (a bool is 0 or 1, an address is its uint160)
+    function _creditGot(uint256 which) internal view returns (uint256) {
+        IControllerV1 c = IControllerV1(v1);
+        if (which == 0) return core.creditCostToPotBps();
+        if (which == 1) return core.chosenComposeOn() ? 1 : 0;
+        if (which == 2) return core.minCcToChoose();
+        if (which == 3) return c.creditSaleOn() ? 1 : 0;
+        if (which == 4) return c.creditWindow();
+        if (which == 5) return c.creditFloorBps();
+        if (which == 6) return c.creditStartBps();
+        if (which == 7) return uint160(c.creditScoreModule());
+        return c.refScore();
     }
 }

@@ -3,7 +3,8 @@ pragma solidity ^0.8.28;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {Halving} from "./lib/Halving.sol";
-import {Sale, IController, ICoreViews, ICoreSale, Mainnet} from "./interfaces/Interfaces.sol";
+import {Sale, Credit, IController, ICoreViews, ICoreSale, Mainnet} from "./interfaces/Interfaces.sol";
+import {CreditBounds} from "./lib/CreditBounds.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
@@ -46,9 +47,6 @@ contract ControllerV1 is IController {
     uint256 private constant BPS = 10_000;
     uint256 private constant READ_GAS = 50_000;
     uint256 private constant MAX_ANCHOR_MIN_COST = 10 ether;
-    /// the largest per-credit score the rating type allows, in ten-thousandths of a point. `refScore` is at most this,
-    /// so `80 * refScore` is at most the largest rating of 80 credits
-    uint32 private constant MAX_REF_SCORE = 8_000_000;
 
     error OnlyOwner();
     error BadSetting(bytes32 field);
@@ -104,7 +102,7 @@ contract ControllerV1 is IController {
     uint16 public floorBps;
     /// the per-credit score at which `80 * refScore` equals a statement's reference denominator, in ten-thousandths of
     /// a point. a statement whose rating is at or below `80 * refScore` references its cost; above it the reference
-    /// scales with the rating. 1 to `MAX_REF_SCORE`
+    /// scales with the rating. 1 to 8_000_000
     uint32 public refScore;
     /// the anchor at `anchorTime`, bps of the reference. 10_000 to `startCapBps`. `anchorBps()` is the value now
     uint32 public storedAnchorBps;
@@ -142,7 +140,7 @@ contract ControllerV1 is IController {
     /// baseline. launch value zero
     address public creditScoreModule;
 
-    constructor(address core, Sale memory sale) {
+    constructor(address core, Sale memory sale, Credit memory credit) {
         CORE = ICoreViews(core);
         if (sale.markupBps < BPS || sale.markupBps > 40_000) revert BadSetting("markupBps");
         markupBps = sale.markupBps;
@@ -163,12 +161,16 @@ contract ControllerV1 is IController {
         storedAnchorBps = uint32(BPS);
         // forge-lint: disable-next-line(unsafe-typecast)
         anchorTime = uint40(block.timestamp);
-        // the average per-credit score at launch, so an average statement references its cost. the owner adjusts it
-        refScore = 4_330_000;
-        // credit sale window launch values. the owner turns the sale on and adjusts these at once
-        creditWindow = 4 hours;
-        creditFloorBps = 11_000;
-        creditStartBps = 30_000;
+        if (!CreditBounds.refScoreOk(credit.refScore)) revert BadSetting("refScore");
+        if (!CreditBounds.windowOk(credit.window)) revert BadSetting("creditWindow");
+        if (!CreditBounds.floorBpsOk(credit.floorBps)) revert BadSetting("creditFloorBps");
+        if (!CreditBounds.startBpsOk(credit.startBps)) revert BadSetting("creditStartBps");
+        refScore = credit.refScore;
+        creditSaleOn = credit.saleOn;
+        creditWindow = credit.window;
+        creditFloorBps = credit.floorBps;
+        creditStartBps = credit.startBps;
+        creditScoreModule = credit.scoreModule;
     }
 
     modifier onlyOwner() {
@@ -222,9 +224,9 @@ contract ControllerV1 is IController {
         emit FloorBpsSet(v);
     }
 
-    /// 1 to `MAX_REF_SCORE`. applies to the reference of every open listing at the next call
+    /// 1 to 8_000_000. applies to the reference of every open listing at the next call
     function setRefScore(uint32 v) external onlyOwner {
-        if (v == 0 || v > MAX_REF_SCORE) revert BadSetting("refScore");
+        if (!CreditBounds.refScoreOk(v)) revert BadSetting("refScore");
         refScore = v;
         emit RefScoreSet(v);
     }
@@ -299,21 +301,21 @@ contract ControllerV1 is IController {
 
     /// 1 minute to 30 days
     function setCreditWindow(uint32 v) external onlyOwner {
-        if (v < 1 minutes || v > 30 days) revert BadSetting("creditWindow");
+        if (!CreditBounds.windowOk(v)) revert BadSetting("creditWindow");
         creditWindow = v;
         emit CreditWindowSet(v);
     }
 
     /// 10_000 to 40_000
     function setCreditFloorBps(uint16 v) external onlyOwner {
-        if (v < BPS || v > 40_000) revert BadSetting("creditFloorBps");
+        if (!CreditBounds.floorBpsOk(v)) revert BadSetting("creditFloorBps");
         creditFloorBps = v;
         emit CreditFloorBpsSet(v);
     }
 
     /// 10_000 to 200_000
     function setCreditStartBps(uint32 v) external onlyOwner {
-        if (v < BPS || v > 200_000) revert BadSetting("creditStartBps");
+        if (!CreditBounds.startBpsOk(v)) revert BadSetting("creditStartBps");
         creditStartBps = v;
         emit CreditStartBpsSet(v);
     }

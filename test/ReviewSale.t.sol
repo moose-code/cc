@@ -906,7 +906,7 @@ contract ReviewSaleTest is Fixture {
     }
 
     function _ctlExt(Sale memory k) external returns (address) {
-        return deployCode("ControllerV1.sol:ControllerV1", abi.encode(address(core), k));
+        return deployCode("ControllerV1.sol:ControllerV1", abi.encode(address(core), k, Mainnet.defaultCredit()));
     }
 
     function test_OK_saleBounds_scriptAndControllerConstructorAgree() public {
