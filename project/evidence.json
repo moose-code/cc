@@ -2893,6 +2893,37 @@
         "sha256": "50d50a090b255028f6441cb2239fa31c9f4c7123500023104dd04babf921848a",
         "revision": "c08a927bf690c0853446e423e097ee06bb554a33"
       }
+    },
+    "E-CREDIT-SCORE-LENS-ETHERSCAN-RETRY-TEST-4f5a891": {
+      "claim": "Etherscan retry explicitly uses one provider, skips the rate-limited ABI precheck and polls every 10 seconds, preserving mandatory helper identity/results checks and verification-only retry. Build/syntax and four CLI tests pass.",
+      "kind": "test",
+      "sourceRevision": "4f5a891ab5367f1b644c513e313b79230f2923e7",
+      "scope": [
+        "script/deploy-credit-score-lens.sh",
+        "script/test_deploy_credit_score_lens.py",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/VerifyCreditScoreLens.s.sol",
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "src/interfaces/Interfaces.sol",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": 3,
+        "A-TOOLCHAIN": 1
+      },
+      "dependsOn": [],
+      "inputs": "Existing main helper artifact and dummy CLI fixtures; owner-supplied deployed address/receipt and rate-limit log.",
+      "method": "Targeted forge build pass; bash -n pass; four subprocess CLI tests pass, asserting Etherscan/profile/skip-ABI/delay flags, verify-only no broadcast, identity checks, fee-before-wallet and cancellation. No Solidity or engine policy changes.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "No agent wallet access, mainnet transaction or Etherscan submission. Etherscan acceptance remains unconfirmed; agent process has no configured key and never asks for it in chat. Actual provider retry requires owner CLI. No new full suite/rehearsal or engine acceptance.",
+      "invalidated": null
     }
   }
 }

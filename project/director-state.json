@@ -156,7 +156,7 @@
     ]
   },
   "candidate": "b12ca481fdbc415331e61e68efc6235b36c29fb2",
-  "activeChange": "FLOW 111: record owner helper deployment/Sourcify verification and repair Etherscan-only retry after explorer rate limits; no redeploy or agent signing.",
+  "activeChange": null,
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -206,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "Verify and commit the focused explorer retry fix, give the owner its verify-address command for private key entry in their CLI if needed. Source already matched on Sourcify; Etherscan remains unconfirmed.",
+  "nextAction": "Owner helper deployment and Sourcify verification are confirmed (docs/DEPLOY-credit-score-lens.md). Etherscan-only retry is tested and independently reviewed; Etherscan acceptance remains unconfirmed. Give the owner the main/clean verify-address command so the key is entered privately in their CLI if needed. Do not redeploy. Engine controls/objective unchanged; no agent signing or submission.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
