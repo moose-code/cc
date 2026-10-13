@@ -384,8 +384,8 @@ contract FlowTest is Fixture {
         assertEq(ctl.priceOf(c.sid), cost * 20_000 / 10_000, "the hard floor lifts the ask of the held statement");
     }
 
-    /// the `Composed` log: `sid` and `caller` are indexed, the data is `(ids[80], format, cost)` with the cost the sum
-    /// of the 80 bases of the page and `ids` the 80 composed credits
+    /// the `Composed` log: `sid` and `caller` are indexed, the data is `(ids[80], format, cost, price)` with the cost
+    /// the sum of the 80 bases of the page, `ids` the 80 composed credits and `price` the controller's `priceOf(sid)`
     function test_compose_emitsComposedWithTheSumOfTheBases() public {
         _fillEthPile(80);
         uint256[] memory page = core.pilePage(0, 80);
@@ -398,22 +398,26 @@ contract FlowTest is Fixture {
         vm.recordLogs();
         vm.prank(keeper);
         core.compose();
+        uint256 sid = STATEMENTS.supply();
+        uint256 expectedPrice = ctl.priceOf(sid);
+        assertGt(expectedPrice, 0, "the statement is priced");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 seen;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.Composed.selector) continue;
             ++seen;
             assertEq(logs[i].topics.length, 3, "sid and caller are indexed");
-            assertEq(uint256(logs[i].topics[1]), STATEMENTS.supply(), "sid");
+            assertEq(uint256(logs[i].topics[1]), sid, "sid");
             assertEq(address(uint160(uint256(logs[i].topics[2]))), keeper, "caller");
-            (uint256[80] memory ids, uint8 format, uint256 cost) =
-                abi.decode(logs[i].data, (uint256[80], uint8, uint256));
+            (uint256[80] memory ids, uint8 format, uint256 cost, uint256 price) =
+                abi.decode(logs[i].data, (uint256[80], uint8, uint256, uint256));
             for (uint256 j; j < 80; ++j) {
                 assertEq(ids[j], page[j], "the 80 composed ids");
             }
             assertEq(format, 0);
             assertEq(cost, sum, "cost is the sum of the 80 bases");
-            assertEq(logs[i].data.length, (80 + 2) * 32, "ids, format and cost only");
+            assertEq(price, expectedPrice, "price is the controller priceOf in the same block");
+            assertEq(logs[i].data.length, (80 + 3) * 32, "ids, format, cost and price only");
         }
         assertEq(seen, 1, "one Composed");
     }

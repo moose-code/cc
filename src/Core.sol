@@ -129,7 +129,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
-    event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, address indexed caller);
+    /// `price` is the controller's `priceOf(sid)` read at compose through a bounded staticcall, 0 when the read fails
+    event Composed(
+        uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, uint256 price, address indexed caller
+    );
     event SettingsSet(Settings settings);
     event RateSet(uint256 rate);
     event StatementExited(uint256 indexed sid, uint256 received);
@@ -476,6 +479,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return ok && abi.decode(out, (bool));
     }
 
+    /// bounded read of the controller's asking price for a statement. a revert or a short answer reads as 0
+    function _priceOf(uint256 sid) private view returns (uint256) {
+        (bool ok, bytes memory out) = _ask(controller, abi.encodeCall(IController.priceOf, (sid)), READ_GAS, 32);
+        return ok ? abi.decode(out, (uint256)) : 0;
+    }
+
     /*//////////////////////////////////////////////////////////////
                                 PILES
     //////////////////////////////////////////////////////////////*/
@@ -685,7 +694,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             held: true
         });
         // forge-lint: disable-next-line(unsafe-typecast)
-        emit Composed(sid, ids, uint8(format), cost, msg.sender);
+        emit Composed(sid, ids, uint8(format), cost, _priceOf(sid), msg.sender);
         _payCaller(gasStart, COMPOSE_OVERHEAD_GAS, COMPOSE_GAS);
     }
 

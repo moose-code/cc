@@ -73,7 +73,9 @@ interface ICore {
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     event ChosenComposeOnSet(bool on);
     event CoinRescued(address indexed to, uint256 amount);
-    event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, address indexed caller);
+    event Composed(
+        uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, uint256 price, address indexed caller
+    );
     event ControllerLocked();
     event ControllerSet(address controller);
     event CreditAdopted(uint256 indexed id, uint256 cost);

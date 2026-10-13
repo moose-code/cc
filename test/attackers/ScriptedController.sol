@@ -55,4 +55,16 @@ contract ScriptedController is IController {
         if (revertPage) revert();
         return (pageReady, _pageIds, pageFormat);
     }
+
+    /// the asking price the core stamps into the `Composed` event
+    uint256 public priceOfValue;
+
+    /// sets the asking price answer.
+    function setPriceOf(uint256 p) external {
+        priceOfValue = p;
+    }
+
+    function priceOf(uint256) external view returns (uint256) {
+        return priceOfValue;
+    }
 }

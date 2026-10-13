@@ -73,7 +73,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x24b30651289e03ad99d9d2b286e5e7160b018b1cd1b865c14d9769aa5d490799;
+    bytes32 internal constant BUILD_HASH_CORE = 0x3c6ef24cb46fe258a059d19661829dac485b59254d4ee47679d92caad8ace1d6;
     bytes32 internal constant BUILD_HASH_CORELIB = 0xbcfd50ac6b19d0da4eb516cd8ec4a74181d1f7cce97195b6bf8e990062365331;
     bytes32 internal constant BUILD_HASH_CONTROLLER = 0xf3ff4e6bbca4e30290812858dc26246df118bc0b03a6a096f7053620004b6a88;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
