@@ -2788,6 +2788,42 @@
         "sha256": "d6c5030679b68c4d77de95eb308ca1475e4b20a79a834811e42163a6e2a4bd77",
         "revision": "62a9a02fbded4e10d19fcf48eb574072ca537c41"
       }
+    },
+    "E-CREDIT-SCORE-LENS-MAIN-644f716": {
+      "claim": "CreditScoreLens merged into local main at 644f716: build passes, 21 focused fork tests pass with 256 differential fuzz cases, and 19 focused CLI tests pass; reviewed helper and deployment CLI bytes/source preserved.",
+      "kind": "test",
+      "sourceRevision": "644f716add048a2072b74168a55b7be4ee301f4e",
+      "scope": [
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "src/interfaces/Interfaces.sol",
+        "test/CreditScoreLens.t.sol",
+        "test/utils/CreditIds.sol",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/VerifyCreditScoreLens.s.sol",
+        "script/tools/credit-score-lens.py",
+        "script/test_credit_score_lens_tool.py",
+        "script/tools/fix-interface.py",
+        "script/tools/gen-interfaces.sh",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": 2,
+        "A-FORK-BLOCK": 1,
+        "A-TOOLCHAIN": 1
+      },
+      "dependsOn": [],
+      "inputs": "Primary main checkout merged over ac09775; mainnet fork block 26158000 through public Tenderly; existing primary dependency checkout preserved; no wallet or private key.",
+      "method": "forge build: pass with existing dependency/lint warnings; MAINNET_RPC_URL=https://mainnet.gateway.tenderly.co forge test --match-path test/CreditScoreLens.t.sol -j 1: 21 pass, 0 fail, 0 skip; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest script/test_credit_score_lens_tool.py -v: 19 pass. Zero diff against reviewed branch for helper, generated interface, deployment/readback Solidity, Python driver/test and Solidity test. Zero diff against prior main for engine source, shared Interfaces.sol, configs, build settings and dependency pins. Merge conflict only in decision log; helper decisions imported as 99-108. Whitespace and working record checks pass.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "Focused helper tests only; no full suite, deep invariants, release rehearsal, engine acceptance, push, wallet, mainnet broadcast or source submission. Existing independent helper/tool reports remain pinned to their branch commits; no new security audit claimed. Deployment gate remains unmet. Primary dependency warnings are preserved, not repaired by this merge.",
+      "invalidated": null
     }
   }
 }
