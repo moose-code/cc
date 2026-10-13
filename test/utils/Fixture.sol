@@ -9,8 +9,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {ICredits, IStatements, IBalanceModule, Mainnet, Settings, Stack, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
-import {ICoreLens} from "../../src/interfaces/ICoreLens.sol";
+import {ICredits, IStatements, IBalanceModule, Mainnet, Settings, Stack, Sale, CreditSale, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2, IArtCoinsFeeEscrowV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {V2Stack} from "./V2Stack.sol";
 import {Deployed} from "../../script/SystemDeployer.sol";
@@ -20,7 +19,6 @@ import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {CreditIds} from "./CreditIds.sol";
 import {TestSwapRouter} from "./TestSwapRouter.sol";
-import {RateStore} from "../../src/lib/RateStore.sol";
 import {Prod} from "./Prod.sol";
 
 /// @notice the full system on a mainnet fork, built only from real contracts. the artcoins v2 stack is the live one
@@ -96,8 +94,6 @@ abstract contract Fixture is Test, ProdDeployer {
     address internal strategyAdapter;
     /// @dev the test adapter that prices any call (`_buyRaw`), approved by the owner in `setUp`
     address internal rawAdapter;
-    /// @dev the read only lens `deploySystem` created for the Core
-    ICoreLens internal lens;
     PoolKey internal launchKey;
     bytes32 internal poolId;
     TestSwapRouter internal router;
@@ -231,7 +227,6 @@ abstract contract Fixture is Test, ProdDeployer {
         core = ICore(payable(d.core));
         coin = IArtCoinsTokenV2(d.coin);
         ctl = IControllerV1(d.controller);
-        lens = ICoreLens(d.lens);
         seaportAdapter = d.seaportAdapter;
         strategyAdapter = d.strategyAdapter;
         // placed with `etch` at a fixed address, so the creation nonces of the test contract stay as the suites expect
@@ -473,10 +468,13 @@ abstract contract Fixture is Test, ProdDeployer {
         }
     }
 
+    /// first slot of `State.anchor` in the Core (four words)
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
+
     /// @notice the bid anchor state of the Core, read from its storage: the rate of the last fill, the rate of the first fill
     /// in the current minute bucket and that bucket
     function _anchor() internal view returns (uint256 lastFillRate, uint256 minuteStartRate, uint256 minuteBucket) {
-        bytes32 slot = RateStore.SLOT;
+        bytes32 slot = ANCHOR_SLOT;
         lastFillRate = uint256(vm.load(address(core), slot));
         minuteStartRate = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
         minuteBucket = uint64(uint256(vm.load(address(core), bytes32(uint256(slot) + 2))));
@@ -485,7 +483,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @notice the remembered peak state of the Core, read from its storage: `peakRate` and `peakTime` (peakTime is the
     /// high 64 bits of the word that holds the minute bucket)
     function _peak() internal view returns (uint256 peakRate, uint256 peakTime) {
-        bytes32 slot = RateStore.SLOT;
+        bytes32 slot = ANCHOR_SLOT;
         peakTime = uint64(uint256(vm.load(address(core), bytes32(uint256(slot) + 2))) >> 64);
         peakRate = uint256(vm.load(address(core), bytes32(uint256(slot) + 3)));
     }
@@ -506,6 +504,72 @@ abstract contract Fixture is Test, ProdDeployer {
     function _setSettings(Settings memory s) internal {
         vm.prank(owner);
         core.setSettings(s);
+    }
+
+    /// @notice the sale settings of the controller as a struct
+    function _sale() internal view returns (Sale memory s) {
+        s = Sale({
+            markupBps: ctl.markupBps(),
+            startCapBps: ctl.startCapBps(),
+            fastDecayBpsPerHour: ctl.fastDecayBpsPerHour(),
+            kneeBps: ctl.kneeBps(),
+            slowDecayBpsPerHour: ctl.slowDecayBpsPerHour(),
+            anchorHalfLife: ctl.anchorHalfLife(),
+            anchorMinCost: ctl.anchorMinCost()
+        });
+    }
+
+    /// @notice the credit sale, rating reference and royalty settings of the controller as a struct
+    function _creditSale() internal view returns (CreditSale memory c) {
+        c = CreditSale({
+            saleOn: ctl.creditSaleOn(),
+            window: ctl.creditWindow(),
+            floorBps: ctl.creditFloorBps(),
+            startBps: ctl.creditStartBps(),
+            refScore: ctl.refScore(),
+            royaltyBps: ctl.royaltyBps(),
+            royaltyRecipient: ctl.royaltyRecipient()
+        });
+    }
+
+    /// @notice the owner sets `refScore` through `setCredit`, the other credit settings unchanged
+    function _setRefScore(uint32 v) internal {
+        CreditSale memory c = _creditSale();
+        c.refScore = v;
+        vm.prank(owner);
+        ctl.setCredit(c);
+    }
+
+    /// @notice the owner turns the credit sale window on or off through `setCredit`, the other credit settings unchanged
+    function _setCreditSaleOn(bool on) internal {
+        CreditSale memory c = _creditSale();
+        c.saleOn = on;
+        vm.prank(owner);
+        ctl.setCredit(c);
+    }
+
+    /// @notice the owner sets the royalty recipient through `setCredit`, the other credit settings unchanged
+    function _setRoyaltyRecipient(address v) internal {
+        CreditSale memory c = _creditSale();
+        c.royaltyRecipient = v;
+        vm.prank(owner);
+        ctl.setCredit(c);
+    }
+
+    /// @notice the owner sets `royaltyBps` through `setCredit`, the other credit settings unchanged
+    function _setRoyaltyBps(uint16 v) internal {
+        CreditSale memory c = _creditSale();
+        c.royaltyBps = v;
+        vm.prank(owner);
+        ctl.setCredit(c);
+    }
+
+    /// @notice the owner sets `anchorMinCost` through `setSale`, the other sale settings unchanged
+    function _setAnchorMinCost(uint128 v) internal {
+        Sale memory s = _sale();
+        s.anchorMinCost = v;
+        vm.prank(owner);
+        ctl.setSale(s);
     }
 
     /// @notice composes and buys the statement with `buyer` at the asking price. the buyer now holds the statement and

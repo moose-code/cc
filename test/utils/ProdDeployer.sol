@@ -13,10 +13,6 @@ abstract contract ProdDeployer is SystemDeployer {
         return address(Prod.newController(core_, c.sale, c.credit));
     }
 
-    function _newLens(address core_) internal virtual override returns (address) {
-        return Prod.newLens(core_, LENS_SALT, CREATE2_DEPLOYER);
-    }
-
     function _newSeaportAdapter(address core_, address[] memory recipients) internal virtual override returns (address) {
         return Prod.newSeaportAdapter(core_, recipients, SEAPORT_ADAPTER_SALT, CREATE2_DEPLOYER);
     }

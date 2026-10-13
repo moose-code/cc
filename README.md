@@ -48,7 +48,6 @@ five contracts are ours. the artcoins v2 stack is live on mainnet (`script/confi
 | Core | custody and every rule: pots, bid, the pile, doors, compose, `composeChosen`, `sellTo`, `sellCreditTo`, redeem, buyback, settings, owner doors, locks |
 | CoreLib | library of the Core called by delegatecall: settings write, bid math, the buyback swap, the balanceToken bid, `adopt`, `rescueCoin`, `rescueNft`, `migrate` |
 | ControllerV1 | statement sale: `priceOf`, `buy`, the price reference, the anchor, the balanceToken pool key for the redemption value floor. credit sale: `creditPrice`, `buyCredit`, `buyCredits` |
-| CoreLens | read only view of the Core and the controller in one call |
 | ArtCoinsTokenV2 and the v2 stack | the coin and its factory, hook, locker, escrow and anti sniper module (`script/config/v2-mainnet.json`) |
 
 each runtime contract stays under 24,576 bytes (`forge build --sizes`).

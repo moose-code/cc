@@ -207,6 +207,26 @@ struct Sale {
     uint128 anchorMinCost;
 }
 
+/// the credit sale settings of the controller and the rating reference and royalty it applies to every sale. set at once by
+/// `setCredit`. the fields are the controller half of `Credit`
+struct CreditSale {
+    /// whether pile credits are for sale from acquisition and compose waits for a credit's window to pass
+    bool saleOn;
+    /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
+    /// take it. 1 minute to 30 days
+    uint32 window;
+    /// the credit sale floor over the larger of the credit's cost and its `valueOf` score, bps. 10_000 to 40_000
+    uint16 floorBps;
+    /// the credit sale start price over the floor, bps. 10_000 to 200_000
+    uint32 startBps;
+    /// the per-credit score the statement reference divides the rating by, in ten-thousandths of a point. 1 to 8_000_000
+    uint32 refScore;
+    /// the share of every sale price added on top and claimable by `royaltyRecipient`, bps. 0 to 1_000
+    uint16 royaltyBps;
+    /// the address `claimRoyalty` pays. never zero
+    address royaltyRecipient;
+}
+
 /// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
 /// window, chosen composition and the rating reference. owner adjustable afterwards, so the launch rules only check
 /// bounds (`src/lib/CreditBounds.sol`). the Core reads `costToPotBps`, `chosenComposeOn` and `minCcToChoose`; the

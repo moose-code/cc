@@ -132,7 +132,7 @@ interface ICore {
     function adaptersLocked() external view returns (bool);
     function addAdapter(address a) external;
     function adopt(uint256[] memory) external;
-    function allowedAdapter(address) external view returns (bool);
+    function allowedAdapter(address adapter) external view returns (bool);
     function balanceModule() external view returns (address);
     function balanceModuleLocked() external view returns (bool);
     function balancePot() external view returns (uint256);
@@ -148,7 +148,7 @@ interface ICore {
     function compose() external;
     function compose(uint8 format) external;
     function composeChosen(uint256[80] memory ids, uint8 format) external;
-    function composerOf(uint256) external view returns (address);
+    function composerOf(uint256 sid) external view returns (address);
     function controller() external view returns (address);
     function controllerLocked() external view returns (bool);
     function creditCostToPotBps() external view returns (uint16);

@@ -3,7 +3,6 @@ pragma solidity ^0.8.28;
 
 import {Core} from "../src/Core.sol";
 import {ControllerV1} from "../src/ControllerV1.sol";
-import {CoreLens} from "../src/CoreLens.sol";
 import {SeaportBasicAdapter} from "../src/adapters/SeaportBasicAdapter.sol";
 import {CreditStrategyAdapter} from "../src/adapters/CreditStrategyAdapter.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
@@ -16,10 +15,6 @@ import {SystemDeployer} from "./SystemDeployer.sol";
 abstract contract NewProd is SystemDeployer {
     function _newController(address core, LaunchConfig memory c) internal virtual override returns (address) {
         return address(new ControllerV1(core, c.sale, c.credit));
-    }
-
-    function _newLens(address core) internal virtual override returns (address) {
-        return address(new CoreLens{salt: LENS_SALT}(core));
     }
 
     function _newSeaportAdapter(address core, address[] memory recipients) internal virtual override returns (address) {

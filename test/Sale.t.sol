@@ -6,7 +6,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Sale, Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {Sale, CreditSale, Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {SellingController, ReentrantBuyer, RefundRefuser} from "./attackers/SaleAttackers.sol";
 import {StatementInfoStub} from "./standins/StatementInfoStub.sol";
@@ -30,8 +30,7 @@ abstract contract SaleBase is Fixture {
         vm.warp(_composedAt(sid) + secs);
     }
 
-    /// sets the six sale numbers in an order that keeps every intermediate state inside the bounds: the cap rises
-    /// before the knee, the cap falls after the knee. the floor is the core `saleFloorBps`
+    /// sets the six sale numbers in one call. the floor is the core `saleFloorBps`
     function _saleSettings(
         uint16 markup,
         uint32 cap,
@@ -41,14 +40,11 @@ abstract contract SaleBase is Fixture {
         uint16 floor_
     ) internal {
         _floorBps(floor_);
-        vm.startPrank(owner);
-        if (cap > ctl.startCapBps()) ctl.setStartCapBps(cap);
-        ctl.setKneeBps(knee);
-        ctl.setMarkupBps(markup);
-        ctl.setStartCapBps(cap);
-        ctl.setFastDecayBpsPerHour(fast);
-        ctl.setSlowDecayBpsPerHour(slow);
-        vm.stopPrank();
+        Sale memory s = _sale();
+        (s.markupBps, s.startCapBps, s.fastDecayBpsPerHour, s.kneeBps, s.slowDecayBpsPerHour) =
+            (markup, cap, fast, knee, slow);
+        vm.prank(owner);
+        ctl.setSale(s);
     }
 
     function _anchor(uint32 bps) internal {
@@ -136,8 +132,7 @@ abstract contract SaleBase is Fixture {
     /// `rateCap` at the opening rate hold the floor rate at or below the fill rate and keep the rate term far below
     /// cost, where the reference equals cost
     function _pinReferenceToCost() internal {
-        vm.prank(owner);
-        ctl.setRefScore(8_000_000);
+        _setRefScore(8_000_000);
         Settings memory s = core.settings();
         s.rateCap = uint64(OPEN_RATE);
         _setSettings(s);
@@ -486,74 +481,94 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.startBps(), 15_000);
     }
 
+    /// every upper edge of the sale settings, and every lower edge
+    function _hi() internal pure returns (Sale memory) {
+        return Sale(40_000, 200_000, 10_000, 200_000, 10_000, 90 days, 10 ether);
+    }
+
+    function _lo() internal pure returns (Sale memory) {
+        return Sale(10_000, 10_000, 1, 1_000, 1, 1 days, 0);
+    }
+
+    function _saleBad(Sale memory s, bytes32 field) internal {
+        vm.expectRevert(_bad(field));
+        ctl.setSale(s);
+    }
+
+    function _creditBad(CreditSale memory c, bytes32 field) internal {
+        vm.expectRevert(_bad(field));
+        ctl.setCredit(c);
+    }
+
     // promise: INTEGRATION BadSetting on the controller setters
     function test_settings_boundsOfEverySetter() public {
         vm.startPrank(owner);
-        // markupBps 10_000 to 40_000, at most the cap
-        ctl.setMarkupBps(10_000);
-        vm.expectRevert(_bad("markupBps"));
-        ctl.setMarkupBps(9_999);
-        ctl.setMarkupBps(40_000);
-        vm.expectRevert(_bad("markupBps"));
-        ctl.setMarkupBps(40_001);
-        // startCapBps from the markup and the knee to 200_000
-        vm.expectRevert(_bad("startCapBps"));
-        ctl.setStartCapBps(39_999);
-        ctl.setStartCapBps(40_000);
-        ctl.setStartCapBps(200_000);
-        vm.expectRevert(_bad("startCapBps"));
-        ctl.setStartCapBps(200_001);
-        // fastDecayBpsPerHour 1 to 10_000
-        vm.expectRevert(_bad("fastDecayBpsPerHour"));
-        ctl.setFastDecayBpsPerHour(0);
-        ctl.setFastDecayBpsPerHour(1);
-        ctl.setFastDecayBpsPerHour(10_000);
-        vm.expectRevert(_bad("fastDecayBpsPerHour"));
-        ctl.setFastDecayBpsPerHour(10_001);
-        // slowDecayBpsPerHour 1 to 10_000
-        vm.expectRevert(_bad("slowDecayBpsPerHour"));
-        ctl.setSlowDecayBpsPerHour(0);
-        ctl.setSlowDecayBpsPerHour(1);
-        ctl.setSlowDecayBpsPerHour(10_000);
-        vm.expectRevert(_bad("slowDecayBpsPerHour"));
-        ctl.setSlowDecayBpsPerHour(10_001);
-        // kneeBps 1_000 to the cap
-        vm.expectRevert(_bad("kneeBps"));
-        ctl.setKneeBps(999);
-        ctl.setKneeBps(1_000);
-        ctl.setKneeBps(7_500);
-        ctl.setKneeBps(200_000);
-        vm.expectRevert(_bad("kneeBps"));
-        ctl.setKneeBps(200_001);
-        // royaltyBps 0 to 1_000
-        ctl.setRoyaltyBps(0);
-        ctl.setRoyaltyBps(1_000);
-        vm.expectRevert(_bad("royaltyBps"));
-        ctl.setRoyaltyBps(1_001);
-        // royaltyRecipient is never zero
-        vm.expectRevert(_bad("royaltyRecipient"));
-        ctl.setRoyaltyRecipient(address(0));
+        // every upper edge is accepted in one call, then every lower edge
+        ctl.setSale(_hi());
+        ctl.setSale(_lo());
+        // one field past its edge, the others valid
+        Sale memory s = _hi();
+        s.markupBps = 40_001;
+        _saleBad(s, "markupBps");
+        s = _hi();
+        s.startCapBps = 39_999;
+        _saleBad(s, "startCapBps");
+        s.startCapBps = 200_001;
+        _saleBad(s, "startCapBps");
+        s = _hi();
+        s.kneeBps = 200_001;
+        _saleBad(s, "kneeBps");
+        s = _hi();
+        s.startCapBps = 100_000;
+        _saleBad(s, "kneeBps");
+        s = _lo();
+        s.markupBps = 9_999;
+        _saleBad(s, "markupBps");
+        s = _lo();
+        s.kneeBps = 999;
+        _saleBad(s, "kneeBps");
+        s = _hi();
+        s.fastDecayBpsPerHour = 10_001;
+        _saleBad(s, "fastDecayBpsPerHour");
+        s = _lo();
+        s.fastDecayBpsPerHour = 0;
+        _saleBad(s, "fastDecayBpsPerHour");
+        s = _hi();
+        s.slowDecayBpsPerHour = 10_001;
+        _saleBad(s, "slowDecayBpsPerHour");
+        s = _lo();
+        s.slowDecayBpsPerHour = 0;
+        _saleBad(s, "slowDecayBpsPerHour");
+        s = _lo();
+        s.anchorHalfLife = 1 days - 1;
+        _saleBad(s, "anchorHalfLife");
+        s = _hi();
+        s.anchorHalfLife = 90 days + 1;
+        _saleBad(s, "anchorHalfLife");
+        s = _hi();
+        s.anchorMinCost = 10 ether + 1;
+        _saleBad(s, "anchorMinCost");
+        s.anchorMinCost = type(uint128).max;
+        _saleBad(s, "anchorMinCost");
+        // royalty: 0 to 1_000, recipient never zero
+        CreditSale memory c = _creditSale();
+        c.royaltyBps = 0;
+        ctl.setCredit(c);
+        c.royaltyBps = 1_000;
+        ctl.setCredit(c);
+        c.royaltyBps = 1_001;
+        _creditBad(c, "royaltyBps");
+        c.royaltyBps = 1_000;
+        c.royaltyRecipient = address(0);
+        _creditBad(c, "royaltyRecipient");
         // anchorBps 10_000 to the cap
+        ctl.setSale(_hi());
         vm.expectRevert(_bad("anchorBps"));
         ctl.setAnchorBps(9_999);
         ctl.setAnchorBps(10_000);
         ctl.setAnchorBps(200_000);
         vm.expectRevert(_bad("anchorBps"));
         ctl.setAnchorBps(200_001);
-        // anchorHalfLife 1 day to 90 days
-        vm.expectRevert(_bad("anchorHalfLife"));
-        ctl.setAnchorHalfLife(1 days - 1);
-        ctl.setAnchorHalfLife(1 days);
-        ctl.setAnchorHalfLife(90 days);
-        vm.expectRevert(_bad("anchorHalfLife"));
-        ctl.setAnchorHalfLife(90 days + 1);
-        // anchorMinCost 0 to 10 ether
-        ctl.setAnchorMinCost(0);
-        ctl.setAnchorMinCost(10 ether);
-        vm.expectRevert(_bad("anchorMinCost"));
-        ctl.setAnchorMinCost(10 ether + 1);
-        vm.expectRevert(_bad("anchorMinCost"));
-        ctl.setAnchorMinCost(type(uint128).max);
         vm.stopPrank();
         assertEq(ctl.anchorMinCost(), 10 ether);
         assertEq(ctl.anchorHalfLife(), 90 days);
@@ -569,37 +584,20 @@ contract SaleSettingsTest is SaleBase {
 
     // promise: SPEC 1 every economic number is an owner setting, effective at once
     function test_settings_eventsAndValues() public {
+        Sale memory s = Sale(12_000, 150_000, 200, 12_000, 50, 3 days, 0.25 ether);
+        CreditSale memory c = _creditSale();
+        c.royaltyBps = 300;
+        c.royaltyRecipient = address(0xA27);
         vm.startPrank(owner);
         vm.expectEmit(address(ctl));
-        emit IControllerV1.MarkupBpsSet(12_000);
-        ctl.setMarkupBps(12_000);
+        emit IControllerV1.SaleSet(s);
+        ctl.setSale(s);
         vm.expectEmit(address(ctl));
-        emit IControllerV1.StartCapBpsSet(150_000);
-        ctl.setStartCapBps(150_000);
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.FastDecayBpsPerHourSet(200);
-        ctl.setFastDecayBpsPerHour(200);
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.SlowDecayBpsPerHourSet(50);
-        ctl.setSlowDecayBpsPerHour(50);
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.KneeBpsSet(12_000);
-        ctl.setKneeBps(12_000);
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.RoyaltyBpsSet(300);
-        ctl.setRoyaltyBps(300);
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.RoyaltyRecipientSet(address(0xA27));
-        ctl.setRoyaltyRecipient(address(0xA27));
+        emit IControllerV1.CreditSaleSet(c);
+        ctl.setCredit(c);
         vm.expectEmit(address(ctl));
         emit IControllerV1.AnchorBpsSet(11_000);
         ctl.setAnchorBps(11_000);
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.AnchorHalfLifeSet(3 days);
-        ctl.setAnchorHalfLife(3 days);
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.AnchorMinCostSet(0.25 ether);
-        ctl.setAnchorMinCost(0.25 ether);
         vm.stopPrank();
         assertEq(ctl.markupBps(), 12_000);
         assertEq(ctl.startCapBps(), 150_000);
@@ -617,29 +615,19 @@ contract SaleSettingsTest is SaleBase {
     // promise: INTEGRATION OnlyOwner on the controller setters
     /// only the live owner of the core: not the deployer, not a keeper, not the controller itself
     function test_settings_onlyTheCoreOwner() public {
+        Sale memory s = _sale();
+        s.markupBps = 12_000;
+        CreditSale memory c = _creditSale();
+        c.royaltyBps = 300;
         address[4] memory who = [deployer, keeper, address(ctl), address(0x5757)];
         for (uint256 i; i < who.length; ++i) {
             vm.startPrank(who[i]);
             vm.expectRevert(IControllerV1.OnlyOwner.selector);
-            ctl.setMarkupBps(12_000);
+            ctl.setSale(s);
             vm.expectRevert(IControllerV1.OnlyOwner.selector);
-            ctl.setStartCapBps(150_000);
-            vm.expectRevert(IControllerV1.OnlyOwner.selector);
-            ctl.setFastDecayBpsPerHour(200);
-            vm.expectRevert(IControllerV1.OnlyOwner.selector);
-            ctl.setSlowDecayBpsPerHour(50);
-            vm.expectRevert(IControllerV1.OnlyOwner.selector);
-            ctl.setKneeBps(12_000);
-            vm.expectRevert(IControllerV1.OnlyOwner.selector);
-            ctl.setRoyaltyBps(300);
-            vm.expectRevert(IControllerV1.OnlyOwner.selector);
-            ctl.setRoyaltyRecipient(address(0xA27));
+            ctl.setCredit(c);
             vm.expectRevert(IControllerV1.OnlyOwner.selector);
             ctl.setAnchorBps(11_000);
-            vm.expectRevert(IControllerV1.OnlyOwner.selector);
-            ctl.setAnchorHalfLife(3 days);
-            vm.expectRevert(IControllerV1.OnlyOwner.selector);
-            ctl.setAnchorMinCost(0.25 ether);
             vm.stopPrank();
         }
         assertEq(ctl.anchorHalfLife(), 7 days);
@@ -724,8 +712,7 @@ contract SaleAnchorTest is SaleShapeBase {
     /// the tests of the minimum set it
     function setUp() public override {
         super.setUp();
-        vm.prank(owner);
-        ctl.setAnchorMinCost(0);
+        _setAnchorMinCost(0);
     }
 
     function _composeN(uint256 n) internal returns (uint256[] memory sids) {
@@ -756,8 +743,7 @@ contract SaleAnchorTest is SaleShapeBase {
     /// composed and bought at its start price. four rounds leave the anchor, its time and the fresh start price unchanged
     function test_anchor_dustStatementsLeaveTheAnchor() public {
         // a page costs at most a page at the capped fill rate, under this minimum, so every round is dust
-        vm.prank(owner);
-        ctl.setAnchorMinCost(0.2 ether);
+        _setAnchorMinCost(0.2 ether);
         assertEq(core.ethPot(), 0, "the pot is empty");
         address attacker = address(0xA77);
         uint256 t0 = ctl.anchorTime();
@@ -920,44 +906,48 @@ contract SaleDecayTest is SaleShapeBase {
         _age(sid, 60 * H);
         assertEq(ctl.priceOf(sid), cost * 9_750 / 10_000, "launch rule: 10 hours past the knee at 25 bps an hour");
         vm.startPrank(owner);
-        ctl.setSlowDecayBpsPerHour(50);
+        Sale memory s = _sale();
+        s.slowDecayBpsPerHour = 50;
+        ctl.setSale(s);
         assertEq(ctl.priceOf(sid), cost * 9_500 / 10_000, "slow 50: 10 hours at 50");
-        ctl.setFastDecayBpsPerHour(200);
+        s.fastDecayBpsPerHour = 200;
+        ctl.setSale(s);
         assertEq(ctl.priceOf(sid), cost * 8_250 / 10_000, "fast 200: the knee is at hour 25, 35 hours at 50");
-        ctl.setKneeBps(12_000);
+        s.kneeBps = 12_000;
+        ctl.setSale(s);
         assertEq(ctl.priceOf(sid), cost * 9_750 / 10_000, "knee 12_000: reached at hour 15, 45 hours at 50");
         vm.stopPrank();
         _floorBps(9_900);
         assertEq(ctl.priceOf(sid), cost * 9_900 / 10_000, "floor 9_900 lifts it");
         _floorBps(7_500);
-        vm.startPrank(owner);
-        ctl.setKneeBps(10_000);
-        ctl.setFastDecayBpsPerHour(100);
-        ctl.setSlowDecayBpsPerHour(25);
-        vm.stopPrank();
+        s.kneeBps = 10_000;
+        s.fastDecayBpsPerHour = 100;
+        s.slowDecayBpsPerHour = 25;
+        vm.prank(owner);
+        ctl.setSale(s);
         assertEq(ctl.priceOf(sid), cost * 9_750 / 10_000, "back to the launch rule");
     }
 
     // promise: SPEC 2 sale settings reachable inside their bounds
-    /// the setter order that reaches any valid combination: the cap rises before the knee, the knee falls before the cap
-    function test_decay_everyValidCombinationIsReachable() public {
+    /// one `setSale` call reaches any valid combination: the knee over the old cap, the cap under the old knee, and the
+    /// knee at the cap
+    function test_decay_oneCallReachesAnyValidCombination() public {
+        Sale memory s = _sale();
         vm.startPrank(owner);
-        // up: the knee over the cap needs the cap first
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("kneeBps")));
-        ctl.setKneeBps(150_000);
-        ctl.setStartCapBps(150_000);
-        ctl.setKneeBps(150_000);
-        // down: the cap under the knee needs the knee first
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("startCapBps")));
-        ctl.setStartCapBps(15_000);
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("kneeBps")));
-        ctl.setKneeBps(999);
-        ctl.setKneeBps(1_000);
-        ctl.setStartCapBps(15_000);
+        // up: the knee and the cap rise together
+        s.startCapBps = 150_000;
+        s.kneeBps = 150_000;
+        ctl.setSale(s);
+        assertEq(ctl.kneeBps(), 150_000);
+        // down: the cap and the knee fall together, the knee to its floor
+        s.startCapBps = 15_000;
+        s.kneeBps = 1_000;
+        ctl.setSale(s);
         assertEq(ctl.kneeBps(), 1_000);
         assertEq(ctl.startCapBps(), 15_000);
-        // and the knee at the cap is reachable again
-        ctl.setKneeBps(15_000);
+        // the knee at the cap
+        s.kneeBps = 15_000;
+        ctl.setSale(s);
         vm.stopPrank();
         assertEq(ctl.kneeBps(), 15_000);
     }
@@ -1086,8 +1076,7 @@ contract SaleRoyaltyTest is SaleBase {
     /// a recipient that reverts blocks no sale. its claim reverts and keeps the royalty, and the owner names another
     function test_royalty_aRecipientThatRevertsBlocksNothing() public {
         RejectsEth bad = new RejectsEth();
-        vm.prank(owner);
-        ctl.setRoyaltyRecipient(address(bad));
+        _setRoyaltyRecipient(address(bad));
         uint256 a = _composeOnce().sid;
         uint256 b = _another();
         _pay(buyer, a, ctl.priceOf(a));
@@ -1100,8 +1089,7 @@ contract SaleRoyaltyTest is SaleBase {
         ctl.claimRoyalty();
         assertEq(ctl.royaltyOwed(), owed, "the royalty is kept");
         address good = address(0x600D);
-        vm.prank(owner);
-        ctl.setRoyaltyRecipient(good);
+        _setRoyaltyRecipient(good);
         ctl.claimRoyalty();
         assertEq(good.balance, owed, "the new recipient got what was owed");
         assertEq(ctl.royaltyOwed(), 0);
@@ -1109,8 +1097,7 @@ contract SaleRoyaltyTest is SaleBase {
 
     // promise: INTEGRATION ZeroAmount on claimRoyalty
     function test_royalty_zeroShareCollectsNothing() public {
-        vm.prank(owner);
-        ctl.setRoyaltyBps(0);
+        _setRoyaltyBps(0);
         uint256 sid = _composeOnce().sid;
         _pay(buyer, sid, ctl.priceOf(sid));
         assertEq(ctl.royaltyOwed(), 0);

@@ -12,7 +12,6 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Mainnet, Stack, Settings} from "../src/interfaces/Interfaces.sol";
 import {ICoreLib} from "../src/interfaces/ICoreLib.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
-import {ICoreLens} from "../src/interfaces/ICoreLens.sol";
 import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
@@ -46,7 +45,6 @@ abstract contract PostflightChecks is PostflightPool {
         bytes32 poolId = _postPool(c, core_, coin);
         _postCoin(c, core_, coin, poolId);
         _postPayee(c, core);
-        _postLens(core);
         _postAdapters(c, core);
         _postPrediction(c, coin, deployer, core_);
         _postUnreadable(c);
@@ -63,19 +61,8 @@ abstract contract PostflightChecks is PostflightPool {
         _warn("warn: coin equals the factory prediction for the deployer", okp && want == coin, vm.toString(want));
     }
 
-    /// @dev the deterministic deployer that `forge script` sends the library and the lens through (CREATE2)
+    /// @dev the deterministic deployer that `forge script` sends the library and the listing adapters through (CREATE2)
     address internal constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
-    /// @dev the CREATE2 salt of the lens
-    bytes32 internal constant LENS_SALT = keccak256("credits.core.lens.v1");
-
-    /// @notice the address of the lens of `core_`: CREATE2 through the deterministic deployer with `LENS_SALT` and the
-    /// creation code of `CoreLens` with the Core as constructor argument. a function of the Core address and the
-    /// compiled lens, so postflight and resume derive it without the deployer or its nonce
-    function lensAddress(address core_) internal view returns (address) {
-        bytes memory init = abi.encodePacked(vm.getCode("CoreLens.sol:CoreLens"), abi.encode(core_));
-        return vm.computeCreate2Address(LENS_SALT, keccak256(init), CREATE2_DEPLOYER);
-    }
-
     /// @dev the CREATE2 salts of the two listing adapters
     bytes32 internal constant SEAPORT_ADAPTER_SALT = keccak256("credits.core.seaportAdapter.v1");
     bytes32 internal constant STRATEGY_ADAPTER_SALT = keccak256("credits.core.strategyAdapter.v1");
@@ -144,24 +131,6 @@ abstract contract PostflightChecks is PostflightPool {
                 && !core.allowedAdapter(address(core)),
             "hook, factory, locker, escrow, pool manager, coin, core"
         );
-    }
-
-    /// @dev the lens at `lensAddress(core)` has code of the compiled size, points at this Core, uses the Credits and Statements of mainnet, and answers `snapshot`. its controller is the Core's,
-    /// read on every call
-    function _postLens(ICore core) private {
-        address lensAt = lensAddress(address(core));
-        _code("code: lens", lensAt);
-        if (lensAt.code.length == 0) return;
-        ICoreLens lens = ICoreLens(lensAt);
-        bool sized = lensAt.code.length == vm.getDeployedCode("CoreLens.sol:CoreLens").length;
-        _check("lens: code size is the compiled CoreLens", sized, vm.toString(lensAt));
-        if (!sized) return;
-        _eq("lens: core", lens.CORE(), address(core));
-        _eq("lens: credits", lens.CREDITS(), Mainnet.CREDITS);
-        _eq("lens: statements", lens.STATEMENTS(), Mainnet.STATEMENTS);
-        _eq("lens: controller is the Core controller", lens.controller(), core.controller());
-        (bool ok,) = lensAt.staticcall(abi.encodeCall(ICoreLens.snapshot, ()));
-        _check("lens: snapshot answers", ok, vm.toString(lensAt));
     }
 
     /// @dev nonces to scan down from the deployer nonce when looking for the creation of the Core

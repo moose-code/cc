@@ -112,12 +112,4 @@ library Prod {
         require(ok && out.length == 20, "strategy adapter create2 failed");
         adapter = address(bytes20(out));
     }
-
-    /// @dev creates the lens through the deterministic deployer, as `forge script` does with `new CoreLens{salt}`
-    function newLens(address core, bytes32 salt, address create2Deployer) internal returns (address lens) {
-        bytes memory init = abi.encodePacked(vm.getCode("CoreLens.sol:CoreLens"), abi.encode(core));
-        (bool ok, bytes memory out) = create2Deployer.call(abi.encodePacked(salt, init));
-        require(ok && out.length == 20, "lens create2 failed");
-        lens = address(bytes20(out));
-    }
 }

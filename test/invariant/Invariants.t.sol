@@ -3,10 +3,8 @@ pragma solidity ^0.8.28;
 
 import {console} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
-import {Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
+import {Mainnet, Settings, CreditSale} from "../../src/interfaces/Interfaces.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {ICoreLens} from "../../src/interfaces/ICoreLens.sol";
-import {RateStore} from "../../src/lib/RateStore.sol";
 import {Halving} from "../../src/lib/Halving.sol";
 import {IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {InvariantFixture} from "./InvariantFixture.sol";
@@ -336,16 +334,6 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// the oldest credit of the pile, zero when it is empty
-    function _head() internal view returns (uint256) {
-        uint256[] memory page = core.pilePage(0, 1);
-        return page.length == 0 ? 0 : page[0];
-    }
-
-    function _hostileController() internal view returns (bool) {
-        return core.controller() == address(fuzz) && fuzz.hostile();
-    }
-
     /// 17. every credit the core owns is in exactly one place. a credit in the pile is reached by walking it from
     /// its head, is recorded as in the pile, is owned by the core and appears once. the pile holds as many credits as
     /// its size says and its walk ends. a credit the core owns outside the pile has no record and `adopt` puts it into
@@ -480,9 +468,8 @@ abstract contract InvariantsBase is InvariantFixture {
         assertLe(rate, price, "the read is above the price state");
         uint256 lastFill = core.lastFillTime();
         uint256 idle = block.timestamp > lastFill ? block.timestamp - lastFill : 0;
-        uint256 lastFillRate = uint256(vm.load(address(core), RateStore.SLOT));
-        uint256 peakTime = uint64(uint256(vm.load(address(core), bytes32(uint256(RateStore.SLOT) + 2))) >> 64);
-        uint256 peakRate = uint256(vm.load(address(core), bytes32(uint256(RateStore.SLOT) + 3)));
+        (uint256 lastFillRate,,) = _anchor();
+        (uint256 peakRate, uint256 peakTime) = _peak();
         uint256 peakNow = Halving.halve(peakRate, block.timestamp > peakTime ? block.timestamp - peakTime : 0, st.peakHalfLife);
         uint256 anchor = lastFillRate > peakNow ? lastFillRate : peakNow;
         uint256 ceiling = anchor * (10_000 + uint256(st.idleLoosenBps) * (idle / 600)) * st.ceilBps / 1e8;
@@ -496,74 +483,6 @@ abstract contract InvariantsBase is InvariantFixture {
         } else {
             assertGe(rate, price < pot ? price : pot, "the read is below the price state lowered to the booked pot");
         }
-    }
-
-    /// 20. `CoreLens` reports what the Core reports. every scalar of `snapshot` equals the direct read, the pending
-    /// income is the eth above the tracked eth (and the payee state is the core's), and `statementsPage` over the held list
-    /// equals the Core's held list and records, whole and in a window.
-    /// the page readiness and the asking prices come from the controller, which a hostile one answers differently from
-    /// call to call, and are left out then.
-    function invariant_20_lensEqualsTheCore() public {
-        ICoreLens.Snapshot memory s = lens.snapshot();
-        assertEq(s.ethRate, core.ethRate(), "lens ethRate");
-        assertEq(s.ethPrice, core.ethPrice(), "lens ethPrice");
-        assertEq(s.pileSize, core.pileSize(), "lens pileSize");
-        assertEq(s.pileHead, _head(), "lens pileHead");
-        assertEq(s.ethPot, core.ethPot(), "lens ethPot");
-        assertEq(s.ethToBuyback, core.ethToBuyback(), "lens ethToBuyback");
-        assertEq(s.ethRedeemBurn, core.ethRedeemBurn(), "lens ethRedeemBurn");
-        assertEq(s.balancePot, core.balancePot(), "lens balancePot");
-        uint256 booked = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed();
-        assertEq(s.pendingIncome, address(core).balance > booked ? address(core).balance - booked : 0, "lens pendingIncome");
-        assertEq(s.payee, core.payee(), "lens payee");
-        assertEq(s.payeeOwed, core.payeeOwed(), "lens payeeOwed");
-        assertEq(s.payeeOn, core.payeeOn(), "lens payeeOn");
-        assertEq(s.controller, core.controller(), "lens controller");
-        assertEq(s.successor, core.successor(), "lens successor");
-        assertEq(s.controllerLocked, core.controllerLocked(), "lens controllerLocked");
-        assertEq(s.balanceModuleLocked, core.balanceModuleLocked(), "lens balanceModuleLocked");
-        assertEq(s.adaptersLocked, core.adaptersLocked(), "lens adaptersLocked");
-        assertEq(s.successorLocked, core.successorLocked(), "lens successorLocked");
-        bool hostile = _hostileController();
-        if (!hostile) {
-            assertEq(s.pageReady, _pageReady(s.controller), "lens pageReady");
-        }
-        uint256[] memory held = core.heldStatements();
-        assertEq(s.statements.length, held.length, "lens statement count");
-        ICoreLens.StatementView[] memory page = lens.statementsPage(0, held.length);
-        assertEq(page.length, held.length, "lens page length");
-        for (uint256 i; i < held.length; ++i) {
-            _lensStatement(s.statements[i], held[i], s.controller, hostile);
-            _lensStatement(page[i], held[i], s.controller, hostile);
-        }
-        if (held.length > 2) {
-            uint256 start = held.length / 2;
-            ICoreLens.StatementView[] memory part = lens.statementsPage(start, 3);
-            uint256 expected = held.length - start < 3 ? held.length - start : 3;
-            assertEq(part.length, expected, "lens partial page length");
-            for (uint256 i; i < part.length; ++i) {
-                assertEq(part[i].id, held[start + i], "lens partial page id");
-            }
-        }
-        assertEq(lens.statementsPage(held.length, 5).length, 0, "lens page past the end");
-    }
-
-    function _pageReady(address ctl) internal view returns (bool ready) {
-        (bool ok, bytes memory out) = ctl.staticcall{gas: 500_000}(abi.encodeCall(IControllerV1.nextPage, ()));
-        ready = ok && out.length >= 82 * 32 && abi.decode(out, (uint256)) == 1;
-    }
-
-    /// a statement view against the Core's record and (outside a hostile controller) the asking price
-    function _lensStatement(ICoreLens.StatementView memory v, uint256 sid, address ctl, bool hostile) internal view {
-        assertEq(v.id, sid, "lens statement id");
-        (, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
-        assertEq(v.cost, cost, "lens statement cost");
-        assertEq(v.composedAt, composedAt, "lens statement compose time");
-        if (hostile) return;
-        uint256 asking;
-        (bool ok, bytes memory out) = ctl.staticcall{gas: 200_000}(abi.encodeCall(IControllerV1.priceOf, (sid)));
-        if (ok && out.length == 32) asking = abi.decode(out, (uint256));
-        assertEq(v.askingPrice, asking, "lens statement asking price");
     }
 
     /// logs how often each action ran, succeeded and was skipped in this run, and over all runs so far.
@@ -820,8 +739,10 @@ abstract contract InvariantsBase is InvariantFixture {
             core.setController(address(ctl));
         }
         assertTrue(_try(40, 20), "no credit setting");
+        CreditSale memory cs = _creditSale();
+        cs.saleOn = true;
         vm.prank(handler.owner());
-        ctl.setCreditSaleOn(true);
+        ctl.setCredit(cs);
         for (uint256 i; i < 20 && core.pileSize() < 5; ++i) {
             _try(2, 10);
         }
@@ -838,8 +759,10 @@ abstract contract InvariantsBase is InvariantFixture {
             core.setController(address(ctl));
         }
         if (ctl.creditSaleOn()) {
+            CreditSale memory cs = _creditSale();
+            cs.saleOn = false;
             vm.prank(handler.owner());
-            ctl.setCreditSaleOn(false);
+            ctl.setCredit(cs);
         }
         vm.startPrank(handler.owner());
         core.setChosenComposeOn(true);

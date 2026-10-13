@@ -2,7 +2,8 @@
 pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
-import {Settings} from "../src/interfaces/Interfaces.sol";
+import {Settings, Sale, CreditSale} from "../src/interfaces/Interfaces.sol";
+import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {SettingsFields} from "./SettingsFields.sol";
 
@@ -24,6 +25,11 @@ interface ICoreOwner {
 /// * `SET_<field>=<value>`, one variable per field of `Settings`, for example `SET_saleFloorBps=8000`
 /// * `SETTINGS_PATCH`, a json object as text or the path of a json file, for example `{"saleFloorBps":8000}`
 /// `SET_RATE=<wei per credit>` also prepares `setRate`.
+/// with `CONTROLLER=0x...` the same `SET_<field>` variables also change the controller: the fields of `Sale` (`markupBps`,
+/// `startCapBps`, `fastDecayBpsPerHour`, `kneeBps`, `slowDecayBpsPerHour`, `anchorHalfLife`, `anchorMinCost`) go to `setSale`
+/// and the fields of `CreditSale` (`saleOn`, `window`, `floorBps`, `startBps`, `refScore`, `royaltyBps`, `royaltyRecipient`)
+/// to `setCredit`. each struct is read live, patched and checked by a simulated call as the owner, which reverts with
+/// the first field out of bounds.
 /// the controller prices held statements live from the settings, so a setting change reaches every held statement at once.
 ///
 /// `CORE=0x... SET_saleFloorBps=8000 forge script script/SetSettings.s.sol --rpc-url $MAINNET_RPC_URL`
@@ -70,6 +76,9 @@ contract SetSettings is Script {
             );
         }
 
+        IControllerV1 ctl = IControllerV1(vm.envOr("CONTROLLER", address(0)));
+        if (address(ctl) != address(0)) _controllerPlan(ctl, core.owner());
+
         if (!_send()) {
             console.log("nothing sent. add SEND=1 and --broadcast with the owner as signer to send");
             return;
@@ -79,8 +88,104 @@ contract SetSettings is Script {
         if (signer != core.owner()) revert NotOwner(core.owner(), signer);
         if (settingsChanged) core.setSettings(next);
         if (rate != 0) core.setRate(rate);
+        if (address(ctl) != address(0)) {
+            (Sale memory ns, CreditSale memory nk, bool saleChanged, bool creditChanged) = _controllerChanges(ctl);
+            if (saleChanged) ctl.setSale(ns);
+            if (creditChanged) ctl.setCredit(nk);
+        }
         vm.stopBroadcast();
         console.log("sent. read it back with settings(), ethRate() and the SettingsSet event");
+    }
+
+    /// @dev the live `Sale` and `CreditSale` of the controller with the `SET_<field>` variables applied, and whether each
+    /// differs from the live struct
+    function _controllerChanges(IControllerV1 c)
+        internal
+        view
+        returns (Sale memory ns, CreditSale memory nk, bool saleChanged, bool creditChanged)
+    {
+        ns = Sale({
+            markupBps: uint16(_field("markupBps", c.markupBps(), type(uint16).max)),
+            startCapBps: uint32(_field("startCapBps", c.startCapBps(), type(uint32).max)),
+            fastDecayBpsPerHour: uint16(_field("fastDecayBpsPerHour", c.fastDecayBpsPerHour(), type(uint16).max)),
+            kneeBps: uint32(_field("kneeBps", c.kneeBps(), type(uint32).max)),
+            slowDecayBpsPerHour: uint16(_field("slowDecayBpsPerHour", c.slowDecayBpsPerHour(), type(uint16).max)),
+            anchorHalfLife: uint32(_field("anchorHalfLife", c.anchorHalfLife(), type(uint32).max)),
+            anchorMinCost: uint128(_field("anchorMinCost", c.anchorMinCost(), type(uint128).max))
+        });
+        nk = CreditSale({
+            saleOn: _field("saleOn", c.creditSaleOn() ? 1 : 0, 1) == 1,
+            window: uint32(_field("window", c.creditWindow(), type(uint32).max)),
+            floorBps: uint16(_field("floorBps", c.creditFloorBps(), type(uint16).max)),
+            startBps: uint32(_field("startBps", c.creditStartBps(), type(uint32).max)),
+            refScore: uint32(_field("refScore", c.refScore(), type(uint32).max)),
+            royaltyBps: uint16(_field("royaltyBps", c.royaltyBps(), type(uint16).max)),
+            royaltyRecipient: vm.envOr("SET_royaltyRecipient", c.royaltyRecipient())
+        });
+        saleChanged = keccak256(abi.encode(ns))
+            != keccak256(
+                abi.encode(
+                    Sale(
+                        c.markupBps(),
+                        c.startCapBps(),
+                        c.fastDecayBpsPerHour(),
+                        c.kneeBps(),
+                        c.slowDecayBpsPerHour(),
+                        c.anchorHalfLife(),
+                        c.anchorMinCost()
+                    )
+                )
+            );
+        creditChanged = keccak256(abi.encode(nk))
+            != keccak256(
+                abi.encode(
+                    CreditSale(
+                        c.creditSaleOn(),
+                        c.creditWindow(),
+                        c.creditFloorBps(),
+                        c.creditStartBps(),
+                        c.refScore(),
+                        c.royaltyBps(),
+                        c.royaltyRecipient()
+                    )
+                )
+            );
+    }
+
+    /// @dev `SET_<name>` when set, else the live value. a value above `max` does not fit the field
+    function _field(string memory name, uint256 live, uint256 max) internal view returns (uint256) {
+        (bool has, uint256 v) = _single(name);
+        if (!has) return live;
+        if (v > max) revert ValueTooWide(name);
+        return v;
+    }
+
+    /// @dev prints the changed controller structs with their calldata, after a simulated call as the owner has accepted
+    /// them. the controller's own `BadSetting` field is the revert
+    function _controllerPlan(IControllerV1 c, address owner_) internal {
+        (Sale memory ns, CreditSale memory nk, bool saleChanged, bool creditChanged) = _controllerChanges(c);
+        if (saleChanged) {
+            _simulate(c, owner_, abi.encodeCall(IControllerV1.setSale, (ns)));
+            console.log("setSale calldata");
+            console.logBytes(abi.encodeCall(IControllerV1.setSale, (ns)));
+        }
+        if (creditChanged) {
+            _simulate(c, owner_, abi.encodeCall(IControllerV1.setCredit, (nk)));
+            console.log("setCredit calldata");
+            console.logBytes(abi.encodeCall(IControllerV1.setCredit, (nk)));
+        }
+        if (!saleChanged && !creditChanged) console.log("the controller settings are unchanged");
+    }
+
+    function _simulate(IControllerV1 c, address owner_, bytes memory data) internal {
+        vm.prank(owner_);
+        (bool ok, bytes memory why) = address(c).call(data);
+        if (ok) return;
+        bytes32 field;
+        assembly ("memory-safe") {
+            field := mload(add(why, 36))
+        }
+        revert OutOfBounds(field);
     }
 
     /// @dev prints a warning row and returns true when `rateCap` is below the live bid read (`ethRate`) or the live price

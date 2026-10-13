@@ -168,12 +168,11 @@ contract RehearsalTest is Test, ProdDeployer {
         vm.stopPrank();
         // each transaction costs its execution gas, 21000 intrinsic and its calldata (4 gas per zero byte, 16 per other byte)
         bytes memory libCode = vm.getCode("CoreLib.sol:CoreLib");
-        uint256[7] memory txGas = [
+        uint256[6] memory txGas = [
             libGas + 21_000 + _calldataGas(libCode) + 512,
             stepGas[0] + _createGas("ControllerV1.sol:ControllerV1") + 512,
             stepGas[1] + _createGas("Core.sol:Core") + 16_384,
             // sent through the deterministic deployer: the measured call includes the create and the code deposit
-            stepGas[3] + 21_000 + _calldataGas(abi.encodePacked(LENS_SALT, vm.getCode("CoreLens.sol:CoreLens"), abi.encode(d.core))) + 512,
             stepGas[4] + 21_000
                 + _calldataGas(
                     abi.encodePacked(
@@ -195,17 +194,16 @@ contract RehearsalTest is Test, ProdDeployer {
                     )
                 )
         ];
-        string[7] memory names = [
+        string[6] memory names = [
             "1 library CoreLib (create2 deployer)",
             "2 controller",
             "3 core",
-            "4 lens (read only)",
-            "5 seaport adapter (create2 deployer)",
-            "6 strategy adapter (create2 deployer)",
-            "7 launch through the factory (deployTokenAsOwner)"
+            "4 seaport adapter (create2 deployer)",
+            "5 strategy adapter (create2 deployer)",
+            "6 launch through the factory (deployTokenAsOwner)"
         ];
         uint256 total;
-        for (uint256 i; i < 7; ++i) {
+        for (uint256 i; i < 6; ++i) {
             total += txGas[i];
             console.log(string.concat("deploy gas, tx ", names[i]), txGas[i]);
             assertLt(txGas[i], TX_GAS_CAP, string.concat("over the per transaction gas cap: ", names[i]));
@@ -217,7 +215,7 @@ contract RehearsalTest is Test, ProdDeployer {
         console.log("library at", lib);
         console.log("total deploy gas, seven transactions", total);
         console.log("per transaction gas cap", TX_GAS_CAP);
-        console.log("factory deploy fee (wei, sent as value of tx 7)", fee);
+        console.log("factory deploy fee (wei, sent as value of tx 6)", fee);
         uint256[3] memory gwei_ = [uint256(1), 5, 20];
         for (uint256 i; i < 3; ++i) {
             uint256 cost = total * gwei_[i] * 1 gwei;

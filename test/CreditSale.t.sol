@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
+import {CreditSale} from "../src/interfaces/Interfaces.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
@@ -35,13 +36,11 @@ contract CreditSaleTest is Fixture {
         ids = _fillEthPile(n);
         vm.prank(owner);
         core.setRate(1e13); // the rate floor, far below the sale cost
-        vm.prank(owner);
-        ctl.setCreditSaleOn(true);
+        _setCreditSaleOn(true);
     }
 
     function _on() internal {
-        vm.prank(owner);
-        ctl.setCreditSaleOn(true);
+        _setCreditSaleOn(true);
     }
 
     /// `who` buys credit `id` at the price `price` plus the royalty on it
@@ -74,38 +73,57 @@ contract CreditSaleTest is Fixture {
         assertEq(ctl.creditFloorBps(), 11_000, "launch floor");
         assertEq(ctl.creditStartBps(), 30_000, "launch start");
 
+        CreditSale memory c = _creditSale();
+        c.saleOn = true;
         vm.expectEmit(address(ctl));
-        emit IControllerV1.CreditSaleOnSet(true);
+        emit IControllerV1.CreditSaleSet(c);
         vm.prank(owner);
-        ctl.setCreditSaleOn(true);
+        ctl.setCredit(c);
         assertTrue(ctl.creditSaleOn());
 
-        vm.prank(owner);
-        ctl.setCreditWindow(1 minutes);
-        vm.prank(owner);
-        ctl.setCreditWindow(30 days);
+        vm.startPrank(owner);
+        c.window = 1 minutes;
+        ctl.setCredit(c);
+        c.window = 30 days;
+        ctl.setCredit(c);
         assertEq(ctl.creditWindow(), 30 days);
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditWindow")));
-        ctl.setCreditWindow(1 minutes - 1);
+        c.window = 1 minutes - 1;
+        _creditBad(c, "creditWindow");
+        c.window = 30 days;
 
-        vm.prank(owner);
-        ctl.setCreditFloorBps(40_000);
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditFloorBps")));
-        ctl.setCreditFloorBps(9_999);
+        c.floorBps = 40_000;
+        ctl.setCredit(c);
+        c.floorBps = 9_999;
+        _creditBad(c, "creditFloorBps");
+        c.floorBps = 40_000;
 
-        vm.prank(owner);
-        ctl.setCreditStartBps(200_000);
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditStartBps")));
-        ctl.setCreditStartBps(9_999);
+        c.startBps = 200_000;
+        ctl.setCredit(c);
+        c.startBps = 9_999;
+        _creditBad(c, "creditStartBps");
+        c.startBps = 200_000;
 
-        // every setter is owner only
+        // refScore 1 to 8_000_000
+        c.refScore = 1;
+        ctl.setCredit(c);
+        c.refScore = 8_000_000;
+        ctl.setCredit(c);
+        c.refScore = 0;
+        _creditBad(c, "refScore");
+        c.refScore = 8_000_001;
+        _creditBad(c, "refScore");
+        vm.stopPrank();
+        assertEq(ctl.refScore(), 8_000_000);
+
+        // owner only
+        c.saleOn = false;
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setCreditSaleOn(false);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setCreditWindow(100);
+        ctl.setCredit(c);
+    }
+
+    function _creditBad(CreditSale memory c, bytes32 field) internal {
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, field));
+        ctl.setCredit(c);
     }
 
     // ------------------------------------------------------------------ the falling price

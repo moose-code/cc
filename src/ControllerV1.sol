@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {Halving} from "./lib/Halving.sol";
-import {Sale, Credit, IController, ICoreViews, ICoreSale, ICreditScore, ICredits, IBalanceModule, Mainnet} from "./interfaces/Interfaces.sol";
+import {Sale, Credit, CreditSale, IController, ICoreViews, ICoreSale, ICreditScore, ICredits, IBalanceModule, Mainnet} from "./interfaces/Interfaces.sol";
 import {CreditBounds} from "./lib/CreditBounds.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -66,24 +66,12 @@ contract ControllerV1 is IController {
     /// a credit sale door was called while the credit sale window is off
     error CreditSaleOff();
 
-    event MarkupBpsSet(uint16 markupBps);
-    event StartCapBpsSet(uint32 startCapBps);
-    event FastDecayBpsPerHourSet(uint16 fastDecayBpsPerHour);
-    event KneeBpsSet(uint32 kneeBps);
-    event SlowDecayBpsPerHourSet(uint16 slowDecayBpsPerHour);
-    event RefScoreSet(uint32 refScore);
+    event SaleSet(Sale sale);
+    event CreditSaleSet(CreditSale credit);
     event AnchorBpsSet(uint32 anchorBps);
-    event AnchorHalfLifeSet(uint32 anchorHalfLife);
-    event AnchorMinCostSet(uint128 anchorMinCost);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
-    event CreditSaleOnSet(bool on);
-    event CreditWindowSet(uint32 creditWindow);
-    event CreditFloorBpsSet(uint16 creditFloorBps);
-    event CreditStartBpsSet(uint32 creditStartBps);
-    event RoyaltyBpsSet(uint16 royaltyBps);
-    event RoyaltyRecipientSet(address royaltyRecipient);
     event RoyaltyClaimed(address indexed to, uint256 amount);
 
     ICoreViews public immutable CORE;
@@ -137,36 +125,21 @@ contract ControllerV1 is IController {
 
     constructor(address core, Sale memory sale, Credit memory credit) {
         CORE = ICoreViews(core);
-        if (sale.markupBps < BPS || sale.markupBps > 40_000) revert BadSetting("markupBps");
-        markupBps = sale.markupBps;
-        if (sale.startCapBps < sale.markupBps || sale.startCapBps > 200_000) revert BadSetting("startCapBps");
-        startCapBps = sale.startCapBps;
-        if (sale.kneeBps < 1_000 || sale.kneeBps > sale.startCapBps) revert BadSetting("kneeBps");
-        kneeBps = sale.kneeBps;
-        if (sale.fastDecayBpsPerHour < 1 || sale.fastDecayBpsPerHour > BPS) revert BadSetting("fastDecayBpsPerHour");
-        fastDecayBpsPerHour = sale.fastDecayBpsPerHour;
-        if (sale.slowDecayBpsPerHour < 1 || sale.slowDecayBpsPerHour > BPS) revert BadSetting("slowDecayBpsPerHour");
-        slowDecayBpsPerHour = sale.slowDecayBpsPerHour;
-        if (sale.anchorHalfLife < 1 days || sale.anchorHalfLife > 90 days) revert BadSetting("anchorHalfLife");
-        anchorHalfLife = sale.anchorHalfLife;
-        if (sale.anchorMinCost > MAX_ANCHOR_MIN_COST) revert BadSetting("anchorMinCost");
-        anchorMinCost = sale.anchorMinCost;
+        _setSale(sale);
         storedAnchorBps = uint32(BPS);
         // forge-lint: disable-next-line(unsafe-typecast)
         anchorTime = uint40(block.timestamp);
-        if (!CreditBounds.refScoreOk(credit.refScore)) revert BadSetting("refScore");
-        if (!CreditBounds.windowOk(credit.window)) revert BadSetting("creditWindow");
-        if (!CreditBounds.floorBpsOk(credit.floorBps)) revert BadSetting("creditFloorBps");
-        if (!CreditBounds.startBpsOk(credit.startBps)) revert BadSetting("creditStartBps");
-        if (!CreditBounds.royaltyBpsOk(credit.royaltyBps)) revert BadSetting("royaltyBps");
-        if (!CreditBounds.royaltyRecipientOk(credit.royaltyRecipient)) revert BadSetting("royaltyRecipient");
-        royaltyBps = credit.royaltyBps;
-        royaltyRecipient = credit.royaltyRecipient;
-        refScore = credit.refScore;
-        creditSaleOn = credit.saleOn;
-        creditWindow = credit.window;
-        creditFloorBps = credit.floorBps;
-        creditStartBps = credit.startBps;
+        _setCredit(
+            CreditSale({
+                saleOn: credit.saleOn,
+                window: credit.window,
+                floorBps: credit.floorBps,
+                startBps: credit.startBps,
+                refScore: credit.refScore,
+                royaltyBps: credit.royaltyBps,
+                royaltyRecipient: credit.royaltyRecipient
+            })
+        );
     }
 
     modifier onlyOwner() {
@@ -176,68 +149,39 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ sale settings, owner, at once
 
-    /// 10_000 to 40_000, and not above `startCapBps`
-    function setMarkupBps(uint16 v) external onlyOwner {
-        if (v < BPS || v > 40_000 || v > startCapBps) revert BadSetting("markupBps");
-        markupBps = v;
-        emit MarkupBpsSet(v);
+    /// sets the seven sale settings at once. every field is checked against the bounds of the others in the call:
+    /// `markupBps` 10_000 to 40_000 and at most `startCapBps`; `startCapBps` at least `markupBps` and `kneeBps`, at most
+    /// 200_000; `kneeBps` 1_000 to `startCapBps`; each decay 1 to 10_000; `anchorHalfLife` 1 day to 90 days;
+    /// `anchorMinCost` 0 to 10 ether. an `anchorBps()` above the new `startCapBps` is lowered to it. a change of
+    /// `anchorHalfLife` stores the anchor at the call first, so the new half life applies from now on
+    function setSale(Sale calldata v) external onlyOwner {
+        if (v.anchorHalfLife != anchorHalfLife) _setAnchorStored(anchorBps());
+        _setSale(v);
+        emit SaleSet(v);
+        if (anchorBps() > v.startCapBps) _setAnchor(v.startCapBps);
     }
 
-    /// the larger of `markupBps` and `kneeBps` to 200_000. an `anchorBps()` above the new cap is lowered to it
-    function setStartCapBps(uint32 v) external onlyOwner {
-        if (v < markupBps || v < kneeBps || v > 200_000) revert BadSetting("startCapBps");
-        startCapBps = v;
-        emit StartCapBpsSet(v);
-        if (anchorBps() > v) _setAnchor(v);
-    }
-
-    /// 1 to 10_000
-    function setFastDecayBpsPerHour(uint16 v) external onlyOwner {
-        if (v < 1 || v > BPS) revert BadSetting("fastDecayBpsPerHour");
-        fastDecayBpsPerHour = v;
-        emit FastDecayBpsPerHourSet(v);
-    }
-
-    /// 1 to 10_000
-    function setSlowDecayBpsPerHour(uint16 v) external onlyOwner {
-        if (v < 1 || v > BPS) revert BadSetting("slowDecayBpsPerHour");
-        slowDecayBpsPerHour = v;
-        emit SlowDecayBpsPerHourSet(v);
-    }
-
-    /// 1_000 to `startCapBps`. raising it above the cap takes `setStartCapBps` first
-    function setKneeBps(uint32 v) external onlyOwner {
-        if (v < 1_000 || v > startCapBps) revert BadSetting("kneeBps");
-        kneeBps = v;
-        emit KneeBpsSet(v);
-    }
-
-    /// 1 to 8_000_000. applies to `valueOf` at the next call
-    function setRefScore(uint32 v) external onlyOwner {
-        if (!CreditBounds.refScoreOk(v)) revert BadSetting("refScore");
-        refScore = v;
-        emit RefScoreSet(v);
+    function _setSale(Sale memory v) private {
+        if (v.markupBps < BPS || v.markupBps > 40_000) revert BadSetting("markupBps");
+        if (v.startCapBps < v.markupBps || v.startCapBps > 200_000) revert BadSetting("startCapBps");
+        if (v.kneeBps < 1_000 || v.kneeBps > v.startCapBps) revert BadSetting("kneeBps");
+        if (v.fastDecayBpsPerHour < 1 || v.fastDecayBpsPerHour > BPS) revert BadSetting("fastDecayBpsPerHour");
+        if (v.slowDecayBpsPerHour < 1 || v.slowDecayBpsPerHour > BPS) revert BadSetting("slowDecayBpsPerHour");
+        if (v.anchorHalfLife < 1 days || v.anchorHalfLife > 90 days) revert BadSetting("anchorHalfLife");
+        if (v.anchorMinCost > MAX_ANCHOR_MIN_COST) revert BadSetting("anchorMinCost");
+        markupBps = v.markupBps;
+        startCapBps = v.startCapBps;
+        kneeBps = v.kneeBps;
+        fastDecayBpsPerHour = v.fastDecayBpsPerHour;
+        slowDecayBpsPerHour = v.slowDecayBpsPerHour;
+        anchorHalfLife = v.anchorHalfLife;
+        anchorMinCost = v.anchorMinCost;
     }
 
     /// 10_000 to `startCapBps`. replaces the running level of sale prices and restarts its decay
     function setAnchorBps(uint32 v) external onlyOwner {
         if (v < BPS || v > startCapBps) revert BadSetting("anchorBps");
         _setAnchor(v);
-    }
-
-    /// 1 day to 90 days. the anchor at the call is stored first, so the new half life applies from now on
-    function setAnchorHalfLife(uint32 v) external onlyOwner {
-        if (v < 1 days || v > 90 days) revert BadSetting("anchorHalfLife");
-        _setAnchorStored(anchorBps());
-        anchorHalfLife = v;
-        emit AnchorHalfLifeSet(v);
-    }
-
-    /// 0 to 10 ether. applies to the next `buy`
-    function setAnchorMinCost(uint128 v) external onlyOwner {
-        if (v > MAX_ANCHOR_MIN_COST) revert BadSetting("anchorMinCost");
-        anchorMinCost = v;
-        emit AnchorMinCostSet(v);
     }
 
     /// sets the native eth / balance token pool whose sqrt price prices the pool term of `valueOf`.
@@ -258,48 +202,30 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ credit sale settings, owner, at once
 
-    /// turns the credit sale window on or off. while on, pile credits are for sale through `buyCredit` and compose
-    /// takes only credits past their window
-    function setCreditSaleOn(bool v) external onlyOwner {
-        creditSaleOn = v;
-        emit CreditSaleOnSet(v);
+    /// sets the credit sale, the rating reference and the royalty at once. `saleOn` turns the credit sale window on or
+    /// off: while on, pile credits are for sale through `buyCredit` and compose takes only credits past their window.
+    /// `window` 1 minute to 30 days, `floorBps` 10_000 to 40_000, `startBps` 10_000 to 200_000, `refScore` 1 to
+    /// 8_000_000 (applies to `valueOf` at the next call), `royaltyBps` 0 to 1_000 (applies to the next sale),
+    /// `royaltyRecipient` never zero (it is paid the royalty already owed)
+    function setCredit(CreditSale calldata v) external onlyOwner {
+        _setCredit(v);
+        emit CreditSaleSet(v);
     }
 
-    /// 1 minute to 30 days
-    function setCreditWindow(uint32 v) external onlyOwner {
-        if (!CreditBounds.windowOk(v)) revert BadSetting("creditWindow");
-        creditWindow = v;
-        emit CreditWindowSet(v);
-    }
-
-    /// 10_000 to 40_000
-    function setCreditFloorBps(uint16 v) external onlyOwner {
-        if (!CreditBounds.floorBpsOk(v)) revert BadSetting("creditFloorBps");
-        creditFloorBps = v;
-        emit CreditFloorBpsSet(v);
-    }
-
-    /// 10_000 to 200_000
-    function setCreditStartBps(uint32 v) external onlyOwner {
-        if (!CreditBounds.startBpsOk(v)) revert BadSetting("creditStartBps");
-        creditStartBps = v;
-        emit CreditStartBpsSet(v);
-    }
-
-    // ------------------------------------------------------------------ royalty settings, owner, at once
-
-    /// 0 to 1_000. applies to the next sale
-    function setRoyaltyBps(uint16 v) external onlyOwner {
-        if (!CreditBounds.royaltyBpsOk(v)) revert BadSetting("royaltyBps");
-        royaltyBps = v;
-        emit RoyaltyBpsSet(v);
-    }
-
-    /// the address `claimRoyalty` pays, including the royalty already owed. never zero
-    function setRoyaltyRecipient(address v) external onlyOwner {
-        if (!CreditBounds.royaltyRecipientOk(v)) revert BadSetting("royaltyRecipient");
-        royaltyRecipient = v;
-        emit RoyaltyRecipientSet(v);
+    function _setCredit(CreditSale memory v) private {
+        if (!CreditBounds.windowOk(v.window)) revert BadSetting("creditWindow");
+        if (!CreditBounds.floorBpsOk(v.floorBps)) revert BadSetting("creditFloorBps");
+        if (!CreditBounds.startBpsOk(v.startBps)) revert BadSetting("creditStartBps");
+        if (!CreditBounds.refScoreOk(v.refScore)) revert BadSetting("refScore");
+        if (!CreditBounds.royaltyBpsOk(v.royaltyBps)) revert BadSetting("royaltyBps");
+        if (!CreditBounds.royaltyRecipientOk(v.royaltyRecipient)) revert BadSetting("royaltyRecipient");
+        creditSaleOn = v.saleOn;
+        creditWindow = v.window;
+        creditFloorBps = v.floorBps;
+        creditStartBps = v.startBps;
+        refScore = v.refScore;
+        royaltyBps = v.royaltyBps;
+        royaltyRecipient = v.royaltyRecipient;
     }
 
     /// sends `royaltyOwed` to `royaltyRecipient`. anyone may call. reverts `ZeroAmount` when nothing is owed. a failed

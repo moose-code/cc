@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {SaleShapeBase} from "./Sale.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
+import {CreditSale} from "../src/interfaces/Interfaces.sol";
 
 /// the owner pause of the Core on the live fork: `sellTo` and `sellCreditTo` revert `Paused`, so `buy` and `buyCredit`
 /// refuse, `priceOf` answers, the age a statement's price falls with excludes every paused second, composing, the bids
@@ -182,10 +183,11 @@ contract PauseTest is SaleShapeBase {
     // promise: SPEC 1 the credit window clock keeps running in a pause
     /// the credit window runs in wall time: a pause does not extend the time a credit must sit before compose
     function test_creditWindowRunsInWallTimeWhilePaused() public {
-        vm.startPrank(owner);
-        ctl.setCreditSaleOn(true);
-        ctl.setCreditWindow(1 hours);
-        vm.stopPrank();
+        CreditSale memory c = _creditSale();
+        c.saleOn = true;
+        c.window = 1 hours;
+        vm.prank(owner);
+        ctl.setCredit(c);
         uint64 acquiredAt = uint64(block.timestamp);
         assertFalse(ctl.pastWindow(acquiredAt));
         _setPaused(true);

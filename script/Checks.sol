@@ -72,14 +72,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x3871fd0dd5499f32b076735e472c334cb7bd97a9114631bb2ff058f3fea22531;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x552d181dffa985ca6b94cb0af742936cc6dd0bf1df6d86421c404ffd0ca0f099;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xb2182c084f84b99ba2bd347539fc5e81357b0baf05f5d2c119a62389324d402c;
-    bytes32 internal constant BUILD_HASH_LENS = 0xdb9b3000f0f72317a89fac6c69f580f5dad099bebc98a2770aabb586e6205fb8;
+    bytes32 internal constant BUILD_HASH_CORE = 0xc10d84af42cf1aa0195297716127bbb8c1d941550d089a2c0178505ce5381940;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x3bf813198195a05ee49732d9b3c8d9d2eb3d4e70fc0aae4fe0537b49e305e3f8;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x684e24d80ee34b425b7c19d5171de012c541b256d3b8dad4b1c579bcd8b63ae7;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0xd2dc1e297a8afef6c382a8ca053dc1511e7ab4023165166193ad94219b703f7f;
+        0xcca577657ff09c77fa65abfc3b2e740326953a1415aa4aa810820e3572588978;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -423,7 +422,6 @@ abstract contract LaunchChecks is PostflightChecks {
         _pinBuild("Core", BUILD_HASH_CORE);
         _pinBuild("CoreLib", BUILD_HASH_CORELIB);
         _pinBuild("ControllerV1", BUILD_HASH_CONTROLLER);
-        _pinBuild("CoreLens", BUILD_HASH_LENS);
         _pinBuild("SeaportBasicAdapter", BUILD_HASH_SEAPORT_ADAPTER);
         _pinBuild("CreditStrategyAdapter", BUILD_HASH_STRATEGY_ADAPTER);
         bytes32 got = keccak256(vm.getCode("CoreLib.sol:CoreLib"));
@@ -838,8 +836,7 @@ abstract contract LaunchChecks is PostflightChecks {
             "signoff: build (runtime code hashes of out/, slots masked)",
             string.concat(
                 "Core ", vm.toString(BUILD_HASH_CORE), " CoreLib ", vm.toString(BUILD_HASH_CORELIB), " ControllerV1 ",
-                vm.toString(BUILD_HASH_CONTROLLER), " CoreLens ",
-                vm.toString(BUILD_HASH_LENS), " SeaportBasicAdapter ", vm.toString(BUILD_HASH_SEAPORT_ADAPTER),
+                vm.toString(BUILD_HASH_CONTROLLER), " SeaportBasicAdapter ", vm.toString(BUILD_HASH_SEAPORT_ADAPTER),
                 " CreditStrategyAdapter ", vm.toString(BUILD_HASH_STRATEGY_ADAPTER), " CoreLib creation ",
                 vm.toString(BUILD_CREATION_HASH_CORELIB)
             )

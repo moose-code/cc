@@ -28,11 +28,9 @@ import {
     BUYBACK_GAS,
     BUYLISTING_GAS
 } from "./interfaces/Interfaces.sol";
-import {CoreLib} from "./lib/CoreLib.sol";
+import {CoreLib, State} from "./lib/CoreLib.sol";
 import {SettingsBounds} from "./lib/SettingsBounds.sol";
 import {CreditBounds} from "./lib/CreditBounds.sol";
-import {SettingsStore} from "./lib/SettingsStore.sol";
-import {RateStore} from "./lib/RateStore.sol";
 
 /// custody and every rule of the credits engine. the owner sets the controller, the balance module and the adapter list at
 /// once, can set a successor that receives the assets on `migrate`, and can close each of the controller, the balance
@@ -247,69 +245,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                 STATE
     //////////////////////////////////////////////////////////////*/
 
-    address public controller;
-    /// one way locks of the owner (docs/ARCHITECTURE.md): once set, the door never opens again
-    bool public controllerLocked;
-    bool public balanceModuleLocked;
-    bool public adaptersLocked;
-    address public balanceModule;
-    address public balanceToken;
-    mapping(address => bool) public allowedAdapter;
-    /// the owner and the pending owner of the two step handover
-    address public owner;
-    address public pendingOwner;
-
-    uint256 public ethPot;
-    uint256 public ethToBuyback;
-    /// eth reserve filled by `feeToRedeemBurnBps` of the fee stream. each redemption moves `redeemBurnBps` of it
-    /// into `ethToBuyback`, so a statement that leaves the engine by redemption funds a coin buy and burn
-    uint256 public ethRedeemBurn;
-    /// balance token held for the balance token bid. redemptions add to it, `sellForBalance` pays from it
-    uint256 public balancePot;
-
-    uint256 public rateAtCheckpoint;
-    uint64 public checkpointTime;
-    uint64 public lastFillTime;
-
-    uint256 public lastBuybackBlock;
-
-    CoreLib.Pile private _pile;
-    mapping(uint256 => CoreLib.Credit) private _credits;
-    mapping(uint256 => CoreLib.Statement) private _statements;
-    uint256[] private _heldIds;
-
-    /// the contract `migrate` sends the assets to, and whether `setSuccessor` is closed
-    address public successor;
-    bool public successorLocked;
-    /// set by the first `migrate`, one way. a retired core refuses `sellForEth`, `buyListing`, `sellForBalance`,
-    /// `adopt`, `compose` and `composeChosen` with `Retired`
-    bool public retired;
-
-    /// share of a sold credit's cost booked to ethPot in `sellCreditTo`, the rest of the payment to ethToBuyback.
-    /// launch 10_000, 0 to 10_000 (docs/FLOW.md 88)
-    uint16 public creditCostToPotBps;
-    /// whether a caller may pick the 80 credits and the format of a compose through `composeChosen`. launch false
-    /// (docs/FLOW.md 89)
-    bool public chosenComposeOn;
-    /// least coin balance the caller of `composeChosen` must hold, checked against the caller's balance at the call.
-    /// launch 0 (docs/FLOW.md 89)
-    uint96 public minCcToChoose;
-
-    /// whether `sellTo` and `sellCreditTo` are paused. launch false
-    bool public paused;
-    /// when the open pause began, 0 while not paused
-    uint40 public pausedSince;
-    /// seconds of every closed pause. with the open pause, `pausedNow()` is the paused seconds so far
-    uint40 public pausedTotal;
-    /// the caller of the `compose` or `composeChosen` that made each statement. kept after the statement is sold
-    mapping(uint256 => address) public composerOf;
-    /// the address `claimPayee` pays
-    address public payee;
-    /// eth credited to the payee by `_book` and not yet claimed
-    uint256 public payeeOwed;
-    /// true once the payee share runs. set by the first `_book` with income at or after `launchedAt + SNIPER_SECONDS`,
-    /// which shares nothing. one way
-    bool public payeeOn;
+    /// every state variable of the Core (`State` in src/lib/CoreLib.sol), at slot 0. the library addresses it by the same type
+    State internal s;
 
     modifier onlyOwner() {
         _onlyOwner();
@@ -317,7 +254,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     function _onlyOwner() private view {
-        if (msg.sender != owner) revert OnlyOwner();
+        if (msg.sender != s.owner) revert OnlyOwner();
     }
 
     /// `cfg_` is the launch config of the v2 factory. a zero `coin_` is a launch: the bounty recipient of `cfg_` is set
@@ -359,8 +296,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         } else if (!IArtCoinsFactoryV2(stack_.factory).isCoin(coin)) {
             revert BadStack();
         }
-        owner = owner_;
-        payee = payee_;
+        s.owner = owner_;
+        s.payee = payee_;
         COIN = coin;
         SNIPER_SECONDS = cfg_.mev.windowSeconds;
         RATE_START = rateStart_;
@@ -371,25 +308,24 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         FACTORY = stack_.factory;
         LOCKER = stack_.locker;
         ESCROW = stack_.escrow;
-        controller = controller_;
+        s.controller = controller_;
         if (!CreditBounds.costToPotBpsOk(credit_.costToPotBps)) revert BadSetting("creditCostToPotBps");
-        creditCostToPotBps = credit_.costToPotBps;
-        chosenComposeOn = credit_.chosenComposeOn;
-        minCcToChoose = credit_.minCcToChoose;
+        s.creditCostToPotBps = credit_.costToPotBps;
+        s.chosenComposeOn = credit_.chosenComposeOn;
+        s.minCcToChoose = credit_.minCcToChoose;
         for (uint256 i; i < adapters_.length; ++i) {
             address adapter = adapters_[i];
             if (adapter == address(0)) revert ZeroAddress();
             if (_forbiddenBase(adapter)) revert ForbiddenTarget();
-            allowedAdapter[adapter] = true;
+            s.allowedAdapter[adapter] = true;
             emit AdapterSet(adapter, true);
         }
-        rateAtCheckpoint = rateStart_;
-        checkpointTime = uint64(block.timestamp);
-        lastFillTime = uint64(block.timestamp);
-        RateStore.Anchor storage a = RateStore.load();
-        a.lastFillRate = rateStart_;
-        a.peakRate = rateStart_;
-        a.peakTime = uint64(block.timestamp);
+        s.rateAtCheckpoint = rateStart_;
+        s.checkpointTime = uint64(block.timestamp);
+        s.lastFillTime = uint64(block.timestamp);
+        s.anchor.lastFillRate = rateStart_;
+        s.anchor.peakRate = rateStart_;
+        s.anchor.peakTime = uint64(block.timestamp);
         CREDITS.setApprovalForAll(address(STATEMENTS), true);
         emit OwnershipTransferred(address(0), owner_);
         emit ControllerSet(controller_);
@@ -424,7 +360,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function fund() external payable nonReentrant {
         _book();
         _checkpoint();
-        ethPot += msg.value;
+        s.ethPot += msg.value;
         emit Funded(msg.sender, msg.value);
     }
 
@@ -436,17 +372,17 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 amount = address(this).balance - before;
         if (amount != 0) {
             _checkpoint();
-            ethPot += amount;
+            s.ethPot += amount;
         }
         emit EscrowCollected(amount);
     }
 
     /// sends the booked payee share to `payee`. a payee that reverts blocks only its own claim
     function claimPayee() external nonReentrant {
-        uint256 amount = payeeOwed;
+        uint256 amount = s.payeeOwed;
         if (amount == 0) revert ZeroAmount();
-        payeeOwed = 0;
-        address to = payee;
+        s.payeeOwed = 0;
+        address to = s.payee;
         (bool ok,) = to.call{value: amount}("");
         if (!ok) revert CallFailed();
         emit PayeeClaimed(to, amount);
@@ -454,29 +390,29 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// adds the balance token held above `balancePot` to `balancePot`. no effect while no balance module is set
     function bookBalance() external nonReentrant {
-        address token = balanceToken;
+        address token = s.balanceToken;
         uint256 amount;
         if (token != address(0)) {
-            amount = SafeTransferLib.balanceOf(token, address(this)).zeroFloorSub(balancePot);
-            balancePot += amount;
+            amount = SafeTransferLib.balanceOf(token, address(this)).zeroFloorSub(s.balancePot);
+            s.balancePot += amount;
         }
         emit BalanceBooked(amount);
     }
 
     /// the eth held above `ethPot`, `ethToBuyback`, `ethRedeemBurn` and `payeeOwed`, without `value` of the current call
     function _income(uint256 value) private view returns (uint256) {
-        return (address(this).balance - value).zeroFloorSub(ethPot + ethToBuyback + ethRedeemBurn + payeeOwed);
+        return (address(this).balance - value).zeroFloorSub(s.ethPot + s.ethToBuyback + s.ethRedeemBurn + s.payeeOwed);
     }
 
     /// the parts of `income` that go to the payee and the redeem burn reserve. the rest goes to the pot. the payee share
     /// is `payeePpm` of the income while `payeeOn`, and the reserve share is `feeToRedeemBurnBps` of the income after it
     function _split(uint256 income) private view returns (uint256 toPayee, uint256 toRedeemBurn) {
-        Settings storage s = _st();
-        if (payeeOn) {
-            toPayee = income * s.payeePpm / PPM;
+        Settings storage cfg = s.settings;
+        if (s.payeeOn) {
+            toPayee = income * cfg.payeePpm / PPM;
             income -= toPayee;
         }
-        toRedeemBurn = income * s.feeToRedeemBurnBps / BPS;
+        toRedeemBurn = income * cfg.feeToRedeemBurnBps / BPS;
     }
 
     /// the share of the unbooked income that the next `_book` adds to the pot
@@ -494,14 +430,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (income == 0) return;
         _checkpoint();
         (uint256 toPayee, uint256 toRedeemBurn) = _split(income);
-        if (payeeOn) {
-            if (toPayee != 0) payeeOwed += toPayee;
+        if (s.payeeOn) {
+            if (toPayee != 0) s.payeeOwed += toPayee;
         } else if (_sniperOver()) {
-            payeeOn = true;
+            s.payeeOn = true;
         }
-        if (toRedeemBurn != 0) ethRedeemBurn += toRedeemBurn;
+        if (toRedeemBurn != 0) s.ethRedeemBurn += toRedeemBurn;
         income -= toPayee;
-        ethPot += income - toRedeemBurn;
+        s.ethPot += income - toRedeemBurn;
         emit FeesAdded(income);
     }
 
@@ -528,7 +464,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// in `CoreLib.climb`
     function ethRate() external view returns (uint256) {
         (uint256 price,) = _climb();
-        return price.min(ethPot + _pendingPot());
+        return price.min(s.ethPot + _pendingPot());
     }
 
     /// the rate of the booked pot, for the doors, which book first
@@ -537,7 +473,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     function _climb() private view returns (uint256, uint256) {
-        return CoreLib.climb(rateAtCheckpoint, ethPot, lastFillTime, checkpointTime, block.timestamp);
+        return CoreLib.climb(s.rateAtCheckpoint, s.ethPot, s.lastFillTime, s.checkpointTime, block.timestamp);
     }
 
     /// wei per credit of the price state now: `rateAtCheckpoint` climbed lazily and bounded by the ceiling and
@@ -552,35 +488,30 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// between fills, so the maximum follows the climb and holds against a sale within the block. the engine's price
     /// floors read it. the math is in `CoreLib.floorRate`
     function floorRate() external view returns (uint256) {
-        return CoreLib.floorRate(rateAtCheckpoint, ethPot, lastFillTime, checkpointTime, block.timestamp);
+        return CoreLib.floorRate(s.rateAtCheckpoint, s.ethPot, s.lastFillTime, s.checkpointTime, block.timestamp);
     }
 
     function _checkpoint() private {
-        (rateAtCheckpoint,) = _climb();
-        checkpointTime = uint64(block.timestamp);
+        (s.rateAtCheckpoint,) = _climb();
+        s.checkpointTime = uint64(block.timestamp);
     }
 
     /// checkpoints, then books a spend of x from the pot: rate drop, fill time.
     function _spend(uint256 x) private {
         _checkpoint();
-        uint256 p = ethPot;
+        uint256 p = s.ethPot;
         if (x == 0) revert ZeroAmount();
         if (x > p) revert PotTooSmall();
-        uint256 r = CoreLib.drop(rateAtCheckpoint, block.timestamp);
-        rateAtCheckpoint = r;
-        lastFillTime = uint64(block.timestamp);
-        ethPot = p - x;
+        uint256 r = CoreLib.drop(s.rateAtCheckpoint, block.timestamp);
+        s.rateAtCheckpoint = r;
+        s.lastFillTime = uint64(block.timestamp);
+        s.ethPot = p - x;
         emit EthRateFill(x, r, p - x);
     }
 
     /*//////////////////////////////////////////////////////////////
                            CONTROLLER READS
     //////////////////////////////////////////////////////////////*/
-
-    /// the settings, three packed slots at a fixed location shared with the library
-    function _st() private pure returns (Settings storage) {
-        return SettingsStore.load();
-    }
 
     /// bounded read of a module. any failure or short answer returns false and a long answer is cut off
     function _ask(address module, bytes memory input, uint256 gasCap, uint256 outLen)
@@ -597,7 +528,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     function _nextPage() private view returns (bool ready, uint256[80] memory ids, uint256 format) {
         (bool ok, bytes memory out) =
-            _ask(controller, abi.encodeCall(IController.nextPage, ()), PAGE_GAS, (PAGE + 2) * 32);
+            _ask(s.controller, abi.encodeCall(IController.nextPage, ()), PAGE_GAS, (PAGE + 2) * 32);
         if (!ok) return (false, ids, 0);
         uint256 flag;
         (flag, ids, format) = abi.decode(out, (uint256, uint256[80], uint256));
@@ -607,7 +538,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// bounded read of the controller's eligibility answer for a statement. a revert, a short answer or a
     /// `false` reads as not eligible
     function _atFloor(uint256 sid) private view returns (bool) {
-        (bool ok, bytes memory out) = _ask(controller, abi.encodeCall(IController.atFloor, (sid)), AT_FLOOR_GAS, 32);
+        (bool ok, bytes memory out) = _ask(s.controller, abi.encodeCall(IController.atFloor, (sid)), AT_FLOOR_GAS, 32);
         return ok && abi.decode(out, (bool));
     }
 
@@ -615,7 +546,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// or a `false` reads as not past the window
     function _pastWindow(uint64 acquiredAt) private view returns (bool) {
         (bool ok, bytes memory out) =
-            _ask(controller, abi.encodeCall(IController.pastWindow, (acquiredAt)), READ_GAS, 32);
+            _ask(s.controller, abi.encodeCall(IController.pastWindow, (acquiredAt)), READ_GAS, 32);
         return ok && abi.decode(out, (bool));
     }
 
@@ -624,22 +555,22 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     function _push(uint256 id, uint256 cost) private {
-        CoreLib.push(_pile, _credits, id, cost);
+        CoreLib.push(s.pile, s.credits, id, cost);
     }
 
     function _pull(uint256 id) private returns (uint256 cost) {
-        CoreLib.Credit storage c = _credits[id];
+        CoreLib.Credit storage c = s.credits[id];
         if (!c.inPile) revert NotInPile(id);
-        CoreLib.Pile storage p = _pile;
+        CoreLib.Pile storage p = s.pile;
         uint256 prev = c.prev;
         uint256 next = c.next;
         if (prev == 0) p.head = next;
-        else _credits[prev].next = next;
+        else s.credits[prev].next = next;
         if (next == 0) p.tail = prev;
-        else _credits[next].prev = prev;
+        else s.credits[next].prev = prev;
         p.size -= 1;
         cost = c.cost;
-        delete _credits[id];
+        delete s.credits[id];
     }
 
     /// the first action of `sellForEth`, `sellForBalance`, `buyListing`, `adopt`, `compose` and `composeChosen`. two
@@ -647,7 +578,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// 1. reverts `Retired` once `migrate` has run.
     /// 2. books the fee income, before the entry point reads a rate or checkpoints
     function _openDoor() private {
-        if (retired) revert Retired();
+        if (s.retired) revert Retired();
         _book();
     }
 
@@ -692,7 +623,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function buyListing(address adapter, uint256 id, bytes calldata params) external nonReentrant {
         uint256 gasStart = gasleft();
         _openDoor();
-        if (!allowedAdapter[adapter]) revert AdapterNotAllowed();
+        if (!s.allowedAdapter[adapter]) revert AdapterNotAllowed();
         if (id == 0) revert ZeroId();
         if (CREDITS.ownerOf(id) == address(this)) revert AlreadyOwned();
         (address target, uint256 value, bytes memory data) = _quote(adapter, id, params);
@@ -700,7 +631,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _checkpoint();
         uint256 bid = _bid();
         if (value == 0) revert ZeroAmount();
-        if (value > ethPot) revert PotTooSmall();
+        if (value > s.ethPot) revert PotTooSmall();
         if (value > bid) revert AboveBid();
 
         uint256 ethBefore = address(this).balance;
@@ -713,12 +644,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (address(this).balance + value < ethBefore) revert BadCost();
 
         // `value` is at most the bid, which is at most `ethPot`
-        Settings storage s = _st();
-        uint256 paid = _payment(gasStart, BUYLISTING_OVERHEAD_GAS, BUYLISTING_GAS, s.keeperMaxBaseFee, s.keeperFee)
+        Settings storage cfg = s.settings;
+        uint256 paid = _payment(gasStart, BUYLISTING_OVERHEAD_GAS, BUYLISTING_GAS, cfg.keeperMaxBaseFee, cfg.keeperFee)
             .min(bid - value);
         _spend(value + paid);
         _push(id, value + paid);
-        emit ListingBought(id, adapter, msg.sender, value, paid, rateAtCheckpoint);
+        emit ListingBought(id, adapter, msg.sender, value, paid, s.rateAtCheckpoint);
         if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
     }
 
@@ -768,7 +699,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     function _forbidden(address t) private view returns (bool) {
-        return _forbiddenBase(t) || t == balanceModule || t == balanceToken;
+        return _forbiddenBase(t) || t == s.balanceModule || t == s.balanceToken;
     }
 
     /// every forbidden target except the balanceModule and the balanceToken, which a later set may name again
@@ -811,9 +742,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// are sold by it. the coin minimum is a balance read at the call, so a flash balance passes it. the gate is a
     /// speed bump on a cosmetic door
     function setHeldFormat(uint256 sid, uint8 format) external nonReentrant {
-        if (!_statements[sid].held) revert NotForSale();
+        if (!s.statements[sid].held) revert NotForSale();
         if (format > MAX_FORMAT) revert BadFormat();
-        if (SafeTransferLib.balanceOf(COIN, msg.sender) < minCcToChoose) revert BelowMinCc();
+        if (SafeTransferLib.balanceOf(COIN, msg.sender) < s.minCcToChoose) revert BelowMinCc();
         STATEMENTS.setFormat(sid, format);
         emit HeldFormatSet(sid, format, msg.sender);
     }
@@ -827,12 +758,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function composeChosen(uint256[80] calldata ids, uint8 format) external nonReentrant {
         uint256 gasStart = gasleft();
         _openDoor();
-        if (!chosenComposeOn) revert ChosenComposeOff();
-        if (SafeTransferLib.balanceOf(COIN, msg.sender) < minCcToChoose) revert BelowMinCc();
+        if (!s.chosenComposeOn) revert ChosenComposeOff();
+        if (SafeTransferLib.balanceOf(COIN, msg.sender) < s.minCcToChoose) revert BelowMinCc();
         uint64 newest;
         uint256 newestId;
         for (uint256 i; i < PAGE; ++i) {
-            uint64 a = _credits[ids[i]].acquiredAt;
+            uint64 a = s.credits[ids[i]].acquiredAt;
             if (a > newest) {
                 newest = a;
                 newestId = ids[i];
@@ -860,18 +791,18 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             revert BadStatement();
         }
 
-        _heldIds.push(sid);
-        composerOf[sid] = msg.sender;
+        s.heldIds.push(sid);
+        s.composerOf[sid] = msg.sender;
         // rating is the sum of 80 credit scores in ten-thousandths of a point, each at most 8_000_000, so at most
         // 640_000_000, within uint32. the cast is checked so a statement whose rating does not fit is refused rather
         // than stored truncated (a compose cannot overprint, so this bound always holds)
         uint256 rating = STATEMENTS.creditScoreOf(sid);
         if (rating > type(uint32).max) revert BadStatement();
         // forge-lint: disable-next-line(unsafe-typecast)
-        _statements[sid] = CoreLib.Statement({
+        s.statements[sid] = CoreLib.Statement({
             cost: cost,
             composedAt: uint64(block.timestamp),
-            slot: uint64(_heldIds.length - 1),
+            slot: uint64(s.heldIds.length - 1),
             rating: uint32(rating),
             held: true,
             pauseMark: pausedNow()
@@ -897,25 +828,25 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// track the climb's gas. both settings zero (the launch value) is the only case that pays nothing, and it skips the
     /// checkpoint and the metering
     function _payCaller(uint256 gasStart, uint256 overhead, uint256 gasCap) private {
-        Settings storage s = _st();
-        if (s.callerMaxBaseFee == 0 && s.callerFee == 0) return;
+        Settings storage cfg = s.settings;
+        if (cfg.callerMaxBaseFee == 0 && cfg.callerFee == 0) return;
         _checkpoint();
-        uint256 pay = _payment(gasStart, overhead, gasCap, s.callerMaxBaseFee, s.callerFee).min(ethPot);
+        uint256 pay = _payment(gasStart, overhead, gasCap, cfg.callerMaxBaseFee, cfg.callerFee).min(s.ethPot);
         if (pay == 0) return;
-        ethPot -= pay;
+        s.ethPot -= pay;
         SafeTransferLib.safeTransferETH(msg.sender, pay);
     }
 
     /// forgets a held statement and compacts the held list.
     function _unhold(uint256 sid) private {
-        CoreLib.Statement storage s = _statements[sid];
-        uint256 slot = s.slot;
-        uint256 last = _heldIds[_heldIds.length - 1];
-        _heldIds[slot] = last;
+        CoreLib.Statement storage st = s.statements[sid];
+        uint256 slot = st.slot;
+        uint256 last = s.heldIds[s.heldIds.length - 1];
+        s.heldIds[slot] = last;
         // forge-lint: disable-next-line(unsafe-typecast)
-        _statements[last].slot = uint64(slot);
-        _heldIds.pop();
-        delete _statements[sid];
+        s.statements[last].slot = uint64(slot);
+        s.heldIds.pop();
+        delete s.statements[sid];
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -926,18 +857,18 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// statement cost. `saleToBuybackBps` of the payment goes to the coin buyback and the rest to the pot. the
     /// controller refunds its own caller
     function sellTo(uint256 sid, address buyer) external payable nonReentrant {
-        if (msg.sender != controller) revert OnlyController();
-        if (paused) revert Paused();
+        if (msg.sender != s.controller) revert OnlyController();
+        if (s.paused) revert Paused();
         _book();
-        CoreLib.Statement storage st = _statements[sid];
+        CoreLib.Statement storage st = s.statements[sid];
         if (!st.held) revert NotForSale();
-        if (msg.value < st.cost * _st().saleFloorBps / BPS) revert BelowFloor();
+        if (msg.value < st.cost * s.settings.saleFloorBps / BPS) revert BelowFloor();
         _unhold(sid);
         STATEMENTS.transferFrom(address(this), buyer, sid);
-        uint256 toBuyback = msg.value * _st().saleToBuybackBps / BPS;
-        ethToBuyback += toBuyback;
+        uint256 toBuyback = msg.value * s.settings.saleToBuybackBps / BPS;
+        s.ethToBuyback += toBuyback;
         _checkpoint();
-        ethPot += msg.value - toBuyback;
+        s.ethPot += msg.value - toBuyback;
         emit StatementSoldTo(sid, buyer, msg.value, toBuyback);
     }
 
@@ -946,21 +877,21 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the cost goes to the pot and the rest of the payment to the coin buyback, so the markup over cost funds a coin
     /// buy and burn. the controller refunds its own caller
     function sellCreditTo(uint256 id, address buyer) external payable nonReentrant {
-        if (msg.sender != controller) revert OnlyController();
-        if (paused) revert Paused();
+        if (msg.sender != s.controller) revert OnlyController();
+        if (s.paused) revert Paused();
         _book();
-        CoreLib.Credit storage c = _credits[id];
+        CoreLib.Credit storage c = s.credits[id];
         if (!c.inPile) revert NotInPile(id);
         uint256 cost = c.cost;
         if (msg.value < cost) revert BelowFloor();
         _pull(id);
         CREDITS.transferFrom(address(this), buyer, id);
-        uint256 toPot = cost * creditCostToPotBps / BPS;
-        ethToBuyback += msg.value - toPot;
+        uint256 toPot = cost * s.creditCostToPotBps / BPS;
+        s.ethToBuyback += msg.value - toPot;
         // checkpoint the climbed rate before the pot grows, so a credit sale cannot raise the eth bid read within its
         // own block
         _checkpoint();
-        ethPot += toPot;
+        s.ethPot += toPot;
         emit CreditSold(id, buyer, msg.value);
     }
 
@@ -977,14 +908,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function redeemStatement(uint256 sid) external nonReentrant {
         uint256 gasStart = gasleft();
         _book();
-        address module = balanceModule;
+        address module = s.balanceModule;
         if (module == address(0)) revert NoBalanceModule();
-        if (!_st().redeemOn) revert RedeemOff();
-        CoreLib.Statement memory s = _statements[sid];
-        if (!s.held) revert NotHeld();
+        if (!s.settings.redeemOn) revert RedeemOff();
+        CoreLib.Statement memory st = s.statements[sid];
+        if (!st.held) revert NotHeld();
         if (!_atFloor(sid)) revert NotEligible();
-        address token = balanceToken;
-        uint256 required = uint256(s.rating) * _unitOf(module) * (BPS - _st().redeemSlippageBps) / BPS;
+        address token = s.balanceToken;
+        uint256 required = uint256(st.rating) * _unitOf(module) * (BPS - s.settings.redeemSlippageBps) / BPS;
         _unhold(sid);
 
         uint256 balanceBefore = SafeTransferLib.balanceOf(token, address(this));
@@ -993,12 +924,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 balanceAfter = SafeTransferLib.balanceOf(token, address(this));
         if (balanceAfter < balanceBefore + required) revert Underpaid();
         uint256 received = balanceAfter - balanceBefore;
-        balancePot += received;
+        s.balancePot += received;
 
-        uint256 toBurn = ethRedeemBurn * _st().redeemBurnBps / BPS;
+        uint256 toBurn = s.ethRedeemBurn * s.settings.redeemBurnBps / BPS;
         if (toBurn != 0) {
-            ethRedeemBurn -= toBurn;
-            ethToBuyback += toBurn;
+            s.ethRedeemBurn -= toBurn;
+            s.ethToBuyback += toBurn;
         }
         emit StatementRedeemed(sid, received);
         _payCaller(gasStart, REDEEM_OVERHEAD_GAS, REDEEM_GAS);
@@ -1018,27 +949,27 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function buyback() external nonReentrant {
         uint256 gasStart = gasleft();
         _book();
-        uint256 pool = ethToBuyback;
+        uint256 pool = s.ethToBuyback;
         if (pool == 0) revert NothingToBuy();
-        Settings storage s = _st();
-        if (block.number < lastBuybackBlock + s.buybackDelay) revert TooSoon();
-        uint256 setSlice = s.buybackSlice;
+        Settings storage cfg = s.settings;
+        if (block.number < s.lastBuybackBlock + cfg.buybackDelay) revert TooSoon();
+        uint256 setSlice = cfg.buybackSlice;
         uint256 slice = pool.min(setSlice);
-        uint256 rate = block.basefee.min(s.keeperMaxBaseFee);
-        uint256 fee = s.keeperFee;
+        uint256 rate = block.basefee.min(cfg.keeperMaxBaseFee);
+        uint256 fee = cfg.keeperFee;
         uint256 maxPay = BUYBACK_GAS * rate + fee;
         if (slice < 2 * maxPay) revert SliceTooSmall();
         uint256 budget = slice - maxPay;
-        ethToBuyback = pool - slice;
-        lastBuybackBlock = block.number;
+        s.ethToBuyback = pool - slice;
+        s.lastBuybackBlock = block.number;
         (uint256 spent, uint256 bought) = abi.decode(MANAGER.unlock(abi.encode(budget)), (uint256, uint256));
         if (bought == 0) revert NothingBought();
         ICoin(COIN).burn(bought);
         // spent is at most budget, which is at most setSlice - maxPay, so the scaled fee is at most the fee
         uint256 paid = _payment(
-            gasStart, BUYBACK_OVERHEAD_GAS, BUYBACK_GAS, s.keeperMaxBaseFee, fee.min(fee * spent / (setSlice - maxPay))
+            gasStart, BUYBACK_OVERHEAD_GAS, BUYBACK_GAS, cfg.keeperMaxBaseFee, fee.min(fee * spent / (setSlice - maxPay))
         );
-        ethToBuyback += slice - spent - paid;
+        s.ethToBuyback += slice - spent - paid;
         emit Buyback(msg.sender, spent, paid);
         if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
     }
@@ -1060,36 +991,36 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// starts the handover of the owner role: `to` becomes the owner when it calls `acceptOwnership`. the zero address
     /// clears a pending handover. there is no renounce
     function transferOwnership(address to) external onlyOwner {
-        pendingOwner = to;
+        s.pendingOwner = to;
         emit OwnershipTransferStarted(msg.sender, to);
     }
 
     /// completes the handover, called by the pending owner. the zero caller never passes
     function acceptOwnership() external {
-        if (msg.sender == address(0) || msg.sender != pendingOwner) revert OnlyPendingOwner();
-        emit OwnershipTransferred(owner, msg.sender);
-        owner = msg.sender;
-        delete pendingOwner;
+        if (msg.sender == address(0) || msg.sender != s.pendingOwner) revert OnlyPendingOwner();
+        emit OwnershipTransferred(s.owner, msg.sender);
+        s.owner = msg.sender;
+        delete s.pendingOwner;
     }
 
     /// sets the controller at once. never zero. reverts after `lockController`
     function setController(address c) external onlyOwner {
-        if (controllerLocked) revert Locked("controller");
+        if (s.controllerLocked) revert Locked("controller");
         if (c == address(0)) revert ZeroAddress();
-        controller = c;
+        s.controller = c;
         emit ControllerSet(c);
     }
 
     /// sets the address `claimPayee` pays. never zero. effective at once, applies to the eth already owed
     function setPayee(address to) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
-        payee = to;
+        s.payee = to;
         emit PayeeSet(to);
     }
 
     /// sets or replaces the balance module at once (any number of times until `lockBalanceModule`)
     function setBalanceModule(address module) external onlyOwner nonReentrant {
-        if (balanceModuleLocked) revert Locked("balanceModule");
+        if (s.balanceModuleLocked) revert Locked("balanceModule");
         _setBalanceModule(module);
     }
 
@@ -1097,38 +1028,38 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// core for a coin buy and burn: `ethRedeemBurn` falls and `ethToBuyback` rises by the same amount, so the tracked
     /// total and solvency hold. callable after `migrate`. reverts `ZeroAmount` when the reserve is empty or `amount` is 0
     function releaseRedeemBurn(uint256 amount) external onlyOwner nonReentrant {
-        uint256 reserve = ethRedeemBurn;
+        uint256 reserve = s.ethRedeemBurn;
         uint256 move = amount < reserve ? amount : reserve;
         if (move == 0) revert ZeroAmount();
-        ethRedeemBurn = reserve - move;
-        ethToBuyback += move;
+        s.ethRedeemBurn = reserve - move;
+        s.ethToBuyback += move;
         emit RedeemBurnReleased(move);
     }
 
     /// approves a listing adapter for `buyListing` at once. forbidden addresses are refused. reverts after `lockAdapters`
     function addAdapter(address a) external onlyOwner {
-        if (adaptersLocked) revert Locked("adapters");
+        if (s.adaptersLocked) revert Locked("adapters");
         if (_forbidden(a)) revert ForbiddenTarget();
-        allowedAdapter[a] = true;
+        s.allowedAdapter[a] = true;
         emit AdapterSet(a, true);
     }
 
     /// the one way locks. each is irreversible. the settings and the controller's own sale settings stay open
     function lockController() external onlyOwner {
-        controllerLocked = true;
+        s.controllerLocked = true;
         emit ControllerLocked();
     }
 
     /// reverts while no balance module is set, so the balance side cannot be locked out by accident
     function lockBalanceModule() external onlyOwner {
-        if (balanceModule == address(0)) revert NoBalanceModule();
-        balanceModuleLocked = true;
+        if (s.balanceModule == address(0)) revert NoBalanceModule();
+        s.balanceModuleLocked = true;
         emit BalanceModuleLocked();
     }
 
     /// after this no adapter can be added. removing one still works
     function lockAdapters() external onlyOwner {
-        adaptersLocked = true;
+        s.adaptersLocked = true;
         emit AdaptersLocked();
     }
 
@@ -1202,7 +1133,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// removes an approved adapter at once.
     function removeAdapter(address a) external onlyOwner {
-        allowedAdapter[a] = false;
+        s.allowedAdapter[a] = false;
         emit AdapterSet(a, false);
     }
 
@@ -1210,19 +1141,19 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// read by `sellCreditTo` (docs/FLOW.md 88)
     function setCreditCostToPotBps(uint16 v) external onlyOwner {
         if (!CreditBounds.costToPotBpsOk(v)) revert BadSetting("creditCostToPotBps");
-        creditCostToPotBps = v;
+        s.creditCostToPotBps = v;
         emit CreditCostToPotBpsSet(v);
     }
 
     /// turns chosen composition on or off. gates `composeChosen`; `compose` is unaffected (docs/FLOW.md 89)
     function setChosenComposeOn(bool v) external onlyOwner {
-        chosenComposeOn = v;
+        s.chosenComposeOn = v;
         emit ChosenComposeOnSet(v);
     }
 
     /// sets the least coin balance a caller of `composeChosen` must hold (docs/FLOW.md 89)
     function setMinCcToChoose(uint96 v) external onlyOwner {
-        minCcToChoose = v;
+        s.minCcToChoose = v;
         emit MinCcToChooseSet(v);
     }
 
@@ -1230,15 +1161,15 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// a pause records its start in `pausedSince`, a resume adds the length of the pause to `pausedTotal`. compose,
     /// the bids, redemptions, buybacks and fee booking run in a pause
     function setPaused(bool on) external onlyOwner {
-        if (on == paused) return;
-        paused = on;
+        if (on == s.paused) return;
+        s.paused = on;
         // forge-lint: disable-next-line(unsafe-typecast)
         uint40 t = uint40(block.timestamp);
         if (on) {
-            pausedSince = t;
+            s.pausedSince = t;
         } else {
-            pausedTotal += t - pausedSince;
-            pausedSince = 0;
+            s.pausedTotal += t - s.pausedSince;
+            s.pausedSince = 0;
         }
         emit PausedSet(on);
     }
@@ -1246,7 +1177,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the paused seconds from deployment to now: `pausedTotal` plus the open pause
     function pausedNow() internal view returns (uint40) {
         // forge-lint: disable-next-line(unsafe-typecast)
-        return pausedTotal + (paused ? uint40(block.timestamp) - pausedSince : 0);
+        return s.pausedTotal + (s.paused ? uint40(block.timestamp) - s.pausedSince : 0);
     }
 
     /// sets every economic setting at once, effective now. the eth rate is checkpointed first, so no climb is credited
@@ -1275,13 +1206,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the remembered peak are all `rate`, the fill clock is unchanged. the clamp and the ceiling still bound the rate
     /// on read
     function setRate(uint256 rate) external onlyOwner nonReentrant {
-        if (!SettingsBounds.rateInBounds(rate) || rate > _st().rateCap) revert BadRate();
-        RateStore.Anchor storage a = RateStore.load();
-        a.lastFillRate = rate;
-        a.peakRate = rate;
-        a.peakTime = uint64(block.timestamp);
-        rateAtCheckpoint = rate;
-        checkpointTime = uint64(block.timestamp);
+        if (!SettingsBounds.rateInBounds(rate) || rate > s.settings.rateCap) revert BadRate();
+        s.anchor.lastFillRate = rate;
+        s.anchor.peakRate = rate;
+        s.anchor.peakTime = uint64(block.timestamp);
+        s.rateAtCheckpoint = rate;
+        s.checkpointTime = uint64(block.timestamp);
         emit RateSet(rate);
     }
 
@@ -1297,15 +1227,15 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// at the set (`_unitOf`). a dormant approved adapter flag of the new module is cleared, so it cannot come back to
     /// life when the module is replaced
     function _setBalanceModule(address module) private {
-        address old = balanceModule;
+        address old = s.balanceModule;
         if (module.code.length == 0) revert BadModule();
         address token = IBalanceModule(module).balanceToken();
-        if (old != address(0) && token != balanceToken) revert BalanceTokenChanged();
+        if (old != address(0) && token != s.balanceToken) revert BalanceTokenChanged();
         if (token.code.length == 0 || _forbiddenBase(module) || _forbiddenBase(token)) revert BadModule();
         uint256 unit = _unitOf(module);
-        balanceModule = module;
-        balanceToken = token;
-        if (allowedAdapter[module]) delete allowedAdapter[module];
+        s.balanceModule = module;
+        s.balanceToken = token;
+        if (s.allowedAdapter[module]) delete s.allowedAdapter[module];
         emit BalanceModuleSet(module, token, unit);
     }
 
@@ -1313,18 +1243,49 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                 VIEWS
     //////////////////////////////////////////////////////////////*/
 
+    function controller() external view returns (address) { return s.controller; }
+    function controllerLocked() external view returns (bool) { return s.controllerLocked; }
+    function balanceModuleLocked() external view returns (bool) { return s.balanceModuleLocked; }
+    function adaptersLocked() external view returns (bool) { return s.adaptersLocked; }
+    function balanceModule() external view returns (address) { return s.balanceModule; }
+    function balanceToken() external view returns (address) { return s.balanceToken; }
+    function allowedAdapter(address adapter) external view returns (bool) { return s.allowedAdapter[adapter]; }
+    function owner() external view returns (address) { return s.owner; }
+    function pendingOwner() external view returns (address) { return s.pendingOwner; }
+    function ethPot() external view returns (uint256) { return s.ethPot; }
+    function ethToBuyback() external view returns (uint256) { return s.ethToBuyback; }
+    function ethRedeemBurn() external view returns (uint256) { return s.ethRedeemBurn; }
+    function balancePot() external view returns (uint256) { return s.balancePot; }
+    function rateAtCheckpoint() external view returns (uint256) { return s.rateAtCheckpoint; }
+    function checkpointTime() external view returns (uint64) { return s.checkpointTime; }
+    function lastFillTime() external view returns (uint64) { return s.lastFillTime; }
+    function lastBuybackBlock() external view returns (uint256) { return s.lastBuybackBlock; }
+    function successor() external view returns (address) { return s.successor; }
+    function successorLocked() external view returns (bool) { return s.successorLocked; }
+    function retired() external view returns (bool) { return s.retired; }
+    function creditCostToPotBps() external view returns (uint16) { return s.creditCostToPotBps; }
+    function chosenComposeOn() external view returns (bool) { return s.chosenComposeOn; }
+    function minCcToChoose() external view returns (uint96) { return s.minCcToChoose; }
+    function paused() external view returns (bool) { return s.paused; }
+    function pausedSince() external view returns (uint40) { return s.pausedSince; }
+    function pausedTotal() external view returns (uint40) { return s.pausedTotal; }
+    function composerOf(uint256 sid) external view returns (address) { return s.composerOf[sid]; }
+    function payee() external view returns (address) { return s.payee; }
+    function payeeOwed() external view returns (uint256) { return s.payeeOwed; }
+    function payeeOn() external view returns (bool) { return s.payeeOn; }
+
     /// number of credits in the pile.
     function pileSize() external view returns (uint256) {
-        return _pile.size;
+        return s.pile.size;
     }
 
     /// up to n credit ids of the pile, oldest first, after startAfter. zero starts at the head.
     function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids) {
-        uint256 first = startAfter == 0 ? _pile.head : _credits[startAfter].next;
+        uint256 first = startAfter == 0 ? s.pile.head : s.credits[startAfter].next;
         // at most the pile size, so a huge n cannot blow up memory. the length is cut to the count found
-        ids = new uint256[](n.min(_pile.size));
+        ids = new uint256[](n.min(s.pile.size));
         uint256 count;
-        for (uint256 id = first; id != 0 && count < ids.length; id = _credits[id].next) {
+        for (uint256 id = first; id != 0 && count < ids.length; id = s.credits[id].next) {
             ids[count++] = id;
         }
         assembly ("memory-safe") {
@@ -1334,49 +1295,36 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// pile membership, cost basis and arrival time of a credit.
     function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt) {
-        CoreLib.Credit storage c = _credits[id];
+        CoreLib.Credit storage c = s.credits[id];
         return (c.inPile, c.cost, c.acquiredAt);
     }
 
     /// whether the core holds a statement for sale or redemption, with its cost basis and compose time
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt) {
-        CoreLib.Statement storage s = _statements[sid];
-        return (s.held, s.cost, s.composedAt);
+        CoreLib.Statement storage st = s.statements[sid];
+        return (st.held, st.cost, st.composedAt);
     }
 
     /// the seconds a held statement has aged outside every pause: the time since its compose minus the paused seconds
     /// accumulated since. a statement composed in a pause has age 0 at the resume. the controller prices by this age
     function statementAge(uint256 sid) external view returns (uint256) {
-        CoreLib.Statement storage s = _statements[sid];
-        if (!s.held) revert NotForSale();
-        return (block.timestamp - s.composedAt) - (pausedNow() - s.pauseMark);
+        CoreLib.Statement storage st = s.statements[sid];
+        if (!st.held) revert NotForSale();
+        return (block.timestamp - st.composedAt) - (pausedNow() - st.pauseMark);
     }
 
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose
     function ratingOf(uint256 sid) external view returns (uint256) {
-        return _statements[sid].rating;
+        return s.statements[sid].rating;
     }
 
-    /// every setting. the three packed slots go to the library, which unpacks them into the struct, and the answer is
-    /// returned as it comes (an abi encoded `Settings`)
+    /// every setting
     function settings() external view returns (Settings memory) {
-        bytes32 slot = SettingsStore.SLOT;
-        address lib = address(CoreLib);
-        bytes4 sel = CoreLib.unpack.selector;
-        assembly ("memory-safe") {
-            let p := mload(0x40)
-            mstore(p, sel)
-            mstore(add(p, 4), sload(slot))
-            mstore(add(p, 0x24), sload(add(slot, 1)))
-            mstore(add(p, 0x44), sload(add(slot, 2)))
-            if iszero(staticcall(gas(), lib, p, 0x64, 0, 0)) { revert(0, 0) }
-            returndatacopy(p, 0, returndatasize())
-            return(p, returndatasize())
-        }
+        return s.settings;
     }
 
     /// every statement the core holds for sale or redemption.
     function heldStatements() external view returns (uint256[] memory sids) {
-        return _heldIds;
+        return s.heldIds;
     }
 }

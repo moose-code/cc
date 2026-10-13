@@ -489,31 +489,6 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "factory: mev module enabled, factory: deployTokenAsOwner accepts the config (simulated)");
     }
 
-    function test_postflightChecksTheLens() public {
-        address lensAt = lensAddress(address(core));
-        assertEq(lensAt, address(lens), "the lens sits at the CREATE2 address of the Core");
-        postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "", "the lens of the deploy passes");
-        // a lens that points at another Core fails its row
-        vm.mockCall(lensAt, abi.encodeWithSignature("CORE()"), abi.encode(address(0x1234)));
-        postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "lens: core");
-        vm.clearMockedCalls();
-        // a missing lens fails the code row only
-        bytes memory code = lensAt.code;
-        vm.etch(lensAt, "");
-        postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "code: lens");
-        // another bytecode at the derived address fails the size row
-        vm.etch(lensAt, hex"6000");
-        postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "lens: code size is the compiled CoreLens");
-        vm.etch(lensAt, code);
-        // the rows need no deployer
-        postflightAs(lc, address(core), address(0));
-        assertEq(_failedNames(), "");
-    }
-
     function test_postflightChecksTheAdapters() public {
         assertEq(seaportAdapter, seaportAdapterAddress(address(core), lc.seaportRecipients), "CREATE2 address");
         assertEq(strategyAdapter, strategyAdapterAddress(), "CREATE2 address");

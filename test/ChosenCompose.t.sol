@@ -116,8 +116,7 @@ contract ChosenComposeTest is Fixture {
     function test_window_insideRevertsWhileSaleOn() public {
         uint256[] memory page = _pile(80);
         _on();
-        vm.prank(owner);
-        ctl.setCreditSaleOn(true);
+        _setCreditSaleOn(true);
         // every named credit was acquired now, inside its window: the gate reverts on the newest, the pile head here
         // since the whole page shares one acquisition time
         vm.expectRevert(abi.encodeWithSelector(ICore.InWindow.selector, page[0]));

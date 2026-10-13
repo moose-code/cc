@@ -17,10 +17,9 @@ units. a rate is wei per credit. every credit has the same price, the rate. ever
 | coin | `core.COIN()` | launched through the artcoins v2 factory |
 | controller | `core.controller()` | ControllerV1 at launch. the owner can replace it until `lockController` |
 | fee recipient | `core.COIN()`, `core.payee()` | the Core is the bounty recipient of the pool. `payee` is the address `claimPayee()` pays |
-| lens | the `lens` line of the `Deploy` output, or the CREATE2 address derived from the Core | `CoreLens`. `lens.CORE()` names the Core it reads |
 | balanceModule, balanceToken | `core.balanceModule()`, `core.balanceToken()` | zero until the owner sets them (unset at launch, decision 82) |
 
-the record of a launch is the output of `script/Deploy.s.sol` (core, coin, controller, lens), the broadcast file `broadcast/Deploy.s.sol/1/run-latest.json`, and the table that `script/Postflight.s.sol` prints after reading every address back (docs/RUNBOOK.md steps 6 and 8). a keeper needs the Core address and reads the rest from it. the lens address is a function of the Core (CREATE2 through the deterministic deployer, salt `keccak256("credits.core.lens.v1")`, the Core as constructor argument), which `Postflight` derives from `CORE`.
+the record of a launch is the output of `script/Deploy.s.sol` (core, coin, controller), the broadcast file `broadcast/Deploy.s.sol/1/run-latest.json`, and the table that `script/Postflight.s.sol` prints after reading every address back (docs/RUNBOOK.md steps 6 and 8). a keeper needs the Core address and reads the rest from it.
 
 ## 2. quoting a credit
 
@@ -98,7 +97,7 @@ keeper economics: the adapter refuses a payout to the caller, so the payment of 
 
 ## 5. compose
 
-`compose()`, `compose(uint8 format)` and `composeChosen(ids, format)`. anyone may call `compose()` and `compose(format)`. the controller decides the page: `ControllerV1.nextPage()` is ready when the pile holds 80 credits and returns the 80 oldest; the Core ignores the format it returns. `compose()` sets the format to `keccak256(abi.encode(block.prevrandao, first page id)) % 8`; `compose(format)` sets the given format (0 to 7). while the credit sale window is on (section 6) it is ready only once the newest of the 80 has been in the pile for `creditWindow`. `lens.snapshot().pageReady` reports it. `composeChosen(uint256[80] ids, uint8 format)` composes the 80 credits and the format (0 to 7) that the caller names. it needs `chosenComposeOn` (off at launch), a caller coin balance of at least `minCcToChoose` (1 coin at launch) and every named credit past its window. `lens.choosable(id)` answers whether one credit may be named now.
+`compose()`, `compose(uint8 format)` and `composeChosen(ids, format)`. anyone may call `compose()` and `compose(format)`. the controller decides the page: `ControllerV1.nextPage()` is ready when the pile holds 80 credits and returns the 80 oldest; the Core ignores the format it returns. `compose()` sets the format to `keccak256(abi.encode(block.prevrandao, first page id)) % 8`; `compose(format)` sets the given format (0 to 7). while the credit sale window is on (section 6) it is ready only once the newest of the 80 has been in the pile for `creditWindow`. `controller.nextPage()` reports it. `composeChosen(uint256[80] ids, uint8 format)` composes the 80 credits and the format (0 to 7) that the caller names. it needs `chosenComposeOn` (off at launch), a caller coin balance of at least `minCcToChoose` (1 coin at launch) and every named credit past its window. a credit may be named when `core.creditInfo(id)` reports it in the pile and `controller.pastWindow(acquiredAt)` is true.
 
 what the call does:
 
@@ -115,7 +114,7 @@ send at least 12,000,000 gas: the live Statements contract needs about 8.7 milli
 
 ## 6. statements and credits: buying
 
-a statement stays in the Core after compose and sells only through `ControllerV1.buy`. `lens.snapshot().statements` lists every held statement with its cost, compose time, `priceReference` and `askingPrice`. the price reference of a statement is `controller.referenceOf(sid)`: `max(cost, floorRate * rating / refScore)`, the larger of its cost and the floor rate (`core.floorRate()`) times its rating over `refScore` (`controller.refScore()`, 4,330,000 at launch, in ten-thousandths of a point per credit), computed at each call. the floor rate is the larger of the climbed eth bid rate and the remembered peak, so a sale within the block, which lowers only the rate, cannot push the reference down. the rate term prices the rating at the engine's average credit price, so two statements of the same rating reference the same amount once it binds, whatever each credit cost. the asking price at `age` seconds since its compose is `reference * price / 10,000`, with `price` in bps of the reference falling at a fixed rate and changing every second: `start` less `fastDecayBpsPerHour` (100) per hour while above `kneeBps` (10,000), then `kneeBps` less `slowDecayBpsPerHour` (25) per hour from the second the knee is reached, never below `floorBps` (10,000 at launch). a `start` at or below `kneeBps` falls at the slow rate from compose. at the launch anchor the price is 15,000 at compose, 12,500 at hour 25 and 10,000 at hour 50, where it stays (the launch knee and floor are both 10,000, so an unsold statement sits at its reference). `start` is `controller.startBps()`, which is `min(anchorBps * markupBps / 10,000, startCapBps)`, 15,000 at the launch anchor of 10,000. `anchorBps` is the running level of sale prices in bps of the reference. a `buy` of a statement whose cost is at least `controller.anchorMinCost()` (0.1 eth at launch, an owner setting from 0 to 10 eth) and whose sale price in bps of the reference is above the anchor sets it to the mean of the anchor now and the sale price, at most `startCapBps` (100,000). every other `buy` completes and leaves the anchor and `anchorTime` unchanged. the part of the anchor above 10,000 halves every `anchorHalfLife` (604,800 seconds, 7 days at launch), continuously, so the anchor falls with time and `controller.anchorBps()` returns the value now. the price is computed from the age, the anchor now and the current settings at every call, so the price of a held statement rises when another statement sells above the anchor, falls as the anchor decays, and changes at once when the owner changes `markupBps`, `startCapBps`, `anchorHalfLife`, `anchorMinCost`, `refScore`, either rate, `kneeBps`, `floorBps` or `saleFloorBps`. `sellTo` takes at least `saleFloorBps` (10,000 at launch) of the cost. `controller.priceOf(sid)` returns the asking price now, never below that floor and, once the owner sets the balance token pool (`setBalancePoolKey`), never below the statement's redeemable value in eth: `rating * unit` balance token base units priced at the pool's sqrt price, with `unit` the lower of the stored and the live `unitPerPoint()`. `controller.atFloor(sid)` is true when the curve price, without the value floor, has reached its floor (`floorBps` of the reference); the Core reads it to gate `redeemStatement`.
+a statement stays in the Core after compose and sells only through `ControllerV1.buy`. `core.heldStatements()` lists the held statements and `core.statementInfo(sid)` gives each cost and compose time. the price reference of a statement is `controller.referenceOf(sid)`: `max(cost, floorRate * rating / refScore)`, the larger of its cost and the floor rate (`core.floorRate()`) times its rating over `refScore` (`controller.refScore()`, 4,330,000 at launch, in ten-thousandths of a point per credit), computed at each call. the floor rate is the larger of the climbed eth bid rate and the remembered peak, so a sale within the block, which lowers only the rate, cannot push the reference down. the rate term prices the rating at the engine's average credit price, so two statements of the same rating reference the same amount once it binds, whatever each credit cost. the asking price at `age` seconds since its compose is `reference * price / 10,000`, with `price` in bps of the reference falling at a fixed rate and changing every second: `start` less `fastDecayBpsPerHour` (100) per hour while above `kneeBps` (10,000), then `kneeBps` less `slowDecayBpsPerHour` (25) per hour from the second the knee is reached, never below `floorBps` (10,000 at launch). a `start` at or below `kneeBps` falls at the slow rate from compose. at the launch anchor the price is 15,000 at compose, 12,500 at hour 25 and 10,000 at hour 50, where it stays (the launch knee and floor are both 10,000, so an unsold statement sits at its reference). `start` is `controller.startBps()`, which is `min(anchorBps * markupBps / 10,000, startCapBps)`, 15,000 at the launch anchor of 10,000. `anchorBps` is the running level of sale prices in bps of the reference. a `buy` of a statement whose cost is at least `controller.anchorMinCost()` (0.1 eth at launch, an owner setting from 0 to 10 eth) and whose sale price in bps of the reference is above the anchor sets it to the mean of the anchor now and the sale price, at most `startCapBps` (100,000). every other `buy` completes and leaves the anchor and `anchorTime` unchanged. the part of the anchor above 10,000 halves every `anchorHalfLife` (604,800 seconds, 7 days at launch), continuously, so the anchor falls with time and `controller.anchorBps()` returns the value now. the price is computed from the age, the anchor now and the current settings at every call, so the price of a held statement rises when another statement sells above the anchor, falls as the anchor decays, and changes at once when the owner changes `markupBps`, `startCapBps`, `anchorHalfLife`, `anchorMinCost`, `refScore`, either rate, `kneeBps`, `floorBps` or `saleFloorBps`. the owner sets the seven sale numbers (`markupBps`, `startCapBps`, `fastDecayBpsPerHour`, `kneeBps`, `slowDecayBpsPerHour`, `anchorHalfLife`, `anchorMinCost`) with `controller.setSale(Sale)` and the credit sale, `refScore` and the royalty with `controller.setCredit(CreditSale)`. each call sets all its fields at once, checks every field against the bounds of the others and emits the whole struct (`SaleSet`, `CreditSaleSet`). `sellTo` takes at least `saleFloorBps` (10,000 at launch) of the cost. `controller.priceOf(sid)` returns the asking price now, never below that floor and, once the owner sets the balance token pool (`setBalancePoolKey`), never below the statement's redeemable value in eth: `rating * unit` balance token base units priced at the pool's sqrt price, with `unit` the lower of the stored and the live `unitPerPoint()`. `controller.atFloor(sid)` is true when the curve price, without the value floor, has reached its floor (`floorBps` of the reference); the Core reads it to gate `redeemStatement`.
 
 the owner can pause sales on the Core (`core.setPaused(bool)`, effective at once, unpaused at launch). `core.paused()` reports the state. while paused `core.sellTo` and `core.sellCreditTo` revert `Paused()`, so `buy` reverts, and `priceOf` keeps answering. the age a price falls with, `core.statementAge(sid)`, excludes every paused second, so a pause holds the age of each held statement and the fall continues from the same age at the resume. a statement composed during a pause starts aging at the resume. the anchor decays with wall time in a pause, so the start price of a held statement follows it. composing, the eth bid, redemptions, buybacks and fees run in a pause.
 
@@ -128,7 +127,7 @@ the owner can pause sales on the Core (`core.setPaused(bool)`, effective at once
 
 `controller.creditSaleOn()` is false at launch. while it is true every pile credit is for sale from its acquisition time (`core.creditInfo(id)`: `inPile`, cost, `acquiredAt`).
 
-1. `controller.creditPrice(id)` returns the price in wei, and `lens.creditPriceOf(id)` the same read with 0 for a controller that does not answer. `floor = max(cost, baseline, backstop) * creditFloorBps / 10,000` (11,000 at launch) and `start = floor * creditStartBps / 10,000` (30,000 at launch). the price falls in a straight line from `start` at `acquiredAt` to `floor` at `acquiredAt + creditWindow` (14,400 seconds at launch) and rests at `floor` after. `baseline` is the credit's score times the lower of the stored and the live `unitPerPoint` priced at the balance token pool key and only lifts the floor: it is 0 while no balance module is set, no pool key is set, the pool price reads zero or the live `unitPerPoint` read fails, so the price never reverts for a missing or failed pool read. `backstop` is `core.floorRate()` (the larger of the climbed eth bid rate and the remembered peak) times `max(1, score / refScore)`, so a credit scored above `refScore` floors proportionally higher and a credit at or below it floors at the unscaled floor rate. `NotForSale` is the only revert, for a credit that is not in the pile. the price changes with the floor rate, so a quote read in an earlier block can move by the time the transaction lands.
+1. `controller.creditPrice(id)` returns the price in wei. `floor = max(cost, baseline, backstop) * creditFloorBps / 10,000` (11,000 at launch) and `start = floor * creditStartBps / 10,000` (30,000 at launch). the price falls in a straight line from `start` at `acquiredAt` to `floor` at `acquiredAt + creditWindow` (14,400 seconds at launch) and rests at `floor` after. `baseline` is the credit's score times the lower of the stored and the live `unitPerPoint` priced at the balance token pool key and only lifts the floor: it is 0 while no balance module is set, no pool key is set, the pool price reads zero or the live `unitPerPoint` read fails, so the price never reverts for a missing or failed pool read. `backstop` is `core.floorRate()` (the larger of the climbed eth bid rate and the remembered peak) times `max(1, score / refScore)`, so a credit scored above `refScore` floors proportionally higher and a credit at or below it floors at the unscaled floor rate. `NotForSale` is the only revert, for a credit that is not in the pile. the price changes with the floor rate, so a quote read in an earlier block can move by the time the transaction lands.
 2. `controller.buyCredit{value: v}(id)` and `controller.buyCredits{value: v}(ids)` with `v` at least `grossCreditPrice(id)`, the price plus the royalty (the sum of the gross prices for a batch, each credit priced after the previous sale). they revert `CreditSaleOff` while the sale is off, `Paused` while sales are paused, `Underpaid` for a short `v`, and refund the excess last. the controller calls `core.sellCreditTo(id, buyer)`, which requires the payment to be at least the credit's cost (`BelowFloor`), sends the credit to the buyer, books `creditCostToPotBps` of the cost (10,000 at launch) to `ethPot` and the rest of the payment to the coin buyback pot, and emits `CreditSold(id, buyer, price)`.
 3. a credit that sits past its window is composed by `compose` or `composeChosen`. with the sale off, a credit composes at once.
 
@@ -140,7 +139,7 @@ the pool pushes the bounty leg of its fees to the Core with the 2,300 gas stipen
 * `fund()` (payable, anyone) books the pending income, then adds `msg.value` to `ethPot`. event `Funded`.
 * `collectEscrow()` (anyone) books, then claims the eth credit of the Core in the fee escrow into `ethPot`. it reverts with the escrow's error when nothing is owed. event `EscrowCollected`.
 * `claimPayee()` (anyone) sends `payeeOwed` to `payee`. `ZeroAmount` when nothing is owed, `CallFailed` when the payee refuses.
-* the gas of the book is part of the gas counted for the caller payment of `compose`, `composeChosen` (section 5) and `buyListing` (section 4). `sellForBalance` and `bookBalance` read no eth price. `lens.snapshot()` reports `pendingIncome`, `payee`, `payeeOwed` and `payeeOn`.
+* the gas of the book is part of the gas counted for the caller payment of `compose`, `composeChosen` (section 5) and `buyListing` (section 4). `sellForBalance` and `bookBalance` read no eth price. `core.payee()`, `core.payeeOwed()` and `core.payeeOn()` report the payee state, and the eth above the booked pots and the payee claim is the pending income that `book()` books.
 
 ## 8. adopt
 
@@ -171,47 +170,26 @@ a successor Core (section 9) receives credits without records and adopts them th
 
 what a successor has to implement: a `fund()` that accepts eth, and a balance token and Credits that it accepts by `transfer` and `transferFrom`, so the `onERC721Received` of the successor is skipped. `migrate` transfers eth, balance token and credits. the old Core is retired by the first `migrate`; an integrator that sells credits to a Core reads `core.retired()` first. `sellForEth`, `buyListing`, `sellForBalance`, `adopt`, `compose` and `composeChosen` revert `Retired`, and `retired()` reads true. it keeps its statements and sells them out itself, so `buy` and `redeemStatement` still work there, and call `migrate` again to move the proceeds, until it moves nothing. it keeps `sellTo`, `sellCreditTo`, `book` and `buyback`, and books the fees that still arrive. `buyback` there burns the `ethToBuyback` that stayed at the migration and whatever later fees and redemptions add. `redeemStatement` there repays its caller from what is left in `ethPot`, capped at the pot, so the repayment is often 0 after a `migrate`. move the pool's bounty recipient to the successor with `setBountyRecipient` on the hook (as the coin admin) before the first `migrate`: a Core that stays the recipient books every later fee. `maxCredits` bounds the credits moved per call, and 0 moves the pots only. the successor builds its pile with `adopt`.
 
-## 10. the lens
+## 10. reading the engine
 
-`CoreLens` (`src/CoreLens.sol`) holds immutable pointers and reads state only.
+a frontend multicalls these views. the Core, and the controller at `core.controller()`.
 
-| call | returns |
+| view | returns |
 |---|---|
-| `snapshot()` | the `Snapshot` struct below, with every held statement. the struct has no `retired` field: read `core.retired()` |
-| `statementsPage(start, n)` | `StatementView[]` for the held statements `start` to `start + n`, in the order of `core.heldStatements()` |
-| `choosable(id)` | whether credit `id` may be named in a chosen compose now: in the pile and past its window |
-| `creditPriceOf(id)` | the controller's `creditPrice(id)`, 0 when the controller does not answer |
-| `balanceBidOf(id)` | the balance token the bid pays for credit `id` now: `score * unit * (10_000 - balanceBidMarginBps) / 10_000`, `unit` the module's `unitPerPoint()` now, at most `balancePot`. 0 when no module is set, the Core is retired or `balanceBidOn` is false |
-| `grossAskingPrice(sid)` and `grossCreditPriceOf(id)` | the controller's `grossPriceOf(sid)` and `grossCreditPrice(id)`: the price plus the royalty, the amount `buy` and `buyCredit` take. 0 when the controller does not answer |
-| `controller()` | the controller of the Core now |
-| `CORE()`, `CREDITS()`, `STATEMENTS()` | the pointers |
+| `core.ethRate()` | the bid per credit (wei) a `sellForEth` pays now: the price state lowered to the booked pot plus the pot share of the unbooked fee income |
+| `core.ethPrice()` | the price state before the pot clamp |
+| `core.floorRate()` | the larger of the price state and the remembered peak |
+| `core.pileSize()`, `core.pilePage(startAfter, n)` | size of the pile and its credit ids, oldest first |
+| `core.creditInfo(id)` | `inPile`, cost basis and `acquiredAt` of a credit |
+| `core.statementInfo(sid)`, `core.statementAge(sid)`, `core.ratingOf(sid)` | held flag, cost and compose time of a statement, its age outside pauses, its stored rating |
+| `core.composerOf(sid)`, `core.heldStatements()` | the caller that composed a statement, every statement the Core holds |
+| `core.settings()` | every economic setting |
+| `controller.priceOf(sid)`, `grossPriceOf(sid)`, `referenceOf(sid)` | asking price of a held statement, the price plus the royalty, and the price reference |
+| `controller.creditPrice(id)`, `grossCreditPrice(id)` | the credit sale price and the price plus the royalty |
+| `controller.atFloor(sid)`, `pastWindow(acquiredAt)`, `nextPage()` | the redemption gate, the compose window gate, and the next page of 80 credits |
+| `controller.pointRate()`, `valueOf(points)` | the eth value per point and of a score |
 
-| `Snapshot` field | meaning |
-|---|---|
-| `ethRate` | the bid per credit as the Core reads it for a sale |
-| `ethPrice` | the price state before the clamp |
-| `pileSize`, `pileHead` | size and oldest credit of the pile |
-| `pageReady` | the controller answers `nextPage()` with a ready flag and the full answer size (82 words) that `compose` requires |
-| `creditSaleOn`, `creditWindow`, `refScore` | the controller's credit sale switch, the window in seconds and the reference score (0 and off for a controller that does not answer) |
-| `chosenComposeOn`, `minCcToChoose` | the Core's chosen composition switch and the least coin balance of the caller of `composeChosen` and `setHeldFormat` |
-| `ethPot`, `ethToBuyback`, `ethRedeemBurn`, `balancePot` | the four pots. `ethToBuyback` leaves only through a `buyback()` whose swap completes: a pool or hook failure reverts the call and the pot stays. `ethRedeemBurn` is the redeem burn reserve, filled by `feeToRedeemBurnBps` of fee income and drawn into `ethToBuyback` on each redemption |
-| `pendingIncome` | Core balance above the booked pots and the payee claim. `book()` books it |
-| `payee`, `payeeOwed`, `payeeOn` | the address `claimPayee()` pays, the eth owed to it, and whether the payee share runs |
-| `controller`, `successor` | the addresses now |
-| `balanceModule`, `balanceToken`, `redeemOn`, `balanceBidOn`, `unitPerPoint` | the balance side module and token (zero until set), the two switches and the module's `unitPerPoint()` now (0 without a module) |
-| `controllerLocked`, `balanceModuleLocked`, `adaptersLocked`, `successorLocked` | the four one way locks |
-| `statements` | `StatementView[]` |
-
-| `StatementView` field | meaning |
-|---|---|
-| `id`, `cost` | statement id and cost basis |
-| `composedAt` | the compose time |
-| `rating` | the stored rating: the sum of the credits' scores read at compose |
-| `priceReference` | the controller's `referenceOf(id)` in wei: the larger of cost and `valueOf(rating)`. 0 for a controller that does not answer |
-| `askingPrice` | the controller's `priceOf(id)` in wei. 0 for a controller that does not answer |
-| `redeemEligible` | a redemption would pass the Core gates now: a module is set, `redeemOn` is true and the controller reports `atFloor(sid)` |
-
-`snapshot()` costs about 120,000 gas plus 25,000 per held statement (measured before decisions 84 and 90 added the rating, `atFloor` and reference reads per statement; `test_GAS_snapshotPerStatement` logs the current figure). a list of several hundred statements exceeds the gas that a public node allows for one `eth_call`, so a keeper reads them with `statementsPage` in pages of a few hundred.
+the pots, the locks, the payee state and the other scalars are the public getters of the Core (`ethPot`, `ethToBuyback`, `ethRedeemBurn`, `balancePot`, `payee`, `payeeOwed`, `payeeOn`, `controller`, `successor`, `retired`, `paused` and the four locks).
 
 ## 11. events
 
@@ -264,21 +242,9 @@ the controller (`src/interfaces/IControllerV1.sol`):
 | `Bought` | `uint256 indexed sid, address indexed buyer, uint256 price` | `buy`: `buyer` paid `price` and received statement `sid` |
 | `AnchorMoved` | `uint256 indexed sid, uint256 saleBps, uint32 anchorBps` | `buy`: the sale price in bps of the reference and the new anchor |
 | `AnchorBpsSet` | `uint32 anchorBps` | the owner set the anchor, or a lower `startCapBps` lowered it |
-| `AnchorHalfLifeSet` | `uint32 anchorHalfLife` | sale setting changed |
-| `AnchorMinCostSet` | `uint128 anchorMinCost` | sale setting changed |
-| `FastDecayBpsPerHourSet` | `uint16 fastDecayBpsPerHour` | sale setting changed |
-| `KneeBpsSet` | `uint32 kneeBps` | sale setting changed |
-| `SlowDecayBpsPerHourSet` | `uint16 slowDecayBpsPerHour` | sale setting changed |
-| `RoyaltyBpsSet` | `uint16 royaltyBps` | the owner changed the royalty |
-| `RoyaltyRecipientSet` | `address royaltyRecipient` | the owner changed the royalty recipient |
 | `RoyaltyClaimed` | `address indexed to, uint256 amount` | `claimRoyalty` paid the royalty owed |
-| `MarkupBpsSet` | `uint16 markupBps` | sale setting changed |
-| `StartCapBpsSet` | `uint32 startCapBps` | sale setting changed |
-| `RefScoreSet` | `uint32 refScore` | sale setting changed |
-| `CreditSaleOnSet` | `bool on` | the owner switched the credit sale window |
-| `CreditWindowSet` | `uint32 creditWindow` | credit sale setting changed |
-| `CreditFloorBpsSet` | `uint16 creditFloorBps` | credit sale setting changed |
-| `CreditStartBpsSet` | `uint32 creditStartBps` | credit sale setting changed |
+| `SaleSet` | `Sale sale` | `setSale`: the owner set the seven sale settings at once |
+| `CreditSaleSet` | `CreditSale credit` | `setCredit`: the owner set the credit sale, `refScore` and the royalty at once |
 | `PausedSet` (Core) | `bool paused` | the owner paused or resumed sales. not emitted by a call that repeats the state |
 | `BalancePoolKeySet` | `address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks` | `setBalancePoolKey`: the owner set the balance token pool that prices the redeemable value floor |
 
@@ -298,7 +264,7 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `BadModule()` | `setBalanceModule`, `redeemStatement`, `sellForBalance` | the module is rejected, or its `unitPerPoint()` read fails, returns short, returns 0 or exceeds a uint128. a redemption and the bid read the unit in the call and revert on a failed, short, zero or oversized read |
 | `BadRate()` | `setRate`, constructor | the rate is outside its bounds |
 | `BadSender()` | `onERC721Received` | an ERC721 other than Credits or Statements was safe transferred to the Core |
-| `BadSetting(bytes32 field)` | `setSettings`, `setCreditCostToPotBps`, constructor | the setting `field` is outside its bounds |
+| `BadSetting(bytes32 field)` | `setSettings`, `setCreditCostToPotBps`, `setSale`, `setCredit`, constructor | the setting `field` is outside its bounds |
 | `BadStack()` | constructor | a stack value is invalid |
 | `BadStatement()` | `compose`, `composeChosen` | Statements returned an id, holder or credit count other than expected |
 | `BadSuccessor(address who)` | `setSuccessor` | the address is the Core or a contract the Core works with (`who`) |
@@ -384,7 +350,6 @@ measured on the pinned fork with foundry 1.8.1. `tx` includes the intrinsic 21,0
 | `adopt`, 80 credits | call gas 7,660,657 (95,758 per credit) | the same test |
 | `migrate`, pots only | call gas 159,226 | `test/Migrate.t.sol` `test_GAS_migrateOneSixtyCredits` |
 | `migrate`, the credits of the pile | call gas 8,022,084 (44,772 per credit), measured with two piles of 80 before decision 92 | `test/Migrate.t.sol` `test_GAS_migrateOneSixtyCredits` logs the current figure for 160 credits in the one pile |
-| `lens.snapshot()` | 120,041 with no statements, 25,201 more per statement | `test/Lens.t.sol` `test_GAS_snapshotPerStatement` |
 
 ## 14. interface files
 
@@ -394,7 +359,6 @@ generated from the production abi by `script/tools/gen-interfaces.sh`, which `--
 |---|---|
 | `src/interfaces/ICore.sol` | `Core`: functions, events and errors |
 | `src/interfaces/IControllerV1.sol` | `ControllerV1` |
-| `src/interfaces/ICoreLens.sol` | `CoreLens` with the `Snapshot` and `StatementView` structs |
-| `src/interfaces/ICoreLib.sol` | `CoreLib`: the pure and view functions of the library and `swapIn`. the Core forwards its owner functions, `sellForBalance` and `adopt` to the library under the same selectors, so a caller uses `ICore` for them |
+| `src/interfaces/ICoreLib.sol` | `CoreLib`: the view functions of the library and `swapIn`. the Core forwards its owner functions, `sellForBalance` and `adopt` to the library under the same selectors, so a caller uses `ICore` for them |
 
 hand written shared types and external interfaces: `src/interfaces/Interfaces.sol` (`Settings`, `Stack`, `Sale`, `Credit`, Credits, Statements and the `Mainnet` constants), and `src/interfaces/ArtCoinsV2.sol` (the v2 stack).

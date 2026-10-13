@@ -4,9 +4,9 @@ pragma solidity ^0.8.28;
 import {Fixture} from "./utils/Fixture.sol";
 import {MigrationSink} from "./standins/MigrationSink.sol";
 
-/// `CoreState` in src/lib/CoreLib.sol mirrors the state variables of the Core in declaration order, and the library
-/// reaches the Core's storage through it. every field with a public getter is compared with the raw storage word the
-/// mirror assumes, the pile, the mappings and the held list by the slot arithmetic the compiler uses. the pile is a
+/// `State` in src/lib/CoreLib.sol holds every field of the Core, which declares it once at slot 0, and the library reads
+/// the same struct. every field with a public getter is compared with the raw storage word of its slot, the pile, the
+/// mappings and the held list by the slot arithmetic the compiler uses. the pile is a
 /// `Pile` struct stored inline (head, tail, size at slots 13, 14, 15), so the mappings and the held list follow it
 contract CoreLayoutTest is Fixture {
     uint256 internal constant S_PILE = 13;
@@ -26,7 +26,7 @@ contract CoreLayoutTest is Fixture {
         return uint256(keccak256(abi.encode(key, base)));
     }
 
-    // promise: SPEC 3 CoreLib addresses the Core storage by the CoreState mirror
+    // promise: SPEC 1 the Core state is one State struct at slot 0
     function test_OK_scalarFieldsSitWhereTheMirrorSays() public {
         MigrationSink sink = new MigrationSink();
         _enterPhase2();
@@ -119,7 +119,7 @@ contract CoreLayoutTest is Fixture {
         assertTrue(core.retired(), "retired value");
     }
 
-    // promise: SPEC 3 CoreLib addresses the Core storage by the CoreState mirror
+    // promise: SPEC 1 the Core state is one State struct at slot 0
     function test_OK_pilesCreditsAndStatementsSitWhereTheMirrorSays() public {
         uint256[] memory ids = _fillEthPile(5);
         // pile: head, tail, size inline at slots 13, 14, 15

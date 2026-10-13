@@ -7,23 +7,22 @@ import {ICore} from "../src/interfaces/ICore.sol";
 
 /// @notice proof that the suite exercises the production build. tests and scripts compile on the default profile (no
 /// via_ir), the production contracts on the via_ir profile (foundry.toml). this test fails unless
-///  1. the runtime code the fixture deployed for the Core, the ControllerV1, the CoreLens, the two listing adapters and the linked CoreLib equals, byte for byte,
+///  1. the runtime code the fixture deployed for the Core, the ControllerV1, the two listing adapters and the linked CoreLib equals, byte for byte,
 ///     the runtime code of the artifact in `out/` (the immutable slots and the library address slots are masked in both:
 ///     they are the constructor arguments and the link, not compiler output),
 ///  2. every one of those artifacts records, in its own solc metadata, viaIR true, optimizer 200 runs, cancun, no
 ///     metadata hash, solc 0.8.30. the artifact cannot claim that by accident: solc writes it from the settings it ran,
 ///  3. this very test contract was compiled WITHOUT viaIR, so the profile split is live. a config that put everything on
 ///     one profile fails here (all via_ir) or at 2 (none via_ir), and a split that deployed a different build fails at 1,
-///  4. the sizes are the shipped ones, and the masked runtime code hashes of the six production artifacts and the creation
+///  4. the sizes are the shipped ones, and the masked runtime code hashes of the five production artifacts and the creation
 ///     code hash of CoreLib equal the constants of script/Checks.sol that preflight compares with `out/`. update the
 ///     sizes and the constants in the same commit that changes a production contract on purpose.
 /// the generated interfaces are not part of the proof: `script/tools/gen-interfaces.sh --check` covers them, and the
 /// two library functions the abi does not list are pinned to the artifact selectors below.
 contract BuildIdentityTest is Fixture {
-    uint256 internal constant CORE_RUNTIME = 21_198;
-    uint256 internal constant CONTROLLER_RUNTIME = 14_832;
-    uint256 internal constant LIB_RUNTIME = 16_579;
-    uint256 internal constant LENS_RUNTIME = 10_263;
+    uint256 internal constant CORE_RUNTIME = 21_522;
+    uint256 internal constant CONTROLLER_RUNTIME = 13_018;
+    uint256 internal constant LIB_RUNTIME = 14_502;
     uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_558;
     uint256 internal constant STRATEGY_ADAPTER_RUNTIME = 508;
 
@@ -107,17 +106,16 @@ contract BuildIdentityTest is Fixture {
     /// @dev the build pins preflight checks (script/Checks.sol) are the artifacts of this tree, by two independent
     /// computations of the masked hash
     function test_pinnedBuildHashesEqualTheArtifacts() public {
-        string[6] memory names =
-            ["Core", "CoreLib", "ControllerV1", "CoreLens", "SeaportBasicAdapter", "CreditStrategyAdapter"];
-        bytes32[6] memory pins = [
+        string[5] memory names =
+            ["Core", "CoreLib", "ControllerV1", "SeaportBasicAdapter", "CreditStrategyAdapter"];
+        bytes32[5] memory pins = [
             BUILD_HASH_CORE,
             BUILD_HASH_CORELIB,
             BUILD_HASH_CONTROLLER,
-            BUILD_HASH_LENS,
             BUILD_HASH_SEAPORT_ADAPTER,
             BUILD_HASH_STRATEGY_ADAPTER
         ];
-        for (uint256 i; i < 6; ++i) {
+        for (uint256 i; i < 5; ++i) {
             assertEq(_maskedHash(names[i]), pins[i], string.concat(names[i], ": masked hash of the artifact"));
             assertEq(artifactHash(names[i]), pins[i], string.concat(names[i], ": hash the preflight row reads"));
         }
@@ -127,7 +125,6 @@ contract BuildIdentityTest is Fixture {
     function test_theFixtureDeploysTheViaIrArtifacts() public view {
         _identical(address(core), "Core", CORE_RUNTIME);
         _identical(address(ctl), "ControllerV1", CONTROLLER_RUNTIME);
-        _identical(address(lens), "CoreLens", LENS_RUNTIME);
         _identical(seaportAdapter, "SeaportBasicAdapter", SEAPORT_ADAPTER_RUNTIME);
         _identical(strategyAdapter, "CreditStrategyAdapter", STRATEGY_ADAPTER_RUNTIME);
         address lib = findLibrary(address(core).code);

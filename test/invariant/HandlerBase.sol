@@ -4,7 +4,6 @@ pragma solidity ^0.8.28;
 import {Test, Vm} from "forge-std/Test.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {BidModel} from "../utils/BidModel.sol";
-import {RateStore} from "../../src/lib/RateStore.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -675,12 +674,14 @@ abstract contract HandlerBase is Test {
         uint256 cp;
         uint256 peakRate;
         uint256 peakTime;
+        uint256 pend;
     }
 
     function _rs() internal view returns (RS memory s) {
         s.st = core.settings();
         s.rate = core.ethRate();
         s.pot = core.ethPot();
+        s.pend = _pendingPot(s.st);
         s.stored = core.rateAtCheckpoint();
         s.cp = core.checkpointTime();
         (s.anchor,,) = _anchorState();
@@ -688,19 +689,31 @@ abstract contract HandlerBase is Test {
         s.lastFill = core.lastFillTime();
     }
 
+    /// the share of the unbooked fee income that the next `_book` adds to the pot: the eth above the tracked pots, less
+    /// the payee share (while `payeeOn`) and the redeem burn reserve share of the rest
+    function _pendingPot(Settings memory st) internal view returns (uint256) {
+        uint256 tracked = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed();
+        uint256 income = address(core).balance > tracked ? address(core).balance - tracked : 0;
+        if (core.payeeOn()) income -= income * st.payeePpm / 1_000_000;
+        return income - income * st.feeToRedeemBurnBps / 10_000;
+    }
+
+    /// first slot of `State.anchor` in the Core (four words)
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
+
     /// the bid anchor state of the core, read from its storage: the rate of the last fill, the rate of the first fill in
     /// the current minute bucket, and that bucket
     function _anchorState() internal view returns (uint256 lastFillRate, uint256 minuteStartRate, uint256 bucket) {
-        bytes32 slot = RateStore.SLOT;
+        bytes32 slot = ANCHOR_SLOT;
         lastFillRate = uint256(vm.load(address(core), slot));
         minuteStartRate = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
         bucket = uint64(uint256(vm.load(address(core), bytes32(uint256(slot) + 2))));
     }
 
-    /// the remembered peak state: `peakRate` and `peakTime`, in the third and fourth words of `RateStore` (peakTime is
+    /// the remembered peak state: `peakRate` and `peakTime`, in the third and fourth words of `State.anchor` (peakTime is
     /// the high 64 bits of the word that holds the minute bucket)
     function _peakState() internal view returns (uint256 peakRate, uint256 peakTime) {
-        bytes32 slot = RateStore.SLOT;
+        bytes32 slot = ANCHOR_SLOT;
         peakTime = uint64(uint256(vm.load(address(core), bytes32(uint256(slot) + 2))) >> 64);
         peakRate = uint256(vm.load(address(core), bytes32(uint256(slot) + 3)));
     }
@@ -756,7 +769,7 @@ abstract contract HandlerBase is Test {
             })
         );
         if (dt != 0) {
-            if (rate1 != BidModel.read(s.st, s.pot, p)) {
+            if (rate1 != BidModel.read(s.st, s.pot + s.pend, p)) {
                 _flag(V_RATE_BOUND, "the rate after a warp differs from the model");
             }
         } else {
@@ -764,7 +777,7 @@ abstract contract HandlerBase is Test {
                 _flag(V_RATE_BOUND, "the stored rate rose with no time passing");
             }
             Settings memory end = core.settings();
-            if (rate1 != BidModel.read(end, core.ethPot(), _priceNow(end))) {
+            if (rate1 != BidModel.read(end, core.ethPot() + _pendingPot(end), _priceNow(end))) {
                 _flag(V_RATE_BOUND, "the read differs from the price state lowered to the clamp of the end pot");
             }
         }
@@ -1986,7 +1999,6 @@ abstract contract HandlerBase is Test {
         uint256 rate0 = core.ethRate();
         RS memory rs = _rs();
         _att(a);
-        bool pending;
         if (mode == 0) {
             vm.deal(who, who.balance + amt);
             receiveSends++;
@@ -2022,18 +2034,15 @@ abstract contract HandlerBase is Test {
                 _ok(a);
                 _eth(b0, 0, amt, "donate");
                 if (core.ethPot() != pot0 || core.ethToBuyback() != tb0) _flag(V_POT, "a push was booked by receive");
-                pending = true;
             }
         } else {
             // eth forced in, as a selfdestruct would
             vm.deal(address(core), address(core).balance + amt);
             _ok(a);
             _eth(b0, 0, amt, "forced eth");
-            pending = true;
         }
         if (phase2() && amtSeed % 3 == 0) _xt().mint(address(core), amt * 1000);
-        // pending income raises the read above the booked pot until the next book, so the model of the rate waits for it
-        if (!pending) _rsCheck(rs, 0);
+        _rsCheck(rs, 0);
     }
 
     /*//////////////////////////////////////////////////////////////

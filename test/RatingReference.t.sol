@@ -26,11 +26,6 @@ contract RatingReferenceTest is Fixture {
     /// backstop as its eth cost, a moderate figure above the eth lineage cost
     uint160 internal constant HIGH_SQRT = uint160((uint256(1) << 96) * 1000);
 
-    function _setRef(uint32 v) internal {
-        vm.prank(owner);
-        ctl.setRefScore(v);
-    }
-
     /// lowers `refScore` so statement `sid` references about four times its cost (the rate term binds), and returns the
     /// reference and the cost
     function _makeRich(uint256 sid) internal returns (uint256 ref, uint256 cost) {
@@ -42,7 +37,7 @@ contract RatingReferenceTest is Fixture {
         uint256 cross = FullMath.mulDiv(p, rating, cost);
         uint32 rs = uint32(cross / 4);
         if (rs == 0) rs = 1;
-        _setRef(rs);
+        _setRefScore(rs);
         ref = ctl.referenceOf(sid);
         assertGt(ref, cost, "the test statement is rich");
     }
@@ -112,11 +107,11 @@ contract RatingReferenceTest is Fixture {
         uint256 p = core.floorRate();
         assertGt(p, 0, "the floor rate is nonzero");
 
-        _setRef(MAX_REF_SCORE);
+        _setRefScore(MAX_REF_SCORE);
         uint256 rateHi = FullMath.mulDiv(p, rating, MAX_REF_SCORE);
         assertEq(ctl.referenceOf(sid), rateHi > cost ? rateHi : cost, "the reference is the max of cost and the rate term");
 
-        _setRef(1);
+        _setRefScore(1);
         uint256 rateLo = FullMath.mulDiv(p, rating, 1);
         assertGt(rateLo, cost, "the rate term at refScore 1 exceeds cost");
         assertEq(ctl.referenceOf(sid), rateLo, "the reference is the rate term exactly when it binds");
@@ -142,7 +137,7 @@ contract RatingReferenceTest is Fixture {
         // bases, where decision 90 scaled each statement by its own cost
         assertTrue(costX != costE, "the two lineages record different cost bases");
 
-        _setRef(1); // the smallest refScore, so the rate term binds for both lineages
+        _setRefScore(1); // the smallest refScore, so the rate term binds for both lineages
 
         uint256 p = core.floorRate();
         uint256 re = core.ratingOf(ethSid);
@@ -168,7 +163,7 @@ contract RatingReferenceTest is Fixture {
     /// price in step, and `atFloor` stays an age decision through the move
     function test_referenceMovesWithTheFloorRate() public {
         uint256 sid = _composeOnce().sid;
-        _setRef(1); // the rate term binds
+        _setRefScore(1); // the rate term binds
         uint256 rating = core.ratingOf(sid);
 
         uint256 p1 = core.floorRate();
@@ -213,30 +208,5 @@ contract RatingReferenceTest is Fixture {
         vm.prank(address(ctl));
         core.sellTo{value: floor}(sid, buyer);
         assertEq(STATEMENTS.ownerOf(sid), buyer, "the sale at the cost floor lands");
-    }
-
-    // ------------------------------------------------------------------ setter
-
-    // promise: INTEGRATION BadSetting and OnlyOwner on setRefScore
-    function test_setRefScore_boundsEventAndOwner() public {
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setRefScore(1_000);
-
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("refScore")));
-        ctl.setRefScore(0);
-
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("refScore")));
-        ctl.setRefScore(MAX_REF_SCORE + 1);
-
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.RefScoreSet(1_234_567);
-        vm.prank(owner);
-        ctl.setRefScore(1_234_567);
-        assertEq(ctl.refScore(), 1_234_567, "the setter stores the value");
-
-        _setRef(MAX_REF_SCORE); // the bound is inclusive
-        assertEq(ctl.refScore(), MAX_REF_SCORE, "the max is accepted");
     }
 }

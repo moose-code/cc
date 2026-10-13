@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Vm} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../../src/interfaces/Interfaces.sol";
+import {Settings, CreditSale, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../../src/interfaces/Interfaces.sol";
 import {BidModel} from "../utils/BidModel.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
@@ -998,38 +998,61 @@ abstract contract HandlerOwner is HandlerBase {
             target = v1;
             cur = c.creditSaleOn() ? 1 : 0;
             bool bv = seed % 2 == 0;
-            data = abi.encodeCall(IControllerV1.setCreditSaleOn, (bv));
+            CreditSale memory cs = _creditSaleOf(c);
+            cs.saleOn = bv;
+            data = abi.encodeCall(IControllerV1.setCredit, (cs));
             valid = true;
             want = bv ? 1 : 0;
         } else if (which == 4) {
             target = v1;
             cur = c.creditWindow();
             uint256 v = bad ? (seed % 2 == 0 ? 59 : 30 days + 1 + seed % 100) : _f(seed, 1 minutes, 30 days, cur);
-            data = abi.encodeCall(IControllerV1.setCreditWindow, (uint32(v)));
+            CreditSale memory cs = _creditSaleOf(c);
+            cs.window = uint32(v);
+            data = abi.encodeCall(IControllerV1.setCredit, (cs));
             valid = v >= 1 minutes && v <= 30 days;
             want = v;
         } else if (which == 5) {
             target = v1;
             cur = c.creditFloorBps();
             uint256 v = bad ? (seed % 2 == 0 ? 9_999 : 40_001) : _f(seed, 10_000, 40_000, cur);
-            data = abi.encodeCall(IControllerV1.setCreditFloorBps, (uint16(v)));
+            CreditSale memory cs = _creditSaleOf(c);
+            cs.floorBps = uint16(v);
+            data = abi.encodeCall(IControllerV1.setCredit, (cs));
             valid = v >= 10_000 && v <= 40_000;
             want = v;
         } else if (which == 6) {
             target = v1;
             cur = c.creditStartBps();
             uint256 v = bad ? (seed % 2 == 0 ? 9_999 : 200_001) : _f(seed, 10_000, 200_000, cur);
-            data = abi.encodeCall(IControllerV1.setCreditStartBps, (uint32(v)));
+            CreditSale memory cs = _creditSaleOf(c);
+            cs.startBps = uint32(v);
+            data = abi.encodeCall(IControllerV1.setCredit, (cs));
             valid = v >= 10_000 && v <= 200_000;
             want = v;
         } else {
             target = v1;
             cur = c.refScore();
             uint256 v = bad ? (seed % 2 == 0 ? 0 : 8_000_001) : _f(seed, 1, 8_000_000, cur);
-            data = abi.encodeCall(IControllerV1.setRefScore, (uint32(v)));
+            CreditSale memory cs = _creditSaleOf(c);
+            cs.refScore = uint32(v);
+            data = abi.encodeCall(IControllerV1.setCredit, (cs));
             valid = v >= 1 && v <= 8_000_000;
             want = v;
         }
+    }
+
+    /// the controller's credit sale settings as a struct
+    function _creditSaleOf(IControllerV1 c) internal view returns (CreditSale memory) {
+        return CreditSale({
+            saleOn: c.creditSaleOn(),
+            window: c.creditWindow(),
+            floorBps: c.creditFloorBps(),
+            startBps: c.creditStartBps(),
+            refScore: c.refScore(),
+            royaltyBps: c.royaltyBps(),
+            royaltyRecipient: c.royaltyRecipient()
+        });
     }
 
     /// the live value of credit setting `which` as a uint (a bool is 0 or 1, an address is its uint160)

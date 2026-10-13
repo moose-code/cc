@@ -80,10 +80,6 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     }
 
     /// @dev the first `n` of the transactions, by hand, as the deployer: 1 library, 2 controller, 3 core, 4 launch
-    /// @dev the lens is sent between the core and the launch, as `deploySystem` does. `skipLens` leaves it out of a
-    /// deploy that went on to the launch, `lensEarly` sends it in a deploy that stopped right after it
-    bool internal skipLens;
-    bool internal lensEarly;
     /// @dev `skipAdapters` leaves the two adapters out of a deploy that went on to the launch
     bool internal skipAdapters;
 
@@ -109,7 +105,6 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
                 launchAdapters(core, base)
             );
         }
-        if ((n >= 4 && !skipLens) || (n >= 3 && lensEarly)) Prod.newLens(core, LENS_SALT, CREATE2_DEPLOYER);
         if (n >= 4 && !skipAdapters) {
             Prod.newSeaportAdapter(core, base.seaportRecipients, SEAPORT_ADAPTER_SALT, CREATE2_DEPLOYER);
             Prod.newStrategyAdapter(STRATEGY_ADAPTER_SALT, CREATE2_DEPLOYER);
@@ -150,37 +145,6 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         postflightAs(base, core, deployer);
         (string memory list,) = _failed();
         assertEq(list, "", "postflight is clean");
-    }
-
-    /// a run that stopped right after the core: the lens is the next transaction, then the launch
-    function test_resumeCreatesAMissingLensBeforeTheLaunch() public {
-        (address core,) = _steps(3);
-        address lensAt = lensAddress(core);
-        assertTrue(lensAt != address(0) && lensAt.code.length == 0, "no lens yet");
-        _assertDone(core, Stage.CoreOnly);
-        assertGt(lensAt.code.length, 0, "the lens sits at the derived address");
-    }
-
-    /// a run that stopped after the lens and before the launch finds the lens and leaves it as it is
-    function test_resumeKeepsTheLensItFinds() public {
-        lensEarly = true;
-        (address core,) = _steps(3);
-        address lensAt = lensAddress(core);
-        assertGt(lensAt.code.length, 0);
-        bytes32 hash = lensAt.code.length == 0 ? bytes32(0) : keccak256(lensAt.code);
-        _assertDone(core, Stage.CoreOnly);
-        assertEq(keccak256(lensAt.code), hash, "the lens is the one that was there");
-    }
-
-    /// a system launched without a lens, with the deployer nonce moved on: the lens is created at the same address
-    /// because the address depends on the Core only
-    function test_resumeCreatesTheLensAfterTheLaunchAndTheNonceMovedOn() public {
-        skipLens = true;
-        (address core,) = _steps(4);
-        address lensAt = lensAddress(core);
-        assertEq(lensAt.code.length, 0);
-        _assertDone(core, Stage.Done);
-        assertGt(lensAt.code.length, 0);
     }
 
     /// a system launched without the adapters: the resume creates them at the addresses the Core already approved

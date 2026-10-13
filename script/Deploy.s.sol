@@ -12,7 +12,7 @@ import {NewProd} from "./NewProd.sol";
 /// LAUNCH_CONFIG. refuses to run while owner, creator, name, symbol or salt is unset, while any of SETTINGS_CHANGED, LOCKS_CHANGED,
 /// OWNER_CHANGED or COIN_CHANGED is set, unless CONFIG_HASH is the hash that preflight printed for this
 /// config, unless CONTROLLER_NONCE is the owner nonce preflight printed, and unless the signer is the factory owner. the order of the transactions
-/// (docs/DECISIONS.md 10.4): the library, the controller, the Core, the lens, the two adapters, the launch.
+/// (docs/DECISIONS.md 10.4): the library, the controller, the Core, the two adapters, the launch.
 /// preflight runs first and postflight runs on the simulated result, both before anything is sent. the full runbook is
 /// docs/RUNBOOK.md
 contract Deploy is Script, NewProd {
@@ -46,7 +46,6 @@ contract Deploy is Script, NewProd {
         console.log("core", d.core);
         console.log("coin", d.coin);
         console.log("controller", d.controller);
-        console.log("lens", d.lens);
         console.log("seaport adapter", d.seaportAdapter);
         console.log("strategy adapter", d.strategyAdapter);
         console.log("fee recipients NOT locked: script/Lock.s.sol is an owner command for later (docs/RUNBOOK.md)");

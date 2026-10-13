@@ -5,7 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Mainnet} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, Sale, CreditSale} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {RawListingAdapter} from "./standins/RawListingAdapter.sol";
 import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
@@ -19,6 +19,15 @@ abstract contract OwnerBase is Fixture {
     MockBalanceModule internal spareMod;
     address internal stranger = address(0x5757);
     address internal heir = address(0xEE11);
+
+    /// the controller's sale and credit settings with every changed field set, for the owner door tests
+    function _newSaleAndCredit() internal view returns (Sale memory s, CreditSale memory c) {
+        s = _sale();
+        (s.markupBps, s.startCapBps, s.fastDecayBpsPerHour, s.kneeBps, s.slowDecayBpsPerHour) =
+            (12_000, 150_000, 200, 12_000, 50);
+        c = _creditSale();
+        (c.royaltyBps, c.royaltyRecipient) = (300, address(0xA27));
+    }
 
     function setUp() public virtual override {
         super.setUp();
@@ -279,14 +288,10 @@ contract OwnerLocksTest is OwnerBase {
         assertEq(core.controller(), c);
         // every other door is open, and the controller's own sale settings stay adjustable
         _openExcept(D_CONTROLLER, owner);
+        (Sale memory s, CreditSale memory cs) = _newSaleAndCredit();
         vm.startPrank(owner);
-        ctl.setMarkupBps(12_000);
-        ctl.setStartCapBps(150_000);
-        ctl.setFastDecayBpsPerHour(200);
-        ctl.setSlowDecayBpsPerHour(50);
-        ctl.setKneeBps(12_000);
-        ctl.setRoyaltyBps(300);
-        ctl.setRoyaltyRecipient(address(0xA27));
+        ctl.setSale(s);
+        ctl.setCredit(cs);
         ctl.setAnchorBps(11_000);
         vm.stopPrank();
         assertTrue(core.controllerLocked());
@@ -408,34 +413,20 @@ contract OwnerHandoverTest is OwnerBase {
         core.acceptOwnership();
         _allShutFor(owner);
         // the controller's sale settings follow the live owner
+        (Sale memory s, CreditSale memory cs) = _newSaleAndCredit();
         vm.startPrank(owner);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setMarkupBps(12_000);
+        ctl.setSale(s);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setStartCapBps(150_000);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setFastDecayBpsPerHour(200);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setSlowDecayBpsPerHour(50);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setKneeBps(12_000);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setRoyaltyBps(300);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setRoyaltyRecipient(address(0xA27));
+        ctl.setCredit(cs);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setAnchorBps(11_000);
         vm.stopPrank();
         // the new owner has every door
         _openExcept(N_DOORS, heir);
         vm.startPrank(heir);
-        ctl.setMarkupBps(12_000);
-        ctl.setStartCapBps(150_000);
-        ctl.setFastDecayBpsPerHour(200);
-        ctl.setSlowDecayBpsPerHour(50);
-        ctl.setKneeBps(12_000);
-        ctl.setRoyaltyBps(300);
-        ctl.setRoyaltyRecipient(address(0xA27));
+        ctl.setSale(s);
+        ctl.setCredit(cs);
         ctl.setAnchorBps(11_000);
         core.lockController();
         core.lockBalanceModule();

@@ -75,8 +75,7 @@ contract OnePileTest is Fixture {
         uint256 id = ids[0];
         uint32 rs = uint32(_score(id) / 4);
         if (rs == 0) rs = 1;
-        vm.prank(owner);
-        ctl.setRefScore(rs);
+        _setRefScore(rs);
         uint256 want = _backstop(id);
         vm.prank(seller);
         core.sellForBalance(ids);

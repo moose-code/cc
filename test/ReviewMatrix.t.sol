@@ -626,7 +626,7 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
 /// @notice the matrix, part three: the chain state differs from the one that was signed off (factory, owner commands,
 /// library, balances, predicted addresses)
 contract ReviewMatrixStateTest is ReviewHarness {
-    uint256 internal constant N_STATE = 32;
+    uint256 internal constant N_STATE = 31;
 
     /// @dev applies state mutation `i` on the current fork state and returns its label and expected class
     function _state(uint256 i) internal override returns (string memory l, Class w) {
@@ -658,8 +658,8 @@ contract ReviewMatrixStateTest is ReviewHarness {
             (l, w) = ("the predicted core address has code", Class.Pre);
             vm.etch(_coreAt(), hex"00");
         } else if (i == 7) {
-            (l, w) = ("the predicted lens address has code", Class.Revert);
-            vm.etch(lensAddress(_coreAt()), hex"00");
+            (l, w) = ("factory team fee recipient is not the config owner (deploy fee above zero)", Class.Pre);
+            FACTORY.setTeamFeeRecipient(creator);
         } else if (i == 8) {
             (l, w) = ("the linked library has no code", Class.Revert);
             vm.etch(_linked(), "");
@@ -737,16 +737,13 @@ contract ReviewMatrixStateTest is ReviewHarness {
         } else if (i == 29) {
             (l, w) = ("locker constantsHash differs from the hook's", Class.Pre);
             vm.mockCall(v2.locker, abi.encodeWithSignature("constantsHash()"), abi.encode(keccak256("another constants hash")));
-        } else if (i == 30) {
+        } else {
             (l, w) = ("hook and the stack report a constantsHash other than the vendored artifacts'", Class.Pre);
             bytes memory other = abi.encode(keccak256("another constants hash"));
             address[5] memory all = [v2.hook, v2.locker, v2.escrow, v2.mev, v2.factory];
             for (uint256 k; k < all.length; ++k) {
                 vm.mockCall(all[k], abi.encodeWithSignature("constantsHash()"), other);
             }
-        } else {
-            (l, w) = ("factory team fee recipient is not the config owner (deploy fee above zero)", Class.Pre);
-            FACTORY.setTeamFeeRecipient(creator);
         }
     }
 

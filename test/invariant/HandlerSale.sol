@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
+import {Sale, CreditSale} from "../../src/interfaces/Interfaces.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 import {HandlerOwner} from "./HandlerOwner.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
@@ -691,59 +692,50 @@ abstract contract HandlerSale is HandlerOwner {
                     the controller's sale settings
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev the sale setting the handler tries: its selector, the value, and whether the model says it is inside the bounds
+    /// @dev the sale setting the handler tries: the value, and whether the model says it is inside the bounds
     /// (a helper so the locals of `saleSettings` fit the stack). `cur` is the live value of the setting
     function _saleCase(IControllerV1 c, uint256 seed, uint256 which, bool bad)
         internal
         view
-        returns (bytes4 sel, uint256 v, bool valid, uint256 cur)
+        returns (uint256 v, bool valid, uint256 cur)
     {
         uint256 cap = c.startCapBps();
         uint256 knee = c.kneeBps();
         if (which == 0) {
-            sel = IControllerV1.setMarkupBps.selector;
             cur = c.markupBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : 40_001) : _f(seed, 10_000, 40_000, cur);
             valid = v >= 10_000 && v <= 40_000 && v <= cap;
         } else if (which == 1) {
-            sel = IControllerV1.setStartCapBps.selector;
             cur = cap;
             v = bad
                 ? (seed % 3 == 0 ? c.markupBps() - 1 : (seed % 3 == 1 ? 200_001 : knee - 1))
                 : _f(seed, _max(c.markupBps(), knee), 200_000, cur);
             valid = v >= c.markupBps() && v >= knee && v <= 200_000;
         } else if (which == 2) {
-            sel = IControllerV1.setFastDecayBpsPerHour.selector;
             cur = c.fastDecayBpsPerHour();
             v = bad ? (seed % 2 == 0 ? 0 : 10_001) : _f(seed, 1, 10_000, cur);
             valid = v >= 1 && v <= 10_000;
         } else if (which == 3) {
-            sel = IControllerV1.setSlowDecayBpsPerHour.selector;
             cur = c.slowDecayBpsPerHour();
             v = bad ? (seed % 2 == 0 ? 0 : 10_001) : _f(seed, 1, 10_000, cur);
             valid = v >= 1 && v <= 10_000;
         } else if (which == 4) {
-            sel = IControllerV1.setKneeBps.selector;
             cur = knee;
             v = bad ? (seed % 2 == 0 ? 999 : cap + 1) : _f(seed, 1_000, cap, cur);
             valid = v >= 1_000 && v <= cap;
         } else if (which == 5) {
-            sel = IControllerV1.setRoyaltyBps.selector;
             cur = c.royaltyBps();
             v = bad ? 1_001 + seed % 60_000 : _f(seed, 0, 1_000, cur);
             valid = v <= 1_000;
         } else if (which == 6) {
-            sel = IControllerV1.setAnchorBps.selector;
             cur = c.anchorBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : cap + 1) : _f(seed, 10_000, cap, cur);
             valid = v >= 10_000 && v <= cap;
         } else if (which == 7) {
-            sel = IControllerV1.setAnchorHalfLife.selector;
             cur = c.anchorHalfLife();
             v = bad ? (seed % 2 == 0 ? 1 days - 1 : 90 days + 1) : _f(seed, 1 days, 90 days, cur);
             valid = v >= 1 days && v <= 90 days;
         } else {
-            sel = IControllerV1.setAnchorMinCost.selector;
             cur = c.anchorMinCost();
             v = bad ? 10 ether + 1 + seed % 1e18 : _f(seed, 0, 10 ether, cur);
             valid = v <= 10 ether;
@@ -752,6 +744,34 @@ abstract contract HandlerSale is HandlerOwner {
 
     function _max(uint256 x, uint256 y) private pure returns (uint256) {
         return x > y ? x : y;
+    }
+
+    /// @dev the call that sets sale number `which` to `v`: `setSale` with every other field as it is, `setCredit` for the
+    /// royalty, `setAnchorBps` for the anchor
+    function _saleCall(IControllerV1 c, uint256 which, uint256 v) internal view returns (bytes memory) {
+        if (which == 6) return abi.encodeCall(IControllerV1.setAnchorBps, (uint32(v)));
+        if (which == 5) {
+            CreditSale memory cs = _creditSaleOf(c);
+            cs.royaltyBps = uint16(v);
+            return abi.encodeCall(IControllerV1.setCredit, (cs));
+        }
+        Sale memory s = Sale({
+            markupBps: c.markupBps(),
+            startCapBps: c.startCapBps(),
+            fastDecayBpsPerHour: c.fastDecayBpsPerHour(),
+            kneeBps: c.kneeBps(),
+            slowDecayBpsPerHour: c.slowDecayBpsPerHour(),
+            anchorHalfLife: c.anchorHalfLife(),
+            anchorMinCost: c.anchorMinCost()
+        });
+        if (which == 0) s.markupBps = uint16(v);
+        else if (which == 1) s.startCapBps = uint32(v);
+        else if (which == 2) s.fastDecayBpsPerHour = uint16(v);
+        else if (which == 3) s.slowDecayBpsPerHour = uint16(v);
+        else if (which == 4) s.kneeBps = uint32(v);
+        else if (which == 7) s.anchorHalfLife = uint32(v);
+        else s.anchorMinCost = uint128(v);
+        return abi.encodeCall(IControllerV1.setSale, (s));
     }
 
     function _saleGot(IControllerV1 c, uint256 which) internal view returns (uint256) {
@@ -776,12 +796,13 @@ abstract contract HandlerSale is HandlerOwner {
         bool stranger = (mode >> 8) % 6 == 0;
         uint256 anchor0 = c.anchorBps();
         bool bad = (mode >> 12) % 4 == 0;
-        (bytes4 sel, uint256 v, bool valid, uint256 cur) = _saleCase(c, seed, which, bad);
+        (uint256 v, bool valid, uint256 cur) = _saleCase(c, seed, which, bad);
         address caller = stranger ? address(uint160(uint256(keccak256(abi.encode("stranger", seed))))) : owner;
+        bytes memory data = _saleCall(c, which, v);
         OPre memory pre = _opre();
         _att(a);
         vm.prank(caller);
-        (bool ok, bytes memory out) = address(c).call(abi.encodeWithSelector(sel, v));
+        (bool ok, bytes memory out) = address(c).call(data);
         bytes4 want = stranger ? IControllerV1.OnlyOwner.selector : (valid ? bytes4(0) : IControllerV1.BadSetting.selector);
         if (ok) {
             if (want != 0) _flag(V_OWNER, "a sale setting the model refuses was accepted");
@@ -1002,12 +1023,13 @@ abstract contract HandlerSale is HandlerOwner {
         (ok,) = address(core).call(abi.encodeCall(ICore.removeAdapter, (target)));
         if (ok) _flag(V_LOCK, "the old owner kept a power after the handover");
         // the argument is read before the prank: a call in the argument list would use it up
-        uint16 decay0 = IControllerV1(v1).fastDecayBpsPerHour();
+        bytes memory same = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).fastDecayBpsPerHour());
+        bytes memory changed = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).fastDecayBpsPerHour() == 200 ? 201 : 200);
         vm.prank(old);
-        (ok,) = address(v1).call(abi.encodeCall(IControllerV1.setFastDecayBpsPerHour, (decay0 == 200 ? 201 : 200)));
+        (ok,) = address(v1).call(changed);
         if (ok) _flag(V_LOCK, "the old owner kept the sale settings");
         vm.prank(next);
-        (ok,) = address(v1).call(abi.encodeCall(IControllerV1.setFastDecayBpsPerHour, (decay0)));
+        (ok,) = address(v1).call(same);
         if (!ok) _flag(V_LOCK, "the new owner has no say over the sale settings");
         _opost(pre, "handover");
         _ok(a);
@@ -1023,7 +1045,7 @@ abstract contract HandlerSale is HandlerOwner {
             (ok,) = address(core).call(abi.encodeCall(ICore.transferOwnership, (formerOwners[i])));
             if (ok) _flag(V_LOCK, "a former owner started a handover");
             vm.prank(formerOwners[i]);
-            (ok,) = address(v1).call(abi.encodeCall(IControllerV1.setFastDecayBpsPerHour, (200)));
+            (ok,) = address(v1).call(_saleCall(IControllerV1(v1), 2, 200));
             if (ok) _flag(V_LOCK, "a former owner set a sale setting");
         }
         if (core.owner() != owner) _flag(V_LOCK, "the core owner is not the handler's owner");

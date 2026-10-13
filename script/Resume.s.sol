@@ -10,7 +10,7 @@ import {NewProd} from "./NewProd.sol";
 /// @notice `CORE=0x... CONFIG_HASH=0x... forge script script/Resume.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow
 /// --private-key $KEY`. reverts while any of SETTINGS_CHANGED, LOCKS_CHANGED, OWNER_CHANGED or COIN_CHANGED is set.
 /// run it as the same deployer as the original run. reads the stage from the chain and sends only what is missing: the
-/// lens, the adapters and the launch (if the core exists and the coin does not). then runs postflight. prints the stage
+/// adapters and the launch (if the core exists and the coin does not). then runs postflight. prints the stage
 /// it found. the runbook is docs/RUNBOOK.md section 6
 contract Resume is Script, SystemResumer, NewProd {
     function run() external {

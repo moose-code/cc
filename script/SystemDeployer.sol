@@ -12,7 +12,6 @@ struct Deployed {
     address core;
     address coin;
     address controller;
-    address lens;
     address seaportAdapter;
     address strategyAdapter;
     PoolKey launchKey;
@@ -23,7 +22,7 @@ struct Deployed {
 /// `owner`, who must be the v2 factory owner and the config owner (a deprecated v2 factory takes only its owner, through
 /// `deployTokenAsOwner`). order (docs/DECISIONS.md 10.4): the library `CoreLib` (linked by `forge script` before `run`), the
 /// controller, the Core (its constructor takes the launch config with the Core as bounty recipient and computes the coin
-/// address with the factory's `predictToken`), the lens `CoreLens` (read only, pointing at the Core), the two listing
+/// address with the factory's `predictToken`), the two listing
 /// adapters (CREATE2 through the deterministic deployer, their addresses are passed to the Core constructor), then the
 /// launch. the controller and Core addresses are predicted and every prediction is checked after creation. the
 /// recipients of the coin are not locked here, the owner closes them as a separate step (`Lock`)
@@ -52,16 +51,13 @@ abstract contract SystemDeployer is LaunchChecks {
     /// @dev the steps of `stepGas`, in the order they are sent
     uint256 internal constant STEPS = 6;
 
-    /// @notice execution gas of the transactions of the last `deploySystem`: controller, core, launch, lens, Seaport
+    /// @notice execution gas of the transactions of the last `deploySystem`: controller, core, launch, (step 3 is unused), Seaport
     /// adapter, CreditStrategy adapter (sent right after the core). the library goes first and is measured by the rehearsal
     uint256[6] internal stepGas;
 
     /// @notice creates the controller and the core. the script (`NewProd`) uses `new`, a test base uses
     /// `deployCode` on the artifacts, so the test contracts neither import the production sources nor embed their code
     function _newController(address core, LaunchConfig memory c) internal virtual returns (address);
-
-    /// @notice creates the lens of `core` at `lensAddress(core)`: CREATE2 through the deterministic deployer with `LENS_SALT`
-    function _newLens(address core) internal virtual returns (address);
 
     /// @notice creates `SeaportBasicAdapter` at `seaportAdapterAddress(core, recipients)`: CREATE2 through the
     /// deterministic deployer with `SEAPORT_ADAPTER_SALT`
@@ -100,10 +96,6 @@ abstract contract SystemDeployer is LaunchChecks {
         _step(1, g);
         if (d.controller != controllerAt) revert AddressMismatch("controller");
         if (d.core != coreAt) revert AddressMismatch("core");
-        g = gasleft();
-        d.lens = _newLens(d.core);
-        _step(3, g);
-        if (d.lens != lensAddress(d.core)) revert AddressMismatch("lens");
         (d.seaportAdapter, d.strategyAdapter) = _ensureAdapters(d.core, c);
 
         d.coin = _launch(c, ICore(payable(d.core)).COIN(), d.core);

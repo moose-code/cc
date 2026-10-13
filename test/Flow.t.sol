@@ -107,7 +107,7 @@ contract FlowTest is Fixture {
     }
 
     // promise: SPEC 2 every setting reads back as written
-    /// @dev write then read of random valid settings: the packed layout the library unpacks matches the compiler's
+    /// @dev write then read of random valid settings
     function testFuzz_settings_roundTrip(uint256 seed) public {
         Settings memory s = _valid(seed);
         vm.expectEmit(address(core));
