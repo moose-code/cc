@@ -310,7 +310,12 @@ contract ReviewDeployTest is ReviewHarness {
         vm.prank(keeper2);
         fr.flush();
         assertEq(keeper2.balance, 0);
-        assertEq(ICore(payable(d.core)).ethPot(), held, "everything else reaches the pot");
+        // the engine books the redeem burn share of the flush to its reserve and the rest to the pot
+        ICore dc = ICore(payable(d.core));
+        uint256 toRedeemBurn = held * dc.settings().feeToRedeemBurnBps / 10_000;
+        uint256 toBuyback = held * dc.settings().feeToBuybackBps / 10_000;
+        assertEq(dc.ethRedeemBurn(), toRedeemBurn, "the redeem burn share reaches the reserve");
+        assertEq(dc.ethPot(), held - toRedeemBurn - toBuyback, "everything else reaches the pot");
         assertFalse(fr.splitOn(), "the window never shares");
     }
 

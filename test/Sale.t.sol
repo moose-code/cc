@@ -136,7 +136,49 @@ abstract contract SaleBase is Fixture {
     }
 }
 
-contract SaleCurveTest is SaleBase {
+/// the two stage curve tests. the launch sale holds floor and knee at 100 percent of cost (decision 85), so the
+/// price falls from its start to cost and stays there. these tests exercise the shape of a two stage curve, so setUp
+/// sets `floorBps` and `saleFloorBps` to 7_500 through the owner setters. the launch curve itself is
+/// `SaleLaunchCurveTest`
+abstract contract SaleShapeBase is SaleBase {
+    function setUp() public virtual override {
+        super.setUp();
+        _floorBps(7_500);
+        vm.prank(owner);
+        ctl.setFloorBps(7_500);
+    }
+}
+
+/// the curve at the launch values: floor and knee at 100 percent of cost
+contract SaleLaunchCurveTest is SaleBase {
+    function test_launchCurve_startsAtStartFallsToCostAndStaysAtCost() public {
+        assertEq(ctl.floorBps(), 10_000, "controller floor at launch");
+        assertEq(ctl.kneeBps(), 10_000, "knee at launch");
+        assertEq(core.settings().saleFloorBps, 10_000, "hard floor at launch");
+        uint256 sid = _composeOnce().sid;
+        uint256 cost = _cost(sid);
+        uint256[11] memory t =
+            [uint256(0), 1, 25 * H, 49 * H, 50 * H - 1, 50 * H, 50 * H + 1, 100 * H, 150 * H, 1000 * H, 100_000 * H];
+        for (uint256 i; i < t.length; ++i) {
+            _age(sid, t[i]);
+            uint256 ask = ctl.priceOf(sid);
+            assertEq(ask, _curve(cost, 15_000, 10_000, 100, 25, 10_000, t[i]), "closed form at launch values");
+            assertEq(ask, _raw(sid), "the controller curve equals the quote");
+            assertGe(ask, cost, "never below cost");
+            assertLe(ask, cost * 15_000 / 10_000, "never above the start");
+        }
+        _age(sid, 0);
+        assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000, "starts at 150 percent");
+        _age(sid, 50 * H);
+        assertEq(ctl.priceOf(sid), cost, "reaches cost at hour 50");
+        _age(sid, 50 * H - 1);
+        assertGt(ctl.priceOf(sid), cost, "one second before it is above cost");
+        _age(sid, 5000 * H);
+        assertEq(ctl.priceOf(sid), cost, "stays at cost");
+    }
+}
+
+contract SaleCurveTest is SaleShapeBase {
     /// the launch curve: 150 percent at listing, 100 at hour 50, 90 at hour 90, 75 at hour 150 and held after
     function test_curve_exactTimesAtLaunchSettings() public {
         uint256 sid = _composeOnce().sid;
@@ -380,7 +422,7 @@ contract SaleFloorTest is SaleBase {
     }
 }
 
-contract SaleBuyTest is SaleBase {
+contract SaleBuyTest is SaleShapeBase {
     address internal buyer = address(0xB0B);
 
     function _buyAt(uint256 age) internal returns (uint256 sid, uint256 price) {
@@ -712,7 +754,7 @@ contract SaleSettingsTest is SaleBase {
         assertEq(lc.sale.fastDecayBpsPerHour, 100);
         assertEq(lc.sale.kneeBps, 10_000);
         assertEq(lc.sale.slowDecayBpsPerHour, 25);
-        assertEq(lc.sale.floorBps, 7_500);
+        assertEq(lc.sale.floorBps, 10_000);
         assertEq(lc.sale.anchorHalfLife, 7 days);
         assertEq(lc.sale.anchorMinCost, 0.1 ether);
         assertEq(abi.encode(Mainnet.defaultSale()), abi.encode(lc.sale), "the launch sale");
@@ -721,7 +763,7 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.fastDecayBpsPerHour(), 100);
         assertEq(ctl.kneeBps(), 10_000);
         assertEq(ctl.slowDecayBpsPerHour(), 25);
-        assertEq(ctl.floorBps(), 7_500);
+        assertEq(ctl.floorBps(), 10_000);
         assertEq(ctl.anchorHalfLife(), 7 days);
         assertEq(ctl.anchorMinCost(), 0.1 ether);
         assertEq(ctl.anchorBps(), 10_000, "the anchor starts at the cost");
@@ -760,7 +802,10 @@ contract SaleSettingsTest is SaleBase {
         ctl.setSlowDecayBpsPerHour(10_000);
         vm.expectRevert(_bad("slowDecayBpsPerHour"));
         ctl.setSlowDecayBpsPerHour(10_001);
-        // kneeBps from the floor (7_500) to the cap
+        // kneeBps from the floor to the cap. the launch floor is 10_000, so the floor is set to 7_500 first
+        vm.expectRevert(_bad("kneeBps"));
+        ctl.setKneeBps(9_999);
+        ctl.setFloorBps(7_500);
         vm.expectRevert(_bad("kneeBps"));
         ctl.setKneeBps(7_499);
         ctl.setKneeBps(7_500);
@@ -1028,7 +1073,7 @@ contract SaleSettingsTest is SaleBase {
     }
 }
 
-contract SaleAnchorTest is SaleBase {
+contract SaleAnchorTest is SaleShapeBase {
     address internal buyer = address(0xB0B);
     uint128 internal constant LAUNCH_MIN_COST = 0.1 ether;
 
@@ -1406,7 +1451,7 @@ contract SaleAnchorTest is SaleBase {
 
 /// the two stage fall of the asking price: exact points, a start below the knee, live settings on held statements, the
 /// order of the setters, and the shape of the price in the age
-contract SaleDecayTest is SaleBase {
+contract SaleDecayTest is SaleShapeBase {
     /// a start of 300 percent (markup 30_000 on the anchor floor of 10_000): 1 percent an hour for 200 hours to the knee,
     /// then 0.25 percent an hour for 100 hours to the floor
     function test_decay_startAt30000() public {

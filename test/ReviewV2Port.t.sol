@@ -122,7 +122,11 @@ contract ReviewSeaportFlushTest is SeaportBase {
         assertEq(booked, price, "the cost basis is the price paid");
         assertEq(core.ethPot(), pot0 - price, "the pot paid the exact cost");
         assertEq(address(core).balance, bal0 - price, "the Core gained nothing mid call");
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "pots stay consistent");
+        assertEq(
+            address(core).balance,
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            "pots stay consistent"
+        );
         // the self dealing door never beats the sell door
         assertLe(maker.balance - maker0 + 1, price, "the door does not beat the sell door");
     }
@@ -154,8 +158,17 @@ contract ReviewSeaportFlushTest is SeaportBase {
         assertEq(cost, price, "the measured cost is the price");
         assertEq(booked, price + buyPaid, "the cost basis is the price plus the buy payment");
         uint256 toBuyback = engine * core.settings().feeToBuybackBps / 10_000;
-        assertEq(core.ethPot(), pot0 + engine - toBuyback - price - buyPaid, "the pot took the held fees and paid the cost");
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "pots stay consistent");
+        uint256 toRedeemBurn = engine * core.settings().feeToRedeemBurnBps / 10_000;
+        assertEq(
+            core.ethPot(),
+            pot0 + engine - toBuyback - toRedeemBurn - price - buyPaid,
+            "the pot took the held fees and paid the cost"
+        );
+        assertEq(
+            address(core).balance,
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            "pots stay consistent"
+        );
     }
 
     function _listingBought(Vm.Log[] memory logs) internal pure returns (uint256 cost, uint256 paid) {
@@ -201,13 +214,20 @@ contract ReviewSeaportFlushTest is SeaportBase {
 
         uint256 bb0 = core.ethToBuyback();
         uint256 pot0 = core.ethPot();
+        uint256 burn0 = core.ethRedeemBurn();
         uint256 shared = feeRouter.splitOn() ? held * 112_778 / 1e6 : 0;
         uint256 delivered = _flush();
         assertEq(delivered, held - shared, "the engine part of the held fees arrived, exactly");
         uint256 toBuyback = delivered * 5_000 / 10_000;
         assertEq(core.ethToBuyback() - bb0, toBuyback, "half to the buyback pot");
-        assertEq(core.ethPot() - pot0, delivered - toBuyback, "the rest to the pot");
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "booked once, nothing left over");
+        uint256 toRedeemBurn = delivered * core.settings().feeToRedeemBurnBps / 10_000;
+        assertEq(core.ethRedeemBurn() - burn0, toRedeemBurn, "the redeem burn share to its reserve");
+        assertEq(core.ethPot() - pot0, delivered - toBuyback - toRedeemBurn, "the rest to the pot");
+        assertEq(
+            address(core).balance,
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            "booked once, nothing left over"
+        );
         assertEq(address(feeRouter).balance, 0);
     }
 
@@ -235,7 +255,9 @@ contract ReviewSeaportFlushTest is SeaportBase {
             uint256 pot0 = core.ethPot();
             uint256 delivered = _flush();
             assertGt(delivered, 0, "the keeper flush is not blocked");
-            assertEq(core.ethPot() - pot0, delivered, "booked");
+            Settings memory cs = core.settings();
+            uint256 toPot = delivered - delivered * cs.feeToBuybackBps / 10_000 - delivered * cs.feeToRedeemBurnBps / 10_000;
+            assertEq(core.ethPot() - pot0, toPot, "booked");
             assertEq(address(feeRouter).balance, 0);
             _warp(1 hours);
         }
@@ -277,16 +299,19 @@ contract ReviewSandwichTest is FeeBase {
         vm.revertToState(snap);
     }
 
-    /// writes `buybackSlice` (bits 0 to 127 of the second settings word) and `buybackDelay` 1 straight into storage, so
-    /// a slice above the bound can be simulated
+    /// writes `buybackSlice` (bits 0 to 127 of the second settings word) and `buybackDelay` 1 (bits 176 to 191 of the
+    /// first word) straight into storage, so a slice above the bound can be simulated
     function _forceSlice(uint256 slice) internal {
-        bytes32 at = bytes32(uint256(keccak256("credits.core.settings.v1")) + 1);
-        uint256 w = uint256(vm.load(address(core), at));
+        bytes32 at0 = bytes32(uint256(keccak256("credits.core.settings.v1")));
+        bytes32 at1 = bytes32(uint256(at0) + 1);
+        uint256 w = uint256(vm.load(address(core), at1));
         uint256 m128 = type(uint128).max;
         w = (w & ~m128) | slice;
-        // buybackDelay: the 16 bits above the slice
-        w = (w & ~(uint256(type(uint16).max) << 128)) | (uint256(1) << 128);
-        vm.store(address(core), at, bytes32(w));
+        vm.store(address(core), at1, bytes32(w));
+        // buybackDelay: bits 176 to 191 of the first settings word, after nine uint16 fields and `peakHalfLife`
+        uint256 w0 = uint256(vm.load(address(core), at0));
+        w0 = (w0 & ~(uint256(type(uint16).max) << 176)) | (uint256(1) << 176);
+        vm.store(address(core), at0, bytes32(w0));
         assertEq(core.settings().buybackSlice, slice, "slice written");
         assertEq(core.settings().buybackDelay, 1, "delay written");
     }
@@ -438,7 +463,9 @@ contract ReviewFlushInPayoutTest is FeeBase {
     }
 
     function _consistent() internal view {
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback(), "every wei is booked");
+        assertEq(
+            address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "every wei is booked"
+        );
         assertEq(address(feeRouter).balance, 0, "the router was flushed");
     }
 
@@ -454,7 +481,7 @@ contract ReviewFlushInPayoutTest is FeeBase {
         uint256 a0 = address(atk).balance;
         atk.go(address(core), abi.encodeCall(ICore.compose, ()));
         assertEq(address(atk).balance, a0, "the compose pays the caller nothing");
-        assertEq(core.ethPot(), pot0 + toEngine, "pot = old + the booked fees");
+        assertEq(core.ethPot(), pot0 + _toPot(toEngine), "pot = old + the booked fees");
         _consistent();
     }
 
@@ -484,7 +511,7 @@ contract ReviewFlushInPayoutTest is FeeBase {
         assertEq(CREDITS.ownerOf(ids[0]), address(core));
         uint256 price = address(atk).balance - a0;
         assertGt(price, 0);
-        assertEq(core.ethPot(), pot0 - price + toEngine, "pot = old - price + the booked fees");
+        assertEq(core.ethPot(), pot0 - price + _toPot(toEngine), "pot = old - price + the booked fees");
         _consistent();
     }
 }
@@ -528,12 +555,14 @@ contract ReviewFeePathTest is FeeBase {
         assertLe(held, 2 ether + 10, "2 eth plus launch dust");
         (, uint256 toEngine) = _routerSplit(held);
         _flush(); // the first flush at the split start: everything to the engine
-        assertEq(core.ethPot(), toEngine, "the forced router eth was booked as fees");
+        uint256 toPot = _toPot(toEngine);
+        assertEq(core.ethPot(), toPot, "the forced router eth was booked as fees");
+        assertEq(core.ethRedeemBurn(), _toRedeemBurn(toEngine), "and the redeem burn share to its reserve");
         assertEq(address(core).balance, toEngine + 1 ether, "the forced Core eth is not booked yet");
         core.skim();
-        assertEq(core.ethPot(), toEngine + 1 ether);
+        assertEq(core.ethPot(), toPot + 1 ether);
         core.skim();
-        assertEq(core.ethPot(), toEngine + 1 ether, "a second skim books nothing");
+        assertEq(core.ethPot(), toPot + 1 ether, "a second skim books nothing");
         _solvent();
     }
 
