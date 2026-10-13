@@ -282,14 +282,14 @@ abstract contract PostflightChecks is PostflightPool {
         bool same = k.markupBps() == c.sale.markupBps
             && k.startCapBps() == c.sale.startCapBps && k.fastDecayBpsPerHour() == c.sale.fastDecayBpsPerHour
             && k.kneeBps() == c.sale.kneeBps && k.slowDecayBpsPerHour() == c.sale.slowDecayBpsPerHour
-            && k.floorBps() == c.sale.floorBps && k.anchorHalfLife() == c.sale.anchorHalfLife
+            && k.anchorHalfLife() == c.sale.anchorHalfLife
             && k.anchorMinCost() == c.sale.anchorMinCost;
         if (_settingsChanged()) {
             _warn(
                 "warn: sale settings equal the config", same, "SETTINGS_CHANGED=1, the owner changed them since launch"
             );
         } else {
-            _check("controller: sale settings equal the config", same, "markupBps startCapBps fastDecayBpsPerHour kneeBps slowDecayBpsPerHour floorBps anchorHalfLife anchorMinCost");
+            _check("controller: sale settings equal the config", same, "markupBps startCapBps fastDecayBpsPerHour kneeBps slowDecayBpsPerHour anchorHalfLife anchorMinCost");
         }
         // a fresh launch has no sales and no owner change, so the running level of sale prices is at its lower bound
         bool anchored = k.anchorBps() == 10_000;
@@ -300,7 +300,8 @@ abstract contract PostflightChecks is PostflightPool {
         }
         bool creditSame = k.creditSaleOn() == c.credit.saleOn && k.creditWindow() == c.credit.window
             && k.creditFloorBps() == c.credit.floorBps && k.creditStartBps() == c.credit.startBps
-            && k.refScore() == c.credit.refScore;
+            && k.refScore() == c.credit.refScore && k.royaltyBps() == c.credit.royaltyBps
+            && k.royaltyRecipient() == c.credit.royaltyRecipient;
         if (_settingsChanged()) {
             _warn(
                 "warn: credit sale settings equal the config",
@@ -311,7 +312,7 @@ abstract contract PostflightChecks is PostflightPool {
             _check(
                 "controller: credit sale settings equal the config",
                 creditSame,
-                "creditSaleOn creditWindow creditFloorBps creditStartBps refScore"
+                "creditSaleOn creditWindow creditFloorBps creditStartBps refScore royaltyBps royaltyRecipient"
             );
         }
         _info(
@@ -327,8 +328,6 @@ abstract contract PostflightChecks is PostflightPool {
                 vm.toString(k.kneeBps()),
                 " then slow decay ",
                 vm.toString(k.slowDecayBpsPerHour()),
-                " bps/h to floor ",
-                vm.toString(k.floorBps()),
                 " anchor ",
                 vm.toString(k.anchorBps()),
                 " anchor half life ",
@@ -396,8 +395,6 @@ abstract contract PostflightChecks is PostflightPool {
             string.concat(
                 "sale to buyback ",
                 vm.toString(live.saleToBuybackBps),
-                " fee to buyback ",
-                vm.toString(live.feeToBuybackBps),
                 " fee to redeem burn ",
                 vm.toString(live.feeToRedeemBurnBps)
             )
@@ -405,8 +402,10 @@ abstract contract PostflightChecks is PostflightPool {
         _info(
             "core: balance side",
             string.concat(
-                "balanceMode ",
-                vm.toString(live.balanceMode),
+                "redeemOn ",
+                live.redeemOn ? "true" : "false",
+                " balanceBidOn ",
+                live.balanceBidOn ? "true" : "false",
                 " redeem slippage ",
                 vm.toString(live.redeemSlippageBps),
                 " balance bid margin ",

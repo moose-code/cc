@@ -30,6 +30,9 @@ abstract contract HandlerSale is HandlerOwner {
     bool public gLockedT;
     /// sales through `sellTo`
     uint256 public gSoldTo;
+    /// the first controller's royalty owed and balance before the action under check
+    uint256 internal _owed0;
+    uint256 internal _ctlBal0;
 
     /// the fixture hands over what only it can build (from artifacts, so the contract stays small)
     function setSaleParts(address selling_, address[] calldata heirs_) external {
@@ -47,6 +50,11 @@ abstract contract HandlerSale is HandlerOwner {
 
     function moduleEverCount() external view returns (uint256) {
         return modulesEver.length;
+    }
+
+    /// the royalty on an engine price `price` at the first controller's current `royaltyBps`
+    function _royaltyOn(uint256 price) internal view returns (uint256) {
+        return price * IControllerV1(v1).royaltyBps() / 10_000;
     }
 
     function _bps() internal view returns (uint256) {
@@ -169,9 +177,42 @@ abstract contract HandlerSale is HandlerOwner {
         if (next > cap) next = cap;
     }
 
-    /// a buyer pays the asking price of the first controller, with an excess now and then and a short payment now and
-    /// then. with another controller in force, on a sold, redeemed or balance side statement it must refuse with the model's
-    /// selector. a sale pays the ask exactly, the excess comes back
+    /// reads the royalty owed and the balance of the first controller before a sale
+    function _royaltyPre() internal {
+        _owed0 = IControllerV1(v1).royaltyOwed();
+        _ctlBal0 = address(v1).balance;
+    }
+
+    /// after a sale that collected `royalty`, the first controller owes `royalty` more and holds `royalty` more eth
+    function _royaltyCheck(uint256 royalty) internal {
+        if (IControllerV1(v1).royaltyOwed() != _owed0 + royalty) {
+            _flag(V_SALE_PATH, "royaltyOwed differs from the royalty of the sale");
+        }
+        if (address(v1).balance != _ctlBal0 + royalty) _flag(V_SALE_PATH, "the controller holds other than the royalty owed");
+    }
+
+    /// anyone claims the royalty: the recipient receives exactly what is owed and nothing stays in the controller
+    function _claimChecked() internal {
+        IControllerV1 c = IControllerV1(v1);
+        address to = c.royaltyRecipient();
+        uint256 owed = c.royaltyOwed();
+        if (owed == 0) return;
+        uint256 before_ = to.balance;
+        _ctlBal0 = address(c).balance;
+        (bool ok,) = address(c).call(abi.encodeCall(IControllerV1.claimRoyalty, ()));
+        if (!ok) {
+            _flag(V_SALE_PATH, "claimRoyalty reverted with a royalty owed");
+            return;
+        }
+        if (to.balance - before_ != owed) _flag(V_SALE_PATH, "the recipient did not receive the royalty owed");
+        if (c.royaltyOwed() != 0 || address(c).balance != _ctlBal0 - owed) {
+            _flag(V_SALE_PATH, "the controller kept eth after the royalty claim");
+        }
+    }
+
+    /// a buyer pays the asking price of the first controller plus the royalty, with an excess now and then and a short
+    /// payment now and then. with another controller in force, on a sold, redeemed or balance side statement it must
+    /// refuse with the model's selector. a sale pays the ask and the royalty exactly, the excess comes back
     function buy(uint256 sIdx, uint256 aSeed, uint256 xSeed, uint256 mode) external checked {
         uint8 a = A_BUY;
         (uint256 sid, bool found) = _pickBy(sIdx, mode % 4 == 0 ? K_ANY : K_HELD);
@@ -193,9 +234,14 @@ abstract contract HandlerSale is HandlerOwner {
         if (priced && price != _modelAsk(sid)) {
             _flag(V_SALE_PATH, "the asking price differs from the curve at the age outside every pause");
         }
+        uint256 gross = price + _royaltyOn(price);
+        if (priced && IControllerV1(v1).grossPriceOf(sid) != gross) {
+            _flag(V_SALE_PATH, "the gross price is not the asking price plus the royalty");
+        }
         bool short_ = priced && price != 0 && xSeed % 7 == 0;
-        uint256 value = !priced ? 1 ether : (short_ ? price - 1 : price + (xSeed % 3 == 0 ? 0 : _logBound(xSeed, 1, 1 ether)));
+        uint256 value = !priced ? 1 ether : (short_ ? gross - 1 : gross + (xSeed % 3 == 0 ? 0 : _logBound(xSeed, 1, 1 ether)));
         SalePre memory p = _salePre(sid, who, who, value);
+        _royaltyPre();
         p.price = price;
         p.want = _buyRefusal(sid, p, short_);
         vm.deal(who, who.balance + value);
@@ -221,11 +267,12 @@ abstract contract HandlerSale is HandlerOwner {
             ) {
                 _flag(V_SALE_PATH, "a buy at or below the anchor, or of a statement under the minimum cost, stored the anchor");
             }
-            if (p.payerBal - who.balance != price) {
-                _flag(V_SALE_PATH, "the buyer did not pay exactly the ask, or the excess was not refunded");
+            if (p.payerBal - who.balance != gross) {
+                _flag(V_SALE_PATH, "the buyer did not pay exactly the ask plus the royalty, or the excess was not refunded");
             }
-            if (address(v1).balance != baseOf[v1].eth) _flag(V_SALE_PATH, "the controller kept eth after a buy");
+            _royaltyCheck(gross - price);
             _saleDone(sid, p, price);
+            if (mode % 5 == 2) _claimChecked();
         } catch (bytes memory why) {
             _saleRefused(sid, p, why, a);
         }
@@ -274,6 +321,7 @@ abstract contract HandlerSale is HandlerOwner {
     /// expects when the call must revert
     struct CQ {
         uint256 price;
+        uint256 royalty;
         uint256 value;
         bytes4 want;
     }
@@ -295,8 +343,9 @@ abstract contract HandlerSale is HandlerOwner {
         } catch (bytes memory reason) {
             priceErr = reason.length >= 4 ? bytes4(reason) : bytes4(0);
         }
+        q.royalty = _royaltyOn(q.price);
         bool short_ = priced && q.price != 0 && xSeed % 7 == 0;
-        q.value = _creditValue(priced, q.price, short_, xSeed);
+        q.value = _creditValue(priced, q.price + q.royalty, short_, xSeed);
         q.want = _buyCreditRefusal(c.creditSaleOn(), core.paused(), priceErr, short_, core.controller() == v1);
     }
 
@@ -307,6 +356,7 @@ abstract contract HandlerSale is HandlerOwner {
         for (uint256 i; i < ids.length; ++i) {
             try c.creditPrice(ids[i]) returns (uint256 pr) {
                 q.price += pr;
+                q.royalty += _royaltyOn(pr);
             } catch (bytes memory reason) {
                 priced = false;
                 // the batch loop prices ids in order and reverts at the first credit whose price reverts, so the first
@@ -315,7 +365,7 @@ abstract contract HandlerSale is HandlerOwner {
             }
         }
         bool short_ = priced && q.price != 0 && xSeed % 6 == 0;
-        q.value = _creditValue(priced, q.price, short_, xSeed);
+        q.value = _creditValue(priced, q.price + q.royalty, short_, xSeed);
         q.want = _buyCreditsRefusal(c.creditSaleOn(), core.paused(), priceErr, short_, core.controller() == v1);
     }
 
@@ -352,13 +402,14 @@ abstract contract HandlerSale is HandlerOwner {
         CreditPre memory p = _creditPre(q.value);
         vm.deal(who, who.balance + q.value);
         p.payerBal = who.balance;
+        _royaltyPre();
         RS memory rs = _rs();
         _att(a);
         vm.prank(who);
         try IControllerV1(v1).buyCredit{value: q.value}(id) {
             _ok(a);
             if (q.want != 0) _flag(V_SALE_PATH, "a credit sale the model refuses went through");
-            _afterCreditBuyOne(id, cost, q.price, p, who);
+            _afterCreditBuyOne(id, cost, q.price, q.royalty, p, who);
         } catch (bytes memory why) {
             _creditRefused(p, why, a, q.want);
         }
@@ -378,13 +429,14 @@ abstract contract HandlerSale is HandlerOwner {
         CreditPre memory p = _creditPre(q.value);
         vm.deal(who, who.balance + q.value);
         p.payerBal = who.balance;
+        _royaltyPre();
         RS memory rs = _rs();
         _att(a);
         vm.prank(who);
         try IControllerV1(v1).buyCredits{value: q.value}(ids) {
             _ok(a);
             if (q.want != 0) _flag(V_SALE_PATH, "a credit batch the model refuses went through");
-            _afterCreditBuy(ids, costs, q.price, p, who);
+            _afterCreditBuy(ids, costs, q.price, q.royalty, p, who);
         } catch (bytes memory why) {
             _creditRefused(p, why, a, q.want);
         }
@@ -438,21 +490,30 @@ abstract contract HandlerSale is HandlerOwner {
         p.value = value;
     }
 
-    function _afterCreditBuyOne(uint256 id, uint256 cost, uint256 price, CreditPre memory p, address who) internal {
+    function _afterCreditBuyOne(uint256 id, uint256 cost, uint256 price, uint256 royalty, CreditPre memory p, address who)
+        internal
+    {
         uint256[] memory ids = new uint256[](1);
         uint256[] memory costs = new uint256[](1);
         ids[0] = id;
         costs[0] = cost;
-        _afterCreditBuy(ids, costs, price, p, who);
+        _afterCreditBuy(ids, costs, price, royalty, p, who);
     }
 
-    /// a credit sale went through: the buyer paid the price exactly and got the excess back, the credits left the pile
+    /// a credit sale went through: the buyer paid the price and the royalty exactly and got the excess back, the credits left the pile
     /// to the buyer, the cost share went to the pot and the markup to the buyback, and no credit left for less than its
     /// recorded cost
-    function _afterCreditBuy(uint256[] memory ids, uint256[] memory costs, uint256 price, CreditPre memory p, address who)
-        internal
-    {
-        if (p.payerBal - who.balance != price) _flag(V_SALE_PATH, "the credit buyer did not pay exactly the price");
+    function _afterCreditBuy(
+        uint256[] memory ids,
+        uint256[] memory costs,
+        uint256 price,
+        uint256 royalty,
+        CreditPre memory p,
+        address who
+    ) internal {
+        if (p.payerBal - who.balance != price + royalty) {
+            _flag(V_SALE_PATH, "the credit buyer did not pay exactly the price plus the royalty");
+        }
         uint256 toPotSum;
         uint256 costSum;
         for (uint256 i; i < ids.length; ++i) {
@@ -470,7 +531,7 @@ abstract contract HandlerSale is HandlerOwner {
         }
         _eth(p.bal, 0, price, "credit buy");
         _booked(price);
-        if (address(v1).balance != baseOf[v1].eth) _flag(V_SALE_PATH, "the controller kept eth after a credit buy");
+        _royaltyCheck(royalty);
     }
 
     function _creditRefused(CreditPre memory p, bytes memory why, uint8 a, bytes4 want) internal {
@@ -523,8 +584,8 @@ abstract contract HandlerSale is HandlerOwner {
 
     /// the asking price of statement `sid` written out again from docs/SPEC.md section 7: the price in units of
     /// 1/3600 bps falls `fastDecayBpsPerHour` a second to the knee and `slowDecayBpsPerHour` after it (rounded up), at
-    /// the age outside every pause, at least `floorBps` and at least the hard floor of the core
-    function _modelAsk(uint256 sid) internal view returns (uint256) {
+    /// the age outside every pause, at least `saleFloorBps` of the reference
+    function _modelAsk(uint256 sid) internal returns (uint256) {
         (, uint256 cost, uint64 at) = core.statementInfo(sid);
         uint256 ref = _modelRef(sid, cost);
         uint256 n = _modelUnits(_modelAge(at));
@@ -533,13 +594,15 @@ abstract contract HandlerSale is HandlerOwner {
         return ask < hard ? hard : ask;
     }
 
-    /// the price reference of statement `sid`: the larger of its cost and the floor rate times its rating over
-    /// `refScore`, the same value the controller prices against. the product cannot overflow a word, so the plain
-    /// divide matches the controller `mulDiv`
-    function _modelRef(uint256 sid, uint256 cost) internal view returns (uint256) {
+    /// the price reference of statement `sid`: the larger of its cost and `valueOf(rating)`, the same value the
+    /// controller prices against. `valueOf` is at least the floor rate times the rating over `refScore`, which is
+    /// written out here (the product cannot overflow a word, so the plain divide matches the controller `mulDiv`)
+    function _modelRef(uint256 sid, uint256 cost) internal returns (uint256) {
         uint256 rating = core.ratingOf(sid);
         uint256 rate = core.floorRate() * rating / uint256(IControllerV1(v1).refScore());
-        return rate > cost ? rate : cost;
+        uint256 value = IControllerV1(v1).valueOf(rating);
+        if (value < rate) _flag(V_SALE_PATH, "valueOf is below the floor rate times the points over refScore");
+        return value > cost ? value : cost;
     }
 
     function _modelUnits(uint256 age) internal view returns (uint256 n) {
@@ -555,7 +618,7 @@ abstract contract HandlerSale is HandlerOwner {
             uint256 base = start < knee ? start : knee;
             n = base > drop ? base - drop : 0;
         }
-        uint256 low = uint256(c.floorBps()) * 3600;
+        uint256 low = uint256(core.settings().saleFloorBps) * 3600;
         if (n < low) n = low;
     }
 
@@ -663,13 +726,13 @@ abstract contract HandlerSale is HandlerOwner {
         } else if (which == 4) {
             sel = IControllerV1.setKneeBps.selector;
             cur = knee;
-            v = bad ? (seed % 2 == 0 ? c.floorBps() - 1 : cap + 1) : _f(seed, c.floorBps(), cap, cur);
-            valid = v >= c.floorBps() && v <= cap;
+            v = bad ? (seed % 2 == 0 ? 999 : cap + 1) : _f(seed, 1_000, cap, cur);
+            valid = v >= 1_000 && v <= cap;
         } else if (which == 5) {
-            sel = IControllerV1.setFloorBps.selector;
-            cur = c.floorBps();
-            v = bad ? (seed % 3 == 0 ? 999 : (seed % 3 == 1 ? 10_001 : knee + 1)) : _f(seed, 1_000, _min(10_000, knee), cur);
-            valid = v >= 1_000 && v <= 10_000 && v <= knee;
+            sel = IControllerV1.setRoyaltyBps.selector;
+            cur = c.royaltyBps();
+            v = bad ? 1_001 + seed % 60_000 : _f(seed, 0, 1_000, cur);
+            valid = v <= 1_000;
         } else if (which == 6) {
             sel = IControllerV1.setAnchorBps.selector;
             cur = c.anchorBps();
@@ -692,23 +755,19 @@ abstract contract HandlerSale is HandlerOwner {
         return x > y ? x : y;
     }
 
-    function _min(uint256 x, uint256 y) private pure returns (uint256) {
-        return x < y ? x : y;
-    }
-
     function _saleGot(IControllerV1 c, uint256 which) internal view returns (uint256) {
         if (which == 0) return c.markupBps();
         if (which == 1) return c.startCapBps();
         if (which == 2) return c.fastDecayBpsPerHour();
         if (which == 3) return c.slowDecayBpsPerHour();
         if (which == 4) return c.kneeBps();
-        if (which == 5) return c.floorBps();
+        if (which == 5) return c.royaltyBps();
         if (which == 6) return c.anchorBps();
         if (which == 7) return c.anchorHalfLife();
         return c.anchorMinCost();
     }
 
-    /// the owner sets one of the nine sale numbers of the first controller to a value inside or outside the bounds of
+    /// the owner sets one of the nine sale numbers (the royalty included) of the first controller to a value inside or outside the bounds of
     /// docs/DECISIONS.md 9.3 (written out again here), or a stranger tries. inside: it goes through and reads back. outside:
     /// BadSetting with the field. a stranger: OnlyOwner. no asset or pot moves
     function saleSettings(uint256 seed, uint256 mode) external checked {
@@ -806,7 +865,6 @@ abstract contract HandlerSale is HandlerOwner {
             if (okM) {
                 module = next;
                 modulesEver.push(next);
-                if (core.unitPerPoint() != next.currentUnit()) _flag(V_OWNER, "the unit was not read from the new module");
             }
         }
         _opost(pre, "hostileOwner");

@@ -25,27 +25,30 @@ contract ReviewCoreTest is Fixture {
         attacker = _user("attacker");
     }
 
-    // ------------------------------------------------------------------ R3 unitPerPoint is fixed at set time
+    // ------------------------------------------------------------------ R3 unitPerPoint is read live
 
-    /// R3 regression: the module lowers its own unit before the redemption. the core requires the unit it stored when the
-    /// module was set, so the underpaid redemption reverts and the statement stays
-    function test_FIXED_loweredUnitCannotTakeStatementForDust() public {
+    /// R3: the core reads the unit from the module in each redemption. a module that lowers its unit is redeemed at the
+    /// unit it reports, and a payout below that unit's minimum still reverts and leaves the statement
+    function test_LIVE_loweredUnitSetsTheMinimumOfTheRedemption() public {
         _enterPhase2();
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
 
+        uint256 rating = core.ratingOf(c.sid);
         mod.setUnitPerPoint(1);
+        mod.setPayBps(10_000 - core.settings().redeemSlippageBps - 1);
         vm.expectRevert(ICore.Underpaid.selector);
         core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement never left");
         assertTrue(_isHeld(c.sid));
-        assertEq(core.unitPerPoint(), UNIT, "the stored unit did not move");
+        mod.setPayBps(10_000);
+        core.redeemStatement(c.sid);
+        assertEq(xt.balanceOf(address(core)), rating * 1, "paid by the unit the module reports");
         _solvent();
     }
 
-    /// R3 regression: the module raises its unit. the bid still pays at the stored unit, so a junk credit gets the
-    /// fair price
-    function test_FIXED_raisedUnitCannotDrainBidPot() public {
+    /// R3: the bid pays by the unit the module reports now
+    function test_LIVE_raisedUnitRaisesTheBid() public {
         _enterPhase2();
         _setBalancePool();
         Composed memory c = _composeOnce();
@@ -56,16 +59,14 @@ contract ReviewCoreTest is Fixture {
 
         uint256[] memory ids = _credits(rseller, 1);
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(ids[0]), CREDITS.timestampOf(ids[0]));
-        uint256 fair = score * UNIT * (10_000 - core.settings().balanceBidMarginBps) / 10_000;
+        uint256 live = score * UNIT * 100 * (10_000 - core.settings().balanceBidMarginBps) / 10_000;
         mod.setUnitPerPoint(UNIT * 100);
         vm.prank(rseller);
         core.sellForBalance(ids);
 
-        assertEq(xt.balanceOf(rseller), fair, "paid the fair price at the stored unit");
-        assertLt(xt.balanceOf(rseller) * 2, pot, "far less than half of the pot");
+        assertEq(xt.balanceOf(rseller), live, "paid by the live unit");
         _solvent();
     }
-
 
     /// the core approved Statements for all its credits. a third party cannot use that approval.
     function test_held_thirdPartyCannotComposeCoreCredits() public {

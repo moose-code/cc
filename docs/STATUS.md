@@ -4,7 +4,7 @@ the live state of the project. the rules and the system are in docs/SPEC.md, the
 
 ## 1. where we are
 
-decisions 1 to 112 are settled. the simplification plan of docs/SIMPLIFICATION-v1.md was approved on 2026-10-13 and is built as the packets of section 2 on the branch `simplify/v1`. packet 0 (the structural cleanup: five living documents, `docs/reviews/`, `docs/notes/`, the freeze table and `script/tools/check-freeze.sh`), packet 1 (the rename of exit to balance, decision 102) and packet 2 (the pause clock in the Core: `paused`, `pausedSince`, `pausedTotal`, a `pauseMark` per Statement, `statementAge`) are done. the build pins in `script/Checks.sol` and `test/BuildIdentity.t.sol` were re-pinned by packets 1 and 2. nothing is deployed and the engine is unaudited.
+decisions 1 to 112 are settled. the simplification plan of docs/SIMPLIFICATION-v1.md was approved on 2026-10-13 and is built as the packets of section 2 on the branch `simplify/v1`. packet 0 (the structural cleanup: five living documents, `docs/reviews/`, `docs/notes/`, the freeze table and `script/tools/check-freeze.sh`), packet 1 (the rename of exit to balance, decision 102), packet 2 (the pause clock in the Core: `paused`, `pausedSince`, `pausedTotal`, a `pauseMark` per Statement, `statementAge`) and packet 5 (`pointRate` and `valueOf`, the unit read live, one floor on `saleFloorBps`, `feeToBuybackBps` out, `redeemOn` and `balanceBidOn`, the royalty on the controller, `composerOf` on the Core) are done. the build pins in `script/Checks.sol` and `test/BuildIdentity.t.sol` were re-pinned by packets 1, 2 and 5 and by the merge of packet 5. nothing is deployed and the engine is unaudited.
 
 ## 2. the plan
 
@@ -17,7 +17,7 @@ each packet is one builder, bounded to the files it names, with `forge build` an
 | 2 | pause clock into the Engine, O(1) | the window array, the controller pause | 1 | done |
 | 3 | listing adapters, measuring out (decision 100) | the measuring flag, `BadCost`, raw calldata, `Measuring` in receive | 1 | pending |
 | 4 | the Engine as bounty recipient: `receive` open to the hook only, `_book`, payee ppm claim, sniper latch from the factory record, `COIN` from `predictToken` in the constructor, `fund`, `collectEscrow`; `skim` and FeeRouter deleted | FeeRouter, flush, pullFees, skim, Resume, split start, V2R-1 | 3 | pending |
-| 5 | `pointValue`, unit live, one floor, `feeToBuybackBps` out, two balance switches (decisions 104 to 107), the royalty on the controller and the composer on the record (decisions 111 and 112), settings recount and bounds | the value floor, baseline, backstop, stored unit, refresh, `floorBps`, `balanceMode` | 1 | pending |
+| 5 | `pointValue`, unit live, one floor, `feeToBuybackBps` out, two balance switches (decisions 104 to 107), the royalty on the controller and the composer on the record (decisions 111 and 112), settings recount and bounds | the value floor, baseline, backstop, stored unit, refresh, `floorBps`, `balanceMode` | 1 | done |
 | 6 | one `State` struct; CoreLens deleted; the bid quote view after pending income; statement formats (decision 113: `compose(format)`, random default, `setHeldFormat`, `minCcToChoose` 1 coin) | CoreState, fixed slots, the lens, 8 postflight rows | 4, 5 | pending |
 | 7 | CREATE2 deploy, `setController` before launch, preflight and postflight trimmed, env vars trimmed, the Lock run becomes a later owner command | nonce pinning, Resume, config echo rows | 6 | pending |
 | 8 | tests follow: delete the files of SIMPLIFICATION-v1 section 5, rewrite fixtures to the five transaction deploy, invariants 15 and 20 out, 10 restated, gas rows re-measured | about 5,000 LOC | 7 | pending |
@@ -58,7 +58,7 @@ each packet is one builder, bounded to the files it names, with `forge build` an
 | safety | no mainnet broadcast, deploy, push or private key without the owner's explicit instruction |
 | fork env | `set -a; source <path to a .env with MAINNET_RPC_URL and FORK_BLOCK>; set +a` before fork tests; this worktree has none, the owner's lives outside it |
 
-pre-existing failures found by packet 1 (they fail at main 35b78be too, before any change of this branch): `test/Lifecycle.t.sol` `test_narrative_theWholeLoopTwice`, `test_compose_unsoldStatementStaysHeldAtTheFloor`, `test_narrative_theOwnerAdaptsTheSystemLive`, and `test/SaleSmoke.t.sol` `test_price_falls_to_the_knee_then_to_the_floor`: sale price assertions. packet 5 (the pricing changes) must leave them green or delete them with a reason.
+pre-existing failures found by packet 1 (they fail at main 35b78be too, before any change of this branch): `test/Lifecycle.t.sol` `test_narrative_theWholeLoopTwice`, `test_compose_unsoldStatementStaysHeldAtTheFloor`, `test_narrative_theOwnerAdaptsTheSystemLive`, and `test/SaleSmoke.t.sol` `test_price_falls_to_the_knee_then_to_the_floor`: sale price assertions. packet 5 re-derived them and they pass.
 
 also pre-existing at main: `test/invariant/ComposeHostileNotReady.t.sol` calls `nextPage(uint8)` while the fuzz controller has `nextPage()` (stale since the single pile, decision 92); packet 8 fixes it. `test/Rehearsal.t.sol` compares the deploy gas with `DEPLOY_GAS_ESTIMATE` (19,200,000), which the adapter transactions of packet 3 exceed; packet 7 re-measures the deploy and sets the constant.
 

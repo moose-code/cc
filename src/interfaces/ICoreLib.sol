@@ -9,7 +9,7 @@ interface ICoreLib {
     error BadSetting(bytes32 field);
     error BadSuccessor(address who);
     error BadSwap();
-    error BalanceModeOff();
+    error BalanceBidOff();
     error CallFailed();
     error Empty();
     error Held();

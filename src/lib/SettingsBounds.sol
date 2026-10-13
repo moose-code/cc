@@ -28,12 +28,9 @@ library SettingsBounds {
         // the largest buyback payment is at most half the slice, so the swap budget is never empty
         if (s.buybackSlice < 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee)) return "buybackSlice";
         if (!rateInBounds(s.rateCap)) return "rateCap";
-        if (s.feeToBuybackBps > 10_000) return "feeToBuybackBps";
         if (s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
-        if (uint256(s.feeToBuybackBps) + s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
         if (s.callerFee > 0.005 ether) return "callerFee";
         if (s.callerMaxBaseFee > 100 gwei) return "callerMaxBaseFee";
-        if (s.balanceMode > 2) return "balanceMode";
         if (s.redeemSlippageBps > 1_000) return "redeemSlippageBps";
         if (s.balanceBidMarginBps > 9_000) return "balanceBidMarginBps";
         // the balance cycle (bid then redeem) cannot lose more than its margin: slippage at most the bid margin

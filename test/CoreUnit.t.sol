@@ -97,7 +97,6 @@ contract CoreUnitTest is CoreBase {
         assertEq(core.ethPot(), 0);
         assertEq(core.balanceModule(), address(0));
         assertEq(core.balanceToken(), address(0));
-        assertEq(core.unitPerPoint(), 0);
         assertFalse(core.controllerLocked());
         assertFalse(core.balanceModuleLocked());
         assertFalse(core.targetsLocked());
@@ -1109,14 +1108,12 @@ contract CoreUnitTest is CoreBase {
         _enterPhase2();
         assertEq(core.balanceModule(), address(mod));
         assertEq(core.balanceToken(), address(xt));
-        assertEq(core.unitPerPoint(), UNIT);
 
-        // a second set with the same balance token goes through and reads the unit again
+        // a second set with the same balance token goes through
         MockBalanceModule other = new MockBalanceModule(address(xt), 1 * UNIT);
         _setBalanceModule(address(other));
         assertEq(core.balanceModule(), address(other));
         assertEq(core.balanceToken(), address(xt));
-        assertEq(core.unitPerPoint(), 1 * UNIT);
 
         // a module with another balance token reverts, and the state stays
         MockBalanceModule alien = new MockBalanceModule(address(new MockBalanceToken("x", "x")), 1 * UNIT);
@@ -1384,16 +1381,16 @@ contract CoreUnitTest is CoreBase {
         assertEq(core.ethToBuyback(), 0);
     }
 
-    /// with balanceMode at its launch value 0 the balance token bid is closed; the redemption door reverts
-    /// NoBalanceModule once mode is on but no module is set
+    /// with both switches at their launch value false the balance token bid is closed; the redemption door reverts
+    /// NoBalanceModule while no module is set
     function test_balanceDoorsClosedAtLaunch() public {
         vm.prank(alice);
-        vm.expectRevert(ICore.BalanceModeOff.selector);
+        vm.expectRevert(ICore.BalanceBidOff.selector);
         core.sellForBalance(_one(1));
         vm.prank(alice);
-        vm.expectRevert(ICore.BalanceModeOff.selector);
+        vm.expectRevert(ICore.BalanceBidOff.selector);
         core.sellForBalance(_one(1), 0);
-        // redeemStatement reverts NoBalanceModule whatever the mode while no module is set
+        // redeemStatement reverts NoBalanceModule whatever the switch while no module is set
         vm.expectRevert(ICore.NoBalanceModule.selector);
         core.redeemStatement(1);
         core.skim();
@@ -1606,20 +1603,28 @@ contract CoreComposedTest is CoreBase {
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod));
     }
 
-    /// the unit is fixed when the module is set. a module that reports a lower unit later is held to the stored one, and
-    /// one that pays by a higher unit is simply paid
-    function test_redeem_unitIsFixedAtSetTime() public {
+    /// the unit is read from the module in the call. a zero unit or a failed read reverts `BadModule`, and the minimum
+    /// follows the unit the module reports now
+    function test_redeem_unitIsReadLive() public {
         Composed memory c = _composeOnce();
-        assertEq(core.unitPerPoint(), UNIT);
         _makeEligible(c.sid);
         mod.setUnitPerPoint(0);
+        vm.expectRevert(ICore.BadModule.selector);
+        core.redeemStatement(c.sid);
+        mod.setRevertUnit(true);
+        vm.expectRevert(ICore.BadModule.selector);
+        core.redeemStatement(c.sid);
+        mod.setRevertUnit(false);
+        // the module pays by the unit it reports now and the minimum is that unit's: a payout of half the live unit
+        // is short, the full payout of the live unit passes
+        mod.setUnitPerPoint(3 * UNIT);
+        mod.setPayBps(5_000);
         vm.expectRevert(ICore.Underpaid.selector);
         core.redeemStatement(c.sid);
-        mod.setUnitPerPoint(3 * UNIT);
+        mod.setPayBps(10_000);
         uint256 out = core.ratingOf(c.sid) * 3 * UNIT;
         core.redeemStatement(c.sid);
         assertEq(xt.balanceOf(address(core)), out);
-        assertEq(core.unitPerPoint(), UNIT, "the stored unit did not follow the module");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1667,15 +1672,15 @@ contract CoreComposedTest is CoreBase {
         core.sellForBalance(ids);
     }
 
-    /// the balance token bid is closed unless balanceMode is 2
-    function test_xBid_needsModeTwo() public {
+    /// the balance token bid is closed while `balanceBidOn` is false
+    function test_xBid_needsBalanceBidOn() public {
         _fillBalanceBuyback();
         xt.mint(address(core), 1e22);
         core.skim();
-        _setBalanceMode(1);
+        _setSwitches(true, false);
         uint256[] memory ids = _credits(alice, 1);
         vm.prank(alice);
-        vm.expectRevert(ICore.BalanceModeOff.selector);
+        vm.expectRevert(ICore.BalanceBidOff.selector);
         core.sellForBalance(ids);
     }
 

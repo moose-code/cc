@@ -12,15 +12,15 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// the price reference of the sale controller on the live fork. `referenceOf(sid)` is the larger of a statement's cost
-/// and the floor rate times its rating over `refScore`, computed at each call. the floor rate is the larger of the
-/// climbed price state and the decayed peak. the sale curve,
-/// its floor, the anchor and `atFloor` all price in bps of the reference. the rate term prices the rating at the
-/// engine's average credit price, so two statements of the same rating reference the same amount once it binds,
-/// whatever each credit cost. real Core, ControllerV1, Statements
+/// and `valueOf(rating)`, computed at each call. `valueOf` is the larger of the rate term, the floor rate times the
+/// rating over `refScore`, and the balance token pool term. the floor rate is the larger of the climbed price state and
+/// the decayed peak. the sale curve, its floor `saleFloorBps`, the anchor and `atFloor` all price in bps of the
+/// reference. the rate term prices the rating at the engine's average credit price, so two statements of the same
+/// rating reference the same amount once it binds, whatever each credit cost. real Core, ControllerV1, Statements
 contract RatingReferenceTest is Fixture {
     uint256 internal constant BPS = 10_000;
     uint32 internal constant MAX_REF_SCORE = 8_000_000;
-    /// a small sqrt price makes the balance token expensive in eth, so the redeemable value floor is large
+    /// a small sqrt price makes the balance token expensive in eth, so the pool term is large
     uint160 internal constant LOW_SQRT = uint160(FixedPoint96.Q96 / 1000);
     /// a large sqrt price makes the balance token cheap in eth, so a balance token bought credit records its score-scaled
     /// backstop as its eth cost, a moderate figure above the eth lineage cost
@@ -92,6 +92,16 @@ contract RatingReferenceTest is Fixture {
 
     function test_launchRefScoreIsTheAverage() public view {
         assertEq(ctl.refScore(), 4_330_000, "launch refScore is the average credit score");
+    }
+
+    /// `pointRate` is the floor rate over `refScore` and `valueOf` is its product with the points at full precision
+    function test_pointRateAndValueOf() public {
+        uint256 p = core.floorRate();
+        assertEq(ctl.pointRate(), p / ctl.refScore(), "the point rate is the floor rate over refScore");
+        assertEq(ctl.valueOf(0), 0, "no points, no value");
+        assertEq(ctl.valueOf(1_000_000), FullMath.mulDiv(p, 1_000_000, ctl.refScore()), "one division on the product");
+        assertGe(ctl.valueOf(ctl.refScore()), ctl.pointRate() * ctl.refScore(), "the product keeps the remainder");
+        assertEq(ctl.valueOf(ctl.refScore()), p, "refScore points are worth the floor rate");
     }
 
     /// the reference is the larger of cost and the rate term `floorRate * rating / refScore`. a high refScore shrinks
@@ -250,17 +260,12 @@ contract RatingReferenceTest is Fixture {
         uint256 sid = _composeOnce().sid;
         _makeRich(sid);
 
-        // lower the core hard floor `cost * saleFloorBps` so the curve points below, each a fraction of the reference,
-        // measure the curve and not the hard floor
-        Settings memory s = core.settings();
-        s.saleFloorBps = 1_000;
-        _setSettings(s);
-
         // a two stage curve: start 15000, knee 7500, floor 5000 of the reference
-        vm.startPrank(owner);
-        ctl.setFloorBps(5_000);
+        Settings memory s = core.settings();
+        s.saleFloorBps = 5_000;
+        _setSettings(s);
+        vm.prank(owner);
         ctl.setKneeBps(7_500);
-        vm.stopPrank();
 
         assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * ctl.startBps() / BPS, "the start is startBps of the reference");
 
@@ -268,7 +273,7 @@ contract RatingReferenceTest is Fixture {
         assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 7_500 / BPS, "the knee is kneeBps of the reference");
 
         _warp(400 hours);
-        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 5_000 / BPS, "the floor is floorBps of the reference");
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 5_000 / BPS, "the floor is saleFloorBps of the reference");
     }
 
     /// a rich statement's floor is the scaled reference and `atFloor` flips when the curve reaches it, at a price above
@@ -276,17 +281,18 @@ contract RatingReferenceTest is Fixture {
     function test_richFloorIsTheScaledReferenceAndAtFloorFlipsThere() public {
         uint256 sid = _composeOnce().sid;
         (, uint256 cost) = _makeRich(sid);
-        assertGt(ctl.referenceOf(sid) * ctl.floorBps() / BPS, cost, "the scaled floor sits above cost");
+        uint256 floorBps = core.settings().saleFloorBps;
+        assertGt(ctl.referenceOf(sid) * floorBps / BPS, cost, "the scaled floor sits above cost");
 
         assertFalse(ctl.atFloor(sid), "a fresh statement is above its floor");
-        assertGt(ctl.priceOf(sid), ctl.referenceOf(sid) * ctl.floorBps() / BPS, "the opening price is above the floor");
+        assertGt(ctl.priceOf(sid), ctl.referenceOf(sid) * floorBps / BPS, "the opening price is above the floor");
 
         _warp(49 hours);
         assertFalse(ctl.atFloor(sid), "one hour before the floor it is still above");
 
         _warp(1 hours); // the launch curve reaches its floor at hour 50
         assertTrue(ctl.atFloor(sid), "the curve has reached its floor");
-        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * ctl.floorBps() / BPS, "the price rests at the scaled floor");
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * floorBps / BPS, "the price rests at the scaled floor");
     }
 
     // ------------------------------------------------------------------ anchor
@@ -307,9 +313,7 @@ contract RatingReferenceTest is Fixture {
         assertGt(price * BPS / cost, 12_000, "in bps of cost it would be above the anchor");
 
         address buyer = _user("buyer");
-        vm.deal(buyer, price);
-        vm.prank(buyer);
-        ctl.buy{value: price}(sid);
+        _buy(buyer, sid);
         assertEq(ctl.anchorBps(), 12_000, "a sale at the anchor markup leaves the anchor unchanged");
     }
 
@@ -327,9 +331,7 @@ contract RatingReferenceTest is Fixture {
         assertEq(price, ref * 18_000 / BPS, "the start is 18000 bps of the reference");
 
         address buyer = _user("buyer");
-        vm.deal(buyer, price);
-        vm.prank(buyer);
-        ctl.buy{value: price}(sid);
+        _buy(buyer, sid);
         assertEq(ctl.anchorBps(), 15_000, "the anchor moves to the mean of 12000 and 18000");
     }
 
@@ -356,20 +358,22 @@ contract RatingReferenceTest is Fixture {
         assertEq(STATEMENTS.ownerOf(sid), buyer, "the sale at the cost floor lands");
     }
 
-    /// the decision 87 value floor still wins over the scaled curve when the redemption value is above it
-    function test_valueFloorWinsOverTheScaledCurve() public {
+    /// the pool term lifts the reference above the rate term, and the curve prices in bps of that reference
+    function test_poolTermLiftsTheReferenceAndTheCurveFollows() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         _makeRich(sid);
-        uint256 curve = ctl.priceOf(sid);
+        uint256 refBefore = ctl.referenceOf(sid);
 
         _initPool(LOW_SQRT); // a low sqrt price makes the balance token expensive in eth
-        uint256 owed = core.ratingOf(sid) * core.unitPerPoint();
+        uint256 owed = core.ratingOf(sid) * UNIT;
         uint256 q = FixedPoint96.Q96;
         uint256 value = FullMath.mulDiv(FullMath.mulDiv(owed, q, LOW_SQRT), q, LOW_SQRT);
 
-        assertGt(value, curve, "the value floor is above the scaled curve");
-        assertEq(ctl.priceOf(sid), value, "the asking price is the value floor");
+        assertGt(value, refBefore, "the pool term is above the rate term");
+        assertEq(ctl.valueOf(core.ratingOf(sid)), value, "valueOf is the pool term");
+        assertEq(ctl.referenceOf(sid), value, "the reference is the pool term");
+        assertEq(ctl.priceOf(sid), value * ctl.startBps() / BPS, "the curve is on the lifted reference");
     }
 
     // ------------------------------------------------------------------ setter

@@ -70,6 +70,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         base = defaultConfig();
         base.owner = owner;
         base.creator = creator;
+        base.credit.royaltyRecipient = creator;
         base.creatorPayee = makeAddr("resume.payee");
         base.name = "Resume Coin";
         base.symbol = "RSM";
@@ -101,9 +102,9 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         address coinAt = predictCoin(base, deployer, router);
         vm.startPrank(deployer);
         address controller;
-        if (n >= 2) controller = address(Prod.newController(core, base.sale));
+        if (n >= 2) controller = address(Prod.newController(core, base.sale, base.credit));
         if (n >= 3) address(Prod.newRouter(deployer));
-        if (n >= 4) Prod.newCore(owner, coinAt, controller, base.stack, base.rateStart, base.settings);
+        if (n >= 4) Prod.newCore(owner, coinAt, controller, base.stack, base.rateStart, base.settings, base.credit);
         if ((n >= 5 && !skipLens) || (n >= 4 && lensEarly)) Prod.newLens(core, LENS_SALT, CREATE2_DEPLOYER);
         if (n >= 5) coin = _launch(base, coinAt, router);
         IFeeRouter r = IFeeRouter(payable(router));

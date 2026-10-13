@@ -32,6 +32,11 @@ contract V2PortMigrationTest is FeeBase {
         assertEq(core2.COIN(), address(coin));
     }
 
+    /// the part of an inflow `toEngine` the second Core books to its pot: the redeem burn share goes to its reserve
+    function _toPot2(uint256 toEngine) internal view returns (uint256) {
+        return toEngine - toEngine * core2.settings().feeToRedeemBurnBps / 10_000;
+    }
+
     function _repoint() internal {
         vm.prank(owner);
         feeRouter.setEngine(address(core2));
@@ -53,7 +58,7 @@ contract V2PortMigrationTest is FeeBase {
         (, uint256 toEngine) = _routerSplit(address(feeRouter).balance);
         vm.prank(flusher);
         feeRouter.flush();
-        assertEq(core2.ethPot(), toEngine, "the new Core booked the fees");
+        assertEq(core2.ethPot(), _toPot2(toEngine), "the new Core booked the fees");
         assertEq(address(core2).balance, toEngine);
         assertEq(core.ethPot(), pot1, "the old Core books nothing more");
         assertEq(address(core).balance, bal1, "and received nothing");
@@ -65,7 +70,7 @@ contract V2PortMigrationTest is FeeBase {
         uint256 sid = STATEMENTS.supply();
         _buy(trader, sid);
         _solvent();
-        assertEq(core2.ethPot(), toEngine, "the new Core is untouched by the old one's work");
+        assertEq(core2.ethPot(), _toPot2(toEngine), "the new Core is untouched by the old one's work");
     }
 
     /// the new Core is not on the coin allowlist and still buys back: the hook grants exactly the allowance the take
@@ -75,7 +80,7 @@ contract V2PortMigrationTest is FeeBase {
         _deployCore2();
         _repoint();
         Settings memory s = core2.settings();
-        s.feeToBuybackBps = 10_000;
+        s.feeToRedeemBurnBps = 10_000;
         vm.prank(owner);
         core2.setSettings(s);
         assertFalse(coin.isAllowed(address(core2)));
@@ -83,6 +88,9 @@ contract V2PortMigrationTest is FeeBase {
         _buyCoin(trader, 5 ether);
         vm.prank(flusher);
         feeRouter.flush();
+        // the fee eth sits in the redeem burn reserve; the owner moves it to the buyback pot
+        vm.prank(owner);
+        core2.releaseRedeemBurn(type(uint256).max);
         assertGt(core2.ethToBuyback(), 0);
         vm.prank(trader);
         vm.expectRevert();
@@ -115,7 +123,7 @@ contract V2PortMigrationTest is FeeBase {
         uint256 pot1 = core.ethPot();
         vm.prank(flusher);
         feeRouter.flush();
-        assertEq(core2.ethPot(), toEngine);
+        assertEq(core2.ethPot(), _toPot2(toEngine));
         assertEq(core.ethPot(), pot1);
         assertEq(feeRouter.engine(), address(core2));
     }
@@ -147,7 +155,7 @@ contract V2PortMigrationTest is FeeBase {
         vm.prank(flusher);
         feeRouter.flush();
         assertEq(address(feeRouter).balance, 0);
-        assertEq(core.ethPot() - pot0, toEngine, "everything that waited reached the right engine");
+        assertEq(core.ethPot() - pot0, _toPot(toEngine), "everything that waited reached the right engine");
         _solvent();
     }
 

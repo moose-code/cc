@@ -55,21 +55,16 @@ abstract contract HandlerOwner is HandlerBase {
         s.buybackDelay = uint16(_f(_r(seed, 18), 1, 7_200, c.buybackDelay));
         s.keeperFee = uint64(_f(_r(seed, 19), 0, 0.005 ether, c.keeperFee));
         s.keeperMaxBaseFee = uint48(_f(_r(seed, 30), 1 gwei, 100 gwei, c.keeperMaxBaseFee));
-        s.balanceMode = uint8(_f(_r(seed, 20), 0, 2, c.balanceMode));
+        s.redeemOn = _f(_r(seed, 20), 0, 1, c.redeemOn ? 1 : 0) == 1;
+        s.balanceBidOn = _f(_r(seed, 34), 0, 1, c.balanceBidOn ? 1 : 0) == 1;
         s.redeemSlippageBps = uint16(_f(_r(seed, 21), 0, 1_000, c.redeemSlippageBps));
         s.balanceBidMarginBps = uint16(_f(_r(seed, 22), 0, 9_000, c.balanceBidMarginBps));
         s.redeemBurnBps = uint16(_f(_r(seed, 23), 0, 10_000, c.redeemBurnBps));
         s.rateCap = uint64(_f(_r(seed, 26), RATE_START_MIN_WEI, RATE_START_MAX_WEI, c.rateCap));
-        s.feeToBuybackBps = uint16(_f(_r(seed, 28), 0, 10_000, c.feeToBuybackBps));
-        // feeToBuybackBps + feeToRedeemBurnBps is at most 10_000
-        s.feeToRedeemBurnBps = uint16(_f(_r(seed, 27), 0, 10_000 - s.feeToBuybackBps, c.feeToRedeemBurnBps));
+        s.feeToRedeemBurnBps = uint16(_f(_r(seed, 27), 0, 10_000, c.feeToRedeemBurnBps));
         s.callerFee = uint64(_f(_r(seed, 10), 0, 0.005 ether, c.callerFee));
         s.callerMaxBaseFee = uint48(_f(_r(seed, 11), 0, 100 gwei, c.callerMaxBaseFee));
         _corner(s, corner);
-        // the fee split corners may raise feeToBuybackBps; keep the sum valid afterwards
-        if (uint256(s.feeToBuybackBps) + s.feeToRedeemBurnBps > 10_000) {
-            s.feeToRedeemBurnBps = uint16(10_000 - s.feeToBuybackBps);
-        }
         // the balance side cycle cannot lose more than its margin: slippage stays at or below the bid margin
         if (s.redeemSlippageBps > s.balanceBidMarginBps) s.redeemSlippageBps = s.balanceBidMarginBps;
         // recoveryClimbPerMinBps is at least the final climbPerMinBps, set after the corners so it stays valid
@@ -114,9 +109,11 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (k == 11) {
             s.buybackSlice = 1 ether;
         } else if (k == 12) {
-            s.balanceMode = 0;
+            s.redeemOn = false;
+            s.balanceBidOn = false;
         } else if (k == 13) {
-            s.balanceMode = 2;
+            s.redeemOn = true;
+            s.balanceBidOn = true;
             s.redeemSlippageBps = 1_000;
             s.balanceBidMarginBps = 9_000;
         } else if (k == 14) {
@@ -139,12 +136,10 @@ abstract contract HandlerOwner is HandlerBase {
             // the lowest rate cap: it pulls the eth rate down to it at the checkpoint
             s.rateCap = uint64(RATE_START_MIN_WEI);
         } else if (k == 18) {
-            // the whole fee stream to the coin buyback, nothing to the redeem burn reserve
-            s.feeToBuybackBps = 10_000;
+            // the whole fee stream to the pot
             s.feeToRedeemBurnBps = 0;
         } else if (k == 19) {
             // the whole fee stream to the redeem burn reserve and the full per redemption release
-            s.feeToBuybackBps = 0;
             s.feeToRedeemBurnBps = 10_000;
             s.redeemBurnBps = 10_000;
         }
@@ -256,12 +251,9 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.keeperMaxBaseFee < 1 gwei || s.keeperMaxBaseFee > 100 gwei) return "keeperMaxBaseFee";
         if (s.buybackSlice < 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee)) return "buybackSlice";
         if (s.rateCap < RATE_START_MIN_WEI || s.rateCap > RATE_START_MAX_WEI) return "rateCap";
-        if (s.feeToBuybackBps > 10_000) return "feeToBuybackBps";
         if (s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
-        if (uint256(s.feeToBuybackBps) + s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
         if (s.callerFee > 0.005 ether) return "callerFee";
         if (s.callerMaxBaseFee > 100 gwei) return "callerMaxBaseFee";
-        if (s.balanceMode > 2) return "balanceMode";
         if (s.redeemSlippageBps > 1_000) return "redeemSlippageBps";
         if (s.balanceBidMarginBps > 9_000) return "balanceBidMarginBps";
         if (s.redeemSlippageBps > s.balanceBidMarginBps) return "redeemSlippageBps";
@@ -292,7 +284,7 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 6) {
             (s.keeperFee, name) = (0.005 ether + 1, "keeperFee");
         } else if (which == 7) {
-            (s.balanceMode, name) = (3, "balanceMode");
+            (s.rateCap, name) = (0, "rateCap");
         } else if (which == 8) {
             (s.callerFee, name) = (0.005 ether + 1, "callerFee");
         } else if (which == 9) {
@@ -324,10 +316,9 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 22) {
             (s.feeToRedeemBurnBps, name) = (10_001, "feeToRedeemBurnBps");
         } else if (which == 23) {
-            // the fee split sum over 10_000 names feeToRedeemBurnBps, as the library does
-            (s.feeToBuybackBps, s.feeToRedeemBurnBps, name) = (6_000, 5_000, "feeToRedeemBurnBps");
+            (s.feeToRedeemBurnBps, name) = (20_000, "feeToRedeemBurnBps");
         } else if (which == 24) {
-            (s.balanceMode, name) = (5, "balanceMode");
+            (s.peakHalfLife, name) = (604_801, "peakHalfLife");
         } else if (which == 25) {
             (s.redeemSlippageBps, name) = (2_000, "redeemSlippageBps");
         } else if (which == 26) {
@@ -335,9 +326,9 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 27) {
             (s.redeemBurnBps, name) = (20_000, "redeemBurnBps");
         } else if (which == 28) {
-            (s.feeToBuybackBps, name) = (10_001, "feeToBuybackBps");
+            (s.buybackSlice, name) = (0, "buybackSlice");
         } else if (which == 29) {
-            (s.balanceMode, name) = (10, "balanceMode");
+            (s.recoveryGapBps, name) = (5_001, "recoveryGapBps");
         } else if (which == 30) {
             (s.ceilBps, name) = (9_999, "ceilBps");
         } else if (which == 31) {
@@ -347,10 +338,9 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 33) {
             (s.rateCap, name) = (1e18 + 1, "rateCap");
         } else if (which == 34) {
-            // the fee split sum over 10_000 names feeToRedeemBurnBps
-            (s.feeToBuybackBps, s.feeToRedeemBurnBps, name) = (9_000, 2_000, "feeToRedeemBurnBps");
+            (s.callerFee, name) = (1 ether, "callerFee");
         } else if (which == 35) {
-            (s.feeToBuybackBps, name) = (10_001, "feeToBuybackBps");
+            (s.keeperFee, name) = (1 ether, "keeperFee");
         } else if (which == 36) {
             (s.ceilBps, name) = (30_001, "ceilBps");
         } else if (which == 37) {
@@ -536,7 +526,6 @@ abstract contract HandlerOwner is HandlerBase {
         if (!phase2()) return _skip(a);
         address token = core.balanceToken();
         address oldModule = core.balanceModule();
-        uint256 oldUnit = core.unitPerPoint();
         (MockBalanceModule next, bytes4 want) = _nextModule(seed, mode % 8, token);
         // a locked module door refuses every set, whatever the module
         if (core.balanceModuleLocked()) want = ICore.Locked.selector;
@@ -553,8 +542,8 @@ abstract contract HandlerOwner is HandlerBase {
             _opost(p, "replaceModule");
             if (want == 0 || bytes4(why) != want) _unexpected(a, why);
             else _ok(a);
-            if (core.balanceModule() != oldModule || core.unitPerPoint() != oldUnit || core.balanceToken() != token) {
-                _flag(V_OWNER, "a refused module set changed the module, the unit or the token");
+            if (core.balanceModule() != oldModule || core.balanceToken() != token) {
+                _flag(V_OWNER, "a refused module set changed the module or the token");
             }
         }
     }
@@ -587,36 +576,25 @@ abstract contract HandlerOwner is HandlerBase {
         _opost(p, "replaceModule");
         if (core.balanceModule() != address(next)) _flag(V_OWNER, "the module set did not install the module");
         if (core.balanceToken() != token) _flag(V_OWNER, "a module set changed the balance token");
-        if (core.unitPerPoint() != next.currentUnit()) _flag(V_OWNER, "a module set did not read the unit again");
         if (core.allowedTarget(address(next))) {
             _flag(V_OWNER, "a module set left the allowed target flag of the module");
         }
     }
 
     /*//////////////////////////////////////////////////////////////
-                      REFRESH THE UNIT, RELEASE THE RESERVE
+                      CHANGE THE UNIT, RELEASE THE RESERVE
     //////////////////////////////////////////////////////////////*/
 
-    /// the owner re-reads the stored unit from the current module. it changes no asset and, after a good refresh, the
-    /// stored unit equals the module's live unit. a stranger is refused with OnlyOwner
-    function refreshUnit(uint256 seed) external checked {
-        uint8 a = A_REFRESH_UNIT;
-        if (!phase2() || module.revertUnit()) return _skip(a);
-        bool stranger = seed % 5 == 0;
+    /// the module reports a new unit. the core reads it at the next redemption or bid, so no asset moves
+    function changeUnit(uint256 seed) external checked {
+        uint8 a = A_CHANGE_UNIT;
+        if (!phase2()) return _skip(a);
         OPre memory p = _opre();
         _att(a);
-        vm.prank(stranger ? _actor(seed >> 8) : owner);
-        try core.refreshUnitPerPoint() {
-            if (stranger) _flag(V_OWNER, "a stranger refreshed the unit");
-            if (core.unitPerPoint() != module.currentUnit()) _flag(V_OWNER, "refresh did not read the module live unit");
-            _opost(p, "refreshUnit");
-            _ok(a);
-        } catch (bytes memory why) {
-            _failed(p.bal, p.pot, p.rate, "refreshUnit");
-            _opost(p, "refreshUnit");
-            if (stranger && bytes4(why) == ICore.OnlyOwner.selector) _ok(a);
-            else _unexpected(a, why);
-        }
+        module.setRevertUnit(false);
+        module.setUnitPerPoint(_logBound(seed >> 8, 5e6, 2e7));
+        _opost(p, "changeUnit");
+        _ok(a);
     }
 
     /// the owner moves part of the redeem burn reserve into the coin buyback. no eth leaves the core and the three eth

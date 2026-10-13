@@ -108,8 +108,8 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_ADOPT = 33;
     // the owner pauses and resumes sales on the core
     uint8 internal constant A_PAUSE = 34;
-    // the owner refreshes the stored unit from the module and releases part of the redeem burn reserve
-    uint8 internal constant A_REFRESH_UNIT = 35;
+    // the module changes its unit and the owner releases part of the redeem burn reserve
+    uint8 internal constant A_CHANGE_UNIT = 35;
     uint8 internal constant A_RELEASE_REDEEM = 36;
     // the credit sale window: a buyer pays the curve price of one pile credit, or a batch of them
     uint8 internal constant A_BUY_CREDIT = 37;
@@ -342,7 +342,7 @@ abstract contract HandlerBase is Test {
             "migrate",
             "adopt",
             "pause",
-            "refreshUnit",
+            "changeUnit",
             "releaseRedeem",
             "buyCredit",
             "buyCredits",
@@ -1145,11 +1145,9 @@ abstract contract HandlerBase is Test {
         (uint256 held, uint256 toCore) = _flushRouter();
         if (held != bounty) _flag(V_POT, "the router received other than the hook bounty leg");
         _eth(p.bal, 0, toCore, what);
-        // the router's eth is split in the core: feeToBuybackBps to the coin buyback, feeToRedeemBurnBps to the redeem
-        // burn reserve, the rest to the pot
-        uint256 fee = toCore * core.settings().feeToBuybackBps / 10_000;
+        // the router's eth is split in the core: feeToRedeemBurnBps to the redeem burn reserve, the rest to the pot
         uint256 rb = toCore * core.settings().feeToRedeemBurnBps / 10_000;
-        if (core.ethPot() != p.pot + toCore - fee - rb || core.ethToBuyback() != p.tb + fee) {
+        if (core.ethPot() != p.pot + toCore - rb || core.ethToBuyback() != p.tb) {
             _flag(V_POT, "swap skim not booked by the fee split");
         }
         if (volume != 0) {
@@ -1817,17 +1815,16 @@ abstract contract HandlerBase is Test {
 
     /// @dev the router flush and pot checks of a buyback (a helper so the locals of `_afterBuyback` fit the stack)
     function _buybackPotChecks(BbPre memory p, uint256 spent, uint256 tip, uint256 bounty) internal {
-        // the skim of the swap went to the router. the flush books its engine share, split by feeToBuybackBps
+        // the skim of the swap went to the router. the flush books its engine share, split by feeToRedeemBurnBps
         (uint256 held, uint256 toCore) = _flushRouter();
         if (held != bounty) _flag(V_BUYBACK, "the router received other than the hook bounty leg");
-        uint256 feeShare = toCore * core.settings().feeToBuybackBps / 10_000;
-        if (core.ethToBuyback() != p.pool - spent - tip + feeShare) {
-            _flag(V_BUYBACK, "buyback pot is not the pot less what was spent and paid, plus the fee share");
+        if (core.ethToBuyback() != p.pool - spent - tip) {
+            _flag(V_BUYBACK, "buyback pot is not the pot less what was spent and paid");
         }
         // eth leaves as the swap input plus the payment. the skim of the swap comes back as an inflow after the flush
         _eth(p.bal, spent + tip, toCore, "buyback");
         uint256 rb = toCore * core.settings().feeToRedeemBurnBps / 10_000;
-        if (core.ethPot() != p.pot + toCore - feeShare - rb) _flag(V_POT, "buyback skim not booked to the pot");
+        if (core.ethPot() != p.pot + toCore - rb) _flag(V_POT, "buyback skim not booked to the pot");
     }
 
     /// @dev the skim and burn checks of a buyback (a helper so the locals of `_afterBuyback` fit the stack)
@@ -1902,7 +1899,6 @@ abstract contract HandlerBase is Test {
         _att(a);
         receiveSends++;
         uint256 expectIn = amt;
-        uint256 fee;
         uint256 rb;
         bool ok;
         if (fromHook) {
@@ -1911,7 +1907,6 @@ abstract contract HandlerBase is Test {
             (ok,) = address(feeRouter).call{value: amt}("");
             if (ok) {
                 (, expectIn) = _flushRouter();
-                fee = expectIn * core.settings().feeToBuybackBps / 10_000;
                 rb = expectIn * core.settings().feeToRedeemBurnBps / 10_000;
             }
         } else {
@@ -1921,7 +1916,7 @@ abstract contract HandlerBase is Test {
         if (ok) {
             _ok(a);
             _eth(b0, 0, expectIn, "donate");
-            if (core.ethPot() != pot0 + (fromHook ? expectIn - fee - rb : 0) || core.ethToBuyback() != tb0 + fee) {
+            if (core.ethPot() != pot0 + (fromHook ? expectIn - rb : 0) || core.ethToBuyback() != tb0) {
                 _flag(V_POT, "a donation was booked wrongly");
             }
         } else {
@@ -2093,17 +2088,16 @@ abstract contract HandlerBase is Test {
         _ok(a);
     }
 
-    /// flushes the router as the flusher and checks the Core booked the fees with the buyback split
+    /// flushes the router as the flusher and checks the Core booked the fees with the fee split
     function _flushChecked() internal {
         uint256 b0 = address(core).balance;
         uint256 pot0 = core.ethPot();
         uint256 tb0 = core.ethToBuyback();
         RS memory rs = _rs();
         (, uint256 toCore) = _flushRouter();
-        uint256 fee = toCore * core.settings().feeToBuybackBps / 10_000;
         uint256 rb = toCore * core.settings().feeToRedeemBurnBps / 10_000;
         _eth(b0, 0, toCore, "flush");
-        if (core.ethPot() != pot0 + toCore - fee - rb || core.ethToBuyback() != tb0 + fee) {
+        if (core.ethPot() != pot0 + toCore - rb || core.ethToBuyback() != tb0) {
             _flag(V_POT, "a flush was booked wrongly");
         }
         _rsCheck(rs, 0);
@@ -2271,7 +2265,7 @@ abstract contract HandlerBase is Test {
     /// with the real controller in force; a hostile controller swapped in is left alone so the backstop is modeled
     function sellForBalance(uint256 aSeed, uint256 nSeed, uint256 pick) external checked {
         uint8 a = A_SELL_FOR_BALANCE;
-        if (!phase2() || core.settings().balanceMode != 2) return _skip(a);
+        if (!phase2() || !core.settings().balanceBidOn) return _skip(a);
         address who = _actor(aSeed);
         // the retired refusal is checked first: a retired core reverts before it reads the controller's refScore
         if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForBalance(uint256[])", _firstOf(who)))) return;
@@ -2280,9 +2274,9 @@ abstract contract HandlerBase is Test {
         if (core.controller() != v1) return _skip(a);
         uint256 len = inventory[who].length;
         if (len == 0) return _skip(a);
-        // the bid pays by the lower of the stored unit and the module's live unit (`_bidUnit`), both nonzero here. a
-        // module set to fail its unit read (`module.revertUnit()`) reverts the whole bid
-        uint256 unit = _bidUnit();
+        // the bid pays by the module's live unit (`_unitOf`), nonzero here. a module set to fail its unit read
+        // (`module.revertUnit()`) reverts the whole bid
+        uint256 unit = _unitOf();
         if (unit == 0) return _skip(a);
         uint256 want = bound(nSeed, 1, 10);
         (uint256[] memory ids, uint256 n) = _pickBalanceIds(who, len, want, pick, unit);
@@ -2340,19 +2334,10 @@ abstract contract HandlerBase is Test {
         _eth(b0, 0, 0, "sellForBalance");
     }
 
-    /// the stored unit: read when the module was last set or refreshed. the redemption check basis `redeemStatement` uses for
-    /// its required minimum. the module can change what it reports, the core keeps the stored value until a set or a
-    /// `refreshUnitPerPoint`
+    /// the unit the core reads from the module in `redeemStatement` and `sellForBalance`: the module's `unitPerPoint()`
+    /// now, 0 while the module fails the read
     function _unitOf() internal view returns (uint256 u) {
-        return core.unitPerPoint();
-    }
-
-    /// the unit the balance token bid pays by: the lower of the stored unit and the module's live unit, so a module that
-    /// lowered its rate cannot make the bid overpay. the core reads both and takes the smaller
-    function _bidUnit() internal view returns (uint256) {
-        uint256 stored = core.unitPerPoint();
-        uint256 live = module.currentUnit();
-        return live < stored ? live : stored;
+        return module.revertUnit() ? 0 : module.currentUnit();
     }
 
     /// the controller's eligibility answer read the way the core reads it: a revert, a short answer or a false reads as
@@ -2384,7 +2369,7 @@ abstract contract HandlerBase is Test {
     }
 
     /// redeems a held statement through the module. a statement is eligible when its asking price is at or below its
-    /// cost. redemption runs only while `balanceMode` is at least 1. the module may be set to underpay, and then the redemption
+    /// cost. redemption runs only while `redeemOn` is true. the module may be set to underpay, and then the redemption
     /// must revert
     function redeemStatement(uint256 sIdx, uint256 aSeed) external checked {
         uint8 a = A_REDEEM_STATEMENT;
@@ -2395,11 +2380,13 @@ abstract contract HandlerBase is Test {
         EPre memory p;
         p.st = core.settings();
         SG storage g = _sg[sid];
-        bool modeOn = p.st.balanceMode >= 1;
+        bool modeOn = p.st.redeemOn;
         bool eligible = _ctlAtFloor(sid);
+        p.unit = _unitOf();
         p.ripe = modeOn && eligible;
-        if (!modeOn) p.refusal = ICore.BalanceModeOff.selector;
+        if (!modeOn) p.refusal = ICore.RedeemOff.selector;
         else if (!eligible) p.refusal = ICore.NotEligible.selector;
+        else if (p.unit == 0) p.refusal = ICore.BadModule.selector;
         // an ineligible statement is only tried now and then, to see the refusal
         if (!p.ripe && aSeed % 6 != 0) return _skip(a);
         p.xbal = _xBal(address(core));
@@ -2410,7 +2397,6 @@ abstract contract HandlerBase is Test {
         p.toBuyback0 = core.ethToBuyback();
         p.reserve0 = core.ethRedeemBurn();
         p.rating = core.ratingOf(sid);
-        p.unit = _unitOf();
         p.required = p.rating * p.unit * (10_000 - p.st.redeemSlippageBps) / 10_000;
         p.callerBal = keeper.balance;
         p.cost = g.cost;
@@ -2429,9 +2415,9 @@ abstract contract HandlerBase is Test {
             }
             if (p.refusal != 0 && bytes4(why) != p.refusal) {
                 _unexpected(a, why);
-            } else if (p.refusal == 0 && p.unit != 0 && module.payBps() >= 10_000) {
+            } else if (p.refusal == 0 && module.payBps() >= 10_000) {
                 // the module overpays or pays exactly, so the required amount arrives: the redemption must not revert
-                if (module.currentUnit() >= p.unit) _unexpected(a, why);
+                _unexpected(a, why);
             }
         }
         _rsCheck(rs, 0);

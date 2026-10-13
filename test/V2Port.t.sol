@@ -20,8 +20,7 @@ contract V2PortFeeTest is FeeBase {
 
     function _share(uint16 bps) internal {
         Settings memory s = core.settings();
-        s.feeToBuybackBps = bps;
-        s.feeToRedeemBurnBps = 0; // isolate the buyback share from the redeem burn share
+        s.feeToRedeemBurnBps = bps;
         _setSettings(s);
     }
 
@@ -37,17 +36,17 @@ contract V2PortFeeTest is FeeBase {
     /// 1 eth buy in steady state at each split. 6.9 points of skim (0.069 eth) split by bountyBps 9_638: the router gets
     /// 0.069 * 9_638 / 10_000 = 0.0665022 eth (6.65022 points), the protocol recipient 0.069 less 0.0665022 = 0.0024978 eth
     /// (0.24978 points). of the router's 66_502_200_000_000_000 wei: payee 112_778 ppm =
-    /// 7_499_985_111_600_000 (0.7499985 points), engine the rest = 59_002_214_888_400_000 (5.9002215 points). the engine part splits between the pot and the buyback by the share setting
+    /// 7_499_985_111_600_000 (0.7499985 points), engine the rest = 59_002_214_888_400_000 (5.9002215 points). the engine part splits between the pot and the redeem burn reserve by the share setting
     function test_exactNumbersAtEachSplit() public {
         _stock();
         uint256[3] memory bps = [uint256(0), 5_000, 10_000];
-        uint256[3] memory toBb = [uint256(0), 29_501_107_444_200_000, 59_002_214_888_400_000];
+        uint256[3] memory toRb = [uint256(0), 29_501_107_444_200_000, 59_002_214_888_400_000];
         for (uint256 i; i < 3; ++i) {
             _share(uint16(bps[i]));
             uint256 payee0 = lc.creatorPayee.balance;
             uint256 flusher0 = flusher.balance;
             uint256 pot0 = core.ethPot();
-            uint256 bb0 = core.ethToBuyback();
+            uint256 rb0 = core.ethRedeemBurn();
             Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
             assertEq(f.skimVolume, 0.931 ether, "volume net of the skim");
             assertEq(f.skimBounty, 0.0665022 ether, "6.65022 points to the router");
@@ -57,15 +56,15 @@ contract V2PortFeeTest is FeeBase {
             assertEq(f.toPayees, 7_499_985_111_600_000, "the single payee");
             assertEq(lc.creatorPayee.balance - payee0, 7_499_985_111_600_000);
             assertEq(f.balanceRise, 59_002_214_888_400_000, "5.9002215 points to the engine");
-            assertEq(core.ethToBuyback() - bb0, toBb[i]);
-            assertEq(core.ethPot() - pot0, 59_002_214_888_400_000 - toBb[i]);
+            assertEq(core.ethRedeemBurn() - rb0, toRb[i]);
+            assertEq(core.ethPot() - pot0, 59_002_214_888_400_000 - toRb[i]);
             assertEq(address(feeRouter).balance, 0, "the router is empty");
             _solvent();
         }
     }
 
     /// eth that reaches the Core from anyone but the router (the hook, the escrow) is left for `skim()`, which books it
-    /// to the pot whatever the buyback share is
+    /// to the pot whatever the reserve share is
     function test_directEthWaitsForSkimAndGoesToThePot() public {
         _share(10_000);
         address[2] memory from = [v2.hook, v2.escrow];
@@ -82,7 +81,7 @@ contract V2PortFeeTest is FeeBase {
         emit ICore.Skimmed(2 ether, 0);
         core.skim();
         assertEq(core.ethPot(), 2 ether, "all of it to the pot");
-        assertEq(core.ethToBuyback(), 0, "none of it to the buyback, whatever the share");
+        assertEq(core.ethRedeemBurn(), 0, "none of it to the reserve, whatever the share");
         _solvent();
     }
 
@@ -159,7 +158,7 @@ contract V2PortFeeTest is FeeBase {
         MockBalanceToken token = new MockBalanceToken("Balance Token", "XT");
         ClaimMidRedeem m = new ClaimMidRedeem(token, UNIT, v2.escrow, address(core));
         _setBalanceModule(address(m));
-        _setBalanceMode(2);
+        _setSwitches(true, true);
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         _creditCore(0.2 ether);

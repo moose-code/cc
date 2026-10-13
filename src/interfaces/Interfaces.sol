@@ -5,7 +5,7 @@ pragma solidity ^0.8.28;
 
 interface IController {
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
-    /// true when the curve price of statement `sid` has reached its floor, `floorBps` of the reference. the curve age
+    /// true when the curve price of statement `sid` has reached its floor, `saleFloorBps` of the reference. the curve age
     /// excludes paused seconds, so eligibility is frozen while sales are paused. the core reads it to gate the balance side
     /// redemption
     function atFloor(uint256 sid) external view returns (bool);
@@ -18,7 +18,8 @@ interface IBalanceModule {
     function balanceToken() external view returns (address);
     /// balance token base units per stored score unit. a score is in ten-thousandths of a point (a score of 132.4012 is
     /// stored as 1_324_012), so this is base units per ten-thousandth of a point, not per whole point. a statement
-    /// redemption owes `rating * unitPerPoint`, where `rating` is the sum of its credits' stored scores
+    /// redemption owes `rating * unitPerPoint`, where `rating` is the sum of its credits' stored scores. the core and
+    /// the controller read it at each use
     function unitPerPoint() external view returns (uint256);
     /// called by the core after it transfers the statement to the module
     function redeem(uint256 statementId) external returns (uint256 out);
@@ -42,8 +43,7 @@ interface ICoreViews {
     function ethPrice() external view returns (uint256);
     /// wei per credit of the floor rate now: the larger of the price state climbed before the pot clamp and the
     /// remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays between
-    /// fills, so the maximum holds against a sale within the block. the statement reference and the credit backstop
-    /// read it
+    /// fills, so the maximum holds against a sale within the block. the controller's `pointRate` divides it by `refScore`
     function floorRate() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the seconds a held statement has aged outside every pause. reverts `NotForSale` when the core does not hold it
@@ -53,8 +53,6 @@ interface ICoreViews {
     function heldStatements() external view returns (uint256[] memory sids);
     function balanceModule() external view returns (address);
     function balanceToken() external view returns (address);
-    /// balance token base units per stored score unit, one ten-thousandth of a point. a redemption owes `rating * unitPerPoint`
-    function unitPerPoint() external view returns (uint256);
 }
 
 /// what the controller needs of the core beyond the views: the live owner and the two doors that sell custody out, a
@@ -134,8 +132,8 @@ struct Settings {
     uint16 ceilBps;
     /// growth of the ceiling anchor per full 10 minutes since the last fill, bps of the anchor
     uint16 idleLoosenBps;
-    /// the hard floor of a statement sale, bps of the statement cost. `sellTo` takes no payment below it and the
-    /// controller prices at or above it
+    /// the floor of a statement sale, bps of the statement cost in `sellTo` and bps of the controller reference in the
+    /// controller's curve. the reference is at least the cost, so the controller's floor is at least the Core's
     uint16 saleFloorBps;
     /// share of sale proceeds that goes to the coin buyback, bps
     uint16 saleToBuybackBps;
@@ -151,9 +149,10 @@ struct Settings {
     uint32 peakHalfLife;
     /// blocks between two coin buybacks
     uint16 buybackDelay;
-    /// the balance side state. 0 off: no redemption and no balance token bid. 1 hold: redemptions run, the balance token bid is
-    /// stopped. 2 on: redemptions and the balance token bid run
-    uint8 balanceMode;
+    /// whether `redeemStatement` runs
+    bool redeemOn;
+    /// whether `sellForBalance` runs
+    bool balanceBidOn;
     /// a redemption must raise the balance token balance by at least `rating * unitPerPoint * (10_000 - redeemSlippageBps)
     /// / 10_000`, bps
     uint16 redeemSlippageBps;
@@ -177,11 +176,8 @@ struct Settings {
     uint64 callerFee;
     /// base fee ceiling of the gas refund of `compose` and `redeemStatement`, wei. zero refunds no gas
     uint48 callerMaxBaseFee;
-    /// share of the swap fee eth that the fee router flushes to the core (booked in `receive()`) that goes to the coin
-    /// buyback, bps. the rest after `feeToRedeemBurnBps` goes to the pot. eth booked later by `skim` goes to the pot whole
-    uint16 feeToBuybackBps;
-    /// share of the swap fee eth booked in `receive()` that fills `ethRedeemBurn`, bps.
-    /// `feeToBuybackBps + feeToRedeemBurnBps` is at most 10_000
+    /// share of the swap fee eth booked in `receive()` that fills `ethRedeemBurn`, bps. the rest goes to the pot. eth
+    /// booked later by `skim` goes to the pot whole
     uint16 feeToRedeemBurnBps;
 }
 
@@ -199,8 +195,6 @@ struct Sale {
     uint32 kneeBps;
     /// fall of the asking price per hour at or below the knee, bps of the statement cost
     uint16 slowDecayBpsPerHour;
-    /// lowest asking price, bps of the statement cost
-    uint16 floorBps;
     /// seconds for the part of the anchor above 10_000 to halve
     uint32 anchorHalfLife;
     /// the least statement cost, in wei, whose sale moves the anchor
@@ -226,13 +220,16 @@ struct Credit {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
     /// take it. 1 minute to 30 days
     uint32 window;
-    /// the credit sale floor over the highest of the credit's cost, balance token baseline and score-scaled eth backstop,
-    /// bps. 10_000 to 40_000
+    /// the credit sale floor over the larger of the credit's cost and its `valueOf` score, bps. 10_000 to 40_000
     uint16 floorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
     uint32 startBps;
     /// the per-credit score the statement reference divides the rating by, in ten-thousandths of a point. 1 to 8_000_000
     uint32 refScore;
+    /// the share of every sale price added on top and claimable by `royaltyRecipient`, bps. 0 to 1_000
+    uint16 royaltyBps;
+    /// the address `claimRoyalty` pays
+    address royaltyRecipient;
 }
 
 /// the artcoins stack a launch runs on. a deploy input of the Core, so a new artcoins version needs no code change.
@@ -285,7 +282,8 @@ library Mainnet {
             recoveryGapBps: 1_000,
             peakHalfLife: 21_600,
             buybackDelay: 25,
-            balanceMode: 0,
+            redeemOn: false,
+            balanceBidOn: false,
             redeemSlippageBps: 200,
             balanceBidMarginBps: 2_000,
             redeemBurnBps: 2_000,
@@ -295,7 +293,6 @@ library Mainnet {
             rateCap: 26_700_000_000_000_000,
             callerFee: 0,
             callerMaxBaseFee: 0,
-            feeToBuybackBps: 0,
             feeToRedeemBurnBps: 1_000
         });
     }
@@ -310,7 +307,6 @@ library Mainnet {
             fastDecayBpsPerHour: 100,
             kneeBps: 10_000,
             slowDecayBpsPerHour: 25,
-            floorBps: 10_000,
             anchorHalfLife: 7 days,
             anchorMinCost: 0.1 ether
         });
@@ -328,7 +324,9 @@ library Mainnet {
             window: 4 hours,
             floorBps: 11_000,
             startBps: 30_000,
-            refScore: 4_330_000
+            refScore: 4_330_000,
+            royaltyBps: 250,
+            royaltyRecipient: address(0)
         });
     }
 

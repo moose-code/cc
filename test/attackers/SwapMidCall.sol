@@ -96,7 +96,7 @@ contract SwapMidRedeem is IBalanceModule, Flushes {
 }
 
 interface IBuy {
-    function priceOf(uint256 sid) external view returns (uint256);
+    function grossPriceOf(uint256 sid) external view returns (uint256);
     function buy(uint256 sid) external payable;
 }
 
@@ -116,7 +116,7 @@ contract SwapAroundBuy is Flushes {
     function run(uint256 swapEth, uint256 sid) external payable {
         router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
         _flush();
-        ctl.buy{value: ctl.priceOf(sid)}(sid);
+        ctl.buy{value: ctl.grossPriceOf(sid)}(sid);
         router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
         _flush();
     }

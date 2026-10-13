@@ -5,7 +5,7 @@ import {Prod} from "./utils/Prod.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Settings, Sale, Mainnet, IBalanceModule, IStatements} from "../src/interfaces/Interfaces.sol";
+import {Settings, Sale, Credit, Mainnet, IBalanceModule, IStatements} from "../src/interfaces/Interfaces.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {SetSettings} from "../script/SetSettings.s.sol";
@@ -226,32 +226,33 @@ contract ReviewSaleTest is Fixture {
 
     function test_OK_sellTo_buyerGetsNoCallbackAndRefundReentryIsBlocked() public {
         uint256 sid = _composeOnce().sid;
-        uint256 price = ctl.priceOf(sid);
+        uint256 gross = ctl.grossPriceOf(sid);
         EvilBuyer b = new EvilBuyer(ctl, core);
-        vm.deal(address(this), price + 1 ether);
+        vm.deal(address(this), gross + 1 ether);
         uint256 dust = address(b).balance;
-        b.buy{value: price + 1 ether}(sid);
+        b.buy{value: gross + 1 ether}(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(b));
         assertEq(b.hooks(), 0, "transferFrom has no callback");
         assertEq(b.refunds(), 1, "the refund arrived once");
         assertEq(b.lastWhy(), IControllerV1.Reentrant.selector, "buy is guarded against the refund");
         assertEq(address(b).balance - dust, 1 ether);
-        assertEq(address(ctl).balance, 0, "nothing stays in the controller");
+        assertEq(address(ctl).balance, ctl.royaltyOwed(), "only the royalty owed stays in the controller");
         _solvent();
     }
 
     function test_OK_buy_revertingRefundRevertsTheWholeBuy() public {
         uint256 sid = _composeOnce().sid;
-        uint256 price = ctl.priceOf(sid);
+        uint256 gross = ctl.grossPriceOf(sid);
         EvilBuyer b = new EvilBuyer(ctl, core);
         b.setFail(true);
-        vm.deal(address(this), price + 1 ether);
+        vm.deal(address(this), gross + 1 ether);
         vm.expectRevert();
-        b.buy{value: price + 1 ether}(sid);
+        b.buy{value: gross + 1 ether}(sid);
         (bool held,,) = core.statementInfo(sid);
         assertTrue(held, "statement still held");
         assertEq(address(ctl).balance, 0);
-        b.buy{value: price}(sid);
+        assertEq(ctl.royaltyOwed(), 0, "the reverted buy owes nothing");
+        b.buy{value: gross}(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(b), "exact payment needs no refund");
     }
 
@@ -288,40 +289,39 @@ contract ReviewSaleTest is Fixture {
         _warp(3 hours);
         uint256 q1 = ctl.priceOf(sid);
         assertLt(q1, q0);
-        // the buyer pays the quote of an earlier block: still enough, the excess comes back
+        // the buyer pays the gross quote of an earlier block: still enough, the excess comes back
+        uint256 g1 = ctl.grossPriceOf(sid);
         _warp(3 hours);
-        uint256 q2 = ctl.priceOf(sid);
-        vm.deal(bob, q1);
+        uint256 g2 = ctl.grossPriceOf(sid);
+        vm.deal(bob, g1);
         vm.prank(bob);
-        ctl.buy{value: q1}(sid);
-        assertEq(bob.balance, q1 - q2, "paid the later, lower price");
+        ctl.buy{value: g1}(sid);
+        assertEq(bob.balance, g1 - g2, "paid the later, lower price");
         assertEq(STATEMENTS.ownerOf(sid), bob);
     }
 
-    /// S-1 fixed: the controller floor can sit under the core hard floor (the owner raised only the core floor). the
-    /// quote and the payment are clamped at the hard floor, so `buy` keeps working and the excess comes back
-    function test_FIXED_buyWorksWhileTheAskIsUnderTheCoreFloor() public {
-        _pinReferenceToCost(); // the reference is cost, so the decayed curve falls under the cost-based hard floor
+    /// S-1 fixed: once the curve has fallen to the floor the quote rests at `saleFloorBps` of the reference, `buy` keeps
+    /// working and the excess comes back
+    function test_FIXED_buyWorksAtTheFloor() public {
+        _pinReferenceToCost(); // the reference is cost, so the floor is the cost based floor
         uint256 sid = _composeOnce().sid;
-        // lower the controller floor below the core hard floor (saleFloorBps stays at its launch 100 percent), so the
-        // decayed ask falls under the core floor and the quote is pinned up to it
-        vm.prank(owner);
-        ctl.setFloorBps(5_000);
         _warp(300 hours);
         uint256 floor = _floorOf(sid);
-        assertEq(ctl.priceOf(sid), floor, "the quote is the hard floor");
+        assertEq(ctl.priceOf(sid), floor, "the quote is the floor");
+        uint256 gross = ctl.grossPriceOf(sid);
         vm.deal(bob, 1000 ether);
         vm.prank(bob);
         ctl.buy{value: 1000 ether}(sid);
         assertEq(STATEMENTS.ownerOf(sid), bob, "sold at the floor");
-        assertEq(bob.balance, 1000 ether - floor, "the excess came back");
-        assertEq(address(ctl).balance, 0);
+        assertEq(bob.balance, 1000 ether - gross, "the excess came back");
+        assertEq(address(ctl).balance, ctl.royaltyOwed());
     }
 
     // ------------------------------------------------------------------ the asking price
 
     function test_OK_price_extremesDoNotOverflowOrUnderflow() public {
         StatementInfoStub stub = new StatementInfoStub(owner);
+        stub.setSaleFloorBps(10_000);
         IControllerV1 c = Prod.newController(address(stub), lc.sale);
         vm.startPrank(owner);
         c.setFastDecayBpsPerHour(10_000);
@@ -506,14 +506,14 @@ contract ReviewSaleTest is Fixture {
         core.lockTargets();
         vm.stopPrank();
         Settings memory s = core.settings();
-        s.feeToBuybackBps = 1_234;
+        s.feeToRedeemBurnBps = 1_234;
         s.saleFloorBps = 8_000;
         _setSettings(s);
         vm.startPrank(owner);
         core.setRate(2e15);
-        ctl.setFloorBps(8_000);
+        ctl.setRoyaltyBps(300);
         vm.stopPrank();
-        assertEq(core.settings().feeToBuybackBps, 1_234);
+        assertEq(core.settings().feeToRedeemBurnBps, 1_234);
     }
 
     // ------------------------------------------------------------------ owner handover
@@ -634,8 +634,7 @@ contract ReviewSaleTest is Fixture {
 
     function _feeShare(uint16 bps) internal {
         Settings memory s = core.settings();
-        s.feeToBuybackBps = bps;
-        s.feeToRedeemBurnBps = 0; // isolate the buyback share from the redeem burn share
+        s.feeToRedeemBurnBps = bps;
         _setSettings(s);
     }
 
@@ -656,10 +655,10 @@ contract ReviewSaleTest is Fixture {
         (bool ok,) = address(core).call{value: 1 ether}("");
         assertTrue(ok, "a stranger may pay, nothing reverts");
         assertEq(core.ethPot(), pot, "not booked by receive");
-        assertEq(core.ethToBuyback(), 0);
+        assertEq(core.ethRedeemBurn(), 0);
         core.skim();
         assertEq(core.ethPot() - pot, 1 ether, "skim books the whole amount to the pot, no split");
-        assertEq(core.ethToBuyback(), 0);
+        assertEq(core.ethRedeemBurn(), 0);
         _solvent();
     }
 
@@ -668,20 +667,20 @@ contract ReviewSaleTest is Fixture {
         uint256[7] memory amounts = [uint256(0), 1, 2, 3, 9_999, 10_001, 1 ether + 7];
         for (uint256 i; i < amounts.length; ++i) {
             uint256 pot = core.ethPot();
-            uint256 bb = core.ethToBuyback();
+            uint256 rb = core.ethRedeemBurn();
             _hookPays(amounts[i]);
-            assertEq((core.ethPot() - pot) + (core.ethToBuyback() - bb), amounts[i], "no dust lost or made");
-            assertEq(core.ethToBuyback() - bb, amounts[i] * 3_333 / 10_000, "rounds down, dust to the pot");
+            assertEq((core.ethPot() - pot) + (core.ethRedeemBurn() - rb), amounts[i], "no dust lost or made");
+            assertEq(core.ethRedeemBurn() - rb, amounts[i] * 3_333 / 10_000, "rounds down, dust to the pot");
             _solvent();
         }
     }
 
-    function test_OK_receive_allToBuybackLeavesThePotAlone() public {
+    function test_OK_receive_allToTheReserveLeavesThePotAlone() public {
         _feeShare(10_000);
         uint256 pot = core.ethPot();
         _hookPays(2 ether);
         assertEq(core.ethPot(), pot);
-        assertEq(core.ethToBuyback(), 2 ether);
+        assertEq(core.ethRedeemBurn(), 2 ether);
         _feeShare(0);
         _hookPays(1 ether);
         assertEq(core.ethPot(), pot + 1 ether);
@@ -691,6 +690,8 @@ contract ReviewSaleTest is Fixture {
         _skipSniperWindow();
         _feeShare(10_000);
         _hookPays(3 ether);
+        vm.prank(owner);
+        core.releaseRedeemBurn(type(uint256).max);
         vm.roll(block.number + 100);
         uint256 pool = core.ethToBuyback();
         vm.prank(keeper);
@@ -698,7 +699,7 @@ contract ReviewSaleTest is Fixture {
         _solvent();
         assertLt(core.ethToBuyback(), pool, "the slice left the pool");
         // the hook skim of the core's own swap came back through receive and was split by the same setting
-        assertGe(address(core).balance, core.ethPot() + core.ethToBuyback());
+        assertGe(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
     }
 
     // ------------------------------------------------------------------ redeem caller payment
@@ -747,7 +748,7 @@ contract ReviewSaleTest is Fixture {
         xt = new MockBalanceToken("X", "X");
         BurnModule bm = new BurnModule(address(xt), UNIT, 6_000_000);
         _setBalanceModule(address(bm));
-        _setBalanceMode(2);
+        _setSwitches(true, true);
         uint256 sid = _composeOnce().sid;
         _callerPayOn();
         _makeEligible(sid);
@@ -804,8 +805,6 @@ contract ReviewSaleTest is Fixture {
         for (uint256 i; i < SettingsFields.N; ++i) {
             SettingsFields.set(s, i, v[i]);
         }
-        // feeToBuybackBps and feeToRedeemBurnBps cannot both be at their max: their sum is at most 10_000
-        if (high) s.feeToRedeemBurnBps = uint16(10_000 - s.feeToBuybackBps);
     }
 
     function test_OK_settings_packingRoundTripAtEveryMaxAndMin() public {
@@ -826,6 +825,8 @@ contract ReviewSaleTest is Fixture {
         uint256[23] memory lo = SettingsFields.lo();
         uint256[23] memory hi = SettingsFields.hi();
         for (uint256 i; i < SettingsFields.N; ++i) {
+            // the two switches (fields 11 and 12) take 0 or 1: nothing is above their top
+            if (i == 11 || i == 12) continue;
             Settings memory s = core.settings();
             SettingsFields.set(s, i, hi[i] + 1);
             assertTrue(SettingsBounds.firstViolation(s) != bytes32(0), string.concat("above ", _nm(names[i])));
@@ -877,7 +878,7 @@ contract ReviewSaleTest is Fixture {
         }
         assertFalse(_has(keys, "reserveBps"));
         string[] memory sale = vm.parseJsonKeys(j, ".sale");
-        assertEq(sale.length, 8);
+        assertEq(sale.length, 7);
         LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
         assertEq(abi.encode(f.sale), abi.encode(Mainnet.defaultSale()));
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()));
@@ -894,16 +895,17 @@ contract ReviewSaleTest is Fixture {
             (string memory dirty,) = _failed();
             assertTrue(keccak256(bytes(dirty)) != keccak256(bytes(clean)), _nm(SettingsFields.names()[i]));
         }
-        for (uint256 i; i < 8; ++i) {
+        for (uint256 i; i < 9; ++i) {
             LaunchConfig memory c = lc;
             if (i == 0) c.sale.markupBps += 1;
             if (i == 1) c.sale.startCapBps += 1;
             if (i == 2) c.sale.fastDecayBpsPerHour += 1;
             if (i == 3) c.sale.kneeBps += 1;
             if (i == 4) c.sale.slowDecayBpsPerHour += 1;
-            if (i == 5) c.sale.floorBps += 1;
-            if (i == 6) c.sale.anchorHalfLife += 1;
-            if (i == 7) c.sale.anchorMinCost += 1;
+            if (i == 5) c.sale.anchorHalfLife += 1;
+            if (i == 6) c.sale.anchorMinCost += 1;
+            if (i == 7) c.credit.royaltyBps += 1;
+            if (i == 8) c.credit.royaltyRecipient = address(0xA27);
             postflightAs(c, address(core), owner);
             (string memory dirty,) = _failed();
             assertTrue(keccak256(bytes(dirty)) != keccak256(bytes(clean)), "sale field unseen by postflight");
@@ -919,7 +921,9 @@ contract ReviewSaleTest is Fixture {
     }
 
     function _ctlExt(Sale memory k) external returns (address) {
-        return deployCode("ControllerV1.sol:ControllerV1", abi.encode(address(core), k, Mainnet.defaultCredit()));
+        Credit memory credit = Mainnet.defaultCredit();
+        credit.royaltyRecipient = creator;
+        return deployCode("ControllerV1.sol:ControllerV1", abi.encode(address(core), k, credit));
     }
 
     function test_OK_saleBounds_scriptAndControllerConstructorAgree() public {
@@ -932,13 +936,12 @@ contract ReviewSaleTest is Fixture {
         v[2].startCapBps = 14_999;
         v[3].fastDecayBpsPerHour = 0;
         v[4].fastDecayBpsPerHour = 10_001;
-        v[5].floorBps = 999;
-        v[6].floorBps = 10_001;
+        v[5].kneeBps = 999;
+        v[6].kneeBps = 1_000;
         v[7].markupBps = 40_000;
         v[7].startCapBps = 40_000;
         v[7].fastDecayBpsPerHour = 10_000;
         v[8].startCapBps = 200_000;
-        v[8].floorBps = 10_000;
         v[9].startCapBps = 200_001;
         v[10].anchorHalfLife = 1 days - 1;
         v[11].anchorHalfLife = 90 days + 1;
@@ -946,10 +949,10 @@ contract ReviewSaleTest is Fixture {
         v[13].anchorHalfLife = 90 days;
         v[14].slowDecayBpsPerHour = 0;
         v[15].slowDecayBpsPerHour = 10_001;
-        v[16].kneeBps = v[16].floorBps - 1;
+        v[16].kneeBps = 998;
         v[17].kneeBps = v[17].startCapBps + 1;
         v[18].kneeBps = v[18].startCapBps;
-        v[19].kneeBps = v[19].floorBps;
+        v[19].kneeBps = 1_000;
         v[20].fastDecayBpsPerHour = 1;
         v[21].slowDecayBpsPerHour = 10_000;
         v[22].anchorMinCost = 10 ether + 1;

@@ -16,16 +16,17 @@ import {ICredits, ICreditScore, IBalanceModule, Settings, Mainnet} from "./inter
 contract CoreLens {
     using FixedPointMathLib for uint256;
 
-    /// the held statement `id` of the Core, with its cost basis, compose time and rating. `priceReference` is the
-    /// controller price reference in wei, the larger of cost and the eth bid rate times rating over `refScore`, 0 when
-    /// the controller does not answer.
+    /// the held statement `id` of the Core, with its cost basis, compose time, composer and rating. `priceReference` is
+    /// the controller price reference in wei, the larger of cost and `valueOf(rating)`, 0 when the controller does not
+    /// answer.
     /// `askingPrice` is the controller price now in wei, 0 when the controller does not answer. `redeemEligible` is true
-    /// when a redemption of this statement would pass the Core gates now: a module set, `balanceMode` at least 1, and a
-    /// curve price at its floor
+    /// when a redemption of this statement would pass the Core gates now: a module set, `redeemOn`, and a curve price
+    /// at its floor
     struct StatementView {
         uint256 id;
         uint256 cost;
         uint64 composedAt;
+        address composer;
         uint256 rating;
         uint256 priceReference;
         uint256 askingPrice;
@@ -55,7 +56,9 @@ contract CoreLens {
         address successor;
         address balanceModule;
         address balanceToken;
-        uint256 balanceMode;
+        bool redeemOn;
+        bool balanceBidOn;
+        /// the balance module's `unitPerPoint()` now, 0 when no module is set or the read fails
         uint256 unitPerPoint;
         bool controllerLocked;
         bool balanceModuleLocked;
@@ -128,8 +131,10 @@ contract CoreLens {
         s.successor = core.successor();
         s.balanceModule = core.balanceModule();
         s.balanceToken = core.balanceToken();
-        s.balanceMode = core.settings().balanceMode;
-        s.unitPerPoint = core.unitPerPoint();
+        Settings memory st = core.settings();
+        s.redeemOn = st.redeemOn;
+        s.balanceBidOn = st.balanceBidOn;
+        if (s.balanceModule != address(0)) s.unitPerPoint = _liveUnit(s.balanceModule);
         s.controllerLocked = core.controllerLocked();
         s.balanceModuleLocked = core.balanceModuleLocked();
         s.targetsLocked = core.targetsLocked();
@@ -162,8 +167,23 @@ contract CoreLens {
     /// the controller's sale price of pile credit `id` now, wei. zero when the controller does not answer with one word
     /// (a credit not in the pile, or a controller without the credit sale window)
     function creditPriceOf(uint256 id) external view returns (uint256 price) {
-        (bool ok, bytes memory out) =
-            controller().staticcall{gas: PRICE_GAS}(abi.encodeWithSignature("creditPrice(uint256)", id));
+        return _word(abi.encodeWithSignature("creditPrice(uint256)", id));
+    }
+
+    /// `creditPriceOf(id)` plus the controller's royalty, the amount `buyCredit` takes. zero when the controller does not
+    /// answer with one word
+    function grossCreditPriceOf(uint256 id) external view returns (uint256 price) {
+        return _word(abi.encodeWithSignature("grossCreditPrice(uint256)", id));
+    }
+
+    /// the controller's gross asking price of held statement `sid`, the amount `buy` takes. zero when the controller does
+    /// not answer with one word
+    function grossAskingPrice(uint256 sid) external view returns (uint256 price) {
+        return _word(abi.encodeWithSignature("grossPriceOf(uint256)", sid));
+    }
+
+    function _word(bytes memory call_) private view returns (uint256 price) {
+        (bool ok, bytes memory out) = controller().staticcall{gas: PRICE_GAS}(call_);
         if (ok && out.length == 32) price = abi.decode(out, (uint256));
     }
 
@@ -230,19 +250,17 @@ contract CoreLens {
         return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
     }
 
-    /// the balance token the bid pays for a live credit now, zero when the bid is off: no module set, `balanceMode` other
-    /// than 2, or the engine retired. the unit is the lower of the stored and the live `unitPerPoint()`, as in
-    /// `sellForBalance`, and a failed live read gives 0. the bid is capped at `balancePot`, the most `sellForBalance` can pay for one credit.
+    /// the balance token the bid pays for a live credit now, zero when the bid is off: no module set, `balanceBidOn` false,
+    /// or the engine retired. the unit is the module's `unitPerPoint()` read now, as in `sellForBalance`, and a failed
+    /// read gives 0. the bid is capped at `balancePot`, the most `sellForBalance` can pay for one credit.
     /// the Core reads the same score from the credit score contract in `sellForBalance`
     function balanceBidOf(uint256 id) external view returns (uint256) {
         ICore core = CORE;
         if (core.balanceModule() == address(0) || core.retired()) return 0;
         Settings memory st = core.settings();
-        if (st.balanceMode != 2) return 0;
+        if (!st.balanceBidOn) return 0;
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(ICredits(CREDITS).seedOf(id), ICredits(CREDITS).timestampOf(id));
-        uint256 unit = core.unitPerPoint();
-        uint256 live = _liveUnit(core.balanceModule());
-        if (live < unit) unit = live;
+        uint256 unit = _liveUnit(core.balanceModule());
         uint256 bid = score * unit * (10_000 - st.balanceBidMarginBps) / 10_000;
         uint256 pot = core.balancePot();
         return bid > pot ? pot : bid;
@@ -251,7 +269,7 @@ contract CoreLens {
     function _statements(uint256 start, uint256 n) private view returns (StatementView[] memory out) {
         ICore core = CORE;
         address ctl = controller();
-        bool modeOn = core.balanceModule() != address(0) && core.settings().balanceMode >= 1;
+        bool modeOn = core.balanceModule() != address(0) && core.settings().redeemOn;
         uint256[] memory ids = core.heldStatements();
         uint256 from = start.min(ids.length);
         uint256 to = ids.length.min(from.saturatingAdd(n));
@@ -264,6 +282,7 @@ contract CoreLens {
     function _statement(uint256 sid, address ctl, bool modeOn) private view returns (StatementView memory v) {
         v.id = sid;
         (, v.cost, v.composedAt) = CORE.statementInfo(sid);
+        v.composer = CORE.composerOf(sid);
         v.rating = CORE.ratingOf(sid);
         v.priceReference = _reference(ctl, sid);
         v.askingPrice = _askingPrice(ctl, sid);

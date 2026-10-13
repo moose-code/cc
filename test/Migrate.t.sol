@@ -293,10 +293,7 @@ contract MigrateTest is Fixture {
         _migrate(1000);
         assertEq(core.ethPot(), 0, "setup: the pot is empty");
         uint256 buybackBefore = core.ethToBuyback();
-        uint256 price = ctl.priceOf(sid);
-        vm.deal(address(0xB1D), price);
-        vm.prank(address(0xB1D));
-        ctl.buy{value: price}(sid);
+        _buy(address(0xB1D), sid);
         assertEq(STATEMENTS.ownerOf(sid), address(0xB1D), "the buyer does not hold the statement");
         assertGt(core.ethPot(), 0, "the proceeds were not booked to the pot");
         assertGt(core.ethToBuyback(), buybackBefore, "the proceeds were not booked to the buyback pot");
@@ -619,9 +616,6 @@ contract MigrateTest is Fixture {
     }
 
     function test_OK_aRetiredCoreStillBooksFeesAndSkims() public {
-        Settings memory st = core.settings();
-        st.feeToBuybackBps = 1000;
-        _setSettings(st);
         _fundPot(1 ether);
         _setSuccessor();
         _migrate(1000);
@@ -629,7 +623,8 @@ contract MigrateTest is Fixture {
         assertEq(core.ethPot(), 0, "setup: the pot moved");
         _buyCoin(funder, 3 ether);
         assertGt(core.ethPot(), 0, "fees were not booked to the pot");
-        assertGt(core.ethToBuyback(), retained, "fees were not booked to the buyback pot");
+        assertEq(core.ethToBuyback(), retained, "fees reached the buyback pot");
+        assertGt(core.ethRedeemBurn(), 0, "fees were not booked to the reserve");
         uint256 pot = core.ethPot();
         vm.deal(address(core), address(core).balance + 1 ether);
         core.skim();

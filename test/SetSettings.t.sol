@@ -135,6 +135,23 @@ contract SetSettingsTest is Fixture {
         probe.applyTo(live);
     }
 
+    /// the two switches are fields 11 and 12 and take 0 or 1: a patch value of 2 is read back different and refused
+    function test_theTwoSwitchesTakeZeroOrOne() public {
+        Settings memory live = core.settings();
+        assertFalse(live.redeemOn);
+        probe.single("redeemOn", 1);
+        probe.single("balanceBidOn", 1);
+        Settings memory next = probe.applyTo(live);
+        assertTrue(next.redeemOn && next.balanceBidOn, "both switches on");
+        (uint256 n, uint256 first) = _diff(live, next);
+        assertEq(n, 2, "two fields changed");
+        assertEq(first, 11, "redeemOn is field 11");
+        SetSettingsProbe fresh = new SetSettingsProbe();
+        fresh.configure(address(core), '{"redeemOn": 2}');
+        vm.expectRevert(abi.encodeWithSelector(SetSettings.ValueTooWide.selector, "redeemOn"));
+        fresh.applyTo(live);
+    }
+
     /// run() refuses a value outside the bounds before it prints a calldata
     function test_runRefusesOutOfBounds() public {
         probe.single("saleFloorBps", 999);

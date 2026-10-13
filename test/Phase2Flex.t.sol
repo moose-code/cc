@@ -62,7 +62,7 @@ contract Phase2FlexTest is Fixture {
         _replace(fresh);
         assertEq(core.balanceModule(), fresh);
         assertEq(core.balanceToken(), address(xt));
-        assertEq(core.unitPerPoint(), 2 * UNIT);
+        assertEq(_moduleUnit(), 2 * UNIT);
 
         // the redemption goes through the new module and pays by the new unit
         _makeEligible(sid);
@@ -104,16 +104,14 @@ contract Phase2FlexTest is Fixture {
     function test_replace_sameAddressUpdatesTheUnit() public {
         _enterPhase2();
         mod.setUnitPerPoint(3 * UNIT);
-        // the module changed its answer, the core keeps the unit it read until the set runs
-        assertEq(core.unitPerPoint(), UNIT);
+        assertEq(_moduleUnit(), 3 * UNIT, "the core reads the unit the module reports now");
         vm.expectEmit(address(core));
         emit ICore.BalanceModuleSet(address(mod), address(xt), 3 * UNIT);
         _replace(address(mod));
         assertEq(core.balanceModule(), address(mod));
-        assertEq(core.unitPerPoint(), 3 * UNIT, "a unit change takes effect at once");
         mod.setUnitPerPoint(4 * UNIT / 10);
         _replace(address(mod));
-        assertEq(core.unitPerPoint(), 4 * UNIT / 10);
+        assertEq(_moduleUnit(), 4 * UNIT / 10);
     }
 
     function test_replace_differentBalanceTokenReverts() public {
@@ -134,7 +132,7 @@ contract Phase2FlexTest is Fixture {
         core.redeemStatement(1);
         _replace(address(mod));
         assertEq(core.balanceToken(), address(xt));
-        assertEq(core.unitPerPoint(), 7 * UNIT / 10);
+        assertEq(_moduleUnit(), 7 * UNIT / 10);
     }
 
     function test_replace_everyTimeAtOnceAndOnlyTheOwner() public {
@@ -143,7 +141,7 @@ contract Phase2FlexTest is Fixture {
         MockBalanceModule m3 = _mod(5 * UNIT / 10);
         _replace(address(m3));
         assertEq(core.balanceModule(), address(m3));
-        assertEq(core.unitPerPoint(), 5 * UNIT / 10);
+        assertEq(_moduleUnit(), 5 * UNIT / 10);
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setBalanceModule(address(mod));
     }
@@ -153,10 +151,10 @@ contract Phase2FlexTest is Fixture {
         MockBalanceModule a = _mod(2 * UNIT);
         MockBalanceModule b = _mod(4 * UNIT / 10);
         _replace(address(a));
-        assertEq(core.unitPerPoint(), 2 * UNIT);
+        assertEq(_moduleUnit(), 2 * UNIT);
         _replace(address(b));
         assertEq(core.balanceModule(), address(b));
-        assertEq(core.unitPerPoint(), 4 * UNIT / 10);
+        assertEq(_moduleUnit(), 4 * UNIT / 10);
         assertEq(core.balanceToken(), address(xt));
     }
 
@@ -178,7 +176,7 @@ contract Phase2FlexTest is Fixture {
         core.setBalanceModule(address(gone));
         vm.stopPrank();
         assertEq(core.balanceModule(), address(mod), "every refusal left the state alone");
-        assertEq(core.unitPerPoint(), UNIT);
+        assertEq(_moduleUnit(), UNIT);
     }
 
     function test_replace_oldModuleIsNoLongerForbiddenAndTheNewOneIs() public {
@@ -260,25 +258,25 @@ contract Phase2FlexTest is Fixture {
         _solvent();
     }
 
-    // ------------------------------------------------------------------ balance mode gates
+    // ------------------------------------------------------------------ the two switches
 
-    function test_mode_bidAndComposeBalanceNeedModeTwo() public {
+    function test_mode_bidNeedsBalanceBidOn() public {
         _enterPhase2();
-        _setBalanceMode(1);
+        _setSwitches(true, false);
         _potX(1e22);
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
-        vm.expectRevert(ICore.BalanceModeOff.selector);
+        vm.expectRevert(ICore.BalanceBidOff.selector);
         core.sellForBalance(ids);
     }
 
-    function test_mode_holdStillRedeems() public {
+    function test_mode_redeemRunsWithBalanceBidOff() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        _setBalanceMode(1);
+        _setSwitches(true, false);
         _makeEligible(sid);
         core.redeemStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod), "mode 1 redeems");
+        assertEq(STATEMENTS.ownerOf(sid), address(mod), "redemption runs with the bid off");
     }
 
     // ------------------------------------------------------------------ solvency through replacements

@@ -64,11 +64,11 @@ abstract contract FeeBase is Fixture {
         toEngine = amount - toPayees;
     }
 
-    /// @dev the part of an engine inflow `toEngine` the core's `receive` books to the pot: the buyback share and the
-    /// redeem burn share, both bps of the inflow, are taken off first
+    /// @dev the part of an engine inflow `toEngine` the core's `receive` books to the pot: the redeem burn share, bps of
+    /// the inflow, is taken off first
     function _toPot(uint256 toEngine) internal view returns (uint256) {
         Settings memory s = core.settings();
-        return toEngine - toEngine * s.feeToBuybackBps / 10_000 - toEngine * s.feeToRedeemBurnBps / 10_000;
+        return toEngine - toEngine * s.feeToRedeemBurnBps / 10_000;
     }
 
     /// @dev the redeem burn share the core's `receive` books from an engine inflow `toEngine`
@@ -615,7 +615,7 @@ contract ReceiveTest is FeeBase {
         m.setFeeRouter(address(feeRouter));
         vm.deal(address(m), 1 ether);
         _setBalanceModule(address(m));
-        _setBalanceMode(2);
+        _setSwitches(true, true);
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         uint256 pot = core.ethPot();
@@ -808,7 +808,7 @@ contract ReceiveSettingsTest is FeeBase {
         m.setFeeRouter(address(feeRouter));
         vm.deal(address(m), 1 ether);
         _setBalanceModule(address(m));
-        _setBalanceMode(2);
+        _setSwitches(true, true);
         Composed memory c = _composeOnce();
         // an eth lane statement is not eligible until its asking price falls to its cost
         vm.expectRevert(ICore.NotEligible.selector);
@@ -837,11 +837,12 @@ contract ReceiveSettingsTest is FeeBase {
         _setSettings(s);
         uint256 sid = _composeOnce().sid;
         uint256 price = ctl.priceOf(sid);
+        uint256 gross = ctl.grossPriceOf(sid);
 
         vm.deal(address(core), address(core).balance + 0.5 ether);
         SwapAroundBuy w = new SwapAroundBuy(router, address(ctl), launchKey);
         w.setFeeRouter(address(feeRouter));
-        vm.deal(address(w), 4 ether + price);
+        vm.deal(address(w), 4 ether + gross);
         uint256 pot = core.ethPot();
         uint256 back = core.ethToBuyback();
         uint256 bal = address(core).balance;
@@ -1271,9 +1272,8 @@ contract BuybackSettingsTest is FeeBase {
         _setSettings(s);
     }
 
-    /// what the last `_buyback` returned to the pot: the unused part of the slice, and the buyback share of the flush
+    /// what the last `_buyback` returned to the pot: the unused part of the slice
     uint256 internal lastMargin;
-    uint256 internal lastFeeShare;
 
     /// one buyback by the keeper, checked against the settings. returns the slice taken and the payment
     function _buyback() internal returns (uint256 slice, uint256 paid) {
@@ -1297,11 +1297,9 @@ contract BuybackSettingsTest is FeeBase {
         assertLt(coin.totalSupply(), supply, "burned");
         assertEq(core.ethPot(), pot, "the skim of the swap went to the router");
         assertGt(address(feeRouter).balance, rbal, "the skim of the swap reached the router");
-        (, uint256 toEngine) = _routerSplit(address(feeRouter).balance);
         lastMargin = slice - spent - paid;
-        lastFeeShare = toEngine * s.feeToBuybackBps / 10_000;
         _flush();
-        assertEq(core.ethToBuyback(), pool - slice + lastMargin + lastFeeShare, "the unused payment and the fee share came back");
+        assertEq(core.ethToBuyback(), pool - slice + lastMargin, "the unused payment came back");
         assertEq(core.lastBuybackBlock(), block.number);
         assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
     }
@@ -1356,7 +1354,7 @@ contract BuybackSettingsTest is FeeBase {
         uint256 rest = core.ethToBuyback();
         (slice, paid) = _buyback();
         assertEq(slice, rest);
-        assertEq(core.ethToBuyback(), lastMargin + lastFeeShare, "only the unused payment margin and the fee share are left");
+        assertEq(core.ethToBuyback(), lastMargin, "only the unused payment margin is left");
         assertEq(
             lastMargin,
             600_000 * block.basefee.min(core.settings().keeperMaxBaseFee) + 0.0005 ether - paid,

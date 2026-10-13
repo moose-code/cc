@@ -8,23 +8,9 @@ import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {MigrationSink} from "./standins/MigrationSink.sol";
 
-/// balance module whose `balanceToken()` can be changed after it is set
-contract TokenSwitchModule {
-    address public balanceToken;
-    uint256 public unitPerPoint = 1e10;
-
-    constructor(address token) {
-        balanceToken = token;
-    }
-
-    function setBalanceToken(address token) external {
-        balanceToken = token;
-    }
-}
-
 /// fixes of the security review of 55307c4 (docs/reviews/REVIEW-security-55307c4.md).
-/// M1: the stored unit is the redemption check basis, the balance token bid pays by the lower of the stored and the live unit,
-/// and `refreshUnitPerPoint` re-reads the unit after `lockBalanceModule`. M2: `releaseRedeemBurn` moves the reserve into
+/// M1: the redemption check and the balance token bid read the unit from the module in the call, so a locked module needs
+/// no refresh. M2: `releaseRedeemBurn` moves the reserve into
 /// the coin buyback. L4: slippage is bounded by the bid margin. I3: the lens bid reads retired, mode and the pot
 contract SecFixes55307c4 is Fixture {
     function _scoreOf(uint256 id) internal view returns (uint256) {
@@ -33,9 +19,8 @@ contract SecFixes55307c4 is Fixture {
 
     // ------------------------------------------------------------------ M1: the balance token bid
 
-    /// the bid pays by the module's live unit when it is below the stored unit, so a module that lowered its rate
-    /// after the owner set it cannot make the bid overpay
-    function test_bidPaysTheLowerOfStoredAndLiveUnit() public {
+    /// the bid pays by the module's live unit
+    function test_bidPaysTheLiveUnit() public {
         _enterPhase2();
         _setBalancePool();
         _fillBalanceBuyback();
@@ -47,12 +32,12 @@ contract SecFixes55307c4 is Fixture {
         core.sellForBalance(ids);
         uint256 paid = pot - core.balancePot();
         uint256 net = 10_000 - core.settings().balanceBidMarginBps;
-        assertEq(paid, score * (UNIT / 2) * net / 10_000, "the bid pays at the live unit, not the stored one");
+        assertEq(paid, score * (UNIT / 2) * net / 10_000, "the bid pays at the live unit");
         assertLe(paid, score * (UNIT / 2), "the bid does not exceed what a redemption now returns");
     }
 
-    /// a higher live unit does not raise the bid above the stored unit
-    function test_bidKeepsTheStoredUnitWhenLiveIsHigher() public {
+    /// a higher live unit raises the bid with it
+    function test_bidFollowsAHigherLiveUnit() public {
         _enterPhase2();
         _setBalancePool();
         _fillBalanceBuyback();
@@ -64,7 +49,7 @@ contract SecFixes55307c4 is Fixture {
         core.sellForBalance(ids);
         uint256 paid = pot - core.balancePot();
         uint256 net = 10_000 - core.settings().balanceBidMarginBps;
-        assertEq(paid, score * UNIT * net / 10_000, "the bid pays at the stored unit");
+        assertEq(paid, score * UNIT * 2 * net / 10_000, "the bid pays at the live unit");
     }
 
     /// a failing live unit read reverts the whole bid, so no stale overpay slips through
@@ -101,95 +86,43 @@ contract SecFixes55307c4 is Fixture {
         core.sellForBalance(ids);
     }
 
-    // ------------------------------------------------------------------ M1: refresh after the lock
+    // ------------------------------------------------------------------ M1: the unit of a locked module
 
-    /// after `lockBalanceModule` the owner still refreshes the stored unit from the current module, which unbricks every
-    /// held statement when the module's redeem rate changed. the module and the balance token stay fixed
-    function test_refreshUnbricksTheLockedModule() public {
+    /// after `lockBalanceModule` the unit still follows the module: a fall of the module's redeem rate lowers the
+    /// minimum of the redemption with it. the module and the balance token stay fixed
+    function test_lockedModuleRedeemsAtItsLiveUnit() public {
         _enterPhase2();
         vm.prank(owner);
         core.lockBalanceModule();
-        // the module's rate falls more than the slippage tolerance: at the stale stored unit every redemption underpays
         mod.setUnitPerPoint(UNIT * 97 / 100);
         uint256 sid = _composeOnce().sid;
+        uint256 rating = core.ratingOf(sid);
         _makeEligible(sid);
-        vm.expectRevert(ICore.Underpaid.selector);
-        core.redeemStatement(sid);
-
-        vm.prank(owner);
-        core.refreshUnitPerPoint();
-        assertEq(core.unitPerPoint(), UNIT * 97 / 100, "the stored unit is the refreshed one");
-        // the module cannot be changed after the lock
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("balanceModule")));
         core.setBalanceModule(address(mod));
-        // the redemption now goes through at the refreshed rate
         core.redeemStatement(sid);
         assertFalse(_isHeld(sid), "the statement redeemed");
+        assertEq(xt.balanceOf(address(core)), rating * (UNIT * 97 / 100), "paid by the live unit");
     }
 
-    function test_refreshIsOwnerOnly() public {
+    /// a live unit above uint128 reverts the redemption and the bid with `BadModule`
+    function test_unitAboveUint128RevertsRedemptionAndBid() public {
         _enterPhase2();
-        vm.expectRevert(ICore.OnlyOwner.selector);
-        core.refreshUnitPerPoint();
-    }
-
-    function test_refreshRevertsWithoutAModule() public {
-        vm.prank(owner);
-        vm.expectRevert(ICore.NoBalanceModule.selector);
-        core.refreshUnitPerPoint();
-    }
-
-    function test_refreshRejectsAZeroUnit() public {
-        _enterPhase2();
-        mod.setUnitPerPoint(0);
-        vm.prank(owner);
-        vm.expectRevert(ICore.BadModule.selector);
-        core.refreshUnitPerPoint();
-    }
-
-    function test_refreshRejectsAFailingRead() public {
-        _enterPhase2();
-        mod.setRevertUnit(true);
-        vm.prank(owner);
-        vm.expectRevert(ICore.BadModule.selector);
-        core.refreshUnitPerPoint();
-    }
-
-    function test_refreshRejectsAUnitAboveUint128() public {
-        _enterPhase2();
+        _fillBalanceBuyback();
         mod.setUnitPerPoint(uint256(type(uint128).max) + 1);
-        vm.prank(owner);
+        _fillEthPile(80);
+        vm.fee(composeBasefee);
+        vm.prank(keeper);
+        core.compose();
+        uint256 sid = STATEMENTS.supply();
+        _makeEligible(sid);
         vm.expectRevert(ICore.BadModule.selector);
-        core.refreshUnitPerPoint();
-        // the edge is accepted
-        mod.setUnitPerPoint(type(uint128).max);
-        vm.prank(owner);
-        core.refreshUnitPerPoint();
-        assertEq(core.unitPerPoint(), type(uint128).max, "the largest unit is accepted");
-    }
-
-    function test_refreshLeavesModuleAndTokenUnchanged() public {
-        _enterPhase2();
-        address m = core.balanceModule();
-        address t = core.balanceToken();
-        mod.setUnitPerPoint(UNIT * 3);
-        vm.prank(owner);
-        core.refreshUnitPerPoint();
-        assertEq(core.unitPerPoint(), UNIT * 3, "the unit is the refreshed one");
-        assertEq(core.balanceModule(), m, "the module is unchanged");
-        assertEq(core.balanceToken(), t, "the balance token is unchanged");
-    }
-
-    function test_refreshRevertsWhenTheModuleChangedItsBalanceToken() public {
-        _enterPhase2();
-        TokenSwitchModule sw = new TokenSwitchModule(address(xt));
-        vm.prank(owner);
-        core.setBalanceModule(address(sw));
-        sw.setBalanceToken(address(new MockBalanceToken("Other", "OTH")));
-        vm.prank(owner);
-        vm.expectRevert(ICore.BalanceTokenChanged.selector);
-        core.refreshUnitPerPoint();
+        core.redeemStatement(sid);
+        uint256[] memory ids = _credits(seller, 1);
+        vm.prank(seller);
+        vm.expectRevert(ICore.BadModule.selector);
+        core.sellForBalance(ids);
     }
 
     // ------------------------------------------------------------------ M2: release the redeem burn reserve
@@ -268,15 +201,15 @@ contract SecFixes55307c4 is Fixture {
 
     // ------------------------------------------------------------------ I3: the lens bid
 
-    function test_lensBidZeroOffMode2() public {
+    function test_lensBidZeroWhileBalanceBidIsOff() public {
         _enterPhase2();
         _fillBalanceBuyback();
         uint256[] memory ids = _credits(seller, 1);
-        assertGt(lens.balanceBidOf(ids[0]), 0, "the bid is live in mode 2");
-        _setBalanceMode(1);
-        assertEq(lens.balanceBidOf(ids[0]), 0, "mode 1 gives no bid");
-        _setBalanceMode(0);
-        assertEq(lens.balanceBidOf(ids[0]), 0, "mode 0 gives no bid");
+        assertGt(lens.balanceBidOf(ids[0]), 0, "the bid is live with balanceBidOn");
+        _setSwitches(true, false);
+        assertEq(lens.balanceBidOf(ids[0]), 0, "balanceBidOn false gives no bid");
+        _setSwitches(false, false);
+        assertEq(lens.balanceBidOf(ids[0]), 0, "both switches off give no bid");
     }
 
     /// after the module lowers its rate the quote equals the payout, and a failing live read quotes 0

@@ -85,6 +85,10 @@ contract OnePileTest is Fixture {
         (, uint256 cost,) = core.creditInfo(id);
         assertGt(want, core.floorRate(), "the backstop scales above the floor rate for a rich credit");
         assertEq(cost, want, "the recorded cost is the scaled backstop");
+        // above refScore the recorded cost is the point rate times the score (`pointRate` rounds down once, the cost once)
+        uint256 pointValue = _score(id) * ctl.pointRate();
+        assertGe(cost, pointValue, "at least score times the point rate");
+        assertLt(cost - pointValue, _score(id), "and above it by less than the rounding of the point rate");
     }
 
     /// a credit scored at or below `refScore` records the unscaled floor rate as its cost

@@ -139,7 +139,8 @@ abstract contract InvariantFixture is Fixture {
         if (phase2) {
             core.setBalanceModule(address(mod));
             Settings memory es = core.settings();
-            es.balanceMode = 2;
+            es.redeemOn = true;
+            es.balanceBidOn = true;
             core.setSettings(es);
             // the balance token / native eth pool prices the statement value floor and the credit sale baseline. a
             // real initialized pool at a 1:1 sqrt price, pointed at by the real controller

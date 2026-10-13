@@ -217,6 +217,27 @@ contract ChosenComposeTest is Fixture {
         assertGt(core.ratingOf(sid), 0, "rating is nonzero");
     }
 
+    /// the Core stores the composer of every statement, for `compose` and for `composeChosen`
+    function test_record_composerIsTheCaller() public {
+        uint256[] memory page = _pile(80);
+        _on();
+        uint256 sid = STATEMENTS.supply() + 1;
+        _call(_first80(page), 0);
+        assertEq(core.composerOf(sid), chooser, "composeChosen records its caller");
+        _fillEthPile(80);
+        uint256 sid2 = STATEMENTS.supply() + 1;
+        vm.warp(block.timestamp + ctl.creditWindow() + 1);
+        vm.fee(composeBasefee);
+        vm.prank(keeper);
+        core.compose();
+        assertEq(core.composerOf(sid2), keeper, "compose records its caller");
+        assertEq(core.composerOf(sid), chooser, "and leaves the earlier one");
+        // a sold statement keeps its composer
+        _buy(chooser, sid);
+        assertEq(core.composerOf(sid), chooser, "the composer stays after the sale");
+        assertEq(core.composerOf(sid2 + 100), address(0), "a statement that was never composed has none");
+    }
+
     function test_event_carriesCallerIdsFormatCost() public {
         uint256[] memory page = _pile(80);
         _on();

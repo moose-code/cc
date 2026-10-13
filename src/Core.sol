@@ -81,8 +81,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error Underpaid();
     error NoBalanceModule();
     error BalanceTokenChanged();
-    /// the action is not allowed in the current `balanceMode`
-    error BalanceModeOff();
+    /// `redeemStatement` while `redeemOn` is false
+    error RedeemOff();
+    /// `sellForBalance` while `balanceBidOn` is false
+    error BalanceBidOff();
     /// `redeemStatement`: the controller's `atFloor` is false (the curve price has not reached its floor) or the
     /// controller did not answer
     error NotEligible();
@@ -148,8 +150,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event TargetsLocked();
     event ControllerSet(address controller);
     event BalanceModuleSet(address balanceModule, address balanceToken, uint256 unitPerPoint);
-    /// `refreshUnitPerPoint` re-read `unitPerPoint` from the current module
-    event UnitPerPointRefreshed(address balanceModule, uint256 unitPerPoint);
     /// `releaseRedeemBurn` moved `amount` of the redeem burn reserve into the coin buyback
     event RedeemBurnReleased(uint256 amount);
     event TargetAdded(address target);
@@ -254,9 +254,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     mapping(uint256 => CoreLib.Statement) private _statements;
     uint256[] private _heldIds;
 
-    /// balance token base units per stored score unit (one ten-thousandth of a point), read from the module when it is set
-    uint256 public unitPerPoint;
-
     /// the contract `migrate` sends the assets to, and whether `setSuccessor` is closed
     address public successor;
     bool public successorLocked;
@@ -280,6 +277,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint40 public pausedSince;
     /// seconds of every closed pause. with the open pause, `pausedNow()` is the paused seconds so far
     uint40 public pausedTotal;
+    /// the caller of the `compose` or `composeChosen` that made each statement. kept after the statement is sold
+    mapping(uint256 => address) public composerOf;
 
     modifier onlyOwner() {
         _onlyOwner();
@@ -350,8 +349,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// accepts eth from anyone but the fee source and leaves it unbooked (`skim` books it). eth from the fee source (the
-    /// router flushing the pool's fee eth) is booked: `feeToBuybackBps` to the coin buyback, `feeToRedeemBurnBps` to the
-    /// redeem burn reserve, the rest to the pot. while a measurement is in flight the fee source REVERTS: a router flush
+    /// router flushing the pool's fee eth) is booked: `feeToRedeemBurnBps` to the redeem burn reserve, the rest to the pot. while a measurement is in flight the fee source REVERTS: a router flush
     /// started inside a measured call (by the seller's callback, say) then fails as a whole and the fees wait in the
     /// router. every other sender is accepted unbooked, so a refund or a sale payout can never fail a call
     receive() external payable {
@@ -359,11 +357,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (_measuring().get()) revert Measuring();
         _checkpoint();
         Settings storage s = _st();
-        uint256 toBuyback = msg.value * s.feeToBuybackBps / BPS;
         uint256 toRedeemBurn = msg.value * s.feeToRedeemBurnBps / BPS;
-        if (toBuyback != 0) ethToBuyback += toBuyback;
         if (toRedeemBurn != 0) ethRedeemBurn += toRedeemBurn;
-        ethPot += msg.value - toBuyback - toRedeemBurn;
+        ethPot += msg.value - toRedeemBurn;
         emit FeesAdded(msg.value);
     }
 
@@ -682,6 +678,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
 
         _heldIds.push(sid);
+        composerOf[sid] = msg.sender;
         // rating is the sum of 80 credit scores in ten-thousandths of a point, each at most 8_000_000, so at most
         // 640_000_000, within uint32. the cast is checked so a statement whose rating does not fit is refused rather
         // than stored truncated (a compose cannot overprint, so this bound always holds)
@@ -786,21 +783,22 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                 REDEEM
     //////////////////////////////////////////////////////////////*/
 
-    /// hands a held statement to the balance module and books the balance token it returns into `balancePot`. requires `balanceMode`
-    /// at least 1 and a module set. a statement is eligible when the controller's curve price has reached its floor.
+    /// hands a held statement to the balance module and books the balance token it returns into `balancePot`. requires
+    /// `redeemOn` and a module set. a statement is eligible when the controller's curve price has reached its floor.
     /// the redemption must raise the balance token holding by at least
-    /// `rating * unitPerPoint * (10_000 - redeemSlippageBps) / 10_000`. every redemption moves `redeemBurnBps` of the
+    /// `rating * unitPerPoint * (10_000 - redeemSlippageBps) / 10_000`, with `unitPerPoint` read from the module in the
+    /// call (`BadModule` when the read fails, is zero or exceeds uint128). every redemption moves `redeemBurnBps` of the
     /// redeem burn reserve into the coin buyback
     function redeemStatement(uint256 sid) external nonReentrant {
         uint256 gasStart = gasleft();
         address module = balanceModule;
         if (module == address(0)) revert NoBalanceModule();
-        if (_st().balanceMode == 0) revert BalanceModeOff();
+        if (!_st().redeemOn) revert RedeemOff();
         CoreLib.Statement memory s = _statements[sid];
         if (!s.held) revert NotHeld();
         if (!_atFloor(sid)) revert NotEligible();
         address token = balanceToken;
-        uint256 required = uint256(s.rating) * unitPerPoint * (BPS - _st().redeemSlippageBps) / BPS;
+        uint256 required = uint256(s.rating) * _unitOf(module) * (BPS - _st().redeemSlippageBps) / BPS;
         _unhold(sid);
 
         uint256 balanceBefore = SafeTransferLib.balanceOf(token, address(this));
@@ -901,21 +899,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function setBalanceModule(address module) external onlyOwner nonReentrant {
         if (balanceModuleLocked) revert Locked("balanceModule");
         _setBalanceModule(module);
-    }
-
-    /// re-reads `unitPerPoint` from the current module and stores it. works after `lockBalanceModule`, and changes
-    /// neither the module nor the balance token. the module's `balanceToken()` must equal the stored balance token
-    /// (`BalanceTokenChanged`). the unit must be nonzero and at most `type(uint128).max`, the same check
-    /// a module set makes. the owner calls it after the module reports a new redeem rate
-    function refreshUnitPerPoint() external onlyOwner nonReentrant {
-        address module = balanceModule;
-        if (module == address(0)) revert NoBalanceModule();
-        if (IBalanceModule(module).balanceToken() != balanceToken) revert BalanceTokenChanged();
-        (bool ok, bytes memory out) = _ask(module, abi.encodeCall(IBalanceModule.unitPerPoint, ()), READ_GAS, 32);
-        uint256 unit = ok ? abi.decode(out, (uint256)) : 0;
-        if (unit == 0 || unit > type(uint128).max) revert BadModule();
-        unitPerPoint = unit;
-        emit UnitPerPointRefreshed(module, unit);
     }
 
     /// moves `amount` of the redeem burn reserve into the coin buyback, capped at the reserve. the eth stays inside the
@@ -1109,21 +1092,26 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit RateSet(rate);
     }
 
-    /// sets or replaces the balance module. the balance token never changes once set. the unit is read again every time, so
-    /// naming the same module again is how the unit is updated. a dormant allowed target flag of the new module is
-    /// cleared, so it cannot come back to life when the module is replaced
+    /// the module's `unitPerPoint()`, read with at most `READ_GAS`. reverts `BadModule` for a failed or short read, zero,
+    /// or a value above `type(uint128).max`
+    function _unitOf(address module) private view returns (uint256 unit) {
+        (bool ok, bytes memory out) = _ask(module, abi.encodeCall(IBalanceModule.unitPerPoint, ()), READ_GAS, 32);
+        unit = ok ? abi.decode(out, (uint256)) : 0;
+        if (unit == 0 || unit > type(uint128).max) revert BadModule();
+    }
+
+    /// sets or replaces the balance module. the balance token never changes once set. the module's unit must be valid
+    /// at the set (`_unitOf`). a dormant allowed target flag of the new module is cleared, so it cannot come back to
+    /// life when the module is replaced
     function _setBalanceModule(address module) private {
         address old = balanceModule;
         if (module.code.length == 0) revert BadModule();
         address token = IBalanceModule(module).balanceToken();
         if (old != address(0) && token != balanceToken) revert BalanceTokenChanged();
         if (token.code.length == 0 || _forbiddenBase(module) || _forbiddenBase(token)) revert BadModule();
-        (bool ok, bytes memory out) = _ask(module, abi.encodeCall(IBalanceModule.unitPerPoint, ()), READ_GAS, 32);
-        uint256 unit = ok ? abi.decode(out, (uint256)) : 0;
-        if (unit == 0 || unit > type(uint128).max) revert BadModule();
+        uint256 unit = _unitOf(module);
         balanceModule = module;
         balanceToken = token;
-        unitPerPoint = unit;
         if (allowedTarget[module]) delete allowedTarget[module];
         emit BalanceModuleSet(module, token, unit);
     }

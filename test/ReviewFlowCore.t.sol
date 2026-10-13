@@ -69,7 +69,6 @@ contract ReviewFlowCoreTest is Fixture {
         _setSettings(s);
         // the controller asks the floor too once its price has decayed
         vm.startPrank(owner);
-        ctl.setFloorBps(1_000);
         ctl.setFastDecayBpsPerHour(10_000);
         ctl.setSlowDecayBpsPerHour(10_000);
         vm.stopPrank();
@@ -124,7 +123,7 @@ contract ReviewFlowCoreTest is Fixture {
         m.keeperMaxBaseFee = 1 gwei;
     }
 
-    /// every field at the top of its bound, except feeToRedeemBurnBps which must leave room under the 10_000 fee sum
+    /// every field at the top of its bound
     function _allMax() internal pure returns (Settings memory m) {
         m = Settings(
             1_000, // dropPerCreditBps
@@ -138,7 +137,8 @@ contract ReviewFlowCoreTest is Fixture {
             5_000, // recoveryGapBps
             604_800, // peakHalfLife
             7_200, // buybackDelay
-            2, // balanceMode
+            true, // redeemOn
+            true, // balanceBidOn
             1_000, // redeemSlippageBps
             9_000, // balanceBidMarginBps
             10_000, // redeemBurnBps
@@ -148,8 +148,7 @@ contract ReviewFlowCoreTest is Fixture {
             uint64(RATE_START_MAX_WEI), // rateCap
             0.005 ether, // callerFee
             100 gwei, // callerMaxBaseFee
-            10_000, // feeToBuybackBps
-            0 // feeToRedeemBurnBps (the sum with feeToBuybackBps is at most 10_000)
+            10_000 // feeToRedeemBurnBps
         );
     }
 
@@ -172,30 +171,32 @@ contract ReviewFlowCoreTest is Fixture {
             // the three raw words hold exactly the values and nothing else
             bytes32 slot = 0xb5805f89ef62cd999f965a45fb6f4c11141caa04e5c4acba9c2552ef76902804;
             uint256 w0 = uint256(vm.load(address(core), slot));
-            assertEq(w0 >> 248, 0, "slot 0 top bits clear");
             assertEq(uint16(w0 >> 80), two[i].saleFloorBps, "the sale floor sits at bits 80 to 95");
             assertEq(uint16(w0 >> 96), two[i].saleToBuybackBps, "the sale buyback share sits at bits 96 to 111");
             assertEq(uint32(w0 >> 144), two[i].peakHalfLife, "the peak half life sits at bits 144 to 175");
-            assertEq(uint8(w0 >> 192), two[i].balanceMode, "the balance mode sits at bits 192 to 199");
-            assertEq(uint16(w0 >> 232), two[i].redeemBurnBps, "the redeem burn share sits at bits 232 to 247");
+            assertEq(uint8(w0 >> 192), two[i].redeemOn ? 1 : 0, "redeemOn sits at bits 192 to 199");
+            assertEq(uint8(w0 >> 200), two[i].balanceBidOn ? 1 : 0, "balanceBidOn sits at bits 200 to 207");
+            assertEq(uint16(w0 >> 208), two[i].redeemSlippageBps, "the redeem slippage sits at bits 208 to 223");
+            assertEq(uint16(w0 >> 224), two[i].balanceBidMarginBps, "the bid margin sits at bits 224 to 239");
+            assertEq(uint16(w0 >> 240), two[i].redeemBurnBps, "the redeem burn share sits at bits 240 to 255");
             uint256 w1 = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
             assertEq(w1 >> 240, 0, "slot 1 top bits clear");
             assertEq(uint128(w1), two[i].buybackSlice, "the buyback slice sits at bits 0 to 127");
             assertEq(uint64(w1 >> 128), two[i].keeperFee, "the keeper fee sits at bits 128 to 191");
             assertEq(uint48(w1 >> 192), two[i].keeperMaxBaseFee, "the keeper base fee ceiling sits at bits 192 to 239");
             uint256 w2 = uint256(vm.load(address(core), bytes32(uint256(slot) + 2)));
-            assertEq(w2 >> 208, 0, "slot 2 top bits clear");
+            assertEq(w2 >> 192, 0, "slot 2 top bits clear");
             assertEq(uint64(w2), two[i].rateCap, "the rate cap sits at bits 0 to 63");
             assertEq(uint64(w2 >> 64), two[i].callerFee, "the caller fee sits at bits 64 to 127");
             assertEq(uint48(w2 >> 128), two[i].callerMaxBaseFee, "the caller base fee ceiling sits at bits 128 to 175");
-            assertEq(uint16(w2 >> 176), two[i].feeToBuybackBps, "the fee buyback share sits at bits 176 to 191");
-            assertEq(uint16(w2 >> 192), two[i].feeToRedeemBurnBps, "the fee redeem burn share sits at bits 192 to 207");
+            assertEq(uint16(w2 >> 176), two[i].feeToRedeemBurnBps, "the fee redeem burn share sits at bits 176 to 191");
         }
     }
 
     function _hostileMix() internal pure returns (Settings memory m) {
         m = _allMax();
-        m.balanceMode = 2;
+        m.redeemOn = true;
+        m.balanceBidOn = true;
         m.redeemSlippageBps = 0;
         m.balanceBidMarginBps = 0;
         m.saleFloorBps = 3_000;
@@ -209,9 +210,9 @@ contract ReviewFlowCoreTest is Fixture {
             _setSettings(three[i]);
             for (uint256 g; g < 3; ++g) {
                 vm.warp(block.timestamp + (g == 0 ? 1 hours : (g == 1 ? 40 days : 3_650 days)));
-                uint256 pot = core.ethPot() + core.ethToBuyback();
+                uint256 pot = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
                 _buyCoin(funder, 2 ether);
-                assertGt(core.ethPot() + core.ethToBuyback(), pot, "the hook's push was booked");
+                assertGt(core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), pot, "the hook's push was booked");
                 core.ethRate();
                 _solvent();
             }
@@ -229,9 +230,10 @@ contract ReviewFlowCoreTest is Fixture {
         assertGt(core.balancePot(), 0);
         Settings[3] memory three = [_allMin(), _allMax(), _hostileMix()];
         for (uint256 i; i < 3; ++i) {
-            // _allMin and _allMax leave balanceMode 0 or 2; force the bid on so the extremes exercise it
+            // _allMin leaves both switches off; force them on so the extremes exercise the balance side
             Settings memory s = three[i];
-            s.balanceMode = 2;
+            s.redeemOn = true;
+            s.balanceBidOn = true;
             _setSettings(s);
             vm.warp(block.timestamp + (i == 0 ? 1 hours : 100 days));
             core.skim();

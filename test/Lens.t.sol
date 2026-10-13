@@ -125,6 +125,29 @@ contract LensTest is Fixture {
         }
     }
 
+    /// the gross views, the composer, the switches and the module's unit now
+    function test_OK_royaltyComposerSwitchesAndUnit() public {
+        _populate();
+        ICoreLens.Snapshot memory s = lens.snapshot();
+        assertTrue(s.redeemOn && s.balanceBidOn, "the two switches");
+        assertEq(s.unitPerPoint, mod.unitPerPoint(), "the unit is the module's now");
+        mod.setUnitPerPoint(3 * UNIT);
+        assertEq(lens.snapshot().unitPerPoint, 3 * UNIT, "and follows it");
+        mod.setRevertUnit(true);
+        assertEq(lens.snapshot().unitPerPoint, 0, "a failing read shows 0");
+        mod.setRevertUnit(false);
+        assertEq(lens.grossAskingPrice(sidFirst), ctl.grossPriceOf(sidFirst), "the gross asking price");
+        assertGt(lens.grossAskingPrice(sidFirst), lens.snapshot().statements[0].askingPrice, "above the price");
+        uint256 id = _fillEthPile(1)[0];
+        assertEq(lens.grossCreditPriceOf(id), ctl.grossCreditPrice(id), "the gross credit price");
+        assertGt(lens.grossCreditPriceOf(id), lens.creditPriceOf(id), "above the credit price");
+        ICoreLens.StatementView[] memory v = lens.snapshot().statements;
+        for (uint256 i; i < v.length; ++i) {
+            assertEq(v[i].composer, core.composerOf(v[i].id), "composer");
+            assertTrue(v[i].composer != address(0), "every held statement has a composer");
+        }
+    }
+
     function test_OK_theFlushFieldsEqualAnActualFlush() public {
         _populate();
         ICoreLens.Snapshot memory s = lens.snapshot();

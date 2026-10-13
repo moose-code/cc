@@ -29,21 +29,19 @@ contract PullFeesTest is CoreBase {
 
     struct Parts {
         uint256 shared;
-        uint256 toBuyback;
         uint256 toRedeemBurn;
         uint256 toPot;
     }
 
-    /// what `flush` does with `amount` now: payee shares, the engine part and its split into buyback, redeem burn and pot
+    /// what `flush` does with `amount` now: payee shares, the engine part and its split into redeem burn and pot
     function _parts(uint256 amount) internal view returns (Parts memory x) {
         (, uint32[] memory ppm) = feeRouter.payees();
         for (uint256 i; i < ppm.length; ++i) {
             x.shared += amount * ppm[i] / 1_000_000;
         }
         uint256 toEngine = amount - x.shared;
-        x.toBuyback = toEngine * core.settings().feeToBuybackBps / 10_000;
         x.toRedeemBurn = toEngine * core.settings().feeToRedeemBurnBps / 10_000;
-        x.toPot = toEngine - x.toBuyback - x.toRedeemBurn;
+        x.toPot = toEngine - x.toRedeemBurn;
     }
 
     function _payeeBalance() internal view returns (uint256) {
@@ -98,7 +96,7 @@ contract PullFeesTest is CoreBase {
 
         assertEq(address(feeRouter).balance, 0, "router emptied");
         assertEq(_payeeBalance() - payeeBefore, x.shared, "payee share");
-        assertEq(pulled.buyback - buybackBefore, x.toBuyback, "buyback part booked");
+        assertEq(pulled.buyback, buybackBefore, "no buyback part");
         assertEq(pulled.got, keeperFlush.got, "the seller is paid what a keeper flush then a sale pays");
         assertEq(pulled.pot, keeperFlush.pot, "same pot");
         assertEq(pulled.buyback, keeperFlush.buyback, "same buyback pot");
@@ -250,7 +248,7 @@ contract PullFeesTest is CoreBase {
         assertEq(address(feeRouter).balance, 0, "router emptied");
         assertEq(_payeeBalance() - payeeBefore, x.shared, "payee share");
         assertEq(keeper.balance - keeperBefore, buyPaid, "the buy payment to the buyer");
-        assertEq(core.ethToBuyback() - buyback, x.toBuyback);
+        assertEq(core.ethToBuyback(), buyback);
         assertEq(core.ethPot(), pot + x.toPot - price - buyPaid, "the pot took the fees and paid the purchase");
         (, uint256 basis,) = core.creditInfo(LISTED_A);
         assertEq(basis, price + buyPaid, "cost basis is price plus the payment");
@@ -275,7 +273,7 @@ contract PullFeesTest is CoreBase {
         assertEq(STATEMENTS.supply(), supply + 1, "composed");
         assertEq(address(feeRouter).balance, 0, "router emptied");
         assertEq(_payeeBalance() - payeeBefore, x.shared, "payee share");
-        assertEq(core.ethToBuyback() - buyback, x.toBuyback);
+        assertEq(core.ethToBuyback(), buyback);
         assertEq(keeper.balance, keeperBefore, "no gas repayment to the caller");
         assertEq(core.ethPot(), pot + x.toPot, "the pot took the fees");
     }
