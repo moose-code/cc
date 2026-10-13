@@ -4,11 +4,13 @@ import { getStatement } from "@/lib/sample";
 import { StatementTile } from "@/components/Tiles";
 import { StatusBadge } from "@/components/Cards";
 import { Addr } from "@/components/Addr";
+import { LiveStatement } from "@/components/StatementLive";
+import { isLive } from "@/lib/config";
 import { agoLabel, signedPct } from "@/lib/format";
 
-// CONNECT: load the statement from CoreLens (snapshot/statementsPage) by id, or
-// 404. askingPrice falls over time — poll ControllerV1.priceOf(id) / Core.
+// Live: read from the chain (LiveStatement). Sample: the static statements.
 export default function StatementDetail({ params }: { params: { id: string } }) {
+  if (isLive) return <LiveStatement id={Number(params.id)} />;
   const s = getStatement(Number(params.id));
   if (!s) notFound();
 
@@ -33,8 +35,6 @@ export default function StatementDetail({ params }: { params: { id: string } }) 
             <StatusBadge status={s.status} />
           </div>
 
-          {/* CONNECT: buy -> ControllerV1.buy(id) payable at priceOf(id), or
-              Core buy path. Show live price, min received, wallet balance. */}
           <div className="buybox">
             <div className="buybox-price">
               <span className="muted">
@@ -67,7 +67,6 @@ export default function StatementDetail({ params }: { params: { id: string } }) 
           </div>
 
           <div className="facts">
-            <Fact k="lane" v={s.lane} />
             <Fact k="cost" v={`${s.cost} eth`} />
             <Fact k="credits" v="80" />
             <Fact k="composed" v={agoLabel(s.composedAgo)} />

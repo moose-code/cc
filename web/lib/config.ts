@@ -7,11 +7,21 @@ const addr = (v?: string): Address | undefined =>
 // NEXT_PUBLIC_CHAIN_ID=31337 selects the local anvil fork (foundry chain).
 // Every other value selects mainnet.
 export const isLocal = process.env.NEXT_PUBLIC_CHAIN_ID === "31337";
-export const chain = isLocal ? foundry : mainnet;
 
 export const rpcUrl =
   process.env.NEXT_PUBLIC_RPC_URL ||
   (isLocal ? "http://127.0.0.1:8545" : "https://eth.drpc.org");
+
+// The local chain's default rpc is rpcUrl: the mock connector sends wallet
+// requests to chain.rpcUrls.default.
+export const chain = isLocal
+  ? { ...foundry, rpcUrls: { default: { http: [rpcUrl] } } }
+  : mainnet;
+
+// Local only: the account the mock connector acts as. anvil runs with
+// --auto-impersonate, so it signs for this address without a key.
+export const localAccount = (addr(process.env.NEXT_PUBLIC_LOCAL_ACCOUNT) ||
+  "0x1111111111111111111111111111111111111111") as Address;
 
 export const addresses = {
   core: addr(process.env.NEXT_PUBLIC_CORE),

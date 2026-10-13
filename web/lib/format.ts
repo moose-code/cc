@@ -73,7 +73,7 @@ export function agoLabel(s: number): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-// relative time from a unix seconds timestamp.
-export function relTime(ts: number): string {
-  return agoLabel(Math.floor(Date.now() / 1000) - ts);
+// relative time from a unix seconds timestamp; `now` is chain time (useNow).
+export function relTime(ts: number, now: number): string {
+  return agoLabel(now - ts);
 }

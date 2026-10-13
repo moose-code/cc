@@ -1,30 +1,47 @@
 "use client";
 
 import { useState } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, usePublicClient, useReadContract } from "wagmi";
+import { useQueryClient } from "@tanstack/react-query";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { parseEther } from "viem";
 import { CreditTile } from "@/components/Tiles";
 import { engineBid, enginePot, yourSampleCredits } from "@/lib/sample";
-import { commas } from "@/lib/format";
+import { addresses, chain } from "@/lib/config";
+import { coreAbi, creditsAbi } from "@/lib/abis";
+import { errMsg, sellQuote, useNow, useSellQuote, useSnapshot } from "@/lib/live";
+import { commas, eth } from "@/lib/format";
+import { useWriteWithBuffer } from "@/lib/tx";
 
-// Holders sell their credits (the external Credits NFT) into the engine's bid.
-//
-// CONNECT:
-//   - your credits -> enumerate the connected wallet's Credits NFTs
-//     (balanceOf + tokenOfOwnerByIndex, or Transfer logs). addresses.credits.
-//   - bid -> CoreLens.snapshot().ethRate (wei per credit).
-//   - buyable now -> ethPot / rate (the pot caps how many it can buy this call;
-//     there may also be a per-call pace bound).
-//   - approve -> Credits.setApprovalForAll(Core, true) once.
-//   - sell -> Core.sellForEth(ids, minOut). minOut guards the rate moving down
-//     between build and mine. Show total received = count * rate.
+const MIN_OUT_BPS = 9950n; // 0.5% under the batch total quoted at click time
+
+// Holders sell their credits (the external Credits NFT) into the engine's bid:
+// Credits.setApprovalForAll(Core, true) once, then Core.sellForEth(ids, minOut).
 export default function SellPage() {
-  const { isConnected } = useAccount();
+  const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
+  const { writeWithBuffer, isPending } = useWriteWithBuffer();
+  const client = usePublicClient();
+  const qc = useQueryClient();
+  const { data: snap } = useSnapshot();
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [err, setErr] = useState<string | null>(null);
 
-  const buyableNow = Math.floor(enginePot / engineBid);
-  const total = selected.size * engineBid;
+  const bid = snap?.ethRate ?? parseEther(String(engineBid));
+  const pot = snap?.ethPot ?? parseEther(String(enginePot));
+  const buyableNow = bid > 0n ? Number(pot / bid) : 0;
+  const now = useNow(5000);
+  const quote = useSellQuote(selected.size, now);
+  const total = quote.data ?? bid * BigInt(selected.size);
+
+  const { data: held } = useReadContract({
+    address: addresses.credits,
+    abi: creditsAbi,
+    functionName: "tokensOf",
+    args: address ? [address] : undefined,
+    query: { enabled: Boolean(addresses.credits && address) },
+  });
+  const mine: number[] = addresses.credits ? (held ?? []).map(Number) : yourSampleCredits;
 
   const toggle = (id: number) =>
     setSelected((prev) => {
@@ -33,9 +50,46 @@ export default function SellPage() {
       return next;
     });
   const all = () =>
-    setSelected((prev) =>
-      prev.size === yourSampleCredits.length ? new Set() : new Set(yourSampleCredits)
-    );
+    setSelected((prev) => (prev.size === mine.length ? new Set() : new Set(mine)));
+
+  async function onSell() {
+    setErr(null);
+    try {
+      const { core, credits } = addresses;
+      if (!core || !credits || !address || !client || selected.size === 0) return;
+      const approved = await client.readContract({
+        address: credits,
+        abi: creditsAbi,
+        functionName: "isApprovedForAll",
+        args: [address, core],
+      });
+      if (!approved) {
+        const h = await writeWithBuffer({
+          address: credits,
+          abi: creditsAbi,
+          functionName: "setApprovalForAll",
+          args: [core, true],
+          chainId: chain.id,
+        });
+        await client.waitForTransactionReceipt({ hash: h });
+      }
+      // The bid drops with each credit sold in one call: minOut is a share of
+      // the whole batch's total, replayed from the contract's rate loop.
+      const expected = await sellQuote(client, selected.size, now);
+      const h = await writeWithBuffer({
+        address: core,
+        abi: coreAbi,
+        functionName: "sellForEth",
+        args: [[...selected].map(BigInt), (expected * MIN_OUT_BPS) / 10000n],
+        chainId: chain.id,
+      });
+      await client.waitForTransactionReceipt({ hash: h });
+      setSelected(new Set());
+      qc.invalidateQueries();
+    } catch (e) {
+      setErr(errMsg(e));
+    }
+  }
 
   return (
     <main className="page detail">
@@ -52,21 +106,20 @@ export default function SellPage() {
           <div className="bidcard">
             <div className="buybox-price">
               <span className="muted">current bid</span>
-              <span className="big">{engineBid} eth</span>
+              <span className="big">{eth(bid)} eth</span>
             </div>
             <div className="quote">
               <div className="r">
                 <span>per credit</span>
-                <span>{engineBid} eth</span>
+                <span>{eth(bid)} eth</span>
               </div>
               <div className="r">
                 <span>engine can buy now</span>
-                {/* CONNECT: pot / rate */}
                 <span>~{commas(buyableNow)} credits</span>
               </div>
               <div className="r">
                 <span>pot</span>
-                <span>{enginePot} eth</span>
+                <span>{eth(pot, 2)} eth</span>
               </div>
             </div>
           </div>
@@ -84,18 +137,15 @@ export default function SellPage() {
             <>
               <div className="sell-head">
                 <span className="muted">
-                  {/* CONNECT: real holdings */}
-                  your credits ({yourSampleCredits.length})
+                  your credits ({mine.length})
                 </span>
                 <button className="link-btn" onClick={all}>
-                  {selected.size === yourSampleCredits.length
-                    ? "clear"
-                    : "select all"}
+                  {selected.size === mine.length ? "clear" : "select all"}
                 </button>
               </div>
 
               <div className="sell-list">
-                {yourSampleCredits.map((id) => {
+                {mine.map((id) => {
                   const on = selected.has(id);
                   return (
                     <button
@@ -106,7 +156,7 @@ export default function SellPage() {
                     >
                       <CreditTile id={id} />
                       <span className="rl-id">credit #{id}</span>
-                      <span className="muted">{engineBid} eth</span>
+                      <span className="muted">{eth(bid)} eth</span>
                       <span className="sell-check">{on ? "✓" : ""}</span>
                     </button>
                   );
@@ -120,18 +170,23 @@ export default function SellPage() {
                 </div>
                 <div className="r">
                   <span className="muted">you receive</span>
-                  <span className="big-sm">{total.toFixed(4)} eth</span>
+                  <span className="big-sm">up to {eth(total)} eth</span>
                 </div>
               </div>
 
-              {/* CONNECT: setApprovalForAll(Core) then sellForEth(ids, minOut) */}
-              <button className="action" disabled={selected.size === 0}>
-                approve &amp; sell {selected.size || ""} credits
+              <button
+                className="action"
+                onClick={onSell}
+                disabled={isPending || selected.size === 0 || !addresses.core || !addresses.credits}
+                title={!addresses.core ? "engine not deployed yet" : undefined}
+              >
+                {isPending ? "confirm in wallet…" : `approve & sell ${selected.size || ""} credits`}
               </button>
               <p className="muted small">
                 first sale approves the collection to the engine, then sells at
-                the bid.
+                the bid. the bid drops with each credit sold in one call.
               </p>
+              {err && <p className="panel-note" style={{ color: "var(--credit)" }}>{err}</p>}
             </>
           )}
         </div>

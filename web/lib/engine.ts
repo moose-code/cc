@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient, useBlockNumber } from "wagmi";
-import { formatUnits, type Address } from "viem";
+import { formatUnits, zeroAddress, type Address } from "viem";
 import { addresses, deployBlock, isLive, poolReady, ethUsdFeed } from "./config";
 import {
   coreLensAbi,
@@ -10,6 +10,7 @@ import {
   stateViewAbi,
   quoterAbi,
   chainlinkAbi,
+  transferEventAbi,
 } from "./abis";
 import { V4, poolId, poolKey, ccPerEthFromSqrt } from "./v4";
 
@@ -100,34 +101,132 @@ const SAMPLE_MARKET: Market = {
 
 // ---- hooks ------------------------------------------------------------------
 
-export function useStats() {
-  const feed = useFeed();
-  return useQuery<Stats>({
-    queryKey: ["stats", isLive, feed.data?.length ?? 0],
-    queryFn: () => {
-      if (!isLive || !feed.data) return SAMPLE_STATS;
-      // live: aggregate the scanned window. Bounded by the log scan, so these
-      // are "recent" counts, not genesis-cumulative.
-      let creditsBought = 0;
-      let ccBurned = 0;
-      let ethIntoCredits = 0;
-      const statements = new Set<number>();
-      for (const e of feed.data) {
-        if (e.kind === "credit") {
-          creditsBought++;
-          ethIntoCredits += Number(e.eth ?? 0);
-        }
-        if (e.kind === "composed" && e.tile) statements.add(e.tile.id);
-        if (e.kind === "burn") {
-          const m = e.detail.match(/([\d,]+) cc/);
-          if (m) ccBurned += Number(m[1].replace(/,/g, ""));
-        }
-      }
-      return { creditsBought, statements: statements.size, ethIntoCredits, ccBurned };
-    },
-    initialData: SAMPLE_STATS,
-  });
+// ---- event scan --------------------------------------------------------------
+
+export interface StatementSale {
+  id: number;
+  buyer: string;
+  price: bigint; // wei
 }
+
+// One pass over the Core logs (and the coin burn transfers) since the deploy
+// block: the newest FEED_ROWS rows for the feed, totals over every log.
+export interface Scan {
+  feed: FeedEvent[];
+  stats: Stats; // statements = Composed events; ccBurned = coin burned by the core
+  sold: StatementSale[]; // StatementSoldTo
+  exited: number[]; // StatementExited sids
+}
+
+const FEED_ROWS = 60;
+const SAMPLE_SCAN = (now: number): Scan => ({ feed: sampleFeed(now), stats: SAMPLE_STATS, sold: [], exited: [] });
+const EMPTY_SCAN: Scan = {
+  feed: [],
+  stats: { creditsBought: 0, statements: 0, ethIntoCredits: 0, ccBurned: 0 },
+  sold: [],
+  exited: [],
+};
+
+// block number -> timestamp. A mined block's timestamp does not change.
+const blockTime = new Map<bigint, number>();
+
+function useScan() {
+  const client = usePublicClient();
+  const { data: head } = useBlockNumber({ watch: isLive });
+  const q = useQuery<Scan>({
+    queryKey: ["scan", isLive, head?.toString()],
+    enabled: !isLive || Boolean(head),
+    refetchInterval: isLive ? 12000 : 30000,
+    placeholderData: (prev) => prev,
+    queryFn: async () => {
+      const now = Math.floor(Date.now() / 1000);
+      if (!isLive || !client || !addresses.core || !head) return SAMPLE_SCAN(now);
+      try {
+        // bounded scan: from the deploy block, else the last ~50k blocks.
+        const from = deployBlock ?? (head > 50000n ? head - 50000n : 0n);
+        const [logs, burnLogs] = await Promise.all([
+          client.getLogs({
+            address: addresses.core as Address,
+            events: coreEventsAbi as any,
+            fromBlock: from,
+            toBlock: head,
+          }),
+          addresses.cc
+            ? client.getLogs({
+                address: addresses.cc,
+                event: transferEventAbi[0],
+                args: { from: addresses.core, to: zeroAddress },
+                fromBlock: from,
+                toBlock: head,
+              })
+            : [],
+        ]);
+        // coin burned per transaction: the Buyback event carries the eth spent only
+        const burnedBy = new Map<string, bigint>();
+        let burned = 0n;
+        for (const b of burnLogs) {
+          const v = b.args.value ?? 0n;
+          burned += v;
+          burnedBy.set(b.transactionHash, (burnedBy.get(b.transactionHash) ?? 0n) + v);
+        }
+
+        const stats: Stats = { creditsBought: 0, statements: 0, ethIntoCredits: 0, ccBurned: Number(formatUnits(burned, 18)) };
+        const sold: StatementSale[] = [];
+        const exited: number[] = [];
+        const rows: Array<FeedEvent & { block: bigint }> = [];
+        for (const log of logs) {
+          const hash = log.transactionHash ?? "0x";
+          const block = log.blockNumber ?? head;
+          const base = { key: `${hash}-${log.logIndex}`, ts: 0, tx: hash.slice(0, 6), txHash: hash, block };
+          const a = (log as any).args ?? {};
+          const name = (log as any).eventName as string;
+          if (name === "FeesAdded")
+            rows.push({ ...base, kind: "fee", detail: "swap fee to engine", eth: fmt(a.amount) });
+          else if (name === "CreditBought") {
+            stats.creditsBought++;
+            stats.ethIntoCredits += Number(formatUnits(a.cost, 18));
+            rows.push({ ...base, kind: "credit", detail: `bought credit #${a.id}`, eth: fmt(a.cost), tile: { kind: "credit", id: Number(a.id) } });
+          } else if (name === "Composed") {
+            stats.statements++;
+            rows.push({ ...base, kind: "composed", detail: `statement ${a.sid} · ${STATEMENT_SIZE} credits · cost ${fmt(a.cost)} eth`, tile: { kind: "statement", id: Number(a.sid) } });
+          } else if (name === "CreditSold")
+            rows.push({ ...base, kind: "sold", detail: `credit #${a.id} bought by`, addr: a.buyer as string, eth: fmt(a.price), tile: { kind: "credit", id: Number(a.id) } });
+          else if (name === "StatementSoldTo") {
+            sold.push({ id: Number(a.sid), buyer: a.buyer as string, price: a.price });
+            rows.push({ ...base, kind: "sold", detail: `statement ${a.sid} bought by`, addr: a.buyer as string, eth: fmt(a.price), tile: { kind: "statement", id: Number(a.sid) } });
+          } else if (name === "StatementExited")
+            exited.push(Number(a.sid));
+          else if (name === "Buyback")
+            rows.push({ ...base, kind: "burn", detail: `burned ${Math.floor(Number(formatUnits(burnedBy.get(hash) ?? 0n, 18))).toLocaleString()} cc`, eth: fmt(a.amountIn) });
+        }
+        // logs arrive oldest first; the feed is newest first
+        const feed = rows.reverse().slice(0, FEED_ROWS);
+        // exact block timestamps for the shown rows (cached per block)
+        await Promise.all(
+          [...new Set(feed.map((r) => r.block))]
+            .filter((n) => !blockTime.has(n))
+            .map(async (n) => blockTime.set(n, Number((await client.getBlock({ blockNumber: n })).timestamp)))
+        );
+        for (const r of feed) r.ts = blockTime.get(r.block) ?? 0;
+        return { feed: feed.length ? feed : sampleFeed(now), stats, sold, exited };
+      } catch {
+        return SAMPLE_SCAN(now);
+      }
+    },
+  });
+  return { ...q, data: q.data ?? (isLive ? EMPTY_SCAN : SAMPLE_SCAN(Math.floor(Date.now() / 1000))) };
+}
+
+export const useStats = () => {
+  const { data, ...q } = useScan();
+  return { ...q, data: data.stats };
+};
+
+// Statements that left the engine: sold by StatementSoldTo, redeemed by StatementExited.
+export const useStatementHistory = () => {
+  const { data, ...q } = useScan();
+  return { ...q, data: { total: data.stats.statements, sold: data.sold, exited: data.exited } };
+};
 
 export function useMarket() {
   const client = usePublicClient();
@@ -168,7 +267,7 @@ export function useMarket() {
           })) as any;
           bid = s.ethRate as bigint;
           engine = s.ethPot as bigint;
-          creditsReady = Number(s.ethPileSize as bigint) % STATEMENT_SIZE;
+          creditsReady = Number(s.pileSize as bigint) % STATEMENT_SIZE;
         } catch {
           /* engine not live yet */
         }
@@ -243,54 +342,10 @@ export function useQuote(side: "buy" | "sell", amountInWei: bigint) {
   });
 }
 
-export function useFeed() {
-  const client = usePublicClient();
-  const { data: head } = useBlockNumber({ watch: isLive });
-  return useQuery<FeedEvent[]>({
-    queryKey: ["feed", isLive, head?.toString()],
-    refetchInterval: isLive ? 12000 : 30000,
-    queryFn: async () => {
-      const now = Math.floor(Date.now() / 1000);
-      if (!isLive || !client || !addresses.core || !head) return sampleFeed(now);
-      try {
-        // bounded scan: from the deploy block, else the last ~50k blocks.
-        const from = deployBlock ?? (head > 50000n ? head - 50000n : 0n);
-        const logs = await client.getLogs({
-          address: addresses.core as Address,
-          events: coreEventsAbi as any,
-          fromBlock: from,
-          toBlock: head,
-        });
-        const out: FeedEvent[] = [];
-        for (const log of logs) {
-          // approx timestamp from block distance (12s/block). ponytail: avoids
-          // an eth_getBlockByNumber per log; display-only.
-          const ts = now - Number(head - (log.blockNumber ?? head)) * 12;
-          const hash = log.transactionHash ?? "0x";
-          const tx = hash.slice(0, 6);
-          const base = { key: `${hash}-${log.logIndex}`, ts, tx, txHash: hash };
-          const a = (log as any).args ?? {};
-          const name = (log as any).eventName as string;
-          if (name === "FeesAdded")
-            out.push({ ...base, kind: "fee", detail: "swap fee to engine", eth: fmt(a.amount) });
-          else if (name === "CreditBought")
-            out.push({ ...base, kind: "credit", detail: `bought credit #${a.id}`, eth: fmt(a.cost), tile: { kind: "credit", id: Number(a.id) } });
-          else if (name === "Composed")
-            out.push({ ...base, kind: "composed", detail: `statement ${a.sid} · cost ${fmt(a.cost)} eth`, tile: { kind: "statement", id: Number(a.sid) } });
-          else if (name === "StatementSoldTo")
-            out.push({ ...base, kind: "sold", detail: `statement ${a.sid} bought by`, addr: a.buyer as string, eth: fmt(a.price), tile: { kind: "statement", id: Number(a.sid) } });
-          else if (name === "Buyback")
-            out.push({ ...base, kind: "burn", detail: `burned ${Math.floor(Number(formatUnits(a.amountIn, 18))).toLocaleString()} cc` });
-        }
-        out.sort((x, y) => y.ts - x.ts);
-        return out.length ? out.slice(0, 60) : sampleFeed(now);
-      } catch {
-        return sampleFeed(now);
-      }
-    },
-    initialData: sampleFeed(Math.floor(Date.now() / 1000)),
-  });
-}
+export const useFeed = () => {
+  const { data, ...q } = useScan();
+  return { ...q, data: data.feed };
+};
 
 function fmt(wei?: bigint): string {
   if (wei == null) return "0.0000";

@@ -49,7 +49,6 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
 
           <div className="facts">
             <Fact k="owner" v="engine" />
-            <Fact k="lane" v={c.lane} />
             <Fact k="paid by engine" v={c.cost ? `${c.cost} eth` : "—"} />
             <Fact
               k={c.composed ? "composed" : "bought"}
@@ -80,7 +79,7 @@ function resolveCredit(id: number): ResolvedCredit {
   const held = getCredit(id);
   if (held) return { ...held, cost: held.cost, composed: false };
   const sid = id >= 40000 ? Math.floor((id - 40000) / 80) : null;
-  return { id, lane: "eth", cost: null, statementId: sid, boughtAgo: 3600, composed: true };
+  return { id, cost: null, statementId: sid, boughtAgo: 3600, composed: true };
 }
 
 function Fact({ k, v }: { k: string; v: string }) {

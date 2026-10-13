@@ -15,6 +15,13 @@ mainnet fork (`http://127.0.0.1:8545`, viem `foundry` chain). Any other value
 selects mainnet. Local mode has no explorer: tx hashes and contract addresses
 render as raw text, and ENS lookups are skipped.
 
+The only wallet is the wagmi mock connector, listed as "local account". It acts
+as `NEXT_PUBLIC_LOCAL_ACCOUNT` (default
+`0x1111111111111111111111111111111111111111`; `local-env.mjs` also reads it from
+the environment or `record.localAccount`). Run anvil with `--auto-impersonate`
+so it signs for that address. Local mode makes no WalletConnect requests.
+Countdowns and "ago" labels use the latest block timestamp, not the browser clock.
+
 Run (anvil up, contracts deployed, record written):
 
 ```bash
@@ -72,7 +79,7 @@ are not read by the app yet.
 
 - **list** — `statements` → `CoreLens.snapshot().statements` (held + listed) and
   sold statements from `StatementSoldTo` logs. Fields per statement: `id`,
-  `lane`, `cost`, `askingPrice`, `composedAt`, status.
+  `cost`, `rating`, `priceReference`, `askingPrice`, `composedAt`, status.
 - **status** — derive: held (in Core, not listed) / listed / sold (has a
   `StatementSoldTo`).
 - **filter/sort** — the all/for-sale/sold control is not built yet.
@@ -95,7 +102,7 @@ are not read by the app yet.
 ## credits index — `app/credits/page.tsx` (feed layout)
 
 - **list** — `credits` → the engine's held pile. Count is
-  `CoreLens.snapshot().ethPileSize`; enumerate ids from `CreditBought` logs or
+  `CoreLens.snapshot().pileSize`; enumerate ids from `CreditBought` logs or
   the credits NFT `balanceOf(Core)` + enumeration.
 - **bid** — `engineBid` → `snapshot().ethRate` (wei per credit).
 
@@ -110,11 +117,11 @@ are not read by the app yet.
 ## compose — `app/compose/page.tsx` (the in-progress statement)
 
 - **filled slots** — `credits` (the pile) → the pile's credit ids (CreditBought
-  logs not yet composed, or a Core pile view). Count = `snapshot().ethPileSize`.
+  logs not yet composed, or a Core pile view). Count = `snapshot().pileSize`.
 - **next statement id** — the id the next compose mints.
 - **compose** (button) — `Core.compose()`. Permissionless: anyone can call once
   >= 80 credits are in the pile. Enabled only when full and the Core is
-  deployed. Exit lane uses `composeExit`.
+  deployed. `composeChosen(ids, format)` is shown when `chosenComposeOn`, gated by `minCcToChoose`.
 
 ## sell — `app/sell/page.tsx` (holder sells into the bid)
 

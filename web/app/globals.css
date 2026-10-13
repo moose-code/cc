@@ -989,7 +989,7 @@ a {
   color: var(--muted);
   font-size: 0.9rem;
 }
-.rl-lane {
+.rl-price {
   width: 70px;
   color: var(--muted);
   font-size: 0.9rem;
@@ -1152,7 +1152,7 @@ a {
     flex-wrap: wrap;
   }
   .rl-meta,
-  .rl-lane {
+  .rl-price {
     width: auto;
   }
   .rl-time {
@@ -1250,4 +1250,50 @@ a {
   .menu .connect {
     margin-left: 0;
   }
+}
+
+/* ---- credit sale: selectable rows, buy bar, chosen compose --------------- */
+
+.rowline {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.rowline .rowlink {
+  flex: 1;
+  min-width: 0;
+}
+.rl-check {
+  width: 1.1rem;
+  flex: none;
+}
+.buybar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1.25rem;
+}
+button.slot {
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+button.slot:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.slot.on {
+  border-color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--fg);
+}
+.chosen {
+  margin-top: 2.5rem;
+}
+.chosen h2 {
+  margin: 0 0 0.5rem;
+}
+.chosen select {
+  font: inherit;
+  padding: 0.3rem;
 }

@@ -3,7 +3,7 @@ import { StatementTile, CreditTile } from "./Tiles";
 import { commas } from "@/lib/format";
 import type { SampleStatement, SampleCredit } from "@/lib/sample";
 
-export function StatementCard({ s }: { s: SampleStatement }) {
+export function StatementCard({ s }: { s: Pick<SampleStatement, "id" | "status" | "ask" | "score"> }) {
   return (
     <Link href={`/statements/${s.id}`} className="card card-statement">
       <StatementTile id={s.id} />
@@ -20,10 +20,12 @@ export function StatementCard({ s }: { s: SampleStatement }) {
             {s.ask} eth
           </div>
         )}
-        <div className="card-sub">
-          <span>credit score</span>
-          <span>{commas(s.score)}</span>
-        </div>
+        {s.score > 0 && (
+          <div className="card-sub">
+            <span>credit score</span>
+            <span>{commas(s.score)}</span>
+          </div>
+        )}
       </div>
     </Link>
   );

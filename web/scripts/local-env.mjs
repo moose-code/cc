@@ -32,6 +32,14 @@ const env = {
 };
 // Optional: skim hook of the deployed pool (the app builds the pool key from it).
 if (rec.hook != null) env.NEXT_PUBLIC_POOL_HOOK = need("hook");
+// Optional: the account the app's local wallet acts as. From the environment,
+// else record.localAccount, else the app default
+// (0x1111111111111111111111111111111111111111).
+const acct = process.env.NEXT_PUBLIC_LOCAL_ACCOUNT ?? rec.localAccount;
+if (acct != null) {
+  if (!isAddr(acct)) throw new Error(`local account is not an address: ${acct}`);
+  env.NEXT_PUBLIC_LOCAL_ACCOUNT = acct;
+}
 
 const out = fileURLToPath(new URL("../.env.local", import.meta.url));
 writeFileSync(

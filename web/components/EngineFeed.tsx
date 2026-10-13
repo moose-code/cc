@@ -8,6 +8,7 @@ import {
   type FeedKind,
 } from "@/lib/engine";
 import { isLive } from "@/lib/config";
+import { useNow } from "@/lib/live";
 import { relTime, eth, evmNowTx } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
 import { Addr } from "./Addr";
@@ -36,6 +37,7 @@ const HL = new Set<FeedKind>(["composed", "listed", "sold", "burn"]);
 export function EngineFeed() {
   const { data: feed } = useFeed();
   const { data: market } = useMarket();
+  const now = useNow();
 
   const pct = market.bid > 0n
     ? Math.min(100, Number((market.nextCreditPaid * 100n) / market.bid))
@@ -86,7 +88,7 @@ export function EngineFeed() {
         </thead>
         <tbody>
           {feed.map((e) => (
-            <Row key={e.key} e={e} />
+            <Row key={e.key} e={e} now={now} />
           ))}
         </tbody>
       </table>
@@ -94,7 +96,7 @@ export function EngineFeed() {
   );
 }
 
-function Row({ e }: { e: FeedEvent }) {
+function Row({ e, now }: { e: FeedEvent; now: number }) {
   return (
     <tr className={HL.has(e.kind) ? "hl" : undefined}>
       <td className="col-event">
@@ -125,14 +127,14 @@ function Row({ e }: { e: FeedEvent }) {
       <td className="col-time" suppressHydrationWarning>
         {e.txHash && evmNowTx(e.txHash) ? (
           <a href={evmNowTx(e.txHash)} target="_blank" rel="noreferrer">
-            {relTime(e.ts)}
+            {relTime(e.ts, now)}
           </a>
         ) : e.txHash ? (
           <span title={e.txHash}>
-            {relTime(e.ts)} {e.txHash}
+            {relTime(e.ts, now)} {e.txHash}
           </span>
         ) : (
-          relTime(e.ts)
+          relTime(e.ts, now)
         )}
       </td>
     </tr>

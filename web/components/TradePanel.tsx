@@ -5,7 +5,6 @@ import {
   useAccount,
   useBalance,
   useReadContract,
-  useWriteContract,
 } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import {
@@ -16,10 +15,12 @@ import {
   type Address,
 } from "viem";
 import { useMarket, useQuote, useEthUsd } from "@/lib/engine";
+import { useNow } from "@/lib/live";
 import { addresses, chain, poolReady } from "@/lib/config";
 import { erc20Abi, permit2Abi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
 import { commas, tokens, ethShort, usd } from "@/lib/format";
+import { useWriteWithBuffer } from "@/lib/tx";
 
 const FEE_BPS = 690; // 6.9% v2 skim
 const SLIPPAGE_BPS = 100; // 1.0%
@@ -31,7 +32,8 @@ export function TradePanel() {
   const { data: ethUsd } = useEthUsd();
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
-  const { writeContractAsync, isPending } = useWriteContract();
+  const { writeWithBuffer, isPending } = useWriteWithBuffer();
+  const chainNow = useNow(30000); // swap deadline is chain time
 
   // 1 CC in USD = (eth per cc) * (usd per eth) = ethUsd / ccPerEth.
   const ccUsd =
@@ -101,10 +103,10 @@ export function TradePanel() {
     setErr(null);
     try {
       if (!addresses.cc) return;
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+      const deadline = BigInt(chainNow + 1200);
 
       if (side === "sell" && needsErc20Approve) {
-        await writeContractAsync({
+        await writeWithBuffer({
           address: addresses.cc,
           abi: erc20Abi,
           functionName: "approve",
@@ -114,7 +116,7 @@ export function TradePanel() {
         return;
       }
       if (side === "sell" && needsP2Approve) {
-        await writeContractAsync({
+        await writeWithBuffer({
           address: V4.permit2,
           abi: permit2Abi,
           functionName: "approve",
@@ -129,7 +131,7 @@ export function TradePanel() {
         side === "buy"
           ? buildBuy(addresses.cc as Address, amountInWei, out)
           : buildSell(addresses.cc as Address, amountInWei, out);
-      await writeContractAsync({
+      await writeWithBuffer({
         address: V4.universalRouter,
         abi: universalRouterAbi,
         functionName: "execute",
