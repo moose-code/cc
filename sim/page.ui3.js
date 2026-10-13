@@ -26,6 +26,9 @@ const CHART_SPECS = [
     { label: 'sold', short: 'sold', color: '--s3', f: (r, h) => r.S.sold[h] },
     { label: 'waiting for a buyer or a redemption', short: 'waiting', color: '--s2', f: (r, h) => r.S.waiting[h] },
     { label: 'redeemed through the exitModule', short: 'redeemed', color: '--s1', f: (r, h) => r.S.exited[h] } ] },
+  { id: 'pile', title: 'the credit pile, and pile credits sold through the credit sale window', fmt: { l: fmtAx, r: fmtAx }, marks: markX, series: [
+    { label: 'credits in the pile', short: 'pile', color: '--s2', f: (r, h) => r.S.pile[h] },
+    { label: 'pile credits sold, cumulative', short: 'sold', color: '--s3', axis: 'r', f: (r, h) => r.S.creditSold[h] } ] },
   { id: 'saleprice', title: 'statements: average sale price as percent of cost, and hours from listing to the first buyer', fmt: { l: (v) => v.toFixed(0) + '%', r: fmtAx }, fixed: { l: [0, 120] }, marks: markX, series: [
     { label: 'average sale price, percent of what the engine paid', short: 'price', color: '--s1', f: (r, h) => r.S.avgSalePct[h] },
     { label: 'average hours from listing to the first buyer', short: 'hours', color: '--s2', axis: 'r', f: (r, h) => r.S.avgSaleAgeH[h] } ] },
@@ -33,6 +36,7 @@ const CHART_SPECS = [
     { label: 'eth to burn from sale proceeds', short: 'from sales', color: '--s3', f: (r, h) => r.S.saleToBuyback[h] },
     { label: 'eth to burn from fees', short: 'from fees', color: '--s4', dash: true, f: (r, h) => r.S.feeToBuyback[h] },
     { label: 'eth released by redemptions from the reserve', short: 'from reserve', color: '--s5', f: (r, h) => r.S.redeemBurnMoved[h] },
+    { label: 'eth from credit sales', short: 'from credits', color: '--s3', dash: true, f: (r, h) => r.S.creditToBuyback[h] },
     { label: 'eth spent buying $CC', short: 'spent', color: '--s1', f: (r, h) => r.S.burnEth[h] },
     { label: '$CC burned, percent of supply', short: 'burned', color: '--s2', axis: 'r', f: (r, h) => r.S.burnedPct[h] } ] },
   { id: 'coin', title: '$CC price, eth per coin', fmt: { l: fmtSci }, log: { l: true }, marks: markX, series: [
@@ -51,7 +55,7 @@ function renderVerdict(res, ms) {
   $('verdict').className = 'verdict ' + (!flowing ? 'bad' : sm.steadyCredits != null && sm.steadyCredits < 50 ? 'warn' : 'good');
   $('v1').textContent = 'day ' + days + ': ' + fmtN(sm.credits) + ' credits acquired, ' + fmtN(sm.statements) + ' statements created, ' + fmtN(sm.sold) + ' sold at ' + (st.saleOverCost * 100).toFixed(0) + '% of cost on average, ' + fmtN(sm.waiting) + ' still waiting, ' + fmtN(sm.burnEth) + ' eth to buy and burn $CC (' + sm.burnPct.toFixed(1) + '% of supply), launch pot spent ' + (sm.potGoneDay == null ? 'not within ' + days + ' days' : 'by day ' + sm.potGoneDay.toFixed(1)) + '';
   const steady = sm.steadyCredits == null ? '' : ' after the pot ran out: ' + fmtN(sm.steadyCredits) + ' credits and ' + fmtN(sm.steadyStatements) + ' statements a day.';
-  $('v2').textContent = 'fees in ' + fmtN(res.S.cumFees[res.H]) + ' eth (' + fmtN(res.core.feeToRedeemBurn) + ' to the redeem burn reserve). credits cost ' + st.costVsMarket.toFixed(2) + 'x the flat market price, average score ' + st.avgScoreBought.toFixed(0) + '. ' + 'burn from sale proceeds ' + fmtN(sm.saleToBurn) + ' eth, from fees ' + fmtN(sm.feeToBurn) + ' eth.' + ' the anchor ended at ' + (st.finalAnchorBps / 100).toFixed(0) + '% of cost.' + steady + (!flowing ? ' no credit was bought in the last week.' : '');
+  $('v2').textContent = 'fees in ' + fmtN(res.S.cumFees[res.H]) + ' eth (' + fmtN(res.core.feeToRedeemBurn) + ' to the redeem burn reserve). credits cost ' + st.costVsMarket.toFixed(2) + 'x the flat market price, average score ' + st.avgScoreBought.toFixed(0) + '. ' + 'burn from sale proceeds ' + fmtN(sm.saleToBurn) + ' eth, from fees ' + fmtN(sm.feeToBurn) + ' eth.' + ' the anchor ended at ' + (st.finalAnchorBps / 100).toFixed(0) + '% of the reference.' + steady + (!flowing ? ' no credit was bought in the last week.' : '');
   $('runinfo').textContent = 'ran ' + Math.round(ms) + ' ms, ' + res.H + ' hours, seed ' + p.seed;
 }
 function renderTable(res) {
@@ -73,9 +77,11 @@ function renderTable(res) {
   ];
   if (T.settingsChanges) notes.push('<b>setting changes</b> applied on day ' + p0().schedule.map((e) => e.day).join(', '));
   if (res.core.ethRedeemBurn + res.core.redeemBurnMoved > 0) notes.push('<b>redeem burn reserve</b> ' + fmtN(res.core.feeToRedeemBurn) + ' eth filled from fees, ' + fmtN(res.core.redeemBurnMoved) + ' eth released to buy and burn $CC by redemptions, ' + fmtN(res.core.ethRedeemBurn) + ' eth still held');
-  if (T.boughtX || T.exited || T.exitedX) notes.push('<b>phase 2</b> ' + fmtN(T.exited) + ' eth lane statements redeemed' + (T.exited ? ' after ' + (T.exitedAge / T.exited / 3600).toFixed(0) + ' hours on average' : '') + ', exit token bid bought ' + fmtN(T.boughtX) + ' credits, ' + fmtN(T.exitedX) + ' exit lane statements redeemed, ' + fmtN(res.core.xPot) + ' eth of exit token held');
+  if (T.boughtX || T.exited) notes.push('<b>phase 2</b> ' + fmtN(T.exited) + ' statements redeemed' + (T.exited ? ' after ' + (T.exitedAge / T.exited / 3600).toFixed(0) + ' hours on average' : '') + ', exit token bid bought ' + fmtN(T.boughtX) + ' credits into the one pile, ' + fmtN(res.core.xPot) + ' eth of exit token held');
+  if (T.creditSold || T.creditMiss) notes.push('<b>credit sale window</b> ' + fmtN(T.creditSold) + ' pile credits sold at ' + (T.creditCost ? (T.creditGross / T.creditCost * 100).toFixed(0) : 'n/a') + '% of their cost' + (T.creditSold ? ', ' + st.creditSaleAgeHours.toFixed(1) + ' hours after acquisition on average' : '') + ', ' + fmtN(T.creditToPot) + ' eth back to the pot, ' + fmtN(T.creditToBuyback) + ' eth to buy and burn $CC, ' + fmtN(T.creditMiss) + ' buyers found nothing at their price');
+  if (T.composedChosen) notes.push('<b>chosen composition</b> ' + fmtN(T.composedChosen) + ' statements composed from credits the composer named, average rating ' + (T.stRating / T.composed).toFixed(0) + ' points a statement');
   $('notes').innerHTML = notes.join(' &nbsp; ');
-  $('tblnote').textContent = 'eth accounting closes to ' + Math.max(Math.abs(st.potCheck), Math.abs(st.saleCheck)).toExponential(1) + ' eth';
+  $('tblnote').textContent = 'eth accounting closes to ' + Math.max(Math.abs(st.potCheck), Math.abs(st.saleCheck), Math.abs(st.creditCheck)).toExponential(1) + ' eth';
 }
 const p0 = () => toParams(state);
 let rejected = null;

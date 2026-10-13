@@ -146,14 +146,14 @@ const SETTINGS = {
   keeperFee: 0.0005, // eth. the buyback caller is paid BUYBACK_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the slice (docs/FLOW.md 61), the buyListing caller BUYLISTING_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the pot (docs/FLOW.md 71)
   keeperMaxBaseFee: 10, // gwei, the cap on the base fee the refunds use
   rateCap: 26700000000000000, // wei per credit, 3 times rateStart: the eth rate never passes it (climb clamp, setRate)
-  callerFee: 0, // eth. paid to the caller of compose, composeExit and exitStatement from the pot, with the gas refund below. launch 0: the simulator does not model these payments
+  callerFee: 0, // eth. paid to the caller of compose, composeChosen and exitStatement from the pot, with the gas refund below. launch 0: the simulator does not model these payments
   callerMaxBaseFee: 0, // gwei, the cap on the base fee the refund of those three doors uses. 0 refunds no gas
   feeToBuybackBps: 0, // share of swap fee eth booked in receive() that goes to the buyback instead of the pot
   feeToRedeemBurnBps: 1000, // share of swap fee eth booked in receive() that fills the redeem burn reserve (FLOW 86)
-  exitMode: 0, // phase 2 state: 0 off (no redemption, no exit token bid), 1 hold (redemptions, no bid, composeExit refused), 2 on (redemptions and the bid) (FLOW 86)
+  exitMode: 0, // phase 2 state: 0 off (no redemption, no exit token bid), 1 hold (redemptions, no bid), 2 on (redemptions and the bid, which also needs the controller's exit token pool key) (FLOW 86, 92)
   exitSlippageBps: 200, // a redemption must return at least rating * unit * (10000 - exitSlippageBps) / 10000 (FLOW 84)
   exitBidMarginBps: 2000, // the exit token bid pays score * unit * (10000 - exitBidMarginBps) / 10000 per credit (FLOW 84)
-  redeemBurnBps: 2000, // share of the redeem burn reserve moved to the coin buyback on each eth lane redemption (FLOW 86)
+  redeemBurnBps: 2000, // share of the redeem burn reserve moved to the coin buyback on each redemption (FLOW 86)
   // the earlier built bid rule (bidRule 'built') and the dropToLast rule read these. they are not Core settings and are not in the config
   climbBaseBps: 100, // per hour
   climbDoubleEvery: 24 * 3600,
@@ -161,25 +161,56 @@ const SETTINGS = {
   dropBps: 2000,
 };
 const SETTING_KEYS = Object.keys(SETTINGS);
-// the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement of cost c, in bps of c, starts at
+// the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement with price reference r (below), in bps of r, starts at
 // start = min(anchorBps * markupBps / 10000, startCapBps) and falls per second in two stages: fastDecayBpsPerHour from start to kneeBps, then
 // slowDecayBpsPerHour to floorBps, where it stays. a start at or below kneeBps falls at the slow rate from the first second (askBps).
-// the anchor (ControllerV1.anchorBps, starts at 10000) is the running level of sale prices in bps of cost. a sale above the anchor now sets it to the
+// the anchor (ControllerV1.anchorBps, starts at 10000) is the running level of sale prices in bps of the reference. a sale above the anchor now sets it to the
 // mean of the anchor now and the sale price, a sale at or below it leaves it, and so does a sale of a statement that costs less than anchorMinCost (eth here, wei in the
 // contract). the part of the anchor above 10000 halves every anchorHalfLife, continuously.
 // a buyer pays the asking price and gets the statement at once through Core.sellTo.
+// the price reference of a statement is cost * max(1, rating / (80 * refScore)) (FLOW 90, ControllerV1.referenceOf), refScore in CREDIT below
 const CONTROLLER = {
   markupBps: 15000,
   startCapBps: 100000,
   fastDecayBpsPerHour: 100,
   kneeBps: 10000,
   slowDecayBpsPerHour: 25,
-  floorBps: 10000, // launch: the price falls to cost and stays there (FLOW 85)
+  floorBps: 10000, // launch: the price falls to the reference and stays there (FLOW 85)
   anchorHalfLife: 7 * 86400,
   anchorMinCost: 0.1,
 };
 const CONTROLLER_KEYS = Object.keys(CONTROLLER);
-// the asking price in bps of cost after `age` seconds from a start price of `start` bps (ControllerV1._ask without its integer rounding):
+// the credit settings (script/config/mainnet.json credit block, the Credit struct). creditCostToPotBps, chosenComposeOn and minCcToChoose are Core settings
+// (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditFloorBps, creditStartBps and refScore are controller
+// settings (FLOW 88 to 90, 93). while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
+// start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, baseline, eth bid) * creditFloorBps / 10000. the
+// baseline is score * min(stored, live unitPerPoint) at the exit token pool price, 0 until the pool key and the module are set; the eth bid is the price state
+// before the pot clamp. Core.sellCreditTo takes at least the credit's cost, books creditCostToPotBps of the cost to the pot and the rest to the buyback pot.
+// compose waits for a credit's window while the sale is on (ControllerV1.pastWindow). refScore is the per-credit score of the statement price reference, in
+// ten-thousandths of a point (the model's scores are in points). minCcToChoose is a coin balance the model does not track: every composer passes it
+const CREDIT = {
+  creditCostToPotBps: 10000,
+  chosenComposeOn: false,
+  minCcToChoose: 0,
+  creditSaleOn: false,
+  creditWindow: 14400, // seconds (4 hours)
+  creditFloorBps: 11000,
+  creditStartBps: 30000,
+  refScore: 4330000,
+};
+const CREDIT_KEYS = Object.keys(CREDIT);
+// the config names of the credit block (script/config/mainnet.json credit.*)
+const CREDIT_CONFIG_KEY = { creditCostToPotBps: 'costToPotBps', chosenComposeOn: 'chosenComposeOn', minCcToChoose: 'minCcToChoose', creditSaleOn: 'saleOn', creditWindow: 'window', creditFloorBps: 'floorBps', creditStartBps: 'startBps', refScore: 'refScore' };
+// src/lib/CreditBounds.sol: the name of the first credit field out of bounds, or null
+function creditViolation(c) {
+  if (!(c.creditCostToPotBps >= 0 && c.creditCostToPotBps <= 10000)) return 'creditCostToPotBps';
+  if (!(c.creditWindow >= 60 && c.creditWindow <= 30 * 86400)) return 'creditWindow';
+  if (!(c.creditFloorBps >= 10000 && c.creditFloorBps <= 40000)) return 'creditFloorBps';
+  if (!(c.creditStartBps >= 10000 && c.creditStartBps <= 200000)) return 'creditStartBps';
+  if (!(c.refScore >= 1 && c.refScore <= 8000000)) return 'refScore';
+  return null;
+}
+// the asking price in bps of the reference after `age` seconds from a start price of `start` bps (ControllerV1._ask without its integer rounding):
 // start less fastDecayBpsPerHour an hour while above kneeBps, then slowDecayBpsPerHour an hour, never below floorBps
 function askBps(c, start, age) {
   const hours = age / 3600, span = Math.max(0, start - c.kneeBps);
@@ -223,7 +254,7 @@ function firstViolation(s) {
   if (s.exitMode !== 0 && s.exitMode !== 1 && s.exitMode !== 2) return 'exitMode';
   if (s.exitSlippageBps > 1000) return 'exitSlippageBps';
   if (s.exitBidMarginBps > 9000) return 'exitBidMarginBps';
-  if (s.exitSlippageBps > s.exitBidMarginBps) return 'exitSlippageBps'; // the exit lane cycle (bid then redeem) cannot lose more than its margin
+  if (s.exitSlippageBps > s.exitBidMarginBps) return 'exitSlippageBps'; // the exit cycle (bid then redeem) cannot lose more than its margin
   if (s.redeemBurnBps > 10000) return 'redeemBurnBps';
   return null;
 }
@@ -319,19 +350,24 @@ const SIM_DEFAULTS = {
   wtpMult: 1,
   stmtPick: 'cheapest', // a buyer takes the statement with the lowest asking price that fits its willingness to pay; 'random' picks any one that fits
   buyerWaits: 'no', // 'no': a buyer takes what it can afford now. 'floor': every buyer waits until the asking price has reached its lowest level (pessimistic case)
-  // phase 2 (exitModule and exitToken). the exit token side is rebuilt per FLOW 84 to 87: exitMode (a Core setting), redemption when the curve price
-  // reaches the statement cost, a rating per statement, a per point exit token bid, no exit token auction. exit token amounts are held as eth value
+  // phase 2 (exitModule and exitToken). the exit token side is rebuilt per FLOW 84 to 87 and 92: exitMode (a Core setting), redemption when the curve price
+  // reaches its floor, a rating per statement, a per point exit token bid that needs the pool key, one pile for every credit. exit token amounts are held as eth value
   phase2Day: null, // day the exit module is set. the same step sets exitMode to phase2ExitMode (the owner switches the state on)
   phase2ExitMode: 2, // exitMode set at phase2Day: 1 hold or 2 on
   xpPerPoint: 0.0108 / 440, // eth value of the exit token a redemption returns per score point (unitPerPoint at the exit token price). a 440 point credit redeems 0.0108 eth. the unit the Core stores when the module is set
   exitPayFrac: 1, // share of rating * xpPerPoint the exit module returns. the Core requires at least 1 - exitSlippageBps / 10000, else the exit reverts
-  exitPoolSet: false, // ControllerV1.setExitPoolKey done (native eth as currency0, the exit token as currency1, pool initialized): a statement's asking price is at least rating * xpPerPoint (its redemption value), unset at launch
+  exitPoolSet: false, // ControllerV1.setExitPoolKey done (native eth as currency0, the exit token as currency1, pool initialized): a statement's asking price is at least rating * xpPerPoint (its redemption value) and the exit token bid works (it values the tokens it pays), unset at launch
+  exitPoolMult: 1, // the exit token pool price against the price the stored unit assumes. values the redemption floor, the credit baseline and the cost of a credit bought with the exit token (FLOW 92). 1 at the unit; below 1 is a pool price pushed down (FLOW 93)
+  // credit sale and composition (FLOW 88 to 90). the buyers of pile credits and the composer exist only in the model
+  creditBuyersPerDay: 40, // arrivals a day of buyers of pile credits while creditSaleOn is true
+  creditWtpMult: 1, // a credit buyer pays up to this multiple of the market price of a credit times a lognormal draw (askSigma)
+  composeChoice: 'oldest', // 'oldest': compose() takes the 80 oldest credits. 'richest': with chosenComposeOn a composer names the 80 highest scoring credits past their window (composeChosen), else compose() applies
   exitMinRatio: 0, // a keeper redeems only when rating * xpPerPoint is at least this times the asking price
   keeperBuyback: true,
   basefeeGwei: 1, // the block base fee of the buyback calls, gwei (the refunds use min(basefee, keeperMaxBaseFee))
 };
 
-const DEFAULTS = Object.assign({}, CORE_PARAMS, SETTINGS, CONTROLLER, SIM_DEFAULTS);
+const DEFAULTS = Object.assign({}, CORE_PARAMS, SETTINGS, CONTROLLER, CREDIT, SIM_DEFAULTS);
 
 
 // quantiles of statement willingness to pay as a multiple of the parts' market cost (data: p10 .48, p25 .71, p50 .84, p75 1.07, 21 percent at 1.2 or more, max 1.32)
@@ -385,7 +421,11 @@ class Core {
     for (const k of SETTING_KEYS) this.s[k] = p[k];
     this.c = {}; // the controller's settings
     for (const k of CONTROLLER_KEYS) this.c[k] = p[k];
-    this.anchorStored = 10000; // the controller's storedAnchorBps: the anchor at anchorTime, bps of cost
+    this.cr = {}; // the credit settings (Core and controller)
+    for (const k of CREDIT_KEYS) this.cr[k] = p[k];
+    this.creditCostToPot = 0; // cumulative cost share of credit sales booked to the pot
+    this.creditToBuyback = 0; // cumulative credit sale eth booked to the buyback pot
+    this.anchorStored = 10000; // the controller's storedAnchorBps: the anchor at anchorTime, bps of the reference
     this.anchorTime = t0;
     this.pauses = []; // the controller's pause windows {start, end} in seconds, end null while open
     this.feeToBuyback = 0; // cumulative swap fee eth sent to the buyback pot by feeToBuybackBps
@@ -467,25 +507,29 @@ class Core {
     }
     return Math.min(r, cap);
   }
+  // Core.ethPrice(): the price state before the pot clamp (wei per credit). the clamp is the read only lowering that ethRate applies. the cost floor of a credit
+  // bought with the exit token and the eth bid term of the credit sale floor read it, so an empty pot does not zero them (FLOW 93)
+  ethPrice(now) { return this.p.bidRule === 'stepped' ? this.priceRate(now) : this.ethRate(now); }
   checkpoint(now) { this.rateAtCheckpoint = this.p.bidRule === 'stepped' ? this.priceRate(now) : this.ethRate(now); this.checkpointTime = now; }
   syncFunded() {
     this.funded = this.ethPot * W >= this.rateAtCheckpoint;
   }
   // owner: setSettings. validates, checkpoints both rates first, then applies at once. patch.rate is setRate.
-  // the patch may also hold `paused` (ControllerV1.setPaused: true opens a pause window, false closes it) and controller settings (markupBps, startCapBps, fastDecayBpsPerHour, kneeBps, slowDecayBpsPerHour, floorBps, anchorHalfLife, anchorMinCost) and anchorBps (setAnchorBps): the controller reads them live.
+  // the patch may also hold `paused` (ControllerV1.setPaused: true opens a pause window, false closes it), controller settings (markupBps, startCapBps, fastDecayBpsPerHour, kneeBps, slowDecayBpsPerHour, floorBps, anchorHalfLife, anchorMinCost), the credit settings (CREDIT) and anchorBps (setAnchorBps): the controller reads them live.
   // a new anchorHalfLife stores the anchor now first, and a start cap below the anchor now lowers the anchor to the cap
   setSettings(patch, now) {
     const rate = patch.rate;
     if (patch.paused !== undefined && typeof patch.paused !== 'boolean') throw new Error('BadSetting paused');
-    const next = Object.assign({}, this.s), nextC = Object.assign({}, this.c);
+    const next = Object.assign({}, this.s), nextC = Object.assign({}, this.c), nextCr = Object.assign({}, this.cr);
     for (const k of SETTING_KEYS) if (patch[k] !== undefined) next[k] = patch[k];
     for (const k of CONTROLLER_KEYS) if (patch[k] !== undefined) nextC[k] = patch[k];
-    const bad = firstViolation(next) || controllerViolation(nextC) || (patch.anchorBps !== undefined && !(patch.anchorBps >= 10000 && patch.anchorBps <= nextC.startCapBps) ? 'anchorBps' : null);
+    for (const k of CREDIT_KEYS) if (patch[k] !== undefined) nextCr[k] = typeof CREDIT[k] === 'boolean' ? !!patch[k] : patch[k];
+    const bad = firstViolation(next) || controllerViolation(nextC) || creditViolation(nextCr) || (patch.anchorBps !== undefined && !(patch.anchorBps >= 10000 && patch.anchorBps <= nextC.startCapBps) ? 'anchorBps' : null);
     if (bad) throw new Error('BadSetting ' + bad);
     if (rate !== undefined && !(rate >= RATE_MIN && rate <= RATE_MAX && rate <= next.rateCap)) throw new Error('BadRate');
     this.checkpoint(now);
     const anchorNow = this.anchorAt(now);
-    this.s = next; this.c = nextC;
+    this.s = next; this.c = nextC; this.cr = nextCr;
     if (patch.anchorHalfLife !== undefined) this.setAnchor(anchorNow, now);
     if (this.c.startCapBps < anchorNow) this.setAnchor(this.c.startCapBps, now);
     if (patch.anchorBps !== undefined) this.setAnchor(patch.anchorBps, now);
@@ -550,10 +594,16 @@ class Core {
     if (!this.spend(ask + paid, now)) return null;
     return { cost: ask, paid };
   }
-  // compose 80 credits. repays nothing: cost is the sum of their costs in both lanes. returns the statement, held by the Core from t0 = composedAt
-  // (eth lane: asked at age zero, so at the start price). rating is the sum of the credits' scores, stored at compose (FLOW 84)
-  compose(costSum, lane, now, rating = 0) {
-    return { cost: costSum, t0: now, lane, rating };
+  // compose 80 credits (compose() and composeChosen() share this path). repays nothing: cost is the sum of their costs. returns the statement, held by the
+  // Core from t0 = composedAt (asked at age zero, so at the start price). rating is the sum of the credits' scores, stored at compose (FLOW 84)
+  compose(costSum, now, rating = 0) {
+    return { cost: costSum, t0: now, rating };
+  }
+  // ControllerV1.referenceOf: the price reference of a statement, cost * max(1, rating / (80 * refScore)) (FLOW 90). ratings and scores are in points here, refScore in
+  // ten-thousandths of a point. a record without a rating references its cost
+  reference(st) {
+    const denom = this.p.PAGE * (this.cr.refScore / 1e4), rating = st.rating || 0;
+    return rating > denom ? (st.cost * rating) / denom : st.cost;
   }
   // ControllerV1._setAnchorStored: the anchor at `now`
   setAnchor(bps, now) { this.anchorStored = bps; this.anchorTime = now; }
@@ -584,21 +634,24 @@ class Core {
     }
     return total;
   }
-  // ControllerV1.statementPrice(sid, cost, listedAt): askBps at the age of the listing from the current anchor and settings, in wei of the cost.
-  // the age is the time since the listing outside the pause windows. the price is relative to what the engine PAID (the statement cost), not to the market price of its parts
-  statementPrice(cost, listedAt, now) {
-    return (cost * askBps(this.c, this.startBps(now), Math.max(0, now - listedAt - this.pausedBetween(listedAt, now)))) / BPS;
+  // ControllerV1._ask(ref, age): askBps at the age of the statement from the current anchor and settings, in wei of `ref`, the statement's price reference.
+  // the age is the time since the compose outside the pause windows. the price is relative to what the engine PAID (the cost, scaled by the rating above the reference
+  // score), not to the market price of the statement's parts
+  statementPrice(ref, listedAt, now) {
+    return (ref * askBps(this.c, this.startBps(now), Math.max(0, now - listedAt - this.pausedBetween(listedAt, now)))) / BPS;
   }
   // the Core's hard floor: no sale below cost * saleFloorBps / 10000
   floorPrice(st) { return (st.cost * this.s.saleFloorBps) / BPS; }
-  // ControllerV1._quote: the curve price, never below the hard floor. the anchor and the redemption test (atCost) read this price
-  curvePrice(st, now) { return Math.max(this.statementPrice(st.cost, st.t0, now), this.floorPrice(st)); }
-  // ControllerV1._value: the redemption value of the statement in eth, rating * unitPerPoint at the exit token pool price. 0 while the pool key is unset or no module is set
-  valueFloor(st) { return this.p.exitPoolSet && this.moduleSet ? (st.rating || 0) * this.xpPerPoint : 0; }
+  // ControllerV1._quote: the curve price, never below the hard floor. the anchor reads this price
+  curvePrice(st, now) { return Math.max(this.statementPrice(this.reference(st), st.t0, now), this.floorPrice(st)); }
+  // the unit the exit token bid, the redemption value and the credit baseline use: the lower of the stored and the live unitPerPoint
+  unit() { return Math.min(this.xpPerPoint, this.xpLive); }
+  // ControllerV1._value: the redemption value of the statement in eth, rating * min(stored, live unitPerPoint) at the exit token pool price. 0 while the pool key is unset or no module is set
+  valueFloor(st) { return this.p.exitPoolSet && this.moduleSet ? (st.rating || 0) * this.unit() * this.p.exitPoolMult : 0; }
   // ControllerV1.priceOf: the curve price, never below the redemption value once the pool key is set
   askingPrice(st, now) { return Math.max(this.curvePrice(st, now), this.valueFloor(st)); }
-  // the lowest asking price the statement will ever have under the current settings (the curve floor or the hard floor, the higher, or the redemption value)
-  lowestPrice(st) { return Math.max((st.cost * Math.max(this.c.floorBps, this.s.saleFloorBps)) / BPS, this.valueFloor(st)); }
+  // the lowest asking price the statement will ever have under the current settings (the curve floor, floorBps of the reference, or the hard floor, saleFloorBps of cost, the higher, or the redemption value)
+  lowestPrice(st) { return Math.max((this.reference(st) * this.c.floorBps) / BPS, this.floorPrice(st), this.valueFloor(st)); }
   // sale proceeds into the pots: saleToBuybackBps to the buyback, the rest to the pot (checkpoint first, resync after)
   bookSale(amount, now) {
     const toBuyback = (amount * this.s.saleToBuybackBps) / BPS;
@@ -608,26 +661,58 @@ class Core {
     this.syncFunded();
     return { toBuyback, toPot: amount - toBuyback };
   }
-  // Core.sellTo (called by the controller): a held eth lane statement is paid for at once. the payment is at least the hard
+  // Core.sellTo (called by the controller): a held statement is paid for at once. the payment is at least the hard
   // floor and is booked right away. returns the booking or null when the Core would revert
   sellTo(st, value, now) {
-    if (st.lane !== 'eth' || st.sold || st.exited) return null;
+    if (st.sold || st.exited) return null;
     if (value < this.floorPrice(st) * (1 - 1e-12)) return null;
     st.sold = true; st.soldAt = now;
     return this.bookSale(value, now);
   }
-  // ControllerV1.buy: pays the asking price now through sellTo. the curve price (not the redemption value floor) in bps of cost, rounded up, above the anchor now
-  // moves the anchor to the mean of the two, not above startCapBps. a sale at or below the anchor leaves it, and so does a statement that costs less than anchorMinCost.
+  // ControllerV1.buy: pays the asking price now through sellTo. the curve price (not the redemption value floor) in bps of the reference, rounded up, above the anchor now
+  // moves the anchor to the mean of the two, not above startCapBps. a sale at or below the anchor leaves it, and so does a statement that costs less than anchorMinCost
+  // (or has a zero reference).
   // returns the booking, or null when the Core would revert
   buy(st, now) {
     if (this.isPausedAt(now)) return null;
     const curve = this.curvePrice(st, now), price = Math.max(curve, this.valueFloor(st));
     const res = this.sellTo(st, price, now);
     if (!res) return null;
-    const saleBps = Math.ceil((curve * BPS) / st.cost - 1e-9);
+    const ref = this.reference(st), saleBps = ref > 0 ? Math.ceil((curve * BPS) / ref - 1e-9) : 0;
     const anchor = this.anchorAt(now);
-    if (st.cost >= this.c.anchorMinCost && saleBps > anchor) this.setAnchor(Math.min(Math.floor((anchor + saleBps) / 2), this.c.startCapBps), now);
+    if (ref > 0 && st.cost >= this.c.anchorMinCost && saleBps > anchor) this.setAnchor(Math.min(Math.floor((anchor + saleBps) / 2), this.c.startCapBps), now);
     return Object.assign({ price, saleBps }, res);
+  }
+
+  // ---- the credit sale window (FLOW 88, 92, 93). a pile credit is {pts, cost, t0}: its score in points, its cost basis in eth and its acquisition time
+  // ControllerV1.pastWindow: a credit acquired at `acquiredAt` may compose now. always while the sale is off, else once creditWindow has passed
+  pastWindow(acquiredAt, now) { return !this.cr.creditSaleOn || acquiredAt + this.cr.creditWindow <= now; }
+  // ControllerV1._baseline: the exit token value of the credit, score * min(stored, live unitPerPoint) at the exit token pool price. 0 until the pool key and the module are set
+  creditBaseline(cr) { return this.p.exitPoolSet && this.moduleSet ? cr.pts * this.unit() * this.p.exitPoolMult : 0; }
+  // the credit sale floor: the highest of the credit's cost, its baseline and the eth bid (the price state before the pot clamp), times creditFloorBps
+  creditFloor(cr, now) { return (Math.max(cr.cost, this.creditBaseline(cr), this.ethPrice(now) / W) * this.cr.creditFloorBps) / BPS; }
+  // ControllerV1.creditPrice: falls linearly from floor * creditStartBps to the floor over creditWindow from the acquisition time and rests at the floor
+  creditPrice(cr, now) {
+    const floor = this.creditFloor(cr, now), start = (floor * this.cr.creditStartBps) / BPS, age = Math.max(0, now - cr.t0);
+    return age >= this.cr.creditWindow ? floor : start - ((start - floor) * age) / this.cr.creditWindow;
+  }
+  // Core.sellCreditTo: the payment is at least the credit's cost. creditCostToPotBps of the cost goes to the pot, the rest of the payment to the buyback pot.
+  // returns the booking or null when the Core would revert
+  sellCreditTo(cr, value, now) {
+    if (cr.sold || value < cr.cost * (1 - 1e-12)) return null;
+    cr.sold = true;
+    const toPot = (cr.cost * this.cr.creditCostToPotBps) / BPS, toBuyback = value - toPot;
+    this.ethToBuyback += toBuyback; this.creditToBuyback += toBuyback; this.creditCostToPot += toPot;
+    this.checkpoint(now);
+    this.ethPot += toPot;
+    this.syncFunded();
+    return { toPot, toBuyback };
+  }
+  // ControllerV1.buyCredit: pays creditPrice now through sellCreditTo. null while the sale is off or sales are paused, or when the Core would revert
+  buyCredit(cr, now) {
+    if (!this.cr.creditSaleOn || this.isPausedAt(now)) return null;
+    const price = this.creditPrice(cr, now), res = this.sellCreditTo(cr, price, now);
+    return res ? Object.assign({ price }, res) : null;
   }
 
   // ---- phase 2. the exit module returns exit token worth rating * xpPerPoint (eth value) for a statement. pots here hold the eth value of the exit token
@@ -650,11 +735,11 @@ class Core {
     this.ethRedeemBurn -= move; this.ethToBuyback += move; this.redeemBurnMoved += move;
     return move;
   }
-  // Core.sellForExitToken runs while exitMode is 2
-  exitBidActive() { return this.moduleSet && this.s.exitMode === 2; }
+  // Core.sellForExitToken runs while exitMode is 2 and the controller's pool key is set (it values the tokens it pays: no key reverts the bid, FLOW 92)
+  exitBidActive() { return this.moduleSet && this.s.exitMode === 2 && this.p.exitPoolSet; }
   // the exit token bid for a credit of `pts` points: score * unit * (10000 - exitBidMarginBps) / 10000, in eth value, where unit is the lower of the stored
   // and the live unitPerPoint. the same price for any credit of that score
-  xBidPrice(pts) { return (pts * Math.min(this.xpPerPoint, this.xpLive) * (BPS - this.s.exitBidMarginBps)) / BPS; }
+  xBidPrice(pts) { return (pts * this.unit() * (BPS - this.s.exitBidMarginBps)) / BPS; }
   // sellForExitToken for one credit: pays xBidPrice from xPot. returns the price, or 0 when the Core would revert (mode not 2, price 0, price above the pot)
   xBuy(pts) {
     const price = this.exitBidActive() ? this.xBidPrice(pts) : 0;
@@ -662,14 +747,24 @@ class Core {
     this.xPot -= price;
     return price;
   }
-  // ControllerV1.atCost: the curve price (with the hard floor, without the redemption value floor) is at or below the statement cost
-  atCost(st, now) { return this.curvePrice(st, now) <= st.cost * (1 + 1e-9); }
-  // Core.exitStatement preconditions: a module is set, exitMode is 1 or 2, an eth lane statement is at cost, an exit lane statement is eligible at once
+  // sellForExitToken for one credit at `now`: the credit enters the pile at an eth cost of the higher of the tokens paid valued at the pool price (paid * exitPoolMult)
+  // and the eth bid rate before the pot clamp, at least 1 wei (FLOW 92, 93). returns {paid, cost}, or null when the bid would revert
+  xBuyCredit(pts, now) {
+    const paid = this.xBuy(pts);
+    if (!(paid > 0)) return null;
+    return { paid, cost: Math.max(paid * this.p.exitPoolMult, this.ethPrice(now) / W, 1e-18) };
+  }
+  // ControllerV1.atFloor: the curve price (without the hard floor and the redemption value floor) has reached its floor, floorBps of the reference
+  atFloor(st, now) {
+    const ref = this.reference(st);
+    return this.statementPrice(ref, st.t0, now) <= ((ref * this.c.floorBps) / BPS) * (1 + 1e-9);
+  }
+  // Core.exitStatement preconditions: a module is set, exitMode is 1 or 2, and the statement's curve price has reached its floor
   exitReady(st, now) {
-    return this.moduleSet && this.s.exitMode >= 1 && !st.sold && !st.exited && (st.lane === 'exit' || this.atCost(st, now));
+    return this.moduleSet && this.s.exitMode >= 1 && !st.sold && !st.exited && this.atFloor(st, now);
   }
   // Core.exitStatement: the module returns rating * xpLive * exitPayFrac; the Core requires at least rating * xpPerPoint (stored) * (10000 - exitSlippageBps) / 10000 and keeps all of it in xPot.
-  // an eth lane redemption moves redeemBurnBps of the redeem burn reserve to the buyback pot. returns {received, toBurn}, or null when the Core would revert
+  // a redemption moves redeemBurnBps of the redeem burn reserve to the buyback pot. returns {received, toBurn}, or null when the Core would revert
   exitStatement(st, now) {
     const s = this.s, value = st.rating * this.xpPerPoint;
     if (!this.exitReady(st, now)) return null;
@@ -677,11 +772,8 @@ class Core {
     if (received < (value * (BPS - s.exitSlippageBps)) / BPS * (1 - 1e-12)) return null; // Underpaid
     st.exited = true;
     this.xPot += received;
-    let toBurn = 0;
-    if (st.lane === 'eth') {
-      toBurn = (this.ethRedeemBurn * s.redeemBurnBps) / BPS;
-      this.ethRedeemBurn -= toBurn; this.ethToBuyback += toBurn; this.redeemBurnMoved += toBurn;
-    }
+    const toBurn = (this.ethRedeemBurn * s.redeemBurnBps) / BPS;
+    this.ethRedeemBurn -= toBurn; this.ethToBuyback += toBurn; this.redeemBurnMoved += toBurn;
     return { received, toBurn };
   }
   // buyback(): one slice at most per buybackDelay blocks. rate = min(basefee, keeperMaxBaseFee). the swap budget is the slice less the largest payment
@@ -850,12 +942,13 @@ function simulate(userParams = {}) {
   let book = []; // resting market offers, ordered by descending key (wei per point needed to clear, in units of the market price), smallest last
   let strat = []; // CreditStrategy listings, ordered by descending need (wei per point to clear)
   let holdPool = p.holders;
-  const ethPile = [], xPile = [], xHeld = []; // credit piles of the two lanes, and the exit lane statements the Core holds
-  let unbid = []; // eth lane statements held by the Core for sale
+  const pile = []; // the one credit pile, oldest first: {pts, cost, t0}. credits bought with eth and with the exit token enter it alike (FLOW 92)
+  let unbid = []; // statements held by the Core for sale or redemption
   let lnM = 0, nextSid = 1;
   const T = { // totals
     fees: 0, feesBuyback: 0, saleGross: 0, saleToPot: 0, saleToBuyback: 0, spent: 0, listingPaid: 0,
-    bought: 0, boughtX: 0, pts: 0, cost: 0, mkt: 0, ask: 0, sumM: 0, composed: 0, composedX: 0, sold: 0, exited: 0, exitedX: 0,
+    bought: 0, boughtX: 0, pts: 0, cost: 0, mkt: 0, ask: 0, sumM: 0, composed: 0, composedChosen: 0, sold: 0, exited: 0,
+    creditSold: 0, creditGross: 0, creditCost: 0, creditToPot: 0, creditToBuyback: 0, creditMiss: 0, creditAge: 0,
     soldPrice: 0, soldCost: 0, soldPts: 0, soldFloor: 0, soldAge: 0, soldAtFloor: 0, buybackSpent: 0, buybackTips: 0, burned: 0,
     listBought: 0, stratBought: 0, xRecv: 0, xSpent: 0, firstFill: -1,
     clampSteps: 0, potBindSteps: 0, vol: 0, stCost: 0, stRating: 0, stmtArrivals: 0, stmtMiss: 0,
@@ -867,7 +960,7 @@ function simulate(userParams = {}) {
   const names = ['pot', 'toBuyback', 'cumFees', 'rate', 'mktPerPoint', 'bidRatio', 'bought', 'credits', 'creditsDay', 'avgScoreCum', 'avgScoreDay',
     'costPerCredit', 'mktPerCredit', 'composed', 'sold', 'waiting', 'locked', 'exited', 'buybackSpent', 'burnEth', 'burned', 'burnedPct',
     'coinPrice', 'xPot', 'redeemBurn', 'book', 'saleToPot', 'saleToBuyback', 'feeToBuyback', 'feeToRedeemBurn', 'redeemBurnMoved', 'avgSalePct', 'avgSaleAgeH', 'saleGross', 'cumPts', 'cumCost', 'cumMkt', 'xBought',
-    'volume', 'poolEth', 'spent'];
+    'volume', 'poolEth', 'spent', 'pile', 'creditSold', 'creditToBuyback'];
   for (const n of names) S[n] = new Array(H + 1);
 
   // initial resting book at steady state, and the CreditStrategy inventory. a key is the ask as a multiple of the market price of a credit
@@ -955,10 +1048,11 @@ function simulate(userParams = {}) {
       if (!c) { noteBind(); break; }
       const it = c.it, useS = c.isStrat;
       let door = c.ethFits && c.xFits ? (r / W >= it.pts * xPerPoint ? 'eth' : 'x') : c.ethFits ? 'eth' : 'x';
-      let cost = 0, paid = 0, viaListing = false, ok = false;
+      let cost = 0, paid = 0, viaListing = false, ok = false, xCost = 0;
       if (door === 'x') {
-        // the exit token bid pays score * unitPerPoint less the margin for the credit
-        cost = core.xBuy(it.pts);
+        // the exit token bid pays score * unitPerPoint less the margin for the credit. the credit enters the pile at an eth cost (FLOW 92, 93)
+        const xr = core.xBuyCredit(it.pts, now);
+        cost = xr ? xr.paid : 0; xCost = xr ? xr.cost : 0;
         ok = cost > 0;
         if (!ok && c.ethFits) door = 'eth';
       }
@@ -974,7 +1068,7 @@ function simulate(userParams = {}) {
       if (!ok) break;
       if (!c.thr) { if (useS) strat.splice(c.i, 1); else book.splice(c.i, 1); holdPool -= 1; } else if (c.thr && !c.forced) T.throttled++;
       if (door === 'x') {
-        T.boughtX++; T.xSpent += cost; xPile.push({ pts: it.pts, cost });
+        T.boughtX++; T.xSpent += cost; pile.push({ pts: it.pts, cost: xCost, t0: now });
       } else {
         T.bought++; T.pts += it.pts; T.cost += cost + paid; T.mkt += Pe; T.ask += c.ask; T.spent += cost + paid; T.listingPaid += paid;
         spentEth += cost + paid;
@@ -984,7 +1078,7 @@ function simulate(userParams = {}) {
         const bin = Math.min(9, Math.floor((it.pts - 80) / 72));
         histPts[bin]++; histCost[bin] += cost + paid;
         T.maxPaidRatio = Math.max(T.maxPaidRatio, (cost + paid) / Pe);
-        ethPile.push({ pts: it.pts, cost: cost + paid });
+        pile.push({ pts: it.pts, cost: cost + paid, t0: now });
         if (T.firstFill < 0) T.firstFill = now / 3600;
         if (T.first80n < 80) {
           T.first80n++; T.first80cost += cost + paid; T.first80mkt += Pe; T.first80pts += it.pts;
@@ -995,24 +1089,55 @@ function simulate(userParams = {}) {
     return spentEth;
   }
 
-  // ---- compose when a lane pile holds 80. the oldest first. an eth lane statement is listed at age zero, at the start price
+  // ---- compose when the pile holds 80 credits past their window (all of them while the credit sale is off). compose() takes the 80 oldest; with
+  // chosenComposeOn and composeChoice 'richest' the composer names the 80 highest scoring ready credits (composeChosen). the statement is listed at age zero, at the start price
   function composeAll(now) {
-    while (ethPile.length >= p.PAGE) {
-      const page = ethPile.splice(0, p.PAGE);
+    for (;;) {
+      let ready = 0;
+      while (ready < pile.length && core.pastWindow(pile[ready].t0, now)) ready++; // the pile is oldest first, so the ready credits are a prefix
+      if (ready < p.PAGE) break;
+      let page;
+      if (core.cr.chosenComposeOn && p.composeChoice === 'richest') {
+        const order = pile.slice(0, ready).map((c, i) => [c, i]).sort((a, b) => b[0].pts - a[0].pts || a[1] - b[1]).slice(0, p.PAGE);
+        const take = new Set(order.map((o) => o[1]));
+        page = order.map((o) => o[0]);
+        for (let i = ready - 1; i >= 0; i--) if (take.has(i)) pile.splice(i, 1);
+        T.composedChosen++;
+      } else page = pile.splice(0, p.PAGE);
       let cost = 0, rating = 0;
       for (const c of page) { cost += c.cost; rating += c.pts; }
-      const st = core.compose(cost, 'eth', now, rating);
+      const st = core.compose(cost, now, rating);
       st.id = nextSid++;
       T.composed++; T.stCost += st.cost; T.stRating += rating;
       unbid.push(st);
     }
-    // composeExit runs while exitMode is 2. the statement is held and redeemed by exits()
-    while (xPile.length >= p.PAGE && core.exitBidActive()) {
-      const page = xPile.splice(0, p.PAGE);
-      let cost = 0, rating = 0;
-      for (const c of page) { cost += c.cost; rating += c.pts; }
-      xHeld.push(core.compose(cost, 'exit', now, rating));
-      T.composedX++;
+  }
+
+  // ---- buyers of pile credits (ControllerV1.buyCredit), while the credit sale is on. a buyer arrives with a willingness to pay of creditWtpMult times the market price of a
+  // credit times a lognormal draw, takes the pile credit with the lowest price now if that fits, and pays it through sellCreditTo. credits acquired in the step meet buyers
+  // from the next step on. no random draw is made while the sale is off
+  function creditBuyers(t0, t1, Pe) {
+    if (!core.cr.creditSaleOn || !pile.length) return;
+    const n = poisson(rng, (p.creditBuyersPerDay * (t1 - t0)) / 86400);
+    if (!n) return;
+    const times = [];
+    for (let i = 0; i < n; i++) times.push(t0 + rng() * (t1 - t0));
+    times.sort((a, b) => a - b);
+    for (const ta of times) {
+      const wtp = Pe * p.creditWtpMult * Math.exp(p.askSigma * normal(rng));
+      if (core.isPausedAt(ta)) { T.creditMiss++; continue; }
+      let best = -1, bestPrice = Infinity;
+      for (let i = 0; i < pile.length; i++) {
+        if (pile[i].t0 > ta) break;
+        const price = core.creditPrice(pile[i], ta);
+        if (price < bestPrice) { bestPrice = price; best = i; }
+      }
+      if (best < 0 || bestPrice > wtp * (1 + 1e-12)) { T.creditMiss++; continue; }
+      const cr = pile[best], res = core.buyCredit(cr, ta);
+      if (!res) { T.creditMiss++; continue; }
+      pile.splice(best, 1);
+      T.creditSold++; T.creditGross += res.price; T.creditCost += cr.cost; T.creditToPot += res.toPot; T.creditToBuyback += res.toBuyback;
+      T.creditAge += ta - cr.t0;
     }
   }
 
@@ -1057,8 +1182,8 @@ function simulate(userParams = {}) {
     }
   }
 
-  // ---- phase 2: a keeper redeems held statements through the exit module (Core.exitStatement): an eth lane statement once its curve price is at or below its cost
-  // (needs exitMode 1 or 2), an exit lane statement at once. the exit token returned goes to xPot, an eth lane redemption moves redeemBurnBps of the reserve to the buyback
+  // ---- phase 2: a keeper redeems held statements through the exit module (Core.exitStatement) once the curve price has reached its floor (needs exitMode 1 or 2).
+  // the exit token returned goes to xPot, a redemption moves redeemBurnBps of the reserve to the buyback
   function exits(now) {
     if (!core.moduleSet || core.s.exitMode < 1) return;
     if (unbid.length) {
@@ -1071,15 +1196,6 @@ function simulate(userParams = {}) {
         } else keep.push(st);
       }
       unbid = keep;
-    }
-    if (xHeld.length) {
-      const keep = [];
-      for (const st of xHeld) {
-        const res = core.exitStatement(st, now);
-        if (!res) { keep.push(st); continue; }
-        T.exitedX++; T.xRecv += res.received;
-      }
-      xHeld.length = 0; xHeld.push(...keep);
     }
   }
 
@@ -1118,16 +1234,16 @@ function simulate(userParams = {}) {
     const dB = T.bought - S.bought[h24], dP = T.pts - S.cumPts[h24];
     S.avgScoreDay[h] = dB > 0 ? dP / dB : (h > 0 ? S.avgScoreDay[h - 1] : 0);
     S.costPerCredit[h] = T.bought ? T.cost / T.bought : 0; S.mktPerCredit[h] = Pe;
-    S.composed[h] = T.composed + T.composedX; S.sold[h] = T.sold; S.waiting[h] = unbid.length;
+    S.composed[h] = T.composed; S.sold[h] = T.sold; S.waiting[h] = unbid.length;
     S.locked[h] = locked;
-    S.exited[h] = T.exited + T.exitedX; S.buybackSpent[h] = T.buybackSpent; S.burnEth[h] = T.buybackSpent + T.buybackTips;
+    S.exited[h] = T.exited; S.buybackSpent[h] = T.buybackSpent; S.burnEth[h] = T.buybackSpent + T.buybackTips;
     S.burned[h] = T.burned; S.burnedPct[h] = (T.burned / p.SUPPLY) * 100;
     S.coinPrice[h] = pool.price; S.xPot[h] = core.xPot; S.redeemBurn[h] = core.ethRedeemBurn;
     S.book[h] = book.length;
     S.saleToPot[h] = T.saleToPot; S.saleToBuyback[h] = T.saleToBuyback; S.feeToBuyback[h] = core.feeToBuyback; S.feeToRedeemBurn[h] = core.feeToRedeemBurn; S.redeemBurnMoved[h] = core.redeemBurnMoved; S.saleGross[h] = T.saleGross;
     S.avgSalePct[h] = T.soldCost ? (T.soldPrice / T.soldCost) * 100 : NaN; S.avgSaleAgeH[h] = T.sold ? T.soldAge / T.sold / 3600 : NaN; S.xBought[h] = T.boughtX;
     S.volume[h] = T.vol; S.poolEth[h] = pool.ethInPool();
-    S.spent[h] = T.spent;
+    S.spent[h] = T.spent; S.pile[h] = pile.length; S.creditSold[h] = T.creditSold; S.creditToBuyback[h] = T.creditToBuyback;
   }
 
   // ---- the owner changes settings on a day (schedule), at the start of the step that reaches it
@@ -1217,6 +1333,7 @@ function simulate(userParams = {}) {
     lnM = Math.min(lnM + (p.impactElast * spentEth) / p.marketDailyEth, Math.log(p.impactCap));
     // statements already listed meet buyers during the step, then the engine composes and lists new ones
     statementBuyers(t0, t1, peff(t1));
+    creditBuyers(t0, t1, peff(t1));
     composeAll(t1);
     exits(t1);
     buybacks(t0, t1);
@@ -1256,15 +1373,17 @@ function simulate(userParams = {}) {
     saleOverCost: T.soldCost ? T.soldPrice / T.soldCost : 0, saleOverFloor: T.soldFloor ? T.soldPrice / T.soldFloor : 0,
     saleAgeHours: T.sold ? T.soldAge / T.sold / 3600 : 0, saleAtFloorShare: T.sold ? T.soldAtFloor / T.sold : 0,
     stmtArrivals: T.stmtArrivals, stmtMiss: T.stmtMiss,
-    potCheck: T.fees + T.feesBuyback - core.feeToBuyback - core.feeToRedeemBurn + T.saleToPot - T.spent - core.ethPot,
-    buybackCheck: T.saleToBuyback + core.feeToBuyback + core.redeemBurnMoved - core.ethToBuyback - T.buybackSpent - T.buybackTips,
+    potCheck: T.fees + T.feesBuyback - core.feeToBuyback - core.feeToRedeemBurn + T.saleToPot + T.creditToPot - T.spent - core.ethPot,
+    buybackCheck: T.saleToBuyback + T.creditToBuyback + core.feeToBuyback + core.redeemBurnMoved - core.ethToBuyback - T.buybackSpent - T.buybackTips,
+    creditCheck: T.creditGross - T.creditToPot - T.creditToBuyback,
+    creditSaleOverCost: T.creditCost ? T.creditGross / T.creditCost : 0, creditSaleAgeHours: T.creditSold ? T.creditAge / T.creditSold / 3600 : 0,
     redeemCheck: core.feeToRedeemBurn - core.redeemBurnMoved - core.ethRedeemBurn,
     saleCheck: T.saleGross - T.saleToPot - T.saleToBuyback,
     stallHours: stallTotal / 3600, stallHoursMax: stallMax / 3600, gapHoursMax: gapMax / 3600, stallRuns, stallCauseHours: Object.fromEntries(Object.entries(stallCause).map(([k, v]) => [k, v / 3600])), gateClosedHours: gateClosed / 3600, rateCapHours: rateCapSec / 3600,
     idleHoursMax: idleMax / 3600, maxPaidRatio: T.maxPaidRatio, throttled: T.throttled,
     finalRate: core.ethRate(H * 3600), finalPot: core.ethPot, finalAnchorBps: core.anchorAt(H * 3600),
   };
-  return { params: p, H, S, T, stats, at, histPts, histCost, core, pool, unbid, xHeld };
+  return { params: p, H, S, T, stats, at, histPts, histCost, core, pool, unbid, pile };
 }
 
 // the owner's metrics for one run: credits acquired, statements created, sold, eth to buy and burn the coin, statements waiting
@@ -1304,7 +1423,7 @@ const fmtSci = (x) => (x == null || !isFinite(x) ? 'n/a' : x === 0 ? '0' : x.toE
 
 // the one mid run change: the setting, its unit and a sensible value to switch to
 const CHG = {
-  floorBps: { label: 'lowest price (floorBps and saleFloorBps together)', unit: 'bps of cost, 1000 to 10000, 1000 to 40000 for saleFloorBps. launch 10000', to: 7500, also: ['saleFloorBps'] },
+  floorBps: { label: 'lowest price (floorBps and saleFloorBps together)', unit: 'bps of the price reference (floorBps, 1000 to 10000) and of cost (saleFloorBps, 1000 to 40000). launch 10000', to: 7500, also: ['saleFloorBps'] },
   markupBps: { label: 'markupBps (start price over the anchor)', unit: 'bps, 10000 to 40000', to: 12000 },
   feeToBuybackBps: { label: 'feeToBuybackBps (fee share to burn $CC)', unit: 'bps, 0 to 10000', to: 2500 },
   saleToBuybackBps: { label: 'saleToBuybackBps (sale proceeds to burn $CC)', unit: 'bps, 0 to 10000', to: 2500 },
@@ -1316,12 +1435,17 @@ const CHG = {
   refreshUnitPerPoint: { label: 'owner calls refreshUnitPerPoint (stores the module unit)', unit: 'any nonzero value', to: 1 },
   releaseRedeemBurn: { label: 'owner calls releaseRedeemBurn (reserve to the buyback pot)', unit: 'eth, capped at the reserve', to: 1 },
   rateCap: { label: 'rateCap (most the eth rate can be)', unit: 'wei per credit, 1e13 to 1e18', to: 2.2e16 },
+  creditSaleOn: { label: 'creditSaleOn (the credit sale window)', unit: '0 off, 1 on. off at launch', to: 1 },
+  creditFloorBps: { label: 'creditFloorBps (credit sale floor over the highest of cost, baseline and eth bid)', unit: 'bps, 10000 to 40000. launch 11000', to: 13000 },
+  creditStartBps: { label: 'creditStartBps (credit sale start price over the floor)', unit: 'bps, 10000 to 200000. launch 30000', to: 20000 },
+  refScore: { label: 'refScore (per-credit score of the statement price reference)', unit: 'ten-thousandths of a point, 1 to 8000000. launch 4330000, 433 points', to: 3500000 },
 };
 // every control: key in the state object, how to show it. launch values are the Core's (script/config/mainnet.json)
 const BASE_STATE = { volPreset: 'comparable', volScale: 1, volTail: 17, volHalfLifeDays: 3, buyShareLate: 'auto', pricePath: 'flat', priceP0: 0.0089, wtpMult: 1, stmtPerDay: 8, buyerWaits: 'no', impactElast: 0.12,
   openPct: 100, markupBps: 15000, startCapBps: 100000, fastBpsH: 100, kneeBps: 10000, slowBpsH: 25, floorBps: 10000, saleFloorBps: 10000, saleToBuybackBps: 5000, feeToBuybackBps: 0, feeToRedeemBurnBps: 1000, anchorHalfLifeDays: 7, anchorMinCost: 0.1, dropPerCreditPct: 0.5, dropToPct: 50, climbPerMin: 0.5, ceilPct: 110, idleLoosenPct: 2, recoveryClimbPerMin: 2, recoveryGapPct: 10, peakHalfLifeHours: 6, rateCap: 26700000000000000,
   basefeeGwei: 1, keeperFee: 0.0005, keeperMaxBaseFee: 10,
   pauseOn: false, pauseDay: 20, pauseDays: 7,
+  creditSaleOn: false, creditWindowHours: 4, creditFloorBps: 11000, creditStartBps: 30000, creditCostToPotBps: 10000, creditBuyersPerDay: 40, creditWtpMult: 1, refScore: 4330000, chosenComposeOn: false, composeChoice: 'oldest', exitPoolMult: 1,
   chgOn: false, chgDay: 30, chgKey: 'saleToBuybackBps', chgValue: 7500,
   phase2On: false, phase2Day: 14, phase2ExitMode: 2, xpPerPoint: 0.0108 / 440, exitPoolSet: false, exitBidMarginBps: 2000, redeemBurnBps: 2000, days: 90, seed: 7 };
 const GROUPS = [
@@ -1342,23 +1466,37 @@ const GROUPS = [
     { k: 'openPct', t: 'range', label: 'opening limit, percent of market', min: 20, max: 125, step: 5, fmt: (v) => v + '%', hint: 'rateStart, wei per credit =', hintFn: (s) => fmtSci(rateOf(s)) },
   ] },
   { title: 'selling statements', open: true, ctl: [
-    { k: 'markupBps', t: 'range', label: 'start price over the anchor (markupBps)', min: 10000, max: 40000, step: 500, fmt: (v) => v / 100 + '%', hint: 'asking price when a statement is listed, as a share of the anchor, the running level of sale prices (100% of cost at launch, each sale moves it halfway to the price paid, never below 100%)' },
-    { k: 'startCapBps', t: 'range', label: 'cap on the start price (startCapBps)', min: 15000, max: 200000, step: 5000, fmt: (v) => v / 100 + '%', hint: 'the start price never passes this share of cost, whatever the anchor' },
-    { k: 'fastBpsH', t: 'range', label: 'fast fall, bps of cost an hour (fastDecayBpsPerHour)', min: 10, max: 2000, log: true, fmt: (v) => Math.round(v), hint: 'asking price walk:', hintFn: (s) => walkText(s) },
+    { k: 'markupBps', t: 'range', label: 'start price over the anchor (markupBps)', min: 10000, max: 40000, step: 500, fmt: (v) => v / 100 + '%', hint: 'asking price when a statement is listed, as a share of the anchor, the running level of sale prices in percent of the price reference (100% at launch, each sale moves it halfway to the price paid, never below 100%)' },
+    { k: 'startCapBps', t: 'range', label: 'cap on the start price (startCapBps)', min: 15000, max: 200000, step: 5000, fmt: (v) => v / 100 + '%', hint: 'the start price never passes this share of the price reference, whatever the anchor' },
+    { k: 'fastBpsH', t: 'range', label: 'fast fall, bps of the reference an hour (fastDecayBpsPerHour)', min: 10, max: 2000, log: true, fmt: (v) => Math.round(v), hint: 'asking price walk:', hintFn: (s) => walkText(s) },
     { k: 'kneeBps', t: 'range', label: 'knee, where the fast fall ends (kneeBps)', min: 2000, max: 100000, step: 500, fmt: (v) => v / 100 + '%', hint: 'a start at or below the knee falls at the slow rate from the first second' },
-    { k: 'slowBpsH', t: 'range', label: 'slow fall, bps of cost an hour (slowDecayBpsPerHour)', min: 5, max: 1000, log: true, fmt: (v) => Math.round(v), hint: 'the rate below the knee, down to the floor' },
-    { k: 'floorBps', t: 'range', label: 'floor of the asking price (floorBps)', min: 2000, max: 10000, step: 500, fmt: (v) => v / 100 + '%', hint: 'the price falls to here and stops. at most the knee. launch 10000, so a statement is asked at its cost once the fall reaches it' },
-    { k: 'saleFloorBps', t: 'range', label: 'hard floor, set in the Core (saleFloorBps)', min: 1000, max: 12000, step: 500, fmt: (v) => v / 100 + '%', hint: 'no sale ever goes under this share of cost, even if the floor above is lower. launch 10000: unsold statements sit at cost' },
+    { k: 'slowBpsH', t: 'range', label: 'slow fall, bps of the reference an hour (slowDecayBpsPerHour)', min: 5, max: 1000, log: true, fmt: (v) => Math.round(v), hint: 'the rate below the knee, down to the floor' },
+    { k: 'floorBps', t: 'range', label: 'floor of the asking price (floorBps)', min: 2000, max: 10000, step: 500, fmt: (v) => v / 100 + '%', hint: 'the price falls to here, in percent of the price reference, and stops. at most the knee. launch 10000, so a statement is asked at its reference once the fall reaches it, and redeems once exitMode allows' },
+    { k: 'saleFloorBps', t: 'range', label: 'hard floor, set in the Core (saleFloorBps)', min: 1000, max: 12000, step: 500, fmt: (v) => v / 100 + '%', hint: 'no sale ever goes under this share of cost (not of the reference), even if the floor above is lower. launch 10000: unsold statements sit at cost or above' },
     { k: 'saleToBuybackBps', t: 'range', label: 'saleToBuybackBps, sale proceeds to burn $CC', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of sale proceeds that buys and burns $CC, the rest goes to the pot' },
     { k: 'feeToBuybackBps', t: 'range', label: 'feeToBuybackBps, fee share to burn $CC', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of $CC swap fee eth that buys and burns $CC instead of going to the pot' },
     { k: 'feeToRedeemBurnBps', t: 'range', label: 'feeToRedeemBurnBps, fee share to the redeem burn reserve', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of $CC swap fee eth held back for redemptions. each redemption of a held statement moves redeemBurnBps of the reserve to buy and burn $CC. launch 1000. with feeToBuybackBps at most 10000 together' },
-    { k: 'anchorHalfLifeDays', t: 'range', label: 'anchorHalfLife, days', min: 1, max: 90, step: 1, fmt: (v) => v + 'd', hint: 'the part of the anchor above 100% of cost halves in this time. launch 7' },
+    { k: 'anchorHalfLifeDays', t: 'range', label: 'anchorHalfLife, days', min: 1, max: 90, step: 1, fmt: (v) => v + 'd', hint: 'the part of the anchor above 100% of the reference halves in this time. launch 7' },
     { k: 'anchorMinCost', t: 'range', label: 'anchorMinCost, eth', min: 0, max: 10, step: 0.1, fmt: (v) => v.toFixed(1), hint: 'a sale of a statement that cost less leaves the anchor where it is. launch 0.1' },
   ] },
   { title: 'pause statement sales (setPaused)', open: false, ctl: [
     { k: 'pauseOn', t: 'check', label: 'the owner pauses statement sales' },
     { k: 'pauseDay', t: 'range', label: 'from day', min: 1, max: 89, step: 1, fmt: (v) => 'day ' + v },
     { k: 'pauseDays', t: 'range', label: 'for how many days', min: 1, max: 60, step: 1, fmt: (v) => v + 'd', hint: 'a buy reverts while paused, the price clock stops, composing, the bid, redemptions and buybacks run on' },
+  ] },
+  { title: 'statement price reference and chosen composition', open: false, ctl: [
+    { k: 'refScore', t: 'range', label: 'refScore, per-credit score of the reference', min: 1000000, max: 8000000, step: 100000, fmt: (v) => fmtN(v / 1e4) + ' points', hint: 'a statement references its cost, scaled by its rating over 80 times this score when richer. the curve, its floor and the anchor are fractions of the reference. launch 433 points (4,330,000, ten-thousandths of a point)' },
+    { k: 'chosenComposeOn', t: 'check', label: 'chosen composition open (chosenComposeOn)', hint: 'a caller names the 80 credits and the format of a statement (composeChosen). off at launch' },
+    { k: 'composeChoice', t: 'select', label: 'what the composer names while it is open', opts: [['oldest', 'the 80 oldest, as compose() does'], ['richest', 'the 80 highest scoring credits past their window']] },
+  ] },
+  { title: 'credit sale window (creditSaleOn)', open: false, ctl: [
+    { k: 'creditSaleOn', t: 'check', label: 'pile credits are for sale from their acquisition time', hint: 'off at launch. compose waits for a credit to pass its window while this is on' },
+    { k: 'creditWindowHours', t: 'range', label: 'creditWindow, hours', min: 0.1, max: 720, log: true, fmt: (v) => fmtN(v) + 'h', hint: 'the price falls over this time and rests at the floor. launch 4' },
+    { k: 'creditFloorBps', t: 'range', label: 'creditFloorBps', min: 10000, max: 40000, step: 500, fmt: (v) => v, hint: 'the floor is the highest of the credit cost, its exit token baseline and the eth bid, times this. launch 11000' },
+    { k: 'creditStartBps', t: 'range', label: 'creditStartBps', min: 10000, max: 200000, step: 5000, fmt: (v) => v, hint: 'the start price is the floor times this. launch 30000' },
+    { k: 'creditCostToPotBps', t: 'range', label: 'creditCostToPotBps', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of a sold credit cost that returns to the pot, the rest of the payment buys and burns $CC. launch 10000' },
+    { k: 'creditBuyersPerDay', t: 'range', label: 'credit buyers a day', min: 1, max: 400, log: true, fmt: (v) => fmtN(v), hint: 'a model input: buyers of pile credits, each takes the lowest priced credit that fits its willingness to pay' },
+    { k: 'creditWtpMult', t: 'range', label: 'credit buyer willingness to pay', min: 0.5, max: 2, step: 0.05, fmt: (v) => v.toFixed(2) + 'x', hint: 'times the market price of a credit, with the spread of the sellers asks' },
   ] },
   { title: 'engine settings', open: false, ctl: [
     { k: 'dropPerCreditPct', t: 'range', label: 'dropPerCreditBps', min: 0.1, max: 5, log: true, fmt: (v) => Math.round(v * 100), hint: 'bps the bid falls after each credit bought. launch 50' },
@@ -1383,11 +1521,12 @@ const GROUPS = [
   { title: 'phase 2: exitModule and exitToken', open: false, ctl: [
     { k: 'phase2On', t: 'check', label: 'phase 2 switched on' },
     { k: 'phase2Day', t: 'range', label: 'on day', min: 1, max: 89, step: 1, fmt: (v) => 'day ' + v, hint: 'the owner sets the exit module and exitMode that day. exitMode is 0 at launch: unsold statements sit at cost and nothing redeems' },
-    { k: 'phase2ExitMode', t: 'select', label: 'exitMode that day', opts: [[1, '1 hold: redemptions at cost, no exit token bid'], [2, '2 on: redemptions and the exit token bid']] },
+    { k: 'phase2ExitMode', t: 'select', label: 'exitMode that day', opts: [[1, '1 hold: redemptions at the floor, no exit token bid'], [2, '2 on: redemptions and the exit token bid (needs the pool key)']] },
     { k: 'xpPerPoint', t: 'range', label: 'exit token value per score point, eth', min: 2e-6, max: 3e-4, log: true, fmt: fmtSci, hint: 'unitPerPoint at the exit token price. a statement of 80 credits at 440 points redeems 35,200 times this', hintFn: (s) => (s.xpPerPoint * 35200).toFixed(2) + ' eth' },
-    { k: 'exitPoolSet', t: 'check', label: 'exit token pool key set in the controller', hint: 'asking price is at least the redeemable value. the pool is native eth / exit token and initialized. unset at launch' },
+    { k: 'exitPoolSet', t: 'check', label: 'exit token pool key set in the controller', hint: 'asking price is at least the redeemable value, and the exit token bid works: it values the tokens it pays at the pool price. the pool is native eth / exit token and initialized. unset at launch' },
+    { k: 'exitPoolMult', t: 'range', label: 'exit token pool price against the unit', min: 0.1, max: 3, log: true, fmt: (v) => v.toFixed(2) + 'x', hint: 'values the redemption floor, the credit baseline and the cost recorded for a credit bought with the exit token (the higher of that and the eth bid). below 1 is a pool price pushed down' },
     { k: 'exitBidMarginBps', t: 'range', label: 'exitBidMarginBps', min: 0, max: 9000, step: 500, fmt: (v) => v, hint: 'the bid pays the redeemable value of a credit less this share, at the lower of the stored and live unit. exitSlippageBps follows it down when it is under 200. launch 2000' },
-    { k: 'redeemBurnBps', t: 'range', label: 'redeemBurnBps', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of the redeem burn reserve moved to buy and burn $CC by each redemption of an eth lane statement. launch 2000' },
+    { k: 'redeemBurnBps', t: 'range', label: 'redeemBurnBps', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of the redeem burn reserve moved to buy and burn $CC by each redemption of a statement. launch 2000' },
   ] },
   { title: 'run', open: false, ctl: [
     { k: 'days', t: 'select', label: 'horizon', opts: [[30, '30 days'], [60, '60 days'], [90, '90 days'], [180, '180 days']] },
@@ -1399,7 +1538,7 @@ function walkText(s) {
   const fast = Math.round(s.fastBpsH), slow = Math.round(s.slowBpsH), knee = s.kneeBps;
   const floor = Math.max(s.floorBps, s.saleFloorBps), top = Math.max(Math.min(s.markupBps, s.startCapBps), floor);
   const hrs = (x) => (+x).toFixed(x < 10 ? 1 : 0) + 'h';
-  const head = (top / 100) + '% of cost at listing (anchor 100%), ';
+  const head = (top / 100) + '% of the reference at listing (anchor 100%), ';
   if (floor >= knee) return head + (floor / 100) + '% at hour ' + hrs(Math.max(0, top - floor) / fast);
   const tKnee = Math.max(0, top - knee) / fast;
   return head + (top > knee ? (knee / 100) + '% at hour ' + hrs(tKnee) + ', ' : '') + (floor / 100) + '% at hour ' + hrs(tKnee + (Math.min(top, knee) - floor) / slow);
@@ -1457,7 +1596,9 @@ function syncControls() {
     else if (c.t === 'check') c.inp.checked = !!v;
     else if (document.activeElement !== c.inp) c.inp.value = String(v);
     if (c.only) $('row-' + k).style.display = state.volPreset === c.only ? '' : 'none';
-    if (k === 'phase2Day' || k === 'phase2ExitMode' || k === 'xpPerPoint' || k === 'exitPoolSet' || k === 'exitBidMarginBps') $('row-' + k).style.opacity = state.phase2On ? 1 : 0.5;
+    if (k === 'phase2Day' || k === 'phase2ExitMode' || k === 'xpPerPoint' || k === 'exitPoolSet' || k === 'exitPoolMult' || k === 'exitBidMarginBps') $('row-' + k).style.opacity = state.phase2On ? 1 : 0.5;
+    if (k === 'creditWindowHours' || k === 'creditFloorBps' || k === 'creditStartBps' || k === 'creditCostToPotBps' || k === 'creditBuyersPerDay' || k === 'creditWtpMult') $('row-' + k).style.opacity = state.creditSaleOn ? 1 : 0.5;
+    if (k === 'composeChoice') $('row-' + k).style.opacity = state.chosenComposeOn ? 1 : 0.5;
     if (k === 'pauseDay' || k === 'pauseDays') $('row-' + k).style.opacity = state.pauseOn ? 1 : 0.5;
     if (k === 'chgDay' || k === 'chgKey' || k === 'chgValue') $('row-' + k).style.opacity = state.chgOn ? 1 : 0.5;
     if (c.hintFn) c.hintEl.innerHTML = c.hint + ' <b>' + c.hintFn(state) + '</b>';
@@ -1476,6 +1617,8 @@ function toParams(s) {
     recoveryClimbPerMin: Math.max(s.recoveryClimbPerMin, s.climbPerMin), recoveryGapPct: s.recoveryGapPct, peakHalfLifeHours: s.peakHalfLifeHours, // the Core needs the recovery climb at least the climb
     stepSec: 300, // 5 minute steps keep a live page responsive, credits within 1 percent of the 60 second steps of the batches
     rateCap: Math.max(s.rateCap, rateOf(s)), // the Core refuses a deploy with rateStart above rateCap
+    creditSaleOn: !!s.creditSaleOn, creditWindow: Math.max(60, Math.round(s.creditWindowHours * 3600)), creditFloorBps: s.creditFloorBps, creditStartBps: s.creditStartBps, creditCostToPotBps: s.creditCostToPotBps, creditBuyersPerDay: s.creditBuyersPerDay, creditWtpMult: s.creditWtpMult,
+    refScore: Math.round(s.refScore), chosenComposeOn: !!s.chosenComposeOn, composeChoice: s.composeChoice, exitPoolMult: s.exitPoolMult,
     phase2Day: s.phase2On ? s.phase2Day : null, phase2ExitMode: +s.phase2ExitMode, xpPerPoint: s.xpPerPoint, exitPoolSet: !!s.exitPoolSet, exitBidMarginBps: s.exitBidMarginBps, exitSlippageBps: Math.min(200, s.exitBidMarginBps), redeemBurnBps: s.redeemBurnBps,
     days: +s.days, seed: s.seed,
   };
@@ -1620,6 +1763,9 @@ const CHART_SPECS = [
     { label: 'sold', short: 'sold', color: '--s3', f: (r, h) => r.S.sold[h] },
     { label: 'waiting for a buyer or a redemption', short: 'waiting', color: '--s2', f: (r, h) => r.S.waiting[h] },
     { label: 'redeemed through the exitModule', short: 'redeemed', color: '--s1', f: (r, h) => r.S.exited[h] } ] },
+  { id: 'pile', title: 'the credit pile, and pile credits sold through the credit sale window', fmt: { l: fmtAx, r: fmtAx }, marks: markX, series: [
+    { label: 'credits in the pile', short: 'pile', color: '--s2', f: (r, h) => r.S.pile[h] },
+    { label: 'pile credits sold, cumulative', short: 'sold', color: '--s3', axis: 'r', f: (r, h) => r.S.creditSold[h] } ] },
   { id: 'saleprice', title: 'statements: average sale price as percent of cost, and hours from listing to the first buyer', fmt: { l: (v) => v.toFixed(0) + '%', r: fmtAx }, fixed: { l: [0, 120] }, marks: markX, series: [
     { label: 'average sale price, percent of what the engine paid', short: 'price', color: '--s1', f: (r, h) => r.S.avgSalePct[h] },
     { label: 'average hours from listing to the first buyer', short: 'hours', color: '--s2', axis: 'r', f: (r, h) => r.S.avgSaleAgeH[h] } ] },
@@ -1627,6 +1773,7 @@ const CHART_SPECS = [
     { label: 'eth to burn from sale proceeds', short: 'from sales', color: '--s3', f: (r, h) => r.S.saleToBuyback[h] },
     { label: 'eth to burn from fees', short: 'from fees', color: '--s4', dash: true, f: (r, h) => r.S.feeToBuyback[h] },
     { label: 'eth released by redemptions from the reserve', short: 'from reserve', color: '--s5', f: (r, h) => r.S.redeemBurnMoved[h] },
+    { label: 'eth from credit sales', short: 'from credits', color: '--s3', dash: true, f: (r, h) => r.S.creditToBuyback[h] },
     { label: 'eth spent buying $CC', short: 'spent', color: '--s1', f: (r, h) => r.S.burnEth[h] },
     { label: '$CC burned, percent of supply', short: 'burned', color: '--s2', axis: 'r', f: (r, h) => r.S.burnedPct[h] } ] },
   { id: 'coin', title: '$CC price, eth per coin', fmt: { l: fmtSci }, log: { l: true }, marks: markX, series: [
@@ -1645,7 +1792,7 @@ function renderVerdict(res, ms) {
   $('verdict').className = 'verdict ' + (!flowing ? 'bad' : sm.steadyCredits != null && sm.steadyCredits < 50 ? 'warn' : 'good');
   $('v1').textContent = 'day ' + days + ': ' + fmtN(sm.credits) + ' credits acquired, ' + fmtN(sm.statements) + ' statements created, ' + fmtN(sm.sold) + ' sold at ' + (st.saleOverCost * 100).toFixed(0) + '% of cost on average, ' + fmtN(sm.waiting) + ' still waiting, ' + fmtN(sm.burnEth) + ' eth to buy and burn $CC (' + sm.burnPct.toFixed(1) + '% of supply), launch pot spent ' + (sm.potGoneDay == null ? 'not within ' + days + ' days' : 'by day ' + sm.potGoneDay.toFixed(1)) + '';
   const steady = sm.steadyCredits == null ? '' : ' after the pot ran out: ' + fmtN(sm.steadyCredits) + ' credits and ' + fmtN(sm.steadyStatements) + ' statements a day.';
-  $('v2').textContent = 'fees in ' + fmtN(res.S.cumFees[res.H]) + ' eth (' + fmtN(res.core.feeToRedeemBurn) + ' to the redeem burn reserve). credits cost ' + st.costVsMarket.toFixed(2) + 'x the flat market price, average score ' + st.avgScoreBought.toFixed(0) + '. ' + 'burn from sale proceeds ' + fmtN(sm.saleToBurn) + ' eth, from fees ' + fmtN(sm.feeToBurn) + ' eth.' + ' the anchor ended at ' + (st.finalAnchorBps / 100).toFixed(0) + '% of cost.' + steady + (!flowing ? ' no credit was bought in the last week.' : '');
+  $('v2').textContent = 'fees in ' + fmtN(res.S.cumFees[res.H]) + ' eth (' + fmtN(res.core.feeToRedeemBurn) + ' to the redeem burn reserve). credits cost ' + st.costVsMarket.toFixed(2) + 'x the flat market price, average score ' + st.avgScoreBought.toFixed(0) + '. ' + 'burn from sale proceeds ' + fmtN(sm.saleToBurn) + ' eth, from fees ' + fmtN(sm.feeToBurn) + ' eth.' + ' the anchor ended at ' + (st.finalAnchorBps / 100).toFixed(0) + '% of the reference.' + steady + (!flowing ? ' no credit was bought in the last week.' : '');
   $('runinfo').textContent = 'ran ' + Math.round(ms) + ' ms, ' + res.H + ' hours, seed ' + p.seed;
 }
 function renderTable(res) {
@@ -1667,9 +1814,11 @@ function renderTable(res) {
   ];
   if (T.settingsChanges) notes.push('<b>setting changes</b> applied on day ' + p0().schedule.map((e) => e.day).join(', '));
   if (res.core.ethRedeemBurn + res.core.redeemBurnMoved > 0) notes.push('<b>redeem burn reserve</b> ' + fmtN(res.core.feeToRedeemBurn) + ' eth filled from fees, ' + fmtN(res.core.redeemBurnMoved) + ' eth released to buy and burn $CC by redemptions, ' + fmtN(res.core.ethRedeemBurn) + ' eth still held');
-  if (T.boughtX || T.exited || T.exitedX) notes.push('<b>phase 2</b> ' + fmtN(T.exited) + ' eth lane statements redeemed' + (T.exited ? ' after ' + (T.exitedAge / T.exited / 3600).toFixed(0) + ' hours on average' : '') + ', exit token bid bought ' + fmtN(T.boughtX) + ' credits, ' + fmtN(T.exitedX) + ' exit lane statements redeemed, ' + fmtN(res.core.xPot) + ' eth of exit token held');
+  if (T.boughtX || T.exited) notes.push('<b>phase 2</b> ' + fmtN(T.exited) + ' statements redeemed' + (T.exited ? ' after ' + (T.exitedAge / T.exited / 3600).toFixed(0) + ' hours on average' : '') + ', exit token bid bought ' + fmtN(T.boughtX) + ' credits into the one pile, ' + fmtN(res.core.xPot) + ' eth of exit token held');
+  if (T.creditSold || T.creditMiss) notes.push('<b>credit sale window</b> ' + fmtN(T.creditSold) + ' pile credits sold at ' + (T.creditCost ? (T.creditGross / T.creditCost * 100).toFixed(0) : 'n/a') + '% of their cost' + (T.creditSold ? ', ' + st.creditSaleAgeHours.toFixed(1) + ' hours after acquisition on average' : '') + ', ' + fmtN(T.creditToPot) + ' eth back to the pot, ' + fmtN(T.creditToBuyback) + ' eth to buy and burn $CC, ' + fmtN(T.creditMiss) + ' buyers found nothing at their price');
+  if (T.composedChosen) notes.push('<b>chosen composition</b> ' + fmtN(T.composedChosen) + ' statements composed from credits the composer named, average rating ' + (T.stRating / T.composed).toFixed(0) + ' points a statement');
   $('notes').innerHTML = notes.join(' &nbsp; ');
-  $('tblnote').textContent = 'eth accounting closes to ' + Math.max(Math.abs(st.potCheck), Math.abs(st.saleCheck)).toExponential(1) + ' eth';
+  $('tblnote').textContent = 'eth accounting closes to ' + Math.max(Math.abs(st.potCheck), Math.abs(st.saleCheck), Math.abs(st.creditCheck)).toExponential(1) + ' eth';
 }
 const p0 = () => toParams(state);
 let rejected = null;
@@ -1714,8 +1863,13 @@ const SCENARIOS = [
   { id: 'sc-dead', label: 'dead after week one', set: { volPreset: 'deadWeek1' } },
   { id: 'sc-recov', label: 'credit price recovery', set: { pricePath: 'recovery' } },
   { id: 'sc-p2hold', label: 'phase 2 hold on day 30', set: { phase2On: true, phase2Day: 30, phase2ExitMode: 1, xpPerPoint: 0.0087 / 440 } },
-  { id: 'sc-p2', label: 'phase 2 on day 30', set: { phase2On: true, phase2Day: 30, phase2ExitMode: 2, xpPerPoint: 0.0087 / 440 } },
-  { id: 'sc-p2nores', label: 'phase 2 on day 30, no reserve', set: { phase2On: true, phase2Day: 30, xpPerPoint: 0.0087 / 440, feeToRedeemBurnBps: 0 } },
+  { id: 'sc-p2', label: 'phase 2 on day 30', set: { phase2On: true, phase2Day: 30, phase2ExitMode: 2, xpPerPoint: 0.0087 / 440, exitPoolSet: true } },
+  { id: 'sc-p2nores', label: 'phase 2 on day 30, no reserve', set: { phase2On: true, phase2Day: 30, xpPerPoint: 0.0087 / 440, feeToRedeemBurnBps: 0, exitPoolSet: true } },
+  { id: 'sc-p2low', label: 'phase 2 on day 30, pool price pushed down', set: { phase2On: true, phase2Day: 30, phase2ExitMode: 2, xpPerPoint: 0.0087 / 440, exitPoolSet: true, exitPoolMult: 0.3 } },
+  { id: 'sc-credit', label: 'credit sale window on', set: { creditSaleOn: true } },
+  { id: 'sc-credit24', label: 'credit sale window 24 hours, composer picks the richest', set: { creditSaleOn: true, creditWindowHours: 24, chosenComposeOn: true, composeChoice: 'richest' } },
+  { id: 'sc-credit-day', label: 'credit sale window on from day 10', set: { chgOn: true, chgDay: 10, chgKey: 'creditSaleOn', chgValue: 1 } },
+  { id: 'sc-ref', label: 'refScore 350 points', set: { refScore: 3500000 } },
   { id: 'sc-noimp', label: 'engine never moves the market', set: { impactElast: 0 } },
 ];
 function applyScenario(sc) { state = Object.assign({}, BASE_STATE, sc.set); syncControls(); run(); }
@@ -1736,8 +1890,9 @@ function buildCalibration() {
     ['flat credit price per credit', 'median 0.0089 eth now, 0.03 at launch, p10 0.0069, p90 0.0138', 'flat in score, premium only above 740 points, 2x at 790 and up'],
     ['credit scores', 'uniform 80 to 800, mean 440', 'census of 122,154 credits'],
     ['statement buyer willingness to pay', 'p10 0.48, p25 0.71, median 0.84, p75 1.07, 21% at 1.2 or more, max 1.32 of the MARKET cost of the 80 credits. the asking price is a share of what the engine PAID, a different number', '42 priced sales, 33 statements'],
-    ['statement asking price', 'starts at 150% of the anchor (the running level of sale prices, at least 100% of cost), falls 1 point of cost an hour to 100% (hour 50 at the launch anchor), then 1 point every 4 hours. the floor and the hard floor are 100% of cost at launch, so an unsold statement is asked at its cost', 'docs/FLOW.md decisions 62 to 65, 85'],
-    ['phase 2', 'exitMode 0 at launch. in mode 1 a statement redeems once its curve price is at its cost and the exit token stays in the engine, in mode 2 the exit token bid pays score times the per point amount less 20%, and the exit lane statements redeem at once. each redemption of an eth lane statement moves 20% of the redeem burn reserve (10% of the fees) to buy and burn $CC', 'docs/FLOW.md decisions 84 to 87. exit token amounts are held as eth value, the module is assumed to return the whole rating times the per point value'],
+    ['statement asking price', 'starts at 150% of the anchor (the running level of sale prices, at least 100% of the price reference), falls 1 point of the reference an hour to 100% (hour 50 at the launch anchor), then 1 point every 4 hours. the reference is the cost, scaled by the rating over 80 times refScore (433 points) when the statement is richer. the floor is 100% of the reference and the hard floor 100% of cost at launch, so an unsold statement is asked at its reference', 'docs/FLOW.md decisions 62 to 65, 85, 90'],
+    ['credit sale window', 'off at launch. while on, a pile credit sells at a price falling from 3.3 times (30000 over 11000) its floor to the floor over 4 hours. the floor is 1.1 times the highest of its cost, its exit token baseline and the eth bid. buyers are a model input: 40 a day, each taking the lowest priced credit that fits a willingness to pay around the market price. the cost share returns to the pot, the markup buys and burns $CC', 'docs/FLOW.md decisions 88, 92, 93'],
+    ['phase 2', 'exitMode 0 at launch. in mode 1 a statement redeems once its curve price has reached its floor and the exit token stays in the engine, in mode 2 the exit token bid (it needs the pool key) pays score times the per point amount less 20%. a credit bought that way enters the one pile at an eth cost, the higher of the tokens paid at the pool price and the eth bid. each redemption moves 20% of the redeem burn reserve (10% of the fees) to buy and burn $CC', 'docs/FLOW.md decisions 84 to 87, 92, 93. exit token amounts are held as eth value, the module is assumed to return the whole rating times the per point value'],
     ['statement buyers a day', '13, 11, 8, 6, 4 in the first five days, model 8 decaying to 2', 'composed 119, 19, 9, 3, 3 a day'],
     ['comparable coin volume', 'day one 1,557 eth, 912 in hour one, then 81, 42, 46, 57, 13, 28, 58, 12, 41, 5, 2, 3', 'fit 123 exp(-0.286 d), floor 0.5 eth a day'],
     ['coin buys against sells', 'day one 819 to 738 eth, net 80 eth moves price 2.5e-8 to 4.4e-7', 'model reproduces 4.48e-7 on day one'],
