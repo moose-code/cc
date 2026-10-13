@@ -122,6 +122,17 @@ contract ReviewSaleTest is Fixture {
         return _cost(sid) * core.settings().saleFloorBps / 10_000;
     }
 
+    /// pins the reference to cost: the largest `refScore` and a `rateCap` at the opening rate hold the eth price at or
+    /// below the fill rate, so the rate term of `max(cost, ethPrice * rating / refScore)` stays far below cost and the
+    /// curve prices in bps of cost through later blocks
+    function _pinReferenceToCost() internal {
+        vm.prank(owner);
+        ctl.setRefScore(8_000_000);
+        Settings memory s = core.settings();
+        s.rateCap = uint64(OPEN_RATE);
+        _setSettings(s);
+    }
+
     function _probe() internal returns (SellProbe p) {
         p = new SellProbe(core);
         _setController(address(p));
@@ -268,6 +279,7 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_buy_quoteNeverRisesForAThirdParty() public {
+        _pinReferenceToCost(); // the quote falls only with decay, not with the climbing eth price
         uint256 sid = _composeOnce().sid;
         uint256 q0 = ctl.priceOf(sid);
         // a stranger runs every permissionless door: none raises the ask
@@ -289,6 +301,7 @@ contract ReviewSaleTest is Fixture {
     /// S-1 fixed: the controller floor can sit under the core hard floor (the owner raised only the core floor). the
     /// quote and the payment are clamped at the hard floor, so `buy` keeps working and the excess comes back
     function test_FIXED_buyWorksWhileTheAskIsUnderTheCoreFloor() public {
+        _pinReferenceToCost(); // the reference is cost, so the decayed curve falls under the cost-based hard floor
         uint256 sid = _composeOnce().sid;
         // lower the controller floor below the core hard floor (saleFloorBps stays at its launch 100 percent), so the
         // decayed ask falls under the core floor and the quote is pinned up to it

@@ -8,8 +8,8 @@ import {Credit} from "../interfaces/Interfaces.sol";
 /// the bounds stop typos and keep the sale prices above the credit cost
 library CreditBounds {
     uint256 internal constant BPS = 10_000;
-    /// the largest per-credit score, in ten-thousandths of a point (800 points), so `80 * refScore` is at most the
-    /// largest rating of 80 credits
+    /// the largest per-credit score, in ten-thousandths of a point (800 points), the ceiling of the `refScore` the
+    /// statement reference divides the rating by
     uint32 internal constant MAX_REF_SCORE = 8_000_000;
 
     function costToPotBpsOk(uint16 v) internal pure returns (bool) {

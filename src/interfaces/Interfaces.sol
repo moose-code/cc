@@ -9,7 +9,7 @@ interface IController {
     /// excludes paused seconds, so eligibility is frozen while sales are paused. the core reads it to gate a phase 2
     /// redemption
     function atFloor(uint256 sid) external view returns (bool);
-    /// `exitTokenBaseUnits` priced in wei at the exit token pool (docs/FLOW.md 87). reverts when the pool key is
+    /// `exitTokenBaseUnits` priced in wei at the exit token pool. reverts when the pool key is
     /// unset or the pool price reads zero. the core reads it in `sellForExitToken` to value the exit tokens paid
     function valueWei(uint256 exitTokenBaseUnits) external view returns (uint256 priceWei);
     /// true when a credit acquired at `acquiredAt` may be composed: always while the credit sale is off, otherwise once
@@ -228,8 +228,7 @@ struct Credit {
     uint16 floorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
     uint32 startBps;
-    /// the per-credit score at which `80 * refScore` equals a statement's reference denominator, in ten-thousandths of
-    /// a point. 1 to 8_000_000
+    /// the per-credit score the statement reference divides the rating by, in ten-thousandths of a point. 1 to 8_000_000
     uint32 refScore;
 }
 

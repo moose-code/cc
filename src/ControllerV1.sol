@@ -13,9 +13,10 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// first policy module. composes the oldest 80 pile credits with format 0.
-/// it prices and sells statements. a statement's price reference is `cost * max(1, rating / (80 * refScore))`: `cost`
-/// for a statement whose rating is at or below `80 * refScore`, and `cost` scaled by `rating / (80 * refScore)` above
-/// that, so a statement richer than average references proportionally higher. `refScore` is an owner setting in the
+/// it prices and sells statements. a statement's price reference is the larger of its cost and the eth bid rate before
+/// the pot clamp times its rating over `refScore`, computed at each call. the rate term prices the rating at the
+/// engine's average credit price, so two statements of the same rating reference the same amount once the rate term
+/// binds, whatever each credit cost. `refScore` is an owner setting in the
 /// per-credit score unit (one ten-thousandth of a point). the asking price is a fraction of the reference in bps that
 /// starts at `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls at a fixed rate per second in two
 /// stages: at `fastDecayBpsPerHour` from `start` to `kneeBps`, then at `slowDecayBpsPerHour` to `floorBps`, where it
@@ -103,9 +104,9 @@ contract ControllerV1 is IController {
     uint32 public kneeBps;
     /// lowest asking price, bps of the reference. 1_000 to the smaller of 10_000 and `kneeBps`
     uint16 public floorBps;
-    /// the per-credit score at which `80 * refScore` equals a statement's reference denominator, in ten-thousandths of
-    /// a point. a statement whose rating is at or below `80 * refScore` references its cost; above it the reference
-    /// scales with the rating. 1 to 8_000_000
+    /// the per-credit score the statement reference divides the rating by, in ten-thousandths of a point. the reference
+    /// is the larger of cost and the eth bid rate times rating over `refScore`, so a lower `refScore` lifts the rate
+    /// term. 1 to 8_000_000
     uint32 public refScore;
     /// the anchor at `anchorTime`, bps of the reference. 10_000 to `startCapBps`. `anchorBps()` is the value now
     uint32 public storedAnchorBps;
@@ -335,8 +336,8 @@ contract ControllerV1 is IController {
         return start < startCapBps ? start : startCapBps;
     }
 
-    /// the price reference of statement `sid`, wei: `cost` when its rating is at or below `80 * refScore`, else
-    /// `cost * rating / (80 * refScore)`. the curve prices in bps of this value. reverts `NotForSale` for a statement
+    /// the price reference of statement `sid`, wei: the larger of its cost and the eth bid rate before the pot clamp
+    /// times its rating over `refScore`. the curve prices in bps of this value. reverts `NotForSale` for a statement
     /// the core does not hold
     function referenceOf(uint256 sid) public view returns (uint256) {
         (bool held, uint256 cost,) = CORE.statementInfo(sid);
@@ -344,12 +345,13 @@ contract ControllerV1 is IController {
         return _reference(cost, CORE.ratingOf(sid));
     }
 
-    /// `cost` when `rating` is at or below `80 * refScore`, else `cost * rating / (80 * refScore)`. one `mulDiv`, so the
-    /// division carries no precision loss
+    /// the larger of `cost` and `CORE.ethPrice()` times `rating` over `refScore`. `ethPrice` is the eth bid rate before
+    /// the pot clamp, so a `sellTo` that enlarges the pot leaves the rate this reads unchanged within the block: the
+    /// core checkpoints the climbed rate before the pot grows, and the climb heads toward the larger pot only in later
+    /// blocks. one `mulDiv`, so the rate term divides at full precision
     function _reference(uint256 cost, uint256 rating) private view returns (uint256) {
-        uint256 denom = PAGE * refScore;
-        if (rating <= denom) return cost;
-        return FullMath.mulDiv(cost, rating, denom);
+        uint256 rate = FullMath.mulDiv(CORE.ethPrice(), rating, refScore);
+        return rate > cost ? rate : cost;
     }
 
     /// the asking price of statement `sid` now, read from the core. never below the core hard floor
@@ -546,7 +548,7 @@ contract ControllerV1 is IController {
 
     /// `exitTokenBaseUnits` priced in wei at the exit token pool. reverts `NoExitPrice` when the pool key is unset or
     /// the pool sqrt price reads zero. the core reads it in `sellForExitToken` to value the exit tokens a credit was
-    /// bought for (docs/FLOW.md 92)
+    /// bought for
     function valueWei(uint256 exitTokenBaseUnits) external view returns (uint256 priceWei) {
         bool priced;
         (priceWei, priced) = _priceBaseUnits(exitTokenBaseUnits);

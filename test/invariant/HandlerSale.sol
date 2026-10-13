@@ -519,13 +519,13 @@ abstract contract HandlerSale is HandlerOwner {
         return ask < hard ? hard : ask;
     }
 
-    /// the price reference of statement `sid`: its cost when the rating is at or below `80 * refScore`, else the cost
-    /// scaled by the rating over that denominator, the same value the controller prices against
+    /// the price reference of statement `sid`: the larger of its cost and the eth bid rate before the pot clamp times
+    /// its rating over `refScore`, the same value the controller prices against. the product cannot overflow a word, so
+    /// the plain divide matches the controller `mulDiv`
     function _modelRef(uint256 sid, uint256 cost) internal view returns (uint256) {
         uint256 rating = core.ratingOf(sid);
-        uint256 denom = 80 * uint256(IControllerV1(v1).refScore());
-        if (rating <= denom) return cost;
-        return cost * rating / denom;
+        uint256 rate = core.ethPrice() * rating / uint256(IControllerV1(v1).refScore());
+        return rate > cost ? rate : cost;
     }
 
     function _modelUnits(uint256 age) internal view returns (uint256 n) {

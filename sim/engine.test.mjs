@@ -473,7 +473,7 @@ const R0 = 6.668e15;
   const mk = (over = {}) => { const c = fresh(Object.assign({ exitMode: 2, floorBps: 10000, saleFloorBps: 10000 }, over), 10); c.setExitModule(0, 1e-5); return c; }; // the launch floors (FLOW 85)
   const c = mk();
   const st = c.compose(1, 0, 35200);
-  assert.equal(c.exitReady(st, 50 * H - 1), false); assert.equal(c.exitReady(st, 50 * H), true); assert.equal(c.exitReady(st, 5000 * H), true); n += 3; // the curve reaches its floor, the reference, at hour 50. a rating above 80 * refScore scales the reference, not the hour
+  assert.equal(c.exitReady(st, 50 * H - 1), false); assert.equal(c.exitReady(st, 50 * H), true); assert.equal(c.exitReady(st, 5000 * H), true); n += 3; // the curve reaches its floor, the reference, at hour 50. the rate term scales the reference, not the hour
   assert.equal(fresh({ exitMode: 2 }, 10).exitReady(c.compose(1, 0), 9999 * H), false); n++; // no module, no exit
   for (const [mode, want] of [[0, false], [1, true], [2, true]]) {
     const m = mk({ exitMode: mode });
@@ -541,7 +541,7 @@ const R0 = 6.668e15;
   // the margin is a setting read at once
   const g = mk(); assert.throws(() => g.setSettings({ exitBidMarginBps: 0 }, 1), /exitSlippageBps/); n++; g.setSettings({ exitSlippageBps: 0, exitBidMarginBps: 0 }, 1); near(g.xBidPrice(100), 100 * 1e-5, 1e-12, 'margin 0 pays the whole value'); g.setSettings({ exitBidMarginBps: 9000 }, 2); near(g.xBidPrice(100), 100 * 1e-5 * 0.1, 1e-12, 'margin 90 percent');
   // buy at (1 - margin) and redeem at full value: the engine keeps the margin
-  const h = mk(); const px = h.xBuy(35200 / 80 * 1); const rec = h.exitStatement(h.compose(0, 0, 440 * 80), 0); // cost 0: a zero reference is at its floor at once
+  const h = mk(); const px = h.xBuy(35200 / 80 * 1); const rec = h.exitStatement(h.compose(0, 0, 440 * 80), 5000 * H); // redeemed once the curve has reached its floor
   near(rec.received, 440 * 80 * 1e-5, 1e-12, 'the redemption returns the full value'); ok(rec.received > 80 * px, 'more than the 80 credits were bought for');
 }
 // a credit bought with the exit token enters the one pile at an eth cost (FLOW 92, 93, 94): the higher of the tokens paid valued at the pool price and the score-scaled eth backstop,
@@ -592,17 +592,17 @@ const R0 = 6.668e15;
   const base = { days: 30, seed: 4, phase2Day: 5, xpPerPoint: 3e-5 / 440, feeToRedeemBurnBps: 1000 };
   const mkRun = (schedule) => simulate(Object.assign({ stepSec: 3600 }, DEFAULTS, base, { schedule }));
   const none2 = mkRun([]), rel = mkRun([{ day: 10, patch: { releaseRedeemBurn: 1e9 } }]);
-  const hr = 10 * 24 + 1; ok(none2.S.redeemBurn[hr] > 0 && rel.S.redeemBurn[hr] < 0.1 * none2.S.redeemBurn[hr] && rel.S.redeemBurnMoved[hr] > none2.S.redeemBurnMoved[hr], 'the owner release on day 10 drains the reserve to the buyback and books the move');
+  const hr = 10 * 24 + 1; ok(none2.S.redeemBurn[hr] > 0 && rel.S.redeemBurn[hr] < 0.5 * none2.S.redeemBurn[hr] && rel.S.redeemBurnMoved[hr] > none2.S.redeemBurnMoved[hr], 'the owner release on day 10 drains the reserve to the buyback and books the move');
   ok(Math.abs(rel.stats.buybackCheck) < 1e-9 && Math.abs(rel.stats.redeemCheck) < 1e-9 && Math.abs(rel.stats.potCheck) < 1e-6, 'books close after a release'); n += 2;
   const low = mkRun([{ day: 8, patch: { moduleUnit: 3e-6 / 440 } }]), fix = mkRun([{ day: 8, patch: { moduleUnit: 3e-6 / 440 } }, { day: 9, patch: { refreshUnitPerPoint: true } }]);
   near(low.core.xpPerPoint, 3e-5 / 440, 1e-18, 'the stored unit stays after the module lowers'); near(low.core.xpLive, 3e-6 / 440, 1e-18, 'the live unit is the new one'); near(fix.core.xpPerPoint, 3e-6 / 440, 1e-18, 'the refresh stores it'); n += 3;
   ok(Math.abs(low.stats.potCheck) < 1e-6 && Math.abs(fix.stats.potCheck) < 1e-6, 'books close with a lowered module unit'); n++;
 }
 // the redemption value floor of the asking price (ControllerV1.priceOf, FLOW 87): max(curve price, rating * min(stored, live unitPerPoint) at the pool price) once the pool key is set.
-// the anchor and the redemption test read the curve price. the hard floor and the pool key at launch: unset. refScore is raised to its bound so these ratings sit under 80 * refScore
-// and the reference is the cost
+// the anchor and the redemption test read the curve price. the hard floor and the pool key at launch: unset. refScore is raised to its bound and the rate cap holds the eth bid
+// at the opening rate, so the rate term of the reference stays under cost and the reference is the cost
 {
-  const U = 2 / 60000, RS = { refScore: 8000000 };
+  const U = 2 / 60000, RS = { refScore: 8000000, rateCap: 8900000000000000 };
   const st = { cost: 1, t0: 0, rating: 60000 }; // value 2 eth
   const unset = fresh(Object.assign({ exitMode: 2 }, RS), 10); unset.setExitModule(0, U);
   near(unset.askingPrice(st, 0), 1.5, 1e-12, 'pool key unset: the curve price');
@@ -625,25 +625,35 @@ const R0 = 6.668e15;
   near(launch.askingPrice({ cost: 1, t0: 0, rating: 10 }, 5000 * H), 1, 1e-12, 'at the launch floors the price never goes under cost');
   n += 4;
 }
-// the rating-scaled price reference (ControllerV1.referenceOf, FLOW 90): reference = cost * max(1, rating / (80 * refScore)). the curve, its floor, the knee, the start price and the
-// anchor are fractions of it. the Core hard floor stays on cost. refScore is the per-credit score in ten-thousandths of a point (4,330,000 = 433 points, so 80 credits at 433)
+// the price reference (ControllerV1.referenceOf, FLOW 95): reference = max(cost, ethPrice * rating / refScore), the eth bid rate before the pot clamp times the rating over
+// refScore, computed at each call. the curve, its floor, the knee, the start price and the anchor are fractions of it. the Core hard floor stays on cost. refScore is the
+// per-credit score in ten-thousandths of a point (4,330,000 = 433 points). the rate cap holds the eth bid at 1e16 so ethPrice / W is 0.01 per credit and the rate term of 80
+// credits at 433 points is 0.8
 {
-  const L = { floorBps: 10000, saleFloorBps: 10000 }, c = fresh(L, 10);
-  near(c.reference({ cost: 1, rating: 80 * 433 }), 1, 1e-12, 'a statement at the reference rating references its cost');
-  near(c.reference({ cost: 1, rating: 80 * 433 / 2 }), 1, 1e-12, 'a statement under it references its cost');
-  near(c.reference({ cost: 1, rating: 80 * 433 * 1.5 }), 1.5, 1e-12, 'a statement 1.5 times richer references 1.5 times its cost');
-  near(c.reference({ cost: 2 }), 2, 1e-12, 'a record without a rating references its cost'); n += 4;
-  const rich = { cost: 1, t0: 0, rating: 80 * 433 * 1.5 };
-  near(c.curvePrice(rich, 0), 1.5 * 1.5, 1e-12, 'the start price is 150 percent of the reference'); near(c.curvePrice(rich, 50 * H), 1.5, 1e-12, 'the floor is 100 percent of the reference at hour 50');
-  near(c.curvePrice(rich, 5000 * H), 1.5, 1e-12, 'and stays there'); near(c.lowestPrice(rich), 1.5, 1e-12, 'the lowest price is the reference'); n += 4;
+  const L = { floorBps: 10000, saleFloorBps: 10000, rateStart: 1e16, rateCap: 1e16 }, c = fresh(L, 10);
+  near(c.ethPrice(0) / W, 0.01, 1e-15, 'the pinned per-credit eth rate'); n++;
+  near(c.reference({ cost: 5, rating: 80 * 433 }, 0), 5, 1e-12, 'a cost over the rate term references cost'); // rate term 0.8 < 5
+  near(c.reference({ cost: 0.5, rating: 80 * 433 }, 0), 0.8, 1e-12, 'the rate term over cost references the rate term'); // 0.01 * 80 = 0.8
+  near(c.reference({ cost: 1, rating: 80 * 433 * 2 }, 0), 1.6, 1e-12, 'twice the rating references twice the rate term');
+  near(c.reference({ cost: 2 }, 0), 2, 1e-12, 'a record without a rating references its cost'); n += 4;
+  // the fix to decision 90: two statements of equal rating reference the same amount whatever each cost, once the rate term binds
+  near(c.reference({ cost: 0.1, rating: 80 * 433 }, 0), c.reference({ cost: 0.4, rating: 80 * 433 }, 0), 1e-12, 'equal rating references the same whatever the cost');
+  near(c.reference({ cost: 0.1, rating: 80 * 433 }, 0), 0.8, 1e-12, 'the shared rate term'); n += 2;
+  const rich = { cost: 0.1, t0: 0, rating: 80 * 433 }; // reference 0.8, rate bound
+  near(c.curvePrice(rich, 0), 0.8 * 1.5, 1e-12, 'the start price is 150 percent of the reference'); near(c.curvePrice(rich, 50 * H), 0.8, 1e-12, 'the floor is 100 percent of the reference at hour 50');
+  near(c.curvePrice(rich, 5000 * H), 0.8, 1e-12, 'and stays there'); near(c.lowestPrice(rich, 0), 0.8, 1e-12, 'the lowest price is the reference'); n += 4;
   assert.equal(c.atFloor(rich, 49 * H), false); assert.equal(c.atFloor(rich, 50 * H), true); n += 2;
-  // the Core hard floor is on cost: a rating over the reference raises the price, never the hard floor
-  near(c.floorPrice(rich), 1, 1e-12, 'the hard floor is saleFloorBps of cost'); n++;
-  // a buy at the start price moves the anchor by the same amount at any rating (the sale price in bps of the reference)
-  const r1 = c.buy({ cost: 1, t0: 0, rating: 80 * 433 * 1.5 }, 0), d = fresh(L, 10), r2 = d.buy({ cost: 1, t0: 0, rating: 80 * 433 }, 0);
-  assert.equal(r1.saleBps, 15000); assert.equal(r2.saleBps, 15000); assert.equal(c.anchorAt(0), d.anchorAt(0)); near(r1.price, 2.25, 1e-12, 'the rich statement is paid 1.5 times more'); n += 4;
-  // refScore is a controller setting read at once: a higher refScore lowers the reference of every held statement
-  const e = fresh(L, 10); near(e.reference({ cost: 1, rating: 80 * 433 * 1.5 }), 1.5, 1e-12, 'before the change'); e.setSettings({ refScore: 8000000 }, 1); near(e.reference({ cost: 1, rating: 80 * 433 * 1.5 }), 1, 1e-12, 'refScore 800 points: the statement is under the reference, which is its cost'); n += 2;
+  // the Core hard floor is on cost: a rate term over cost raises the price, never the hard floor
+  near(c.floorPrice(rich), 0.1, 1e-12, 'the hard floor is saleFloorBps of cost'); n++;
+  // the reference moves with the eth bid at the call: doubling the stored rate doubles the reference
+  const m = fresh({ floorBps: 10000, saleFloorBps: 10000, rateStart: 1e16, rateCap: 2e16 }, 10);
+  near(m.reference(rich, 0), 0.8, 1e-12, 'the reference at the opening rate'); m.setSettings({ rate: 2e16 }, 1);
+  near(m.ethPrice(1) / W, 0.02, 1e-12, 'the owner doubled the eth bid'); near(m.reference(rich, 1), 1.6, 1e-12, 'the reference doubled with it'); n += 3;
+  // a buy at the start price moves the anchor by the same bps at any rating (the sale price in bps of the reference)
+  const r1 = c.buy({ cost: 0.1, t0: 0, rating: 80 * 433 }, 0), d = fresh(L, 10), r2 = d.buy({ cost: 0.1, t0: 0, rating: 80 * 433 * 2 }, 0);
+  assert.equal(r1.saleBps, 15000); assert.equal(r2.saleBps, 15000); assert.equal(c.anchorAt(0), d.anchorAt(0)); near(r2.price, 2 * r1.price, 1e-12, 'twice the rating is paid twice as much'); n += 4;
+  // refScore is a controller setting read at once: a higher refScore shrinks the rate term, and cost binds once it falls under cost
+  const e = fresh(L, 10); near(e.reference({ cost: 0.6, rating: 80 * 433 }, 0), 0.8, 1e-12, 'before the change the rate term binds'); e.setSettings({ refScore: 8000000 }, 0); near(e.reference({ cost: 0.6, rating: 80 * 433 }, 0), 0.6, 1e-12, 'refScore 800 points shrinks the rate term under cost, which is the reference'); n += 2;
   assert.throws(() => e.setSettings({ refScore: 0 }, 2), /refScore/); assert.throws(() => e.setSettings({ refScore: 8000001 }, 2), /refScore/); n += 2;
 }
 // the credit sale window (ControllerV1.creditPrice, FLOW 88, 92, 93, 94): off at launch. floor = max(cost, baseline, score-scaled backstop) * creditFloorBps / 10000, start = floor *
@@ -802,7 +812,7 @@ const R0 = 6.668e15;
   ok(L.T.sold > 0 && L.T.soldPrice >= L.T.soldCost * (1 - 1e-9), 'every sale clears at or above cost (the launch hard floor)');
   // the start price follows the anchor, so the curve reaches its floor, the reference, (startBps - 10000) / 100 hours after listing
   const endSec = L.H * 3600, hoursToCost = (L.core.startBps(endSec) - 10000) / 100, old = L.unbid.filter((st) => endSec - st.t0 >= hoursToCost * H);
-  ok(L.unbid.length > 100 && old.length > 20, 'statements wait'); ok(old.every((st) => Math.abs(L.core.askingPrice(st, endSec) - L.core.reference(st)) < 1e-12 * st.cost), 'and every one past that age is asked at its reference');
+  ok(L.unbid.length > 100 && old.length > 20, 'statements wait'); ok(old.every((st) => Math.abs(L.core.askingPrice(st, endSec) - L.core.reference(st, endSec)) < 1e-12 * L.core.reference(st, endSec)), 'and every one past that age is asked at its reference');
   ok(L.unbid.every((st) => L.core.askingPrice(st, endSec) >= st.cost * (1 - 1e-12)), 'none is asked under its cost');
   near(L.core.feeToRedeemBurn, 0.1 * (L.T.fees + L.T.feesBuyback), 1e-9, 'the reserve takes 10 percent of the fees booked'); near(L.core.ethRedeemBurn, L.core.feeToRedeemBurn, 1e-12, 'and nothing leaves it without a redemption');
   ok(L.core.redeemBurnMoved === 0, 'no redemption, no move to the buyback');

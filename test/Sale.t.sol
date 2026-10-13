@@ -134,6 +134,18 @@ abstract contract SaleBase is Fixture {
     function _recordedBook() internal view returns (uint256 pot, uint256 bb, uint256 bal) {
         return (core.ethPot(), core.ethToBuyback(), address(core).balance);
     }
+
+    /// pins the reference to cost for the curve, anchor and decay suites, which assert the launch "settle at cost"
+    /// guarantee in bps of cost. the reference is `max(cost, ethPrice * rating / refScore)`, so the largest `refScore`
+    /// and a `rateCap` at the opening rate hold the eth price at or below the fill rate and keep the rate term far
+    /// below cost, where the reference equals cost
+    function _pinReferenceToCost() internal {
+        vm.prank(owner);
+        ctl.setRefScore(8_000_000);
+        Settings memory s = core.settings();
+        s.rateCap = uint64(OPEN_RATE);
+        _setSettings(s);
+    }
 }
 
 /// the two stage curve tests. the launch sale holds floor and knee at 100 percent of cost (decision 85), so the
@@ -143,6 +155,7 @@ abstract contract SaleBase is Fixture {
 abstract contract SaleShapeBase is SaleBase {
     function setUp() public virtual override {
         super.setUp();
+        _pinReferenceToCost();
         _floorBps(7_500);
         vm.prank(owner);
         ctl.setFloorBps(7_500);
@@ -151,6 +164,11 @@ abstract contract SaleShapeBase is SaleBase {
 
 /// the curve at the launch values: floor and knee at 100 percent of cost
 contract SaleLaunchCurveTest is SaleBase {
+    function setUp() public override {
+        super.setUp();
+        _pinReferenceToCost();
+    }
+
     function test_launchCurve_startsAtStartFallsToCostAndStaysAtCost() public {
         assertEq(ctl.floorBps(), 10_000, "controller floor at launch");
         assertEq(ctl.kneeBps(), 10_000, "knee at launch");
@@ -1127,8 +1145,9 @@ contract SaleAnchorTest is SaleShapeBase {
     /// the review of d77b82c (F1): with an empty pot the engine pays 1 wei per credit, so a statement of about 80 wei is
     /// composed and bought at its start price. four rounds leave the anchor, its time and the fresh start price unchanged
     function test_anchor_dustStatementsLeaveTheAnchor() public {
+        // a page costs at most a page at the capped fill rate, under this minimum, so every round is dust
         vm.prank(owner);
-        ctl.setAnchorMinCost(LAUNCH_MIN_COST);
+        ctl.setAnchorMinCost(0.2 ether);
         assertEq(core.ethPot(), 0, "the pot is empty");
         address attacker = address(0xA77);
         uint256 t0 = ctl.anchorTime();
@@ -1150,9 +1169,11 @@ contract SaleAnchorTest is SaleShapeBase {
             core.compose();
             uint256 sid = STATEMENTS.supply();
             assertLt(_cost(sid), ctl.anchorMinCost(), "the statement costs less than the minimum");
-            assertLt(_cost(sid), 1_000, "80 credits at 1 wei each, plus the page remainder");
             uint256 price = ctl.priceOf(sid);
-            assertEq(price, _cost(sid) * 15_000 / 10_000, "the start price");
+            // a low-cost statement's cost is below the rate term, so the reference is the rate term and the start price
+            // is 150 percent of it, not of the cost. the buy at this price funds the pot, so later rounds cost a page
+            // at the capped rate rather than 1 wei each, still under the minimum
+            assertEq(price, ctl.referenceOf(sid) * 15_000 / 10_000, "the start price");
             vm.recordLogs();
             _pay(attacker, sid, price);
             assertEq(_moved(vm.getRecordedLogs()), 0, "no AnchorMoved");

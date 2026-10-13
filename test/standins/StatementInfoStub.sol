@@ -3,10 +3,10 @@ pragma solidity ^0.8.28;
 
 import {Settings} from "../../src/interfaces/Interfaces.sol";
 
-/// answers the reads `ControllerV1` makes of the Core (`statementInfo`, `ratingOf`, `settings`, `owner`) for any
-/// statement id, with a settable cost and compose time and the lowest hard floor. the rating is zero, so the reference
-/// equals the cost and the curve prices in bps of cost. lets the price fuzz set the cost and the age of a statement
-/// directly
+/// answers the reads `ControllerV1` makes of the Core (`statementInfo`, `ratingOf`, `ethPrice`, `settings`, `owner`)
+/// for any statement id, with a settable cost and compose time and the lowest hard floor. the rating is zero, so the
+/// rate term of the reference is zero and the reference equals the cost and the curve prices in bps of cost. lets the
+/// price fuzz set the cost and the age of a statement directly
 contract StatementInfoStub {
     address public owner;
     uint256 internal cost;
@@ -26,6 +26,10 @@ contract StatementInfoStub {
     }
 
     function ratingOf(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function ethPrice() external pure returns (uint256) {
         return 0;
     }
 

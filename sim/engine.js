@@ -39,7 +39,7 @@ export const SETTING_KEYS = Object.keys(SETTINGS);
 // mean of the anchor now and the sale price, a sale at or below it leaves it, and so does a sale of a statement that costs less than anchorMinCost (eth here, wei in the
 // contract). the part of the anchor above 10000 halves every anchorHalfLife, continuously.
 // a buyer pays the asking price and gets the statement at once through Core.sellTo.
-// the price reference of a statement is cost * max(1, rating / (80 * refScore)) (FLOW 90, ControllerV1.referenceOf), refScore in CREDIT below
+// the price reference of a statement is max(cost, ethPrice * rating / refScore) (FLOW 95, ControllerV1.referenceOf), where ethPrice is the eth bid rate before the pot clamp and refScore is in CREDIT below
 export const CONTROLLER = {
   markupBps: 15000,
   startCapBps: 100000,
@@ -470,11 +470,14 @@ export class Core {
   compose(costSum, now, rating = 0) {
     return { cost: costSum, t0: now, rating };
   }
-  // ControllerV1.referenceOf: the price reference of a statement, cost * max(1, rating / (80 * refScore)) (FLOW 90). ratings and scores are in points here, refScore in
-  // ten-thousandths of a point. a record without a rating references its cost
-  reference(st) {
-    const denom = this.p.PAGE * (this.cr.refScore / 1e4), rating = st.rating || 0;
-    return rating > denom ? (st.cost * rating) / denom : st.cost;
+  // ControllerV1.referenceOf: the price reference of a statement, max(cost, ethPrice * rating / refScore) (FLOW 95),
+  // where ethPrice is the eth bid rate before the pot clamp. ratings and scores are in points here, refScore in
+  // ten-thousandths of a point, so refScore/1e4 is the reference score in points and ethPrice/W is the per-credit rate
+  // in eth. a record without a rating references its cost
+  reference(st, now) {
+    const refPts = this.cr.refScore / 1e4, rating = st.rating || 0;
+    const rateTerm = (this.ethPrice(now) / W) * (rating / refPts);
+    return Math.max(st.cost, rateTerm);
   }
   // ControllerV1._setAnchorStored: the anchor at `now`
   setAnchor(bps, now) { this.anchorStored = bps; this.anchorTime = now; }
@@ -506,15 +509,15 @@ export class Core {
     return total;
   }
   // ControllerV1._ask(ref, age): askBps at the age of the statement from the current anchor and settings, in wei of `ref`, the statement's price reference.
-  // the age is the time since the compose outside the pause windows. the price is relative to what the engine PAID (the cost, scaled by the rating above the reference
-  // score), not to the market price of the statement's parts
+  // the age is the time since the compose outside the pause windows. the price is relative to the reference, the larger of the cost and the rating priced at the eth
+  // bid rate, not to the market price of the statement's parts
   statementPrice(ref, listedAt, now) {
     return (ref * askBps(this.c, this.startBps(now), Math.max(0, now - listedAt - this.pausedBetween(listedAt, now)))) / BPS;
   }
   // the Core's hard floor: no sale below cost * saleFloorBps / 10000
   floorPrice(st) { return (st.cost * this.s.saleFloorBps) / BPS; }
   // ControllerV1._quote: the curve price, never below the hard floor. the anchor reads this price
-  curvePrice(st, now) { return Math.max(this.statementPrice(this.reference(st), st.t0, now), this.floorPrice(st)); }
+  curvePrice(st, now) { return Math.max(this.statementPrice(this.reference(st, now), st.t0, now), this.floorPrice(st)); }
   // the unit the exit token bid, the redemption value and the credit baseline use: the lower of the stored and the live unitPerPoint
   unit() { return Math.min(this.xpPerPoint, this.xpLive); }
   // ControllerV1._value: the redemption value of the statement in eth, rating * min(stored, live unitPerPoint) at the exit token pool price. 0 while the pool key is unset or no module is set
@@ -522,7 +525,7 @@ export class Core {
   // ControllerV1.priceOf: the curve price, never below the redemption value once the pool key is set
   askingPrice(st, now) { return Math.max(this.curvePrice(st, now), this.valueFloor(st)); }
   // the lowest asking price the statement will ever have under the current settings (the curve floor, floorBps of the reference, or the hard floor, saleFloorBps of cost, the higher, or the redemption value)
-  lowestPrice(st) { return Math.max((this.reference(st) * this.c.floorBps) / BPS, this.floorPrice(st), this.valueFloor(st)); }
+  lowestPrice(st, now) { return Math.max((this.reference(st, now) * this.c.floorBps) / BPS, this.floorPrice(st), this.valueFloor(st)); }
   // sale proceeds into the pots: saleToBuybackBps to the buyback, the rest to the pot (checkpoint first, resync after)
   bookSale(amount, now) {
     const toBuyback = (amount * this.s.saleToBuybackBps) / BPS;
@@ -549,7 +552,7 @@ export class Core {
     const curve = this.curvePrice(st, now), price = Math.max(curve, this.valueFloor(st));
     const res = this.sellTo(st, price, now);
     if (!res) return null;
-    const ref = this.reference(st), saleBps = ref > 0 ? Math.ceil((curve * BPS) / ref - 1e-9) : 0;
+    const ref = this.reference(st, now), saleBps = ref > 0 ? Math.ceil((curve * BPS) / ref - 1e-9) : 0;
     const anchor = this.anchorAt(now);
     if (ref > 0 && st.cost >= this.c.anchorMinCost && saleBps > anchor) this.setAnchor(Math.min(Math.floor((anchor + saleBps) / 2), this.c.startCapBps), now);
     return Object.assign({ price, saleBps }, res);
@@ -630,7 +633,7 @@ export class Core {
   }
   // ControllerV1.atFloor: the curve price (without the hard floor and the redemption value floor) has reached its floor, floorBps of the reference
   atFloor(st, now) {
-    const ref = this.reference(st);
+    const ref = this.reference(st, now);
     return this.statementPrice(ref, st.t0, now) <= ((ref * this.c.floorBps) / BPS) * (1 + 1e-9);
   }
   // Core.exitStatement preconditions: a module is set, exitMode is 1 or 2, and the statement's curve price has reached its floor
@@ -1019,7 +1022,7 @@ export function simulate(userParams = {}) {
   function noteSale(st, price, at) {
     T.sold++; T.soldPrice += price; T.soldCost += st.cost; T.soldPts += st.rating; T.soldFloor += core.floorPrice(st);
     T.soldAge += at - st.t0;
-    if (price <= core.lowestPrice(st) * (1 + 1e-9)) T.soldAtFloor++;
+    if (price <= core.lowestPrice(st, at) * (1 + 1e-9)) T.soldAtFloor++;
   }
   // ---- statement buyers. a buyer arrives with a willingness to pay that is a multiple of the MARKET cost of 80 credits (80 times the flat market
   // price Pe), while the asking price is a share of what the ENGINE PAID for the statement's parts (the statement cost). the buyer takes
@@ -1041,7 +1044,7 @@ export function simulate(userParams = {}) {
       for (const st of unbid) {
         const mb = core.askingPrice(st, ta);
         if (mb > wtp * (1 + 1e-12)) continue;
-        if (waits && mb > core.lowestPrice(st) * (1 + 1e-9)) continue;
+        if (waits && mb > core.lowestPrice(st, ta) * (1 + 1e-9)) continue;
         opts.push({ st, mb });
       }
       if (!opts.length) { T.stmtMiss++; continue; }

@@ -17,7 +17,8 @@ contract CoreLens {
     using FixedPointMathLib for uint256;
 
     /// the held statement `id` of the Core, with its cost basis, compose time and rating. `priceReference` is the
-    /// controller price reference in wei, the cost scaled by the rating, 0 when the controller does not answer.
+    /// controller price reference in wei, the larger of cost and the eth bid rate times rating over `refScore`, 0 when
+    /// the controller does not answer.
     /// `askingPrice` is the controller price now in wei, 0 when the controller does not answer. `exitEligible` is true
     /// when a redemption of this statement would pass the Core gates now: a module set, `exitMode` at least 1, and a
     /// curve price at its floor
@@ -63,7 +64,7 @@ contract CoreLens {
         /// whether the controller's credit sale window is on, and the seconds a credit's price falls over
         bool creditSaleOn;
         uint256 creditWindow;
-        /// the controller's `refScore`, the per-credit score a statement's reference denominator is `80 *` of
+        /// the controller's `refScore`, the per-credit score the statement reference divides the rating by
         uint32 refScore;
         /// whether a caller may pick the 80 credits and the format of a compose, and the least coin balance a caller
         /// of a chosen compose must hold
