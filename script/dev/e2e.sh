@@ -7,6 +7,7 @@
 #
 #   script/dev/e2e.sh          start a fresh anvil, run end to end, stop it
 #   NO_ANVIL=1 script/dev/e2e.sh   reuse an anvil already on $RPC_URL
+#   STOP_AFTER=e script/dev/e2e.sh  stop after a stage (a b c d e f g) and leave anvil running for the UI
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -88,20 +89,30 @@ stage() {
   fi
 }
 
+stop_if() {
+  [ "${STOP_AFTER:-}" = "$1" ] || return 0
+  say "stopped after stage $1, anvil left running on $RPC_URL"
+  trap - EXIT
+  exit 0
+}
+
 say "warp past the anti sniper window / split start"
 warp 2000
 
 say "stage a: trade the coin, fees reach the core"
 stage a
+stop_if a
 
 say "stage b: sell 80 credits into the eth bid"
 stage b
+stop_if b
 
 say "warp past the credit window so compose is ready"
 warp 14410
 
 say "stage c: compose and buy the statement"
 stage c
+stop_if c
 
 say "stage d: open the credit sale, sell fresh credits in"
 DOPEN="$(STAGE=d-open CORE=$CORE OWNER=$OWNER A1=$A1 A2=$A2 A3=$A3 KEEPER=$KEEPER TRADER=$TRADER \
@@ -119,17 +130,21 @@ python3 -c "import sys; p0=int('$P0'); p1=int('$P1'); sys.exit(0 if p1<p0 else 1
 
 say "stage d-buy: buyCredit and buyCredits"
 stage d-buy
+stop_if d
 
 say "stage e: chosen composition"
 stage e-fill
 warp 15000
 stage e-compose
+stop_if e
 
 say "stage f: pause then unpause"
 stage f
+stop_if f
 
 say "stage g: keeper buyback (buy and burn)"
 stage g
+stop_if g
 
 say "stage h: exit side"
 stage h-setup
