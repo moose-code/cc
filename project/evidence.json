@@ -2416,6 +2416,111 @@
       "dependsOn": [],
       "reviewer": "",
       "invalidated": null
+    },
+    "E-SUITE-24378f9": {
+      "kind": "test",
+      "sourceRevision": "24378f9bb8b33ca75d01be28d39f1c09cb8322ec",
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 9,
+        "A-OWNER-DELEGATE": 1
+      },
+      "reviewer": "",
+      "dependsOn": [],
+      "invalidated": null,
+      "claim": "full suite at the candidate 24378f9: 1035 tests passed, 11 failed, 8 skipped (the Deep suites) in 113 test suites. the 11 failures reproduce with -j 1 (docs/RERUN-24378f9.log), so none is an rpc flake",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "script/config/**",
+        "script/tools/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "inputs": "candidate 24378f9 at the tip 00301d5; MAINNET_RPC_URL=https://gateway.tenderly.co/public/mainnet and FORK_BLOCK=26158000 (the rehearsal test forks the latest block, 26184372 in this run)",
+      "method": "CANDIDATE_RUN=1 REHEARSAL=1 forge test -j 6, foundry 1.8.1, 419 seconds; rerun of the failed tests with forge test -j 1 --rerun; logs docs/SUITE-24378f9.log, docs/RERUN-24378f9.log. failures: Lifecycle.t.sol test_compose_unsoldStatementStaysHeldAtTheFloor, test_narrative_theWholeLoopTwice, test_narrative_theOwnerAdaptsTheSystemLive; Rehearsal.t.sol test_rehearsal (gas 19373863 > DEPLOY_GAS_ESTIMATE 19200000); SaleSmoke.t.sol test_price_falls_to_the_knee_then_to_the_floor; V2PortMigration.t.sol test_lockFreezesTheEngine, test_newCoreWithoutAllowlistBuysBack (BadSetting feeToRedeemBurnBps), test_refusingEngineNeverBlocksSwapsAndTheEthWaits, test_repointMovesTheFeesAndTheOldCoreKeepsWorking; invariant/ComposeHostileNotReady.t.sol test_hostileControllerBurningTheReadGasIsNotReady (pre check read failed); invariant/InvariantsSale.t.sol InvariantsSalePhase1 invariant_11_noUnexpectedReverts (saleSettings)",
+      "author": "implementer run for the director, 2026-10-13",
+      "result": "fail",
+      "limitations": "the 8 skipped tests are the Deep suites (E-DEEP-24378f9). the Lifecycle, SaleSmoke and V2PortMigration failures reproduce unchanged in a copy of f171863 (the commit before 24378f9), without the storage cache, and on a second rpc (eth-mainnet.public.blastapi.io), so they predate the review fixes of 24378f9. the sim check count was not run",
+      "report": {
+        "path": "docs/SUITE-24378f9.log",
+        "sha256": "2dd7c3b2f231f78f1466936a6f757b354e5eb1bb5c309ca6a500302f5e3b188f",
+        "revision": "738adb460b0356e9c49e063fd3b7265ea6627908"
+      }
+    },
+    "E-DEEP-24378f9": {
+      "kind": "test",
+      "sourceRevision": "24378f9bb8b33ca75d01be28d39f1c09cb8322ec",
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 9,
+        "A-OWNER-DELEGATE": 1
+      },
+      "reviewer": "",
+      "dependsOn": [],
+      "invalidated": null,
+      "claim": "Deep invariant suites at 24378f9: 6 of 7 pass (InvariantsPhase1Deep, InvariantsPhase1WindowDeep, InvariantsPhase2Deep, InvariantsSalePhase1Deep, InvariantsHostileOwnerDeep, InvariantsSalePhase2Deep). InvariantsHostileControllerDeep fails: invariant_08_ownerAndControllersNeverGain, owner or controller gained eth: 736988097934455329 > 0, shrunk sequence repoint then sellCoin(1234, 8904, 2e18)",
+      "scope": [
+        "src/**",
+        "test/**",
+        "script/*.sol",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "inputs": "candidate 24378f9 at the tip 00301d5; MAINNET_RPC_URL=https://gateway.tenderly.co/public/mainnet and FORK_BLOCK=26158000",
+      "method": "CANDIDATE_RUN=1 INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 forge test --match-contract '^<Suite>$', one suite at a time. seconds: Phase1 493, Phase1Window 493, Phase2 605, HostileController 632 (exit 1), SalePhase1 489, HostileOwner 612, SalePhase2 611; log docs/DEEP-RUN-24378f9.log",
+      "author": "implementer run for the director, 2026-10-13",
+      "result": "fail",
+      "limitations": "runs on the fork pin with the exitModule stand in. the first two suites ran while a side check shared the machine, so their seconds are slightly high. the failing invariant was not rerun or shrunk further",
+      "report": {
+        "path": "docs/DEEP-RUN-24378f9.log",
+        "sha256": "b190695d2772f309420967b0292981eec3b6396baf07817f4edcff70f214c2db",
+        "revision": "738adb460b0356e9c49e063fd3b7265ea6627908"
+      }
+    },
+    "E-REHEARSAL-24378f9": {
+      "kind": "rehearsal",
+      "sourceRevision": "24378f9bb8b33ca75d01be28d39f1c09cb8322ec",
+      "assumptions": {
+        "A-FORK-BLOCK": 1,
+        "A-V2-STACK": 1,
+        "A-TOOLCHAIN": 1,
+        "A-OWNER-DECISIONS": 9,
+        "A-OWNER-DELEGATE": 1
+      },
+      "reviewer": "",
+      "dependsOn": [],
+      "invalidated": null,
+      "claim": "rehearsal test at the frozen candidate 24378f9 (tip 00301d5) with the placeholder config script/config/rehearsal.json, nothing sent: test_rehearsal fails on its gas assertion, measured 20134787 gas for the nine transactions (19373863 in the suite run) against DEPLOY_GAS_ESTIMATE 19200000. in a throwaway copy with that one assertion raised: preflight 117 of 120 then 119 of 120, postflight 99 of 99 after the launch and after the lock, then the trading smoke assertion fails (59851980000000000 != 66502200000000000)",
+      "scope": [
+        "src/**",
+        "script/**",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt",
+        "test/Rehearsal.t.sol",
+        "docs/DEPLOY.md"
+      ],
+      "inputs": "worktree at 00301d5; mainnet through the tenderly public gateway (reads only), rehearsal test forked at blocks 26184372, 26184400 and 26184406; owner nonce 3848, balance 0.093284 eth",
+      "method": "CANDIDATE_RUN=1 REHEARSAL=1 forge test --match-path test/Rehearsal.t.sol -vv; result table in docs/REHEARSAL-24378f9.md",
+      "author": "implementer run for the director, 2026-10-13",
+      "result": "fail",
+      "limitations": "the standalone Deploy, Resume, Postflight and Lock dry forms and check-preflight were not run; only the rehearsal test ran. the postflight and lock figures come from a throwaway copy with the gas assertion raised to 40,000,000 (the repository test is unchanged). the trading smoke step was not reached in the unmodified test. the gas per transaction differs between blocks (19373863 and 20134787 totals)",
+      "report": {
+        "path": "docs/REHEARSAL-24378f9.md",
+        "sha256": "e36a5a94f88b7dad595110d85986a5654f88378cd84d060433765842e602526f",
+        "revision": "738adb460b0356e9c49e063fd3b7265ea6627908"
+      }
     }
   }
 }
