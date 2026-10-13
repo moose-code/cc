@@ -5,7 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
-import {Stack, Settings, Sale} from "../../src/interfaces/Interfaces.sol";
+import {Stack, Settings, Sale, Credit, Mainnet} from "../../src/interfaces/Interfaces.sol";
 
 /// @notice creates the production contracts from their via_ir artifacts. the tests never import the production sources
 /// (that would pull them onto the via_ir compiler profile), so `new Core(...)` becomes `Prod.newCore(...)`. a revert
@@ -21,12 +21,28 @@ library Prod {
         uint256 rateStart,
         Settings memory settings
     ) internal returns (ICore) {
-        bytes memory args = abi.encode(owner, coin, controller, stack, rateStart, settings);
+        return newCore(owner, coin, controller, stack, rateStart, settings, Mainnet.defaultCredit());
+    }
+
+    function newCore(
+        address owner,
+        address coin,
+        address controller,
+        Stack memory stack,
+        uint256 rateStart,
+        Settings memory settings,
+        Credit memory credit
+    ) internal returns (ICore) {
+        bytes memory args = abi.encode(owner, coin, controller, stack, rateStart, settings, credit);
         return ICore(payable(vm.deployCode("Core.sol:Core", args)));
     }
 
     function newController(address core, Sale memory sale) internal returns (IControllerV1) {
-        return IControllerV1(vm.deployCode("ControllerV1.sol:ControllerV1", abi.encode(core, sale)));
+        return newController(core, sale, Mainnet.defaultCredit());
+    }
+
+    function newController(address core, Sale memory sale, Credit memory credit) internal returns (IControllerV1) {
+        return IControllerV1(vm.deployCode("ControllerV1.sol:ControllerV1", abi.encode(core, sale, credit)));
     }
 
     function newRouter(address owner) internal returns (IFeeRouter) {

@@ -1,31 +1,49 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Lane, IController} from "../../src/interfaces/Interfaces.sol";
+import {IController} from "../../src/interfaces/Interfaces.sol";
 
 /// settable controller for unit tests. it can also revert `nextPage`.
 contract ScriptedController is IController {
-    mapping(Lane => bool) public pageReady;
-    mapping(Lane => uint256[80]) internal _pageIds;
-    mapping(Lane => uint8) public pageFormat;
+    bool public pageReady;
+    uint256[80] internal _pageIds;
+    uint8 public pageFormat;
     bool public revertPage;
-    /// the eligibility answer the core reads for a phase 2 redemption of an eth lane statement
-    bool public atCostFlag;
+    /// the eligibility answer the core reads for a phase 2 redemption
+    bool public atFloorFlag;
+    /// the window answer the core reads for a chosen compose, and whether the call reverts
+    bool public pastWindowFlag = true;
+    bool public pastWindowReverts;
 
     /// sets the eligibility answer.
-    function setAtCost(bool on) external {
-        atCostFlag = on;
+    function setAtFloor(bool on) external {
+        atFloorFlag = on;
     }
 
-    function atCost(uint256) external view returns (bool) {
-        return atCostFlag;
+    function atFloor(uint256) external view returns (bool) {
+        return atFloorFlag;
     }
 
-    /// sets the page answer for a lane.
-    function setPage(Lane lane, bool ready, uint256[80] calldata ids, uint8 format) external {
-        pageReady[lane] = ready;
-        _pageIds[lane] = ids;
-        pageFormat[lane] = format;
+    /// sets the window answer.
+    function setPastWindow(bool on) external {
+        pastWindowFlag = on;
+    }
+
+    /// makes `pastWindow` revert.
+    function setPastWindowReverts(bool on) external {
+        pastWindowReverts = on;
+    }
+
+    function pastWindow(uint64) external view returns (bool) {
+        if (pastWindowReverts) revert();
+        return pastWindowFlag;
+    }
+
+    /// sets the page answer.
+    function setPage(bool ready, uint256[80] calldata ids, uint8 format) external {
+        pageReady = ready;
+        _pageIds = ids;
+        pageFormat = format;
     }
 
     /// makes nextPage revert.
@@ -33,8 +51,8 @@ contract ScriptedController is IController {
         revertPage = on;
     }
 
-    function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format) {
+    function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format) {
         if (revertPage) revert();
-        return (pageReady[lane], _pageIds[lane], pageFormat[lane]);
+        return (pageReady, _pageIds, pageFormat);
     }
 }

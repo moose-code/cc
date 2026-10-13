@@ -21,17 +21,6 @@ abstract contract SaleSuite is InvariantsBase {
         return true;
     }
 
-    /// the base actions as before, then the five of `HandlerSale` after `buy`
-    function _act(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) internal override {
-        a = a % 39;
-        if (a < 26 || a > 30) return super._act(a, w, x, y, z);
-        if (a == 26) handler.ownerSell(w, x, y, z);
-        else if (a == 27) handler.saleSettings(w, x);
-        else if (a == 28) handler.hostileOwner(w, x);
-        else if (a == 29) handler.lockDoor(w, x);
-        else handler.handover(w, x);
-    }
-
     function _owner() internal view returns (address) {
         return handler.owner();
     }
@@ -48,21 +37,21 @@ abstract contract SaleSuite is InvariantsBase {
     /// forge-config: default.gas_limit = 9223372036854775807
     function test_saleActionsEverySucceed() public {
         _ownerSets(address(ctl));
-        assertTrue(_try(25, 120), "no buy");
+        assertTrue(_try(23, 120), "no buy");
         // credits in, a compose: one more held statement for the selling controller
         _try(2, 40);
         _try(2, 40);
         _try(2, 40);
         assertTrue(_try(7, 80), "compose never succeeded");
         _ownerSets(address(handler.selling()));
-        assertTrue(_try(26, 160), "no sale through the selling controller");
+        assertTrue(_try(24, 160), "no sale through the selling controller");
         _ownerSets(address(ctl));
-        assertTrue(_try(27, 20), "no sale setting");
-        assertTrue(_try(28, 40), "no owner swap");
-        assertTrue(_try(30, 160), "no handover");
-        assertTrue(_try(29, 160), "no lock");
+        assertTrue(_try(25, 20), "no sale setting");
+        assertTrue(_try(26, 40), "no owner swap");
+        assertTrue(_try(28, 160), "no handover");
+        assertTrue(_try(27, 160), "no lock");
         for (uint256 i; i < 120 && (handler.pauseCount() == 0 || ctl.paused()); ++i) {
-            _try(36, 1);
+            _try(34, 1);
         }
         assertGt(handler.pauseCount(), 0, "no pause window");
         assertFalse(ctl.paused(), "no resume");
@@ -70,21 +59,21 @@ abstract contract SaleSuite is InvariantsBase {
         for (uint256 i = 1; i < handler.violationCount(); ++i) {
             assertEq(handler.viol(i), 0, handler.violMsg(i));
         }
-        for (uint256 a = 25; a < 31; ++a) {
+        for (uint256 a = 24; a < 29; ++a) {
             assertEq(handler.unexpectedFails(a), 0, handler.actionName(a));
         }
-        assertEq(handler.unexpectedFails(36), 0, handler.actionName(36));
+        assertEq(handler.unexpectedFails(34), 0, handler.actionName(34));
     }
 
     /// the seeds at the top of the range must not overflow inside a handler action
     function test_saleActionsSurviveMaxSeeds() public {
         uint256 m = type(uint256).max;
-        for (uint256 a = 25; a < 31; ++a) {
+        for (uint256 a = 24; a < 29; ++a) {
             _act(a, m, m, m, m);
             _act(a, 0, m, m - 1, m - 2);
         }
-        _act(36, m, m, m, m);
-        _act(36, 0, m, m - 1, m - 2);
+        _act(34, m, m, m, m);
+        _act(34, 0, m, m - 1, m - 2);
         for (uint256 i = 1; i < handler.violationCount(); ++i) {
             assertEq(handler.viol(i), 0, handler.violMsg(i));
         }
@@ -94,7 +83,7 @@ abstract contract SaleSuite is InvariantsBase {
     /// forge-config: default.gas_limit = 9223372036854775807
     function testFuzz_saleActionsNeverRevert(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) public {
         uint256 k = a % 7;
-        _act(k == 6 ? 36 : 25 + k, w, x, y, z);
+        _act(k == 6 ? 34 : 23 + k, w, x, y, z);
         for (uint256 i = 1; i < handler.violationCount(); ++i) {
             assertEq(handler.viol(i), 0, handler.violMsg(i));
         }

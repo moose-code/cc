@@ -6,7 +6,7 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, ICreditStrategy, ICreditScore, Stack, Mainnet, Settings, BUYLISTING_GAS} from "../src/interfaces/Interfaces.sol";
+import {ICreditStrategy, ICreditScore, Stack, Mainnet, Settings, BUYLISTING_GAS} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {HostileTarget} from "./attackers/HostileTarget.sol";
 import {ProbeTarget} from "./attackers/ProbeTarget.sol";
@@ -455,11 +455,10 @@ contract CoreUnitTest is CoreBase {
         assertEq(core.lastFillTime(), block.timestamp);
         assertEq(core.checkpointTime(), block.timestamp);
         assertEq(CREDITS.ownerOf(id), address(core));
-        (bool inPile, Lane lane, uint256 cost,) = core.creditInfo(id);
+        (bool inPile, uint256 cost,) = core.creditInfo(id);
         assertTrue(inPile);
-        assertEq(uint8(lane), uint8(Lane.Eth));
         assertEq(cost, price);
-        assertEq(core.pileSize(Lane.Eth), 1);
+        assertEq(core.pileSize(), 1);
         _solvent();
 
         // the climb restarts from the dropped rate, and the ceiling is 110 percent of the rate paid
@@ -492,7 +491,7 @@ contract CoreUnitTest is CoreBase {
         assertEq(alice.balance - before, total);
         assertEq(core.rateAtCheckpoint(), r);
         assertEq(core.ethPot(), p);
-        assertEq(core.pileSize(Lane.Eth), 3);
+        assertEq(core.pileSize(), 3);
         _solvent();
     }
 
@@ -673,7 +672,7 @@ contract CoreUnitTest is CoreBase {
         r.paid = keeper.balance - before;
         _assertListingPay(r.paid, r.gap);
         assertEq(core.ethPot(), pot - cost - r.paid, "the pot pays the cost and the payment");
-        (,, uint256 basis,) = core.creditInfo(id);
+        (, uint256 basis,) = core.creditInfo(id);
         assertEq(basis, cost + r.paid, "the cost basis is the cost plus the payment");
         assertLe(basis, ceiling, "the engine pays at most its bid");
         _solvent();
@@ -743,7 +742,7 @@ contract CoreUnitTest is CoreBase {
             PayRun memory r =
                 _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 0)), id, ceiling - gaps[i], 1 gwei, 1 gwei);
             assertEq(r.paid, gaps[i], "the payment is the gap");
-            (,, uint256 basis,) = core.creditInfo(id);
+            (, uint256 basis,) = core.creditInfo(id);
             assertEq(basis, ceiling, "cost plus payment is the bid");
             vm.revertToState(snap);
         }
@@ -801,13 +800,13 @@ contract CoreUnitTest is CoreBase {
 
         assertEq(core.ethPot(), pot);
         assertEq(core.ethRate(), rate);
-        assertEq(core.pileSize(Lane.Eth), 0);
+        assertEq(core.pileSize(), 0);
 
         // an unrelated buy still goes through.
         vm.prank(keeper);
         core.buyListing(priceB, _listing(LISTED_B), LISTED_B, STRATEGY);
         assertEq(CREDITS.ownerOf(LISTED_B), address(core));
-        assertEq(core.pileSize(Lane.Eth), 1);
+        assertEq(core.pileSize(), 1);
 
         // the core never buys a credit it already owns.
         vm.prank(keeper);
@@ -902,7 +901,7 @@ contract CoreUnitTest is CoreBase {
         uint256 paid = keeper.balance - keeperBefore;
         _assertListingPay(paid, ceiling - cost);
 
-        (,, uint256 booked,) = core.creditInfo(id);
+        (, uint256 booked,) = core.creditInfo(id);
         assertEq(booked, cost + paid, "cost is net of the refund");
         assertEq(core.ethPot(), 10 ether - cost - paid);
         assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), excessBefore, "refund booked nowhere");
@@ -1235,37 +1234,34 @@ contract CoreUnitTest is CoreBase {
         core.sellForEth(b);
         vm.stopPrank();
 
-        assertEq(core.pileSize(Lane.Eth), 5);
-        assertEq(core.pileSize(Lane.Exit), 0);
-        assertEq(core.pilePage(Lane.Eth, 0, 1)[0], a[0]);
-        assertEq(core.pilePage(Lane.Exit, 0, 1).length, 0);
-        assertEq(core.pilePage(Lane.Eth, a[0], 1)[0], a[1]);
-        assertEq(core.pilePage(Lane.Eth, a[2], 1)[0], b[0]);
-        assertEq(core.pilePage(Lane.Eth, b[1], 1).length, 0);
+        assertEq(core.pileSize(), 5);
+        assertEq(core.pilePage(0, 1)[0], a[0]);
+        assertEq(core.pilePage(a[0], 1)[0], a[1]);
+        assertEq(core.pilePage(a[2], 1)[0], b[0]);
+        assertEq(core.pilePage(b[1], 1).length, 0);
 
-        uint256[] memory all = core.pilePage(Lane.Eth, 0, 10);
+        uint256[] memory all = core.pilePage(0, 10);
         assertEq(all.length, 5);
         assertEq(all[0], a[0]);
         assertEq(all[4], b[1]);
-        uint256[] memory page = core.pilePage(Lane.Eth, a[1], 2);
+        uint256[] memory page = core.pilePage(a[1], 2);
         assertEq(page.length, 2);
         assertEq(page[0], a[2]);
         assertEq(page[1], b[0]);
-        assertEq(core.pilePage(Lane.Eth, b[1], 2).length, 0);
-        assertEq(core.pilePage(Lane.Eth, 0, 0).length, 0);
+        assertEq(core.pilePage(b[1], 2).length, 0);
+        assertEq(core.pilePage(0, 0).length, 0);
 
-        (bool inPile, Lane lane, uint256 cost, uint64 at) = core.creditInfo(b[0]);
+        (bool inPile, uint256 cost, uint64 at) = core.creditInfo(b[0]);
         assertTrue(inPile);
-        assertEq(uint8(lane), 0);
         assertGt(cost, 0);
         assertEq(at, block.timestamp);
-        (inPile,,, at) = core.creditInfo(12345678);
+        (inPile,, at) = core.creditInfo(12345678);
         assertFalse(inPile);
         assertEq(at, 0);
 
         assertEq(core.heldStatements().length, 0);
         assertEq(core.heldStatements().length, 0);
-        (bool held,,,) = core.statementInfo(1);
+        (bool held,,) = core.statementInfo(1);
         assertFalse(held);
     }
 
@@ -1274,11 +1270,8 @@ contract CoreUnitTest is CoreBase {
     //////////////////////////////////////////////////////////////*/
 
     function test_compose_notReady() public {
-        _setExitMode(2); // so composeExit reaches the page check instead of the mode gate
         vm.expectRevert(ICore.NotReady.selector);
         core.compose();
-        vm.expectRevert(ICore.NotReady.selector);
-        core.composeExit();
 
         uint256[] memory ids = _sellN(alice, 79);
         assertEq(ids.length, 79);
@@ -1287,38 +1280,32 @@ contract CoreUnitTest is CoreBase {
     }
 
     function test_compose_controllerCannotNameBadPages() public {
-        _setExitMode(2); // so composeExit reaches the page check instead of the mode gate
         ScriptedController scripted = new ScriptedController();
         _setController(address(scripted));
         uint256[] memory ids = _sellN(alice, 2);
 
         // an id that is in no pile
-        scripted.setPage(Lane.Eth, true, _page(ids[0], 777_777), 0);
+        scripted.setPage(true, _page(ids[0], 777_777), 0);
         vm.expectRevert(abi.encodeWithSelector(ICore.NotInPile.selector, 777_777));
         core.compose();
 
         // a duplicate: the second occurrence is no longer in the pile
-        scripted.setPage(Lane.Eth, true, _page(ids[0], ids[0]), 0);
+        scripted.setPage(true, _page(ids[0], ids[0]), 0);
         vm.expectRevert(abi.encodeWithSelector(ICore.NotInPile.selector, ids[0]));
         core.compose();
 
-        // a credit of the other lane
-        scripted.setPage(Lane.Exit, true, _page(ids[0], ids[1]), 0);
-        vm.expectRevert(abi.encodeWithSelector(ICore.NotInPile.selector, ids[0]));
-        core.composeExit();
-
         // id zero is the null sentinel and is never in a pile
-        scripted.setPage(Lane.Eth, true, _page(0, 0), 0);
+        scripted.setPage(true, _page(0, 0), 0);
         vm.expectRevert(abi.encodeWithSelector(ICore.NotInPile.selector, 0));
         core.compose();
 
         // bad format
-        scripted.setPage(Lane.Eth, true, _page(ids[0], ids[1]), 8);
+        scripted.setPage(true, _page(ids[0], ids[1]), 8);
         vm.expectRevert(ICore.BadFormat.selector);
         core.compose();
 
         // not ready and a reverting controller
-        scripted.setPage(Lane.Eth, false, _page(ids[0], ids[1]), 0);
+        scripted.setPage(false, _page(ids[0], ids[1]), 0);
         vm.expectRevert(ICore.NotReady.selector);
         core.compose();
         scripted.setRevertPage(true);
@@ -1329,7 +1316,7 @@ contract CoreUnitTest is CoreBase {
         uint256[] memory more = _credits(alice, 1);
         vm.prank(alice);
         core.sellForEth(more);
-        assertEq(core.pileSize(Lane.Eth), 3);
+        assertEq(core.pileSize(), 3);
     }
 
     /// the one compose of this suite with a scripted page: credits from the middle of the pile, in a different
@@ -1338,7 +1325,7 @@ contract CoreUnitTest is CoreBase {
         ScriptedController scripted = new ScriptedController();
         _setController(address(scripted));
         uint256[] memory ids = _sellN(alice, 85);
-        assertEq(core.pileSize(Lane.Eth), 85);
+        assertEq(core.pileSize(), 85);
 
         // leave the first, a few middle ones and the last in the pile.
         uint256[5] memory left = [uint256(0), 17, 40, 63, 84];
@@ -1353,28 +1340,28 @@ contract CoreUnitTest is CoreBase {
         }
         assertEq(n, 80);
         (page[0], page[79]) = (page[79], page[0]);
-        scripted.setPage(Lane.Eth, true, page, 7);
+        scripted.setPage(true, page, 7);
         uint256 supply = STATEMENTS.supply();
         vm.expectCall(address(STATEMENTS), abi.encodeWithSelector(STATEMENTS.compose.selector, page, uint8(7)));
         vm.prank(keeper);
         core.compose();
         assertEq(STATEMENTS.supply(), supply + 1);
 
-        assertEq(core.pileSize(Lane.Eth), 5);
-        assertEq(core.pilePage(Lane.Eth, 0, 1)[0], ids[0]);
-        uint256[] memory rest = core.pilePage(Lane.Eth, 0, 10);
+        assertEq(core.pileSize(), 5);
+        assertEq(core.pilePage(0, 1)[0], ids[0]);
+        uint256[] memory rest = core.pilePage(0, 10);
         assertEq(rest.length, 5);
         for (uint256 j; j < 5; ++j) {
             assertEq(rest[j], ids[left[j]]);
         }
-        assertEq(core.pilePage(Lane.Eth, ids[84], 1).length, 0);
+        assertEq(core.pilePage(ids[84], 1).length, 0);
 
         // a new arrival lands behind the old tail.
         uint256[] memory more = _credits(alice, 1);
         vm.prank(alice);
         core.sellForEth(more);
-        assertEq(core.pilePage(Lane.Eth, ids[84], 1)[0], more[0]);
-        assertEq(core.pileSize(Lane.Eth), 6);
+        assertEq(core.pilePage(ids[84], 1)[0], more[0]);
+        assertEq(core.pileSize(), 6);
         _solvent();
     }
 
@@ -1391,13 +1378,13 @@ contract CoreUnitTest is CoreBase {
         core.sellTo(1, alice);
         vm.expectRevert(ICore.NoExitModule.selector);
         core.exitStatement(1);
-        (bool held,,,) = core.statementInfo(1);
+        (bool held,,) = core.statementInfo(1);
         assertFalse(held);
         assertEq(core.ethPot(), 0);
         assertEq(core.ethToBuyback(), 0);
     }
 
-    /// with exitMode at its launch value 0 the exit token bid and composeExit are closed; the redemption door reverts
+    /// with exitMode at its launch value 0 the exit token bid is closed; the redemption door reverts
     /// NoExitModule once mode is on but no module is set
     function test_exitDoorsClosedAtLaunch() public {
         vm.prank(alice);
@@ -1406,8 +1393,6 @@ contract CoreUnitTest is CoreBase {
         vm.prank(alice);
         vm.expectRevert(ICore.ExitModeOff.selector);
         core.sellForExitToken(_one(1), 0);
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.composeExit();
         // exitStatement reverts NoExitModule whatever the mode while no module is set
         vm.expectRevert(ICore.NoExitModule.selector);
         core.exitStatement(1);
@@ -1519,16 +1504,15 @@ contract CoreComposedTest is CoreBase {
         assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the core holds it");
         assertEq(STATEMENTS.creditsOf(c.sid), 80);
 
-        (bool held, Lane lane, uint256 cost, uint64 composedAt) = core.statementInfo(c.sid);
+        (bool held, uint256 cost, uint64 composedAt) = core.statementInfo(c.sid);
         assertTrue(held);
-        assertEq(uint8(lane), uint8(Lane.Eth));
         assertEq(cost, c.cost, "cost basis is the sum of the credits' cost bases");
         assertEq(composedAt, c.at);
 
-        assertEq(core.pileSize(Lane.Eth), 0);
-        assertEq(core.pilePage(Lane.Eth, 0, 1).length, 0);
+        assertEq(core.pileSize(), 0);
+        assertEq(core.pilePage(0, 1).length, 0);
         for (uint256 i; i < 80; ++i) {
-            (bool inPile,,,) = core.creditInfo(ids[i]);
+            (bool inPile,,) = core.creditInfo(ids[i]);
             assertFalse(inPile);
         }
         assertEq(CREDITS.balanceOf(address(core)), 0, "the credits were burned into the statement");
@@ -1570,7 +1554,7 @@ contract CoreComposedTest is CoreBase {
         assertEq(address(core).balance, coreBefore, "the core balance is unchanged");
         assertEq(core.ethPot(), potBefore, "the eth pot is unchanged");
         assertEq(keeper.balance, callerBefore, "the caller receives nothing");
-        (,, uint256 cost,) = core.statementInfo(supply + 1);
+        (, uint256 cost,) = core.statementInfo(supply + 1);
         assertEq(cost, c.cost, "the cost basis is the credits only");
     }
 
@@ -1645,6 +1629,7 @@ contract CoreComposedTest is CoreBase {
     /// the per point bid pays each credit its score times the unit less the margin
     function test_xBid_paysScoreTimesUnit() public {
         _fillExitBuyback();
+        _setExitPool();
         xt.mint(address(core), 1e22);
         core.skim();
         uint256[] memory ids = _credits(alice, 2);
@@ -1682,7 +1667,7 @@ contract CoreComposedTest is CoreBase {
         core.sellForExitToken(ids);
     }
 
-    /// the bid and composeExit are closed unless exitMode is 2
+    /// the exit token bid is closed unless exitMode is 2
     function test_xBid_needsModeTwo() public {
         _fillExitBuyback();
         xt.mint(address(core), 1e22);
@@ -1707,50 +1692,4 @@ contract CoreComposedTest is CoreBase {
         _solvent();
     }
 
-    /*//////////////////////////////////////////////////////////////
-                         exit lane compose and exit
-    //////////////////////////////////////////////////////////////*/
-
-    function test_exitLane_composeThenImmediateExit() public {
-        _fillExitBuyback();
-        xt.mint(address(core), 1e23);
-        core.skim();
-
-        uint256[] memory ids = _credits(alice, 80);
-        vm.prank(alice);
-        core.sellForExitToken(ids);
-        assertEq(core.pileSize(Lane.Exit), 80);
-        uint256 sumExit;
-        for (uint256 i; i < 80; ++i) {
-            (,, uint256 paidIn,) = core.creditInfo(ids[i]);
-            sumExit += paidIn;
-        }
-
-        uint256 potBefore = core.ethPot();
-        uint256 balBefore = keeper.balance;
-        uint256 sidX = STATEMENTS.supply() + 1;
-        vm.prank(keeper);
-        core.composeExit();
-        uint256 paid = keeper.balance - balBefore;
-
-        assertEq(STATEMENTS.ownerOf(sidX), address(core), "held by the core");
-        (bool held, Lane lane, uint256 cost,) = core.statementInfo(sidX);
-        assertTrue(held);
-        assertEq(uint8(lane), uint8(Lane.Exit));
-        assertEq(cost, sumExit, "exit token cost basis");
-        assertEq(core.pileSize(Lane.Exit), 0);
-        assertEq(core.ethPot(), potBefore);
-        assertEq(paid, 0, "the compose pays the caller nothing");
-        vm.prank(address(ctl));
-        vm.expectRevert(ICore.NotForSale.selector);
-        core.sellTo(sidX, alice);
-
-        // the exit lane exits at once and everything returns to the bid pot
-        uint256 xPotBefore = core.xPot();
-        uint256 out = core.ratingOf(sidX) * UNIT;
-        core.exitStatement(sidX);
-        assertEq(core.xPot(), xPotBefore + out);
-        assertEq(STATEMENTS.ownerOf(sidX), address(mod));
-        _solvent();
-    }
 }

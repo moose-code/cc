@@ -232,7 +232,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "");
         _print("preflight");
         // every launch input has a row: the count is part of the report
-        assertEq(rows.length, 117, "preflight rows: docs/DEPLOY.md step 4");
+        assertEq(rows.length, 120, "preflight rows: docs/DEPLOY.md step 4");
     }
 
     /// each pinned code hash has a row. appending one byte of code to a contract fails exactly its row
@@ -707,7 +707,7 @@ contract ConfigTest is Fixture {
         assertEq(first, address(ctl), "the first controller is found from the deployer nonce");
         assertEq(
             coreConstructorArgs(core, lc, first),
-            abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings),
+            abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit),
             "etherscan constructor args"
         );
     }

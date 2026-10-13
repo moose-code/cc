@@ -3,7 +3,6 @@ pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane} from "../src/interfaces/Interfaces.sol";
 
 /// `rescueNft` of the Core: an ERC721 token leaves only when the Core's books do not hold it. real Credits, Statements
 /// and a real ERC721 of the fork
@@ -28,18 +27,18 @@ contract RescueTest is Fixture {
 
     function test_REVERT_aCreditInAPileStays() public {
         uint256[] memory ids = _fillEthPile(3);
-        (bool inPile,,,) = core.creditInfo(ids[1]);
+        (bool inPile,,) = core.creditInfo(ids[1]);
         assertTrue(inPile, "setup: the credit is in the pile");
         _expectRescueRevert(address(CREDITS), ids[1], ICore.InPile.selector);
         assertEq(CREDITS.ownerOf(ids[1]), address(core), "the credit moved");
-        assertEq(core.pileSize(Lane.Eth), 3, "the pile changed");
+        assertEq(core.pileSize(), 3, "the pile changed");
     }
 
     function test_OK_aCreditSentStraightToTheCoreLeaves() public {
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
         CREDITS.transferFrom(seller, address(core), ids[0]);
-        (bool inPile,,,) = core.creditInfo(ids[0]);
+        (bool inPile,,) = core.creditInfo(ids[0]);
         assertFalse(inPile, "a straight transfer is not in a pile");
         vm.expectEmit(true, true, true, true, address(core));
         emit NftRescued(address(CREDITS), ids[0], dest);
@@ -54,37 +53,15 @@ contract RescueTest is Fixture {
 
     function test_REVERT_aHeldStatementStays() public {
         Composed memory c = _composeOnce();
-        (bool held,,,) = core.statementInfo(c.sid);
+        (bool held,,) = core.statementInfo(c.sid);
         assertTrue(held, "setup: the statement is held");
         _expectRescueRevert(address(STATEMENTS), c.sid, ICore.Held.selector);
         assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement moved");
     }
 
-    function test_REVERT_anExitLaneStatementHeldByTheCoreStays() public {
-        _enterPhase2();
-        uint256 sid = _exitLaneStatement();
-        (bool held, Lane lane,,) = core.statementInfo(sid);
-        assertTrue(held && lane == Lane.Exit, "setup: an exit lane statement is held");
-        assertEq(STATEMENTS.ownerOf(sid), address(core), "setup: the core holds it");
-        _expectRescueRevert(address(STATEMENTS), sid, ICore.Held.selector);
-    }
-
-    function _exitLaneStatement() internal returns (uint256 sid) {
-        uint256[] memory ids = _credits(seller, 80);
-        // the exit pot pays for the credits: fund it with the exit token the module pays out
-        xt.mint(address(core), 1_000_000_000e18);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        assertEq(core.pileSize(Lane.Exit), 80, "setup: eighty credits in the exit pile");
-        uint256 supply = STATEMENTS.supply();
-        core.composeExit();
-        sid = supply + 1;
-    }
-
     function test_OK_aStatementThatCameBackAfterASaleLeaves() public {
         (uint256 sid,) = _sellStatement(address(0xB1D));
-        (bool held,,,) = core.statementInfo(sid);
+        (bool held,,) = core.statementInfo(sid);
         assertFalse(held, "setup: the sale cleared the record");
         vm.prank(address(0xB1D));
         STATEMENTS.transferFrom(address(0xB1D), address(core), sid);
@@ -153,10 +130,10 @@ contract RescueTest is Fixture {
         vm.prank(seller);
         CREDITS.transferFrom(seller, address(core), stray[0]);
         _rescue(address(CREDITS), stray[0], dest);
-        assertEq(core.pileSize(Lane.Eth), 5, "the pile changed");
-        assertEq(core.pilePage(Lane.Eth, 0, 1)[0], ids[0], "the pile head changed");
+        assertEq(core.pileSize(), 5, "the pile changed");
+        assertEq(core.pilePage(0, 1)[0], ids[0], "the pile head changed");
         _fillEthPile(75);
-        assertEq(core.pileSize(Lane.Eth), 80, "the pile did not fill");
+        assertEq(core.pileSize(), 80, "the pile did not fill");
         _composeOnce();
     }
 }

@@ -4,11 +4,11 @@ pragma solidity ^0.8.28;
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, Settings} from "../src/interfaces/Interfaces.sol";
+import {Settings} from "../src/interfaces/Interfaces.sol";
 import {RepaidCaller} from "./attackers/SaleAttackers.sol";
 import {GasBurningPayee} from "./attackers/GasBurners.sol";
 
-/// the caller payment of `compose` and `composeExit`: counted gas at the capped base fee plus `callerFee`, from `ethPot`,
+/// the caller payment of `compose`: counted gas at the capped base fee plus `callerFee`, from `ethPot`,
 /// at most the pot. real Core, real Statements, the stand in exit module and token. `exitStatement` shares the helper
 /// and the settings, its cases are in test/Redeem.t.sol
 contract CallerPayTest is Fixture {
@@ -49,19 +49,7 @@ contract CallerPayTest is Fixture {
         _fundPot(1 ether);
     }
 
-    /// a full exit lane page, phase 2, and a pot that carries the payment
-    function _readyExit() internal {
-        _enterPhase2();
-        _fundPot(1 ether);
-        uint256[] memory ids = _credits(seller, 80);
-        xt.mint(address(core), 5e19);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        _fundPot(1 ether);
-    }
-
-    function _run(bool exitLane, uint256 basefee, uint256 gasPrice) internal returns (Run memory r) {
+    function _run(uint256 basefee, uint256 gasPrice) internal returns (Run memory r) {
         vm.fee(basefee);
         vm.txGasPrice(gasPrice);
         uint256 pot = core.ethPot();
@@ -69,8 +57,7 @@ contract CallerPayTest is Fixture {
         uint256 kb = keeper.balance;
         vm.prank(keeper);
         uint256 g0 = gasleft();
-        if (exitLane) core.composeExit();
-        else core.compose();
+        core.compose();
         r.gasUsed = g0 - gasleft();
         (r.gross, r.refund) = _lastCallGross();
         r.paid = keeper.balance - kb;
@@ -92,15 +79,10 @@ contract CallerPayTest is Fixture {
         assertEq(s.callerFee, 0);
         assertEq(s.callerMaxBaseFee, 0);
         _readyEth();
-        Run memory r = _run(false, 300 gwei, 300 gwei);
+        Run memory r = _run(300 gwei, 300 gwei);
         assertEq(r.paid, 0, "compose pays nothing");
         assertEq(r.potDrop, 0, "the pot is unchanged");
         assertEq(r.balDrop, 0, "no eth moved");
-        _readyExit();
-        r = _run(true, 300 gwei, 300 gwei);
-        assertEq(r.paid, 0, "composeExit pays nothing");
-        assertEq(r.potDrop, 0);
-        assertEq(r.balDrop, 0);
     }
 
     /// the fee alone pays the fee, the ceiling alone pays the gas
@@ -110,13 +92,13 @@ contract CallerPayTest is Fixture {
         Settings memory s = core.settings();
         s.callerFee = uint64(FEE);
         _setSettings(s);
-        Run memory r = _run(false, 5 gwei, 5 gwei);
+        Run memory r = _run(5 gwei, 5 gwei);
         assertEq(r.paid, FEE, "the fee alone, no gas refund with a zero ceiling");
         vm.revertToState(snap);
         s.callerFee = 0;
         s.callerMaxBaseFee = uint48(CEILING);
         _setSettings(s);
-        r = _run(false, 5 gwei, 5 gwei);
+        r = _run(5 gwei, 5 gwei);
         assertGt(r.paid, 0);
         assertEq(r.paid % 5 gwei, 0, "the gas alone");
     }
@@ -126,7 +108,7 @@ contract CallerPayTest is Fixture {
     function test_composePaysCountedGasAtTheBaseFeePlusTheFee() public {
         _readyEth();
         _payOn();
-        Run memory r = _run(false, 5 gwei, 5 gwei);
+        Run memory r = _run(5 gwei, 5 gwei);
         uint256 counted = _counted(r, 5 gwei);
         emit log_named_uint("gas of the compose call (net of refund)", r.gasUsed);
         emit log_named_uint("gas of the compose transaction before refund", r.gross);
@@ -144,28 +126,15 @@ contract CallerPayTest is Fixture {
         _solvent();
     }
 
-    function test_composeExitPaysByTheSameRule() public {
-        _readyExit();
-        _payOn();
-        Run memory r = _run(true, 5 gwei, 5 gwei);
-        uint256 counted = _counted(r, 5 gwei);
-        assertEq(r.paid, counted * 5 gwei + FEE);
-        assertEq(r.potDrop, r.paid);
-        assertEq(r.balDrop, r.paid);
-        assertGe(counted, r.gross);
-        assertLe(counted, r.gross + 20_000);
-        _solvent();
-    }
-
     /// above the ceiling the gas is paid at the ceiling, with the same counted gas
     function test_baseFeeAboveTheCeilingPaysAtTheCeiling() public {
         _readyEth();
         _payOn();
         uint256 snap = vm.snapshotState();
-        Run memory low = _run(false, 5 gwei, 5 gwei);
+        Run memory low = _run(5 gwei, 5 gwei);
         uint256 counted = _counted(low, 5 gwei);
         vm.revertToState(snap);
-        Run memory high = _run(false, 50 gwei, 50 gwei);
+        Run memory high = _run(50 gwei, 50 gwei);
         assertEq(high.paid, counted * CEILING + FEE, "the same counted gas at the ceiling");
         assertEq(high.potDrop, high.paid);
     }
@@ -175,9 +144,9 @@ contract CallerPayTest is Fixture {
         _readyEth();
         _payOn();
         uint256 snap = vm.snapshotState();
-        Run memory plain = _run(false, 5 gwei, 5 gwei);
+        Run memory plain = _run(5 gwei, 5 gwei);
         vm.revertToState(snap);
-        Run memory tipped = _run(false, 5 gwei, 5 gwei + 40 gwei);
+        Run memory tipped = _run(5 gwei, 5 gwei + 40 gwei);
         assertEq(tipped.paid, plain.paid);
     }
 
@@ -190,10 +159,10 @@ contract CallerPayTest is Fixture {
         _readyEth();
         _payOn();
         uint256 snap = vm.snapshotState();
-        Run memory empty = _run(false, 5 gwei, 5 gwei);
+        Run memory empty = _run(5 gwei, 5 gwei);
         vm.revertToState(snap);
         vm.deal(address(feeRouter), 1 ether);
-        Run memory loaded = _run(false, 5 gwei, 5 gwei);
+        Run memory loaded = _run(5 gwei, 5 gwei);
         assertGt(address(core).balance, 0);
         uint256 flushGas = _counted(loaded, 5 gwei) - _counted(empty, 5 gwei);
         emit log_named_uint("counted gas of the flush", flushGas);
@@ -205,7 +174,7 @@ contract CallerPayTest is Fixture {
         _readyEth();
         _payOn();
         _setPot(1e12);
-        Run memory r = _run(false, 5 gwei, 5 gwei);
+        Run memory r = _run(5 gwei, 5 gwei);
         assertEq(r.paid, 1e12, "the whole pot");
         assertEq(core.ethPot(), 0);
         assertEq(core.heldStatements().length, 1, "the compose went through");
@@ -215,7 +184,7 @@ contract CallerPayTest is Fixture {
         _readyEth();
         _payOn();
         _setPot(0);
-        Run memory r = _run(false, 5 gwei, 5 gwei);
+        Run memory r = _run(5 gwei, 5 gwei);
         assertEq(r.paid, 0);
         assertEq(core.heldStatements().length, 1);
     }
@@ -240,16 +209,10 @@ contract CallerPayTest is Fixture {
         _readyEth();
         _payOn();
         vm.deal(address(feeRouter), 1 ether);
-        Run memory r = _run(false, 1 gwei, 1 gwei);
+        Run memory r = _run(1 gwei, 1 gwei);
         emit log_named_uint("eth lane worst case: counted", _counted(r, 1 gwei));
         emit log_named_uint("eth lane worst case: gross before refund", r.gross);
         assertLe(_counted(r, 1 gwei) * 12 / 10, COMPOSE_GAS, "the bound is at least 1.2 times the worst case");
-        _readyExit();
-        vm.deal(address(feeRouter), 1 ether);
-        r = _run(true, 1 gwei, 1 gwei);
-        emit log_named_uint("exit lane worst case: counted", _counted(r, 1 gwei));
-        emit log_named_uint("exit lane worst case: gross before refund", r.gross);
-        assertLe(_counted(r, 1 gwei) * 12 / 10, COMPOSE_GAS);
     }
 
     // ------------------------------------------------------------------ bounds and reentrancy
@@ -280,7 +243,7 @@ contract CallerPayTest is Fixture {
         uint256 pot = core.ethPot();
         rc.compose(0);
         assertEq(rc.hits(), 1, "paid once");
-        assertEq(rc.blocked(), 5, "all five doors refused it");
+        assertEq(rc.blocked(), 4, "all four doors refused it");
         assertEq(rc.ok(), 0);
         assertEq(core.ethPot(), pot - rc.repaid(), "the pot paid it once");
         assertEq(core.heldStatements().length, 1);

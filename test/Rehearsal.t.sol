@@ -9,7 +9,7 @@ import {IV4Router} from "v4-periphery/src/interfaces/IV4Router.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Lane, ICredits, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {ICredits, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {SystemDeployer, Deployed} from "../script/SystemDeployer.sol";
 import {V2Stack} from "./utils/V2Stack.sol";
 import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
@@ -359,7 +359,7 @@ contract RehearsalTest is Test, ProdDeployer {
             assertEq(credits.ownerOf(id), address(core), "the core holds the credit");
             assertEq(who.balance - before, price, "the seller was paid the ceiling");
             assertEq(pot - core.ethPot(), price, "the pot paid it");
-            assertEq(core.pileSize(Lane.Eth), 1);
+            assertEq(core.pileSize(), 1);
             console.log("sold credit", id, "for wei", price);
             return;
         }

@@ -29,7 +29,7 @@ export function metrics(res) {
     avgScoreBought: st.avgScoreBought, clampSteps: st.clampSteps, rateMaxBidRatio: st.rateMaxBidRatio,
     saleOverCost: st.saleOverCost, saleOverFloor: st.saleOverFloor, saleAgeH: st.saleAgeHours, saleAtFloor: st.saleAtFloorShare, anchorBps: st.finalAnchorBps,
     stmtArrivals: st.stmtArrivals, stmtMiss: st.stmtMiss,
-    boughtX: T.boughtX, exitedX: T.exitedX, burnEthM: T.burned / 1e6, listingPaid: T.listingPaid, spent: T.spent,
+    boughtX: T.boughtX, creditSold: T.creditSold, creditGross: T.creditGross, creditToBuyback: T.creditToBuyback, burnEthM: T.burned / 1e6, listingPaid: T.listingPaid, spent: T.spent,
     stCost: T.composed ? T.stCost / T.composed : NaN, stRating: T.composed ? T.stRating / T.composed : NaN,
     xPotEnd: res.core.xPot, redeemBurnEnd: res.core.ethRedeemBurn, redeemBurnMoved: res.core.redeemBurnMoved, potEnd: res.core.ethPot, toBuybackEnd: res.core.ethToBuyback,
     feeToBurnEnd: res.core.feeToBuyback,

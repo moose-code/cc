@@ -5,7 +5,7 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {SettingsStore} from "../src/lib/SettingsStore.sol";
-import {Lane, Settings, Mainnet, IExitModule, IStatements, ICreditScore, ICredits} from "../src/interfaces/Interfaces.sol";
+import {Settings, Mainnet, IExitModule, IStatements, ICreditScore, ICredits} from "../src/interfaces/Interfaces.sol";
 import {MockExitToken} from "./standins/MockExitToken.sol";
 import {MockExitModule} from "./standins/MockExitModule.sol";
 
@@ -41,7 +41,6 @@ contract ReenteringModule is IExitModule {
         ids[0] = 1;
         (skimInside,) = core.call(abi.encodeWithSignature("skim()"));
         _try(abi.encodeWithSignature("skim()"));
-        _try(abi.encodeWithSignature("composeExit()"));
         _try(abi.encodeWithSignature("compose()"));
         _try(abi.encodeWithSignature("buyback()"));
         _try(abi.encodeWithSignature("sellForEth(uint256[])", ids));
@@ -169,7 +168,7 @@ contract ReviewPhase2FlexTest is Fixture {
         _makeEligible(sid);
         uint256 before = xt.balanceOf(address(core));
         core.exitStatement(sid);
-        assertGt(rm.attempts(), 13, "tried every door");
+        assertGe(rm.attempts(), 13, "tried every door");
         assertEq(rm.succeeded(), 0, "none got through");
         assertFalse(rm.skimInside(), "the guard refused skim inside the callback");
         assertGt(xt.balanceOf(address(core)), before, "the exit booked the received token");
@@ -206,6 +205,7 @@ contract ReviewPhase2FlexTest is Fixture {
     /// old unit from a drop to a lower new unit
     function test_OK_sellInTheBlockOfTheSetUsesOneUnitAndMinOutProtects() public {
         _enterPhase2();
+        _setExitPool();
         _potX(5e21);
         uint256[] memory ids = _credits(seller, 1);
         uint256 quoteOld = _bid(ids[0], UNIT);

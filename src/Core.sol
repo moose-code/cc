@@ -14,7 +14,6 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {
-    Lane,
     IController,
     IExitModule,
     ICoin,
@@ -23,12 +22,14 @@ import {
     IStatements,
     Stack,
     Settings,
+    Credit,
     Mainnet,
     BUYBACK_GAS,
     BUYLISTING_GAS
 } from "./interfaces/Interfaces.sol";
 import {CoreLib} from "./lib/CoreLib.sol";
 import {SettingsBounds} from "./lib/SettingsBounds.sol";
+import {CreditBounds} from "./lib/CreditBounds.sol";
 import {SettingsStore} from "./lib/SettingsStore.sol";
 import {RateStore} from "./lib/RateStore.sol";
 
@@ -58,6 +59,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error NotInPile(uint256 id);
     error NotReady();
     error BadFormat();
+    /// a chosen compose while `chosenComposeOn` is false
+    error ChosenComposeOff();
+    /// the caller of a chosen compose holds less coin than `minCcToChoose`
+    error BelowMinCc();
+    /// a chosen compose names credit `id`, whose window has not passed while the credit sale is on
+    error InWindow(uint256 id);
     error BadStatement();
     error BadCost();
     error BadModule();
@@ -76,7 +83,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error ExitTokenChanged();
     /// the action is not allowed in the current `exitMode`
     error ExitModeOff();
-    /// `exitStatement`: the eth lane statement's asking price is above its stored cost, or the controller did not answer
+    /// `exitStatement`: the controller's `atFloor` is false (the curve price has not reached its floor) or the
+    /// controller did not answer
     error NotEligible();
     /// the door `what` ("controller", "exitModule" or "targets") was locked by the owner
     error Locked(bytes32 what);
@@ -93,7 +101,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error BadStack();
     /// a setting is out of its bounds. `field` is its name
     error BadSetting(bytes32 field);
-    /// `sellTo`: the statement is not an eth lane statement held by the core
+    /// `sellTo`: the statement is not held by the core
     error NotForSale();
     /// a stack member that must be a contract has no code
     error NoCode(address who);
@@ -105,7 +113,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error NotHolder();
     /// `migrate` with no successor set
     error NoSuccessor();
-    /// `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`, `compose` or `composeExit` after `migrate`
+    /// `sellForEth`, `buyListing`, `sellForExitToken`, `adopt`, `compose` or `composeChosen` after `migrate`
     error Retired();
     /// `setSuccessor` with the core or a contract the core works with
     error BadSuccessor(address who);
@@ -116,19 +124,21 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     event FeesAdded(uint256 amount);
     event Skimmed(uint256 eth, uint256 exitToken);
-    event CreditBought(uint256 indexed id, address indexed from, Lane lane, uint256 cost);
+    event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event ListingBought(
         uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
-    event Composed(uint256 indexed sid, Lane lane, uint8 format, uint256 cost, address indexed caller);
+    event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, address indexed caller);
     event SettingsSet(Settings settings);
     event RateSet(uint256 rate);
-    event StatementExited(uint256 indexed sid, Lane lane, uint256 received);
+    event StatementExited(uint256 indexed sid, uint256 received);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     /// the controller sold a statement: the buyer, the price paid and the part of it booked to the coin buyback (the
     /// rest went to the pot)
     event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback);
+    /// the controller sold a pile credit through the credit sale window: the buyer and the price paid
+    event CreditSold(uint256 indexed id, address indexed buyer, uint256 price);
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
     event OwnershipTransferred(address indexed from, address indexed to);
     event ControllerLocked();
@@ -146,7 +156,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
     event SuccessorSet(address successor);
     event SuccessorLocked();
-    /// `adopt` put a credit the core held without a record into the eth pile at cost basis `cost`
+    /// `adopt` put a credit the core held without a record into the pile at cost basis `cost`
     event CreditAdopted(uint256 indexed id, uint256 cost);
     /// `migrate` moved eth, exit token and credits to the successor
     event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
@@ -154,6 +164,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event EngineRetired(address indexed successor);
     /// `migrate` could not transfer `xPot` (`amount`) to the successor; the pot stays
     event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
+    /// share of a sold credit's cost booked to ethPot, the rest of the payment to ethToBuyback (docs/FLOW.md 88)
+    event CreditCostToPotBpsSet(uint16 bps);
+    /// whether a caller may pick the 80 credits and the format of a compose (docs/FLOW.md 89)
+    event ChosenComposeOnSet(bool on);
+    /// least coin balance a caller of a chosen compose must hold (docs/FLOW.md 89)
+    event MinCcToChooseSet(uint96 min);
 
     /*//////////////////////////////////////////////////////////////
                               PARAMETERS
@@ -163,8 +179,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant PAGE = 80;
     uint256 private constant MAX_FORMAT = 7;
     uint256 private constant READ_GAS = 200_000;
-    /// gas of the work after the end of `compose` and `composeExit` that the caller payment counts, with the
-    /// transaction base cost
+    /// gas of the work after the end of `compose` that the caller payment counts, with the transaction base cost
     uint256 private constant COMPOSE_OVERHEAD_GAS = 50_000;
     /// the most gas of a compose the caller payment counts. above the largest metered compose, 11.1 million with a loaded
     /// fee router of four gas burning payees, so a gas burning controller or router cannot inflate the payment
@@ -178,7 +193,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// gas of the work after the count in `buyListing` (the spend, the pile record, the event and the payment, about
     /// 200,000), the transaction base cost and typical calldata
     uint256 private constant BUYLISTING_OVERHEAD_GAS = 250_000;
-    /// gas the controller's `nextPage` may use, in both lanes. a full page of ControllerV1 costs under 250,000 gas on a
+    /// gas the controller's `nextPage` may use. a full page of ControllerV1 costs under 250,000 gas on a
     /// cold read
     uint256 private constant PAGE_GAS = 500_000;
     address private constant DEAD = Mainnet.DEAD;
@@ -219,7 +234,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     uint256 public ethPot;
     uint256 public ethToBuyback;
-    /// eth reserve filled by `feeToRedeemBurnBps` of the fee stream. each eth lane redemption moves `redeemBurnBps` of it
+    /// eth reserve filled by `feeToRedeemBurnBps` of the fee stream. each redemption moves `redeemBurnBps` of it
     /// into `ethToBuyback`, so a statement that leaves the engine by redemption funds a coin buy and burn
     uint256 public ethRedeemBurn;
     /// exit token held for the exit token bid. redemptions add to it, `sellForExitToken` pays from it
@@ -231,7 +246,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     uint256 public lastBuybackBlock;
 
-    mapping(Lane => CoreLib.Pile) private _piles;
+    CoreLib.Pile private _pile;
     mapping(uint256 => CoreLib.Credit) private _credits;
     mapping(uint256 => CoreLib.Statement) private _statements;
     uint256[] private _heldIds;
@@ -243,8 +258,18 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     address public successor;
     bool public successorLocked;
     /// set by the first `migrate`, one way. a retired core refuses `sellForEth`, `buyListing`, `sellForExitToken`,
-    /// `adopt`, `compose` and `composeExit` with `Retired`
+    /// `adopt`, `compose` and `composeChosen` with `Retired`
     bool public retired;
+
+    /// share of a sold credit's cost booked to ethPot in `sellCreditTo`, the rest of the payment to ethToBuyback.
+    /// launch 10_000, 0 to 10_000 (docs/FLOW.md 88)
+    uint16 public creditCostToPotBps;
+    /// whether a caller may pick the 80 credits and the format of a compose through `composeChosen`. launch false
+    /// (docs/FLOW.md 89)
+    bool public chosenComposeOn;
+    /// least coin balance the caller of `composeChosen` must hold, checked against the caller's balance at the call.
+    /// launch 0 (docs/FLOW.md 89)
+    uint96 public minCcToChoose;
 
     modifier onlyOwner() {
         _onlyOwner();
@@ -261,7 +286,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         address controller_,
         Stack memory stack_,
         uint256 rateStart_,
-        Settings memory settings_
+        Settings memory settings_,
+        Credit memory credit_
     ) {
         if (owner_ == address(0) || coin_ == address(0) || controller_ == address(0)) {
             revert ZeroAddress();
@@ -291,6 +317,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         LOCKER = stack_.locker;
         ESCROW = stack_.escrow;
         controller = controller_;
+        if (!CreditBounds.costToPotBpsOk(credit_.costToPotBps)) revert BadSetting("creditCostToPotBps");
+        creditCostToPotBps = credit_.costToPotBps;
+        chosenComposeOn = credit_.chosenComposeOn;
+        minCcToChoose = credit_.minCcToChoose;
         allowedTarget[Mainnet.SEAPORT] = true;
         allowedTarget[Mainnet.CREDIT_STRATEGY] = true;
         rateAtCheckpoint = rateStart_;
@@ -375,6 +405,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         (price,) = _climb();
     }
 
+    /// wei per credit of the floor rate now: the larger of `ethPrice`, the price state climbed before the pot clamp,
+    /// and the remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays
+    /// between fills, so the maximum follows the climb and holds against a sale within the block. the engine's price
+    /// floors read it. the math is in `CoreLib.floorRate`
+    function floorRate() external view returns (uint256) {
+        return CoreLib.floorRate(rateAtCheckpoint, ethPot, lastFillTime, checkpointTime, block.timestamp);
+    }
+
     function _checkpoint() private {
         (rateAtCheckpoint,) = _climb();
         checkpointTime = uint64(block.timestamp);
@@ -415,19 +453,27 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
     }
 
-    function _nextPage(Lane lane) private view returns (bool ready, uint256[80] memory ids, uint256 format) {
+    function _nextPage() private view returns (bool ready, uint256[80] memory ids, uint256 format) {
         (bool ok, bytes memory out) =
-            _ask(controller, abi.encodeCall(IController.nextPage, (lane)), PAGE_GAS, (PAGE + 2) * 32);
+            _ask(controller, abi.encodeCall(IController.nextPage, ()), PAGE_GAS, (PAGE + 2) * 32);
         if (!ok) return (false, ids, 0);
         uint256 flag;
         (flag, ids, format) = abi.decode(out, (uint256, uint256[80], uint256));
         ready = flag == 1;
     }
 
-    /// bounded read of the controller's eligibility answer for an eth lane statement. a revert, a short answer or a
+    /// bounded read of the controller's eligibility answer for a statement. a revert, a short answer or a
     /// `false` reads as not eligible
-    function _atCost(uint256 sid) private view returns (bool) {
-        (bool ok, bytes memory out) = _ask(controller, abi.encodeCall(IController.atCost, (sid)), READ_GAS, 32);
+    function _atFloor(uint256 sid) private view returns (bool) {
+        (bool ok, bytes memory out) = _ask(controller, abi.encodeCall(IController.atFloor, (sid)), READ_GAS, 32);
+        return ok && abi.decode(out, (bool));
+    }
+
+    /// bounded read of the controller's window answer for a credit acquired at `acquiredAt`. a revert, a short answer
+    /// or a `false` reads as not past the window
+    function _pastWindow(uint64 acquiredAt) private view returns (bool) {
+        (bool ok, bytes memory out) =
+            _ask(controller, abi.encodeCall(IController.pastWindow, (acquiredAt)), READ_GAS, 32);
         return ok && abi.decode(out, (bool));
     }
 
@@ -435,14 +481,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                 PILES
     //////////////////////////////////////////////////////////////*/
 
-    function _push(Lane lane, uint256 id, uint256 cost) private {
-        CoreLib.push(_piles[lane], _credits, lane, id, cost);
+    function _push(uint256 id, uint256 cost) private {
+        CoreLib.push(_pile, _credits, id, cost);
     }
 
-    function _pull(Lane lane, uint256 id) private returns (uint256 cost) {
+    function _pull(uint256 id) private returns (uint256 cost) {
         CoreLib.Credit storage c = _credits[id];
-        if (!c.inPile || c.lane != lane) revert NotInPile(id);
-        CoreLib.Pile storage p = _piles[lane];
+        if (!c.inPile) revert NotInPile(id);
+        CoreLib.Pile storage p = _pile;
         uint256 prev = c.prev;
         uint256 next = c.next;
         if (prev == 0) p.head = next;
@@ -454,7 +500,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         delete _credits[id];
     }
 
-    /// the first action of `sellForEth`, `buyListing`, `adopt`, `compose` and `composeExit`. two steps in order:
+    /// the first action of `sellForEth`, `buyListing`, `adopt` and `compose`. two steps in order:
     /// 1. reverts `Retired` once `migrate` has run. `sellForExitToken` checks the same flag in `CoreLib`.
     /// 2. pulls the fee router: the router flushes its balance into `receive`, which books it, before the entry point
     /// reads a rate, checkpoints or measures. a failing router does not fail the entry point (docs/FLOW.md 10.8)
@@ -486,10 +532,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             uint256 id = _owned(ids[i]);
             uint256 price = ethRate();
             _spend(price);
-            _push(Lane.Eth, id, price);
+            _push(id, price);
             CREDITS.transferFrom(msg.sender, address(this), id);
             total += price;
-            emit CreditBought(id, msg.sender, Lane.Eth, price);
+            emit CreditBought(id, msg.sender, price);
         }
         if (total < minOut) revert Slippage();
         SafeTransferLib.safeTransferETH(msg.sender, total);
@@ -529,7 +575,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 paid = _payment(gasStart, BUYLISTING_OVERHEAD_GAS, BUYLISTING_GAS, s.keeperMaxBaseFee, s.keeperFee)
             .min(ceiling - cost);
         _spend(cost + paid);
-        _push(Lane.Eth, id, cost + paid);
+        _push(id, cost + paid);
         emit ListingBought(id, target, msg.sender, cost, paid, rateAtCheckpoint);
         if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
     }
@@ -572,32 +618,50 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                COMPOSING
     //////////////////////////////////////////////////////////////*/
 
-    /// composes the controller's page of eth lane credits into a statement the core holds for sale. anyone may call. the
-    /// gas counted for the caller payment includes the fee router flush. reverts `Retired` after `migrate`
+    /// composes the controller's page of the oldest 80 pile credits into a statement the core holds for sale with the
+    /// controller's default format. anyone may call. the gas counted for the caller payment includes the fee router
+    /// flush. reverts `Retired` after `migrate`
     function compose() external nonReentrant {
-        _compose();
-    }
-
-    /// composes the controller's page of exit lane credits into a statement. anyone may call. the gas counted for the
-    /// caller payment includes the fee router flush. reverts `Retired` after `migrate`
-    function composeExit() external nonReentrant {
-        _compose();
-    }
-
-    /// one body for both lanes, told apart by the selector of the call, so the code is not duplicated
-    function _compose() private {
         uint256 gasStart = gasleft();
         _openDoor();
-        Lane lane = msg.sig == this.composeExit.selector ? Lane.Exit : Lane.Eth;
-        // the exit lane feeds the exit token bid, which runs only while exitMode is 2
-        if (lane == Lane.Exit && _st().exitMode != 2) revert ExitModeOff();
-        (bool ready, uint256[80] memory ids, uint256 format) = _nextPage(lane);
+        (bool ready, uint256[80] memory ids, uint256 format) = _nextPage();
         if (!ready) revert NotReady();
+        _compose(ids, format, gasStart);
+    }
+
+    /// composes a statement from 80 pile credits the caller names and a format the caller picks. requires
+    /// `chosenComposeOn`, a caller coin balance at least `minCcToChoose`, and that every named credit is in the pile.
+    /// the core passes only the newest named credit's acquisition time to the controller's `pastWindow`. the controller
+    /// must keep `pastWindow` non-increasing in the acquisition time, so the newest named credit passing means every
+    /// named credit passes. every other compose rule, the record and the event are the same as `compose`. reverts
+    /// `Retired` after `migrate`
+    function composeChosen(uint256[80] calldata ids, uint8 format) external nonReentrant {
+        uint256 gasStart = gasleft();
+        _openDoor();
+        if (!chosenComposeOn) revert ChosenComposeOff();
+        if (SafeTransferLib.balanceOf(COIN, msg.sender) < minCcToChoose) revert BelowMinCc();
+        uint64 newest;
+        uint256 newestId;
+        for (uint256 i; i < PAGE; ++i) {
+            uint64 a = _credits[ids[i]].acquiredAt;
+            if (a > newest) {
+                newest = a;
+                newestId = ids[i];
+            }
+        }
+        if (!_pastWindow(newest)) revert InWindow(newestId);
+        _compose(ids, format, gasStart);
+    }
+
+    /// pulls the 80 named credits from the pile, composes the statement, stores its record and pays the caller. the
+    /// cost basis is the sum of the credits' costs. a credit named twice or absent reverts in `_pull`. shared by
+    /// `compose` and `composeChosen`
+    function _compose(uint256[80] memory ids, uint256 format, uint256 gasStart) private {
         if (format > MAX_FORMAT) revert BadFormat();
         uint256 cost;
         for (uint256 i; i < PAGE; ++i) {
             uint256 id = ids[i];
-            cost += _pull(lane, id);
+            cost += _pull(id);
             if (CREDITS.ownerOf(id) != address(this)) revert NotHeld();
         }
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -619,11 +683,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             composedAt: uint64(block.timestamp),
             slot: uint64(_heldIds.length - 1),
             rating: uint32(rating),
-            lane: lane,
             held: true
         });
         // forge-lint: disable-next-line(unsafe-typecast)
-        emit Composed(sid, lane, uint8(format), cost, msg.sender);
+        emit Composed(sid, ids, uint8(format), cost, msg.sender);
         _payCaller(gasStart, COMPOSE_OVERHEAD_GAS, COMPOSE_GAS);
     }
 
@@ -637,7 +700,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return (gasStart - gasleft() + overhead).min(gasCap) * block.basefee.min(maxBaseFee) + fee;
     }
 
-    /// pays the caller of `compose`, `composeExit` and `exitStatement` from `ethPot`, at most the pot, by the
+    /// pays the caller of `compose` and `exitStatement` from `ethPot`, at most the pot, by the
     /// `callerFee` and `callerMaxBaseFee` settings. the last action of the door, after all state is final. the
     /// checkpoint runs before the payment is metered, so the caller is repaid for it and the overhead constant does not
     /// track the climb's gas. both settings zero (the launch value) is the only case that pays nothing, and it skips the
@@ -668,13 +731,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                  SALE
     //////////////////////////////////////////////////////////////*/
 
-    /// the controller sells a held eth lane statement to `buyer` for `msg.value`, at least `saleFloorBps` of the
+    /// the controller sells a held statement to `buyer` for `msg.value`, at least `saleFloorBps` of the
     /// statement cost. `saleToBuybackBps` of the payment goes to the coin buyback and the rest to the pot. the
     /// controller refunds its own caller
     function sellTo(uint256 sid, address buyer) external payable nonReentrant {
         if (msg.sender != controller) revert OnlyController();
         CoreLib.Statement storage st = _statements[sid];
-        if (!st.held || st.lane != Lane.Eth) revert NotForSale();
+        if (!st.held) revert NotForSale();
         if (msg.value < st.cost * _st().saleFloorBps / BPS) revert BelowFloor();
         _unhold(sid);
         STATEMENTS.transferFrom(address(this), buyer, sid);
@@ -685,15 +748,36 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit StatementSoldTo(sid, buyer, msg.value, toBuyback);
     }
 
+    /// the controller sells pile credit `id` to `buyer` for `msg.value`. the payment is at least the credit's cost: no
+    /// credit leaves the pot for less than it was bought for, whatever the controller quotes. `creditCostToPotBps` of
+    /// the cost goes to the pot and the rest of the payment to the coin buyback, so the markup over cost funds a coin
+    /// buy and burn. the controller refunds its own caller
+    function sellCreditTo(uint256 id, address buyer) external payable nonReentrant {
+        if (msg.sender != controller) revert OnlyController();
+        CoreLib.Credit storage c = _credits[id];
+        if (!c.inPile) revert NotInPile(id);
+        uint256 cost = c.cost;
+        if (msg.value < cost) revert BelowFloor();
+        _pull(id);
+        CREDITS.transferFrom(address(this), buyer, id);
+        uint256 toPot = cost * creditCostToPotBps / BPS;
+        ethToBuyback += msg.value - toPot;
+        // checkpoint the climbed rate before the pot grows, so a credit sale cannot raise the eth bid read within its
+        // own block
+        _checkpoint();
+        ethPot += toPot;
+        emit CreditSold(id, buyer, msg.value);
+    }
+
     /*//////////////////////////////////////////////////////////////
                                  EXIT
     //////////////////////////////////////////////////////////////*/
 
     /// hands a held statement to the exit module and books the exit token it returns into `xPot`. requires `exitMode`
-    /// at least 1 and a module set. an eth lane statement is eligible when the controller's asking price is at or below
-    /// its stored cost; an exit lane statement is eligible at once. the exit must raise the exit token balance by at
-    /// least `rating * unitPerPoint * (10_000 - exitSlippageBps) / 10_000`. an eth lane redemption also moves
-    /// `redeemBurnBps` of the redeem burn reserve into the coin buyback
+    /// at least 1 and a module set. a statement is eligible when the controller's curve price has reached its floor.
+    /// the exit must raise the exit token balance by at least
+    /// `rating * unitPerPoint * (10_000 - exitSlippageBps) / 10_000`. every redemption moves `redeemBurnBps` of the
+    /// redeem burn reserve into the coin buyback
     function exitStatement(uint256 sid) external nonReentrant {
         uint256 gasStart = gasleft();
         address module = exitModule;
@@ -701,7 +785,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (_st().exitMode == 0) revert ExitModeOff();
         CoreLib.Statement memory s = _statements[sid];
         if (!s.held) revert NotHeld();
-        if (s.lane == Lane.Eth && !_atCost(sid)) revert NotEligible();
+        if (!_atFloor(sid)) revert NotEligible();
         address token = exitToken;
         uint256 required = uint256(s.rating) * unitPerPoint * (BPS - _st().exitSlippageBps) / BPS;
         _unhold(sid);
@@ -716,14 +800,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 received = balanceAfter - balanceBefore;
         xPot += received;
 
-        if (s.lane == Lane.Eth) {
-            uint256 toBurn = ethRedeemBurn * _st().redeemBurnBps / BPS;
-            if (toBurn != 0) {
-                ethRedeemBurn -= toBurn;
-                ethToBuyback += toBurn;
-            }
+        uint256 toBurn = ethRedeemBurn * _st().redeemBurnBps / BPS;
+        if (toBurn != 0) {
+            ethRedeemBurn -= toBurn;
+            ethToBuyback += toBurn;
         }
-        emit StatementExited(sid, s.lane, received);
+        emit StatementExited(sid, received);
         _payCaller(gasStart, EXIT_OVERHEAD_GAS, EXIT_GAS);
     }
 
@@ -893,7 +975,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _toLib();
     }
 
-    /// moves `ethPot`, `xPot` and up to `maxCredits` credits from the head of each pile to the successor,
+    /// moves `ethPot`, `xPot` and up to `maxCredits` credits from the head of the pile to the successor,
     /// in batches. callable again until nothing is left. `ethToBuyback` and `ethRedeemBurn` stay for the coin buyback.
     /// the held statements and their records stay with the core. an exit token transfer that fails leaves `xPot` and
     /// logs `ExitTokenMigrationSkipped`, the eth and credit legs go on. the first call sets `retired` and logs
@@ -917,11 +999,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
     }
 
-    /// puts credits the core holds without a record into the eth pile, anyone may call. the fee router is pulled first,
+    /// puts credits the core holds without a record into the pile, anyone may call. the fee router is pulled first,
     /// like at every door that reads the pot, so pending fee eth is booked before the price is read. the cost basis of
     /// each credit is the price state per credit (`ethPrice`), at least 1 wei. the price
     /// state is the figure the engine pays with a funded pot, so a statement built from adopted credits is priced at
-    /// that level; the clamp of a thin pot would book a basis of 1 wei. the basis is booked and the eth pile grows: eth,
+    /// that level; the clamp of a thin pot would book a basis of 1 wei. the basis is booked and the pile grows: eth,
     /// the rate state and the pots keep their values. a donor who inflates the basis of a statement
     /// gives credits away. reverts `Retired` after `migrate`, `InPile`, `NotHolder`, `ZeroId` and `Empty`. logs
     /// `CreditAdopted`. the body is `CoreLib.adopt`, called with the calldata untouched
@@ -934,6 +1016,26 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function removeTarget(address target) external onlyOwner {
         allowedTarget[target] = false;
         emit TargetRemoved(target);
+    }
+
+    /// sets the share of a sold credit's cost booked to ethPot, the rest of the payment to ethToBuyback. 0 to 10_000.
+    /// read by `sellCreditTo` (docs/FLOW.md 88)
+    function setCreditCostToPotBps(uint16 v) external onlyOwner {
+        if (!CreditBounds.costToPotBpsOk(v)) revert BadSetting("creditCostToPotBps");
+        creditCostToPotBps = v;
+        emit CreditCostToPotBpsSet(v);
+    }
+
+    /// turns chosen composition on or off. gates `composeChosen`; `compose` is unaffected (docs/FLOW.md 89)
+    function setChosenComposeOn(bool v) external onlyOwner {
+        chosenComposeOn = v;
+        emit ChosenComposeOnSet(v);
+    }
+
+    /// sets the least coin balance a caller of `composeChosen` must hold (docs/FLOW.md 89)
+    function setMinCcToChoose(uint96 v) external onlyOwner {
+        minCcToChoose = v;
+        emit MinCcToChooseSet(v);
     }
 
     /// sets every economic setting at once, effective now. the eth rate is checkpointed first, so no climb is credited
@@ -994,16 +1096,16 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                 VIEWS
     //////////////////////////////////////////////////////////////*/
 
-    /// number of credits in a lane pile.
-    function pileSize(Lane lane) external view returns (uint256) {
-        return _piles[lane].size;
+    /// number of credits in the pile.
+    function pileSize() external view returns (uint256) {
+        return _pile.size;
     }
 
-    /// up to n credit ids of a lane pile, oldest first, after startAfter. zero starts at the head.
-    function pilePage(Lane lane, uint256 startAfter, uint256 n) external view returns (uint256[] memory ids) {
-        uint256 first = startAfter == 0 ? _piles[lane].head : _credits[startAfter].next;
+    /// up to n credit ids of the pile, oldest first, after startAfter. zero starts at the head.
+    function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids) {
+        uint256 first = startAfter == 0 ? _pile.head : _credits[startAfter].next;
         // at most the pile size, so a huge n cannot blow up memory. the length is cut to the count found
-        ids = new uint256[](n.min(_piles[lane].size));
+        ids = new uint256[](n.min(_pile.size));
         uint256 count;
         for (uint256 id = first; id != 0 && count < ids.length; id = _credits[id].next) {
             ids[count++] = id;
@@ -1013,16 +1115,16 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
     }
 
-    /// pile membership, lane, cost basis and arrival time of a credit.
-    function creditInfo(uint256 id) external view returns (bool inPile, Lane lane, uint256 cost, uint64 acquiredAt) {
+    /// pile membership, cost basis and arrival time of a credit.
+    function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt) {
         CoreLib.Credit storage c = _credits[id];
-        return (c.inPile, c.lane, c.cost, c.acquiredAt);
+        return (c.inPile, c.cost, c.acquiredAt);
     }
 
-    /// whether the core holds a statement for sale or exit, with its lane, cost basis and compose time
-    function statementInfo(uint256 sid) external view returns (bool held, Lane lane, uint256 cost, uint64 composedAt) {
+    /// whether the core holds a statement for sale or exit, with its cost basis and compose time
+    function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt) {
         CoreLib.Statement storage s = _statements[sid];
-        return (s.held, s.lane, s.cost, s.composedAt);
+        return (s.held, s.cost, s.composedAt);
     }
 
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose

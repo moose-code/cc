@@ -191,7 +191,6 @@ contract RepaidCaller {
         if (hits++ != 0) return;
         _try(abi.encodeCall(ICore.exitStatement, (other)));
         _try(abi.encodeCall(ICore.compose, ()));
-        _try(abi.encodeCall(ICore.composeExit, ()));
         _try(abi.encodeCall(ICore.skim, ()));
         _try(abi.encodeCall(ICore.buyback, ()));
     }

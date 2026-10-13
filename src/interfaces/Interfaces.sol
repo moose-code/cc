@@ -3,17 +3,15 @@ pragma solidity ^0.8.28;
 
 /// shared interfaces. fixed by the project director. do not change signatures without sign off.
 
-enum Lane {
-    Eth,
-    Exit
-}
-
 interface IController {
-    function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format);
-    /// true when the asking price of eth lane statement `sid` is at or below its stored cost. the asking price
+    function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
+    /// true when the curve price of statement `sid` has reached its floor, `floorBps` of the reference. the curve age
     /// excludes paused seconds, so eligibility is frozen while sales are paused. the core reads it to gate a phase 2
-    /// redemption of an eth lane statement
-    function atCost(uint256 sid) external view returns (bool);
+    /// redemption
+    function atFloor(uint256 sid) external view returns (bool);
+    /// true when a credit acquired at `acquiredAt` may be composed: always while the credit sale is off, otherwise once
+    /// the credit window has passed. the core reads it to gate a chosen compose
+    function pastWindow(uint64 acquiredAt) external view returns (bool);
 }
 
 interface IExitModule {
@@ -32,12 +30,22 @@ interface ICreditScore {
     function scoreOf(bytes21 seed, uint64 paidAt) external view returns (uint256);
 }
 
-/// the surface controllers rely on. piles are insertion ordered linked lists, oldest first
+/// the surface controllers rely on. the pile is an insertion ordered linked list, oldest first
 interface ICoreViews {
-    function pileSize(Lane lane) external view returns (uint256);
-    function pilePage(Lane lane, uint256 startAfter, uint256 n) external view returns (uint256[] memory ids); // startAfter 0 starts at head
-    function creditInfo(uint256 id) external view returns (bool inPile, Lane lane, uint256 cost, uint64 acquiredAt);
-    function statementInfo(uint256 sid) external view returns (bool held, Lane lane, uint256 cost, uint64 composedAt);
+    function pileSize() external view returns (uint256);
+    function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids); // startAfter 0 starts at head
+    function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
+    /// wei per credit the eth bid pays now, the price state lowered to the pot
+    function ethRate() external view returns (uint256);
+    /// wei per credit of the price state now, before the pot clamp `ethRate` applies. the cost basis of an adopted
+    /// credit is this price. in later blocks the climb heads toward the larger pot
+    function ethPrice() external view returns (uint256);
+    /// wei per credit of the floor rate now: the larger of the price state climbed before the pot clamp and the
+    /// remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays between
+    /// fills, so the maximum holds against a sale within the block. the statement reference and the credit backstop
+    /// read it
+    function floorRate() external view returns (uint256);
+    function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose
     function ratingOf(uint256 sid) external view returns (uint256);
     function heldStatements() external view returns (uint256[] memory sids);
@@ -47,11 +55,14 @@ interface ICoreViews {
     function unitPerPoint() external view returns (uint256);
 }
 
-/// what the controller needs of the core beyond the views: the live owner and the one door that sells a statement
+/// what the controller needs of the core beyond the views: the live owner and the two doors that sell custody out, a
+/// statement and a pile credit
 interface ICoreSale {
     function owner() external view returns (address);
     function settings() external view returns (Settings memory);
     function sellTo(uint256 sid, address buyer) external payable;
+    /// sends pile credit `id` to `buyer` for `msg.value`, at least the credit's cost. only the controller
+    function sellCreditTo(uint256 id, address buyer) external payable;
 }
 
 /// the coin calls the core makes. the live token burns from the caller or from an account that approved the caller
@@ -139,14 +150,14 @@ struct Settings {
     /// blocks between two coin buybacks
     uint16 buybackDelay;
     /// phase 2 state. 0 off: no redemption and no exit token bid. 1 hold: redemptions run, the exit token bid is
-    /// stopped. 2 on: redemptions and the exit token bid run, `composeExit` is allowed
+    /// stopped. 2 on: redemptions and the exit token bid run
     uint8 exitMode;
     /// a redemption must raise the exit token balance by at least `rating * unitPerPoint * (10_000 - exitSlippageBps)
     /// / 10_000`, bps
     uint16 exitSlippageBps;
     /// the exit token bid pays `score * unitPerPoint * (10_000 - exitBidMarginBps) / 10_000` per credit, bps
     uint16 exitBidMarginBps;
-    /// share of `ethRedeemBurn` moved into the coin buyback on each eth lane redemption, bps
+    /// share of `ethRedeemBurn` moved into the coin buyback on each redemption, bps
     uint16 redeemBurnBps;
     // slot 1
     uint128 buybackSlice;
@@ -159,10 +170,10 @@ struct Settings {
     /// the most the eth rate can be, wei per credit. the price state and the read stay at or below it, `setRate`
     /// refuses above it, and the rate bounds apply to it
     uint64 rateCap;
-    /// fixed fee paid to the caller of `compose`, `composeExit` and `exitStatement`, wei, from `ethPot`. zero turns the
-    /// whole payment of those doors off when `callerMaxBaseFee` is zero too
+    /// fixed fee paid to the caller of `compose` and `exitStatement`, wei, from `ethPot`. zero turns the whole payment
+    /// of those doors off when `callerMaxBaseFee` is zero too
     uint64 callerFee;
-    /// base fee ceiling of the gas refund of `compose`, `composeExit` and `exitStatement`, wei. zero refunds no gas
+    /// base fee ceiling of the gas refund of `compose` and `exitStatement`, wei. zero refunds no gas
     uint48 callerMaxBaseFee;
     /// share of the swap fee eth that the fee router flushes to the core (booked in `receive()`) that goes to the coin
     /// buyback, bps. the rest after `feeToRedeemBurnBps` goes to the pot. eth booked later by `skim` goes to the pot whole
@@ -192,6 +203,34 @@ struct Sale {
     uint32 anchorHalfLife;
     /// the least statement cost, in wei, whose sale moves the anchor
     uint128 anchorMinCost;
+}
+
+/// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
+/// window, chosen composition and the rating reference. owner adjustable afterwards, so the launch rules only check
+/// bounds (`src/lib/CreditBounds.sol`). the Core reads `costToPotBps`, `chosenComposeOn` and `minCcToChoose`; the
+/// controller reads `saleOn`, `window`, `floorBps`, `startBps` and `refScore`
+struct Credit {
+    // core
+    /// share of the sold credit's cost booked to the buying pot, bps. the rest of the payment funds the coin buyback.
+    /// 0 to 10_000
+    uint16 costToPotBps;
+    /// whether a caller may name the 80 credits and the format of a compose through `composeChosen`
+    bool chosenComposeOn;
+    /// least coin balance a caller of `composeChosen` must hold
+    uint96 minCcToChoose;
+    // controller
+    /// whether pile credits are for sale from acquisition and compose waits for a credit's window to pass
+    bool saleOn;
+    /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
+    /// take it. 1 minute to 30 days
+    uint32 window;
+    /// the credit sale floor over the highest of the credit's cost, exit token baseline and score-scaled eth backstop,
+    /// bps. 10_000 to 40_000
+    uint16 floorBps;
+    /// the credit sale start price over the floor, bps. 10_000 to 200_000
+    uint32 startBps;
+    /// the per-credit score the statement reference divides the rating by, in ten-thousandths of a point. 1 to 8_000_000
+    uint32 refScore;
 }
 
 /// the artcoins stack a launch runs on. a deploy input of the Core, so a new artcoins version needs no code change.
@@ -272,6 +311,22 @@ library Mainnet {
             floorBps: 10_000,
             anchorHalfLife: 7 days,
             anchorMinCost: 0.1 ether
+        });
+    }
+
+    /// the launch credit settings: the credit sale is off, its window is 4 hours, the floor is 110 percent and the
+    /// start 300 percent of the floor, the reference per-credit score is the launch average, the whole credit cost
+    /// funds the pot, and chosen composition is off with no coin balance required
+    function defaultCredit() internal pure returns (Credit memory) {
+        return Credit({
+            costToPotBps: 10_000,
+            chosenComposeOn: false,
+            minCcToChoose: 0,
+            saleOn: false,
+            window: 4 hours,
+            floorBps: 11_000,
+            startBps: 30_000,
+            refScore: 4_330_000
         });
     }
 

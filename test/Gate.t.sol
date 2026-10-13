@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, Settings} from "../src/interfaces/Interfaces.sol";
+import {Settings} from "../src/interfaces/Interfaces.sol";
 
 /// @notice the inventory gate is gone (docs/FLOW.md decision 2): the engine never stops buying because statements are
 /// unsold. what is left of its suite is the rate property that never depended on the gate (the rate does not rise
@@ -15,7 +15,7 @@ contract GateTest is Fixture {
 
     function _composeNext() internal returns (uint256 sid) {
         sid = STATEMENTS.supply() + 1;
-        uint256 size = core.pileSize(Lane.Eth);
+        uint256 size = core.pileSize();
         if (size < 80) _fillEthPile(80 - size);
         vm.fee(composeBasefee);
         vm.prank(keeper);

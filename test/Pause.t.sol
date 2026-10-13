@@ -3,15 +3,15 @@ pragma solidity ^0.8.28;
 
 import {Prod} from "./utils/Prod.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {SaleBase} from "./Sale.t.sol";
+import {SaleBase, SaleShapeBase} from "./Sale.t.sol";
+import {Sale} from "../src/interfaces/Interfaces.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Lane} from "../src/interfaces/Interfaces.sol";
 import {StatementInfoStub} from "./standins/StatementInfoStub.sol";
 
 /// the owner pause of the sale controller on the live fork: `buy` refuses while paused, `priceOf` answers, the age a
 /// statement's price falls with excludes every paused second, composing and the bid are unaffected
-contract PauseTest is SaleBase {
+contract PauseTest is SaleShapeBase {
     address internal buyer = address(0xB0B);
 
     function _setPaused(bool v) internal {
@@ -235,9 +235,9 @@ contract PauseTest is SaleBase {
     /// the eth bid is unaffected: credits sell into it while paused
     function test_sellForEth_worksWhilePaused() public {
         _setPaused(true);
-        uint256 size = core.pileSize(Lane.Eth);
+        uint256 size = core.pileSize();
         _fillEthPile(5);
-        assertEq(core.pileSize(Lane.Eth), size + 5, "the credits entered the pile");
+        assertEq(core.pileSize(), size + 5, "the credits entered the pile");
     }
 }
 
@@ -251,7 +251,10 @@ contract PauseWindowsTest is SaleBase {
     function setUp() public override {
         super.setUp();
         stub = new StatementInfoStub(owner);
-        c = Prod.newController(address(stub), lc.sale);
+        // the launch sale is flat at cost below hour 50; the model prices the two stage curve of `_launch`
+        Sale memory sale = lc.sale;
+        sale.floorBps = 7_500;
+        c = Prod.newController(address(stub), sale);
     }
 
     function _toggle(bool v) internal {

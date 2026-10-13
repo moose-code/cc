@@ -42,6 +42,28 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         return string.concat("POSTFLIGHT_CODE_", what, "_", name);
     }
 
+    /// @dev sorts `ids` (decimal AST id strings) ascending by numeric value, in place. insertion sort: the immutable
+    /// count is small
+    function _sortAstKeys(string[] memory ids) private pure {
+        for (uint256 i = 1; i < ids.length; ++i) {
+            string memory key = ids[i];
+            uint256 kv = _toUint(key);
+            uint256 j = i;
+            while (j != 0 && _toUint(ids[j - 1]) > kv) {
+                ids[j] = ids[j - 1];
+                --j;
+            }
+            ids[j] = key;
+        }
+    }
+
+    function _toUint(string memory s) private pure returns (uint256 v) {
+        bytes memory b = bytes(s);
+        for (uint256 i; i < b.length; ++i) {
+            v = v * 10 + (uint8(b[i]) - 48);
+        }
+    }
+
     /// @dev reads the artifact once: the immutable slots, the library address slots and the hash of the masked compiled
     /// runtime code
     function _idLoad(string memory name) private {
@@ -51,6 +73,10 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         string[] memory ids = vm.keyExistsJson(j, ".deployedBytecode.immutableReferences")
             ? vm.parseJsonKeys(j, ".deployedBytecode.immutableReferences")
             : new string[](0);
+        // parseJsonKeys returns the keys in the json's lexicographic order, which equals ascending AST id only while
+        // every id has the same digit width; a 5 digit id sorts before a 4 digit one. the group index must be the
+        // ascending AST id order (declaration order), so the keys are sorted numerically first
+        _sortAstKeys(ids);
         for (uint256 i; i < ids.length; ++i) {
             imm = _idCollect(j, string.concat(".deployedBytecode.immutableReferences.", ids[i]), imm, i);
         }

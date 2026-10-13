@@ -73,13 +73,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0xee17c6ee2de1dc9ab55ce170627ab7b71fbe5e1620963a089c323b165231259d;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x11f29734a33acb260f478f4ad84f4c573e4a0fb7f019c10e727c765ad17a7569;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x93ced5871902b27c53220675ad4ff71aefb4da38fd36057e4466f86c5e44c7cc;
+    bytes32 internal constant BUILD_HASH_CORE = 0x24b30651289e03ad99d9d2b286e5e7160b018b1cd1b865c14d9769aa5d490799;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xbcfd50ac6b19d0da4eb516cd8ec4a74181d1f7cce97195b6bf8e990062365331;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xc618e7b2a304cfe2096fe3efa100391773427c1870c1a449a59305598204655c;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
-    bytes32 internal constant BUILD_HASH_LENS = 0x909413e9362b22315ad2a59460962ddeec804e6de934b25077c3a0955d8bca67;
+    bytes32 internal constant BUILD_HASH_LENS = 0x1bbf8a1ebcdbefe62c95f478267a3d8ac85f6461b964943b09127958edba5362;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x9b5eded9ab9586defc55696d92765d741eef902b8529a50cb290afc9704973cd;
+        0x8a1527ec4eb03e66347f6ec74317a28b32b54355bd4fe0f713d2b64734f55b9a;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -200,6 +200,12 @@ abstract contract LaunchChecks is PostflightChecks {
             "warn: sale floor below the core hard floor",
             c.sale.floorBps >= c.settings.saleFloorBps,
             "the core takes no sale below saleFloorBps, so the lower asking price is never reached"
+        );
+        bytes32 badCredit = creditViolation(c);
+        _check(
+            "credit settings inside the bounds",
+            badCredit == 0,
+            badCredit == 0 ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps refScore" : string(abi.encodePacked("out of bounds: ", badCredit))
         );
         _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);
     }
@@ -890,6 +896,32 @@ abstract contract LaunchChecks is PostflightChecks {
                 "s, the anchor moves on statements costing at least ",
                 vm.toString(c.sale.anchorMinCost),
                 " wei"
+            )
+        );
+        _info(
+            "signoff: credit sale",
+            string.concat(
+                "sale ",
+                c.credit.saleOn ? "on" : "off",
+                " window ",
+                vm.toString(c.credit.window),
+                "s floor ",
+                vm.toString(c.credit.floorBps),
+                " start ",
+                vm.toString(c.credit.startBps),
+                " bps, cost to pot ",
+                vm.toString(c.credit.costToPotBps),
+                " bps, refScore ",
+                vm.toString(c.credit.refScore)
+            )
+        );
+        _info(
+            "signoff: chosen composition",
+            string.concat(
+                "chosen compose ",
+                c.credit.chosenComposeOn ? "on" : "off",
+                " min coin to choose ",
+                vm.toString(uint256(c.credit.minCcToChoose))
             )
         );
         _info("signoff: settings are adjustable", "the owner can change every setting at once after launch");

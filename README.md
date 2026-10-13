@@ -4,12 +4,13 @@ an erc20 on ethereum mainnet whose swap fees buy Credits nfts, compose them into
 
 ## what the engine does
 
-* **fees buy credits.** the v2 hook skims 6.9 points of swap volume. 6.65022 points reach the FeeRouter, which pays its payee 0.75 points and sends the rest to the Core. the Core books the eth into the eth pot (90 percent) and the redeem burn reserve (10 percent). the pot funds a bid, the rate in wei per credit, and every credit is paid the same rate. a seller calls `sellForEth`, or a caller fills a marketplace listing below the bid with `buyListing`. each fill drops the rate, and between fills the rate climbs toward a ceiling.
-* **credits compose into statements.** `compose()` takes 80 credits from the pile and mints a Statement. the Core holds it and records its cost, the sum of the 80 cost bases.
-* **statements sell at a falling price.** `ControllerV1.buy` sells a held statement. the start price is 1.5 times an anchor (the anchor moves up with sales and decays with time). the price falls fast from the start to the knee, then slowly to the floor. at launch the knee and the floor are both 100 percent of cost, so the price reaches cost at hour 50 and an unsold statement sits there.
+* **fees buy credits.** the v2 hook skims 6.9 points of swap volume. 6.65022 points reach the FeeRouter, which pays its payee 0.75 points and sends the rest to the Core. the Core books the eth into the eth pot (90 percent) and the redeem burn reserve (10 percent). the pot funds a bid, the rate in wei per credit, and every credit is paid the same rate. a seller calls `sellForEth`, or a caller fills a marketplace listing below the bid with `buyListing`. each fill drops the rate, and between fills the rate climbs toward a ceiling. every bought credit enters one pile with a cost basis in eth.
+* **credits compose into statements.** `compose()` takes the 80 oldest credits from the pile and mints a Statement. the Core holds it and records its cost, the sum of the 80 cost bases, and its rating, the sum of the credits' scores. `composeChosen(ids, format)` composes 80 credits the caller names with an art format 0 to 7. it is an owner switch (`chosenComposeOn`), off at launch.
+* **credits can sell before they compose.** the credit sale window is an owner switch (`creditSaleOn`), off at launch. while on, every pile credit is for sale through `ControllerV1.buyCredit` from its acquisition time. the price falls linearly from a start to a floor over `creditWindow` (4 hours at launch), and the floor is 1.1 times the highest of the credit's cost, its exit token baseline and its score-scaled eth backstop (the floor rate times `max(1, score / refScore)`, where the floor rate is the larger of the climbed eth bid rate and the remembered peak). the baseline reads the live exit token pool and only lifts the floor. the cost share of the proceeds refills the eth pot and the rest funds the coin buyback. compose waits for a credit's window.
+* **statements sell at a falling price.** `ControllerV1.buy` sells a held statement. the start price is 1.5 times an anchor (the anchor moves up with sales and decays with time). the price falls fast from the start to the knee, then slowly to the floor. the curve is in percent of the statement's price reference, the larger of its cost and the floor rate (the larger of the climbed eth bid rate and the remembered peak) times its rating over `refScore`. at launch the knee and the floor are both 100 percent of the reference, so the price reaches the reference at hour 50 and an unsold statement sits there.
 * **each sale funds a buy and burn.** 50 percent of the proceeds (`saleToBuybackBps`) go to the coin buyback, which swaps eth for the coin in the pool and burns it. the other 50 percent refill the eth pot.
 * **the redeem burn reserve.** each redemption of a statement moves 20 percent of the reserve (`redeemBurnBps`) to the buyback, so every statement that leaves the engine, sold or redeemed, funds a buy and burn.
-* **phase 2.** the owner sets an exitModule and switches `exitMode` from 0 (off) to 1 (hold) or 2 (on). from mode 1, `exitStatement` redeems a held statement once its asking price has fallen to its cost. each statement stores a rating (the sum of its credits' scores) at compose. a redemption must return at least `rating * unitPerPoint` of the exitToken less `exitSlippageBps`, and the Core keeps what arrives. in mode 2 the Core also buys credits with the exitToken, per point: `score * unitPerPoint` less `exitBidMarginBps` (20 percent at launch), and `composeExit` builds exit lane statements. once the exitToken trades, the owner sets its v4 pool key on the controller, and a statement's asking price is at least the higher of its cost and its redemption value in eth.
+* **phase 2.** the owner sets an exitModule and switches `exitMode` from 0 (off) to 1 (hold) or 2 (on). from mode 1, `exitStatement` redeems a held statement once its curve price has reached its floor. a redemption must return at least `rating * unitPerPoint` of the exitToken less `exitSlippageBps`, and the Core keeps what arrives. in mode 2 the Core also buys credits with the exitToken, per point: `score * unitPerPoint` less `exitBidMarginBps` (20 percent at launch). such a credit enters the same pile with an eth cost basis of its score-scaled eth backstop (the floor rate times `max(1, score / refScore)`, where the floor rate is the larger of the climbed eth bid rate and the remembered peak), read from no pool, so the bid needs no pool key. once the exitToken trades, the owner sets its v4 pool key on the controller, and a statement's asking price is at least the higher of its curve price and its redemption value in eth.
 
 the full rules and the settings table are in docs/ARCHITECTURE.md. the owner decisions behind them are in docs/FLOW.md.
 
@@ -21,17 +22,22 @@ graph LR
     core["Core<br/>eth pot, redeem burn reserve"]
     buy["sellForEth, buyListing<br/>credits at the bid"]
     compose["compose<br/>80 credits, one Statement"]
-    held["held by the Core<br/>1.5x anchor falling to cost"]
+    pile["pile<br/>every credit, cost basis in eth"]
+    held["held by the Core<br/>1.5x anchor falling to the reference"]
+    credsale["ControllerV1.buyCredit<br/>sale window, off at launch"]
     sold["ControllerV1.buy<br/>sellTo"]
     burn["coin buy and burn"]
-    exit["exitStatement<br/>exitMode 1 or 2, at cost"]
+    exit["exitStatement<br/>exitMode 1 or 2, at the floor"]
 
-    swap --> hook --> router --> core --> buy --> compose --> held
+    swap --> hook --> router --> core --> buy --> pile --> compose --> held
+    pile --> credsale
     held --> sold
     held --> exit
     sold -->|50 percent| burn
     sold -->|50 percent| core
     exit -->|reserve share| burn
+    credsale -->|cost share| core
+    credsale -->|rest| burn
 ```
 
 ## contracts
@@ -40,9 +46,9 @@ five contracts are ours. the artcoins v2 stack is live on mainnet (`script/confi
 
 | name | role |
 |---|---|
-| Core | custody and every rule: pots, bid, piles, doors, compose, `sellTo`, exit, buyback, settings, owner doors, locks |
+| Core | custody and every rule: pots, bid, the pile, doors, compose, `composeChosen`, `sellTo`, `sellCreditTo`, exit, buyback, settings, owner doors, locks |
 | CoreLib | library of the Core called by delegatecall: settings write, bid math, the buyback swap, the exitToken bid, `adopt`, `rescueCoin`, `rescueNft`, `migrate` |
-| ControllerV1 | statement sale: `priceOf`, `buy`, the anchor, the pause, the exitToken pool key for the redemption value floor |
+| ControllerV1 | statement sale: `priceOf`, `buy`, the price reference, the anchor, the pause, the exitToken pool key for the redemption value floor. credit sale: `creditPrice`, `buyCredit`, `buyCredits` |
 | CoreLens | read only view of the Core, the controller and the fee router in one call |
 | FeeRouter | bounty recipient of the pool: empty `receive`, `flush()` to the payees and the engine |
 | ArtCoinsTokenV2 and the v2 stack | the coin and its factory, hook, locker, escrow and anti sniper module (`script/config/v2-mainnet.json`) |
@@ -53,9 +59,9 @@ each runtime contract stays under 24,576 bytes (`forge build --sizes`).
 
 | caller | doors |
 |---|---|
-| anyone | `sellForEth`, `buyListing`, `adopt`, `compose`, `composeExit`, `sellForExitToken` (exitMode 2), `exitStatement`, `buyback`, `skim`, `ControllerV1.buy`, `FeeRouter.flush` |
-| owner of the Core | `setSettings`, `setRate`, `setController`, `setExitModule`, `refreshUnitPerPoint`, `releaseRedeemBurn`, `addTarget`, `removeTarget`, `rescueCoin`, `rescueNft`, `setSuccessor`, `migrate`, two step `transferOwnership` |
-| owner on the controller | the sale settings, `setAnchorBps`, `setExitPoolKey`, `setPaused` (blocks `buy`, composing, the bid, exits and buybacks continue) |
+| anyone | `sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen` (when open), `sellForExitToken` (exitMode 2), `exitStatement`, `buyback`, `skim`, `ControllerV1.buy`, `ControllerV1.buyCredit` and `buyCredits` (when the credit sale is on), `FeeRouter.flush` |
+| owner of the Core | `setSettings`, `setRate`, `setController`, `setExitModule`, `refreshUnitPerPoint`, `releaseRedeemBurn`, `setCreditCostToPotBps`, `setChosenComposeOn`, `setMinCcToChoose`, `addTarget`, `removeTarget`, `rescueCoin`, `rescueNft`, `setSuccessor`, `migrate`, two step `transferOwnership` |
+| owner on the controller | the sale settings, `setRefScore`, the credit sale settings (`setCreditSaleOn`, `setCreditWindow`, `setCreditFloorBps`, `setCreditStartBps`), `setAnchorBps`, `setExitPoolKey`, `setPaused` (blocks `buy` and `buyCredit`, composing, the bid, exits and buybacks continue) |
 | owner of the router | `setEngine`, `setPayees`, `setSplitStart` |
 | locks, one way | `lockController`, `lockExitModule`, `lockTargets`, `lockSuccessor` on the Core, `lock` on the router |
 

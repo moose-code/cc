@@ -13,6 +13,9 @@ contract MockExitModule is IExitModule {
     bool public revertUnit;
     /// makes unitPerPoint loop until its gas runs out
     bool public burnUnitRead;
+    /// gas unitPerPoint burns before it returns, 0 to burn none. a nonzero value under the caller's forwarded gas
+    /// still returns the unit, so a caller that forwards too little reads short
+    uint256 public burnUnitGas;
     /// payout as bps of the owed amount. 10_000 pays exactly the owed amount
     uint256 public payBps = 10_000;
     /// gas to burn inside `exit`, and a call to make to some address while the core is inside the exit. a test or a
@@ -33,6 +36,10 @@ contract MockExitModule is IExitModule {
     function unitPerPoint() public view returns (uint256) {
         if (revertUnit) revert();
         if (burnUnitRead) while (true) {}
+        if (burnUnitGas != 0) {
+            uint256 end = gasleft() > burnUnitGas ? gasleft() - burnUnitGas : 0;
+            while (gasleft() > end) {}
+        }
         return _unit;
     }
 
@@ -49,6 +56,11 @@ contract MockExitModule is IExitModule {
     /// makes unitPerPoint burn all the gas it is given.
     function setBurnUnitRead(bool on) external {
         burnUnitRead = on;
+    }
+
+    /// makes unitPerPoint burn `gas_` gas before it returns the unit.
+    function setBurnUnitGas(uint256 gas_) external {
+        burnUnitGas = gas_;
     }
 
     /// sets the payout as bps of the owed amount. below 10_000 underpays, above overpays.

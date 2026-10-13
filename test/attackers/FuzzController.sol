@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Lane, ICoreViews, Mainnet} from "../../src/interfaces/Interfaces.sol";
+import {ICoreViews, Mainnet} from "../../src/interfaces/Interfaces.sol";
 
 /// a controller for invariant runs. every answer is a pure function of `seed` and the arguments, so the handler can
 /// ask the same question the core asks and get the same answer. the core reads it with staticcall, so none of the
@@ -40,19 +40,18 @@ contract FuzzController {
                                 nextPage
     //////////////////////////////////////////////////////////////*/
 
-    function nextPage(uint8 lane) external returns (uint256 ready, uint256[80] memory ids, uint256 format) {
-        uint256 r = _r("page", lane);
-        Lane l = lane == 0 ? Lane.Eth : Lane.Exit;
+    function nextPage() external returns (uint256 ready, uint256[80] memory ids, uint256 format) {
+        uint256 r = _r("page", 0);
         if (!hostile) {
             bool ok;
-            (ok, ids) = _honestPage(l, r);
+            (ok, ids) = _honestPage(r);
             if (!ok) return (0, ids, 0);
             return (1, ids, (r >> 40) % 8);
         }
         _attack(r);
-        uint256 m = (r >> 16) % 14;
+        uint256 m = (r >> 16) % 13;
         bool okPage;
-        (okPage, ids) = _honestPage(l, r);
+        (okPage, ids) = _honestPage(r);
         uint256 f = (r >> 40) % 8;
         uint256 k = (r >> 48) % PAGE;
         uint256 j = (r >> 64) % PAGE;
@@ -73,25 +72,20 @@ contract FuzzController {
         if (m == 6) return (1, ids, 8 + (r >> 80) % 248);
         if (m == 7) return (1, ids, type(uint256).max);
         if (m == 8) return (2, ids, f);
-        if (m == 9) {
-            // the other lane's page
-            (okPage, ids) = _honestPage(l == Lane.Eth ? Lane.Exit : Lane.Eth, r);
-            return (1, ids, f);
-        }
-        if (m == 10) _short(81);
-        if (m == 11) _short(90);
-        if (m == 12) revert("hostile page");
+        if (m == 9) _short(81);
+        if (m == 10) _short(90);
+        if (m == 11) revert("hostile page");
         _burn(1_000_000);
         return (okPage ? 1 : 0, ids, f);
     }
 
-    /// a contiguous run of 80 ids from the lane pile starting at a random offset, or not ok when the pile is short.
-    function _honestPage(Lane lane, uint256 r) internal view returns (bool ok, uint256[80] memory ids) {
-        uint256 size = ICoreViews(core).pileSize(lane);
+    /// a contiguous run of 80 ids from the pile starting at a random offset, or not ok when the pile is short.
+    function _honestPage(uint256 r) internal view returns (bool ok, uint256[80] memory ids) {
+        uint256 size = ICoreViews(core).pileSize();
         if (size < PAGE) return (false, ids);
         uint256 span = size - PAGE < MAX_SKIP ? size - PAGE : MAX_SKIP;
         uint256 skip = (r >> 100) % (span + 1);
-        uint256[] memory walk = ICoreViews(core).pilePage(lane, 0, skip + PAGE);
+        uint256[] memory walk = ICoreViews(core).pilePage(0, skip + PAGE);
         for (uint256 i; i < PAGE; ++i) {
             ids[i] = walk[skip + i];
         }

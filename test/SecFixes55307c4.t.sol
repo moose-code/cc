@@ -37,6 +37,7 @@ contract SecFixes55307c4 is Fixture {
     /// after the owner set it cannot make the bid overpay
     function test_bidPaysTheLowerOfStoredAndLiveUnit() public {
         _enterPhase2();
+        _setExitPool();
         _fillExitBuyback();
         uint256 pot = core.xPot();
         mod.setUnitPerPoint(UNIT / 2);
@@ -53,6 +54,7 @@ contract SecFixes55307c4 is Fixture {
     /// a higher live unit does not raise the bid above the stored unit
     function test_bidKeepsTheStoredUnitWhenLiveIsHigher() public {
         _enterPhase2();
+        _setExitPool();
         _fillExitBuyback();
         uint256 pot = core.xPot();
         mod.setUnitPerPoint(UNIT * 2);
@@ -280,6 +282,7 @@ contract SecFixes55307c4 is Fixture {
     /// after the module lowers its rate the quote equals the payout, and a failing live read quotes 0
     function test_lensBidFollowsTheLiveUnit() public {
         _enterPhase2();
+        _setExitPool();
         _fillExitBuyback();
         mod.setUnitPerPoint(UNIT / 2);
         uint256[] memory ids = _credits(seller, 1);

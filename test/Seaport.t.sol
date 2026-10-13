@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {console} from "forge-std/console.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {BidModel} from "./utils/BidModel.sol";
@@ -206,7 +206,7 @@ abstract contract SeaportBase is Fixture {
         s.toBuyback = core.ethToBuyback();
         s.rate = core.rateAtCheckpoint();
         s.fillTime = core.lastFillTime();
-        s.pile = core.pileSize(Lane.Eth);
+        s.pile = core.pileSize();
         s.credits = CREDITS.balanceOf(address(core));
         s.keeper = keeper.balance;
         s.maker = maker.balance;
@@ -238,12 +238,11 @@ abstract contract SeaportBase is Fixture {
 
         assertEq(CREDITS.ownerOf(id), address(core), "core owns the credit");
         assertEq(CREDITS.balanceOf(address(core)), before.credits + 1);
-        (bool inPile, Lane lane, uint256 booked,) = core.creditInfo(id);
+        (bool inPile, uint256 booked,) = core.creditInfo(id);
         assertTrue(inPile, "in the pile");
-        assertEq(uint8(lane), uint8(Lane.Eth), "eth lane");
         paid = keeper.balance - before.keeper;
         assertEq(booked, cost + paid, "costOf is cost plus the payment");
-        assertEq(core.pileSize(Lane.Eth), before.pile + 1);
+        assertEq(core.pileSize(), before.pile + 1);
         _assertListingPay(paid, ceiling - cost);
         assertEq(core.ethPot(), before.pot - cost - paid, "pot down by exactly cost and the payment");
         assertEq(address(core).balance, before.balance - cost - paid, "balance down by exactly cost and the payment");
@@ -252,7 +251,9 @@ abstract contract SeaportBase is Fixture {
         assertEq(core.lastFillTime(), block.timestamp);
         assertLe(cost + paid, ceiling, "never above the ceiling");
         _solvent();
-        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), 0, "no surplus");
+        assertEq(
+            address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(), 0, "no surplus"
+        );
     }
 
     function _expectFail(uint256 id, uint256 value, bytes memory data, bytes4 err) internal {
@@ -289,7 +290,8 @@ contract SeaportTest is SeaportBase {
             _warp(1 hours);
         }
         assertGe(core.ethRate(), TARGET_RATE, "rate cleared");
-        assertEq(address(core).balance, core.ethPot(), "the pot is exactly what real fees brought");
+        // real fees split between the pot and the redeem burn reserve (feeToRedeemBurnBps), nothing else held
+        assertEq(address(core).balance, core.ethPot() + core.ethRedeemBurn(), "the pot and reserve are what real fees brought");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -344,7 +346,7 @@ contract SeaportTest is SeaportBase {
 
         assertEq(maker.balance - makerBefore, total - fee, "maker got the price less the fee");
         assertEq(feeTaker.balance - feeBefore, fee, "fee recipient got one percent");
-        (,, uint256 booked,) = core.creditInfo(id);
+        (, uint256 booked,) = core.creditInfo(id);
         assertEq(booked, total + paid, "cost is the sum of every payout plus the payment");
     }
 
@@ -409,7 +411,7 @@ contract SeaportTest is SeaportBase {
         assertEq(balanceBefore - address(core).balance, total + paid, "refund came back");
         assertEq(maker.balance - makerBefore, total - fee);
         assertEq(feeTaker.balance - feeBefore, fee);
-        (,, uint256 booked,) = core.creditInfo(id);
+        (, uint256 booked,) = core.creditInfo(id);
         assertEq(booked, total + paid, "cost is the order total, not value");
 
         // the refund is not revenue: nothing for skim to book, pot and buyback pot unchanged by it.
@@ -595,7 +597,7 @@ contract SeaportTest is SeaportBase {
         uint256 makerBefore = maker.balance;
         uint256 paid = _buy(id, price, _basicData(c), price);
 
-        (,, uint256 booked,) = core.creditInfo(id);
+        (, uint256 booked,) = core.creditInfo(id);
         assertEq(booked, price + paid);
         assertLe(booked, ceiling, "cost plus the payment never exceeds the ceiling");
         assertEq(maker.balance - makerBefore, price);

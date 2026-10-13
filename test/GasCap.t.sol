@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {console} from "forge-std/console.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, ICreditStrategy, IStatements, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {ICreditStrategy, IStatements, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
@@ -124,7 +124,7 @@ contract GasCapTest is SeaportBase {
     }
 
     function test_gas_deploy_2_controller() public {
-        bytes memory args = abi.encode(address(core), lc.sale);
+        bytes memory args = abi.encode(address(core), lc.sale, lc.credit);
         bytes memory code = bytes.concat(vm.getCode("ControllerV1.sol:ControllerV1"), args);
         _cool(address(this));
         uint256 g = gasleft();
@@ -135,7 +135,7 @@ contract GasCapTest is SeaportBase {
 
     /// @dev tx 3, a second Core
     function test_gas_deploy_3_core() public {
-        bytes memory args = abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings);
+        bytes memory args = abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit);
         bytes memory code = bytes.concat(vm.getCode("Core.sol:Core"), args);
         _cool(address(this));
         uint256 g = gasleft();
@@ -350,61 +350,6 @@ contract GasCapTest is SeaportBase {
         _composeLoaded(true);
     }
 
-    function _composeExitLoaded(bool burning) internal returns (uint256 g) {
-        _splitOn(burning);
-        _exitPile();
-        _loadRouter();
-        vm.fee(composeBasefee);
-        _cool(address(core));
-        vm.prank(keeper);
-        g = gasleft();
-        core.composeExit();
-        g -= gasleft();
-        assertEq(address(feeRouter).balance, burning ? feeRouter.totalOwed() : 0, "the compose pulled the router");
-        _row(
-            burning ? "composeExit, router 1 eth, four burning payees, cold" : "composeExit, router 1 eth, cold",
-            g,
-            abi.encodeCall(core.composeExit, ())
-        );
-    }
-
-    function test_gas_composeExit_routerLoaded() public {
-        _composeExitLoaded(false);
-    }
-
-    function test_gas_composeExit_routerWorstCaseFlush() public {
-        _composeExitLoaded(true);
-    }
-
-    /// @dev phase 2 with the exit pot funded and 80 credits sold into the exit bid, so the exit pile is full
-    function _exitPile() internal {
-        _enterPhase2();
-        _fillExitBuyback();
-        xt.mint(address(core), 100e18);
-        core.skim();
-        uint256[] memory ids = _credits(seller, 80);
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        assertEq(core.pileSize(Lane.Exit), 80);
-    }
-
-    function test_gas_composeExit_andExitStatement_exitLane() public {
-        _exitPile();
-        _cool(address(core));
-        vm.prank(keeper);
-        uint256 g = gasleft();
-        core.composeExit();
-        g -= gasleft();
-        _row("composeExit, 80 credits, cold", g, abi.encodeCall(core.composeExit, ()));
-        uint256 sid = STATEMENTS.supply();
-        _cool(address(core));
-        vm.prank(keeper);
-        g = gasleft();
-        core.exitStatement(sid);
-        g -= gasleft();
-        _row("exitStatement, exit lane (stand in exitModule), cold", g, abi.encodeCall(core.exitStatement, (sid)));
-    }
-
     function test_gas_exitStatement_ethLane() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
@@ -502,6 +447,7 @@ contract GasCapTest is SeaportBase {
 
     function test_gas_sellForExitToken_batch() public {
         _enterPhase2();
+        _setExitPool();
         _fillExitBuyback();
         xt.mint(address(core), 1_000_000e18);
         core.skim();
@@ -601,7 +547,7 @@ contract GasCapTest is SeaportBase {
     // ------------------------------------------------------------------ statements: sellTo
 
     function _cost(uint256 sid) internal view returns (uint256 c) {
-        (,, c,) = core.statementInfo(sid);
+        (, c,) = core.statementInfo(sid);
     }
 
     /// @dev ControllerV1.buy pays the asking price and takes the statement through Core.sellTo
@@ -682,7 +628,7 @@ contract GasCapTest is SeaportBase {
         _fillEthPile(80);
         _cool(address(ctl));
         uint256 g = gasleft();
-        (bool ready,,) = ctl.nextPage(Lane.Eth);
+        (bool ready,,) = ctl.nextPage();
         g -= gasleft();
         assertTrue(ready);
         console.log("READ ControllerV1.nextPage, full eth pile, cold, gas", g, "cap", PAGE_GAS);
@@ -690,9 +636,11 @@ contract GasCapTest is SeaportBase {
         assertLt(g, PAGE_GAS);
     }
 
-    /// @dev the same read for the exit lane pile, and for a pile far larger than a page (the read takes the head page)
-    function test_gas_readCaps_nextPage_exitLaneAndDeepPile() public {
+    /// @dev the same read for a pile far larger than a page (the read takes the head page). the deep pile is filled
+    /// through the exit bid so the eth pot is not drained
+    function test_gas_readCaps_nextPage_deepPile() public {
         _enterPhase2();
+        _setExitPool();
         _fillExitBuyback();
         xt.mint(address(core), 1_000_000e18);
         core.skim();
@@ -706,13 +654,13 @@ contract GasCapTest is SeaportBase {
             vm.prank(seller);
             core.sellForExitToken(batch);
         }
-        assertEq(core.pileSize(Lane.Exit), 400);
+        assertEq(core.pileSize(), 400);
         _cool(address(ctl));
         uint256 g = gasleft();
-        (bool ready,,) = ctl.nextPage(Lane.Exit);
+        (bool ready,,) = ctl.nextPage();
         g -= gasleft();
         assertTrue(ready);
-        console.log("READ ControllerV1.nextPage, exit lane, pile of 400, cold, gas", g, "cap", PAGE_GAS);
+        console.log("READ ControllerV1.nextPage, pile of 400, cold, gas", g, "cap", PAGE_GAS);
         assertLt(g, PAGE_GAS);
     }
 
@@ -720,7 +668,7 @@ contract GasCapTest is SeaportBase {
     /// costs the compose, with a scripted controller
     function test_gas_compose_everyFormat() public {
         _fillEthPile(80);
-        uint256[] memory page = core.pilePage(Lane.Eth, 0, 80);
+        uint256[] memory page = core.pilePage(0, 80);
         uint256[80] memory ids;
         for (uint256 i; i < 80; ++i) {
             ids[i] = page[i];
@@ -729,7 +677,7 @@ contract GasCapTest is SeaportBase {
         _setController(address(sc));
         for (uint8 f; f < 8; ++f) {
             uint256 snap = vm.snapshotState();
-            sc.setPage(Lane.Eth, true, ids, f);
+            sc.setPage(true, ids, f);
             _cool(address(core));
             _measureCompose(
                 string.concat("compose eth lane, scripted controller, format ", vm.toString(uint256(f)), ", cold")

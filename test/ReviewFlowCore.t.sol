@@ -6,7 +6,6 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICoreLib} from "../src/interfaces/ICoreLib.sol";
 import {
-    Lane,
     Settings,
     Mainnet,
     IStatements,
@@ -78,7 +77,7 @@ contract ReviewFlowCoreTest is Fixture {
         vm.prank(keeper);
         core.compose();
         uint256 sid = STATEMENTS.supply();
-        (,, uint256 cost,) = core.statementInfo(sid);
+        (, uint256 cost,) = core.statementInfo(sid);
         _warp(2 hours);
         assertEq(ctl.priceOf(sid), cost * 1_000 / 10_000, "the ask at the floor is 10 percent of cost");
         address buyer = _user("buyer");
@@ -430,7 +429,7 @@ contract ReviewFlowCoreTest is Fixture {
     function test_measure_controllerV1PageGas() public {
         _fillEthPile(80);
         uint256 g = gasleft();
-        (bool ready,,) = ctl.nextPage(Lane.Eth);
+        (bool ready,,) = ctl.nextPage();
         uint256 used = g - gasleft();
         assertTrue(ready);
         emit log_named_uint("ControllerV1.nextPage gas, full page, cold", used);
@@ -438,22 +437,17 @@ contract ReviewFlowCoreTest is Fixture {
         // costs about 242,000 gas (cold storage), so the cap is at least twice the cold cost of a full page
         assertLt(used * 2, 500_000, "the gas cap of the core's read is at least twice the cold read of a full page");
         g = gasleft();
-        ctl.nextPage(Lane.Eth);
+        ctl.nextPage();
         emit log_named_uint("ControllerV1.nextPage gas, full page, warm", g - gasleft());
     }
 
     /// FC-4 (fixed): the read of the controller's `nextPage` is cut at `PAGE_GAS` (500,000). a controller that burns
     /// gas there makes the compose revert `NotReady` and the gas of the call stays bounded by the cut
-    function test_FIXED_gasBurningControllerCannotFarmTheExitLaneReimbursement() public {
+    function test_FIXED_gasBurningControllerCannotFarmTheComposeReimbursement() public {
         _skipSniperWindow();
-        _enterPhase2();
         _fundPot(3 ether);
-        xt.mint(address(core), 1e20);
-        core.skim();
-        uint256[] memory ids = _credits(seller, 80);
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        assertEq(core.pileSize(Lane.Exit), 80);
+        _fillEthPile(80);
+        assertEq(core.pileSize(), 80);
 
         // 20M gas of burning is far past the cut: the read fails and the page is not ready
         BurnController bc = new BurnController(address(core), 20_000_000);
@@ -462,7 +456,7 @@ contract ReviewFlowCoreTest is Fixture {
         vm.prank(keeper);
         uint256 g = gasleft();
         vm.expectRevert(ICore.NotReady.selector);
-        core.composeExit{gas: 30_000_000}();
+        core.compose{gas: 30_000_000}();
         g -= gasleft();
         assertLt(g, 1_000_000, "the read is cut at 500,000 and the rest of the call is small");
 
@@ -471,7 +465,7 @@ contract ReviewFlowCoreTest is Fixture {
         _setController(address(bc));
         uint256 supply = STATEMENTS.supply();
         vm.prank(keeper);
-        core.composeExit{gas: 30_000_000}();
+        core.compose{gas: 30_000_000}();
         assertEq(STATEMENTS.supply(), supply + 1, "the page under the cut composes");
     }
 
@@ -480,6 +474,7 @@ contract ReviewFlowCoreTest is Fixture {
     function test_exitBidAtParIsAWash() public {
         _skipSniperWindow();
         _enterPhase2();
+        _setExitPool();
         _fundPot(3 ether);
         Settings memory s = core.settings();
         s.exitBidMarginBps = 0;
@@ -495,8 +490,9 @@ contract ReviewFlowCoreTest is Fixture {
         uint256 paid = xBefore - core.xPot();
         vm.fee(composeBasefee);
         vm.prank(keeper);
-        core.composeExit();
+        core.compose();
         uint256 sid = STATEMENTS.supply();
+        _makeEligible(sid);
         core.exitStatement(sid);
         emit log_named_uint("paid to the seller (exit token)", paid);
         emit log_named_uint("exit pot before", xBefore);
@@ -515,21 +511,21 @@ contract BurnController {
         BURN = burn_;
     }
 
-    function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format) {
+    function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format) {
         uint256 stop = gasleft() - BURN;
         uint256 h;
         while (gasleft() > stop) {
             h = uint256(keccak256(abi.encode(h)));
         }
         if (h == 1) return (false, ids, 0);
-        uint256[] memory page = CORE.pilePage(lane, 0, 80);
+        uint256[] memory page = CORE.pilePage(0, 80);
         for (uint256 i; i < 80; ++i) {
             ids[i] = page[i];
         }
         return (true, ids, 0);
     }
 
-    function atCost(uint256) external pure returns (bool) {
+    function atFloor(uint256) external pure returns (bool) {
         return false;
     }
 }

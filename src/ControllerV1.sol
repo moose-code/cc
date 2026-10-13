@@ -3,7 +3,8 @@ pragma solidity ^0.8.28;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {Halving} from "./lib/Halving.sol";
-import {Lane, Sale, IController, ICoreViews, ICoreSale, Mainnet} from "./interfaces/Interfaces.sol";
+import {Sale, Credit, IController, ICoreViews, ICoreSale, ICreditScore, ICredits, IExitModule, Mainnet} from "./interfaces/Interfaces.sol";
+import {CreditBounds} from "./lib/CreditBounds.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
@@ -11,26 +12,33 @@ import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
-/// first policy module. composes the oldest 80 credits of a lane with format 0.
-/// it prices and sells statements. the asking price of a statement of cost `c` is a fraction of `c` in bps that starts at
-/// `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls at a fixed rate per second in two stages: at
-/// `fastDecayBpsPerHour` from `start` to `kneeBps`, then at `slowDecayBpsPerHour` to `floorBps`, where it stays. a `start`
-/// at or below `kneeBps` falls at the slow rate from the first second. the price is computed at every call from the age of
-/// statement (time since its compose) and the current settings, so a setting change applies to held statements at once.
-/// `anchorBps` (bps of cost, at least 10_000) is the running level of sale prices. it moves up with sales and down with
-/// time. a `buy` of a statement whose cost is at least `anchorMinCost` and whose sale price in bps of cost is above the
-/// anchor sets the anchor to the mean of the two. every other `buy` leaves the anchor unchanged. the part of the anchor above 10_000 halves every `anchorHalfLife`,
-/// continuously. the controller stores the anchor at its last change (`storedAnchorBps`, `anchorTime`) and evaluates
-/// the decay at the call. the price is computed from the current anchor at every call, so held statements follow it.
-/// `buy` sells a held eth lane statement at once at the asking price.
+/// first policy module. composes the oldest 80 pile credits with format 0.
+/// it prices and sells statements. a statement's price reference is the larger of its cost and the remembered peak of
+/// the eth bid times its rating over `refScore`, computed at each call. the rate term prices the rating at the
+/// engine's average credit price, so two statements of the same rating reference the same amount once the rate term
+/// binds, whatever each credit cost. `refScore` is an owner setting in the
+/// per-credit score unit (one ten-thousandth of a point). the asking price is a fraction of the reference in bps that
+/// starts at `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls at a fixed rate per second in two
+/// stages: at `fastDecayBpsPerHour` from `start` to `kneeBps`, then at `slowDecayBpsPerHour` to `floorBps`, where it
+/// stays. a `start` at or below `kneeBps` falls at the slow rate from the first second. the price is computed at every
+/// call from the age of the statement (time since its compose) and the current settings, so a setting change applies to
+/// held statements at once.
+/// `anchorBps` (at least 10_000) is the running level of sale prices in bps of the reference. it moves up with sales and
+/// down with time. a `buy` of a statement whose cost is at least `anchorMinCost` and whose sale price in bps of the
+/// reference is above the anchor sets the anchor to the mean of the two. every other `buy` leaves the anchor unchanged.
+/// the part of the anchor above 10_000 halves every `anchorHalfLife`, continuously. the controller stores the anchor at
+/// its last change (`storedAnchorBps`, `anchorTime`) and evaluates the decay at the call. the price is computed from the
+/// current anchor at every call, so held statements follow it.
+/// `buy` sells a held statement at once at the asking price. `atFloor(sid)` is true once the statement's curve price has
+/// reached its floor, `floorBps` of the reference.
 /// the owner can pause sales (`setPaused`). while paused `buy` reverts `Paused`, `priceOf` answers, and the age of a
 /// statement excludes every paused second, so the age of a held statement stops advancing for the length of a pause
 /// and continues from the same age at resume. the anchor decays with wall time in both states, so the start of the
 /// curve, and with it the asking price, can still fall in a pause while the anchor is above 10_000.
 /// it holds no funds between calls. its settings belong to the live owner of the core (`core.owner()`), there is no
-/// second owner. the core enforces its own hard floor whatever this contract answers.
+/// second owner. the core enforces its own hard floor, `saleFloorBps` of cost, whatever this contract answers.
 /// once the owner sets the exit token pool (`setExitPoolKey`), the asking price is also floored at the statement's
-/// redeemable value in eth, `rating * unit` exit token base units priced at the pool sqrt price, with `unit` the lower of the stored and the live `unitPerPoint()`. `atCost` and
+/// redeemable value in eth, `rating * unit` exit token base units priced at the pool sqrt price, with `unit` the lower of the stored and the live `unitPerPoint()`. `atFloor` and
 /// the anchor use the curve price, not this floor. with the pool key unset, no exit module set, or a zero pool read
 /// the value floor is 0 and the asking price is the curve price
 contract ControllerV1 is IController {
@@ -38,7 +46,7 @@ contract ControllerV1 is IController {
 
     uint256 private constant PAGE = 80;
     uint256 private constant BPS = 10_000;
-    uint256 private constant READ_GAS = 50_000;
+    uint256 private constant READ_GAS = 200_000;
     uint256 private constant MAX_ANCHOR_MIN_COST = 10 ether;
 
     error OnlyOwner();
@@ -47,6 +55,8 @@ contract ControllerV1 is IController {
     error Underpaid();
     error Reentrant();
     error Paused();
+    /// a credit sale door was called while the credit sale window is off
+    error CreditSaleOff();
 
     event MarkupBpsSet(uint16 markupBps);
     event StartCapBpsSet(uint32 startCapBps);
@@ -54,6 +64,7 @@ contract ControllerV1 is IController {
     event KneeBpsSet(uint32 kneeBps);
     event SlowDecayBpsPerHourSet(uint16 slowDecayBpsPerHour);
     event FloorBpsSet(uint16 floorBps);
+    event RefScoreSet(uint32 refScore);
     event AnchorBpsSet(uint32 anchorBps);
     event AnchorHalfLifeSet(uint32 anchorHalfLife);
     event AnchorMinCostSet(uint128 anchorMinCost);
@@ -61,6 +72,10 @@ contract ControllerV1 is IController {
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event ExitPoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
+    event CreditSaleOnSet(bool on);
+    event CreditWindowSet(uint32 creditWindow);
+    event CreditFloorBpsSet(uint16 creditFloorBps);
+    event CreditStartBpsSet(uint32 creditStartBps);
 
     /// one pause of sales: a single storage slot
     struct PauseWindow {
@@ -73,17 +88,21 @@ contract ControllerV1 is IController {
 
     /// start price over the anchor, bps. 10_000 to 40_000, at most `startCapBps`
     uint16 public markupBps;
-    /// the most the start price can be, bps of cost. the larger of `markupBps` and `kneeBps` to 200_000
+    /// the most the start price can be, bps of the reference. the larger of `markupBps` and `kneeBps` to 200_000
     uint32 public startCapBps;
-    /// fall of the asking price per hour above `kneeBps`, bps of cost. 1 to 10_000
+    /// fall of the asking price per hour above `kneeBps`, bps of the reference. 1 to 10_000
     uint16 public fastDecayBpsPerHour;
-    /// fall of the asking price per hour at or below `kneeBps`, bps of cost. 1 to 10_000
+    /// fall of the asking price per hour at or below `kneeBps`, bps of the reference. 1 to 10_000
     uint16 public slowDecayBpsPerHour;
-    /// the price where the fast fall ends and the slow fall starts, bps of cost. `floorBps` to `startCapBps`
+    /// the price where the fast fall ends and the slow fall starts, bps of the reference. `floorBps` to `startCapBps`
     uint32 public kneeBps;
-    /// lowest asking price, bps of cost. 1_000 to the smaller of 10_000 and `kneeBps`
+    /// lowest asking price, bps of the reference. 1_000 to the smaller of 10_000 and `kneeBps`
     uint16 public floorBps;
-    /// the anchor at `anchorTime`, bps of cost. 10_000 to `startCapBps`. `anchorBps()` is the value now
+    /// the per-credit score the statement reference divides the rating by, in ten-thousandths of a point. the reference
+    /// is the larger of cost and the peak of the eth bid times rating over `refScore`, so a lower `refScore` lifts the
+    /// rate term. 1 to 8_000_000
+    uint32 public refScore;
+    /// the anchor at `anchorTime`, bps of the reference. 10_000 to `startCapBps`. `anchorBps()` is the value now
     uint32 public storedAnchorBps;
     /// when `storedAnchorBps` was last set
     uint40 public anchorTime;
@@ -104,7 +123,19 @@ contract ControllerV1 is IController {
     /// last window is open and its `end` is 0. `pausedBefore` is the paused seconds of windows `0` to `i - 1`
     PauseWindow[] private _pauses;
 
-    constructor(address core, Sale memory sale) {
+    /// whether pile credits are for sale from their acquisition time and compose waits for a credit's window to pass.
+    /// launch value false
+    bool public creditSaleOn;
+    /// seconds a credit's price falls over before it rests at the floor, and the time a credit must sit before compose
+    /// may take it. 1 minute to 30 days
+    uint32 public creditWindow;
+    /// the credit sale floor over the highest of the credit's cost, exit token baseline and score-scaled eth backstop,
+    /// bps. 10_000 to 40_000
+    uint16 public creditFloorBps;
+    /// the credit sale start price over the floor, bps. 10_000 to 200_000
+    uint32 public creditStartBps;
+
+    constructor(address core, Sale memory sale, Credit memory credit) {
         CORE = ICoreViews(core);
         if (sale.markupBps < BPS || sale.markupBps > 40_000) revert BadSetting("markupBps");
         markupBps = sale.markupBps;
@@ -125,6 +156,15 @@ contract ControllerV1 is IController {
         storedAnchorBps = uint32(BPS);
         // forge-lint: disable-next-line(unsafe-typecast)
         anchorTime = uint40(block.timestamp);
+        if (!CreditBounds.refScoreOk(credit.refScore)) revert BadSetting("refScore");
+        if (!CreditBounds.windowOk(credit.window)) revert BadSetting("creditWindow");
+        if (!CreditBounds.floorBpsOk(credit.floorBps)) revert BadSetting("creditFloorBps");
+        if (!CreditBounds.startBpsOk(credit.startBps)) revert BadSetting("creditStartBps");
+        refScore = credit.refScore;
+        creditSaleOn = credit.saleOn;
+        creditWindow = credit.window;
+        creditFloorBps = credit.floorBps;
+        creditStartBps = credit.startBps;
     }
 
     modifier onlyOwner() {
@@ -176,6 +216,13 @@ contract ControllerV1 is IController {
         if (v < 1_000 || v > BPS || v > kneeBps) revert BadSetting("floorBps");
         floorBps = v;
         emit FloorBpsSet(v);
+    }
+
+    /// 1 to 8_000_000. applies to the reference of every open listing at the next call
+    function setRefScore(uint32 v) external onlyOwner {
+        if (!CreditBounds.refScoreOk(v)) revert BadSetting("refScore");
+        refScore = v;
+        emit RefScoreSet(v);
     }
 
     /// 10_000 to `startCapBps`. replaces the running level of sale prices and restarts its decay
@@ -237,38 +284,87 @@ contract ControllerV1 is IController {
         emit ExitPoolKeySet(c0, c1, key.fee, key.tickSpacing, address(key.hooks));
     }
 
+    // ------------------------------------------------------------------ credit sale settings, owner, at once
+
+    /// turns the credit sale window on or off. while on, pile credits are for sale through `buyCredit` and compose
+    /// takes only credits past their window
+    function setCreditSaleOn(bool v) external onlyOwner {
+        creditSaleOn = v;
+        emit CreditSaleOnSet(v);
+    }
+
+    /// 1 minute to 30 days
+    function setCreditWindow(uint32 v) external onlyOwner {
+        if (!CreditBounds.windowOk(v)) revert BadSetting("creditWindow");
+        creditWindow = v;
+        emit CreditWindowSet(v);
+    }
+
+    /// 10_000 to 40_000
+    function setCreditFloorBps(uint16 v) external onlyOwner {
+        if (!CreditBounds.floorBpsOk(v)) revert BadSetting("creditFloorBps");
+        creditFloorBps = v;
+        emit CreditFloorBpsSet(v);
+    }
+
+    /// 10_000 to 200_000
+    function setCreditStartBps(uint32 v) external onlyOwner {
+        if (!CreditBounds.startBpsOk(v)) revert BadSetting("creditStartBps");
+        creditStartBps = v;
+        emit CreditStartBpsSet(v);
+    }
+
     // ------------------------------------------------------------------ pricing and sale
 
-    /// the running level of sale prices now, bps of cost: 10_000 plus the part of `storedAnchorBps` above 10_000,
-    /// halved every `anchorHalfLife` since `anchorTime`
+    /// the running level of sale prices now, bps of the reference: 10_000 plus the part of `storedAnchorBps` above
+    /// 10_000, halved every `anchorHalfLife` since `anchorTime`
     function anchorBps() public view returns (uint32) {
         uint256 excess = storedAnchorBps - BPS;
         // forge-lint: disable-next-line(unsafe-typecast)
         return uint32(BPS + Halving.halve(excess, block.timestamp - anchorTime, anchorHalfLife));
     }
 
-    /// the start price of a new statement, bps of cost: the anchor times `markupBps`, at most `startCapBps`
+    /// the start price of a new statement, bps of the reference: the anchor times `markupBps`, at most `startCapBps`
     function startBps() public view returns (uint256) {
         uint256 start = uint256(anchorBps()) * markupBps / BPS;
         return start < startCapBps ? start : startCapBps;
+    }
+
+    /// the price reference of statement `sid`, wei: the larger of its cost and the peak of the eth bid times its rating
+    /// over `refScore`. the curve prices in bps of this value. reverts `NotForSale` for a statement the core does not
+    /// hold
+    function referenceOf(uint256 sid) public view returns (uint256) {
+        (bool held, uint256 cost,) = CORE.statementInfo(sid);
+        if (!held) revert NotForSale();
+        return _reference(cost, CORE.ratingOf(sid));
+    }
+
+    /// the larger of `cost` and `CORE.floorRate()` times `rating` over `refScore`. the floor rate is the larger of the
+    /// climbed price state and the decayed peak. selling credits lowers only the rate and the peak decays between fills,
+    /// so the maximum holds against a sale within the block. one `mulDiv`, so the rate term divides at full precision
+    function _reference(uint256 cost, uint256 rating) private view returns (uint256) {
+        uint256 rate = FullMath.mulDiv(CORE.floorRate(), rating, refScore);
+        return rate > cost ? rate : cost;
     }
 
     /// the asking price of statement `sid` now, read from the core. never below the core hard floor
     /// `cost * saleFloorBps / 10_000`, and never below the redeemable value floor once the exit token pool key is set,
     /// so the quote is always a price `sellTo` takes. answers while paused
     function priceOf(uint256 sid) public view returns (uint256 price) {
-        uint256 cost;
-        (price, cost) = _quote(sid);
+        (price,,) = _quote(sid);
         uint256 value = _value(sid);
         if (value > price) price = value;
     }
 
-    /// true when the asking price of eth lane statement `sid` is at or below its stored cost. the asking price excludes
-    /// paused seconds, so eligibility holds its value while sales are paused. the core reads it to gate a phase 2
-    /// redemption of an eth lane statement
-    function atCost(uint256 sid) external view returns (bool) {
-        (uint256 price, uint256 cost) = _quote(sid);
-        return price <= cost;
+    /// true when the curve price of statement `sid` has reached its floor, `floorBps` of the reference. the curve age
+    /// excludes paused seconds, so eligibility holds its value while sales are paused. the core hard floor does not
+    /// enter this, so a `saleFloorBps` above the curve floor does not block eligibility. the core reads it to gate a
+    /// phase 2 redemption
+    function atFloor(uint256 sid) external view returns (bool) {
+        (bool held, uint256 cost, uint64 composedAt) = CORE.statementInfo(sid);
+        if (!held) revert NotForSale();
+        uint256 ref = _reference(cost, CORE.ratingOf(sid));
+        return _ask(ref, _age(composedAt)) <= ref * floorBps / BPS;
     }
 
     /// pays the asking price, gets the statement at once, and moves the anchor halfway to the sale price in bps of
@@ -277,52 +373,175 @@ contract ControllerV1 is IController {
         if (paused) revert Paused();
         if (_busy) revert Reentrant();
         _busy = true;
-        (uint256 curve, uint256 cost) = _quote(sid);
+        (uint256 curve, uint256 cost, uint256 ref) = _quote(sid);
         uint256 value = _value(sid);
         uint256 price = value > curve ? value : curve;
         if (msg.value < price) revert Underpaid();
-        _moveAnchor(sid, curve, cost);
+        _moveAnchor(sid, curve, cost, ref);
         ICoreSale(address(CORE)).sellTo{value: price}(sid, msg.sender);
         emit Bought(sid, msg.sender, price);
         if (msg.value > price) SafeTransferLib.safeTransferETH(msg.sender, msg.value - price);
         _busy = false;
     }
 
-    function _quote(uint256 sid) private view returns (uint256 price, uint256 cost) {
+    // ------------------------------------------------------------------ credit sale window
+
+    /// the sale price of pile credit `id` now, wei. the floor is the highest of the credit's cost, its exit token
+    /// baseline and the score-scaled eth backstop, times `creditFloorBps`. the start is the floor times
+    /// `creditStartBps`. the price falls in a straight line from the start at the acquisition time to the floor at the
+    /// acquisition time plus `creditWindow`, and rests at the floor after. reverts `NotForSale` for a credit not in the
+    /// pile. a missing or failed exit token price leaves the baseline at 0, so the sale never reverts for it. answers
+    /// whether or not the sale is on
+    function creditPrice(uint256 id) public view returns (uint256 price) {
+        (bool inPile, uint256 cost, uint64 acquiredAt) = CORE.creditInfo(id);
+        if (!inPile) revert NotForSale();
+        uint256 score = _scoreOf(id);
+        uint256 hi = cost;
+        uint256 base = _baseline(score);
+        if (base > hi) hi = base;
+        uint256 back = _backstop(score);
+        if (back > hi) hi = back;
+        uint256 floor = hi * creditFloorBps / BPS;
+        uint256 start = floor * creditStartBps / BPS;
+        uint256 age = block.timestamp - acquiredAt;
+        if (age >= creditWindow) return floor;
+        price = start - (start - floor) * age / creditWindow;
+    }
+
+    /// the exit token redemption value of a credit of `score` in wei, read from the exit token pool, the same read the
+    /// statement value floor uses. it only lifts the credit floor. zero when no exit module is set, the pool key is
+    /// unset, the live unit read fails or is zero, the pool price reads zero, or `score` or the unit is zero. `score`
+    /// is at most 8_000_000 and the unit is taken as at most uint128.max, so `score * unit` is below 2^151 and the
+    /// pool pricing cannot overflow. never reverts: a missing or failed read gives 0
+    function _baseline(uint256 score) private view returns (uint256) {
+        address module = CORE.exitModule();
+        if (module == address(0)) return 0;
+        (uint256 live, bool ok) = _liveUnit(module);
+        if (!ok || live == 0) return 0;
+        uint256 unit = CORE.unitPerPoint();
+        if (live < unit) unit = live;
+        if (unit > type(uint128).max) unit = type(uint128).max;
+        (uint256 priceWei, bool priced) = _priceBaseUnits(score * unit);
+        return priced ? priceWei : 0;
+    }
+
+    /// the score-scaled eth backstop of a credit in wei: the floor rate when `score` is at or below `refScore`, else
+    /// `floorRate * score / refScore`, the scaling the statement reference applies. the floor rate is the larger of the
+    /// climbed price state and the decayed peak. selling credits lowers only the rate and the peak decays between fills,
+    /// so neither a pot move nor a pool move can push the rate down within the block. a `score` of zero (a failed score
+    /// read) gives the unscaled rate
+    function _backstop(uint256 score) private view returns (uint256) {
+        uint256 eth = CORE.floorRate();
+        uint256 rs = refScore;
+        if (score <= rs) return eth;
+        return FullMath.mulDiv(eth, score, rs);
+    }
+
+    /// the credit score of `id` from the credit score contract, the same `scoreOf(seed, paidAt)` source the exit token
+    /// bid reads in `sellForExitToken`. `scoreOf` is pure on a fixed verified contract, so the call is direct.
+    /// `creditPrice` calls this only for a credit the core holds in the pile, so the reads cannot revert
+    function _scoreOf(uint256 id) private view returns (uint256) {
+        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(
+            ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id)
+        );
+    }
+
+    /// true when credit acquired at `acquiredAt` may be composed: always while the sale is off, otherwise once
+    /// `creditWindow` has passed since its acquisition. the core and chosen composition test one credit with it
+    function pastWindow(uint64 acquiredAt) public view returns (bool) {
+        if (!creditSaleOn) return true;
+        return uint256(acquiredAt) + creditWindow <= block.timestamp;
+    }
+
+    /// pays the sale price of credit `id`, gets the credit at once, and refunds the excess of `msg.value` last. reverts
+    /// `CreditSaleOff` while the sale is off and `Paused` while sales are paused
+    function buyCredit(uint256 id) external payable {
+        if (!creditSaleOn) revert CreditSaleOff();
+        if (paused) revert Paused();
+        if (_busy) revert Reentrant();
+        _busy = true;
+        uint256 price = creditPrice(id);
+        if (msg.value < price) revert Underpaid();
+        ICoreSale(address(CORE)).sellCreditTo{value: price}(id, msg.sender);
+        if (msg.value > price) SafeTransferLib.safeTransferETH(msg.sender, msg.value - price);
+        _busy = false;
+    }
+
+    /// pays the sale prices of `ids` in order, gets the credits, and refunds the excess last. each credit is priced at
+    /// the state left by the previous sale. the eth backstop reads the floor rate, which a credit sale leaves unchanged
+    /// for the rest of the block, so within one batch a credit's price moves only through its own cost, baseline and age.
+    /// reverts `CreditSaleOff` while the sale is off and `Paused` while sales are paused
+    function buyCredits(uint256[] calldata ids) external payable {
+        if (!creditSaleOn) revert CreditSaleOff();
+        if (paused) revert Paused();
+        if (_busy) revert Reentrant();
+        _busy = true;
+        uint256 n = ids.length;
+        uint256 spent;
+        for (uint256 i; i < n; ++i) {
+            uint256 price = creditPrice(ids[i]);
+            spent += price;
+            if (msg.value < spent) revert Underpaid();
+            ICoreSale(address(CORE)).sellCreditTo{value: price}(ids[i], msg.sender);
+        }
+        if (msg.value > spent) SafeTransferLib.safeTransferETH(msg.sender, msg.value - spent);
+        _busy = false;
+    }
+
+    /// the curve price of statement `sid` in wei with its cost basis and its reference. the price is `floorBps` to the
+    /// start of the reference by the age curve, floored at the core hard floor `saleFloorBps` of cost
+    function _quote(uint256 sid) private view returns (uint256 price, uint256 cost, uint256 ref) {
         bool held;
-        Lane lane;
         uint64 composedAt;
-        (held, lane, cost, composedAt) = CORE.statementInfo(sid);
-        if (!held || lane != Lane.Eth) revert NotForSale();
-        price = _ask(cost, _age(composedAt));
+        (held, cost, composedAt) = CORE.statementInfo(sid);
+        if (!held) revert NotForSale();
+        ref = _reference(cost, CORE.ratingOf(sid));
+        price = _ask(ref, _age(composedAt));
         uint256 floor = cost * ICoreSale(address(CORE)).settings().saleFloorBps / BPS;
         if (price < floor) price = floor;
     }
 
-    /// the module's `unitPerPoint()` read with at most `READ_GAS`. a revert or a short answer reads as 0
-    function _liveUnit(address module) private view returns (uint256) {
-        (bool ok, bytes memory out) = module.staticcall{gas: READ_GAS}(abi.encodeWithSignature("unitPerPoint()"));
-        return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
+    /// the module's `unitPerPoint()` read with at most `READ_GAS`, the same gas the exit token bid forwards. copies at
+    /// most 32 bytes of returndata, so a long answer cannot grief the gas. `ok` is false on a revert or an answer
+    /// shorter than 32 bytes, where the unit reads 0
+    function _liveUnit(address module) private view returns (uint256 unit, bool ok) {
+        bytes4 sel = IExitModule.unitPerPoint.selector;
+        assembly ("memory-safe") {
+            mstore(0, sel)
+            ok := staticcall(READ_GAS, module, 0, 4, 0, 32)
+            ok := and(ok, iszero(lt(returndatasize(), 32)))
+            unit := mload(0)
+        }
+        if (!ok) unit = 0;
     }
 
     /// the redeemable value of statement `sid` in wei from the exit token pool: `rating * unit` exit token base units
     /// priced at the pool sqrt price, where `unit` is the lower of the stored and the module's live `unitPerPoint()`
     /// (a failed live read gives 0). zero when the pool key is unset, no exit module is set, the owed amount is
-    /// zero, or the pool sqrt price reads zero. native eth is `currency0`, so wei per token base unit is
-    /// `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
+    /// zero, or the pool sqrt price reads zero
     function _value(uint256 sid) private view returns (uint256) {
         if (!exitPoolKeySet) return 0;
         if (CORE.exitModule() == address(0)) return 0;
         uint256 unit = CORE.unitPerPoint();
-        uint256 live = _liveUnit(CORE.exitModule());
+        (uint256 live,) = _liveUnit(CORE.exitModule());
         if (live < unit) unit = live;
         uint256 owed = CORE.ratingOf(sid) * unit;
         if (owed == 0) return 0;
+        (uint256 priceWei, bool priced) = _priceBaseUnits(owed);
+        return priced ? priceWei : 0;
+    }
+
+    /// `baseUnits` of the exit token priced in wei at the exit token pool. `priced` is false when the pool key is
+    /// unset or the pool sqrt price reads zero. native eth is `currency0`, so wei per token base unit is
+    /// `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
+    function _priceBaseUnits(uint256 baseUnits) private view returns (uint256 priceWei, bool priced) {
+        if (!exitPoolKeySet) return (0, false);
         (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(exitPoolKey.toId());
-        if (sqrtPriceX96 == 0) return 0;
+        if (sqrtPriceX96 == 0) return (0, false);
         uint256 q = FixedPoint96.Q96;
         uint256 p = sqrtPriceX96;
-        return FullMath.mulDiv(FullMath.mulDiv(owed, q, p), q, p);
+        priceWei = FullMath.mulDiv(FullMath.mulDiv(baseUnits, q, p), q, p);
+        priced = true;
     }
 
     /// the age of a statement composed at `composedAt`: the seconds from then to now outside every pause window. a
@@ -350,12 +569,15 @@ contract ControllerV1 is IController {
         return w.pausedBefore + end - w.start;
     }
 
-    /// with `cost` at least `anchorMinCost`, a sale price in bps of cost (rounded up) above the anchor sets the anchor to
-    /// the mean of the two, at most `startCapBps`. every other sale leaves the stored anchor and `anchorTime` unchanged
-    function _moveAnchor(uint256 sid, uint256 price, uint256 cost) private {
+    /// with `cost` at least `anchorMinCost`, a sale price in bps of the reference (rounded up) above the anchor sets the
+    /// anchor to the mean of the two, at most `startCapBps`. every other sale leaves the stored anchor and `anchorTime`
+    /// unchanged. measuring in bps of the reference keeps a rating-rich statement sold at the normal markup from moving
+    /// the anchor
+    function _moveAnchor(uint256 sid, uint256 price, uint256 cost, uint256 ref) private {
         if (cost < anchorMinCost) return;
-        // cost is at least 80: every eth lane credit enters the pile through `_spend` (nonzero) or `adopt` (at least 1 wei)
-        uint256 saleBps = (price * BPS + cost - 1) / cost;
+        // a zero reference would divide by zero below
+        if (ref == 0) return;
+        uint256 saleBps = (price * BPS + ref - 1) / ref;
         uint256 current = anchorBps();
         if (saleBps <= current) return;
         uint256 next = (current + saleBps) / 2;
@@ -378,12 +600,12 @@ contract ControllerV1 is IController {
         anchorTime = uint40(block.timestamp);
     }
 
-    /// the asking price in wei after `age` seconds. the price is held in units of 1/3600 bps so each stage is an integer
-    /// line of the second: it falls by `fastDecayBpsPerHour` units a second from the start to the knee and by
-    /// `slowDecayBpsPerHour` units a second after, never below `floorBps`. the slow stage starts at the second the fast
-    /// stage reaches the knee, which is `(start - knee) / fastDecayBpsPerHour` hours and need not be a whole second, so
-    /// its fall is rounded up. the rounding keeps the price non-increasing in `age`
-    function _ask(uint256 cost, uint256 age) private view returns (uint256) {
+    /// the asking price in wei after `age` seconds, a fraction of `ref` by the bps curve. the bps is held in units of
+    /// 1/3600 so each stage is an integer line of the second: it falls by `fastDecayBpsPerHour` units a second from the
+    /// start to the knee and by `slowDecayBpsPerHour` units a second after, never below `floorBps`. the slow stage
+    /// starts at the second the fast stage reaches the knee, which is `(start - knee) / fastDecayBpsPerHour` hours and
+    /// need not be a whole second, so its fall is rounded up. the rounding keeps the price non-increasing in `age`
+    function _ask(uint256 ref, uint256 age) private view returns (uint256) {
         uint256 start = startBps() * 1 hours;
         uint256 knee = uint256(kneeBps) * 1 hours;
         uint256 fast = fastDecayBpsPerHour;
@@ -399,15 +621,21 @@ contract ControllerV1 is IController {
         }
         uint256 low = uint256(floorBps) * 1 hours;
         if (n < low) n = low;
-        return cost * n / (1 hours * BPS);
+        return ref * n / (1 hours * BPS);
     }
 
-    // ------------------------------------------------------------------ credit picking, unchanged
+    // ------------------------------------------------------------------ credit picking
 
-    /// ready when the lane pile holds a full page. the page is the 80 oldest credits with format 0.
-    function nextPage(Lane lane) external view returns (bool ready, uint256[80] memory ids, uint8 format) {
-        if (CORE.pileSize(lane) < PAGE) return (false, ids, 0);
-        uint256[] memory page = CORE.pilePage(lane, 0, PAGE);
+    /// ready when the pile holds a full page. the page is the 80 oldest credits with format 0. while the credit sale is
+    /// on the page is ready only once the newest of its 80 credits is past its window; the pile is oldest first, so that
+    /// credit is the last of the page
+    function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format) {
+        if (CORE.pileSize() < PAGE) return (false, ids, 0);
+        uint256[] memory page = CORE.pilePage(0, PAGE);
+        if (creditSaleOn) {
+            (,, uint64 acquiredAt) = CORE.creditInfo(page[PAGE - 1]);
+            if (!pastWindow(acquiredAt)) return (false, ids, 0);
+        }
         for (uint256 i; i < PAGE; ++i) {
             ids[i] = page[i];
         }

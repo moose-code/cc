@@ -583,7 +583,7 @@ contract BidRuleTest is Fixture {
         core.buyListing(price, _listingData(LISTED_A), LISTED_A, STRATEGY);
         uint256 paid = keeper.balance - keeperBefore;
         _assertListingPay(paid, ceiling - price);
-        (,, uint256 basis,) = core.creditInfo(LISTED_A);
+        (, uint256 basis,) = core.creditInfo(LISTED_A);
         assertEq(basis, price + paid, "the cost basis is the cost plus the payment");
         assertEq(core.ethPot(), pot - price - paid);
         (uint256 anchor, uint256 start,) = _anchor();

@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Lane, ICreditStrategy, ICreditScore, ICredits, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {ICreditStrategy, ICreditScore, ICredits, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {BidModel} from "./utils/BidModel.sol";
@@ -37,7 +37,7 @@ contract LifecycleSwapsTest is Fixture {
 
         _sellCoin(trader, coinOut / 2);
         assertGt(core.ethPot(), pot, "a sell feeds the pot too");
-        assertEq(address(core).balance, core.ethPot());
+        assertEq(address(core).balance, core.ethPot() + core.ethRedeemBurn(), "the pot and reserve are the balance");
         assertEq(coin.totalSupply(), 1_000_000_000e18, "swaps burn nothing");
         _solvent();
     }
@@ -75,8 +75,6 @@ contract LifecycleSwapsTest is Fixture {
         core.exitStatement(1);
         vm.expectRevert(ICore.ExitModeOff.selector);
         core.sellForExitToken(_one(1));
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.composeExit();
         // the statement sale door belongs to the controller and needs no module
         vm.expectRevert(ICore.OnlyController.selector);
         core.sellTo(1, address(0xB1D));
@@ -133,12 +131,11 @@ contract LifecycleDoorsTest is Fixture {
         assertEq(core.rateAtCheckpoint(), r, "dropped once per credit");
         assertLt(r, rate);
         assertEq(core.lastFillTime(), block.timestamp);
-        assertEq(core.pileSize(Lane.Eth), 3);
+        assertEq(core.pileSize(), 3);
         for (uint256 i; i < 3; ++i) {
             assertEq(CREDITS.ownerOf(ids[i]), address(core));
-            (bool inPile, Lane lane, uint256 cost,) = core.creditInfo(ids[i]);
+            (bool inPile, uint256 cost,) = core.creditInfo(ids[i]);
             assertTrue(inPile);
-            assertEq(uint8(lane), uint8(Lane.Eth));
             assertEq(cost, prices[i]);
         }
         _solvent();
@@ -189,7 +186,7 @@ contract LifecycleDoorsTest is Fixture {
         s.rate = core.rateAtCheckpoint();
         s.checkpointTime = core.checkpointTime();
         s.lastFillTime = core.lastFillTime();
-        s.pile = core.pileSize(Lane.Eth);
+        s.pile = core.pileSize();
         s.saleA = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         s.saleB = ICreditStrategy(STRATEGY).nftForSale(LISTED_B);
         s.ownerA = CREDITS.ownerOf(LISTED_A);
@@ -226,9 +223,8 @@ contract LifecycleDoorsTest is Fixture {
         assertEq(address(core).balance, balance - price - paid);
         assertEq(core.rateAtCheckpoint(), _dropped(rate, rate));
         assertEq(core.lastFillTime(), block.timestamp);
-        (bool inPile, Lane lane, uint256 cost,) = core.creditInfo(id);
+        (bool inPile, uint256 cost,) = core.creditInfo(id);
         assertTrue(inPile);
-        assertEq(uint8(lane), uint8(Lane.Eth));
         assertEq(cost, price + paid, "cost basis includes the payment");
         _solvent();
     }
@@ -382,7 +378,7 @@ contract LifecycleComposeTest is Fixture {
     function test_compose_throughControllerV1() public {
         _prepare();
         uint256[] memory sold = _fillEthPile(85);
-        assertEq(core.pileSize(Lane.Eth), 85);
+        assertEq(core.pileSize(), 85);
         Composed memory c = _composeOnce();
 
         for (uint256 i; i < 80; ++i) {
@@ -394,9 +390,8 @@ contract LifecycleComposeTest is Fixture {
         assertEq(STATEMENTS.creditsOf(c.sid), 80);
 
         // cost basis is the sum of the credits' cost bases, and the asking price is 150 percent of it (the opening ask)
-        (bool held, Lane lane, uint256 basis, uint64 composedAt) = core.statementInfo(c.sid);
+        (bool held, uint256 basis, uint64 composedAt) = core.statementInfo(c.sid);
         assertTrue(held);
-        assertEq(uint8(lane), uint8(Lane.Eth));
         assertEq(basis, c.cost);
         assertEq(composedAt, c.at);
         assertEq(ctl.priceOf(c.sid), basis * 15_000 / 10_000, "150 percent of cost");
@@ -405,11 +400,11 @@ contract LifecycleComposeTest is Fixture {
         assertEq(heldIds[0], c.sid);
 
         // the five newest credits are still in the pile and in the core, the 80 are gone into the statement
-        assertEq(core.pileSize(Lane.Eth), 5);
-        assertEq(core.pilePage(Lane.Eth, 0, 1)[0], sold[80]);
+        assertEq(core.pileSize(), 5);
+        assertEq(core.pilePage(0, 1)[0], sold[80]);
         assertEq(CREDITS.balanceOf(address(core)), 5);
         for (uint256 i; i < 80; ++i) {
-            (bool inPile,,,) = core.creditInfo(c.ids[i]);
+            (bool inPile,,) = core.creditInfo(c.ids[i]);
             assertFalse(inPile);
         }
 
@@ -424,7 +419,7 @@ contract LifecycleComposeTest is Fixture {
         Composed memory high = _composeOnce();
         assertEq(high.sid, c.sid);
         assertEq(high.cost, c.cost);
-        (,, uint256 basis2,) = core.statementInfo(high.sid);
+        (, uint256 basis2,) = core.statementInfo(high.sid);
         assertEq(basis2, c.cost);
         assertEq(ctl.priceOf(high.sid), basis2 * 15_000 / 10_000, "the asking price follows the basis");
         assertEq(keeper.balance, 0);
@@ -438,7 +433,7 @@ contract LifecycleComposeTest is Fixture {
     function test_compose_unsoldStatementStaysHeldAtTheFloor() public {
         _prepare();
         Composed memory c = _composeOnce();
-        (,, uint256 basis,) = core.statementInfo(c.sid);
+        (, uint256 basis,) = core.statementInfo(c.sid);
         uint256 pot = core.ethPot();
         _warp(60 days);
         assertEq(STATEMENTS.ownerOf(c.sid), address(core));
@@ -514,7 +509,7 @@ contract LifecycleComposeTest is Fixture {
     function test_sale_buyBookBuyback() public {
         _prepare();
         Composed memory c = _composeOnce();
-        (,, uint256 basis,) = core.statementInfo(c.sid);
+        (, uint256 basis,) = core.statementInfo(c.sid);
         uint256 step = ctl.priceOf(c.sid);
         assertEq(step, basis * 15_000 / 10_000);
 
@@ -596,7 +591,7 @@ contract LifecycleComposeTest is Fixture {
 }
 
 /// phase 2 with the stand in exit module and exit token: exit of unsold statements, the
-/// split, the dutch auction against the real coin, the exit token bid and the exit lane
+/// split, the coin buyback against the real coin, and the exit token bid into the single pile
 contract LifecyclePhase2Test is Fixture {
     using FixedPointMathLib for uint256;
 
@@ -611,6 +606,7 @@ contract LifecyclePhase2Test is Fixture {
         alice = _user("alice");
         // the owner action waits seven days, which must pass while the pot is empty and the rate cannot climb
         _enterPhase2();
+        _setExitPool();
         _skipSniperWindow();
         _fundPot(20 ether);
         _warp(90 hours);
@@ -622,7 +618,7 @@ contract LifecyclePhase2Test is Fixture {
         return score * UNIT * (10_000 - core.settings().exitBidMarginBps) / 10_000;
     }
 
-    /// an eth lane statement is eligible once its asking price falls to its cost, and the exit books the whole received
+    /// a statement is eligible once its asking price falls to its cost, and the exit books the whole received
     /// amount into the bid pot
     function _exitTheStatement() internal returns (Composed memory c, uint256 required) {
         assertEq(core.exitToken(), address(xt));
@@ -638,7 +634,7 @@ contract LifecyclePhase2Test is Fixture {
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "the module has the statement");
         assertEq(xt.balanceOf(address(core)) - pot, required);
         assertEq(core.xPot() - pot, required, "all to the bid pot");
-        (bool held,,,) = core.statementInfo(c.sid);
+        (bool held,,) = core.statementInfo(c.sid);
         assertFalse(held);
         assertEq(core.heldStatements().length, 0);
         _solvent();
@@ -655,8 +651,8 @@ contract LifecyclePhase2Test is Fixture {
         _solvent();
     }
 
-    /// the exit token bid pays for credits, the exit lane composes them, and its statement exits at once with
-    /// everything back to xPot, so the pot compounds
+    /// the exit token bid pays for credits into the single pile, compose builds a statement from them, and the
+    /// statement redeems once its curve reaches cost with everything back to xPot, so the pot compounds
     function test_phase2_bidComposeExitAndCompound() public {
         _exitTheStatement();
         // top the bid pot up the way exit token fees would arrive: plain exit token booked by skim
@@ -667,10 +663,8 @@ contract LifecyclePhase2Test is Fixture {
         uint256[] memory ids = _credits(xseller, 80);
         uint256 xPotBefore = core.xPot();
         uint256 total;
-        uint256[] memory prices = new uint256[](80);
         for (uint256 i; i < 80; ++i) {
-            prices[i] = _bid(ids[i]);
-            total += prices[i];
+            total += _bid(ids[i]);
         }
         assertLt(total, xPotBefore, "the pot carries the whole page");
 
@@ -678,40 +672,42 @@ contract LifecyclePhase2Test is Fixture {
         core.sellForExitToken(ids);
         assertEq(xt.balanceOf(xseller), total, "paid in the exit token, by each credit's score");
         assertEq(core.xPot(), xPotBefore - total);
-        assertEq(core.pileSize(Lane.Exit), 80);
+        assertEq(core.pileSize(), 80);
+        // the credit cost basis is in eth (the higher of the exit tokens valued in wei and the eth bid), positive
+        uint256 basisSum;
         for (uint256 i; i < 80; ++i) {
-            (bool inPile, Lane bidLane, uint256 cost,) = core.creditInfo(ids[i]);
+            (bool inPile, uint256 cost,) = core.creditInfo(ids[i]);
             assertTrue(inPile);
-            assertEq(uint8(bidLane), uint8(Lane.Exit));
-            assertEq(cost, prices[i]);
+            assertGt(cost, 0, "an eth cost basis was recorded");
+            basisSum += cost;
             assertEq(CREDITS.ownerOf(ids[i]), address(core));
         }
         _solvent();
 
-        // compose the exit lane. the caller receives nothing, the eth pot is unchanged, the basis is the exit token paid
+        // compose the pile. the caller receives nothing, the eth pot is unchanged, the basis is the sum of eth costs
         uint256 supply0 = STATEMENTS.supply();
         uint256 ethPot0 = core.ethPot();
         uint256 keeper0 = keeper.balance;
         vm.fee(composeBasefee);
         vm.prank(keeper);
-        core.composeExit();
+        core.compose();
         uint256 sid = supply0 + 1;
         {
             assertEq(STATEMENTS.supply(), sid);
             assertEq(STATEMENTS.ownerOf(sid), address(core), "held by the core");
-            assertEq(core.pileSize(Lane.Exit), 0);
-            (bool held, Lane lane, uint256 basis,) = core.statementInfo(sid);
+            assertEq(core.pileSize(), 0);
+            (bool held, uint256 basis,) = core.statementInfo(sid);
             assertTrue(held);
-            assertEq(uint8(lane), uint8(Lane.Exit));
-            assertEq(basis, total, "the basis is the exit token paid");
+            assertEq(basis, basisSum, "the basis is the sum of the credits' eth cost bases");
             assertEq(keeper.balance, keeper0);
             assertEq(core.ethPot(), ethPot0);
-            vm.prank(address(ctl));
-            vm.expectRevert(ICore.NotForSale.selector);
-            core.sellTo(sid, alice);
+            // the statement sells for eth on the curve, so it is not eligible to redeem yet
+            vm.expectRevert(ICore.NotEligible.selector);
+            core.exitStatement(sid);
         }
 
-        // immediate exit, everything to xPot
+        // once the curve reaches cost the statement redeems, everything to xPot
+        _makeEligible(sid);
         uint256 required = core.ratingOf(sid) * UNIT;
         uint256 xPot1 = core.xPot();
         core.exitStatement(sid);
@@ -735,7 +731,7 @@ contract LifecyclePhase2Test is Fixture {
         vm.expectRevert(ICore.Underpaid.selector);
         core.exitStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement never left the core");
-        (bool held,,,) = core.statementInfo(c.sid);
+        (bool held,,) = core.statementInfo(c.sid);
         assertTrue(held);
 
         // all of it withheld
@@ -787,6 +783,7 @@ contract LifecycleNarrativeTest is Fixture {
         buybacker = _user("buybacker");
         // the owner action waits seven days, which must pass while the pot is empty and the rate cannot climb
         _enterPhase2();
+        _setExitPool();
         _skipSniperWindow();
         lastSupply = coin.totalSupply();
     }
@@ -814,7 +811,7 @@ contract LifecycleNarrativeTest is Fixture {
     }
 
     function _composeNow() internal returns (uint256 sid, uint64 at) {
-        uint256 size = core.pileSize(Lane.Eth);
+        uint256 size = core.pileSize();
         if (size < 80) _fillEthPile(80 - size);
         _check();
         uint256 supply = STATEMENTS.supply();
@@ -824,7 +821,7 @@ contract LifecycleNarrativeTest is Fixture {
         sid = supply + 1;
         assertEq(STATEMENTS.supply(), sid);
         assertEq(STATEMENTS.ownerOf(sid), address(core), "held by the core");
-        (,, uint256 cost,) = core.statementInfo(sid);
+        (, uint256 cost,) = core.statementInfo(sid);
         assertEq(ctl.priceOf(sid), cost * ctl.startBps() / 10_000, "at the start price of the controller");
         at = uint64(block.timestamp);
         _check();
@@ -941,13 +938,13 @@ contract LifecycleOwnerAdaptsTest is Fixture {
     }
 
     function _composeFresh() internal returns (uint256 sid, uint256 cost) {
-        uint256 size = core.pileSize(Lane.Eth);
+        uint256 size = core.pileSize();
         if (size < 80) _fillEthPile(80 - size);
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
         sid = STATEMENTS.supply();
-        (,, cost,) = core.statementInfo(sid);
+        (, cost,) = core.statementInfo(sid);
         _solvent();
     }
 
