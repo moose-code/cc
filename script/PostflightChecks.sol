@@ -246,6 +246,18 @@ abstract contract PostflightChecks is PostflightPool {
         }
         _warn("warn: no pending owner", core.pendingOwner() == address(0), "an owner handover is offered");
         _postSale(c, ctl);
+        // the credit sale prices each credit against its exit token baseline when an exit module is set, which reads
+        // the exit pool key. a live credit sale with a module set and the pool key unset reverts NoExitPrice for every
+        // pile credit. the launch state has no exit module, so this gates a later owner setup
+        if (ctl.code.length != 0) {
+            IControllerV1 k = IControllerV1(ctl);
+            bool poolKeyReady = !(k.creditSaleOn() && core.exitModule() != address(0) && !k.exitPoolKeySet());
+            _check(
+                "controller: credit sale has the exit pool key when an exit module is set",
+                poolKeyReady,
+                "a live credit sale with an exit module set needs setExitPoolKey, else creditPrice reverts NoExitPrice"
+            );
+        }
         _check(
             "core: pots covered by balance",
             core.ethPot() + core.ethToBuyback() <= address(core).balance,

@@ -260,6 +260,20 @@ contract LensTest is Fixture {
         assertFalse(s.pageReady);
     }
 
+    /// the lens forwards enough gas for the controller's two bounded module reads, so a module that burns most of the
+    /// read budget in unitPerPoint gives the same creditPrice through the lens as a direct controller read
+    function test_OK_creditPriceThroughTheLensSurvivesAGasBurningModule() public {
+        _enterPhase2();
+        _setExitPool();
+        uint256[] memory ids = _fillEthPile(1);
+        vm.prank(owner);
+        ctl.setCreditSaleOn(true);
+        mod.setBurnUnitGas(190_000);
+        uint256 direct = ctl.creditPrice(ids[0]);
+        assertGt(direct, 0, "the controller prices the credit");
+        assertEq(lens.creditPriceOf(ids[0]), direct, "the lens answer equals the controller through a gas burning module");
+    }
+
     function test_OK_theSnapshotReadsAnEmptySystem() public view {
         ICoreLens.Snapshot memory s = lens.snapshot();
         assertEq(s.ethRate, core.ethRate());

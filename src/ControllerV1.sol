@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {Halving} from "./lib/Halving.sol";
-import {Sale, Credit, IController, ICoreViews, ICoreSale, ICreditScore, ICredits, Mainnet} from "./interfaces/Interfaces.sol";
+import {Sale, Credit, IController, ICoreViews, ICoreSale, ICreditScore, ICredits, IExitModule, Mainnet} from "./interfaces/Interfaces.sol";
 import {CreditBounds} from "./lib/CreditBounds.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -54,9 +54,9 @@ contract ControllerV1 is IController {
     error Underpaid();
     error Reentrant();
     error Paused();
-    /// the exit token baseline cannot be priced: the pool key is unset, the pool price reads zero, or the module's
-    /// live `unitPerPoint()` read fails or returns zero. reverts `valueWei` and, while an exit module is set, the
-    /// credit sale
+    /// the exit token baseline cannot be priced. `valueWei` reverts it for an unset pool key or a zero pool price. the
+    /// credit sale reverts it for the same two and, while an exit module is set, for a failed or zero live
+    /// `unitPerPoint` read
     error NoExitPrice();
     /// a credit sale door was called while the credit sale window is off
     error CreditSaleOff();
@@ -134,7 +134,7 @@ contract ControllerV1 is IController {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit must sit before compose
     /// may take it. 1 minute to 30 days
     uint32 public creditWindow;
-    /// the credit sale floor over the highest of the credit's cost, its exit token baseline and the current eth bid,
+    /// the credit sale floor over the highest of the credit's cost, exit token baseline and score-scaled eth backstop,
     /// bps. 10_000 to 40_000
     uint16 public creditFloorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
@@ -413,12 +413,11 @@ contract ControllerV1 is IController {
         price = start - (start - floor) * age / creditWindow;
     }
 
-    /// the exit token baseline of credit `id` in wei: `score` times the lower of the stored and live `unitPerPoint`,
-    /// priced at the exit token pool, the same read the statement value floor uses. zero when no exit module is set.
-    /// while an exit module is set the baseline must price: a failed or zero live unit read, an unset pool key or a
-    /// zero pool price reverts `NoExitPrice`, and a `score` times unit that overflows a word reverts `BaselineOverflow`.
-    /// a `score` or unit of zero gives a baseline of zero without reverting, so a failed score read leaves the floor to
-    /// the cost and backstop terms
+    /// the exit token baseline in wei: `score` times the lower of the stored and live `unitPerPoint`, priced at the
+    /// exit token pool, the same read the statement value floor uses. zero when no exit module is set. with a module
+    /// set it reverts `NoExitPrice` for a failed or zero live unit read, an unset pool key or a zero pool price, and
+    /// `BaselineOverflow` when `score` times unit overflows a word. a zero `score` or unit gives zero once the pool
+    /// prices, so a failed score read leaves the floor to the cost and backstop terms
     function _baseline(uint256 score) private view returns (uint256) {
         address module = CORE.exitModule();
         if (module == address(0)) return 0;
@@ -437,7 +436,7 @@ contract ControllerV1 is IController {
     }
 
     /// the score-scaled eth backstop of a credit in wei: `ethPrice` when `score` is at or below `refScore`, else
-    /// `ethPrice * score / refScore`, the scaling decision 90 applies to statements. `ethPrice` is the eth bid rate
+    /// `ethPrice * score / refScore`, the scaling the statement reference applies. `ethPrice` is the eth bid rate
     /// before the pot clamp, so a sale through `sellCreditTo` that enlarges the pot cannot raise the rate the credit is
     /// priced against within the block. a `score` of zero (a failed score read) gives the unscaled rate
     function _backstop(uint256 score) private view returns (uint256) {
@@ -481,9 +480,10 @@ contract ControllerV1 is IController {
         _busy = false;
     }
 
-    /// pays the sale prices of `ids` in order, gets the credits, and refunds the excess last. each credit is priced and
-    /// paid in order, so a sale's effect on the pot is in the next credit's price. reverts `CreditSaleOff` while the
-    /// sale is off and `Paused` while sales are paused
+    /// pays the sale prices of `ids` in order, gets the credits, and refunds the excess last. each credit is priced at
+    /// the state left by the previous sale. the eth backstop reads `ethPrice`, which a credit sale leaves unchanged for
+    /// the rest of the block, so within one batch a credit's price moves only through its own cost, baseline and age.
+    /// reverts `CreditSaleOff` while the sale is off and `Paused` while sales are paused
     function buyCredits(uint256[] calldata ids) external payable {
         if (!creditSaleOn) revert CreditSaleOff();
         if (paused) revert Paused();
@@ -514,13 +514,18 @@ contract ControllerV1 is IController {
         if (price < floor) price = floor;
     }
 
-    /// the module's `unitPerPoint()` read with at most `READ_GAS`, the same gas the exit token bid forwards. `ok` is
-    /// false on a revert or a short answer, where the unit reads 0
+    /// the module's `unitPerPoint()` read with at most `READ_GAS`, the same gas the exit token bid forwards. copies at
+    /// most 32 bytes of returndata, so a long answer cannot grief the gas. `ok` is false on a revert or an answer
+    /// shorter than 32 bytes, where the unit reads 0
     function _liveUnit(address module) private view returns (uint256 unit, bool ok) {
-        bytes memory out;
-        (ok, out) = module.staticcall{gas: READ_GAS}(abi.encodeWithSignature("unitPerPoint()"));
-        if (ok && out.length >= 32) return (abi.decode(out, (uint256)), true);
-        return (0, false);
+        bytes4 sel = IExitModule.unitPerPoint.selector;
+        assembly ("memory-safe") {
+            mstore(0, sel)
+            ok := staticcall(READ_GAS, module, 0, 4, 0, 32)
+            ok := and(ok, iszero(lt(returndatasize(), 32)))
+            unit := mload(0)
+        }
+        if (!ok) unit = 0;
     }
 
     /// the redeemable value of statement `sid` in wei from the exit token pool: `rating * unit` exit token base units

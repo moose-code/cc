@@ -42,7 +42,7 @@ interface ICoreViews {
     function ethRate() external view returns (uint256);
     /// wei per credit of the price state now, before the pot clamp `ethRate` applies. the credit sale floor reads it.
     /// a sale that enlarges the pot cannot raise the rate the credit is priced against within the sale's block, because
-    /// `sellCreditTo` checkpoints the climbed rate before the pot grows; in later blocks the climb heads toward the
+    /// `sellCreditTo` checkpoints the climbed rate before the pot grows. in later blocks the climb heads toward the
     /// larger pot
     function ethPrice() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
@@ -223,7 +223,7 @@ struct Credit {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
     /// take it. 1 minute to 30 days
     uint32 window;
-    /// the credit sale floor over the highest of the credit's cost, its exit token baseline and the current eth bid,
+    /// the credit sale floor over the highest of the credit's cost, exit token baseline and score-scaled eth backstop,
     /// bps. 10_000 to 40_000
     uint16 floorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000

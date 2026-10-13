@@ -582,10 +582,10 @@ library CoreLib {
     /// while `exitMode` is 2. each credit's price must not exceed the remaining pot. the credit enters the single pile
     /// with an eth cost basis of the higher of the exit tokens paid valued in wei (`controller.valueWei`) and the
     /// score-scaled eth backstop `ethBid * max(1, score / refScore)`, at least 1 wei, so a pushed down pool price cannot
-    /// record a cost below the score's eth value and an empty pot does not record a zero cost (docs/FLOW.md 92, 94). a
-    /// failing, short or zero live unit read reverts the whole bid (`BadModule`); an unset pool key or a zero pool price
-    /// reverts in `valueWei`. `refScore` is read from the controller with a bounded staticcall; a failed read leaves the
-    /// backstop unscaled at `ethBid`
+    /// record a cost below the score's eth value and an empty pot does not record a zero cost. a failing, short or zero
+    /// live unit read reverts the whole bid (`BadModule`). an unset pool key or a zero pool price reverts in `valueWei`.
+    /// `refScore` is read from the controller with a bounded staticcall. a failed read leaves the backstop unscaled at
+    /// `ethBid`
     function _sellForExitToken(uint256[] calldata ids, uint256 minOut) private {
         CoreState storage c = state();
         if (c.retired) revert Retired();
@@ -624,7 +624,7 @@ library CoreLib {
         SafeTransferLib.safeTransfer(c.exitToken, msg.sender, total);
     }
 
-    /// gas forwarded to the live `unitPerPoint()` read of the exit token bid
+    /// gas forwarded to the bounded module and controller reads of the exit token bid
     uint256 internal constant READ_GAS = 200_000;
 
     /// bounded read of `unitPerPoint()` of `module`: at most `READ_GAS`, exactly 32 bytes returned or more (a long
@@ -641,11 +641,19 @@ library CoreLib {
         if (!ok || unit == 0) revert BadModule();
     }
 
-    /// the controller's `refScore()` through a bounded staticcall of at most `READ_GAS`. a revert or a short answer
-    /// reads as 0, which leaves the exit bid's backstop unscaled at the eth bid rate
-    function _refScore(address controller) private view returns (uint256) {
-        (bool ok, bytes memory out) = controller.staticcall{gas: READ_GAS}(abi.encodeWithSignature("refScore()"));
-        return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
+    /// the controller's `refScore()` through a bounded staticcall of at most `READ_GAS`, copying at most 32 bytes of
+    /// returndata. a revert or an answer shorter than 32 bytes reads as 0, which leaves the exit bid's backstop
+    /// unscaled at the eth bid rate
+    function _refScore(address controller) private view returns (uint256 refScore) {
+        bytes4 sel = 0x0dd34cf6; // refScore()
+        bool ok;
+        assembly ("memory-safe") {
+            mstore(0, sel)
+            ok := staticcall(READ_GAS, controller, 0, 4, 0, 32)
+            ok := and(ok, iszero(lt(returndatasize(), 32)))
+            refScore := mload(0)
+        }
+        if (!ok) refScore = 0;
     }
 
     /// gas forwarded to the router flush of `pullFees`. the most expensive flush (four payees that burn all their

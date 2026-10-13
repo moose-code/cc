@@ -77,6 +77,10 @@ contract CoreLens {
     /// the answer size of `nextPage` that the Core requires: ready flag, 80 ids and the format
     uint256 private constant NEXT_PAGE_BYTES = (80 + 2) * 32;
     uint256 private constant ASK_GAS = 200_000;
+    /// gas forwarded to `creditPrice` and `priceOf`. each makes up to two bounded module reads inside the controller at
+    /// the controller READ_GAS (200_000) each, plus a pool read, so the lens forwards both reads plus overhead for the
+    /// controller frame. a smaller budget would run a module out of gas and return a lens price below the controller's
+    uint256 private constant PRICE_GAS = 600_000;
 
     ICore public immutable CORE;
     IFeeRouter public immutable ROUTER;
@@ -158,7 +162,7 @@ contract CoreLens {
     /// (a credit not in the pile, or a controller without the credit sale window)
     function creditPriceOf(uint256 id) external view returns (uint256 price) {
         (bool ok, bytes memory out) =
-            controller().staticcall{gas: ASK_GAS}(abi.encodeWithSignature("creditPrice(uint256)", id));
+            controller().staticcall{gas: PRICE_GAS}(abi.encodeWithSignature("creditPrice(uint256)", id));
         if (ok && out.length == 32) price = abi.decode(out, (uint256));
     }
 
@@ -195,7 +199,7 @@ contract CoreLens {
 
     /// the asking price of statement `sid` from the controller, zero when it does not answer with one word
     function _askingPrice(address ctl, uint256 sid) private view returns (uint256 price) {
-        (bool ok, bytes memory out) = ctl.staticcall{gas: ASK_GAS}(abi.encodeCall(IControllerV1.priceOf, (sid)));
+        (bool ok, bytes memory out) = ctl.staticcall{gas: PRICE_GAS}(abi.encodeCall(IControllerV1.priceOf, (sid)));
         if (ok && out.length == 32) price = abi.decode(out, (uint256));
     }
 
