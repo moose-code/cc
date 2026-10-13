@@ -134,6 +134,19 @@ contract PayeeShareTest is FeeBase {
     }
 
     /// the ppm bound is 200,000: above it `setSettings` reverts, at it the book credits a fifth of the income
+    /// income that arrived before `setSettings` is split under the settings in force when it arrived
+    function test_setSettingsBooksUnbookedIncomeUnderTheOldShare() public {
+        _stock();
+        Settings memory s = core.settings();
+        uint256 oldPpm = s.payeePpm;
+        uint256 owed0 = core.payeeOwed();
+        vm.deal(address(core), address(core).balance + 1 ether);
+        s.payeePpm = 200_000;
+        _setSettings(s);
+        assertEq(core.payeeOwed() - owed0, 1 ether * oldPpm / 1_000_000, "the unbooked income took the old share");
+        _solvent();
+    }
+
     function test_theShareBoundIsTwoHundredThousandPpm() public {
         Settings memory s = core.settings();
         s.payeePpm = 200_001;

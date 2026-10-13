@@ -446,7 +446,7 @@ library CoreLib {
     /// forwards its call here untouched, the owner check and the reentrancy guard are here.
     /// the first call sets `retired`, which stays set: `sellForEth`, `buyListing`, `sellForBalance`, `adopt` and
     /// `compose` then revert `Retired`. logs `EngineRetired` once.
-    /// eth: `ethPot`, by `fund()` of the successor, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
+    /// eth: `ethPot`, by `fund()` of the successor, or by a plain send when `fund()` fails, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
     /// trackers stays.
     /// balance token: `balancePot`, by `transfer`, the tracker zeroed. a transfer that reverts, returns false or returns less
     /// than a word leaves the pot as it is, logs `BalanceTokenMigrationSkipped` and the call goes on; a later `migrate`
@@ -479,6 +479,7 @@ library CoreLib {
         c.checkpointTime = uint64(block.timestamp);
         c.ethPot = 0;
         (bool ok,) = to.call{value: eth}(abi.encodeCall(IFund.fund, ()));
+        if (!ok) (ok,) = to.call{value: eth}("");
         if (!ok) revert CallFailed();
     }
 

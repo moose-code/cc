@@ -631,8 +631,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         delete _credits[id];
     }
 
-    /// the first action of `sellForEth`, `buyListing`, `adopt`, `compose` and `composeChosen`. two steps in order:
-    /// 1. reverts `Retired` once `migrate` has run. `sellForBalance` checks the same flag in `CoreLib`.
+    /// the first action of `sellForEth`, `sellForBalance`, `buyListing`, `adopt`, `compose` and `composeChosen`. two
+    /// steps in order:
+    /// 1. reverts `Retired` once `migrate` has run.
     /// 2. books the fee income, before the entry point reads a rate or checkpoints
     function _openDoor() private {
         if (retired) revert Retired();
@@ -738,11 +739,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// sell credits into the balance token bid. the balance side only. reverts `Retired` after `migrate`. the body is
     /// `CoreLib.sellForBalance`, called with the calldata untouched
     function sellForBalance(uint256[] calldata ids) external nonReentrant {
+        _openDoor();
         _toLib();
     }
 
     /// same as sellForBalance with a floor on the total paid.
     function sellForBalance(uint256[] calldata ids, uint256 minOut) external nonReentrant {
+        _openDoor();
         _toLib();
     }
 
@@ -1202,6 +1205,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// bounds, stores them and logs them. a change of `peakHalfLife` restates the remembered peak at the old half life
     /// first, so the new one decays forward only
     function setSettings(Settings calldata) external onlyOwner nonReentrant {
+        _book();
         _checkpoint();
         address lib = address(CoreLib);
         bytes4 sel = CoreLib.setSettings.selector;

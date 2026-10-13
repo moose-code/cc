@@ -199,9 +199,9 @@ abstract contract PostflightChecks is PostflightPool {
     }
 
     /// @notice the constructor arguments of the Core as its creation transaction carried them, in the encoding etherscan
-    /// wants for verification: `(owner, cfg, launcher, controller, payee, stack, rateStart, settings, credit, adapters)`.
+    /// wants for verification: `(owner, cfg, launcher, coin, controller, payee, stack, rateStart, settings, credit, adapters)`.
     /// built only from the signed launch config, the deployer and the first controller: the original owner `c.owner`,
-    /// the launch config with the zero address as bounty recipient, `c.payee`, `c.stack`, `c.rateStart`, `c.settings` and
+    /// the launch config with the zero address as bounty recipient, the zero address as `coin`, `c.payee`, `c.stack`, `c.rateStart`, `c.settings` and
     /// `c.credit`. nothing here reads the live `owner`, `controller`, `payee`, `settings` or credit settings, all of
     /// which the owner can change after launch (audit finding A02)
     function coreConstructorArgs(ICore core, LaunchConfig memory c, address firstController_, address deployer)
@@ -213,6 +213,7 @@ abstract contract PostflightChecks is PostflightPool {
             c.owner,
             buildConfig(c, c.owner, address(0)),
             deployer,
+            address(0),
             firstController_,
             c.payee,
             c.stack,

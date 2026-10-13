@@ -162,6 +162,22 @@ contract MigrateTest is Fixture {
     // ------------------------------------------------------------------ a full migration
 
     /// the record and holder of a statement, as one hash
+    /// a successor with a receive function and no `fund` (a Safe) takes the pot by the plain send
+    function test_OK_aSuccessorWithoutFundTakesAPlainSend() public {
+        _world();
+        PlainSuccessor plain = new PlainSuccessor();
+        vm.prank(owner);
+        core.setSuccessor(address(plain));
+        vm.prank(owner);
+        core.lockSuccessor();
+        uint256 pot = core.ethPot();
+        assertGt(pot, 0, "setup: a pot");
+        _migrate(100);
+        assertEq(address(plain).balance, pot, "the successor got the pot");
+        assertEq(core.ethPot(), 0, "ethPot");
+        assertTrue(core.retired(), "retired");
+    }
+
     function _fingerprint(uint256 sid) internal view returns (bytes32) {
         (bool held, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
         return keccak256(abi.encode(held, cost, composedAt, STATEMENTS.ownerOf(sid)));
@@ -778,4 +794,9 @@ contract MigrateTest is Fixture {
         emit log_named_uint("largest maxCredits under 16777216", (16_777_216 - pots) / perCredit);
         assertLt(credits160, 16_777_216, "160 credits fit the transaction cap");
     }
+}
+
+/// a successor that takes eth by `receive` only
+contract PlainSuccessor {
+    receive() external payable {}
 }

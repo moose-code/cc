@@ -791,6 +791,7 @@ contract ConfigTest is Fixture {
                 owner,
                 buildConfig(lc, owner, address(0)),
                 owner,
+                address(0),
                 address(ctl),
                 lc.payee,
                 lc.stack,
