@@ -14,6 +14,8 @@ struct Deployed {
     address controller;
     address router;
     address lens;
+    address seaportAdapter;
+    address strategyAdapter;
     PoolKey launchKey;
     bytes32 poolId;
 }
@@ -22,7 +24,8 @@ struct Deployed {
 /// `owner`, who must be the v2 factory owner and the config owner (a deprecated v2 factory takes only its owner, through
 /// `deployTokenAsOwner`). order (docs/DECISIONS.md 10.4): the library `CoreLib` (linked by `forge script` before `run`), the
 /// controller, the router (engine unset), the Core (fee source the router, coin predicted by the factory), the lens
-/// `CoreLens` (read only, pointing at the Core), the launch, then the router is set up in three transactions: engine, payees, tip. the fourth, the split start, is a separate step
+/// `CoreLens` (read only, pointing at the Core), the two listing adapters (CREATE2 through the deterministic deployer, their
+/// addresses are passed to the Core constructor), the launch, then the router is set up in three transactions: engine, payees, tip. the fourth, the split start, is a separate step
 /// that runs after the launch is mined (`startSplitAfterLaunch`, the Resume script): it reads the launch time from the chain.
 /// the router is NOT locked here, the owner closes it as a separate step. the controller, router, Core and coin addresses are predicted and every
 /// prediction is checked after creation
@@ -52,12 +55,12 @@ abstract contract SystemDeployer is LaunchChecks {
     error LaunchNotMined();
 
     /// @dev the steps of `stepGas`, in the order they are sent
-    uint256 internal constant STEPS = 8;
+    uint256 internal constant STEPS = 10;
 
     /// @notice execution gas of the transactions of the last `deploySystem`: controller, router, core, launch, setEngine,
-    /// setPayees, setSplitStart (measured by `startSplitAfterLaunch`, not by `deploySystem`), lens (sent right after
-    /// the core). the library goes first and is measured by the rehearsal
-    uint256[8] internal stepGas;
+    /// setPayees, setSplitStart (measured by `startSplitAfterLaunch`, not by `deploySystem`), lens, Seaport adapter,
+    /// CreditStrategy adapter (sent right after the core). the library goes first and is measured by the rehearsal
+    uint256[10] internal stepGas;
 
     /// @notice creates the router, the controller and the core. the script (`NewProd`) uses `new`, a test base uses
     /// `deployCode` on the artifacts, so the test contracts neither import the production sources nor embed their code
@@ -68,10 +71,21 @@ abstract contract SystemDeployer is LaunchChecks {
     /// @notice creates the lens of `core` at `lensAddress(core)`: CREATE2 through the deterministic deployer with `LENS_SALT`
     function _newLens(address core) internal virtual returns (address);
 
-    function _newCore(address owner, address coin, address controller, LaunchConfig memory c)
-        internal
-        virtual
-        returns (address);
+    /// @notice creates `SeaportBasicAdapter` at `seaportAdapterAddress(core, recipients)`: CREATE2 through the
+    /// deterministic deployer with `SEAPORT_ADAPTER_SALT`
+    function _newSeaportAdapter(address core, address[] memory recipients) internal virtual returns (address);
+
+    /// @notice creates `CreditStrategyAdapter` at `strategyAdapterAddress()`: CREATE2 through the deterministic deployer
+    /// with `STRATEGY_ADAPTER_SALT`
+    function _newStrategyAdapter() internal virtual returns (address);
+
+    function _newCore(
+        address owner,
+        address coin,
+        address controller,
+        LaunchConfig memory c,
+        address[] memory adapters
+    ) internal virtual returns (address);
 
     /// @notice deploys and launches the whole system. `c.stack.feeSource` is filled in with the new router
     /// @param owner the address that sends every transaction: the broadcaster or the active prank, the factory owner
@@ -93,7 +107,7 @@ abstract contract SystemDeployer is LaunchChecks {
         d.router = _newRouter(owner);
         _step(1, g);
         g = gasleft();
-        d.core = _newCore(c.owner, coinAt, d.controller, c);
+        d.core = _newCore(c.owner, coinAt, d.controller, c, launchAdapters(coreAt, c));
         _step(2, g);
         if (d.controller != controllerAt) revert AddressMismatch("controller");
         if (d.router != routerAt) revert AddressMismatch("router");
@@ -102,11 +116,34 @@ abstract contract SystemDeployer is LaunchChecks {
         d.lens = _newLens(d.core);
         _step(7, g);
         if (d.lens != lensAddress(d.core)) revert AddressMismatch("lens");
+        (d.seaportAdapter, d.strategyAdapter) = _ensureAdapters(d.core, c);
 
         d.coin = _launch(c, coinAt, d.router);
         d.launchKey = poolKeyOf(d.coin, c.stack);
         d.poolId = keccak256(abi.encode(d.launchKey));
         _setupRouter(c, d.router, d.core);
+    }
+
+    /// @dev creates each adapter that has no code at its address. the addresses are functions of the Core and the config,
+    /// so a run that stopped after the Core sends the missing ones whatever the deployer nonce is
+    function _ensureAdapters(address core_, LaunchConfig memory c)
+        internal
+        returns (address seaportAt, address strategyAt)
+    {
+        seaportAt = seaportAdapterAddress(core_, c.seaportRecipients);
+        if (seaportAt.code.length == 0) {
+            uint256 g = gasleft();
+            address made = _newSeaportAdapter(core_, c.seaportRecipients);
+            _step(8, g);
+            if (made != seaportAt) revert AddressMismatch("seaport adapter");
+        }
+        strategyAt = strategyAdapterAddress();
+        if (strategyAt.code.length == 0) {
+            uint256 g = gasleft();
+            address made = _newStrategyAdapter();
+            _step(9, g);
+            if (made != strategyAt) revert AddressMismatch("strategy adapter");
+        }
     }
 
     function _step(uint256 i, uint256 gasBefore) internal {

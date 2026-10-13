@@ -200,7 +200,7 @@ contract PullFeesTest is CoreBase {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         _fund(10 ether);
         _warpUntilCeiling(LISTED_A, price);
-        _doorGas("buyListing", keeper, abi.encodeCall(core.buyListing, (price, _listing(LISTED_A), LISTED_A, STRATEGY)));
+        _doorGas("buyListing", keeper, abi.encodeCall(core.buyListing, (strategyAdapter, LISTED_A, "")));
     }
 
     function test_gasOfThePullPerDoor_compose() public {
@@ -228,9 +228,9 @@ contract PullFeesTest is CoreBase {
         }
     }
 
-    /// the pull comes before the measured window: the measured cost is the listing price and the cost basis is not
+    /// the pull comes before the listing is priced: the cost is the listing price and the cost basis is not
     /// understated by the flushed amount
-    function test_buyListingPullsOutsideTheMeasuredWindow() public {
+    function test_buyListingPullsBeforeThePrice() public {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         _fund(10 ether);
         _warpUntilCeiling(LISTED_A, price);
@@ -243,10 +243,10 @@ contract PullFeesTest is CoreBase {
 
         vm.recordLogs();
         vm.prank(keeper);
-        core.buyListing(price, _listing(LISTED_A), LISTED_A, STRATEGY);
+        core.buyListing(strategyAdapter, LISTED_A, "");
         (uint256 cost, uint256 buyPaid) = _listingBought(vm.getRecordedLogs());
 
-        assertEq(cost, price, "the measured cost is the listing price");
+        assertEq(cost, price, "the cost is the listing price");
         assertEq(address(feeRouter).balance, 0, "router emptied");
         assertEq(_payeeBalance() - payeeBefore, x.shared, "payee share");
         assertEq(keeper.balance - keeperBefore, buyPaid, "the buy payment to the buyer");

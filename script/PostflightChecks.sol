@@ -14,6 +14,7 @@ import {ICoreLib} from "../src/interfaces/ICoreLib.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
 import {ICoreLens} from "../src/interfaces/ICoreLens.sol";
+import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {PostflightPool} from "./PostflightPool.sol";
@@ -49,6 +50,7 @@ abstract contract PostflightChecks is PostflightPool {
         _postCoin(c, core_, coin, poolId);
         _postRouter(c, core, deployer, coin);
         _postLens(core);
+        _postAdapters(c, core);
         _postPrediction(c, coin, deployer, core_);
         _postUnreadable(c);
     }
@@ -76,6 +78,76 @@ abstract contract PostflightChecks is PostflightPool {
     function lensAddress(address core_) internal view returns (address) {
         bytes memory init = abi.encodePacked(vm.getCode("CoreLens.sol:CoreLens"), abi.encode(core_));
         return vm.computeCreate2Address(LENS_SALT, keccak256(init), CREATE2_DEPLOYER);
+    }
+
+    /// @dev the CREATE2 salts of the two listing adapters
+    bytes32 internal constant SEAPORT_ADAPTER_SALT = keccak256("credits.core.seaportAdapter.v1");
+    bytes32 internal constant STRATEGY_ADAPTER_SALT = keccak256("credits.core.strategyAdapter.v1");
+
+    /// @notice the address of `SeaportBasicAdapter` for `core_` and the launch allowlist `recipients`: CREATE2 through
+    /// the deterministic deployer with `SEAPORT_ADAPTER_SALT` and the creation code with the Core and the recipients as
+    /// constructor arguments
+    function seaportAdapterAddress(address core_, address[] memory recipients) internal view returns (address) {
+        bytes memory init =
+            abi.encodePacked(vm.getCode("SeaportBasicAdapter.sol:SeaportBasicAdapter"), abi.encode(core_, recipients));
+        return vm.computeCreate2Address(SEAPORT_ADAPTER_SALT, keccak256(init), CREATE2_DEPLOYER);
+    }
+
+    /// @notice the address of `CreditStrategyAdapter`: CREATE2 through the deterministic deployer with
+    /// `STRATEGY_ADAPTER_SALT` and the creation code (no constructor arguments)
+    function strategyAdapterAddress() internal view returns (address) {
+        return vm.computeCreate2Address(
+            STRATEGY_ADAPTER_SALT,
+            keccak256(vm.getCode("CreditStrategyAdapter.sol:CreditStrategyAdapter")),
+            CREATE2_DEPLOYER
+        );
+    }
+
+    /// @notice the adapter list of the Core constructor at launch: the Seaport adapter, then the CreditStrategy adapter
+    function launchAdapters(address core_, LaunchConfig memory c) internal view returns (address[] memory a) {
+        a = new address[](2);
+        a[0] = seaportAdapterAddress(core_, c.seaportRecipients);
+        a[1] = strategyAdapterAddress();
+    }
+
+    /// @dev both adapters have the compiled code, the Seaport adapter points at the Core and holds the config allowlist,
+    /// and the Core approves both and no stack contract
+    function _postAdapters(LaunchConfig memory c, ICore core) private {
+        (address seaportAt, address strategyAt) = (
+            seaportAdapterAddress(address(core), c.seaportRecipients), strategyAdapterAddress()
+        );
+        _code("code: seaport adapter", seaportAt);
+        _code("code: strategy adapter", strategyAt);
+        _check(
+            "adapters: runtime code is the compiled adapters (immutables masked)",
+            runtimeMatchesArtifact(seaportAt, "SeaportBasicAdapter")
+                && runtimeMatchesArtifact(strategyAt, "CreditStrategyAdapter"),
+            string.concat(vm.toString(seaportAt), " ", vm.toString(strategyAt))
+        );
+        if (seaportAt.code.length != 0) {
+            ISeaportBasicAdapter a = ISeaportBasicAdapter(seaportAt);
+            _eq("adapters: seaport adapter core", a.CORE(), address(core));
+            bool listed = true;
+            for (uint256 i; i < c.seaportRecipients.length; ++i) {
+                listed = listed && a.allowedRecipient(c.seaportRecipients[i]);
+            }
+            _check("adapters: seaport recipients are the config allowlist", listed, "fee collector allowed");
+        }
+        // the owner may remove an adapter or add another after launch: LOCKS_CHANGED=1 turns the row into a warning
+        bool allowed = core.allowedAdapter(seaportAt) && core.allowedAdapter(strategyAt);
+        if (_locksChanged()) {
+            _warn("warn: adapters are allowed", allowed, "LOCKS_CHANGED=1, the owner changed them");
+        } else {
+            _check("adapters: both are allowed in the Core", allowed, "seaport and CreditStrategy adapters");
+        }
+        _check(
+            "adapters: no stack contract is allowed",
+            !core.allowedAdapter(c.stack.hook) && !core.allowedAdapter(c.stack.factory)
+                && !core.allowedAdapter(c.stack.locker) && !core.allowedAdapter(c.stack.escrow)
+                && !core.allowedAdapter(c.stack.poolManager) && !core.allowedAdapter(core.COIN())
+                && !core.allowedAdapter(core.FEE_SOURCE()),
+            "hook, factory, locker, escrow, pool manager, coin, router"
+        );
     }
 
     /// @dev the lens at `lensAddress(core)` has code of the compiled size, points at this Core and at the router
@@ -138,7 +210,7 @@ abstract contract PostflightChecks is PostflightPool {
     }
 
     /// @notice the constructor arguments of the Core as its creation transaction carried them, in the encoding etherscan
-    /// wants for verification: `(owner, coin, controller, stack, rateStart, settings, credit)`. built only from the signed
+    /// wants for verification: `(owner, coin, controller, stack, rateStart, settings, credit, adapters)`. built only from the signed
     /// launch config and the first controller: the original owner `c.owner`, `c.stack`, `c.rateStart`, `c.settings` and
     /// `c.credit`. the coin is the Core immutable `COIN`, which cannot change. nothing here reads the live `owner`,
     /// `controller`, `settings` or credit settings, all of which the owner can change after launch (audit finding A02)
@@ -149,7 +221,16 @@ abstract contract PostflightChecks is PostflightPool {
     {
         // the fee source is an immutable of the Core: it cannot drift, so it is read from the Core (the config file has none)
         c.stack.feeSource = core.FEE_SOURCE();
-        return abi.encode(c.owner, core.COIN(), firstController_, c.stack, c.rateStart, c.settings, c.credit);
+        return abi.encode(
+            c.owner,
+            core.COIN(),
+            firstController_,
+            c.stack,
+            c.rateStart,
+            c.settings,
+            c.credit,
+            launchAdapters(address(core), c)
+        );
     }
 
     /// @notice prints what etherscan verification needs: the library address and the exact `--libraries` flag, the
@@ -167,6 +248,8 @@ abstract contract PostflightChecks is PostflightPool {
             console.logBytes(coreConstructorArgs(core, c, first));
             console.log("verify: controller constructor args");
             console.logBytes(abi.encode(address(core), c.sale, c.credit));
+            console.log("verify: seaport adapter constructor args");
+            console.logBytes(abi.encode(address(core), c.seaportRecipients));
         } else {
             console.log(
                 "verify: core constructor args NOT printed: set DEPLOYER (the deploy signer) or FIRST_CONTROLLER"
@@ -209,15 +292,6 @@ abstract contract PostflightChecks is PostflightPool {
         address ctl = core.controller();
         _code("code: controller", ctl);
         if (ctl.code.length != 0) _eq("controller: core", address(IControllerV1(ctl).CORE()), address(core));
-        _check(
-            "core: allowed targets",
-            core.allowedTarget(Mainnet.SEAPORT) && core.allowedTarget(Mainnet.CREDIT_STRATEGY)
-                && !core.allowedTarget(c.stack.hook) && !core.allowedTarget(c.stack.factory)
-                && !core.allowedTarget(c.stack.locker) && !core.allowedTarget(c.stack.escrow)
-                && !core.allowedTarget(c.stack.poolManager) && !core.allowedTarget(core.COIN())
-                && !core.allowedTarget(core.FEE_SOURCE()),
-            "seaport and CreditStrategy only, the router is not a target"
-        );
         _code("code: fee source (the router)", core.FEE_SOURCE());
         _check(
             "core: runtime code is the compiled Core (immutables and the library address masked)",
@@ -237,7 +311,7 @@ abstract contract PostflightChecks is PostflightPool {
             "the 28 immutable sites of the controller runtime code"
         );
         // after launch the owner may lock or set the balance module: LOCKS_CHANGED=1 turns the row into a report line
-        bool launchState = !core.controllerLocked() && !core.balanceModuleLocked() && !core.targetsLocked()
+        bool launchState = !core.controllerLocked() && !core.balanceModuleLocked() && !core.adaptersLocked()
             && core.balanceModule() == address(0);
         if (_locksChanged()) {
             _warn("warn: no locks, no balance module", launchState, "LOCKS_CHANGED=1, the owner changed them");

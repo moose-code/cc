@@ -5,6 +5,8 @@ import {Core} from "../src/Core.sol";
 import {FeeRouter} from "../src/FeeRouter.sol";
 import {ControllerV1} from "../src/ControllerV1.sol";
 import {CoreLens} from "../src/CoreLens.sol";
+import {SeaportBasicAdapter} from "../src/adapters/SeaportBasicAdapter.sol";
+import {CreditStrategyAdapter} from "../src/adapters/CreditStrategyAdapter.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemDeployer} from "./SystemDeployer.sol";
 
@@ -24,12 +26,21 @@ abstract contract NewProd is SystemDeployer {
         return address(new CoreLens{salt: LENS_SALT}(core));
     }
 
-    function _newCore(address owner, address coin, address controller, LaunchConfig memory c)
-        internal
-        virtual
-        override
-        returns (address)
-    {
-        return address(new Core(owner, coin, controller, c.stack, c.rateStart, c.settings, c.credit));
+    function _newSeaportAdapter(address core, address[] memory recipients) internal virtual override returns (address) {
+        return address(new SeaportBasicAdapter{salt: SEAPORT_ADAPTER_SALT}(core, recipients));
+    }
+
+    function _newStrategyAdapter() internal virtual override returns (address) {
+        return address(new CreditStrategyAdapter{salt: STRATEGY_ADAPTER_SALT}());
+    }
+
+    function _newCore(
+        address owner,
+        address coin,
+        address controller,
+        LaunchConfig memory c,
+        address[] memory adapters
+    ) internal virtual override returns (address) {
+        return address(new Core(owner, coin, controller, c.stack, c.rateStart, c.settings, c.credit, adapters));
     }
 }

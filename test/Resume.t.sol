@@ -90,6 +90,8 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     /// deploy that went on to the launch, `lensEarly` sends it in a deploy that stopped right after it
     bool internal skipLens;
     bool internal lensEarly;
+    /// @dev `skipAdapters` leaves the two adapters out of a deploy that went on to the launch
+    bool internal skipAdapters;
 
     function _steps(uint256 n) internal returns (address core, address coin, address router) {
         scriptMode = true;
@@ -103,8 +105,16 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         address controller;
         if (n >= 2) controller = address(Prod.newController(core, base.sale));
         if (n >= 3) address(Prod.newRouter(deployer));
-        if (n >= 4) Prod.newCore(owner, coinAt, controller, base.stack, base.rateStart, base.settings);
+        if (n >= 4) {
+            Prod.newCore(
+                owner, coinAt, controller, base.stack, base.rateStart, base.settings, base.credit, launchAdapters(core, base)
+            );
+        }
         if ((n >= 5 && !skipLens) || (n >= 4 && lensEarly)) Prod.newLens(core, LENS_SALT, CREATE2_DEPLOYER);
+        if (n >= 5 && !skipAdapters) {
+            Prod.newSeaportAdapter(core, base.seaportRecipients, SEAPORT_ADAPTER_SALT, CREATE2_DEPLOYER);
+            Prod.newStrategyAdapter(STRATEGY_ADAPTER_SALT, CREATE2_DEPLOYER);
+        }
         if (n >= 5) coin = _launch(base, coinAt, router);
         IFeeRouter r = IFeeRouter(payable(router));
         if (n >= 6) r.setEngine(core);
@@ -244,6 +254,19 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         assertEq(lensAt.code.length, 0);
         _assertDone(core, Stage.Launched);
         assertGt(lensAt.code.length, 0);
+    }
+
+    /// a system launched without the adapters: the resume creates them at the addresses the Core already approved
+    function test_resumeCreatesTheAdaptersAfterTheLaunch() public {
+        skipAdapters = true;
+        (address core,,) = _steps(5);
+        address seaportAt = seaportAdapterAddress(core, base.seaportRecipients);
+        address strategyAt = strategyAdapterAddress();
+        assertEq(seaportAt.code.length + strategyAt.code.length, 0);
+        assertTrue(ICore(payable(core)).allowedAdapter(seaportAt) && ICore(payable(core)).allowedAdapter(strategyAt));
+        _assertDone(core, Stage.Launched);
+        assertGt(seaportAt.code.length, 0);
+        assertGt(strategyAt.code.length, 0);
     }
 
     function test_resumeAfterTheLaunch() public {
@@ -449,7 +472,11 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         // sending the saved core creation at the next nonce gives the predicted core, and Resume goes on from there
         address coinAt = predictCoin(base, deployer, router);
         vm.startPrank(deployer);
-        address c2 = address(Prod.newCore(owner, coinAt, controller, base.stack, base.rateStart, base.settings));
+        address c2 = address(
+            Prod.newCore(
+                owner, coinAt, controller, base.stack, base.rateStart, base.settings, base.credit, launchAdapters(core, base)
+            )
+        );
         vm.stopPrank();
         assertEq(c2, core, "the saved creation lands on the predicted core");
         _assertDone(core, Stage.CoreOnly);

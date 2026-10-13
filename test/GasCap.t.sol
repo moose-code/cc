@@ -135,7 +135,9 @@ contract GasCapTest is SeaportBase {
 
     /// @dev tx 3, a second Core
     function test_gas_deploy_3_core() public {
-        bytes memory args = abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit);
+        bytes memory args = abi.encode(
+            owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit, launchAdapters(address(core), lc)
+        );
         bytes memory code = bytes.concat(vm.getCode("Core.sol:Core"), args);
         _cool(address(this));
         uint256 g = gasleft();
@@ -460,15 +462,15 @@ contract GasCapTest is SeaportBase {
         _fundPot(10 ether);
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         _warpUntilCeiling(LISTED_A, price);
-        bytes memory listing = abi.encodeCall(ICreditStrategy.sellTargetNFT, (LISTED_A));
-        bytes memory data = abi.encodeCall(core.buyListing, (price, listing, LISTED_A, STRATEGY));
+        bytes memory data = abi.encodeCall(core.buyListing, (strategyAdapter, LISTED_A, ""));
         _cool(address(core));
+        _cool(strategyAdapter);
         vm.prank(keeper);
         uint256 g = gasleft();
-        core.buyListing(price, listing, LISTED_A, STRATEGY);
+        core.buyListing(strategyAdapter, LISTED_A, "");
         g -= gasleft();
         assertEq(CREDITS.ownerOf(LISTED_A), address(core));
-        _row("buyListing through the CreditStrategy target, cold", g, data);
+        _row("buyListing through the CreditStrategy adapter, cold", g, data);
     }
 
     /// @dev the CreditStrategy listing with the router split on and 1 eth in the router, so the door's flush runs. with
@@ -479,18 +481,18 @@ contract GasCapTest is SeaportBase {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         _warpUntilCeiling(LISTED_A, price);
         vm.deal(address(feeRouter), address(feeRouter).balance + 1 ether);
-        bytes memory listing = abi.encodeCall(ICreditStrategy.sellTargetNFT, (LISTED_A));
-        bytes memory data = abi.encodeCall(core.buyListing, (price, listing, LISTED_A, STRATEGY));
+        bytes memory data = abi.encodeCall(core.buyListing, (strategyAdapter, LISTED_A, ""));
         _cool(address(core));
+        _cool(strategyAdapter);
         vm.prank(keeper);
         uint256 g = gasleft();
-        core.buyListing(price, listing, LISTED_A, STRATEGY);
+        core.buyListing(strategyAdapter, LISTED_A, "");
         g -= gasleft();
         assertEq(address(feeRouter).balance, burning ? feeRouter.totalOwed() : 0, "the buy pulled the router");
         _row(
             burning
-                ? "buyListing through the CreditStrategy target, router 1 eth, four burning payees, cold"
-                : "buyListing through the CreditStrategy target, router 1 eth, cold",
+                ? "buyListing through the CreditStrategy adapter, router 1 eth, four burning payees, cold"
+                : "buyListing through the CreditStrategy adapter, router 1 eth, cold",
             g,
             data
         );
@@ -509,27 +511,24 @@ contract GasCapTest is SeaportBase {
         uint256 id = _list();
         uint256 price = core.ethRate() * 9 / 10;
         OrderComponents memory c = mode == 1 ? _open(id, price - price / 100, price / 100) : _open(id, price, 0);
-        bytes memory order = mode == 2 ? _advancedData(c, "", address(core)) : _basicData(c);
-        bytes memory data = abi.encodeCall(core.buyListing, (price, order, id, Mainnet.SEAPORT));
+        bytes memory order = _basicData(c);
+        bytes memory data = abi.encodeCall(core.buyListing, (seaportAdapter, id, order));
         _cool(address(core));
+        _cool(seaportAdapter);
         vm.prank(keeper);
         uint256 g = gasleft();
-        core.buyListing(price, order, id, Mainnet.SEAPORT);
+        core.buyListing(seaportAdapter, id, order);
         g -= gasleft();
         assertEq(CREDITS.ownerOf(id), address(core));
         _row(name, g, data);
     }
 
     function test_gas_buyListing_seaport_basic() public {
-        _seaportBuy("buyListing through seaport, basic order, cold", 0);
+        _seaportBuy("buyListing through the Seaport adapter, basic order, cold", 0);
     }
 
     function test_gas_buyListing_seaport_basicWithFee() public {
-        _seaportBuy("buyListing through seaport, basic order with a fee recipient, cold", 1);
-    }
-
-    function test_gas_buyListing_seaport_advanced() public {
-        _seaportBuy("buyListing through seaport, advanced order, cold", 2);
+        _seaportBuy("buyListing through the Seaport adapter, basic order with a fee recipient, cold", 1);
     }
 
     /// @dev a statement sold through the controller books its buyback share, then the buyback swaps in the real pool

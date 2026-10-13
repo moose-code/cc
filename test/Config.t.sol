@@ -5,6 +5,7 @@ import {Fixture} from "./utils/Fixture.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
+import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
 import {
     LaunchConfig,
     V2_CODEHASH_HOOK,
@@ -232,7 +233,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "");
         _print("preflight");
         // every launch input has a row: the count is part of the report
-        assertEq(rows.length, 120, "preflight rows: docs/RUNBOOK.md step 4");
+        assertEq(rows.length, 122, "preflight rows: docs/RUNBOOK.md step 4");
     }
 
     /// each pinned code hash has a row. appending one byte of code to a contract fails exactly its row
@@ -473,6 +474,49 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "");
     }
 
+    function test_postflightChecksTheAdapters() public {
+        assertEq(seaportAdapter, seaportAdapterAddress(address(core), lc.seaportRecipients), "CREATE2 address");
+        assertEq(strategyAdapter, strategyAdapterAddress(), "CREATE2 address");
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), "", "the adapters of the deploy pass");
+
+        // an adapter the owner removed
+        vm.prank(owner);
+        core.removeAdapter(strategyAdapter);
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), "adapters: both are allowed in the Core");
+        vm.prank(owner);
+        core.addAdapter(strategyAdapter);
+
+        // an allowlist that differs from the config
+        vm.prank(owner);
+        ISeaportBasicAdapter(seaportAdapter).setAllowedRecipient(Mainnet.OPENSEA_FEE_COLLECTOR, false);
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), "adapters: seaport recipients are the config allowlist");
+        vm.prank(owner);
+        ISeaportBasicAdapter(seaportAdapter).setAllowedRecipient(Mainnet.OPENSEA_FEE_COLLECTOR, true);
+
+        // other bytecode at the CREATE2 address of the strategy adapter
+        bytes memory code = strategyAdapter.code;
+        vm.etch(strategyAdapter, hex"6000");
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), "adapters: runtime code is the compiled adapters (immutables masked)");
+        vm.etch(strategyAdapter, code);
+
+        // a missing adapter fails the code row, and the lock is a launch state row
+        vm.etch(strategyAdapter, "");
+        postflightAs(lc, address(core), owner);
+        assertEq(
+            _failedNames(),
+            "code: strategy adapter, adapters: runtime code is the compiled adapters (immutables masked)"
+        );
+        vm.etch(strategyAdapter, code);
+        vm.prank(owner);
+        core.lockAdapters();
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), "core: no locks, no balance module");
+    }
+
     function test_postflightPassesOnTheFixture() public {
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "");
@@ -707,7 +751,16 @@ contract ConfigTest is Fixture {
         assertEq(first, address(ctl), "the first controller is found from the deployer nonce");
         assertEq(
             coreConstructorArgs(core, lc, first),
-            abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit),
+            abi.encode(
+                owner,
+                address(coin),
+                address(ctl),
+                lc.stack,
+                lc.rateStart,
+                lc.settings,
+                lc.credit,
+                launchAdapters(address(core), lc)
+            ),
             "etherscan constructor args"
         );
     }

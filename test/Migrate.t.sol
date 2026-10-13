@@ -517,7 +517,7 @@ contract MigrateTest is Fixture {
         uint256 pot = core.ethPot();
         uint256 balancePot = core.balancePot();
         vm.expectRevert(ICore.Retired.selector);
-        core.buyListing(0, "", ids[0], address(0xA110C));
+        _buyRaw(0, "", ids[0], address(0xA110C));
         _assertRefusedDoorChangedNothing(ids, pot, balancePot);
     }
 
@@ -684,8 +684,8 @@ contract MigrateTest is Fixture {
         _migrate(1000);
         vm.startPrank(owner);
         core.setRate(core.RATE_START());
-        core.addTarget(address(0xA110C));
-        core.removeTarget(address(0xA110C));
+        core.addAdapter(address(0xA110C));
+        core.removeAdapter(address(0xA110C));
         vm.stopPrank();
         _setSettings(core.settings());
         // a credit sent straight to the core leaves by rescueNft

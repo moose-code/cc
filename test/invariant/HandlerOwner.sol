@@ -468,7 +468,7 @@ abstract contract HandlerOwner is HandlerBase {
                               THE REST OF THE OWNER
     //////////////////////////////////////////////////////////////*/
 
-    /// the owner's other doors, which only ever touch the allow list and the owner slot, all at once: remove a target,
+    /// the owner's other doors, which only ever touch the adapter list and the owner slot, all at once: remove an adapter,
     /// add one (live at once, and removed again), start a handover and clear it, and a stranger who tries the owner
     /// doors (OnlyOwner). the locks are one way and never fuzzed here. none of it moves an asset
     function ownerMisc(uint256 seed, uint256 mode) external checked {
@@ -479,15 +479,15 @@ abstract contract HandlerOwner is HandlerBase {
         _att(a);
         if (m == 0) {
             vm.prank(owner);
-            core.removeTarget(t);
+            core.removeAdapter(t);
         } else if (m == 1) {
             vm.startPrank(owner);
-            try core.addTarget(t) {
-                if (!core.allowedTarget(t)) _flag(V_OWNER, "addTarget did not allow the target at once");
-                core.removeTarget(t);
+            try core.addAdapter(t) {
+                if (!core.allowedAdapter(t)) _flag(V_OWNER, "addAdapter did not approve the adapter at once");
+                core.removeAdapter(t);
             } catch (bytes memory why) {
                 // the stack contracts and the balance side are refused, nothing else is
-                bool shut = core.targetsLocked() && bytes4(why) == ICore.Locked.selector;
+                bool shut = core.adaptersLocked() && bytes4(why) == ICore.Locked.selector;
                 if (bytes4(why) != ICore.ForbiddenTarget.selector && !shut) _unexpected(a, why);
             }
             vm.stopPrank();
@@ -500,13 +500,13 @@ abstract contract HandlerOwner is HandlerBase {
             if (core.pendingOwner() != address(0)) _flag(V_OWNER, "the handover was not cleared");
         } else {
             vm.startPrank(t);
-            try core.addTarget(t) {
-                _flag(V_OWNER, "a stranger added a target");
+            try core.addAdapter(t) {
+                _flag(V_OWNER, "a stranger added an adapter");
             } catch (bytes memory why) {
                 if (bytes4(why) != ICore.OnlyOwner.selector) _unexpected(a, why);
             }
-            try core.lockTargets() {
-                _flag(V_OWNER, "a stranger locked the targets");
+            try core.lockAdapters() {
+                _flag(V_OWNER, "a stranger locked the adapters");
             } catch (bytes memory why) {
                 if (bytes4(why) != ICore.OnlyOwner.selector) _unexpected(a, why);
             }
@@ -588,8 +588,8 @@ abstract contract HandlerOwner is HandlerBase {
         if (core.balanceModule() != address(next)) _flag(V_OWNER, "the module set did not install the module");
         if (core.balanceToken() != token) _flag(V_OWNER, "a module set changed the balance token");
         if (core.unitPerPoint() != next.currentUnit()) _flag(V_OWNER, "a module set did not read the unit again");
-        if (core.allowedTarget(address(next))) {
-            _flag(V_OWNER, "a module set left the allowed target flag of the module");
+        if (core.allowedAdapter(address(next))) {
+            _flag(V_OWNER, "a module set left the approved adapter flag of the module");
         }
     }
 

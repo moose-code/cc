@@ -81,6 +81,8 @@ struct LaunchConfig {
     /// the Core is not listed (docs/DECISIONS.md 29)
     bool restricted;
     address[] allowed;
+    /// the recipients of additional payouts that `SeaportBasicAdapter` accepts at launch. the OpenSea fee collector
+    address[] seaportRecipients;
     // the fee router (docs/DECISIONS.md 10.6): one payee at launch, by parts per million of a flush. later payees are set
     // through `setPayees`
     address creatorPayee;
@@ -126,6 +128,8 @@ abstract contract ConfigReader is CommonBase {
         c.sniperSeconds = 1800;
         c.protocolBps = 2000;
         c.restricted = true;
+        c.seaportRecipients = new address[](1);
+        c.seaportRecipients[0] = Mainnet.OPENSEA_FEE_COLLECTOR;
         c.payeePpm = 112_778;
     }
 
@@ -235,6 +239,7 @@ abstract contract ConfigReader is CommonBase {
         c.protocolBps = _u16(j, ".launch.protocolBps");
         c.restricted = vm.parseJsonBool(j, ".launch.restricted");
         c.allowed = vm.parseJsonAddressArray(j, ".launch.allowed");
+        c.seaportRecipients = vm.parseJsonAddressArray(j, ".adapters.seaportRecipients");
         c.creatorPayee = vm.parseJsonAddress(j, ".router.creatorPayee");
         c.payeePpm = _u32(j, ".router.payeePpm");
     }

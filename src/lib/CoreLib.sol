@@ -30,10 +30,10 @@ struct CoreState {
     address controller;
     bool controllerLocked;
     bool balanceModuleLocked;
-    bool targetsLocked;
+    bool adaptersLocked;
     address balanceModule;
     address balanceToken;
-    mapping(address => bool) allowedTarget;
+    mapping(address => bool) allowedAdapter;
     address owner;
     address pendingOwner;
     uint256 ethPot;

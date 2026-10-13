@@ -325,10 +325,9 @@ contract AdoptTest is Fixture {
         AdoptingTarget t = new AdoptingTarget(address(core));
         vm.prank(STRATEGY);
         CREDITS.transferFrom(STRATEGY, address(t), id);
-        _allow(address(t));
         uint256 value = core.ethRate() / 2;
         vm.prank(keeper);
-        core.buyListing(value, abi.encodeCall(AdoptingTarget.fill, (id)), id, address(t));
+        _buyRaw(value, abi.encodeCall(AdoptingTarget.fill, (id)), id, address(t));
         assertFalse(t.adoptOk(), "adopt inside the buy failed");
         assertEq(bytes4(t.adoptOut()), bytes4(0xab143c06), "Reentrancy()");
         assertEq(core.pileSize(), 1, "the credit is in the pile once");

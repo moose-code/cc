@@ -6,7 +6,7 @@ import {FeeBase} from "./Fees.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsLpLockerV2} from "../src/interfaces/ArtCoinsV2.sol";
-import {ClaimMidListing, ClaimMidRedeem} from "./attackers/V2Port.sol";
+import {ClaimMidRedeem} from "./attackers/V2Port.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 
 interface IEscrowStore {
@@ -108,49 +108,6 @@ contract V2PortFeeTest is FeeBase {
         assertEq(core.ethPot(), 0.3 ether);
         assertEq(core.ethToBuyback(), 0);
         _solvent();
-    }
-
-    /// the credit claimed in the middle of `buyListing`: the Core sees less spent, books nothing, and stays consistent
-    function test_claimMidBuyListingKeepsThePotsConsistent() public {
-        ClaimMidListing t = new ClaimMidListing(v2.escrow, address(core));
-        _allow(address(t));
-        _stock();
-        _fundPot(1 ether);
-        uint256 id = _credits(address(t), 1)[0];
-        uint256 ceiling = core.ethRate();
-        uint256 e = ceiling / 3;
-        _creditCore(e);
-        t.arm(id);
-        uint256 pot = core.ethPot();
-        uint256 bal = address(core).balance;
-        uint256 cost = ceiling - e;
-        uint256 keeperBefore = keeper.balance;
-        vm.prank(keeper);
-        core.buyListing(ceiling, hex"deadbeef", id, address(t));
-        uint256 paid = keeper.balance - keeperBefore;
-        _assertListingPay(paid, ceiling - cost);
-        assertEq(CREDITS.ownerOf(id), address(core));
-        assertEq(core.ethPot(), pot - cost - paid, "the pot paid the measured cost, which the claim lowered");
-        assertEq(address(core).balance, bal - cost - paid, "balance and pot moved together");
-        _solvent();
-    }
-
-    /// a claim worth the whole price makes the measured cost zero: the buy reverts, nothing is booked wrong
-    function test_claimOfTheWholePriceMidBuyListingReverts() public {
-        ClaimMidListing t = new ClaimMidListing(v2.escrow, address(core));
-        _allow(address(t));
-        _stock();
-        _fundPot(1 ether);
-        uint256 id = _credits(address(t), 1)[0];
-        uint256 ceiling = core.ethRate();
-        _creditCore(ceiling);
-        t.arm(id);
-        uint256 pot = core.ethPot();
-        vm.prank(keeper);
-        vm.expectRevert(ICore.BadCost.selector);
-        core.buyListing(ceiling, hex"deadbeef", id, address(t));
-        assertEq(core.ethPot(), pot);
-        assertEq(CREDITS.ownerOf(id), address(t), "the credit never moved");
     }
 
     /// the same during `redeemStatement`: the pot only falls by the gas repay, the claimed eth is left unbooked for skim

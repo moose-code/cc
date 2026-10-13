@@ -162,7 +162,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// 8. the hard rule: across the whole campaign neither the owner address nor any controller address ever gains eth,
     /// coin, credits, statements or balance token from the core, whatever settings the owner chooses. their balances are
     /// compared with what they held at the start (the owner pays gas only). the controllers' attack calls all failed,
-    /// their reentry attempts through targets failed, and nobody but the owner changed a setting.
+    /// their reentry attempts through the test adapter failed, and nobody but the owner changed a setting.
     function invariant_08_ownerAndControllersNeverGain() public view {
         _zero(g8);
         uint256 n = handler.watchedCount();
@@ -253,7 +253,7 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// 13. the four one way locks (controller, balance module, targets, successor) never come undone and the setter of a
+    /// 13. the four one way locks (controller, balance module, adapters, successor) never come undone and the setter of a
     /// locked door always refuses. the retired flag set by the first `migrate` never clears, and from then on the six
     /// doors (`sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen`, `sellForBalance`) revert `Retired`. every
     /// former owner has no power over the core or over the controller's sale settings, and the core's owner is the one
@@ -514,7 +514,7 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(s.successor, core.successor(), "lens successor");
         assertEq(s.controllerLocked, core.controllerLocked(), "lens controllerLocked");
         assertEq(s.balanceModuleLocked, core.balanceModuleLocked(), "lens balanceModuleLocked");
-        assertEq(s.targetsLocked, core.targetsLocked(), "lens targetsLocked");
+        assertEq(s.adaptersLocked, core.adaptersLocked(), "lens adaptersLocked");
         assertEq(s.successorLocked, core.successorLocked(), "lens successorLocked");
         _lensFlush(s);
         bool hostile = _hostileController();
@@ -973,7 +973,7 @@ contract InvariantsPhase1Deep is InvariantsPhase1 {
 }
 
 /// phase 1 starting inside the sniper window: setUp ends a few seconds after launch, the pot, the piles and the
-/// statements were all built under a 90 percent skim, and the owner has allowed the hostile target. the run begins
+/// statements were all built under a 90 percent skim, and the owner has approved the test adapter that reaches the hostile target. the run begins
 /// with the skim near its maximum and the handler may switch the controller at any time.
 /// forge-config: default.invariant.runs = 24
 /// forge-config: default.invariant.depth = 80

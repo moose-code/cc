@@ -76,14 +76,14 @@ contract Phase2FlexTest is Fixture {
         _solvent();
     }
 
-    function test_replace_pilesPotsHeldAndTargetsAreUntouched() public {
+    function test_replace_pilesPotsHeldAndAdaptersAreUntouched() public {
         _enterPhase2();
         _composeOnce();
         _potX(3e19);
         _fillEthPile(5);
         MockBalanceModule m2 = _mod(3 * UNIT);
         address t = address(0xA11CE);
-        _allow(t);
+        _approveAdapter(t);
         uint256 balancePot = core.balancePot();
         uint256 ep = core.ethPot();
         uint256 eb = core.ethToBuyback();
@@ -97,7 +97,7 @@ contract Phase2FlexTest is Fixture {
         assertEq(core.ethRedeemBurn(), reserve);
         assertEq(core.pileSize(), pile);
         assertEq(core.heldStatements().length, held);
-        assertTrue(core.allowedTarget(t), "the allowed targets are untouched");
+        assertTrue(core.allowedAdapter(t), "the approved adapters are untouched");
         _solvent();
     }
 
@@ -185,30 +185,30 @@ contract Phase2FlexTest is Fixture {
         _enterPhase2();
         vm.prank(owner);
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(mod));
+        core.addAdapter(address(mod));
         MockBalanceModule m2 = _mod(2 * UNIT);
         _replace(address(m2));
-        _allow(address(mod));
-        assertTrue(core.allowedTarget(address(mod)));
+        _approveAdapter(address(mod));
+        assertTrue(core.allowedAdapter(address(mod)));
         vm.prank(owner);
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(m2));
+        core.addAdapter(address(m2));
         vm.prank(owner);
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(xt));
+        core.addAdapter(address(xt));
     }
 
-    function test_replace_dormantTargetFlagIsClearedByTheSet() public {
+    function test_replace_dormantAdapterFlagIsClearedByTheSet() public {
         xt = new MockBalanceToken("Balance Token", "XT");
         mod = new MockBalanceModule(address(xt), UNIT);
-        _allow(address(mod));
-        assertTrue(core.allowedTarget(address(mod)));
+        _approveAdapter(address(mod));
+        assertTrue(core.allowedAdapter(address(mod)));
         _replace(address(mod));
-        assertFalse(core.allowedTarget(address(mod)), "cleared by the first set");
+        assertFalse(core.allowedAdapter(address(mod)), "cleared by the first set");
         MockBalanceModule m2 = _mod(2 * UNIT);
-        _allow(address(m2));
+        _approveAdapter(address(m2));
         _replace(address(m2));
-        assertFalse(core.allowedTarget(address(m2)), "cleared by a later set");
+        assertFalse(core.allowedAdapter(address(m2)), "cleared by a later set");
     }
 
     // ------------------------------------------------------------------ the redemption reads the current unit

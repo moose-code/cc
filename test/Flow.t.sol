@@ -828,10 +828,10 @@ contract FlowTest is Fixture {
             core.setSettings(s);
         } else if (kind == 3) {
             address t = address(uint160(r >> 8));
-            try core.addTarget(t) {} catch {}
-            core.removeTarget(t);
+            try core.addAdapter(t) {} catch {}
+            core.removeAdapter(t);
         } else {
-            core.removeTarget(Mainnet.SEAPORT);
+            core.removeAdapter(seaportAdapter);
         }
         vm.stopPrank();
     }

@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {ICredits, Mainnet} from "../../src/interfaces/Interfaces.sol";
 
 /// a listing target with several hostile behaviours, selected by `mode`. it holds credits so it can deliver the
-/// right one, a wrong one or two at once. modes 0 to 4 and 6 must make the core revert the buy. modes 5, 7 and 8
+/// right one, a wrong one or two at once. modes 0 to 3 and 6 must make the core revert the buy. modes 4, 5, 7 and 8
 /// end in an honest delivery and may succeed, after attempts to reenter the core or to pull the credit back,
 /// which the core and the credits must refuse.
 contract ProbeTarget {
@@ -27,7 +27,7 @@ contract ProbeTarget {
 
     /// true when a success of the buy is acceptable for this mode.
     function honest(uint256 m) public pure returns (bool) {
-        return m == 5 || m == 7 || m == 8;
+        return m == 4 || m == 5 || m == 7 || m == 8;
     }
 
     /// 0 keeps the eth. 1 sends the wrong credit. 2 sends the right credit and a second one. 3 reenters the core
@@ -85,9 +85,7 @@ contract ProbeTarget {
             abi.encodeWithSignature("buyback()"),
             abi.encodeWithSignature("sellTo(uint256,address)", uint256(1), address(this)),
             abi.encodeWithSignature("redeemStatement(uint256)", uint256(1)),
-            abi.encodeWithSignature(
-                "buyListing(uint256,bytes,uint256,address)", uint256(1), bytes(""), uint256(1), address(this)
-            )
+            abi.encodeWithSignature("buyListing(address,uint256,bytes)", address(this), uint256(1), bytes(""))
         ];
         for (uint256 i; i < calls.length; ++i) {
             (bool ok,) = core.call(calls[i]);

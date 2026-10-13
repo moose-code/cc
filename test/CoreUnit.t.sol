@@ -88,8 +88,8 @@ contract CoreUnitTest is CoreBase {
         assertEq(core.COIN(), address(coin));
         assertEq(core.HOOK(), lc.stack.hook);
         assertEq(core.controller(), address(ctl));
-        assertTrue(core.allowedTarget(Mainnet.SEAPORT));
-        assertTrue(core.allowedTarget(Mainnet.CREDIT_STRATEGY));
+        assertTrue(core.allowedAdapter(seaportAdapter));
+        assertTrue(core.allowedAdapter(strategyAdapter));
         assertTrue(CREDITS.isApprovedForAll(address(core), address(STATEMENTS)));
         assertEq(core.rateAtCheckpoint(), OPEN_RATE);
         assertEq(core.ethRate(), 0, "an empty pot reads zero");
@@ -100,7 +100,7 @@ contract CoreUnitTest is CoreBase {
         assertEq(core.unitPerPoint(), 0);
         assertFalse(core.controllerLocked());
         assertFalse(core.balanceModuleLocked());
-        assertFalse(core.targetsLocked());
+        assertFalse(core.adaptersLocked());
     }
 
     function _stack8(Stack memory st, uint256 which, address to) internal pure returns (Stack memory bad) {
@@ -536,7 +536,7 @@ contract CoreUnitTest is CoreBase {
         bytes memory data = abi.encodeCall(ICreditStrategy.sellTargetNFT, (LISTED_A));
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);
-        core.buyListing(1, data, LISTED_A, Mainnet.CREDIT_STRATEGY);
+        _buyRaw(1, data, LISTED_A, Mainnet.CREDIT_STRATEGY);
         vm.prank(alice);
         vm.expectRevert(ICore.ZeroAmount.selector);
         core.sellForEth(_one(ids[0]));
@@ -547,7 +547,7 @@ contract CoreUnitTest is CoreBase {
         assertEq(core.ethRate(), 1);
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);
-        core.buyListing(2, data, LISTED_A, Mainnet.CREDIT_STRATEGY);
+        _buyRaw(2, data, LISTED_A, Mainnet.CREDIT_STRATEGY);
         uint256 before = alice.balance;
         vm.prank(alice);
         core.sellForEth(_one(ids[0]));
@@ -634,8 +634,8 @@ contract CoreUnitTest is CoreBase {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         assertGt(price, core.ethRate(), "start rate is far below the listing");
         vm.prank(keeper);
-        vm.expectRevert(ICore.AboveCeiling.selector);
-        core.buyListing(price, _listing(LISTED_A), LISTED_A, STRATEGY);
+        vm.expectRevert(ICore.AboveBid.selector);
+        _buyRaw(price, _listing(LISTED_A), LISTED_A, STRATEGY);
     }
 
     struct PayRun {
@@ -644,18 +644,17 @@ contract CoreUnitTest is CoreBase {
         uint256 used;
     }
 
-    /// moves credit `id` from the strategy to a fresh `ListingTarget` and allows it
+    /// moves credit `id` from the strategy to a fresh `ListingTarget`
     function _listingTarget(uint256 id) internal returns (ListingTarget t) {
         t = new ListingTarget();
         vm.prank(STRATEGY);
         CREDITS.transferFrom(STRATEGY, address(t), id);
-        _allow(address(t));
     }
 
-    /// one `buyListing` of credit `id` through `target` with `data`, at base fee `bf` and gas price `gp`, for `value`
-    /// less `gapWanted` under the bid when `gapWanted` is nonzero. checks the books: the keeper gets the payment, the
-    /// pot pays the cost and the payment, the cost basis is both
-    function _payRun(address target, bytes memory data, uint256 id, uint256 cost, uint256 bf, uint256 gp)
+    /// one `buyListing` of credit `id` through `adapter` with `params`, at base fee `bf` and gas price `gp`, where the
+    /// adapter prices the listing at `cost`. checks the books: the keeper gets the payment, the pot pays the cost and the
+    /// payment, the cost basis is both
+    function _payRun(address adapter, bytes memory params, uint256 id, uint256 cost, uint256 bf, uint256 gp)
         internal
         returns (PayRun memory r)
     {
@@ -667,7 +666,7 @@ contract CoreUnitTest is CoreBase {
         uint256 before = keeper.balance;
         vm.prank(keeper);
         uint256 g = gasleft();
-        core.buyListing(cost, data, id, target);
+        core.buyListing(adapter, id, params);
         r.used = g - gasleft();
         r.paid = keeper.balance - before;
         _assertListingPay(r.paid, r.gap);
@@ -686,7 +685,7 @@ contract CoreUnitTest is CoreBase {
         _fundAndClimb(LISTED_A, price);
         _warp(30 hours);
         uint256 snap = vm.snapshotState();
-        PayRun memory a = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 1 gwei, 1 gwei);
+        PayRun memory a = _payRun(strategyAdapter, "", LISTED_A, price, 1 gwei, 1 gwei);
         uint256 fee = core.settings().keeperFee;
         assertEq(fee, 0.0005 ether);
         assertGt(a.gap, a.paid, "the gap does not bind");
@@ -697,7 +696,7 @@ contract CoreUnitTest is CoreBase {
         emit log_named_uint("buyListing strategy path: gas used", a.used);
         emit log_named_uint("buyListing strategy path: gas counted", counted);
         vm.revertToState(snap);
-        PayRun memory b = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 2 gwei, 2 gwei);
+        PayRun memory b = _payRun(strategyAdapter, "", LISTED_A, price, 2 gwei, 2 gwei);
         assertEq(b.paid - fee, 2 * (a.paid - fee), "the gas part scales with the base fee");
     }
 
@@ -708,12 +707,12 @@ contract CoreUnitTest is CoreBase {
         _warp(30 hours);
         assertEq(core.settings().keeperMaxBaseFee, 10 gwei);
         uint256 snap = vm.snapshotState();
-        PayRun memory atCeiling = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 10 gwei, 10 gwei);
+        PayRun memory atCeiling = _payRun(strategyAdapter, "", LISTED_A, price, 10 gwei, 10 gwei);
         vm.revertToState(snap);
-        PayRun memory above = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 300 gwei, 300 gwei);
+        PayRun memory above = _payRun(strategyAdapter, "", LISTED_A, price, 300 gwei, 300 gwei);
         assertEq(above.paid, atCeiling.paid, "a base fee above the ceiling pays at the ceiling");
         vm.revertToState(snap);
-        PayRun memory tipped = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 10 gwei, 500 gwei);
+        PayRun memory tipped = _payRun(strategyAdapter, "", LISTED_A, price, 10 gwei, 500 gwei);
         assertEq(tipped.paid, atCeiling.paid, "the gas price above the base fee changes nothing");
     }
 
@@ -726,7 +725,7 @@ contract CoreUnitTest is CoreBase {
         s.keeperFee = 0.005 ether;
         _setSettings(s);
         uint256 cost = 0.01 ether;
-        PayRun memory r = _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 0)), id, cost, 0, 0);
+        PayRun memory r = _payRun(rawAdapter, _raw(address(t), cost, abi.encodeCall(ListingTarget.fill, (id, 0))), id, cost, 0, 0);
         assertEq(r.paid, 0.005 ether, "the whole fee, no gas part");
     }
 
@@ -740,7 +739,7 @@ contract CoreUnitTest is CoreBase {
             ListingTarget t = _listingTarget(id);
             uint256 snap = vm.snapshotState();
             PayRun memory r =
-                _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 0)), id, ceiling - gaps[i], 1 gwei, 1 gwei);
+                _payRun(rawAdapter, _raw(address(t), ceiling - gaps[i], abi.encodeCall(ListingTarget.fill, (id, 0))), id, ceiling - gaps[i], 1 gwei, 1 gwei);
             assertEq(r.paid, gaps[i], "the payment is the gap");
             (, uint256 basis,) = core.creditInfo(id);
             assertEq(basis, ceiling, "cost plus payment is the bid");
@@ -756,7 +755,7 @@ contract CoreUnitTest is CoreBase {
         assertEq(bid, core.ethPot(), "the pot clamps the bid");
         uint256 id = CreditIds.at(552);
         ListingTarget t = _listingTarget(id);
-        PayRun memory r = _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 0)), id, bid - 100, 5 gwei, 5 gwei);
+        PayRun memory r = _payRun(rawAdapter, _raw(address(t), bid - 100, abi.encodeCall(ListingTarget.fill, (id, 0))), id, bid - 100, 5 gwei, 5 gwei);
         assertEq(r.paid, 100);
         assertEq(core.ethPot(), 0, "the pot is empty, not below it");
     }
@@ -770,7 +769,7 @@ contract CoreUnitTest is CoreBase {
         s.keeperFee = 0;
         _setSettings(s);
         uint256 cost = 0.01 ether;
-        PayRun memory r = _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 3_000_000)), id, cost, 1 gwei, 1 gwei);
+        PayRun memory r = _payRun(rawAdapter, _raw(address(t), cost, abi.encodeCall(ListingTarget.fill, (id, 3_000_000))), id, cost, 1 gwei, 1 gwei);
         assertGt(r.used, 3_000_000, "the call burned the gas");
         assertEq(r.paid, BUYLISTING_GAS * 1 gwei, "the gas counted stops at the constant");
     }
@@ -786,17 +785,17 @@ contract CoreUnitTest is CoreBase {
         // wrong value, the strategy reverts.
         vm.prank(keeper);
         vm.expectRevert(ICore.CallFailed.selector);
-        core.buyListing(priceA - 1, _listing(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(priceA - 1, _listing(LISTED_A), LISTED_A, STRATEGY);
 
         // wrong calldata, the strategy reverts.
         vm.prank(keeper);
         vm.expectRevert(ICore.CallFailed.selector);
-        core.buyListing(priceA, _listing(LISTED_B), LISTED_A, STRATEGY);
+        _buyRaw(priceA, _listing(LISTED_B), LISTED_A, STRATEGY);
 
         // asked for one id but the call delivers another.
         vm.prank(keeper);
         vm.expectRevert(ICore.NoCredit.selector);
-        core.buyListing(priceB, _listing(LISTED_B), LISTED_A, STRATEGY);
+        _buyRaw(priceB, _listing(LISTED_B), LISTED_A, STRATEGY);
 
         assertEq(core.ethPot(), pot);
         assertEq(core.ethRate(), rate);
@@ -804,22 +803,26 @@ contract CoreUnitTest is CoreBase {
 
         // an unrelated buy still goes through.
         vm.prank(keeper);
-        core.buyListing(priceB, _listing(LISTED_B), LISTED_B, STRATEGY);
+        _buyRaw(priceB, _listing(LISTED_B), LISTED_B, STRATEGY);
         assertEq(CREDITS.ownerOf(LISTED_B), address(core));
         assertEq(core.pileSize(), 1);
 
         // the core never buys a credit it already owns.
         vm.prank(keeper);
         vm.expectRevert(ICore.AlreadyOwned.selector);
-        core.buyListing(priceB, _listing(LISTED_B), LISTED_B, STRATEGY);
+        _buyRaw(priceB, _listing(LISTED_B), LISTED_B, STRATEGY);
         _solvent();
     }
 
-    /// targets that were never allowed, and every address the core itself refuses, are not callable
-    function test_buyListing_targetGuards() public {
+    /// an adapter the owner has not approved is refused, and every address the core itself refuses is not callable as the
+    /// target of an approved adapter
+    function test_buyListing_adapterAndTargetGuards() public {
         _fund(10 ether);
-        address[12] memory refused = [
-            address(0xABCD),
+        vm.prank(keeper);
+        vm.expectRevert(ICore.AdapterNotAllowed.selector);
+        core.buyListing(address(0xABCD), LISTED_A, "");
+
+        address[11] memory refused = [
             address(CREDITS),
             address(STATEMENTS),
             address(core),
@@ -834,11 +837,13 @@ contract CoreUnitTest is CoreBase {
         ];
         vm.startPrank(keeper);
         for (uint256 i; i < refused.length; ++i) {
-            vm.expectRevert(ICore.TargetNotAllowed.selector);
-            core.buyListing(1, "", LISTED_A, refused[i]);
+            vm.expectRevert(ICore.ForbiddenTarget.selector);
+            _buyRaw(1, "", LISTED_A, refused[i]);
         }
         vm.expectRevert(ICore.ZeroId.selector);
-        core.buyListing(1, "", 0, STRATEGY);
+        _buyRaw(1, "", 0, STRATEGY);
+        vm.expectRevert(ICore.ZeroAmount.selector);
+        _buyRaw(0, "", LISTED_A, STRATEGY);
         vm.stopPrank();
     }
 
@@ -850,10 +855,10 @@ contract CoreUnitTest is CoreBase {
         _warpUntilCeiling(LISTED_A, price);
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);
-        core.buyListing(price * 4 + 1, _listing(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(price * 4 + 1, _listing(LISTED_A), LISTED_A, STRATEGY);
 
         vm.prank(keeper);
-        core.buyListing(price, _listing(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(price, _listing(LISTED_A), LISTED_A, STRATEGY);
         assertEq(CREDITS.ownerOf(LISTED_A), address(core));
         _solvent();
     }
@@ -864,13 +869,12 @@ contract CoreUnitTest is CoreBase {
 
     function test_buyListing_hostileTargetThatKeepsEthReverts() public {
         HostileTarget hostile = new HostileTarget();
-        _allow(address(hostile));
         _fund(10 ether);
         uint256 before = address(core).balance;
         uint256 hostileBefore = address(hostile).balance;
         vm.prank(keeper);
         vm.expectRevert(ICore.NoCredit.selector);
-        core.buyListing(1 gwei, "", LISTED_A, address(hostile));
+        _buyRaw(1 gwei, "", LISTED_A, address(hostile));
         assertEq(address(core).balance, before, "core balance");
         assertEq(address(hostile).balance, hostileBefore, "the eth went nowhere");
         assertEq(core.ethPot(), 10 ether, "pot");
@@ -881,49 +885,35 @@ contract CoreUnitTest is CoreBase {
         p.setMode(mode);
         vm.prank(STRATEGY);
         CREDITS.transferFrom(STRATEGY, address(p), id);
-        _allow(address(p));
     }
 
-    /// a target that refunds part of what it was paid: the cost is net of the refund, the refund is booked nowhere
-    function test_buyListing_refundIsNotBooked() public {
+    /// a target that refunds part of what it was paid: the cost basis is the full value, the refund is unbooked surplus
+    /// that `skim` books
+    function test_buyListing_refundIsSurplusUntilSkim() public {
         uint256 id = CreditIds.at(630);
         ProbeTarget p = _probe(id, 5);
         _fund(10 ether);
         uint256 ceiling = core.ethRate();
         uint256 value = ceiling * 3 / 4;
-        uint256 cost = value - value / 2;
-        uint256 excessBefore = address(core).balance - core.ethPot() - core.ethToBuyback();
+        uint256 refund = value / 2;
         uint256 listingBefore = address(p).balance;
 
         uint256 keeperBefore = keeper.balance;
         vm.prank(keeper);
-        core.buyListing(value, abi.encodeCall(ProbeTarget.fill, (id, 0)), id, address(p));
+        _buyRaw(value, abi.encodeCall(ProbeTarget.fill, (id, 0)), id, address(p));
         uint256 paid = keeper.balance - keeperBefore;
-        _assertListingPay(paid, ceiling - cost);
+        _assertListingPay(paid, ceiling - value);
 
         (, uint256 booked,) = core.creditInfo(id);
-        assertEq(booked, cost + paid, "cost is net of the refund");
-        assertEq(core.ethPot(), 10 ether - cost - paid);
-        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), excessBefore, "refund booked nowhere");
-        assertEq(address(p).balance - listingBefore, cost, "the listing kept the net price");
+        assertEq(booked, value + paid, "the cost basis is the value plus the payment");
+        assertEq(core.ethPot(), 10 ether - value - paid);
+        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), refund, "the refund is unbooked surplus");
+        assertEq(address(p).balance - listingBefore, value - refund, "the listing kept the net price");
         _solvent();
 
-        // skim sees nothing extra.
         uint256 pot = core.ethPot();
         core.skim();
-        assertEq(core.ethPot(), pot);
-    }
-
-    /// a target that sends back more than it was paid leaves the core richer: a negative cost is refused
-    function test_buyListing_refundAboveValueReverts() public {
-        uint256 id = CreditIds.at(631);
-        ProbeTarget p = _probe(id, 4);
-        vm.deal(address(p), 1);
-        _fund(10 ether);
-        uint256 value = core.ethRate() / 2;
-        vm.prank(keeper);
-        vm.expectRevert(ICore.BadCost.selector);
-        core.buyListing(value, abi.encodeCall(ProbeTarget.fill, (id, 0)), id, address(p));
+        assertEq(core.ethPot(), pot + refund, "skim books the refund");
     }
 
     /// reentry from the target into every guarded door fails, and a wrong or doubled delivery reverts the buy
@@ -935,7 +925,9 @@ contract CoreUnitTest is CoreBase {
             vm.deal(address(p), 1 ether);
             uint256 value = (core.ethRate() / 2).min(core.ethPot() / 20);
             vm.prank(keeper);
-            try core.buyListing(value, abi.encodeCall(ProbeTarget.fill, (id, CreditIds.at(620 + m))), id, address(p)) {
+            try core.buyListing(
+                rawAdapter, id, _raw(address(p), value, abi.encodeCall(ProbeTarget.fill, (id, CreditIds.at(620 + m))))
+            ) {
                 assertTrue(p.honest(m), "a hostile mode succeeded");
             } catch {
                 assertFalse(p.honest(m), "an honest mode failed");
@@ -957,15 +949,15 @@ contract CoreUnitTest is CoreBase {
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setBalanceModule(address(mod));
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.addTarget(address(0x1234));
+        core.addAdapter(address(0x1234));
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.removeTarget(STRATEGY);
+        core.removeAdapter(strategyAdapter);
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.lockController();
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.lockBalanceModule();
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.lockTargets();
+        core.lockAdapters();
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.transferOwnership(alice);
         vm.stopPrank();
@@ -998,13 +990,13 @@ contract CoreUnitTest is CoreBase {
 
         // the other powers survive the lock
         HostileTarget t = new HostileTarget();
-        _allow(address(t));
-        assertTrue(core.allowedTarget(address(t)));
+        _approveAdapter(address(t));
+        assertTrue(core.allowedAdapter(address(t)));
         vm.prank(owner);
-        core.removeTarget(address(t));
-        assertFalse(core.allowedTarget(address(t)));
+        core.removeAdapter(address(t));
+        assertFalse(core.allowedAdapter(address(t)));
         assertFalse(core.balanceModuleLocked());
-        assertFalse(core.targetsLocked());
+        assertFalse(core.adaptersLocked());
     }
 
     function test_owner_lockBalanceModule() public {
@@ -1032,23 +1024,23 @@ contract CoreUnitTest is CoreBase {
         assertEq(core.balanceModule(), address(mod));
     }
 
-    function test_owner_lockTargets() public {
+    function test_owner_lockAdapters() public {
         address t = address(new HostileTarget());
-        _allow(t);
+        _approveAdapter(t);
         vm.expectEmit(false, false, false, false);
-        emit ICore.TargetsLocked();
+        emit ICore.AdaptersLocked();
         vm.prank(owner);
-        core.lockTargets();
-        assertTrue(core.targetsLocked());
+        core.lockAdapters();
+        assertTrue(core.adaptersLocked());
 
         address t2 = address(new HostileTarget());
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("targets")));
-        core.addTarget(t2);
+        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("adapters")));
+        core.addAdapter(t2);
         // removing still works
         vm.prank(owner);
-        core.removeTarget(t);
-        assertFalse(core.allowedTarget(t));
+        core.removeAdapter(t);
+        assertFalse(core.allowedAdapter(t));
     }
 
     function test_owner_twoStepHandover() public {
@@ -1077,10 +1069,10 @@ contract CoreUnitTest is CoreBase {
         // the old owner lost every power, the new one has them
         vm.prank(owner);
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.removeTarget(STRATEGY);
+        core.removeAdapter(strategyAdapter);
         vm.prank(alice);
-        core.removeTarget(STRATEGY);
-        assertFalse(core.allowedTarget(STRATEGY));
+        core.removeAdapter(strategyAdapter);
+        assertFalse(core.allowedAdapter(strategyAdapter));
         // the accept cannot be replayed
         vm.prank(alice);
         vm.expectRevert(ICore.OnlyPendingOwner.selector);
@@ -1167,7 +1159,7 @@ contract CoreUnitTest is CoreBase {
         }
     }
 
-    function test_owner_targets() public {
+    function test_owner_adapters() public {
         address[12] memory forbidden = [
             address(CREDITS),
             address(STATEMENTS),
@@ -1185,7 +1177,7 @@ contract CoreUnitTest is CoreBase {
         vm.startPrank(owner);
         for (uint256 i; i < forbidden.length; ++i) {
             vm.expectRevert(ICore.ForbiddenTarget.selector);
-            core.addTarget(forbidden[i]);
+            core.addAdapter(forbidden[i]);
         }
         vm.stopPrank();
 
@@ -1193,31 +1185,31 @@ contract CoreUnitTest is CoreBase {
         _enterPhase2();
         vm.startPrank(owner);
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(mod));
+        core.addAdapter(address(mod));
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(xt));
+        core.addAdapter(address(xt));
         vm.stopPrank();
     }
 
-    function test_owner_removeTargetIsImmediate() public {
-        assertTrue(core.allowedTarget(STRATEGY));
+    function test_owner_removeAdapterIsImmediate() public {
+        assertTrue(core.allowedAdapter(strategyAdapter));
         vm.prank(owner);
-        core.removeTarget(STRATEGY);
-        assertFalse(core.allowedTarget(STRATEGY));
+        core.removeAdapter(strategyAdapter);
+        assertFalse(core.allowedAdapter(strategyAdapter));
         _fund(10 ether);
         vm.prank(keeper);
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(1, "", LISTED_A, STRATEGY);
+        vm.expectRevert(ICore.AdapterNotAllowed.selector);
+        core.buyListing(strategyAdapter, LISTED_A, "");
 
-        // a target that later becomes the balance module can no longer be called.
+        // an adapter that later becomes the balance module can no longer be called.
         xt = new MockBalanceToken("X", "X");
         mod = new MockBalanceModule(address(xt), UNIT);
-        _allow(address(mod));
-        assertTrue(core.allowedTarget(address(mod)));
+        _approveAdapter(address(mod));
+        assertTrue(core.allowedAdapter(address(mod)));
         _setBalanceModule(address(mod));
         vm.prank(keeper);
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(1, "", LISTED_A, address(mod));
+        vm.expectRevert(ICore.AdapterNotAllowed.selector);
+        core.buyListing(address(mod), LISTED_A, "");
     }
 
     /*//////////////////////////////////////////////////////////////

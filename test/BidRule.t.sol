@@ -554,7 +554,7 @@ contract BidRuleTest is Fixture {
         uint256 price = _forListing();
         uint256 rate = core.ethRate();
         vm.prank(keeper);
-        core.buyListing(price, _listingData(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(price, _listingData(LISTED_A), LISTED_A, STRATEGY);
         (uint256 anchor, uint256 start,) = _anchor();
         assertEq(anchor, rate, "the anchor is the bid rate");
         assertEq(start, rate);
@@ -580,7 +580,7 @@ contract BidRuleTest is Fixture {
         assertGe(ceiling, price, "and the ceiling still covers the listing");
         uint256 keeperBefore = keeper.balance;
         vm.prank(keeper);
-        core.buyListing(price, _listingData(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(price, _listingData(LISTED_A), LISTED_A, STRATEGY);
         uint256 paid = keeper.balance - keeperBefore;
         _assertListingPay(paid, ceiling - price);
         (, uint256 basis,) = core.creditInfo(LISTED_A);
@@ -599,7 +599,7 @@ contract BidRuleTest is Fixture {
         (uint256 a0, uint256 s0, uint256 b0) = _anchor();
         vm.prank(keeper);
         vm.expectRevert(ICore.CallFailed.selector);
-        core.buyListing(price - 1, _listingData(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(price - 1, _listingData(LISTED_A), LISTED_A, STRATEGY);
         vm.prank(seller);
         vm.expectRevert(ICore.Empty.selector);
         core.sellForEth(new uint256[](0));

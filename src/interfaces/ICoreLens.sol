@@ -27,7 +27,7 @@ interface ICoreLens {
         uint256 unitPerPoint;
         bool controllerLocked;
         bool balanceModuleLocked;
-        bool targetsLocked;
+        bool adaptersLocked;
         bool successorLocked;
         bool creditSaleOn;
         uint256 creditWindow;

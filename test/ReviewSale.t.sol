@@ -389,11 +389,11 @@ contract ReviewSaleTest is Fixture {
             abi.encodeCall(ICore.transferOwnership, (bob)),
             abi.encodeCall(ICore.setController, (bob)),
             abi.encodeCall(ICore.setBalanceModule, (bob)),
-            abi.encodeCall(ICore.addTarget, (bob)),
-            abi.encodeCall(ICore.removeTarget, (bob)),
+            abi.encodeCall(ICore.addAdapter, (bob)),
+            abi.encodeCall(ICore.removeAdapter, (bob)),
             abi.encodeCall(ICore.lockController, ()),
             abi.encodeCall(ICore.lockBalanceModule, ()),
-            abi.encodeCall(ICore.lockTargets, ()),
+            abi.encodeCall(ICore.lockAdapters, ()),
             abi.encodeCall(ICore.setSettings, (core.settings())),
             abi.encodeCall(ICore.setRate, (OPEN_RATE))
         ];
@@ -403,7 +403,7 @@ contract ReviewSaleTest is Fixture {
             assertFalse(ok);
             assertEq(bytes4(why), ICore.OnlyOwner.selector);
         }
-        assertFalse(core.controllerLocked() || core.balanceModuleLocked() || core.targetsLocked());
+        assertFalse(core.controllerLocked() || core.balanceModuleLocked() || core.adaptersLocked());
         assertEq(core.pendingOwner(), address(0));
     }
 
@@ -416,7 +416,7 @@ contract ReviewSaleTest is Fixture {
         address[3] memory bad = [lc.stack.hook, address(core), core.COIN()];
         for (uint256 i; i < bad.length; ++i) {
             vm.expectRevert(ICore.ForbiddenTarget.selector);
-            core.addTarget(bad[i]);
+            core.addAdapter(bad[i]);
         }
         vm.stopPrank();
         _enterPhase2();
@@ -429,14 +429,14 @@ contract ReviewSaleTest is Fixture {
         core.setBalanceModule(address(other));
         vm.expectRevert(ICore.BadModule.selector);
         core.setBalanceModule(address(core));
-        // a target flag set before a module is named is cleared when it becomes the module
+        // an adapter flag set before a module is named is cleared when it becomes the module
         MockBalanceModule m2 = new MockBalanceModule(address(xt), 2 * UNIT);
-        core.addTarget(address(m2));
-        assertTrue(core.allowedTarget(address(m2)));
+        core.addAdapter(address(m2));
+        assertTrue(core.allowedAdapter(address(m2)));
         core.setBalanceModule(address(m2));
-        assertFalse(core.allowedTarget(address(m2)));
+        assertFalse(core.allowedAdapter(address(m2)));
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(m2));
+        core.addAdapter(address(m2));
         vm.stopPrank();
     }
 
@@ -450,8 +450,8 @@ contract ReviewSaleTest is Fixture {
         core.setController(address(0xC0DE));
         // everything else stays open
         core.setBalanceModule(address(new MockBalanceModule(address(xt), 3 * UNIT)));
-        core.addTarget(address(0x7A9));
-        core.removeTarget(address(0x7A9));
+        core.addAdapter(address(0x7A9));
+        core.removeAdapter(address(0x7A9));
         core.transferOwnership(alice);
         vm.stopPrank();
         Settings memory s = core.settings();
@@ -459,7 +459,7 @@ contract ReviewSaleTest is Fixture {
         _setSettings(s);
         vm.prank(owner);
         ctl.setFastDecayBpsPerHour(500);
-        assertFalse(core.balanceModuleLocked() || core.targetsLocked());
+        assertFalse(core.balanceModuleLocked() || core.adaptersLocked());
     }
 
     function test_OK_lockBalanceModule_revertsWhileUnsetThenBlocksOnlyTheModuleDoor() public {
@@ -479,23 +479,23 @@ contract ReviewSaleTest is Fixture {
         SellProbe probe = new SellProbe(core);
         probe.setAtFloor(true); // the eth lane statement is eligible under this controller
         core.setController(address(probe));
-        core.addTarget(address(0x7A9));
+        core.addAdapter(address(0x7A9));
         vm.stopPrank();
         core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod), "redeem still works");
     }
 
-    function test_OK_lockTargets_blocksOnlyAddTarget() public {
+    function test_OK_lockAdapters_blocksOnlyAddAdapter() public {
         vm.startPrank(owner);
-        core.lockTargets();
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("targets")));
-        core.addTarget(address(0x7A9));
-        core.removeTarget(Mainnet.SEAPORT);
-        assertFalse(core.allowedTarget(Mainnet.SEAPORT), "removal still works");
+        core.lockAdapters();
+        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("adapters")));
+        core.addAdapter(address(0x7A9));
+        core.removeAdapter(seaportAdapter);
+        assertFalse(core.allowedAdapter(seaportAdapter), "removal still works");
         core.setController(address(new SellProbe(core)));
         vm.stopPrank();
         _enterPhase2();
-        assertTrue(core.targetsLocked());
+        assertTrue(core.adaptersLocked());
     }
 
     function test_OK_allThreeLocksLeaveSettingsAndSaleSettingsOpen() public {
@@ -503,7 +503,7 @@ contract ReviewSaleTest is Fixture {
         vm.startPrank(owner);
         core.lockController();
         core.lockBalanceModule();
-        core.lockTargets();
+        core.lockAdapters();
         vm.stopPrank();
         Settings memory s = core.settings();
         s.feeToBuybackBps = 1_234;
@@ -540,7 +540,7 @@ contract ReviewSaleTest is Fixture {
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setController(address(ctl));
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.lockTargets();
+        core.lockAdapters();
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setFastDecayBpsPerHour(200);
         vm.stopPrank();
@@ -624,7 +624,7 @@ contract ReviewSaleTest is Fixture {
         assertGt(n1, n0, "an unannounced handover fails the owner row");
         emit log_string(afterHandover);
         vm.prank(alice);
-        core.lockTargets();
+        core.lockAdapters();
         postflightAs(lc, address(core), owner);
         (, uint256 n2) = _failed();
         assertGt(n2, n1, "a lock fails the launch state row");
@@ -1010,7 +1010,7 @@ contract ReviewSaleTest is Fixture {
     /// S-10 fixed: LOCKS_CHANGED=1 turns the launch state row into a report line
     function test_FIXED_locksChangedFlagTurnsTheLockRowIntoAReportLine() public {
         vm.prank(owner);
-        core.lockTargets();
+        core.lockAdapters();
         postflightAs(lc, address(core), owner);
         (string memory failed, uint256 n) = _failed();
         assertGt(n, 0);

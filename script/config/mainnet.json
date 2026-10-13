@@ -81,6 +81,9 @@
     "bounty": false,
     "openFactory": false
   },
+  "adapters": {
+    "seaportRecipients": ["0x0000a26b00c1F0DF003000390027140000fAa719"]
+  },
   "router": {
     "creatorPayee": "0xCB43078C32423F5348Cab5885911C3B5faE217F9",
     "payeePpm": 112778

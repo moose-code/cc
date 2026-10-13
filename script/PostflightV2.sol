@@ -147,7 +147,7 @@ abstract contract PostflightV2 is SystemBuilder, Report {
     }
 
     /// @notice the keccak256 of the runtime code of the compiled artifact `name` (`Core`, `CoreLib`, `ControllerV1`,
-    /// `FeeRouter`, `CoreLens`) with the immutable slots and the library address slots zeroed, as read from `out/`
+    /// `FeeRouter`, `CoreLens`, `SeaportBasicAdapter`, `CreditStrategyAdapter`) with the immutable slots and the library address slots zeroed, as read from `out/`
     function artifactHash(string memory name) internal returns (bytes32) {
         _idEnsure(name);
         return vm.envBytes32(_idKey(name, "HASH"));

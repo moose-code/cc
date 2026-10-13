@@ -46,10 +46,10 @@ contract ReenteringModule is IBalanceModule {
         _try(abi.encodeWithSignature("sellForEth(uint256[])", ids));
         _try(abi.encodeWithSignature("sellForBalance(uint256[])", ids));
         _try(abi.encodeWithSignature("redeemStatement(uint256)", 1));
-        _try(abi.encodeWithSignature("buyListing(uint256,bytes,uint256,address)", 0, "", 1, address(this)));
+        _try(abi.encodeWithSignature("buyListing(address,uint256,bytes)", address(this), 1, bytes("")));
         _try(abi.encodeWithSignature("setBalanceModule(address)", address(this)));
         _try(abi.encodeWithSignature("setController(address)", address(this)));
-        _try(abi.encodeWithSignature("addTarget(address)", address(this)));
+        _try(abi.encodeWithSignature("addAdapter(address)", address(this)));
         _try(abi.encodeWithSignature("transferOwnership(address)", address(this)));
         _try(abi.encodeWithSignature("sellTo(uint256,address)", 1, address(this)));
         _try(abi.encodeWithSignature("adopt(uint256[])", ids));
@@ -223,17 +223,17 @@ contract ReviewPhase2FlexTest is Fixture {
         _solvent();
     }
 
-    /// after a replacement the old module may be a target and the new one may not, and the stack members and non
+    /// after a replacement the old module may be an adapter and the new one may not, and the stack members and non
     /// contracts are refused as modules
     function test_OK_forbiddenSetsAndStackMembersAfterAReplacement() public {
         _enterPhase2();
         MockBalanceModule m2 = _mod(2 * UNIT);
         _replace(address(m2));
-        _allow(address(mod));
-        assertTrue(core.allowedTarget(address(mod)));
+        _approveAdapter(address(mod));
+        assertTrue(core.allowedAdapter(address(mod)));
         vm.startPrank(owner);
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(m2));
+        core.addAdapter(address(m2));
         // a non contract is never a module
         vm.expectRevert(ICore.BadModule.selector);
         core.setBalanceModule(address(0x1234));

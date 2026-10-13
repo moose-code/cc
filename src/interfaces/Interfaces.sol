@@ -111,7 +111,7 @@ uint256 constant RATE_START_MAX_WEI = 1e18;
 uint256 constant BUYBACK_GAS = 600_000;
 
 // the most gas of a buyListing the caller's payment counts, so a gas burning target cannot inflate it. the largest
-// measured buyListing (CreditStrategy path, four gas burning router payees flushing) is 946,000 gas as a transaction,
+// measured buyListing (CreditStrategy path, four gas burning router payees flushing) is 956,000 gas as a transaction,
 // 450,000 to 490,000 without the router load. read by the Core
 uint256 constant BUYLISTING_GAS = 1_500_000;
 
@@ -255,6 +255,8 @@ library Mainnet {
     address internal constant CREDIT_SCORE = 0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7;
     address internal constant CREDIT_STRATEGY = 0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6;
     address internal constant SEAPORT = 0x0000000000000068F116a894984e2DB1123eB395;
+    /// the OpenSea fee recipient of Seaport orders, the launch allowlist entry of `SeaportBasicAdapter`
+    address internal constant OPENSEA_FEE_COLLECTOR = 0x0000a26b00c1F0DF003000390027140000fAa719;
     address internal constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
     address internal constant POSITION_MANAGER = 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e;
     address internal constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;

@@ -36,17 +36,17 @@ contract CoreLayoutTest is Fixture {
         core.skim();
         vm.store(address(core), bytes32(uint256(8)), bytes32(uint256(1 ether)));
         vm.startPrank(owner);
-        core.addTarget(address(0xA110C));
+        core.addAdapter(address(0xA110C));
         vm.stopPrank();
-        assertTrue(core.allowedTarget(address(0xA110C)), "setup: the target is allowed");
-        assertEq(uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110C), uint256(3))))), 1, "allowedTarget");
-        assertEq(uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110D), uint256(3))))), 0, "unset target");
+        assertTrue(core.allowedAdapter(address(0xA110C)), "setup: the adapter is approved");
+        assertEq(uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110C), uint256(3))))), 1, "allowedAdapter");
+        assertEq(uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110D), uint256(3))))), 0, "unset adapter");
         vm.prank(owner);
         core.transferOwnership(address(0xBEEF));
         vm.startPrank(owner);
         core.lockController();
         core.lockBalanceModule();
-        core.lockTargets();
+        core.lockAdapters();
         core.setSuccessor(address(this));
         core.lockSuccessor();
         vm.stopPrank();
@@ -54,7 +54,7 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(0, 0, 20), uint256(uint160(core.controller())), "controller");
         assertEq(_field(0, 20, 1), core.controllerLocked() ? 1 : 0, "controllerLocked");
         assertEq(_field(0, 21, 1), core.balanceModuleLocked() ? 1 : 0, "balanceModuleLocked");
-        assertEq(_field(0, 22, 1), core.targetsLocked() ? 1 : 0, "targetsLocked");
+        assertEq(_field(0, 22, 1), core.adaptersLocked() ? 1 : 0, "adaptersLocked");
         assertEq(_field(1, 0, 20), uint256(uint160(core.balanceModule())), "balanceModule");
         assertEq(_field(2, 0, 20), uint256(uint160(core.balanceToken())), "balanceToken");
         assertEq(_field(4, 0, 20), uint256(uint160(core.owner())), "owner");
@@ -73,7 +73,7 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(20, 20, 1), core.successorLocked() ? 1 : 0, "successorLocked");
         assertEq(core.successor(), address(this), "successor value");
         assertTrue(core.successorLocked(), "successorLocked value");
-        assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.targetsLocked(), "locks");
+        assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.adaptersLocked(), "locks");
         // the standalone settings pack after retired: creditCostToPotBps and chosenComposeOn finish slot 20 (offsets
         // 22 and 24), minCcToChoose (uint96, 12 bytes) cannot straddle so it starts slot 21
         vm.startPrank(owner);

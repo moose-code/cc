@@ -60,10 +60,10 @@ each runtime contract stays under 24,576 bytes (`forge build --sizes`).
 | caller | doors |
 |---|---|
 | anyone | `sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen` (when open), `sellForBalance` (balanceMode 2), `redeemStatement`, `buyback`, `skim`, `ControllerV1.buy`, `ControllerV1.buyCredit` and `buyCredits` (when the credit sale is on), `FeeRouter.flush` |
-| owner of the Core | `setSettings`, `setRate`, `setController`, `setBalanceModule`, `refreshUnitPerPoint`, `releaseRedeemBurn`, `setCreditCostToPotBps`, `setChosenComposeOn`, `setMinCcToChoose`, `addTarget`, `removeTarget`, `rescueCoin`, `rescueNft`, `setSuccessor`, `migrate`, two step `transferOwnership` |
+| owner of the Core | `setSettings`, `setRate`, `setController`, `setBalanceModule`, `refreshUnitPerPoint`, `releaseRedeemBurn`, `setCreditCostToPotBps`, `setChosenComposeOn`, `setMinCcToChoose`, `addAdapter`, `removeAdapter`, `rescueCoin`, `rescueNft`, `setSuccessor`, `migrate`, two step `transferOwnership` |
 | owner on the controller | the sale settings, `setRefScore`, the credit sale settings (`setCreditSaleOn`, `setCreditWindow`, `setCreditFloorBps`, `setCreditStartBps`), `setAnchorBps`, `setBalancePoolKey`, `setPaused` (blocks `buy` and `buyCredit`, composing, the bid, redemptions and buybacks continue) |
 | owner of the router | `setEngine`, `setPayees`, `setSplitStart` |
-| locks, one way | `lockController`, `lockBalanceModule`, `lockTargets`, `lockSuccessor` on the Core, `lock` on the router |
+| locks, one way | `lockController`, `lockBalanceModule`, `lockAdapters`, `lockSuccessor` on the Core, `lock` on the router |
 
 eth, credits and balanceToken leave the Core at the owner's call only through `migrate` to the successor. coin leaves through `rescueCoin` and NFTs off the books through `rescueNft`. the owner sets the price the engine pays and the balanceModule that redeems statements, so holders trust the owner key (docs/SPEC.md section 10).
 

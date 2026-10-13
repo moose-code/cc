@@ -93,7 +93,6 @@ contract LifecycleDoorsTest is Fixture {
         super.setUp();
         // the owner action waits seven days, which must pass while the pot is empty and the rate cannot climb
         hostile = new HostileTarget();
-        _allow(address(hostile));
         _fundPot(20 ether);
     }
 
@@ -211,7 +210,7 @@ contract LifecycleDoorsTest is Fixture {
         uint256 keeper0 = keeper.balance;
 
         vm.prank(keeper);
-        core.buyListing(price, _buyData(id), id, STRATEGY);
+        core.buyListing(strategyAdapter, id, "");
 
         uint256 paid = keeper.balance - keeper0;
         _assertListingPay(paid, ceiling - price);
@@ -235,8 +234,8 @@ contract LifecycleDoorsTest is Fixture {
         assertEq(price, 0.036 ether);
         assertGt(price, core.ethRate(), "the start rate is far below the listing");
         vm.prank(keeper);
-        vm.expectRevert(ICore.AboveCeiling.selector);
-        core.buyListing(price, _buyData(LISTED_A), LISTED_A, STRATEGY);
+        vm.expectRevert(ICore.AboveBid.selector);
+        core.buyListing(strategyAdapter, LISTED_A, "");
 
         _warpUntilCeiling(LISTED_A, price);
         _checkListingBuy(LISTED_A, price, true);
@@ -261,31 +260,31 @@ contract LifecycleDoorsTest is Fixture {
         // wrong value, the strategy refuses
         vm.prank(keeper);
         vm.expectRevert(ICore.CallFailed.selector);
-        core.buyListing(priceA - 1, _buyData(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(priceA - 1, _buyData(LISTED_A), LISTED_A, STRATEGY);
         _assertUnchanged(s0);
 
         // wrong calldata for the value
         vm.prank(keeper);
         vm.expectRevert(ICore.CallFailed.selector);
-        core.buyListing(priceA, _buyData(LISTED_B), LISTED_A, STRATEGY);
+        _buyRaw(priceA, _buyData(LISTED_B), LISTED_A, STRATEGY);
         _assertUnchanged(s0);
 
         // the call works but delivers another credit than the one asked for
         vm.prank(keeper);
         vm.expectRevert(ICore.NoCredit.selector);
-        core.buyListing(priceB, _buyData(LISTED_B), LISTED_A, STRATEGY);
+        _buyRaw(priceB, _buyData(LISTED_B), LISTED_A, STRATEGY);
         _assertUnchanged(s0);
 
         // a credit the strategy holds but does not list
         uint256 unlisted = CreditIds.at(5);
         vm.prank(keeper);
         vm.expectRevert(ICore.CallFailed.selector);
-        core.buyListing(1, _buyData(unlisted), unlisted, STRATEGY);
+        _buyRaw(1, _buyData(unlisted), unlisted, STRATEGY);
         _assertUnchanged(s0);
 
         // another listing still goes through, and the first one stays for sale
         vm.prank(keeper);
-        core.buyListing(priceB, _buyData(LISTED_B), LISTED_B, STRATEGY);
+        _buyRaw(priceB, _buyData(LISTED_B), LISTED_B, STRATEGY);
         assertEq(CREDITS.ownerOf(LISTED_B), address(core));
         assertEq(CREDITS.ownerOf(LISTED_A), STRATEGY);
         assertEq(ICreditStrategy(STRATEGY).nftForSale(LISTED_A), priceA);
@@ -293,7 +292,7 @@ contract LifecycleDoorsTest is Fixture {
         // the core never buys a credit it already owns
         vm.prank(keeper);
         vm.expectRevert(ICore.AlreadyOwned.selector);
-        core.buyListing(priceB, _buyData(LISTED_B), LISTED_B, STRATEGY);
+        _buyRaw(priceB, _buyData(LISTED_B), LISTED_B, STRATEGY);
         _solvent();
     }
 
@@ -304,27 +303,26 @@ contract LifecycleDoorsTest is Fixture {
 
         vm.prank(keeper);
         vm.expectRevert(ICore.NoCredit.selector);
-        core.buyListing(1 gwei, "", LISTED_A, address(hostile));
+        _buyRaw(1 gwei, "", LISTED_A, address(hostile));
         _assertUnchanged(s0);
         assertEq(address(hostile).balance, hostile0, "the eth came back with the revert");
 
-        // not on the list at all
-        address stranger = address(new HostileTarget());
+        // an adapter that was never approved
         vm.prank(keeper);
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(1 gwei, "", LISTED_A, stranger);
+        vm.expectRevert(ICore.AdapterNotAllowed.selector);
+        core.buyListing(address(hostile), LISTED_A, "");
 
         // removal is immediate
         vm.prank(owner);
-        core.removeTarget(address(hostile));
+        core.removeAdapter(rawAdapter);
         vm.prank(keeper);
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(1 gwei, "", LISTED_A, address(hostile));
+        vm.expectRevert(ICore.AdapterNotAllowed.selector);
+        _buyRaw(1 gwei, "", LISTED_A, address(hostile));
         _assertUnchanged(s0);
     }
 
-    /// the system's own contracts can never become targets, even by the owner.
-    function test_buyListing_forbiddenTargetsCannotBeAdded() public {
+    /// the system's own contracts can never become adapters, and no adapter can name them as its target.
+    function test_buyListing_forbiddenAddressesCannotBeAdded() public {
         address[9] memory forbidden = [
             lc.stack.hook,
             address(coin),
@@ -339,12 +337,12 @@ contract LifecycleDoorsTest is Fixture {
         for (uint256 i; i < forbidden.length; ++i) {
             vm.prank(owner);
             vm.expectRevert(ICore.ForbiddenTarget.selector);
-            core.addTarget(forbidden[i]);
-            assertFalse(core.allowedTarget(forbidden[i]));
+            core.addAdapter(forbidden[i]);
+            assertFalse(core.allowedAdapter(forbidden[i]));
         }
         vm.prank(keeper);
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(1, "", LISTED_A, lc.stack.hook);
+        vm.expectRevert(ICore.ForbiddenTarget.selector);
+        _buyRaw(1, "", LISTED_A, lc.stack.hook);
     }
 }
 
@@ -831,7 +829,7 @@ contract LifecycleNarrativeTest is Fixture {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(id);
         _warpUntilCeiling(id, price);
         vm.prank(keeper);
-        core.buyListing(price, abi.encodeCall(ICreditStrategy.sellTargetNFT, (id)), id, STRATEGY);
+        core.buyListing(strategyAdapter, id, "");
         assertEq(CREDITS.ownerOf(id), address(core));
         _check();
     }

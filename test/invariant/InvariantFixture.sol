@@ -80,6 +80,7 @@ abstract contract InvariantFixture is Fixture {
             v1: address(ctl),
             fuzz: fuzz,
             probe: probeTarget,
+            rawAdapter: rawAdapter,
             module: mod,
             balanceToken: xt,
             canSwapController: canSwapController,
@@ -135,7 +136,6 @@ abstract contract InvariantFixture is Fixture {
     function _ownerSetup(bool phase2, bool hostile, bool inWindow) internal {
         if (!inWindow) vm.warp(block.timestamp + 7 days + 1);
         vm.startPrank(owner);
-        core.addTarget(address(probeTarget));
         if (phase2) {
             core.setBalanceModule(address(mod));
             Settings memory es = core.settings();
@@ -165,7 +165,7 @@ abstract contract InvariantFixture is Fixture {
         // the hostile controller swap comes after the pool key is set on the real controller, so the key survives it
         if (hostile) core.setController(address(fuzz));
         vm.stopPrank();
-        assertTrue(core.allowedTarget(address(probeTarget)));
+        assertTrue(core.allowedAdapter(rawAdapter));
     }
 
     /// the whale buys coin through the real launch pool. the skim funds the eth pot, and the whale holds coin

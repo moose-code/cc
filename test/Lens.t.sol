@@ -111,7 +111,7 @@ contract LensTest is Fixture {
         assertEq(s.successor, core.successor(), "successor");
         assertEq(s.controllerLocked, core.controllerLocked());
         assertEq(s.balanceModuleLocked, core.balanceModuleLocked());
-        assertEq(s.targetsLocked, core.targetsLocked());
+        assertEq(s.adaptersLocked, core.adaptersLocked());
         assertEq(s.successorLocked, core.successorLocked());
 
         assertEq(s.statements.length, core.heldStatements().length, "statement count");

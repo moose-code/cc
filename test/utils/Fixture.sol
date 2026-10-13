@@ -100,6 +100,11 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @dev when true the swap helpers flush the router right after the swap, so the Core books the fees at once
     bool internal autoFlush = true;
     IControllerV1 internal ctl;
+    /// @dev the launch adapters `deploySystem` created and the Core approves
+    address internal seaportAdapter;
+    address internal strategyAdapter;
+    /// @dev the test adapter that prices any call (`_buyRaw`), approved by the owner in `setUp`
+    address internal rawAdapter;
     /// @dev the read only lens `deploySystem` created for the Core
     ICoreLens internal lens;
     PoolKey internal launchKey;
@@ -235,6 +240,13 @@ abstract contract Fixture is Test, ProdDeployer {
         coin = IArtCoinsTokenV2(d.coin);
         ctl = IControllerV1(d.controller);
         lens = ICoreLens(d.lens);
+        seaportAdapter = d.seaportAdapter;
+        strategyAdapter = d.strategyAdapter;
+        // placed with `etch` at a fixed address, so the creation nonces of the test contract stay as the suites expect
+        rawAdapter = _user("rawAdapter");
+        vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
+        vm.prank(owner);
+        core.addAdapter(rawAdapter);
         feeRouter = IFeeRouter(payable(d.router));
         launchKey = d.launchKey;
         poolId = d.poolId;
@@ -530,10 +542,20 @@ abstract contract Fixture is Test, ProdDeployer {
         _setSettings(s);
     }
 
-    /// @notice adds a target to the core allowlist
-    function _allow(address target) internal {
+    /// @notice the `params` the test adapter turns into the call of `target` with `value` and `data`
+    function _raw(address target, uint256 value, bytes memory data) internal pure returns (bytes memory) {
+        return abi.encode(target, value, data);
+    }
+
+    /// @notice `buyListing` through the test adapter: the Core calls `target` with `value` and `data`
+    function _buyRaw(uint256 value, bytes memory data, uint256 id, address target) internal {
+        core.buyListing(rawAdapter, id, _raw(target, value, data));
+    }
+
+    /// @notice the owner approves a listing adapter
+    function _approveAdapter(address adapter) internal {
         vm.prank(owner);
-        core.addTarget(target);
+        core.addAdapter(adapter);
     }
 
     // ------------------------------------------------------------------ the balance side

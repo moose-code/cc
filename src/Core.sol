@@ -4,7 +4,6 @@ pragma solidity ^0.8.28;
 import {ReentrancyGuard} from "solady/utils/ReentrancyGuard.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {LibTransient} from "solady/utils/LibTransient.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
@@ -13,6 +12,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {IListingAdapter} from "./interfaces/IListingAdapter.sol";
 import {
     IController,
     IBalanceModule,
@@ -33,15 +33,14 @@ import {CreditBounds} from "./lib/CreditBounds.sol";
 import {SettingsStore} from "./lib/SettingsStore.sol";
 import {RateStore} from "./lib/RateStore.sol";
 
-/// custody and every rule of the credits engine. the owner sets the controller, the balance module and the target list at
+/// custody and every rule of the credits engine. the owner sets the controller, the balance module and the adapter list at
 /// once, can set a successor that receives the assets on `migrate`, and can close each of the controller, the balance
-/// module, the targets and the successor door with a one way lock (docs/ARCHITECTURE.md).
+/// module, the adapters and the successor door with a one way lock (docs/ARCHITECTURE.md).
 /// credits and statements sent to the core outside its doors are not tracked and stay in the core.
 /// the pool's bounty recipient is the fee router, which flushes the fee eth here: `receive()` books eth from the fee
 /// source (the router) into the pot.
 contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     using FixedPointMathLib for uint256;
-    using LibTransient for LibTransient.TBool;
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
@@ -69,14 +68,17 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error BadCost();
     error BadModule();
     error BadSwap();
-    error TargetNotAllowed();
+    /// `buyListing` names an adapter the owner has not approved
+    error AdapterNotAllowed();
+    /// the adapter reverted, ran out of its gas cap, or answered with fewer than three words or more than `QUOTE_MAX` bytes
+    error BadQuote();
     error ForbiddenTarget();
     error AlreadyOwned();
     error CallFailed();
-    error Measuring();
     error NoCredit();
     error PotTooSmall();
-    error AboveCeiling();
+    /// the quoted `value` of `buyListing` is above `ethRate()`
+    error AboveBid();
     error Slippage();
     error Underpaid();
     error NoBalanceModule();
@@ -86,7 +88,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// `redeemStatement`: the controller's `atFloor` is false (the curve price has not reached its floor) or the
     /// controller did not answer
     error NotEligible();
-    /// the door `what` ("controller", "balanceModule" or "targets") was locked by the owner
+    /// the door `what` ("controller", "balanceModule" or "adapters") was locked by the owner
     error Locked(bytes32 what);
     error OnlyController();
     error OnlyPendingOwner();
@@ -126,7 +128,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event Skimmed(uint256 eth, uint256 balanceToken);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event ListingBought(
-        uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate
+        uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, address indexed caller);
@@ -143,15 +145,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event OwnershipTransferred(address indexed from, address indexed to);
     event ControllerLocked();
     event BalanceModuleLocked();
-    event TargetsLocked();
+    event AdaptersLocked();
     event ControllerSet(address controller);
     event BalanceModuleSet(address balanceModule, address balanceToken, uint256 unitPerPoint);
     /// `refreshUnitPerPoint` re-read `unitPerPoint` from the current module
     event UnitPerPointRefreshed(address balanceModule, uint256 unitPerPoint);
     /// `releaseRedeemBurn` moved `amount` of the redeem burn reserve into the coin buyback
     event RedeemBurnReleased(uint256 amount);
-    event TargetAdded(address target);
-    event TargetRemoved(address target);
+    event AdapterSet(address indexed adapter, bool allowed);
     event CoinRescued(address indexed to, uint256 amount);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
     event SuccessorSet(address successor);
@@ -193,11 +194,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// gas of the work after the count in `buyListing` (the spend, the pile record, the event and the payment, about
     /// 200,000), the transaction base cost and typical calldata
     uint256 private constant BUYLISTING_OVERHEAD_GAS = 250_000;
+    /// gas the quote of a listing adapter may use
+    uint256 private constant QUOTE_GAS = 300_000;
+    /// bytes of the answer of a listing adapter the Core accepts
+    uint256 private constant QUOTE_MAX = 8_192;
     /// gas the controller's `nextPage` may use. a full page of ControllerV1 costs under 250,000 gas on a
     /// cold read
     uint256 private constant PAGE_GAS = 500_000;
     address private constant DEAD = Mainnet.DEAD;
-    bytes32 private constant MEASURING_SLOT = keccak256("core.measuring");
 
     ICredits private constant CREDITS = ICredits(Mainnet.CREDITS);
     IStatements private constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
@@ -224,10 +228,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// one way locks of the owner (docs/ARCHITECTURE.md): once set, the door never opens again
     bool public controllerLocked;
     bool public balanceModuleLocked;
-    bool public targetsLocked;
+    bool public adaptersLocked;
     address public balanceModule;
     address public balanceToken;
-    mapping(address => bool) public allowedTarget;
+    mapping(address => bool) public allowedAdapter;
     /// the owner and the pending owner of the two step handover
     address public owner;
     address public pendingOwner;
@@ -287,7 +291,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         Stack memory stack_,
         uint256 rateStart_,
         Settings memory settings_,
-        Credit memory credit_
+        Credit memory credit_,
+        address[] memory adapters_
     ) {
         if (owner_ == address(0) || coin_ == address(0) || controller_ == address(0)) {
             revert ZeroAddress();
@@ -321,8 +326,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         creditCostToPotBps = credit_.costToPotBps;
         chosenComposeOn = credit_.chosenComposeOn;
         minCcToChoose = credit_.minCcToChoose;
-        allowedTarget[Mainnet.SEAPORT] = true;
-        allowedTarget[Mainnet.CREDIT_STRATEGY] = true;
+        for (uint256 i; i < adapters_.length; ++i) {
+            address adapter = adapters_[i];
+            if (adapter == address(0)) revert ZeroAddress();
+            if (_forbiddenBase(adapter)) revert ForbiddenTarget();
+            allowedAdapter[adapter] = true;
+            emit AdapterSet(adapter, true);
+        }
         rateAtCheckpoint = rateStart_;
         checkpointTime = uint64(block.timestamp);
         lastFillTime = uint64(block.timestamp);
@@ -333,20 +343,16 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         CREDITS.setApprovalForAll(address(STATEMENTS), true);
         emit OwnershipTransferred(address(0), owner_);
         emit ControllerSet(controller_);
-        emit TargetAdded(Mainnet.SEAPORT);
-        emit TargetAdded(Mainnet.CREDIT_STRATEGY);
         // validates, stores at the settings slot and logs, by delegatecall into the library
         CoreLib.setSettings(settings_);
     }
 
     /// accepts eth from anyone but the fee source and leaves it unbooked (`skim` books it). eth from the fee source (the
     /// router flushing the pool's fee eth) is booked: `feeToBuybackBps` to the coin buyback, `feeToRedeemBurnBps` to the
-    /// redeem burn reserve, the rest to the pot. while a measurement is in flight the fee source REVERTS: a router flush
-    /// started inside a measured call (by the seller's callback, say) then fails as a whole and the fees wait in the
-    /// router. every other sender is accepted unbooked, so a refund or a sale payout can never fail a call
+    /// redeem burn reserve, the rest to the pot. every other sender is accepted unbooked, so a refund or a sale payout
+    /// can never fail a call
     receive() external payable {
         if (msg.sender != FEE_SOURCE) return;
-        if (_measuring().get()) revert Measuring();
         _checkpoint();
         Settings storage s = _st();
         uint256 toBuyback = msg.value * s.feeToBuybackBps / BPS;
@@ -503,7 +509,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the first action of `sellForEth`, `buyListing`, `adopt` and `compose`. two steps in order:
     /// 1. reverts `Retired` once `migrate` has run. `sellForBalance` checks the same flag in `CoreLib`.
     /// 2. pulls the fee router: the router flushes its balance into `receive`, which books it, before the entry point
-    /// reads a rate, checkpoints or measures. a failing router does not fail the entry point (docs/FLOW.md 10.8)
+    /// reads a rate or checkpoints. a failing router does not fail the entry point (docs/FLOW.md 10.8)
     function _openDoor() private {
         if (retired) revert Retired();
         CoreLib.pullFees(FEE_SOURCE);
@@ -541,43 +547,69 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         SafeTransferLib.safeTransferETH(msg.sender, total);
     }
 
-    /// buy credit id through an allowed target. the caller supplies the complete calldata and is paid from `ethPot`: the
-    /// gas of the call at the base fee, capped at `keeperMaxBaseFee` and `BUYLISTING_GAS`, plus `keeperFee`. the payment
-    /// is at most the bid less the listing cost, so the pot pays at most the bid for the credit. the gas counted
-    /// includes the fee router flush. reverts `Retired` after `migrate`
-    function buyListing(uint256 value, bytes calldata data, uint256 id, address target) external nonReentrant {
+    /// buys credit `id` from the listing that an approved adapter prices. the adapter answers the one call the Core
+    /// makes (`target`, `value`, `data`) from the venue's own data, by a read capped at `QUOTE_GAS` gas and `QUOTE_MAX`
+    /// bytes. `value` is at most the bid (`ethRate()`) and at most `ethPot`. the Core must own `id` after the call and
+    /// its credit balance must have risen by one. the caller is paid from `ethPot`: the gas of the call at the base fee,
+    /// capped at `keeperMaxBaseFee` and `BUYLISTING_GAS`, plus `keeperFee`. the payment is at most the bid less
+    /// `value`, so the pot pays at most the bid for the credit. the gas counted includes the fee router flush. reverts
+    /// `Retired` after `migrate`
+    function buyListing(address adapter, uint256 id, bytes calldata params) external nonReentrant {
         uint256 gasStart = gasleft();
         _openDoor();
-        if (!allowedTarget[target] || _forbidden(target)) revert TargetNotAllowed();
+        if (!allowedAdapter[adapter]) revert AdapterNotAllowed();
         if (id == 0) revert ZeroId();
         if (CREDITS.ownerOf(id) == address(this)) revert AlreadyOwned();
+        (address target, uint256 value, bytes memory data) = _quote(adapter, id, params);
+        if (_forbidden(target)) revert ForbiddenTarget();
         _checkpoint();
-        uint256 ceiling = ethRate();
+        uint256 bid = ethRate();
+        if (value == 0) revert ZeroAmount();
         if (value > ethPot) revert PotTooSmall();
-        if (value > ceiling) revert AboveCeiling();
+        if (value > bid) revert AboveBid();
 
         uint256 ethBefore = address(this).balance;
         uint256 creditsBefore = CREDITS.balanceOf(address(this));
-        _measuring().set(true);
         (bool ok,) = target.call{value: value}(data);
-        _measuring().set(false);
         if (!ok) revert CallFailed();
         if (CREDITS.balanceOf(address(this)) != creditsBefore + 1 || CREDITS.ownerOf(id) != address(this)) {
             revert NoCredit();
         }
-        uint256 ethAfter = address(this).balance;
-        if (ethAfter >= ethBefore) revert BadCost();
-        uint256 cost = ethBefore - ethAfter;
-        if (cost > value) revert BadCost();
+        if (address(this).balance + value < ethBefore) revert BadCost();
 
-        // the bid is at most `ethPot` (the read is lowered to the pot) and cost is at most `value`, at most the bid
+        // `value` is at most the bid, which is at most `ethPot`
         Settings storage s = _st();
         uint256 paid = _payment(gasStart, BUYLISTING_OVERHEAD_GAS, BUYLISTING_GAS, s.keeperMaxBaseFee, s.keeperFee)
-            .min(ceiling - cost);
-        _spend(cost + paid);
-        _push(id, cost + paid);
-        emit ListingBought(id, target, msg.sender, cost, paid, rateAtCheckpoint);
+            .min(bid - value);
+        _spend(value + paid);
+        _push(id, value + paid);
+        emit ListingBought(id, adapter, msg.sender, value, paid, rateAtCheckpoint);
         if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
+    }
+
+    /// reads the quote of `adapter` for `id`. a revert, a gas cap overrun, an answer under three words or over
+    /// `QUOTE_MAX` bytes reverts `BadQuote`
+    function _quote(address adapter, uint256 id, bytes calldata params)
+        private
+        view
+        returns (address target, uint256 value, bytes memory data)
+    {
+        bytes memory input = abi.encodeCall(IListingAdapter.price, (id, params));
+        bool ok;
+        bytes memory out;
+        assembly ("memory-safe") {
+            ok := staticcall(QUOTE_GAS, adapter, add(input, 0x20), mload(input), 0, 0)
+            let n := returndatasize()
+            ok := and(ok, and(iszero(lt(n, 0x60)), iszero(gt(n, QUOTE_MAX))))
+            if ok {
+                out := mload(0x40)
+                mstore(out, n)
+                returndatacopy(add(out, 0x20), 0, n)
+                mstore(0x40, add(add(out, 0x20), and(add(n, 0x1f), not(0x1f))))
+            }
+        }
+        if (!ok) revert BadQuote();
+        (target, value, data) = abi.decode(out, (address, uint256, bytes));
     }
 
     /// sell credits into the balance token bid. the balance side only. reverts `Retired` after `migrate`. the body is
@@ -608,10 +640,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             || t == address(MANAGER) || t == FACTORY || t == LOCKER || t == ESCROW || t == FEE_SOURCE
             || t == Mainnet.PERMIT2 || t == Mainnet.POSITION_MANAGER
             || t == Mainnet.UNIVERSAL_ROUTER;
-    }
-
-    function _measuring() private pure returns (LibTransient.TBool storage) {
-        return LibTransient.tBool(MEASURING_SLOT);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -791,10 +819,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _unhold(sid);
 
         uint256 balanceBefore = SafeTransferLib.balanceOf(token, address(this));
-        _measuring().set(true);
         STATEMENTS.transferFrom(address(this), module, sid);
         IBalanceModule(module).redeem(sid);
-        _measuring().set(false);
         uint256 balanceAfter = SafeTransferLib.balanceOf(token, address(this));
         if (balanceAfter < balanceBefore + required) revert Underpaid();
         uint256 received = balanceAfter - balanceBefore;
@@ -917,12 +943,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit RedeemBurnReleased(move);
     }
 
-    /// allows a target of `buyListing` at once. forbidden targets are refused. reverts after `lockTargets`
-    function addTarget(address t) external onlyOwner {
-        if (targetsLocked) revert Locked("targets");
-        if (_forbidden(t)) revert ForbiddenTarget();
-        allowedTarget[t] = true;
-        emit TargetAdded(t);
+    /// approves a listing adapter for `buyListing` at once. forbidden addresses are refused. reverts after `lockAdapters`
+    function addAdapter(address a) external onlyOwner {
+        if (adaptersLocked) revert Locked("adapters");
+        if (_forbidden(a)) revert ForbiddenTarget();
+        allowedAdapter[a] = true;
+        emit AdapterSet(a, true);
     }
 
     /// the one way locks. each is irreversible. the settings and the controller's own sale settings stay open
@@ -938,10 +964,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit BalanceModuleLocked();
     }
 
-    /// after this no target can be added. removing one still works
-    function lockTargets() external onlyOwner {
-        targetsLocked = true;
-        emit TargetsLocked();
+    /// after this no adapter can be added. removing one still works
+    function lockAdapters() external onlyOwner {
+        adaptersLocked = true;
+        emit AdaptersLocked();
     }
 
     /// sends coin the core holds to `to`. the core holds coin only in passing (the buyback burns what it buys in the same
@@ -1012,10 +1038,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _toLib();
     }
 
-    /// removes an allowed target at once.
-    function removeTarget(address target) external onlyOwner {
-        allowedTarget[target] = false;
-        emit TargetRemoved(target);
+    /// removes an approved adapter at once.
+    function removeAdapter(address a) external onlyOwner {
+        allowedAdapter[a] = false;
+        emit AdapterSet(a, false);
     }
 
     /// sets the share of a sold credit's cost booked to ethPot, the rest of the payment to ethToBuyback. 0 to 10_000.
@@ -1074,7 +1100,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// sets or replaces the balance module. the balance token never changes once set. the unit is read again every time, so
-    /// naming the same module again is how the unit is updated. a dormant allowed target flag of the new module is
+    /// naming the same module again is how the unit is updated. a dormant approved adapter flag of the new module is
     /// cleared, so it cannot come back to life when the module is replaced
     function _setBalanceModule(address module) private {
         address old = balanceModule;
@@ -1088,7 +1114,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         balanceModule = module;
         balanceToken = token;
         unitPerPoint = unit;
-        if (allowedTarget[module]) delete allowedTarget[module];
+        if (allowedAdapter[module]) delete allowedAdapter[module];
         emit BalanceModuleSet(module, token, unit);
     }
 

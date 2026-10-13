@@ -24,6 +24,7 @@ library Prod {
         return newCore(owner, coin, controller, stack, rateStart, settings, Mainnet.defaultCredit());
     }
 
+    /// @dev a Core with no approved adapter
     function newCore(
         address owner,
         address coin,
@@ -33,7 +34,20 @@ library Prod {
         Settings memory settings,
         Credit memory credit
     ) internal returns (ICore) {
-        bytes memory args = abi.encode(owner, coin, controller, stack, rateStart, settings, credit);
+        return newCore(owner, coin, controller, stack, rateStart, settings, credit, new address[](0));
+    }
+
+    function newCore(
+        address owner,
+        address coin,
+        address controller,
+        Stack memory stack,
+        uint256 rateStart,
+        Settings memory settings,
+        Credit memory credit,
+        address[] memory adapters
+    ) internal returns (ICore) {
+        bytes memory args = abi.encode(owner, coin, controller, stack, rateStart, settings, credit, adapters);
         return ICore(payable(vm.deployCode("Core.sol:Core", args)));
     }
 
@@ -47,6 +61,28 @@ library Prod {
 
     function newRouter(address owner) internal returns (IFeeRouter) {
         return IFeeRouter(payable(vm.deployCode("FeeRouter.sol:FeeRouter", abi.encode(owner))));
+    }
+
+    /// @dev creates the Seaport adapter through the deterministic deployer, as `forge script` does with
+    /// `new SeaportBasicAdapter{salt}`
+    function newSeaportAdapter(address core, address[] memory recipients, bytes32 salt, address create2Deployer)
+        internal
+        returns (address adapter)
+    {
+        bytes memory init = abi.encodePacked(
+            vm.getCode("SeaportBasicAdapter.sol:SeaportBasicAdapter"), abi.encode(core, recipients)
+        );
+        (bool ok, bytes memory out) = create2Deployer.call(abi.encodePacked(salt, init));
+        require(ok && out.length == 20, "seaport adapter create2 failed");
+        adapter = address(bytes20(out));
+    }
+
+    /// @dev creates the CreditStrategy adapter through the deterministic deployer
+    function newStrategyAdapter(bytes32 salt, address create2Deployer) internal returns (address adapter) {
+        bytes memory init = vm.getCode("CreditStrategyAdapter.sol:CreditStrategyAdapter");
+        (bool ok, bytes memory out) = create2Deployer.call(abi.encodePacked(salt, init));
+        require(ok && out.length == 20, "strategy adapter create2 failed");
+        adapter = address(bytes20(out));
     }
 
     /// @dev creates the lens through the deterministic deployer, as `forge script` does with `new CoreLens{salt}`

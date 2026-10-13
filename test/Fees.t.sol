@@ -16,7 +16,7 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Mainnet, Settings, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsMevSkimV2} from "../src/interfaces/ArtCoinsV2.sol";
-import {SwapMidListing, SwapMidRedeem, SwapAroundBuy} from "./attackers/SwapMidCall.sol";
+import {SwapMidListing, SwapAroundBuy} from "./attackers/SwapMidCall.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 
 /// shared helpers for the fee, buyback, auction and tax suites. every swap goes through the real pool
@@ -427,6 +427,39 @@ contract FeeFlowTest is FeeBase {
 
 /// `receive()` is the hook's push target. a revert there bricks every swap in the pool, so it must never revert
 contract ReceiveTest is FeeBase {
+    /// a swap inside the target call of `buyListing`: the hook pushes fee eth to the router and the attacker flushes the
+    /// router inside the call. the Core books the push from its fee source, the buy succeeds, the cost is the price and
+    /// the books stay consistent
+    function test_swapInsideBuyListingBooksTheFee() public {
+        SwapMidListing t = new SwapMidListing(router, address(core), launchKey);
+        t.setFeeRouter(address(feeRouter));
+        _stock();
+        _fundPot(1 ether);
+        uint256 id = _credits(address(t), 1)[0];
+        uint256 ceiling = core.ethRate();
+        uint256 swapEth = ceiling * 5;
+        vm.deal(address(t), swapEth);
+        t.arm(id, swapEth);
+
+        uint256 booked0 = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
+        uint256 balance = address(core).balance;
+        vm.prank(keeper);
+        _buyRaw(ceiling, hex"deadbeef", id, address(t));
+        assertEq(CREDITS.ownerOf(id), address(core));
+        assertEq(t.flushes(), 1, "the attacker flushed inside the call");
+        assertEq(t.flushFailed(), 0, "the flush went through");
+        (, uint256 booked,) = core.creditInfo(id);
+        assertEq(booked, ceiling, "no gap, no payment: the cost basis is the price");
+        uint256 fees = address(core).balance + ceiling - balance;
+        assertGt(fees, 0, "the Core received the push");
+        assertEq(
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), booked0 + fees - ceiling, "the push is booked"
+        );
+        assertEq(
+            address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "every wei is booked"
+        );
+    }
+
     using stdStorage for StdStorage;
     using FixedPointMathLib for uint256;
 
@@ -572,64 +605,6 @@ contract ReceiveTest is FeeBase {
         );
     }
 
-    /// the hook pushes eth to the router while `buyListing` is measuring the cost and the attacker flushes the router
-    /// inside the call. the core refuses the fee source then (V2R-1): the flush fails whole, the fees wait in the
-    /// router, the measured cost is the price paid and a flush right after books them
-    function test_receiveMidBuyListing() public {
-        SwapMidListing t = new SwapMidListing(router, address(core), launchKey);
-        t.setFeeRouter(address(feeRouter));
-        _allow(address(t));
-        _stock();
-        _fundPot(1 ether);
-        uint256 id = _credits(address(t), 1)[0];
-        uint256 ceiling = core.ethRate();
-        uint256 swapEth = ceiling * 5;
-        vm.deal(address(t), swapEth);
-        t.arm(id, swapEth);
-
-        uint256 pot = core.ethPot();
-        uint256 balance = address(core).balance;
-        uint256 routerBefore = address(feeRouter).balance;
-        vm.prank(keeper);
-        core.buyListing(ceiling, hex"deadbeef", id, address(t));
-        assertEq(CREDITS.ownerOf(id), address(core));
-        assertEq(t.flushFailed(), 1, "the mid call flush failed");
-        assertGt(address(feeRouter).balance, routerBefore, "the fees wait in the router");
-        // no gap, so no payment: the cost is the price
-        assertEq(core.ethPot(), pot - ceiling, "the cost is exact");
-        assertEq(address(core).balance, balance - ceiling);
-        assertEq(
-            address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "consistent"
-        );
-        assertGt(_flush(), 0, "the next flush delivers the fees");
-        assertEq(
-            address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "booked once"
-        );
-    }
-
-    /// the same during `redeemStatement`
-    function test_receiveMidRedeem() public {
-        _stock();
-        MockBalanceToken token = new MockBalanceToken("Balance Token", "XT");
-        SwapMidRedeem m = new SwapMidRedeem(token, UNIT, router, launchKey, 1 ether);
-        m.setFeeRouter(address(feeRouter));
-        vm.deal(address(m), 1 ether);
-        _setBalanceModule(address(m));
-        _setBalanceMode(2);
-        Composed memory c = _composeOnce();
-        _makeEligible(c.sid);
-        uint256 pot = core.ethPot();
-        uint256 gas0 = address(this).balance;
-        core.redeemStatement(c.sid);
-        // the mid redemption flush failed whole: the pot only fell by the gas repay the caller received, nothing is unbooked
-        assertEq(m.flushFailed(), 1, "the mid call flush failed");
-        assertGt(address(feeRouter).balance, 0, "the fees wait in the router");
-        assertEq(core.ethPot(), pot - (address(this).balance - gas0), "nothing booked mid redemption");
-        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(), 0);
-        assertGt(core.balancePot(), 0);
-        core.skim();
-        assertEq(core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance);
-    }
 }
 
 /// `receive()` under every setting the owner can reach, and in the middle of every call that measures
@@ -753,78 +728,6 @@ contract ReceiveSettingsTest is FeeBase {
             assertLt(coin.totalSupply(), supply);
             assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "no surplus, no deficit");
         }
-    }
-
-    /// the push inside `buyListing`'s measurement under changed settings (keeper fee). nothing is booked
-    /// then, the push only lowers the measured cost, and the payment is capped at the bid less the cost
-    function test_receiveMidBuyListingAcrossSettings() public {
-        SwapMidListing t = new SwapMidListing(router, address(core), launchKey);
-        t.setFeeRouter(address(feeRouter));
-        _allow(address(t));
-        _stock();
-        _fundPot(1 ether);
-        uint256 snap = vm.snapshotState();
-        uint256[3] memory fees = [uint256(0), 0.0005 ether, 0.005 ether];
-        for (uint256 i; i < 3; ++i) {
-            vm.revertToState(snap);
-            _midListingCase(t, fees[i]);
-        }
-    }
-
-    /// @dev one setting row of `test_receiveMidBuyListingAcrossSettings` (a helper so the locals fit the stack)
-    function _midListingCase(SwapMidListing t, uint256 fee) internal {
-        {
-            Settings memory s = core.settings();
-            // forge-lint: disable-next-line(unsafe-typecast)
-            s.keeperFee = uint64(fee);
-            _setSettings(s);
-        }
-        uint256 id = _credits(address(t), 1)[0];
-        uint256 ceiling = core.ethRate();
-        uint256 swapEth = ceiling * 5;
-        vm.deal(address(t), swapEth);
-        t.arm(id, swapEth);
-        uint256 pot = core.ethPot();
-        // the mid call flush fails (V2R-1), so the cost is the price and the payment cap (bid less cost) is zero
-        uint256 cost = ceiling;
-        uint256 paid = 0;
-        uint256 keeper0 = keeper.balance;
-        vm.prank(keeper);
-        core.buyListing(ceiling, hex"deadbeef", id, address(t));
-        assertEq(CREDITS.ownerOf(id), address(core));
-        assertEq(keeper.balance - keeper0, paid, "the payment is capped at the bid less the cost");
-        assertEq(core.ethPot(), pot - cost - paid, "the cost is exact");
-        assertEq(t.flushFailed(), 1, "the mid call flush failed");
-        assertEq(
-            address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), "consistent"
-        );
-    }
-
-    /// the push inside `redeemStatement`'s measurement, with the redemption split and the wait taken from the settings
-    function test_receiveMidRedeemAcrossSettings() public {
-        _stock();
-        MockBalanceToken token = new MockBalanceToken("Balance Token", "XT");
-        SwapMidRedeem m = new SwapMidRedeem(token, UNIT, router, launchKey, 1 ether);
-        m.setFeeRouter(address(feeRouter));
-        vm.deal(address(m), 1 ether);
-        _setBalanceModule(address(m));
-        _setBalanceMode(2);
-        Composed memory c = _composeOnce();
-        // an eth lane statement is not eligible until its asking price falls to its cost
-        vm.expectRevert(ICore.NotEligible.selector);
-        core.redeemStatement(c.sid);
-        _makeEligible(c.sid);
-        uint256 pot = core.ethPot();
-        uint256 gas0 = address(this).balance;
-        uint256 rating = core.ratingOf(c.sid);
-        core.redeemStatement(c.sid);
-        // the swap mid redemption booked nothing: the pot only fell by the gas repay the caller received
-        assertEq(m.flushFailed(), 1, "the mid call flush failed");
-        assertEq(core.ethPot(), pot - (address(this).balance - gas0), "nothing booked mid redemption");
-        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(), 0);
-        assertEq(core.balancePot(), rating * UNIT, "the whole redemption went to the bid pot");
-        core.skim();
-        assertEq(core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance);
     }
 
     /// two statements are composed. one transaction swaps in the real pool (the skim hook pushes into `receive`), buys

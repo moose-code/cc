@@ -187,16 +187,16 @@ contract ReviewPort is Fixture {
         assertEq(_burnOneSlice(), base, "the slice buys the same coin with the attempt made");
     }
 
-    // ------------------------------------------------------------------ P-5 forbidden targets
+    // ------------------------------------------------------------------ P-5 forbidden adapters
 
-    /// regression for P-5: permit2, the v4 position manager and the universal router cannot become targets
-    function test_FIXED_permit2AndRoutersAreForbiddenTargets() public {
+    /// regression for P-5: permit2, the v4 position manager and the universal router cannot become adapters
+    function test_FIXED_permit2AndRoutersAreForbiddenAdapters() public {
         address[3] memory banned = [Mainnet.PERMIT2, Mainnet.POSITION_MANAGER, Mainnet.UNIVERSAL_ROUTER];
         for (uint256 i; i < banned.length; ++i) {
             vm.prank(owner);
             vm.expectRevert(ICore.ForbiddenTarget.selector);
-            core.addTarget(banned[i]);
-            assertFalse(core.allowedTarget(banned[i]));
+            core.addAdapter(banned[i]);
+            assertFalse(core.allowedAdapter(banned[i]));
         }
     }
 

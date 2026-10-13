@@ -2,15 +2,13 @@
 pragma solidity ^0.8.28;
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {ICredits, IStatements, IBalanceModule, Mainnet} from "../../src/interfaces/Interfaces.sol";
-import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
+import {ICredits, Mainnet} from "../../src/interfaces/Interfaces.sol";
 import {TestSwapRouter} from "../utils/TestSwapRouter.sol";
 import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
 
 /// the v2 hook pays the pool fee to the fee router, not to the core: these attackers flush the router right after each
-/// swap, which is the call that lands the eth in the core's `receive()`. inside a measured call the core refuses the
-/// router (V2R-1), so the flush fails whole and the attacker swallows the failure: `flushes` counts the tries,
-/// `flushFailed` the ones that reverted
+/// swap, which is the call that lands the eth in the core's `receive()`. `flushes` counts the tries, `flushFailed` the
+/// ones that reverted
 abstract contract Flushes {
     IFeeRouter public feeRouter;
     uint256 public flushes;
@@ -29,8 +27,8 @@ abstract contract Flushes {
     }
 }
 
-/// a listing target that swaps in the real pool in the middle of the core's `buyListing` measurement, so the skim
-/// hook pushes eth into the core's `receive()` while the core's measuring flag is set. it then delivers its credit
+/// a listing target that swaps in the real pool in the middle of the core's `buyListing` call, so the skim hook pushes
+/// eth into the core's `receive()` during the call. it then delivers its credit
 contract SwapMidListing is Flushes {
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
 
@@ -55,41 +53,6 @@ contract SwapMidListing is Flushes {
         router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
         _flush();
         CREDITS.transferFrom(address(this), core, creditId);
-    }
-
-    receive() external payable {}
-}
-
-/// a balance module that swaps in the real pool in the middle of the core's `redeemStatement` measurement, so the skim
-/// hook pushes eth into the core's `receive()` while the core's measuring flag is set. it pays like the stand in
-contract SwapMidRedeem is IBalanceModule, Flushes {
-    MockBalanceToken public immutable token;
-    uint256 public immutable unit;
-    TestSwapRouter public immutable router;
-    PoolKey internal key;
-    uint256 public swapEth;
-
-    constructor(MockBalanceToken token_, uint256 unit_, TestSwapRouter router_, PoolKey memory key_, uint256 swapEth_) {
-        token = token_;
-        unit = unit_;
-        router = router_;
-        key = key_;
-        swapEth = swapEth_;
-    }
-
-    function balanceToken() external view returns (address) {
-        return address(token);
-    }
-
-    function unitPerPoint() external view returns (uint256) {
-        return unit;
-    }
-
-    function redeem(uint256 statementId) external returns (uint256 out) {
-        router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
-        _flush();
-        out = IStatements(Mainnet.STATEMENTS).creditScoreOf(statementId) * unit;
-        token.mint(msg.sender, out);
     }
 
     receive() external payable {}

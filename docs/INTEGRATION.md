@@ -10,8 +10,8 @@ units. a rate is wei per credit. every credit has the same price, the rate. ever
 |---|---|---|
 | Credits | 0x97630aA70AB14ed9883B41dAfccBc11349723043 | constant `Mainnet.CREDITS` |
 | Statements | 0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b | constant `Mainnet.STATEMENTS` |
-| CreditStrategy | 0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6 | allowed target of `buyListing` at launch |
-| Seaport 1.6 | 0x0000000000000068F116a894984e2DB1123eB395 | allowed target of `buyListing` at launch |
+| CreditStrategy | 0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6 | venue of `CreditStrategyAdapter` |
+| Seaport 1.6 | 0x0000000000000068F116a894984e2DB1123eB395 | venue of `SeaportBasicAdapter` |
 | pool manager | 0x000000000004444c5dc75cB358380D2e3dE08A90 | uniswap v4, holds the coin pool |
 | Core | the `core` line of the `Deploy` output | custody and every rule |
 | coin | `core.COIN()` | launched through the artcoins v2 factory |
@@ -58,27 +58,43 @@ the batch size is bounded by the transaction gas cap: the largest batch under 16
 
 `sellForBalance(ids)` and `(ids, minOut)` are the balance side door (docs/SPEC.md section 9). they run at `balanceMode` 2 and pay each credit `score * unit * (10_000 - balanceBidMarginBps) / 10_000` in balance token from `balancePot`, with `unit` the lower of the stored and the live `unitPerPoint()`. the credit enters the pile with an eth cost basis of the score-scaled eth backstop, the remembered peak of the eth bid times `max(1, score / refScore)`, at least 1 wei, and `CreditBought(id, caller, cost)` carries that basis. the basis reads no pool, so the bid needs no pool key and records the same basis whatever the pool price. they revert `BalanceModeOff` below mode 2 and `Retired` after `migrate`; `lens.balanceBidOf(id)` quotes the payout.
 
-## 4. door 2: buy a listed credit through an allowed marketplace
+## 4. door 2: buy a listed credit through an approved adapter
 
-`buyListing(uint256 value, bytes data, uint256 id, address target)`. the caller supplies the complete calldata for the marketplace and is paid from `ethPot` for the gas of the call. the Core pays with its own eth and the credit arrives at the Core.
+`buyListing(address adapter, uint256 id, bytes params)`. the adapter prices the listing from the venue's own data and answers the one call the Core makes. the caller is paid from `ethPot` for the gas of the call. the Core pays with its own eth and the credit arrives at the Core.
+
+an adapter implements `IListingAdapter.price(id, params)` and returns `(target, value, data)`. the owner approves adapters (`addAdapter`, `removeAdapter`, `lockAdapters`). the launch adapters are in `core.allowedAdapter(adapter)`.
 
 sequence for a keeper:
 
-1. find a listing of credit `id` on an allowed target: Seaport 1.6 or the CreditStrategy at launch (`core.allowedTarget(target)`).
-2. check the room: `price <= core.ethRate()` and `price <= core.ethPot()`.
-3. build the calldata that makes the target deliver `id` to the Core. for Seaport the recipient of the order is the Core. for the CreditStrategy the call is `sellTargetNFT(id)` with `value` equal to `nftForSale(id)`. `test/GasCap.t.sol` runs a basic order, a basic order with a fee recipient, an advanced order and the CreditStrategy.
-4. call `core.buyListing(value, data, id, target)`. `value` is the eth the Core forwards, at most the ceiling.
+1. find a listing of credit `id` and the adapter of its venue: `SeaportBasicAdapter` for a Seaport 1.6 basic order, `CreditStrategyAdapter` for the CreditStrategy.
+2. read `adapter.price(id, params)` and check the room: `value <= core.ethRate()` and `value <= core.ethPot()`.
+3. call `core.buyListing(adapter, id, params)`.
+
+`SeaportBasicAdapter`: `params = abi.encode(BasicOrderParameters)`, the struct of `fulfillBasicOrder_efficient_6GL6yc` (`src/interfaces/ISeaport.sol`). the order must offer exactly credit `id` (`offerToken` Credits, `offerIdentifier` `id`, `offerAmount` 1), pay native eth (`considerationToken` 0, `considerationAmount` above 0), use an open route (`ETH_TO_ERC721_FULL_OPEN` or `ETH_TO_ERC721_PARTIAL_OPEN`), and every additional recipient must be on the allowlist of the adapter (`allowedRecipient`, the OpenSea fee collector at launch). `value` is `considerationAmount` plus every additional amount, the target is Seaport and the Core is the buyer. a restricted route, a recipient off the allowlist, a wrong token or a wrong id makes `price` revert, and the Core answers `BadQuote`.
+
+```solidity
+bytes memory params = abi.encode(order); // order: BasicOrderParameters signed by the seller
+core.buyListing(seaportAdapter, id, params);
+```
+
+`CreditStrategyAdapter`: `params` is empty. `value` is `nftForSale(id)` of the CreditStrategy and the call is `sellTargetNFT(id)`. `price` reverts `NotForSale` when `nftForSale(id)` is 0.
+
+```solidity
+core.buyListing(strategyAdapter, id, "");
+```
 
 what the call does, in order:
 
-1. the fee pull of section 7, before anything is measured.
-2. `TargetNotAllowed` when the target is not allowed or is a forbidden contract. `ZeroId`. `AlreadyOwned` when the Core owns the credit. `PotTooSmall`, `AboveCeiling` (value above `ethRate()`).
-3. the Core calls `target` with `value` and `data`. `CallFailed` when it reverts. during the call the router cannot flush into the Core (`Measuring`), so the pull waits for the next door.
-4. the Core checks that exactly one credit arrived and that it is `id` (`NoCredit`), that the eth balance fell (`BadCost`) and that the fall is at most `value` (`BadCost`). the fall is the cost, so a target that refunds part of `value` lowers the cost, and a consideration item that the caller appends to a Seaport order is paid from `value` and counts as cost.
-5. the payment is `min(min(counted gas, BUYLISTING_GAS) * min(block.basefee, keeperMaxBaseFee) + keeperFee, ceiling - cost)`, paid to the caller last. counted gas is the gas measured from the first line of `buyListing` (the fee pull included) plus 250,000 for the work after the count, the transaction base cost and calldata. `BUYLISTING_GAS` is 1,500,000. `keeperFee` is paid whole. the base fee is used and the priority fee is not refunded. the cap `ceiling - cost` is the bid less the listing cost, and the bid is at most `ethPot`, so cost plus payment never exceeds the bid.
-6. `cost + payment` is spent from the pot and is the cost basis of the credit. event `ListingBought(id, target, caller, cost, paid, rate)`.
+1. the fee pull of section 7, before the listing is priced.
+2. `AdapterNotAllowed` when the adapter is not approved. `ZeroId`. `AlreadyOwned` when the Core owns the credit.
+3. the Core reads `adapter.price(id, params)` by a static call capped at 300,000 gas and 8,192 bytes of answer. a revert, a gas overrun, an answer of fewer than three words or an answer of more than 8,192 bytes reverts `BadQuote`.
+4. `ForbiddenTarget` when the target is a forbidden contract. `ZeroAmount` when `value` is 0. `PotTooSmall` when `value` is above `ethPot`, `AboveBid` when it is above `ethRate()`.
+5. the Core calls `target` with exactly `value` and `data`. `CallFailed` when it reverts.
+6. the Core checks that exactly one credit arrived and that it is `id` (`NoCredit`) and that the eth balance fell by at most `value` (`BadCost`). eth that arrives during the call stays unbooked until `skim()`.
+7. the payment is `min(min(counted gas, BUYLISTING_GAS) * min(block.basefee, keeperMaxBaseFee) + keeperFee, bid - value)`, paid to the caller last. counted gas is the gas measured from the first line of `buyListing` (the fee pull and the quote included) plus 250,000 for the work after the count, the transaction base cost and calldata. `BUYLISTING_GAS` is 1,500,000. `keeperFee` is paid whole. the base fee is used and the priority fee is not refunded. the cap `bid - value` is the bid less the listing price, and the bid is at most `ethPot`, so value plus payment never exceeds the bid.
+8. `value + payment` is spent from the pot and is the cost basis of the credit. event `ListingBought(id, adapter, caller, cost, paid, rate)` with `cost` equal to `value`.
 
-keeper economics: the caller's profit is the payment plus anything it appends to the order for itself, less its own gas cost at the base fee plus its priority fee. the caller writes the target calldata. Seaport lets the fulfiller append consideration items (or additional recipients in a basic order) that the seller signature does not cover. the Core pays them from `value` and they count as `cost`, so the fastest caller can add itself as a recipient and take up to the whole gap `ceiling - cost` between the bid and the listing price. the engine pays at most its bid for the credit, the same outcome as buying the listing on Seaport and selling the credit with `sellForEth` at the bid, and competing callers bid priority fees for whole gaps. a caller that appends nothing is paid the payment of step 5: a gap above the full payment pays counted gas plus `keeperFee`. counted gas exceeds the gas of the transaction by 19,000 to 31,000 on the measured paths, so that caller earns `keeperFee` plus that margin at the base fee, less its priority fee. a smaller gap pays the whole gap, so the caller profits when the gap exceeds its gas cost. at 2 gwei and no priority fee a basic Seaport order costs the caller about 0.00086 eth, so the payment alone breaks even at a gap of that size (10 percent under the opening bid of 0.0089 eth) and a gap above 0.0014 eth pays about 0.00054 eth net (`test/Seaport.t.sol` `SeaportCallerPayTest`).
+keeper economics: the adapter refuses a payout to the caller, so the payment of step 7 is the caller's whole income and the engine keeps the gap between the bid and the listing price. a gap above the full payment pays counted gas plus `keeperFee`. counted gas exceeds the gas of the transaction by 19,000 to 31,000 on the measured paths, so the caller earns `keeperFee` plus that margin at the base fee, less its priority fee. a smaller gap pays the whole gap, so the caller profits when the gap exceeds its gas cost. at 2 gwei and no priority fee a basic Seaport order costs the caller about 0.00086 eth, so the payment alone breaks even at a gap of that size (10 percent under the opening bid of 0.0089 eth) and a gap above 0.0014 eth pays about 0.00054 eth net (`test/Seaport.t.sol` `SeaportCallerPayTest`).
 
 ## 5. compose
 
@@ -181,7 +197,7 @@ what a successor has to implement: a `receive()` that accepts a plain eth call, 
 | `flushToCore`, `flushToPayees` | what `flush()` sends now |
 | `controller`, `successor` | the addresses now |
 | `balanceModule`, `balanceToken`, `balanceMode`, `unitPerPoint` | the balance side module and token (zero until set), the mode (0 off, 1 hold, 2 on) and the stored unit |
-| `controllerLocked`, `balanceModuleLocked`, `targetsLocked`, `successorLocked` | the four one way locks |
+| `controllerLocked`, `balanceModuleLocked`, `adaptersLocked`, `successorLocked` | the four one way locks |
 | `statements` | `StatementView[]` |
 
 | `StatementView` field | meaning |
@@ -217,7 +233,7 @@ the Core (`src/interfaces/ICore.sol`):
 | `UnitPerPointRefreshed` | `address balanceModule, uint256 unitPerPoint` | `refreshUnitPerPoint`: the stored unit re-read from the current module, which works after `lockBalanceModule` |
 | `RedeemBurnReleased` | `uint256 amount` | `releaseRedeemBurn`: `amount` moved from the redeem burn reserve (`ethRedeemBurn`) into the coin buyback pot (`ethToBuyback`) |
 | `FeesAdded` | `uint256 amount` | `receive()` booked a flush of the fee router: `feeToBuybackBps` of it to the coin buyback pot, `feeToRedeemBurnBps` to the redeem burn reserve, the rest to `ethPot` |
-| `ListingBought` | `uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate` | `buyListing`. `cost` is the eth the target took, `paid` the payment to the caller, `rate` the price state after the fill. the cost basis of the credit is `cost + paid` |
+| `ListingBought` | `uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate` | `buyListing`. `cost` is the eth the adapter quoted and the Core sent, `paid` the payment to the caller, `rate` the price state after the fill. the cost basis of the credit is `cost + paid` |
 | `EngineRetired` | `address indexed successor` | the first `migrate`, once. the Core refuses the six doors from then on |
 | `Migrated` | `address indexed successor, uint256 eth, uint256 balanceTokens, uint256 credits` | `migrate`: eth moved (`ethPot`), balance token moved (`balancePot`), credits moved |
 | `BalanceTokenMigrationSkipped` | `address indexed successor, uint256 amount` | `migrate`: the balance token `transfer` of `amount` (`balancePot`) reverted or returned false. `balancePot` stays in the Core, the other legs went through |
@@ -232,9 +248,8 @@ the Core (`src/interfaces/ICore.sol`):
 | `StatementSoldTo` | `uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback` | `sellTo` (the controller `buy` path): the statement went to `buyer` for `price`, booked at once: `toBuyback` to the coin buyback pot, the rest to `ethPot` |
 | `SuccessorLocked` | (empty) | `lockSuccessor` |
 | `SuccessorSet` | `address successor` | `setSuccessor` |
-| `TargetAdded` | `address target` | `addTarget` (Seaport and CreditStrategy at construction) |
-| `TargetRemoved` | `address target` | `removeTarget` |
-| `TargetsLocked` | (empty) | `lockTargets` |
+| `AdapterSet` | `address indexed adapter, bool allowed` | `addAdapter`, `removeAdapter` and the constructor (the launch adapters) |
+| `AdaptersLocked` | (empty) | `lockAdapters` |
 
 the controller (`src/interfaces/IControllerV1.sol`):
 
@@ -281,9 +296,9 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 
 | error | raised by | meaning |
 |---|---|---|
-| `AboveCeiling()` | `buyListing` | `value` is above `ethRate()` |
+| `AboveBid()` | `buyListing` | the quoted `value` is above `ethRate()` |
 | `AlreadyOwned()` | `buyListing` | the Core already owns the credit |
-| `BadCost()` | `buyListing` | the eth balance did not fall, or fell by more than `value` |
+| `BadCost()` | `buyListing` | the eth balance fell by more than `value` |
 | `BadFormat()` | `compose`, `composeChosen` | the format is above 7 |
 | `BelowMinCc()` | `composeChosen` | the caller holds less coin than `minCcToChoose` |
 | `ChosenComposeOff()` | `composeChosen` | chosen composition is off |
@@ -300,11 +315,10 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `CallFailed()` | `buyListing`, `migrate` | the target call reverted, or the successor refused the eth |
 | `Empty()` | `sellForEth`, `sellForBalance`, `adopt` | an empty id list |
 | `BalanceTokenChanged()` | `setBalanceModule`, `refreshUnitPerPoint` | the module names another balanceToken |
-| `ForbiddenTarget()` | `addTarget` | the target is a contract the Core refuses to call |
+| `ForbiddenTarget()` | `addAdapter`, `buyListing` | the address is a contract the Core refuses to approve or to call |
 | `Held()` | `rescueNft` | the statement is on the books of the Core |
 | `InPile()` | `adopt`, `rescueNft` | the credit is in the pile |
-| `Locked(bytes32 what)` | owner setters | the door `what` (`controller`, `balanceModule`, `targets`, `successor`) is locked |
-| `Measuring()` | `receive` | the fee router sent eth while a measured external call of the Core was running |
+| `Locked(bytes32 what)` | owner setters | the door `what` (`controller`, `balanceModule`, `adapters`, `successor`) is locked |
 | `NoCode(address who)` | constructor, `setSuccessor` | the address has no code |
 | `NoCredit()` | `buyListing` | the target call did not deliver exactly the credit `id` to the Core |
 | `NoBalanceModule()` | `redeemStatement`, `sellForBalance`, `refreshUnitPerPoint`, `lockBalanceModule` | no balance module is set |
@@ -325,7 +339,8 @@ the Core. an error named here is declared in `ICore`, and the ones raised inside
 | `Reentrancy()` | guarded functions | a guarded function was entered while another guarded call runs |
 | `SliceTooSmall()` | `buyback` | the slice is under twice the largest payment to the caller: 600,000 gas at the capped base fee plus `keeperFee` |
 | `Slippage()` | `sellForEth`, `sellForBalance` | total payout below `minOut` |
-| `TargetNotAllowed()` | `buyListing` | the target is not on the allowlist, or it is a forbidden contract |
+| `AdapterNotAllowed()` | `buyListing` | the adapter is not approved |
+| `BadQuote()` | `buyListing` | the adapter reverted, ran out of gas or answered with fewer than three words or more than 8,192 bytes |
 | `NotForSale()` | `sellTo` | the Core does not hold the statement |
 | `NotEligible()` | `redeemStatement` | the statement's curve price has not reached its floor (`atFloor` is false), or the controller did not answer |
 | `BalanceModeOff()` | `redeemStatement`, `sellForBalance` | `balanceMode` is 0 (off), or below 2 for the balance token bid |
@@ -378,12 +393,11 @@ measured on the pinned fork with foundry 1.8.1. `tx` includes the intrinsic 21,0
 | `flush`, most expensive case (four payees that burn all their gas) | 639,876 | `test/PullFees.t.sol` `test_worstCaseFlushGasAndTheDoorCompletes` |
 | `flush` with the split on, two payees | tx 139,228 | `test/GasCap.t.sol` `test_gas_routerFlush` |
 | `flush` that turns the split on | tx 104,997 | `test/GasCap.t.sol` `test_gas_routerFlush_firstAtSplitStart` |
-| `buyListing` through the CreditStrategy | tx 436,005 | `test/GasCap.t.sol` `test_gas_buyListing_creditStrategy` |
-| `buyListing` through the CreditStrategy, router holding 1 eth | tx 471,684 | `test_gas_buyListing_creditStrategy_routerLoaded` |
-| `buyListing` through the CreditStrategy, router holding 1 eth, four gas burning payees (the largest; `BUYLISTING_GAS` is 1.59 times its transaction gas) | tx 946,013 | `test_gas_buyListing_creditStrategy_routerWorstCaseFlush` |
-| `buyListing` through Seaport, basic order | tx 448,223 | `test_gas_buyListing_seaport_basic` |
-| `buyListing` through Seaport, basic order with a fee recipient | tx 485,554 | `test_gas_buyListing_seaport_basicWithFee` |
-| `buyListing` through Seaport, advanced order | tx 462,112 | `test_gas_buyListing_seaport_advanced` |
+| `buyListing` through the CreditStrategy adapter | tx 438,844 | `test/GasCap.t.sol` `test_gas_buyListing_creditStrategy` |
+| `buyListing` through the CreditStrategy adapter, router holding 1 eth | tx 481,420 | `test_gas_buyListing_creditStrategy_routerLoaded` |
+| `buyListing` through the CreditStrategy adapter, router holding 1 eth, four gas burning payees (the largest; `BUYLISTING_GAS` is 1.57 times its transaction gas) | tx 955,749 | `test_gas_buyListing_creditStrategy_routerWorstCaseFlush` |
+| `buyListing` through the Seaport adapter, basic order | tx 447,872 | `test_gas_buyListing_seaport_basic` |
+| `buyListing` through the Seaport adapter, basic order with a fee recipient | tx 488,228 | `test_gas_buyListing_seaport_basicWithFee` |
 | `compose()`, 80 credits, first compose | tx 8,484,004 after the refund, 10.60 million before it (refund 2.12 million), 11.1 million before it with a loaded router of four gas burning payees | `test/GasCap.t.sol` `test_gas_compose_ethLane_firstCold`, `test/CallerPay.t.sol` |
 | `compose()`, second compose | tx 8,444,792 | `test_gas_compose_ethLane_secondWarmAndCold` |
 | `ControllerV1.nextPage`, full pile, cold | 238,062 (the Core allows 500,000) | `test_gas_readCaps_nextPage` |

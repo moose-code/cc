@@ -45,6 +45,7 @@ struct Wiring {
     address v1;
     FuzzController fuzz;
     ProbeTarget probe;
+    address rawAdapter;
     MockBalanceModule module;
     MockBalanceToken balanceToken;
     bool canSwapController;
@@ -189,6 +190,7 @@ abstract contract HandlerBase is Test {
     address public v1;
     FuzzController public fuzz;
     ProbeTarget public probe;
+    address public rawAdapter;
     MockBalanceModule public module;
     MockBalanceToken public balanceToken;
     bool public canSwapController;
@@ -301,6 +303,7 @@ abstract contract HandlerBase is Test {
         v1 = w.v1;
         fuzz = w.fuzz;
         probe = w.probe;
+        rawAdapter = w.rawAdapter;
         module = w.module;
         balanceToken = w.balanceToken;
         canSwapController = w.canSwapController;
@@ -526,7 +529,7 @@ abstract contract HandlerBase is Test {
 
     /// the `buyListing` call of a listing action on a retired core
     function _retiredListing(uint8 a, address target) internal returns (bool) {
-        return _retiredRefusal(a, keeper, abi.encodeCall(ICore.buyListing, (1, "", 1, target)));
+        return _retiredRefusal(a, keeper, abi.encodeCall(ICore.buyListing, (target, 1, "")));
     }
 
     /// the credits an actor holds, at most the first one: the argument of a call a retired core refuses
@@ -1334,7 +1337,7 @@ abstract contract HandlerBase is Test {
         uint256 value = variant == 0 ? price - 1 : price;
         uint256 dataId = variant == 1 ? candidates[(pick % n + 1) % n] : id;
         bytes memory data = abi.encodeCall(ICreditStrategy.sellTargetNFT, (dataId));
-        _listing(a, id, value, data, STRATEGY, price, allowed && variant > 1);
+        _listing(a, id, value, data, STRATEGY, 0, allowed && variant > 1);
     }
 
     /// buy through a hostile target. only the honest modes may succeed, every other mode must revert and leave
@@ -1343,7 +1346,7 @@ abstract contract HandlerBase is Test {
         uint8 a = A_LISTING_HOSTILE;
         if (_retiredListing(a, address(probe))) return;
         uint256 n = probeIds.length;
-        if (n < 2 || !core.allowedTarget(address(probe))) return _skip(a);
+        if (n < 2 || !core.allowedAdapter(rawAdapter)) return _skip(a);
         uint256 id = probeIds[pick % n];
         uint256 wrongId = probeIds[(pick % n + 1) % n];
         if (gone[id] || gone[wrongId]) return _skip(a);
@@ -1356,9 +1359,10 @@ abstract contract HandlerBase is Test {
         uint256 value = cap / 2 + 1;
         bytes memory data = abi.encodeCall(ProbeTarget.fill, (id, wrongId));
         uint256 t0 = address(probe).balance;
-        uint256 expectCost = m == 5 ? value - value / 2 : value;
+        // the probe sends part of the value back in modes 4 and 5
+        uint256 refund = m == 4 ? value + 1 : (m == 5 ? value / 2 : 0);
         bool hon = probe.honest(m);
-        _listing(a, id, value, data, address(probe), expectCost, hon);
+        _listing(a, id, value, data, address(probe), refund, hon);
         if (!hon && viol[V_HOSTILE_OK] == 0 && address(probe).balance != t0) {
             // a hostile mode that reverted must also leave the target's eth where it was
             _flag(V_REVERT_CHANGED, "hostile target eth moved without a buy");
@@ -1377,14 +1381,15 @@ abstract contract HandlerBase is Test {
         Pull pull;
     }
 
-    /// the shared body of the three listing actions. `expectCost` is the cost the target should produce.
+    /// the shared body of the listing actions, through the test adapter. `refund` is the eth the target sends back to the
+    /// core during the call, which stays unbooked
     function _listing(
         uint8 a,
         uint256 id,
         uint256 value,
         bytes memory data,
         address target,
-        uint256 expectCost,
+        uint256 refund,
         bool expect
     ) internal {
         LPre memory p;
@@ -1401,9 +1406,9 @@ abstract contract HandlerBase is Test {
         vm.recordLogs();
         _att(a);
         vm.prank(keeper);
-        try core.buyListing(value, data, id, target) {
+        try core.buyListing(rawAdapter, id, abi.encode(target, value, data)) {
             _ok(a);
-            _afterListing(a, id, value, expectCost, p, rs.st);
+            _afterListing(a, id, value, refund, p, rs.st);
         } catch (bytes memory why) {
             _failed(p.pull.bal0, p.pull.pot0, p.pull.rate0, "buyListing");
             rs = p.pull.rs0;
@@ -1412,7 +1417,7 @@ abstract contract HandlerBase is Test {
         _rsCheck(rs, 0);
     }
 
-    function _afterListing(uint8 a, uint256 id, uint256 value, uint256 expectCost, LPre memory p, Settings memory st)
+    function _afterListing(uint8 a, uint256 id, uint256 value, uint256 refund, LPre memory p, Settings memory st)
         internal
     {
         _pullChecks(p.pull, vm.getRecordedLogs());
@@ -1420,17 +1425,14 @@ abstract contract HandlerBase is Test {
             _flag(V_HOSTILE_OK, "a hostile listing target got a buy through");
         }
         uint256 paid = keeper.balance - p.keeperBal;
-        uint256 outflow = p.bal - address(core).balance;
-        uint256 cost = outflow - paid;
-        if (cost != expectCost) _flag(V_ETH_OUT, "listing cost differs from what the target should charge");
+        uint256 cost = value;
         // the rate was read before the action. the ceiling of the buy and the payment rule are checked against it
         uint256 ceiling = p.ceiling;
         if (value > ceiling) _flag(V_ABOVE_CAP, "listing value above the ceiling");
-        if (cost > value) _flag(V_ABOVE_CAP, "listing cost above the value");
         if (cost + paid > ceiling) _flag(V_ABOVE_CAP, "listing cost plus payment above the ceiling");
         _listingPayChecks(paid, ceiling > cost ? ceiling - cost : 0, st);
         uint256 potLeft = _recordSpend(cost + paid, p.pot);
-        _eth(p.bal, paid + expectCost, 0, "buyListing");
+        _eth(p.bal, paid + cost, refund, "buyListing");
         if (core.ethPot() != potLeft) _flag(V_POT, "listing pot not reduced by cost and the payment");
         uint256 stored = _dropped(st, p.price, p.minuteStart);
         if (core.rateAtCheckpoint() != stored || core.ethRate() != _readAfterFill(st, stored, potLeft)) {

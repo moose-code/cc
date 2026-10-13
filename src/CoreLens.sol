@@ -59,7 +59,7 @@ contract CoreLens {
         uint256 unitPerPoint;
         bool controllerLocked;
         bool balanceModuleLocked;
-        bool targetsLocked;
+        bool adaptersLocked;
         bool successorLocked;
         /// whether the controller's credit sale window is on, and the seconds a credit's price falls over
         bool creditSaleOn;
@@ -132,7 +132,7 @@ contract CoreLens {
         s.unitPerPoint = core.unitPerPoint();
         s.controllerLocked = core.controllerLocked();
         s.balanceModuleLocked = core.balanceModuleLocked();
-        s.targetsLocked = core.targetsLocked();
+        s.adaptersLocked = core.adaptersLocked();
         s.successorLocked = core.successorLocked();
         (s.creditSaleOn, s.creditWindow) = _creditWindow(s.controller);
         s.refScore = _refScore(s.controller);

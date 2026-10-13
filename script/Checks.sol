@@ -48,7 +48,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the per transaction gas cap of the target chain (EIP 7825, 2^24). the launch is simulated with what is left of
     /// it, so a launch that does not fit fails the simulation row, and a collision cannot burn more than that
     uint256 internal constant TX_GAS_CAP = 16_777_216;
-    /// @dev the gas of the nine deploy transactions as the launch rehearsal measures it (17,581,727), rounded up with margin.
+    /// @dev the gas of the deploy transactions as the launch rehearsal measures it (17,581,727 for the nine transactions before the two adapters), rounded up with margin.
     /// `test/Rehearsal.t.sol` asserts that the measured total stays under it
     uint256 internal constant DEPLOY_GAS_ESTIMATE = 19_200_000;
     /// @dev the coin supply of the launch. test/Config.t.sol checks the config against it
@@ -73,11 +73,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x65b61ab7d4a83d34778925ceaf18aae53ab5e2c354efd068e7decb2f04d7ade2;
+    bytes32 internal constant BUILD_HASH_CORE = 0x970e646c12de69edff2342e055372481917e258127049cbfa57e5093e1d2b4e4;
     bytes32 internal constant BUILD_HASH_CORELIB = 0x918fc8bd7eeace40495a67eb672da397d637431845a180ed56b1be0c56fd0482;
     bytes32 internal constant BUILD_HASH_CONTROLLER = 0x107427cbe9dbd3d19a1311a09784abdb01ddf54558c7faeec5c1804db38e009e;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
-    bytes32 internal constant BUILD_HASH_LENS = 0x91e3a30775098db793b71839293b31c783ee23ea027c6bab91e3d48ff28fb04f;
+    bytes32 internal constant BUILD_HASH_LENS = 0xd1c3bff55bd0545cce6d1712949f04a9061ff483864eec4065b4c1ec83649239;
+    bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x5e67d695e48b1d52a96ff9a2a3fc0a542208b23ed22f6a1677b24686ddf1a4eb;
+    bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
         0x8ac2c0bda2684838f2b79701dbb6f4e8c531e30503408712d276c7143b9ce262;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
@@ -429,6 +431,8 @@ abstract contract LaunchChecks is PostflightChecks {
         _pinBuild("ControllerV1", BUILD_HASH_CONTROLLER);
         _pinBuild("FeeRouter", BUILD_HASH_ROUTER);
         _pinBuild("CoreLens", BUILD_HASH_LENS);
+        _pinBuild("SeaportBasicAdapter", BUILD_HASH_SEAPORT_ADAPTER);
+        _pinBuild("CreditStrategyAdapter", BUILD_HASH_STRATEGY_ADAPTER);
         bytes32 got = keccak256(vm.getCode("CoreLib.sol:CoreLib"));
         _check(
             "build: CoreLib creation code hash equals the pinned build",
@@ -809,7 +813,9 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat(
                 "Core ", vm.toString(BUILD_HASH_CORE), " CoreLib ", vm.toString(BUILD_HASH_CORELIB), " ControllerV1 ",
                 vm.toString(BUILD_HASH_CONTROLLER), " FeeRouter ", vm.toString(BUILD_HASH_ROUTER), " CoreLens ",
-                vm.toString(BUILD_HASH_LENS), " CoreLib creation ", vm.toString(BUILD_CREATION_HASH_CORELIB)
+                vm.toString(BUILD_HASH_LENS), " SeaportBasicAdapter ", vm.toString(BUILD_HASH_SEAPORT_ADAPTER),
+                " CreditStrategyAdapter ", vm.toString(BUILD_HASH_STRATEGY_ADAPTER), " CoreLib creation ",
+                vm.toString(BUILD_CREATION_HASH_CORELIB)
             )
         );
         _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));

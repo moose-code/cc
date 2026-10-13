@@ -101,6 +101,7 @@ abstract contract SystemResumer is SystemDeployer {
         d.coin = core.COIN();
         d.controller = core.controller();
         d.lens = _ensureLens(core_);
+        (d.seaportAdapter, d.strategyAdapter) = _ensureAdapters(core_, c);
         d.launchKey = poolKeyOf(d.coin, c.stack);
         d.poolId = keccak256(abi.encode(d.launchKey));
 
