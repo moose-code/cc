@@ -4,6 +4,71 @@ for integrators and keepers: the contracts, the call sequences of each door, the
 
 units. a rate is wei per credit. every credit has the same price, the rate. every credit sits in one pile and carries a cost basis in eth. bps is out of 10,000, ppm out of 1,000,000. settings values quoted below are the launch values of `script/config/mainnet.json`; `core.settings()` returns the live ones.
 
+## CreditScoreLens: scores and traits by token id
+
+`CreditScoreLens` is a standalone read-only developer helper for Ethereum mainnet. Import `src/interfaces/ICreditScoreLens.sol` and call the deployed helper address. It has no constructor arguments, mutable storage, owner or payable functions. The helper address is not yet deployed; it is separate from the engine lens.
+
+Its sources are the on-chain Credits contract at `0x97630aA70AB14ed9883B41dAfccBc11349723043`, CreditScore at `0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7`, and Statements at `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b`. The addresses are fixed in the helper's bytecode.
+
+- `creditScore(creditId)`: score of one credit. Reads its seed and payment timestamp from Credits and passes them to CreditScore.
+- `creditScores(creditIds)`: the same read for a batch, preserving order and duplicates. Empty input returns an empty array. Any unknown credit id reverts the whole call with `UnknownCredit(creditId)`; source failures propagate. Calls grow linearly with the batch size, so chunk to the RPC's call gas limit.
+- `creditRarity(creditId)`: raw sum of rarity trait points, including CreditScore's doubled eights contribution. This is neither a percentile nor the 80-to-800 point score.
+- `creditTraits(creditId)`: `(mask, active, occupied, eights, band)` from CreditScore. These are the active plate bitmask (1 to 15), inked bits across those plates, occupied raster cells after misregistration, ASCII '8' count in the seed, and registration band (0 Registered, 1 Nudge, 2 Slip, 3 Skew, 4 Drift, 5 Loose).
+- `statementScore(statementId)`: the total stored by `Statements.creditScoreOf`, including all overprinted pages. Never-composed ids return zero. Pages burned into other pages retain their historical total. Later overprints are reflected immediately. This is neither an average nor proof of ownership or redeemability.
+
+All single credit methods reject never-minted ids with `UnknownCredit(creditId)` and support burned credits, whose mint records remain on-chain. Credit scores do not change on transfer or burn. Source failures propagate from every method.
+
+Credit and statement scores use ten-thousandths of a point: `1_324_012` means `132.4012` points. One credit scores from `800_000` to `8_000_000`; a statement's summed score can be larger. Preserve the raw integer for computation. For display, format the integer quotient and four-digit remainder after division by `10_000`; do not round to whole points.
+
+```solidity
+import {ICreditScoreLens} from "./src/interfaces/ICreditScoreLens.sol";
+
+ICreditScoreLens scoreLens = ICreditScoreLens(scoreLensAddress);
+uint256 score = scoreLens.creditScore(creditId);
+uint256[] memory scores = scoreLens.creditScores(creditIds);
+uint256 statementTotal = scoreLens.statementScore(statementId);
+```
+
+The contract and generated interface contain NatSpec for every method, input and output. Regenerate only this interface with `script/tools/gen-interfaces.sh write CreditScoreLens`; check it with `script/tools/gen-interfaces.sh --check CreditScoreLens`.
+
+### Deployment and verification commands
+
+Run from the primary checkout on `main`, with a clean Forge build:
+
+```bash
+cd /Users/dd/CascadeProjects/cc/cc && git switch main && forge clean && forge build && python3 script/tools/credit-score-lens.py deploy
+```
+
+Use `python3 script/tools/credit-score-lens.py`. RPC defaults to `TENDERLY_RPC_URL` or the public Tenderly mainnet gateway. The default deployment keystore is `ripe0x`, with public sender `0xCB43078C32423F5348Cab5885911C3B5faE217F9`. Foundry checks the unlocked signer against the supplied sender. A different account needs its public `--sender`.
+
+```bash
+# Show a current-mainnet gas fee budget without opening a wallet.
+python3 script/tools/credit-score-lens.py estimate
+
+# Preview the fee, confirm, then unlock ripe0x, deploy and verify.
+python3 script/tools/credit-score-lens.py deploy
+
+# Retry source verification for an existing address, without deploying again.
+python3 script/tools/credit-score-lens.py verify --address 0xDEPLOYED_LENS
+
+# Read-only bytecode and source-result checks, with no explorer submission or wallet.
+python3 script/tools/credit-score-lens.py check --address 0xDEPLOYED_LENS
+```
+
+Deploy first enforces the release gate. After building and checking artifact identity, it runs a current-mainnet deployment simulation without a signer. It prints the gas budget (Foundry's 30% buffer), maximum fee and priority fee in gwei, and their ETH fee budget before any keystore unlock. It reuses the quoted fee settings for broadcast. The ETH figure is an estimate, not a fixed total: mined gas used and base fee determine the actual fee, and a later base-fee increase can delay inclusion. `estimate` performs the same read-only quote without the release gate, credential prompts or broadcast.
+
+Etherscan credentials come from `ETHERSCAN_API_KEY`, then Foundry's resolved configuration (including the project `.env` and its mainnet explorer entry). If absent, the CLI prompts privately in a terminal and keeps the key only for this run. It passes the key through the verification subprocess environment, never a command-line argument or saved file. Noninteractive runs must configure the key beforehand. Select `--verifier sourcify` for verification without an Etherscan key.
+
+After displaying the fee and resolving verification credentials, deploy asks for `y` to continue. Only then does Foundry open `ripe0x` and ask for its password. Cancellation sends nothing. To use Ledger, pass `--ledger --sender <address>`; to use another encrypted keystore, pass `--account <name> --sender <address>`. The tool accepts no private-key argument.
+
+Each mode accepts `--rpc-url`. Use `simulate --fork-block 26158000` for a historical simulation; omitting `--fork-block` reads current state. Read-only script subprocesses omit wallet/broadcast arguments and remove inherited signer environment settings. They run from a fresh temporary directory with a `.git` marker that bounds Foundry project discovery, plus an explicit build root. This prevents ancestor `.env` signer settings from reappearing even when `TMPDIR` points inside a project.
+
+Before signing, deploy mode calls `python3 script/director.py check --gate deploy`. The current repository gate is unmet and remains enforced; standalone helper tooling does not waive it. The user request authorized writing these scripts, not broadcasting a mainnet transaction.
+
+The tool compiles the helper and checks its reviewed runtime hash and compiler settings. `DeployCreditScoreLens.s.sol` checks chain 1 and all three source runtime hashes. A broadcast creates exactly one zero-value helper deployment and gets its own record directory under `broadcast/credit-score-lens-*`; only its successful, matching receipt supplies the address. The tool prints the address and transaction hash before explorer verification. If verification fails after deployment, use `verify --address`, not another `deploy`.
+
+`VerifyCreditScoreLens.s.sol` checks exact deployed/helper-artifact bytecode, the three source identities, and every method against direct source reads for credit ids `[1,2,3]` and statement id `1`. Results are native integers. The source-verification command uses the `viair` compilation profile and waits for Etherscan or Sourcify to report the result. Live readbacks run before and after source verification.
+
 ## 1. contracts and addresses
 
 | contract | address | where to read it |

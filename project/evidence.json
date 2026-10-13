@@ -63,6 +63,27 @@
       "source": "chain read at block 26163823, Sourcify",
       "version": 1,
       "checked": "2026-10-10"
+    },
+    "A-CREDIT-SCORE-LENS-API": {
+      "statement": "CreditScoreLens implements FLOW 88 to 91: five clear read-only methods for creditScore, creditScores, creditRarity, creditTraits and statementScore, complete on-chain NatSpec, no owner, mutable state or engine integration. Unknown credits revert; unknown statements return zero; burned records remain readable.",
+      "kind": "owner-decision",
+      "source": "docs/FLOW.md decisions 88 to 91; docs/NEXT.md helper spec; helper branch FLOW 88-97 imported on main as 99-108 (same intent, FLOW 109)",
+      "version": 1,
+      "checked": "2026-10-13"
+    },
+    "A-CREDIT-SCORE-LENS-SOURCES": {
+      "statement": "Ethereum mainnet sources at block 26158000: Credits 0x97630aA70AB14ed9883B41dAfccBc11349723043 runtime hash 0x8ab17e09de9f492357738695c934fb72062a0f1aa0c66eaf388b3fcf659d57d4; CreditScore 0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7 runtime hash 0xeea220f30cd748713b758d3cecf2a3c9e814381ace6d276390663d7e334ddf9d; Statements 0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b runtime hash 0x6ea1df2fdef523d462711ac890c1be3df13badae863912f8453018251488f6ae. All three match Sourcify exact-match source snapshots inspected 2026-10-13. Credits sealed; Statements.score points to this scorer.",
+      "kind": "fact",
+      "source": "test/CreditScoreLens.t.sol source hash assertions; docs/NEXT.md source SHA-256 table; script/DeployCreditScoreLens.s.sol",
+      "version": 1,
+      "checked": "2026-10-13"
+    },
+    "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": {
+      "statement": "FLOW 94 authorizes CreditScoreLens deployment/verification tooling, not broadcast or source publication. Deploy must enforce the configured repository gate, reviewed compiler/runtime identity and a fresh successful CREATE receipt; verify/check compare all five native-unit methods with pinned source contracts. FLOW 96 adds a wallet-free current-mainnet fee preview before unlock, quoted EIP-1559 settings reused for broadcast, Tenderly/ripe0x defaults and standard Etherscan configuration or private terminal prompt.",
+      "kind": "owner-decision",
+      "source": "docs/FLOW.md decisions 94 and 96; docs/INTEGRATION.md helper tooling; helper branch FLOW 88-97 imported on main as 99-108 (same intent, FLOW 109)",
+      "version": 2,
+      "checked": "2026-10-13"
     }
   },
   "evidence": {
@@ -2416,6 +2437,357 @@
       "dependsOn": [],
       "reviewer": "",
       "invalidated": null
+    },
+    "E-CREDIT-SCORE-LENS-TEST-135a216": {
+      "claim": "CreditScoreLens build and 17 focused fork tests pass, including 256 differential fuzz cases and transfer, burn, batch error and nested overprint cases; helper runtime 1478 bytes and hash 0xb2477fe32da0dfde830387f29295c5ad83e3438a11ecfa8994d21a92d81e7058; documented generated interfaces match the ABI.",
+      "kind": "test",
+      "sourceRevision": "135a2166acaf9bae5a6ce1ea888b80c4e3ccd96f",
+      "scope": [
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "src/interfaces/Interfaces.sol",
+        "test/CreditScoreLens.t.sol",
+        "test/utils/CreditIds.sol",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/tools/gen-interfaces.sh",
+        "script/tools/fix-interface.py",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-TOOLCHAIN": 1,
+        "A-FORK-BLOCK": 1
+      },
+      "dependsOn": [],
+      "inputs": "Ethereum mainnet block 26158000 via public https://mainnet.gateway.tenderly.co; default fuzz runs 256; test logs summarized in docs/NEXT.md",
+      "method": "forge build; forge test --match-path test/CreditScoreLens.t.sol -j 1 -vv; script/tools/gen-interfaces.sh --check; forge fmt --check src/CreditScoreLens.sol src/interfaces/ICreditScoreLens.sol script/DeployCreditScoreLens.s.sol test/CreditScoreLens.t.sol; compiled ABI/NatSpec completeness checked. Final generated-interface cleanup changed only comment spacing, with unchanged ABI and helper runtime hash, and focused recompilation passed.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "Focused helper verification only; no full suite or deep invariants. Source code hash pins establish this deployed source identity, not third-party correctness. Batch gas measurements are input-dependent. Engine launch readiness is outside this record.",
+      "invalidated": null
+    },
+    "E-CREDIT-SCORE-LENS-SCRIPT-135a216": {
+      "claim": "Isolated CreditScoreLens deployment script simulates successfully against its pinned mainnet source contracts, produces one CREATE and the verified runtime hash; no transaction broadcast.",
+      "kind": "test",
+      "sourceRevision": "135a2166acaf9bae5a6ce1ea888b80c4e3ccd96f",
+      "scope": [
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "src/interfaces/Interfaces.sol",
+        "test/CreditScoreLens.t.sol",
+        "test/utils/CreditIds.sol",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/tools/gen-interfaces.sh",
+        "script/tools/fix-interface.py",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-TOOLCHAIN": 1,
+        "A-FORK-BLOCK": 1
+      },
+      "dependsOn": [
+        "E-CREDIT-SCORE-LENS-TEST-135a216"
+      ],
+      "inputs": "Ethereum mainnet block 26158000; simulated sender 0xCB43078C32423F5348Cab5885911C3B5faE217F9; public RPC; no signer or private key",
+      "method": "forge script script/DeployCreditScoreLens.s.sol --rpc-url https://mainnet.gateway.tenderly.co --fork-block-number 26158000 --sender 0xCB43078C32423F5348Cab5885911C3B5faE217F9",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "Script simulation only, not an engine deployment rehearsal, mined receipt, mainnet deployment or deployment authorization. Foundry gas budget 484845 is an estimate including its margin.",
+      "invalidated": null
+    },
+    "E-CREDIT-SCORE-LENS-CARRY-abd4c20": {
+      "claim": "Focused test, build, generated-interface and isolated deployment simulation results carry from 135a216 to abd4c20: only NatSpec wording and generated comments changed; both creation and runtime bytecode and the ABI are unchanged.",
+      "kind": "analysis",
+      "sourceRevision": "abd4c20f57dce51f88c04443d19deb638a6354b8",
+      "scope": [
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "src/interfaces/Interfaces.sol",
+        "test/CreditScoreLens.t.sol",
+        "test/utils/CreditIds.sol",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/tools/gen-interfaces.sh",
+        "script/tools/fix-interface.py",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-TOOLCHAIN": 1,
+        "A-FORK-BLOCK": 1
+      },
+      "dependsOn": [],
+      "inputs": "Ethereum mainnet block 26158000 via public https://mainnet.gateway.tenderly.co; default fuzz runs 256; test logs summarized in docs/NEXT.md",
+      "method": "git diff 135a216 abd4c20: only NatSpec in src/CreditScoreLens.sol and src/interfaces/ICreditScoreLens.sol; gen-interfaces.sh write and --check CreditScoreLens compile and regenerate successfully; forge fmt --check passes. Final runtime hash equals 0xb2477fe32da0dfde830387f29295c5ad83e3438a11ecfa8994d21a92d81e7058; creation bytecode equals the prior simulated CREATE transaction input exactly.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "No repeated fork tests or deployment simulation for this NatSpec-only delta. Carried on unchanged executable bytes and ABI; final docs compiled and generated interface checked. No mainnet deployment or engine release acceptance.",
+      "invalidated": null,
+      "carries": [
+        "E-CREDIT-SCORE-LENS-TEST-135a216",
+        "E-CREDIT-SCORE-LENS-SCRIPT-135a216"
+      ],
+      "carriedChanges": [
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol"
+      ]
+    },
+    "E-CREDIT-SCORE-LENS-REVIEW-abd4c20": {
+      "claim": "Independent review of CreditScoreLens final candidate abd4c20: five justified clearly named read-only methods, source forwarding and historical semantics correct, complete on-chain NatSpec, documented generated ABI; no open implementation findings after the Low NatSpec wording correction.",
+      "kind": "review",
+      "sourceRevision": "abd4c20f57dce51f88c04443d19deb638a6354b8",
+      "scope": [
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "test/CreditScoreLens.t.sol",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/tools/gen-interfaces.sh",
+        "script/tools/fix-interface.py",
+        "docs/INTEGRATION.md"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-TOOLCHAIN": 1,
+        "A-FORK-BLOCK": 1
+      },
+      "dependsOn": [
+        "E-CREDIT-SCORE-LENS-CARRY-abd4c20"
+      ],
+      "inputs": "Immutable detached local review checkout at 135a216 then abd4c20; exact-match source snapshots, build/focused-test/simulation logs and compiled artifact; owner decisions FLOW 88 to 91.",
+      "method": "Independent read-only subagent reviewed source, ABI, names, NatSpec, tests, docs and script/tool changes; independently recomputed source/runtime hashes, regenerated documented interface without building, checked immutable follow-up delta and compared creation bytes with prior dry-run input.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "Codex independent subagent /root/review_credit_score_lens, 2026-10-13",
+      "result": "pass",
+      "limitations": "Source review and supplied execution evidence, not an independent compiler/test run or human audit. No mainnet deployment, engine acceptance or deployment-gate waiver. Future authorized helper broadcast needs its scoped release control and exact command/readbacks.",
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-credit-score-lens-abd4c20.md",
+        "sha256": "7abe3bba5b3ee5675746088961b7c9b1e9646ae8fbca3cde408a54943734aa47",
+        "revision": "566b68dcb4a265183d51370a1cdc202e06d376a0"
+      }
+    },
+    "E-CREDIT-SCORE-LENS-TOOLING-TEST-7402455": {
+      "claim": "CreditScoreLens deployment and verification tooling compiles; 21 focused fork tests pass including 256 differential fuzz cases; all 9 Python driver safety tests pass; actual driver simulation passes without broadcast; explorer compiler input matches the reviewed build.",
+      "kind": "test",
+      "sourceRevision": "7402455594f0d032f516de67db53281327592133",
+      "scope": [
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "src/interfaces/Interfaces.sol",
+        "test/CreditScoreLens.t.sol",
+        "test/utils/CreditIds.sol",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/VerifyCreditScoreLens.s.sol",
+        "script/tools/credit-score-lens.py",
+        "script/test_credit_score_lens_tool.py",
+        "script/director.py",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": 1,
+        "A-TOOLCHAIN": 1,
+        "A-FORK-BLOCK": 1
+      },
+      "dependsOn": [],
+      "inputs": "Mainnet fork block 26158000 via public Tenderly RPC; no signing wallet; solc 0.8.30 viaIR, optimizer 200, Cancun, metadata hash none; runtime 1478 bytes, hash 0xb2477fe32da0dfde830387f29295c5ad83e3438a11ecfa8994d21a92d81e7058.",
+      "method": "forge build; forge test --match-path test/CreditScoreLens.t.sol -j 1 -vv (21 pass, 256 fuzz); PYTHONDONTWRITEBYTECODE=1 python3 -m unittest script/test_credit_score_lens_tool.py -v (9 pass); actual Python simulate --fork-block 26158000 --sender 0xCB43078C32423F5348Cab5885911C3B5faE217F9; forge verify-contract --compilation-profile viair --show-standard-json-input --skip-is-verified-check with dummy address, no submission; compiler settings inspected; formatting/whitespace checks; configured deploy gate rejects current release state.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "No full suite, engine rehearsal, wallet access, mainnet broadcast, actual mined receipt or explorer submission/acceptance. Receipt and failure handling use fixtures/mocks. Helper runtime unchanged. Does not restore engine launch evidence or waive its unmet deployment gate.",
+      "invalidated": null
+    },
+    "E-CREDIT-SCORE-LENS-TOOLING-REVIEW-7402455": {
+      "claim": "Independent review of the CreditScoreLens deployment/verification tooling delta at immutable 7402455 found no actionable correctness or security defect; configured deploy gate remains enforced.",
+      "kind": "review",
+      "sourceRevision": "7402455594f0d032f516de67db53281327592133",
+      "scope": [
+        "script/VerifyCreditScoreLens.s.sol",
+        "script/tools/credit-score-lens.py",
+        "script/test_credit_score_lens_tool.py",
+        "test/CreditScoreLens.t.sol",
+        "script/DeployCreditScoreLens.s.sol",
+        "docs/INTEGRATION.md",
+        "foundry.toml"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": 1,
+        "A-TOOLCHAIN": 1,
+        "A-FORK-BLOCK": 1
+      },
+      "dependsOn": [
+        "E-CREDIT-SCORE-LENS-TOOLING-TEST-7402455"
+      ],
+      "inputs": "Detached clean local checkout at 7402455594f0d032f516de67db53281327592133; diff base ee0e649754136c29b5feb94fe94402b03d4eb08c; parent artifact and supplied focused build/fork/simulation/compiler-input logs; FLOW 94.",
+      "method": "Independent subagent read all tooling, tests and usage delta; independently ran 9 Python safety tests against existing artifact; mocked two whole deploy flows through explorer failure, checking gate ordering, distinct receipts and retry output; checked local Foundry CLI flags and broadcast-directory configuration; inspected standard compiler JSON and artifact settings/runtime.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "Codex independent subagent /root/review_credit_score_lens, 2026-10-13",
+      "result": "pass",
+      "limitations": "Bounded tooling-delta review, not a repeated audit of unchanged helper/core code, human audit or engine acceptance. Reviewer did not build or fork again. No wallet, broadcast, mined receipt or Etherscan/Sourcify acceptance exercised. Existing engine deployment gate remains unmet and is not waived.",
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-credit-score-lens-tooling-7402455.md",
+        "sha256": "ddd93918c3c696db575386aaca33cff765dec12e6f18b23d6e1977ce398ea939",
+        "revision": "6d1aa24fcaad537fa9699e8effada5c8a7ea58bb"
+      }
+    },
+    "E-CREDIT-SCORE-LENS-BOUNDED-AUDIT-ee0e649": {
+      "claim": "Owner-supplied independent bounded audit reports no actionable security, correctness or documentation defect at ee0e649. The production helper, generated interface, interface tools and deployment Solidity covered by this record remain unchanged; later deployment tooling has separate review.",
+      "kind": "review",
+      "sourceRevision": "ee0e649754136c29b5feb94fe94402b03d4eb08c",
+      "scope": [
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/tools/gen-interfaces.sh",
+        "script/tools/fix-interface.py",
+        "src/interfaces/Interfaces.sol",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-TOOLCHAIN": 1,
+        "A-FORK-BLOCK": 1
+      },
+      "dependsOn": [],
+      "inputs": "Report pasted by owner on 2026-10-13, saved verbatim. Report identifies detached checkout at ee0e649 on codex/issue-3-spec against base 79c79d1c7b412b430b20927615a6d86277e519c2; source snapshots checked against documented hashes, mainnet fork block 26158000.",
+      "method": "Reported independent source/ABI/NatSpec review and 17 passing focused fork tests with 256 fuzz cases, helper interface regeneration and comparisons of all five engine interfaces, shell/Python syntax and whitespace checks. Director checked zero diff since ee0e649 for helper, generated interface, deployment Solidity and interface tools; mapped release prerequisites to later reviewed tooling without treating prepared controls as release acceptance.",
+      "author": "Codex director /root, recording owner-supplied evidence, 2026-10-13",
+      "reviewer": "Independent bounded-audit reviewer, supplied by owner; reviewer identity is not stated in the pasted report",
+      "result": "pass",
+      "limitations": "Report is owner-supplied; original reviewer logs and identity were not independently recovered. Automated Codex Security diff-scan remains incomplete. No external source recompilation, full suite, engine lifecycle/rehearsal, broadcast or deployment. Test file and integration docs changed after ee0e649 and are covered by later tooling records, not this narrowed unchanged-file record. Final candidate/artifact freeze and current-mainnet release checks remain prerequisites; no release authority or engine gate waiver.",
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-credit-score-lens-bounded-ee0e649.md",
+        "sha256": "877c34a4f6110585ad9f2d139716e4a5fd9b4567dcb98496569d6218937bd7a4",
+        "revision": "9bd0e87b797cc2da27bcec12df28ba578c7f0e76"
+      }
+    },
+    "E-CREDIT-SCORE-LENS-FORK-UNCHANGED-2fc334c": {
+      "claim": "The 21 focused Solidity fork test results (including 256 fuzz cases) recorded at 7402455 carry on byte-for-byte unchanged Solidity/test/build inputs at 2fc334c; this claim excludes changed Python driver behavior.",
+      "kind": "analysis",
+      "sourceRevision": "2fc334c0c44aaefd932dadb1cf5d31b9147348bd",
+      "scope": [
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "src/interfaces/Interfaces.sol",
+        "test/CreditScoreLens.t.sol",
+        "test/utils/CreditIds.sol",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/VerifyCreditScoreLens.s.sol",
+        "lib/**",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-FORK-BLOCK": 1,
+        "A-TOOLCHAIN": 1
+      },
+      "dependsOn": [],
+      "inputs": "21-test focused fork execution at 7402455, recorded in docs/REVIEW-credit-score-lens-tooling-7402455.md and docs/NEXT.md; block 26158000; unchanged helper artifact.",
+      "method": "git diff --name-only 7402455594f0d032f516de67db53281327592133 HEAD -- scoped Solidity source, tests, fixtures, dependencies and build settings is empty; forge build passes and live fee preview validates the same compiler/runtime identity.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "No repeated Solidity fork test execution. Python tooling has fresh focused tests and needs independent delta review. No new current-mainnet result readback of a deployed helper, broadcast or release acceptance.",
+      "invalidated": null
+    },
+    "E-CREDIT-SCORE-LENS-FEE-TEST-25c2adc": {
+      "claim": "Updated CLI build and 19 focused safety tests pass; actual wallet-free estimate on current Tenderly mainnet passes with a nonexistent inherited keystore setting, showing fee budget before any credentials or wallet access.",
+      "kind": "test",
+      "sourceRevision": "25c2adcd4698df40f3b5041e3696bf41a39a4202",
+      "scope": [
+        "script/tools/credit-score-lens.py",
+        "script/test_credit_score_lens_tool.py",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/VerifyCreditScoreLens.s.sol",
+        "src/CreditScoreLens.sol",
+        "src/interfaces/ICreditScoreLens.sol",
+        "src/interfaces/Interfaces.sol",
+        "foundry.toml",
+        "foundry.lock",
+        "remappings.txt",
+        "lib/**",
+        "script/director.py"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": 2,
+        "A-TOOLCHAIN": 1
+      },
+      "dependsOn": [],
+      "inputs": "Current Ethereum mainnet via https://mainnet.gateway.tenderly.co; simulated public sender 0xCB43078C32423F5348Cab5885911C3B5faE217F9; ETH_KEYSTORE_ACCOUNT deliberately nonexistent; no signing wallet or real credentials. Existing compiled helper artifact, unchanged 1478-byte runtime hash.",
+      "method": "forge build pass; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest script/test_credit_score_lens_tool.py -v: 19 passed. Actual driver estimate passes with ETH_KEYSTORE_ACCOUNT=__must_not_unlock__, gas budget 484845 including 30% margin, live max-fee/tip parsed exactly to wei and ETH. Local ephemeral forge config probe proved standard .env Etherscan key resolution. Failed native --unlocked probes demonstrated that flag does not suppress inherited account initialization; final driver instead sanitizes signer env and runs from an external temporary cwd with --root. CLI tests exercise gate failure, estimate failure, cancellation, prompt ordering, config key reuse/private prompt, environment isolation, quoted fee reuse and existing receipt/runtime protections; mocked broadcast only. Whitespace checks pass. Independent-review M1 fixed by a disposable .git boundary; a real Foundry --help regression confirms that project-local TMPDIR cannot restore an ancestor .env signer. Final repaired live quote passes.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "",
+      "result": "pass",
+      "limitations": "No wallet unlock, signing, broadcast, mined receipt or explorer submission. Actual interactive password/key input and Etherscan acceptance remain untested; prompts are unit-tested with fixtures/mocks. Fee quotes change with mainnet state and are estimates, not guaranteed costs. Focused Solidity tests were not repeated because their sources, inputs and compiled helper are unchanged. No engine release acceptance or deploy-gate waiver.",
+      "invalidated": null
+    },
+    "E-CREDIT-SCORE-LENS-FEE-REVIEW-25c2adc": {
+      "claim": "Independent immutable review of the fee/default/key CLI at 25c2adc has no open findings; M1 project-local TMPDIR dotenv-signer restoration fixed and independently verified.",
+      "kind": "review",
+      "sourceRevision": "25c2adcd4698df40f3b5041e3696bf41a39a4202",
+      "scope": [
+        "script/tools/credit-score-lens.py",
+        "script/test_credit_score_lens_tool.py",
+        "docs/INTEGRATION.md",
+        "script/DeployCreditScoreLens.s.sol",
+        "script/VerifyCreditScoreLens.s.sol",
+        "foundry.toml"
+      ],
+      "assumptions": {
+        "A-CREDIT-SCORE-LENS-API": 1,
+        "A-CREDIT-SCORE-LENS-SOURCES": 1,
+        "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": 2,
+        "A-TOOLCHAIN": 1
+      },
+      "dependsOn": [
+        "E-CREDIT-SCORE-LENS-FEE-TEST-25c2adc"
+      ],
+      "inputs": "Clean detached independent checkout at 2fc334c, then 25c2adc; FLOW 96; supplied build/live-estimate logs and existing parent artifact.",
+      "method": "Independent read-only review of fee units and reuse, prompt/credential order, wallet defaults, gate and cancellation; all 19 unit tests independently passed. Actual local Foundry startup counterexample using synthetic TMPDIR/.env found M1 at 2fc334c; repaired disposable .git discovery boundary and actual startup regression independently verified at 25c2adc.",
+      "author": "Codex director /root, 2026-10-13",
+      "reviewer": "Codex independent subagent /root/review_credit_score_lens, 2026-10-13",
+      "result": "pass",
+      "limitations": "No reviewer build/fork/network estimate/wallet/signing/broadcast/explorer submission; live password prompting, mined fees and explorer acceptance remain untested. Gate remains enforced, not satisfied or waived. Helper runtime unchanged; bounded tooling review only.",
+      "invalidated": null,
+      "report": {
+        "path": "docs/REVIEW-credit-score-lens-fees-25c2adc.md",
+        "sha256": "d6c5030679b68c4d77de95eb308ca1475e4b20a79a834811e42163a6e2a4bd77",
+        "revision": "62a9a02fbded4e10d19fcf48eb574072ca537c41"
+      }
     }
   }
 }

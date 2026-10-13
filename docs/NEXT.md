@@ -2,6 +2,103 @@
 
 kept by the director. an item is built only where its state says built. the owner said go on 2026-10-08 for every decided item. items 1 to 34 record what was built at the commit each names. decisions 84 to 93 changed part of it: `composeExit`, the two lanes and the exit token auction no longer exist (items 35 and 36).
 
+## Issue #3: credit lookup helper, work spec (2026-10-13)
+
+Owner request (FLOW 99, 100, 101, 102): review [issue #3](https://github.com/ripe0x/cc/issues/3) and spec the work; keep the contract simple, minimal and focused. Implementation authorized by FLOW 102; deployment requires a separate owner instruction. It is optional work outside the engine's launch prerequisites.
+
+### Scope
+
+Build one standalone `CreditScoreLens` with five read-only functions. It translates credit ids into the source scorer's inputs and exposes the source's stored statement score. The engine continues reading its source contracts directly.
+
+```solidity
+function creditScore(uint256 creditId) external view returns (uint256);
+function creditScores(uint256[] calldata creditIds) external view returns (uint256[] memory);
+function creditRarity(uint256 creditId) external view returns (uint256);
+function creditTraits(uint256 creditId) external view returns (
+    uint256 mask, uint256 active, uint256 occupied, uint256 eights, uint256 band
+);
+function statementScore(uint256 statementId) external view returns (uint256);
+error UnknownCredit(uint256 creditId);
+```
+
+Use three internal address constants, with no constructor arguments:
+
+- Credits: `0x97630aA70AB14ed9883B41dAfccBc11349723043`.
+- CreditScore: `0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7`.
+- Statements: `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b`.
+
+No owner, mutable storage, proxy, setters, events, payable functions, token receiver, cache, pricing logic, score math, extra batches or combined detail response. Fixed mainnet dependencies are the entire configuration. A different source deployment needs a different helper deployment.
+
+The five names identify the NFT type and result explicitly. `creditScores` is the only plural method because it accepts a batch; the others accept one token id. NatSpec documents units, source dependencies, failure and historical behavior using on-chain facts only.
+
+### Exact behavior
+
+1. One internal input reader gets `Credits.timestampOf(id)`. If zero, revert `UnknownCredit(id)`; otherwise read `Credits.seedOf(id)`. Mint requires a nonzero timestamp and burn retains both mappings, so this rejects never-minted ids without excluding burned credits. Do not call `ownerOf`, which would reject burned credits.
+2. Single credit methods forward those inputs to the respective `CreditScore.scoreOf`, `rarityOf` or `traitsOf`. Return source values unchanged. Score units are ten-thousandths of a point: `1_324_012` means `132.4012`, range `800_000` to `8_000_000`. Rarity is the source's summed trait points, not a percentile or the score. Traits retain the source tuple order and numeric values; labels and formatting belong in the client.
+3. `creditScores` loops through the same internal score reader, preserving order and duplicates. Empty input returns an empty array. Any unknown id or source revert reverts the whole call; there is no partial-success sentinel. Do not call `this.creditScore` inside the loop.
+4. No arbitrary contract batch cap. Work is linear in input length; callers chunk to their RPC's gas/response limit. Measure 1, 10 and 80 ids during implementation before giving client batch guidance. One RPC round trip still involves three source calls per credit, not a cheaper scoring algorithm.
+
+### Statement scores
+
+Add only `statementScore(statementId)`, a direct call to `Statements.creditScoreOf(statementId)`. Return the source value unchanged, in ten-thousandths of a point. This is the total score of all credits represented by that page, including every overprinted page, not an average and not limited to one page's 80 credits.
+
+Preserve the source's historical behavior: never-composed ids return zero; pages burned into other pages retain their last stored score. The view does not assert current ownership or redeemability. Clients needing those properties query ownership separately. Read on every call so later overprints are reflected; no cache, id enumeration, statement batch, or local summation.
+
+Summing only `Statements.composedFrom(id)` would omit overprints. Recursively rescoring all history duplicates existing source accounting and makes a constant-size read grow with statement history.
+
+### Implementation packet and acceptance
+
+Deliver `src/CreditScoreLens.sol`, a narrow interface if required by the interface generator, `test/CreditScoreLens.t.sol`, one isolated deployment script, and a short consumer example in `docs/INTEGRATION.md`. Keep scorer-only rarity and trait declarations local to this helper or its narrow interface; do not expand engine interfaces for this feature. Generate the helper interface using the repository tool. Avoid changes to Core, CoreLib, CoreLens, controller, engine deploy scripts, launch config, or engine bytecode pins.
+
+The test file uses a small standalone mainnet fork fixture at block `26158000`, not the engine fixture. Real Credits, CreditScore and Statements only. Before implementing, check their runtime hashes at that pin against the verified sources, plus `Credits.isSealed()` and `Statements.score()` against the documented scorer address.
+
+- Differential checks: singles, rarity and all five traits equal direct source reads for multiple minted ids; scores stay in the source range and preserve full precision. Include credit #1 and bounded fuzz over the sealed edition's minted id range.
+- Historical checks: score, rarity and traits of a real burned credit equal their source values; burning a real held credit on the fork leaves helper results unchanged. A transfer likewise leaves them unchanged.
+- Batch checks: empty, one, out-of-order ids, duplicates, 80 ids, and a batch with a never-minted id in the middle. Compare each output with a direct source read.
+- Failure checks: id `0`, `supply + 1`, and `type(uint256).max` revert with `UnknownCredit(id)` across every single credit method and the credit batch.
+- Statement checks: compare `statementScore` with the direct source for composed, overprinted and absorbed (burned) pages. A real overprint must update the base score by the top page's total; the helper reflects it immediately and the absorbed page remains queryable. Verify ids `0`, `Statements.supply() + 1` and `type(uint256).max` return zero. Statement totals retain full precision and are not constrained to the single-credit score range.
+
+Verify implementation with `forge build` and only `forge test --match-path test/CreditScoreLens.t.sol`, using the repository RPC environment. Record runtime size and measured deployment gas; the issue's "few hundred thousand gas" is an estimate, not an accepted budget or measurement. Commit the verified implementation, then independently review that immutable commit before deployment. Deployment requires a separate owner instruction and should record chain, addresses, source/runtime hashes, compiler settings, verified source and a direct-versus-helper read. This spec does not freeze or accept the engine candidate.
+
+### Source evidence and limits
+
+Reviewed on 2026-10-13 via Sourcify v2, chain 1, `fields=all`. All three returned `exact_match` for creation and runtime, compiler `0.8.28+commit.7893614a`, and no proxy. Repository comparison: `src/interfaces/Interfaces.sol` and `src/CoreLens.sol`.
+
+| Verified source | Findings used | SHA-256 of source content |
+|---|---|---|
+| [Credits.sol](https://sourcify.dev/server/v2/contract/1/0x97630aA70AB14ed9883B41dAfccBc11349723043?fields=all) | timestamp nonzero at mint; seed and timestamp survive burn; mappings return zero for unknown ids | `b2c916aa276ed04bc300b4aeb04e5482804739ec6d1f72b026a57f9e8f664176` |
+| [CreditScore.sol](https://sourcify.dev/server/v2/contract/1/0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7?fields=all) | exact input/output types, tuple order, units and pure computation | `713e3c873e8c419ee1c3c715cdb669c111b35786c26b9938318ee6329a591d89` |
+| [Statements.sol](https://sourcify.dev/server/v2/contract/1/0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b?fields=all) | rating stored at compose, increased on overprint, retained after burn; unknown rating returns zero | `1ae0e4903edf3f9a9b8ebc683bfbef7d31fd5898b829a4cb0bef1570395b3b35` |
+
+The helper is built and verified as recorded below; no mainnet deployment has occurred. The current request changes no engine behavior or engine assumptions. Existing engine evidence validity is not restored by this spec; the checker already marks candidate evidence stale at HEAD `79c79d1`.
+
+### Implementation verification (2026-10-13)
+
+Implemented the five documented views in `src/CreditScoreLens.sol`, its generated NatSpec interface, the isolated deployment script and developer examples in docs/INTEGRATION.md. No engine contract or engine bytecode pin changed.
+
+- `forge build`: pass with existing repository warnings; helper uses solc 0.8.30, viaIR, optimizer 200, Cancun, no metadata hash.
+- `forge test --match-path test/CreditScoreLens.t.sol -j 1 -vv`: 17 passed, 0 failed, 0 skipped; the differential test ran 256 fuzz cases. Real sources at block 26158000, with all three runtime hashes checked. Transfer, burn, batch failures and nested overprint behavior exercised.
+- `script/tools/gen-interfaces.sh --check`: all six interfaces match their compiled ABI; helper NatSpec is copied from its source. Formatter and whitespace checks pass. Final interface cleanup changes comment spacing only; it changes neither ABI nor helper bytecode.
+- Measured runtime: 1,478 bytes; hash `0xb2477fe32da0dfde830387f29295c5ad83e3438a11ecfa8994d21a92d81e7058`.
+- Measured cold-call execution gas for `creditScores`: 54,191 for 1 id, 365,886 for 10, 2,904,422 for 80, using distinct fixture credits. These are test call measurements, exclude transaction intrinsic gas, and depend on the source inputs. They are not a universal RPC batch limit.
+- `forge script script/DeployCreditScoreLens.s.sol --rpc-url https://mainnet.gateway.tenderly.co --fork-block-number 26158000 --sender 0xCB43078C32423F5348Cab5885911C3B5faE217F9`: pass, simulation only, one CREATE, runtime hash matches. Foundry estimated gas budget 484,845, including its estimation margin, not a mined receipt or exact deployment gas measurement.
+
+Independent review of implementation 135a216 and NatSpec-only follow-up abd4c20 is complete: no open implementation findings (docs/REVIEW-credit-score-lens-abd4c20.md). The one Low wording issue was corrected without asset-handling functions. Fork results carry on exactly unchanged creation/runtime bytes and ABI; the final NatSpec interface compiled and checked. Engine release evidence remains stale; this helper does not complete the engine launch objective. Unrelated `.DS_Store` is preserved.
+
+Owner-supplied independent bounded audit of ee0e649 against 79c79d1 is recorded in docs/REVIEW-credit-score-lens-bounded-ee0e649.md (FLOW 106). It reports no actionable helper findings and independently passed the 17 tests with 256 fuzz cases. The audited helper source, generated interface, interface generators and deployment Solidity remain unchanged at current HEAD. Its automated security scan did not finish. The later driver pins compiler settings/runtime and checks a fresh receipt and all five results; its separate verification/review is below. These prepared controls do not replace a final artifact freeze or current-mainnet release check.
+
+### Deployment/verification tooling (FLOW 105, 2026-10-13)
+
+`script/tools/credit-score-lens.py` provides simulate, deploy, check and verify modes. Deploy enforces the configured repository gate before building, accessing a wallet or broadcasting; the gate is currently unmet. It pins the reviewed helper compiler settings and runtime hash, uses one fresh broadcast-record directory per run, validates the successful CREATE receipt against the artifact, then checks live bytecode/results and waits for Etherscan or Sourcify source verification. A failed explorer submission can be retried by address without another deployment. `script/VerifyCreditScoreLens.s.sol` checks chain, helper/source bytecode and all five native-unit results. Usage is in docs/INTEGRATION.md.
+
+Verification: `forge build` passes; `forge test --match-path test/CreditScoreLens.t.sol -j 1 -vv` passes 21 tests with 256 differential fuzz cases; `python3 -m unittest script/test_credit_score_lens_tool.py -v` passes 9 safety tests. The actual Python simulate command passes at block 26158000 with the owner as simulated sender. Explorer standard compiler JSON was generated without submission and checked for solc 0.8.30, viaIR, optimizer 200, Cancun and no metadata hash. Helper runtime remains 1,478 bytes and its reviewed hash is unchanged. No wallet accessed, transaction broadcast or explorer submission performed. Successful source publication awaits a real deployed address. Independent tooling review of commit 7402455594f0d032f516de67db53281327592133 found no actionable issues; report: docs/REVIEW-credit-score-lens-tooling-7402455.md. The reviewer independently passed all 9 Python safety tests and mocked deployment/failure-retry checks; no live wallet, mined receipt or explorer acceptance was tested.
+
+### Fee preview and default wallet (FLOW 107, 2026-10-13)
+
+The CLI now defaults to Tenderly and keystore ripe0x with the documented public owner sender. Deploy previews the current-mainnet ETH gas fee budget before wallet access, reuses its max-fee/tip settings, privately prompts for an Etherscan key only when standard environment/Foundry configuration has none, and asks for confirmation before unlocking the keystore. An estimate mode provides the quote without credentials, release-gate acceptance or broadcast. The existing release gate remains enforced. Build and 19 focused Python safety tests pass. The actual Tenderly estimate passes with a deliberately nonexistent inherited keystore setting; the resulting gas budget is 484,845 and fee values are live estimates, not durable prices. Independent review at 2fc334c found M1: a project-local TMPDIR could reload ancestor .env signer settings. Fixed with a disposable .git project-discovery boundary and a real Foundry-startup regression test; independent repair review of 25c2adc is complete, no open findings (docs/REVIEW-credit-score-lens-fees-25c2adc.md). No wallet opened or broadcast authorized.
+
+## Engine change list
+
 | # | change | state | notes |
 |---|---|---|---|
 | 1 | the engine pulls its own fees: the Core calls the router's `flush` at the start of its own entry points (the two credit doors, compose), so fees arrive without a keeper | built, awaiting review | the Core has 75 bytes of headroom (at that commit): the call goes into `CoreLib`. a failing or reverting flush must never block the entry point (try, ignore). mind the measuring rule: flush before any measurement starts, never inside one. built: `CoreLib.pullFees(router)` (low level call, at most 1,000,000 gas, outcome ignored) behind `Core._openDoor()` (named `_pullFees` at that commit), first action of `sellForEth` (both overloads), `buyListing`, `compose` and `composeExit`, before anything else in compose and composeExit (they repay nothing, FLOW decision 41); `FeeRouter.flush()`; the router pointer is the existing immutable `FEE_SOURCE`; tests in `test/PullFees.t.sol`; docs/FLOW.md 10.8. `sellForExitToken` does not read the eth pot and does not pull |
