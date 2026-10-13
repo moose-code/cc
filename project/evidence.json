@@ -2966,7 +2966,7 @@
     "E-CREDIT-SCORE-LENS-DEPLOYED-SOURCIFY-4f5a891": {
       "claim": "Owner deployed CreditScoreLens at 0x7a3f3967cBB63E8d56e3f093069C62A25eebBda6, successful mainnet receipt at block 26186035; all five source comparisons passed. Sourcify creation/runtime matches confirmed, onchain/recompiled runtime equal reviewed hash and helper source equal committed file.",
       "kind": "analysis",
-      "sourceRevision": "4f5a891ab5367f1b644c513e313b79230f2923e7",
+      "sourceRevision": "5875fbdbd830e85f4fb884a74c98f92c6a26a822",
       "scope": [
         "src/CreditScoreLens.sol",
         "src/interfaces/ICreditScoreLens.sol",
