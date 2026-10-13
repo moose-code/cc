@@ -56,7 +56,7 @@ what the caller receives: the total payout.
 
 the batch size is bounded by the transaction gas cap: the largest batch under 16,777,216 gas is 115 credits at the launch settings (section 13).
 
-`sellForBalance(ids)` and `(ids, minOut)` are the balance side door (docs/SPEC.md section 9). they run while `balanceBidOn` is true and pay each credit `score * unit * (10_000 - balanceBidMarginBps) / 10_000` in balance token from `balancePot`, with `unit` the module's `unitPerPoint()` read in the call. the credit enters the pile with an eth cost basis of the floor rate times `max(1, score / refScore)`, at least 1 wei, and `CreditBought(id, caller, cost)` carries that basis. the basis reads no pool, so the bid needs no pool key and records the same basis whatever the pool price. they revert `BalanceBidOff` while `balanceBidOn` is false and `Retired` after `migrate`; `lens.balanceBidOf(id)` quotes the payout.
+`sellForBalance(ids)` and `(ids, minOut)` are the balance side door (docs/SPEC.md section 9). they run while `balanceBidOn` is true and pay each credit `score * unit * (10_000 - balanceBidMarginBps) / 10_000` in balance token from `balancePot`, with `unit` the module's `unitPerPoint()` read in the call. the credit enters the pile with an eth cost basis of the floor rate times `score / refScore`, at least 1 wei, and `CreditBought(id, caller, cost)` carries that basis. the basis reads no pool, so the bid needs no pool key and records the same basis whatever the pool price. they revert `BalanceBidOff` while `balanceBidOn` is false and `Retired` after `migrate`; `lens.balanceBidOf(id)` quotes the payout.
 
 ## 4. door 2: buy a listed credit through an allowed marketplace
 
@@ -207,7 +207,7 @@ the Core (`src/interfaces/ICore.sol`):
 | `ControllerLocked` | (empty) | `lockController` |
 | `ControllerSet` | `address controller` | `setController` (also at construction) |
 | `CreditAdopted` | `uint256 indexed id, uint256 cost` | `adopt`, one per credit. `cost` is the cost basis written |
-| `CreditBought` | `uint256 indexed id, address indexed from, uint256 cost` | one per credit of `sellForEth` or `sellForBalance`. `cost` is the cost basis in eth: the payout for `sellForEth`, and for `sellForBalance` the score-scaled eth backstop, the peak of the eth bid times `max(1, score / refScore)`, read from no pool (section 3) |
+| `CreditBought` | `uint256 indexed id, address indexed from, uint256 cost` | one per credit of `sellForEth` or `sellForBalance`. `cost` is the cost basis in eth: the payout for `sellForEth`, and for `sellForBalance` the floor rate times `score / refScore`, read from no pool (section 3) |
 | `CreditSold` | `uint256 indexed id, address indexed buyer, uint256 price` | `sellCreditTo` (the controller `buyCredit` path): the credit went to `buyer` for `price` |
 | `CreditCostToPotBpsSet` | `uint16 bps` | the owner set the share of a sold credit's cost booked to `ethPot` |
 | `ChosenComposeOnSet` | `bool on` | the owner switched chosen composition |

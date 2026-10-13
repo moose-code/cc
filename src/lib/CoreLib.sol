@@ -102,6 +102,8 @@ library CoreLib {
     error Empty();
     error NoBalanceModule();
     error BadModule();
+    /// the controller's `refScore()` read failed or returned zero
+    error BadQuote();
     error ZeroId();
     error NotOwner();
     error ZeroAmount();
@@ -595,11 +597,11 @@ library CoreLib {
     /// pays each credit `score * unit * (10_000 - balanceBidMarginBps) / 10_000` in balance token from `balancePot`, where
     /// `unit` is the module's `unitPerPoint()` read in the call. reads the score from the credit score contract. runs
     /// only while `balanceBidOn` is true. each credit's price must not exceed the remaining pot. the credit enters the single pile
-    /// with an eth cost basis of the score-scaled eth backstop `peak * max(1, score / refScore)`, at least 1 wei, where
-    /// `peak` is the remembered peak of the eth bid decayed to now. the peak rises with fills and falls only with time,
-    /// so neither a pot move nor a pool move can push a recorded cost down, and no pool key is needed. a failing, short
-    /// or zero live unit read reverts the whole bid (`BadModule`). `refScore` is read from the controller with a
-    /// bounded staticcall. a failed read leaves the backstop unscaled at `peak`
+    /// with an eth cost basis of `floorRate * score / refScore`, at least 1 wei, where `floorRate` is the larger of the
+    /// climbed price state and the remembered eth bid peak decayed to now (the Core's `floorRate()`). the peak rises with
+    /// fills and falls only with time, so neither a pot move nor a pool move can push a recorded cost down, and no pool
+    /// key is needed. a failing, short or zero live unit read reverts the whole bid (`BadModule`). `refScore` is read
+    /// from the controller with a bounded staticcall; a failed or zero read reverts `BadQuote`
     function _sellForBalance(uint256[] calldata ids, uint256 minOut) private {
         CoreState storage c = state();
         if (c.retired) revert Retired();
@@ -626,8 +628,7 @@ library CoreLib {
             if (paid > pot) revert PotTooSmall();
             pot -= paid;
             total += paid;
-            uint256 backstop = (refScore == 0 || score <= refScore) ? floor : floor.mulDiv(score, refScore);
-            uint256 cost = backstop.max(1);
+            uint256 cost = floor.mulDiv(score, refScore).max(1);
             push(c.pile, c.credits, id, cost);
             CREDITS.transferFrom(msg.sender, address(this), id);
             emit CreditBought(id, msg.sender, cost);
@@ -655,8 +656,7 @@ library CoreLib {
     }
 
     /// the controller's `refScore()` through a bounded staticcall of at most `READ_GAS`, copying at most 32 bytes of
-    /// returndata. a revert or an answer shorter than 32 bytes reads as 0, which leaves the balance bid's backstop
-    /// unscaled at the eth bid rate
+    /// returndata. a revert, an answer shorter than 32 bytes or a zero answer reverts `BadQuote`
     function _refScore(address controller) private view returns (uint256 refScore) {
         bytes4 sel = 0x0dd34cf6; // refScore()
         bool ok;
@@ -666,7 +666,7 @@ library CoreLib {
             ok := and(ok, iszero(lt(returndatasize(), 32)))
             refScore := mload(0)
         }
-        if (!ok) refScore = 0;
+        if (!ok || refScore == 0) revert BadQuote();
     }
 
     /// gas forwarded to the router flush of `pullFees`. the most expensive flush (four payees that burn all their

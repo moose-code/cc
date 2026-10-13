@@ -29,7 +29,8 @@ contract ReviewCoreTest is Fixture {
 
     /// R3: the core reads the unit from the module in each redemption. a module that lowers its unit is redeemed at the
     /// unit it reports, and a payout below that unit's minimum still reverts and leaves the statement
-    function test_LIVE_loweredUnitSetsTheMinimumOfTheRedemption() public {
+    /// accepted: docs/SPEC.md section 14 item 29. the owner's module decides the unit; a dust module is the owner's own door
+    function test_ACCEPTED_loweredUnitSetsTheMinimumOfTheRedemption() public {
         _enterPhase2();
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
@@ -48,7 +49,8 @@ contract ReviewCoreTest is Fixture {
     }
 
     /// R3: the bid pays by the unit the module reports now
-    function test_LIVE_raisedUnitRaisesTheBid() public {
+    /// accepted: docs/SPEC.md section 14 item 29. the owner's module decides the unit; an overpaying module is the owner's own door
+    function test_ACCEPTED_raisedUnitRaisesTheBid() public {
         _enterPhase2();
         _setBalancePool();
         Composed memory c = _composeOnce();

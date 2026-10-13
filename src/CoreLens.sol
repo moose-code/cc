@@ -81,9 +81,11 @@ contract CoreLens {
     /// the answer size of `nextPage` that the Core requires: ready flag, 80 ids and the format
     uint256 private constant NEXT_PAGE_BYTES = (80 + 2) * 32;
     uint256 private constant ASK_GAS = 200_000;
+    /// gas the Core allows the controller's `atFloor`
+    uint256 private constant AT_FLOOR_GAS = 400_000;
     /// gas forwarded to `creditPrice` and `priceOf`. each makes up to two bounded module reads inside the controller at
-    /// the controller READ_GAS (200_000) each, plus a pool read, so the lens forwards both reads plus overhead for the
-    /// controller frame. a smaller budget would run a module out of gas and return a lens price below the controller's
+    /// the controller UNIT_GAS (50_000) each, plus the floor rate and a pool read, so the lens forwards the reads plus
+    /// overhead for the controller frame. a smaller budget would run a module out of gas and return a lens price below the controller's
     uint256 private constant PRICE_GAS = 600_000;
 
     ICore public immutable CORE;
@@ -227,7 +229,7 @@ contract CoreLens {
     /// the controller's eligibility answer for a statement, read with the gas the Core uses. a revert, a
     /// short answer or a `false` reads as not eligible
     function _atFloor(address ctl, uint256 sid) private view returns (bool) {
-        (bool ok, bytes memory out) = ctl.staticcall{gas: ASK_GAS}(abi.encodeCall(IControllerV1.atFloor, (sid)));
+        (bool ok, bytes memory out) = ctl.staticcall{gas: AT_FLOOR_GAS}(abi.encodeCall(IControllerV1.atFloor, (sid)));
         return ok && out.length == 32 && abi.decode(out, (bool));
     }
 
@@ -244,10 +246,13 @@ contract CoreLens {
         return ok && out.length == 32 ? uint32(abi.decode(out, (uint256))) : 0;
     }
 
-    /// the module's `unitPerPoint()` read with the gas the Core uses. a revert or a short answer reads as 0
+    /// the module's `unitPerPoint()` read with the gas the Core uses. a revert, a short answer or a unit above
+    /// `type(uint128).max` reads as 0, the reads the Core's `sellForBalance` reverts `BadModule` on
     function _liveUnit(address module) private view returns (uint256) {
         (bool ok, bytes memory out) = module.staticcall{gas: ASK_GAS}(abi.encodeCall(IBalanceModule.unitPerPoint, ()));
-        return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
+        if (!ok || out.length < 32) return 0;
+        uint256 unit = abi.decode(out, (uint256));
+        return unit > type(uint128).max ? 0 : unit;
     }
 
     /// the balance token the bid pays for a live credit now, zero when the bid is off: no module set, `balanceBidOn` false,

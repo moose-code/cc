@@ -107,6 +107,18 @@ contract BalanceValueFloorTest is Fixture {
         assertEq(ctl.valueOf(rating), _rate(rating), "a zero unit leaves the rate term");
     }
 
+    /// an extreme unit with a tiny pool sqrt price overflows 256 bits in the second `mulDiv` of the pool pricing: the pool
+    /// term is 0, `valueOf` answers the rate term and `priceOf` answers
+    function test_poolTerm_overflowYieldsZeroAndNeverReverts() public {
+        _enterPhase2();
+        uint256 sid = _composeOnce().sid;
+        _initAndSet(TickMath.MIN_SQRT_PRICE, 3000, 60);
+        mod.setUnitPerPoint(type(uint128).max);
+        uint256 rating = core.ratingOf(sid);
+        assertEq(ctl.valueOf(rating), _rate(rating), "the overflowing pool term reads 0");
+        assertGt(ctl.priceOf(sid), 0, "priceOf answers");
+    }
+
     function test_buyPaysTheGrossPriceAndTheAnchorStaysOnTheCurve() public {
         _enterPhase2();
         vm.prank(owner);

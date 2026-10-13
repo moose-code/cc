@@ -259,8 +259,8 @@ contract CreditSaleTest is Fixture {
         assertEq(ctl.creditPrice(id), _max(cost, _rateTerm(id)) * ctl.creditFloorBps() / BPS, "the sale prices with the pool term at 0");
     }
 
-    /// a live unit above type(uint128).max is capped before the pool pricing, so the pool term cannot overflow and the
-    /// sale does not revert. a score is at most 8_000_000, so the capped product is below 2^151
+    /// a live unit above type(uint128).max is a failed read: the pool term is 0, the sale does not revert and the floor is
+    /// the cost or the rate term, the same reads the Core's balance doors revert `BadModule` on
     function test_poolTerm_unitCappedAtUint128() public {
         _enterPhase2();
         uint256[] memory ids = _fillEthPile(1);
@@ -271,14 +271,13 @@ contract CreditSaleTest is Fixture {
         _on();
         _warp(ctl.creditWindow());
         assertGt(_creditScore(id), 1, "the score is above 1");
-        vm.mockCall(address(mod), abi.encodeWithSignature("unitPerPoint()"), abi.encode(type(uint256).max));
-        // the pool term uses the capped unit and the sale prices without reverting
-        uint256 pool = _poolValueWei(_creditScore(id) * uint256(type(uint128).max), HIGH_PRICE_SQRT);
-        uint256 hi = pool;
+        vm.mockCall(address(mod), abi.encodeWithSignature("unitPerPoint()"), abi.encode(uint256(type(uint128).max) + 1));
         (, uint256 cost,) = core.creditInfo(id);
-        if (cost > hi) hi = cost;
-        if (_rateTerm(id) > hi) hi = _rateTerm(id);
-        assertEq(ctl.creditPrice(id), hi * ctl.creditFloorBps() / BPS, "the floor uses the capped pool term");
+        uint256 hi = _max(cost, _rateTerm(id));
+        assertEq(ctl.creditPrice(id), hi * ctl.creditFloorBps() / BPS, "the pool term is 0 for a unit above uint128");
+        vm.mockCall(address(mod), abi.encodeWithSignature("unitPerPoint()"), abi.encode(uint256(type(uint128).max)));
+        uint256 pool = _poolValueWei(_creditScore(id) * uint256(type(uint128).max), HIGH_PRICE_SQRT);
+        assertEq(ctl.creditPrice(id), _max(hi, pool) * ctl.creditFloorBps() / BPS, "the largest unit still carries the pool term");
         vm.clearMockedCalls();
     }
 

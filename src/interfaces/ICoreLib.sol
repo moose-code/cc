@@ -6,6 +6,7 @@ import {Settings} from "./Interfaces.sol";
 
 interface ICoreLib {
     error BadModule();
+    error BadQuote();
     error BadSetting(bytes32 field);
     error BadSuccessor(address who);
     error BadSwap();

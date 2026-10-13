@@ -68,6 +68,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error BadStatement();
     error BadCost();
     error BadModule();
+    /// `sellForBalance` could not read a nonzero `refScore()` from the controller
+    error BadQuote();
     error BadSwap();
     error TargetNotAllowed();
     error ForbiddenTarget();
@@ -182,6 +184,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant PAGE = 80;
     uint256 private constant MAX_FORMAT = 7;
     uint256 private constant READ_GAS = 200_000;
+    /// gas the controller's `atFloor` may use: its reads of the settings, `floorRate`, the module's `unitPerPoint` and the
+    /// pool `getSlot0`
+    uint256 private constant AT_FLOOR_GAS = 400_000;
     /// gas of the work after the end of `compose` that the caller payment counts, with the transaction base cost
     uint256 private constant COMPOSE_OVERHEAD_GAS = 50_000;
     /// the most gas of a compose the caller payment counts. above the largest metered compose, 11.1 million with a loaded
@@ -471,7 +476,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// bounded read of the controller's eligibility answer for a statement. a revert, a short answer or a
     /// `false` reads as not eligible
     function _atFloor(uint256 sid) private view returns (bool) {
-        (bool ok, bytes memory out) = _ask(controller, abi.encodeCall(IController.atFloor, (sid)), READ_GAS, 32);
+        (bool ok, bytes memory out) = _ask(controller, abi.encodeCall(IController.atFloor, (sid)), AT_FLOOR_GAS, 32);
         return ok && abi.decode(out, (bool));
     }
 

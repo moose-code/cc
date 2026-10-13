@@ -8,10 +8,11 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 
-/// one pile for every credit. the balance token bid records an eth cost basis of the score-scaled eth backstop
-/// `floorRate * max(1, score / refScore)`, at least 1 wei, where the floor rate is the larger of the climbed price
+/// one pile for every credit. the balance token bid records an eth cost basis of `floorRate * score / refScore`
+/// (decision 104), at least 1 wei, where the floor rate is the larger of the climbed price
 /// state and the decayed peak. the record reads no pool price, so a pushed up or pushed down pool cannot move it and
 /// the bid needs no pool key. every credit composes into the same statement. the three standalone settings have owner
 /// setters, bounds and events
@@ -58,19 +59,15 @@ contract OnePileTest is Fixture {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
-    /// the score-scaled eth backstop the sale records for `id`: the floor rate when the score is at or below `refScore`,
-    /// else `floorRate * score / refScore`, at least 1 wei. the floor rate is read at the current block, which the sale
-    /// does not move
+    /// the eth cost the sale records for `id`: `floorRate * score / refScore`, at least 1 wei. the floor rate is read at
+    /// the current block, which the sale does not move
     function _backstop(uint256 id) internal view returns (uint256 b) {
-        uint256 floor = core.floorRate();
-        uint256 rs = ctl.refScore();
-        uint256 score = _score(id);
-        b = score <= rs ? floor : floor * score / rs;
+        b = FullMath.mulDiv(core.floorRate(), _score(id), ctl.refScore());
         if (b == 0) b = 1;
     }
 
     /// the recorded eth cost is the score-scaled backstop, with no pool key set
-    function test_sellForBalance_costIsTheScaledBackstopWithoutAPoolKey() public {
+    function test_sellForBalance_costIsScoreTimesPointRateWithoutAPoolKey() public {
         _ready();
         assertFalse(ctl.balancePoolKeySet(), "no pool key");
         uint256[] memory ids = _credits(seller, 1);
@@ -85,25 +82,42 @@ contract OnePileTest is Fixture {
         (, uint256 cost,) = core.creditInfo(id);
         assertGt(want, core.floorRate(), "the backstop scales above the floor rate for a rich credit");
         assertEq(cost, want, "the recorded cost is the scaled backstop");
-        // above refScore the recorded cost is the point rate times the score (`pointRate` rounds down once, the cost once)
+        // the recorded cost is the point rate times the score (`pointRate` rounds down once, the cost once)
         uint256 pointValue = _score(id) * ctl.pointRate();
         assertGe(cost, pointValue, "at least score times the point rate");
         assertLt(cost - pointValue, _score(id), "and above it by less than the rounding of the point rate");
     }
 
-    /// a credit scored at or below `refScore` records the unscaled floor rate as its cost
-    function test_sellForBalance_costIsThePeakBelowRefScore() public {
+    /// a credit scored below `refScore` records `floorRate * score / refScore`, a cost below the floor rate
+    function test_sellForBalance_costIsScoreTimesPointRateBelowRefScore() public {
         _ready();
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];
         vm.prank(owner);
-        ctl.setRefScore(8_000_000); // the max, so the score is at or below it
+        ctl.setRefScore(8_000_000); // the max, above the score
+        assertLt(_score(id), 8_000_000, "the score is below refScore");
         uint256 want = _backstop(id);
         vm.prank(seller);
         core.sellForBalance(ids);
         (, uint256 cost,) = core.creditInfo(id);
-        assertEq(want, core.floorRate(), "the backstop is the unscaled floor rate");
-        assertEq(cost, want, "the recorded cost is the floor rate");
+        assertEq(cost, FullMath.mulDiv(core.floorRate(), _score(id), 8_000_000), "floor rate times score over refScore");
+        assertLt(cost, core.floorRate(), "below the floor rate for a score below refScore");
+        assertEq(cost, want, "the recorded cost is the helper value");
+    }
+
+    /// a failed `refScore()` read reverts the bid with `BadQuote` instead of recording the floor rate
+    function test_sellForBalance_failedRefScoreReadReverts() public {
+        _ready();
+        uint256[] memory ids = _credits(seller, 1);
+        vm.mockCallRevert(address(ctl), abi.encodeWithSignature("refScore()"), "");
+        vm.prank(seller);
+        vm.expectRevert(ICore.BadQuote.selector);
+        core.sellForBalance(ids);
+        vm.mockCall(address(ctl), abi.encodeWithSignature("refScore()"), abi.encode(uint256(0)));
+        vm.prank(seller);
+        vm.expectRevert(ICore.BadQuote.selector);
+        core.sellForBalance(ids);
+        vm.clearMockedCalls();
     }
 
     /// a pushed up pool price (an expensive balance token) does not move the recorded cost: it stays the backstop
@@ -136,9 +150,9 @@ contract OnePileTest is Fixture {
         assertEq(cost, want, "the recorded cost is the backstop, not the pushed down pool value");
     }
 
-    /// with an empty eth pot the recorded cost is still the floor rate backstop, nonzero, so a credit bought with the
+    /// with an empty eth pot the recorded cost still scales the nonzero floor rate, so a credit bought with the
     /// balance token is never resellable into the eth bid at a profit. buying it back costs at least `creditFloorBps` of it
-    function test_sellForBalance_costIsThePeakWithAnEmptyPot() public {
+    function test_sellForBalance_costScalesTheFloorRateWithAnEmptyPot() public {
         _enterPhase2();
         xt.mint(address(core), 1e24);
         core.skim();
@@ -154,7 +168,7 @@ contract OnePileTest is Fixture {
         vm.prank(seller);
         core.sellForBalance(ids);
         (, uint256 cost,) = core.creditInfo(id);
-        assertEq(cost, floor, "the recorded cost is the floor rate, not the clamped zero");
+        assertEq(cost, FullMath.mulDiv(floor, _score(id), 8_000_000), "the recorded cost scales the floor rate, not the clamped zero");
         assertGe(cost, 1, "the recorded cost is at least 1 wei");
 
         vm.prank(owner);

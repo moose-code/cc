@@ -227,6 +227,9 @@ contract SecFixes55307c4 is Fixture {
         assertEq(pot - core.balancePot(), quote, "the quote equals the payout");
         mod.setRevertUnit(true);
         assertEq(lens.balanceBidOf(ids[0]), 0, "a failing live read quotes 0");
+        mod.setRevertUnit(false);
+        mod.setUnitPerPoint(uint256(type(uint128).max) + 1);
+        assertEq(lens.balanceBidOf(ids[0]), 0, "a unit above uint128 quotes 0");
     }
 
     function test_lensBidCapsAtThePot() public {

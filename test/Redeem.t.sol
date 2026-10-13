@@ -126,6 +126,34 @@ contract RedeemTimingTest is RedeemBase {
         core.redeemStatement(0);
     }
 
+    /// `atFloor` reads the settings, `floorRate`, the module's unit and the pool price in cold state. the Core allows it
+    /// 400,000 gas (`AT_FLOOR_GAS`). with a pool key set and the module stand in, the cold read stays under half the cap
+    /// and the redemption through the Core completes
+    function test_timing_atFloorColdFitsTheCoreReadBudget() public {
+        _enterPhase2();
+        _setBalancePool();
+        uint256 sid = _composeOnce().sid;
+        _makeEligible(sid);
+        _cool();
+        uint256 before = gasleft();
+        bool floor = ctl.atFloor(sid);
+        uint256 used = before - gasleft();
+        assertTrue(floor, "eligible");
+        emit log_named_uint("atFloor gas, cold, pool key set", used);
+        assertLt(used, 200_000, "the cold read uses under half the Core read budget");
+        _cool();
+        core.redeemStatement(sid);
+        (bool held,,) = core.statementInfo(sid);
+        assertFalse(held, "the redemption through the Core completed");
+    }
+
+    function _cool() internal {
+        vm.cool(address(core));
+        vm.cool(address(ctl));
+        vm.cool(address(mod));
+        vm.cool(address(PM));
+    }
+
     function test_timing_offWhenRedeemOnIsFalse() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;

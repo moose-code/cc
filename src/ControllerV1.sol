@@ -47,13 +47,14 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// start of the curve, and with it the asking price, can still fall in a pause while the anchor is above 10_000.
 /// its settings belong to the live owner of the core (`core.owner()`), there is no second owner.
 /// once the owner sets the balance token pool (`setBalancePoolKey`), `valueOf` includes the pool term. with the pool key
-/// unset, no balance module set, a failed or zero unit read, or a zero pool read the pool term is 0
+/// unset, no balance module set, a failed, zero or above `uint128.max` unit read, or a zero pool read the pool term is 0
 contract ControllerV1 is IController {
     using StateLibrary for IPoolManager;
 
     uint256 private constant PAGE = 80;
     uint256 private constant BPS = 10_000;
-    uint256 private constant READ_GAS = 200_000;
+    /// gas of the controller's read of the balance module's `unitPerPoint()`. the Core allows `atFloor` 400,000 gas in all
+    uint256 private constant UNIT_GAS = 50_000;
     uint256 private constant MAX_ANCHOR_MIN_COST = 10 ether;
 
     error OnlyOwner();
@@ -335,8 +336,8 @@ contract ControllerV1 is IController {
 
     /// the value in wei of `points` score units: the larger of `floorRate * points / refScore` and the balance token pool
     /// value of `points * unitPerPoint` base units. `unitPerPoint` is read from the balance module in the call. the pool
-    /// term is 0 when the pool key is unset, no balance module is set, the unit read fails or is zero, or the pool reads
-    /// zero
+    /// term is 0 when the pool key is unset, no balance module is set, the unit read fails, is zero or exceeds
+    /// `uint128.max`, the pool reads zero, or the pool pricing exceeds 256 bits
     function valueOf(uint256 points) public view returns (uint256) {
         uint256 rate = FullMath.mulDiv(CORE.floorRate(), points, refScore);
         uint256 pool = _poolValue(points);
@@ -498,46 +499,69 @@ contract ControllerV1 is IController {
         return ICoreSale(address(CORE)).settings().saleFloorBps;
     }
 
-    /// the module's `unitPerPoint()` read with at most `READ_GAS`, the same gas the balance token bid forwards. copies at
-    /// most 32 bytes of returndata, so a long answer cannot grief the gas. `ok` is false on a revert or an answer
-    /// shorter than 32 bytes, where the unit reads 0
+    /// the module's `unitPerPoint()` read with at most `UNIT_GAS`. copies at most 32 bytes of returndata, so a long answer
+    /// cannot grief the gas. `ok` is false, and the unit reads 0, on a revert, an answer shorter than 32 bytes, a zero
+    /// unit or a unit above `type(uint128).max`, the same reads the Core's balance doors revert `BadModule` on
     function _liveUnit(address module) private view returns (uint256 unit, bool ok) {
         bytes4 sel = IBalanceModule.unitPerPoint.selector;
         assembly ("memory-safe") {
             mstore(0, sel)
-            ok := staticcall(READ_GAS, module, 0, 4, 0, 32)
+            ok := staticcall(UNIT_GAS, module, 0, 4, 0, 32)
             ok := and(ok, iszero(lt(returndatasize(), 32)))
             unit := mload(0)
         }
-        if (!ok) unit = 0;
+        if (!ok || unit == 0 || unit > type(uint128).max) return (0, false);
     }
 
     /// the balance token pool value of `points` score units in wei: `points * unitPerPoint` base units priced at the pool
-    /// sqrt price. `unitPerPoint` is read from the balance module in the call and taken as at most `uint128.max`, so
-    /// `points` of at most 2^128 cannot overflow the pool pricing. zero when the pool key is unset, no balance module is
-    /// set, the unit read fails or is zero, the owed amount is zero, or the pool sqrt price reads zero
+    /// sqrt price. `unitPerPoint` is read from the balance module in the call. never reverts: 0 when the pool key is
+    /// unset, no balance module is set, the unit read fails (see `_liveUnit`), the owed amount is zero, the pool sqrt
+    /// price reads zero, or a product of the pricing exceeds 256 bits
     function _poolValue(uint256 points) private view returns (uint256) {
         if (!balancePoolKeySet) return 0;
         address module = CORE.balanceModule();
         if (module == address(0)) return 0;
         (uint256 unit, bool ok) = _liveUnit(module);
-        if (!ok || unit == 0) return 0;
-        if (unit > type(uint128).max) unit = type(uint128).max;
-        (uint256 priceWei, bool priced) = _priceBaseUnits(points * unit);
+        if (!ok) return 0;
+        uint256 baseUnits;
+        unchecked {
+            baseUnits = points * unit;
+        }
+        if (points != 0 && baseUnits / points != unit) return 0;
+        (uint256 priceWei, bool priced) = _priceBaseUnits(baseUnits);
         return priced ? priceWei : 0;
     }
 
     /// `baseUnits` of the balance token priced in wei at the balance token pool. `priced` is false when the pool key is
-    /// unset or the pool sqrt price reads zero. native eth is `currency0`, so wei per token base unit is
-    /// `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
+    /// unset, the pool sqrt price reads zero, or either `mulDiv` of the price exceeds 256 bits. native eth is `currency0`,
+    /// so wei per token base unit is `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
     function _priceBaseUnits(uint256 baseUnits) private view returns (uint256 priceWei, bool priced) {
         if (!balancePoolKeySet) return (0, false);
         (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(balancePoolKey.toId());
         if (sqrtPriceX96 == 0) return (0, false);
         uint256 q = FixedPoint96.Q96;
         uint256 p = sqrtPriceX96;
-        priceWei = FullMath.mulDiv(FullMath.mulDiv(baseUnits, q, p), q, p);
+        bool fits;
+        (fits, priceWei) = _mulDivFits(baseUnits, q, p);
+        if (!fits) return (0, false);
+        (fits, priceWei) = _mulDivFits(priceWei, q, p);
+        if (!fits) return (0, false);
         priced = true;
+    }
+
+    /// `a * b / d` rounded down with `fits` false when the quotient exceeds 256 bits. `d` is nonzero
+    function _mulDivFits(uint256 a, uint256 b, uint256 d) private pure returns (bool fits, uint256 r) {
+        uint256 hi;
+        unchecked {
+            uint256 lo = a * b;
+            uint256 mm;
+            assembly ("memory-safe") {
+                mm := mulmod(a, b, not(0))
+            }
+            hi = mm - lo - (mm < lo ? 1 : 0);
+        }
+        if (hi >= d) return (false, 0);
+        return (true, FullMath.mulDiv(a, b, d));
     }
 
     /// with `cost` at least `anchorMinCost`, a sale price in bps of the reference (rounded up) above the anchor sets the

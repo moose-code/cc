@@ -23,6 +23,7 @@ interface ICore {
     error BadCost();
     error BadFormat();
     error BadModule();
+    error BadQuote();
     error BadRate();
     error BadSender();
     error BadSetting(bytes32 field);

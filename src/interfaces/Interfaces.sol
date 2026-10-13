@@ -187,13 +187,13 @@ struct Settings {
 struct Sale {
     /// the start price over the anchor, bps
     uint16 markupBps;
-    /// the most the start price can be, bps of the statement cost
+    /// the most the start price can be, bps of the price reference, `max(cost, valueOf(rating))`
     uint32 startCapBps;
-    /// fall of the asking price per hour above the knee, bps of the statement cost
+    /// fall of the asking price per hour above the knee, bps of the price reference, `max(cost, valueOf(rating))`
     uint16 fastDecayBpsPerHour;
-    /// the price where the fast fall ends and the slow fall starts, bps of the statement cost
+    /// the price where the fast fall ends and the slow fall starts, bps of the price reference, `max(cost, valueOf(rating))`
     uint32 kneeBps;
-    /// fall of the asking price per hour at or below the knee, bps of the statement cost
+    /// fall of the asking price per hour at or below the knee, bps of the price reference, `max(cost, valueOf(rating))`
     uint16 slowDecayBpsPerHour;
     /// seconds for the part of the anchor above 10_000 to halve
     uint32 anchorHalfLife;
