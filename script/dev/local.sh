@@ -32,11 +32,12 @@ stop_anvil() {
 
 if [ "${1:-}" = "stop" ]; then stop_anvil; exit 0; fi
 
+# content hash of every tracked or untracked, non-ignored source file the run
+# depends on. commits and stashes leave it unchanged. the cache dir is gitignored.
 KEY="$({
   echo "$PHASE $FORK_BLOCK"
-  git ls-files -s src script test/standins test/utils foundry.toml remappings.txt
-  git diff HEAD -- src script test/standins test/utils foundry.toml remappings.txt
-  git ls-files --others --exclude-standard src script test/standins test/utils | xargs -I{} shasum {} 2>/dev/null
+  git ls-files -co --exclude-standard src script test/standins test/utils foundry.toml remappings.txt \
+    | grep -v '^script/dev/local.sh$' | sort | while read -r f; do [ -f "$f" ] && shasum "$f"; done
 } | shasum | cut -c1-12)"
 STATE="$CACHE_DIR/state-$PHASE-$KEY.hex"
 RECORD="$CACHE_DIR/record-$PHASE-$KEY.json"
