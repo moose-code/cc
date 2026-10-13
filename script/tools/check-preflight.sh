@@ -47,7 +47,7 @@ if [ -z "$summary" ]; then
 fi
 failed="$(grep -E '^ +failed: ' <<<"$out" | sed -E 's/^ +failed: //' || true)"
 echo "$summary" | sed 's/^ *//'
-grep -oE '(CONFIG_HASH|CONTROLLER_NONCE)=[0-9a-fx]+' <<<"$out" | sort -u || true
+grep -oE 'CONFIG_HASH=[0-9a-fx]+' <<<"$out" | sort -u || true
 # the failed rows without the balance row, in the same ", " joined form as the expected rows
 without_balance() { { sed 's/, /\n/g' <<<"$1" | grep -vxF "$balrow" || true; } | paste -sd, - | sed 's/,/, /g'; }
 if [ "${IGNORE_BALANCE:-0}" = 1 ]; then

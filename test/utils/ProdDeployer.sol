@@ -3,14 +3,20 @@ pragma solidity ^0.8.28;
 
 import {LaunchConfig} from "../../script/LaunchConfig.sol";
 import {SystemDeployer} from "../../script/SystemDeployer.sol";
-import {IArtCoinsFactoryV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {Prod} from "./Prod.sol";
 
-/// @notice the test side of `NewProd`: the controller and the core are created from their via_ir artifacts, so no test
-/// contract imports the production sources or embeds their creation code
+/// @notice the test side of `NewProd`: every contract is created from its via_ir artifact through the deterministic
+/// deployer, so no test contract imports the production sources or embeds their creation code
 abstract contract ProdDeployer is SystemDeployer {
+    function _newCore(LaunchConfig memory c, address launcher) internal virtual override returns (address) {
+        bytes memory init = abi.encodePacked(vm.getCode("Core.sol:Core"), coreConstructorArgs(c, launcher));
+        return Prod.create2(init, CORE_SALT, CREATE2_DEPLOYER);
+    }
+
     function _newController(address core_, LaunchConfig memory c) internal virtual override returns (address) {
-        return address(Prod.newController(core_, c.sale, c.credit));
+        bytes memory init =
+            abi.encodePacked(vm.getCode("ControllerV1.sol:ControllerV1"), abi.encode(core_, c.sale, c.credit));
+        return Prod.create2(init, CONTROLLER_SALT, CREATE2_DEPLOYER);
     }
 
     function _newSeaportAdapter(address core_, address[] memory recipients) internal virtual override returns (address) {
@@ -19,18 +25,5 @@ abstract contract ProdDeployer is SystemDeployer {
 
     function _newStrategyAdapter() internal virtual override returns (address) {
         return Prod.newStrategyAdapter(STRATEGY_ADAPTER_SALT, CREATE2_DEPLOYER);
-    }
-
-    function _newCore(
-        address owner_,
-        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg,
-        address launcher,
-        address controller_,
-        LaunchConfig memory c,
-        address[] memory adapters
-    ) internal virtual override returns (address) {
-        return address(
-            Prod.newCore(owner_, cfg, launcher, controller_, c.payee, c.stack, c.rateStart, c.settings, c.credit, adapters)
-        );
     }
 }

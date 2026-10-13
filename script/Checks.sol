@@ -47,9 +47,9 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the per transaction gas cap of the target chain (EIP 7825, 2^24). the launch is simulated with what is left of
     /// it, so a launch that does not fit fails the simulation row, and a collision cannot burn more than that
     uint256 internal constant TX_GAS_CAP = 16_777_216;
-    /// @dev the gas of the deploy transactions as the launch rehearsal measures it (17,581,727 for the nine transactions before the two adapters), rounded up with margin.
+    /// @dev the gas of the nine deploy transactions as the launch rehearsal measures it (16,120,826), plus 15 percent, rounded up.
     /// `test/Rehearsal.t.sol` asserts that the measured total stays under it
-    uint256 internal constant DEPLOY_GAS_ESTIMATE = 19_200_000;
+    uint256 internal constant DEPLOY_GAS_ESTIMATE = 18_600_000;
     /// @dev the coin supply of the launch. test/Config.t.sol checks the config against it
     uint256 internal constant COIN_SUPPLY = 1_000_000_000e18;
     /// @dev the byte caps of the coin's `image` and `description` (`ArtCoinsTokenV2.MAX_IMAGE_BYTES` and
@@ -72,7 +72,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0xc10d84af42cf1aa0195297716127bbb8c1d941550d089a2c0178505ce5381940;
+    bytes32 internal constant BUILD_HASH_CORE = 0x2dac7c78aac231c379e35aa9f468283c069a30f335596a0dd1a448c2389ca5cf;
     bytes32 internal constant BUILD_HASH_CORELIB = 0x3bf813198195a05ee49732d9b3c8d9d2eb3d4e70fc0aae4fe0537b49e305e3f8;
     bytes32 internal constant BUILD_HASH_CONTROLLER = 0x684e24d80ee34b425b7c19d5171de012c541b256d3b8dad4b1c579bcd8b63ae7;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
@@ -100,32 +100,6 @@ abstract contract LaunchChecks is PostflightChecks {
     uint256 internal constant CREDITS_SUPPLY_MIN = 122_154;
     uint256 internal constant STATEMENTS_SUPPLY_MIN = 176;
 
-    /// @notice true when running under `forge script`. a test overrides it to rehearse the script behaviour
-    function _scriptContext() internal view virtual returns (bool) {
-        return vm.isContext(VmSafe.ForgeContext.ScriptGroup);
-    }
-
-    /// @notice the address `forge script` gives the linked library `CoreLib`: CREATE2 through the deterministic deployer,
-    /// salt zero, the creation code of the compiled library. it depends on the compiler output only
-    function libraryAddress() internal view returns (address) {
-        return vm.computeCreate2Address(bytes32(0), keccak256(vm.getCode("CoreLib.sol:CoreLib")), CREATE2_DEPLOYER);
-    }
-
-    /// @notice whether the broadcast will send a library transaction before the controller. the library goes through the
-    /// deterministic deployer as an ordinary transaction FROM THE DEPLOYER, so it takes one deployer nonce, but only
-    /// when no code sits at its address yet (a deployed library is skipped). a test run deploys no library through
-    /// the deterministic deployer, so it never takes a nonce there
-    function _libraryTxPending() internal view returns (bool) {
-        return _scriptContext() && libraryAddress().code.length == 0;
-    }
-
-    /// @notice the deployer nonce the controller will be created at: the live nonce plus the library transaction that
-    /// still precedes it. inside `Deploy` the library is already on chain by the time `run` starts, so the live nonce
-    /// already counts it. the Core is created at this nonce plus one
-    function _controllerNonce(address deployer) internal view returns (uint64) {
-        return vm.getNonce(deployer) + (_libraryTxPending() ? 1 : 0);
-    }
-
     /// @notice runs every preflight check and records it in the report
     function preflight(LaunchConfig memory c, address deployer) internal {
         _reset();
@@ -145,15 +119,15 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     /// @notice the checks of `Resume.s.sol` before it sends the missing steps. the prediction rows are left out (the
-    /// addresses are taken by now) and the factory rows run only while the launch is still to be sent
-    function preflightResume(LaunchConfig memory c, address deployer, bool launching) internal {
+    /// Core is deployed by now)
+    function preflightResume(LaunchConfig memory c, address deployer) internal {
         _reset();
         _preConfig(c);
         _preRules(c, deployer);
         _preCode(c);
         _preBuild();
         _preStack(c);
-        if (launching) _preFactory(c, deployer);
+        _preFactory(c, deployer);
         _preLive();
     }
 
@@ -401,12 +375,8 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     function _preCode(LaunchConfig memory c) private {
+        // the hook, factory, locker, escrow and mev module have a code hash row each (`_preStackCode`)
         _code("code: pool manager", c.stack.poolManager);
-        _code("code: hook", c.stack.hook);
-        _code("code: factory", c.stack.factory);
-        _code("code: locker", c.stack.locker);
-        _code("code: escrow", c.stack.escrow);
-        _code("code: mev module", c.mevModule);
         _code("code: Credits", Mainnet.CREDITS);
         _code("code: Statements", Mainnet.STATEMENTS);
         _code("code: CreditStrategy", Mainnet.CREDIT_STRATEGY);
@@ -450,22 +420,16 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "library: CoreLib at its create2 address is the compiled code or absent",
             !deployed || isCompiledLibrary(lib.code),
-            string.concat(
-                vm.toString(lib),
-                deployed
-                    ? " on chain, the broadcast skips it and takes no deployer nonce"
-                    : " not deployed, the first transaction deploys it and takes one deployer nonce"
-            )
+            string.concat(vm.toString(lib), deployed ? " on chain, the broadcast skips it" : " not deployed, the first transaction deploys it")
         );
     }
 
-    /// @dev the deploy order is controller, Core: the controller takes the deployer nonce after the library (when
-    /// the library still has to go out), the Core the next. the coin comes from the factory's own `predictToken` for
-    /// the deployer and the full config with the Core as bounty recipient, read through a call that cannot revert here
+    /// @dev the Core is the only contract of the deploy whose address depends on the sender. the other contracts are
+    /// created when they have no code, so a copy that is there already is the same code. the coin comes from the
+    /// factory's own `predictToken` for the deployer and the full config with the Core as bounty recipient, read through
+    /// a call that cannot revert here
     function _prePredictions(LaunchConfig memory c, address deployer) private {
-        uint64 nonce = _controllerNonce(deployer);
-        address coreAt = vm.computeCreateAddress(deployer, nonce + 1);
-        _noCode("predicted controller is empty", vm.computeCreateAddress(deployer, nonce));
+        address coreAt = coreAddress(c, deployer);
         _noCode("predicted core is empty", coreAt);
         (bool ok, address coinAt) = _predict(c, deployer, coreAt);
         _check(
@@ -478,19 +442,10 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the Seaport adapter takes the list at construction and the lock freezes additions, so an entry is a permanent
     /// payout address. none may be zero, repeated, or an address of the system (Core, controller, owner, payee, stack)
     function _preSeaportRecipients(LaunchConfig memory c, address deployer) private {
-        uint64 nonce = _controllerNonce(deployer);
+        address coreAt = coreAddress(c, deployer);
         Stack memory s = c.stack;
-        address[9] memory system = [
-            vm.computeCreateAddress(deployer, nonce + 1),
-            vm.computeCreateAddress(deployer, nonce),
-            c.owner,
-            c.payee,
-            s.poolManager,
-            s.hook,
-            s.factory,
-            s.locker,
-            s.escrow
-        ];
+        address[9] memory system =
+            [coreAt, controllerAddress(coreAt, c), c.owner, c.payee, s.poolManager, s.hook, s.factory, s.locker, s.escrow];
         address[] memory r = c.seaportRecipients;
         bool zero;
         bool dup;
@@ -670,7 +625,6 @@ abstract contract LaunchChecks is PostflightChecks {
         (bool ok, address p) = _addr(fa, abi.encodeCall(IArtCoinsFactoryV2.protocolRecipient, ()));
         _check("factory: protocol recipient set (the launcher protocol, not the engine owner)", ok && p != address(0), vm.toString(p));
         (bool okf, uint256 fee) = _word(fa, abi.encodeCall(IArtCoinsFactoryV2.deployFee, ()));
-        _info("factory: deploy fee paid by the launch", okf ? vm.toString(fee) : "unreadable");
         (ok, p) = _addr(fa, abi.encodeCall(IArtCoinsFactoryV2.teamFeeRecipient, ()));
         if (okf && fee != 0) {
             _check(
@@ -700,8 +654,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// factory and the hook accept the config (bounds, minimums, enabled stack, mev values, recipients). the Core needs no
     /// code for it. the deployer gets the fee for the simulation only
     function _preSimulate(LaunchConfig memory c, address deployer) private {
-        uint64 nonce = _controllerNonce(deployer);
-        address coreAt = vm.computeCreateAddress(deployer, nonce + 1);
+        address coreAt = coreAddress(c, deployer);
         IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(c, c.owner, coreAt);
         (bool ok, address coin, uint256 gas, bytes memory why) = _simulateLaunch(c, deployer, cfg);
         _check(
@@ -784,11 +737,19 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the table the owner signs. every row restates one launch input in the words of what it does, then the hash
     /// of the whole config is the single value the deploy needs back in CONFIG_HASH
     function _preSignoff(LaunchConfig memory c, address deployer) private {
-        uint64 nonce = _controllerNonce(deployer);
+        address coreAt = coreAddress(c, deployer);
         _info("signoff: owner (core owner, token admin, factory owner)", vm.toString(c.owner));
         _info("signoff: creator (the one project locker reward slot, 80 percent of the lp rewards, none at lp fee 0)", vm.toString(c.creator));
         _info("signoff: deployer (sends the transactions, must be the factory owner)", vm.toString(deployer));
-        _info("signoff: core address (the bounty recipient of the pool)", vm.toString(vm.computeCreateAddress(deployer, nonce + 1)));
+        _info("signoff: core address (the bounty recipient of the pool)", vm.toString(coreAt));
+        _info(
+            "signoff: other addresses",
+            string.concat(
+                "controller ", vm.toString(controllerAddress(coreAt, c)),
+                " seaport adapter ", vm.toString(seaportAdapterAddress(coreAt, c.seaportRecipients)),
+                " strategy adapter ", vm.toString(strategyAdapterAddress())
+            )
+        );
         _info(
             "signoff: payee (one address, owner replaces it later with setPayee)",
             string.concat(vm.toString(c.payee), " ppm ", vm.toString(c.settings.payeePpm), " of the fee income")
@@ -842,7 +803,6 @@ abstract contract LaunchChecks is PostflightChecks {
             )
         );
         _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));
-        _info("signoff: CONTROLLER_NONCE (the owner sends nothing else until the deploy ends)", vm.toString(uint256(nonce)));
     }
 
     /// @dev the settings are adjustable by the owner after launch, so these rows print them for sign off

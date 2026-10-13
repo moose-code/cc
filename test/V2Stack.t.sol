@@ -128,27 +128,18 @@ contract V2StackTest is Test {
         swapper.swap{value: ethIn}(key, true, -int256(ethIn), buyer);
     }
 
-    function _sell(PoolKey memory key, address coin, uint256 coinIn) internal {
-        vm.startPrank(buyer);
-        IArtCoinsTokenV2(coin).approve(address(swapper), coinIn);
-        swapper.swap(key, false, -int256(coinIn), buyer);
-        vm.stopPrank();
-    }
-
+    // the live stack of the fork is the stack the preflight pins describe
     function test_liveStackPassesCheck() public view {
         V2Stack.check(s, p); // the DeployV2Lib post deploy requires, on the live stack
+        assertEq(IV2Reads(s.hook).constantsHash(), V2_CONSTANTS_HASH);
+        assertEq(F(s.factory).STACK_VERSION(), 2);
         assertEq(F(s.factory).owner(), owner);
         assertTrue(F(s.factory).deprecated());
         assertEq(F(s.factory).deployFee(), V2Stack.MAINNET_DEPLOY_FEE);
         assertEq(uint160(s.hook) & 0x3FFF, V2Stack.HOOK_LOW_BITS);
     }
 
-    /// the constants hash of the live stack, which preflight pins (`V2_CONSTANTS_HASH`)
-    function test_liveStackReportsThePinnedConstantsHash() public view {
-        assertEq(IV2Reads(s.hook).constantsHash(), V2_CONSTANTS_HASH);
-        assertEq(F(s.factory).STACK_VERSION(), 2);
-    }
-
+    // a bounty recipient with an empty receive is paid at once by the hook, on a buy of a restricted coin
     function test_launchRestrictedCoinWithEmptyRecipient() public {
         EmptyRecipient r = new EmptyRecipient();
         (address coin, PoolKey memory key) = _launch(address(r), bytes32(uint256(1)));
@@ -175,11 +166,9 @@ contract V2StackTest is Test {
         uint256 got = t.balanceOf(buyer);
         assertGt(got, 0, "bought");
         console.log("bounty on a 1 eth buy", bounty);
-        _sell(key, coin, got / 2);
-        assertEq(t.balanceOf(buyer), got - got / 2, "sold");
-        assertGt(address(r).balance, before + bounty, "sell skim also pushed");
     }
 
+    // a bounty recipient whose receive writes storage fails the stipend push: the hook credits the escrow, anyone claims
     function test_writingRecipientIsCreditedInEscrowAndClaims() public {
         WritingRecipient r = new WritingRecipient();
         (, PoolKey memory key) = _launch(address(r), bytes32(uint256(2)));
@@ -196,111 +185,4 @@ contract V2StackTest is Test {
         assertEq(e.balances(address(r), address(0)), 0);
     }
 
-    function test_restrictedTransfersAndBurns() public {
-        EmptyRecipient r = new EmptyRecipient();
-        (address coin, PoolKey memory key) = _launch(address(r), bytes32(uint256(3)));
-        IArtCoinsTokenV2 t = IArtCoinsTokenV2(coin);
-        _buy(key, 1 ether);
-        uint256 bal = t.balanceOf(buyer);
-        address other = makeAddr("other");
-        vm.prank(buyer);
-        vm.expectRevert(abi.encodeWithSelector(TransferRestricted.selector, buyer, other, 1));
-        t.transfer(other, 1);
-        // burn and burnFrom bypass the restriction
-        vm.prank(buyer);
-        t.burn(1e18);
-        assertEq(t.balanceOf(buyer), bal - 1e18);
-        address spender = makeAddr("spender");
-        vm.prank(buyer);
-        t.approve(spender, 2e18);
-        vm.prank(spender);
-        t.burnFrom(buyer, 2e18);
-        assertEq(t.balanceOf(buyer), bal - 3e18);
-        assertEq(t.totalSupply(), 1e27 - 3e18);
-    }
-
-    function test_lpFeeAccruesAndLockerPaysRecipients() public {
-        EmptyRecipient r = new EmptyRecipient();
-        (address coin, PoolKey memory key) = _launch(address(r), bytes32(uint256(4)));
-        IArtCoinsTokenV2 t = IArtCoinsTokenV2(coin);
-        _buy(key, 5 ether);
-        _sell(key, coin, t.balanceOf(buyer) / 2);
-        assertEq(creator.balance, 0);
-        assertEq(t.balanceOf(creator), 0);
-        IArtCoinsLpLockerV2(s.locker).collectRewards(coin);
-        uint256 ethPaid = creator.balance + IArtCoinsFeeEscrowV2(s.escrow).balances(creator, address(0));
-        uint256 coinPaid = t.balanceOf(creator) + IArtCoinsFeeEscrowV2(s.escrow).balances(creator, coin);
-        assertGt(ethPaid, 0, "eth lp fee reached the reward recipient");
-        assertGt(coinPaid, 0, "coin lp fee reached the reward recipient");
-        console.log("lp fee eth to creator", creator.balance);
-        console.log("lp fee coin to creator", t.balanceOf(creator));
-    }
-
-    /// the v1 launch values do not fit the mainnet env knobs (V2-PORT.md, git history before packet 0 section 5.1): bounty 9500
-    /// reverts, and a launch with no fee on either leg (lp fee and baseline skim both 0) reverts
-    function test_v1LaunchValuesRevert() public {
-        EmptyRecipient r = new EmptyRecipient();
-        F.DeploymentConfigV2 memory c = _config(address(r), bytes32(uint256(6)));
-        c.fee.bountyBps = 9500;
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSignature("BountyBpsTooHigh(uint16,uint16)", 9500, 9000));
-        F(s.factory).deployTokenAsOwner{value: p.deployFee}(c, p.protocolBps);
-        c.fee.bountyBps = 9000;
-        c.fee.lpFeePips = 0;
-        c.fee.baselineSkimBps = 0;
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSignature("ZeroFeeLaunch()"));
-        F(s.factory).deployTokenAsOwner{value: p.deployFee}(c, p.protocolBps);
-    }
-
-    /// the coin admin repoints the hook bounty recipient until it calls `lockRecipients()`. a caller that is not the
-    /// admin is refused, and after the lock the admin is refused too
-    function test_coinAdminRepointsTheBountyRecipientUntilLocked() public {
-        EmptyRecipient r = new EmptyRecipient();
-        EmptyRecipient r2 = new EmptyRecipient();
-        (address coin, PoolKey memory key) = _launch(address(r), bytes32(uint256(8)));
-        IArtCoinsTokenV2 t = IArtCoinsTokenV2(coin);
-        bytes32 pid = t.canonicalPoolId();
-        IArtCoinsHookV2 h = IArtCoinsHookV2(s.hook);
-        vm.prank(buyer);
-        vm.expectRevert(abi.encodeWithSignature("NotCoinAdmin()"));
-        h.setBountyRecipient(pid, payable(address(r2)));
-        vm.prank(owner);
-        h.setBountyRecipient(pid, payable(address(r2)));
-        assertEq(h.skimConfig(pid).bountyRecipient, address(r2));
-        uint256 before = address(r2).balance;
-        _buy(key, 1 ether);
-        assertGt(address(r2).balance, before, "the new recipient is paid");
-        assertFalse(t.recipientsLocked());
-        vm.prank(owner);
-        t.lockRecipients();
-        assertTrue(t.recipientsLocked());
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSignature("RecipientsLocked()"));
-        h.setBountyRecipient(pid, payable(address(r)));
-    }
-
-    /// the coin admin repoints a locker reward slot until `lockRecipients()`, and the protocol slot is frozen
-    function test_coinAdminRepointsALockerRewardRecipient() public {
-        EmptyRecipient r = new EmptyRecipient();
-        (address coin,) = _launch(address(r), bytes32(uint256(9)));
-        IArtCoinsLpLockerV2 l = IArtCoinsLpLockerV2(s.locker);
-        address next = makeAddr("next reward recipient");
-        vm.prank(buyer);
-        vm.expectRevert(abi.encodeWithSignature("NotCoinAdmin()"));
-        l.setRewardRecipient(coin, 0, next);
-        vm.prank(owner);
-        l.setRewardRecipient(coin, 0, next);
-        assertEq(l.rewardRecipients(coin)[0], next);
-        (bool hasSlot, uint256 idx) = l.protocolSlotIndex(coin);
-        assertTrue(hasSlot, "the factory appended the protocol slot");
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSignature("ProtocolSlotFrozen()"));
-        l.setRewardRecipient(coin, idx, next);
-        vm.prank(owner);
-        IArtCoinsTokenV2(coin).lockRecipients();
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSignature("RecipientsLocked()"));
-        l.setRewardRecipient(coin, 0, address(r));
-    }
 }

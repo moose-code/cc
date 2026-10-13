@@ -7,7 +7,6 @@ import {ICreditStrategyAdapter} from "../src/interfaces/ICreditStrategyAdapter.s
 import {ICreditStrategy, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {SeaportBase} from "./Seaport.t.sol";
 import {FaultyAdapter} from "./standins/FaultyAdapter.sol";
-import {Prod} from "./utils/Prod.sol";
 import {
     ISeaport,
     OrderComponents,
@@ -182,30 +181,14 @@ contract AdaptersTest is SeaportBase {
                               the Core
     //////////////////////////////////////////////////////////////*/
 
-    // promise: INTEGRATION ZeroAddress, ForbiddenTarget on the constructor adapters
-    function test_core_constructorRefusesAZeroOrForbiddenAdapter() public {
-        address[] memory zero = new address[](1);
+    // promise: INTEGRATION ZeroAddress, ForbiddenTarget on addAdapter
+    function test_core_addAdapterRefusesAZeroOrForbiddenAdapter() public {
+        vm.startPrank(owner);
         vm.expectRevert(ICore.ZeroAddress.selector);
-        Prod.newCore(
-            owner, buildConfig(lc, owner, address(0)), owner, address(ctl), lc.payee, lc.stack, lc.rateStart, lc.settings, lc.credit, zero
-        );
-
-        address[] memory forbidden = new address[](2);
-        forbidden[0] = seaportAdapter;
-        forbidden[1] = address(CREDITS);
+        core.addAdapter(address(0));
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        Prod.newCore(
-            owner,
-            buildConfig(lc, owner, address(0)),
-            owner,
-            address(ctl),
-            lc.payee,
-            lc.stack,
-            lc.rateStart,
-            lc.settings,
-            lc.credit,
-            forbidden
-        );
+        core.addAdapter(address(CREDITS));
+        vm.stopPrank();
     }
 
     // promise: INTEGRATION ForbiddenTarget on buyListing

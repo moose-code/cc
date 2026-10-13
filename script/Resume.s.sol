@@ -4,14 +4,14 @@ pragma solidity ^0.8.28;
 import {Script, console} from "forge-std/Script.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {Deployed} from "./SystemDeployer.sol";
-import {SystemResumer, Stage} from "./SystemResumer.sol";
+import {SystemResumer} from "./SystemResumer.sol";
 import {NewProd} from "./NewProd.sol";
 
-/// @notice `CORE=0x... CONFIG_HASH=0x... forge script script/Resume.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow
-/// --private-key $KEY`. reverts while any of SETTINGS_CHANGED, LOCKS_CHANGED, OWNER_CHANGED or COIN_CHANGED is set.
-/// run it as the same deployer as the original run. reads the stage from the chain and sends only what is missing: the
-/// adapters and the launch (if the core exists and the coin does not). then runs postflight. prints the stage
-/// it found. the runbook is docs/RUNBOOK.md section 6
+/// @notice `CORE=0x... CONFIG_HASH=0x... DEPLOYER=0x... forge script script/Resume.s.sol --rpc-url $PRIVATE_RPC --broadcast
+/// --slow --private-key $KEY`. reverts while SETTINGS_CHANGED or COIN_CHANGED is set. run it as the same deployer as the
+/// original run. CORE must be the Core address of this config and deployer. sends the contracts that have no code at
+/// their address, the owner calls and the launch that are not on chain yet. reverts when the Core does not exist (run
+/// Deploy) or the coin is launched already. then runs postflight. the runbook is docs/RUNBOOK.md section 6
 contract Resume is Script, SystemResumer, NewProd {
     function run() external {
         _requireNoChangeFlags();
@@ -24,12 +24,10 @@ contract Resume is Script, SystemResumer, NewProd {
         vm.stopBroadcast();
         _requireDeployer(vm.envOr("DEPLOYER", address(0)), deployer);
         // the checks simulate the launch on a snapshot, so they run outside the broadcast
-        Stage from = resumeChecks(deployer, c, core);
+        resumeChecks(deployer, c, core);
         vm.startBroadcast();
-        Deployed memory d = resumeSend(deployer, c, core, from);
+        Deployed memory d = resumeSend(deployer, c);
         vm.stopBroadcast();
-        console.log("stage found", uint256(from));
-        console.log("0 no core, 1 core only, 2 done");
         console.log("coin", d.coin);
     }
 }

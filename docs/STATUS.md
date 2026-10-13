@@ -21,7 +21,7 @@ each packet is one builder, bounded to the files it names, with `forge build` an
 | 6 | one `State` struct; CoreLens deleted; the bid quote view after pending income; statement formats (decision 113: `compose(format)`, random default, `setHeldFormat`, `minCcToChoose` 1 coin) | CoreState, fixed slots, the lens, 8 postflight rows | 4, 5 | done in 6a and 6b |
 | 6b | one `State` struct (`CoreState`, `SettingsStore` and `RateStore` gone), `CoreLens` deleted, the controller's per field setters replaced by `setSale(Sale)` and `setCredit(CreditSale)` (decision 114), invariant 6 model includes the pending pot share | CoreState, fixed slots, the lens, 14 controller setters | 4, 5 | done |
 | 6a | statement formats (decision 113): `compose(format)`, a random default from `prevrandao` and the head id, `setHeldFormat`, `minCcToChoose` 1 coin at launch | none | 5 | done |
-| 7 | CREATE2 deploy, `setController` before launch, preflight and postflight trimmed, env vars trimmed, the Lock run becomes a later owner command | nonce pinning, Resume, config echo rows | 6 | pending |
+| 7 | CREATE2 deploy, `setController` before launch, preflight and postflight trimmed, env vars trimmed, the Lock run becomes a later owner command | nonce pinning, Resume, config echo rows | 6 | done: nine transactions (the library, Core, controller, the two adapters, `setController`, `addAdapter` for each adapter, the launch), 16,120,826 gas measured and `DEPLOY_GAS_ESTIMATE` 18,600,000; 116 preflight rows and 70 postflight rows on the fixture, 6 `build:` rows |
 | 8 | the test cut: a test stays only when it names the promise it protects (a docs/SPEC.md section 1 row, a docs/INTEGRATION.md revert or an invariant); the reviewer era files, narratives and duplicate cases are deleted and a survivor carries a `// promise:` line. test/**/*.sol before and after: 94 to 75 files (test/*.sol 56 to 39), 34,964 to 23,432 lines, 983 to 452 test functions; the 12 files of packet 7 (4,474 lines, 130 test functions) are untouched. the 20 invariants, 9 suites and 7 Deep variants are kept | 11,532 lines, 531 test functions | 7 | done |
 | 9 | sim follows: the fee fraction without a router, `pointValue`; the page kept (the pause clock is done in packet 2) | none | 5 | pending |
 | 10 | docs content rewrite: SPEC, RUNBOOK, INTEGRATION, README and STATUS describe the built design; `src/` comments naming old paths fixed and the build pins re-pinned; the UI branch's one lens read replaced by a multicall | the stale text of the old design | 8 | pending |
@@ -56,13 +56,11 @@ each packet is one builder, bounded to the files it names, with `forge build` an
 | timings | clean build about 3 to 4 minutes, a test file change about 3 seconds, a `src/Core.sol` change about 35 seconds. full suite with `REHEARSAL=1 forge test -j 6` about 2 minutes on a 16 core machine (rerun rpc failures with `-j 1`). a Deep suite 577 to 692 seconds: `INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 forge test --match-contract '^<Suite>Deep$'` |
 | verification | during an edit run the smallest test that covers it (`--match-path`). run one combined gate at a batch boundary. full suites, deep invariants and the rehearsal belong to a frozen candidate or to a gate whose evidence was invalidated. before a command over 30 seconds, say what it must establish |
 | interfaces | after changing a production contract's external surface run `script/tools/gen-interfaces.sh` and repin test/BuildIdentity.t.sol. never import `src/Core.sol` in a test |
-| Core size | 21,198 bytes of runtime code after the merge of packets 3 and 4, 3,378 bytes of headroom, margin rule at least 60. new logic goes into `CoreLib`. never drop a check to make room |
+| Core size | 21,531 bytes of runtime code after the merge of packet 7, 3,045 bytes of headroom, margin rule at least 60. new logic goes into `CoreLib`. never drop a check to make room |
 | safety | no mainnet broadcast, deploy, push or private key without the owner's explicit instruction |
 | fork env | `set -a; source <path to a .env with MAINNET_RPC_URL and FORK_BLOCK>; set +a` before fork tests; this worktree has none, the owner's lives outside it |
 
 `test/Lifecycle.t.sol` and `test/SaleSmoke.t.sol`, which held four failures at main 35b78be, were deleted by packet 8.
-
-also pre-existing at main: `test/Rehearsal.t.sol` compares the deploy gas with `DEPLOY_GAS_ESTIMATE` (19,200,000), which the adapter transactions of packet 3 exceed; packet 7 re-measures the deploy and sets the constant.
 
 ## 6. known and not fixed
 

@@ -89,16 +89,17 @@ contract CoreUnitTest is CoreBase {
         if (which == 4) bad.escrow = to;
     }
 
-    // promise: INTEGRATION ZeroAddress, BadStack on the constructor
-    function test_constructorRejectsZero() public {
+    // promise: INTEGRATION ZeroAddress on the constructor and on setController, BadStack on the constructor
+    function test_constructorAndSetControllerRejectZero() public {
         Stack memory st = lc.stack;
         uint256 r = lc.rateStart;
         Settings memory s = lc.settings;
         address payee_ = lc.payee;
         vm.expectRevert(ICore.ZeroAddress.selector);
         this.mk(address(0), address(ctl), payee_, st, r, s);
+        vm.prank(owner);
         vm.expectRevert(ICore.ZeroAddress.selector);
-        this.mk(owner, address(0), payee_, st, r, s);
+        core.setController(address(0));
         vm.expectRevert(ICore.ZeroAddress.selector);
         this.mk(owner, address(ctl), address(0), st, r, s);
         // every address of the stack is required

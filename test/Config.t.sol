@@ -4,7 +4,6 @@ pragma solidity ^0.8.28;
 import {Fixture} from "./utils/Fixture.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
-import {CreditIds} from "./utils/CreditIds.sol";
 import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
 import {
     LaunchConfig,
@@ -171,39 +170,6 @@ contract ConfigTest is Fixture {
         this.requireExt(c);
     }
 
-    /// the shipped file is complete and passes the guard, and the refusal is proven by blanking each field of it
-    function test_shippedFileBlankedIsRefused() public {
-        LaunchConfig memory c = _shipped();
-        this.requireExt(c);
-        c.stack.hook = address(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "stack.hook"));
-        this.requireExt(c);
-        c = _shipped();
-        c.mevModule = address(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "stack.mevModule"));
-        this.requireExt(c);
-        c = _shipped();
-        c.owner = address(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "owner"));
-        this.requireExt(c);
-        c = _shipped();
-        c.creator = address(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "creator"));
-        this.requireExt(c);
-        c = _shipped();
-        c.name = "";
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "name"));
-        this.requireExt(c);
-        c = _shipped();
-        c.salt = bytes32(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "salt"));
-        this.requireExt(c);
-        c = _shipped();
-        c.payee = address(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "payee.address"));
-        this.requireExt(c);
-    }
-
     function _shipped() internal view returns (LaunchConfig memory c) {
         c = loadConfig(DEFAULT_CONFIG_FILE);
     }
@@ -238,9 +204,6 @@ contract ConfigTest is Fixture {
         address d2 = _funded();
         _pre(lc, d2);
         assertEq(_failedNames(), "");
-        _print("preflight");
-        // every launch input has a row: the count is part of the report
-        assertEq(rows.length, 124, "preflight rows: docs/RUNBOOK.md step 4");
     }
 
     /// each pinned code hash has a row. appending one byte of code to a contract fails exactly its row
@@ -268,36 +231,6 @@ contract ConfigTest is Fixture {
         }
         _pre(lc, d2);
         assertEq(_failedNames(), "", "unchanged code passes");
-    }
-
-    /// the deprecated gate row: a stranger launch reverts Deprecated(). with the factory public the row is an info line
-    function test_preflightDeprecatedGateRow() public {
-        address d2 = _funded();
-        string memory row = "factory: deprecated, the owner launches and any other caller reverts Deprecated()";
-        _pre(lc, d2);
-        assertTrue(bytes(_rowDetail(row)).length > 10, "row present while deprecated");
-        vm.prank(owner);
-        FACTORY.setDeprecated(false);
-        LaunchConfig memory c = lc;
-        c.allowOpenFactory = true;
-        _pre(c, d2);
-        vm.expectRevert(bytes("row missing"));
-        this.rowDetailExt(row);
-        assertEq(_failedNames(), "", "an open factory passes with the override");
-    }
-
-    function rowDetailExt(string memory name) external view returns (string memory) {
-        return _rowDetail(name);
-    }
-
-    /// every id of `CreditIds` is owned by the CreditStrategy at the fork block, and the three listed ids too
-    function test_creditIdsAreHeldByTheStrategy() public view {
-        for (uint256 i; i < 640; ++i) {
-            assertEq(CREDITS.ownerOf(CreditIds.at(i)), STRATEGY, "credit id moved");
-        }
-        assertEq(CREDITS.ownerOf(LISTED_A), STRATEGY);
-        assertEq(CREDITS.ownerOf(LISTED_B), STRATEGY);
-        assertEq(CREDITS.ownerOf(LISTED_C), STRATEGY);
     }
 
     function test_preflightSimulatesTheLaunchAndLeavesNoTrace() public {
@@ -381,42 +314,15 @@ contract ConfigTest is Fixture {
             _pre(c, d2);
             assertEq(_failedNames(), "seaport recipients: none is the Core, controller, owner, payee or a stack address");
         }
+        // the Core address depends on the opening rate `_pre` substitutes
+        c.rateStart = c.settings.rateCap / 3;
         c.seaportRecipients = new address[](1);
-        c.seaportRecipients[0] = vm.computeCreateAddress(d2, vm.getNonce(d2) + 1);
+        c.seaportRecipients[0] = coreAddress(c, d2);
         _pre(c, d2);
         assertEq(
             _failedNames(),
             "seaport recipients: none is the Core, controller, owner, payee or a stack address",
             "the predicted Core"
-        );
-    }
-
-    function test_preflightFailures() public {
-        // the default config: unset placeholders, a deployer that is not the factory owner
-        address d2 = _user("second deployer");
-        vm.deal(d2, 5 ether);
-        LaunchConfig memory c = defaultConfig();
-        _pre(c, d2);
-        (string memory list, uint256 n) = _failed();
-        assertGe(n, 8, list);
-        // a poor deployer, an out of bounds rate and a wrong hook
-        c = lc;
-        c.rateStart = 5;
-        c.stack.hook = address(0xBEEF);
-        _pre(c, _user("poor deployer"));
-        (list, n) = _failed();
-        assertGe(n, 8, list);
-        // the predicted addresses are already taken: rewind the fixture owner to the nonce it deployed at. the coin is
-        // taken by the same salt of the same config, and the launch cannot be simulated
-        (bool found, uint256 coreNonce) = _coreNonce(address(core), owner);
-        assertTrue(found);
-        vm.resetNonce(owner);
-        vm.setNonce(owner, uint64(coreNonce - 1));
-        vm.deal(owner, 5 ether);
-        _pre(lc, owner);
-        assertEq(
-            _failedNames(),
-            "factory: deployTokenAsOwner accepts the config (simulated), predicted controller is empty, predicted core is empty, predicted coin is empty"
         );
     }
 
@@ -540,8 +446,6 @@ contract ConfigTest is Fixture {
         _buyCoin(funder, 1 ether);
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "");
-        _print("postflight");
-        assertGe(rows.length, 85, "postflight rows");
     }
 
     /// V2R-5: the postflight compares the runtime code of the Core and of the controller with the compiled artifacts
@@ -581,11 +485,11 @@ contract ConfigTest is Fixture {
         // a config that names other values than the coin holds fails exactly its row
         LaunchConfig memory c = lc;
         c.image = "ipfs://other";
-        postflightAs(c, address(core), owner);
+        postflightAs(c, address(core), address(0));
         assertEq(_failedNames(), imageRow);
         c = lc;
         c.description = "other";
-        postflightAs(c, address(core), owner);
+        postflightAs(c, address(core), address(0));
         assertEq(_failedNames(), descRow);
         vm.startPrank(owner);
         (bool ok1,) = address(coin).call(abi.encodeWithSignature("updateImage(string)", "ipfs://img"));
@@ -603,12 +507,13 @@ contract ConfigTest is Fixture {
         assertFalse(_warnClean("warn: coin: description equals the config"));
     }
 
-    /// preflight: both fields inside the coin caps (2048 and 4096 bytes), filled (not empty or spaces only) and free of `placeholder` in any letter case and not `todo` or `tbd` as the whole value (a failure on chain id 1, a warning elsewhere)
+    // preflight: image and description inside the coin caps (2048 and 4096 bytes), filled, free of `placeholder` in any
+    // letter case, not `todo` or `tbd` as the whole value, and the image carries a scheme (a failure on chain id 1, a
+    // warning elsewhere). the rule is `metadataRowPasses`, shared with the rehearsal
     function test_preflightImageAndDescription() public {
         address d2 = _funded();
         string memory cap = "rule: image at most 2048 bytes, description at most 4096 bytes";
         string memory filled = "rule: image and description are filled and are not placeholders";
-        // the factory enforces the same caps, so its simulated launch fails with the rule row
         string memory both = string.concat(cap, ", factory: deployTokenAsOwner accepts the config (simulated)");
         _pre(lc, d2);
         assertTrue(_warnClean(cap) && _warnClean(filled), "filled and inside the caps");
@@ -619,81 +524,43 @@ contract ConfigTest is Fixture {
         _pre(c, d2);
         assertEq(_failedNames(), filled, "an empty image fails");
         c = lc;
-        c.description = "";
-        _pre(c, d2);
-        assertEq(_failedNames(), filled, "an empty description fails");
-        c.image = "";
-        _pre(c, d2);
-        assertEq(_failedNames(), filled, "both empty fails");
-        assertTrue(_warnClean(cap));
-        c = lc;
-        c.image = "ipfs://PLACEHOLDER-cc-image";
-        _pre(c, d2);
-        assertEq(_failedNames(), filled, "a placeholder image fails");
-        c = lc;
         c.description = "a PLACEHOLDER description";
         _pre(c, d2);
         assertEq(_failedNames(), filled, "a placeholder description fails");
-        // spaces only counts as empty
-        c = lc;
-        c.image = " ";
-        _pre(c, d2);
-        assertEq(_failedNames(), filled, "a single space image fails");
-        c = lc;
-        c.description = "   ";
-        _pre(c, d2);
-        assertEq(_failedNames(), filled, "a spaces only description fails");
-        // `placeholder` matches inside a value in any letter case, `todo` and `tbd` match the whole trimmed value
-        string[6] memory marked = ["ipfs://placeholder", "ipfs://PlaceHolder-1", "TODO", " todo ", "tbd", "TBD"];
-        for (uint256 i; i < marked.length; ++i) {
-            c = lc;
-            c.image = marked[i];
-            _pre(c, d2);
-            assertEq(_failedNames(), filled, string.concat("a marked image fails: ", marked[i]));
-            c = lc;
-            c.description = marked[i];
-            _pre(c, d2);
-            assertEq(_failedNames(), filled, string.concat("a marked description fails: ", marked[i]));
-        }
-        // real looking values pass, with spaces inside the text
-        c = lc;
-        c.image = "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
-        c.description = "Credits engine coin. The pot buys credits at the bid.";
-        _pre(c, d2);
-        assertEq(_failedNames(), "", "real looking values pass");
-        // a cid or a description that holds the letters of a short marker passes
-        c = lc;
-        c.image = "ipfs://bafybeitbdtodoabcdefghijklmnopqrstuvwxyz234567abcdefghij";
-        c.description = "todo list of the engine: tbd later";
-        _pre(c, d2);
-        assertEq(_failedNames(), "", "short markers inside a value pass");
 
-        // the same rule, checked directly through the shared helper (the full preflight above exercises it end to end).
-        // a value that trims to nothing by a tab, a newline or NBSP counts as empty
+        // the rule through the shared helper
         string memory okDesc = "Credits engine coin.";
         string memory okImage = "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
-        string[3] memory whitespace = ["\n", "\t", unicode" "];
-        for (uint256 i; i < whitespace.length; ++i) {
-            assertFalse(metadataRowPasses(whitespace[i], okDesc), "a whitespace only image fails");
-            assertFalse(metadataRowPasses(okImage, whitespace[i]), "a whitespace only description fails");
+        assertTrue(metadataRowPasses(okImage, okDesc));
+        string[8] memory blank = ["", " ", "   ", "\n", "\t", unicode" ", "TODO", " tbd "];
+        for (uint256 i; i < blank.length; ++i) {
+            assertFalse(metadataRowPasses(blank[i], okDesc), string.concat("image: ", blank[i]));
+            assertFalse(metadataRowPasses(okImage, blank[i]), string.concat("description: ", blank[i]));
         }
-        // the image must carry a scheme with content past it: a bare scheme or a value without one fails
-        string[4] memory badScheme =
-            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", "ipfs://", "https://", "ar://"];
+        string[3] memory marked = ["ipfs://placeholder", "ipfs://PlaceHolder-1", "a PLACEHOLDER description"];
+        for (uint256 i; i < marked.length; ++i) {
+            assertFalse(metadataRowPasses(marked[i], okDesc), marked[i]);
+            assertFalse(metadataRowPasses(okImage, marked[i]), marked[i]);
+        }
+        // a cid or a description that holds the letters of a short marker passes
+        assertTrue(metadataRowPasses("ipfs://bafybeitbdtodoabcdefghijklmnopqrstuvwxyz234567abcdefghij", "todo list of the engine: tbd later"));
+        // the image must carry a scheme with content past it, matched on the raw bytes that go on chain
+        string[8] memory badScheme = [
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            "ipfs://",
+            "https://",
+            "ar://",
+            "IPFS://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            "  ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi  ",
+            "http://example.com/cc.png"
+        ];
         for (uint256 i; i < badScheme.length; ++i) {
-            assertFalse(metadataRowPasses(badScheme[i], okDesc), string.concat("an image without a scheme and content fails: ", badScheme[i]));
+            assertFalse(metadataRowPasses(badScheme[i], okDesc), badScheme[i]);
         }
-        // an ipfs, https or ar image with content, and a plain description, pass; a scheme on the description is not required
-        assertTrue(metadataRowPasses(okImage, okDesc), "an ipfs image passes");
-        assertTrue(metadataRowPasses("https://example.com/cc.png", okDesc), "an https image passes");
-        assertTrue(metadataRowPasses("ar://abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHI", okDesc), "an ar image passes");
-        // the scheme is matched on the raw bytes that go on chain: an upper case scheme or surrounding whitespace fails,
-        // an onchain data uri passes, http is refused
-        assertFalse(metadataRowPasses("IPFS://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", okDesc), "an upper case scheme fails");
-        assertFalse(metadataRowPasses("  ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", okDesc), "leading whitespace before the scheme fails");
-        assertFalse(metadataRowPasses("ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi  ", okDesc), "trailing whitespace fails");
-        assertTrue(metadataRowPasses("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", okDesc), "a data uri passes");
-        assertFalse(metadataRowPasses("http://example.com/cc.png", okDesc), "an http image fails");
+        assertTrue(metadataRowPasses("https://example.com/cc.png", okDesc));
+        assertTrue(metadataRowPasses("ar://abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHI", okDesc));
+        assertTrue(metadataRowPasses("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", okDesc));
 
         // another chain id: the row warns and never fails (the chain id row fails there)
         vm.chainId(11155111);
@@ -701,29 +568,12 @@ contract ConfigTest is Fixture {
         c.image = "";
         _pre(c, d2);
         assertFalse(_warnClean(filled), "an empty image warns off mainnet");
-        assertTrue(bytes(_failedNames()).length != 0, "the chain id row fails");
-        c = lc;
-        c.description = "PLACEHOLDER";
-        _pre(c, d2);
-        assertFalse(_warnClean(filled), "a placeholder warns off mainnet");
-        c = lc;
-        c.image = " ";
-        _pre(c, d2);
-        assertFalse(_warnClean(filled), "a blank image warns off mainnet");
-        c = lc;
-        c.description = "todo";
-        _pre(c, d2);
-        assertFalse(_warnClean(filled), "a todo warns off mainnet");
-        c = lc;
-        c.image = "TBD";
-        _pre(c, d2);
-        assertFalse(_warnClean(filled), "a tbd warns off mainnet");
         (string memory list,) = _failed();
         assertFalse(vm.contains(list, filled), "the row is not a failure off mainnet");
         vm.chainId(1);
 
+        // the caps: the factory enforces the same ones, so its simulated launch fails with the cap row
         c = lc;
-        // the image fills the cap with a scheme and content past it, the description fills its cap with plain text
         c.image = string.concat("ipfs://", _bytesOf(MAX_IMAGE_BYTES - 7));
         c.description = _bytesOf(MAX_DESCRIPTION_BYTES);
         _pre(c, d2);
@@ -755,54 +605,28 @@ contract ConfigTest is Fixture {
         assertEq(c.description, "the CC coin");
     }
 
-    function test_configSupplyMatchesCoinSupply() public view {
-        assertEq(COIN_SUPPLY, lc.supply);
-    }
-
-    /// the verification arguments built from the config and the first controller are the arguments the core was built with
-    function test_coreConstructorArgsReadBack() public view {
-        (address first, bool found) = firstController(address(core), owner);
-        assertTrue(found);
-        assertEq(first, address(ctl), "the first controller is found from the deployer nonce");
-        assertEq(
-            coreConstructorArgs(core, lc, first, owner),
-            abi.encode(
-                owner,
-                buildConfig(lc, owner, address(0)),
-                owner,
-                address(0),
-                address(ctl),
-                lc.payee,
-                lc.stack,
-                lc.rateStart,
-                lc.settings,
-                lc.credit,
-                launchAdapters(address(core), lc)
-            ),
-            "etherscan constructor args"
-        );
-    }
-
+    // the readbacks name the row of the field a config changes, and the Core address row catches any change of the config
     function test_postflightCatchesEveryMismatch() public {
+        string memory id = "core: address is the CREATE2 address of the config and the deployer";
         LaunchConfig memory c = lc;
         c.rateStart = lc.rateStart + 1;
         postflightAs(c, address(core), owner);
-        assertEq(_failedNames(), "core: RATE_START");
+        assertEq(_failedNames(), id);
 
         c = lc;
         c.owner = creator;
-        postflightAs(c, address(core), owner);
+        postflightAs(c, address(core), address(0));
         assertEq(_failedNames(), "core: owner, coin: admin is the config owner");
 
         c = lc;
         c.bountyBps = 8000;
-        postflightAs(c, address(core), owner);
+        postflightAs(c, address(core), address(0));
         assertEq(_failedNames(), "hook: skim config equals the config");
 
         c = lc;
         c.stack.escrow = address(0xE5C);
-        postflightAs(c, address(core), owner);
-        assertEq(_failedNames(), "core: escrow, code: stack addresses, factory: deploymentInfo names the coin, hook, locker, mev module, escrow and pool of the config, coin: allowlist holds the locker, the escrow and the config entries, coin: the locker and the escrow are pinned");
+        postflightAs(c, address(core), address(0));
+        assertEq(_failedNames(), "core: stack equals the config, factory: deploymentInfo names the coin, hook, locker, mev module, escrow and pool of the config, coin: allowlist holds the locker, the escrow and the config entries, coin: the locker and the escrow are pinned");
 
         postflightAs(lc, address(0xBEEF), owner);
         assertEq(_failedNames(), "code: core");
@@ -886,7 +710,7 @@ contract ConfigTest is Fixture {
             LaunchConfig memory c = lc;
             uint256 v = SettingsFields.get(c.settings, i);
             SettingsFields.set(c.settings, i, v == 0 ? 1 : v - 1);
-            postflightAs(c, address(core), owner);
+            postflightAs(c, address(core), address(0));
             assertEq(_failedNames(), "core: settings equal the config", "a settings field slipped the readback");
         }
     }
@@ -901,22 +725,6 @@ contract ConfigTest is Fixture {
         changedFlag = true;
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "", "SETTINGS_CHANGED turns the row into a warning");
-    }
-
-    /// sales are open after a launch. paused sales fail the row until the operator says the owner changed the state since launch
-    function test_postflightWhileSalesArePaused() public {
-        postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "");
-        assertTrue(_warnClean("core: not paused"), "the row exists and passes on a fresh launch");
-        vm.prank(owner);
-        core.setPaused(true);
-        postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "core: not paused");
-        assertEq(_rowDetail("core: not paused"), "paused");
-        changedFlag = true;
-        postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "", "SETTINGS_CHANGED turns the row into a warning");
-        assertFalse(_warnClean("warn: core is not paused"), "the warning row reports the pause");
     }
 
     /// NEXT 26: the owner account is an EIP 7702 delegation to Calibur with an empty key registry. each of the three

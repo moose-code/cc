@@ -260,21 +260,20 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// `cfg_` is the launch config of the v2 factory. a zero `coin_` is a launch: the bounty recipient of `cfg_` is set
     /// to this contract and `COIN` is the address the factory predicts for `launcher_` and that config, so the coin and
     /// the Core refer to each other. a nonzero `coin_` is a successor of a Core of a coin that is launched already: it
-    /// must be a coin the factory recorded, and `cfg_` supplies the anti sniper window
+    /// must be a coin the factory recorded, and `cfg_` supplies the anti sniper window. `controller` starts at the zero
+    /// address and the adapter list starts empty: the owner sets them with `setController` and `addAdapter`
     constructor(
         address owner_,
         IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg_,
         address launcher_,
         address coin_,
-        address controller_,
         address payee_,
         Stack memory stack_,
         uint256 rateStart_,
         Settings memory settings_,
-        Credit memory credit_,
-        address[] memory adapters_
+        Credit memory credit_
     ) {
-        if (owner_ == address(0) || controller_ == address(0) || payee_ == address(0)) revert ZeroAddress();
+        if (owner_ == address(0) || payee_ == address(0)) revert ZeroAddress();
         if (
             stack_.poolManager == address(0) || stack_.hook == address(0) || stack_.factory == address(0)
                 || stack_.locker == address(0) || stack_.escrow == address(0)
@@ -308,18 +307,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         FACTORY = stack_.factory;
         LOCKER = stack_.locker;
         ESCROW = stack_.escrow;
-        s.controller = controller_;
         if (!CreditBounds.costToPotBpsOk(credit_.costToPotBps)) revert BadSetting("creditCostToPotBps");
         s.creditCostToPotBps = credit_.costToPotBps;
         s.chosenComposeOn = credit_.chosenComposeOn;
         s.minCcToChoose = credit_.minCcToChoose;
-        for (uint256 i; i < adapters_.length; ++i) {
-            address adapter = adapters_[i];
-            if (adapter == address(0)) revert ZeroAddress();
-            if (_forbiddenBase(adapter)) revert ForbiddenTarget();
-            s.allowedAdapter[adapter] = true;
-            emit AdapterSet(adapter, true);
-        }
         s.rateAtCheckpoint = rateStart_;
         s.checkpointTime = uint64(block.timestamp);
         s.lastFillTime = uint64(block.timestamp);
@@ -328,7 +319,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         s.anchor.peakTime = uint64(block.timestamp);
         CREDITS.setApprovalForAll(address(STATEMENTS), true);
         emit OwnershipTransferred(address(0), owner_);
-        emit ControllerSet(controller_);
         emit PayeeSet(payee_);
         // validates, stores at the settings slot and logs, by delegatecall into the library
         CoreLib.setSettings(settings_);
@@ -1036,9 +1026,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit RedeemBurnReleased(move);
     }
 
-    /// approves a listing adapter for `buyListing` at once. forbidden addresses are refused. reverts after `lockAdapters`
+    /// approves a listing adapter for `buyListing` at once. the zero address and forbidden addresses are refused.
+    /// reverts after `lockAdapters`
     function addAdapter(address a) external onlyOwner {
         if (s.adaptersLocked) revert Locked("adapters");
+        if (a == address(0)) revert ZeroAddress();
         if (_forbidden(a)) revert ForbiddenTarget();
         s.allowedAdapter[a] = true;
         emit AdapterSet(a, true);

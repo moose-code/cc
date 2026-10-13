@@ -109,8 +109,6 @@ contract GasCapTest is SeaportBase {
         if (target.code.length == 0) revert("target has no code");
     }
 
-    // ------------------------------------------------------------------ the deploy transactions of script/SystemDeployer.sol
-
     // ------------------------------------------------------------------ compose and redeem
 
     function _measureCompose(string memory name) internal returns (uint256 g) {
