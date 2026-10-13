@@ -105,8 +105,7 @@ contract EconDialsTest is Fixture {
 
     /// sells credits into a pot of `pot` wei until a sale is refused, and counts what the pot admits
     function _drain(uint256 pot) internal returns (uint256 sold, uint256 spent, bytes4 refusedWith) {
-        vm.deal(address(core), pot);
-        core.skim();
+        _addToPot(pot);
         uint256[] memory ids = _credits(seller, 20);
         for (uint256 i; i < ids.length; ++i) {
             uint256 x = core.ethRate();

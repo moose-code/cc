@@ -12,7 +12,6 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {ICredits, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {SystemDeployer, Deployed} from "../script/SystemDeployer.sol";
 import {V2Stack} from "./utils/V2Stack.sol";
-import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {LaunchConfig} from "../script/LaunchConfig.sol";
 
@@ -26,7 +25,7 @@ interface IPermit2R {
 
 /// @notice the launch rehearsal. forks mainnet at the LATEST block (read from the rpc, not the pinned one), runs the
 /// preflight, the real deploy path as the factory owner, the postflight, and a short smoke: a buy and a sell through the
-/// universal router, a flush of the router and a real credit sold into the bid. it skips cleanly unless the env var
+/// universal router, a book of the fees at the Core, the payee claim and a real credit sold into the bid. it skips cleanly unless the env var
 /// REHEARSAL is set, so the default suite stays pinned and fast. it reads the config file named by LAUNCH_CONFIG, like the
 /// scripts do, and defaults to script/config/rehearsal.json, whose `image` and `description` hold the placeholder marker:
 /// the preflight row `rule: image and description are filled and are not placeholders` is expected to fail before and
@@ -61,7 +60,7 @@ contract RehearsalTest is Test, ProdDeployer {
         c = loadConfig(file);
         if (c.owner == address(0)) c.owner = _user("owner");
         if (c.creator == address(0)) c.creator = _user("creator");
-        if (c.creatorPayee == address(0)) c.creatorPayee = _user("payee");
+        if (c.payee == address(0)) c.payee = _user("payee");
         if (bytes(c.name).length == 0) c.name = "Rehearsal Coin";
         if (bytes(c.symbol).length == 0) c.symbol = "REH";
         if (c.salt == bytes32(0)) c.salt = keccak256("credits engine rehearsal");
@@ -166,48 +165,47 @@ contract RehearsalTest is Test, ProdDeployer {
         uint256 libGas = lg - gasleft();
         vm.startPrank(deployer);
         d = deploySystem(deployer, c);
-        // the Deploy script ends here. the split start is the first transaction of the Resume run, after the launch is
-        // mined: it reads the launch time from the factory record (the rehearsal mines in the same block)
-        startSplitAfterLaunch(c, d.router, d.coin);
         vm.stopPrank();
-        (, IArtCoinsFactoryV2.DeploymentInfoV2 memory info) = _deployment(c.stack.factory, d.coin);
-        assertEq(
-            IFeeRouter(payable(d.router)).splitStart(),
-            uint256(info.launchedAt) + c.sniperSeconds,
-            "split start: the mined launch time plus the window, no margin"
-        );
         // each transaction costs its execution gas, 21000 intrinsic and its calldata (4 gas per zero byte, 16 per other byte)
         bytes memory libCode = vm.getCode("CoreLib.sol:CoreLib");
-        uint256[9] memory txGas = [
+        uint256[7] memory txGas = [
             libGas + 21_000 + _calldataGas(libCode) + 512,
             stepGas[0] + _createGas("ControllerV1.sol:ControllerV1") + 512,
-            stepGas[1] + _createGas("FeeRouter.sol:FeeRouter") + 512,
-            stepGas[2] + _createGas("Core.sol:Core") + 16_384,
+            stepGas[1] + _createGas("Core.sol:Core") + 16_384,
             // sent through the deterministic deployer: the measured call includes the create and the code deposit
-            stepGas[7] + 21_000 + _calldataGas(abi.encodePacked(LENS_SALT, vm.getCode("CoreLens.sol:CoreLens"), abi.encode(d.core))) + 512,
-            stepGas[3] + 21_000
+            stepGas[3] + 21_000 + _calldataGas(abi.encodePacked(LENS_SALT, vm.getCode("CoreLens.sol:CoreLens"), abi.encode(d.core))) + 512,
+            stepGas[4] + 21_000
+                + _calldataGas(
+                    abi.encodePacked(
+                        SEAPORT_ADAPTER_SALT,
+                        vm.getCode("SeaportBasicAdapter.sol:SeaportBasicAdapter"),
+                        abi.encode(d.core, c.seaportRecipients)
+                    )
+                ) + 512,
+            stepGas[5] + 21_000
+                + _calldataGas(
+                    abi.encodePacked(
+                        STRATEGY_ADAPTER_SALT, vm.getCode("CreditStrategyAdapter.sol:CreditStrategyAdapter")
+                    )
+                ) + 512,
+            stepGas[2] + 21_000
                 + _calldataGas(
                     abi.encodeCall(
-                        IArtCoinsFactoryV2.deployTokenAsOwner, (buildConfig(c, c.owner, d.router), c.protocolBps)
+                        IArtCoinsFactoryV2.deployTokenAsOwner, (buildConfig(c, c.owner, d.core), c.protocolBps)
                     )
-                ),
-            stepGas[4] + 21_000 + 1_024,
-            stepGas[5] + 21_000 + 2_048,
-            stepGas[6] + 21_000 + 1_024
+                )
         ];
-        string[9] memory names = [
+        string[7] memory names = [
             "1 library CoreLib (create2 deployer)",
             "2 controller",
-            "3 router",
-            "4 core",
-            "5 lens (read only)",
-            "6 launch through the factory (deployTokenAsOwner)",
-            "7 router setEngine",
-            "8 router setPayees",
-            "9 router setSplitStart (the Resume run, after the launch is mined)"
+            "3 core",
+            "4 lens (read only)",
+            "5 seaport adapter (create2 deployer)",
+            "6 strategy adapter (create2 deployer)",
+            "7 launch through the factory (deployTokenAsOwner)"
         ];
         uint256 total;
-        for (uint256 i; i < 9; ++i) {
+        for (uint256 i; i < 7; ++i) {
             total += txGas[i];
             console.log(string.concat("deploy gas, tx ", names[i]), txGas[i]);
             assertLt(txGas[i], TX_GAS_CAP, string.concat("over the per transaction gas cap: ", names[i]));
@@ -217,9 +215,9 @@ contract RehearsalTest is Test, ProdDeployer {
         assertLe(total, DEPLOY_GAS_ESTIMATE, "the measured deploy gas is above DEPLOY_GAS_ESTIMATE");
         console.log("DEPLOY_GAS_ESTIMATE", DEPLOY_GAS_ESTIMATE);
         console.log("library at", lib);
-        console.log("total deploy gas, nine transactions", total);
+        console.log("total deploy gas, seven transactions", total);
         console.log("per transaction gas cap", TX_GAS_CAP);
-        console.log("factory deploy fee (wei, sent as value of tx 6)", fee);
+        console.log("factory deploy fee (wei, sent as value of tx 7)", fee);
         uint256[3] memory gwei_ = [uint256(1), 5, 20];
         for (uint256 i; i < 3; ++i) {
             uint256 cost = total * gwei_[i] * 1 gwei;
@@ -230,7 +228,6 @@ contract RehearsalTest is Test, ProdDeployer {
         }
         console.log("deployer paid wei (the fee only, the test gas price is 0)", balBefore - deployer.balance);
         console.log("core", d.core);
-        console.log("router", d.router);
         console.log("coin", d.coin);
     }
 
@@ -278,30 +275,38 @@ contract RehearsalTest is Test, ProdDeployer {
     function _smoke() internal {
         ICore core = ICore(payable(d.core));
         IArtCoinsTokenV2 coin = IArtCoinsTokenV2(d.coin);
-        IFeeRouter router = IFeeRouter(payable(d.router));
         IUniversalRouterR ur = IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER);
         // past the anti sniper window, so the skim is the 6.9 point baseline
         vm.warp(block.timestamp + c.sniperSeconds + 1);
 
         uint256 pot = core.ethPot();
-        uint256 payeeStart = c.creatorPayee.balance;
+        uint256 bal = d.core.balance;
         vm.prank(trader);
         ur.execute{value: 1 ether}(hex"10", _v4Swap(true, 1 ether), block.timestamp + 1 hours);
         uint256 bought = coin.balanceOf(trader);
         assertGt(bought, 0, "bought coin through the universal router");
         // the baseline skim of the config (bps of volume) times the bounty share of it
         uint256 want = uint256(1 ether) * c.baselineSkimBps / 10_000 * c.bountyBps / 10_000;
-        assertEq(address(router).balance, want, "the bounty share of the baseline skim reached the router");
-        assertEq(core.ethPot(), pot, "nothing reaches the pot before the flush");
+        assertEq(d.core.balance - bal, want, "the bounty share of the baseline skim reached the Core");
+        assertEq(core.ethPot(), pot, "nothing reaches the pot before the book");
         address keeper = _user("keeper");
         vm.prank(keeper);
-        router.flush();
-        assertEq(keeper.balance, 0, "the flusher is paid nothing");
-        assertEq(core.ethPot() - pot, want, "all of it reached the pot (no payee share in the flush that starts the split)");
-        assertEq(address(core).balance, core.ethPot(), "pot equals balance");
-        // the split start is the end of the window: this first flush after it turns the split on and shares nothing
-        assertTrue(router.splitOn(), "the first flush after the window starts the split");
-        assertEq(c.creatorPayee.balance, payeeStart, "that flush shared nothing");
+        core.book();
+        assertEq(keeper.balance, 0, "the caller of book is paid nothing");
+        // the book that starts the payee share shares nothing: the whole income splits by the fee share
+        {
+            uint256 reserve = want * c.settings.feeToRedeemBurnBps / 10_000;
+            assertEq(core.ethPot() - pot, want - reserve, "the rest of the income reached the pot");
+            assertEq(core.ethRedeemBurn(), reserve, "the redeem burn share reached the reserve");
+            assertEq(
+                core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed(),
+                address(core).balance,
+                "the tracked eth equals the balance"
+            );
+        }
+        // the payee share starts with the first book after the window
+        assertTrue(core.payeeOn(), "the first book after the window starts the payee share");
+        assertEq(core.payeeOwed(), 0, "that book shared nothing");
 
         uint256 deadBefore = coin.balanceOf(Mainnet.DEAD);
         uint256 sellIn = bought / 2;
@@ -314,20 +319,24 @@ contract RehearsalTest is Test, ProdDeployer {
         vm.stopPrank();
         assertGt(trader.balance, ethBefore, "sold coin for eth");
         vm.prank(keeper);
-        router.flush();
+        core.book();
         assertGt(core.ethPot(), pot, "the sell skim reached the pot too");
         assertEq(coin.balanceOf(Mainnet.DEAD), deadBefore, "no tax and no burn on canonical swaps");
 
-        // from the flush after that the payee is paid its parts per million of the gross amount flushed
-        uint256 payee0 = c.creatorPayee.balance;
+        // from the book after that the payee is credited its parts per million of the fee income
+        uint256 payee0 = c.payee.balance;
+        uint256 owed0 = core.payeeOwed();
+        bal = d.core.balance;
         vm.deal(trader, 2 ether);
         vm.prank(trader);
         ur.execute{value: 1 ether}(hex"10", _v4Swap(true, 1 ether), block.timestamp + 1 hours);
-        uint256 gross = address(router).balance;
+        uint256 gross = d.core.balance - bal;
         vm.prank(keeper);
-        router.flush();
-        assertGt(c.creatorPayee.balance, payee0, "from now on the payee is paid its share");
-        assertEq(c.creatorPayee.balance - payee0, gross * c.payeePpm / 1e6, "exactly its share of the inflow");
+        core.book();
+        assertEq(core.payeeOwed() - owed0, gross * c.settings.payeePpm / 1e6, "exactly its share of the inflow");
+        core.claimPayee();
+        assertGt(c.payee.balance, payee0, "the payee claims its share");
+        assertEq(core.payeeOwed(), 0, "the claim clears the share");
 
         _sellRealCredit(core);
     }

@@ -26,12 +26,12 @@ abstract contract PostflightPool is PostflightV2 {
     /// @dev the locker keeps rounding dust of the supply
     uint256 internal constant LOCKER_DUST_MAX = 1e6;
 
-    function _postPool(LaunchConfig memory c, address coin_) internal returns (bytes32 poolId) {
+    function _postPool(LaunchConfig memory c, address core_, address coin_) internal returns (bytes32 poolId) {
         PoolKey memory key = poolKeyOf(coin_, c.stack);
         poolId = keccak256(abi.encode(key));
         uint40 launchedAt = _postFactoryRecord(c, coin_, poolId);
         _postHook(c, coin_, poolId, launchedAt);
-        _postSkim(c, poolId);
+        _postSkim(c, core_, poolId);
         _postMev(c, poolId, launchedAt);
         _postLocker(c, coin_, key);
         _postState(c, coin_, poolId);
@@ -81,14 +81,14 @@ abstract contract PostflightPool is PostflightV2 {
         );
     }
 
-    /// @dev the skim config of the pool, frozen at init: the bounty goes to the router, the values are the config's
-    function _postSkim(LaunchConfig memory c, bytes32 poolId) private {
+    /// @dev the skim config of the pool, frozen at init: the bounty goes to the Core, the values are the config's
+    function _postSkim(LaunchConfig memory c, address core_, bytes32 poolId) private {
         IArtCoinsHookV2.SkimConfig memory k = _hookSkim(c.stack.hook, poolId);
         _soft(
             _coinChanged(),
-            "hook: bounty recipient is the fee router (the Core fee source)",
-            address(k.bountyRecipient) == c.stack.feeSource,
-            string.concat("got ", vm.toString(address(k.bountyRecipient)), " want ", vm.toString(c.stack.feeSource)),
+            "hook: bounty recipient is the Core",
+            address(k.bountyRecipient) == core_,
+            string.concat("got ", vm.toString(address(k.bountyRecipient)), " want ", vm.toString(core_)),
             "COIN_CHANGED=1"
         );
         _check(

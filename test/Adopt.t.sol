@@ -239,7 +239,7 @@ contract AdoptTest is Fixture {
         uint64 n = vm.getNonce(address(this));
         address coreAt = vm.computeCreateAddress(address(this), n + 1);
         IControllerV1 ctl2 = Prod.newController(coreAt, lc.sale);
-        succ = Prod.newCore(owner, address(coin), address(ctl2), lc.stack, lc.rateStart, _settings());
+        succ = _successorCore(address(ctl2), lc.rateStart, _settings());
         assertEq(address(succ), coreAt, "predicted successor address");
     }
 
@@ -325,10 +325,9 @@ contract AdoptTest is Fixture {
         AdoptingTarget t = new AdoptingTarget(address(core));
         vm.prank(STRATEGY);
         CREDITS.transferFrom(STRATEGY, address(t), id);
-        _allow(address(t));
         uint256 value = core.ethRate() / 2;
         vm.prank(keeper);
-        core.buyListing(value, abi.encodeCall(AdoptingTarget.fill, (id)), id, address(t));
+        _buyRaw(value, abi.encodeCall(AdoptingTarget.fill, (id)), id, address(t));
         assertFalse(t.adoptOk(), "adopt inside the buy failed");
         assertEq(bytes4(t.adoptOut()), bytes4(0xab143c06), "Reentrancy()");
         assertEq(core.pileSize(), 1, "the credit is in the pile once");
@@ -337,32 +336,23 @@ contract AdoptTest is Fixture {
         assertTrue(p);
     }
 
-    /// the fee router is pulled before the price is read, like at every door that spends from the pot: pending fee eth is
-    /// booked
-    function test_OK_adoptPullsTheFeeRouterFirst() public {
-        autoFlush = false;
+    /// the fee income is booked before the price is read, like at every door that spends from the pot
+    function test_OK_adoptBooksTheFeesFirst() public {
+        autoBook = false;
         _buyCoin(funder, 3 ether);
-        assertGt(address(feeRouter).balance, 0, "the router holds fees");
+        assertGt(address(core).balance - _tracked(), 0, "the core holds unbooked fees");
         uint256 pot = core.ethPot();
         uint256[] memory ids = _gift(1);
         vm.expectEmit(false, false, false, false, address(core));
         emit ICore.FeesAdded(0);
         _adopt(ids);
-        assertEq(address(feeRouter).balance, 0, "the router was flushed");
+        assertEq(address(core).balance, _tracked(), "the fees were booked");
         assertGt(core.ethPot(), pot, "the fees are in the pot");
         (, uint256 cost,) = core.creditInfo(ids[0]);
-        assertEq(cost, core.ethPrice(), "the basis is read after the pull");
+        assertEq(cost, core.ethPrice(), "the basis is read after the book");
     }
 
-    /// a router that reverts does not block adopt
-    function test_OK_adoptWorksWithABrokenRouter() public {
-        vm.etch(address(feeRouter), hex"fe");
-        uint256[] memory ids = _gift(1);
-        _adopt(ids);
-        assertEq(core.pileSize(), 1);
-    }
-
-    /// `ethPrice()` is the value a real checkpoint stores: skim with 1 wei above the pots checkpoints
+    /// `ethPrice()` is the value a real checkpoint stores: a book with 1 wei above the pots checkpoints
     function test_OK_ethPriceIsWhatARealCheckpointStores() public {
         _fundPot(2 ether);
         uint256[] memory sold = _credits(seller, 6);
@@ -372,7 +362,7 @@ contract AdoptTest is Fixture {
         uint256 read = core.ethPrice();
         assertGt(read, core.rateAtCheckpoint(), "the price state climbed since the last checkpoint");
         vm.deal(address(core), address(core).balance + 1);
-        core.skim();
+        core.book();
         assertEq(core.rateAtCheckpoint(), read, "the checkpoint stored the value ethPrice read");
         assertEq(core.ethPrice(), read);
     }
@@ -413,7 +403,7 @@ contract AdoptTest is Fixture {
         _fundPot(2 ether);
         _warp(1 hours);
         vm.deal(address(core), address(core).balance + 1);
-        core.skim();
+        core.book();
         Settings memory st = core.settings();
         st.ceilBps = 10_000;
         st.idleLoosenBps = 1;
@@ -448,7 +438,7 @@ contract AdoptTest is Fixture {
         assertEq(core.rateAtCheckpoint(), stored, "nothing was checkpointed by the adopt");
     }
 
-    /// gas of `adopt` for one credit and for a page of 80, with an empty router. docs/INTEGRATION.md section 13 quotes
+    /// gas of `adopt` for one credit and for a page of 80, with no unbooked income. docs/INTEGRATION.md section 13 quotes
     /// both figures: 242,489 and 10,552,467. the bound is 5 percent around each
     function test_GAS_adopt() public {
         uint256[] memory one = _gift(1);

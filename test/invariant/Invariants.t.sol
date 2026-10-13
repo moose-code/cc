@@ -32,9 +32,9 @@ import {HandlerBase} from "./HandlerBase.sol";
 /// `invariant_callSummary` logs. the summary also keeps running totals over all runs in this process through the
 /// environment, which no revert can undo.
 ///
-/// every swap is a real swap through the live skim hook, which pushes its bounty into the core's receive(). a swap
-/// failure is classified by revert selector, and the one that matters, the hook's BidForwardFailed, is a violation
-/// of invariant 10.
+/// every swap is a real swap through the live skim hook, which pushes its bounty into the core's receive(), where it
+/// waits for the next book. a swap failure is classified by revert selector, and the one that matters, the hook's
+/// BidForwardFailed, is a violation of invariant 10.
 ///
 /// the handler never reverts. a failed core call is caught, counted, and checked for leaving state untouched, so
 /// a violation recorded in the ghosts cannot be lost to `fail_on_revert = false`.
@@ -54,7 +54,7 @@ abstract contract InvariantsBase is InvariantFixture {
     uint256[] internal g11 = [7, 8, 26];
     /// locks and handovers
     uint256[] internal g12 = [27, 29];
-    /// the fee router: its eth goes only to the engine set at that time, by the flush rule
+    /// the payee share: the share, the latch and the claim follow the model of the book
     uint256[] internal g13 = [28];
 
     function _zero(uint256[] storage codes) internal view {
@@ -68,9 +68,9 @@ abstract contract InvariantsBase is InvariantFixture {
     /// callerMaxBaseFee and the pot, a buyback slice (the swap input plus the payment to the caller), a refund of
     /// overpayment, or a migration to the successor. every action's balance change is matched to those flows, measured at the
     /// recipients, against the settings in force at that moment (the owner changes them throughout). the inflows are the
-    /// hook's skim pushed into receive() during real swaps, including the one the hook pushes back during the buyback, the
-    /// fee router's flush, `sellTo` payments and a plain
-    /// donation. any other movement is a violation. balance token flows too: it leaves the core only as a bid payment in
+    /// hook's skim pushed into receive() during real swaps, including the one the hook pushes back during the buyback,
+    /// `sellTo` payments, `fund` and eth forced in. a plain send from anyone but the hook and the escrow reverts. any other
+    /// movement is a violation. balance token flows too: it leaves the core only as a bid payment in
     /// sellForBalance or as an auction slice paid for at or above the quoted coin price.
     function invariant_01_ethOnlyLeavesByAllowedPaths() public view {
         _zero(g1);
@@ -130,12 +130,15 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(inRecord, core.heldStatements().length, "held count differs from the core's list");
     }
 
-    /// 5. ethPot + ethToBuyback never exceeds the core's eth balance, and the same for the balance token pots. a sale
-    /// books its payment at once, split by saleToBuybackBps, so nothing is owed outside the pots.
+    /// 5. ethPot + ethToBuyback + ethRedeemBurn + payeeOwed never exceeds the core's eth balance, and the same for the
+    /// balance token pots. a sale books its payment at once, split by saleToBuybackBps, so nothing is owed outside the
+    /// pots and the payee claim.
     function invariant_05_potsNeverExceedBalances() public view {
         _zero(g5);
         assertLe(
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance, "eth pots above balance"
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed(),
+            address(core).balance,
+            "eth pots above balance"
         );
         address t = core.balanceToken();
         if (t != address(0)) {
@@ -162,7 +165,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// 8. the hard rule: across the whole campaign neither the owner address nor any controller address ever gains eth,
     /// coin, credits, statements or balance token from the core, whatever settings the owner chooses. their balances are
     /// compared with what they held at the start (the owner pays gas only). the controllers' attack calls all failed,
-    /// their reentry attempts through targets failed, and nobody but the owner changed a setting.
+    /// their reentry attempts through the test adapter failed, and nobody but the owner changed a setting.
     function invariant_08_ownerAndControllersNeverGain() public view {
         _zero(g8);
         uint256 n = handler.watchedCount();
@@ -204,8 +207,9 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(coin.balanceOf(address(core)), 0, "the core holds coin");
     }
 
-    /// 10. the core's receive() never reverted in the campaign. every direct send, from an account and from the
-    /// hook's address, was accepted, and no real swap died of the hook's BidForwardFailed, which is how a reverting
+    /// 10. the core's receive() never reverted for the hook or the escrow, and reverted `UseFund` for every other sender.
+    /// every send from the hook's address and the escrow's address was accepted, every send from an account was
+    /// refused with `UseFund`, and no real swap died of the hook's BidForwardFailed, which is how a reverting
     /// receive() would show up. swaps that failed for other reasons are counted by selector in the call summary.
     function invariant_10_receiveNeverReverts() public view {
         _zero(g10);
@@ -254,7 +258,7 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// 13. the four one way locks (controller, balance module, targets, successor) never come undone and the setter of a
+    /// 13. the four one way locks (controller, balance module, adapters, successor) never come undone and the setter of a
     /// locked door always refuses. the retired flag set by the first `migrate` never clears, and from then on the six
     /// doors (`sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen`, `sellForBalance`) revert `Retired`. every
     /// former owner has no power over the core or over the controller's sale settings, and the core's owner is the one
@@ -268,19 +272,12 @@ abstract contract InvariantsBase is InvariantFixture {
         assertTrue(core.pendingOwner() != core.owner(), "the pending owner is the owner");
     }
 
-    /// 15. the fee router's eth goes only to the engine the owner set at that time (the payees' parts, the rest to the
-    /// engine), whichever engine that is. a flush against an engine that refuses reverts and the eth waits, the lock is
-    /// one way, and nothing the router owner does moves an asset or a pot of the core. what the core books from the
-    /// router is exactly the engine share of the flush when the engine is the core, and zero when it is not.
-    function invariant_15_routerEthOnlyGoesToTheEngineSetAtThatTime() public view {
-        _zero(g13);
-        assertEq(feeRouter.engine(), handler.gEngine(), "the router engine differs from the last one set");
-        assertEq(feeRouter.locked(), handler.gRouterLocked(), "the router lock differs from the ghost");
-        assertGe(address(feeRouter).balance, handler.parked(), "eth that waited in the router is gone");
-    }
+    /// 15. retired with the fee router (docs/DECISIONS.md decision 109): the pool pays the core directly, so there is no
+    /// router whose eth goes to an engine. the numbering of the items stays. the payee share that replaced the router
+    /// split is checked under item 18.
 
     /// 14. no balance module ever called the core, or the selling controller, successfully from inside a redemption. the hostile
-    /// module's callouts are compose, skim, buyback, releaseRedeemBurn, redeemStatement, adopt, sellForEth,
+    /// module's callouts are compose, book, buyback, releaseRedeemBurn, redeemStatement, adopt, sellForEth,
     /// buyListing, sellTo and sellForBalance, and the selling controller's sell. every one of them
     /// reverts while the core is inside `redeemStatement`, whatever the module does with its gas
     function invariant_14_noCallFromInsideARedemptionEverWorked() public view {
@@ -292,13 +289,12 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// 16. the eth bid stays open while the core has not migrated. when the read (`ethRate`) is not zero, a one credit
     /// `sellForEth` by a holder succeeds. the check runs after every action
-    /// under a snapshot that is reverted, so the state is unchanged. it starts with the flush of the fee router that
+    /// under a snapshot that is reverted, so the state is unchanged. it starts with the book of the fee income that
     /// every `sellForEth` makes first, so the price is the one the sale itself reads.
     function invariant_16_theBidNeverCloses() public {
         if (core.retired()) return;
         uint256 snap = vm.snapshotState();
-        vm.prank(address(core));
-        try feeRouter.flush{gas: 1_000_000}() {} catch {}
+        try core.book() {} catch {}
         (address holder, uint256 id) = _sellable(core.ethPot());
         if (holder == address(0)) {
             vm.revertToState(snap);
@@ -454,17 +450,23 @@ abstract contract InvariantsBase is InvariantFixture {
         return false;
     }
 
-    /// 18. the eth books balance over the whole run. the pots (`ethPot + ethToBuyback`) at the start of the run plus
-    /// every amount booked into them (fee flushes, sale proceeds, sale payments, skims) equal the pots now plus every
-    /// amount that left them (credit purchases, tips, redemption repayments, buyback spends, migrations). the handler adds
-    /// each amount to its ledger where the action measures it at the recipient. unbooked eth, forced eth included, is
-    /// outside the sum until `skim` books it.
+    /// 18. the eth books balance over the whole run. the pots (`ethPot + ethToBuyback + ethRedeemBurn`) at the start of
+    /// the run plus every amount booked into them (fee income less the payee share, sale proceeds, sale payments,
+    /// `fund`) equal the pots now plus every amount that left them (credit purchases, tips, redemption repayments, buyback
+    /// spends, migrations). the handler adds each amount to its ledger where the action measures it at the recipient.
+    /// unbooked eth, forced eth included, is outside the sum until `book` counts it. the payee claim follows the model of
+    /// the book: the share is `payeePpm` of the income once the share is on, the first book with income at or after
+    /// `launchedAt + SNIPER_SECONDS` turns it on and shares nothing, and `claimPayee` pays exactly the eth owed.
     function invariant_18_ethConservation() public view {
+        _zero(g13);
         assertEq(
             core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + handler.gEthOut(),
             handler.gEthStart() + handler.gEthIn(),
             "the eth books do not balance: start + booked != pots + paid out"
         );
+        assertEq(core.payeeOwed(), handler.gPayeeOwed(), "the payee claim differs from the model");
+        assertEq(core.payeeOn(), handler.gPayeeOn(), "the payee latch differs from the model");
+        assertEq(core.payee(), handler.gPayee(), "the payee differs from the one the owner set last");
     }
 
     /// 19. the price state and the read stay inside the bounds the settings and the state give, with no model of the
@@ -487,18 +489,22 @@ abstract contract InvariantsBase is InvariantFixture {
         uint256 cap = ceiling < st.rateCap ? ceiling : st.rateCap;
         assertLe(price, cap, "the price state is above the rate cap and the ceiling");
         uint256 pot = core.ethPot();
-        assertLe(rate, pot, "the read is above the pot");
-        assertEq(rate, price < pot ? price : pot, "the read is not the price state lowered to the pot");
+        uint256 pending = address(core).balance - pot - core.ethToBuyback() - core.ethRedeemBurn() - core.payeeOwed();
+        assertLe(rate, pot + pending, "the read is above the pot and the pending income");
+        if (pending == 0) {
+            assertEq(rate, price < pot ? price : pot, "the read is not the price state lowered to the pot");
+        } else {
+            assertGe(rate, price < pot ? price : pot, "the read is below the price state lowered to the booked pot");
+        }
     }
 
-    /// 20. `CoreLens` reports what the Core and the fee router report. every scalar of `snapshot` equals the
-    /// direct read, the flush fields equal the split of the router balance (and an actual flush when the engine is the
-    /// core), and `statementsPage` over the held list equals the Core's held list and records, whole and in a window.
+    /// 20. `CoreLens` reports what the Core reports. every scalar of `snapshot` equals the direct read, the pending
+    /// income is the eth above the tracked eth (and the payee state is the core's), and `statementsPage` over the held list
+    /// equals the Core's held list and records, whole and in a window.
     /// the page readiness and the asking prices come from the controller, which a hostile one answers differently from
     /// call to call, and are left out then.
     function invariant_20_lensEqualsTheCore() public {
         ICoreLens.Snapshot memory s = lens.snapshot();
-        Settings memory st = core.settings();
         assertEq(s.ethRate, core.ethRate(), "lens ethRate");
         assertEq(s.ethPrice, core.ethPrice(), "lens ethPrice");
         assertEq(s.pileSize, core.pileSize(), "lens pileSize");
@@ -507,17 +513,17 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(s.ethToBuyback, core.ethToBuyback(), "lens ethToBuyback");
         assertEq(s.ethRedeemBurn, core.ethRedeemBurn(), "lens ethRedeemBurn");
         assertEq(s.balancePot, core.balancePot(), "lens balancePot");
-        uint256 booked = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
-        assertEq(s.unbookedEth, address(core).balance > booked ? address(core).balance - booked : 0, "lens unbookedEth");
-        assertEq(s.routerBalance, address(feeRouter).balance, "lens routerBalance");
-        assertEq(s.routerOwed, feeRouter.totalOwed(), "lens routerOwed");
+        uint256 booked = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed();
+        assertEq(s.pendingIncome, address(core).balance > booked ? address(core).balance - booked : 0, "lens pendingIncome");
+        assertEq(s.payee, core.payee(), "lens payee");
+        assertEq(s.payeeOwed, core.payeeOwed(), "lens payeeOwed");
+        assertEq(s.payeeOn, core.payeeOn(), "lens payeeOn");
         assertEq(s.controller, core.controller(), "lens controller");
         assertEq(s.successor, core.successor(), "lens successor");
         assertEq(s.controllerLocked, core.controllerLocked(), "lens controllerLocked");
         assertEq(s.balanceModuleLocked, core.balanceModuleLocked(), "lens balanceModuleLocked");
-        assertEq(s.targetsLocked, core.targetsLocked(), "lens targetsLocked");
+        assertEq(s.adaptersLocked, core.adaptersLocked(), "lens adaptersLocked");
         assertEq(s.successorLocked, core.successorLocked(), "lens successorLocked");
-        _lensFlush(s);
         bool hostile = _hostileController();
         if (!hostile) {
             assertEq(s.pageReady, _pageReady(s.controller), "lens pageReady");
@@ -540,35 +546,6 @@ abstract contract InvariantsBase is InvariantFixture {
             }
         }
         assertEq(lens.statementsPage(held.length, 5).length, 0, "lens page past the end");
-    }
-
-    /// the flush fields against the split of the router balance read directly, and against an actual flush (undone)
-    /// when the engine is the core
-    function _lensFlush(ICoreLens.Snapshot memory s) internal {
-        uint256 balance = address(feeRouter).balance;
-        uint256 owed = feeRouter.totalOwed();
-        uint256 toPayees;
-        uint256 toCore;
-        if (feeRouter.engine() != address(0) && balance > owed) {
-            uint256 amount = balance - owed;
-            if (feeRouter.splitOn()) {
-                (, uint32[] memory ppm) = feeRouter.payees();
-                for (uint256 i; i < ppm.length; ++i) {
-                    toPayees += amount * ppm[i] / 1_000_000;
-                }
-            }
-            toCore = amount - toPayees;
-        }
-        assertEq(s.flushToCore, toCore, "lens flushToCore");
-        assertEq(s.flushToPayees, toPayees, "lens flushToPayees");
-        if (feeRouter.engine() == address(core) && balance > owed) {
-            uint256 snap = vm.snapshotState();
-            uint256 before = address(core).balance;
-            try feeRouter.flush() {
-                assertEq(address(core).balance - before, s.flushToCore, "lens flushToCore differs from a flush");
-            } catch {}
-            vm.revertToState(snap);
-        }
     }
 
     function _pageReady(address ctl) internal view returns (bool ready) {
@@ -658,7 +635,7 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 6) handler.roll(w);
         else if (a == 7) handler.compose(w, x);
         else if (a == 8) handler.buyback(w);
-        else if (a == 9) handler.skim(w);
+        else if (a == 9) handler.bookBalance(w);
         else if (a == 10) handler.donate(w, x);
         else if (a == 11) handler.controllerSeed(w);
         else if (a == 12) handler.controllerSwap(w);
@@ -678,8 +655,8 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 26) handler.hostileOwner(w, x);
         else if (a == 27) handler.lockDoor(w, x);
         else if (a == 28) handler.handover(w, x);
-        else if (a == 29) handler.flush(w, x);
-        else if (a == 30) handler.repoint(w, x);
+        else if (a == 29) handler.book(w, x);
+        else if (a == 30) handler.claimPayee(w, x);
         else if (a == 31) handler.rescueNft(w, x);
         else if (a == 32) handler.migrate(w, x);
         else if (a == 33) handler.adopt(w, x, y);
@@ -769,7 +746,7 @@ abstract contract InvariantsBase is InvariantFixture {
         if (a == 35) return handler.phase2();
         // the sale and owner door actions run only in the suites that list them
         if (a >= 24 && a <= 28) return _saleSuite();
-        // flush through creditSettings, and buy, are available in every suite
+        // book through creditSettings, and buy, are available in every suite
         if (a >= 29 || a == 23) return true;
         // the redemption actions and the module replacement need the balance side
         if ((a >= 14 && a <= 16 || a == 22) && !handler.phase2()) return false;
@@ -838,7 +815,7 @@ abstract contract InvariantsBase is InvariantFixture {
         assertTrue(_try(8, 60), "no buyback");
         _creditSmoke();
         _ownerSmoke();
-        _routerSmoke();
+        _payeeSmoke();
     }
 
     /// the owner's credit settings and the credit sale window. the real controller is put back in force first, so the
@@ -884,20 +861,20 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// the router actions: flushes with the core as engine, then the router owner points the engine at every kind of
-    /// target (the core, an engine that takes eth, one that refuses it, bad addresses), flushes against each, swaps keep
-    /// working with an engine that refuses, and the engine goes back to the core
-    function _routerSmoke() internal {
-        assertTrue(_try(29, 20), "no flush");
+    /// the book and the payee actions: books with and without pushed eth, then the owner points the payee at every kind
+    /// of target (a fresh account, a payee that reverts, one that burns its gas, the zero address), claims against each,
+    /// swaps keep working with a payee that refuses, and the payee goes back to a working account
+    function _payeeSmoke() internal {
+        assertTrue(_try(29, 20), "no book");
         for (uint256 m; m < 6; ++m) {
-            handler.repoint(m + 6 * 7, m);
-            handler.flush(m, 0);
             handler.buyCoin(m, 1, 0);
+            handler.claimPayee(m + 6 * 7, m);
+            handler.book(m, 0);
         }
-        assertTrue(_try(30, 20), "no repoint");
-        handler.repoint(0, 0);
-        assertEq(feeRouter.engine(), address(core), "the engine is back at the core");
-        handler.flush(1, 0);
+        assertTrue(_try(30, 20), "no claim");
+        handler.claimPayee(1, 1);
+        assertEq(core.payee(), handler.gPayee(), "the payee is the one the owner set last");
+        handler.book(1, 0);
     }
 
     /// the owner's calls: valid settings across the bounds, refused ones, the rate and the other doors
@@ -982,7 +959,7 @@ contract InvariantsPhase1Deep is InvariantsPhase1 {
 }
 
 /// phase 1 starting inside the sniper window: setUp ends a few seconds after launch, the pot, the piles and the
-/// statements were all built under a 90 percent skim, and the owner has allowed the hostile target. the run begins
+/// statements were all built under a 90 percent skim, and the owner has approved the test adapter that reaches the hostile target. the run begins
 /// with the skim near its maximum and the handler may switch the controller at any time.
 /// forge-config: default.invariant.runs = 24
 /// forge-config: default.invariant.depth = 80

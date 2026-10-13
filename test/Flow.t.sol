@@ -17,16 +17,16 @@ import {SettingsFields} from "../script/SettingsFields.sol";
 contract FlowTest is Fixture {
     using FixedPointMathLib for uint256;
 
-    uint256 internal constant N = 23;
+    uint256 internal constant N = 24;
 
     // ------------------------------------------------------------------ helpers
 
-    /// @dev books `eth` into the buying pot through the real `skim` door (a donation of eth to the core)
+    /// @dev adds eth to the buying pot through the real `fund` door
     function _potTo(uint256 eth) internal {
         uint256 have = core.ethPot();
         if (have >= eth) return;
-        vm.deal(address(core), address(core).balance + (eth - have));
-        core.skim();
+        vm.deal(address(this), address(this).balance + (eth - have));
+        core.fund{value: eth - have}();
     }
 
     function _owner(Settings memory s) internal {
@@ -38,7 +38,7 @@ contract FlowTest is Fixture {
         return keccak256(abi.encode(s));
     }
 
-    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 26 fields in declaration order
+    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 24 fields in declaration order
     function _get(Settings memory s, uint256 i) internal pure returns (uint256) {
         return SettingsFields.get(s, i);
     }
@@ -47,22 +47,22 @@ contract FlowTest is Fixture {
         SettingsFields.set(s, i, v);
     }
 
-    function _lo() internal pure returns (uint256[23] memory) {
+    function _lo() internal pure returns (uint256[24] memory) {
         return SettingsFields.lo();
     }
 
-    function _hi() internal pure returns (uint256[23] memory) {
+    function _hi() internal pure returns (uint256[24] memory) {
         return SettingsFields.hi();
     }
 
-    function _names() internal pure returns (bytes32[23] memory) {
+    function _names() internal pure returns (bytes32[24] memory) {
         return SettingsFields.names();
     }
 
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
-        uint256[23] memory lo = _lo();
-        uint256[23] memory hi = _hi();
+        uint256[24] memory lo = _lo();
+        uint256[24] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
@@ -115,8 +115,8 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundEdgeIsAccepted() public {
-        uint256[23] memory lo = _lo();
-        uint256[23] memory hi = _hi();
+        uint256[24] memory lo = _lo();
+        uint256[24] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             for (uint256 k; k < 2; ++k) {
                 Settings memory s = Mainnet.defaultSettings();
@@ -138,9 +138,9 @@ contract FlowTest is Fixture {
     }
 
     function test_settings_everyBoundViolationReverts() public {
-        uint256[23] memory lo = _lo();
-        uint256[23] memory hi = _hi();
-        bytes32[23] memory names = _names();
+        uint256[24] memory lo = _lo();
+        uint256[24] memory hi = _hi();
+        bytes32[24] memory names = _names();
         for (uint256 i; i < N; ++i) {
             // the two switches take 0 or 1, nothing is out of bounds
             if (i == 11 || i == 12) continue;
@@ -517,38 +517,35 @@ contract FlowTest is Fixture {
         _solvent();
     }
 
-    // ------------------------------------------------------------------ skim never double books sale proceeds
+    // ------------------------------------------------------------------ the book never double counts sale proceeds
 
     function _booked() internal view returns (uint256) {
-        return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
+        return _tracked();
     }
 
-    function test_skim_findsNothingAfterASale() public {
+    function test_book_findsNothingAfterASale() public {
         uint256 sid = _composeOnce().sid;
-        core.skim();
+        core.book();
         uint256 booked = _booked();
         uint256 price = _buy(alice, sid);
         assertEq(_booked(), booked + price, "booked once by the sale");
-        vm.expectEmit(address(core));
-        emit ICore.Skimmed(0, 0);
-        core.skim();
-        assertEq(_booked(), booked + price, "and not again by skim");
+        vm.recordLogs();
+        core.book();
+        assertEq(vm.getRecordedLogs().length, 0, "a book with no income logs nothing");
+        assertEq(_booked(), booked + price, "and not again by the book");
         _solvent();
     }
 
-    function test_skim_afterASaleWithADonationBooksOnlyTheDonation() public {
+    function test_book_afterASaleWithForcedEthBooksOnlyTheForcedEth() public {
         (, uint256 price) = _sellStatement(alice);
+        core.book();
         uint256 booked = _booked();
-        // an unrelated donation sits unbooked in the core
-        vm.deal(address(this), 3 ether);
-        (bool ok,) = address(core).call{value: 1 ether}("");
-        assertTrue(ok);
-        assertEq(address(core).balance - _booked(), 1 ether, "the donation is unbooked");
-        vm.expectEmit(address(core));
-        emit ICore.Skimmed(1 ether, 0);
-        core.skim();
+        // an unrelated forced send sits above the pots
+        vm.deal(address(core), address(core).balance + 1 ether);
+        assertEq(address(core).balance - _booked(), 1 ether, "the forced eth is unbooked");
+        core.book();
         assertEq(_booked(), booked + 1 ether);
-        core.skim();
+        core.book();
         assertEq(_booked(), booked + 1 ether, "nothing left to book");
         assertGt(price, 0);
         _solvent();
@@ -587,14 +584,16 @@ contract FlowTest is Fixture {
         _makeEligible(c.sid);
         // fund the reserve directly and back it with real eth so the pots stay solvent (slot 8 is ethRedeemBurn,
         // test/CoreLayout.t.sol pins it)
+        uint256 old = core.ethRedeemBurn();
+        uint256 reserve = old + 1 ether;
         vm.deal(address(core), address(core).balance + 1 ether);
-        vm.store(address(core), bytes32(uint256(8)), bytes32(uint256(1 ether)));
-        assertEq(core.ethRedeemBurn(), 1 ether);
+        vm.store(address(core), bytes32(uint256(8)), bytes32(reserve));
+        assertEq(core.ethRedeemBurn(), reserve);
         uint256 buyback = core.ethToBuyback();
-        uint256 released = uint256(1 ether) * core.settings().redeemBurnBps / 10_000;
+        uint256 released = reserve * core.settings().redeemBurnBps / 10_000;
         assertGt(released, 0, "there is something to release");
         core.redeemStatement(c.sid);
-        assertEq(core.ethRedeemBurn(), 1 ether - released, "the reserve fell by redeemBurnBps");
+        assertEq(core.ethRedeemBurn(), reserve - released, "the reserve fell by redeemBurnBps");
         assertEq(core.ethToBuyback(), buyback + released, "the release reached the coin buyback");
         _solvent();
     }
@@ -642,7 +641,7 @@ contract FlowTest is Fixture {
     function _newCore(Settings memory s, address escrow) internal returns (ICore) {
         Stack memory st = lc.stack;
         st.escrow = escrow;
-        return Prod.newCore(owner, address(coin), address(ctl), st, OPEN_RATE, s);
+        return _launchCore(address(ctl), st, OPEN_RATE, s);
     }
 
     function test_constructor_storesTheSettings() public {
@@ -689,11 +688,12 @@ contract FlowTest is Fixture {
         uint256 r = core.ethRate();
         assertLt(g - gasleft(), 400_000, "bounded work");
         assertLe(r, uint256(1 ether), "clamped at the pot");
-        vm.deal(core.FEE_SOURCE(), 1 ether);
+        vm.deal(lc.stack.hook, 1 ether);
         uint256 pot = core.ethPot();
-        vm.prank(core.FEE_SOURCE());
+        vm.prank(lc.stack.hook);
         (bool ok,) = address(core).call{value: 1e15}("");
         assertTrue(ok, "receive does not revert");
+        core.book();
         assertEq(core.ethPot(), pot + 1e15, "booked");
     }
 
@@ -823,10 +823,10 @@ contract FlowTest is Fixture {
             core.setSettings(s);
         } else if (kind == 3) {
             address t = address(uint160(r >> 8));
-            try core.addTarget(t) {} catch {}
-            core.removeTarget(t);
+            try core.addAdapter(t) {} catch {}
+            core.removeAdapter(t);
         } else {
-            core.removeTarget(Mainnet.SEAPORT);
+            core.removeAdapter(seaportAdapter);
         }
         vm.stopPrank();
     }
@@ -842,7 +842,7 @@ contract FlowTest is Fixture {
             core.ethToBuyback() < core.settings().buybackSlice ? core.ethToBuyback() : core.settings().buybackSlice;
         vm.startPrank(who);
         if (pick == 0) {
-            try core.skim() {} catch {}
+            try core.book() {} catch {}
         } else {
             try core.buyback() {} catch {}
         }
@@ -854,11 +854,11 @@ contract FlowTest is Fixture {
         return 0;
     }
 
-    /// @dev the seller sells a credit. whatever the settings, the core pays the quoted ceiling. the door flushes the fee
-    /// router first and the Core books that eth, so the router is flushed before the balance is read
+    /// @dev the seller sells a credit. whatever the settings, the core pays the quoted ceiling. the door books the fee
+    /// income first, so the fees are booked before the balance is read
     function _sellMaybe(uint256 id) internal {
         if (CREDITS.ownerOf(id) != seller) return;
-        _flush();
+        _book();
         uint256 quote = core.ethRate();
         uint256 coreBefore = address(core).balance;
         uint256 sellerBefore = seller.balance;

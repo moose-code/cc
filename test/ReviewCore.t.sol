@@ -104,9 +104,7 @@ contract ReviewCoreTest is Fixture {
         emit log_named_uint("gas of a ten year read", g);
         // a checkpointing call after the gap still works
         vm.deal(address(this), 1 ether);
-        (bool ok,) = address(core).call{value: 1 ether}("");
-        assertTrue(ok);
-        core.skim();
+        core.fund{value: 1 ether}();
         assertEq(core.ethPot(), pot + 1 ether);
     }
 }

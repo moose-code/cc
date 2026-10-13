@@ -1,7 +1,7 @@
 // unit checks that the port matches src/Core.sol on hand computed cases. run: node engine.test.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { Core, Pool, DEFAULTS, SETTINGS, CONTROLLER, CREDIT, CREDIT_CONFIG_KEY, creditViolation, simulate, controllerViolation, summary, firstViolation, skimFraction, pathPrice, routerFeeFraction, engineFeeFraction, stepVolume, W } from './engine.js';
+import { Core, Pool, DEFAULTS, SETTINGS, CONTROLLER, CREDIT, CREDIT_CONFIG_KEY, creditViolation, simulate, controllerViolation, summary, firstViolation, skimFraction, pathPrice, bountyFeeFraction, engineFeeFraction, stepVolume, W } from './engine.js';
 
 let n = 0;
 const near = (a, b, tol, msg) => {
@@ -57,12 +57,12 @@ const R0 = 6.668e15;
   assert.deepEqual(Object.keys(cfg.sale).sort(), Object.keys(CONTROLLER).sort()); n++; // the sale block and the model carry the same fields
   // the launch rateStart is 100 percent of market
   near(cfg.rateStart, 0.0089 * W, 1e-3, 'launch rateStart is 100 percent of the 0.0089 market');
-  // the pool and router values of the v2 launch
+  // the pool and payee values of the v2 launch
   for (const k of ['baselineSkimBps', 'bountyBps', 'sniperStartBps']) near(DEFAULTS[k], cfg.launch[k], 1e-12, 'launch ' + k);
   near(DEFAULTS.sniperSeconds, cfg.launch.sniperSeconds, 1e-12, 'launch sniperSeconds');
   near(DEFAULTS.sniperEndBps, cfg.launch.baselineSkimBps, 1e-12, 'the sniper skim falls to the baseline');
   ok(cfg.launch.lpFeePips === 0, 'no lp fee, so no lp income in the model');
-  near(DEFAULTS.routerPayeePpm, cfg.router.payeePpm, 1e-12, 'router payeePpm');
+  near(DEFAULTS.payeePpm, cfg.settings.payeePpm, 1e-12, 'payeePpm');
   // the credit block (the Credit struct of the launch config) is the model's CREDIT, field for field, and the launch values are the ones of FLOW 88 to 90
   assert.deepEqual(Object.keys(cfg.credit).sort(), [...Object.values(CREDIT_CONFIG_KEY), 'royaltyRecipient'].sort()); n++; // the recipient is an address the model has no use for
   for (const [k, ck] of Object.entries(CREDIT_CONFIG_KEY)) near(+CREDIT[k], +cfg.credit[ck], 1e-12, 'credit ' + k);
@@ -750,16 +750,16 @@ const R0 = 6.668e15;
   near(p.price, 2.5131970949402153e-8, 1e-9, 'back at the start');
   ok(p.sell(1).eth < 1e-9); // nothing to sell below the start tick
 }
-// skim schedule: anti sniper 90 points falling to the 6.9 point baseline over 30 minutes. the router gets 90 percent of the baseline
-// plus the whole extra, after the split start the payee takes 112,778 ppm of the gross inflow
+// skim schedule: anti sniper 90 points falling to the 6.9 point baseline over 30 minutes. the Core gets 90 percent of the baseline
+// plus the whole extra, after the window the payee takes 75,185 ppm of the income
 {
   near(skimFraction(DEFAULTS, 0), 0.9, 1e-12, 'launch skim'); near(skimFraction(DEFAULTS, 900), (0.9 + 0.069) / 2, 1e-12, 'midway');
   near(skimFraction(DEFAULTS, 1800), 0.069, 1e-12, 'end of window'); near(skimFraction(DEFAULTS, 99999), 0.069, 1e-12, 'baseline');
-  near(routerFeeFraction(DEFAULTS, 0.069), 0.0665022, 1e-12, 'router 6.65022 points'); near(routerFeeFraction(DEFAULTS, 0.9), 0.0665022 + 0.831, 1e-12, 'extra to the router');
-  near(engineFeeFraction(DEFAULTS, 0.069, 3600), 0.0665022 * (1 - 112778 / 1e6), 1e-12, 'engine share after the split start');
-  near(engineFeeFraction(DEFAULTS, 0.069, 3600) * 1e3, 59.00221, 1e-4, 'engine 5.90022 points of 100 eth (docs/DECISIONS.md 10.9) is 59.00 finney of 1 eth');
+  near(bountyFeeFraction(DEFAULTS, 0.069), 0.0665022, 1e-12, 'Core 6.65022 points'); near(bountyFeeFraction(DEFAULTS, 0.9), 0.0665022 + 0.831, 1e-12, 'extra to the Core');
+  near(engineFeeFraction(DEFAULTS, 0.069, 3600), 0.0665022 * (1 - 75185 / 1e6), 1e-12, 'engine share after the window');
+  near(engineFeeFraction(DEFAULTS, 0.069, 3600) * 1e3, 61.502232, 1e-4, 'engine 6.15022 points of 100 eth is 61.50 finney of 1 eth');
   near(engineFeeFraction(DEFAULTS, 0.9, 0), (0.0665022 + 0.831), 1e-12, 'the window is not shared with the payee');
-  near(engineFeeFraction(DEFAULTS, 0.069, 1799), 0.0665022, 1e-12, 'nor is anything before the split start');
+  near(engineFeeFraction(DEFAULTS, 0.069, 1799), 0.0665022, 1e-12, 'nor is anything before the end of the window');
   let d0 = 0;
   for (let t = 0; t < 3600; t += 120) d0 += stepVolume(DEFAULTS, t, 120);
   near(d0, 1557 * 0.586, 1e-9, 'first hour volume');
@@ -877,7 +877,7 @@ const R0 = 6.668e15;
   const paused = simulate(Object.assign({ creditSaleOn: true, schedule: [{ day: 1, patch: { paused: true } }] }, base)); ok(paused.T.creditMiss > 0 && paused.T.creditSold < on.T.creditSold, 'sales are paused, credit sales too'); n++;
   const mid = simulate(Object.assign({ schedule: [{ day: 10, patch: { creditSaleOn: true } }] }, base)); ok(mid.T.creditSold > 0 && mid.S.creditSold[10 * 24] === 0, 'the owner turns the sale on mid run'); n++;
   // chosen composition: a composer that names the richest ready credits builds richer statements than compose() does from the oldest
-  const win = { creditSaleOn: true, creditWindow: 24 * H, days: 30, seed: 3, stepSec: 300, stmtPerDay: 2 };
+  const win = { creditSaleOn: true, creditWindow: 24 * H, days: 30, seed: 4, stepSec: 300, stmtPerDay: 2 };
   const std = simulate(win), pick = simulate(Object.assign({ chosenComposeOn: true, composeChoice: 'richest' }, win));
   ok(pick.T.composedChosen > 0 && std.T.composedChosen === 0, 'composeChosen runs only when the owner opens it'); ok(pick.T.stRating / pick.T.composed > std.T.stRating / std.T.composed, 'and the statements it builds are richer');
   const gated = simulate(Object.assign({ composeChoice: 'richest' }, win)); assert.equal(gated.T.composedChosen, 0); assert.deepEqual(gated.S.composed, std.S.composed); n += 4; // the composer needs chosenComposeOn

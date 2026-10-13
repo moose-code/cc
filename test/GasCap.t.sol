@@ -6,13 +6,11 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditStrategy, IStatements, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
-import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {SeaportBase} from "./Seaport.t.sol";
 import {OrderComponents} from "./utils/SeaportTypes.sol";
-import {GasBurningPayee} from "./attackers/GasBurners.sol";
 import {ComposeCall} from "./utils/ComposeCall.sol";
 
 /// @notice every transaction this system needs, against the per transaction gas cap of mainnet (EIP-7825, since the
@@ -89,7 +87,7 @@ contract GasCapTest is SeaportBase {
     /// @dev marks every account the system touches as cold, with its slots, then warms only the account of `target`
     /// (a transaction starts with its target warm). the sender is not cooled
     function _cool(address target) internal {
-        address[16] memory a = [
+        address[15] memory a = [
             address(core),
             address(ctl),
             address(STATEMENTS),
@@ -103,7 +101,6 @@ contract GasCapTest is SeaportBase {
             v2.escrow,
             v2.factory,
             v2.mev,
-            address(feeRouter),
             address(mod),
             address(xt)
         ];
@@ -136,7 +133,19 @@ contract GasCapTest is SeaportBase {
 
     /// @dev tx 3, a second Core
     function test_gas_deploy_3_core() public {
-        bytes memory args = abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit);
+        bytes memory args = abi.encode(
+            owner,
+            buildConfig(lc, owner, address(0)),
+            owner,
+            address(0),
+            address(ctl),
+            lc.payee,
+            lc.stack,
+            lc.rateStart,
+            lc.settings,
+            lc.credit,
+            launchAdapters(address(core), lc)
+        );
         bytes memory code = bytes.concat(vm.getCode("Core.sol:Core"), args);
         _cool(address(this));
         uint256 g = gasleft();
@@ -147,9 +156,8 @@ contract GasCapTest is SeaportBase {
         _row("deploy 3 core", g, code);
     }
 
-    /// @dev tx 4 and 5 on a fresh launch (new salt), as the owner: `deployTokenAsOwner`, then the router setup (a second
-    /// router, so the set up transactions are the first ones)
-    function test_gas_deploy_4_5_launchAndRouterSetup() public {
+    /// @dev tx 4 on a fresh launch (new salt), as the owner: `deployTokenAsOwner`
+    function test_gas_deploy_4_launch() public {
         IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg =
             buildConfig(owner, creator, "Gas Coin", "GASC", keccak256("gas cap coin"));
         uint256 fee = FACTORY.deployFee();
@@ -161,102 +169,89 @@ contract GasCapTest is SeaportBase {
         FACTORY.deployTokenAsOwner{value: fee}(cfg, lc.protocolBps);
         g -= gasleft();
         _row("deploy 4 launch through the factory (deployTokenAsOwner)", g, data);
-
-        // the router set up: engine, payees, lock
-        IFeeRouter r2 = IFeeRouter(payable(deployCode("FeeRouter.sol:FeeRouter", abi.encode(owner))));
-        address[] memory who = new address[](1);
-        who[0] = lc.creatorPayee;
-        uint32[] memory ppm = new uint32[](1);
-        ppm[0] = lc.payeePpm;
-        data = abi.encodeCall(IFeeRouter.setEngine, (address(core)));
-        _cool(address(r2));
-        vm.prank(owner);
-        g = gasleft();
-        r2.setEngine(address(core));
-        g -= gasleft();
-        _row("deploy 5a router setEngine", g, data);
-        data = abi.encodeCall(IFeeRouter.setPayees, (who, ppm));
-        _cool(address(r2));
-        vm.prank(owner);
-        g = gasleft();
-        r2.setPayees(who, ppm);
-        g -= gasleft();
-        _row("deploy 5b router setPayees", g, data);
-        data = abi.encodeCall(IFeeRouter.lock, ());
-        _cool(address(r2));
-        vm.prank(owner);
-        g = gasleft();
-        r2.lock();
-        g -= gasleft();
-        _row("deploy 5c router lock", g, data);
     }
 
-    /// @dev `flush` with the split on and two payees, cold, the call that moves the pool fees into the Core
-    function test_gas_routerFlush() public {
-        _skipToSplitStart();
+    /// @dev `book` with the payee share on, cold, the call that counts the pool fees the hook pushed into the Core
+    function test_gas_book() public {
+        _skipToPayeeStart();
         _buyCoin(funder, 20 ether);
-        autoFlush = false;
+        autoBook = false;
         _buyCoin(funder, 5 ether);
-        _flush();
+        _book();
         _buyCoin(funder, 5 ether);
-        assertTrue(feeRouter.splitOn(), "the split is on");
-        // launch has one payee. measure the heavier case of two, set by the owner
-        address[] memory who = new address[](2);
-        who[0] = lc.creatorPayee;
-        who[1] = makeAddr("secondPayee");
-        uint32[] memory ppm = new uint32[](2);
-        ppm[0] = 80_515;
-        ppm[1] = 80_515;
-        vm.prank(owner);
-        feeRouter.setPayees(who, ppm);
-        bytes memory data = abi.encodeCall(IFeeRouter.flush, ());
-        _cool(address(feeRouter));
-        vm.prank(flusher);
+        assertTrue(core.payeeOn(), "the payee share is on");
+        bytes memory data = abi.encodeCall(core.book, ());
+        _cool(address(core));
+        vm.prank(stranger);
         uint256 g = gasleft();
-        feeRouter.flush();
+        core.book();
         g -= gasleft();
-        _row("flush with the split on (two payees, the Core books the fees)", g, data);
+        _row("book with the payee share on (the Core books the fees)", g, data);
     }
 
-    /// @dev the first flush at or after the split start: sends everything to the engine and turns the split on
-    function test_gas_routerFlush_firstAtSplitStart() public {
-        _skipToSplitStart();
-        autoFlush = false;
+    /// @dev the first book at or after the end of the window: reads the launch time from the factory, turns the payee
+    /// share on and shares nothing
+    function test_gas_book_firstAfterTheWindow() public {
+        _skipToPayeeStart();
+        autoBook = false;
         _buyCoin(funder, 5 ether);
-        assertFalse(feeRouter.splitOn());
-        bytes memory data = abi.encodeCall(IFeeRouter.flush, ());
-        _cool(address(feeRouter));
-        vm.prank(flusher);
+        assertFalse(core.payeeOn());
+        bytes memory data = abi.encodeCall(core.book, ());
+        _cool(address(core));
+        vm.prank(stranger);
         uint256 g = gasleft();
-        feeRouter.flush();
+        core.book();
         g -= gasleft();
-        assertTrue(feeRouter.splitOn());
-        _row("flush that turns the split on (engine only)", g, data);
+        assertTrue(core.payeeOn());
+        _row("book that turns the payee share on (reads the factory record)", g, data);
     }
 
-    /// @dev the keeper calls the v2 escrow adds: claim the Core's credit (anyone), `skim()` books it and `rescueCoin`
-    function test_gas_escrowClaim_skim_rescue() public {
-        _skipToSplitStart();
+    /// @dev `fund`, cold: books the income above the pots, then adds the value to the pot
+    function test_gas_fund() public {
+        _skipToPayeeStart();
+        _buyCoin(funder, 20 ether);
+        autoBook = false;
+        _buyCoin(funder, 5 ether);
+        bytes memory data = abi.encodeCall(core.fund, ());
+        vm.deal(stranger, 2 ether);
+        _cool(address(core));
+        vm.prank(stranger);
+        uint256 g = gasleft();
+        core.fund{value: 1 ether}();
+        g -= gasleft();
+        _row("fund with income to book, cold", g, data);
+    }
+
+    /// @dev `claimPayee`, cold
+    function test_gas_claimPayee() public {
+        _skipToPayeeStart();
+        _buyCoin(funder, 20 ether);
+        _buyCoin(funder, 5 ether);
+        assertGt(core.payeeOwed(), 0);
+        bytes memory data = abi.encodeCall(core.claimPayee, ());
+        _cool(address(core));
+        vm.prank(stranger);
+        uint256 g = gasleft();
+        core.claimPayee();
+        g -= gasleft();
+        _row("claimPayee, cold", g, data);
+    }
+
+    /// @dev the keeper calls the v2 escrow adds: `collectEscrow` claims the Core credit into the pot, and `rescueCoin`
+    function test_gas_escrowClaim_collect_rescue() public {
+        _skipToPayeeStart();
         _buyCoin(funder, 5 ether);
         vm.deal(v2.hook, 1 ether);
         vm.prank(v2.hook);
         (bool ok,) = v2.escrow.call{value: 0.3 ether}(abi.encodeWithSignature("storeFeesNative(address)", address(core)));
         assertTrue(ok);
-        bytes memory data = abi.encodeCall(ESCROW.claim, (address(core), address(0)));
-        _cool(v2.escrow);
-        vm.prank(stranger);
-        uint256 g = gasleft();
-        ESCROW.claim(address(core), address(0));
-        g -= gasleft();
-        _row("escrow claim of the Core credit (pays the Core, not booked)", g, data);
-
-        data = abi.encodeCall(core.skim, ());
+        bytes memory data = abi.encodeCall(core.collectEscrow, ());
         _cool(address(core));
         vm.prank(stranger);
-        g = gasleft();
-        core.skim();
+        uint256 g = gasleft();
+        core.collectEscrow();
         g -= gasleft();
-        _row("skim books the claimed eth", g, data);
+        _row("collectEscrow claims the Core credit into the pot", g, data);
 
         vm.prank(owner);
         coin.setAllowed(funder, true);
@@ -302,53 +297,28 @@ contract GasCapTest is SeaportBase {
         _measureCompose("compose eth lane, 80 credits, second compose, cold");
     }
 
-    /// @dev turns the router split on, and with `burning` replaces the payees by four that burn all the gas they are
-    /// given (the most expensive flush). called before the pile is filled: the sales that fill it pull the router
-    function _splitOn(bool burning) internal {
-        _skipToSplitStart();
-        vm.deal(address(feeRouter), 1 gwei);
-        _flush();
-        assertTrue(feeRouter.splitOn(), "the split is on");
-        if (!burning) return;
-        address[] memory who = new address[](4);
-        uint32[] memory ppm = new uint32[](4);
-        for (uint256 i; i < 4; ++i) {
-            who[i] = address(new GasBurningPayee());
-            ppm[i] = 50_000;
-        }
-        vm.prank(owner);
-        feeRouter.setPayees(who, ppm);
+    /// @dev puts 1 eth of unbooked income in the Core, so the compose books it first
+    function _loadIncome() internal {
+        vm.deal(address(core), address(core).balance + 1 ether);
     }
 
-    /// @dev puts 1 eth in the router, so the compose pulls it
-    function _loadRouter() internal {
-        vm.deal(address(feeRouter), 1 ether);
-    }
-
-    function _composeLoaded(bool burning) internal returns (uint256 g) {
-        _splitOn(burning);
+    function _composeLoaded() internal returns (uint256 g) {
+        _skipToPayeeStart();
+        _buyCoin(funder, 5 ether);
         _fillEthPile(80);
-        _loadRouter();
+        _loadIncome();
         vm.fee(composeBasefee);
         _cool(address(core));
         vm.prank(keeper);
         g = gasleft();
         core.compose();
         g -= gasleft();
-        assertEq(address(feeRouter).balance, burning ? feeRouter.totalOwed() : 0, "the compose pulled the router");
-        _row(
-            burning ? "compose eth lane, router 1 eth, four burning payees, cold" : "compose eth lane, router 1 eth, cold",
-            g,
-            ComposeCall.noArgs()
-        );
+        assertEq(address(core).balance, _tracked(), "the compose booked the income");
+        _row("compose eth lane, 1 eth of unbooked income, payee share on, cold", g, ComposeCall.noArgs());
     }
 
-    function test_gas_compose_ethLane_routerLoaded() public {
-        _composeLoaded(false);
-    }
-
-    function test_gas_compose_ethLane_routerWorstCaseFlush() public {
-        _composeLoaded(true);
+    function test_gas_compose_ethLane_incomeLoaded() public {
+        _composeLoaded();
     }
 
     function test_gas_redeemStatement_ethLane() public {
@@ -391,8 +361,8 @@ contract GasCapTest is SeaportBase {
         bytes memory data =
             abi.encodeWithSignature(balance_ ? "sellForBalance(uint256[])" : "sellForEth(uint256[])", ids);
         _cool(address(core));
-        // the eth door pulls the router first: the measured sell carries a flush of 1 eth
-        if (!balance_) vm.deal(address(feeRouter), 1 ether);
+        // the eth door books the income first: the measured sell carries a book of 1 eth
+        if (!balance_) vm.deal(address(core), address(core).balance + 1 ether);
         vm.prank(seller);
         g = gasleft();
         if (balance_) core.sellForBalance(ids);
@@ -451,7 +421,7 @@ contract GasCapTest is SeaportBase {
         _setBalancePool();
         _fillBalanceBuyback();
         xt.mint(address(core), 1_000_000e18);
-        core.skim();
+        core.bookBalance();
         _searchBatch("sellForBalance", true);
     }
 
@@ -461,48 +431,34 @@ contract GasCapTest is SeaportBase {
         _fundPot(10 ether);
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         _warpUntilCeiling(LISTED_A, price);
-        bytes memory listing = abi.encodeCall(ICreditStrategy.sellTargetNFT, (LISTED_A));
-        bytes memory data = abi.encodeCall(core.buyListing, (price, listing, LISTED_A, STRATEGY));
+        bytes memory data = abi.encodeCall(core.buyListing, (strategyAdapter, LISTED_A, ""));
         _cool(address(core));
+        _cool(strategyAdapter);
         vm.prank(keeper);
         uint256 g = gasleft();
-        core.buyListing(price, listing, LISTED_A, STRATEGY);
+        core.buyListing(strategyAdapter, LISTED_A, "");
         g -= gasleft();
         assertEq(CREDITS.ownerOf(LISTED_A), address(core));
-        _row("buyListing through the CreditStrategy target, cold", g, data);
+        _row("buyListing through the CreditStrategy adapter, cold", g, data);
     }
 
-    /// @dev the CreditStrategy listing with the router split on and 1 eth in the router, so the door's flush runs. with
-    /// `burning` the four payees burn all the gas they are given (the most expensive flush)
-    function _buyListingLoaded(bool burning) internal {
-        _splitOn(burning);
+    /// @dev the CreditStrategy listing with the payee share on and 1 eth of unbooked income, so the door's book runs
+    function test_gas_buyListing_creditStrategy_incomeLoaded() public {
+        _skipToPayeeStart();
+        _buyCoin(funder, 5 ether);
         _fundPot(10 ether);
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         _warpUntilCeiling(LISTED_A, price);
-        vm.deal(address(feeRouter), address(feeRouter).balance + 1 ether);
-        bytes memory listing = abi.encodeCall(ICreditStrategy.sellTargetNFT, (LISTED_A));
-        bytes memory data = abi.encodeCall(core.buyListing, (price, listing, LISTED_A, STRATEGY));
+        vm.deal(address(core), address(core).balance + 1 ether);
+        bytes memory data = abi.encodeCall(core.buyListing, (strategyAdapter, LISTED_A, ""));
         _cool(address(core));
+        _cool(strategyAdapter);
         vm.prank(keeper);
         uint256 g = gasleft();
-        core.buyListing(price, listing, LISTED_A, STRATEGY);
+        core.buyListing(strategyAdapter, LISTED_A, "");
         g -= gasleft();
-        assertEq(address(feeRouter).balance, burning ? feeRouter.totalOwed() : 0, "the buy pulled the router");
-        _row(
-            burning
-                ? "buyListing through the CreditStrategy target, router 1 eth, four burning payees, cold"
-                : "buyListing through the CreditStrategy target, router 1 eth, cold",
-            g,
-            data
-        );
-    }
-
-    function test_gas_buyListing_creditStrategy_routerLoaded() public {
-        _buyListingLoaded(false);
-    }
-
-    function test_gas_buyListing_creditStrategy_routerWorstCaseFlush() public {
-        _buyListingLoaded(true);
+        assertEq(address(core).balance, _tracked(), "the buy booked the income");
+        _row("buyListing through the CreditStrategy adapter, 1 eth of unbooked income, cold", g, data);
     }
 
     function _seaportBuy(string memory name, uint256 mode) internal {
@@ -510,27 +466,24 @@ contract GasCapTest is SeaportBase {
         uint256 id = _list();
         uint256 price = core.ethRate() * 9 / 10;
         OrderComponents memory c = mode == 1 ? _open(id, price - price / 100, price / 100) : _open(id, price, 0);
-        bytes memory order = mode == 2 ? _advancedData(c, "", address(core)) : _basicData(c);
-        bytes memory data = abi.encodeCall(core.buyListing, (price, order, id, Mainnet.SEAPORT));
+        bytes memory order = _basicData(c);
+        bytes memory data = abi.encodeCall(core.buyListing, (seaportAdapter, id, order));
         _cool(address(core));
+        _cool(seaportAdapter);
         vm.prank(keeper);
         uint256 g = gasleft();
-        core.buyListing(price, order, id, Mainnet.SEAPORT);
+        core.buyListing(seaportAdapter, id, order);
         g -= gasleft();
         assertEq(CREDITS.ownerOf(id), address(core));
         _row(name, g, data);
     }
 
     function test_gas_buyListing_seaport_basic() public {
-        _seaportBuy("buyListing through seaport, basic order, cold", 0);
+        _seaportBuy("buyListing through the Seaport adapter, basic order, cold", 0);
     }
 
     function test_gas_buyListing_seaport_basicWithFee() public {
-        _seaportBuy("buyListing through seaport, basic order with a fee recipient, cold", 1);
-    }
-
-    function test_gas_buyListing_seaport_advanced() public {
-        _seaportBuy("buyListing through seaport, advanced order, cold", 2);
+        _seaportBuy("buyListing through the Seaport adapter, basic order with a fee recipient, cold", 1);
     }
 
     /// @dev a statement sold through the controller books its buyback share, then the buyback swaps in the real pool
@@ -644,7 +597,7 @@ contract GasCapTest is SeaportBase {
         _setBalancePool();
         _fillBalanceBuyback();
         xt.mint(address(core), 1_000_000e18);
-        core.skim();
+        core.bookBalance();
         uint256[] memory ids = _credits(seller, 400);
         // in batches of 100: a cold sale of 400 credits in one call exceeds the gas of one call
         for (uint256 from; from < 400; from += 100) {

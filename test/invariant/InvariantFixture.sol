@@ -74,12 +74,12 @@ abstract contract InvariantFixture is Fixture {
             launchKey: launchKey,
             hook: lc.stack.hook,
             mev: lc.mevModule,
-            feeRouter: feeRouter,
             poolId: poolId,
             owner: owner,
             v1: address(ctl),
             fuzz: fuzz,
             probe: probeTarget,
+            rawAdapter: rawAdapter,
             module: mod,
             balanceToken: xt,
             canSwapController: canSwapController,
@@ -135,7 +135,6 @@ abstract contract InvariantFixture is Fixture {
     function _ownerSetup(bool phase2, bool hostile, bool inWindow) internal {
         if (!inWindow) vm.warp(block.timestamp + 7 days + 1);
         vm.startPrank(owner);
-        core.addTarget(address(probeTarget));
         if (phase2) {
             core.setBalanceModule(address(mod));
             Settings memory es = core.settings();
@@ -166,7 +165,7 @@ abstract contract InvariantFixture is Fixture {
         // the hostile controller swap comes after the pool key is set on the real controller, so the key survives it
         if (hostile) core.setController(address(fuzz));
         vm.stopPrank();
-        assertTrue(core.allowedTarget(address(probeTarget)));
+        assertTrue(core.allowedAdapter(rawAdapter));
     }
 
     /// the whale buys coin through the real launch pool. the skim funds the eth pot, and the whale holds coin
@@ -175,7 +174,7 @@ abstract contract InvariantFixture is Fixture {
         vm.prank(whale);
         coin.approve(address(router), type(uint256).max);
         assertGt(core.ethPot(), 3 ether);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
+        assertEq(address(core).balance, _tracked());
     }
 
     /// four actors with credits, eth and coin, all approved for the core and the router. every approval and every
@@ -232,9 +231,9 @@ abstract contract InvariantFixture is Fixture {
             (sold2, price2) = _saleOf(firstStatement + 1);
         }
         if (phase2) {
-            // the balance token bid is funded the way the module would: balance token arrives and skim books it
+            // the balance token bid is funded the way the module would: balance token arrives and bookBalance books it
             xt.mint(address(core), 1e20);
-            core.skim();
+            core.bookBalance();
             uint256[] memory balanceIds = new uint256[](80);
             for (uint256 i; i < 80; ++i) {
                 balanceIds[i] = ids[ethN + i];
@@ -355,15 +354,16 @@ abstract contract InvariantFixture is Fixture {
         s[n++] = HandlerSale.buyCredit.selector;
         s[n++] = HandlerSale.buyCredits.selector;
         s[n++] = HandlerBase.buyback.selector;
-        s[n++] = HandlerBase.skim.selector;
+        s[n++] = HandlerBase.bookBalance.selector;
         s[n++] = HandlerBase.donate.selector;
         s[n++] = HandlerBase.adopt.selector;
         s[n++] = HandlerBase.controllerSeed.selector;
         s[n++] = HandlerBase.controllerSwap.selector;
         s[n++] = HandlerBase.probeController.selector;
-        // the fee router: a flush by anyone (the router owner repointing the engine is in the owner list below)
-        s[n++] = HandlerBase.flush.selector;
-        s[n++] = HandlerBase.flush.selector;
+        // the book of the fee income by anyone, and the payee claim with the owner replacing the payee
+        s[n++] = HandlerBase.book.selector;
+        s[n++] = HandlerBase.book.selector;
+        s[n++] = HandlerBase.claimPayee.selector;
         // the balance module is set in the balance side suites before the run starts, so the redemption actions are listed only there
         if (phase2) {
             s[n++] = HandlerBase.sellForBalance.selector;
@@ -384,7 +384,6 @@ abstract contract InvariantFixture is Fixture {
             s[n++] = HandlerOwner.setSettingsInvalid.selector;
             s[n++] = HandlerOwner.setRate.selector;
             s[n++] = HandlerOwner.ownerMisc.selector;
-            s[n++] = HandlerOwner.repoint.selector;
             s[n++] = HandlerOwner.rescueNft.selector;
             s[n++] = HandlerOwner.migrate.selector;
             s[n++] = HandlerOwner.creditSettings.selector;

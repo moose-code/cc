@@ -804,7 +804,7 @@ abstract contract HandlerSale is HandlerOwner {
     //////////////////////////////////////////////////////////////*/
 
     /// the call a hostile module makes from inside a redemption: nothing, or one door of the core, or the selling controller.
-    /// k = 1..11 selects compose, skim, buyback, redeemStatement, the selling controller's sell, adopt, releaseRedeemBurn,
+    /// k = 1..11 selects compose, book, buyback, redeemStatement, the selling controller's sell, adopt, releaseRedeemBurn,
     /// sellForEth, buyListing, sellTo and sellForBalance
     function _callout(uint256 k, uint256 seed, MockBalanceModule next) internal {
         if (k == 0) return;
@@ -815,13 +815,13 @@ abstract contract HandlerSale is HandlerOwner {
         uint256[] memory ids = new uint256[](1);
         ids[0] = seed >> 8;
         if (k == 1) data = ComposeCall.noArgs();
-        else if (k == 2) data = abi.encodeCall(ICore.skim, ());
+        else if (k == 2) data = abi.encodeCall(ICore.book, ());
         else if (k == 3) data = abi.encodeCall(ICore.buyback, ());
         else if (k == 4) data = abi.encodeCall(ICore.redeemStatement, (sid));
         else if (k == 6) data = abi.encodeCall(ICore.adopt, (ids));
         else if (k == 7) data = abi.encodeCall(ICore.releaseRedeemBurn, (1));
         else if (k == 8) data = abi.encodeWithSignature("sellForEth(uint256[])", ids);
-        else if (k == 9) data = abi.encodeCall(ICore.buyListing, (1, "", seed >> 8, address(next)));
+        else if (k == 9) data = abi.encodeCall(ICore.buyListing, (rawAdapter, seed >> 8, abi.encode(address(next), uint256(1), bytes(""))));
         else if (k == 10) data = abi.encodeCall(ICore.sellTo, (sid, address(next)));
         else if (k == 11) data = abi.encodeWithSignature("sellForBalance(uint256[])", ids);
         else {
@@ -886,7 +886,7 @@ abstract contract HandlerSale is HandlerOwner {
         OPre memory pre = _opre();
         _att(a);
         bytes memory data = abi.encodeWithSelector(
-            which == 0 ? ICore.lockController.selector : (which == 1 ? ICore.lockBalanceModule.selector : ICore.lockTargets.selector)
+            which == 0 ? ICore.lockController.selector : (which == 1 ? ICore.lockBalanceModule.selector : ICore.lockAdapters.selector)
         );
         vm.prank(stranger);
         (bool ok, bytes memory out) = address(core).call(data);
@@ -898,7 +898,7 @@ abstract contract HandlerSale is HandlerOwner {
             if (ok || bytes4(out) != ICore.NoBalanceModule.selector) _flag(V_LOCK, "the module lock worked with no module");
         } else {
             if (!ok) _flag(V_LOCK, "the owner could not lock a door");
-            bool nowLocked = which == 0 ? core.controllerLocked() : (which == 1 ? core.balanceModuleLocked() : core.targetsLocked());
+            bool nowLocked = which == 0 ? core.controllerLocked() : (which == 1 ? core.balanceModuleLocked() : core.adaptersLocked());
             if (!nowLocked) _flag(V_LOCK, "a lock did not set its flag");
             if (which == 0) gLockedC = true;
             else if (which == 1) gLockedE = true;
@@ -915,7 +915,7 @@ abstract contract HandlerSale is HandlerOwner {
             ? abi.encodeCall(ICore.setController, (v1))
             : (which == 1
                     ? abi.encodeCall(ICore.setBalanceModule, (core.balanceModule()))
-                    : abi.encodeCall(ICore.addTarget, (address(0xA110C))));
+                    : abi.encodeCall(ICore.addAdapter, (address(0xA110C))));
         vm.prank(owner);
         (bool ok, bytes memory out) = address(core).call(data);
         if (ok || bytes4(out) != ICore.Locked.selector) _flag(V_LOCK, "a locked door's setter did not revert Locked");
@@ -932,7 +932,7 @@ abstract contract HandlerSale is HandlerOwner {
             _setterShut(1);
         }
         if (gLockedT) {
-            if (!core.targetsLocked()) _flag(V_LOCK, "the targets lock came undone");
+            if (!core.adaptersLocked()) _flag(V_LOCK, "the adapters lock came undone");
             _setterShut(2);
         }
         if (core.retired() != gRetired) _flag(V_RETIRED, "the retired flag differs from the ghost");
@@ -967,10 +967,10 @@ abstract contract HandlerSale is HandlerOwner {
         if (core.owner() != old || core.pendingOwner() != (m == 2 ? other : heir)) _flag(V_LOCK, "the first step moved the owner");
         // the old owner still holds every power, the pending owner none
         vm.prank(old);
-        (bool ok,) = address(core).call(abi.encodeCall(ICore.removeTarget, (target)));
+        (bool ok,) = address(core).call(abi.encodeCall(ICore.removeAdapter, (target)));
         if (!ok) _flag(V_LOCK, "the owner lost a power before the handover was accepted");
         vm.prank(m == 2 ? other : heir);
-        (ok,) = address(core).call(abi.encodeCall(ICore.removeTarget, (target)));
+        (ok,) = address(core).call(abi.encodeCall(ICore.removeAdapter, (target)));
         if (ok) _flag(V_LOCK, "a pending owner had a power before accepting");
         address next = heir;
         if (m == 1) {
@@ -1001,7 +1001,7 @@ abstract contract HandlerSale is HandlerOwner {
         heirNext += 1;
         // the old owner has no power: the core and the controller's settings
         vm.prank(old);
-        (ok,) = address(core).call(abi.encodeCall(ICore.removeTarget, (target)));
+        (ok,) = address(core).call(abi.encodeCall(ICore.removeAdapter, (target)));
         if (ok) _flag(V_LOCK, "the old owner kept a power after the handover");
         // the argument is read before the prank: a call in the argument list would use it up
         uint16 decay0 = IControllerV1(v1).fastDecayBpsPerHour();
@@ -1019,7 +1019,7 @@ abstract contract HandlerSale is HandlerOwner {
     function formerOwnersCheck() external {
         for (uint256 i; i < formerOwners.length; ++i) {
             vm.prank(formerOwners[i]);
-            (bool ok,) = address(core).call(abi.encodeCall(ICore.lockTargets, ()));
+            (bool ok,) = address(core).call(abi.encodeCall(ICore.lockAdapters, ()));
             if (ok) _flag(V_LOCK, "a former owner locked a door");
             vm.prank(formerOwners[i]);
             (ok,) = address(core).call(abi.encodeCall(ICore.transferOwnership, (formerOwners[i])));

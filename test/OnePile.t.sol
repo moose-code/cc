@@ -49,7 +49,7 @@ contract OnePileTest is Fixture {
         _enterPhase2();
         _fundPot(3 ether);
         xt.mint(address(core), 1e24);
-        core.skim();
+        core.bookBalance();
     }
 
     // ------------------------------------------------------------------ the balance bid's eth cost basis
@@ -155,7 +155,7 @@ contract OnePileTest is Fixture {
     function test_sellForBalance_costScalesTheFloorRateWithAnEmptyPot() public {
         _enterPhase2();
         xt.mint(address(core), 1e24);
-        core.skim();
+        core.bookBalance();
         assertEq(core.ethPot(), 0, "the eth pot is empty");
         assertEq(core.ethRate(), 0, "the clamped bid is zero with an empty pot");
         uint256 floor = core.floorRate();

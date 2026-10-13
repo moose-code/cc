@@ -64,7 +64,7 @@ contract EvilBuyer {
         catch (bytes memory why) {
             lastWhy = bytes4(why);
         }
-        try core.skim() {} catch {}
+        try core.book() {} catch {}
     }
 }
 
@@ -218,9 +218,9 @@ contract ReviewSaleTest is Fixture {
         assertEq(address(core).balance - bal, pay, "balance rose by the payment");
         assertEq((core.ethPot() - pot) + (core.ethToBuyback() - bb), pay, "booked exactly once");
         assertEq(core.ethToBuyback() - bb, pay * core.settings().saleToBuybackBps / 10_000);
-        // skim and a later hook payment add nothing for this payment
-        core.skim();
-        assertEq((core.ethPot() - pot) + (core.ethToBuyback() - bb), pay, "skim finds nothing to add");
+        // a book and a later hook payment add nothing for this payment
+        core.book();
+        assertEq((core.ethPot() - pot) + (core.ethToBuyback() - bb), pay, "the book finds nothing to add");
         _solvent();
     }
 
@@ -284,7 +284,7 @@ contract ReviewSaleTest is Fixture {
         uint256 sid = _composeOnce().sid;
         uint256 q0 = ctl.priceOf(sid);
         // a stranger runs every permissionless door: none raises the ask
-        core.skim();
+        core.book();
         assertEq(ctl.priceOf(sid), q0);
         _warp(3 hours);
         uint256 q1 = ctl.priceOf(sid);
@@ -389,11 +389,11 @@ contract ReviewSaleTest is Fixture {
             abi.encodeCall(ICore.transferOwnership, (bob)),
             abi.encodeCall(ICore.setController, (bob)),
             abi.encodeCall(ICore.setBalanceModule, (bob)),
-            abi.encodeCall(ICore.addTarget, (bob)),
-            abi.encodeCall(ICore.removeTarget, (bob)),
+            abi.encodeCall(ICore.addAdapter, (bob)),
+            abi.encodeCall(ICore.removeAdapter, (bob)),
             abi.encodeCall(ICore.lockController, ()),
             abi.encodeCall(ICore.lockBalanceModule, ()),
-            abi.encodeCall(ICore.lockTargets, ()),
+            abi.encodeCall(ICore.lockAdapters, ()),
             abi.encodeCall(ICore.setSettings, (core.settings())),
             abi.encodeCall(ICore.setRate, (OPEN_RATE))
         ];
@@ -403,7 +403,7 @@ contract ReviewSaleTest is Fixture {
             assertFalse(ok);
             assertEq(bytes4(why), ICore.OnlyOwner.selector);
         }
-        assertFalse(core.controllerLocked() || core.balanceModuleLocked() || core.targetsLocked());
+        assertFalse(core.controllerLocked() || core.balanceModuleLocked() || core.adaptersLocked());
         assertEq(core.pendingOwner(), address(0));
     }
 
@@ -416,7 +416,7 @@ contract ReviewSaleTest is Fixture {
         address[3] memory bad = [lc.stack.hook, address(core), core.COIN()];
         for (uint256 i; i < bad.length; ++i) {
             vm.expectRevert(ICore.ForbiddenTarget.selector);
-            core.addTarget(bad[i]);
+            core.addAdapter(bad[i]);
         }
         vm.stopPrank();
         _enterPhase2();
@@ -429,14 +429,14 @@ contract ReviewSaleTest is Fixture {
         core.setBalanceModule(address(other));
         vm.expectRevert(ICore.BadModule.selector);
         core.setBalanceModule(address(core));
-        // a target flag set before a module is named is cleared when it becomes the module
+        // an adapter flag set before a module is named is cleared when it becomes the module
         MockBalanceModule m2 = new MockBalanceModule(address(xt), 2 * UNIT);
-        core.addTarget(address(m2));
-        assertTrue(core.allowedTarget(address(m2)));
+        core.addAdapter(address(m2));
+        assertTrue(core.allowedAdapter(address(m2)));
         core.setBalanceModule(address(m2));
-        assertFalse(core.allowedTarget(address(m2)));
+        assertFalse(core.allowedAdapter(address(m2)));
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(m2));
+        core.addAdapter(address(m2));
         vm.stopPrank();
     }
 
@@ -450,8 +450,8 @@ contract ReviewSaleTest is Fixture {
         core.setController(address(0xC0DE));
         // everything else stays open
         core.setBalanceModule(address(new MockBalanceModule(address(xt), 3 * UNIT)));
-        core.addTarget(address(0x7A9));
-        core.removeTarget(address(0x7A9));
+        core.addAdapter(address(0x7A9));
+        core.removeAdapter(address(0x7A9));
         core.transferOwnership(alice);
         vm.stopPrank();
         Settings memory s = core.settings();
@@ -459,7 +459,7 @@ contract ReviewSaleTest is Fixture {
         _setSettings(s);
         vm.prank(owner);
         ctl.setFastDecayBpsPerHour(500);
-        assertFalse(core.balanceModuleLocked() || core.targetsLocked());
+        assertFalse(core.balanceModuleLocked() || core.adaptersLocked());
     }
 
     function test_OK_lockBalanceModule_revertsWhileUnsetThenBlocksOnlyTheModuleDoor() public {
@@ -479,23 +479,23 @@ contract ReviewSaleTest is Fixture {
         SellProbe probe = new SellProbe(core);
         probe.setAtFloor(true); // the eth lane statement is eligible under this controller
         core.setController(address(probe));
-        core.addTarget(address(0x7A9));
+        core.addAdapter(address(0x7A9));
         vm.stopPrank();
         core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod), "redeem still works");
     }
 
-    function test_OK_lockTargets_blocksOnlyAddTarget() public {
+    function test_OK_lockAdapters_blocksOnlyAddAdapter() public {
         vm.startPrank(owner);
-        core.lockTargets();
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("targets")));
-        core.addTarget(address(0x7A9));
-        core.removeTarget(Mainnet.SEAPORT);
-        assertFalse(core.allowedTarget(Mainnet.SEAPORT), "removal still works");
+        core.lockAdapters();
+        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("adapters")));
+        core.addAdapter(address(0x7A9));
+        core.removeAdapter(seaportAdapter);
+        assertFalse(core.allowedAdapter(seaportAdapter), "removal still works");
         core.setController(address(new SellProbe(core)));
         vm.stopPrank();
         _enterPhase2();
-        assertTrue(core.targetsLocked());
+        assertTrue(core.adaptersLocked());
     }
 
     function test_OK_allThreeLocksLeaveSettingsAndSaleSettingsOpen() public {
@@ -503,7 +503,7 @@ contract ReviewSaleTest is Fixture {
         vm.startPrank(owner);
         core.lockController();
         core.lockBalanceModule();
-        core.lockTargets();
+        core.lockAdapters();
         vm.stopPrank();
         Settings memory s = core.settings();
         s.feeToRedeemBurnBps = 1_234;
@@ -540,7 +540,7 @@ contract ReviewSaleTest is Fixture {
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setController(address(ctl));
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.lockTargets();
+        core.lockAdapters();
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setFastDecayBpsPerHour(200);
         vm.stopPrank();
@@ -624,7 +624,7 @@ contract ReviewSaleTest is Fixture {
         assertGt(n1, n0, "an unannounced handover fails the owner row");
         emit log_string(afterHandover);
         vm.prank(alice);
-        core.lockTargets();
+        core.lockAdapters();
         postflightAs(lc, address(core), owner);
         (, uint256 n2) = _failed();
         assertGt(n2, n1, "a lock fails the launch state row");
@@ -638,27 +638,29 @@ contract ReviewSaleTest is Fixture {
         _setSettings(s);
     }
 
-    /// the fee source (the router) pays the core, which is what `receive` books
+    /// the hook pays the core, and the book counts it
     function _hookPays(uint256 amount) internal {
-        address hook = lc.stack.feeSource;
+        address hook = lc.stack.hook;
         vm.deal(hook, hook.balance + amount);
         vm.prank(hook);
         (bool ok,) = address(core).call{value: amount}("");
         assertTrue(ok);
+        core.book();
     }
 
-    function test_OK_receive_onlyHookEthIsBookedAndSkimStaysWhole() public {
+    function test_OK_receive_onlyHookAndEscrowSendAndFundStaysWhole() public {
         _feeShare(5_000);
         vm.deal(bob, 10 ether);
         uint256 pot = core.ethPot();
         vm.prank(bob);
         (bool ok,) = address(core).call{value: 1 ether}("");
-        assertTrue(ok, "a stranger may pay, nothing reverts");
-        assertEq(core.ethPot(), pot, "not booked by receive");
-        assertEq(core.ethRedeemBurn(), 0);
-        core.skim();
-        assertEq(core.ethPot() - pot, 1 ether, "skim books the whole amount to the pot, no split");
-        assertEq(core.ethRedeemBurn(), 0);
+        assertFalse(ok, "a stranger send reverts");
+        assertEq(core.ethPot(), pot, "not booked");
+        assertEq(core.ethToBuyback(), 0);
+        vm.prank(bob);
+        core.fund{value: 1 ether}();
+        assertEq(core.ethPot() - pot, 1 ether, "fund adds the whole amount to the pot, no split");
+        assertEq(core.ethToBuyback(), 0);
         _solvent();
     }
 
@@ -801,7 +803,7 @@ contract ReviewSaleTest is Fixture {
     // ------------------------------------------------------------------ settings, config, scripts
 
     function _withAll(bool high) internal view returns (Settings memory s) {
-        uint256[23] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
+        uint256[24] memory v = high ? SettingsFields.hi() : SettingsFields.lo();
         for (uint256 i; i < SettingsFields.N; ++i) {
             SettingsFields.set(s, i, v[i]);
         }
@@ -821,9 +823,9 @@ contract ReviewSaleTest is Fixture {
     }
 
     function test_OK_settings_everyFieldBoundMatchesTheScriptTable() public {
-        bytes32[23] memory names = SettingsFields.names();
-        uint256[23] memory lo = SettingsFields.lo();
-        uint256[23] memory hi = SettingsFields.hi();
+        bytes32[24] memory names = SettingsFields.names();
+        uint256[24] memory lo = SettingsFields.lo();
+        uint256[24] memory hi = SettingsFields.hi();
         for (uint256 i; i < SettingsFields.N; ++i) {
             // the two switches (fields 11 and 12) take 0 or 1: nothing is above their top
             if (i == 11 || i == 12) continue;
@@ -871,7 +873,7 @@ contract ReviewSaleTest is Fixture {
     function test_OK_config_jsonCarriesEveryFieldAndTheSaleBlock() public view {
         string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
         string[] memory keys = vm.parseJsonKeys(j, ".settings");
-        bytes32[23] memory names = SettingsFields.names();
+        bytes32[24] memory names = SettingsFields.names();
         assertEq(keys.length, SettingsFields.N, "the settings block has exactly the fields of the struct");
         for (uint256 i; i < SettingsFields.N; ++i) {
             assertTrue(_has(keys, _nm(names[i])), _nm(names[i]));
@@ -956,7 +958,7 @@ contract ReviewSaleTest is Fixture {
         v[20].fastDecayBpsPerHour = 1;
         v[21].slowDecayBpsPerHour = 10_000;
         v[22].anchorMinCost = 10 ether + 1;
-        v[23].anchorMinCost = 10 ether;
+        v[24].anchorMinCost = 10 ether;
         v[24].anchorMinCost = 0;
         for (uint256 i; i < v.length; ++i) {
             LaunchConfig memory c = lc;
@@ -1013,7 +1015,7 @@ contract ReviewSaleTest is Fixture {
     /// S-10 fixed: LOCKS_CHANGED=1 turns the launch state row into a report line
     function test_FIXED_locksChangedFlagTurnsTheLockRowIntoAReportLine() public {
         vm.prank(owner);
-        core.lockTargets();
+        core.lockAdapters();
         postflightAs(lc, address(core), owner);
         (string memory failed, uint256 n) = _failed();
         assertGt(n, 0);

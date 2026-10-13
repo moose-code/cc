@@ -9,8 +9,8 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
-/// `CoreLens` on the fork: the real Core, controller, router, Credits and Statements. every field of `snapshot` is
-/// compared with the direct reads on a populated system, and the flush split with an actual flush
+/// `CoreLens` on the fork: the real Core, controller, Credits and Statements. every field of `snapshot` is compared
+/// with the direct reads on a populated system, and the pending income with an actual book
 contract LensTest is Fixture {
     uint256 internal sidFirst;
     uint256 internal sidSecond;
@@ -29,7 +29,7 @@ contract LensTest is Fixture {
     function _balanceBidStatement() internal returns (uint256 sid) {
         uint256[] memory ids = _credits(seller, 80);
         xt.mint(address(core), 1_000_000_000e18);
-        core.skim();
+        core.bookBalance();
         vm.prank(seller);
         core.sellForBalance(ids);
         uint256 supply = STATEMENTS.supply();
@@ -38,8 +38,8 @@ contract LensTest is Fixture {
         sid = supply + 1;
     }
 
-    /// three held statements, credits in the pile, pots in both currencies and a router that holds fee eth with the
-    /// split on
+    /// three held statements, credits in the pile, pots in both currencies and fee eth in the Core above its pots with
+    /// the payee share on
     function _populate() internal {
         _enterPhase2();
         _setBalancePool();
@@ -51,13 +51,13 @@ contract LensTest is Fixture {
         uint256[] memory ids = _credits(seller, 5);
         vm.prank(seller);
         core.sellForBalance(ids);
-        // the first flush at or after the split start turns the split on, then the router keeps the next fees
-        _skipToSplitStart();
+        // the first book after the window turns the payee share on, then the Core keeps the next fees unbooked
+        _skipToPayeeStart();
         _buyCoin(funder, 2 ether);
-        assertTrue(feeRouter.splitOn(), "split on");
-        autoFlush = false;
+        assertTrue(core.payeeOn(), "payee share on");
+        autoBook = false;
         _buyCoin(funder, 3 ether);
-        assertGt(address(feeRouter).balance, 0, "router loaded");
+        assertGt(address(core).balance - _tracked(), 0, "fees unbooked");
         // eth above the booked pots
         vm.deal(address(core), address(core).balance + 0.01 ether);
     }
@@ -95,23 +95,18 @@ contract LensTest is Fixture {
         assertEq(s.ethRedeemBurn, core.ethRedeemBurn(), "ethRedeemBurn");
         assertEq(s.balancePot, core.balancePot(), "balancePot");
         assertTrue(s.ethPot != 0 && s.balancePot != 0, "pots populated");
-        assertEq(
-            s.unbookedEth,
-            address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(),
-            "unbookedEth"
-        );
-        assertGe(s.unbookedEth, 0.01 ether, "unbookedEth carries the extra eth");
-
-        assertEq(s.routerBalance, address(feeRouter).balance, "routerBalance");
-        assertEq(s.routerOwed, feeRouter.totalOwed(), "routerOwed");
-        assertEq(s.flushToCore + s.flushToPayees, s.routerBalance - s.routerOwed, "the split adds up");
-        assertGt(s.flushToPayees, 0, "payee share");
+        assertEq(s.pendingIncome, address(core).balance - _tracked(), "pendingIncome");
+        assertGe(s.pendingIncome, 0.01 ether, "pendingIncome carries the extra eth");
+        assertEq(s.payee, core.payee(), "payee");
+        assertEq(s.payeeOwed, core.payeeOwed(), "payeeOwed");
+        assertEq(s.payeeOn, core.payeeOn(), "payeeOn");
+        assertTrue(s.payeeOn, "payee share on");
 
         assertEq(s.controller, address(ctl), "controller");
         assertEq(s.successor, core.successor(), "successor");
         assertEq(s.controllerLocked, core.controllerLocked());
         assertEq(s.balanceModuleLocked, core.balanceModuleLocked());
-        assertEq(s.targetsLocked, core.targetsLocked());
+        assertEq(s.adaptersLocked, core.adaptersLocked());
         assertEq(s.successorLocked, core.successorLocked());
 
         assertEq(s.statements.length, core.heldStatements().length, "statement count");
@@ -148,29 +143,26 @@ contract LensTest is Fixture {
         }
     }
 
-    function test_OK_theFlushFieldsEqualAnActualFlush() public {
+    function test_OK_pendingIncomeIsWhatTheNextBookCounts() public {
         _populate();
         ICoreLens.Snapshot memory s = lens.snapshot();
-        address payee = lc.creatorPayee;
-        uint256 coreBefore = address(core).balance;
-        uint256 payeeBefore = payee.balance;
-        vm.prank(flusher);
-        feeRouter.flush();
-        assertEq(address(core).balance - coreBefore, s.flushToCore, "to the core");
-        assertEq(payee.balance - payeeBefore, s.flushToPayees, "to the payee");
+        uint256 owed0 = core.payeeOwed();
+        core.book();
+        assertEq(core.payeeOwed() - owed0, s.pendingIncome * core.settings().payeePpm / 1_000_000, "the payee share");
         ICoreLens.Snapshot memory after_ = lens.snapshot();
-        assertEq(after_.flushToCore + after_.flushToPayees, 0, "nothing left to flush");
+        assertEq(after_.pendingIncome, 0, "nothing left to book");
+        assertEq(after_.payeeOwed, core.payeeOwed());
     }
 
-    function test_OK_theFlushFieldsBeforeTheSplit() public {
-        // before the split starts every fee eth goes to the core
-        autoFlush = false;
+    function test_OK_thePayeeFieldsBeforeTheShare() public {
+        // before the payee share starts the whole income is pending and nothing is owed
+        autoBook = false;
         _buyCoin(funder, 3 ether);
         ICoreLens.Snapshot memory s = lens.snapshot();
-        assertFalse(feeRouter.splitOn());
-        assertEq(s.flushToPayees, 0, "no payee share before the split");
-        assertEq(s.flushToCore, address(feeRouter).balance);
-        assertEq(s.routerOwed, 0);
+        assertFalse(s.payeeOn);
+        assertEq(s.payee, lc.payee);
+        assertEq(s.pendingIncome, address(core).balance);
+        assertEq(s.payeeOwed, 0);
     }
 
     function test_OK_theRateIsThePayoutOfOneCredit() public {
@@ -272,7 +264,6 @@ contract LensTest is Fixture {
 
     function test_OK_thePointersAndTheControllerFollow() public {
         assertEq(lens.CORE(), address(core));
-        assertEq(lens.ROUTER(), address(feeRouter));
         assertEq(lens.CREDITS(), address(CREDITS));
         assertEq(lens.STATEMENTS(), address(STATEMENTS));
         assertEq(lens.controller(), address(ctl));

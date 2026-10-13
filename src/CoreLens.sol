@@ -4,12 +4,10 @@ pragma solidity ^0.8.28;
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "./interfaces/ICore.sol";
 import {IControllerV1} from "./interfaces/IControllerV1.sol";
-import {IFeeRouter} from "./interfaces/IFeeRouter.sol";
 import {ICredits, ICreditScore, IBalanceModule, Settings, Mainnet} from "./interfaces/Interfaces.sol";
 
-/// read only view of the Core, the controller and the fee router in one call. it has no storage and no state changing
-/// function. the Core and the router are immutable pointers fixed at creation (the router is the Core fee source). the
-/// controller is read from the Core on every call, so a controller replaced by the owner is followed. Credits and
+/// read only view of the Core and the controller in one call. it has no storage and no state changing
+/// function. the Core is an immutable pointer fixed at creation. the controller is read from the Core on every call, so a controller replaced by the owner is followed. Credits and
 /// Statements are the mainnet constants.
 /// `snapshot` returns everything a seller, a buyer or a keeper decides on. a held list of several hundred statements
 /// costs more gas than a public node allows for `eth_call`: `statementsPage` reads it in pages
@@ -34,9 +32,8 @@ contract CoreLens {
     }
 
     /// `ethRate` is the wei the Core pays for one credit now. `ethPrice` is the price state before the
-    /// clamp, the figure an adopted credit is priced with. `unbookedEth` is the Core balance
-    /// above the booked pots (`skim` books it). the flush fields are what `FeeRouter.flush()` would send
-    /// now: to the Core and to the payees
+    /// clamp, the figure an adopted credit is priced with. `pendingIncome` is the Core balance above the booked pots and
+    /// the payee claim (`book` books it). `payee`, `payeeOwed` and `payeeOn` are the payee state of the Core
     struct Snapshot {
         uint256 ethRate;
         uint256 ethPrice;
@@ -47,11 +44,10 @@ contract CoreLens {
         uint256 ethToBuyback;
         uint256 ethRedeemBurn;
         uint256 balancePot;
-        uint256 unbookedEth;
-        uint256 routerBalance;
-        uint256 routerOwed;
-        uint256 flushToCore;
-        uint256 flushToPayees;
+        uint256 pendingIncome;
+        address payee;
+        uint256 payeeOwed;
+        bool payeeOn;
         address controller;
         address successor;
         address balanceModule;
@@ -62,7 +58,7 @@ contract CoreLens {
         uint256 unitPerPoint;
         bool controllerLocked;
         bool balanceModuleLocked;
-        bool targetsLocked;
+        bool adaptersLocked;
         bool successorLocked;
         /// whether the controller's credit sale window is on, and the seconds a credit's price falls over
         bool creditSaleOn;
@@ -76,7 +72,6 @@ contract CoreLens {
         StatementView[] statements;
     }
 
-    uint256 private constant PPM = 1_000_000;
     uint256 private constant NEXT_PAGE_GAS = 500_000;
     /// the answer size of `nextPage` that the Core requires: ready flag, 80 ids and the format
     uint256 private constant NEXT_PAGE_BYTES = (80 + 2) * 32;
@@ -89,13 +84,11 @@ contract CoreLens {
     uint256 private constant PRICE_GAS = 600_000;
 
     ICore public immutable CORE;
-    IFeeRouter public immutable ROUTER;
     address public constant CREDITS = 0x97630aA70AB14ed9883B41dAfccBc11349723043;
     address public constant STATEMENTS = 0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b;
 
     constructor(address core) {
         CORE = ICore(payable(core));
-        ROUTER = IFeeRouter(payable(ICore(payable(core)).FEE_SOURCE()));
     }
 
     /// the controller of the Core now
@@ -126,10 +119,10 @@ contract CoreLens {
         s.ethToBuyback = core.ethToBuyback();
         s.ethRedeemBurn = core.ethRedeemBurn();
         s.balancePot = core.balancePot();
-        s.unbookedEth = address(core).balance.zeroFloorSub(s.ethPot + s.ethToBuyback + s.ethRedeemBurn);
-        s.routerBalance = address(ROUTER).balance;
-        s.routerOwed = ROUTER.totalOwed();
-        (s.flushToCore, s.flushToPayees) = _flush();
+        s.payee = core.payee();
+        s.payeeOwed = core.payeeOwed();
+        s.payeeOn = core.payeeOn();
+        s.pendingIncome = address(core).balance.zeroFloorSub(s.ethPot + s.ethToBuyback + s.ethRedeemBurn + s.payeeOwed);
         s.successor = core.successor();
         s.balanceModule = core.balanceModule();
         s.balanceToken = core.balanceToken();
@@ -139,7 +132,7 @@ contract CoreLens {
         if (s.balanceModule != address(0)) s.unitPerPoint = _liveUnit(s.balanceModule);
         s.controllerLocked = core.controllerLocked();
         s.balanceModuleLocked = core.balanceModuleLocked();
-        s.targetsLocked = core.targetsLocked();
+        s.adaptersLocked = core.adaptersLocked();
         s.successorLocked = core.successorLocked();
         (s.creditSaleOn, s.creditWindow) = _creditWindow(s.controller);
         s.refScore = _refScore(s.controller);
@@ -193,23 +186,6 @@ contract CoreLens {
     function _head() private view returns (uint256) {
         uint256[] memory ids = CORE.pilePage(0, 1);
         return ids.length == 0 ? 0 : ids[0];
-    }
-
-    /// the split of `FeeRouter.flush`, from the router balance, the debts to payees and the split state now. zero while
-    /// the router has no engine or nothing above its debts
-    function _flush() private view returns (uint256 toCore, uint256 toPayees) {
-        IFeeRouter r = ROUTER;
-        uint256 balance = address(r).balance;
-        uint256 owed = r.totalOwed();
-        if (r.engine() == address(0) || balance <= owed) return (0, 0);
-        uint256 amount = balance - owed;
-        if (r.splitOn()) {
-            (, uint32[] memory ppm) = r.payees();
-            for (uint256 i; i < ppm.length; ++i) {
-                toPayees += amount * ppm[i] / PPM;
-            }
-        }
-        toCore = amount - toPayees;
     }
 
     /// whether the controller answers `nextPage` with ready set, read with the gas and the answer size the

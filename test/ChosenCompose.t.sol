@@ -315,7 +315,7 @@ contract ChosenComposeTest is Fixture {
         _enterPhase2();
         _fundPot(3 ether);
         xt.mint(address(core), 1e24);
-        core.skim();
+        core.bookBalance();
         _setBalancePool();
 
         _fillEthPile(40);

@@ -9,7 +9,7 @@ import {BidModel} from "../utils/BidModel.sol";
 /// @notice plain fuzz tests for the eth rate (SPEC 5.1 and 5.2) with fuzzed times, amounts and
 /// fuzzed settings: the climb per minute, the ceiling and its loosening, the drop per credit and the rate cap are all
 /// fields of `Settings` that the owner may set, so the model is parameterised by them. the climb is an independent whole minute integer walk, so it shares no code with the core's
-/// wad pow. the pot is funded to an exact size by sending eth to the core and calling its real `skim()`, which is how
+/// wad pow. the pot is funded to an exact size through the real `fund()`, which is how
 /// the core books any eth that did not arrive through the hook. credits are real ones, the settings are changed by the
 /// real owner call.
 contract RateFuzzTest is Fixture {
@@ -23,11 +23,10 @@ contract RateFuzzTest is Fixture {
         alice = seller;
     }
 
-    /// @dev grows the pot by exactly `eth`: the eth is sent to the core and booked by the real `skim()`
+    /// @dev grows the pot by exactly `eth` through the real `fund()`
     function _fund(uint256 eth) internal {
         uint256 pot = core.ethPot();
-        vm.deal(address(core), pot + core.ethToBuyback() + eth);
-        core.skim();
+        _addToPot(eth);
         assertEq(core.ethPot(), pot + eth, "pot grew by the funded amount");
     }
 

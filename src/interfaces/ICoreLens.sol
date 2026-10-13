@@ -14,11 +14,10 @@ interface ICoreLens {
         uint256 ethToBuyback;
         uint256 ethRedeemBurn;
         uint256 balancePot;
-        uint256 unbookedEth;
-        uint256 routerBalance;
-        uint256 routerOwed;
-        uint256 flushToCore;
-        uint256 flushToPayees;
+        uint256 pendingIncome;
+        address payee;
+        uint256 payeeOwed;
+        bool payeeOn;
         address controller;
         address successor;
         address balanceModule;
@@ -28,7 +27,7 @@ interface ICoreLens {
         uint256 unitPerPoint;
         bool controllerLocked;
         bool balanceModuleLocked;
-        bool targetsLocked;
+        bool adaptersLocked;
         bool successorLocked;
         bool creditSaleOn;
         uint256 creditWindow;
@@ -51,7 +50,6 @@ interface ICoreLens {
 
     function CORE() external view returns (address);
     function CREDITS() external view returns (address);
-    function ROUTER() external view returns (address);
     function STATEMENTS() external view returns (address);
     function balanceBidOf(uint256 id) external view returns (uint256);
     function choosable(uint256 id) external view returns (bool);

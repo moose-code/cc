@@ -7,7 +7,7 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
-import {ProbeTarget} from "./attackers/ProbeTarget.sol";
+import {RawListingAdapter} from "./standins/RawListingAdapter.sol";
 import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 
@@ -36,7 +36,7 @@ abstract contract OwnerBase is Fixture {
 
     uint256 internal constant D_CONTROLLER = 0;
     uint256 internal constant D_MODULE = 1;
-    uint256 internal constant D_TARGETS = 2;
+    uint256 internal constant D_ADAPTERS = 2;
     uint256 internal constant D_SETTINGS = 3;
     uint256 internal constant D_RATE = 4;
     uint256 internal constant D_REMOVE = 5;
@@ -48,12 +48,12 @@ abstract contract OwnerBase is Fixture {
             address token = core.balanceToken() == address(0) ? address(spareToken) : core.balanceToken();
             return abi.encodeCall(ICore.setBalanceModule, (address(new MockBalanceModule(token, UNIT))));
         }
-        if (i == D_TARGETS) {
-            return abi.encodeCall(ICore.addTarget, (address(uint160(0xA0000 + block.number + gasleft() % 97))));
+        if (i == D_ADAPTERS) {
+            return abi.encodeCall(ICore.addAdapter, (address(uint160(0xA0000 + block.number + gasleft() % 97))));
         }
         if (i == D_SETTINGS) return abi.encodeCall(ICore.setSettings, (core.settings()));
         if (i == D_RATE) return abi.encodeCall(ICore.setRate, (core.rateAtCheckpoint()));
-        if (i == D_REMOVE) return abi.encodeCall(ICore.removeTarget, (address(0xDEAD1)));
+        if (i == D_REMOVE) return abi.encodeCall(ICore.removeAdapter, (address(0xDEAD1)));
         return abi.encodeCall(ICore.transferOwnership, (address(0)));
     }
 
@@ -90,7 +90,7 @@ abstract contract OwnerBase is Fixture {
         (ok2, out2) = address(core).call(abi.encodeCall(ICore.lockBalanceModule, ()));
         assertTrue(!ok2 && _sel(out2) == ICore.OnlyOwner.selector);
         vm.prank(who);
-        (ok2, out2) = address(core).call(abi.encodeCall(ICore.lockTargets, ()));
+        (ok2, out2) = address(core).call(abi.encodeCall(ICore.lockAdapters, ()));
         assertTrue(!ok2 && _sel(out2) == ICore.OnlyOwner.selector);
     }
 }
@@ -156,7 +156,7 @@ contract OwnerFormerQueueTest is OwnerBase {
         _setBalancePoolFor(address(spareToken));
         uint256[] memory ids = _credits(seller, 1);
         spareToken.mint(address(core), 5e19);
-        core.skim();
+        core.bookBalance();
         vm.prank(seller);
         core.sellForBalance(ids);
         assertEq(CREDITS.ownerOf(ids[0]), address(core));
@@ -217,36 +217,36 @@ contract OwnerFormerQueueTest is OwnerBase {
         assertEq(core.balanceModule(), address(second));
     }
 
-    // ------------------------------------------------------------------ addTarget
+    // ------------------------------------------------------------------ addAdapter
 
-    function test_target_addTakesEffectInTheSameBlock() public {
-        address t = address(0xA11E);
+    function test_adapter_addTakesEffectInTheSameBlock() public {
+        address a = address(new RawListingAdapter());
+        bytes memory params = _raw(address(0xA11E), 0, "");
         uint256 id = 35377;
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(0, "", id, t);
+        vm.expectRevert(ICore.AdapterNotAllowed.selector);
+        core.buyListing(a, id, params);
         vm.expectEmit(address(core));
-        emit ICore.TargetAdded(t);
-        _allow(t);
-        assertTrue(core.allowedTarget(t));
-        // the same call now passes the allow list and fails further in
-        vm.expectRevert(ICore.NoCredit.selector);
-        core.buyListing(0, "", id, t);
+        emit ICore.AdapterSet(a, true);
+        _approveAdapter(a);
+        assertTrue(core.allowedAdapter(a));
+        // the same call now passes the adapter check and fails further in
+        vm.expectRevert(ICore.ZeroAmount.selector);
+        core.buyListing(a, id, params);
         vm.expectEmit(address(core));
-        emit ICore.TargetRemoved(t);
+        emit ICore.AdapterSet(a, false);
         vm.prank(owner);
-        core.removeTarget(t);
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(0, "", id, t);
+        core.removeAdapter(a);
+        vm.expectRevert(ICore.AdapterNotAllowed.selector);
+        core.buyListing(a, id, params);
     }
 
-    function test_target_forbiddenAddressesAreRefused() public {
-        address[13] memory bad = [
+    function test_adapter_forbiddenAddressesAreRefused() public {
+        address[12] memory bad = [
             address(CREDITS),
             address(STATEMENTS),
             address(core),
             address(coin),
             core.HOOK(),
-            core.FEE_SOURCE(),
             address(PM),
             core.FACTORY(),
             core.LOCKER(),
@@ -258,39 +258,39 @@ contract OwnerFormerQueueTest is OwnerBase {
         for (uint256 i; i < bad.length; ++i) {
             vm.prank(owner);
             vm.expectRevert(ICore.ForbiddenTarget.selector);
-            core.addTarget(bad[i]);
-            assertFalse(core.allowedTarget(bad[i]));
+            core.addAdapter(bad[i]);
+            assertFalse(core.allowedAdapter(bad[i]));
         }
         // the balance module and the balance token join the list once set, and a flag set earlier on the module is cleared
         address early = address(spareMod);
-        _allow(early);
-        assertTrue(core.allowedTarget(early));
+        _approveAdapter(early);
+        assertTrue(core.allowedAdapter(early));
         _setBalanceModule(early);
-        assertFalse(core.allowedTarget(early), "the module set cleared the old flag");
+        assertFalse(core.allowedAdapter(early), "the module set cleared the old flag");
         vm.startPrank(owner);
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(early);
+        core.addAdapter(early);
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(spareToken));
+        core.addAdapter(address(spareToken));
         vm.stopPrank();
         vm.prank(stranger);
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.addTarget(address(0xA11E));
+        core.addAdapter(address(0xA11E));
     }
 
-    function test_target_removeIsImmediateAndHarmlessForUnknown() public {
-        _allow(address(0xA11E));
+    function test_adapter_removeIsImmediateAndHarmlessForUnknown() public {
+        _approveAdapter(address(0xA11E));
         vm.startPrank(owner);
-        core.removeTarget(address(0xA11E));
-        core.removeTarget(address(0xA11E));
-        core.removeTarget(address(0x1));
+        core.removeAdapter(address(0xA11E));
+        core.removeAdapter(address(0xA11E));
+        core.removeAdapter(address(0x1));
         vm.stopPrank();
-        assertFalse(core.allowedTarget(address(0xA11E)));
-        // the launch targets are removable too
-        assertTrue(core.allowedTarget(Mainnet.SEAPORT));
+        assertFalse(core.allowedAdapter(address(0xA11E)));
+        // the launch adapters are removable too
+        assertTrue(core.allowedAdapter(seaportAdapter));
         vm.prank(owner);
-        core.removeTarget(Mainnet.SEAPORT);
-        assertFalse(core.allowedTarget(Mainnet.SEAPORT));
+        core.removeAdapter(seaportAdapter);
+        assertFalse(core.allowedAdapter(seaportAdapter));
     }
 
     // ------------------------------------------------------------------ the queue is gone
@@ -327,7 +327,7 @@ contract OwnerLocksTest is OwnerBase {
         core.lockController();
         assertTrue(core.controllerLocked());
         assertFalse(core.balanceModuleLocked());
-        assertFalse(core.targetsLocked());
+        assertFalse(core.adaptersLocked());
         address c = core.controller();
         vm.prank(owner);
         vm.expectRevert(_lockedErr("controller"));
@@ -376,7 +376,7 @@ contract OwnerLocksTest is OwnerBase {
         core.lockBalanceModule();
         assertTrue(core.balanceModuleLocked());
         assertFalse(core.controllerLocked());
-        assertFalse(core.targetsLocked());
+        assertFalse(core.adaptersLocked());
         address m = core.balanceModule();
         mod.setUnitPerPoint(9 * UNIT);
         vm.startPrank(owner);
@@ -394,30 +394,30 @@ contract OwnerLocksTest is OwnerBase {
         _openExcept(D_MODULE, owner);
     }
 
-    function test_lockTargets_blocksAddButNotRemoveAndKeepsTheOldOnes() public {
+    function test_lockAdapters_blocksAddButNotRemoveAndKeepsTheOldOnes() public {
         address kept = address(0xA11E);
-        _allow(kept);
+        _approveAdapter(kept);
         vm.expectEmit(address(core));
-        emit ICore.TargetsLocked();
+        emit ICore.AdaptersLocked();
         vm.prank(owner);
-        core.lockTargets();
-        assertTrue(core.targetsLocked());
+        core.lockAdapters();
+        assertTrue(core.adaptersLocked());
         assertFalse(core.controllerLocked());
         assertFalse(core.balanceModuleLocked());
-        assertTrue(core.allowedTarget(kept), "an allowed target stays allowed");
+        assertTrue(core.allowedAdapter(kept), "an approved adapter stays approved");
         vm.startPrank(owner);
-        vm.expectRevert(_lockedErr("targets"));
-        core.addTarget(address(0xA11F));
+        vm.expectRevert(_lockedErr("adapters"));
+        core.addAdapter(address(0xA11F));
         // the order of the checks: locked first, also for a forbidden address
-        vm.expectRevert(_lockedErr("targets"));
-        core.addTarget(address(core));
-        core.removeTarget(kept);
+        vm.expectRevert(_lockedErr("adapters"));
+        core.addAdapter(address(core));
+        core.removeAdapter(kept);
         vm.stopPrank();
-        assertFalse(core.allowedTarget(kept));
+        assertFalse(core.allowedAdapter(kept));
         vm.prank(owner);
-        vm.expectRevert(_lockedErr("targets"));
-        core.addTarget(kept);
-        _openExcept(D_TARGETS, owner);
+        vm.expectRevert(_lockedErr("adapters"));
+        core.addAdapter(kept);
+        _openExcept(D_ADAPTERS, owner);
     }
 
     function test_locks_areIndependentAndOneWayAndRepeatable() public {
@@ -427,13 +427,13 @@ contract OwnerLocksTest is OwnerBase {
         core.lockController();
         core.lockBalanceModule();
         core.lockBalanceModule();
-        core.lockTargets();
-        core.lockTargets();
+        core.lockAdapters();
+        core.lockAdapters();
         vm.stopPrank();
-        assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.targetsLocked());
-        // with all three locked everything else works: settings, rates, removing targets, the handover
+        assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.adaptersLocked());
+        // with all three locked everything else works: settings, rates, removing adapters, the handover
         for (uint256 i; i < N_DOORS; ++i) {
-            if (i == D_CONTROLLER || i == D_MODULE || i == D_TARGETS) continue;
+            if (i == D_CONTROLLER || i == D_MODULE || i == D_ADAPTERS) continue;
             (bool ok,) = _call(i, owner);
             assertTrue(ok, "an unlocked door is shut");
         }
@@ -457,7 +457,7 @@ contract OwnerLocksTest is OwnerBase {
         _allShutFor(stranger);
         _allShutFor(deployer);
         _allShutFor(address(ctl));
-        assertFalse(core.controllerLocked() || core.balanceModuleLocked() || core.targetsLocked());
+        assertFalse(core.controllerLocked() || core.balanceModuleLocked() || core.adaptersLocked());
     }
 
     /// a locked controller cannot be swapped, so a controller that goes bad stays: compose reverts, the doors that do
@@ -545,9 +545,9 @@ contract OwnerHandoverTest is OwnerBase {
         ctl.setAnchorBps(11_000);
         core.lockController();
         core.lockBalanceModule();
-        core.lockTargets();
+        core.lockAdapters();
         vm.stopPrank();
-        assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.targetsLocked());
+        assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.adaptersLocked());
     }
 
     /// the new owner can hand over again, and the chain of owners never has two at once
@@ -658,7 +658,7 @@ contract OwnerHandoverTest is OwnerBase {
         _openExcept(N_DOORS, heir);
         vm.startPrank(heir);
         core.lockController();
-        core.lockTargets();
+        core.lockAdapters();
         vm.stopPrank();
         assertEq(address(core).balance, bal);
         assertEq(CREDITS.balanceOf(address(core)), credits);

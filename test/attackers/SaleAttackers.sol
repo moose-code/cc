@@ -78,7 +78,7 @@ contract ReentrantBuyer {
         catch {
             redeemBlocked = true;
         }
-        try CORE.skim() {} catch {}
+        try CORE.book() {} catch {}
     }
 
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
@@ -192,7 +192,7 @@ contract RepaidCaller {
         if (hits++ != 0) return;
         _try(abi.encodeCall(ICore.redeemStatement, (other)));
         _try(ComposeCall.noArgs());
-        _try(abi.encodeCall(ICore.skim, ()));
+        _try(abi.encodeCall(ICore.book, ()));
         _try(abi.encodeCall(ICore.buyback, ()));
     }
 }

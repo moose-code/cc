@@ -19,7 +19,8 @@ export const SETTINGS = {
   rateCap: 26700000000000000, // wei per credit, 3 times rateStart: the eth rate never passes it (climb clamp, setRate)
   callerFee: 0, // eth. paid to the caller of compose, composeChosen and redeemStatement from the pot, with the gas refund below. launch 0: the simulator does not model these payments
   callerMaxBaseFee: 0, // gwei, the cap on the base fee the refund of those three doors uses. 0 refunds no gas
-  feeToRedeemBurnBps: 1000, // share of swap fee eth booked in receive() that fills the redeem burn reserve, the rest goes to the pot (decision 106)
+  feeToRedeemBurnBps: 1000, // share of swap fee eth booked in _book() that fills the redeem burn reserve, the rest goes to the pot (decision 106)
+  payeePpm: 75185, // the payee's share of the fee income booked by _book() once the payee share is on, ppm. 0.5 points of volume at the baseline (docs/DECISIONS.md 112)
   redeemOn: false, // whether redeemStatement runs (decision 107)
   balanceBidOn: false, // whether sellForBalance runs (decision 107)
   redeemSlippageBps: 200, // a redemption must return at least rating * unit * (10000 - redeemSlippageBps) / 10000 (FLOW 84)
@@ -180,14 +181,13 @@ export const SIM_DEFAULTS = {
   whipsawStartDay: 2, // pricePath 'whipsaw': day the fall starts
   schedule: [], // [{ day, patch }]: owner changes settings on that day. patch may hold any setting and `rate` (setRate, wei per credit), `moduleUnit` (the balance module reports a new eth value per point), `releaseRedeemBurn: eth`
   baselineSkimBps: 690, // bps of volume: 6.9 points (script/config/mainnet.json launch.baselineSkimBps)
-  bountyBps: 9638, // of the baseline skim, to the fee router. the other 362 of 10000 is the protocol leg, not the engine's
+  bountyBps: 9638, // of the baseline skim, to the Core (the bounty recipient). the other 362 of 10000 is the protocol leg, not the engine's
   sniperStartBps: 9000,
   sniperEndBps: 690, // falls to the baseline
   sniperSeconds: 1800,
-  // the fee router (docs/DECISIONS.md 10.6, 10.7): once the split has started a flush pays the
-  // payee its parts per million of the gross inflow. everything before the split start goes to the engine. no lp fee, no lp income
-  routerPayeePpm: 112778, // the one launch payee, 0.75 points of volume at the baseline (of the gross router inflow)
-  routerSplitStartSec: 1800, // the mined launch time plus the 30 minute window, no margin
+  // the Core is the bounty recipient (docs/DECISIONS.md 109): the first book at or after `sniperSeconds` after the launch
+  // turns the payee share on and shares nothing, from then on a book credits the payee `payeePpm` of the income. everything
+  // before goes to the engine. no lp fee, no lp income
   startTick: -175000,
   positionUpper: 887200,
   // coin market
@@ -442,7 +442,7 @@ export class Core {
     this.syncFunded();
     return true;
   }
-  // receive(): swap fee eth from the fee router. feeToRedeemBurnBps of it goes to the redeem burn reserve, the rest to the pot (checkpoint first, resync after)
+  // _book(): swap fee eth the hook pushed to the Core, after the payee share. feeToRedeemBurnBps of it goes to the redeem burn reserve, the rest to the pot (checkpoint first, resync after)
   addFees(amount, now) {
     const toRedeemBurn = (amount * this.s.feeToRedeemBurnBps) / BPS;
     this.feeToRedeemBurn += toRedeemBurn; this.ethRedeemBurn += toRedeemBurn;
@@ -768,17 +768,17 @@ export function skimFraction(p, t) {
   const f = (p.sniperStartBps - ((p.sniperStartBps - p.sniperEndBps) * t) / p.sniperSeconds) / 1e4;
   return Math.max(base, f);
 }
-// share of a swap's notional the fee router receives: 90 percent of the baseline skim plus all of the anti sniper extra
-export function routerFeeFraction(p, f) {
+// share of a swap's notional the Core receives: 90 percent of the baseline skim plus all of the anti sniper extra
+export function bountyFeeFraction(p, f) {
   const base = p.baselineSkimBps / 1e4;
   return base * (p.bountyBps / BPS) + Math.max(0, f - base);
 }
-// share of a swap's notional that lands in the engine's pot at t seconds after launch: the router's inflow,
-// and after the split start less the payee's parts per million of the gross inflow.
-// 5.90 points at the baseline once the split is on
+// share of a swap's notional that lands in the engine's books at t seconds after launch: the Core's inflow, and after the
+// end of the anti sniper window less the payee's parts per million of the income. 6.15 points at the baseline once the
+// payee share is on
 export function engineFeeFraction(p, f, t) {
-  const inflow = routerFeeFraction(p, f);
-  return inflow * (1 - (t >= p.routerSplitStartSec ? p.routerPayeePpm / 1e6 : 0));
+  const inflow = bountyFeeFraction(p, f);
+  return inflow * (1 - (t >= p.sniperSeconds ? p.payeePpm / 1e6 : 0));
 }
 // volume in a step [t, t+dt). the first hour runs in 120 s sub steps, 15 of them inside the anti sniper window
 export function stepVolume(p, t, dt) {

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
+import {MigrationSink} from "./standins/MigrationSink.sol";
 
 /// `CoreState` in src/lib/CoreLib.sol mirrors the state variables of the Core in declaration order, and the library
 /// reaches the Core's storage through it. every field with a public getter is compared with the raw storage word the
@@ -26,6 +27,7 @@ contract CoreLayoutTest is Fixture {
     }
 
     function test_OK_scalarFieldsSitWhereTheMirrorSays() public {
+        MigrationSink sink = new MigrationSink();
         _enterPhase2();
         _fundPot(3 ether);
         uint256[] memory sold = _credits(seller, 3);
@@ -34,28 +36,28 @@ contract CoreLayoutTest is Fixture {
         // a large balance token balance is booked into the balance pot and the reserve holds fee eth, so both nonzero words
         // are compared
         xt.mint(address(core), 1_000_000_000e18);
-        core.skim();
+        core.bookBalance();
         vm.store(address(core), bytes32(uint256(8)), bytes32(uint256(1 ether)));
         vm.startPrank(owner);
-        core.addTarget(address(0xA110C));
+        core.addAdapter(address(0xA110C));
         vm.stopPrank();
-        assertTrue(core.allowedTarget(address(0xA110C)), "setup: the target is allowed");
-        assertEq(uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110C), uint256(3))))), 1, "allowedTarget");
-        assertEq(uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110D), uint256(3))))), 0, "unset target");
+        assertTrue(core.allowedAdapter(address(0xA110C)), "setup: the adapter is approved");
+        assertEq(uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110C), uint256(3))))), 1, "allowedAdapter");
+        assertEq(uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110D), uint256(3))))), 0, "unset adapter");
         vm.prank(owner);
         core.transferOwnership(address(0xBEEF));
         vm.startPrank(owner);
         core.lockController();
         core.lockBalanceModule();
-        core.lockTargets();
-        core.setSuccessor(address(this));
+        core.lockAdapters();
+        core.setSuccessor(address(sink));
         core.lockSuccessor();
         vm.stopPrank();
 
         assertEq(_field(0, 0, 20), uint256(uint160(core.controller())), "controller");
         assertEq(_field(0, 20, 1), core.controllerLocked() ? 1 : 0, "controllerLocked");
         assertEq(_field(0, 21, 1), core.balanceModuleLocked() ? 1 : 0, "balanceModuleLocked");
-        assertEq(_field(0, 22, 1), core.targetsLocked() ? 1 : 0, "targetsLocked");
+        assertEq(_field(0, 22, 1), core.adaptersLocked() ? 1 : 0, "adaptersLocked");
         assertEq(_field(1, 0, 20), uint256(uint160(core.balanceModule())), "balanceModule");
         assertEq(_field(2, 0, 20), uint256(uint160(core.balanceToken())), "balanceToken");
         assertEq(_field(4, 0, 20), uint256(uint160(core.owner())), "owner");
@@ -71,9 +73,9 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(12, 0, 32), core.lastBuybackBlock(), "lastBuybackBlock");
         assertEq(_field(19, 0, 20), uint256(uint160(core.successor())), "successor");
         assertEq(_field(19, 20, 1), core.successorLocked() ? 1 : 0, "successorLocked");
-        assertEq(core.successor(), address(this), "successor value");
+        assertEq(core.successor(), address(sink), "successor value");
         assertTrue(core.successorLocked(), "successorLocked value");
-        assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.targetsLocked(), "locks");
+        assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.adaptersLocked(), "locks");
         // the standalone settings pack after retired: creditCostToPotBps and chosenComposeOn finish slot 19 (offsets
         // 22 and 24), minCcToChoose (uint96, 12 bytes) cannot straddle so it starts slot 20
         vm.startPrank(owner);
@@ -102,6 +104,11 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(20, 18, 5), 777, "pausedTotal");
         assertEq(_field(20, 18, 5), core.pausedTotal(), "pausedTotal getter");
         assertEq(_field(20, 12, 1), core.paused() ? 1 : 0, "paused getter");
+        // composerOf is a mapping and takes slot 21. payee (20 bytes) starts slot 22, payeeOwed is slot 23, payeeOn slot 24
+        assertEq(_field(22, 0, 20), uint256(uint160(core.payee())), "payee");
+        assertEq(core.payee(), lc.payee, "payee value");
+        assertEq(_field(23, 0, 32), core.payeeOwed(), "payeeOwed");
+        assertEq(_field(24, 0, 1), core.payeeOn() ? 1 : 0, "payeeOn");
         // the first migrate sets retired. the call moves the pots, so it comes after the pot words are compared
         assertEq(_field(19, 21, 1), 0, "retired is false before a migrate");
         assertFalse(core.retired(), "retired value before");

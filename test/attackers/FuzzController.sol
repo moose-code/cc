@@ -136,7 +136,7 @@ contract FuzzController {
         } else if (which == 5) {
             data = abi.encodeWithSignature("sellTo(uint256,address)", sid, address(this));
         } else if (which == 6) {
-            data = abi.encodeWithSignature("removeTarget(address)", Mainnet.CREDIT_STRATEGY);
+            data = abi.encodeWithSignature("removeAdapter(address)", Mainnet.CREDIT_STRATEGY);
         } else if (which == 7) {
             data = abi.encodeWithSignature("unlockCallback(bytes)", bytes(""));
         } else if (which == 8) {

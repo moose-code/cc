@@ -45,9 +45,11 @@ contract LaunchTest is Fixture {
         assertEq(address(ctl.CORE()), address(core));
         assertEq(core.HOOK(), lc.stack.hook);
         assertEq(core.FACTORY(), lc.stack.factory);
-        assertEq(core.FEE_SOURCE(), address(feeRouter));
-        assertEq(feeRouter.engine(), address(core));
-        assertEq(feeRouter.owner(), owner);
+        assertEq(core.ESCROW(), lc.stack.escrow);
+        assertEq(core.payee(), lc.payee);
+        assertEq(core.SNIPER_SECONDS(), lc.sniperSeconds);
+        assertFalse(core.payeeOn());
+        assertEq(core.payeeOwed(), 0);
     }
 
     function test_supplyAllInThePool() public view {
@@ -59,7 +61,6 @@ contract LaunchTest is Fixture {
         assertApproxEqAbs(coin.balanceOf(address(PM)) + dust, 1_000_000_000e18, 1e6);
         assertEq(coin.balanceOf(owner), 0);
         assertEq(coin.balanceOf(address(core)), 0);
-        assertEq(coin.balanceOf(address(feeRouter)), 0);
         assertEq(coin.balanceOf(lc.stack.factory), 0);
 
         IArtCoinsLpLockerV2.TokenRewardInfoV2 memory info = IArtCoinsLpLockerV2(lc.stack.locker).tokenRewards(address(coin));
@@ -91,7 +92,7 @@ contract LaunchTest is Fixture {
         assertEq(k.bountyBps, 9_638);
         assertEq(k.maxReferralBpsOfVolume, 0);
         assertEq(k.lpFeePips, 0);
-        assertEq(k.bountyRecipient, address(feeRouter), "the bounty goes to the router");
+        assertEq(k.bountyRecipient, address(core), "the bounty goes to the Core");
         assertEq(k.protocolRecipient, FACTORY.protocolRecipient(), "the protocol leg is the launcher protocol");
         assertTrue(HOOK.isOfficialPool(poolId));
         // the anti sniper schedule: 9_000 bps (90 points) at the first block, the baseline once the window is over
@@ -117,12 +118,11 @@ contract LaunchTest is Fixture {
         assertEq(coin.launcher(), lc.stack.factory);
         assertTrue(coin.isAllowed(lc.stack.locker) && coin.isPinned(lc.stack.locker), "the locker is pinned");
         assertTrue(coin.isAllowed(lc.stack.escrow) && coin.isPinned(lc.stack.escrow), "the escrow is pinned");
-        address[8] memory off = [
+        address[7] memory off = [
             address(core),
-            address(feeRouter),
             owner,
             creator,
-            lc.creatorPayee,
+            lc.payee,
             lc.stack.hook,
             lc.stack.factory,
             address(ctl)

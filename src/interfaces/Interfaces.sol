@@ -115,8 +115,7 @@ uint256 constant RATE_START_MAX_WEI = 1e18;
 uint256 constant BUYBACK_GAS = 600_000;
 
 // the most gas of a buyListing the caller's payment counts, so a gas burning target cannot inflate it. the largest
-// measured buyListing (CreditStrategy path, four gas burning router payees flushing) is 946,000 gas as a transaction,
-// 450,000 to 490,000 without the router load. read by the Core
+// measured buyListing (CreditStrategy path) is 450,000 to 490,000 gas as a transaction. read by the Core
 uint256 constant BUYLISTING_GAS = 1_500_000;
 
 /// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`, bounds
@@ -180,9 +179,12 @@ struct Settings {
     uint64 callerFee;
     /// base fee ceiling of the gas refund of `compose` and `redeemStatement`, wei. zero refunds no gas
     uint48 callerMaxBaseFee;
-    /// share of the swap fee eth booked in `receive()` that fills `ethRedeemBurn`, bps. the rest goes to the pot. eth
-    /// booked later by `skim` goes to the pot whole
+    /// share of the fee income booked by `_book`, after the payee share, that fills `ethRedeemBurn`, bps. the rest goes to
+    /// the pot
     uint16 feeToRedeemBurnBps;
+    /// share of the fee income booked by `_book` that is credited to the payee once the payee share is on, ppm. at most
+    /// 200_000
+    uint24 payeePpm;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -237,8 +239,7 @@ struct Credit {
 }
 
 /// the artcoins stack a launch runs on. a deploy input of the Core, so a new artcoins version needs no code change.
-/// `feeSource` (the fee router) is the only address whose eth the Core books as fees. the rest feed the pool key and the
-/// forbidden targets
+/// the members feed the pool key and the forbidden targets
 struct Stack {
     address poolManager;
     address hook;
@@ -247,8 +248,6 @@ struct Stack {
     address factory;
     address locker;
     address escrow;
-    /// the fee router: the pool's bounty recipient. the Core books eth from it as fees and forbids it as a target
-    address feeSource;
 }
 
 library Mainnet {
@@ -258,6 +257,8 @@ library Mainnet {
     address internal constant CREDIT_SCORE = 0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7;
     address internal constant CREDIT_STRATEGY = 0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6;
     address internal constant SEAPORT = 0x0000000000000068F116a894984e2DB1123eB395;
+    /// the OpenSea fee recipient of Seaport orders, the launch allowlist entry of `SeaportBasicAdapter`
+    address internal constant OPENSEA_FEE_COLLECTOR = 0x0000a26b00c1F0DF003000390027140000fAa719;
     address internal constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
     address internal constant POSITION_MANAGER = 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e;
     address internal constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
@@ -297,7 +298,8 @@ library Mainnet {
             rateCap: 26_700_000_000_000_000,
             callerFee: 0,
             callerMaxBaseFee: 0,
-            feeToRedeemBurnBps: 1_000
+            feeToRedeemBurnBps: 1_000,
+            payeePpm: 75_185
         });
     }
 
@@ -334,8 +336,8 @@ library Mainnet {
         });
     }
 
-    /// the default stack: the fixed parts of mainnet. the v2 members (hook, factory, locker, escrow) and the fee router
-    /// are zero and are filled by the config before a launch
+    /// the default stack: the fixed parts of mainnet. the v2 members (hook, factory, locker, escrow) are zero and are
+    /// filled by the config before a launch
     function defaultStack() internal pure returns (Stack memory) {
         return Stack({
             poolManager: POOL_MANAGER,
@@ -344,8 +346,7 @@ library Mainnet {
             poolFee: POOL_FEE,
             factory: address(0),
             locker: address(0),
-            escrow: address(0),
-            feeSource: address(0)
+            escrow: address(0)
         });
     }
 }

@@ -40,7 +40,8 @@
     "rateCap": 26700000000000000,
     "callerFee": 0,
     "callerMaxBaseFee": 0,
-    "feeToRedeemBurnBps": 1000
+    "feeToRedeemBurnBps": 1000,
+    "payeePpm": 75185
   },
   "sale": {
     "markupBps": 15000,
@@ -82,8 +83,10 @@
     "bounty": false,
     "openFactory": false
   },
-  "router": {
-    "creatorPayee": "0xCB43078C32423F5348Cab5885911C3B5faE217F9",
-    "payeePpm": 112778
+  "adapters": {
+    "seaportRecipients": ["0x0000a26b00c1F0DF003000390027140000fAa719"]
+  },
+  "payee": {
+    "address": "0xCB43078C32423F5348Cab5885911C3B5faE217F9"
   }
 }

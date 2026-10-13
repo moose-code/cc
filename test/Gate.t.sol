@@ -120,11 +120,7 @@ contract GateFuzzTest is Fixture {
         } else if (op == 6) {
             _sellAStatement(seed);
         } else if (op == 7) {
-            vm.deal(funder, funder.balance + 0.02 ether);
-            vm.prank(funder);
-            (bool ok,) = address(core).call{value: 0.02 ether}("");
-            assertTrue(ok);
-            core.skim();
+            _addToPot(0.02 ether);
         } else {
             _settingsWalk(seed);
         }

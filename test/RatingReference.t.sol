@@ -151,7 +151,7 @@ contract RatingReferenceTest is Fixture {
     function test_sameRatingSameReference_acrossLineages() public {
         _enterPhase2();
         xt.mint(address(core), 1e27);
-        core.skim();
+        core.bookBalance();
         _fundPot(5 ether);
         _initPool(HIGH_SQRT); // the cheap balance token records the score-scaled backstop as the redemption lineage cost
 

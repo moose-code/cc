@@ -80,9 +80,9 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m.c.allowed = new address[](1);
             m.c.allowed[0] = creator;
         } else if (i == 2) {
-            m = _m("the router on the allowlist", Class.Pre);
+            m = _m("a stand in contract on the allowlist", Class.Pre);
             m.c.allowed = new address[](1);
-            m.c.allowed[0] = address(uint160(uint256(keccak256("review.router.stand in"))));
+            m.c.allowed[0] = address(uint160(uint256(keccak256("review.stand in"))));
         } else if (i == 3) {
             m = _m("bountyBps 9999", Class.Pre);
             m.c.bountyBps = 9999;
@@ -236,35 +236,35 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("overrides.openFactory on while the factory is deprecated", Class.Hash);
             m.c.allowOpenFactory = true;
         } else if (i == 11) {
-            m = _m("router payee = another address", Class.Hash);
-            m.c.creatorPayee = address(uint160(uint256(keccak256("review.other.payee"))));
+            m = _m("payee = another address", Class.Hash);
+            m.c.payee = address(uint160(uint256(keccak256("review.other.payee"))));
         } else if (i == 12) {
-            m = _m("router payee ppm 100000 (valid, wrong)", Class.Hash);
-            m.c.payeePpm = 100_000;
+            m = _m("payee ppm 100000 (valid, wrong)", Class.Hash);
+            m.c.settings.payeePpm = 100_000;
         } else if (i == 13) {
-            m = _m("router payee ppm 112777 (off by one)", Class.Hash);
-            m.c.payeePpm = 112_777;
+            m = _m("payee ppm 75184 (off by one)", Class.Hash);
+            m.c.settings.payeePpm = 75_184;
         } else if (i == 14) {
-            m = _m("router payee ppm 200000 (the top edge)", Class.Hash);
-            m.c.payeePpm = 200_000;
+            m = _m("payee ppm 200000 (the top edge)", Class.Hash);
+            m.c.settings.payeePpm = 200_000;
         } else if (i == 15) {
-            m = _m("router payee ppm 200001 (above the router limit)", Class.Pre);
-            m.c.payeePpm = 200_001;
+            m = _m("payee ppm 200001 (above the limit)", Class.Pre);
+            m.c.settings.payeePpm = 200_001;
         } else if (i == 16) {
-            m = _m("router payee ppm 0", Class.Pre);
-            m.c.payeePpm = 0;
+            m = _m("payee ppm 0", Class.Pre);
+            m.c.settings.payeePpm = 0;
         } else if (i == 17) {
-            m = _m("router payee = the zero address", Class.Pre);
-            m.c.creatorPayee = address(0);
+            m = _m("payee = the zero address", Class.Pre);
+            m.c.payee = address(0);
         } else if (i == 18) {
-            m = _m("router payee = the escrow", Class.Pre);
-            m.c.creatorPayee = m.c.stack.escrow;
+            m = _m("payee = the escrow", Class.Pre);
+            m.c.payee = m.c.stack.escrow;
         } else if (i == 19) {
-            m = _m("router payee = the hook", Class.Pre);
-            m.c.creatorPayee = m.c.stack.hook;
+            m = _m("payee = the hook", Class.Pre);
+            m.c.payee = m.c.stack.hook;
         } else if (i == 20) {
-            m = _m("router payee = the dead address", Class.Pre);
-            m.c.creatorPayee = Mainnet.DEAD;
+            m = _m("payee = the dead address", Class.Pre);
+            m.c.payee = Mainnet.DEAD;
         } else if (i == 21) {
             m = _m("sale: anchorHalfLife 1209600 (valid, wrong)", Class.Hash);
             m.c.sale.anchorHalfLife = 1_209_600;
@@ -495,10 +495,10 @@ contract ReviewMatrixConfigTest is ReviewHarness {
 /// @notice the config mutation matrix, part two: every field of the settings, above the top, below the bottom, a plausible
 /// wrong value and both edges
 contract ReviewMatrixSettingsTest is ReviewHarness {
-    uint256 internal constant N_SETTINGS = 115;
+    uint256 internal constant N_SETTINGS = 120;
 
     /// @dev a plausible value that is not the launch value, inside the bounds, for each field
-    function _wrong() internal pure returns (uint256[23] memory) {
+    function _wrong() internal pure returns (uint256[24] memory) {
         return [
             uint256(100),
             9000,
@@ -522,7 +522,8 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
             40_000_000_000_000_000,
             0.002 ether,
             50 gwei,
-            2000
+            2000,
+            100_000
         ];
     }
 
@@ -539,10 +540,10 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
     /// @dev kinds: 0 above the top, 1 below the bottom, 2 a plausible wrong value, 3 the top edge, 4 the bottom edge.
     /// an empty label means the field has no such case
     function _mutSettings(uint256 k) internal view returns (Mut memory m) {
-        uint256 f = k % 23;
-        uint256 kind = k / 23;
-        uint256[23] memory lo = SettingsFields.lo();
-        uint256[23] memory hi = SettingsFields.hi();
+        uint256 f = k % 24;
+        uint256 kind = k / 24;
+        uint256[24] memory lo = SettingsFields.lo();
+        uint256[24] memory hi = SettingsFields.hi();
         string memory nm = _trim(SettingsFields.names()[f]);
         // rateCap is field 19. a rateCap other than 3 times the launch rateStart is stopped by its own preflight row
         m = _m("", kind <= 1 || f == 19 ? Class.Pre : Class.Hash);
@@ -606,19 +607,19 @@ contract ReviewMatrixSettingsTest is ReviewHarness {
     /// the settings group in parts: every field above the top and below the bottom, a plausible wrong value for every
     /// field, then the edges that must still be accepted
     function test_matrix_settingsViolations() public {
-        _matrix(2, 0, 46);
+        _matrix(2, 0, 48);
     }
 
     function test_matrix_settingsWrongValues() public {
-        _matrix(2, 46, 69);
+        _matrix(2, 48, 72);
     }
 
     function test_matrix_settingsTopEdges() public {
-        _matrix(2, 69, 92);
+        _matrix(2, 72, 96);
     }
 
     function test_matrix_settingsBottomEdges() public {
-        _matrix(2, 92, N_SETTINGS);
+        _matrix(2, 96, N_SETTINGS);
     }
 }
 
@@ -649,7 +650,7 @@ contract ReviewMatrixStateTest is ReviewHarness {
             vm.fee(1 gwei);
         } else if (i == 4) {
             (l, w) = ("the predicted coin address has code (salt reuse, a copycat)", Class.Pre);
-            vm.etch(predictCoin(base, deployer, _routerAt()), hex"00");
+            vm.etch(predictCoin(base, deployer, _coreAt()), hex"00");
         } else if (i == 5) {
             (l, w) = ("the predicted controller address has code", Class.Pre);
             vm.etch(_controllerAt(), hex"00");
@@ -657,8 +658,8 @@ contract ReviewMatrixStateTest is ReviewHarness {
             (l, w) = ("the predicted core address has code", Class.Pre);
             vm.etch(_coreAt(), hex"00");
         } else if (i == 7) {
-            (l, w) = ("the predicted router address has code", Class.Pre);
-            vm.etch(_routerAt(), hex"00");
+            (l, w) = ("the predicted lens address has code", Class.Revert);
+            vm.etch(lensAddress(_coreAt()), hex"00");
         } else if (i == 8) {
             (l, w) = ("the linked library has no code", Class.Revert);
             vm.etch(_linked(), "");
@@ -667,7 +668,7 @@ contract ReviewMatrixStateTest is ReviewHarness {
             (lateEtchAt, lateEtchCode) = (_linked(), hex"00");
         } else if (i == 10) {
             (l, w) = ("the linked library plus one trailing byte", Class.Post);
-            (lateEtchAt, lateEtchCode) = (_linked(), bytes.concat(_linked().code, hex"00"));
+            (lateEtchAt, lateEtchCode, lateEtchAppend) = (_linked(), hex"00", true);
         } else {
             (l, w) = _state2(i);
         }

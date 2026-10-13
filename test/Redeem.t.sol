@@ -43,8 +43,11 @@ abstract contract RedeemBase is Fixture {
         sid = STATEMENTS.supply();
     }
 
+    /// sets the pot by slot and moves the eth with it, so no eth is left above the pots for the next book to count
     function _setPot(uint256 v) internal {
+        uint256 old = core.ethPot();
         stdstore.target(address(core)).sig("ethPot()").checked_write(v);
+        vm.deal(address(core), address(core).balance + v - old);
         assertEq(core.ethPot(), v);
     }
 
@@ -424,7 +427,7 @@ contract RedeemRepayTest is RedeemBase {
             bytes memory data;
             address target = address(core);
             if (k == 0) data = ComposeCall.noArgs();
-            else if (k == 1) data = abi.encodeCall(ICore.skim, ());
+            else if (k == 1) data = abi.encodeCall(ICore.book, ());
             else if (k == 2) data = abi.encodeCall(ICore.redeemStatement, (b));
             else if (k == 3) data = abi.encodeCall(ICore.buyback, ());
             else {

@@ -47,7 +47,7 @@ contract LockProbe is Lock {
     }
 }
 
-/// the launch step that freezes the fee recipients (docs/RUNBOOK.md section 4) and the postflight rows around it
+/// the owner command that freezes the fee recipients (docs/RUNBOOK.md section 4) and the postflight rows around it
 contract LockTest is Fixture {
     LockProbe internal probe;
     bool internal lockExpected;
@@ -93,11 +93,12 @@ contract LockTest is Fixture {
 
     /// COIN_CHANGED=1 relaxes the postflight row, and the lock still refuses a pool that pays another address
     function test_aRepointedBountyRecipientRefusesTheLockWhateverCoinChangedSays() public {
+        address elsewhere = makeAddr("elsewhere");
         vm.prank(owner);
-        IArtCoinsHookV2(lc.stack.hook).setBountyRecipient(poolId, payable(address(core)));
+        IArtCoinsHookV2(lc.stack.hook).setBountyRecipient(poolId, payable(elsewhere));
         probe.setCoinChanged(true);
         probe.configure(lc, address(core), owner, true);
-        vm.expectRevert(abi.encodeWithSelector(Lock.BountyRecipientNotRouter.selector, address(core), address(feeRouter)));
+        vm.expectRevert(abi.encodeWithSelector(Lock.BountyRecipientNotCore.selector, elsewhere, address(core)));
         probe.run();
         assertFalse(coin.recipientsLocked());
     }
@@ -142,14 +143,14 @@ contract LockTest is Fixture {
     /// the bounty recipient row fails when the coin admin repointed it, and is a warning with COIN_CHANGED=1
     function test_theBountyRecipientRowIsSoft() public {
         vm.prank(owner);
-        IArtCoinsHookV2(lc.stack.hook).setBountyRecipient(poolId, payable(address(core)));
+        IArtCoinsHookV2(lc.stack.hook).setBountyRecipient(poolId, payable(makeAddr("elsewhere")));
         postflightAs(lc, address(core), owner);
         (string memory failed,) = _failed();
-        assertTrue(vm.contains(failed, "hook: bounty recipient is the fee router"), "fails without the flag");
+        assertTrue(vm.contains(failed, "hook: bounty recipient is the Core"), "fails without the flag");
 
         coinChangedFlag = true;
         postflightAs(lc, address(core), owner);
         (failed,) = _failed();
-        assertFalse(vm.contains(failed, "hook: bounty recipient is the fee router"), "a warning with the flag");
+        assertFalse(vm.contains(failed, "hook: bounty recipient is the Core"), "a warning with the flag");
     }
 }

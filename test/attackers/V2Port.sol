@@ -6,31 +6,6 @@ import {ICredits, IStatements, IBalanceModule, Mainnet} from "../../src/interfac
 import {IArtCoinsFeeEscrowV2, IArtCoinsTokenV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 
-/// a listing target that claims the escrow credit of the Core in the middle of the Core's `buyListing` measurement
-/// (anyone may claim for the Core), then delivers its credit. the claimed eth lands in the Core with the escrow as sender
-contract ClaimMidListing {
-    ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
-    IArtCoinsFeeEscrowV2 public immutable ESCROW;
-    address public immutable CORE;
-    uint256 public creditId;
-
-    constructor(address escrow_, address core_) {
-        ESCROW = IArtCoinsFeeEscrowV2(escrow_);
-        CORE = core_;
-    }
-
-    function arm(uint256 id) external {
-        creditId = id;
-    }
-
-    fallback() external payable {
-        ESCROW.claim(CORE, address(0));
-        CREDITS.transferFrom(address(this), CORE, creditId);
-    }
-
-    receive() external payable {}
-}
-
 /// a balance module that claims the Core's escrow credit in the middle of `redeemStatement`, then pays like the stand in
 contract ClaimMidRedeem is IBalanceModule {
     MockBalanceToken public immutable token;

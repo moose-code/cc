@@ -22,12 +22,13 @@ abstract contract SystemBuilder is ConfigReader {
         });
     }
 
-    /// @notice the v2 factory config of the launch. the token admin is the owner. the bounty recipient is the fee
-    /// router and the one project locker slot is the creator (the lp fee is 0, so it earns nothing today). the protocol
+    /// @notice the v2 factory config of the launch. the token admin is the owner. the bounty recipient is `recipient`
+    /// (the Core; the Core constructor sets it itself, so it takes the config with the zero address) and the one
+    /// project locker slot is the creator (the lp fee is 0, so it earns nothing today). the protocol
     /// slot is appended by the factory, so the project slot is `10_000 - protocolBps`. the coin is restricted and its
     /// allowlist is `l.allowed` plus the entries the factory seeds. the Core is not listed: the buyback take reaches it through the
     /// transfer allowance the hook grants for the swap (docs/DECISIONS.md decision 29)
-    function buildConfig(LaunchConfig memory l, address tokenAdmin, address router)
+    function buildConfig(LaunchConfig memory l, address tokenAdmin, address recipient)
         internal
         pure
         returns (IArtCoinsFactoryV2.DeploymentConfigV2 memory c)
@@ -54,7 +55,7 @@ abstract contract SystemBuilder is ConfigReader {
             baselineSkimBps: l.baselineSkimBps,
             bountyBps: l.bountyBps,
             maxReferralBpsOfVolume: l.maxReferralBps,
-            bountyRecipient: payable(router)
+            bountyRecipient: payable(recipient)
         });
         address[] memory recipients = new address[](1);
         recipients[0] = l.creator;
@@ -84,22 +85,18 @@ abstract contract SystemBuilder is ConfigReader {
     /// @notice keccak256 of the canonical abi encoding of the whole launch config. it covers every value the launch
     /// depends on (the overrides included) and none of the machine (not the deployer). the operator signs off this
     /// one value: preflight prints it, `Deploy` needs it in CONFIG_HASH and postflight prints it again
-    function configHash(LaunchConfig memory l) internal pure returns (bytes32 h) {
-        // `stack.feeSource` is the router the deploy creates: derived, never signed, so the hash leaves it out
-        address fs = l.stack.feeSource;
-        l.stack.feeSource = address(0);
-        h = keccak256(abi.encode(l));
-        l.stack.feeSource = fs;
+    function configHash(LaunchConfig memory l) internal pure returns (bytes32) {
+        return keccak256(abi.encode(l));
     }
 
     /// @notice the address the v2 factory will give the coin, from its own `predictToken`. it depends on the sender
-    /// (the owner, who signs the launch), the whole config (the router included) and mutable factory state
+    /// (the owner, who signs the launch), the whole config (the Core address included) and mutable factory state
     /// (the default allowlist and the hook escrow), so read it right before the launch
-    function predictCoin(LaunchConfig memory l, address sender, address router)
+    function predictCoin(LaunchConfig memory l, address sender, address core)
         internal
         view
         returns (address)
     {
-        return IArtCoinsFactoryV2(l.stack.factory).predictToken(sender, buildConfig(l, l.owner, router));
+        return IArtCoinsFactoryV2(l.stack.factory).predictToken(sender, buildConfig(l, l.owner, core));
     }
 }

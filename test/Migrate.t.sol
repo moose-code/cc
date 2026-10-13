@@ -51,7 +51,7 @@ contract MigrateTest is Fixture {
     function _balanceBidStatement() internal returns (uint256 sid) {
         uint256[] memory ids = _credits(seller, 80);
         xt.mint(address(core), 1_000_000_000e18);
-        core.skim();
+        core.bookBalance();
         vm.prank(seller);
         core.sellForBalance(ids);
         uint256 supply = STATEMENTS.supply();
@@ -162,6 +162,22 @@ contract MigrateTest is Fixture {
     // ------------------------------------------------------------------ a full migration
 
     /// the record and holder of a statement, as one hash
+    /// a successor with a receive function and no `fund` (a Safe) takes the pot by the plain send
+    function test_OK_aSuccessorWithoutFundTakesAPlainSend() public {
+        _world();
+        PlainSuccessor plain = new PlainSuccessor();
+        vm.prank(owner);
+        core.setSuccessor(address(plain));
+        vm.prank(owner);
+        core.lockSuccessor();
+        uint256 pot = core.ethPot();
+        assertGt(pot, 0, "setup: a pot");
+        _migrate(100);
+        assertEq(address(plain).balance, pot, "the successor got the pot");
+        assertEq(core.ethPot(), 0, "ethPot");
+        assertTrue(core.retired(), "retired");
+    }
+
     function _fingerprint(uint256 sid) internal view returns (bytes32) {
         (bool held, uint256 cost, uint64 composedAt) = core.statementInfo(sid);
         return keccak256(abi.encode(held, cost, composedAt, STATEMENTS.ownerOf(sid)));
@@ -378,11 +394,12 @@ contract MigrateTest is Fixture {
         _migrate(10);
         assertEq(sink.ethReceived(), tracked);
         assertEq(address(core).balance, balance - tracked, "the forced eth moved");
-        // skim books it, and the next call moves it
-        core.skim();
-        assertGe(core.ethPot(), 1 ether - 1, "skim did not book the forced eth");
+        // the next book counts it as income, and the next call moves it
+        core.book();
+        uint256 toPot = 1 ether - uint256(1 ether) * core.settings().feeToRedeemBurnBps / 10_000;
+        assertEq(core.ethPot(), toPot, "the book did not count the forced eth");
         _migrate(10);
-        assertGe(sink.ethReceived(), tracked + 1 ether - 1, "the booked eth did not move");
+        assertEq(sink.ethReceived(), tracked + toPot, "the booked eth did not move");
     }
 
     // ------------------------------------------------------------------ a successor that misbehaves
@@ -514,7 +531,7 @@ contract MigrateTest is Fixture {
         uint256 pot = core.ethPot();
         uint256 balancePot = core.balancePot();
         vm.expectRevert(ICore.Retired.selector);
-        core.buyListing(0, "", ids[0], address(0xA110C));
+        _buyRaw(0, "", ids[0], address(0xA110C));
         _assertRefusedDoorChangedNothing(ids, pot, balancePot);
     }
 
@@ -627,8 +644,12 @@ contract MigrateTest is Fixture {
         assertGt(core.ethRedeemBurn(), 0, "fees were not booked to the reserve");
         uint256 pot = core.ethPot();
         vm.deal(address(core), address(core).balance + 1 ether);
-        core.skim();
-        assertGe(core.ethPot(), pot + 1 ether, "skim did not book the forced eth");
+        core.book();
+        assertEq(
+            core.ethPot(),
+            pot + 1 ether - uint256(1 ether) * core.settings().feeToRedeemBurnBps / 10_000,
+            "the book counted the forced eth"
+        );
         _solvent();
     }
 
@@ -679,8 +700,8 @@ contract MigrateTest is Fixture {
         _migrate(1000);
         vm.startPrank(owner);
         core.setRate(core.RATE_START());
-        core.addTarget(address(0xA110C));
-        core.removeTarget(address(0xA110C));
+        core.addAdapter(address(0xA110C));
+        core.removeAdapter(address(0xA110C));
         vm.stopPrank();
         _setSettings(core.settings());
         // a credit sent straight to the core leaves by rescueNft
@@ -715,9 +736,8 @@ contract MigrateTest is Fixture {
 
     function test_REVERT_theSuccessorIsNotPartOfTheEngine() public {
         _enterPhase2();
-        address[7] memory bad = [
+        address[6] memory bad = [
             address(core),
-            address(feeRouter),
             address(coin),
             address(CREDITS),
             address(STATEMENTS),
@@ -748,7 +768,7 @@ contract MigrateTest is Fixture {
         _fillEthPile(80);
         uint256[] memory ids = _credits(seller, 80);
         xt.mint(address(core), 1_000_000_000e18);
-        core.skim();
+        core.bookBalance();
         vm.prank(seller);
         core.sellForBalance(ids);
         assertEq(core.pileSize(), 160, "setup: one pile of 80 eth bid plus 80 balance bid credits");
@@ -768,4 +788,9 @@ contract MigrateTest is Fixture {
         emit log_named_uint("largest maxCredits under 16777216", (16_777_216 - pots) / perCredit);
         assertLt(credits160, 16_777_216, "160 credits fit the transaction cap");
     }
+}
+
+/// a successor that takes eth by `receive` only
+contract PlainSuccessor {
+    receive() external payable {}
 }
