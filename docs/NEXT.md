@@ -83,7 +83,7 @@ Implemented the five documented views in `src/CreditScoreLens.sol`, its generate
 - Measured cold-call execution gas for `creditScores`: 54,191 for 1 id, 365,886 for 10, 2,904,422 for 80, using distinct fixture credits. These are test call measurements, exclude transaction intrinsic gas, and depend on the source inputs. They are not a universal RPC batch limit.
 - `forge script script/DeployCreditScoreLens.s.sol --rpc-url https://mainnet.gateway.tenderly.co --fork-block-number 26158000 --sender 0xCB43078C32423F5348Cab5885911C3B5faE217F9`: pass, simulation only, one CREATE, runtime hash matches. Foundry estimated gas budget 484,845, including its estimation margin, not a mined receipt or exact deployment gas measurement.
 
-Independent review of the implementation commit follows before deployment. Engine release evidence remains stale; this helper does not complete the engine launch objective. Unrelated `.DS_Store` is preserved.
+Independent review of implementation 135a216 and NatSpec-only follow-up abd4c20 is complete: no open implementation findings (docs/REVIEW-credit-score-lens-abd4c20.md). The one Low wording issue was corrected without asset-handling functions. Fork results carry on exactly unchanged creation/runtime bytes and ABI; the final NatSpec interface compiled and checked. Engine release evidence remains stale; this helper does not complete the engine launch objective. Unrelated `.DS_Store` is preserved.
 
 ## Engine change list
 
