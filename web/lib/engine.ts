@@ -78,6 +78,8 @@ function sampleFeed(now: number): FeedEvent[] {
     detail: r.detail,
     eth: r.eth,
     tx: r.tx,
+    // sample rows link like live rows (placeholder hash, dead link)
+    txHash: r.tx.padEnd(66, "0"),
     tile: r.tile,
     addr: r.addr,
   }));
