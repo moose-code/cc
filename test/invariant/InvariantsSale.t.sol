@@ -30,6 +30,7 @@ abstract contract SaleSuite is InvariantsBase {
         core.setController(c);
     }
 
+    // promise: inv 3 and inv 12 are not vacuous: every sale action succeeds
     /// the fresh state has held statements (and none sold in the window variant). the sale actions
     /// are driven through them, the owner swaps and locks come last. every one must succeed at least once, and the
     /// violation counters must stay at zero. the base `test_everyActionSucceeds` leaves the sale actions out because it
@@ -65,6 +66,7 @@ abstract contract SaleSuite is InvariantsBase {
         assertEq(handler.unexpectedFails(34), 0, handler.actionName(34));
     }
 
+    // promise: inv 11 handler actions survive the top of the seed range
     /// the seeds at the top of the range must not overflow inside a handler action
     function test_saleActionsSurviveMaxSeeds() public {
         uint256 m = type(uint256).max;

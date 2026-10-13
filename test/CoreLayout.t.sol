@@ -26,6 +26,7 @@ contract CoreLayoutTest is Fixture {
         return uint256(keccak256(abi.encode(key, base)));
     }
 
+    // promise: SPEC 3 CoreLib addresses the Core storage by the CoreState mirror
     function test_OK_scalarFieldsSitWhereTheMirrorSays() public {
         MigrationSink sink = new MigrationSink();
         _enterPhase2();
@@ -118,6 +119,7 @@ contract CoreLayoutTest is Fixture {
         assertTrue(core.retired(), "retired value");
     }
 
+    // promise: SPEC 3 CoreLib addresses the Core storage by the CoreState mirror
     function test_OK_pilesCreditsAndStatementsSitWhereTheMirrorSays() public {
         uint256[] memory ids = _fillEthPile(5);
         // pile: head, tail, size inline at slots 13, 14, 15

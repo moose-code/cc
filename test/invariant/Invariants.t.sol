@@ -315,6 +315,7 @@ abstract contract InvariantsBase is InvariantFixture {
         );
     }
 
+    // promise: inv 16 the bid check reaches its success branch
     /// the sale of invariant 16 has a seller in the state `setUp` builds, so its success branch runs in the campaigns
     function test_theBidCheckFindsASeller() public {
         (address holder,) = _sellable(core.ethPot());
@@ -684,6 +685,7 @@ abstract contract InvariantsBase is InvariantFixture {
         return false;
     }
 
+    // promise: inv 1 to 20 are not vacuous: every handler action succeeds
     /// a suite where everything reverts proves nothing. this drives every action of the suite to a success.
     /// forge-config: default.gas_limit = 9223372036854775807
     function test_everyActionSucceeds() public virtual {
@@ -699,6 +701,7 @@ abstract contract InvariantsBase is InvariantFixture {
         _summary();
     }
 
+    // promise: inv 11 the six doors refuse with Retired after migrate
     /// the first successful `migrate` of the handler retires the core. every action that calls one of the six doors
     /// then sends its call, which must revert `Retired` with the books untouched, and no violation or unexpected revert
     /// is recorded
@@ -826,6 +829,7 @@ abstract contract InvariantsBase is InvariantFixture {
         assertTrue(_try(38, 40), "no credit batch buy");
     }
 
+    // promise: inv 1 to 20 are not vacuous: composeChosen succeeds
     /// a chosen compose: the owner turns it on, a page of 80 pile credits is built with the sale off (so the window is
     /// trivially satisfied), and the oldest 80 are composed into a statement. runs in every concrete suite
     function test_composeChosenComposesAPage() public {
@@ -931,6 +935,7 @@ contract InvariantsPhase1 is InvariantsBase {
         _build(false, false, true, false, "p1");
     }
 
+    // promise: inv 5 the handler reads the Core storage slots
     /// the storage slots used by the handler match the public getters.
     function test_storageLayoutMatchesTheHandlerSlots() public view {
         assertEq(uint256(vm.load(address(core), bytes32(uint256(6)))), core.ethPot());
@@ -959,6 +964,7 @@ contract InvariantsPhase1Window is InvariantsBase {
         _build(false, false, true, true, "w1");
     }
 
+    // promise: inv 10 the window suite starts inside the anti sniper window
     /// the run starts inside the window with the skim well above the baseline
     function test_startsInsideTheSniperWindow() public view {
         assertLt(block.timestamp, launchTime + SNIPER_WINDOW / 2);
