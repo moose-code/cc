@@ -2,7 +2,8 @@
 
 // Token art from the contracts: tokenURI(id) of the Credits and Statements
 // collections, decoded to its name, image and attributes. Reads of one render
-// pass go out as one multicall per collection. Cached per token id.
+// pass go out as one multicall per collection. Cached per token id in memory and,
+// for entries under 32 KB (credits; a statement is ~160 KB), in localStorage.
 
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
@@ -10,6 +11,7 @@ import type { Address } from "viem";
 import { engineDeployed, addresses } from "./config";
 import { coreLensAbi, tokenUriAbi } from "./abis";
 import { MULTICALL3 } from "./live";
+import { SCOPE, lsGet, lsSet, verifyScope } from "./cache";
 
 export type TokenKind = "credit" | "statement";
 
@@ -97,6 +99,30 @@ function flush() {
     for (let i = 0; i < g.length; i += CHUNK[g[0].kind]) run(g.slice(i, i + CHUNK[g[0].kind]));
 }
 
+const metaMem = new Map<string, TokenMeta | null>();
+const META_MAX_CHARS = 32_000;
+
+// A token's metadata does not change: read from memory, then storage, then the chain.
+async function loadMeta(kind: TokenKind, address: Address, id: number, client: Client): Promise<TokenMeta | null> {
+  const key = `${SCOPE}:art:${address.toLowerCase()}:${id}`;
+  await verifyScope(client);
+  if (metaMem.has(key)) return metaMem.get(key)!;
+  const stored = lsGet<TokenMeta>(key);
+  if (stored) {
+    metaMem.set(key, stored);
+    return stored;
+  }
+  const m = await new Promise<TokenMeta | null>((resolve, reject) => {
+    queue.push({ client, kind, address, id, resolve, reject });
+    timer ??= setTimeout(flush, 15);
+  });
+  if (m) {
+    metaMem.set(key, m);
+    lsSet(key, m, META_MAX_CHARS);
+  }
+  return m; // a null (reverted or unreadable tokenURI) is retried on the next mount
+}
+
 // The Credits and Statements contract addresses, from the lens.
 export function useCollections() {
   const client = usePublicClient();
@@ -124,10 +150,6 @@ export function useTokenMeta(kind: TokenKind, id: number) {
     enabled: Boolean(client && address),
     staleTime: Infinity,
     gcTime: 30 * 60 * 1000,
-    queryFn: () =>
-      new Promise<TokenMeta | null>((resolve, reject) => {
-        queue.push({ client: client!, kind, address: address!, id, resolve, reject });
-        timer ??= setTimeout(flush, 15);
-      }),
+    queryFn: () => loadMeta(kind, address!, id, client!),
   });
 }

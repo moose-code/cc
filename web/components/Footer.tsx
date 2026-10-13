@@ -1,11 +1,11 @@
 "use client";
 
-import { useBlockNumber } from "wagmi";
+import { useHead } from "@/lib/live";
 import { commas, evmNowAddress } from "@/lib/format";
 import { contracts } from "@/lib/config";
 
 export function Footer() {
-  const { data: block } = useBlockNumber({ watch: true });
+  const block = useHead().data?.n;
   return (
     <footer className="footer">
       <span>{block ? `block ${commas(Number(block))}` : "block —"}</span>

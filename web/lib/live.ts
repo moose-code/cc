@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
 import { numberToHex, type ContractFunctionReturnType } from "viem";
-import { addresses, engineDeployed, poolReady } from "./config";
+import { addresses, engineDeployed } from "./config";
 import { coreAbi, coreLensAbi } from "./abis";
 
 export type Snapshot = ContractFunctionReturnType<typeof coreLensAbi, "view", "snapshot">;
@@ -21,12 +21,16 @@ const PILE_PAGE = 200n; // ponytail: first 200 pile credits only, page with pile
 // warps) shows the times the contracts use. Wall clock until the first block is read.
 let blockSeen: { n: bigint; ts: number; at: number } | undefined;
 
-function useChainBlock() {
+// The one head poll of the app: the latest block, read every 12 s. The scan, the
+// market and the footer key off it. react-query skips the interval while the tab is
+// hidden, and staleTime keeps focus refetches inside the 12 s window from sending.
+export function useHead() {
   const client = usePublicClient();
   return useQuery({
-    queryKey: ["chain-block", engineDeployed || poolReady],
-    enabled: engineDeployed || poolReady,
-    refetchInterval: 15000,
+    queryKey: ["head"],
+    enabled: Boolean(client),
+    refetchInterval: 12000,
+    staleTime: 12000,
     queryFn: async () => {
       const b = await client!.getBlock();
       if (blockSeen?.n !== b.number) blockSeen = { n: b.number, ts: Number(b.timestamp), at: Date.now() };
@@ -36,7 +40,7 @@ function useChainBlock() {
 }
 
 export function useNow(ms = 1000): number {
-  const { data: blk } = useChainBlock();
+  const { data: blk } = useHead();
   const at = () => (blk ? blk.ts + (Date.now() - blk.at) / 1000 : Date.now() / 1000);
   const [now, setNow] = useState(() => Math.floor(at()));
   useEffect(() => {
