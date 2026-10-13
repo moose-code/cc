@@ -5,7 +5,8 @@ pragma solidity ^0.8.28;
 
 /// @title CreditScoreLens
 /// @notice Read credit scores, rarity, traits and statement scores by token id on Ethereum mainnet.
-/// @dev Reads fixed Credits, CreditScore and Statements contracts. Holds no state or assets and has no admin.
+/// @dev Reads fixed Credits, CreditScore and Statements contracts. Stores no mutable state and has no admin
+///      or asset-handling functions.
 ///      Credit records remain readable after burn. Statement scores include overprinted pages and can change
 ///      when a page is overprinted. These reads do not establish current NFT ownership or redeemability.
 interface ICreditScoreLens {
