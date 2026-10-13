@@ -79,10 +79,10 @@
       "checked": "2026-10-13"
     },
     "A-CREDIT-SCORE-LENS-DEPLOY-TOOLING": {
-      "statement": "FLOW 94 authorizes CreditScoreLens deployment/verification tooling, not broadcast or source publication. Deploy must enforce the configured repository gate, reviewed compiler/runtime identity and a fresh successful CREATE receipt; verify/check compare all five native-unit methods with pinned source contracts. FLOW 96 adds a wallet-free current-mainnet fee preview before unlock, quoted EIP-1559 settings reused for broadcast, Tenderly/ripe0x defaults and standard Etherscan configuration or private terminal prompt.",
+      "statement": "FLOW 105/107/109/110: standalone helper deploy/verify shell script runs on main, uses Tenderly/ripe0x, checks reviewed compiler/runtime and pinned on-chain sources, previews gas before keystore unlock, uses standard Etherscan credentials or a hidden CLI prompt, and validates a fresh successful CREATE receipt and all five source results. The engine OBJ-LAUNCH-1 gate does not apply to this separate helper; its policy remains unchanged. No agent broadcast authorized.",
       "kind": "owner-decision",
-      "source": "docs/FLOW.md decisions 94 and 96; docs/INTEGRATION.md helper tooling; helper branch FLOW 88-97 imported on main as 99-108 (same intent, FLOW 109)",
-      "version": 2,
+      "source": "docs/FLOW.md decisions 105, 107, 109 and 110",
+      "version": 3,
       "checked": "2026-10-13"
     }
   },

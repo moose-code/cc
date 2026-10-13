@@ -31,43 +31,23 @@ uint256 statementTotal = scoreLens.statementScore(statementId);
 
 The contract and generated interface contain NatSpec for every method, input and output. Regenerate only this interface with `script/tools/gen-interfaces.sh write CreditScoreLens`; check it with `script/tools/gen-interfaces.sh --check CreditScoreLens`.
 
-### Deployment and verification commands
+### Deployment and verification
 
-Run from the primary checkout on `main`, with a clean Forge build:
-
-```bash
-cd /Users/dd/CascadeProjects/cc/cc && git switch main && forge clean && forge build && python3 script/tools/credit-score-lens.py deploy
-```
-
-Use `python3 script/tools/credit-score-lens.py`. RPC defaults to `TENDERLY_RPC_URL` or the public Tenderly mainnet gateway. The default deployment keystore is `ripe0x`, with public sender `0xCB43078C32423F5348Cab5885911C3B5faE217F9`. Foundry checks the unlocked signer against the supplied sender. A different account needs its public `--sender`.
+Run the standalone helper from main with a clean Forge build:
 
 ```bash
-# Show a current-mainnet gas fee budget without opening a wallet.
-python3 script/tools/credit-score-lens.py estimate
-
-# Preview the fee, confirm, then unlock ripe0x, deploy and verify.
-python3 script/tools/credit-score-lens.py deploy
-
-# Retry source verification for an existing address, without deploying again.
-python3 script/tools/credit-score-lens.py verify --address 0xDEPLOYED_LENS
-
-# Read-only bytecode and source-result checks, with no explorer submission or wallet.
-python3 script/tools/credit-score-lens.py check --address 0xDEPLOYED_LENS
+cd /Users/dd/CascadeProjects/cc/cc && git switch main && forge clean && forge build && bash script/deploy-credit-score-lens.sh
 ```
 
-Deploy first enforces the release gate. After building and checking artifact identity, it runs a current-mainnet deployment simulation without a signer. It prints the gas budget (Foundry's 30% buffer), maximum fee and priority fee in gwei, and their ETH fee budget before any keystore unlock. It reuses the quoted fee settings for broadcast. The ETH figure is an estimate, not a fixed total: mined gas used and base fee determine the actual fee, and a later base-fee increase can delay inclusion. `estimate` performs the same read-only quote without the release gate, credential prompts or broadcast.
+The script uses Tenderly (`TENDERLY_RPC_URL`, otherwise its public mainnet gateway) and the ripe0x keystore with public sender `0xCB43078C32423F5348Cab5885911C3B5faE217F9`. It checks the reviewed artifact, simulates against the mainnet source contracts and shows Foundry's gas fee estimate before asking to unlock the keystore. Declining the prompt sends nothing. Final fees can differ from the estimate as gas prices change.
 
-Etherscan credentials come from `ETHERSCAN_API_KEY`, then Foundry's resolved configuration (including the project `.env` and its mainnet explorer entry). If absent, the CLI prompts privately in a terminal and keeps the key only for this run. It passes the key through the verification subprocess environment, never a command-line argument or saved file. Noninteractive runs must configure the key beforehand. Select `--verifier sourcify` for verification without an Etherscan key.
+It reuses `ETHERSCAN_API_KEY` or Foundry's configured mainnet key, including the project `.env`; if absent, it asks privately in the terminal. The key is kept in the process environment, never printed or written to a file. After a successful receipt, the script prints the address, compares all five methods directly with their on-chain sources, and verifies the source on Etherscan with the reviewed viair profile. The engine launch checker does not apply to this standalone helper; engine launch controls are untouched.
 
-After displaying the fee and resolving verification credentials, deploy asks for `y` to continue. Only then does Foundry open `ripe0x` and ask for its password. Cancellation sends nothing. To use Ledger, pass `--ledger --sender <address>`; to use another encrypted keystore, pass `--account <name> --sender <address>`. The tool accepts no private-key argument.
+If source verification fails after deployment, retry without deploying again:
 
-Each mode accepts `--rpc-url`. Use `simulate --fork-block 26158000` for a historical simulation; omitting `--fork-block` reads current state. Read-only script subprocesses omit wallet/broadcast arguments and remove inherited signer environment settings. They run from a fresh temporary directory with a `.git` marker that bounds Foundry project discovery, plus an explicit build root. This prevents ancestor `.env` signer settings from reappearing even when `TMPDIR` points inside a project.
-
-Before signing, deploy mode calls `python3 script/director.py check --gate deploy`. The current repository gate is unmet and remains enforced; standalone helper tooling does not waive it. The user request authorized writing these scripts, not broadcasting a mainnet transaction.
-
-The tool compiles the helper and checks its reviewed runtime hash and compiler settings. `DeployCreditScoreLens.s.sol` checks chain 1 and all three source runtime hashes. A broadcast creates exactly one zero-value helper deployment and gets its own record directory under `broadcast/credit-score-lens-*`; only its successful, matching receipt supplies the address. The tool prints the address and transaction hash before explorer verification. If verification fails after deployment, use `verify --address`, not another `deploy`.
-
-`VerifyCreditScoreLens.s.sol` checks exact deployed/helper-artifact bytecode, the three source identities, and every method against direct source reads for credit ids `[1,2,3]` and statement id `1`. Results are native integers. The source-verification command uses the `viair` compilation profile and waits for Etherscan or Sourcify to report the result. Live readbacks run before and after source verification.
+```bash
+bash script/deploy-credit-score-lens.sh verify 0xDEPLOYED_LENS
+```
 
 ## 1. contracts and addresses
 

@@ -156,7 +156,7 @@
     ]
   },
   "candidate": "b12ca481fdbc415331e61e68efc6235b36c29fb2",
-  "activeChange": null,
+  "activeChange": "FLOW 110: simplify standalone helper CLI and correct its mistakenly applied engine gate; engine policy unchanged, no broadcast authorized.",
   "openBlockers": [],
   "ownerDecisions": [
     {
@@ -206,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "CreditScoreLens is merged and focused-verified on local main (FLOW 109). Give the primary-checkout command that switches to main, runs forge clean and forge build, then the deploy CLI. No push or agent broadcast authorized; configured deploy gate remains unmet. Existing engine objective and candidate evidence remain separate.",
+  "nextAction": "Exercise the simplified script through live preview/cancellation only, commit and independently review the immutable repair, then give the short clean/main command.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",
