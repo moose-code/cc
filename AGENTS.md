@@ -20,5 +20,5 @@ The active objective, its required paths and deliverables, and the open owner de
 - One active director. Implementers get bounded packets. Reviewers inspect an immutable commit, challenge the director's reasoning, and do not fix their own findings.
 - Each change gets `forge build` and `forge test --match-path` for the test files it touched. Nothing more. The full suite, the deep invariants and the rehearsal run once, on the frozen candidate. A builder packet never asks for a full suite on a work item. Before a command over 30 seconds, say what it must establish.
 - No mainnet broadcast, deploy, push, merge or private key without the owner's explicit instruction.
-- Phase 2 contracts are named only `exitModule` and `exitToken`.
+- The vocabulary is "balance", never "exit" (docs/FLOW.md decision 102). Until the rename packet (docs/NEXT.md item 38) lands, the code still carries `exitModule`, `exitToken` and `exitMode`; new text and new code use the balance names.
 - Toolchain, timings and test rules: `docs/HANDOFF.md` section 7.
