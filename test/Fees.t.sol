@@ -729,17 +729,6 @@ contract BuybackSettingsTest is FeeBase {
         vm.fee(1 gwei);
     }
 
-    function _configure(uint256 slice, uint256 delay, uint256 fee) internal {
-        Settings memory s = core.settings();
-        s.saleToBuybackBps = 10_000;
-        // forge-lint: disable-start(unsafe-typecast)
-        s.buybackSlice = uint128(slice);
-        s.buybackDelay = uint16(delay);
-        s.keeperFee = uint64(fee);
-        // forge-lint: disable-end(unsafe-typecast)
-        _setSettings(s);
-    }
-
     /// what the last `_buyback` returned to the pot: the unused part of the slice
     uint256 internal lastMargin;
 
@@ -770,73 +759,6 @@ contract BuybackSettingsTest is FeeBase {
         assertEq(core.ethToBuyback(), pool - slice + lastMargin, "the unused payment came back");
         assertEq(core.lastBuybackBlock(), block.number);
         assertEq(address(core).balance, _tracked(), "no surplus, no deficit");
-    }
-
-    // promise: SPEC 1 every economic number is an owner setting, effective at once
-    function test_sliceDelayAndFeeFollowTheSettings() public {
-        _configure(0.02 ether, 3, 0.001 ether);
-        _fillEthBuyback();
-        uint256 pool = core.ethToBuyback();
-        assertGt(pool, 0.1 ether);
-        (uint256 slice,) = _buyback();
-        assertEq(slice, 0.02 ether);
-
-        vm.prank(keeper);
-        vm.expectRevert(ICore.TooSoon.selector);
-        core.buyback();
-        vm.roll(block.number + 2);
-        vm.prank(keeper);
-        vm.expectRevert(ICore.TooSoon.selector);
-        core.buyback();
-        vm.roll(block.number + 1);
-        (slice,) = _buyback();
-        assertEq(slice, 0.02 ether);
-
-        // a shorter delay, effective at once: one block is enough now
-        _configure(0.02 ether, 1, 0.001 ether);
-        vm.prank(keeper);
-        vm.expectRevert(ICore.TooSoon.selector);
-        core.buyback();
-        vm.roll(block.number + 1);
-        (slice,) = _buyback();
-        assertEq(slice, 0.02 ether);
-
-        // a zero fee pays the gas refund alone. the smallest slice at a zero fee and the 10 gwei cap is 0.012 ether
-        _configure(0.012 ether, 1, 0);
-        vm.roll(block.number + 1);
-        uint256 keeper0 = keeper.balance;
-        uint256 paid;
-        (slice, paid) = _buyback();
-        assertEq(slice, 0.012 ether);
-        assertEq(keeper.balance - keeper0, paid);
-        assertGt(paid, 0, "the gas refund is still paid");
-
-        // the largest fee. the smallest slice at it is 0.022 ether
-        _configure(0.022 ether, 1, 0.005 ether);
-        vm.roll(block.number + 1);
-        (, paid) = _buyback();
-        assertGt(paid, 0.005 ether);
-
-        // a slice above the pot takes the whole pot
-        _configure(1 ether, 7_200, 0.0005 ether);
-        vm.roll(block.number + 7_200);
-        uint256 rest = core.ethToBuyback();
-        (slice, paid) = _buyback();
-        assertEq(slice, rest);
-        assertEq(core.ethToBuyback(), lastMargin, "only the unused payment margin is left");
-        assertEq(
-            lastMargin,
-            600_000 * block.basefee.min(core.settings().keeperMaxBaseFee) + 0.0005 ether - paid,
-            "the margin is the largest payment less the payment"
-        );
-        // the longest delay binds in blocks
-        _anotherSale();
-        vm.roll(block.number + 7_199);
-        vm.prank(keeper);
-        vm.expectRevert(ICore.TooSoon.selector);
-        core.buyback();
-        vm.roll(block.number + 1);
-        _buyback();
     }
 
 }

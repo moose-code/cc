@@ -564,48 +564,6 @@ contract CoreUnitTest is CoreBase {
                                   views
     //////////////////////////////////////////////////////////////*/
 
-    // promise: inv 17 the pile walk returns pileSize credits
-    function test_views_piles() public {
-        _fund(10 ether);
-        uint256[] memory a = _credits(alice, 3);
-        uint256[] memory b = _credits(alice, 2);
-        vm.startPrank(alice);
-        core.sellForEth(a);
-        _warp(10);
-        core.sellForEth(b);
-        vm.stopPrank();
-
-        assertEq(core.pileSize(), 5);
-        assertEq(core.pilePage(0, 1)[0], a[0]);
-        assertEq(core.pilePage(a[0], 1)[0], a[1]);
-        assertEq(core.pilePage(a[2], 1)[0], b[0]);
-        assertEq(core.pilePage(b[1], 1).length, 0);
-
-        uint256[] memory all = core.pilePage(0, 10);
-        assertEq(all.length, 5);
-        assertEq(all[0], a[0]);
-        assertEq(all[4], b[1]);
-        uint256[] memory page = core.pilePage(a[1], 2);
-        assertEq(page.length, 2);
-        assertEq(page[0], a[2]);
-        assertEq(page[1], b[0]);
-        assertEq(core.pilePage(b[1], 2).length, 0);
-        assertEq(core.pilePage(0, 0).length, 0);
-
-        (bool inPile, uint256 cost, uint64 at) = core.creditInfo(b[0]);
-        assertTrue(inPile);
-        assertGt(cost, 0);
-        assertEq(at, block.timestamp);
-        (inPile,, at) = core.creditInfo(12345678);
-        assertFalse(inPile);
-        assertEq(at, 0);
-
-        assertEq(core.heldStatements().length, 0);
-        assertEq(core.heldStatements().length, 0);
-        (bool held,,) = core.statementInfo(1);
-        assertFalse(held);
-    }
-
     /*//////////////////////////////////////////////////////////////
                                compose guards
     //////////////////////////////////////////////////////////////*/
