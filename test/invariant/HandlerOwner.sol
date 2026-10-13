@@ -1004,12 +1004,12 @@ abstract contract HandlerOwner is HandlerBase {
                       the credit sale, chosen compose and reference settings
     //////////////////////////////////////////////////////////////*/
 
-    /// the owner sets one of the nine credit settings (three on the core, six on the controller) to a value inside or
+    /// the owner sets one of the eight credit settings (three on the core, five on the controller) to a value inside or
     /// outside its bounds, or a stranger tries. inside: it goes through and reads back. outside a bounded numeric field:
     /// BadSetting. a stranger: OnlyOwner. no asset or pot moves
     function creditSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_CREDIT_SETTINGS;
-        uint256 which = mode % 9;
+        uint256 which = mode % 8;
         bool stranger = (mode >> 8) % 6 == 0;
         bool bad = (mode >> 12) % 4 == 0;
         (address target, bytes memory data, bool valid, uint256 want, uint256 cur) = _creditCase(which, seed, bad);
@@ -1089,13 +1089,6 @@ abstract contract HandlerOwner is HandlerBase {
             data = abi.encodeCall(IControllerV1.setCreditStartBps, (uint32(v)));
             valid = v >= 10_000 && v <= 200_000;
             want = v;
-        } else if (which == 7) {
-            target = v1;
-            cur = uint160(c.creditScoreModule());
-            address m = seed % 2 == 0 ? address(0) : address(uint160(uint256(keccak256(abi.encode("scoreMod", seed)))));
-            data = abi.encodeCall(IControllerV1.setCreditScoreModule, (m));
-            valid = true;
-            want = uint160(m);
         } else {
             target = v1;
             cur = c.refScore();
@@ -1116,7 +1109,6 @@ abstract contract HandlerOwner is HandlerBase {
         if (which == 4) return c.creditWindow();
         if (which == 5) return c.creditFloorBps();
         if (which == 6) return c.creditStartBps();
-        if (which == 7) return uint160(c.creditScoreModule());
         return c.refScore();
     }
 }

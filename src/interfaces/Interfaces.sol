@@ -38,8 +38,11 @@ interface ICoreViews {
     function pileSize() external view returns (uint256);
     function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids); // startAfter 0 starts at head
     function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
-    /// wei per credit the eth bid pays now, the current bid used in the credit sale floor
+    /// wei per credit the eth bid pays now, the price state lowered to the pot
     function ethRate() external view returns (uint256);
+    /// wei per credit of the price state now, before the pot clamp `ethRate` applies. the credit sale floor reads it
+    /// so a sale that enlarges the pot cannot raise the rate the credit is priced against
+    function ethPrice() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose
     function ratingOf(uint256 sid) external view returns (uint256);
@@ -203,7 +206,7 @@ struct Sale {
 /// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
 /// window, chosen composition and the rating reference. owner adjustable afterwards, so the launch rules only check
 /// bounds (`src/lib/CreditBounds.sol`). the Core reads `costToPotBps`, `chosenComposeOn` and `minCcToChoose`; the
-/// controller reads `saleOn`, `window`, `floorBps`, `startBps`, `scoreModule` and `refScore`
+/// controller reads `saleOn`, `window`, `floorBps`, `startBps` and `refScore`
 struct Credit {
     // core
     /// share of credit sale proceeds routed to the buying pot, bps. the rest funds the coin buyback. 0 to 10_000
@@ -223,9 +226,6 @@ struct Credit {
     uint16 floorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
     uint32 startBps;
-    /// the module read for a credit's score in the exit token baseline, through `scoreOf(uint256)`. zero gives a zero
-    /// baseline
-    address scoreModule;
     /// the per-credit score at which `80 * refScore` equals a statement's reference denominator, in ten-thousandths of
     /// a point. 1 to 8_000_000
     uint32 refScore;
@@ -313,8 +313,8 @@ library Mainnet {
     }
 
     /// the launch credit settings: the credit sale is off, its window is 4 hours, the floor is 110 percent and the
-    /// start 300 percent of the floor, the score module is unset, the reference per-credit score is the launch average,
-    /// the whole credit cost funds the pot, and chosen composition is off with no coin balance required
+    /// start 300 percent of the floor, the reference per-credit score is the launch average, the whole credit cost
+    /// funds the pot, and chosen composition is off with no coin balance required
     function defaultCredit() internal pure returns (Credit memory) {
         return Credit({
             costToPotBps: 10_000,
@@ -324,7 +324,6 @@ library Mainnet {
             window: 4 hours,
             floorBps: 11_000,
             startBps: 30_000,
-            scoreModule: address(0),
             refScore: 4_330_000
         });
     }

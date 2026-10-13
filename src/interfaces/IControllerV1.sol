@@ -14,7 +14,6 @@ interface IControllerV1 {
         uint32 window;
         uint16 floorBps;
         uint32 startBps;
-        address scoreModule;
         uint32 refScore;
     }
 
@@ -42,7 +41,6 @@ interface IControllerV1 {
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event CreditFloorBpsSet(uint16 creditFloorBps);
     event CreditSaleOnSet(bool on);
-    event CreditScoreModuleSet(address creditScoreModule);
     event CreditStartBpsSet(uint32 creditStartBps);
     event CreditWindowSet(uint32 creditWindow);
     event ExitPoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
@@ -67,7 +65,6 @@ interface IControllerV1 {
     function creditFloorBps() external view returns (uint16);
     function creditPrice(uint256 id) external view returns (uint256 price);
     function creditSaleOn() external view returns (bool);
-    function creditScoreModule() external view returns (address);
     function creditStartBps() external view returns (uint32);
     function creditWindow() external view returns (uint32);
     function exitPoolKey()
@@ -90,7 +87,6 @@ interface IControllerV1 {
     function setAnchorMinCost(uint128 v) external;
     function setCreditFloorBps(uint16 v) external;
     function setCreditSaleOn(bool v) external;
-    function setCreditScoreModule(address v) external;
     function setCreditStartBps(uint32 v) external;
     function setCreditWindow(uint32 v) external;
     function setExitPoolKey(PoolKey memory key) external;

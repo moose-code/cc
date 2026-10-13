@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {Halving} from "./lib/Halving.sol";
-import {Sale, Credit, IController, ICoreViews, ICoreSale, Mainnet} from "./interfaces/Interfaces.sol";
+import {Sale, Credit, IController, ICoreViews, ICoreSale, ICreditScore, ICredits, Mainnet} from "./interfaces/Interfaces.sol";
 import {CreditBounds} from "./lib/CreditBounds.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -77,7 +77,6 @@ contract ControllerV1 is IController {
     event CreditWindowSet(uint32 creditWindow);
     event CreditFloorBpsSet(uint16 creditFloorBps);
     event CreditStartBpsSet(uint32 creditStartBps);
-    event CreditScoreModuleSet(address creditScoreModule);
 
     /// one pause of sales: a single storage slot
     struct PauseWindow {
@@ -136,9 +135,6 @@ contract ControllerV1 is IController {
     uint16 public creditFloorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
     uint32 public creditStartBps;
-    /// the module read for a credit's score in the exit token baseline, through `scoreOf(uint256)`. zero gives a zero
-    /// baseline. launch value zero
-    address public creditScoreModule;
 
     constructor(address core, Sale memory sale, Credit memory credit) {
         CORE = ICoreViews(core);
@@ -170,7 +166,6 @@ contract ControllerV1 is IController {
         creditWindow = credit.window;
         creditFloorBps = credit.floorBps;
         creditStartBps = credit.startBps;
-        creditScoreModule = credit.scoreModule;
     }
 
     modifier onlyOwner() {
@@ -320,12 +315,6 @@ contract ControllerV1 is IController {
         emit CreditStartBpsSet(v);
     }
 
-    /// the module read for a credit's score in the exit token baseline. the zero address gives a zero baseline
-    function setCreditScoreModule(address v) external onlyOwner {
-        creditScoreModule = v;
-        emit CreditScoreModuleSet(v);
-    }
-
     // ------------------------------------------------------------------ pricing and sale
 
     /// the running level of sale prices now, bps of the reference: 10_000 plus the part of `storedAnchorBps` above
@@ -409,7 +398,10 @@ contract ControllerV1 is IController {
         uint256 hi = cost;
         uint256 base = _baseline(id);
         if (base > hi) hi = base;
-        uint256 bid = CORE.ethRate();
+        // the eth bid rate before the pot clamp. a sale through `sellCreditTo` adds the credit's cost to the pot, which
+        // raises the clamped rate; reading the rate before the clamp keeps the floor at or above the rate a buyer
+        // could resell the credit into, so a buy and resell in one transaction cannot profit
+        uint256 bid = CORE.ethPrice();
         if (bid > hi) hi = bid;
         uint256 floor = hi * creditFloorBps / BPS;
         uint256 start = floor * creditStartBps / BPS;
@@ -418,28 +410,34 @@ contract ControllerV1 is IController {
         price = start - (start - floor) * age / creditWindow;
     }
 
-    /// the exit token baseline of credit `id` in wei: its score times the lower of the stored and live `unitPerPoint`,
-    /// priced at the exit token pool, the same read the statement value floor uses. zero when the credit score module
-    /// is unset, no exit module is set, the pool key is unset, the score reads zero, or the pool price reads zero. a
-    /// failing module call does not revert the sale
+    /// the exit token baseline of credit `id` in wei: its credit score times the lower of the stored and live
+    /// `unitPerPoint`, priced at the exit token pool, the same read the statement value floor uses. the credit score
+    /// comes from the same source the exit token bid reads (`sellForExitToken`). zero when no exit module is set, the
+    /// pool key is unset, the score or the unit reads zero, the product would overflow, or the pool price reads zero. a
+    /// failing score read gives zero and does not revert the sale
     function _baseline(uint256 id) private view returns (uint256) {
-        address scoreMod = creditScoreModule;
-        if (scoreMod == address(0) || !exitPoolKeySet) return 0;
+        if (!exitPoolKeySet) return 0;
         address module = CORE.exitModule();
         if (module == address(0)) return 0;
         uint256 unit = CORE.unitPerPoint();
         uint256 live = _liveUnit(module);
         if (live < unit) unit = live;
-        uint256 owed = _scoreOf(scoreMod, id) * unit;
-        if (owed == 0) return 0;
-        (uint256 priceWei, bool priced) = _priceBaseUnits(owed);
+        uint256 score = _scoreOf(id);
+        if (score == 0 || unit == 0 || unit > type(uint256).max / score) return 0;
+        (uint256 priceWei, bool priced) = _priceBaseUnits(score * unit);
         return priced ? priceWei : 0;
     }
 
-    /// the score of credit `id` from the credit score module, read with at most `READ_GAS`. a revert or a short answer
-    /// reads as 0
-    function _scoreOf(address module, uint256 id) private view returns (uint256) {
-        (bool ok, bytes memory out) = module.staticcall{gas: READ_GAS}(abi.encodeWithSignature("scoreOf(uint256)", id));
+    /// the credit score of `id` from the credit score contract, the same `scoreOf(seed, paidAt)` source the exit token
+    /// bid reads in `sellForExitToken`, through a bounded staticcall of at most `READ_GAS`. a revert or a short answer
+    /// reads as 0. `seedOf` and `timestampOf` are read directly: `creditPrice` calls this only for a credit the core
+    /// holds in the pile, so those reads cannot revert
+    function _scoreOf(uint256 id) private view returns (uint256) {
+        bytes21 seed = ICredits(Mainnet.CREDITS).seedOf(id);
+        uint64 paidAt = ICredits(Mainnet.CREDITS).timestampOf(id);
+        (bool ok, bytes memory out) = Mainnet.CREDIT_SCORE.staticcall{gas: READ_GAS}(
+            abi.encodeWithSelector(ICreditScore.scoreOf.selector, seed, paidAt)
+        );
         return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
     }
 
@@ -464,26 +462,23 @@ contract ControllerV1 is IController {
         _busy = false;
     }
 
-    /// pays the sum of the sale prices of `ids`, gets the credits, and refunds the excess last. each price is read
-    /// before any sale, so the batch total is fixed and a sale does not raise the price of a later credit in the same
-    /// batch. reverts `CreditSaleOff` while the sale is off and `Paused` while sales are paused
+    /// pays the sale prices of `ids` in order, gets the credits, and refunds the excess last. each credit is priced
+    /// after the previous sale in the same batch, so a sale's effect on the pot is already in the next credit's price.
+    /// reverts `CreditSaleOff` while the sale is off and `Paused` while sales are paused
     function buyCredits(uint256[] calldata ids) external payable {
         if (!creditSaleOn) revert CreditSaleOff();
         if (paused) revert Paused();
         if (_busy) revert Reentrant();
         _busy = true;
         uint256 n = ids.length;
-        uint256[] memory prices = new uint256[](n);
-        uint256 total;
+        uint256 spent;
         for (uint256 i; i < n; ++i) {
-            prices[i] = creditPrice(ids[i]);
-            total += prices[i];
+            uint256 price = creditPrice(ids[i]);
+            spent += price;
+            if (msg.value < spent) revert Underpaid();
+            ICoreSale(address(CORE)).sellCreditTo{value: price}(ids[i], msg.sender);
         }
-        if (msg.value < total) revert Underpaid();
-        for (uint256 i; i < n; ++i) {
-            ICoreSale(address(CORE)).sellCreditTo{value: prices[i]}(ids[i], msg.sender);
-        }
-        if (msg.value > total) SafeTransferLib.safeTransferETH(msg.sender, msg.value - total);
+        if (msg.value > spent) SafeTransferLib.safeTransferETH(msg.sender, msg.value - spent);
         _busy = false;
     }
 
@@ -575,8 +570,10 @@ contract ControllerV1 is IController {
     /// the anchor
     function _moveAnchor(uint256 sid, uint256 price, uint256 cost, uint256 ref) private {
         if (cost < anchorMinCost) return;
-        // ref is at least cost, and cost is at least 80: every credit enters the pile through `_spend` (nonzero),
-        // `adopt` (at least 1 wei) or the exit bid
+        // `ref` is zero only when `cost` is zero (a statement whose credits all entered the pile at a zero eth rate).
+        // the return guards the division below. `_reference` divides by `80 * refScore`, at least 80, so it never
+        // divides by zero
+        if (ref == 0) return;
         uint256 saleBps = (price * BPS + ref - 1) / ref;
         uint256 current = anchorBps();
         if (saleBps <= current) return;
@@ -624,7 +621,7 @@ contract ControllerV1 is IController {
         return ref * n / (1 hours * BPS);
     }
 
-    // ------------------------------------------------------------------ credit picking, unchanged
+    // ------------------------------------------------------------------ credit picking
 
     /// ready when the pile holds a full page. the page is the 80 oldest credits with format 0. while the credit sale is
     /// on the page is ready only once the newest of its 80 credits is past its window; the pile is oldest first, so that

@@ -163,7 +163,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event EngineRetired(address indexed successor);
     /// `migrate` could not transfer `xPot` (`amount`) to the successor; the pot stays
     event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
-    /// share of credit sale proceeds routed to the buying pot, the rest to the coin buyback (docs/FLOW.md 88)
+    /// share of a sold credit's cost booked to ethPot, the rest of the payment to ethToBuyback (docs/FLOW.md 88)
     event CreditCostToPotBpsSet(uint16 bps);
     /// whether a caller may pick the 80 credits and the format of a compose (docs/FLOW.md 89)
     event ChosenComposeOnSet(bool on);
@@ -260,13 +260,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// `adopt` and `compose` with `Retired`
     bool public retired;
 
-    /// share of credit sale proceeds routed to the buying pot, the rest to the coin buyback. launch 10_000, 0 to
-    /// 10_000. phase 2 wires it (docs/FLOW.md 88)
+    /// share of a sold credit's cost booked to ethPot in `sellCreditTo`, the rest of the payment to ethToBuyback.
+    /// launch 10_000, 0 to 10_000 (docs/FLOW.md 88)
     uint16 public creditCostToPotBps;
     /// whether a caller may pick the 80 credits and the format of a compose through `composeChosen`. launch false
     /// (docs/FLOW.md 89)
     bool public chosenComposeOn;
-    /// least coin balance a caller of `composeChosen` must hold. launch 0 (docs/FLOW.md 89)
+    /// least coin balance the caller of `composeChosen` must hold, checked against the caller's balance at the call.
+    /// launch 0 (docs/FLOW.md 89)
     uint96 public minCcToChoose;
 
     modifier onlyOwner() {
@@ -620,10 +621,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// composes a statement from 80 pile credits the caller names and a format the caller picks. requires
-    /// `chosenComposeOn`, a caller coin balance at least `minCcToChoose`, and that every named credit is in the pile
-    /// and past its window. the window gate reads the controller with the acquisition time of the newest named credit:
-    /// `pastWindow` is monotonic in that time, so the newest passing means every named credit passes. every other
-    /// compose rule, the record and the event are the same as `compose`. reverts `Retired` after `migrate`
+    /// `chosenComposeOn`, a caller coin balance at least `minCcToChoose`, and that every named credit is in the pile.
+    /// the core passes only the newest named credit's acquisition time to the controller's `pastWindow`. the controller
+    /// must keep `pastWindow` non-increasing in the acquisition time, so the newest named credit passing means every
+    /// named credit passes. every other compose rule, the record and the event are the same as `compose`. reverts
+    /// `Retired` after `migrate`
     function composeChosen(uint256[80] calldata ids, uint8 format) external nonReentrant {
         uint256 gasStart = gasleft();
         _openDoor();
@@ -1005,8 +1007,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit TargetRemoved(target);
     }
 
-    /// sets the share of credit sale proceeds routed to the buying pot, the rest to the coin buyback. 0 to 10_000.
-    /// phase 2 wires it; no behavior reads it yet (docs/FLOW.md 88)
+    /// sets the share of a sold credit's cost booked to ethPot, the rest of the payment to ethToBuyback. 0 to 10_000.
+    /// read by `sellCreditTo` (docs/FLOW.md 88)
     function setCreditCostToPotBps(uint16 v) external onlyOwner {
         if (!CreditBounds.costToPotBpsOk(v)) revert BadSetting("creditCostToPotBps");
         creditCostToPotBps = v;

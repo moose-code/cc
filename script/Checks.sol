@@ -74,12 +74,12 @@ abstract contract LaunchChecks is PostflightChecks {
     /// code. computed from the sources at the frozen candidate recorded in project/director-state.json. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0xe421b6c5114eb6605b739036aafa4c9aa1a40c9df4bda65f3a0f08485bf3438f;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0xf5916c265b20cb08879aca2b840911affa95db55d6bafcc36f6b9c8580a9b272;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xa9d3de885181aacc186fe8830ed57779300ae593d0f576baaad3b5de049a59cd;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xd53631369f50a69ef0b95308262af6d24e5a9b68e6d6cae3d2bdf1bfb119c82c;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xffd8e83b03874fb67fc4278fc62475a46e4e34cc5400ddb5732b64d912a8438e;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
     bytes32 internal constant BUILD_HASH_LENS = 0x5aac42605b463b8938153f064736e5f4ae6f7d4f0ad15acf23221380ffd88555;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x6289dac1e52a5b5783bdc0d36eddef21e6da205029e4534b6facaacaa77aa0e6;
+        0xcbdddcd29b65031a7c704ec3cd3b86a317408ba1405e7120a423b9598893c944;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -911,9 +911,7 @@ abstract contract LaunchChecks is PostflightChecks {
                 vm.toString(c.credit.startBps),
                 " bps, cost to pot ",
                 vm.toString(c.credit.costToPotBps),
-                " bps, score module ",
-                vm.toString(c.credit.scoreModule),
-                " refScore ",
+                " bps, refScore ",
                 vm.toString(c.credit.refScore)
             )
         );

@@ -8,8 +8,8 @@ import {Credit} from "../interfaces/Interfaces.sol";
 /// the bounds stop typos and keep the sale prices above the credit cost
 library CreditBounds {
     uint256 internal constant BPS = 10_000;
-    /// the largest per-credit score the rating type allows, in ten-thousandths of a point, so `80 * refScore` is at
-    /// most the largest rating of 80 credits
+    /// the largest per-credit score, in ten-thousandths of a point (800 points), so `80 * refScore` is at most the
+    /// largest rating of 80 credits
     uint32 internal constant MAX_REF_SCORE = 8_000_000;
 
     function costToPotBpsOk(uint16 v) internal pure returns (bool) {
@@ -33,7 +33,7 @@ library CreditBounds {
     }
 
     /// @notice the name of the first credit field out of bounds, or zero when every bounded field is inside its bounds.
-    /// `chosenComposeOn`, `minCcToChoose`, `saleOn` and `scoreModule` take any value
+    /// `chosenComposeOn`, `minCcToChoose` and `saleOn` take any value
     function firstViolation(Credit memory c) internal pure returns (bytes32) {
         if (!costToPotBpsOk(c.costToPotBps)) return "creditCostToPotBps";
         if (!windowOk(c.window)) return "creditWindow";

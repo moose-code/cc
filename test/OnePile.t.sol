@@ -8,6 +8,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
+import {LowballCreditController} from "./attackers/CreditSaleAttackers.sol";
 
 /// decision 92: one pile for every credit. the exit token bid records an eth cost basis of the higher of the exit
 /// tokens paid valued in wei (the controller's `valueWei`, decision 87 pool math) and the current eth bid, so a
@@ -65,13 +66,13 @@ contract OnePileTest is Fixture {
     }
 
     /// a cheap exit token (a pushed down pool price) values the exit tokens below the eth bid, so the recorded cost
-    /// floors at the eth bid and cannot go lower
+    /// floors at the eth bid rate before the pot clamp and cannot go lower
     function test_sellForExit_costFloorsAtTheEthBidWhenThePoolPriceIsPushedDown() public {
         _ready();
         // the fixture pool is at a high sqrt price: the exit token is cheap, so its wei value is near zero
         _setExitPool();
         uint256[] memory ids = _credits(seller, 1);
-        uint256 ethBid = core.ethRate();
+        uint256 ethBid = core.ethPrice();
         assertGt(ethBid, 0, "the eth bid is nonzero");
         uint256 xBefore = core.xPot();
         vm.prank(seller);
@@ -80,7 +81,78 @@ contract OnePileTest is Fixture {
         uint256 valued = ctl.valueWei(exitPaid);
         (, uint256 cost,) = core.creditInfo(ids[0]);
         assertLt(valued, ethBid, "the pushed down pool price values the exit tokens below the eth bid");
-        assertEq(cost, ethBid, "the recorded eth cost floors at the eth bid");
+        assertEq(cost, ethBid, "the recorded eth cost floors at the eth bid rate before the clamp");
+    }
+
+    /// with an empty eth pot the clamped bid is zero, but the recorded cost floors at the unclamped price state, not
+    /// zero, so a credit bought with the exit token is never resellable into the eth bid at a profit (H2). buying it
+    /// back costs at least `creditFloorBps` (1.1x) of that unclamped rate
+    function test_sellForExit_costFloorsAtTheUnclampedRateWithAnEmptyPot() public {
+        _enterPhase2();
+        xt.mint(address(core), 1e24);
+        core.skim();
+        _setExitPool();
+        assertEq(core.ethPot(), 0, "the eth pot is empty");
+        assertEq(core.ethRate(), 0, "the clamped bid is zero with an empty pot");
+        uint256 priceState = core.ethPrice();
+        assertGt(priceState, 0, "the unclamped price state is nonzero");
+
+        uint256[] memory ids = _credits(seller, 1);
+        uint256 xBefore = core.xPot();
+        vm.prank(seller);
+        core.sellForExitToken(ids);
+        uint256 exitPaid = xBefore - core.xPot();
+        uint256 valued = ctl.valueWei(exitPaid);
+        (, uint256 cost,) = core.creditInfo(ids[0]);
+        assertLt(valued, priceState, "the cheap pool values the exit tokens below the price state");
+        assertEq(cost, priceState, "the recorded cost floors at the unclamped rate, not the clamped zero");
+        assertGe(cost, 1, "the recorded cost is at least 1 wei");
+
+        vm.prank(owner);
+        ctl.setCreditSaleOn(true);
+        vm.warp(block.timestamp + ctl.creditWindow());
+        uint256 floor = cost * ctl.creditFloorBps() / 10_000;
+        assertEq(ctl.creditPrice(ids[0]), floor, "the sale floor is 1.1x the recorded cost");
+        assertGe(ctl.creditPrice(ids[0]), priceState * 11_000 / 10_000, "buy back costs at least 1.1x the unclamped rate");
+    }
+
+    /// an inflated pool price records an inflated eth cost (an accepted residual, M1): the credit's sale is floored at
+    /// that cost by the core hard floor, so a sale below it reverts BelowFloor, and the statement built from the credit
+    /// still leaves the engine through redemption once its curve reaches the floor
+    function test_sellForExit_inflatedCostStillRedeems() public {
+        address buyer = _user("onepileBuyer");
+        _ready();
+        _initPoolAt(LOW_SQRT); // expensive exit token: the recorded cost is far above the eth market
+        uint256[] memory xIds = _credits(seller, 1);
+        vm.prank(seller);
+        core.sellForExitToken(xIds);
+        (, uint256 inflated,) = core.creditInfo(xIds[0]);
+        assertGt(inflated, core.ethPrice() * 100, "the recorded cost is far above the eth bid");
+
+        // a controller that quotes below the inflated cost is refused by the core hard floor
+        IControllerV1 saved = ctl;
+        LowballCreditController lowball = new LowballCreditController(address(core));
+        _setController(address(lowball));
+        vm.deal(address(lowball), inflated);
+        vm.expectRevert(ICore.BelowFloor.selector);
+        lowball.sell{value: inflated - 1}(xIds[0], buyer);
+        _setController(address(saved));
+
+        // compose the inflated credit with 79 eth credits into a statement, then redeem it once it is at its floor
+        _fillEthPile(79);
+        assertEq(core.pileSize(), 80, "a full page including the inflated credit");
+        uint256 supply = STATEMENTS.supply();
+        vm.fee(composeBasefee);
+        vm.prank(keeper);
+        core.compose();
+        uint256 sid = supply + 1;
+        _makeEligible(sid);
+        assertTrue(ctl.atFloor(sid), "the statement reached its floor");
+        uint256 xBefore = core.xPot();
+        core.exitStatement(sid);
+        assertGt(core.xPot(), xBefore, "the statement left the engine through redemption");
+        (bool held,,) = core.statementInfo(sid);
+        assertFalse(held, "the statement is no longer held");
     }
 
     /// without the exit pool key the bid cannot value its cost basis, so it reverts

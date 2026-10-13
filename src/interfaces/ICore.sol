@@ -13,7 +13,6 @@ interface ICore {
         uint32 window;
         uint16 floorBps;
         uint32 startBps;
-        address scoreModule;
         uint32 refScore;
     }
 

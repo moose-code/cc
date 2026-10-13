@@ -303,7 +303,20 @@ abstract contract HandlerSale is HandlerOwner {
         }
         bool short_ = priced && q.price != 0 && xSeed % 6 == 0;
         q.value = _creditValue(priced, q.price, short_, xSeed);
-        q.want = _buyCreditRefusal(c.creditSaleOn(), c.paused(), short_, core.controller() == v1);
+        q.want = _buyCreditsRefusal(c.creditSaleOn(), c.paused(), short_, core.controller() == v1);
+    }
+
+    /// the refusal of `ControllerV1.buyCredits` in the order its one pass loop reaches: the sale window, the pause,
+    /// then per credit a payment check and the core's `sellCreditTo`. a short batch payment is `total - 1`, which
+    /// clears the first credit's cumulative check, so a wrong controller reverts `OnlyController` on the first sale
+    /// before the short payment reverts `Underpaid` on the last credit. this flips the payment and controller order of
+    /// the single `buyCredit` refusal
+    function _buyCreditsRefusal(bool saleOn, bool paused_, bool short_, bool realCtl) internal pure returns (bytes4) {
+        if (!saleOn) return IControllerV1.CreditSaleOff.selector;
+        if (paused_) return IControllerV1.Paused.selector;
+        if (!realCtl) return ICore.OnlyController.selector;
+        if (short_) return IControllerV1.Underpaid.selector;
+        return bytes4(0);
     }
 
     /// a buyer pays the curve price of one pile credit through the first controller, with an excess or a short payment

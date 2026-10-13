@@ -216,7 +216,6 @@ abstract contract ConfigReader is CommonBase {
             window: _u32(j, ".credit.window"),
             floorBps: _u16(j, ".credit.floorBps"),
             startBps: _u32(j, ".credit.startBps"),
-            scoreModule: vm.parseJsonAddress(j, ".credit.scoreModule"),
             refScore: _u32(j, ".credit.refScore")
         });
     }

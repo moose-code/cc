@@ -60,7 +60,6 @@
     "window": 14400,
     "floorBps": 11000,
     "startBps": 30000,
-    "scoreModule": "0x0000000000000000000000000000000000000000",
     "refScore": 4330000
   },
   "launch": {

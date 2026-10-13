@@ -580,10 +580,10 @@ library CoreLib {
     /// the lower of the stored `unitPerPoint` and the module's live `unitPerPoint()`, so a module that lowered its rate
     /// after the owner set it cannot make the bid overpay. reads the score from the credit score contract. runs only
     /// while `exitMode` is 2. each credit's price must not exceed the remaining pot. the credit enters the single pile
-    /// with an eth cost basis of the higher of the exit tokens paid valued in wei (`controller.valueWei`) and the
-    /// current eth bid, so a pushed down pool price cannot record a cost below the eth market (docs/FLOW.md 92). a
-    /// failing, short or zero live unit read reverts the whole bid (`BadModule`); an unset pool key or a zero pool
-    /// price reverts in `valueWei`
+    /// with an eth cost basis of the higher of the exit tokens paid valued in wei (`controller.valueWei`) and the eth
+    /// bid rate before the pot clamp, at least 1 wei, so a pushed down pool price cannot record a cost below the eth
+    /// market and an empty pot does not record a zero cost (docs/FLOW.md 92). a failing, short or zero live unit read
+    /// reverts the whole bid (`BadModule`); an unset pool key or a zero pool price reverts in `valueWei`
     function _sellForExitToken(uint256[] calldata ids, uint256 minOut) private {
         CoreState storage c = state();
         if (c.retired) revert Retired();
@@ -596,8 +596,9 @@ library CoreLib {
         if (live < unit) unit = live;
         uint256 net = BPS - s.exitBidMarginBps;
         uint256 pot = c.xPot;
-        // the current eth bid, the floor of a credit's recorded eth cost basis. read only, no checkpoint
-        (, uint256 ethBid) = _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
+        // the eth bid rate before the pot clamp, the floor of a credit's recorded eth cost basis. the unclamped price
+        // state is read so an empty pot does not drop the floor to zero. read only, no checkpoint
+        (uint256 ethBid,) = _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
         IController ctl = IController(c.controller);
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
@@ -609,7 +610,7 @@ library CoreLib {
             pot -= paid;
             total += paid;
             uint256 valued = ctl.valueWei(paid);
-            uint256 cost = valued > ethBid ? valued : ethBid;
+            uint256 cost = (valued > ethBid ? valued : ethBid).max(1);
             push(c.pile, c.credits, id, cost);
             CREDITS.transferFrom(msg.sender, address(this), id);
             emit CreditBought(id, msg.sender, cost);
