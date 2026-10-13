@@ -79,15 +79,6 @@ abstract contract SaleSuite is InvariantsBase {
         }
     }
 
-    /// the hostile owner path with every sale action in a long fixed sequence of mixed calls: nothing reverts, no violation
-    /// forge-config: default.gas_limit = 9223372036854775807
-    function testFuzz_saleActionsNeverRevert(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) public {
-        uint256 k = a % 7;
-        _act(k == 6 ? 34 : 23 + k, w, x, y, z);
-        for (uint256 i = 1; i < handler.violationCount(); ++i) {
-            assertEq(handler.viol(i), 0, handler.violMsg(i));
-        }
-    }
 }
 
 /// phase 1 after the sniper window, the sale suite

@@ -11,12 +11,7 @@ import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {ICredits, IStatements, IBalanceModule, Mainnet, Settings, Stack, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
 import {ICoreLens} from "../../src/interfaces/ICoreLens.sol";
-import {
-    IArtCoinsFactoryV2,
-    IArtCoinsTokenV2,
-    IArtCoinsFeeEscrowV2,
-    IArtCoinsHookV2
-} from "../../src/interfaces/ArtCoinsV2.sol";
+import {IArtCoinsFactoryV2, IArtCoinsTokenV2, IArtCoinsFeeEscrowV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {V2Stack} from "./V2Stack.sol";
 import {Deployed} from "../../script/SystemDeployer.sol";
 import {ProdDeployer} from "./ProdDeployer.sol";
@@ -363,15 +358,6 @@ abstract contract Fixture is Test, ProdDeployer {
         for (uint256 i; i < 16 && core.ethPot() < eth; ++i) {
             uint256 need = eth - core.ethPot();
             _buyCoin(funder, need * 10_000 / 460 + 1000);
-        }
-        assertGe(core.ethPot(), eth, "pot not funded");
-    }
-
-    /// @notice like `_fundPot` but never buys more than the gap needs (the guess is the first book rate, the highest one),
-    /// so the pot lands just over `eth`. for tests that need a pot close to an exact figure
-    function _fundPotNear(uint256 eth) internal {
-        for (uint256 i; i < 16 && core.ethPot() < eth; ++i) {
-            _buyCoin(funder, (eth - core.ethPot()) * 10_000 / 531 + 1e12);
         }
         assertGe(core.ethPot(), eth, "pot not funded");
     }

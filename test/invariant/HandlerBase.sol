@@ -129,12 +129,10 @@ abstract contract HandlerBase is Test {
     uint256 internal constant V_X_IN = 4; // balance token arrived in the core beyond what the action explains
     uint256 internal constant V_ABOVE_CAP = 5; // a credit was bought above the rate read before the action
     uint256 internal constant V_LISTING_PAY = 6; // a buyListing payment outside min(bid less cost, gas cap at the base fee plus keeperFee)
-    uint256 internal constant V_SALE_FLOOR = 7; // a statement sold below the hard floor, or at another price than the controller asks
     uint256 internal constant V_DEPART = 8; // a statement left the core without a recorded legal redemption
     uint256 internal constant V_REDEEM_SHORT = 9; // a redemption that returned less than credits * unit per credit
     uint256 internal constant V_MODEL = 10; // the core disagrees with the handler's ghost model
     uint256 internal constant V_RATE_BOUND = 11; // the rate moved faster or slower than the settings in force allow
-    uint256 internal constant V_FUNDED_STALE = 12; // the stored funded flag disagrees with pot and rate
     uint256 internal constant V_SPEND = 13; // a spend above the pot at that moment
     uint256 internal constant V_HOSTILE_OK = 14; // a hostile listing target got through
     uint256 internal constant V_PROBE_OK = 15; // a controller attack call succeeded
@@ -148,7 +146,6 @@ abstract contract HandlerBase is Test {
     uint256 internal constant V_POT = 20; // pot bookkeeping off from the action's flows
     uint256 internal constant V_RECEIVE = 21; // the core's receive() reverted, or a swap failed for an unexplained reason
     uint256 internal constant V_SUPPLY = 22; // coin supply differs from the ghost, or rose
-    uint256 internal constant V_AUCTION = 23; // the balance token auction broke its price, slice or restart rules
     uint256 internal constant V_SETTINGS = 24; // settings changed outside the owner's call, or an owner call misbehaved
     uint256 internal constant V_OWNER = 25; // an owner action moved assets or the books it must not touch
     uint256 internal constant V_SALE_PATH = 26; // a sellTo or buy sale outside the rules: price, booking, holder or record
@@ -231,12 +228,11 @@ abstract contract HandlerBase is Test {
     bool public gRetired;
     string[N_VIOL] public violMsg;
 
-    // coin supply ghost. the expected supply falls by the coin the eth buyback bought and burned, and by the coin
-    // burned out of a taker in a redemption auction fill. coin taxed to the burn address is held there, not burned
+    // coin supply ghost. the expected supply falls by the coin the eth buyback bought and burned. coin taxed to the
+    // burn address is held there, not burned
     uint256 public gSupply;
     uint256 public gDead;
     uint256 public gBurnedByBuyback;
-    uint256 public gBurnedByAuction;
     uint256 internal gSupplyLast;
     /// swaps and buybacks that ran while the anti sniper skim was above the baseline
     uint256 public windowSwaps;
@@ -985,7 +981,7 @@ abstract contract HandlerBase is Test {
     /// coin, and the core never holds coin
     function _coinCheck() internal {
         uint256 s = coin.totalSupply();
-        if (s != gSupply) _flag(V_SUPPLY, "coin total supply differs from the ghost of buyback and auction burns");
+        if (s != gSupply) _flag(V_SUPPLY, "coin total supply differs from the ghost of buyback burns");
         if (s > gSupplyLast) _flag(V_SUPPLY, "coin total supply rose");
         gSupplyLast = s;
         uint256 d = coin.balanceOf(DEAD);

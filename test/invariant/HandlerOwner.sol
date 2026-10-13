@@ -185,7 +185,7 @@ abstract contract HandlerOwner is HandlerBase {
 
     /// the owner changes the settings to random valid ones, effective at once. nothing may revert. afterwards the
     /// settings are what was set, the stored eth rate is exactly what it was (the call checkpoints it, it never jumps),
-    /// the redemption rate is only held inside the new band, the redemption auction price is continuous, and the pots and balances
+    /// and the pots and balances
     /// did not move
     /// the owner sets exactly `ns` and the ghost follows. not in the fuzz selector list: the smoke tests use it
     function setSettingsExact(Settings memory ns) external {

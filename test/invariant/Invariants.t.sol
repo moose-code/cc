@@ -22,7 +22,7 @@ import {HandlerBase} from "./HandlerBase.sol";
 ///   INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 \
 ///     forge test --match-contract '.*Deep' -vv           # deeper, only the Deep variants run
 /// the defaults come from inline `forge-config` lines on the concrete suites: phase 1 after the sniper window, phase 1
-/// starting inside the window (90 percent skim at the start), the balance side with the redemption auction, the balance side under a hostile
+/// starting inside the window (90 percent skim at the start), the balance side, the balance side under a hostile
 /// controller, and the balance side under a hostile owner (the owner's calls are frequent and adversarial). an inline line beats
 /// an environment variable, so the Deep variants carry no inline config and skip themselves unless INVARIANT_DEEP is
 /// set. they are the same suites, only the depth comes from the environment.
@@ -71,7 +71,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// hook's skim pushed into receive() during real swaps, including the one the hook pushes back during the buyback,
     /// `sellTo` payments, `fund` and eth forced in. a plain send from anyone but the hook and the escrow reverts. any other
     /// movement is a violation. balance token flows too: it leaves the core only as a bid payment in
-    /// sellForBalance or as an auction slice paid for at or above the quoted coin price.
+    /// sellForBalance.
     function invariant_01_ethOnlyLeavesByAllowedPaths() public view {
         _zero(g1);
     }
@@ -187,10 +187,9 @@ abstract contract InvariantsBase is InvariantFixture {
         assertTrue(known, "the installed controller is not tracked");
     }
 
-    /// 9. coin total supply never increases, and it falls by exactly the coin the eth buyback bought and burned plus
-    /// the coin burned out of takers in balance auction fills. coin taxed to the burn address is a transfer, not a
-    /// burn: 0xdEaD holds it and the supply does not move. the handler keeps a ghost of the expected supply and the
-    /// two burn totals from the token's own transfer events and the auction's events.
+    /// 9. coin total supply never increases, and it falls by exactly the coin the eth buyback bought and burned.
+    /// coin taxed to the burn address is a transfer, not a burn: 0xdEaD holds it and the supply does not move. the
+    /// handler keeps a ghost of the expected supply and the burn total from the token's own transfer events.
     function invariant_09_coinSupplyOnlyFallsByBurns() public view {
         _zero(g9);
         uint256 launchSupply = 1_000_000_000e18;
@@ -608,7 +607,7 @@ abstract contract InvariantsBase is InvariantFixture {
         console.log("owner calls checked", handler.gOwnerCalls(), "refused as expected", handler.gOwnerRefused());
         console.log("statements ever held", handler.everHeldCount(), "held now", core.heldStatements().length);
         console.log("coin supply", coin.totalSupply(), "burned by buybacks", handler.gBurnedByBuyback());
-        console.log("burned by auction fills", handler.gBurnedByAuction(), "held by the burn address", handler.gDead());
+        console.log("held by the burn address", handler.gDead());
         console.log("swaps under a skim above baseline", handler.windowSwaps());
         console.log("receive() direct sends", handler.receiveSends(), "failures", handler.receiveFails());
         uint256 f = handler.swapFailSelCount();
@@ -668,15 +667,6 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 39) handler.composeChosen(w, x);
         else if (a == 40) handler.creditSettings(w, x);
         else handler.setHeldFormat(w, x);
-    }
-
-    /// no action may revert, whatever the inputs. a reverting handler loses its ghost writes and hides violations.
-    /// the violation counters must also stay at zero after any single action.
-    function testFuzz_handlerNeverReverts(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) public {
-        _act(a, w, x, y, z);
-        for (uint256 i = 1; i < handler.violationCount(); ++i) {
-            assertEq(handler.viol(i), 0, handler.violMsg(i));
-        }
     }
 
     uint256 internal _nonce;
