@@ -1,4 +1,5 @@
 import { formatUnits } from "viem";
+import { chain } from "./config";
 
 // "+58%" / "-12%" for a percentage number.
 export function signedPct(n: number): string {
@@ -47,11 +48,11 @@ export function shortAddr(a: string): string {
 
 // evm.now explorer (chain-aware). Standing rule: never chain-specific explorers.
 export function evmNowAddress(a: string): string {
-  return `https://evm.now/address/${a}?chainId=1`;
+  return `https://evm.now/address/${a}?chainId=${chain.id}`;
 }
 
 export function evmNowTx(h: string): string {
-  return `https://evm.now/tx/${h}?chainId=1`;
+  return `https://evm.now/tx/${h}?chainId=${chain.id}`;
 }
 
 export function shortHash(h: string): string {
@@ -70,7 +71,7 @@ export function agoLabel(s: number): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-// relative time from a unix seconds timestamp.
-export function relTime(ts: number): string {
-  return agoLabel(Math.floor(Date.now() / 1000) - ts);
+// relative time from a unix seconds timestamp; `now` is chain time (useNow).
+export function relTime(ts: number, now: number): string {
+  return agoLabel(now - ts);
 }

@@ -1,81 +1,103 @@
-# connection points
+# data sources
 
-Every place the statements/credits pages use sample data or a disabled action,
-and the on-chain call that replaces it at wiring time. Grep the code for
-`CONNECT:` to find the same notes inline.
+Every number, list and row on the pages comes from the chain. Without the core
+and lens addresses each engine page renders "engine not deployed". Before the
+first read lands, values are zero or "—". Reads follow the project's RPC
+discipline: `CoreLens.snapshot()` returns most engine state in one call and one
+log scan feeds the feed, stats and histories.
 
-Sample data lives in `lib/sample.ts` — swap its getters for reads, the pages
-stay the same. Reads should follow the project's RPC discipline: indexer first,
-then cache, then RPC; `CoreLens.snapshot()` returns most of this in one call.
+## local anvil (fork) mode
 
-## statements index — `app/statements/page.tsx`
+`NEXT_PUBLIC_CHAIN_ID=31337` points every read and write at a local anvil
+mainnet fork (`http://127.0.0.1:8545`, viem `foundry` chain). Any other value
+selects mainnet. Local mode has no explorer: tx hashes and contract addresses
+render as raw text, and ENS lookups are skipped.
 
-- **list** — `statements` → `CoreLens.snapshot().statements` (held + listed) and
-  sold statements from `StatementSoldTo` logs. Fields per statement: `id`,
-  `lane`, `cost`, `askingPrice`, `composedAt`, status.
-- **status** — derive: held (in Core, not listed) / listed / sold (has a
-  `StatementSoldTo`).
-- **filter/sort** — the all/for-sale/sold control is not built yet.
+The only wallet is the wagmi mock connector, listed as "local account". It acts
+as `NEXT_PUBLIC_LOCAL_ACCOUNT` (default
+`0x1111111111111111111111111111111111111111`; `local-env.mjs` also reads it from
+the environment or `record.localAccount`). Run anvil with `--auto-impersonate`
+so it signs for that address. Local mode makes no WalletConnect requests.
+Countdowns and "ago" labels use the latest block timestamp, not the browser clock.
 
-## statement detail — `app/statements/[id]/page.tsx`
+Run (anvil up, contracts deployed, record written):
 
-- **load** — `getStatement(id)` → `CoreLens.statementsPage` / `snapshot` by id,
-  else 404.
-- **price** — `ask` is static; poll `ControllerV1.priceOf(id)` (falling price).
-  Show start/floor from the sale settings (`markupBps`, `floorBps`).
-- **buy** (disabled button) — `ControllerV1.buy(id)` payable at `priceOf(id)`
-  (or the Core buy path). Need: live price, slippage/exact value, wallet
-  balance check, tx state.
-- **history** — build from events: `Composed` (cost), the listing (start/markup),
-  `StatementSoldTo` (price + buyer). % over cost = price / cost - 1. Buyer runs
-  through `<Addr>` (ENS).
-- **composed credits** — `creditIds` is synthesized; use the real compose record
-  from the Core.
+```bash
+cd web
+npm run dev:local                          # reads ../deployments/31337.json
+RECORD=/path/to/31337.json npm run dev:local
+```
 
-## credits index — `app/credits/page.tsx` (feed layout)
+`dev:local` runs `scripts/local-env.mjs <record> [rpcUrl]`, which writes the
+gitignored `web/.env.local`, then `next dev`.
 
-- **list** — `credits` → the engine's held pile. Count is
-  `CoreLens.snapshot().ethPileSize`; enumerate ids from `CreditBought` logs or
-  the credits NFT `balanceOf(Core)` + enumeration.
-- **bid** — `engineBid` → `snapshot().ethRate` (wei per credit).
+### deployment record: `deployments/<chainId>.json`
 
-## credit detail — `app/credits/[id]/page.tsx` (engine-owned, no action)
+Written by the contracts deploy wrapper, read by `scripts/local-env.mjs`:
 
-- **load** — `getCredit(id)`; a held credit comes from the pile, a composed one
-  maps to its statement. The engine owns the credit, so there is no action here.
-- **paid by engine** — real `cost` from the `CreditBought` event.
-- **state** — held (awaiting compose) vs composed (into statement #X), from the
-  Core compose record.
+```json
+{
+  "chainId": 31337,
+  "block": 0,
+  "core": "0x..",
+  "coin": "0x..",
+  "controller": "0x..",
+  "router": "0x..",
+  "lens": "0x..",
+  "poolId": "0x..",
+  "credits": "0x..",
+  "statements": "0x..",
+  "creditScore": "0x..",
+  "exitToken": "0x..",
+  "exitModule": "0x.."
+}
+```
 
-## compose — `app/compose/page.tsx` (the in-progress statement)
+`block` is the deploy block (number). `exitToken` and `exitModule` are an
+address or `null`. Optional `hook` (address of the pool's skim hook): the app
+builds the pool key from it (`NEXT_PUBLIC_POOL_HOOK`); without it the app uses
+the mainnet launch hook.
 
-- **filled slots** — `credits` (the pile) → the pile's credit ids (CreditBought
-  logs not yet composed, or a Core pile view). Count = `snapshot().ethPileSize`.
-- **next statement id** — the id the next compose mints.
-- **compose** (button) — `Core.compose()`. Permissionless: anyone can call once
-  >= 80 credits are in the pile. Enabled only when full and the Core is
-  deployed. Exit lane uses `composeExit`.
+| record field | env var |
+| --- | --- |
+| chainId | `NEXT_PUBLIC_CHAIN_ID` |
+| (flag or default) | `NEXT_PUBLIC_RPC_URL` |
+| core | `NEXT_PUBLIC_CORE` |
+| lens | `NEXT_PUBLIC_CORE_LENS` |
+| credits | `NEXT_PUBLIC_CREDITS` |
+| coin | `NEXT_PUBLIC_CC` |
+| router | `NEXT_PUBLIC_ROUTER` |
+| block | `NEXT_PUBLIC_DEPLOY_BLOCK` |
+| hook (optional) | `NEXT_PUBLIC_POOL_HOOK` |
 
-## sell — `app/sell/page.tsx` (holder sells into the bid)
+`creditScore` and `exitModule`
+are not read by the app yet.
 
-- **your credits** — enumerate the connected wallet's Credits NFTs
-  (`balanceOf` + `tokenOfOwnerByIndex`, or `Transfer` logs). `addresses.credits`.
-- **bid** — `snapshot().ethRate` (wei per credit).
-- **buyable now** — `ethPot / rate` caps how many the engine can buy this call;
-  there may also be a per-call pace bound.
-- **approve** (disabled) — `Credits.setApprovalForAll(Core, true)` once.
-- **sell** (disabled) — `Core.sellForEth(ids, minOut)`. `minOut` guards the rate
-  moving down between build and mine. Total received = count * rate.
+## pages
 
-## credit / statement art — `lib/credit-art.ts`, `components/Tiles.tsx`
+| page | source |
+| --- | --- |
+| feed, stats bar | every event of the `Core`, the controller(s) (`Core.controller()` and each `ControllerSet`) and the fee router (`engineEventsAbi` in `lib/abis.ts`), from `NEXT_PUBLIC_DEPLOY_BLOCK`, and coin `Transfer` logs from the core to the zero address (`lib/engine.ts` `useScan`, rows built in `lib/events.ts`). Compose mode (default or chosen) comes from the Composed transaction's calldata; `SettingsSet` rows diff against the previous settings (the first against `Core.settings()` one block earlier); the `$BALANCE` decimals come from `Core.exitToken()`, `$BALANCE` paid for a credit from the token's `Transfer` logs from the core in the `CreditBought` transaction, and the listed price on a composed row from the `price` field of the `Composed` event (0 shows no listed price) |
+| pot, bid, next statement bar | `CoreLens.snapshot()` (`ethPot`, `ethRate`, `pileSize`) |
+| `/statements` | `snapshot().statements` (for sale), `StatementSoldTo` logs (sold), `StatementExited` logs (redeemed); composed statements with none of these show as not held |
+| `/statements/[id]` | `snapshot().statements` plus `ControllerV1.priceOf`, `referenceOf`, `atFloor`, `paused`; history from `Composed` (credits, format, caller, compose mode), `StatementSoldTo`, `AnchorMoved` and `StatementExited` logs and block timestamps. An id with no record shows an empty state |
+| `/credits` | `Core.pilePage`, `Core.creditInfo`, `CoreLens.choosable`, `CoreLens.creditPriceOf` |
+| `/credits/[id]` | `Core.creditInfo` (in pile), `CoreLens.choosable`, `CoreLens.creditPriceOf` and `snapshot().creditWindow` (sale window), `CreditBought` (eth bid, or `$BALANCE` bid when no `EthRateFill` precedes it in the transaction), `ListingBought`, `CreditAdopted`, `CreditSold` and `Composed` logs. An id with no record shows an empty state |
+| `/compose` | `snapshot()` (`pileSize`, `pageReady`, `chosenComposeOn`, `minCcToChoose`), the pile reads above, `Core.compose` and `composeChosen` |
+| `/sell` | `Credits.tokensOf(account)`, `snapshot()` (`ethRate`, `ethPot`), `Core.settings` and the rate storage slot for the batch quote, `Core.sellForEth` |
+| trade panel | pool key from `Core.HOOK`, `POOL_FEE`, `TICK_SPACING`; fee from the hook's `skimConfig` and the MEV module's `currentSkimBps`; engine share from `skimConfig.bountyBps` less the router payee split (`splitOn`, `payeePpmTotal`); v4 `StateView.getSlot0`, v4 `Quoter`, Universal Router; `$cc` price from the Chainlink ETH/USD feed (shows "—" when the read fails) |
 
-- Tiles render the real **Credits format**: a Credit is a CMYK overprint
-  (cyan/magenta/yellow/black, subtractive on white) in a 12x12 raster; a
-  Statement is 80 Credits laid out 8 wide x 10 tall (burn order).
-- Currently the raster is seeded by id (a faithful look-alike). At wiring time,
-  draw the real raster from `Credits.seedOf(id)` + the art contract (see
-  gtmcknight/creditunion `CreditDrawing.sol` / `sheet` renderers), and use the
-  real composed ids from the Core compose record in `statementCreditIds`.
+## credit / statement art — `lib/art.ts`, `components/Tiles.tsx`
+
+- Tiles show the `image` of `tokenURI(id)` of the Credits and Statements
+  contracts (addresses from `CoreLens.CREDITS()` and `STATEMENTS()`).
+  `data:application/json` metadata (base64, utf8 or percent-encoded) is
+  decoded in the browser; http and ipfs metadata is fetched. The image is a
+  data URI or a URL.
+- Reads of one render pass go out as one multicall per collection and are
+  cached per token id. A token whose `tokenURI` reverts (a credit burned in a
+  compose) shows an empty tile with its id.
+- Statement format name and credit rating come from the metadata attributes.
 
 ## ENS (global) — `lib/ens.ts`, `components/Addr.tsx`
 
@@ -84,10 +106,3 @@ then cache, then RPC; `CoreLens.snapshot()` returns most of this in one call.
   (hits and misses) so the RPC is never touched twice for the same address.
 - Used on: the feed's sold rows, the statement history buyer. The connected
   wallet's own name comes from RainbowKit.
-
-## already wired (for reference)
-
-- header stats, engine feed, next-credit / next-statement bars — `lib/engine.ts`
-  (live when `CORE`/`CORE_LENS` set, sample otherwise).
-- trade panel price/quote/swap — `lib/v4.ts` (live when `CC` set, `poolReady`).
-- `$cc` price — Chainlink ETH/USD feed.

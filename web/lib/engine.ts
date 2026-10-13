@@ -1,189 +1,409 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { usePublicClient, useBlockNumber } from "wagmi";
-import { formatUnits, type Address } from "viem";
-import { addresses, deployBlock, isLive, poolReady, ethUsdFeed } from "./config";
+import { usePublicClient } from "wagmi";
+import { decodeFunctionData, zeroAddress, type Address } from "viem";
+import { addresses, deployBlock, engineDeployed, poolReady, ethUsdFeed, pool } from "./config";
 import {
+  coreAbi,
   coreLensAbi,
-  coreEventsAbi,
+  engineEventsAbi,
   stateViewAbi,
   quoterAbi,
   chainlinkAbi,
+  transferEventAbi,
+  erc20Abi,
+  hookAbi,
+  mevAbi,
+  routerAbi,
 } from "./abis";
-import { V4, poolId, poolKey, ccPerEthFromSqrt } from "./v4";
+import { V4, poolId, poolKey, ccPerEthFromSqrt, type PoolParams } from "./v4";
+import { lsGet, lsSet, persistedMap, setAnchor, SCOPE, verifyScope } from "./cache";
+import { useHead } from "./live";
+import { processLogs, type ComposeMode, type ExitTokenInfo, type FeedEvent, type Scan } from "./events";
 
-export type FeedKind = "fee" | "credit" | "composed" | "listed" | "sold" | "burn";
+export type { FeedEvent, FeedKind, Stats, Scan, CreditEvt, CreditHow, StatementRecord, ComposeMode } from "./events";
 
-export interface FeedEvent {
-  key: string;
-  ts: number; // unix seconds
-  kind: FeedKind;
-  detail: string;
-  eth?: string; // pre-formatted for the eth column
-  tx: string; // short display label
-  txHash?: string; // full hash, present on live rows, drives the evm.now link
-  tile?: { kind: "credit" | "statement"; id: number };
-  addr?: string; // an address in the detail (e.g. the statement buyer), ENS-ified
-}
-
-export interface Stats {
-  creditsBought: number;
-  statements: number;
-  ethIntoCredits: number;
-  ccBurned: number;
-}
-
-export const STATEMENT_SIZE = 80; // credits composed into one statement
+export const STATEMENT_SIZE = 80; // credits composed into one statement (Core PAGE, the length of Composed.ids)
 
 export interface Market {
-  live: boolean;
-  ccPerEth: number; // tokens per 1 eth
-  nextCreditPaid: bigint; // wei toward the next credit
-  bid: bigint; // wei the engine pays per credit (rate)
+  ccPerEth: number; // tokens per 1 eth, from the v4 pool slot0
+  bid: bigint; // wei the engine pays per credit (snapshot.ethRate)
+  pot: bigint; // wei available to buy credits (snapshot.ethPot)
   creditsReady: number; // credits in the pile toward the next statement
-  balances?: { cc: bigint; engine: bigint; pool: bigint };
 }
 
-// ---- sample data (engine not deployed) -------------------------------------
+const EMPTY_MARKET: Market = { ccPerEth: 0, bid: 0n, pot: 0n, creditsReady: 0 };
 
-const SAMPLE_BID = 7100000000000000n; // 0.0071 eth
+type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
-function sampleFeed(now: number): FeedEvent[] {
-  // one rolling window mirroring a live engine: fees flush in, credits get
-  // bought at the bid, 80 compose into a statement, statements list and sell,
-  // proceeds buy and burn the coin.
-  const rows: Array<Omit<FeedEvent, "ts" | "key"> & { back: number }> = [
-    { back: 2, kind: "fee", detail: "swap fee to engine", eth: "0.0345", tx: "0x8e1f" },
-    { back: 3, kind: "credit", detail: "bought credit #48213 → statement 213", eth: "0.0071", tx: "0x2c94", tile: { kind: "credit", id: 48213 } },
-    { back: 3, kind: "credit", detail: "bought credit #48207 → statement 213", eth: "0.0070", tx: "0x2c94", tile: { kind: "credit", id: 48207 } },
-    { back: 3, kind: "credit", detail: "bought credit #48204 → statement 213", eth: "0.0072", tx: "0x2c94", tile: { kind: "credit", id: 48204 } },
-    { back: 20, kind: "fee", detail: "swap fee to engine", eth: "0.0052", tx: "0x61ad" },
-    { back: 31, kind: "composed", detail: "statement 212 · 80 credits · cost 0.562 eth", tx: "0x0f37", tile: { kind: "statement", id: 212 } },
-    { back: 31, kind: "listed", detail: "statement 212 for sale, price falling", eth: "2.10", tx: "0x0f37" },
-    { back: 59, kind: "credit", detail: "bought credit #48190 → statement 213", eth: "0.0069", tx: "0x9b02", tile: { kind: "credit", id: 48190 } },
-    { back: 69, kind: "fee", detail: "swap fee to engine", eth: "0.0255", tx: "0x44c8" },
-    { back: 68, kind: "credit", detail: "bought credit #48188 → statement 213", eth: "0.0071", tx: "0x7d5e", tile: { kind: "credit", id: 48188 } },
-    { back: 116, kind: "sold", detail: "statement 208 bought by", addr: "0x91ac4df2a1e8b7c3d5f6a9e0b2c4d6e8f0a244de", eth: "1.40", tx: "0x3a90", tile: { kind: "statement", id: 208 } },
-    { back: 116, kind: "burn", detail: "burned 310,000 cc", tx: "0x3a90" },
-    { back: 115, kind: "credit", detail: "bought credit #48161 → statement 213", eth: "0.0068", tx: "0xe6f1", tile: { kind: "credit", id: 48161 } },
-    { back: 179, kind: "fee", detail: "swap fee to engine", eth: "0.0759", tx: "0xb3a4" },
-    { back: 178, kind: "credit", detail: "bought credit #48151 → statement 213", eth: "0.0070", tx: "0x5c2d", tile: { kind: "credit", id: 48151 } },
-  ];
-  return rows.map((r, i) => ({
-    key: `${r.tx}-${i}`,
-    ts: now - r.back,
-    kind: r.kind,
-    detail: r.detail,
-    eth: r.eth,
-    tx: r.tx,
-    tile: r.tile,
-    addr: r.addr,
-  }));
+// ---- event scan --------------------------------------------------------------
+
+const EMPTY_SCAN: Scan = {
+  feed: [],
+  stats: {
+    creditsEth: 0,
+    creditsExit: 0,
+    creditsListing: 0,
+    creditsAdopted: 0,
+    creditsSold: 0,
+    composed: 0,
+    sold: 0,
+    redeemed: 0,
+    ethIntoCredits: 0,
+    ccBurned: 0,
+  },
+  credits: {},
+  statements: {},
+};
+
+// block number -> timestamp. A mined block's timestamp does not change.
+const blockTime = persistedMap<number>("ts");
+
+async function timestampOf(client: Client, n: bigint): Promise<number> {
+  await verifyScope(client);
+  const cached = blockTime.get(n.toString());
+  if (cached != null) return cached;
+  const ts = Number((await client.getBlock({ blockNumber: n })).timestamp);
+  blockTime.set(n.toString(), ts);
+  return ts;
 }
 
-const SAMPLE_STATS: Stats = {
-  creditsBought: 17017,
-  statements: 212,
-  ethIntoCredits: 119.4,
-  ccBurned: 41820000,
-};
+// Timestamp of one block, undefined until read.
+export function useBlockTs(block?: bigint) {
+  const client = usePublicClient();
+  return useQuery<number | undefined>({
+    queryKey: ["block-ts", block?.toString()],
+    enabled: block != null,
+    staleTime: Infinity,
+    queryFn: () => timestampOf(client!, block!),
+  });
+}
 
-const SAMPLE_MARKET: Market = {
-  live: false,
-  ccPerEth: 2564900,
-  nextCreditPaid: 1200000000000000n, // 0.0012 eth
-  bid: SAMPLE_BID,
-  creditsReady: 56, // 56 of 80 toward the next statement
-  balances: { cc: 0n, engine: 0n, pool: 0n },
-};
+// Immutable per transaction: did it call Core.compose or Core.composeChosen directly?
+const composeMode = persistedMap<ComposeMode | null>("mode");
 
-// ---- hooks ------------------------------------------------------------------
+async function modeOf(client: Client, hash: string): Promise<ComposeMode | null> {
+  const cached = composeMode.get(hash);
+  if (cached !== undefined) return cached;
+  const t = await client.getTransaction({ hash: hash as `0x${string}` });
+  let mode: ComposeMode | null = null;
+  if (t.to?.toLowerCase() === addresses.core?.toLowerCase()) {
+    try {
+      const fn = decodeFunctionData({ abi: coreAbi, data: t.input }).functionName;
+      mode = fn === "compose" ? "default" : fn === "composeChosen" ? "chosen" : null;
+    } catch {
+      /* not a compose call */
+    }
+  }
+  composeMode.set(hash, mode);
+  return mode;
+}
 
-export function useStats() {
-  const feed = useFeed();
-  return useQuery<Stats>({
-    queryKey: ["stats", isLive, feed.data?.length ?? 0],
+const tokenInfo = new Map<string, ExitTokenInfo>();
+
+async function exitTokenInfo(client: Client): Promise<ExitTokenInfo | undefined> {
+  const token = await client.readContract({ address: addresses.core!, abi: coreAbi, functionName: "exitToken" });
+  if (token === zeroAddress) return undefined;
+  const hit = tokenInfo.get(token);
+  if (hit) return hit;
+  const decimals = await client.readContract({ address: token, abi: erc20Abi, functionName: "decimals" });
+  const info = { address: token, decimals };
+  tokenInfo.set(token, info);
+  return info;
+}
+
+export function useExitToken() {
+  const client = usePublicClient();
+  return useQuery<ExitTokenInfo | undefined>({
+    queryKey: ["exit-token", addresses.core],
+    enabled: engineDeployed && Boolean(client),
+    staleTime: 60000,
+    queryFn: () => exitTokenInfo(client!).catch(() => undefined),
+  });
+}
+
+// Decoded logs of the Core, the fee router, every controller the Core has used and
+// the coin burn transfers, kept per source. Each source records the first block not
+// yet scanned; a scan reads that block minus RESCAN up to the head, in CHUNK block
+// ranges. The state is saved in localStorage so a reload resumes where it stopped.
+const RESCAN = 12n; // blocks re-read behind the last scanned block (reorg window)
+const CHUNK = 10_000n; // blocks per getLogs call
+const SCAN_KEY = `${SCOPE}:scan:${addresses.router?.toLowerCase()}:${addresses.cc?.toLowerCase()}`;
+
+interface ScanState {
+  start: bigint; // first block scanned
+  next: Record<string, bigint>; // source -> first block not yet scanned
+  logs: Record<string, any[]>; // source -> logs, oldest first
+  controllers: Record<string, Address>;
+  exit?: ExitTokenInfo;
+}
+
+let state: ScanState | undefined;
+let exitChecked = false;
+let saved = { total: -1, head: 0n };
+let lastGood: Scan | undefined;
+let queue: Promise<unknown> = Promise.resolve();
+
+const slim = (l: any) => ({
+  eventName: l.eventName,
+  args: l.args,
+  address: l.address,
+  blockNumber: l.blockNumber,
+  blockHash: l.blockHash,
+  logIndex: l.logIndex,
+  transactionHash: l.transactionHash,
+});
+
+// Reads one source from its resume point to the head; returns the logs read.
+async function readSource(client: Client, st: ScanState, src: string, head: bigint, fetch: (from: bigint, to: bigint) => Promise<any[]>) {
+  const prev = st.next[src];
+  if (prev != null && head < prev) return []; // head unchanged
+  const from = prev == null || prev > head + 1n ? st.start : prev > st.start + RESCAN ? prev - RESCAN : st.start;
+  const fresh: any[] = [];
+  for (let a = from; a <= head; a += CHUNK) fresh.push(...(await fetch(a, a + CHUNK - 1n < head ? a + CHUNK - 1n : head)).map(slim));
+  st.logs[src] = [...(st.logs[src] ?? []).filter((l) => l.blockNumber < from), ...fresh];
+  st.next[src] = head + 1n;
+  return fresh;
+}
+
+async function scanTo(client: Client, head: bigint): Promise<Scan> {
+  const core = addresses.core!;
+  await verifyScope(client);
+  if (!state) {
+    const s = lsGet<ScanState>(SCAN_KEY);
+    state = s && typeof s.start === "bigint" ? s : { start: deployBlock ?? (head > 50000n ? head - 50000n : 0n), next: {}, logs: {}, controllers: {} };
+  }
+  const st = state;
+  const events = engineEventsAbi as any;
+
+  const [coreFresh, burnFresh] = await Promise.all([
+    readSource(client, st, "core", head, (fromBlock, toBlock) =>
+      client.getLogs({ address: [core, ...(addresses.router ? [addresses.router] : [])], events, fromBlock, toBlock })
+    ),
+    readSource(client, st, "burn", head, (fromBlock, toBlock) =>
+      addresses.cc
+        ? client.getLogs({ address: addresses.cc, event: transferEventAbi[0], args: { from: core, to: zeroAddress }, fromBlock, toBlock })
+        : Promise.resolve([])
+    ),
+  ]);
+
+  // every controller the Core has used: its own logs carry the sale events
+  if (Object.keys(st.controllers).length === 0) {
+    const c = await client.readContract({ address: core, abi: coreAbi, functionName: "controller" });
+    st.controllers[c.toLowerCase()] = c;
+  }
+  for (const l of st.logs.core) if (l.eventName === "ControllerSet") st.controllers[l.args.controller.toLowerCase()] = l.args.controller;
+  const ctl = Object.entries(st.controllers);
+  const ctlFresh = await Promise.all(
+    ctl.map(([k, address]) => readSource(client, st, `ctl:${k}`, head, (fromBlock, toBlock) => client.getLogs({ address, events, fromBlock, toBlock })))
+  );
+
+  // the exit token changes only through ExitModuleSet
+  if (!exitChecked || coreFresh.some((l) => l.eventName === "ExitModuleSet")) {
+    st.exit = await exitTokenInfo(client).catch(() => st.exit);
+    exitChecked = true;
+  }
+
+  const logs = [...st.logs.core, ...ctl.flatMap(([k]) => st.logs[`ctl:${k}`] ?? [])].sort((x, y) =>
+    x.blockNumber === y.blockNumber ? Number(x.logIndex - y.logIndex) : x.blockNumber < y.blockNumber ? -1 : 1
+  );
+
+  // exit token paid by the core to a credit seller, per transaction and seller
+  if (st.exit?.address) {
+    const token = st.exit.address;
+    await readSource(client, st, `xpay:${token.toLowerCase()}`, head, (fromBlock, toBlock) =>
+      client.getLogs({ address: token, event: transferEventAbi[0], args: { from: core }, fromBlock, toBlock })
+    );
+  }
+  const exitPaid = new Map<string, bigint>();
+  for (const t of st.exit?.address ? st.logs[`xpay:${st.exit.address.toLowerCase()}`] ?? [] : []) {
+    const k = `${t.transactionHash}:${String(t.args.to).toLowerCase()}`;
+    exitPaid.set(k, (exitPaid.get(k) ?? 0n) + (t.args.value ?? 0n));
+  }
+
+  // total coin burned by the core
+  let burned = 0n;
+  for (const b of st.logs.burn ?? []) burned += b.args.value ?? 0n;
+
+  // compose mode per Composed transaction
+  const modes = new Map<string, ComposeMode>();
+  await Promise.all(
+    logs
+      .filter((l) => l.eventName === "Composed")
+      .map(async (l) => {
+        const m = await modeOf(client, l.transactionHash).catch(() => null);
+        if (m) modes.set(l.transactionHash, m);
+      })
+  );
+
+  // save when logs were added, else every 300 blocks
+  const total = Object.values(st.logs).reduce((n, a) => n + a.length, 0);
+  if (total !== saved.total || head - saved.head > 300n) {
+    lsSet(SCAN_KEY, st, 2_500_000);
+    const last = logs.reduce((m, l) => (m == null || l.blockNumber > m.blockNumber ? l : m), undefined as any);
+    if (last?.blockHash) setAnchor(last.blockNumber, last.blockHash);
+    saved = { total, head };
+  }
+
+  const { stats, credits, statements, rows } = processLogs({
+    logs,
+    head,
+    burned,
+    modes,
+    exitToken: st.exit,
+    exitPaid,
+  });
+  // logs arrive oldest first; the feed is newest first
+  return (lastGood = { feed: rows.reverse(), stats, credits, statements });
+}
+
+// Every row for the feed (newest first), totals and per credit / per statement
+// histories over every log. Runs once per new head and reads only the blocks since the last run.
+export function useScan() {
+  const client = usePublicClient();
+  const { data: hd } = useHead();
+  const head = hd?.n;
+  const q = useQuery<Scan>({
+    queryKey: ["scan", head?.toString()],
+    enabled: engineDeployed && Boolean(head),
+    gcTime: 30000,
+    placeholderData: (prev) => prev,
     queryFn: () => {
-      if (!isLive || !feed.data) return SAMPLE_STATS;
-      // live: aggregate the scanned window. Bounded by the log scan, so these
-      // are "recent" counts, not genesis-cumulative.
-      let creditsBought = 0;
-      let ccBurned = 0;
-      let ethIntoCredits = 0;
-      const statements = new Set<number>();
-      for (const e of feed.data) {
-        if (e.kind === "credit") {
-          creditsBought++;
-          ethIntoCredits += Number(e.eth ?? 0);
-        }
-        if (e.kind === "composed" && e.tile) statements.add(e.tile.id);
-        if (e.kind === "burn") {
-          const m = e.detail.match(/([\d,]+) cc/);
-          if (m) ccBurned += Number(m[1].replace(/,/g, ""));
-        }
-      }
-      return { creditsBought, statements: statements.size, ethIntoCredits, ccBurned };
+      if (!client || !addresses.core || !head) return EMPTY_SCAN;
+      const p = queue.then(() => scanTo(client, head)).catch(() => lastGood ?? EMPTY_SCAN);
+      queue = p;
+      return p;
     },
-    initialData: SAMPLE_STATS,
+  });
+  return { ...q, data: q.data ?? EMPTY_SCAN };
+}
+
+export const useStats = () => {
+  const { data, ...q } = useScan();
+  return { ...q, data: data.stats };
+};
+
+// ---- pool params and fees, from the chain --------------------------------------
+
+// The pool key the Core buys back in: HOOK, POOL_FEE and TICK_SPACING are Core
+// immutables. Without a deployed Core the config values (the launch config) apply.
+const poolParamsCache = new Map<string, Promise<PoolParams>>();
+
+export function poolParams(client: Client): Promise<PoolParams> {
+  const core = addresses.core;
+  if (!core) return Promise.resolve(pool);
+  let hit = poolParamsCache.get(core);
+  if (!hit) {
+    hit = Promise.all([
+      client.readContract({ address: core, abi: coreAbi, functionName: "HOOK" }),
+      client.readContract({ address: core, abi: coreAbi, functionName: "POOL_FEE" }),
+      client.readContract({ address: core, abi: coreAbi, functionName: "TICK_SPACING" }),
+    ]).then(([hook, fee, tickSpacing]) => ({ hook, fee: Number(fee), tickSpacing: Number(tickSpacing) }));
+    hit.catch(() => poolParamsCache.delete(core));
+    poolParamsCache.set(core, hit);
+  }
+  return hit;
+}
+
+export function usePoolParams() {
+  const client = usePublicClient();
+  return useQuery<PoolParams>({
+    queryKey: ["pool-params", addresses.core],
+    enabled: Boolean(client),
+    staleTime: Infinity,
+    queryFn: () => poolParams(client!).catch(() => pool),
+  });
+}
+
+export interface SwapFees {
+  fee: number; // share of the swap amount taken as fee: the pool's current skim plus the lp fee
+  engineShare: number; // share of that fee that reaches the engine: the hook's bounty share, less the router payee split
+}
+
+// Reads the hook's skim config for the CC/ETH pool, the MEV module's current
+// skim (decays after launch) and the router's payee split.
+export function useSwapFees() {
+  const client = usePublicClient();
+  return useQuery<SwapFees | undefined>({
+    queryKey: ["swap-fees", addresses.cc, addresses.router],
+    enabled: poolReady && Boolean(client),
+    staleTime: 60000,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      if (!client || !addresses.cc) return undefined;
+      try {
+        const p = await poolParams(client);
+        const id = poolId(addresses.cc, p);
+        const cfg = await client.readContract({ address: p.hook, abi: hookAbi, functionName: "skimConfig", args: [id] });
+        let skimBps = Number(cfg.baselineSkimBps);
+        const info = await client.readContract({ address: p.hook, abi: hookAbi, functionName: "poolInfo", args: [id] });
+        if (info.mevModule !== zeroAddress) {
+          const [now] = await client.readContract({ address: info.mevModule, abi: mevAbi, functionName: "currentSkimBps", args: [id] });
+          skimBps = Number(now);
+        }
+        let engineShare = Number(cfg.bountyBps) / 10000;
+        if (addresses.router) {
+          const [on, ppm] = await Promise.all([
+            client.readContract({ address: addresses.router, abi: routerAbi, functionName: "splitOn" }),
+            client.readContract({ address: addresses.router, abi: routerAbi, functionName: "payeePpmTotal" }),
+          ]);
+          if (on) engineShare *= 1 - Number(ppm) / 1e6;
+        }
+        return { fee: skimBps / 10000 + Number(cfg.lpFeePips) / 1e6, engineShare };
+      } catch {
+        return undefined;
+      }
+    },
   });
 }
 
 export function useMarket() {
   const client = usePublicClient();
-  const { data: head } = useBlockNumber({ watch: isLive || poolReady });
+  const head = useHead().data?.n;
   return useQuery<Market>({
-    queryKey: ["market", isLive, poolReady, head?.toString()],
-    refetchInterval: 15000,
+    queryKey: ["market", engineDeployed, poolReady, head?.toString()],
     queryFn: async () => {
-      if (!client || (!isLive && !poolReady)) return SAMPLE_MARKET;
-      let ccPerEth = SAMPLE_MARKET.ccPerEth;
-      let bid = SAMPLE_MARKET.bid;
-      let engine = 0n;
-      let creditsReady = SAMPLE_MARKET.creditsReady;
+      if (!client) return EMPTY_MARKET;
+      let ccPerEth = 0;
+      let bid = 0n;
+      let pot = 0n;
+      let creditsReady = 0;
 
-      // real cc/eth spot from the v4 pool slot0 (coin deployed).
+      // cc/eth spot from the v4 pool slot0 (coin deployed).
       if (poolReady && addresses.cc) {
         try {
           const slot0 = (await client.readContract({
             address: V4.stateView,
             abi: stateViewAbi,
             functionName: "getSlot0",
-            args: [poolId(addresses.cc)],
+            args: [poolId(addresses.cc, await poolParams(client))],
           })) as readonly [bigint, number, number, number];
-          const spot = ccPerEthFromSqrt(slot0[0]);
-          if (spot > 0) ccPerEth = spot;
+          ccPerEth = Math.max(0, ccPerEthFromSqrt(slot0[0]));
         } catch {
-          /* pool not live yet */
+          /* pool not initialized */
         }
       }
 
-      // engine state (bid, pot) from the lens.
-      if (isLive && addresses.coreLens) {
+      // engine state (bid, pot, pile) from the lens.
+      if (engineDeployed && addresses.coreLens) {
         try {
-          const s = (await client.readContract({
+          const s = await client.readContract({
             address: addresses.coreLens,
             abi: coreLensAbi,
             functionName: "snapshot",
-          })) as any;
-          bid = s.ethRate as bigint;
-          engine = s.ethPot as bigint;
-          creditsReady = Number(s.ethPileSize as bigint) % STATEMENT_SIZE;
+          });
+          bid = s.ethRate;
+          pot = s.ethPot;
+          creditsReady = Number(s.pileSize % BigInt(STATEMENT_SIZE));
         } catch {
-          /* engine not live yet */
+          /* lens not readable */
         }
       }
 
-      return {
-        live: true,
-        ccPerEth,
-        nextCreditPaid: 0n,
-        bid,
-        creditsReady,
-        balances: { cc: 0n, engine, pool: 0n },
-      };
+      return { ccPerEth, bid, pot, creditsReady };
     },
-    initialData: SAMPLE_MARKET,
+    initialData: EMPTY_MARKET,
   });
 }
 
@@ -228,7 +448,7 @@ export function useQuote(side: "buy" | "sell", amountInWei: bigint) {
           functionName: "quoteExactInputSingle",
           args: [
             {
-              poolKey: poolKey(addresses.cc),
+              poolKey: poolKey(addresses.cc, await poolParams(client)),
               zeroForOne: side === "buy", // ETH(0)->CC on buy
               exactAmount: amountInWei,
               hookData: "0x",
@@ -243,59 +463,7 @@ export function useQuote(side: "buy" | "sell", amountInWei: bigint) {
   });
 }
 
-export function useFeed() {
-  const client = usePublicClient();
-  const { data: head } = useBlockNumber({ watch: isLive });
-  return useQuery<FeedEvent[]>({
-    queryKey: ["feed", isLive, head?.toString()],
-    refetchInterval: isLive ? 12000 : 30000,
-    queryFn: async () => {
-      const now = Math.floor(Date.now() / 1000);
-      if (!isLive || !client || !addresses.core || !head) return sampleFeed(now);
-      try {
-        // bounded scan: from the deploy block, else the last ~50k blocks.
-        const from = deployBlock ?? (head > 50000n ? head - 50000n : 0n);
-        const logs = await client.getLogs({
-          address: addresses.core as Address,
-          events: coreEventsAbi as any,
-          fromBlock: from,
-          toBlock: head,
-        });
-        const out: FeedEvent[] = [];
-        for (const log of logs) {
-          // approx timestamp from block distance (12s/block). ponytail: avoids
-          // an eth_getBlockByNumber per log; display-only.
-          const ts = now - Number(head - (log.blockNumber ?? head)) * 12;
-          const hash = log.transactionHash ?? "0x";
-          const tx = hash.slice(0, 6);
-          const base = { key: `${hash}-${log.logIndex}`, ts, tx, txHash: hash };
-          const a = (log as any).args ?? {};
-          const name = (log as any).eventName as string;
-          if (name === "FeesAdded")
-            out.push({ ...base, kind: "fee", detail: "swap fee to engine", eth: fmt(a.amount) });
-          else if (name === "CreditBought")
-            out.push({ ...base, kind: "credit", detail: `bought credit #${a.id}`, eth: fmt(a.cost), tile: { kind: "credit", id: Number(a.id) } });
-          else if (name === "Composed")
-            out.push({ ...base, kind: "composed", detail: `statement ${a.sid} · cost ${fmt(a.cost)} eth`, tile: { kind: "statement", id: Number(a.sid) } });
-          else if (name === "StatementSoldTo")
-            out.push({ ...base, kind: "sold", detail: `statement ${a.sid} bought by`, addr: a.buyer as string, eth: fmt(a.price), tile: { kind: "statement", id: Number(a.sid) } });
-          else if (name === "Buyback")
-            out.push({ ...base, kind: "burn", detail: `burned ${Math.floor(Number(formatUnits(a.amountIn, 18))).toLocaleString()} cc` });
-        }
-        out.sort((x, y) => y.ts - x.ts);
-        return out.length ? out.slice(0, 60) : sampleFeed(now);
-      } catch {
-        return sampleFeed(now);
-      }
-    },
-    initialData: sampleFeed(Math.floor(Date.now() / 1000)),
-  });
-}
-
-function fmt(wei?: bigint): string {
-  if (wei == null) return "0.0000";
-  return Number(formatUnits(wei, 18)).toLocaleString("en-US", {
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
-  });
-}
+export const useFeed = () => {
+  const { data, ...q } = useScan();
+  return { ...q, data: data.feed };
+};

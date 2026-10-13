@@ -8,12 +8,10 @@
   --rowhover: #fafafa;
   --rowalt: #f7f7f7;
 
-  --fee: #16b6d8;
   --credit: #ff0080;
   --composed: #e8b200;
-  --listed: #ffffff;
   --sold: #0a9b41;
-  --burn: #000000;
+  --redeemed: #7a4dff;
 
   --mono: ui-monospace, "SF Mono", "Menlo", "Monaco", "Cascadia Code",
     "Roboto Mono", monospace;
@@ -37,6 +35,11 @@ body {
 
 a {
   color: inherit;
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .app {
@@ -161,9 +164,6 @@ a {
   background: var(--sold);
   display: inline-block;
 }
-.live.sample .dot {
-  background: var(--composed);
-}
 
 .nextcredit,
 .nextstatement {
@@ -265,17 +265,16 @@ a {
 }
 .col-time a {
   color: var(--muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 .col-time a:hover {
   color: var(--fg);
 }
 .col-event {
-  width: 170px;
+  width: 210px;
 }
 .col-eth {
-  width: 90px;
+  width: 150px;
+  white-space: nowrap;
 }
 
 .event {
@@ -288,12 +287,8 @@ a {
   height: 11px;
   flex: none;
 }
-.event .chip.listed {
-  background: var(--listed);
-  border: 1px solid var(--fg);
-}
 .event .name {
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .detail-cell {
@@ -301,18 +296,29 @@ a {
   align-items: center;
   gap: 0.75rem;
 }
-.detail-cell .label b {
-  font-weight: 600;
-}
 
-/* tiles — canvas CMYK rasters, scaled up crisply. credit is square (12x12),
-   statement is 8 wide x 10 tall (4:5). */
+/* tiles — the images of the contracts' tokenURI. credit is square,
+   statement is about 4:5 (the aspect of its format). */
 .tile-credit,
 .tile-statement {
   display: block;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
   background: #fff;
+}
+.tile-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.6rem;
+  line-height: 1;
+  overflow: hidden;
+}
+.tile-statement.tile-empty {
+  aspect-ratio: 4 / 5;
+}
+.tile-credit.tile-empty {
+  aspect-ratio: 1;
 }
 .tile-credit {
   width: 30px;
@@ -480,8 +486,6 @@ a {
 }
 .footer a {
   color: var(--muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 .footer a:hover {
   color: var(--fg);
@@ -591,7 +595,6 @@ a {
 /* ---- nav ------------------------------------------------------------------ */
 
 .brand {
-  text-decoration: none;
   color: var(--fg);
 }
 .nav {
@@ -600,7 +603,6 @@ a {
 }
 .nav a {
   color: var(--muted);
-  text-decoration: none;
 }
 .nav a:hover {
   color: var(--fg);
@@ -756,6 +758,13 @@ a {
   color: var(--sold);
   border-color: var(--sold);
 }
+.badge-redeemed {
+  color: var(--redeemed);
+  border-color: var(--redeemed);
+}
+.badge-not-held {
+  color: var(--muted);
+}
 .badge-held {
   color: var(--composed);
   border-color: var(--composed);
@@ -777,7 +786,6 @@ a {
   display: inline-block;
   margin-bottom: 1.25rem;
   color: var(--muted);
-  text-decoration: none;
 }
 .back:hover {
   color: var(--fg);
@@ -794,53 +802,11 @@ a {
   display: flex;
   justify-content: center;
 }
-.detail-art .tile-statement,
-.detail-art .tile-statement-wrap {
+.detail-art .tile-statement {
   width: 100%;
   height: auto;
 }
 
-/* clickable credits over the Issued sheet. inset matches the canvas margin
-   (8/144 x, 8/186 y); the inner area splits evenly 8x10 into the cells. */
-.tile-statement-wrap {
-  position: relative;
-  display: block;
-  line-height: 0;
-}
-.statement-links {
-  position: absolute;
-  left: 5.556%;
-  right: 5.556%;
-  top: 4.301%;
-  bottom: 4.301%;
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  grid-template-rows: repeat(10, 1fr);
-}
-.statement-links a {
-  position: relative;
-  display: block;
-}
-.statement-links a:hover {
-  outline: 1px solid var(--line);
-  outline-offset: -1px;
-}
-.statement-links a:hover::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: 4px;
-  padding: 3px 6px;
-  background: var(--fg);
-  color: var(--bg);
-  font-size: 0.7rem;
-  line-height: 1;
-  white-space: nowrap;
-  pointer-events: none;
-  z-index: 5;
-}
 .credit-art .tile-credit {
   width: 180px;
   height: 180px;
@@ -908,8 +874,6 @@ a {
   display: inline-block;
   margin-top: 1.25rem;
   color: var(--fg);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 .section {
@@ -989,7 +953,7 @@ a {
   color: var(--muted);
   font-size: 0.9rem;
 }
-.rl-lane {
+.rl-price {
   width: 70px;
   color: var(--muted);
   font-size: 0.9rem;
@@ -1046,8 +1010,6 @@ a {
 }
 .xlink-inline {
   color: var(--fg);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 /* ---- sell page ------------------------------------------------------------ */
@@ -1087,11 +1049,11 @@ a {
   font-family: var(--mono);
   font-size: 0.85rem;
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 .link-btn:hover {
   color: var(--fg);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .sell-list {
   display: flex;
@@ -1152,7 +1114,7 @@ a {
     flex-wrap: wrap;
   }
   .rl-meta,
-  .rl-lane {
+  .rl-price {
     width: auto;
   }
   .rl-time {
@@ -1250,4 +1212,57 @@ a {
   .menu .connect {
     margin-left: 0;
   }
+}
+
+/* ---- credit sale: selectable rows, buy bar, chosen compose --------------- */
+
+.rowline {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.rowline .rowlink {
+  flex: 1;
+  min-width: 0;
+}
+.rl-check {
+  width: 1.1rem;
+  flex: none;
+}
+.buybar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1.25rem;
+}
+button.slot {
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+button.slot:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.slot.on {
+  border-color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--fg);
+}
+.chosen {
+  margin-top: 2.5rem;
+}
+.chosen h2 {
+  margin: 0 0 0.5rem;
+}
+.chosen select {
+  font: inherit;
+  padding: 0.3rem;
+}
+
+.feed .more {
+  display: block;
+  margin: 1rem auto 2rem;
+  width: auto;
+  padding: 0.5rem 1.25rem;
 }

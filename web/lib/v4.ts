@@ -1,8 +1,7 @@
-// Config-bound v4 wrappers. Binds the launch pool params to the pure encoders
-// in v4core.ts, keeping the app's call sites short.
+// Config-bound v4 wrappers. Binds the pool params (read from the Core, see
+// engine.ts poolParams) to the pure encoders in v4core.ts.
 
 import type { Address } from "viem";
-import { pool } from "./config";
 import {
   makePoolKey,
   poolIdOf,
@@ -15,18 +14,24 @@ import {
 export { V4, ccPerEthFromSqrt, minOut } from "./v4core";
 export type { PoolKey, SwapCall } from "./v4core";
 
-export function poolKey(coin: Address): PoolKey {
-  return makePoolKey(coin, pool.fee, pool.tickSpacing, pool.hook);
+export interface PoolParams {
+  hook: Address;
+  fee: number;
+  tickSpacing: number;
 }
 
-export function poolId(coin: Address) {
-  return poolIdOf(poolKey(coin));
+export function poolKey(coin: Address, p: PoolParams): PoolKey {
+  return makePoolKey(coin, p.fee, p.tickSpacing, p.hook);
 }
 
-export function buildBuy(coin: Address, ethIn: bigint, minCcOut: bigint): SwapCall {
-  return buildBuyFor(poolKey(coin), ethIn, minCcOut);
+export function poolId(coin: Address, p: PoolParams) {
+  return poolIdOf(poolKey(coin, p));
 }
 
-export function buildSell(coin: Address, ccIn: bigint, minEthOut: bigint): SwapCall {
-  return buildSellFor(poolKey(coin), ccIn, minEthOut);
+export function buildBuy(coin: Address, p: PoolParams, ethIn: bigint, minCcOut: bigint): SwapCall {
+  return buildBuyFor(poolKey(coin, p), ethIn, minCcOut);
+}
+
+export function buildSell(coin: Address, p: PoolParams, ccIn: bigint, minEthOut: bigint): SwapCall {
+  return buildSellFor(poolKey(coin, p), ccIn, minEthOut);
 }

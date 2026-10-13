@@ -1,13 +1,30 @@
-import { mainnet } from "wagmi/chains";
+import { foundry, mainnet } from "wagmi/chains";
 import type { Address } from "viem";
 
 const addr = (v?: string): Address | undefined =>
   v && /^0x[0-9a-fA-F]{40}$/.test(v) ? (v as Address) : undefined;
 
-export const chain = mainnet;
+// NEXT_PUBLIC_CHAIN_ID=31337 selects the local anvil fork (foundry chain).
+// Every other value selects mainnet.
+// Display symbol of the exit token, used for every user-facing reference to it.
+export const EXIT_TOKEN_SYMBOL = "$BALANCE" as const;
+
+export const isLocal = process.env.NEXT_PUBLIC_CHAIN_ID === "31337";
 
 export const rpcUrl =
-  process.env.NEXT_PUBLIC_RPC_URL || "https://eth.drpc.org";
+  process.env.NEXT_PUBLIC_RPC_URL ||
+  (isLocal ? "http://127.0.0.1:8545" : "https://eth.drpc.org");
+
+// The local chain's default rpc is rpcUrl: the mock connector sends wallet
+// requests to chain.rpcUrls.default.
+export const chain = isLocal
+  ? { ...foundry, rpcUrls: { default: { http: [rpcUrl] } } }
+  : mainnet;
+
+// Local only: the account the mock connector acts as. anvil runs with
+// --auto-impersonate, so it signs for this address without a key.
+export const localAccount = (addr(process.env.NEXT_PUBLIC_LOCAL_ACCOUNT) ||
+  "0x1111111111111111111111111111111111111111") as Address;
 
 export const addresses = {
   core: addr(process.env.NEXT_PUBLIC_CORE),
@@ -49,9 +66,9 @@ export const poolReady = Boolean(addresses.cc);
 export const ethUsdFeed =
   "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" as Address;
 
-// The feed and stats read on-chain only when a lens address is set. Until the
-// engine deploys, the UI renders representative sample activity instead.
-export const isLive = Boolean(addresses.coreLens && addresses.core);
+// True when the core and lens addresses are configured. Every engine read and
+// page needs both; without them the pages render an "engine not deployed" state.
+export const engineDeployed = Boolean(addresses.coreLens && addresses.core);
 
 export const wcProjectId =
-  process.env.NEXT_PUBLIC_WC_PROJECT_ID || "credits_engine_demo";
+  process.env.NEXT_PUBLIC_WC_PROJECT_ID || "credits_engine";

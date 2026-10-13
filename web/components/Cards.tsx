@@ -1,63 +1,50 @@
-import Link from "next/link";
-import { StatementTile, CreditTile } from "./Tiles";
-import { commas } from "@/lib/format";
-import type { SampleStatement, SampleCredit } from "@/lib/sample";
+"use client";
 
-export function StatementCard({ s }: { s: SampleStatement }) {
+import Link from "next/link";
+import { StatementTile } from "./Tiles";
+import { commas, eth } from "@/lib/format";
+import { useTokenMeta } from "@/lib/art";
+
+export type StatementStatus = "listed" | "sold" | "redeemed" | "not held";
+
+export function StatementCard({
+  id,
+  status,
+  price,
+  priceTag,
+}: {
+  id: number;
+  status: StatementStatus;
+  price?: bigint; // asking price while listed, sale price once sold, cost otherwise
+  priceTag?: string; // small tag before the price
+}) {
+  // credit score: the Credit Rating attribute of the statement's tokenURI
+  const score = Number(useTokenMeta("statement", id).data?.attrs["Credit Rating"] ?? 0);
   return (
-    <Link href={`/statements/${s.id}`} className="card card-statement">
-      <StatementTile id={s.id} />
+    <Link href={`/statements/${id}`} className="card card-statement">
+      <StatementTile id={id} />
       <div className="card-body">
         <div className="card-head">
-          <span className="card-id">statement {s.id}</span>
-          <StatusBadge status={s.status} />
+          <span className="card-id">statement {id}</span>
+          <StatusBadge status={status} />
         </div>
-        {s.status === "held" ? (
-          <div className="card-price muted">composing</div>
-        ) : (
+        {price != null && (
           <div className="card-price">
-            {s.status === "sold" && <span className="card-price-tag">sold</span>}
-            {s.ask} eth
+            {priceTag && <span className="card-price-tag">{priceTag}</span>}
+            {eth(price)} eth
           </div>
         )}
-        <div className="card-sub">
-          <span>credit score</span>
-          <span>{commas(s.score)}</span>
-        </div>
+        {score > 0 && (
+          <div className="card-sub">
+            <span>credit score</span>
+            <span>{commas(score)}</span>
+          </div>
+        )}
       </div>
     </Link>
   );
 }
 
-export function CreditCard({ c }: { c: SampleCredit }) {
-  return (
-    <Link href={`/credits/${c.id}`} className="card card-credit">
-      <CreditTile id={c.id} />
-      <div className="card-body">
-        <div className="card-head">
-          <span className="card-id">credit #{c.id}</span>
-        </div>
-        <div className="card-rows">
-          <Row k="paid" v={`${c.cost} eth`} />
-          <Row
-            k="statement"
-            v={c.statementId ? `#${c.statementId}` : "pending"}
-          />
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-export function StatusBadge({ status }: { status: SampleStatement["status"] }) {
-  return <span className={`badge badge-${status}`}>{status}</span>;
-}
-
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="r">
-      <span>{k}</span>
-      <span>{v}</span>
-    </div>
-  );
+export function StatusBadge({ status }: { status: StatementStatus }) {
+  return <span className={`badge badge-${status.replace(" ", "-")}`}>{status === "listed" ? "for sale" : status}</span>;
 }

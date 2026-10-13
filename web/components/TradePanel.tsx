@@ -5,7 +5,6 @@ import {
   useAccount,
   useBalance,
   useReadContract,
-  useWriteContract,
 } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import {
@@ -15,30 +14,34 @@ import {
   maxUint256,
   type Address,
 } from "viem";
-import { useMarket, useQuote, useEthUsd } from "@/lib/engine";
-import { addresses, poolReady } from "@/lib/config";
+import { useMarket, useQuote, useEthUsd, usePoolParams, useSwapFees } from "@/lib/engine";
+import { useNow } from "@/lib/live";
+import { addresses, chain, poolReady } from "@/lib/config";
 import { erc20Abi, permit2Abi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
 import { commas, tokens, ethShort, usd } from "@/lib/format";
+import { useWriteWithBuffer } from "@/lib/tx";
 
-const FEE_BPS = 690; // 6.9% v2 skim
-const SLIPPAGE_BPS = 100; // 1.0%
+const SLIPPAGE_BPS = 100; // 1.0%, the panel's own tolerance for the swap minimum
 const PERMIT2_MAX = (1n << 160n) - 1n;
 const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as number
 
 export function TradePanel() {
   const { data: market } = useMarket();
   const { data: ethUsd } = useEthUsd();
+  const { data: poolP } = usePoolParams();
+  const { data: fees } = useSwapFees();
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
-  const { writeContractAsync, isPending } = useWriteContract();
+  const { writeWithBuffer, isPending } = useWriteWithBuffer();
+  const chainNow = useNow(30000); // swap deadline is chain time
 
   // 1 CC in USD = (eth per cc) * (usd per eth) = ethUsd / ccPerEth.
   const ccUsd =
     ethUsd != null && market.ccPerEth > 0 ? ethUsd / market.ccPerEth : undefined;
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [pay, setPay] = useState("0.50");
+  const [pay, setPay] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const amount = Number(pay) || 0;
@@ -59,7 +62,8 @@ export function TradePanel() {
     quoteOut != null
       ? Number(formatUnits(quoteOut, 18))
       : spotReceive;
-  const feeEth = side === "buy" ? (amount * FEE_BPS) / 10000 : (receiveNum * FEE_BPS) / 10000;
+  const feeRate = fees?.fee ?? 0;
+  const feeEth = side === "buy" ? amount * feeRate : receiveNum * feeRate;
 
   // balances strip + sell approvals
   const { data: ccBal } = useReadContract({
@@ -95,28 +99,30 @@ export function TradePanel() {
     (p2Allow as readonly [bigint, number, number])[0] < amountInWei;
 
   const canExecute =
-    poolReady && isConnected && amountInWei > 0n && quoteOut != null && quoteOut > 0n;
+    poolReady && Boolean(poolP) && isConnected && amountInWei > 0n && quoteOut != null && quoteOut > 0n;
 
   async function onAction() {
     setErr(null);
     try {
-      if (!addresses.cc) return;
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+      if (!addresses.cc || !poolP) return;
+      const deadline = BigInt(chainNow + 1200);
 
       if (side === "sell" && needsErc20Approve) {
-        await writeContractAsync({
+        await writeWithBuffer({
           address: addresses.cc,
           abi: erc20Abi,
           functionName: "approve",
+          chainId: chain.id,
           args: [V4.permit2, maxUint256],
         });
         return;
       }
       if (side === "sell" && needsP2Approve) {
-        await writeContractAsync({
+        await writeWithBuffer({
           address: V4.permit2,
           abi: permit2Abi,
           functionName: "approve",
+          chainId: chain.id,
           args: [addresses.cc, V4.universalRouter, PERMIT2_MAX, PERMIT2_EXP],
         });
         return;
@@ -125,12 +131,13 @@ export function TradePanel() {
       const out = minOut(quoteOut as bigint, SLIPPAGE_BPS);
       const call =
         side === "buy"
-          ? buildBuy(addresses.cc as Address, amountInWei, out)
-          : buildSell(addresses.cc as Address, amountInWei, out);
-      await writeContractAsync({
+          ? buildBuy(addresses.cc as Address, poolP, amountInWei, out)
+          : buildSell(addresses.cc as Address, poolP, amountInWei, out);
+      await writeWithBuffer({
         address: V4.universalRouter,
         abi: universalRouterAbi,
         functionName: "execute",
+        chainId: chain.id,
         args: [call.commands, call.inputs, deadline],
         value: call.value,
       });
@@ -200,6 +207,7 @@ export function TradePanel() {
         <div className="box">
           <input
             inputMode="decimal"
+            placeholder="0"
             value={pay}
             onChange={(e) => setPay(e.target.value.replace(/[^0-9.]/g, ""))}
           />
@@ -210,7 +218,7 @@ export function TradePanel() {
       <div className="field">
         <label>
           <span>receive</span>
-          <span>{quoteOut != null ? "quoted" : poolReady ? "" : "estimate"}</span>
+          <span>{quoteOut != null ? "quoted" : ""}</span>
         </label>
         <div className="box">
           <span className="out">
@@ -228,16 +236,16 @@ export function TradePanel() {
           </span>
         </div>
         <div className="r">
-          <span>fee 6.9%</span>
-          <span>{feeEth.toFixed(5)} eth</span>
+          <span>{fees ? `fee ${(feeRate * 100).toFixed(2)}%` : "fee"}</span>
+          <span>{fees ? `${feeEth.toFixed(5)} eth` : "—"}</span>
         </div>
         <div className="r">
           <span>to engine</span>
-          <span>{`≈ ${(feeEth * 0.964).toFixed(5)} eth`}</span>
+          <span>{fees ? `≈ ${(feeEth * fees.engineShare).toFixed(5)} eth` : "—"}</span>
         </div>
         <div className="r">
           <span>slippage</span>
-          <span>1.0%</span>
+          <span>{(SLIPPAGE_BPS / 100).toFixed(1)}%</span>
         </div>
       </div>
 
@@ -250,7 +258,7 @@ export function TradePanel() {
           className="action"
           onClick={onAction}
           disabled={!canExecute && !needsErc20Approve && !needsP2Approve}
-          title={!poolReady ? "engine not deployed yet" : undefined}
+          title={!poolReady ? "coin not deployed" : undefined}
         >
           {actionLabel}
         </button>
@@ -258,12 +266,7 @@ export function TradePanel() {
 
       {err && <p className="panel-note" style={{ color: "var(--credit)" }}>{err}</p>}
 
-      {!poolReady && (
-        <p className="panel-note">
-          engine not deployed yet. quotes are illustrative; swaps go live when the
-          coin and pool launch on mainnet.
-        </p>
-      )}
+      {!poolReady && <p className="panel-note">coin not deployed.</p>}
 
       <div className="balances">
         <div className="r">
@@ -278,7 +281,7 @@ export function TradePanel() {
         )}
         <div className="r">
           <span>engine</span>
-          <span>{market.balances ? `${ethShort(market.balances.engine)} eth` : "—"}</span>
+          <span>{ethShort(market.pot)} eth</span>
         </div>
         <div className="r">
           <span>pool</span>
