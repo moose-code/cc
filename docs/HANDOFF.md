@@ -2,7 +2,7 @@
 
 the baton for the session that directs this project next. read this file, then run `python3 script/director.py handoff` and read what it lists. the previous baton is `git show 2407087:docs/HANDOFF.md`.
 
-Latest task, 2026-10-13: issue #3 reviewed and specified in docs/NEXT.md (FLOW 88). The proposed CreditLens has four read-only methods; Statements already supplies the statement rating. No implementation or deployment was requested. Source interfaces and lifecycle behavior checked against Sourcify exact-match sources; documentation-only verification. Worktree started clean at detached HEAD 79c79d1. Engine launch objective remains active; the candidate 6ea44f5 evidence is already stale at this HEAD, so the older green-gate statements below are historical and do not establish current readiness. The helper spec changes no engine behavior or assumptions.
+Latest task, 2026-10-13: issue #3 reviewed and specified in docs/NEXT.md (FLOW 88, name set by FLOW 89). The proposed CreditScoreLens has four read-only methods; Statements already supplies the statement rating. No implementation or deployment was requested. Source interfaces and lifecycle behavior checked against Sourcify exact-match sources; documentation-only verification. Worktree started clean at detached HEAD 79c79d1. Engine launch objective remains active; the candidate 6ea44f5 evidence is already stale at this HEAD, so the older green-gate statements below are historical and do not establish current readiness. The helper spec changes no engine behavior or assumptions.
 
 ## 1. where intent and evidence live
 

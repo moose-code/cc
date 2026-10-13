@@ -206,7 +206,7 @@
       ]
     }
   ],
-  "nextAction": "Issue #3 specification is complete in docs/NEXT.md (FLOW 88). If the owner requests implementation, use that bounded packet and keep the helper outside engine dependencies. No helper deployment is authorized. The engine launch objective remains active: before using the launch steps in docs/HANDOFF.md section 6, reconcile the current source and decisions 81 to 87, independently review and freeze a new candidate, and satisfy its configured gates. Candidate 6ea44f5 evidence is stale at the current HEAD; owner sign-off and launch prerequisites remain outstanding.",
+  "nextAction": "Issue #3 CreditScoreLens specification is complete in docs/NEXT.md (FLOW 88, 89). If the owner requests implementation, use that bounded packet and keep the helper outside engine dependencies. No helper deployment is authorized. The engine launch objective remains active: before using the launch steps in docs/HANDOFF.md section 6, reconcile the current source and decisions 81 to 87, independently review and freeze a new candidate, and satisfy its configured gates. Candidate 6ea44f5 evidence is stale at the current HEAD; owner sign-off and launch prerequisites remain outstanding.",
   "requiredFreezeGates": [
     "productRules",
     "focusedTests",

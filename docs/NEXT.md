@@ -8,7 +8,7 @@ Owner request (FLOW 88): review [issue #3](https://github.com/ripe0x/cc/issues/3
 
 ### Scope
 
-Build one standalone `CreditLens` with four read-only functions. Its only job is to translate a credit id into the source scorer's inputs. The engine continues reading its source contracts directly.
+Build one standalone `CreditScoreLens` with four read-only functions. Its only job is to translate a credit id into the source scorer's inputs. The engine continues reading its source contracts directly.
 
 ```solidity
 function scoreOfId(uint256 id) external view returns (uint256);
@@ -42,7 +42,7 @@ Summing only `Statements.composedFrom(id)` would omit overprints. Recursively re
 
 ### Implementation packet and acceptance
 
-Deliver `src/CreditLens.sol`, a narrow interface if required by the interface generator, `test/CreditLens.t.sol`, one isolated deployment script, and a short consumer example in `docs/INTEGRATION.md`. Keep scorer-only rarity and trait declarations local to this helper or its narrow interface; do not expand engine interfaces for this feature. Generate the helper interface using the repository tool. Avoid changes to Core, CoreLib, CoreLens, controller, engine deploy scripts, launch config, or engine bytecode pins.
+Deliver `src/CreditScoreLens.sol`, a narrow interface if required by the interface generator, `test/CreditScoreLens.t.sol`, one isolated deployment script, and a short consumer example in `docs/INTEGRATION.md`. Keep scorer-only rarity and trait declarations local to this helper or its narrow interface; do not expand engine interfaces for this feature. Generate the helper interface using the repository tool. Avoid changes to Core, CoreLib, CoreLens, controller, engine deploy scripts, launch config, or engine bytecode pins.
 
 The test file uses a small standalone mainnet fork fixture at block `26158000`, not the engine fixture. Real Credits and CreditScore only. Before implementing, check their runtime hashes at that pin against the verified sources, plus `Credits.isSealed()` and `Statements.score()` against the documented scorer address.
 
@@ -51,7 +51,7 @@ The test file uses a small standalone mainnet fork fixture at block `26158000`, 
 - Batch checks: empty, one, out-of-order ids, duplicates, 80 ids, and a batch with a never-minted id in the middle. Compare each output with a direct source read.
 - Failure checks: id `0`, `supply + 1`, and `type(uint256).max` revert with `UnknownCredit(id)` across every single method and the batch.
 
-Verify implementation with `forge build` and only `forge test --match-path test/CreditLens.t.sol`, using the repository RPC environment. Record runtime size and measured deployment gas; the issue's "few hundred thousand gas" is an estimate, not an accepted budget or measurement. Commit the verified implementation, then independently review that immutable commit before deployment. Deployment requires a separate owner instruction and should record chain, addresses, source/runtime hashes, compiler settings, verified source and a direct-versus-helper read. This spec does not freeze or accept the engine candidate.
+Verify implementation with `forge build` and only `forge test --match-path test/CreditScoreLens.t.sol`, using the repository RPC environment. Record runtime size and measured deployment gas; the issue's "few hundred thousand gas" is an estimate, not an accepted budget or measurement. Commit the verified implementation, then independently review that immutable commit before deployment. Deployment requires a separate owner instruction and should record chain, addresses, source/runtime hashes, compiler settings, verified source and a direct-versus-helper read. This spec does not freeze or accept the engine candidate.
 
 ### Source evidence and limits
 
