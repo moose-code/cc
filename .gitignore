@@ -5,3 +5,6 @@ broadcast/
 !.env.example
 script/config/local.json
 script/config/*.local.json
+# local anvil end to end: the fork deployment record and the state dumps are local
+deployments/31337.json
+script/dev/.anvil-state.json

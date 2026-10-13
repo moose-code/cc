@@ -95,6 +95,26 @@ one script, `script/Deploy.s.sol`, deploys the system and launches the coin thro
 
 the runbook, with the commands in order, is docs/DEPLOY.md.
 
+one wrapper, `script/deploy.sh <env>`, runs that path for every environment. it sources a values-only file (`script/env/<env>.env`) and runs the same build, preflight, deploy, resume and postflight. `script/deploy.sh local` deploys to a local anvil mainnet fork; `script/env/mainnet.env` ships with required values empty, so `script/deploy.sh mainnet` refuses until they are filled, and the mainnet launch still signs from the owner's own wallet per docs/DEPLOY.md. on success the wrapper writes `deployments/<chainId>.json` in the shape the UI reads.
+
+## local end to end
+
+one command deploys through the same path as mainnet on an anvil mainnet fork, seeds real Credits and the exit stand ins, and runs a full scenario (coin trades, the eth bid, compose and sell, the credit sale window, chosen composition, pause, buyback, the exit side) with a check after each stage:
+
+```bash
+script/dev/e2e.sh
+```
+
+it starts anvil (block 26158000, chain id 31337, `--auto-impersonate`), runs `script/deploy.sh local`, seeds, warps the node between stages, prints a final report and the gas per stage, then stops anvil. no mainnet, no private key: the signer is the real v2 factory owner, impersonated on the fork.
+
+to drive the UI against a running fork, start anvil and deploy, then point the UI at the record:
+
+```bash
+script/dev/anvil.sh &                 # fork on http://127.0.0.1:8545
+script/deploy.sh local                # writes deployments/31337.json
+cd <ui worktree>/web && RECORD=../../<repo>/deployments/31337.json npm run dev:local
+```
+
 ## docs
 
 | file | what |

@@ -2,6 +2,15 @@
 
 this is the launch runbook for branch `main`, on the artcoins v2 stack, live on mainnet since 2026-10-09 (contract sources of v2 repo commit d4aa46b, deployed from launcher commit fbe07c7). the stack is a config input: the `stack` block of `script/config/mainnet.json` holds the five v2 addresses the Core takes as a constructor argument, and nothing in `src/` hardcodes an artcoins address. `Deploy` refuses a file that leaves a stack address at zero.
 
+### one wrapper, environments as data
+
+`script/deploy.sh <env>` runs this runbook's build, preflight, deploy, resume and postflight as one path for every environment. it sources a values-only file, `script/env/<env>.env` (chain id, rpc, the launch config path, wallet mode, deployer, verify flag, main branch guard flag), and runs the same scripts the sections below describe. environments are data, the code path is one.
+
+- `script/deploy.sh local` deploys to a local anvil mainnet fork (`script/dev/anvil.sh`, chain id 31337, `--auto-impersonate`). the signer is the real v2 factory owner, impersonated, so there is no key. it funds the owner, runs the `setMinProtocolSkimShareBps` owner command, deploys, resumes, runs postflight and writes `deployments/31337.json`. `script/dev/e2e.sh` runs it then a full scenario. local refuses to broadcast to a non local rpc host.
+- `script/deploy.sh mainnet` runs the identical path, but `script/env/mainnet.env` ships with the required values (rpc, deployer, wallet mode) empty, so the wrapper refuses until they are filled. the mainnet signer is the owner's own wallet (`WALLET_MODE=account` with `--account`, or `ledger` with `--ledger`): the wrapper never holds a key. `DRY_RUN=1 script/deploy.sh mainnet` simulates without a wallet or a broadcast.
+
+the wrapper replaces the hand assembled commands of section 1 only where they are identical. the owner still reads back each step and holds the sign off: the parameter sign off table of section 2, `CONFIG_HASH` and `CONTROLLER_NONCE` from preflight, the funding check, `--slow` for the EIP 7702 delegated signer, verification and `Lock.s.sol` are the runbook, not the wrapper.
+
 ### the live v2 stack
 
 `script/config/v2-mainnet.json` is the record of the artcoins v2 stack on mainnet: the ten contract addresses, their deploy blocks, the launcher commit it was deployed from (fbe07c7, contract sources of d4aa46b) and the salt of the hook CREATE2 deployment. `test/utils/V2Stack.sol` reads the addresses from it, and a test requires the `stack` block of `script/config/mainnet.json` to equal it.

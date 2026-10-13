@@ -158,7 +158,13 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     function _preConfig(LaunchConfig memory c) private {
-        _eq("chain id", block.chainid, 1);
+        // one deploy path: mainnet (1) and the local anvil fork (31337) take the same config, every other chain fails
+        // the row and reverts the run. the fork id lets `script/deploy.sh local` run the mainnet deploy path end to end
+        _check(
+            "chain id",
+            block.chainid == 1 || block.chainid == 31337,
+            string.concat("chain ", vm.toString(block.chainid), " (mainnet 1 or local fork 31337)")
+        );
         string[] memory unset = unsetFields(c);
         string memory names;
         for (uint256 i; i < unset.length; ++i) {
