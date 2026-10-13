@@ -236,13 +236,13 @@ abstract contract PostflightChecks is PostflightPool {
             runtimeSlotsMatch(ctl, "ControllerV1", address(0), ctlWant),
             "the 28 immutable sites of the controller runtime code"
         );
-        // after launch the owner may lock or set the exit module: LOCKS_CHANGED=1 turns the row into a report line
-        bool launchState = !core.controllerLocked() && !core.exitModuleLocked() && !core.targetsLocked()
-            && core.exitModule() == address(0);
+        // after launch the owner may lock or set the balance module: LOCKS_CHANGED=1 turns the row into a report line
+        bool launchState = !core.controllerLocked() && !core.balanceModuleLocked() && !core.targetsLocked()
+            && core.balanceModule() == address(0);
         if (_locksChanged()) {
-            _warn("warn: no locks, no exit module", launchState, "LOCKS_CHANGED=1, the owner changed them");
+            _warn("warn: no locks, no balance module", launchState, "LOCKS_CHANGED=1, the owner changed them");
         } else {
-            _check("core: no locks, no exit module", launchState, "launch state");
+            _check("core: no locks, no balance module", launchState, "launch state");
         }
         _warn("warn: no pending owner", core.pendingOwner() == address(0), "an owner handover is offered");
         _postSale(c, ctl);
@@ -263,7 +263,7 @@ abstract contract PostflightChecks is PostflightPool {
         );
     }
 
-    /// @notice the operator says the owner locked a setter or set the exit module since launch (LOCKS_CHANGED=1). a test
+    /// @notice the operator says the owner locked a setter or set the balance module since launch (LOCKS_CHANGED=1). a test
     /// overrides it
     function _locksChanged() internal view virtual returns (bool) {
         return vm.envOr("LOCKS_CHANGED", uint256(0)) == 1;
@@ -403,14 +403,14 @@ abstract contract PostflightChecks is PostflightPool {
             )
         );
         _info(
-            "core: phase 2",
+            "core: balance side",
             string.concat(
-                "exitMode ",
-                vm.toString(live.exitMode),
-                " exit slippage ",
-                vm.toString(live.exitSlippageBps),
-                " exit bid margin ",
-                vm.toString(live.exitBidMarginBps),
+                "balanceMode ",
+                vm.toString(live.balanceMode),
+                " redeem slippage ",
+                vm.toString(live.redeemSlippageBps),
+                " balance bid margin ",
+                vm.toString(live.balanceBidMarginBps),
                 " redeem burn ",
                 vm.toString(live.redeemBurnBps),
                 " (bps)"

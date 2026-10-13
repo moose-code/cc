@@ -9,7 +9,7 @@ import {RepaidCaller} from "./attackers/SaleAttackers.sol";
 import {GasBurningPayee} from "./attackers/GasBurners.sol";
 
 /// the caller payment of `compose`: counted gas at the capped base fee plus `callerFee`, from `ethPot`,
-/// at most the pot. real Core, real Statements, the stand in exit module and token. `exitStatement` shares the helper
+/// at most the pot. real Core, real Statements, the stand in balance module and token. `redeemStatement` shares the helper
 /// and the settings, its cases are in test/Redeem.t.sol
 contract CallerPayTest is Fixture {
     using stdStorage for StdStorage;

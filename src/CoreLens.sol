@@ -5,7 +5,7 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "./interfaces/ICore.sol";
 import {IControllerV1} from "./interfaces/IControllerV1.sol";
 import {IFeeRouter} from "./interfaces/IFeeRouter.sol";
-import {ICredits, ICreditScore, IExitModule, Settings, Mainnet} from "./interfaces/Interfaces.sol";
+import {ICredits, ICreditScore, IBalanceModule, Settings, Mainnet} from "./interfaces/Interfaces.sol";
 
 /// read only view of the Core, the controller and the fee router in one call. it has no storage and no state changing
 /// function. the Core and the router are immutable pointers fixed at creation (the router is the Core fee source). the
@@ -19,8 +19,8 @@ contract CoreLens {
     /// the held statement `id` of the Core, with its cost basis, compose time and rating. `priceReference` is the
     /// controller price reference in wei, the larger of cost and the eth bid rate times rating over `refScore`, 0 when
     /// the controller does not answer.
-    /// `askingPrice` is the controller price now in wei, 0 when the controller does not answer. `exitEligible` is true
-    /// when a redemption of this statement would pass the Core gates now: a module set, `exitMode` at least 1, and a
+    /// `askingPrice` is the controller price now in wei, 0 when the controller does not answer. `redeemEligible` is true
+    /// when a redemption of this statement would pass the Core gates now: a module set, `balanceMode` at least 1, and a
     /// curve price at its floor
     struct StatementView {
         uint256 id;
@@ -29,7 +29,7 @@ contract CoreLens {
         uint256 rating;
         uint256 priceReference;
         uint256 askingPrice;
-        bool exitEligible;
+        bool redeemEligible;
     }
 
     /// `ethRate` is the wei the Core pays for one credit now. `ethPrice` is the price state before the
@@ -45,7 +45,7 @@ contract CoreLens {
         uint256 ethPot;
         uint256 ethToBuyback;
         uint256 ethRedeemBurn;
-        uint256 xPot;
+        uint256 balancePot;
         uint256 unbookedEth;
         uint256 routerBalance;
         uint256 routerOwed;
@@ -53,12 +53,12 @@ contract CoreLens {
         uint256 flushToPayees;
         address controller;
         address successor;
-        address exitModule;
-        address exitToken;
-        uint256 exitMode;
+        address balanceModule;
+        address balanceToken;
+        uint256 balanceMode;
         uint256 unitPerPoint;
         bool controllerLocked;
-        bool exitModuleLocked;
+        bool balanceModuleLocked;
         bool targetsLocked;
         bool successorLocked;
         /// whether the controller's credit sale window is on, and the seconds a credit's price falls over
@@ -120,18 +120,18 @@ contract CoreLens {
         s.ethPot = core.ethPot();
         s.ethToBuyback = core.ethToBuyback();
         s.ethRedeemBurn = core.ethRedeemBurn();
-        s.xPot = core.xPot();
+        s.balancePot = core.balancePot();
         s.unbookedEth = address(core).balance.zeroFloorSub(s.ethPot + s.ethToBuyback + s.ethRedeemBurn);
         s.routerBalance = address(ROUTER).balance;
         s.routerOwed = ROUTER.totalOwed();
         (s.flushToCore, s.flushToPayees) = _flush();
         s.successor = core.successor();
-        s.exitModule = core.exitModule();
-        s.exitToken = core.exitToken();
-        s.exitMode = core.settings().exitMode;
+        s.balanceModule = core.balanceModule();
+        s.balanceToken = core.balanceToken();
+        s.balanceMode = core.settings().balanceMode;
         s.unitPerPoint = core.unitPerPoint();
         s.controllerLocked = core.controllerLocked();
-        s.exitModuleLocked = core.exitModuleLocked();
+        s.balanceModuleLocked = core.balanceModuleLocked();
         s.targetsLocked = core.targetsLocked();
         s.successorLocked = core.successorLocked();
         (s.creditSaleOn, s.creditWindow) = _creditWindow(s.controller);
@@ -226,32 +226,32 @@ contract CoreLens {
 
     /// the module's `unitPerPoint()` read with the gas the Core uses. a revert or a short answer reads as 0
     function _liveUnit(address module) private view returns (uint256) {
-        (bool ok, bytes memory out) = module.staticcall{gas: ASK_GAS}(abi.encodeCall(IExitModule.unitPerPoint, ()));
+        (bool ok, bytes memory out) = module.staticcall{gas: ASK_GAS}(abi.encodeCall(IBalanceModule.unitPerPoint, ()));
         return ok && out.length >= 32 ? abi.decode(out, (uint256)) : 0;
     }
 
-    /// the exit token the bid pays for a live credit now, zero when the bid is off: no module set, `exitMode` other
+    /// the balance token the bid pays for a live credit now, zero when the bid is off: no module set, `balanceMode` other
     /// than 2, or the engine retired. the unit is the lower of the stored and the live `unitPerPoint()`, as in
-    /// `sellForExitToken`, and a failed live read gives 0. the bid is capped at `xPot`, the most `sellForExitToken` can pay for one credit.
-    /// the Core reads the same score from the credit score contract in `sellForExitToken`
-    function exitBidOf(uint256 id) external view returns (uint256) {
+    /// `sellForBalance`, and a failed live read gives 0. the bid is capped at `balancePot`, the most `sellForBalance` can pay for one credit.
+    /// the Core reads the same score from the credit score contract in `sellForBalance`
+    function balanceBidOf(uint256 id) external view returns (uint256) {
         ICore core = CORE;
-        if (core.exitModule() == address(0) || core.retired()) return 0;
+        if (core.balanceModule() == address(0) || core.retired()) return 0;
         Settings memory st = core.settings();
-        if (st.exitMode != 2) return 0;
+        if (st.balanceMode != 2) return 0;
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(ICredits(CREDITS).seedOf(id), ICredits(CREDITS).timestampOf(id));
         uint256 unit = core.unitPerPoint();
-        uint256 live = _liveUnit(core.exitModule());
+        uint256 live = _liveUnit(core.balanceModule());
         if (live < unit) unit = live;
-        uint256 bid = score * unit * (10_000 - st.exitBidMarginBps) / 10_000;
-        uint256 pot = core.xPot();
+        uint256 bid = score * unit * (10_000 - st.balanceBidMarginBps) / 10_000;
+        uint256 pot = core.balancePot();
         return bid > pot ? pot : bid;
     }
 
     function _statements(uint256 start, uint256 n) private view returns (StatementView[] memory out) {
         ICore core = CORE;
         address ctl = controller();
-        bool modeOn = core.exitModule() != address(0) && core.settings().exitMode >= 1;
+        bool modeOn = core.balanceModule() != address(0) && core.settings().balanceMode >= 1;
         uint256[] memory ids = core.heldStatements();
         uint256 from = start.min(ids.length);
         uint256 to = ids.length.min(from.saturatingAdd(n));
@@ -267,6 +267,6 @@ contract CoreLens {
         v.rating = CORE.ratingOf(sid);
         v.priceReference = _reference(ctl, sid);
         v.askingPrice = _askingPrice(ctl, sid);
-        v.exitEligible = modeOn && _atFloor(ctl, sid);
+        v.redeemEligible = modeOn && _atFloor(ctl, sid);
     }
 }

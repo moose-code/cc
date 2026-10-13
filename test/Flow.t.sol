@@ -9,11 +9,11 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Settings, Mainnet, Stack, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
-import {MockExitToken} from "./standins/MockExitToken.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 
 /// @notice the flow rework (docs/DECISIONS.md) on the real stack: settings, the flat bid, statement sales through the
-/// controller, the phase 2 exit, and the hard rule that the owner can never move assets out under any settings
+/// controller, the balance side redemption, and the hard rule that the owner can never move assets out under any settings
 contract FlowTest is Fixture {
     using FixedPointMathLib for uint256;
 
@@ -76,8 +76,8 @@ contract FlowTest is Fixture {
         // the slice is at least twice the largest buyback payment (field 15 is `buybackSlice`)
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
         if (s.buybackSlice < minSlice) _set(s, 15, minSlice);
-        // exitSlippageBps (field 12) is bounded above by exitBidMarginBps (field 13), set later in the loop
-        if (s.exitSlippageBps > s.exitBidMarginBps) _set(s, 12, s.exitBidMarginBps);
+        // redeemSlippageBps (field 12) is bounded above by balanceBidMarginBps (field 13), set later in the loop
+        if (s.redeemSlippageBps > s.balanceBidMarginBps) _set(s, 12, s.balanceBidMarginBps);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -96,9 +96,9 @@ contract FlowTest is Fixture {
         assertEq(s.buybackDelay, 25);
         assertEq(s.keeperFee, 0.0005 ether);
         assertEq(s.keeperMaxBaseFee, 10 gwei);
-        assertEq(s.exitMode, 0);
-        assertEq(s.exitSlippageBps, 200);
-        assertEq(s.exitBidMarginBps, 2_000);
+        assertEq(s.balanceMode, 0);
+        assertEq(s.redeemSlippageBps, 200);
+        assertEq(s.balanceBidMarginBps, 2_000);
         assertEq(s.redeemBurnBps, 2_000);
         assertEq(s.rateCap, 26_700_000_000_000_000);
         assertEq(s.feeToBuybackBps, 0);
@@ -132,8 +132,8 @@ contract FlowTest is Fixture {
                 if (i == 2 && k == 1) s.recoveryClimbPerMinBps = 1_000;
                 // the smallest slice needs the cheapest buyback payment: 2 * (600,000 gas * 1 gwei + 0) is 0.0012 ether
                 if (i == 15 && k == 0) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
-                // exitBidMarginBps at its bottom (0) needs exitSlippageBps lowered to it, which it bounds
-                if (i == 13 && k == 0) s.exitSlippageBps = 0;
+                // balanceBidMarginBps at its bottom (0) needs redeemSlippageBps lowered to it, which it bounds
+                if (i == 13 && k == 0) s.redeemSlippageBps = 0;
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -421,7 +421,7 @@ contract FlowTest is Fixture {
     /// the removed auction surface answers with an empty revert (no function, no fallback), where a live function
     /// would revert with its own error
     function test_noAuctionSurfaceRemains() public {
-        // the auction house surface and the exit token auction surface are both gone from the core
+        // the auction house surface and the balance token auction surface are both gone from the core
         string[13] memory coreSigs = [
             "collectSales()",
             "syncStatement(uint256)",
@@ -429,9 +429,9 @@ contract FlowTest is Fixture {
             "statementStatus(uint256)",
             "HOUSE()",
             "AUCTION_FACTORY()",
-            "buybackExit(uint256)",
-            "exitAuctionPrice()",
-            "exitAuctionQuote()",
+            "buybackBalance(uint256)",
+            "balanceAuctionPrice()",
+            "balanceAuctionQuote()",
             "xToBuyback()",
             "SUPPLY()",
             "XRATE_START()",
@@ -559,34 +559,34 @@ contract FlowTest is Fixture {
         _solvent();
     }
 
-    // ------------------------------------------------------------------ phase 2 exit
+    // ------------------------------------------------------------------ the balance side redemption
 
-    /// a statement is redeemable once its asking price falls to its cost; the exit token received goes to the
+    /// a statement is redeemable once its asking price falls to its cost; the balance token received goes to the
     /// bid pot whole, and the redeem burn reserve releases redeemBurnBps into the coin buyback
-    function test_exit_redeemsAtCostAllToTheBidPot() public {
+    function test_redeem_redeemsAtCostAllToTheBidPot() public {
         _enterPhase2();
         Composed memory c = _composeOnce();
         // before the price falls to cost the statement is not eligible
         vm.expectRevert(ICore.NotEligible.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         _makeEligible(c.sid);
         uint256 rating = core.ratingOf(c.sid);
         uint256 before = xt.balanceOf(address(core));
-        uint256 pot = core.xPot();
+        uint256 pot = core.balancePot();
         vm.expectEmit(address(core));
-        emit ICore.StatementExited(c.sid, rating * UNIT);
+        emit ICore.StatementRedeemed(c.sid, rating * UNIT);
         vm.prank(bob);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         uint256 got = xt.balanceOf(address(core)) - before;
         assertEq(got, rating * UNIT, "the module paid rating times the unit");
-        assertEq(core.xPot() - pot, got, "the whole received amount goes to the bid pot");
+        assertEq(core.balancePot() - pot, got, "the whole received amount goes to the bid pot");
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "in the module");
         assertEq(core.heldStatements().length, 0);
         _solvent();
     }
 
     /// each eth lane redemption moves redeemBurnBps of the reserve into the coin buyback
-    function test_exit_redeemReleasesTheReserveToTheBuyback() public {
+    function test_redeem_redeemReleasesTheReserveToTheBuyback() public {
         _enterPhase2();
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
@@ -598,47 +598,47 @@ contract FlowTest is Fixture {
         uint256 buyback = core.ethToBuyback();
         uint256 released = uint256(1 ether) * core.settings().redeemBurnBps / 10_000;
         assertGt(released, 0, "there is something to release");
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         assertEq(core.ethRedeemBurn(), 1 ether - released, "the reserve fell by redeemBurnBps");
         assertEq(core.ethToBuyback(), buyback + released, "the release reached the coin buyback");
         _solvent();
     }
 
     /// a module that pays less than rating * unit * (1 - slippage) reverts the redemption
-    function test_exit_underpaymentBelowSlippageReverts() public {
+    function test_redeem_underpaymentBelowSlippageReverts() public {
         _enterPhase2();
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         // pay just under the slippage floor
-        mod.setPayBps(10_000 - core.settings().exitSlippageBps - 1);
+        mod.setPayBps(10_000 - core.settings().redeemSlippageBps - 1);
         vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         // within the slippage floor passes
-        mod.setPayBps(10_000 - core.settings().exitSlippageBps);
-        core.exitStatement(c.sid);
+        mod.setPayBps(10_000 - core.settings().redeemSlippageBps);
+        core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod));
     }
 
-    function test_exit_needsTheModule() public {
+    function test_redeem_needsTheModule() public {
         uint256 sid = _composeOnce().sid;
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.exitStatement(sid);
+        vm.expectRevert(ICore.NoBalanceModule.selector);
+        core.redeemStatement(sid);
     }
 
-    function test_exit_offWhenExitModeZero() public {
+    function test_redeem_offWhenBalanceModeZero() public {
         _enterPhase2();
-        _setExitMode(0);
+        _setBalanceMode(0);
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.exitStatement(c.sid);
+        vm.expectRevert(ICore.BalanceModeOff.selector);
+        core.redeemStatement(c.sid);
     }
 
-    function test_exit_aSoldStatementIsNotExited() public {
+    function test_redeem_aSoldStatementIsNotRedeemed() public {
         _enterPhase2();
         (uint256 sid,) = _sellStatement(alice);
         vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), alice);
     }
 
@@ -733,9 +733,9 @@ contract FlowTest is Fixture {
     }
 
     /// @dev a random sequence of owner calls under random valid settings, mixed with public doors and time. the
-    /// owner and the controller never end up holding more eth, coin, credits, statements or exit token than they
+    /// owner and the controller never end up holding more eth, coin, credits, statements or balance token than they
     /// began with, an owner call never changes what the core holds, and eth leaves the core only by a sale of a credit
-    /// (paid to the seller, exactly the quoted ceiling) or by the buyback (at most one slice). the exit is a paid door
+    /// (paid to the seller, exactly the quoted ceiling) or by the buyback (at most one slice). the redemption is a paid door
     /// (it pays its caller from the pot), so it is called by a neutral keeper that is not watched,
     /// and what that keeper receives is at most the gas cap at the capped base fee plus the fee
     /// forge-config: default.fuzz.runs = 40
@@ -766,7 +766,7 @@ contract FlowTest is Fixture {
             } else if (kind == 7) {
                 _sellMaybe(ids[(r >> 8) % 6]);
             } else {
-                _exitAsKeeper(sid);
+                _redeemAsKeeper(sid);
             }
             for (uint256 i; i < 3; ++i) {
                 _noGain(watched[i], base[i], "owner or controller gained");
@@ -775,19 +775,19 @@ contract FlowTest is Fixture {
         }
     }
 
-    /// @dev a neutral keeper exits the statement. the paid door pays it at most `EXIT_GAS` at `callerMaxBaseFee` plus
+    /// @dev a neutral keeper redeems the statement. the paid door pays it at most `REDEEM_GAS` at `callerMaxBaseFee` plus
     /// `callerFee`
-    function _exitAsKeeper(uint256 sid) internal {
-        address exitKeeper = makeAddr("exitKeeper");
+    function _redeemAsKeeper(uint256 sid) internal {
+        address redeemKeeper = makeAddr("redeemKeeper");
         Settings memory st = core.settings();
         uint256 cap = 1_500_000 * uint256(st.callerMaxBaseFee) + st.callerFee;
-        uint256 before = exitKeeper.balance;
-        vm.prank(exitKeeper);
-        try core.exitStatement(sid) {} catch {}
-        assertLe(exitKeeper.balance - before, cap, "the exit payment stays within the cap");
+        uint256 before = redeemKeeper.balance;
+        vm.prank(redeemKeeper);
+        try core.redeemStatement(sid) {} catch {}
+        assertLe(redeemKeeper.balance - before, cap, "the redemption payment stays within the cap");
     }
 
-    /// @dev the owner who calls the paid exit door is paid like any keeper: exactly the pot debit, within the cap
+    /// @dev the owner who calls the paid redemption door is paid like any keeper: exactly the pot debit, within the cap
     function test_rule8_ownerAsRedeemCallerGetsOnlyTheCappedPayment() public {
         _enterPhase2();
         Composed memory c = _composeOnce();
@@ -803,7 +803,7 @@ contract FlowTest is Fixture {
         uint256[5] memory base = _holdings(owner);
         vm.fee(composeBasefee);
         vm.prank(owner);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         uint256 gain = owner.balance - base[0];
         assertGt(gain, 0, "the paid door repays its caller");
         assertEq(gain, pot - core.ethPot(), "exactly the pot debit");
@@ -824,7 +824,7 @@ contract FlowTest is Fixture {
         } else if (kind == 2) {
             Settings memory s = core.settings();
             // forge-lint: disable-next-line(unsafe-typecast)
-            s.exitMode = uint8(bound(r >> 8, 0, 2));
+            s.balanceMode = uint8(bound(r >> 8, 0, 2));
             core.setSettings(s);
         } else if (kind == 3) {
             address t = address(uint160(r >> 8));

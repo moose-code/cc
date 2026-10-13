@@ -20,9 +20,9 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 contract RatingReferenceTest is Fixture {
     uint256 internal constant BPS = 10_000;
     uint32 internal constant MAX_REF_SCORE = 8_000_000;
-    /// a small sqrt price makes the exit token expensive in eth, so the redeemable value floor is large
+    /// a small sqrt price makes the balance token expensive in eth, so the redeemable value floor is large
     uint160 internal constant LOW_SQRT = uint160(FixedPoint96.Q96 / 1000);
-    /// a large sqrt price makes the exit token cheap in eth, so an exit token bought credit records its score-scaled
+    /// a large sqrt price makes the balance token cheap in eth, so a balance token bought credit records its score-scaled
     /// backstop as its eth cost, a moderate figure above the eth lineage cost
     uint160 internal constant HIGH_SQRT = uint160((uint256(1) << 96) * 1000);
 
@@ -56,12 +56,12 @@ contract RatingReferenceTest is Fixture {
         sid = STATEMENTS.supply();
     }
 
-    /// composes a fresh statement from 80 exit token bought credits. needs phase 2 on, the exit pool set and the exit
+    /// composes a fresh statement from 80 balance token bought credits. needs the balance side on, the balance pool set and the redemption
     /// pot funded
-    function _composeExitPage() internal returns (uint256 sid) {
+    function _composeBalancePage() internal returns (uint256 sid) {
         uint256[] memory xIds = _credits(seller, 80);
         vm.prank(seller);
-        core.sellForExitToken(xIds);
+        core.sellForBalance(xIds);
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
@@ -85,7 +85,7 @@ contract RatingReferenceTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setExitPoolKey(k);
+        ctl.setBalancePoolKey(k);
     }
 
     // ------------------------------------------------------------------ reference
@@ -135,22 +135,22 @@ contract RatingReferenceTest is Fixture {
         assertEq(ctl.referenceOf(sid), cost, "one unit above the boundary references cost");
     }
 
-    /// the bug decision 95 fixes: an eth bought statement and an exit token bought statement reference by the same
-    /// per-rating amount once the rate term binds, whatever each credit cost. decision 90 scaled the exit statement by
+    /// the bug decision 95 fixes: an eth bought statement and a balance token bought statement reference by the same
+    /// per-rating amount once the rate term binds, whatever each credit cost. decision 90 scaled the redemption statement by
     /// about the square of its score ratio because its recorded cost already scaled with score
     function test_sameRatingSameReference_acrossLineages() public {
         _enterPhase2();
         xt.mint(address(core), 1e27);
         core.skim();
         _fundPot(5 ether);
-        _initPool(HIGH_SQRT); // the cheap exit token records the score-scaled backstop as the exit lineage cost
+        _initPool(HIGH_SQRT); // the cheap balance token records the score-scaled backstop as the redemption lineage cost
 
         uint256 ethSid = _composeEthPage();
-        uint256 exitSid = _composeExitPage();
+        uint256 balanceSid = _composeBalancePage();
 
         (, uint256 costE,) = core.statementInfo(ethSid);
-        (, uint256 costX,) = core.statementInfo(exitSid);
-        // the eth lineage records the dropped eth bid, the exit lineage its score-scaled backstop: two different cost
+        (, uint256 costX,) = core.statementInfo(balanceSid);
+        // the eth lineage records the dropped eth bid, the redemption lineage its score-scaled backstop: two different cost
         // bases, where decision 90 scaled each statement by its own cost
         assertTrue(costX != costE, "the two lineages record different cost bases");
 
@@ -158,19 +158,19 @@ contract RatingReferenceTest is Fixture {
 
         uint256 p = core.floorRate();
         uint256 re = core.ratingOf(ethSid);
-        uint256 rx = core.ratingOf(exitSid);
+        uint256 rx = core.ratingOf(balanceSid);
 
         // the reference is the rate term for both, cost absent
         assertEq(ctl.referenceOf(ethSid), FullMath.mulDiv(p, re, 1), "the eth lineage references the rate term");
-        assertEq(ctl.referenceOf(exitSid), FullMath.mulDiv(p, rx, 1), "the exit lineage references the rate term");
+        assertEq(ctl.referenceOf(balanceSid), FullMath.mulDiv(p, rx, 1), "the redemption lineage references the rate term");
         assertGt(ctl.referenceOf(ethSid), costE, "the rate term binds above the eth lineage cost");
-        assertGt(ctl.referenceOf(exitSid), costX, "the rate term binds above the exit lineage cost");
+        assertGt(ctl.referenceOf(balanceSid), costX, "the rate term binds above the redemption lineage cost");
 
-        // equal rating gives equal reference: scaling the eth reference to the exit rating lands on the exit reference,
-        // so the higher exit cost does not lift it
+        // equal rating gives equal reference: scaling the eth reference to the redemption rating lands on the redemption reference,
+        // so the higher redemption cost does not lift it
         assertEq(
             FullMath.mulDiv(ctl.referenceOf(ethSid), rx, re),
-            ctl.referenceOf(exitSid),
+            ctl.referenceOf(balanceSid),
             "a statement of equal rating references equally whatever its credits cost"
         );
     }
@@ -363,7 +363,7 @@ contract RatingReferenceTest is Fixture {
         _makeRich(sid);
         uint256 curve = ctl.priceOf(sid);
 
-        _initPool(LOW_SQRT); // a low sqrt price makes the exit token expensive in eth
+        _initPool(LOW_SQRT); // a low sqrt price makes the balance token expensive in eth
         uint256 owed = core.ratingOf(sid) * core.unitPerPoint();
         uint256 q = FixedPoint96.Q96;
         uint256 value = FullMath.mulDiv(FullMath.mulDiv(owed, q, LOW_SQRT), q, LOW_SQRT);

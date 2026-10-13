@@ -13,7 +13,7 @@ interface ICoreLens {
         uint256 ethPot;
         uint256 ethToBuyback;
         uint256 ethRedeemBurn;
-        uint256 xPot;
+        uint256 balancePot;
         uint256 unbookedEth;
         uint256 routerBalance;
         uint256 routerOwed;
@@ -21,12 +21,12 @@ interface ICoreLens {
         uint256 flushToPayees;
         address controller;
         address successor;
-        address exitModule;
-        address exitToken;
-        uint256 exitMode;
+        address balanceModule;
+        address balanceToken;
+        uint256 balanceMode;
         uint256 unitPerPoint;
         bool controllerLocked;
-        bool exitModuleLocked;
+        bool balanceModuleLocked;
         bool targetsLocked;
         bool successorLocked;
         bool creditSaleOn;
@@ -44,17 +44,17 @@ interface ICoreLens {
         uint256 rating;
         uint256 priceReference;
         uint256 askingPrice;
-        bool exitEligible;
+        bool redeemEligible;
     }
 
     function CORE() external view returns (address);
     function CREDITS() external view returns (address);
     function ROUTER() external view returns (address);
     function STATEMENTS() external view returns (address);
+    function balanceBidOf(uint256 id) external view returns (uint256);
     function choosable(uint256 id) external view returns (bool);
     function controller() external view returns (address);
     function creditPriceOf(uint256 id) external view returns (uint256 price);
-    function exitBidOf(uint256 id) external view returns (uint256);
     function snapshot() external view returns (Snapshot memory s);
     function statementsPage(uint256 start, uint256 n) external view returns (StatementView[] memory);
 }

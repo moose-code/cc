@@ -2,8 +2,8 @@
 pragma solidity ^0.8.28;
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {ICredits, IStatements, IExitModule, Mainnet} from "../../src/interfaces/Interfaces.sol";
-import {MockExitToken} from "../standins/MockExitToken.sol";
+import {ICredits, IStatements, IBalanceModule, Mainnet} from "../../src/interfaces/Interfaces.sol";
+import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {TestSwapRouter} from "../utils/TestSwapRouter.sol";
 import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
 
@@ -60,16 +60,16 @@ contract SwapMidListing is Flushes {
     receive() external payable {}
 }
 
-/// an exit module that swaps in the real pool in the middle of the core's `exitStatement` measurement, so the skim
+/// a balance module that swaps in the real pool in the middle of the core's `redeemStatement` measurement, so the skim
 /// hook pushes eth into the core's `receive()` while the core's measuring flag is set. it pays like the stand in
-contract SwapMidExit is IExitModule, Flushes {
-    MockExitToken public immutable token;
+contract SwapMidRedeem is IBalanceModule, Flushes {
+    MockBalanceToken public immutable token;
     uint256 public immutable unit;
     TestSwapRouter public immutable router;
     PoolKey internal key;
     uint256 public swapEth;
 
-    constructor(MockExitToken token_, uint256 unit_, TestSwapRouter router_, PoolKey memory key_, uint256 swapEth_) {
+    constructor(MockBalanceToken token_, uint256 unit_, TestSwapRouter router_, PoolKey memory key_, uint256 swapEth_) {
         token = token_;
         unit = unit_;
         router = router_;
@@ -77,7 +77,7 @@ contract SwapMidExit is IExitModule, Flushes {
         swapEth = swapEth_;
     }
 
-    function exitToken() external view returns (address) {
+    function balanceToken() external view returns (address) {
         return address(token);
     }
 
@@ -85,7 +85,7 @@ contract SwapMidExit is IExitModule, Flushes {
         return unit;
     }
 
-    function exit(uint256 statementId) external returns (uint256 out) {
+    function redeem(uint256 statementId) external returns (uint256 out) {
         router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
         _flush();
         out = IStatements(Mainnet.STATEMENTS).creditScoreOf(statementId) * unit;

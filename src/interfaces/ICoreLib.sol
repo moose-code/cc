@@ -9,14 +9,14 @@ interface ICoreLib {
     error BadSetting(bytes32 field);
     error BadSuccessor(address who);
     error BadSwap();
+    error BalanceModeOff();
     error CallFailed();
     error Empty();
-    error ExitModeOff();
     error Held();
     error InPile();
     error Locked(bytes32 what);
+    error NoBalanceModule();
     error NoCode(address who);
-    error NoExitModule();
     error NoSuccessor();
     error NotHolder();
     error NotOwner();
@@ -28,12 +28,12 @@ interface ICoreLib {
     error ZeroAmount();
     error ZeroId();
 
+    event BalanceTokenMigrationSkipped(address indexed successor, uint256 amount);
     event CoinRescued(address indexed to, uint256 amount);
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event EngineRetired(address indexed successor);
-    event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
-    event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
+    event Migrated(address indexed successor, uint256 eth, uint256 balanceTokens, uint256 credits);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
     event SettingsSet(Settings settings);
     event SuccessorLocked();

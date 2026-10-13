@@ -20,5 +20,5 @@ The plan, the open items and the freeze table are in `docs/STATUS.md`. A fix or 
 - One active director. Implementers get bounded packets. Reviewers inspect an immutable commit, challenge the director's reasoning, and do not fix their own findings.
 - Each change gets `forge build` and `forge test --match-path` for the test files it touched. Nothing more. The full suite, the deep invariants and the rehearsal run once, on the frozen candidate. A builder packet never asks for a full suite on a work item. Before a command over 30 seconds, say what it must establish.
 - No mainnet broadcast, deploy, push, merge or private key without the owner's explicit instruction.
-- The vocabulary is "balance", never "exit" (docs/DECISIONS.md decision 102). Until the rename packet (docs/STATUS.md section 2, packet 1) lands, the code still carries `exitModule`, `exitToken` and `exitMode`; new text and new code use the balance names.
+- The vocabulary is "balance", never "exit" (docs/DECISIONS.md decision 102). Code, comments, tests and docs use the balance names: `balanceToken`, `balanceModule`, `balanceMode`, `redeemStatement`, `sellForBalance`, `balancePot`.
 - Toolchain, timings and test rules: `docs/STATUS.md` section 5.

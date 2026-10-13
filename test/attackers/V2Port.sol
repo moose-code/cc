@@ -2,9 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {ICore} from "../../src/interfaces/ICore.sol";
-import {ICredits, IStatements, IExitModule, Mainnet} from "../../src/interfaces/Interfaces.sol";
+import {ICredits, IStatements, IBalanceModule, Mainnet} from "../../src/interfaces/Interfaces.sol";
 import {IArtCoinsFeeEscrowV2, IArtCoinsTokenV2} from "../../src/interfaces/ArtCoinsV2.sol";
-import {MockExitToken} from "../standins/MockExitToken.sol";
+import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 
 /// a listing target that claims the escrow credit of the Core in the middle of the Core's `buyListing` measurement
 /// (anyone may claim for the Core), then delivers its credit. the claimed eth lands in the Core with the escrow as sender
@@ -31,21 +31,21 @@ contract ClaimMidListing {
     receive() external payable {}
 }
 
-/// an exit module that claims the Core's escrow credit in the middle of `exitStatement`, then pays like the stand in
-contract ClaimMidExit is IExitModule {
-    MockExitToken public immutable token;
+/// a balance module that claims the Core's escrow credit in the middle of `redeemStatement`, then pays like the stand in
+contract ClaimMidRedeem is IBalanceModule {
+    MockBalanceToken public immutable token;
     uint256 public immutable unit;
     IArtCoinsFeeEscrowV2 public immutable ESCROW;
     address public immutable CORE;
 
-    constructor(MockExitToken token_, uint256 unit_, address escrow_, address core_) {
+    constructor(MockBalanceToken token_, uint256 unit_, address escrow_, address core_) {
         token = token_;
         unit = unit_;
         ESCROW = IArtCoinsFeeEscrowV2(escrow_);
         CORE = core_;
     }
 
-    function exitToken() external view returns (address) {
+    function balanceToken() external view returns (address) {
         return address(token);
     }
 
@@ -53,7 +53,7 @@ contract ClaimMidExit is IExitModule {
         return unit;
     }
 
-    function exit(uint256 statementId) external returns (uint256 out) {
+    function redeem(uint256 statementId) external returns (uint256 out) {
         ESCROW.claim(CORE, address(0));
         out = IStatements(Mainnet.STATEMENTS).creditScoreOf(statementId) * unit;
         token.mint(msg.sender, out);

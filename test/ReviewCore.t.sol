@@ -6,9 +6,9 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings, ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 
-/// regressions and attack tests for REVIEW-core.md (git history before packet 0), on the real stack. the exit token buyback is the dutch
+/// regressions and attack tests for REVIEW-core.md (git history before packet 0), on the real stack. the balance token buyback is the dutch
 /// auction inside the core (unchanged by the flow rework, its half life and slice are settings now), so its attacks
-/// are written against that: nobody gets exit token for less coin than the
+/// are written against that: nobody gets balance token for less coin than the
 /// quote, nothing but the clock lowers the price, a fill never takes more than `xToBuyback`, and every fill restarts
 /// the price at max(2 * clearing, previous start / 4)
 contract ReviewCoreTest is Fixture {
@@ -27,8 +27,8 @@ contract ReviewCoreTest is Fixture {
 
     // ------------------------------------------------------------------ R3 unitPerPoint is fixed at set time
 
-    /// R3 regression: the module lowers its own unit before the exit. the core requires the unit it stored when the
-    /// module was set, so the underpaid exit reverts and the statement stays
+    /// R3 regression: the module lowers its own unit before the redemption. the core requires the unit it stored when the
+    /// module was set, so the underpaid redemption reverts and the statement stays
     function test_FIXED_loweredUnitCannotTakeStatementForDust() public {
         _enterPhase2();
         Composed memory c = _composeOnce();
@@ -36,7 +36,7 @@ contract ReviewCoreTest is Fixture {
 
         mod.setUnitPerPoint(1);
         vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement never left");
         assertTrue(_isHeld(c.sid));
         assertEq(core.unitPerPoint(), UNIT, "the stored unit did not move");
@@ -47,19 +47,19 @@ contract ReviewCoreTest is Fixture {
     /// fair price
     function test_FIXED_raisedUnitCannotDrainBidPot() public {
         _enterPhase2();
-        _setExitPool();
+        _setBalancePool();
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
-        core.exitStatement(c.sid);
-        uint256 pot = core.xPot();
+        core.redeemStatement(c.sid);
+        uint256 pot = core.balancePot();
         assertGt(pot, 0);
 
         uint256[] memory ids = _credits(rseller, 1);
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(ids[0]), CREDITS.timestampOf(ids[0]));
-        uint256 fair = score * UNIT * (10_000 - core.settings().exitBidMarginBps) / 10_000;
+        uint256 fair = score * UNIT * (10_000 - core.settings().balanceBidMarginBps) / 10_000;
         mod.setUnitPerPoint(UNIT * 100);
         vm.prank(rseller);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
 
         assertEq(xt.balanceOf(rseller), fair, "paid the fair price at the stored unit");
         assertLt(xt.balanceOf(rseller) * 2, pot, "far less than half of the pot");

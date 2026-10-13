@@ -8,8 +8,8 @@ import {ICreditStrategy, IStatements, Mainnet, Settings} from "../src/interfaces
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
-import {MockExitToken} from "./standins/MockExitToken.sol";
-import {MockExitModule} from "./standins/MockExitModule.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
+import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {SeaportBase} from "./Seaport.t.sol";
 import {OrderComponents} from "./utils/SeaportTypes.sol";
 import {GasBurningPayee} from "./attackers/GasBurners.sol";
@@ -20,8 +20,8 @@ import {GasBurningPayee} from "./attackers/GasBurners.sol";
 /// slots cooled first, so the first access of every slot is charged the cold price like in a fresh transaction.
 /// ESTIMATE: the transaction gas is that delta plus 21,000 intrinsic plus the calldata cost (4 per zero byte, 16 per
 /// other byte, or the EIP-7623 floor of 10 per token when that is larger). it ignores the access list, the gas refund
-/// (the cap counts gas before refunds) and a few hundred gas of call overhead inside the delta. `exitModule` and
-/// `exitToken` are test stand ins: what a real `exitModule` costs inside `exit` is not measured here
+/// (the cap counts gas before refunds) and a few hundred gas of call overhead inside the delta. `balanceModule` and
+/// `balanceToken` are test stand ins: what a real `balanceModule` costs inside `redeem` is not measured here
 contract GasCapTest is SeaportBase {
     uint256 internal constant CAP = 16_777_216;
     /// @dev above this share of the cap a row is flagged
@@ -270,7 +270,7 @@ contract GasCapTest is SeaportBase {
         _row("rescueCoin", g, data);
     }
 
-    // ------------------------------------------------------------------ compose and exit
+    // ------------------------------------------------------------------ compose and redeem
 
     function _measureCompose(string memory name) internal returns (uint256 g) {
         uint256 held = core.heldStatements().length;
@@ -350,19 +350,19 @@ contract GasCapTest is SeaportBase {
         _composeLoaded(true);
     }
 
-    function test_gas_exitStatement_ethLane() public {
+    function test_gas_redeemStatement_ethLane() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
         _cool(address(core));
         vm.prank(keeper);
         uint256 g = gasleft();
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         g -= gasleft();
         _row(
-            "exitStatement, eth lane (stand in exitModule), cold",
+            "redeemStatement, eth lane (stand in balanceModule), cold",
             g,
-            abi.encodeCall(core.exitStatement, (sid))
+            abi.encodeCall(core.redeemStatement, (sid))
         );
     }
 
@@ -377,24 +377,24 @@ contract GasCapTest is SeaportBase {
 
     /// @dev a sell of `n` fresh credits by `seller`, measured, then the state is rolled back. returns the exec gas and
     /// the estimated transaction gas
-    function _sellBatch(bool exit_, uint256 n) internal returns (uint256 g, uint256 total) {
+    function _sellBatch(bool balance_, uint256 n) internal returns (uint256 g, uint256 total) {
         // two runs, the larger counts: repeated runs of one size differ by a few thousand gas
-        (uint256 g1, uint256 t1) = _sellOnce(exit_, n);
-        (uint256 g2, uint256 t2) = _sellOnce(exit_, n);
+        (uint256 g1, uint256 t1) = _sellOnce(balance_, n);
+        (uint256 g2, uint256 t2) = _sellOnce(balance_, n);
         return t1 > t2 ? (g1, t1) : (g2, t2);
     }
 
-    function _sellOnce(bool exit_, uint256 n) internal returns (uint256 g, uint256 total) {
+    function _sellOnce(bool balance_, uint256 n) internal returns (uint256 g, uint256 total) {
         uint256 snap = vm.snapshotState();
         uint256[] memory ids = _credits(seller, n);
         bytes memory data =
-            abi.encodeWithSignature(exit_ ? "sellForExitToken(uint256[])" : "sellForEth(uint256[])", ids);
+            abi.encodeWithSignature(balance_ ? "sellForBalance(uint256[])" : "sellForEth(uint256[])", ids);
         _cool(address(core));
         // the eth door pulls the router first: the measured sell carries a flush of 1 eth
-        if (!exit_) vm.deal(address(feeRouter), 1 ether);
+        if (!balance_) vm.deal(address(feeRouter), 1 ether);
         vm.prank(seller);
         g = gasleft();
-        if (exit_) core.sellForExitToken(ids);
+        if (balance_) core.sellForBalance(ids);
         else core.sellForEth(ids);
         g -= gasleft();
         total = _txGas(g, data, 0);
@@ -403,33 +403,33 @@ contract GasCapTest is SeaportBase {
 
     /// @dev the core does not bound the batch. the largest `n` whose transaction stays under the cap is found by a
     /// linear fit on three sizes, then walked to the exact edge
-    function _searchBatch(string memory label, bool exit_) internal {
-        (uint256 g1, uint256 t1) = _sellBatch(exit_, 1);
+    function _searchBatch(string memory label, bool balance_) internal {
+        (uint256 g1, uint256 t1) = _sellBatch(balance_, 1);
         _row(string.concat(label, ", 1 credit, cold"), g1, abi.encodeWithSignature("sellForEth(uint256[])", _one(1)));
-        (uint256 g10,) = _sellBatch(exit_, 10);
-        (uint256 g40, uint256 t40) = _sellBatch(exit_, 40);
+        (uint256 g10,) = _sellBatch(balance_, 10);
+        (uint256 g40, uint256 t40) = _sellBatch(balance_, 40);
         uint256 slope = (t40 - t1) / 39;
         console.log(string.concat(label, ": marginal tx gas per credit (fit 1 to 40)"), slope);
         console.log(string.concat(label, ": exec gas for 10 credits"), g10);
         uint256 n = (CAP - t1) / slope + 1;
         while (n > 1) {
-            (, uint256 t) = _sellBatch(exit_, n);
+            (, uint256 t) = _sellBatch(balance_, n);
             if (t < CAP) break;
             --n;
         }
         while (n < 600) {
-            (, uint256 t) = _sellBatch(exit_, n + 1);
+            (, uint256 t) = _sellBatch(balance_, n + 1);
             if (t >= CAP) break;
             ++n;
         }
-        (uint256 gn, uint256 tn) = _sellBatch(exit_, n);
+        (uint256 gn, uint256 tn) = _sellBatch(balance_, n);
         // a size measured under the cap during the walk can measure over it again: the edge is the last size whose final
         // measurement is under the cap
         while (tn >= CAP) {
             --n;
-            (gn, tn) = _sellBatch(exit_, n);
+            (gn, tn) = _sellBatch(balance_, n);
         }
-        (, uint256 tn1) = _sellBatch(exit_, n + 1);
+        (, uint256 tn1) = _sellBatch(balance_, n + 1);
         console.log(string.concat(label, ": LARGEST BATCH under the cap"), n);
         console.log(string.concat(label, ": gas per credit at the largest batch"), tn / n);
         string memory big = string.concat(label, ", largest batch ", vm.toString(n), ", cold");
@@ -445,13 +445,13 @@ contract GasCapTest is SeaportBase {
         _searchBatch("sellForEth (launch)", false);
     }
 
-    function test_gas_sellForExitToken_batch() public {
+    function test_gas_sellForBalance_batch() public {
         _enterPhase2();
-        _setExitPool();
-        _fillExitBuyback();
+        _setBalancePool();
+        _fillBalanceBuyback();
         xt.mint(address(core), 1_000_000e18);
         core.skim();
-        _searchBatch("sellForExitToken", true);
+        _searchBatch("sellForBalance", true);
     }
 
     // ------------------------------------------------------------------ buyListing, sales proceeds, buybacks
@@ -566,17 +566,17 @@ contract GasCapTest is SeaportBase {
 
     // ------------------------------------------------------------------ owner doors
 
-    /// @dev phase 2 on with exit token in the bid pot: setSettings checkpoints the eth rate and rewrites every field
+    /// @dev the balance side on with balance token in the bid pot: setSettings checkpoints the eth rate and rewrites every field
     function test_gas_setSettings() public {
         _enterPhase2();
-        _fillExitBuyback();
+        _fillBalanceBuyback();
         Settings memory s = core.settings();
         s.climbPerMinBps = 90;
         s.dropPerCreditBps = 150;
         s.saleFloorBps = 8_000;
         s.saleToBuybackBps = 4_000;
         s.buybackSlice = 1 ether;
-        s.exitSlippageBps = 500;
+        s.redeemSlippageBps = 500;
         s.redeemBurnBps = 3_500;
         bytes memory data = abi.encodeCall(core.setSettings, (s));
         _cool(address(core));
@@ -585,7 +585,7 @@ contract GasCapTest is SeaportBase {
         core.setSettings(s);
         g -= gasleft();
         assertEq(core.settings().saleFloorBps, 8_000);
-        _row("setSettings (phase 2, exit auction re anchored), cold", g, data);
+        _row("setSettings (the balance side, balance auction re anchored), cold", g, data);
     }
 
     function test_gas_setController() public {
@@ -599,25 +599,25 @@ contract GasCapTest is SeaportBase {
         _row("setController, cold", g, abi.encodeCall(core.setController, (address(sc))));
     }
 
-    function test_gas_setExitModule_firstAndReplace() public {
-        xt = new MockExitToken("XT", "XT");
-        mod = new MockExitModule(address(xt), UNIT);
+    function test_gas_setBalanceModule_firstAndReplace() public {
+        xt = new MockBalanceToken("XT", "XT");
+        mod = new MockBalanceModule(address(xt), UNIT);
         _cool(address(core));
         vm.prank(owner);
         uint256 g = gasleft();
-        core.setExitModule(address(mod));
+        core.setBalanceModule(address(mod));
         g -= gasleft();
-        _row("setExitModule, first set, cold", g, abi.encodeCall(core.setExitModule, (address(mod))));
-        MockExitModule mod2 = new MockExitModule(address(xt), UNIT * 2);
+        _row("setBalanceModule, first set, cold", g, abi.encodeCall(core.setBalanceModule, (address(mod))));
+        MockBalanceModule mod2 = new MockBalanceModule(address(xt), UNIT * 2);
         _cool(address(core));
         vm.prank(owner);
         g = gasleft();
-        core.setExitModule(address(mod2));
+        core.setBalanceModule(address(mod2));
         g -= gasleft();
         _row(
-            "setExitModule, replace with a module of the same exitToken, cold",
+            "setBalanceModule, replace with a module of the same balanceToken, cold",
             g,
-            abi.encodeCall(core.setExitModule, (address(mod2)))
+            abi.encodeCall(core.setBalanceModule, (address(mod2)))
         );
     }
 
@@ -637,11 +637,11 @@ contract GasCapTest is SeaportBase {
     }
 
     /// @dev the same read for a pile far larger than a page (the read takes the head page). the deep pile is filled
-    /// through the exit bid so the eth pot is not drained
+    /// through the balance bid so the eth pot is not drained
     function test_gas_readCaps_nextPage_deepPile() public {
         _enterPhase2();
-        _setExitPool();
-        _fillExitBuyback();
+        _setBalancePool();
+        _fillBalanceBuyback();
         xt.mint(address(core), 1_000_000e18);
         core.skim();
         uint256[] memory ids = _credits(seller, 400);
@@ -652,7 +652,7 @@ contract GasCapTest is SeaportBase {
                 batch[j] = ids[from + j];
             }
             vm.prank(seller);
-            core.sellForExitToken(batch);
+            core.sellForBalance(batch);
         }
         assertEq(core.pileSize(), 400);
         _cool(address(ctl));

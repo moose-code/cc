@@ -5,14 +5,14 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {SettingsStore} from "../src/lib/SettingsStore.sol";
-import {Settings, Mainnet, IExitModule, IStatements, ICreditScore, ICredits} from "../src/interfaces/Interfaces.sol";
-import {MockExitToken} from "./standins/MockExitToken.sol";
-import {MockExitModule} from "./standins/MockExitModule.sol";
+import {Settings, Mainnet, IBalanceModule, IStatements, ICreditScore, ICredits} from "../src/interfaces/Interfaces.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
+import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 
-/// @notice a module that tries to re enter every core door from inside its exit callback. it pays the statement rating
+/// @notice a module that tries to re enter every core door from inside its redeem callback. it pays the statement rating
 /// times the unit
-contract ReenteringModule is IExitModule {
-    address public exitToken;
+contract ReenteringModule is IBalanceModule {
+    address public balanceToken;
     uint256 public unit;
     address public core;
     uint256 public attempts;
@@ -20,7 +20,7 @@ contract ReenteringModule is IExitModule {
     bool public skimInside;
 
     constructor(address token, uint256 unit_, address core_) {
-        exitToken = token;
+        balanceToken = token;
         unit = unit_;
         core = core_;
     }
@@ -44,10 +44,10 @@ contract ReenteringModule is IExitModule {
         _try(abi.encodeWithSignature("compose()"));
         _try(abi.encodeWithSignature("buyback()"));
         _try(abi.encodeWithSignature("sellForEth(uint256[])", ids));
-        _try(abi.encodeWithSignature("sellForExitToken(uint256[])", ids));
-        _try(abi.encodeWithSignature("exitStatement(uint256)", 1));
+        _try(abi.encodeWithSignature("sellForBalance(uint256[])", ids));
+        _try(abi.encodeWithSignature("redeemStatement(uint256)", 1));
         _try(abi.encodeWithSignature("buyListing(uint256,bytes,uint256,address)", 0, "", 1, address(this)));
-        _try(abi.encodeWithSignature("setExitModule(address)", address(this)));
+        _try(abi.encodeWithSignature("setBalanceModule(address)", address(this)));
         _try(abi.encodeWithSignature("setController(address)", address(this)));
         _try(abi.encodeWithSignature("addTarget(address)", address(this)));
         _try(abi.encodeWithSignature("transferOwnership(address)", address(this)));
@@ -60,25 +60,25 @@ contract ReenteringModule is IExitModule {
         (ok,) = core.call(abi.encodeWithSignature("skim()"));
     }
 
-    function exit(uint256 sid) external returns (uint256 out) {
+    function redeem(uint256 sid) external returns (uint256 out) {
         _poke();
         out = IStatements(Mainnet.STATEMENTS).creditScoreOf(sid) * unit;
-        MockExitToken(exitToken).mint(msg.sender, out);
+        MockBalanceToken(balanceToken).mint(msg.sender, out);
     }
 }
 
-/// @notice a module whose exitToken report and unit can change after it was set
-contract FlipModule is IExitModule {
-    address public exitToken;
+/// @notice a module whose balanceToken report and unit can change after it was set
+contract FlipModule is IBalanceModule {
+    address public balanceToken;
     uint256 public unit;
 
     constructor(address token, uint256 unit_) {
-        exitToken = token;
+        balanceToken = token;
         unit = unit_;
     }
 
     function setToken(address t) external {
-        exitToken = t;
+        balanceToken = t;
     }
 
     function setUnit(uint256 u) external {
@@ -89,9 +89,9 @@ contract FlipModule is IExitModule {
         return unit;
     }
 
-    function exit(uint256 sid) external returns (uint256 out) {
+    function redeem(uint256 sid) external returns (uint256 out) {
         out = IStatements(Mainnet.STATEMENTS).creditScoreOf(sid) * unit;
-        MockExitToken(exitToken).mint(msg.sender, out);
+        MockBalanceToken(balanceToken).mint(msg.sender, out);
     }
 }
 
@@ -110,9 +110,9 @@ contract PackHarness {
         s.recoveryGapBps = type(uint16).max;
         s.peakHalfLife = type(uint32).max;
         s.buybackDelay = type(uint16).max;
-        s.exitMode = type(uint8).max;
-        s.exitSlippageBps = type(uint16).max;
-        s.exitBidMarginBps = type(uint16).max;
+        s.balanceMode = type(uint8).max;
+        s.redeemSlippageBps = type(uint16).max;
+        s.balanceBidMarginBps = type(uint16).max;
         s.redeemBurnBps = type(uint16).max;
         s.buybackSlice = type(uint128).max;
         s.keeperFee = type(uint64).max;
@@ -134,18 +134,18 @@ contract PackHarness {
     }
 }
 
-/// @notice review of the phase 2 exit side after the per point rebuild: the module is replaceable, a hostile module
+/// @notice review of the balance side after the per point rebuild: the module is replaceable, a hostile module
 /// cannot re enter any door, a module that flips its reported token only bricks itself, the per point bid takes one
 /// unit across a set with minOut protection, and the settings pack into three words
 contract ReviewPhase2FlexTest is Fixture {
     using FixedPointMathLib for uint256;
 
-    function _mod(uint256 unit) internal returns (MockExitModule) {
-        return new MockExitModule(address(xt), unit);
+    function _mod(uint256 unit) internal returns (MockBalanceModule) {
+        return new MockBalanceModule(address(xt), unit);
     }
 
     function _replace(address m) internal {
-        _setExitModule(m);
+        _setBalanceModule(m);
     }
 
     function _potX(uint256 amount) internal {
@@ -155,10 +155,10 @@ contract ReviewPhase2FlexTest is Fixture {
 
     function _bid(uint256 id, uint256 unit) internal view returns (uint256) {
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id));
-        return score * unit * (10_000 - core.settings().exitBidMarginBps) / 10_000;
+        return score * unit * (10_000 - core.settings().balanceBidMarginBps) / 10_000;
     }
 
-    /// a hostile module cannot re enter any door from its exit callback, and the exit books exactly what arrived
+    /// a hostile module cannot re enter any door from its redeem callback, and the redemption books exactly what arrived
     function test_OK_hostileModuleCannotReenterAnyDoor() public {
         _enterPhase2();
         ReenteringModule rm = new ReenteringModule(address(xt), UNIT, address(core));
@@ -167,45 +167,45 @@ contract ReviewPhase2FlexTest is Fixture {
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
         uint256 before = xt.balanceOf(address(core));
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         assertGe(rm.attempts(), 13, "tried every door");
         assertEq(rm.succeeded(), 0, "none got through");
         assertFalse(rm.skimInside(), "the guard refused skim inside the callback");
-        assertGt(xt.balanceOf(address(core)), before, "the exit booked the received token");
-        assertEq(core.xPot(), xt.balanceOf(address(core)), "all the core's exit token is in the bid pot");
+        assertGt(xt.balanceOf(address(core)), before, "the redemption booked the received token");
+        assertEq(core.balancePot(), xt.balanceOf(address(core)), "all the core's balance token is in the bid pot");
         _solvent();
     }
 
-    /// a module that reports another exit token after it was set cannot move the core's token: its exits come back
+    /// a module that reports another balance token after it was set cannot move the core's token: its redemptions come back
     /// Underpaid, the same address cannot be set again, and a good module replaces it
     function test_OK_moduleThatChangesItsReportedTokenOnlyBricksItself() public {
         _enterPhase2();
         FlipModule fm = new FlipModule(address(xt), UNIT);
         _replace(address(fm));
-        MockExitToken other = new MockExitToken("O", "O");
+        MockBalanceToken other = new MockBalanceToken("O", "O");
         fm.setToken(address(other));
-        assertEq(core.exitToken(), address(xt), "the core kept its own copy");
+        assertEq(core.balanceToken(), address(xt), "the core kept its own copy");
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
         vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         vm.prank(owner);
-        vm.expectRevert(ICore.ExitTokenChanged.selector);
-        core.setExitModule(address(fm));
+        vm.expectRevert(ICore.BalanceTokenChanged.selector);
+        core.setBalanceModule(address(fm));
         // a unit change reported later is ignored until a set reads it
         fm.setToken(address(xt));
         fm.setUnit(5 * UNIT);
         assertEq(core.unitPerPoint(), UNIT);
         _replace(address(_mod(UNIT)));
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         _solvent();
     }
 
-    /// a seller in the block of the set is paid by one unit; minOut in exit token units protects a seller who quoted the
+    /// a seller in the block of the set is paid by one unit; minOut in balance token units protects a seller who quoted the
     /// old unit from a drop to a lower new unit
     function test_OK_sellInTheBlockOfTheSetUsesOneUnitAndMinOutProtects() public {
         _enterPhase2();
-        _setExitPool();
+        _setBalancePool();
         _potX(5e21);
         uint256[] memory ids = _credits(seller, 1);
         uint256 quoteOld = _bid(ids[0], UNIT);
@@ -214,11 +214,11 @@ contract ReviewPhase2FlexTest is Fixture {
         uint256[] memory withFloor = ids;
         vm.prank(seller);
         vm.expectRevert(ICore.Slippage.selector);
-        core.sellForExitToken(withFloor, quoteOld);
+        core.sellForBalance(withFloor, quoteOld);
         // without the floor the sale goes through at the new unit
         uint256 before = xt.balanceOf(seller);
         vm.prank(seller);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
         assertEq(xt.balanceOf(seller) - before, _bid(ids[0], UNIT / 10), "paid by the new unit");
         _solvent();
     }
@@ -227,7 +227,7 @@ contract ReviewPhase2FlexTest is Fixture {
     /// contracts are refused as modules
     function test_OK_forbiddenSetsAndStackMembersAfterAReplacement() public {
         _enterPhase2();
-        MockExitModule m2 = _mod(2 * UNIT);
+        MockBalanceModule m2 = _mod(2 * UNIT);
         _replace(address(m2));
         _allow(address(mod));
         assertTrue(core.allowedTarget(address(mod)));
@@ -236,11 +236,11 @@ contract ReviewPhase2FlexTest is Fixture {
         core.addTarget(address(m2));
         // a non contract is never a module
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(0x1234));
-        // a module whose exit token is a stack member keeps the same token first, so the token change is caught
-        MockExitModule alien = new MockExitModule(Mainnet.CREDITS, UNIT);
-        vm.expectRevert(ICore.ExitTokenChanged.selector);
-        core.setExitModule(address(alien));
+        core.setBalanceModule(address(0x1234));
+        // a module whose balance token is a stack member keeps the same token first, so the token change is caught
+        MockBalanceModule alien = new MockBalanceModule(Mainnet.CREDITS, UNIT);
+        vm.expectRevert(ICore.BalanceTokenChanged.selector);
+        core.setBalanceModule(address(alien));
         vm.stopPrank();
     }
 
@@ -261,9 +261,9 @@ contract ReviewPhase2FlexTest is Fixture {
         assertEq(uint16(a >> 128), type(uint16).max, "recoveryGapBps");
         assertEq(uint32(a >> 144), type(uint32).max, "peakHalfLife");
         assertEq(uint16(a >> 176), type(uint16).max, "buybackDelay");
-        assertEq(uint8(a >> 192), type(uint8).max, "exitMode");
-        assertEq(uint16(a >> 200), type(uint16).max, "exitSlippageBps");
-        assertEq(uint16(a >> 216), type(uint16).max, "exitBidMarginBps");
+        assertEq(uint8(a >> 192), type(uint8).max, "balanceMode");
+        assertEq(uint16(a >> 200), type(uint16).max, "redeemSlippageBps");
+        assertEq(uint16(a >> 216), type(uint16).max, "balanceBidMarginBps");
         assertEq(uint16(a >> 232), type(uint16).max, "redeemBurnBps");
         // slot 1
         assertEq(uint128(b), type(uint128).max, "buybackSlice");
@@ -279,7 +279,7 @@ contract ReviewPhase2FlexTest is Fixture {
         assertEq(c >> 208, 0, "no field above feeToRedeemBurnBps");
     }
 
-    /// nothing of the core's eth or exit token moves when the owner replaces the module
+    /// nothing of the core's eth or balance token moves when the owner replaces the module
     function test_OK_nothingUnbookedAroundSets() public {
         _enterPhase2();
         _composeOnce();
@@ -289,14 +289,14 @@ contract ReviewPhase2FlexTest is Fixture {
         uint256 ep = core.ethPot();
         uint256 eb = core.ethToBuyback();
         uint256 reserve = core.ethRedeemBurn();
-        uint256 xp = core.xPot();
+        uint256 xp = core.balancePot();
         _replace(address(_mod(2 * UNIT)));
         assertEq(address(core).balance, bal);
         assertEq(xt.balanceOf(address(core)), xbal);
         assertEq(core.ethPot(), ep);
         assertEq(core.ethToBuyback(), eb);
         assertEq(core.ethRedeemBurn(), reserve);
-        assertEq(core.xPot(), xp);
+        assertEq(core.balancePot(), xp);
         _solvent();
     }
 }

@@ -13,14 +13,14 @@ import {ICreditScore, ICredits, Mainnet} from "../src/interfaces/Interfaces.sol"
 import {LowballCreditController, ReentrantCreditBuyer} from "./attackers/CreditSaleAttackers.sol";
 
 /// credit sale window. pile credits are for sale from acquisition at a price that falls linearly from a start to a
-/// floor over `creditWindow` and rests at the floor. the floor is the highest of the credit's cost, its exit token
+/// floor over `creditWindow` and rests at the floor. the floor is the highest of the credit's cost, its balance token
 /// redemption baseline and the score-scaled eth backstop `floorRate * max(1, score / refScore)`, times
-/// `creditFloorBps`; the start is the floor times `creditStartBps`. the baseline reads the live exit token pool and
+/// `creditFloorBps`; the start is the floor times `creditStartBps`. the baseline reads the live balance token pool and
 /// only lifts the floor: a missing or failed pool read leaves it at 0 and the sale never reverts for it. the core
 /// keeps a hard floor at the credit's cost. while the sale is on compose takes only credits past their window
 contract CreditSaleTest is Fixture {
     uint256 internal constant BPS = 10_000;
-    /// a small sqrt price makes the exit token expensive in eth, so the baseline is large
+    /// a small sqrt price makes the balance token expensive in eth, so the baseline is large
     uint160 internal constant HIGH_PRICE_SQRT = uint160(FixedPoint96.Q96 / 1000);
 
     address internal buyer;
@@ -47,8 +47,8 @@ contract CreditSaleTest is Fixture {
         ctl.setCreditSaleOn(true);
     }
 
-    /// initializes a native eth / exit token pool at `sp` and points the controller at it
-    function _initExitPoolAt(uint160 sp) internal {
+    /// initializes a native eth / balance token pool at `sp` and points the controller at it
+    function _initBalancePoolAt(uint160 sp) internal {
         PoolKey memory vk = PoolKey({
             currency0: Currency.wrap(address(0)),
             currency1: Currency.wrap(address(xt)),
@@ -65,7 +65,7 @@ contract CreditSaleTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setExitPoolKey(k);
+        ctl.setBalancePoolKey(k);
     }
 
     function _buyAt(address who, uint256 id, uint256 pay) internal {
@@ -74,13 +74,13 @@ contract CreditSaleTest is Fixture {
         ctl.buyCredit{value: pay}(id);
     }
 
-    /// the credit score source the exit token bid and the credit baseline both read: `scoreOf(seed, paidAt)` on the
+    /// the credit score source the balance token bid and the credit baseline both read: `scoreOf(seed, paidAt)` on the
     /// mainnet credit score contract
     function _creditScore(uint256 id) internal view returns (uint256) {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
-    /// `baseUnits` of the exit token priced in wei at a pool whose sqrt price is `sp`, the same math the controller's
+    /// `baseUnits` of the balance token priced in wei at a pool whose sqrt price is `sp`, the same math the controller's
     /// value floor and credit baseline use. native eth is currency0, so wei per base unit is `(2^96 / sp)^2`
     function _poolValueWei(uint256 baseUnits, uint160 sp) internal pure returns (uint256) {
         uint256 q = FixedPoint96.Q96;
@@ -158,7 +158,7 @@ contract CreditSaleTest is Fixture {
 
         // age 0: the start
         assertEq(ctl.creditPrice(id), start, "start at acquisition");
-        // the exit token baseline is off, so the floor is the cost times the floor bps
+        // the balance token baseline is off, so the floor is the cost times the floor bps
         assertEq(floor, cost * 11_000 / BPS, "floor is 110 percent of cost");
         assertEq(start, floor * 3, "start is three times the floor");
 
@@ -230,14 +230,14 @@ contract CreditSaleTest is Fixture {
         _enterPhase2();
         uint256[] memory ids = _fillEthPile(1);
         uint256 id = ids[0];
-        // an expensive exit token pool makes the credit's exit token baseline the highest term
-        _initExitPoolAt(HIGH_PRICE_SQRT);
+        // an expensive balance token pool makes the credit's balance token baseline the highest term
+        _initBalancePoolAt(HIGH_PRICE_SQRT);
         vm.prank(owner);
         core.setRate(1e13); // keep the floor rate small
         _on();
         _warp(ctl.creditWindow());
 
-        // the baseline uses the same credit score source the exit token bid reads, priced at the pool sqrt price
+        // the baseline uses the same credit score source the balance token bid reads, priced at the pool sqrt price
         uint256 baseline = _poolValueWei(_creditScore(id) * core.unitPerPoint(), HIGH_PRICE_SQRT);
         (, uint256 cost,) = core.creditInfo(id);
         assertGt(baseline, cost, "baseline above cost");
@@ -247,7 +247,7 @@ contract CreditSaleTest is Fixture {
 
     // ------------------------------------------------------------------ baseline and the pool read
 
-    function test_baseline_zeroWithoutExitModule() public {
+    function test_baseline_zeroWithoutBalanceModule() public {
         uint256[] memory ids = _fillEthPile(1);
         uint256 id = ids[0];
         vm.prank(owner);
@@ -255,8 +255,8 @@ contract CreditSaleTest is Fixture {
         _on();
         _warp(ctl.creditWindow());
         (, uint256 cost,) = core.creditInfo(id);
-        // no exit module: the baseline is 0 and the sale works
-        assertEq(ctl.creditPrice(id), cost * ctl.creditFloorBps() / BPS, "no exit module, baseline 0");
+        // no balance module: the baseline is 0 and the sale works
+        assertEq(ctl.creditPrice(id), cost * ctl.creditFloorBps() / BPS, "no balance module, baseline 0");
     }
 
     function test_creditPrice_worksWithModuleSetAndPoolKeyUnset() public {
@@ -267,8 +267,8 @@ contract CreditSaleTest is Fixture {
         core.setRate(1e13);
         _on();
         _warp(ctl.creditWindow());
-        assertFalse(ctl.exitPoolKeySet(), "no pool key yet");
-        // an exit module is set but the pool key is unset: the baseline stays 0 and the floor is the cost or backstop
+        assertFalse(ctl.balancePoolKeySet(), "no pool key yet");
+        // a balance module is set but the pool key is unset: the baseline stays 0 and the floor is the cost or backstop
         (, uint256 cost,) = core.creditInfo(id);
         uint256 hi = cost > _backstop(id) ? cost : _backstop(id);
         assertEq(ctl.creditPrice(id), hi * ctl.creditFloorBps() / BPS, "the sale prices with the baseline at 0");
@@ -280,7 +280,7 @@ contract CreditSaleTest is Fixture {
         _enterPhase2();
         uint256[] memory ids = _fillEthPile(1);
         uint256 id = ids[0];
-        _initExitPoolAt(HIGH_PRICE_SQRT);
+        _initBalancePoolAt(HIGH_PRICE_SQRT);
         vm.prank(owner);
         core.setRate(1e13);
         _on();
@@ -342,15 +342,15 @@ contract CreditSaleTest is Fixture {
         assertEq(ctl.creditPrice(id), back * ctl.creditFloorBps() / BPS, "floor is the scaled backstop");
     }
 
-    /// a pushed down pool price values a rich credit's exit tokens below its scaled eth backstop, so the floor rests at
+    /// a pushed down pool price values a rich credit's balance tokens below its scaled eth backstop, so the floor rests at
     /// `creditFloorBps` (1.1x) of the backstop, not the manipulated pool value
     function test_backstop_pushedDownPoolLeavesRichCreditAtTheScaledBackstop() public {
         _enterPhase2();
         uint256[] memory ids = _fillEthPile(1);
         uint256 id = ids[0];
-        // a large sqrt price makes the exit token cheap in eth, so the baseline is far below the backstop
+        // a large sqrt price makes the balance token cheap in eth, so the baseline is far below the backstop
         uint160 pushedDown = uint160((uint256(1) << 96) * 1000);
-        _initExitPoolAt(pushedDown);
+        _initBalancePoolAt(pushedDown);
         (, uint256 cost,) = core.creditInfo(id);
         _liftRateCap();
         vm.prank(owner);
@@ -613,20 +613,20 @@ contract CreditSaleTest is Fixture {
         assertTrue(held, "the statement composed after the window");
     }
 
-    // ------------------------------------------------------------------ an exit token credit sells at its recorded cost
+    // ------------------------------------------------------------------ a balance token credit sells at its recorded cost
 
-    function test_buy_exitTokenCreditSellsAtItsRecordedCost() public {
+    function test_buy_balanceTokenCreditSellsAtItsRecordedCost() public {
         _enterPhase2();
         _fundPot(3 ether);
         xt.mint(address(core), 1e24);
         core.skim();
-        _setExitPool();
+        _setBalancePool();
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];
         vm.prank(seller);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
         (, uint256 cost,) = core.creditInfo(id);
-        assertGt(cost, 0, "the credit recorded an eth cost from the exit sale");
+        assertGt(cost, 0, "the credit recorded an eth cost from the redemption sale");
 
         _on();
         _warp(ctl.creditWindow());
@@ -634,7 +634,7 @@ contract CreditSaleTest is Fixture {
         assertGe(price, cost, "the sale price is at least the recorded cost");
         uint256 potBefore = core.ethPot();
         _buyAt(buyer, id, price);
-        assertEq(CREDITS.ownerOf(id), buyer, "the exit token credit is sold");
+        assertEq(CREDITS.ownerOf(id), buyer, "the balance token credit is sold");
         assertEq(core.ethPot() - potBefore, cost, "the pot books the recorded cost at the default split");
     }
 

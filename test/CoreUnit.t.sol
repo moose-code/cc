@@ -11,8 +11,8 @@ import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {HostileTarget} from "./attackers/HostileTarget.sol";
 import {ProbeTarget} from "./attackers/ProbeTarget.sol";
 import {ListingTarget} from "./attackers/ListingTarget.sol";
-import {MockExitToken} from "./standins/MockExitToken.sol";
-import {MockExitModule} from "./standins/MockExitModule.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
+import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {BidModel} from "./utils/BidModel.sol";
 
@@ -95,11 +95,11 @@ contract CoreUnitTest is CoreBase {
         assertEq(core.ethRate(), 0, "an empty pot reads zero");
         assertEq(core.lastFillTime(), launchTime);
         assertEq(core.ethPot(), 0);
-        assertEq(core.exitModule(), address(0));
-        assertEq(core.exitToken(), address(0));
+        assertEq(core.balanceModule(), address(0));
+        assertEq(core.balanceToken(), address(0));
         assertEq(core.unitPerPoint(), 0);
         assertFalse(core.controllerLocked());
-        assertFalse(core.exitModuleLocked());
+        assertFalse(core.balanceModuleLocked());
         assertFalse(core.targetsLocked());
     }
 
@@ -955,7 +955,7 @@ contract CoreUnitTest is CoreBase {
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setController(address(ctl));
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.setExitModule(address(mod));
+        core.setBalanceModule(address(mod));
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.addTarget(address(0x1234));
         vm.expectRevert(ICore.OnlyOwner.selector);
@@ -963,7 +963,7 @@ contract CoreUnitTest is CoreBase {
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.lockController();
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.lockExitModule();
+        core.lockBalanceModule();
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.lockTargets();
         vm.expectRevert(ICore.OnlyOwner.selector);
@@ -1003,33 +1003,33 @@ contract CoreUnitTest is CoreBase {
         vm.prank(owner);
         core.removeTarget(address(t));
         assertFalse(core.allowedTarget(address(t)));
-        assertFalse(core.exitModuleLocked());
+        assertFalse(core.balanceModuleLocked());
         assertFalse(core.targetsLocked());
     }
 
-    function test_owner_lockExitModule() public {
-        // no module yet: phase 2 cannot be locked out by accident
+    function test_owner_lockBalanceModule() public {
+        // no module yet: the balance side cannot be locked out by accident
         vm.prank(owner);
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.lockExitModule();
-        assertFalse(core.exitModuleLocked());
+        vm.expectRevert(ICore.NoBalanceModule.selector);
+        core.lockBalanceModule();
+        assertFalse(core.balanceModuleLocked());
 
         _enterPhase2();
         vm.expectEmit(false, false, false, false);
-        emit ICore.ExitModuleLocked();
+        emit ICore.BalanceModuleLocked();
         vm.prank(owner);
-        core.lockExitModule();
-        assertTrue(core.exitModuleLocked());
+        core.lockBalanceModule();
+        assertTrue(core.balanceModuleLocked());
 
-        MockExitModule other = new MockExitModule(address(xt), 1 * UNIT);
+        MockBalanceModule other = new MockBalanceModule(address(xt), 1 * UNIT);
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("exitModule")));
-        core.setExitModule(address(other));
+        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("balanceModule")));
+        core.setBalanceModule(address(other));
         // naming the same module again to refresh the unit is blocked too
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("exitModule")));
-        core.setExitModule(address(mod));
-        assertEq(core.exitModule(), address(mod));
+        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("balanceModule")));
+        core.setBalanceModule(address(mod));
+        assertEq(core.balanceModule(), address(mod));
     }
 
     function test_owner_lockTargets() public {
@@ -1105,30 +1105,30 @@ contract CoreUnitTest is CoreBase {
         core.acceptOwnership();
     }
 
-    function test_owner_exitModuleReplaceable() public {
+    function test_owner_balanceModuleReplaceable() public {
         _enterPhase2();
-        assertEq(core.exitModule(), address(mod));
-        assertEq(core.exitToken(), address(xt));
+        assertEq(core.balanceModule(), address(mod));
+        assertEq(core.balanceToken(), address(xt));
         assertEq(core.unitPerPoint(), UNIT);
 
-        // a second set with the same exit token goes through and reads the unit again
-        MockExitModule other = new MockExitModule(address(xt), 1 * UNIT);
-        _setExitModule(address(other));
-        assertEq(core.exitModule(), address(other));
-        assertEq(core.exitToken(), address(xt));
+        // a second set with the same balance token goes through and reads the unit again
+        MockBalanceModule other = new MockBalanceModule(address(xt), 1 * UNIT);
+        _setBalanceModule(address(other));
+        assertEq(core.balanceModule(), address(other));
+        assertEq(core.balanceToken(), address(xt));
         assertEq(core.unitPerPoint(), 1 * UNIT);
 
-        // a module with another exit token reverts, and the state stays
-        MockExitModule alien = new MockExitModule(address(new MockExitToken("x", "x")), 1 * UNIT);
+        // a module with another balance token reverts, and the state stays
+        MockBalanceModule alien = new MockBalanceModule(address(new MockBalanceToken("x", "x")), 1 * UNIT);
         vm.prank(owner);
-        vm.expectRevert(ICore.ExitTokenChanged.selector);
-        core.setExitModule(address(alien));
-        assertEq(core.exitModule(), address(other));
+        vm.expectRevert(ICore.BalanceTokenChanged.selector);
+        core.setBalanceModule(address(alien));
+        assertEq(core.balanceModule(), address(other));
     }
 
-    function test_owner_exitModuleValidation() public {
-        MockExitModule coinModule = new MockExitModule(address(coin), 1 * UNIT);
-        MockExitModule ghost = new MockExitModule(address(0x5678), 1 * UNIT);
+    function test_owner_balanceModuleValidation() public {
+        MockBalanceModule coinModule = new MockBalanceModule(address(coin), 1 * UNIT);
+        MockBalanceModule ghost = new MockBalanceModule(address(0x5678), 1 * UNIT);
         address[7] memory badTokens = [
             lc.stack.hook,
             Mainnet.POOL_MANAGER,
@@ -1140,30 +1140,30 @@ contract CoreUnitTest is CoreBase {
         ];
         address[] memory bad = new address[](3 + badTokens.length);
         bad[0] = address(0x1234); // no code
-        bad[1] = address(coinModule); // the exit token is the coin
-        bad[2] = address(ghost); // the exit token has no code
+        bad[1] = address(coinModule); // the balance token is the coin
+        bad[2] = address(ghost); // the balance token has no code
         for (uint256 i; i < badTokens.length; ++i) {
-            bad[3 + i] = address(new MockExitModule(badTokens[i], 1 * UNIT));
+            bad[3 + i] = address(new MockBalanceModule(badTokens[i], 1 * UNIT));
         }
         vm.startPrank(owner);
         for (uint256 i; i < bad.length; ++i) {
             vm.expectRevert(ICore.BadModule.selector);
-            core.setExitModule(bad[i]);
+            core.setBalanceModule(bad[i]);
         }
         vm.stopPrank();
-        assertEq(core.exitModule(), address(0));
+        assertEq(core.balanceModule(), address(0));
     }
 
     /// a module whose unit is zero, above uint128, or unreadable is refused when it is set
-    function test_owner_exitModuleRefusesBadUnits() public {
+    function test_owner_balanceModuleRefusesBadUnits() public {
         uint256[4] memory units = [uint256(0), uint256(type(uint128).max) + 1, type(uint256).max, 1 * UNIT];
         for (uint256 i; i < units.length; ++i) {
-            MockExitModule m = new MockExitModule(address(new MockExitToken("X", "X")), units[i]);
+            MockBalanceModule m = new MockBalanceModule(address(new MockBalanceToken("X", "X")), units[i]);
             if (i == 3) m.setRevertUnit(true);
             vm.prank(owner);
             vm.expectRevert(ICore.BadModule.selector);
-            core.setExitModule(address(m));
-            assertEq(core.exitModule(), address(0));
+            core.setBalanceModule(address(m));
+            assertEq(core.balanceModule(), address(0));
         }
     }
 
@@ -1189,7 +1189,7 @@ contract CoreUnitTest is CoreBase {
         }
         vm.stopPrank();
 
-        // the exit module and the exit token are forbidden once they exist.
+        // the balance module and the balance token are forbidden once they exist.
         _enterPhase2();
         vm.startPrank(owner);
         vm.expectRevert(ICore.ForbiddenTarget.selector);
@@ -1209,12 +1209,12 @@ contract CoreUnitTest is CoreBase {
         vm.expectRevert(ICore.TargetNotAllowed.selector);
         core.buyListing(1, "", LISTED_A, STRATEGY);
 
-        // a target that later becomes the exit module can no longer be called.
-        xt = new MockExitToken("X", "X");
-        mod = new MockExitModule(address(xt), UNIT);
+        // a target that later becomes the balance module can no longer be called.
+        xt = new MockBalanceToken("X", "X");
+        mod = new MockBalanceModule(address(xt), UNIT);
         _allow(address(mod));
         assertTrue(core.allowedTarget(address(mod)));
-        _setExitModule(address(mod));
+        _setBalanceModule(address(mod));
         vm.prank(keeper);
         vm.expectRevert(ICore.TargetNotAllowed.selector);
         core.buyListing(1, "", LISTED_A, address(mod));
@@ -1369,33 +1369,33 @@ contract CoreUnitTest is CoreBase {
                          doors that need no module
     //////////////////////////////////////////////////////////////*/
 
-    /// the statement doors with no statement: `sellTo` is the controller's, `exitStatement` needs a module
+    /// the statement doors with no statement: `sellTo` is the controller's, `redeemStatement` needs a module
     function test_statementDoorsRefuseAnUnknownStatement() public {
         vm.expectRevert(ICore.OnlyController.selector);
         core.sellTo(1, alice);
         vm.prank(address(ctl));
         vm.expectRevert(ICore.NotForSale.selector);
         core.sellTo(1, alice);
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.exitStatement(1);
+        vm.expectRevert(ICore.NoBalanceModule.selector);
+        core.redeemStatement(1);
         (bool held,,) = core.statementInfo(1);
         assertFalse(held);
         assertEq(core.ethPot(), 0);
         assertEq(core.ethToBuyback(), 0);
     }
 
-    /// with exitMode at its launch value 0 the exit token bid is closed; the redemption door reverts
-    /// NoExitModule once mode is on but no module is set
-    function test_exitDoorsClosedAtLaunch() public {
+    /// with balanceMode at its launch value 0 the balance token bid is closed; the redemption door reverts
+    /// NoBalanceModule once mode is on but no module is set
+    function test_balanceDoorsClosedAtLaunch() public {
         vm.prank(alice);
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.sellForExitToken(_one(1));
+        vm.expectRevert(ICore.BalanceModeOff.selector);
+        core.sellForBalance(_one(1));
         vm.prank(alice);
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.sellForExitToken(_one(1), 0);
-        // exitStatement reverts NoExitModule whatever the mode while no module is set
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.exitStatement(1);
+        vm.expectRevert(ICore.BalanceModeOff.selector);
+        core.sellForBalance(_one(1), 0);
+        // redeemStatement reverts NoBalanceModule whatever the mode while no module is set
+        vm.expectRevert(ICore.NoBalanceModule.selector);
+        core.redeemStatement(1);
         core.skim();
     }
 
@@ -1465,7 +1465,7 @@ contract CoreUnitTest is CoreBase {
     }
 }
 
-/// everything that follows a real compose. the stand in exit module is set in `setUp`, the compose itself goes through
+/// everything that follows a real compose. the stand in balance module is set in `setUp`, the compose itself goes through
 /// the real controller and the real Statements contract, once per test
 contract CoreComposedTest is CoreBase {
     using FixedPointMathLib for uint256;
@@ -1559,81 +1559,81 @@ contract CoreComposedTest is CoreBase {
     }
 
     /*//////////////////////////////////////////////////////////////
-                              exit path
+                              redeem path
     //////////////////////////////////////////////////////////////*/
 
-    function test_exit_guards() public {
+    function test_redeem_guards() public {
         Composed memory c = _composeOnce();
         vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(c.sid + 100);
+        core.redeemStatement(c.sid + 100);
         // an eth lane statement is not eligible until its asking price falls to its cost
         vm.expectRevert(ICore.NotEligible.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         _makeEligible(c.sid);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
     }
 
     /// an eth lane redemption books the whole received amount into the bid pot
-    function test_exit_ethLaneAllToTheBidPot() public {
+    function test_redeem_ethLaneAllToTheBidPot() public {
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         uint256 out = core.ratingOf(c.sid) * UNIT;
-        uint256 pot = core.xPot();
-        core.exitStatement(c.sid);
+        uint256 pot = core.balancePot();
+        core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "the module keeps the statement");
         assertEq(xt.balanceOf(address(core)), out);
-        assertEq(core.xPot() - pot, out, "all received to the bid pot");
+        assertEq(core.balancePot() - pot, out, "all received to the bid pot");
         assertEq(_held().length, 0);
         assertFalse(_isHeld(c.sid));
     }
 
-    function test_exit_moduleThatUnderpaysReverts() public {
+    function test_redeem_moduleThatUnderpaysReverts() public {
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
-        mod.setPayBps(10_000 - core.settings().exitSlippageBps - 1);
+        mod.setPayBps(10_000 - core.settings().redeemSlippageBps - 1);
         vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         mod.setPayBps(5000);
         vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement never left");
         assertTrue(_isHeld(c.sid));
         // a payment within the slippage floor passes
-        mod.setPayBps(10_000 - core.settings().exitSlippageBps);
-        core.exitStatement(c.sid);
+        mod.setPayBps(10_000 - core.settings().redeemSlippageBps);
+        core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod));
     }
 
     /// the unit is fixed when the module is set. a module that reports a lower unit later is held to the stored one, and
     /// one that pays by a higher unit is simply paid
-    function test_exit_unitIsFixedAtSetTime() public {
+    function test_redeem_unitIsFixedAtSetTime() public {
         Composed memory c = _composeOnce();
         assertEq(core.unitPerPoint(), UNIT);
         _makeEligible(c.sid);
         mod.setUnitPerPoint(0);
         vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         mod.setUnitPerPoint(3 * UNIT);
         uint256 out = core.ratingOf(c.sid) * 3 * UNIT;
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         assertEq(xt.balanceOf(address(core)), out);
         assertEq(core.unitPerPoint(), UNIT, "the stored unit did not follow the module");
     }
 
     /*//////////////////////////////////////////////////////////////
-                              exit token bid
+                              balance token bid
     //////////////////////////////////////////////////////////////*/
 
     /// the per point bid pays each credit its score times the unit less the margin
     function test_xBid_paysScoreTimesUnit() public {
-        _fillExitBuyback();
-        _setExitPool();
+        _fillBalanceBuyback();
+        _setBalancePool();
         xt.mint(address(core), 1e22);
         core.skim();
         uint256[] memory ids = _credits(alice, 2);
-        uint256 net = 10_000 - core.settings().exitBidMarginBps;
+        uint256 net = 10_000 - core.settings().balanceBidMarginBps;
         uint256 expect;
         for (uint256 i; i < 2; ++i) {
             uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(ids[i]), CREDITS.timestampOf(ids[i]));
@@ -1641,54 +1641,54 @@ contract CoreComposedTest is CoreBase {
         }
         uint256 before = xt.balanceOf(alice);
         vm.prank(alice);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
         assertEq(xt.balanceOf(alice) - before, expect, "paid score times the unit less the margin");
         _solvent();
     }
 
     function test_xBid_guards() public {
-        _fillExitBuyback();
+        _fillBalanceBuyback();
         xt.mint(address(core), 1e22);
         core.skim();
         uint256[] memory ids = _credits(alice, 1);
         uint256[] memory none = new uint256[](0);
         vm.prank(alice);
         vm.expectRevert(ICore.Empty.selector);
-        core.sellForExitToken(none);
+        core.sellForBalance(none);
         vm.prank(alice);
         vm.expectRevert(ICore.ZeroId.selector);
-        core.sellForExitToken(_one(0));
+        core.sellForBalance(_one(0));
         vm.prank(keeper);
         vm.expectRevert(ICore.NotOwner.selector);
-        core.sellForExitToken(ids);
-        stdstore.target(address(core)).sig("xPot()").checked_write(uint256(1));
+        core.sellForBalance(ids);
+        stdstore.target(address(core)).sig("balancePot()").checked_write(uint256(1));
         vm.prank(alice);
         vm.expectRevert(ICore.PotTooSmall.selector);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
     }
 
-    /// the exit token bid is closed unless exitMode is 2
+    /// the balance token bid is closed unless balanceMode is 2
     function test_xBid_needsModeTwo() public {
-        _fillExitBuyback();
+        _fillBalanceBuyback();
         xt.mint(address(core), 1e22);
         core.skim();
-        _setExitMode(1);
+        _setBalanceMode(1);
         uint256[] memory ids = _credits(alice, 1);
         vm.prank(alice);
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.sellForExitToken(ids);
+        vm.expectRevert(ICore.BalanceModeOff.selector);
+        core.sellForBalance(ids);
     }
 
-    /// exit token that arrives outside an exit is booked only by `skim`, into the bid pot
+    /// balance token that arrives outside a redemption is booked only by `skim`, into the bid pot
     function test_xFees_skimBooksPlainTransfers() public {
-        _fillExitBuyback();
-        uint256 pot = core.xPot();
+        _fillBalanceBuyback();
+        uint256 pot = core.balancePot();
         core.skim();
-        assertEq(core.xPot(), pot, "nothing above the pot");
+        assertEq(core.balancePot(), pot, "nothing above the pot");
         xt.mint(address(core), 3e18);
-        assertEq(core.xPot(), pot);
+        assertEq(core.balancePot(), pot);
         core.skim();
-        assertEq(core.xPot(), pot + 3e18);
+        assertEq(core.balancePot(), pot + 3e18);
         _solvent();
     }
 

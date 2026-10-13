@@ -11,7 +11,7 @@ recommendation: one coherent design (section 2), delivered by pruning the curren
 | measured today | projected after |
 |---|---|
 | 5 contracts (Core, CoreLib, ControllerV1, FeeRouter, CoreLens) | 3 (Engine, EngineLib, Controller) plus one small adapter per venue (2 at launch) |
-| src 4,205 LOC, 23 settings | about 3,400 LOC, 24 settings (two balance switches and the payee share replace `exitMode` and `feeToBuybackBps`) |
+| src 4,205 LOC, 23 settings | about 3,400 LOC, 24 settings (two balance switches and the payee share replace `balanceMode` and `feeToBuybackBps`) |
 | deploy 8 transactions, a Resume run, a Lock run, nonce pinning | 5 transactions, no Resume, no nonce pinning, Lock later |
 | preflight 95 rows, postflight 67, 15 env vars | about 70, 45, 8 |
 | tests 62 files, 27,414 LOC, 990 tests, 21 invariants | about 50 files, 22,000 LOC, 18 invariants |
@@ -70,7 +70,7 @@ the royalty (decision 112) sits after the curve and the floors: the controller's
 
 ### 2.6 settings and storage
 
-`Settings`, 24 fields: the nine bid fields with `rateCap`, `saleFloorBps`, `saleToBuybackBps`, `feeToRedeemBurnBps`, `redeemSlippageBps`, `balanceBidMarginBps`, `redeemBurnBps`, `buybackSlice`, `buybackDelay`, `keeperFee`, `keeperMaxBaseFee`, `callerFee`, `callerMaxBaseFee`, `redeemOn`, `balanceBidOn`, `payeePpm`. bounds: `payeePpm` at most 200,000; the rest as today. the count does not fall: `exitMode` becomes two flags and the payee share moves in from the router. the knobs removed by the agreement (`floorBps`, the stored unit) were on the controller or were functions.
+`Settings`, 24 fields: the nine bid fields with `rateCap`, `saleFloorBps`, `saleToBuybackBps`, `feeToRedeemBurnBps`, `redeemSlippageBps`, `balanceBidMarginBps`, `redeemBurnBps`, `buybackSlice`, `buybackDelay`, `keeperFee`, `keeperMaxBaseFee`, `callerFee`, `callerMaxBaseFee`, `redeemOn`, `balanceBidOn`, `payeePpm`. bounds: `payeePpm` at most 200,000; the rest as today. the count does not fall: `balanceMode` becomes two flags and the payee share moves in from the router. the knobs removed by the agreement (`floorBps`, the stored unit) were on the controller or were functions.
 
 one `State` struct at slot 0 holds every Engine variable, used by the Engine and the library through the same type. `CoreState`, `SettingsStore` and `RateStore` go; only tests read those fixed slots today (verified). the packed settings decode stays in the library.
 
@@ -97,7 +97,7 @@ unchanged in meaning: `rescueCoin`, `rescueNft`, `setSuccessor`, `lockSuccessor`
 | stored unit, min rule, `refreshUnitPerPoint` | the module cannot lower what a redemption owes without an owner call | the module is ours; read live | relaxes a guard against our own contract | nothing |
 | separate value floor, baseline, backstop | a Statement or credit is never sold for eth below its balance value | `pointValue` once | none | nothing |
 | two Statement floors, knee | the curve shape and the custody floor | one floor on the Engine; the knee stays | none | nothing |
-| `exitMode` tri state | redeem and bid switches | two flags | none | nothing |
+| `balanceMode` tri state | redeem and bid switches | two flags | none | nothing |
 | `feeToBuybackBps` | fees can burn | the reserve and `releaseRedeemBurn` | none | the owner releases by hand |
 | two storage conventions, 15 assembly blocks | the library shares the Engine's storage safely | one struct type at slot 0 | none | nothing; the layout test shrinks to one |
 | nonce based predictions, `CONTROLLER_NONCE`, Resume | addresses known before the launch | CREATE2 for every contract of ours | none | nothing |
@@ -125,7 +125,7 @@ recommendation: prune to the design. the end state is the clean sheet; the path 
 measured, by name:
 
 - contracts: FeeRouter (202 LOC), CoreLens (272 LOC), their interfaces (112 LOC).
-- states: the eth measuring flag, `splitOn`, `splitStart`, `owed` per payee, the lens pointers, the pause window array, the stored `unitPerPoint`, `exitMode`, the controller `floorBps`, `feeToBuybackBps`, `CoreState`, `SettingsStore`, `RateStore`.
+- states: the eth measuring flag, `splitOn`, `splitStart`, `owed` per payee, the lens pointers, the pause window array, the stored `unitPerPoint`, `balanceMode`, the controller `floorBps`, `feeToBuybackBps`, `CoreState`, `SettingsStore`, `RateStore`.
 - workflows: the Resume run, `setSplitStart` by hand, `flush()` at split start, `CONTROLLER_NONCE`, the "no transaction between steps" rule, escrow claim then `skim` (one `collectEscrow`), `skim` itself, `router.lock` (OD-2 half), `refreshUnitPerPoint`.
 - failure paths: a flush reverting inside a measured call (V2R-1), a payee that burns gas blocking a flush, a router with no engine stranding eth, `Measuring`, `BadCost`, a claim inside a measurement, a lens short answer, the `Underpaid` race after a unit change (section 14 item 31), a controller swap resetting the pause clock.
 - tests that exist only for the removed mechanics: FeeRouter.t 537, PullFees.t 391, FeeShare.t 301, Resume.t 513, Lens.t 286, PostflightSlots.t 252, most of ReviewV2Port.t 582 and V2PortMigration.t 170 (3,032 LOC whole files, measured) plus the measuring and flush cases inside Fees.t, CoreUnit.t, Seaport.t and GasCap.t (projected 2,000 LOC). invariants 15 (router) and 20 (lens) go; 10 (`receive` never reverts) becomes "book never reverts".
@@ -149,7 +149,7 @@ each packet: one builder on sonnet, bounded to the files named, `forge build` an
 | 2 | pause clock into the Engine, O(1) | the window array, the controller pause | 1 |
 | 3 | listing adapters, measuring out (NEXT 37) | the measuring flag, `BadCost`, raw calldata, `Measuring` in receive | 1 |
 | 4 | the Engine as bounty recipient: `receive` open to the hook only, `_book`, payee ppm claim, sniper latch from the factory record, `COIN` from `predictToken` in the constructor, `fund`, `collectEscrow`, `skim` and FeeRouter deleted | FeeRouter, flush, pullFees, skim, Resume, split start, V2R-1 | 3 |
-| 5 | `pointValue`, unit live, one floor, `feeToBuybackBps` out, two balance switches (NEXT 39 to 42), the royalty on the controller and the composer on the record (NEXT 44), settings recount and bounds | the value floor, baseline, backstop, stored unit, refresh, `floorBps`, `exitMode` | 1 |
+| 5 | `pointValue`, unit live, one floor, `feeToBuybackBps` out, two balance switches (NEXT 39 to 42), the royalty on the controller and the composer on the record (NEXT 44), settings recount and bounds | the value floor, baseline, backstop, stored unit, refresh, `floorBps`, `balanceMode` | 1 |
 | 6 | one `State` struct; CoreLens deleted; the bid quote view after pending income | CoreState, fixed slots, the lens, 8 postflight rows | 4, 5 |
 | 7 | CREATE2 deploy, `setController` before launch, preflight and postflight trimmed, env vars trimmed, Lock run becomes a later owner command | nonce pinning, Resume, config echo rows | 6 |
 | 8 | tests follow: delete the files of section 5, rewrite fixtures to the five transaction deploy, invariants 15 and 20 out, 10 restated, gas rows re-measured | about 5,000 LOC | 7 |

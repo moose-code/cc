@@ -16,7 +16,7 @@ export function metrics(res) {
     const a = summary(res, d);
     Object.assign(m, {
       ['credits' + d]: a.credits, ['stmts' + d]: a.statements, ['sold' + d]: a.sold, ['burnEth' + d]: a.burnEth, ['burnPct' + d]: a.burnPct,
-      ['waiting' + d]: a.waiting, ['exited' + d]: a.exited, ['locked' + d]: a.locked, ['pot' + d]: a.pot, ['recycled' + d]: a.recycled,
+      ['waiting' + d]: a.waiting, ['redeemed' + d]: a.redeemed, ['locked' + d]: a.locked, ['pot' + d]: a.pot, ['recycled' + d]: a.recycled,
       ['salePct' + d]: a.avgSalePct, ['feeToBurn' + d]: a.feeToBurn, ['saleToBurn' + d]: a.saleToBurn,
     });
   }
@@ -31,12 +31,12 @@ export function metrics(res) {
     stmtArrivals: st.stmtArrivals, stmtMiss: st.stmtMiss,
     boughtX: T.boughtX, creditSold: T.creditSold, creditGross: T.creditGross, creditToBuyback: T.creditToBuyback, burnEthM: T.burned / 1e6, listingPaid: T.listingPaid, spent: T.spent,
     stCost: T.composed ? T.stCost / T.composed : NaN, stRating: T.composed ? T.stRating / T.composed : NaN,
-    xPotEnd: res.core.xPot, redeemBurnEnd: res.core.ethRedeemBurn, redeemBurnMoved: res.core.redeemBurnMoved, potEnd: res.core.ethPot, toBuybackEnd: res.core.ethToBuyback,
+    balancePotEnd: res.core.balancePot, redeemBurnEnd: res.core.ethRedeemBurn, redeemBurnMoved: res.core.redeemBurnMoved, potEnd: res.core.ethPot, toBuybackEnd: res.core.ethToBuyback,
     feeToBurnEnd: res.core.feeToBuyback,
     recycledRatio: T.spent ? T.saleGross / T.spent : 0, fees: S.cumFees[H], saleToPot: T.saleToPot, saleToBuyback: T.saleToBuyback,
     f80hours: st.first80 ? st.first80.hours : NaN, f80ratio: st.first80 ? st.first80.ratio : NaN, f80score: st.first80 ? st.first80.avgScore : NaN,
-    exitedValue: T.exitedValue, exitedCost: T.exitedCost, exitedValueOverCost: T.exitedCost ? T.exitedValue / T.exitedCost : NaN,
-    exitedAgeDays: T.exited ? T.exitedAge / T.exited / 86400 : NaN, xRecv: T.xRecv, stratBought: T.stratBought,
+    redeemedValue: T.redeemedValue, redeemedCost: T.redeemedCost, redeemedValueOverCost: T.redeemedCost ? T.redeemedValue / T.redeemedCost : NaN,
+    redeemedAgeDays: T.redeemed ? T.redeemedAge / T.redeemed / 86400 : NaN, xRecv: T.xRecv, stratBought: T.stratBought,
   });
   return m;
 }
@@ -153,7 +153,7 @@ batches.q7 = () => {
   return out;
 };
 
-// ---- q8: phase 2 arrives on day 14, 30 or 60 in hold (exitMode 1) or on (exitMode 2), for a range of exit token values per score point
+// ---- q8: the balance side arrives on day 14, 30 or 60 in hold (balanceMode 1) or on (balanceMode 2), for a range of balance token values per score point
 batches.q8 = () => {
   const out = { grid: [], bid: [], noModule: many({}, SEEDS3) };
   const XPS = [1e-5, 2e-5, 3e-5, 5e-5, 1e-4, 2e-4]; // eth value per point; a 440 point credit redeems 440 times this
@@ -161,20 +161,20 @@ batches.q8 = () => {
     for (const day of [14, 30, 60]) {
       for (const xpPerPoint of XPS) {
         const runs = SEEDS3.map((seed) => {
-          const r = simulate({ seed, phase2Day: day, phase2ExitMode: mode, xpPerPoint, days: 90 });
+          const r = simulate({ seed, balanceDay: day, balanceDayMode: mode, xpPerPoint, days: 90 });
           const m = metrics(r), b = r.at(day - 1 / 24), p7 = r.at(Math.min(90, day + 7)), p30 = r.at(Math.min(90, day + 30));
-          return Object.assign(m, { waitBefore: b.waiting, exitedAt7: p7.exited, xPotAt7: p7.xPot, xBoughtAt7: p7.xBought, xBoughtAt30: p30.xBought, redeemBurnMovedAt30: p30.redeemBurnMoved });
+          return Object.assign(m, { waitBefore: b.waiting, redeemedAt7: p7.redeemed, balancePotAt7: p7.balancePot, xBoughtAt7: p7.xBought, xBoughtAt30: p30.xBought, redeemBurnMovedAt30: p30.redeemBurnMoved });
         });
         out.grid.push(Object.assign({ mode, day, xpPerPoint }, mean(runs)));
       }
     }
   }
   for (const xpPerPoint of [2e-5, 1e-4]) {
-    const r = simulate({ xpPerPoint, phase2Day: 14, seed: 1 });
-    for (const d of [14.5, 15, 16, 18, 21, 30, 45, 60, 90]) { const a = r.at(d); out.bid.push({ xpPerPoint, day: d, xPot: a.xPot, redeemBurn: a.redeemBurn, xBought: a.xBought, exited: a.exited, burnPct: a.burnedPct }); }
+    const r = simulate({ xpPerPoint, balanceDay: 14, seed: 1 });
+    for (const d of [14.5, 15, 16, 18, 21, 30, 45, 60, 90]) { const a = r.at(d); out.bid.push({ xpPerPoint, day: d, balancePot: a.balancePot, redeemBurn: a.redeemBurn, xBought: a.xBought, redeemed: a.redeemed, burnPct: a.burnedPct }); }
   }
-  // a keeper that redeems only when the exit token returned is worth at least the asking price
-  out.keeper = [0, 1].map((ratio) => Object.assign({ exitMinRatio: ratio }, many({ phase2Day: 30, xpPerPoint: 3e-5, exitMinRatio: ratio }, SEEDS3)));
+  // a keeper that redeems only when the balance token returned is worth at least the asking price
+  out.keeper = [0, 1].map((ratio) => Object.assign({ redeemMinRatio: ratio }, many({ balanceDay: 30, xpPerPoint: 3e-5, redeemMinRatio: ratio }, SEEDS3)));
   return out;
 };
 

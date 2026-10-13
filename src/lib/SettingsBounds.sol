@@ -33,11 +33,11 @@ library SettingsBounds {
         if (uint256(s.feeToBuybackBps) + s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
         if (s.callerFee > 0.005 ether) return "callerFee";
         if (s.callerMaxBaseFee > 100 gwei) return "callerMaxBaseFee";
-        if (s.exitMode > 2) return "exitMode";
-        if (s.exitSlippageBps > 1_000) return "exitSlippageBps";
-        if (s.exitBidMarginBps > 9_000) return "exitBidMarginBps";
-        // the exit cycle (bid then redeem) cannot lose more than its margin: slippage at most the bid margin
-        if (s.exitSlippageBps > s.exitBidMarginBps) return "exitSlippageBps";
+        if (s.balanceMode > 2) return "balanceMode";
+        if (s.redeemSlippageBps > 1_000) return "redeemSlippageBps";
+        if (s.balanceBidMarginBps > 9_000) return "balanceBidMarginBps";
+        // the balance cycle (bid then redeem) cannot lose more than its margin: slippage at most the bid margin
+        if (s.redeemSlippageBps > s.balanceBidMarginBps) return "redeemSlippageBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         return bytes32(0);
     }

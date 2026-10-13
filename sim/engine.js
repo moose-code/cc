@@ -1,6 +1,6 @@
 // credits engine economic simulator. plain es module, no dependencies, runs in node 22 and in a browser.
 // core rules are ported from src/Core.sol on branch flow. units: eth for pots and prices, wei per credit for the rate,
-// seconds for time, whole coins for coin amounts. exitModule and exitToken are the only names for phase 2.
+// seconds for time, whole coins for coin amounts. balanceModule and balanceToken are the only names for the balance side.
 
 export const W = 1e18;
 export const BPS = 10000;
@@ -17,13 +17,13 @@ export const SETTINGS = {
   keeperFee: 0.0005, // eth. the buyback caller is paid BUYBACK_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the slice (docs/DECISIONS.md 61), the buyListing caller BUYLISTING_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the pot (docs/DECISIONS.md 71)
   keeperMaxBaseFee: 10, // gwei, the cap on the base fee the refunds use
   rateCap: 26700000000000000, // wei per credit, 3 times rateStart: the eth rate never passes it (climb clamp, setRate)
-  callerFee: 0, // eth. paid to the caller of compose, composeChosen and exitStatement from the pot, with the gas refund below. launch 0: the simulator does not model these payments
+  callerFee: 0, // eth. paid to the caller of compose, composeChosen and redeemStatement from the pot, with the gas refund below. launch 0: the simulator does not model these payments
   callerMaxBaseFee: 0, // gwei, the cap on the base fee the refund of those three doors uses. 0 refunds no gas
   feeToBuybackBps: 0, // share of swap fee eth booked in receive() that goes to the buyback instead of the pot
   feeToRedeemBurnBps: 1000, // share of swap fee eth booked in receive() that fills the redeem burn reserve (FLOW 86)
-  exitMode: 0, // phase 2 state: 0 off (no redemption, no exit token bid), 1 hold (redemptions, no bid), 2 on (redemptions and the bid, which also needs the controller's exit token pool key) (FLOW 86, 92)
-  exitSlippageBps: 200, // a redemption must return at least rating * unit * (10000 - exitSlippageBps) / 10000 (FLOW 84)
-  exitBidMarginBps: 2000, // the exit token bid pays score * unit * (10000 - exitBidMarginBps) / 10000 per credit (FLOW 84)
+  balanceMode: 0, // the balance side state: 0 off (no redemption, no balance token bid), 1 hold (redemptions, no bid), 2 on (redemptions and the bid, which also needs the controller's balance token pool key) (FLOW 86, 92)
+  redeemSlippageBps: 200, // a redemption must return at least rating * unit * (10000 - redeemSlippageBps) / 10000 (FLOW 84)
+  balanceBidMarginBps: 2000, // the balance token bid pays score * unit * (10000 - balanceBidMarginBps) / 10000 per credit (FLOW 84)
   redeemBurnBps: 2000, // share of the redeem burn reserve moved to the coin buyback on each redemption (FLOW 86)
   // the earlier built bid rule (bidRule 'built') and the dropToLast rule read these. they are not Core settings and are not in the config
   climbBaseBps: 100, // per hour
@@ -55,7 +55,7 @@ export const CONTROLLER_KEYS = Object.keys(CONTROLLER);
 // (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditFloorBps, creditStartBps and refScore are controller
 // settings (FLOW 88 to 90, 93, 94). while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
 // start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, baseline, backstop) * creditFloorBps / 10000. the
-// baseline is score * min(stored, live unitPerPoint) at the exit token pool price and only lifts the floor, 0 while no module or pool key is set; the backstop is the floor rate (the larger of the climbed price state and the decayed peak)
+// baseline is score * min(stored, live unitPerPoint) at the balance token pool price and only lifts the floor, 0 while no module or pool key is set; the backstop is the floor rate (the larger of the climbed price state and the decayed peak)
 // times max(1, score / refScore), so a credit scored above refScore floors proportionally higher. Core.sellCreditTo takes at least the credit's cost, books creditCostToPotBps of the cost to the pot and the rest to the buyback pot.
 // compose waits for a credit's window while the sale is on (ControllerV1.pastWindow). refScore is the per-credit score of the statement price reference, in
 // ten-thousandths of a point (the model's scores are in points). minCcToChoose is a coin balance the model does not track: every composer passes it
@@ -122,10 +122,10 @@ export function firstViolation(s) {
   if (s.feeToBuybackBps + s.feeToRedeemBurnBps > 10000) return 'feeToRedeemBurnBps';
   if (s.callerFee > 0.005) return 'callerFee';
   if (s.callerMaxBaseFee > 100) return 'callerMaxBaseFee';
-  if (s.exitMode !== 0 && s.exitMode !== 1 && s.exitMode !== 2) return 'exitMode';
-  if (s.exitSlippageBps > 1000) return 'exitSlippageBps';
-  if (s.exitBidMarginBps > 9000) return 'exitBidMarginBps';
-  if (s.exitSlippageBps > s.exitBidMarginBps) return 'exitSlippageBps'; // the exit cycle (bid then redeem) cannot lose more than its margin
+  if (s.balanceMode !== 0 && s.balanceMode !== 1 && s.balanceMode !== 2) return 'balanceMode';
+  if (s.redeemSlippageBps > 1000) return 'redeemSlippageBps';
+  if (s.balanceBidMarginBps > 9000) return 'balanceBidMarginBps';
+  if (s.redeemSlippageBps > s.balanceBidMarginBps) return 'redeemSlippageBps'; // the balance cycle (bid then redeem) cannot lose more than its margin
   if (s.redeemBurnBps > 10000) return 'redeemBurnBps';
   return null;
 }
@@ -176,7 +176,7 @@ export const SIM_DEFAULTS = {
   holdPot: 0, // test hook: eth. the pot is topped up to this level after every step (accounting checks do not hold)
   gateAt: 20, // counterfactual only: hours with at least this many unsold statements held are counted in gateClosedHours
   whipsawStartDay: 2, // pricePath 'whipsaw': day the fall starts
-  schedule: [], // [{ day, patch }]: owner changes settings on that day. patch may hold any setting and `rate` (setRate, wei per credit), `moduleUnit` (the exit module reports a new eth value per point), `refreshUnitPerPoint: true`, `releaseRedeemBurn: eth`
+  schedule: [], // [{ day, patch }]: owner changes settings on that day. patch may hold any setting and `rate` (setRate, wei per credit), `moduleUnit` (the balance module reports a new eth value per point), `refreshUnitPerPoint: true`, `releaseRedeemBurn: eth`
   baselineSkimBps: 690, // bps of volume: 6.9 points (script/config/mainnet.json launch.baselineSkimBps)
   bountyBps: 9638, // of the baseline skim, to the fee router. the other 362 of 10000 is the protocol leg, not the engine's
   sniperStartBps: 9000,
@@ -221,19 +221,19 @@ export const SIM_DEFAULTS = {
   wtpMult: 1,
   stmtPick: 'cheapest', // a buyer takes the statement with the lowest asking price that fits its willingness to pay; 'random' picks any one that fits
   buyerWaits: 'no', // 'no': a buyer takes what it can afford now. 'floor': every buyer waits until the asking price has reached its lowest level (pessimistic case)
-  // phase 2 (exitModule and exitToken). the exit token side is rebuilt per FLOW 84 to 87 and 92: exitMode (a Core setting), redemption when the curve price
-  // reaches its floor, a rating per statement, a per point exit token bid that needs the pool key, one pile for every credit. exit token amounts are held as eth value
-  phase2Day: null, // day the exit module is set. the same step sets exitMode to phase2ExitMode (the owner switches the state on)
-  phase2ExitMode: 2, // exitMode set at phase2Day: 1 hold or 2 on
-  xpPerPoint: 0.0108 / 440, // eth value of the exit token a redemption returns per score point (unitPerPoint at the exit token price). a 440 point credit redeems 0.0108 eth. the unit the Core stores when the module is set
-  exitPayFrac: 1, // share of rating * xpPerPoint the exit module returns. the Core requires at least 1 - exitSlippageBps / 10000, else the exit reverts
-  exitPoolSet: false, // ControllerV1.setExitPoolKey done (native eth as currency0, the exit token as currency1, pool initialized): a statement's asking price is at least rating * xpPerPoint (its redemption value) and the credit sale baseline can lift a credit's floor, unset at launch. the exit token bid works without it (FLOW 96)
-  exitPoolMult: 1, // the exit token pool price against the price the stored unit assumes. values the redemption floor and the credit baseline (both only lift). 1 at the unit; below 1 is a pool price pushed down (FLOW 93)
+  // the balance side (balanceModule and balanceToken). the balance token side is rebuilt per FLOW 84 to 87 and 92: balanceMode (a Core setting), redemption when the curve price
+  // reaches its floor, a rating per statement, a per point balance token bid that needs the pool key, one pile for every credit. balance token amounts are held as eth value
+  balanceDay: null, // day the balance module is set. the same step sets balanceMode to balanceDayMode (the owner switches the state on)
+  balanceDayMode: 2, // balanceMode set at balanceDay: 1 hold or 2 on
+  xpPerPoint: 0.0108 / 440, // eth value of the balance token a redemption returns per score point (unitPerPoint at the balance token price). a 440 point credit redeems 0.0108 eth. the unit the Core stores when the module is set
+  redeemPayFrac: 1, // share of rating * xpPerPoint the balance module returns. the Core requires at least 1 - redeemSlippageBps / 10000, else the redemption reverts
+  balancePoolSet: false, // ControllerV1.setBalancePoolKey done (native eth as currency0, the balance token as currency1, pool initialized): a statement's asking price is at least rating * xpPerPoint (its redemption value) and the credit sale baseline can lift a credit's floor, unset at launch. the balance token bid works without it (FLOW 96)
+  balancePoolMult: 1, // the balance token pool price against the price the stored unit assumes. values the redemption floor and the credit baseline (both only lift). 1 at the unit; below 1 is a pool price pushed down (FLOW 93)
   // credit sale and composition (FLOW 88 to 90). the buyers of pile credits and the composer exist only in the model
   creditBuyersPerDay: 40, // arrivals a day of buyers of pile credits while creditSaleOn is true
   creditWtpMult: 1, // a credit buyer pays up to this multiple of the market price of a credit times a lognormal draw (askSigma)
   composeChoice: 'oldest', // 'oldest': compose() takes the 80 oldest credits. 'richest': with chosenComposeOn a composer names the 80 highest scoring credits past their window (composeChosen), else compose() applies
-  exitMinRatio: 0, // a keeper redeems only when rating * xpPerPoint is at least this times the asking price
+  redeemMinRatio: 0, // a keeper redeems only when rating * xpPerPoint is at least this times the asking price
   keeperBuyback: true,
   basefeeGwei: 1, // the block base fee of the buyback calls, gwei (the refunds use min(basefee, keeperMaxBaseFee))
 };
@@ -302,9 +302,9 @@ export class Core {
     this.feeToBuyback = 0; // cumulative swap fee eth sent to the buyback pot by feeToBuybackBps
     this.feeToRedeemBurn = 0; // cumulative swap fee eth sent to the redeem burn reserve by feeToRedeemBurnBps
     this.redeemBurnMoved = 0; // cumulative eth moved from the reserve to the buyback pot by redemptions
-    this.ethPot = 0; this.ethToBuyback = 0; this.ethRedeemBurn = 0; this.xPot = 0; // xPot holds the eth value of the exit token
+    this.ethPot = 0; this.ethToBuyback = 0; this.ethRedeemBurn = 0; this.balancePot = 0; // balancePot holds the eth value of the balance token
     this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0; this.funded = false;
-    this.xpPerPoint = 0; this.xpLive = 0; this.moduleSet = false; // the exit module is set by setExitModule
+    this.xpPerPoint = 0; this.xpLive = 0; this.moduleSet = false; // the balance module is set by setBalanceModule
     this.lastBuybackTime = -1e12;
     this.clampTime = 0;
     this.lastPaidRate = p.rateStart; this.burstTime = -1; this.burstBase = 0; // bidRule stepped
@@ -379,12 +379,12 @@ export class Core {
     return Math.min(r, cap);
   }
   // Core.ethPrice(): the price state before the pot clamp (wei per credit). the clamp is the read only lowering that ethRate applies. the cost floor of a credit
-  // bought with the exit token and the eth bid term of the credit sale floor read it, so an empty pot does not zero them (FLOW 93)
+  // bought with the balance token and the eth bid term of the credit sale floor read it, so an empty pot does not zero them (FLOW 93)
   ethPrice(now) { return this.p.bidRule === 'stepped' ? this.priceRate(now) : this.ethRate(now); }
   // Core.floorRate(): the floor rate now (wei per credit): the larger of ethPrice, the price state climbed before the
   // pot clamp, and the remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak
   // decays between fills, so the maximum follows the climb and holds against a sale within the block. the statement
-  // reference, the credit backstop and the cost of a credit bought with the exit token read it
+  // reference, the credit backstop and the cost of a credit bought with the balance token read it
   floorRate(now) { return this.p.bidRule === 'stepped' ? Math.max(this.priceRate(now), this.peakAt(now)) : this.ethRate(now); }
   checkpoint(now) { this.rateAtCheckpoint = this.p.bidRule === 'stepped' ? this.priceRate(now) : this.ethRate(now); this.checkpointTime = now; }
   syncFunded() {
@@ -523,10 +523,10 @@ export class Core {
   floorPrice(st) { return (st.cost * this.s.saleFloorBps) / BPS; }
   // ControllerV1._quote: the curve price, never below the hard floor. the anchor reads this price
   curvePrice(st, now) { return Math.max(this.statementPrice(this.reference(st, now), st.t0, now), this.floorPrice(st)); }
-  // the unit the exit token bid, the redemption value and the credit baseline use: the lower of the stored and the live unitPerPoint
+  // the unit the balance token bid, the redemption value and the credit baseline use: the lower of the stored and the live unitPerPoint
   unit() { return Math.min(this.xpPerPoint, this.xpLive); }
-  // ControllerV1._value: the redemption value of the statement in eth, rating * min(stored, live unitPerPoint) at the exit token pool price. 0 while the pool key is unset or no module is set
-  valueFloor(st) { return this.p.exitPoolSet && this.moduleSet ? (st.rating || 0) * this.unit() * this.p.exitPoolMult : 0; }
+  // ControllerV1._value: the redemption value of the statement in eth, rating * min(stored, live unitPerPoint) at the balance token pool price. 0 while the pool key is unset or no module is set
+  valueFloor(st) { return this.p.balancePoolSet && this.moduleSet ? (st.rating || 0) * this.unit() * this.p.balancePoolMult : 0; }
   // ControllerV1.priceOf: the curve price, never below the redemption value once the pool key is set
   askingPrice(st, now) { return Math.max(this.curvePrice(st, now), this.valueFloor(st)); }
   // the lowest asking price the statement will ever have under the current settings (the curve floor, floorBps of the reference, or the hard floor, saleFloorBps of cost, the higher, or the redemption value)
@@ -543,7 +543,7 @@ export class Core {
   // Core.sellTo (called by the controller): a held statement is paid for at once. the payment is at least the hard
   // floor and is booked right away. returns the booking or null when the Core would revert
   sellTo(st, value, now) {
-    if (st.sold || st.exited) return null;
+    if (st.sold || st.redeemed) return null;
     if (value < this.floorPrice(st) * (1 - 1e-12)) return null;
     st.sold = true; st.soldAt = now;
     return this.bookSale(value, now);
@@ -566,8 +566,8 @@ export class Core {
   // ---- the credit sale window (FLOW 88, 92, 93). a pile credit is {pts, cost, t0}: its score in points, its cost basis in eth and its acquisition time
   // ControllerV1.pastWindow: a credit acquired at `acquiredAt` may compose now. always while the sale is off, else once creditWindow has passed
   pastWindow(acquiredAt, now) { return !this.cr.creditSaleOn || acquiredAt + this.cr.creditWindow <= now; }
-  // ControllerV1._baseline: the exit token value of the credit, score * min(stored, live unitPerPoint) at the exit token pool price. 0 until the pool key and the module are set
-  creditBaseline(cr) { return this.p.exitPoolSet && this.moduleSet ? cr.pts * this.unit() * this.p.exitPoolMult : 0; }
+  // ControllerV1._baseline: the balance token value of the credit, score * min(stored, live unitPerPoint) at the balance token pool price. 0 until the pool key and the module are set
+  creditBaseline(cr) { return this.p.balancePoolSet && this.moduleSet ? cr.pts * this.unit() * this.p.balancePoolMult : 0; }
   // the score-scaled eth backstop of a credit: the floor rate times max(1, score / refScore), where the floor rate is
   // the larger of the climbed price state and the decayed peak. refScore is in ten-thousandths of a point, so
   // refScore/1e4 is the reference score in points; a credit scored at or below it backstops at the unscaled floor rate
@@ -598,14 +598,14 @@ export class Core {
     return res ? Object.assign({ price }, res) : null;
   }
 
-  // ---- phase 2. the exit module returns exit token worth rating * xpPerPoint (eth value) for a statement. pots here hold the eth value of the exit token
+  // ---- the balance side. the balance module returns balance token worth rating * xpPerPoint (eth value) for a statement. pots here hold the eth value of the balance token
   // xpPerPoint is the unit the Core stores, xpLive the unit the module reports now (the module's unitPerPoint())
-  setExitModule(now, xpPerPoint) {
+  setBalanceModule(now, xpPerPoint) {
     this.moduleSet = true; this.xpPerPoint = xpPerPoint; this.xpLive = xpPerPoint;
   }
   // the module reports a new unit; the Core stored unit is unchanged until refreshUnitPerPoint
   moduleReports(xpLive) { this.xpLive = xpLive; }
-  // Core.refreshUnitPerPoint (owner): stores the module's live unit. reverts BadModule (null) without a module or at a zero unit. allowed after lockExitModule
+  // Core.refreshUnitPerPoint (owner): stores the module's live unit. reverts BadModule (null) without a module or at a zero unit. allowed after lockBalanceModule
   refreshUnitPerPoint() {
     if (!this.moduleSet || !(this.xpLive > 0)) return null;
     this.xpPerPoint = this.xpLive;
@@ -618,20 +618,20 @@ export class Core {
     this.ethRedeemBurn -= move; this.ethToBuyback += move; this.redeemBurnMoved += move;
     return move;
   }
-  // Core.sellForExitToken runs while exitMode is 2 and a module is set. it records the score-scaled floor rate backstop
+  // Core.sellForBalance runs while balanceMode is 2 and a module is set. it records the score-scaled floor rate backstop
   // and reads no pool, so it needs no pool key
-  exitBidActive() { return this.moduleSet && this.s.exitMode === 2; }
-  // the exit token bid for a credit of `pts` points: score * unit * (10000 - exitBidMarginBps) / 10000, in eth value, where unit is the lower of the stored
+  balanceBidActive() { return this.moduleSet && this.s.balanceMode === 2; }
+  // the balance token bid for a credit of `pts` points: score * unit * (10000 - balanceBidMarginBps) / 10000, in eth value, where unit is the lower of the stored
   // and the live unitPerPoint. the same price for any credit of that score
-  xBidPrice(pts) { return (pts * this.unit() * (BPS - this.s.exitBidMarginBps)) / BPS; }
-  // sellForExitToken for one credit: pays xBidPrice from xPot. returns the price, or 0 when the Core would revert (mode not 2, price 0, price above the pot)
+  xBidPrice(pts) { return (pts * this.unit() * (BPS - this.s.balanceBidMarginBps)) / BPS; }
+  // sellForBalance for one credit: pays xBidPrice from balancePot. returns the price, or 0 when the Core would revert (mode not 2, price 0, price above the pot)
   xBuy(pts) {
-    const price = this.exitBidActive() ? this.xBidPrice(pts) : 0;
-    if (!(price > 0) || price > this.xPot + 1e-18) return 0;
-    this.xPot -= price;
+    const price = this.balanceBidActive() ? this.xBidPrice(pts) : 0;
+    if (!(price > 0) || price > this.balancePot + 1e-18) return 0;
+    this.balancePot -= price;
     return price;
   }
-  // sellForExitToken for one credit at `now`: the credit enters the pile at an eth cost of the score-scaled floor rate
+  // sellForBalance for one credit at `now`: the credit enters the pile at an eth cost of the score-scaled floor rate
   // backstop, at least 1 wei, read from no pool. returns {paid, cost}, or null when the bid would revert
   xBuyCredit(pts, now) {
     const paid = this.xBuy(pts);
@@ -643,19 +643,19 @@ export class Core {
     const ref = this.reference(st, now);
     return this.statementPrice(ref, st.t0, now) <= ((ref * this.c.floorBps) / BPS) * (1 + 1e-9);
   }
-  // Core.exitStatement preconditions: a module is set, exitMode is 1 or 2, and the statement's curve price has reached its floor
-  exitReady(st, now) {
-    return this.moduleSet && this.s.exitMode >= 1 && !st.sold && !st.exited && this.atFloor(st, now);
+  // Core.redeemStatement preconditions: a module is set, balanceMode is 1 or 2, and the statement's curve price has reached its floor
+  redeemReady(st, now) {
+    return this.moduleSet && this.s.balanceMode >= 1 && !st.sold && !st.redeemed && this.atFloor(st, now);
   }
-  // Core.exitStatement: the module returns rating * xpLive * exitPayFrac; the Core requires at least rating * xpPerPoint (stored) * (10000 - exitSlippageBps) / 10000 and keeps all of it in xPot.
+  // Core.redeemStatement: the module returns rating * xpLive * redeemPayFrac; the Core requires at least rating * xpPerPoint (stored) * (10000 - redeemSlippageBps) / 10000 and keeps all of it in balancePot.
   // a redemption moves redeemBurnBps of the redeem burn reserve to the buyback pot. returns {received, toBurn}, or null when the Core would revert
-  exitStatement(st, now) {
+  redeemStatement(st, now) {
     const s = this.s, value = st.rating * this.xpPerPoint;
-    if (!this.exitReady(st, now)) return null;
-    const received = st.rating * this.xpLive * this.p.exitPayFrac;
-    if (received < (value * (BPS - s.exitSlippageBps)) / BPS * (1 - 1e-12)) return null; // Underpaid
-    st.exited = true;
-    this.xPot += received;
+    if (!this.redeemReady(st, now)) return null;
+    const received = st.rating * this.xpLive * this.p.redeemPayFrac;
+    if (received < (value * (BPS - s.redeemSlippageBps)) / BPS * (1 - 1e-12)) return null; // Underpaid
+    st.redeemed = true;
+    this.balancePot += received;
     const toBurn = (this.ethRedeemBurn * s.redeemBurnBps) / BPS;
     this.ethRedeemBurn -= toBurn; this.ethToBuyback += toBurn; this.redeemBurnMoved += toBurn;
     return { received, toBurn };
@@ -819,31 +819,31 @@ export function simulate(userParams = {}) {
   const pool = new Pool(p);
   const H = Math.round(p.days * 24);
   const bLate = p.buyShareLate != null ? p.buyShareLate : (p.volPreset === 'sustained17' || p.volPreset === 'sustained50') ? 0.5 : p.volPreset === 'custom' ? 0.49 : 0.46;
-  const phase2At = p.phase2Day == null ? Infinity : p.phase2Day * 86400;
+  const balanceAt = p.balanceDay == null ? Infinity : p.balanceDay * 86400;
   const sched = (p.schedule || []).map((e) => ({ at: e.day * 86400, patch: e.patch, done: false })).sort((a, b) => a.at - b.at);
 
   // state
   let book = []; // resting market offers, ordered by descending key (wei per point needed to clear, in units of the market price), smallest last
   let strat = []; // CreditStrategy listings, ordered by descending need (wei per point to clear)
   let holdPool = p.holders;
-  const pile = []; // the one credit pile, oldest first: {pts, cost, t0}. credits bought with eth and with the exit token enter it alike (FLOW 92)
+  const pile = []; // the one credit pile, oldest first: {pts, cost, t0}. credits bought with eth and with the balance token enter it alike (FLOW 92)
   let unbid = []; // statements held by the Core for sale or redemption
   let lnM = 0, nextSid = 1;
   const T = { // totals
     fees: 0, feesBuyback: 0, saleGross: 0, saleToPot: 0, saleToBuyback: 0, spent: 0, listingPaid: 0,
-    bought: 0, boughtX: 0, pts: 0, cost: 0, mkt: 0, ask: 0, sumM: 0, composed: 0, composedChosen: 0, sold: 0, exited: 0,
+    bought: 0, boughtX: 0, pts: 0, cost: 0, mkt: 0, ask: 0, sumM: 0, composed: 0, composedChosen: 0, sold: 0, redeemed: 0,
     creditSold: 0, creditGross: 0, creditCost: 0, creditToPot: 0, creditToBuyback: 0, creditMiss: 0, creditAge: 0,
     soldPrice: 0, soldCost: 0, soldPts: 0, soldFloor: 0, soldAge: 0, soldAtFloor: 0, buybackSpent: 0, buybackTips: 0, burned: 0,
     listBought: 0, stratBought: 0, xRecv: 0, xSpent: 0, firstFill: -1,
     clampSteps: 0, potBindSteps: 0, vol: 0, stCost: 0, stRating: 0, stmtArrivals: 0, stmtMiss: 0,
     throttled: 0, maxPaidRatio: 0,
-    first80cost: 0, first80mkt: 0, first80pts: 0, first80n: 0, first80t: -1, exitedValue: 0, exitedCost: 0, exitedAge: 0, settingsChanges: 0,
+    first80cost: 0, first80mkt: 0, first80pts: 0, first80n: 0, first80t: -1, redeemedValue: 0, redeemedCost: 0, redeemedAge: 0, settingsChanges: 0,
   };
   const histPts = new Array(10).fill(0), histCost = new Array(10).fill(0);
   const S = {}; // series, one entry per hour
   const names = ['pot', 'toBuyback', 'cumFees', 'rate', 'mktPerPoint', 'bidRatio', 'bought', 'credits', 'creditsDay', 'avgScoreCum', 'avgScoreDay',
-    'costPerCredit', 'mktPerCredit', 'composed', 'sold', 'waiting', 'locked', 'exited', 'buybackSpent', 'burnEth', 'burned', 'burnedPct',
-    'coinPrice', 'xPot', 'redeemBurn', 'book', 'saleToPot', 'saleToBuyback', 'feeToBuyback', 'feeToRedeemBurn', 'redeemBurnMoved', 'avgSalePct', 'avgSaleAgeH', 'saleGross', 'cumPts', 'cumCost', 'cumMkt', 'xBought',
+    'costPerCredit', 'mktPerCredit', 'composed', 'sold', 'waiting', 'locked', 'redeemed', 'buybackSpent', 'burnEth', 'burned', 'burnedPct',
+    'coinPrice', 'balancePot', 'redeemBurn', 'book', 'saleToPot', 'saleToBuyback', 'feeToBuyback', 'feeToRedeemBurn', 'redeemBurnMoved', 'avgSalePct', 'avgSaleAgeH', 'saleGross', 'cumPts', 'cumCost', 'cumMkt', 'xBought',
     'volume', 'poolEth', 'spent', 'pile', 'creditSold', 'creditToBuyback'];
   for (const n of names) S[n] = new Array(H + 1);
 
@@ -874,10 +874,10 @@ export function simulate(userParams = {}) {
   let runCause = {}; const stallCause = {};
   let prevRate = p.rateStart, signChanges = 0, lastDir = 0, rateMaxRatio = 0, rateAbsMove = 0, rateMoves = 0;
 
-  // ---- the engine buys: market offers through the bid or a listing, CreditStrategy listings, exitToken bid in phase 2.
+  // ---- the engine buys: market offers through the bid or a listing, CreditStrategy listings, balanceToken bid in the balance side.
   // nothing here looks at unsold statements: the engine never stops buying because statements are unsold.
   // a seller whose credit does not fit the pot waits, and another credit that fits sells instead
-  // xPerPoint is the exit token bid per score point, eth value (0 while the bid is off): a credit of `pts` points is bid pts * xPerPoint, so the best price offered is at 800 points
+  // xPerPoint is the balance token bid per score point, eth value (0 while the bid is off): a credit of `pts` points is bid pts * xPerPoint, so the best price offered is at 800 points
   function pickFrom(arr, isStrat, r, xPerPoint, Pw, Pe, afford, xAfford) {
     const lim = Math.max(0, arr.length - 400);
     const top = Math.max(r, xPerPoint * 800 * W);
@@ -906,10 +906,10 @@ export function simulate(userParams = {}) {
     const Pw = Pe * W;
     for (let guard = 0; guard < 200000; guard++) {
       const r = core.ethRate(now);
-      const p2 = core.exitBidActive();
+      const p2 = core.balanceBidActive();
       const xPerPoint = p2 ? core.xBidPrice(1) : 0;
       const afford = core.ethPot;
-      const xAfford = p2 ? core.xPot : 0;
+      const xAfford = p2 ? core.balancePot : 0;
       if (afford <= 1e-15 && xAfford <= 0) { noteBind(); break; }
       const a = pickFrom(book, false, r, xPerPoint, Pw, Pe, afford, xAfford);
       const b = strat.length ? pickFrom(strat, true, r, 0, Pw, Pe, afford, 0) : null;
@@ -934,7 +934,7 @@ export function simulate(userParams = {}) {
       let door = c.ethFits && c.xFits ? (r / W >= it.pts * xPerPoint ? 'eth' : 'x') : c.ethFits ? 'eth' : 'x';
       let cost = 0, paid = 0, viaListing = false, ok = false, xCost = 0;
       if (door === 'x') {
-        // the exit token bid pays score * unitPerPoint less the margin for the credit. the credit enters the pile at an eth cost (FLOW 92, 93)
+        // the balance token bid pays score * unitPerPoint less the margin for the credit. the credit enters the pile at an eth cost (FLOW 92, 93)
         const xr = core.xBuyCredit(it.pts, now);
         cost = xr ? xr.paid : 0; xCost = xr ? xr.cost : 0;
         ok = cost > 0;
@@ -1066,17 +1066,17 @@ export function simulate(userParams = {}) {
     }
   }
 
-  // ---- phase 2: a keeper redeems held statements through the exit module (Core.exitStatement) once the curve price has reached its floor (needs exitMode 1 or 2).
-  // the exit token returned goes to xPot, a redemption moves redeemBurnBps of the reserve to the buyback
-  function exits(now) {
-    if (!core.moduleSet || core.s.exitMode < 1) return;
+  // ---- the balance side: a keeper redeems held statements through the balance module (Core.redeemStatement) once the curve price has reached its floor (needs balanceMode 1 or 2).
+  // the balance token returned goes to balancePot, a redemption moves redeemBurnBps of the reserve to the buyback
+  function redeems(now) {
+    if (!core.moduleSet || core.s.balanceMode < 1) return;
     if (unbid.length) {
       const keep = [];
       for (const st of unbid) {
-        if (core.exitReady(st, now) && st.rating * core.xpPerPoint >= p.exitMinRatio * core.askingPrice(st, now)) {
-          const res = core.exitStatement(st, now);
+        if (core.redeemReady(st, now) && st.rating * core.xpPerPoint >= p.redeemMinRatio * core.askingPrice(st, now)) {
+          const res = core.redeemStatement(st, now);
           if (!res) { keep.push(st); continue; }
-          T.exited++; T.xRecv += res.received; T.exitedValue += res.received; T.exitedCost += st.cost; T.exitedAge += now - st.t0;
+          T.redeemed++; T.xRecv += res.received; T.redeemedValue += res.received; T.redeemedCost += st.cost; T.redeemedAge += now - st.t0;
         } else keep.push(st);
       }
       unbid = keep;
@@ -1120,9 +1120,9 @@ export function simulate(userParams = {}) {
     S.costPerCredit[h] = T.bought ? T.cost / T.bought : 0; S.mktPerCredit[h] = Pe;
     S.composed[h] = T.composed; S.sold[h] = T.sold; S.waiting[h] = unbid.length;
     S.locked[h] = locked;
-    S.exited[h] = T.exited; S.buybackSpent[h] = T.buybackSpent; S.burnEth[h] = T.buybackSpent + T.buybackTips;
+    S.redeemed[h] = T.redeemed; S.buybackSpent[h] = T.buybackSpent; S.burnEth[h] = T.buybackSpent + T.buybackTips;
     S.burned[h] = T.burned; S.burnedPct[h] = (T.burned / p.SUPPLY) * 100;
-    S.coinPrice[h] = pool.price; S.xPot[h] = core.xPot; S.redeemBurn[h] = core.ethRedeemBurn;
+    S.coinPrice[h] = pool.price; S.balancePot[h] = core.balancePot; S.redeemBurn[h] = core.ethRedeemBurn;
     S.book[h] = book.length;
     S.saleToPot[h] = T.saleToPot; S.saleToBuyback[h] = T.saleToBuyback; S.feeToBuyback[h] = core.feeToBuyback; S.feeToRedeemBurn[h] = core.feeToRedeemBurn; S.redeemBurnMoved[h] = core.redeemBurnMoved; S.saleGross[h] = T.saleGross;
     S.avgSalePct[h] = T.soldCost ? (T.soldPrice / T.soldCost) * 100 : NaN; S.avgSaleAgeH[h] = T.sold ? T.soldAge / T.sold / 3600 : NaN; S.xBought[h] = T.boughtX;
@@ -1161,11 +1161,11 @@ export function simulate(userParams = {}) {
     const fee = V * engineFeeFraction(p, f, mid);
     core.addFees(fee, mid);
     T.fees += fee; T.vol += V;
-    if (!core.moduleSet && t1 >= phase2At) { core.setExitModule(t1, p.xpPerPoint); if (p.phase2ExitMode != null) core.setSettings({ exitMode: p.phase2ExitMode }, t1); }
+    if (!core.moduleSet && t1 >= balanceAt) { core.setBalanceModule(t1, p.xpPerPoint); if (p.balanceDayMode != null) core.setSettings({ balanceMode: p.balanceDayMode }, t1); }
     // credit market: the engine's own buying lifts the flat price, the lift decays
     lnM *= Math.pow(0.5, dt / (p.impactHalfLifeHours * 3600));
     const Pe = peff(t1), r0 = core.ethRate(t1);
-    const xPay = core.exitBidActive() && core.xPot > 0 ? core.xBidPrice(440) * W : 0; // the exit token bid for an average credit
+    const xPay = core.balanceBidActive() && core.balancePot > 0 ? core.xBidPrice(440) * W : 0; // the balance token bid for an average credit
     const boost = Math.pow(Math.max(1, Math.max(r0, xPay) / (Pe * W)), p.supplyElast);
     const nOff = Math.min(poisson(rng, (p.offersPerHour * dt * boost) / 3600), 1500, Math.floor(Math.max(holdPool, 0) * 0.05));
     if (p.bookChurn > 0) {
@@ -1219,7 +1219,7 @@ export function simulate(userParams = {}) {
     statementBuyers(t0, t1, peff(t1));
     creditBuyers(t0, t1, peff(t1));
     composeAll(t1);
-    exits(t1);
+    redeems(t1);
     buybacks(t0, t1);
     // rate path statistics
     const rr = core.ethRate(t1);
@@ -1271,7 +1271,7 @@ export function simulate(userParams = {}) {
 }
 
 // the owner's metrics for one run: credits acquired, statements created, sold, eth to buy and burn the coin, statements waiting
-// for phase 2, the day the launch pot is spent, and the steady state per day after that (the last 30 days of the run, or the
+// for the balance side, the day the launch pot is spent, and the steady state per day after that (the last 30 days of the run, or the
 // days since the pot ran out when that is shorter, at least 10)
 export function summary(res, day) {
   const S = res.S, T = res.T, H = res.H;
@@ -1283,7 +1283,7 @@ export function summary(res, day) {
   const a = res.at(h / 24);
   const out = {
     day: h / 24, credits: a.credits, statements: a.composed, sold: a.sold, burnEth: a.burnEth, burnPct: a.burnedPct, waiting: a.waiting,
-    exited: a.exited, potGoneDay: gone, pot: a.pot, locked: a.locked, recycled: a.saleGross, avgSalePct: a.avgSalePct, feeToBurn: a.feeToBuyback, saleToBurn: a.saleToBuyback, firstBuyDay: res.stats.firstFillHour < 0 ? null : res.stats.firstFillHour / 24,
+    redeemed: a.redeemed, potGoneDay: gone, pot: a.pot, locked: a.locked, recycled: a.saleGross, avgSalePct: a.avgSalePct, feeToBurn: a.feeToBuyback, saleToBurn: a.saleToBuyback, firstBuyDay: res.stats.firstFillHour < 0 ? null : res.stats.firstFillHour / 24,
   };
   if (gone != null && H / 24 - Math.max(gone, H / 24 - 30) >= 10) {
     const fh = Math.round(Math.max(gone, H / 24 - 30) * 24), span = (H - fh) / 24;

@@ -138,9 +138,9 @@ contract ReviewFlowCoreTest is Fixture {
             5_000, // recoveryGapBps
             604_800, // peakHalfLife
             7_200, // buybackDelay
-            2, // exitMode
-            1_000, // exitSlippageBps
-            9_000, // exitBidMarginBps
+            2, // balanceMode
+            1_000, // redeemSlippageBps
+            9_000, // balanceBidMarginBps
             10_000, // redeemBurnBps
             1 ether, // buybackSlice
             0.005 ether, // keeperFee
@@ -176,7 +176,7 @@ contract ReviewFlowCoreTest is Fixture {
             assertEq(uint16(w0 >> 80), two[i].saleFloorBps, "the sale floor sits at bits 80 to 95");
             assertEq(uint16(w0 >> 96), two[i].saleToBuybackBps, "the sale buyback share sits at bits 96 to 111");
             assertEq(uint32(w0 >> 144), two[i].peakHalfLife, "the peak half life sits at bits 144 to 175");
-            assertEq(uint8(w0 >> 192), two[i].exitMode, "the exit mode sits at bits 192 to 199");
+            assertEq(uint8(w0 >> 192), two[i].balanceMode, "the balance mode sits at bits 192 to 199");
             assertEq(uint16(w0 >> 232), two[i].redeemBurnBps, "the redeem burn share sits at bits 232 to 247");
             uint256 w1 = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
             assertEq(w1 >> 240, 0, "slot 1 top bits clear");
@@ -195,9 +195,9 @@ contract ReviewFlowCoreTest is Fixture {
 
     function _hostileMix() internal pure returns (Settings memory m) {
         m = _allMax();
-        m.exitMode = 2;
-        m.exitSlippageBps = 0;
-        m.exitBidMarginBps = 0;
+        m.balanceMode = 2;
+        m.redeemSlippageBps = 0;
+        m.balanceBidMarginBps = 0;
         m.saleFloorBps = 3_000;
     }
 
@@ -221,23 +221,23 @@ contract ReviewFlowCoreTest is Fixture {
         }
     }
 
-    /// the exit side at the extremes of the bounds: the bid pot stays backed and no setting stops a redemption or a bid
+    /// the balance side at the extremes of the bounds: the bid pot stays backed and no setting stops a redemption or a bid
     function test_extremeSettingsPhase2() public {
         _skipSniperWindow();
         _enterPhase2();
-        _fillExitBuyback();
-        assertGt(core.xPot(), 0);
+        _fillBalanceBuyback();
+        assertGt(core.balancePot(), 0);
         Settings[3] memory three = [_allMin(), _allMax(), _hostileMix()];
         for (uint256 i; i < 3; ++i) {
-            // _allMin and _allMax leave exitMode 0 or 2; force the bid on so the extremes exercise it
+            // _allMin and _allMax leave balanceMode 0 or 2; force the bid on so the extremes exercise it
             Settings memory s = three[i];
-            s.exitMode = 2;
+            s.balanceMode = 2;
             _setSettings(s);
             vm.warp(block.timestamp + (i == 0 ? 1 hours : 100 days));
             core.skim();
             uint256[] memory ids = _credits(seller, 1);
             vm.prank(seller);
-            try core.sellForExitToken(ids) {} catch {}
+            try core.sellForBalance(ids) {} catch {}
             _solvent();
         }
     }
@@ -469,35 +469,35 @@ contract ReviewFlowCoreTest is Fixture {
         assertEq(STATEMENTS.supply(), supply + 1, "the page under the cut composes");
     }
 
-    /// held: the exit bid at a zero margin pays exactly what the module pays back for the same credits, so selling
-    /// credits for exit token and exiting them leaves the exit pot whole
-    function test_exitBidAtParIsAWash() public {
+    /// held: the balance bid at a zero margin pays exactly what the module pays back for the same credits, so selling
+    /// credits for balance token and redeeming them leaves the balance pot whole
+    function test_balanceBidAtParIsAWash() public {
         _skipSniperWindow();
         _enterPhase2();
-        _setExitPool();
+        _setBalancePool();
         _fundPot(3 ether);
         Settings memory s = core.settings();
-        s.exitBidMarginBps = 0;
+        s.balanceBidMarginBps = 0;
         // slippage at or below the bid margin: a zero margin needs zero slippage
-        s.exitSlippageBps = 0;
+        s.redeemSlippageBps = 0;
         _setSettings(s);
         xt.mint(address(core), 1e22);
         core.skim();
-        uint256 xBefore = core.xPot();
+        uint256 xBefore = core.balancePot();
         uint256[] memory ids = _credits(seller, 80);
         vm.prank(seller);
-        core.sellForExitToken(ids);
-        uint256 paid = xBefore - core.xPot();
+        core.sellForBalance(ids);
+        uint256 paid = xBefore - core.balancePot();
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
         uint256 sid = STATEMENTS.supply();
         _makeEligible(sid);
-        core.exitStatement(sid);
-        emit log_named_uint("paid to the seller (exit token)", paid);
-        emit log_named_uint("exit pot before", xBefore);
-        emit log_named_uint("exit pot after the exit", core.xPot());
-        assertEq(core.xPot(), xBefore, "the pot is whole");
+        core.redeemStatement(sid);
+        emit log_named_uint("paid to the seller (balance token)", paid);
+        emit log_named_uint("balance pot before", xBefore);
+        emit log_named_uint("balance pot after the redemption", core.balancePot());
+        assertEq(core.balancePot(), xBefore, "the pot is whole");
     }
 }
 

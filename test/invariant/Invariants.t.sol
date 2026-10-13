@@ -14,7 +14,7 @@ import {HandlerBase} from "./HandlerBase.sol";
 
 /// @notice SPEC section 10 as reworked by docs/DECISIONS.md, one `invariant_` function per item, against the real system on
 /// the mainnet fork: the real Core, the live Credits, Statements,
-/// CreditStrategy, pool manager and artcoins stack. only the exit module and exit token are stand ins.
+/// CreditStrategy, pool manager and artcoins stack. only the balance module and balance token are stand ins.
 ///
 /// how to run:
 ///   set -a; . ./.env; set +a
@@ -22,8 +22,8 @@ import {HandlerBase} from "./HandlerBase.sol";
 ///   INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 \
 ///     forge test --match-contract '.*Deep' -vv           # deeper, only the Deep variants run
 /// the defaults come from inline `forge-config` lines on the concrete suites: phase 1 after the sniper window, phase 1
-/// starting inside the window (90 percent skim at the start), phase 2 with the exit auction, phase 2 under a hostile
-/// controller, and phase 2 under a hostile owner (the owner's calls are frequent and adversarial). an inline line beats
+/// starting inside the window (90 percent skim at the start), the balance side with the redemption auction, the balance side under a hostile
+/// controller, and the balance side under a hostile owner (the owner's calls are frequent and adversarial). an inline line beats
 /// an environment variable, so the Deep variants carry no inline config and skip themselves unless INVARIANT_DEEP is
 /// set. they are the same suites, only the depth comes from the environment.
 /// every `invariant_` function is its own campaign, so cost grows with runs times depth times the number of
@@ -64,14 +64,14 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 1. eth leaves the core only as a credit purchase within the ceiling, a `buyListing` payment within the bid less the
-    /// cost, keeperFee and keeperMaxBaseFee, the caller payment of `compose`, `composeChosen` and `exitStatement` within callerFee,
+    /// cost, keeperFee and keeperMaxBaseFee, the caller payment of `compose`, `composeChosen` and `redeemStatement` within callerFee,
     /// callerMaxBaseFee and the pot, a buyback slice (the swap input plus the payment to the caller), a refund of
     /// overpayment, or a migration to the successor. every action's balance change is matched to those flows, measured at the
     /// recipients, against the settings in force at that moment (the owner changes them throughout). the inflows are the
     /// hook's skim pushed into receive() during real swaps, including the one the hook pushes back during the buyback, the
     /// fee router's flush, `sellTo` payments and a plain
-    /// donation. any other movement is a violation. exit token flows too: it leaves the core only as a bid payment in
-    /// sellForExitToken or as an auction slice paid for at or above the quoted coin price.
+    /// donation. any other movement is a violation. balance token flows too: it leaves the core only as a bid payment in
+    /// sellForBalance or as an auction slice paid for at or above the quoted coin price.
     function invariant_01_ethOnlyLeavesByAllowedPaths() public view {
         _zero(g1);
     }
@@ -83,7 +83,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 3. a statement leaves the core's control only by a sale at or above the hard floor (cost * saleFloorBps of the
-    /// settings in force at the sale) or by an exit that returned at least credits * unitPerPoint. `sellTo` is paid the
+    /// settings in force at the sale) or by a redemption that returned at least credits * unitPerPoint. `sellTo` is paid the
     /// decaying ask, at least the hard floor. here the first part: every sold statement was paid at least the hard
     /// floor in force at its sale.
     function invariant_03_noStatementSoldBelowTheHardFloor() public view {
@@ -97,7 +97,7 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// 4. every statement ever composed is, at all times, exactly one of: held by the core, sold or exited. the ghost
+    /// 4. every statement ever composed is, at all times, exactly one of: held by the core, sold or redeemed. the ghost
     /// status is checked against the statements token and the core's own records, and the held count against the core's
     /// list.
     function invariant_04_everyStatementIsInExactlyOnePlace() public view {
@@ -119,10 +119,10 @@ abstract contract InvariantsBase is InvariantFixture {
                 assertEq(o, s.buyer, "a sold statement is not with its buyer");
                 assertTrue(!held, "a sold statement is still recorded as held");
                 assertGe(s.price, s.floor, "sold below the hard floor");
-            } else if (s.status == handler.S_EXITED()) {
-                assertTrue(!held, "exited but still held");
-                assertEq(o, address(s.module), "an exited statement is not with the module that took it");
-                assertGe(s.received, s.required, "exit returned less than credits * unitPerPoint");
+            } else if (s.status == handler.S_REDEEMED()) {
+                assertTrue(!held, "redeemed but still held");
+                assertEq(o, address(s.module), "an redeemed statement is not with the module that took it");
+                assertGe(s.received, s.required, "redemption returned less than credits * unitPerPoint");
             } else {
                 revert("an ever held statement has no recorded status");
             }
@@ -130,16 +130,16 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(inRecord, core.heldStatements().length, "held count differs from the core's list");
     }
 
-    /// 5. ethPot + ethToBuyback never exceeds the core's eth balance, and the same for the exit token pots. a sale
+    /// 5. ethPot + ethToBuyback never exceeds the core's eth balance, and the same for the balance token pots. a sale
     /// books its payment at once, split by saleToBuybackBps, so nothing is owed outside the pots.
     function invariant_05_potsNeverExceedBalances() public view {
         _zero(g5);
         assertLe(
             core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance, "eth pots above balance"
         );
-        address t = core.exitToken();
+        address t = core.balanceToken();
         if (t != address(0)) {
-            assertLe(core.xPot(), _balanceOf(t, address(core)), "exit token pot above balance");
+            assertLe(core.balancePot(), _balanceOf(t, address(core)), "balance token pot above balance");
         }
     }
 
@@ -160,13 +160,13 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 8. the hard rule: across the whole campaign neither the owner address nor any controller address ever gains eth,
-    /// coin, credits, statements or exit token from the core, whatever settings the owner chooses. their balances are
+    /// coin, credits, statements or balance token from the core, whatever settings the owner chooses. their balances are
     /// compared with what they held at the start (the owner pays gas only). the controllers' attack calls all failed,
     /// their reentry attempts through targets failed, and nobody but the owner changed a setting.
     function invariant_08_ownerAndControllersNeverGain() public view {
         _zero(g8);
         uint256 n = handler.watchedCount();
-        address xtoken = core.exitToken();
+        address xtoken = core.balanceToken();
         for (uint256 i; i < n; ++i) {
             address c = handler.watched(i);
             (uint256 eth, uint256 coin_, uint256 credits_, uint256 statements_, uint256 xt_) = handler.baseOf(c);
@@ -174,7 +174,7 @@ abstract contract InvariantsBase is InvariantFixture {
             assertLe(coin.balanceOf(c), coin_, "owner or controller gained coin");
             assertLe(CREDITS.balanceOf(c), credits_, "owner or controller gained credits");
             assertLe(_statementsBalance(c), statements_, "owner or controller gained statements");
-            if (xtoken != address(0)) assertLe(_balanceOf(xtoken, c), xt_, "owner or controller gained exit token");
+            if (xtoken != address(0)) assertLe(_balanceOf(xtoken, c), xt_, "owner or controller gained balance token");
         }
         bool known;
         for (uint256 i; i < handler.controllerCount(); ++i) {
@@ -184,7 +184,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 9. coin total supply never increases, and it falls by exactly the coin the eth buyback bought and burned plus
-    /// the coin burned out of takers in exit auction fills. coin taxed to the burn address is a transfer, not a
+    /// the coin burned out of takers in balance auction fills. coin taxed to the burn address is a transfer, not a
     /// burn: 0xdEaD holds it and the supply does not move. the handler keeps a ghost of the expected supply and the
     /// two burn totals from the token's own transfer events and the auction's events.
     function invariant_09_coinSupplyOnlyFallsByBurns() public view {
@@ -235,27 +235,27 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// 12. docs/DECISIONS.md 9.2: a statement leaves the core only by `sellTo` or by an exit. every ever held statement has
-    /// one of the ghost statuses Held, Sold or Exited, a sale through `sellTo` paid at least the hard floor (cost *
+    /// 12. docs/DECISIONS.md 9.2: a statement leaves the core only by `sellTo` or by a redemption. every ever held statement has
+    /// one of the ghost statuses Held, Sold or Redeemed, a sale through `sellTo` paid at least the hard floor (cost *
     /// saleFloorBps of the settings in force at the sale), and the handler's departure and sale path violation codes
     /// (codes 7, 8 and 26: price, booking by saleToBuybackBps, holder and record of each sale) stay at zero.
-    function invariant_12_aStatementOnlyLeavesByASaleOrAnExit() public view {
+    function invariant_12_aStatementOnlyLeavesByASaleOrARedemption() public view {
         _zero(g11);
         uint256 n = handler.everHeldCount();
         for (uint256 i; i < n; ++i) {
             HandlerBase.SG memory s = handler.statementGhost(handler.everHeld(i));
             uint8 st = s.status;
             assertTrue(
-                st == handler.S_HELD() || st == handler.S_SOLD() || st == handler.S_EXITED(),
+                st == handler.S_HELD() || st == handler.S_SOLD() || st == handler.S_REDEEMED(),
                 "a statement left the core by a path that is not allowed"
             );
             if (st == handler.S_SOLD()) assertGe(s.price, s.floor, "a sale below the hard floor");
         }
     }
 
-    /// 13. the four one way locks (controller, exit module, targets, successor) never come undone and the setter of a
+    /// 13. the four one way locks (controller, balance module, targets, successor) never come undone and the setter of a
     /// locked door always refuses. the retired flag set by the first `migrate` never clears, and from then on the six
-    /// doors (`sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen`, `sellForExitToken`) revert `Retired`. every
+    /// doors (`sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen`, `sellForBalance`) revert `Retired`. every
     /// former owner has no power over the core or over the controller's sale settings, and the core's owner is the one
     /// the handler last saw accept. the handler checks each of these again on every call to `lockCheck` and
     /// `formerOwnersCheck`.
@@ -278,11 +278,11 @@ abstract contract InvariantsBase is InvariantFixture {
         assertGe(address(feeRouter).balance, handler.parked(), "eth that waited in the router is gone");
     }
 
-    /// 14. no exit module ever called the core, or the selling controller, successfully from inside an exit. the hostile
-    /// module's callouts are compose, skim, buyback, releaseRedeemBurn, exitStatement, adopt, sellForEth,
-    /// buyListing, sellTo and sellForExitToken, and the selling controller's sell. every one of them
-    /// reverts while the core is inside `exitStatement`, whatever the module does with its gas
-    function invariant_14_noCallFromInsideAnExitEverWorked() public view {
+    /// 14. no balance module ever called the core, or the selling controller, successfully from inside a redemption. the hostile
+    /// module's callouts are compose, skim, buyback, releaseRedeemBurn, redeemStatement, adopt, sellForEth,
+    /// buyListing, sellTo and sellForBalance, and the selling controller's sell. every one of them
+    /// reverts while the core is inside `redeemStatement`, whatever the module does with its gas
+    function invariant_14_noCallFromInsideARedemptionEverWorked() public view {
         uint256 n = handler.moduleEverCount();
         for (uint256 i; i < n; ++i) {
             assertTrue(!handler.modulesEver(i).calledOk(), "a module made a call into the core that went through");
@@ -455,7 +455,7 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// 18. the eth books balance over the whole run. the pots (`ethPot + ethToBuyback`) at the start of the run plus
     /// every amount booked into them (fee flushes, sale proceeds, sale payments, skims) equal the pots now plus every
-    /// amount that left them (credit purchases, tips, exit repayments, buyback spends, migrations). the handler adds
+    /// amount that left them (credit purchases, tips, redemption repayments, buyback spends, migrations). the handler adds
     /// each amount to its ledger where the action measures it at the recipient. unbooked eth, forced eth included, is
     /// outside the sum until `skim` books it.
     function invariant_18_ethConservation() public view {
@@ -505,7 +505,7 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(s.ethPot, core.ethPot(), "lens ethPot");
         assertEq(s.ethToBuyback, core.ethToBuyback(), "lens ethToBuyback");
         assertEq(s.ethRedeemBurn, core.ethRedeemBurn(), "lens ethRedeemBurn");
-        assertEq(s.xPot, core.xPot(), "lens xPot");
+        assertEq(s.balancePot, core.balancePot(), "lens balancePot");
         uint256 booked = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
         assertEq(s.unbookedEth, address(core).balance > booked ? address(core).balance - booked : 0, "lens unbookedEth");
         assertEq(s.routerBalance, address(feeRouter).balance, "lens routerBalance");
@@ -513,7 +513,7 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(s.controller, core.controller(), "lens controller");
         assertEq(s.successor, core.successor(), "lens successor");
         assertEq(s.controllerLocked, core.controllerLocked(), "lens controllerLocked");
-        assertEq(s.exitModuleLocked, core.exitModuleLocked(), "lens exitModuleLocked");
+        assertEq(s.balanceModuleLocked, core.balanceModuleLocked(), "lens balanceModuleLocked");
         assertEq(s.targetsLocked, core.targetsLocked(), "lens targetsLocked");
         assertEq(s.successorLocked, core.successorLocked(), "lens successorLocked");
         _lensFlush(s);
@@ -662,8 +662,8 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 11) handler.controllerSeed(w);
         else if (a == 12) handler.controllerSwap(w);
         else if (a == 13) handler.probeController(w);
-        else if (a == 14) handler.sellForExit(w, x, y);
-        else if (a == 15) handler.exitStatement(w, x);
+        else if (a == 14) handler.sellForBalance(w, x, y);
+        else if (a == 15) handler.redeemStatement(w, x);
         else if (a == 16) handler.moduleMode(w);
         else if (a == 17) handler.walletMove(w, x);
         else if (a == 18) handler.setSettings(w, x);
@@ -740,7 +740,7 @@ abstract contract InvariantsBase is InvariantFixture {
         }
         assertTrue(handler.gRetired(), "the handler never migrated");
         assertTrue(core.retired(), "the core is not retired");
-        // sellForEth, listingStrategy, listingHostile, compose, adopt, composeChosen, then sellForExit in phase 2
+        // sellForEth, listingStrategy, listingHostile, compose, adopt, composeChosen, then sellForBalance in the balance side
         uint8[7] memory doors = [2, 3, 4, 7, 33, 39, 14];
         for (uint256 k; k < doors.length; ++k) {
             if (!_available(doors[k])) continue;
@@ -763,13 +763,13 @@ abstract contract InvariantsBase is InvariantFixture {
         // pause and composeChosen are exercised by their own tests, not by test_everyActionSucceeds (a chosen compose
         // needs a fresh page of 80 pile credits, which its own test builds)
         if (a == 34 || a == 39) return false;
-        // refreshUnit reads the module, so it only lands in phase 2
+        // refreshUnit reads the module, so it only lands in the balance side
         if (a == 35) return handler.phase2();
         // the sale and owner door actions run only in the suites that list them
         if (a >= 24 && a <= 28) return _saleSuite();
         // flush through creditSettings, and buy, are available in every suite
         if (a >= 29 || a == 23) return true;
-        // the exit actions and the module replacement need phase 2
+        // the redemption actions and the module replacement need the balance side
         if ((a >= 14 && a <= 16 || a == 22) && !handler.phase2()) return false;
         if (a == 12 && !handler.canSwapController()) return false;
         return true;
@@ -912,12 +912,12 @@ abstract contract InvariantsBase is InvariantFixture {
         // an eth lane statement is redeemable once its asking price falls to its cost; the long warp takes every held
         // statement there
         vm.warp(block.timestamp + 160 hours);
-        assertTrue(_try(15, 80), "no exit");
-        assertTrue(_try(14, 60), "no exit token sale");
+        assertTrue(_try(15, 80), "no redemption");
+        assertTrue(_try(14, 60), "no balance token sale");
         _try(14, 60);
-        // the exit bid credits sit in the single pile and compose through the regular compose, proven in _smoke
+        // the balance bid credits sit in the single pile and compose through the regular compose, proven in _smoke
         assertTrue(_try(16, 20), "no module mode");
-        // the owner replaces the exit module: a new one, the same one with a new unit, and the refusals
+        // the owner replaces the balance module: a new one, the same one with a new unit, and the refusals
         assertTrue(_try(22, 40), "no module replacement");
         for (uint256 i; i < 8; ++i) {
             handler.replaceModule(i * 7919 + 1, i);
@@ -944,7 +944,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 }
 
-/// phase 1 after the sniper window: the exit module slot is empty, the controller is ControllerV1 and may be swapped
+/// phase 1 after the sniper window: the balance module slot is empty, the controller is ControllerV1 and may be swapped
 /// for the fuzz controller in benign mode at once. the owner setup came a week, so the skim is
 /// the 10 point baseline.
 /// forge-config: default.invariant.runs = 24

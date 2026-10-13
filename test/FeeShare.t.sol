@@ -5,7 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {FeeBase} from "./Fees.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
-import {MockExitToken} from "./standins/MockExitToken.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 
 /// `feeToBuybackBps`: the share of the router's eth that `receive()` books to the coin buyback, the rest to the pot.
 /// every number comes from real swaps through the live pool and the live skim hook, which pays its bounty leg into the
@@ -138,13 +138,13 @@ contract FeeShareTest is FeeBase {
         assertEq(core.ethPot() - pot, 1.5 ether);
     }
 
-    /// the exit token sent to the core is booked by skim to the bid pot
-    function test_skim_theExitTokenGoesToTheBidPot() public {
+    /// the balance token sent to the core is booked by skim to the bid pot
+    function test_skim_theBalanceTokenGoesToTheBidPot() public {
         _enterPhase2();
         xt.mint(address(core), 7e18);
-        uint256 xp = core.xPot();
+        uint256 xp = core.balancePot();
         core.skim();
-        assertEq(core.xPot() - xp, 7e18);
+        assertEq(core.balancePot() - xp, 7e18);
     }
 
     // ------------------------------------------------------------------ a change of the setting

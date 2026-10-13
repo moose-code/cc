@@ -15,9 +15,9 @@ const CHG = {
   saleToBuybackBps: { label: 'saleToBuybackBps (sale proceeds to burn $CC)', unit: 'bps, 0 to 10000', to: 2500 },
   feeToRedeemBurnBps: { label: 'feeToRedeemBurnBps (fee share to the redeem burn reserve)', unit: 'bps, 0 to 10000, with feeToBuybackBps at most 10000', to: 2500 },
   redeemBurnBps: { label: 'redeemBurnBps (reserve share released by a redemption)', unit: 'bps, 0 to 10000', to: 5000 },
-  exitMode: { label: 'exitMode (needs phase 2 switched on to have an effect)', unit: '0 off, 1 hold, 2 on', to: 0 },
-  exitBidMarginBps: { label: 'exitBidMarginBps (margin under the redeemable value)', unit: 'bps, 200 to 9000 (at least exitSlippageBps, 200 at launch)', to: 4000 },
-  moduleUnit: { label: 'exit module reports a new unitPerPoint (the Core stored unit is unchanged)', unit: 'eth per score point. the bid pays the lower of the stored and live unit', to: 1e-5 },
+  balanceMode: { label: 'balanceMode (needs the balance side switched on to have an effect)', unit: '0 off, 1 hold, 2 on', to: 0 },
+  balanceBidMarginBps: { label: 'balanceBidMarginBps (margin under the redeemable value)', unit: 'bps, 200 to 9000 (at least redeemSlippageBps, 200 at launch)', to: 4000 },
+  moduleUnit: { label: 'balance module reports a new unitPerPoint (the Core stored unit is unchanged)', unit: 'eth per score point. the bid pays the lower of the stored and live unit', to: 1e-5 },
   refreshUnitPerPoint: { label: 'owner calls refreshUnitPerPoint (stores the module unit)', unit: 'any nonzero value', to: 1 },
   releaseRedeemBurn: { label: 'owner calls releaseRedeemBurn (reserve to the buyback pot)', unit: 'eth, capped at the reserve', to: 1 },
   rateCap: { label: 'rateCap (most the eth rate can be)', unit: 'wei per credit, 1e13 to 1e18', to: 2.2e16 },
@@ -31,9 +31,9 @@ const BASE_STATE = { volPreset: 'comparable', volScale: 1, volTail: 17, volHalfL
   openPct: 100, markupBps: 15000, startCapBps: 100000, fastBpsH: 100, kneeBps: 10000, slowBpsH: 25, floorBps: 10000, saleFloorBps: 10000, saleToBuybackBps: 5000, feeToBuybackBps: 0, feeToRedeemBurnBps: 1000, anchorHalfLifeDays: 7, anchorMinCost: 0.1, dropPerCreditPct: 0.5, dropToPct: 50, climbPerMin: 0.5, ceilPct: 110, idleLoosenPct: 2, recoveryClimbPerMin: 2, recoveryGapPct: 10, peakHalfLifeHours: 6, rateCap: 26700000000000000,
   basefeeGwei: 1, keeperFee: 0.0005, keeperMaxBaseFee: 10,
   pauseOn: false, pauseDay: 20, pauseDays: 7,
-  creditSaleOn: false, creditWindowHours: 4, creditFloorBps: 11000, creditStartBps: 30000, creditCostToPotBps: 10000, creditBuyersPerDay: 40, creditWtpMult: 1, refScore: 4330000, chosenComposeOn: false, composeChoice: 'oldest', exitPoolMult: 1,
+  creditSaleOn: false, creditWindowHours: 4, creditFloorBps: 11000, creditStartBps: 30000, creditCostToPotBps: 10000, creditBuyersPerDay: 40, creditWtpMult: 1, refScore: 4330000, chosenComposeOn: false, composeChoice: 'oldest', balancePoolMult: 1,
   chgOn: false, chgDay: 30, chgKey: 'saleToBuybackBps', chgValue: 7500,
-  phase2On: false, phase2Day: 14, phase2ExitMode: 2, xpPerPoint: 0.0108 / 440, exitPoolSet: false, exitBidMarginBps: 2000, redeemBurnBps: 2000, days: 90, seed: 7 };
+  balanceOn: false, balanceDay: 14, balanceDayMode: 2, xpPerPoint: 0.0108 / 440, balancePoolSet: false, balanceBidMarginBps: 2000, redeemBurnBps: 2000, days: 90, seed: 7 };
 const GROUPS = [
   { title: 'market', open: true, ctl: [
     { k: 'volPreset', t: 'select', label: '$CC volume preset', opts: [['comparable', 'comparable decay'], ['sustained17', 'sustained 17 eth a day'], ['sustained50', 'sustained 50 eth a day'], ['deadWeek1', 'dead after week one'], ['custom', 'custom']] },
@@ -57,7 +57,7 @@ const GROUPS = [
     { k: 'fastBpsH', t: 'range', label: 'fast fall, bps of the reference an hour (fastDecayBpsPerHour)', min: 10, max: 2000, log: true, fmt: (v) => Math.round(v), hint: 'asking price walk:', hintFn: (s) => walkText(s) },
     { k: 'kneeBps', t: 'range', label: 'knee, where the fast fall ends (kneeBps)', min: 2000, max: 100000, step: 500, fmt: (v) => v / 100 + '%', hint: 'a start at or below the knee falls at the slow rate from the first second' },
     { k: 'slowBpsH', t: 'range', label: 'slow fall, bps of the reference an hour (slowDecayBpsPerHour)', min: 5, max: 1000, log: true, fmt: (v) => Math.round(v), hint: 'the rate below the knee, down to the floor' },
-    { k: 'floorBps', t: 'range', label: 'floor of the asking price (floorBps)', min: 2000, max: 10000, step: 500, fmt: (v) => v / 100 + '%', hint: 'the price falls to here, in percent of the price reference, and stops. at most the knee. launch 10000, so a statement is asked at its reference once the fall reaches it, and redeems once exitMode allows' },
+    { k: 'floorBps', t: 'range', label: 'floor of the asking price (floorBps)', min: 2000, max: 10000, step: 500, fmt: (v) => v / 100 + '%', hint: 'the price falls to here, in percent of the price reference, and stops. at most the knee. launch 10000, so a statement is asked at its reference once the fall reaches it, and redeems once balanceMode allows' },
     { k: 'saleFloorBps', t: 'range', label: 'hard floor, set in the Core (saleFloorBps)', min: 1000, max: 12000, step: 500, fmt: (v) => v / 100 + '%', hint: 'no sale ever goes under this share of cost (not of the reference), even if the floor above is lower. launch 10000: unsold statements sit at cost or above' },
     { k: 'saleToBuybackBps', t: 'range', label: 'saleToBuybackBps, sale proceeds to burn $CC', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of sale proceeds that buys and burns $CC, the rest goes to the pot' },
     { k: 'feeToBuybackBps', t: 'range', label: 'feeToBuybackBps, fee share to burn $CC', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of $CC swap fee eth that buys and burns $CC instead of going to the pot' },
@@ -78,7 +78,7 @@ const GROUPS = [
   { title: 'credit sale window (creditSaleOn)', open: false, ctl: [
     { k: 'creditSaleOn', t: 'check', label: 'pile credits are for sale from their acquisition time', hint: 'off at launch. compose waits for a credit to pass its window while this is on' },
     { k: 'creditWindowHours', t: 'range', label: 'creditWindow, hours', min: 0.1, max: 720, log: true, fmt: (v) => fmtN(v) + 'h', hint: 'the price falls over this time and rests at the floor. launch 4' },
-    { k: 'creditFloorBps', t: 'range', label: 'creditFloorBps', min: 10000, max: 40000, step: 500, fmt: (v) => v, hint: 'the floor is the highest of the credit cost, its exit token baseline and the eth bid, times this. launch 11000' },
+    { k: 'creditFloorBps', t: 'range', label: 'creditFloorBps', min: 10000, max: 40000, step: 500, fmt: (v) => v, hint: 'the floor is the highest of the credit cost, its balance token baseline and the eth bid, times this. launch 11000' },
     { k: 'creditStartBps', t: 'range', label: 'creditStartBps', min: 10000, max: 200000, step: 5000, fmt: (v) => v, hint: 'the start price is the floor times this. launch 30000' },
     { k: 'creditCostToPotBps', t: 'range', label: 'creditCostToPotBps', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of a sold credit cost that returns to the pot, the rest of the payment buys and burns $CC. launch 10000' },
     { k: 'creditBuyersPerDay', t: 'range', label: 'credit buyers a day', min: 1, max: 400, log: true, fmt: (v) => fmtN(v), hint: 'a model input: buyers of pile credits, each takes the lowest priced credit that fits its willingness to pay' },
@@ -104,14 +104,14 @@ const GROUPS = [
     { k: 'chgKey', t: 'select', label: 'setting', opts: Object.keys(CHG).map((k) => [k, CHG[k].label]) },
     { k: 'chgValue', t: 'number', label: 'new value', hint: 'unit:', hintFn: (s) => CHG[s.chgKey].unit },
   ] },
-  { title: 'phase 2: exitModule and exitToken', open: false, ctl: [
-    { k: 'phase2On', t: 'check', label: 'phase 2 switched on' },
-    { k: 'phase2Day', t: 'range', label: 'on day', min: 1, max: 89, step: 1, fmt: (v) => 'day ' + v, hint: 'the owner sets the exit module and exitMode that day. exitMode is 0 at launch: unsold statements sit at cost and nothing redeems' },
-    { k: 'phase2ExitMode', t: 'select', label: 'exitMode that day', opts: [[1, '1 hold: redemptions at the floor, no exit token bid'], [2, '2 on: redemptions and the exit token bid (needs the pool key)']] },
-    { k: 'xpPerPoint', t: 'range', label: 'exit token value per score point, eth', min: 2e-6, max: 3e-4, log: true, fmt: fmtSci, hint: 'unitPerPoint at the exit token price. a statement of 80 credits at 440 points redeems 35,200 times this', hintFn: (s) => (s.xpPerPoint * 35200).toFixed(2) + ' eth' },
-    { k: 'exitPoolSet', t: 'check', label: 'exit token pool key set in the controller', hint: 'asking price is at least the redeemable value, and the exit token bid works: it values the tokens it pays at the pool price. the pool is native eth / exit token and initialized. unset at launch' },
-    { k: 'exitPoolMult', t: 'range', label: 'exit token pool price against the unit', min: 0.1, max: 3, log: true, fmt: (v) => v.toFixed(2) + 'x', hint: 'values the redemption floor, the credit baseline and the cost recorded for a credit bought with the exit token (the higher of that and the eth bid). below 1 is a pool price pushed down' },
-    { k: 'exitBidMarginBps', t: 'range', label: 'exitBidMarginBps', min: 0, max: 9000, step: 500, fmt: (v) => v, hint: 'the bid pays the redeemable value of a credit less this share, at the lower of the stored and live unit. exitSlippageBps follows it down when it is under 200. launch 2000' },
+  { title: 'the balance side: balanceModule and balanceToken', open: false, ctl: [
+    { k: 'balanceOn', t: 'check', label: 'the balance side switched on' },
+    { k: 'balanceDay', t: 'range', label: 'on day', min: 1, max: 89, step: 1, fmt: (v) => 'day ' + v, hint: 'the owner sets the balance module and balanceMode that day. balanceMode is 0 at launch: unsold statements sit at cost and nothing redeems' },
+    { k: 'balanceDayMode', t: 'select', label: 'balanceMode that day', opts: [[1, '1 hold: redemptions at the floor, no balance token bid'], [2, '2 on: redemptions and the balance token bid (needs the pool key)']] },
+    { k: 'xpPerPoint', t: 'range', label: 'balance token value per score point, eth', min: 2e-6, max: 3e-4, log: true, fmt: fmtSci, hint: 'unitPerPoint at the balance token price. a statement of 80 credits at 440 points redeems 35,200 times this', hintFn: (s) => (s.xpPerPoint * 35200).toFixed(2) + ' eth' },
+    { k: 'balancePoolSet', t: 'check', label: 'balance token pool key set in the controller', hint: 'asking price is at least the redeemable value, and the balance token bid works: it values the tokens it pays at the pool price. the pool is native eth / balance token and initialized. unset at launch' },
+    { k: 'balancePoolMult', t: 'range', label: 'balance token pool price against the unit', min: 0.1, max: 3, log: true, fmt: (v) => v.toFixed(2) + 'x', hint: 'values the redemption floor, the credit baseline and the cost recorded for a credit bought with the balance token (the higher of that and the eth bid). below 1 is a pool price pushed down' },
+    { k: 'balanceBidMarginBps', t: 'range', label: 'balanceBidMarginBps', min: 0, max: 9000, step: 500, fmt: (v) => v, hint: 'the bid pays the redeemable value of a credit less this share, at the lower of the stored and live unit. redeemSlippageBps follows it down when it is under 200. launch 2000' },
     { k: 'redeemBurnBps', t: 'range', label: 'redeemBurnBps', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of the redeem burn reserve moved to buy and burn $CC by each redemption of a statement. launch 2000' },
   ] },
   { title: 'run', open: false, ctl: [
@@ -182,7 +182,7 @@ function syncControls() {
     else if (c.t === 'check') c.inp.checked = !!v;
     else if (document.activeElement !== c.inp) c.inp.value = String(v);
     if (c.only) $('row-' + k).style.display = state.volPreset === c.only ? '' : 'none';
-    if (k === 'phase2Day' || k === 'phase2ExitMode' || k === 'xpPerPoint' || k === 'exitPoolSet' || k === 'exitPoolMult' || k === 'exitBidMarginBps') $('row-' + k).style.opacity = state.phase2On ? 1 : 0.5;
+    if (k === 'balanceDay' || k === 'balanceDayMode' || k === 'xpPerPoint' || k === 'balancePoolSet' || k === 'balancePoolMult' || k === 'balanceBidMarginBps') $('row-' + k).style.opacity = state.balanceOn ? 1 : 0.5;
     if (k === 'creditWindowHours' || k === 'creditFloorBps' || k === 'creditStartBps' || k === 'creditCostToPotBps' || k === 'creditBuyersPerDay' || k === 'creditWtpMult') $('row-' + k).style.opacity = state.creditSaleOn ? 1 : 0.5;
     if (k === 'composeChoice') $('row-' + k).style.opacity = state.chosenComposeOn ? 1 : 0.5;
     if (k === 'pauseDay' || k === 'pauseDays') $('row-' + k).style.opacity = state.pauseOn ? 1 : 0.5;
@@ -204,11 +204,11 @@ function toParams(s) {
     stepSec: 300, // 5 minute steps keep a live page responsive, credits within 1 percent of the 60 second steps of the batches
     rateCap: Math.max(s.rateCap, rateOf(s)), // the Core refuses a deploy with rateStart above rateCap
     creditSaleOn: !!s.creditSaleOn, creditWindow: Math.max(60, Math.round(s.creditWindowHours * 3600)), creditFloorBps: s.creditFloorBps, creditStartBps: s.creditStartBps, creditCostToPotBps: s.creditCostToPotBps, creditBuyersPerDay: s.creditBuyersPerDay, creditWtpMult: s.creditWtpMult,
-    refScore: Math.round(s.refScore), chosenComposeOn: !!s.chosenComposeOn, composeChoice: s.composeChoice, exitPoolMult: s.exitPoolMult,
-    phase2Day: s.phase2On ? s.phase2Day : null, phase2ExitMode: +s.phase2ExitMode, xpPerPoint: s.xpPerPoint, exitPoolSet: !!s.exitPoolSet, exitBidMarginBps: s.exitBidMarginBps, exitSlippageBps: Math.min(200, s.exitBidMarginBps), redeemBurnBps: s.redeemBurnBps,
+    refScore: Math.round(s.refScore), chosenComposeOn: !!s.chosenComposeOn, composeChoice: s.composeChoice, balancePoolMult: s.balancePoolMult,
+    balanceDay: s.balanceOn ? s.balanceDay : null, balanceDayMode: +s.balanceDayMode, xpPerPoint: s.xpPerPoint, balancePoolSet: !!s.balancePoolSet, balanceBidMarginBps: s.balanceBidMarginBps, redeemSlippageBps: Math.min(200, s.balanceBidMarginBps), redeemBurnBps: s.redeemBurnBps,
     days: +s.days, seed: s.seed,
   };
-  if (p.phase2Day != null && p.phase2Day >= p.days) p.phase2Day = null;
+  if (p.balanceDay != null && p.balanceDay >= p.days) p.balanceDay = null;
   p.schedule = [];
   if (s.chgOn && s.chgDay < p.days) {
     const ch = CHG[s.chgKey], patch = {};

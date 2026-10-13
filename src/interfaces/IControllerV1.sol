@@ -37,12 +37,12 @@ interface IControllerV1 {
     event AnchorHalfLifeSet(uint32 anchorHalfLife);
     event AnchorMinCostSet(uint128 anchorMinCost);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
+    event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event CreditFloorBpsSet(uint16 creditFloorBps);
     event CreditSaleOnSet(bool on);
     event CreditStartBpsSet(uint32 creditStartBps);
     event CreditWindowSet(uint32 creditWindow);
-    event ExitPoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
     event FastDecayBpsPerHourSet(uint16 fastDecayBpsPerHour);
     event FloorBpsSet(uint16 floorBps);
     event KneeBpsSet(uint32 kneeBps);
@@ -58,6 +58,11 @@ interface IControllerV1 {
     function anchorMinCost() external view returns (uint128);
     function anchorTime() external view returns (uint40);
     function atFloor(uint256 sid) external view returns (bool);
+    function balancePoolKey()
+        external
+        view
+        returns (Currency currency0, Currency currency1, uint24 fee, int24 tickSpacing, address hooks);
+    function balancePoolKeySet() external view returns (bool);
     function buy(uint256 sid) external payable;
     function buyCredit(uint256 id) external payable;
     function buyCredits(uint256[] memory ids) external payable;
@@ -66,11 +71,6 @@ interface IControllerV1 {
     function creditSaleOn() external view returns (bool);
     function creditStartBps() external view returns (uint32);
     function creditWindow() external view returns (uint32);
-    function exitPoolKey()
-        external
-        view
-        returns (Currency currency0, Currency currency1, uint24 fee, int24 tickSpacing, address hooks);
-    function exitPoolKeySet() external view returns (bool);
     function fastDecayBpsPerHour() external view returns (uint16);
     function floorBps() external view returns (uint16);
     function kneeBps() external view returns (uint32);
@@ -84,11 +84,11 @@ interface IControllerV1 {
     function setAnchorBps(uint32 v) external;
     function setAnchorHalfLife(uint32 v) external;
     function setAnchorMinCost(uint128 v) external;
+    function setBalancePoolKey(PoolKey memory key) external;
     function setCreditFloorBps(uint16 v) external;
     function setCreditSaleOn(bool v) external;
     function setCreditStartBps(uint32 v) external;
     function setCreditWindow(uint32 v) external;
-    function setExitPoolKey(PoolKey memory key) external;
     function setFastDecayBpsPerHour(uint16 v) external;
     function setFloorBps(uint16 v) external;
     function setKneeBps(uint32 v) external;

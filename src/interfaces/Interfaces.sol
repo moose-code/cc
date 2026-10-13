@@ -6,7 +6,7 @@ pragma solidity ^0.8.28;
 interface IController {
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
     /// true when the curve price of statement `sid` has reached its floor, `floorBps` of the reference. the curve age
-    /// excludes paused seconds, so eligibility is frozen while sales are paused. the core reads it to gate a phase 2
+    /// excludes paused seconds, so eligibility is frozen while sales are paused. the core reads it to gate the balance side
     /// redemption
     function atFloor(uint256 sid) external view returns (bool);
     /// true when a credit acquired at `acquiredAt` may be composed: always while the credit sale is off, otherwise once
@@ -14,14 +14,14 @@ interface IController {
     function pastWindow(uint64 acquiredAt) external view returns (bool);
 }
 
-interface IExitModule {
-    function exitToken() external view returns (address);
-    /// exit token base units per stored score unit. a score is in ten-thousandths of a point (a score of 132.4012 is
+interface IBalanceModule {
+    function balanceToken() external view returns (address);
+    /// balance token base units per stored score unit. a score is in ten-thousandths of a point (a score of 132.4012 is
     /// stored as 1_324_012), so this is base units per ten-thousandth of a point, not per whole point. a statement
     /// redemption owes `rating * unitPerPoint`, where `rating` is the sum of its credits' stored scores
     function unitPerPoint() external view returns (uint256);
     /// called by the core after it transfers the statement to the module
-    function exit(uint256 statementId) external returns (uint256 out);
+    function redeem(uint256 statementId) external returns (uint256 out);
 }
 
 interface ICreditScore {
@@ -49,9 +49,9 @@ interface ICoreViews {
     /// the stored rating of a statement: the sum of its credits' scores, read from Statements at compose
     function ratingOf(uint256 sid) external view returns (uint256);
     function heldStatements() external view returns (uint256[] memory sids);
-    function exitModule() external view returns (address);
-    function exitToken() external view returns (address);
-    /// exit token base units per stored score unit, one ten-thousandth of a point. a redemption owes `rating * unitPerPoint`
+    function balanceModule() external view returns (address);
+    function balanceToken() external view returns (address);
+    /// balance token base units per stored score unit, one ten-thousandth of a point. a redemption owes `rating * unitPerPoint`
     function unitPerPoint() external view returns (uint256);
 }
 
@@ -118,7 +118,7 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`, bounds
 /// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into three storage slots
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
-/// fields and the exit mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields and fee
+/// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields and fee
 /// split. docs/FLOW.md section 2 has the meaning of every field
 struct Settings {
     // slot 0
@@ -149,14 +149,14 @@ struct Settings {
     uint32 peakHalfLife;
     /// blocks between two coin buybacks
     uint16 buybackDelay;
-    /// phase 2 state. 0 off: no redemption and no exit token bid. 1 hold: redemptions run, the exit token bid is
-    /// stopped. 2 on: redemptions and the exit token bid run
-    uint8 exitMode;
-    /// a redemption must raise the exit token balance by at least `rating * unitPerPoint * (10_000 - exitSlippageBps)
+    /// the balance side state. 0 off: no redemption and no balance token bid. 1 hold: redemptions run, the balance token bid is
+    /// stopped. 2 on: redemptions and the balance token bid run
+    uint8 balanceMode;
+    /// a redemption must raise the balance token balance by at least `rating * unitPerPoint * (10_000 - redeemSlippageBps)
     /// / 10_000`, bps
-    uint16 exitSlippageBps;
-    /// the exit token bid pays `score * unitPerPoint * (10_000 - exitBidMarginBps) / 10_000` per credit, bps
-    uint16 exitBidMarginBps;
+    uint16 redeemSlippageBps;
+    /// the balance token bid pays `score * unitPerPoint * (10_000 - balanceBidMarginBps) / 10_000` per credit, bps
+    uint16 balanceBidMarginBps;
     /// share of `ethRedeemBurn` moved into the coin buyback on each redemption, bps
     uint16 redeemBurnBps;
     // slot 1
@@ -170,10 +170,10 @@ struct Settings {
     /// the most the eth rate can be, wei per credit. the price state and the read stay at or below it, `setRate`
     /// refuses above it, and the rate bounds apply to it
     uint64 rateCap;
-    /// fixed fee paid to the caller of `compose` and `exitStatement`, wei, from `ethPot`. zero turns the whole payment
+    /// fixed fee paid to the caller of `compose` and `redeemStatement`, wei, from `ethPot`. zero turns the whole payment
     /// of those doors off when `callerMaxBaseFee` is zero too
     uint64 callerFee;
-    /// base fee ceiling of the gas refund of `compose` and `exitStatement`, wei. zero refunds no gas
+    /// base fee ceiling of the gas refund of `compose` and `redeemStatement`, wei. zero refunds no gas
     uint48 callerMaxBaseFee;
     /// share of the swap fee eth that the fee router flushes to the core (booked in `receive()`) that goes to the coin
     /// buyback, bps. the rest after `feeToRedeemBurnBps` goes to the pot. eth booked later by `skim` goes to the pot whole
@@ -224,7 +224,7 @@ struct Credit {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
     /// take it. 1 minute to 30 days
     uint32 window;
-    /// the credit sale floor over the highest of the credit's cost, exit token baseline and score-scaled eth backstop,
+    /// the credit sale floor over the highest of the credit's cost, balance token baseline and score-scaled eth backstop,
     /// bps. 10_000 to 40_000
     uint16 floorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
@@ -251,7 +251,7 @@ struct Stack {
 library Mainnet {
     address internal constant CREDITS = 0x97630aA70AB14ed9883B41dAfccBc11349723043;
     address internal constant STATEMENTS = 0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b;
-    /// scores a credit from its seed and paid time. read for the exit token bid, once per credit sold
+    /// scores a credit from its seed and paid time. read for the balance token bid, once per credit sold
     address internal constant CREDIT_SCORE = 0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7;
     address internal constant CREDIT_STRATEGY = 0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6;
     address internal constant SEAPORT = 0x0000000000000068F116a894984e2DB1123eB395;
@@ -283,9 +283,9 @@ library Mainnet {
             recoveryGapBps: 1_000,
             peakHalfLife: 21_600,
             buybackDelay: 25,
-            exitMode: 0,
-            exitSlippageBps: 200,
-            exitBidMarginBps: 2_000,
+            balanceMode: 0,
+            redeemSlippageBps: 200,
+            balanceBidMarginBps: 2_000,
             redeemBurnBps: 2_000,
             buybackSlice: 0.5 ether,
             keeperFee: 0.0005 ether,

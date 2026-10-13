@@ -28,22 +28,22 @@ interface ICore {
     error BadStatement();
     error BadSuccessor(address who);
     error BadSwap();
+    error BalanceModeOff();
+    error BalanceTokenChanged();
     error BelowFloor();
     error BelowMinCc();
     error CallFailed();
     error ChosenComposeOff();
     error Empty();
-    error ExitModeOff();
-    error ExitTokenChanged();
     error ForbiddenTarget();
     error Held();
     error InPile();
     error InWindow(uint256 id);
     error Locked(bytes32 what);
     error Measuring();
+    error NoBalanceModule();
     error NoCode(address who);
     error NoCredit();
-    error NoExitModule();
     error NoSuccessor();
     error NotEligible();
     error NotForSale();
@@ -70,6 +70,9 @@ interface ICore {
     error ZeroAmount();
     error ZeroId();
 
+    event BalanceModuleLocked();
+    event BalanceModuleSet(address balanceModule, address balanceToken, uint256 unitPerPoint);
+    event BalanceTokenMigrationSkipped(address indexed successor, uint256 amount);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     event ChosenComposeOnSet(bool on);
     event CoinRescued(address indexed to, uint256 amount);
@@ -82,14 +85,11 @@ interface ICore {
     event CreditSold(uint256 indexed id, address indexed buyer, uint256 price);
     event EngineRetired(address indexed successor);
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
-    event ExitModuleLocked();
-    event ExitModuleSet(address exitModule, address exitToken, uint256 unitPerPoint);
-    event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
     event FeesAdded(uint256 amount);
     event ListingBought(
         uint256 indexed id, address indexed target, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
-    event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
+    event Migrated(address indexed successor, uint256 eth, uint256 balanceTokens, uint256 credits);
     event MinCcToChooseSet(uint96 min);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
@@ -97,15 +97,15 @@ interface ICore {
     event RateSet(uint256 rate);
     event RedeemBurnReleased(uint256 amount);
     event SettingsSet(Settings settings);
-    event Skimmed(uint256 eth, uint256 exitToken);
-    event StatementExited(uint256 indexed sid, uint256 received);
+    event Skimmed(uint256 eth, uint256 balanceToken);
+    event StatementRedeemed(uint256 indexed sid, uint256 received);
     event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback);
     event SuccessorLocked();
     event SuccessorSet(address successor);
     event TargetAdded(address target);
     event TargetRemoved(address target);
     event TargetsLocked();
-    event UnitPerPointRefreshed(address exitModule, uint256 unitPerPoint);
+    event UnitPerPointRefreshed(address balanceModule, uint256 unitPerPoint);
 
     receive() external payable;
 
@@ -123,6 +123,10 @@ interface ICore {
     function addTarget(address t) external;
     function adopt(uint256[] memory) external;
     function allowedTarget(address) external view returns (bool);
+    function balanceModule() external view returns (address);
+    function balanceModuleLocked() external view returns (bool);
+    function balancePot() external view returns (uint256);
+    function balanceToken() external view returns (address);
     function buyListing(uint256 value, bytes memory data, uint256 id, address target) external;
     function buyback() external;
     function checkpointTime() external view returns (uint64);
@@ -138,16 +142,12 @@ interface ICore {
     function ethRate() external view returns (uint256 read);
     function ethRedeemBurn() external view returns (uint256);
     function ethToBuyback() external view returns (uint256);
-    function exitModule() external view returns (address);
-    function exitModuleLocked() external view returns (bool);
-    function exitStatement(uint256 sid) external;
-    function exitToken() external view returns (address);
     function floorRate() external view returns (uint256);
     function heldStatements() external view returns (uint256[] memory sids);
     function lastBuybackBlock() external view returns (uint256);
     function lastFillTime() external view returns (uint64);
+    function lockBalanceModule() external;
     function lockController() external;
-    function lockExitModule() external;
     function lockSuccessor() external;
     function lockTargets() external;
     function migrate(uint256) external;
@@ -159,6 +159,7 @@ interface ICore {
     function pileSize() external view returns (uint256);
     function rateAtCheckpoint() external view returns (uint256);
     function ratingOf(uint256 sid) external view returns (uint256);
+    function redeemStatement(uint256 sid) external;
     function refreshUnitPerPoint() external;
     function releaseRedeemBurn(uint256 amount) external;
     function removeTarget(address target) external;
@@ -166,15 +167,15 @@ interface ICore {
     function rescueNft(address, uint256, address) external;
     function retired() external view returns (bool);
     function sellCreditTo(uint256 id, address buyer) external payable;
+    function sellForBalance(uint256[] memory ids) external;
+    function sellForBalance(uint256[] memory ids, uint256 minOut) external;
     function sellForEth(uint256[] memory ids, uint256 minOut) external;
     function sellForEth(uint256[] memory ids) external;
-    function sellForExitToken(uint256[] memory ids) external;
-    function sellForExitToken(uint256[] memory ids, uint256 minOut) external;
     function sellTo(uint256 sid, address buyer) external payable;
+    function setBalanceModule(address module) external;
     function setChosenComposeOn(bool v) external;
     function setController(address c) external;
     function setCreditCostToPotBps(uint16 v) external;
-    function setExitModule(address module) external;
     function setMinCcToChoose(uint96 v) external;
     function setRate(uint256 rate) external;
     function setSettings(Settings memory) external;
@@ -188,5 +189,4 @@ interface ICore {
     function transferOwnership(address to) external;
     function unitPerPoint() external view returns (uint256);
     function unlockCallback(bytes memory data) external returns (bytes memory);
-    function xPot() external view returns (uint256);
 }

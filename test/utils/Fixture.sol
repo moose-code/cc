@@ -22,8 +22,8 @@ import {V2Stack} from "./V2Stack.sol";
 import {Deployed} from "../../script/SystemDeployer.sol";
 import {ProdDeployer} from "./ProdDeployer.sol";
 import {LaunchConfig} from "../../script/LaunchConfig.sol";
-import {MockExitToken} from "../standins/MockExitToken.sol";
-import {MockExitModule} from "../standins/MockExitModule.sol";
+import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
+import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {CreditIds} from "./CreditIds.sol";
 import {TestSwapRouter} from "./TestSwapRouter.sol";
 import {RateStore} from "../../src/lib/RateStore.sol";
@@ -34,7 +34,7 @@ import {RateStore} from "../../src/lib/RateStore.sol";
 /// deployed through `SystemDeployer.deploySystem` and the coin is launched with `deployTokenAsOwner`. the pool lives in
 /// the live pool manager under the v2 hook. fees reach the Core through the fee router: `_buyCoin` and `_sellCoin`
 /// flush it right after the swap (set `autoFlush` false to hold the eth in the router), `_flush` does it on demand.
-/// the only stand ins are the exit module and exit token, which appear only after `_enterPhase2`.
+/// the only stand ins are the balance module and balance token, which appear only after `_enterPhase2`.
 /// the sniper window is OPEN after setUp (the pool was just born). call `_skipSniperWindow` for steady state fees.
 /// @dev every address is namespaced because common labels are delegated accounts on mainnet that sweep eth
 abstract contract Fixture is Test, ProdDeployer {
@@ -51,9 +51,9 @@ abstract contract Fixture is Test, ProdDeployer {
 
     /// @dev the opening bid of the fixture core, wei per credit
     uint256 internal constant OPEN_RATE = 1_732_000_000_000_000;
-    /// @dev exit token base units per credit reported by the stand in exit module
-    /// exit token base units per stored score unit (one ten-thousandth of a point). a credit of average score (about
-    /// 4.33e6 in stored units) is paid about 4.33e16 of exit token, the magnitude the per credit unit had before the
+    /// @dev balance token base units per credit reported by the stand in balance module
+    /// balance token base units per stored score unit (one ten-thousandth of a point). a credit of average score (about
+    /// 4.33e6 in stored units) is paid about 4.33e16 of balance token, the magnitude the per credit unit had before the
     /// per point rebuild
     uint256 internal constant UNIT = 1e10;
     /// @dev the sniper window of the launch, seconds
@@ -116,10 +116,10 @@ abstract contract Fixture is Test, ProdDeployer {
 
     uint256 internal creditCursor;
 
-    // ------------------------------------------------------------------ phase 2
+    // ------------------------------------------------------------------ the balance side
 
-    MockExitToken internal xt;
-    MockExitModule internal mod;
+    MockBalanceToken internal xt;
+    MockBalanceModule internal mod;
 
     // ------------------------------------------------------------------ compose
 
@@ -182,7 +182,7 @@ abstract contract Fixture is Test, ProdDeployer {
         else assertEq((paid - s.keeperFee) % rate, 0, "whole gas units at the base fee");
     }
 
-    /// @dev the test contract is a caller of the doors that pay eth to their caller (the compose and exit caller payment, the buyListing and buyback payments), so it takes eth
+    /// @dev the test contract is a caller of the doors that pay eth to their caller (the compose and redeem caller payment, the buyListing and buyback payments), so it takes eth
     receive() external payable {}
 
     function setUp() public virtual {
@@ -517,16 +517,16 @@ abstract contract Fixture is Test, ProdDeployer {
         core.setController(c);
     }
 
-    /// @notice the owner sets the exit module at once
-    function _setExitModule(address m) internal {
+    /// @notice the owner sets the balance module at once
+    function _setBalanceModule(address m) internal {
         vm.prank(owner);
-        core.setExitModule(m);
+        core.setBalanceModule(m);
     }
 
-    /// @notice the owner sets the phase 2 mode (0 off, 1 hold, 2 on)
-    function _setExitMode(uint8 m) internal {
+    /// @notice the owner sets the balance side mode (0 off, 1 hold, 2 on)
+    function _setBalanceMode(uint8 m) internal {
         Settings memory s = core.settings();
-        s.exitMode = m;
+        s.balanceMode = m;
         _setSettings(s);
     }
 
@@ -536,27 +536,27 @@ abstract contract Fixture is Test, ProdDeployer {
         core.addTarget(target);
     }
 
-    // ------------------------------------------------------------------ phase 2
+    // ------------------------------------------------------------------ the balance side
 
-    /// @notice sets the stand in exit module and exit token and turns phase 2 on (exitMode 2), so redemptions and the
-    /// exit token bid both run. the exit token the core receives from a redemption goes to `xPot`
+    /// @notice sets the stand in balance module and balance token and turns the balance side on (balanceMode 2), so redemptions and the
+    /// balance token bid both run. the balance token the core receives from a redemption goes to `balancePot`
     function _enterPhase2() internal {
-        xt = new MockExitToken("Exit Token", "XT");
-        mod = new MockExitModule(address(xt), UNIT);
-        _setExitModule(address(mod));
-        _setExitMode(2);
+        xt = new MockBalanceToken("Balance Token", "XT");
+        mod = new MockBalanceModule(address(xt), UNIT);
+        _setBalanceModule(address(mod));
+        _setBalanceMode(2);
     }
 
-    /// @notice initializes a native eth / exit token uniswap v4 pool and points the controller at it, so the exit bid
-    /// can price its eth cost basis (decision 92). the pool sqrt price makes the exit token cheap in eth, so the
-    /// decision 87 value floor is far below the sale curve and the exit bid's eth cost basis is the eth market bid.
-    /// a suite that needs the value floor to bind sets its own pool price. needs phase 2 (the exit token set)
-    function _setExitPool() internal {
-        _setExitPoolFor(address(xt));
+    /// @notice initializes a native eth / balance token uniswap v4 pool and points the controller at it, so the balance bid
+    /// can price its eth cost basis (decision 92). the pool sqrt price makes the balance token cheap in eth, so the
+    /// decision 87 value floor is far below the sale curve and the balance bid's eth cost basis is the eth market bid.
+    /// a suite that needs the value floor to bind sets its own pool price. needs the balance side (the balance token set)
+    function _setBalancePool() internal {
+        _setBalancePoolFor(address(xt));
     }
 
-    /// @notice the same for an arbitrary exit token (a suite that sets a non default exit token on the core)
-    function _setExitPoolFor(address token) internal {
+    /// @notice the same for an arbitrary balance token (a suite that sets a non default balance token on the core)
+    function _setBalancePoolFor(address token) internal {
         PoolKey memory vk = PoolKey({
             currency0: Currency.wrap(address(0)),
             currency1: Currency.wrap(token),
@@ -573,7 +573,7 @@ abstract contract Fixture is Test, ProdDeployer {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setExitPoolKey(k);
+        ctl.setBalancePoolKey(k);
     }
 
     /// @notice warps until the controller's curve price of a statement has reached its floor, which makes it eligible
@@ -584,13 +584,13 @@ abstract contract Fixture is Test, ProdDeployer {
         }
     }
 
-    /// @notice composes the eth pile, makes the statement eligible and redeems it, which books the exit token into
-    /// `xPot`. needs phase 2. returns the exit token the core received
-    function _fillExitBuyback() internal returns (uint256 received) {
+    /// @notice composes the eth pile, makes the statement eligible and redeems it, which books the balance token into
+    /// `balancePot`. needs the balance side. returns the balance token the core received
+    function _fillBalanceBuyback() internal returns (uint256 received) {
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         uint256 before = xt.balanceOf(address(core));
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         received = xt.balanceOf(address(core)) - before;
     }
 
@@ -603,9 +603,9 @@ abstract contract Fixture is Test, ProdDeployer {
             address(core).balance,
             "eth pots exceed balance"
         );
-        address t = core.exitToken();
+        address t = core.balanceToken();
         if (t != address(0)) {
-            assertLe(core.xPot(), MockExitToken(t).balanceOf(address(core)), "exit pot exceeds");
+            assertLe(core.balancePot(), MockBalanceToken(t).balanceOf(address(core)), "balance pot exceeds");
         }
     }
 

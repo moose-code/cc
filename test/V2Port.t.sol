@@ -6,8 +6,8 @@ import {FeeBase} from "./Fees.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsLpLockerV2} from "../src/interfaces/ArtCoinsV2.sol";
-import {ClaimMidListing, ClaimMidExit} from "./attackers/V2Port.sol";
-import {MockExitToken} from "./standins/MockExitToken.sol";
+import {ClaimMidListing, ClaimMidRedeem} from "./attackers/V2Port.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 
 interface IEscrowStore {
     function storeFeesNative(address feeOwner) external payable;
@@ -153,19 +153,19 @@ contract V2PortFeeTest is FeeBase {
         assertEq(CREDITS.ownerOf(id), address(t), "the credit never moved");
     }
 
-    /// the same during `exitStatement`: the pot only falls by the gas repay, the claimed eth is left unbooked for skim
-    function test_claimMidExitKeepsThePotsConsistent() public {
+    /// the same during `redeemStatement`: the pot only falls by the gas repay, the claimed eth is left unbooked for skim
+    function test_claimMidRedeemKeepsThePotsConsistent() public {
         _stock();
-        MockExitToken token = new MockExitToken("Exit Token", "XT");
-        ClaimMidExit m = new ClaimMidExit(token, UNIT, v2.escrow, address(core));
-        _setExitModule(address(m));
-        _setExitMode(2);
+        MockBalanceToken token = new MockBalanceToken("Balance Token", "XT");
+        ClaimMidRedeem m = new ClaimMidRedeem(token, UNIT, v2.escrow, address(core));
+        _setBalanceModule(address(m));
+        _setBalanceMode(2);
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         _creditCore(0.2 ether);
         uint256 pot = core.ethPot();
         uint256 gas0 = address(this).balance;
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         assertEq(core.ethPot(), pot - (address(this).balance - gas0), "only the gas repay left the pot");
         assertEq(
             address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(),

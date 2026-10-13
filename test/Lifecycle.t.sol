@@ -69,17 +69,17 @@ contract LifecycleSwapsTest is Fixture {
         assertEq(core.ethRate(), clamp < core.settings().rateCap ? clamp : core.settings().rateCap);
     }
 
-    /// phase 2 doors are shut while the exit module slot is empty and exitMode is 0
-    function test_phase1_exitDoorsAreClosed() public {
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.exitStatement(1);
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.sellForExitToken(_one(1));
+    /// the balance side doors are shut while the balance module slot is empty and balanceMode is 0
+    function test_phase1_balanceDoorsAreClosed() public {
+        vm.expectRevert(ICore.NoBalanceModule.selector);
+        core.redeemStatement(1);
+        vm.expectRevert(ICore.BalanceModeOff.selector);
+        core.sellForBalance(_one(1));
         // the statement sale door belongs to the controller and needs no module
         vm.expectRevert(ICore.OnlyController.selector);
         core.sellTo(1, address(0xB1D));
-        assertEq(core.exitToken(), address(0));
-        assertEq(core.exitModule(), address(0));
+        assertEq(core.balanceToken(), address(0));
+        assertEq(core.balanceModule(), address(0));
     }
 }
 
@@ -590,8 +590,8 @@ contract LifecycleComposeTest is Fixture {
     }
 }
 
-/// phase 2 with the stand in exit module and exit token: exit of unsold statements, the
-/// split, the coin buyback against the real coin, and the exit token bid into the single pile
+/// the balance side with the stand in balance module and balance token: redemption of unsold statements, the
+/// split, the coin buyback against the real coin, and the balance token bid into the single pile
 contract LifecyclePhase2Test is Fixture {
     using FixedPointMathLib for uint256;
 
@@ -606,7 +606,7 @@ contract LifecyclePhase2Test is Fixture {
         alice = _user("alice");
         // the owner action waits seven days, which must pass while the pot is empty and the rate cannot climb
         _enterPhase2();
-        _setExitPool();
+        _setBalancePool();
         _skipSniperWindow();
         _fundPot(20 ether);
         _warp(90 hours);
@@ -615,65 +615,65 @@ contract LifecyclePhase2Test is Fixture {
     /// the per point bid pays each credit its score times the unit less the margin
     function _bid(uint256 id) internal view returns (uint256) {
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id));
-        return score * UNIT * (10_000 - core.settings().exitBidMarginBps) / 10_000;
+        return score * UNIT * (10_000 - core.settings().balanceBidMarginBps) / 10_000;
     }
 
-    /// a statement is eligible once its asking price falls to its cost, and the exit books the whole received
+    /// a statement is eligible once its asking price falls to its cost, and the redemption books the whole received
     /// amount into the bid pot
-    function _exitTheStatement() internal returns (Composed memory c, uint256 required) {
-        assertEq(core.exitToken(), address(xt));
-        assertEq(core.exitModule(), address(mod));
+    function _redeemTheStatement() internal returns (Composed memory c, uint256 required) {
+        assertEq(core.balanceToken(), address(xt));
+        assertEq(core.balanceModule(), address(mod));
         c = _composeOnce();
         vm.expectRevert(ICore.NotEligible.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         _makeEligible(c.sid);
 
         required = core.ratingOf(c.sid) * UNIT;
-        uint256 pot = core.xPot();
-        core.exitStatement(c.sid);
+        uint256 pot = core.balancePot();
+        core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "the module has the statement");
         assertEq(xt.balanceOf(address(core)) - pot, required);
-        assertEq(core.xPot() - pot, required, "all to the bid pot");
+        assertEq(core.balancePot() - pot, required, "all to the bid pot");
         (bool held,,) = core.statementInfo(c.sid);
         assertFalse(held);
         assertEq(core.heldStatements().length, 0);
         _solvent();
     }
 
-    /// a sold statement can never be exited
-    function test_phase2_aSaleFirstMakesTheExitRevert() public {
+    /// a sold statement can never be redeemed
+    function test_phase2_aSaleFirstMakesTheRedemptionRevert() public {
         Composed memory c = _composeOnce();
         _buy(alice, c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), alice);
         vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(c.sid);
-        assertEq(core.xPot(), 0, "no exit token came in");
+        core.redeemStatement(c.sid);
+        assertEq(core.balancePot(), 0, "no balance token came in");
         _solvent();
     }
 
-    /// the exit token bid pays for credits into the single pile, compose builds a statement from them, and the
-    /// statement redeems once its curve reaches cost with everything back to xPot, so the pot compounds
-    function test_phase2_bidComposeExitAndCompound() public {
-        _exitTheStatement();
-        // top the bid pot up the way exit token fees would arrive: plain exit token booked by skim
+    /// the balance token bid pays for credits into the single pile, compose builds a statement from them, and the
+    /// statement redeems once its curve reaches cost with everything back to balancePot, so the pot compounds
+    function test_phase2_bidComposeBalanceAndCompound() public {
+        _redeemTheStatement();
+        // top the bid pot up the way balance token fees would arrive: plain balance token booked by skim
         xt.mint(address(core), 1e22);
         core.skim();
         _solvent();
 
         uint256[] memory ids = _credits(xseller, 80);
-        uint256 xPotBefore = core.xPot();
+        uint256 balancePotBefore = core.balancePot();
         uint256 total;
         for (uint256 i; i < 80; ++i) {
             total += _bid(ids[i]);
         }
-        assertLt(total, xPotBefore, "the pot carries the whole page");
+        assertLt(total, balancePotBefore, "the pot carries the whole page");
 
         vm.prank(xseller);
-        core.sellForExitToken(ids);
-        assertEq(xt.balanceOf(xseller), total, "paid in the exit token, by each credit's score");
-        assertEq(core.xPot(), xPotBefore - total);
+        core.sellForBalance(ids);
+        assertEq(xt.balanceOf(xseller), total, "paid in the balance token, by each credit's score");
+        assertEq(core.balancePot(), balancePotBefore - total);
         assertEq(core.pileSize(), 80);
-        // the credit cost basis is in eth (the higher of the exit tokens valued in wei and the eth bid), positive
+        // the credit cost basis is in eth (the higher of the balance tokens valued in wei and the eth bid), positive
         uint256 basisSum;
         for (uint256 i; i < 80; ++i) {
             (bool inPile, uint256 cost,) = core.creditInfo(ids[i]);
@@ -703,33 +703,33 @@ contract LifecyclePhase2Test is Fixture {
             assertEq(core.ethPot(), ethPot0);
             // the statement sells for eth on the curve, so it is not eligible to redeem yet
             vm.expectRevert(ICore.NotEligible.selector);
-            core.exitStatement(sid);
+            core.redeemStatement(sid);
         }
 
-        // once the curve reaches cost the statement redeems, everything to xPot
+        // once the curve reaches cost the statement redeems, everything to balancePot
         _makeEligible(sid);
         uint256 required = core.ratingOf(sid) * UNIT;
-        uint256 xPot1 = core.xPot();
-        core.exitStatement(sid);
-        assertEq(core.xPot(), xPot1 + required, "all of it back to xPot");
+        uint256 balancePot1 = core.balancePot();
+        core.redeemStatement(sid);
+        assertEq(core.balancePot(), balancePot1 + required, "all of it back to balancePot");
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
         // compounding: the pot ends above where it stood before the bids were paid
-        assertEq(core.xPot(), xPotBefore - total + required);
-        assertGt(core.xPot(), xPotBefore, "compounded");
+        assertEq(core.balancePot(), balancePotBefore - total + required);
+        assertGt(core.balancePot(), balancePotBefore, "compounded");
         assertGt(required, total);
         _solvent();
     }
 
-    /// a module that underpays reverts the exit and changes nothing, however little it is short
-    function test_phase2_hostileExitModuleUnderpaysReverts() public {
+    /// a module that underpays reverts the redemption and changes nothing, however little it is short
+    function test_phase2_hostileBalanceModuleUnderpaysReverts() public {
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
-        bytes32 before = keccak256(abi.encode(core.xPot(), xt.balanceOf(address(core))));
+        bytes32 before = keccak256(abi.encode(core.balancePot(), xt.balanceOf(address(core))));
 
         // one basis point under the slippage floor
-        mod.setPayBps(10_000 - core.settings().exitSlippageBps - 1);
+        mod.setPayBps(10_000 - core.settings().redeemSlippageBps - 1);
         vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement never left the core");
         (bool held,,) = core.statementInfo(c.sid);
         assertTrue(held);
@@ -737,15 +737,15 @@ contract LifecyclePhase2Test is Fixture {
         // all of it withheld
         mod.setPayBps(0);
         vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
 
         // a module that lowers the unit it pays by after it was set; the core holds the unit from set time
         mod.setPayBps(10_000);
         mod.setUnitPerPoint(1);
         vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
 
-        assertEq(keccak256(abi.encode(core.xPot(), xt.balanceOf(address(core)))), before);
+        assertEq(keccak256(abi.encode(core.balancePot(), xt.balanceOf(address(core)))), before);
         // the statement is still good: a buyer could take it right now
         uint256 snap = vm.snapshotState();
         _buy(alice, c.sid);
@@ -753,7 +753,7 @@ contract LifecyclePhase2Test is Fixture {
 
         // an honest module goes through afterwards
         mod.setUnitPerPoint(UNIT);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod));
         _solvent();
     }
@@ -783,7 +783,7 @@ contract LifecycleNarrativeTest is Fixture {
         buybacker = _user("buybacker");
         // the owner action waits seven days, which must pass while the pot is empty and the rate cannot climb
         _enterPhase2();
-        _setExitPool();
+        _setBalancePool();
         _skipSniperWindow();
         lastSupply = coin.totalSupply();
     }
@@ -861,20 +861,20 @@ contract LifecycleNarrativeTest is Fixture {
     }
 
     /// the statement nobody bought: still held after the sale of the other, redeemed once its price falls to its cost
-    function _exit(uint256 sid, uint64) internal {
+    function _redeem(uint256 sid, uint64) internal {
         assertTrue(_isHeld(sid), "no buyer, so still held");
         _makeEligible(sid);
         uint256 required = core.ratingOf(sid) * UNIT;
-        uint256 pot0 = core.xPot();
-        core.exitStatement(sid);
-        assertEq(core.xPot() - pot0, required, "all to the bid pot");
+        uint256 pot0 = core.balancePot();
+        core.redeemStatement(sid);
+        assertEq(core.balancePot() - pot0, required, "all to the bid pot");
         _check();
     }
 
     function _bidForCredits() internal {
         uint256[] memory ids = _credits(xseller, 3);
         vm.prank(xseller);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
         assertGt(xt.balanceOf(xseller), 0);
         _check();
     }
@@ -911,7 +911,7 @@ contract LifecycleNarrativeTest is Fixture {
             _sale(sold);
             assertTrue(_isHeld(aged));
             _buybacks();
-            _exit(aged, agedAt);
+            _redeem(aged, agedAt);
             _bidForCredits();
             assertEq(core.heldStatements().length, 0);
         }

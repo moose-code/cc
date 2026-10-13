@@ -152,7 +152,7 @@ contract ReserveSaleAndOutsiders is ReviewEconBase {
     }
 
     /// a statement sent to the core from outside is accepted by the receiver hook and never counted: it is not in the
-    /// held list, cannot be sold or exited
+    /// held list, cannot be sold or redeemed
     function test_statementSentFromOutsideIsNotCounted() public {
         (uint256 sid,) = _composeOne();
         address a = _user("outsider");
@@ -169,7 +169,7 @@ contract ReserveSaleAndOutsiders is ReviewEconBase {
         core.sellTo(sid, a);
         _enterPhase2();
         vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         _solvent();
     }
 

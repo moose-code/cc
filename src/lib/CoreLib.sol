@@ -13,7 +13,7 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {
     ICredits,
     ICreditScore,
-    IExitModule,
+    IBalanceModule,
     IStatements,
     Settings,
     Mainnet
@@ -29,17 +29,17 @@ import {RateStore} from "./RateStore.sol";
 struct CoreState {
     address controller;
     bool controllerLocked;
-    bool exitModuleLocked;
+    bool balanceModuleLocked;
     bool targetsLocked;
-    address exitModule;
-    address exitToken;
+    address balanceModule;
+    address balanceToken;
     mapping(address => bool) allowedTarget;
     address owner;
     address pendingOwner;
     uint256 ethPot;
     uint256 ethToBuyback;
     uint256 ethRedeemBurn;
-    uint256 xPot;
+    uint256 balancePot;
     uint256 rateAtCheckpoint;
     uint64 checkpointTime;
     uint64 lastFillTime;
@@ -59,7 +59,7 @@ struct CoreState {
 
 /// the one linked library of the Core: the settings write (validation, storage, event), the eth rate (the climb with its
 /// clamp and ceiling, and the drop on a fill), the pool manager swap of the coin buyback, the
-/// pull of the fee router's balance and the sale of credits into the exit token bid.
+/// pull of the fee router's balance and the sale of credits into the balance token bid.
 /// it holds no state of its own and is called by delegatecall, so it works on the Core's storage and balance, and the
 /// Core keeps its runtime under the size limit. deployed once before the Core (docs/DEPLOY.md)
 library CoreLib {
@@ -79,7 +79,7 @@ library CoreLib {
         bool inPile;
     }
 
-    /// a statement the Core holds for sale or exit. `composedAt` is the time of the compose, `slot` the index in
+    /// a statement the Core holds for sale or redemption. `composedAt` is the time of the compose, `slot` the index in
     /// `heldIds`, `rating` the sum of its credits' scores read from Statements at compose. the record is deleted when
     /// the statement leaves
     struct Statement {
@@ -96,15 +96,15 @@ library CoreLib {
 
     /// the same declarations as the Core, so the library's reverts and logs decode against the Core abi
     error Empty();
-    error NoExitModule();
+    error NoBalanceModule();
     error BadModule();
     error ZeroId();
     error NotOwner();
     error ZeroAmount();
     error PotTooSmall();
     error Slippage();
-    /// the action is not allowed in the current `exitMode`
-    error ExitModeOff();
+    /// the action is not allowed in the current `balanceMode`
+    error BalanceModeOff();
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     error BadSetting(bytes32 field);
     event SettingsSet(Settings settings);
@@ -130,9 +130,9 @@ library CoreLib {
     event SuccessorSet(address successor);
     event SuccessorLocked();
     event CreditAdopted(uint256 indexed id, uint256 cost);
-    event Migrated(address indexed successor, uint256 eth, uint256 exitTokens, uint256 credits);
+    event Migrated(address indexed successor, uint256 eth, uint256 balanceTokens, uint256 credits);
     event EngineRetired(address indexed successor);
-    event ExitTokenMigrationSkipped(address indexed successor, uint256 amount);
+    event BalanceTokenMigrationSkipped(address indexed successor, uint256 amount);
 
     /// @notice validates the settings, stores them and logs them. the Core forwards its own `setSettings` call here
     /// untouched (same selector), after it checkpointed the eth rate. the constructor calls it too. a change of
@@ -163,9 +163,9 @@ library CoreLib {
         s.recoveryGapBps = ns.recoveryGapBps;
         s.peakHalfLife = ns.peakHalfLife;
         s.buybackDelay = ns.buybackDelay;
-        s.exitMode = ns.exitMode;
-        s.exitSlippageBps = ns.exitSlippageBps;
-        s.exitBidMarginBps = ns.exitBidMarginBps;
+        s.balanceMode = ns.balanceMode;
+        s.redeemSlippageBps = ns.redeemSlippageBps;
+        s.balanceBidMarginBps = ns.balanceBidMarginBps;
         s.redeemBurnBps = ns.redeemBurnBps;
         s.buybackSlice = ns.buybackSlice;
         s.keeperFee = ns.keeperFee;
@@ -194,9 +194,9 @@ library CoreLib {
         s.recoveryGapBps = uint16(a >> 128);
         s.peakHalfLife = uint32(a >> 144);
         s.buybackDelay = uint16(a >> 176);
-        s.exitMode = uint8(a >> 192);
-        s.exitSlippageBps = uint16(a >> 200);
-        s.exitBidMarginBps = uint16(a >> 216);
+        s.balanceMode = uint8(a >> 192);
+        s.redeemSlippageBps = uint16(a >> 200);
+        s.balanceBidMarginBps = uint16(a >> 216);
         s.redeemBurnBps = uint16(a >> 232);
         s.buybackSlice = uint128(b);
         s.keeperFee = uint64(b >> 128);
@@ -412,7 +412,7 @@ library CoreLib {
     }
 
     /// @notice sets the successor to which `migrate` sends the assets. the zero address means no migration. reverts
-    /// after `lockSuccessor`, and for the Core itself, the exit module, the exit token, the fee source, the
+    /// after `lockSuccessor`, and for the Core itself, the balance module, the balance token, the fee source, the
     /// coin, Credits and Statements. the Core forwards its call here untouched
     function setSuccessor(address next) external {
         _onlyOwner();
@@ -422,7 +422,7 @@ library CoreLib {
             if (next.code.length == 0) revert NoCode(next);
             ICoinOf core = ICoinOf(address(this));
             if (
-                next == address(this) || next == c.exitModule || next == c.exitToken || next == core.FEE_SOURCE()
+                next == address(this) || next == c.balanceModule || next == c.balanceToken || next == core.FEE_SOURCE()
                     || next == core.COIN() || next == address(CREDITS) || next == address(STATEMENTS)
             ) revert BadSuccessor(next);
         }
@@ -437,18 +437,18 @@ library CoreLib {
         emit SuccessorLocked();
     }
 
-    /// @notice moves `ethPot`, `xPot` and the credits the Core tracks to the successor, in batches. the Core
+    /// @notice moves `ethPot`, `balancePot` and the credits the Core tracks to the successor, in batches. the Core
     /// forwards its call here untouched, the owner check and the reentrancy guard are here.
-    /// the first call sets `retired`, which stays set: `sellForEth`, `buyListing`, `sellForExitToken`, `adopt` and
+    /// the first call sets `retired`, which stays set: `sellForEth`, `buyListing`, `sellForBalance`, `adopt` and
     /// `compose` then revert `Retired`. logs `EngineRetired` once.
     /// eth: `ethPot`, by one plain call, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
     /// trackers stays.
-    /// exit token: `xPot`, by `transfer`, the tracker zeroed. a transfer that reverts, returns false or returns less
-    /// than a word leaves the pot as it is, logs `ExitTokenMigrationSkipped` and the call goes on; a later `migrate`
+    /// balance token: `balancePot`, by `transfer`, the tracker zeroed. a transfer that reverts, returns false or returns less
+    /// than a word leaves the pot as it is, logs `BalanceTokenMigrationSkipped` and the call goes on; a later `migrate`
     /// retries. the coin stays. `ethToBuyback` and `ethRedeemBurn` stay for the coin buyback.
     /// credits: up to `maxCredits` from the head of the pile, by `transferFrom`, the pile membership cleared (the
     /// cost and arrival time of the record stay). zero moves the pots only.
-    /// the held statements and their records stay with the Core, which sells or exits them itself.
+    /// the held statements and their records stay with the Core, which sells or redeems them itself.
     /// the eth rate is checkpointed before `ethPot` is zeroed. a call with nothing left to move logs zeros
     function migrate(uint256 maxCredits) external {
         _onlyOwner();
@@ -462,9 +462,9 @@ library CoreLib {
         }
         uint256 eth = _moveEth(c, to);
         uint256 credits = _moveCredits(c, to, maxCredits);
-        uint256 exitTokens = _moveExitToken(c, to);
+        uint256 balanceTokens = _moveBalanceToken(c, to);
         _leave();
-        emit Migrated(to, eth, exitTokens, credits);
+        emit Migrated(to, eth, balanceTokens, credits);
     }
 
     function _moveEth(CoreState storage c, address to) private returns (uint256 eth) {
@@ -478,11 +478,11 @@ library CoreLib {
     }
 
     /// the transfer is a low level call that accepts no return data or `true`. on failure the pot stays as it is and
-    /// `ExitTokenMigrationSkipped` is logged
-    function _moveExitToken(CoreState storage c, address to) private returns (uint256 amount) {
-        amount = c.xPot;
+    /// `BalanceTokenMigrationSkipped` is logged
+    function _moveBalanceToken(CoreState storage c, address to) private returns (uint256 amount) {
+        amount = c.balancePot;
         if (amount == 0) return 0;
-        address token = c.exitToken;
+        address token = c.balanceToken;
         bool ok;
         assembly ("memory-safe") {
             let p := mload(0x40)
@@ -495,10 +495,10 @@ library CoreLib {
             default { ok := and(ok, and(gt(returndatasize(), 31), eq(mload(0), 1))) }
         }
         if (!ok) {
-            emit ExitTokenMigrationSkipped(to, amount);
+            emit BalanceTokenMigrationSkipped(to, amount);
             return 0;
         }
-        c.xPot = 0;
+        c.balancePot = 0;
     }
 
     /// pops up to `max` credits from the head of the pile
@@ -577,38 +577,38 @@ library CoreLib {
         return id;
     }
 
-    /// @notice sells the credits `ids` of the caller into the exit token bid. the Core's `sellForExitToken` forwards its
+    /// @notice sells the credits `ids` of the caller into the balance token bid. the Core's `sellForBalance` forwards its
     /// call here untouched, under its own reentrancy guard
-    function sellForExitToken(uint256[] calldata ids) external {
-        _sellForExitToken(ids, 0);
+    function sellForBalance(uint256[] calldata ids) external {
+        _sellForBalance(ids, 0);
     }
 
     /// @notice same as the one argument form with a floor on the total paid
-    function sellForExitToken(uint256[] calldata ids, uint256 minOut) external {
-        _sellForExitToken(ids, minOut);
+    function sellForBalance(uint256[] calldata ids, uint256 minOut) external {
+        _sellForBalance(ids, minOut);
     }
 
-    /// pays each credit `score * unit * (10_000 - exitBidMarginBps) / 10_000` in exit token from `xPot`, where `unit` is
+    /// pays each credit `score * unit * (10_000 - balanceBidMarginBps) / 10_000` in balance token from `balancePot`, where `unit` is
     /// the lower of the stored `unitPerPoint` and the module's live `unitPerPoint()`, so a module that lowered its rate
     /// after the owner set it cannot make the bid overpay. reads the score from the credit score contract. runs only
-    /// while `exitMode` is 2. each credit's price must not exceed the remaining pot. the credit enters the single pile
+    /// while `balanceMode` is 2. each credit's price must not exceed the remaining pot. the credit enters the single pile
     /// with an eth cost basis of the score-scaled eth backstop `peak * max(1, score / refScore)`, at least 1 wei, where
     /// `peak` is the remembered peak of the eth bid decayed to now. the peak rises with fills and falls only with time,
     /// so neither a pot move nor a pool move can push a recorded cost down, and no pool key is needed. a failing, short
     /// or zero live unit read reverts the whole bid (`BadModule`). `refScore` is read from the controller with a
     /// bounded staticcall. a failed read leaves the backstop unscaled at `peak`
-    function _sellForExitToken(uint256[] calldata ids, uint256 minOut) private {
+    function _sellForBalance(uint256[] calldata ids, uint256 minOut) private {
         CoreState storage c = state();
         if (c.retired) revert Retired();
         Settings storage s = SettingsStore.load();
-        if (s.exitMode != 2) revert ExitModeOff();
+        if (s.balanceMode != 2) revert BalanceModeOff();
         if (ids.length == 0) revert Empty();
-        if (c.exitModule == address(0)) revert NoExitModule();
+        if (c.balanceModule == address(0)) revert NoBalanceModule();
         uint256 unit = c.unitPerPoint;
-        uint256 live = _liveUnit(c.exitModule);
+        uint256 live = _liveUnit(c.balanceModule);
         if (live < unit) unit = live;
-        uint256 net = BPS - s.exitBidMarginBps;
-        uint256 pot = c.xPot;
+        uint256 net = BPS - s.balanceBidMarginBps;
+        uint256 pot = c.balancePot;
         // the floor rate now, the base of a credit's recorded eth cost basis: the larger of the price state climbed
         // before the pot clamp and the decayed peak. selling credits lowers only the rate and the peak decays between
         // fills, so the maximum follows the climb and holds against the walk down. read only
@@ -631,18 +631,18 @@ library CoreLib {
             CREDITS.transferFrom(msg.sender, address(this), id);
             emit CreditBought(id, msg.sender, cost);
         }
-        c.xPot = pot;
+        c.balancePot = pot;
         if (total < minOut) revert Slippage();
-        SafeTransferLib.safeTransfer(c.exitToken, msg.sender, total);
+        SafeTransferLib.safeTransfer(c.balanceToken, msg.sender, total);
     }
 
-    /// gas forwarded to the bounded module and controller reads of the exit token bid
+    /// gas forwarded to the bounded module and controller reads of the balance token bid
     uint256 internal constant READ_GAS = 200_000;
 
     /// bounded read of `unitPerPoint()` of `module`: at most `READ_GAS`, exactly 32 bytes returned or more (a long
     /// answer is cut off). a revert, a short answer or a zero unit reverts `BadModule`
     function _liveUnit(address module) private view returns (uint256 unit) {
-        bytes4 sel = IExitModule.unitPerPoint.selector;
+        bytes4 sel = IBalanceModule.unitPerPoint.selector;
         bool ok;
         assembly ("memory-safe") {
             mstore(0, sel)
@@ -654,7 +654,7 @@ library CoreLib {
     }
 
     /// the controller's `refScore()` through a bounded staticcall of at most `READ_GAS`, copying at most 32 bytes of
-    /// returndata. a revert or an answer shorter than 32 bytes reads as 0, which leaves the exit bid's backstop
+    /// returndata. a revert or an answer shorter than 32 bytes reads as 0, which leaves the balance bid's backstop
     /// unscaled at the eth bid rate
     function _refScore(address controller) private view returns (uint256 refScore) {
         bytes4 sel = 0x0dd34cf6; // refScore()

@@ -24,9 +24,9 @@ library SettingsFields {
             s.recoveryGapBps,
             s.peakHalfLife,
             s.buybackDelay,
-            s.exitMode,
-            s.exitSlippageBps,
-            s.exitBidMarginBps,
+            s.balanceMode,
+            s.redeemSlippageBps,
+            s.balanceBidMarginBps,
             s.redeemBurnBps,
             s.buybackSlice,
             s.keeperFee,
@@ -54,9 +54,9 @@ library SettingsFields {
         else if (i == 8) s.recoveryGapBps = uint16(v);
         else if (i == 9) s.peakHalfLife = uint32(v);
         else if (i == 10) s.buybackDelay = uint16(v);
-        else if (i == 11) s.exitMode = uint8(v);
-        else if (i == 12) s.exitSlippageBps = uint16(v);
-        else if (i == 13) s.exitBidMarginBps = uint16(v);
+        else if (i == 11) s.balanceMode = uint8(v);
+        else if (i == 12) s.redeemSlippageBps = uint16(v);
+        else if (i == 13) s.balanceBidMarginBps = uint16(v);
         else if (i == 14) s.redeemBurnBps = uint16(v);
         else if (i == 15) s.buybackSlice = uint128(v);
         else if (i == 16) s.keeperFee = uint64(v);
@@ -140,9 +140,9 @@ library SettingsFields {
             "recoveryGapBps",
             "peakHalfLife",
             "buybackDelay",
-            "exitMode",
-            "exitSlippageBps",
-            "exitBidMarginBps",
+            "balanceMode",
+            "redeemSlippageBps",
+            "balanceBidMarginBps",
             "redeemBurnBps",
             "buybackSlice",
             "keeperFee",

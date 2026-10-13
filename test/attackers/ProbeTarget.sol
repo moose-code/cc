@@ -84,7 +84,7 @@ contract ProbeTarget {
             abi.encodeWithSignature("skim()"),
             abi.encodeWithSignature("buyback()"),
             abi.encodeWithSignature("sellTo(uint256,address)", uint256(1), address(this)),
-            abi.encodeWithSignature("exitStatement(uint256)", uint256(1)),
+            abi.encodeWithSignature("redeemStatement(uint256)", uint256(1)),
             abi.encodeWithSignature(
                 "buyListing(uint256,bytes,uint256,address)", uint256(1), bytes(""), uint256(1), address(this)
             )

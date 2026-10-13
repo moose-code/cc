@@ -9,19 +9,19 @@ import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 /// `setSuccessor`, `lockSuccessor` and `migrate` of the Core on the fork: the real Core, Credits, Statements and
-/// pool, the stand in exit module and token, and `MigrationSink` as the successor. the first `migrate` retires the Core:
-/// six doors refuse with `Retired`, and settling, exits, sales of statements, both buybacks and the owner functions work
+/// pool, the stand in balance module and token, and `MigrationSink` as the successor. the first `migrate` retires the Core:
+/// six doors refuse with `Retired`, and settling, redemptions, sales of statements, both buybacks and the owner functions work
 contract MigrateTest is Fixture {
     MigrationSink internal sink;
     address internal stranger = address(0x5757);
 
     /// the statements of `_world`: two statements the core holds, one that was bought, and one composed from credits
-    /// bought through the exit token bid
+    /// bought through the balance token bid
     struct World {
-        uint256 forExit;
+        uint256 forRedeem;
         uint256 forSale;
         uint256 sold;
-        uint256 exitBid;
+        uint256 balanceBid;
     }
 
     function setUp() public override {
@@ -48,36 +48,36 @@ contract MigrateTest is Fixture {
         sid = supply + 1;
     }
 
-    function _exitBidStatement() internal returns (uint256 sid) {
+    function _balanceBidStatement() internal returns (uint256 sid) {
         uint256[] memory ids = _credits(seller, 80);
         xt.mint(address(core), 1_000_000_000e18);
         core.skim();
         vm.prank(seller);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
         uint256 supply = STATEMENTS.supply();
         vm.prank(keeper);
         core.compose();
         sid = supply + 1;
     }
 
-    /// pots in both currencies, credits in the pile from both the eth and the exit bid, and one statement of each kind
+    /// pots in both currencies, credits in the pile from both the eth and the balance bid, and one statement of each kind
     function _world() internal returns (World memory w) {
         _enterPhase2();
-        _setExitPool();
+        _setBalancePool();
         _fundPot(3 ether);
-        // the first statement exits, which fills the exit pots
-        _fillExitBuyback();
-        w.forExit = _composedStatement();
+        // the first statement redeems, which fills the balance pots
+        _fillBalanceBuyback();
+        w.forRedeem = _composedStatement();
         w.forSale = _composedStatement();
         w.sold = _composedStatement();
         _buy(address(0xB2D), w.sold);
         // the proceeds of the sale are booked: half to the pot, half to the coin buyback pot
-        w.exitBid = _exitBidStatement();
-        // credits left in the pile, from the eth bid and the exit bid
+        w.balanceBid = _balanceBidStatement();
+        // credits left in the pile, from the eth bid and the balance bid
         _fillEthPile(7);
         uint256[] memory ids = _credits(seller, 5);
         vm.prank(seller);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
     }
 
     function _heldCount() internal view returns (uint256) {
@@ -174,10 +174,10 @@ contract MigrateTest is Fixture {
         uint256 pot = core.ethPot();
         uint256 buyback = core.ethToBuyback();
         uint256 reserve = core.ethRedeemBurn();
-        uint256 xPot = core.xPot();
-        assertTrue(pot > 0 && buyback > 0 && xPot > 0, "setup: every pot holds something");
+        uint256 balancePot = core.balancePot();
+        assertTrue(pot > 0 && buyback > 0 && balancePot > 0, "setup: every pot holds something");
         uint256[] memory pileIds = core.pilePage(0, 100);
-        assertEq(pileIds.length, 12, "setup: one pile of 7 eth bid plus 5 exit bid credits");
+        assertEq(pileIds.length, 12, "setup: one pile of 7 eth bid plus 5 balance bid credits");
         uint256 balance = address(core).balance;
         uint256 xBalance = xt.balanceOf(address(core));
         uint256 coinBalance = coin.balanceOf(address(core));
@@ -186,7 +186,7 @@ contract MigrateTest is Fixture {
         vm.expectEmit(true, false, false, true, address(core));
         emit ICore.EngineRetired(address(sink));
         vm.expectEmit(true, false, false, true, address(core));
-        emit ICore.Migrated(address(sink), pot, xPot, 12);
+        emit ICore.Migrated(address(sink), pot, balancePot, 12);
         _migrate(1000);
 
         assertTrue(core.retired(), "the first migrate did not retire the core");
@@ -197,10 +197,10 @@ contract MigrateTest is Fixture {
         assertEq(core.ethToBuyback(), buyback, "ethToBuyback stays");
         assertEq(core.ethRedeemBurn(), reserve, "ethRedeemBurn stays");
         assertEq(address(core).balance, balance - pot, "the core balance");
-        // exit token
-        assertEq(xt.balanceOf(address(sink)), xPot, "the sink did not get xPot");
-        assertEq(core.xPot(), 0, "xPot");
-        assertEq(xt.balanceOf(address(core)), xBalance - xPot, "the core exit token balance");
+        // balance token
+        assertEq(xt.balanceOf(address(sink)), balancePot, "the sink did not get balancePot");
+        assertEq(core.balancePot(), 0, "balancePot");
+        assertEq(xt.balanceOf(address(core)), xBalance - balancePot, "the core balance token balance");
         // the coin stays
         assertEq(coin.balanceOf(address(core)), coinBalance, "the coin moved");
         // credits
@@ -217,7 +217,7 @@ contract MigrateTest is Fixture {
     function test_OK_everyHeldStatementStaysAsItWas() public {
         World memory w = _world();
         _setSuccessor();
-        uint256[4] memory sids = [w.forExit, w.forSale, w.sold, w.exitBid];
+        uint256[4] memory sids = [w.forRedeem, w.forSale, w.sold, w.balanceBid];
         bytes32[4] memory before;
         for (uint256 i; i < 4; ++i) {
             before[i] = _fingerprint(sids[i]);
@@ -233,9 +233,9 @@ contract MigrateTest is Fixture {
         for (uint256 i; i < heldAfter.length; ++i) {
             assertEq(heldAfter[i], heldBefore[i], "the held order changed");
         }
-        assertEq(STATEMENTS.ownerOf(w.forExit), address(core), "the eth lane statement left the core");
+        assertEq(STATEMENTS.ownerOf(w.forRedeem), address(core), "the eth lane statement left the core");
         assertEq(STATEMENTS.ownerOf(w.forSale), address(core), "the eth lane statement left the core");
-        assertEq(STATEMENTS.ownerOf(w.exitBid), address(core), "the exit bid statement left the core");
+        assertEq(STATEMENTS.ownerOf(w.balanceBid), address(core), "the balance bid statement left the core");
         assertEq(STATEMENTS.ownerOf(w.sold), address(0xB2D), "the winner lost the statement");
         assertEq(STATEMENTS.balanceOf(address(sink)), 0, "a statement reached the successor");
     }
@@ -247,36 +247,36 @@ contract MigrateTest is Fixture {
         uint256 ethBefore = sink.ethReceived();
         uint256 xBefore = xt.balanceOf(address(sink));
         assertEq(_heldCount(), 3, "three statements on the books");
-        // a statement exits once its asking price falls to its cost
-        _makeEligible(w.forExit);
-        _makeEligible(w.exitBid);
-        // the pots are empty after the migration: the exit payment to the caller clamps at the pot
+        // a statement redeems once its asking price falls to its cost
+        _makeEligible(w.forRedeem);
+        _makeEligible(w.balanceBid);
+        // the pots are empty after the migration: the redemption payment to the caller clamps at the pot
         assertEq(core.ethPot(), 0, "setup: the eth pot is empty");
         vm.fee(composeBasefee);
         vm.txGasPrice(composeBasefee);
         uint256 callerBalance = address(this).balance;
-        core.exitStatement(w.forExit);
-        core.exitStatement(w.exitBid);
-        assertEq(core.ethPot(), 0, "the exit took eth from an empty pot");
+        core.redeemStatement(w.forRedeem);
+        core.redeemStatement(w.balanceBid);
+        assertEq(core.ethPot(), 0, "the redemption took eth from an empty pot");
         assertEq(address(this).balance, callerBalance, "the caller was paid from an empty pot");
-        assertEq(_heldCount(), 1, "the exits left one statement on the books");
-        assertGt(core.xPot(), 0, "the exit did not fill the bid pot");
+        assertEq(_heldCount(), 1, "the redemptions left one statement on the books");
+        assertGt(core.balancePot(), 0, "the redemption did not fill the bid pot");
         // the remaining statement sells through the controller. the pot share moves in the next call, the buyback
         // share stays
         uint256 buybackBefore = core.ethToBuyback();
         _buy(address(0xB3D), w.forSale);
         assertEq(_heldCount(), 0, "nothing is left on the books");
         uint256 booked = core.ethPot();
-        uint256 xBooked = core.xPot();
+        uint256 xBooked = core.balancePot();
         assertGt(booked, 0, "the proceeds were booked");
         assertGt(core.ethToBuyback(), buybackBefore, "the buyback share was booked");
         uint256 buybackStays = core.ethToBuyback();
         _migrate(1000);
         assertEq(sink.ethReceived(), ethBefore + booked, "the second call did not move the new eth");
-        assertEq(xt.balanceOf(address(sink)), xBefore + xBooked, "the second call did not move the new exit token");
+        assertEq(xt.balanceOf(address(sink)), xBefore + xBooked, "the second call did not move the new balance token");
         assertEq(core.ethPot(), 0, "the pot is zero again");
         assertEq(core.ethToBuyback(), buybackStays, "the buyback pot stays");
-        assertEq(core.xPot(), 0, "xPot is zero again");
+        assertEq(core.balancePot(), 0, "balancePot is zero again");
         assertEq(STATEMENTS.balanceOf(address(sink)), 0, "a statement reached the successor");
         // a call with nothing left to move does nothing
         uint256 sends = sink.sends();
@@ -339,10 +339,10 @@ contract MigrateTest is Fixture {
         uint256 size0 = core.pileSize();
         uint256 held = _heldCount();
         _migrate(1);
-        // eth and exit token are not batched: one call moves all of them
+        // eth and balance token are not batched: one call moves all of them
         assertEq(sink.ethReceived(), pot, "the first call moves all of the pot");
         assertEq(core.ethToBuyback(), buyback, "the first call leaves the buyback pot");
-        assertEq(core.xPot(), 0, "the first call moves all of xPot");
+        assertEq(core.balancePot(), 0, "the first call moves all of balancePot");
         assertEq(core.pileSize(), size0 - 1, "one credit per call");
         assertEq(CREDITS.balanceOf(address(sink)), 1, "one credit reached the successor");
         // a call drains the rest of the pile one by one
@@ -362,7 +362,7 @@ contract MigrateTest is Fixture {
         _world();
         _setSuccessor();
         uint256 eth = core.ethPot();
-        uint256 x = core.xPot();
+        uint256 x = core.balancePot();
         uint256 held = _heldCount();
         uint256 pileSize = core.pileSize();
         _migrate(0);
@@ -397,12 +397,12 @@ contract MigrateTest is Fixture {
         uint256 pot = core.ethPot();
         uint256 held = _heldCount();
         uint256 ethPile = core.pileSize();
-        uint256 x = core.xPot();
+        uint256 x = core.balancePot();
         vm.expectRevert(ICore.CallFailed.selector);
         _migrate(100);
         assertFalse(core.retired(), "a failed migrate retired the core");
         assertEq(core.ethPot(), pot, "pot changed");
-        assertEq(core.xPot(), x, "exit pot changed");
+        assertEq(core.balancePot(), x, "balance pot changed");
         assertEq(core.pileSize(), ethPile, "pile changed");
         assertEq(_heldCount(), held, "statements changed");
         // the owner points at another successor
@@ -477,85 +477,85 @@ contract MigrateTest is Fixture {
     }
 
     /// the refused door left the credits, the pots and the piles as they were
-    function _assertRefusedDoorChangedNothing(uint256[] memory ids, uint256 pot, uint256 xPot) internal view {
+    function _assertRefusedDoorChangedNothing(uint256[] memory ids, uint256 pot, uint256 balancePot) internal view {
         assertEq(CREDITS.ownerOf(ids[0]), seller, "a refused call moved the credit");
         (bool inPile,,) = core.creditInfo(ids[1]);
         assertFalse(inPile, "a refused call booked the credit");
         assertEq(core.ethPot(), pot, "ethPot");
-        assertEq(core.xPot(), xPot, "xPot");
+        assertEq(core.balancePot(), balancePot, "balancePot");
         assertEq(core.pileSize(), 0, "pile");
     }
 
     function test_REVERT_aRetiredCoreRefusesSellForEth() public {
         uint256[] memory ids = _retiredWithCredits();
         uint256 pot = core.ethPot();
-        uint256 xPot = core.xPot();
+        uint256 balancePot = core.balancePot();
         vm.startPrank(seller);
         vm.expectRevert(ICore.Retired.selector);
         core.sellForEth(_one(ids[0]));
         vm.expectRevert(ICore.Retired.selector);
         core.sellForEth(_one(ids[0]), 0);
         vm.stopPrank();
-        _assertRefusedDoorChangedNothing(ids, pot, xPot);
+        _assertRefusedDoorChangedNothing(ids, pot, balancePot);
     }
 
-    function test_REVERT_aRetiredCoreRefusesSellForExitToken() public {
+    function test_REVERT_aRetiredCoreRefusesSellForBalance() public {
         uint256[] memory ids = _retiredWithCredits();
         uint256 pot = core.ethPot();
-        uint256 xPot = core.xPot();
+        uint256 balancePot = core.balancePot();
         vm.startPrank(seller);
         vm.expectRevert(ICore.Retired.selector);
-        core.sellForExitToken(_one(ids[0]));
+        core.sellForBalance(_one(ids[0]));
         vm.expectRevert(ICore.Retired.selector);
-        core.sellForExitToken(_one(ids[0]), 0);
+        core.sellForBalance(_one(ids[0]), 0);
         vm.stopPrank();
-        _assertRefusedDoorChangedNothing(ids, pot, xPot);
+        _assertRefusedDoorChangedNothing(ids, pot, balancePot);
     }
 
     function test_REVERT_aRetiredCoreRefusesBuyListing() public {
         uint256[] memory ids = _retiredWithCredits();
         uint256 pot = core.ethPot();
-        uint256 xPot = core.xPot();
+        uint256 balancePot = core.balancePot();
         vm.expectRevert(ICore.Retired.selector);
         core.buyListing(0, "", ids[0], address(0xA110C));
-        _assertRefusedDoorChangedNothing(ids, pot, xPot);
+        _assertRefusedDoorChangedNothing(ids, pot, balancePot);
     }
 
     function test_REVERT_aRetiredCoreRefusesAdopt() public {
         uint256[] memory ids = _retiredWithCredits();
         uint256 pot = core.ethPot();
-        uint256 xPot = core.xPot();
+        uint256 balancePot = core.balancePot();
         vm.expectRevert(ICore.Retired.selector);
         core.adopt(_one(ids[1]));
-        _assertRefusedDoorChangedNothing(ids, pot, xPot);
+        _assertRefusedDoorChangedNothing(ids, pot, balancePot);
     }
 
     function test_REVERT_aRetiredCoreRefusesCompose() public {
         uint256[] memory ids = _retiredWithCredits();
         uint256 pot = core.ethPot();
-        uint256 xPot = core.xPot();
+        uint256 balancePot = core.balancePot();
         vm.fee(composeBasefee);
         vm.expectRevert(ICore.Retired.selector);
         vm.prank(keeper);
         core.compose();
-        _assertRefusedDoorChangedNothing(ids, pot, xPot);
+        _assertRefusedDoorChangedNothing(ids, pot, balancePot);
     }
 
-    /// an exit token whose transfer reverts (mode 1) or returns false (mode 2): the eth leg, the credit leg and the
-    /// retired flag go through, `xPot`, `xToBuyback` and the rate state stay, and a later migrate with a working token
+    /// a balance token whose transfer reverts (mode 1) or returns false (mode 2): the eth leg, the credit leg and the
+    /// retired flag go through, `balancePot`, `xToBuyback` and the rate state stay, and a later migrate with a working token
     /// moves them
-    function _exitTokenLegSkips(uint8 mode) internal {
+    function _balanceTokenLegSkips(uint8 mode) internal {
         _world();
         _setSuccessor();
         uint256 pot = core.ethPot();
-        uint256 xPot = core.xPot();
-        assertTrue(xPot > 0, "setup: the bid pot holds exit token");
+        uint256 balancePot = core.balancePot();
+        assertTrue(balancePot > 0, "setup: the bid pot holds balance token");
         uint256 credits = core.pileSize();
         uint256 xBalance = xt.balanceOf(address(core));
         xt.setTransferMode(mode);
 
         vm.expectEmit(true, false, false, true, address(core));
-        emit ICore.ExitTokenMigrationSkipped(address(sink), xPot);
+        emit ICore.BalanceTokenMigrationSkipped(address(sink), balancePot);
         vm.expectEmit(true, false, false, true, address(core));
         emit ICore.Migrated(address(sink), pot, 0, credits);
         _migrate(1000);
@@ -564,26 +564,26 @@ contract MigrateTest is Fixture {
         assertEq(sink.ethReceived(), pot, "the eth leg did not go through");
         assertEq(core.ethPot(), 0, "ethPot");
         assertEq(CREDITS.balanceOf(address(sink)), credits, "the credit leg did not go through");
-        assertEq(core.xPot(), xPot, "xPot changed");
-        assertEq(xt.balanceOf(address(core)), xBalance, "the exit token moved");
-        assertEq(xt.balanceOf(address(sink)), 0, "the successor got exit token");
+        assertEq(core.balancePot(), balancePot, "balancePot changed");
+        assertEq(xt.balanceOf(address(core)), xBalance, "the balance token moved");
+        assertEq(xt.balanceOf(address(sink)), 0, "the successor got balance token");
         _solvent();
 
         xt.setTransferMode(0);
         vm.expectEmit(true, false, false, true, address(core));
-        emit ICore.Migrated(address(sink), 0, xPot, 0);
+        emit ICore.Migrated(address(sink), 0, balancePot, 0);
         _migrate(1000);
-        assertEq(core.xPot(), 0, "xPot after the working token");
-        assertEq(xt.balanceOf(address(sink)), xPot, "the later migrate did not move xPot");
+        assertEq(core.balancePot(), 0, "balancePot after the working token");
+        assertEq(xt.balanceOf(address(sink)), balancePot, "the later migrate did not move balancePot");
         _solvent();
     }
 
-    function test_OK_aRevertingExitTokenSkipsItsLegAndTheEngineRetires() public {
-        _exitTokenLegSkips(1);
+    function test_OK_aRevertingBalanceTokenSkipsItsLegAndTheEngineRetires() public {
+        _balanceTokenLegSkips(1);
     }
 
-    function test_OK_anExitTokenReturningFalseSkipsItsLegAndTheEngineRetires() public {
-        _exitTokenLegSkips(2);
+    function test_OK_anBalanceTokenReturningFalseSkipsItsLegAndTheEngineRetires() public {
+        _balanceTokenLegSkips(2);
     }
 
     function test_REVERT_aNonOwnerMigrateLeavesTheCoreActive() public {
@@ -637,7 +637,7 @@ contract MigrateTest is Fixture {
         _solvent();
     }
 
-    function test_OK_aRetiredCoreStillSellsAndExitsStatements() public {
+    function test_OK_aRetiredCoreStillSellsAndRedeemsStatements() public {
         World memory w = _world();
         _setSuccessor();
         _migrate(1000);
@@ -645,21 +645,21 @@ contract MigrateTest is Fixture {
         uint256 pot = core.ethPot();
         _buy(address(0xB3D), w.forSale);
         assertGt(core.ethPot(), pot, "the proceeds were not booked");
-        // the two statements left on the books exit
-        _makeEligible(w.forExit);
-        uint256 x = core.xPot();
-        core.exitStatement(w.forExit);
-        core.exitStatement(w.exitBid);
-        assertEq(_heldCount(), 0, "the exits left statements on the books");
-        assertGt(core.xPot(), x, "the exit did not fill the bid pot");
-        // the next migrate moves the new eth pot and the new xPot
+        // the two statements left on the books redeem
+        _makeEligible(w.forRedeem);
+        uint256 x = core.balancePot();
+        core.redeemStatement(w.forRedeem);
+        core.redeemStatement(w.balanceBid);
+        assertEq(_heldCount(), 0, "the redemptions left statements on the books");
+        assertGt(core.balancePot(), x, "the redemption did not fill the bid pot");
+        // the next migrate moves the new eth pot and the new balancePot
         uint256 ethBefore = sink.ethReceived();
         uint256 xBefore = xt.balanceOf(address(sink));
         uint256 booked = core.ethPot();
-        uint256 xBooked = core.xPot();
+        uint256 xBooked = core.balancePot();
         _migrate(0);
         assertEq(sink.ethReceived(), ethBefore + booked, "the new pot did not move");
-        assertEq(xt.balanceOf(address(sink)), xBefore + xBooked, "the new xPot did not move");
+        assertEq(xt.balanceOf(address(sink)), xBefore + xBooked, "the new balancePot did not move");
         _solvent();
     }
 
@@ -748,15 +748,15 @@ contract MigrateTest is Fixture {
 
     function test_GAS_migrateOneSixtyCredits() public {
         _enterPhase2();
-        _setExitPool();
+        _setBalancePool();
         _fundPot(2 ether);
         _fillEthPile(80);
         uint256[] memory ids = _credits(seller, 80);
         xt.mint(address(core), 1_000_000_000e18);
         core.skim();
         vm.prank(seller);
-        core.sellForExitToken(ids);
-        assertEq(core.pileSize(), 160, "setup: one pile of 80 eth bid plus 80 exit bid credits");
+        core.sellForBalance(ids);
+        assertEq(core.pileSize(), 160, "setup: one pile of 80 eth bid plus 80 balance bid credits");
         _setSuccessor();
         uint256 snap = vm.snapshotState();
 

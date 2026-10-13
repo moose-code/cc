@@ -286,18 +286,18 @@ contract ChosenComposeTest is Fixture {
 
     // ------------------------------------------------------------------ mixed credit sources
 
-    /// credits bought through the eth bid and the exit token bid share one pile and compose through a chosen call
-    function test_mix_ethBidAndExitTokenCredits() public {
+    /// credits bought through the eth bid and the balance token bid share one pile and compose through a chosen call
+    function test_mix_ethBidAndBalanceTokenCredits() public {
         _enterPhase2();
         _fundPot(3 ether);
         xt.mint(address(core), 1e24);
         core.skim();
-        _setExitPool();
+        _setBalancePool();
 
         _fillEthPile(40);
         uint256[] memory xIds = _credits(seller, 40);
         vm.prank(seller);
-        core.sellForExitToken(xIds);
+        core.sellForBalance(xIds);
         assertEq(core.pileSize(), 80, "one pile holds both kinds");
 
         uint256[] memory page = core.pilePage(0, 80);

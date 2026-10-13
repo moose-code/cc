@@ -73,13 +73,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x24b30651289e03ad99d9d2b286e5e7160b018b1cd1b865c14d9769aa5d490799;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0xbcfd50ac6b19d0da4eb516cd8ec4a74181d1f7cce97195b6bf8e990062365331;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xc618e7b2a304cfe2096fe3efa100391773427c1870c1a449a59305598204655c;
+    bytes32 internal constant BUILD_HASH_CORE = 0x65b61ab7d4a83d34778925ceaf18aae53ab5e2c354efd068e7decb2f04d7ade2;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x918fc8bd7eeace40495a67eb672da397d637431845a180ed56b1be0c56fd0482;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x107427cbe9dbd3d19a1311a09784abdb01ddf54558c7faeec5c1804db38e009e;
     bytes32 internal constant BUILD_HASH_ROUTER = 0x72bc8fb83d47a9af43424c13e3bb9e7898e67994980a29f38aa0814fb6d54b51;
-    bytes32 internal constant BUILD_HASH_LENS = 0x1bbf8a1ebcdbefe62c95f478267a3d8ac85f6461b964943b09127958edba5362;
+    bytes32 internal constant BUILD_HASH_LENS = 0x91e3a30775098db793b71839293b31c783ee23ea027c6bab91e3d48ff28fb04f;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x8a1527ec4eb03e66347f6ec74317a28b32b54355bd4fe0f713d2b64734f55b9a;
+        0x8ac2c0bda2684838f2b79701dbb6f4e8c531e30503408712d276c7143b9ce262;
     /// @dev the FeeRouter bounds (src/FeeRouter.sol), restated here so a bad config stops at preflight
     uint32 internal constant ROUTER_MAX_PAYEE_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -846,14 +846,14 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat("saleFloorBps ", vm.toString(c.settings.saleFloorBps))
         );
         _info(
-            "signoff: phase 2",
+            "signoff: balance side",
             string.concat(
-                "exitMode ",
-                vm.toString(c.settings.exitMode),
-                " exit slippage ",
-                vm.toString(c.settings.exitSlippageBps),
-                " exit bid margin ",
-                vm.toString(c.settings.exitBidMarginBps),
+                "balanceMode ",
+                vm.toString(c.settings.balanceMode),
+                " redeem slippage ",
+                vm.toString(c.settings.redeemSlippageBps),
+                " balance bid margin ",
+                vm.toString(c.settings.balanceBidMarginBps),
                 " redeem burn ",
                 vm.toString(c.settings.redeemBurnBps),
                 " fee to redeem burn ",

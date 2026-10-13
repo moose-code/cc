@@ -97,7 +97,7 @@ contract RescueTest is Fixture {
         _expectRescueRevert(Mainnet_WETH, 1, ICore.NotHolder.selector);
         _expectRescueRevert(address(0xABCD), 1, ICore.NotHolder.selector);
         _expectRescueRevert(address(0), 1, ICore.NotHolder.selector);
-        assertEq(xt.balanceOf(address(core)), 5e18, "exit token left");
+        assertEq(xt.balanceOf(address(core)), 5e18, "balance token left");
     }
 
     address internal constant Mainnet_WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;

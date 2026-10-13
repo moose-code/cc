@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {Halving} from "./lib/Halving.sol";
-import {Sale, Credit, IController, ICoreViews, ICoreSale, ICreditScore, ICredits, IExitModule, Mainnet} from "./interfaces/Interfaces.sol";
+import {Sale, Credit, IController, ICoreViews, ICoreSale, ICreditScore, ICredits, IBalanceModule, Mainnet} from "./interfaces/Interfaces.sol";
 import {CreditBounds} from "./lib/CreditBounds.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -37,9 +37,9 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// curve, and with it the asking price, can still fall in a pause while the anchor is above 10_000.
 /// it holds no funds between calls. its settings belong to the live owner of the core (`core.owner()`), there is no
 /// second owner. the core enforces its own hard floor, `saleFloorBps` of cost, whatever this contract answers.
-/// once the owner sets the exit token pool (`setExitPoolKey`), the asking price is also floored at the statement's
-/// redeemable value in eth, `rating * unit` exit token base units priced at the pool sqrt price, with `unit` the lower of the stored and the live `unitPerPoint()`. `atFloor` and
-/// the anchor use the curve price, not this floor. with the pool key unset, no exit module set, or a zero pool read
+/// once the owner sets the balance token pool (`setBalancePoolKey`), the asking price is also floored at the statement's
+/// redeemable value in eth, `rating * unit` balance token base units priced at the pool sqrt price, with `unit` the lower of the stored and the live `unitPerPoint()`. `atFloor` and
+/// the anchor use the curve price, not this floor. with the pool key unset, no balance module set, or a zero pool read
 /// the value floor is 0 and the asking price is the curve price
 contract ControllerV1 is IController {
     using StateLibrary for IPoolManager;
@@ -71,7 +71,7 @@ contract ControllerV1 is IController {
     event PausedSet(bool paused);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
-    event ExitPoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
+    event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
     event CreditSaleOnSet(bool on);
     event CreditWindowSet(uint32 creditWindow);
     event CreditFloorBpsSet(uint16 creditFloorBps);
@@ -113,12 +113,12 @@ contract ControllerV1 is IController {
     bool private _busy;
     /// whether sales are paused. launch value false
     bool public paused;
-    /// whether the exit token pool key is set. launch value false
-    bool public exitPoolKeySet;
-    /// the uniswap v4 pool of the exit token against native eth, used to price the redeemable value floor. native eth
-    /// is `currency0` (the zero address) and the exit token is `currency1`, the only order a native eth pool sorts to.
+    /// whether the balance token pool key is set. launch value false
+    bool public balancePoolKeySet;
+    /// the uniswap v4 pool of the balance token against native eth, used to price the redeemable value floor. native eth
+    /// is `currency0` (the zero address) and the balance token is `currency1`, the only order a native eth pool sorts to.
     /// unset at launch
-    PoolKey public exitPoolKey;
+    PoolKey public balancePoolKey;
     /// the pause windows in time order, disjoint. window `i` is paused from `start` until `end`. while `paused` is true the
     /// last window is open and its `end` is 0. `pausedBefore` is the paused seconds of windows `0` to `i - 1`
     PauseWindow[] private _pauses;
@@ -129,7 +129,7 @@ contract ControllerV1 is IController {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit must sit before compose
     /// may take it. 1 minute to 30 days
     uint32 public creditWindow;
-    /// the credit sale floor over the highest of the credit's cost, exit token baseline and score-scaled eth backstop,
+    /// the credit sale floor over the highest of the credit's cost, balance token baseline and score-scaled eth backstop,
     /// bps. 10_000 to 40_000
     uint16 public creditFloorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
@@ -268,20 +268,20 @@ contract ControllerV1 is IController {
         emit PausedSet(v);
     }
 
-    /// sets the native eth / exit token pool whose sqrt price floors the asking price at a statement's redeemable value.
-    /// `currency0` must be native eth (the zero address) and `currency1` the core's current exit token, the order a
+    /// sets the native eth / balance token pool whose sqrt price floors the asking price at a statement's redeemable value.
+    /// `currency0` must be native eth (the zero address) and `currency1` the core's current balance token, the order a
     /// native eth pool sorts to. the pool must be initialized, so `_value` reads a live price at once. effective at once
-    function setExitPoolKey(PoolKey calldata key) external onlyOwner {
-        address token = CORE.exitToken();
-        if (token == address(0)) revert BadSetting("exitToken");
+    function setBalancePoolKey(PoolKey calldata key) external onlyOwner {
+        address token = CORE.balanceToken();
+        if (token == address(0)) revert BadSetting("balanceToken");
         address c0 = Currency.unwrap(key.currency0);
         address c1 = Currency.unwrap(key.currency1);
-        if (c0 != address(0) || c1 != token) revert BadSetting("exitPoolKey");
+        if (c0 != address(0) || c1 != token) revert BadSetting("balancePoolKey");
         (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(key.toId());
-        if (sqrtPriceX96 == 0) revert BadSetting("exitPoolKey");
-        exitPoolKey = key;
-        exitPoolKeySet = true;
-        emit ExitPoolKeySet(c0, c1, key.fee, key.tickSpacing, address(key.hooks));
+        if (sqrtPriceX96 == 0) revert BadSetting("balancePoolKey");
+        balancePoolKey = key;
+        balancePoolKeySet = true;
+        emit BalancePoolKeySet(c0, c1, key.fee, key.tickSpacing, address(key.hooks));
     }
 
     // ------------------------------------------------------------------ credit sale settings, owner, at once
@@ -348,7 +348,7 @@ contract ControllerV1 is IController {
     }
 
     /// the asking price of statement `sid` now, read from the core. never below the core hard floor
-    /// `cost * saleFloorBps / 10_000`, and never below the redeemable value floor once the exit token pool key is set,
+    /// `cost * saleFloorBps / 10_000`, and never below the redeemable value floor once the balance token pool key is set,
     /// so the quote is always a price `sellTo` takes. answers while paused
     function priceOf(uint256 sid) public view returns (uint256 price) {
         (price,,) = _quote(sid);
@@ -359,7 +359,7 @@ contract ControllerV1 is IController {
     /// true when the curve price of statement `sid` has reached its floor, `floorBps` of the reference. the curve age
     /// excludes paused seconds, so eligibility holds its value while sales are paused. the core hard floor does not
     /// enter this, so a `saleFloorBps` above the curve floor does not block eligibility. the core reads it to gate a
-    /// phase 2 redemption
+    /// the balance side redemption
     function atFloor(uint256 sid) external view returns (bool) {
         (bool held, uint256 cost, uint64 composedAt) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
@@ -386,11 +386,11 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ credit sale window
 
-    /// the sale price of pile credit `id` now, wei. the floor is the highest of the credit's cost, its exit token
+    /// the sale price of pile credit `id` now, wei. the floor is the highest of the credit's cost, its balance token
     /// baseline and the score-scaled eth backstop, times `creditFloorBps`. the start is the floor times
     /// `creditStartBps`. the price falls in a straight line from the start at the acquisition time to the floor at the
     /// acquisition time plus `creditWindow`, and rests at the floor after. reverts `NotForSale` for a credit not in the
-    /// pile. a missing or failed exit token price leaves the baseline at 0, so the sale never reverts for it. answers
+    /// pile. a missing or failed balance token price leaves the baseline at 0, so the sale never reverts for it. answers
     /// whether or not the sale is on
     function creditPrice(uint256 id) public view returns (uint256 price) {
         (bool inPile, uint256 cost, uint64 acquiredAt) = CORE.creditInfo(id);
@@ -408,13 +408,13 @@ contract ControllerV1 is IController {
         price = start - (start - floor) * age / creditWindow;
     }
 
-    /// the exit token redemption value of a credit of `score` in wei, read from the exit token pool, the same read the
-    /// statement value floor uses. it only lifts the credit floor. zero when no exit module is set, the pool key is
+    /// the balance token redemption value of a credit of `score` in wei, read from the balance token pool, the same read the
+    /// statement value floor uses. it only lifts the credit floor. zero when no balance module is set, the pool key is
     /// unset, the live unit read fails or is zero, the pool price reads zero, or `score` or the unit is zero. `score`
     /// is at most 8_000_000 and the unit is taken as at most uint128.max, so `score * unit` is below 2^151 and the
     /// pool pricing cannot overflow. never reverts: a missing or failed read gives 0
     function _baseline(uint256 score) private view returns (uint256) {
-        address module = CORE.exitModule();
+        address module = CORE.balanceModule();
         if (module == address(0)) return 0;
         (uint256 live, bool ok) = _liveUnit(module);
         if (!ok || live == 0) return 0;
@@ -437,8 +437,8 @@ contract ControllerV1 is IController {
         return FullMath.mulDiv(eth, score, rs);
     }
 
-    /// the credit score of `id` from the credit score contract, the same `scoreOf(seed, paidAt)` source the exit token
-    /// bid reads in `sellForExitToken`. `scoreOf` is pure on a fixed verified contract, so the call is direct.
+    /// the credit score of `id` from the credit score contract, the same `scoreOf(seed, paidAt)` source the balance token
+    /// bid reads in `sellForBalance`. `scoreOf` is pure on a fixed verified contract, so the call is direct.
     /// `creditPrice` calls this only for a credit the core holds in the pile, so the reads cannot revert
     function _scoreOf(uint256 id) private view returns (uint256) {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(
@@ -501,11 +501,11 @@ contract ControllerV1 is IController {
         if (price < floor) price = floor;
     }
 
-    /// the module's `unitPerPoint()` read with at most `READ_GAS`, the same gas the exit token bid forwards. copies at
+    /// the module's `unitPerPoint()` read with at most `READ_GAS`, the same gas the balance token bid forwards. copies at
     /// most 32 bytes of returndata, so a long answer cannot grief the gas. `ok` is false on a revert or an answer
     /// shorter than 32 bytes, where the unit reads 0
     function _liveUnit(address module) private view returns (uint256 unit, bool ok) {
-        bytes4 sel = IExitModule.unitPerPoint.selector;
+        bytes4 sel = IBalanceModule.unitPerPoint.selector;
         assembly ("memory-safe") {
             mstore(0, sel)
             ok := staticcall(READ_GAS, module, 0, 4, 0, 32)
@@ -515,15 +515,15 @@ contract ControllerV1 is IController {
         if (!ok) unit = 0;
     }
 
-    /// the redeemable value of statement `sid` in wei from the exit token pool: `rating * unit` exit token base units
+    /// the redeemable value of statement `sid` in wei from the balance token pool: `rating * unit` balance token base units
     /// priced at the pool sqrt price, where `unit` is the lower of the stored and the module's live `unitPerPoint()`
-    /// (a failed live read gives 0). zero when the pool key is unset, no exit module is set, the owed amount is
+    /// (a failed live read gives 0). zero when the pool key is unset, no balance module is set, the owed amount is
     /// zero, or the pool sqrt price reads zero
     function _value(uint256 sid) private view returns (uint256) {
-        if (!exitPoolKeySet) return 0;
-        if (CORE.exitModule() == address(0)) return 0;
+        if (!balancePoolKeySet) return 0;
+        if (CORE.balanceModule() == address(0)) return 0;
         uint256 unit = CORE.unitPerPoint();
-        (uint256 live,) = _liveUnit(CORE.exitModule());
+        (uint256 live,) = _liveUnit(CORE.balanceModule());
         if (live < unit) unit = live;
         uint256 owed = CORE.ratingOf(sid) * unit;
         if (owed == 0) return 0;
@@ -531,12 +531,12 @@ contract ControllerV1 is IController {
         return priced ? priceWei : 0;
     }
 
-    /// `baseUnits` of the exit token priced in wei at the exit token pool. `priced` is false when the pool key is
+    /// `baseUnits` of the balance token priced in wei at the balance token pool. `priced` is false when the pool key is
     /// unset or the pool sqrt price reads zero. native eth is `currency0`, so wei per token base unit is
     /// `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
     function _priceBaseUnits(uint256 baseUnits) private view returns (uint256 priceWei, bool priced) {
-        if (!exitPoolKeySet) return (0, false);
-        (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(exitPoolKey.toId());
+        if (!balancePoolKeySet) return (0, false);
+        (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(balancePoolKey.toId());
         if (sqrtPriceX96 == 0) return (0, false);
         uint256 q = FixedPoint96.Q96;
         uint256 p = sqrtPriceX96;

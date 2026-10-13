@@ -14,7 +14,7 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 contract LensTest is Fixture {
     uint256 internal sidFirst;
     uint256 internal sidSecond;
-    uint256 internal sidExit;
+    uint256 internal sidBalanceBid;
 
     function _composedStatement() internal returns (uint256 sid) {
         _fillEthPile(80);
@@ -25,13 +25,13 @@ contract LensTest is Fixture {
         sid = supply + 1;
     }
 
-    /// a statement composed from credits bought through the exit token bid. one pile, so it is a normal statement
-    function _exitBidStatement() internal returns (uint256 sid) {
+    /// a statement composed from credits bought through the balance token bid. one pile, so it is a normal statement
+    function _balanceBidStatement() internal returns (uint256 sid) {
         uint256[] memory ids = _credits(seller, 80);
         xt.mint(address(core), 1_000_000_000e18);
         core.skim();
         vm.prank(seller);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
         uint256 supply = STATEMENTS.supply();
         vm.prank(keeper);
         core.compose();
@@ -42,15 +42,15 @@ contract LensTest is Fixture {
     /// split on
     function _populate() internal {
         _enterPhase2();
-        _setExitPool();
+        _setBalancePool();
         _fundPot(3 ether);
         sidFirst = _composedStatement();
         sidSecond = _composedStatement();
-        sidExit = _exitBidStatement();
+        sidBalanceBid = _balanceBidStatement();
         _fillEthPile(7);
         uint256[] memory ids = _credits(seller, 5);
         vm.prank(seller);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
         // the first flush at or after the split start turns the split on, then the router keeps the next fees
         _skipToSplitStart();
         _buyCoin(funder, 2 ether);
@@ -84,7 +84,7 @@ contract LensTest is Fixture {
         assertEq(s.ethRate, core.ethRate(), "ethRate");
         assertEq(s.ethPrice, core.ethPrice(), "ethPrice");
         assertGe(s.ethPrice, s.ethRate, "the read is the price state or the clamp below it");
-        assertEq(s.pileSize, 12, "pile size: 7 eth bid plus 5 exit bid");
+        assertEq(s.pileSize, 12, "pile size: 7 eth bid plus 5 balance bid");
         assertEq(s.pileSize, core.pileSize());
         assertEq(s.pileHead, core.pilePage(0, 1)[0]);
         assertTrue(s.pileHead != 0, "head");
@@ -93,8 +93,8 @@ contract LensTest is Fixture {
         assertEq(s.ethPot, core.ethPot(), "ethPot");
         assertEq(s.ethToBuyback, core.ethToBuyback(), "ethToBuyback");
         assertEq(s.ethRedeemBurn, core.ethRedeemBurn(), "ethRedeemBurn");
-        assertEq(s.xPot, core.xPot(), "xPot");
-        assertTrue(s.ethPot != 0 && s.xPot != 0, "pots populated");
+        assertEq(s.balancePot, core.balancePot(), "balancePot");
+        assertTrue(s.ethPot != 0 && s.balancePot != 0, "pots populated");
         assertEq(
             s.unbookedEth,
             address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(),
@@ -110,7 +110,7 @@ contract LensTest is Fixture {
         assertEq(s.controller, address(ctl), "controller");
         assertEq(s.successor, core.successor(), "successor");
         assertEq(s.controllerLocked, core.controllerLocked());
-        assertEq(s.exitModuleLocked, core.exitModuleLocked());
+        assertEq(s.balanceModuleLocked, core.balanceModuleLocked());
         assertEq(s.targetsLocked, core.targetsLocked());
         assertEq(s.successorLocked, core.successorLocked());
 
@@ -119,7 +119,7 @@ contract LensTest is Fixture {
         _assertStatementViews(s.statements, 0);
         for (uint256 i; i < s.statements.length; ++i) {
             ICoreLens.StatementView memory v = s.statements[i];
-            assertTrue(v.id == sidFirst || v.id == sidSecond || v.id == sidExit);
+            assertTrue(v.id == sidFirst || v.id == sidSecond || v.id == sidBalanceBid);
             // every statement sells for eth on the curve, so each has an asking price
             assertGt(v.askingPrice, 0);
         }
@@ -265,7 +265,7 @@ contract LensTest is Fixture {
     /// read budget in unitPerPoint gives the same creditPrice through the lens as a direct controller read
     function test_OK_creditPriceThroughTheLensSurvivesAGasBurningModule() public {
         _enterPhase2();
-        _setExitPool();
+        _setBalancePool();
         uint256[] memory ids = _fillEthPile(1);
         vm.prank(owner);
         ctl.setCreditSaleOn(true);

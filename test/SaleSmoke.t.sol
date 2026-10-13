@@ -125,7 +125,7 @@ contract SaleSmokeTest is Fixture {
         uint256 pot = core.ethPot();
         uint256 before_ = keeper.balance;
         vm.prank(keeper);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         uint256 got = keeper.balance - before_;
         assertGt(got, 0.0005 ether, "caller paid the fee and the gas");
         assertLe(got, 1_500_000 * 10 gwei + 0.0005 ether, "capped");

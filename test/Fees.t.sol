@@ -16,8 +16,8 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Mainnet, Settings, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsMevSkimV2} from "../src/interfaces/ArtCoinsV2.sol";
-import {SwapMidListing, SwapMidExit, SwapAroundBuy} from "./attackers/SwapMidCall.sol";
-import {MockExitToken} from "./standins/MockExitToken.sol";
+import {SwapMidListing, SwapMidRedeem, SwapAroundBuy} from "./attackers/SwapMidCall.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 
 /// shared helpers for the fee, buyback, auction and tax suites. every swap goes through the real pool
 abstract contract FeeBase is Fixture {
@@ -607,26 +607,26 @@ contract ReceiveTest is FeeBase {
         );
     }
 
-    /// the same during `exitStatement`
-    function test_receiveMidExit() public {
+    /// the same during `redeemStatement`
+    function test_receiveMidRedeem() public {
         _stock();
-        MockExitToken token = new MockExitToken("Exit Token", "XT");
-        SwapMidExit m = new SwapMidExit(token, UNIT, router, launchKey, 1 ether);
+        MockBalanceToken token = new MockBalanceToken("Balance Token", "XT");
+        SwapMidRedeem m = new SwapMidRedeem(token, UNIT, router, launchKey, 1 ether);
         m.setFeeRouter(address(feeRouter));
         vm.deal(address(m), 1 ether);
-        _setExitModule(address(m));
-        _setExitMode(2);
+        _setBalanceModule(address(m));
+        _setBalanceMode(2);
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         uint256 pot = core.ethPot();
         uint256 gas0 = address(this).balance;
-        core.exitStatement(c.sid);
-        // the mid exit flush failed whole: the pot only fell by the gas repay the caller received, nothing is unbooked
+        core.redeemStatement(c.sid);
+        // the mid redemption flush failed whole: the pot only fell by the gas repay the caller received, nothing is unbooked
         assertEq(m.flushFailed(), 1, "the mid call flush failed");
         assertGt(address(feeRouter).balance, 0, "the fees wait in the router");
-        assertEq(core.ethPot(), pot - (address(this).balance - gas0), "nothing booked mid exit");
+        assertEq(core.ethPot(), pot - (address(this).balance - gas0), "nothing booked mid redemption");
         assertEq(address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(), 0);
-        assertGt(core.xPot(), 0);
+        assertGt(core.balancePot(), 0);
         core.skim();
         assertEq(core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance);
     }
@@ -800,29 +800,29 @@ contract ReceiveSettingsTest is FeeBase {
         );
     }
 
-    /// the push inside `exitStatement`'s measurement, with the exit split and the wait taken from the settings
-    function test_receiveMidExitAcrossSettings() public {
+    /// the push inside `redeemStatement`'s measurement, with the redemption split and the wait taken from the settings
+    function test_receiveMidRedeemAcrossSettings() public {
         _stock();
-        MockExitToken token = new MockExitToken("Exit Token", "XT");
-        SwapMidExit m = new SwapMidExit(token, UNIT, router, launchKey, 1 ether);
+        MockBalanceToken token = new MockBalanceToken("Balance Token", "XT");
+        SwapMidRedeem m = new SwapMidRedeem(token, UNIT, router, launchKey, 1 ether);
         m.setFeeRouter(address(feeRouter));
         vm.deal(address(m), 1 ether);
-        _setExitModule(address(m));
-        _setExitMode(2);
+        _setBalanceModule(address(m));
+        _setBalanceMode(2);
         Composed memory c = _composeOnce();
         // an eth lane statement is not eligible until its asking price falls to its cost
         vm.expectRevert(ICore.NotEligible.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         _makeEligible(c.sid);
         uint256 pot = core.ethPot();
         uint256 gas0 = address(this).balance;
         uint256 rating = core.ratingOf(c.sid);
-        core.exitStatement(c.sid);
-        // the swap mid exit booked nothing: the pot only fell by the gas repay the caller received
+        core.redeemStatement(c.sid);
+        // the swap mid redemption booked nothing: the pot only fell by the gas repay the caller received
         assertEq(m.flushFailed(), 1, "the mid call flush failed");
-        assertEq(core.ethPot(), pot - (address(this).balance - gas0), "nothing booked mid exit");
+        assertEq(core.ethPot(), pot - (address(this).balance - gas0), "nothing booked mid redemption");
         assertEq(address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(), 0);
-        assertEq(core.xPot(), rating * UNIT, "the whole exit went to the bid pot");
+        assertEq(core.balancePot(), rating * UNIT, "the whole redemption went to the bid pot");
         core.skim();
         assertEq(core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance);
     }
@@ -1438,7 +1438,7 @@ contract RestrictedCoinTest is FeeBase {
         vm.prank(trader);
         vm.expectRevert();
         coin.transfer(friend, 1e18);
-        // approvals still work: the exit door burns with `burnFrom`, which skips the rule
+        // approvals still work: burning uses `burnFrom`, which skips the rule
         assertEq(coin.balanceOf(friend), 0);
     }
 

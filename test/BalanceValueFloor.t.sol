@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Fixture} from "./utils/Fixture.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Mainnet} from "../src/interfaces/Interfaces.sol";
-import {MockExitModule} from "./standins/MockExitModule.sol";
+import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
@@ -13,10 +13,10 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// the redeemable value floor of the sale controller (decision 87). the asking price is floored at a statement's
-/// redeemable value in eth, read from the exit token / native eth uniswap v4 pool. the floor only raises the price:
+/// redeemable value in eth, read from the balance token / native eth uniswap v4 pool. the floor only raises the price:
 /// `atFloor`, redemption eligibility and the anchor stay on the curve
-contract ExitValueFloorTest is Fixture {
-    /// initializes a native eth / exit token pool at sqrt price `sp` and points the controller at it. native eth is
+contract BalanceValueFloorTest is Fixture {
+    /// initializes a native eth / balance token pool at sqrt price `sp` and points the controller at it. native eth is
     /// currency0
     function _initAndSet(uint160 sp, uint24 fee, int24 tickSpacing) private {
         PoolKey memory vk = PoolKey({
@@ -39,7 +39,7 @@ contract ExitValueFloorTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setExitPoolKey(k);
+        ctl.setBalancePoolKey(k);
     }
 
     /// the redeemable value in wei the controller computes for `sid` at sqrt price `sp`, native eth currency0
@@ -50,12 +50,12 @@ contract ExitValueFloorTest is Fixture {
     }
 
     function _lowSqrtPrice() private pure returns (uint160) {
-        // a small sqrt price makes the exit token expensive in eth, so the value floor is large
+        // a small sqrt price makes the balance token expensive in eth, so the value floor is large
         return uint160(FixedPoint96.Q96 / 1000);
     }
 
     function _highSqrtPrice() private pure returns (uint160) {
-        // a large sqrt price makes the exit token cheap in eth, so the value floor is small but nonzero
+        // a large sqrt price makes the balance token cheap in eth, so the value floor is small but nonzero
         return uint160(FixedPoint96.Q96 * 1000);
     }
 
@@ -127,7 +127,7 @@ contract ExitValueFloorTest is Fixture {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         uint256 curve = ctl.priceOf(sid);
-        assertFalse(ctl.exitPoolKeySet(), "no pool key at launch");
+        assertFalse(ctl.balancePoolKeySet(), "no pool key at launch");
         assertEq(ctl.priceOf(sid), curve, "the asking price is the curve");
     }
 
@@ -142,17 +142,17 @@ contract ExitValueFloorTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("exitPoolKey")));
-        ctl.setExitPoolKey(k);
-        assertFalse(ctl.exitPoolKeySet(), "the key stays unset");
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("balancePoolKey")));
+        ctl.setBalancePoolKey(k);
+        assertFalse(ctl.balancePoolKeySet(), "the key stays unset");
     }
 
     function test_setterTakesNativeEthCurrency0Only() public {
         _enterPhase2();
-        // native eth currency0, exit token currency1, on an initialized pool: accepted
+        // native eth currency0, balance token currency1, on an initialized pool: accepted
         _initAndSet(_highSqrtPrice(), 3000, 60);
-        assertTrue(ctl.exitPoolKeySet(), "the native eth currency0 order is accepted");
-        // exit token currency0, native eth currency1 cannot be a native eth pool and is refused
+        assertTrue(ctl.balancePoolKeySet(), "the native eth currency0 order is accepted");
+        // balance token currency0, native eth currency1 cannot be a native eth pool and is refused
         IControllerV1.PoolKey memory reverseKey = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(address(xt)),
             currency1: IControllerV1.Currency.wrap(address(0)),
@@ -161,8 +161,8 @@ contract ExitValueFloorTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("exitPoolKey")));
-        ctl.setExitPoolKey(reverseKey);
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("balancePoolKey")));
+        ctl.setBalancePoolKey(reverseKey);
     }
 
     function test_setterRejectsPairsWithoutTheTokenAndNativeEth() public {
@@ -176,8 +176,8 @@ contract ExitValueFloorTest is Fixture {
             tickSpacing: 60,
             hooks: address(0)
         });
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("exitPoolKey")));
-        ctl.setExitPoolKey(noEth);
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("balancePoolKey")));
+        ctl.setBalancePoolKey(noEth);
         IControllerV1.PoolKey memory noToken = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(address(0)),
             currency1: IControllerV1.Currency.wrap(other),
@@ -185,8 +185,8 @@ contract ExitValueFloorTest is Fixture {
             tickSpacing: 60,
             hooks: address(0)
         });
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("exitPoolKey")));
-        ctl.setExitPoolKey(noToken);
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("balancePoolKey")));
+        ctl.setBalancePoolKey(noToken);
         vm.stopPrank();
     }
 
@@ -200,19 +200,19 @@ contract ExitValueFloorTest is Fixture {
             hooks: address(0)
         });
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setExitPoolKey(k);
+        ctl.setBalancePoolKey(k);
     }
 
     function test_extremeSqrtPricesDoNotRevert() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         uint256 curve = ctl.priceOf(sid);
-        // the minimum sqrt price: the exit token is as expensive as the pool allows, the floor is huge but finite
+        // the minimum sqrt price: the balance token is as expensive as the pool allows, the floor is huge but finite
         uint160 lo = TickMath.MIN_SQRT_PRICE;
         _initAndSet(lo, 3000, 60);
         uint256 vLo = _value(sid, lo);
         assertEq(ctl.priceOf(sid), vLo > curve ? vLo : curve, "min sqrt price prices without reverting");
-        // the maximum sqrt price: the exit token is as cheap as the pool allows, the floor rounds to zero
+        // the maximum sqrt price: the balance token is as cheap as the pool allows, the floor rounds to zero
         uint160 hi = TickMath.MAX_SQRT_PRICE - 1;
         _initAndSet(hi, 500, 10);
         uint256 vHi = _value(sid, hi);
@@ -232,8 +232,8 @@ contract ExitValueFloorTest is Fixture {
         assertEq(ctl.priceOf(sid), priceBefore, "the value floor is unchanged while nothing moved");
         // the owner raises the owed amount per point by naming a module with twice the unit: the live value floor
         // doubles while the curve stays frozen
-        MockExitModule mod2 = new MockExitModule(address(xt), UNIT * 2);
-        _setExitModule(address(mod2));
+        MockBalanceModule mod2 = new MockBalanceModule(address(xt), UNIT * 2);
+        _setBalanceModule(address(mod2));
         assertEq(ctl.priceOf(sid), priceBefore * 2, "the value floor tracks the live unit during a pause");
         assertFalse(ctl.atFloor(sid), "the curve is still frozen");
     }

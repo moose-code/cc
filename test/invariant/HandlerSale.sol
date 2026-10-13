@@ -7,12 +7,12 @@ import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Settings} from "../../src/interfaces/Interfaces.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 import {HandlerOwner} from "./HandlerOwner.sol";
-import {MockExitModule} from "../standins/MockExitModule.sol";
+import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {SellingController} from "../attackers/SaleAttackers.sol";
 
 /// @notice the sale controller and the owner as an adversary. actions: `buy` through the first controller, the
 /// controller's own `sellTo` through a selling controller the owner installs, the controller's sale settings, the owner
-/// swapping the controller and the exit module in one go, the three one way locks and the two step handover. every call is checked against a model written from docs/DECISIONS.md: who may
+/// swapping the controller and the balance module in one go, the three one way locks and the two step handover. every call is checked against a model written from docs/DECISIONS.md: who may
 /// sell, at what least price, what is booked where, who holds the statement after. a refusal must carry the selector
 /// the model names. nothing here reverts, a violation goes to `viol`.
 abstract contract HandlerSale is HandlerOwner {
@@ -22,8 +22,8 @@ abstract contract HandlerSale is HandlerOwner {
     address[] public formerOwners;
     address[] public heirs;
     uint256 public heirNext;
-    /// every exit module the owner ever installed: none may have called the core successfully from inside an exit
-    MockExitModule[] public modulesEver;
+    /// every balance module the owner ever installed: none may have called the core successfully from inside a redemption
+    MockBalanceModule[] public modulesEver;
     /// the one way locks seen by the handler. they must never come undone
     bool public gLockedC;
     bool public gLockedE;
@@ -170,7 +170,7 @@ abstract contract HandlerSale is HandlerOwner {
     }
 
     /// a buyer pays the asking price of the first controller, with an excess now and then and a short payment now and
-    /// then. with another controller in force, on a sold, exited or exit lane statement it must refuse with the model's
+    /// then. with another controller in force, on a sold, redeemed or balance side statement it must refuse with the model's
     /// selector. a sale pays the ask exactly, the excess comes back
     function buy(uint256 sIdx, uint256 aSeed, uint256 xSeed, uint256 mode) external checked {
         uint8 a = A_BUY;
@@ -728,10 +728,10 @@ abstract contract HandlerSale is HandlerOwner {
                     the owner swapping the controller and the module
     //////////////////////////////////////////////////////////////*/
 
-    /// the call a hostile module makes from inside an exit: nothing, or one door of the core, or the selling controller.
-    /// k = 1..11 selects compose, skim, buyback, exitStatement, the selling controller's sell, adopt, releaseRedeemBurn,
-    /// sellForEth, buyListing, sellTo and sellForExitToken
-    function _callout(uint256 k, uint256 seed, MockExitModule next) internal {
+    /// the call a hostile module makes from inside a redemption: nothing, or one door of the core, or the selling controller.
+    /// k = 1..11 selects compose, skim, buyback, redeemStatement, the selling controller's sell, adopt, releaseRedeemBurn,
+    /// sellForEth, buyListing, sellTo and sellForBalance
+    function _callout(uint256 k, uint256 seed, MockBalanceModule next) internal {
         if (k == 0) return;
         address target = address(core);
         bytes memory data;
@@ -742,13 +742,13 @@ abstract contract HandlerSale is HandlerOwner {
         if (k == 1) data = abi.encodeCall(ICore.compose, ());
         else if (k == 2) data = abi.encodeCall(ICore.skim, ());
         else if (k == 3) data = abi.encodeCall(ICore.buyback, ());
-        else if (k == 4) data = abi.encodeCall(ICore.exitStatement, (sid));
+        else if (k == 4) data = abi.encodeCall(ICore.redeemStatement, (sid));
         else if (k == 6) data = abi.encodeCall(ICore.adopt, (ids));
         else if (k == 7) data = abi.encodeCall(ICore.releaseRedeemBurn, (1));
         else if (k == 8) data = abi.encodeWithSignature("sellForEth(uint256[])", ids);
         else if (k == 9) data = abi.encodeCall(ICore.buyListing, (1, "", seed >> 8, address(next)));
         else if (k == 10) data = abi.encodeCall(ICore.sellTo, (sid, address(next)));
-        else if (k == 11) data = abi.encodeWithSignature("sellForExitToken(uint256[])", ids);
+        else if (k == 11) data = abi.encodeWithSignature("sellForBalance(uint256[])", ids);
         else {
             target = address(selling);
             data = abi.encodeCall(SellingController.sell, (sid, address(next)));
@@ -756,38 +756,38 @@ abstract contract HandlerSale is HandlerOwner {
         next.setCall(target, data);
     }
 
-    /// the owner replaces the controller and, in phase 2, the exit module in one go. the controller is any of the three
-    /// the run knows, the module a new one with the same exit token, a new unit, and now and then a gas burning body and a
-    /// call into the core from inside the exit. both take effect at once unless the owner locked the door. the call must
-    /// not move an asset or a pot, and no call from inside an exit may ever go through
+    /// the owner replaces the controller and, in the balance side, the balance module in one go. the controller is any of the three
+    /// the run knows, the module a new one with the same balance token, a new unit, and now and then a gas burning body and a
+    /// call into the core from inside the redemption. both take effect at once unless the owner locked the door. the call must
+    /// not move an asset or a pot, and no call from inside a redemption may ever go through
     function hostileOwner(uint256 seed, uint256 mode) external checked {
         uint8 a = A_HOSTILE_OWNER;
         address c = seed % 3 == 0 ? v1 : (seed % 3 == 1 && canSwapController ? address(fuzz) : address(selling));
         bool swapMod = phase2() && mode % 2 == 0;
-        MockExitModule next;
+        MockBalanceModule next;
         if (swapMod) {
-            next = new MockExitModule(core.exitToken(), _logBound(seed >> 8, 2e9, 5e10));
+            next = new MockBalanceModule(core.balanceToken(), _logBound(seed >> 8, 2e9, 5e10));
             uint256 burn = (mode >> 4) % 4;
             if (burn == 1) next.setBurn(300_000);
             else if (burn == 2) next.setBurn(2_000_000);
             _callout((mode >> 8) % 12, seed >> 16, next);
         }
         bool lockedC = core.controllerLocked();
-        bool lockedE = core.exitModuleLocked();
+        bool lockedE = core.balanceModuleLocked();
         address oldC = core.controller();
-        address oldM = core.exitModule();
+        address oldM = core.balanceModule();
         OPre memory pre = _opre();
         _att(a);
         vm.startPrank(owner);
         (bool okC,) = address(core).call(abi.encodeCall(ICore.setController, (c)));
         bool okM = true;
-        if (swapMod) (okM,) = address(core).call(abi.encodeCall(ICore.setExitModule, (address(next))));
+        if (swapMod) (okM,) = address(core).call(abi.encodeCall(ICore.setBalanceModule, (address(next))));
         vm.stopPrank();
         if (okC == lockedC) _flag(V_LOCK, "the controller door and its lock disagree");
         if (core.controller() != (okC ? c : oldC)) _flag(V_OWNER, "the controller is not what the owner set at once");
         if (swapMod) {
-            if (okM == lockedE) _flag(V_LOCK, "the exit module door and its lock disagree");
-            if (core.exitModule() != (okM ? address(next) : oldM)) _flag(V_OWNER, "the exit module is not what the owner set");
+            if (okM == lockedE) _flag(V_LOCK, "the balance module door and its lock disagree");
+            if (core.balanceModule() != (okM ? address(next) : oldM)) _flag(V_OWNER, "the balance module is not what the owner set");
             if (okM) {
                 module = next;
                 modulesEver.push(next);
@@ -812,19 +812,19 @@ abstract contract HandlerSale is HandlerOwner {
         OPre memory pre = _opre();
         _att(a);
         bytes memory data = abi.encodeWithSelector(
-            which == 0 ? ICore.lockController.selector : (which == 1 ? ICore.lockExitModule.selector : ICore.lockTargets.selector)
+            which == 0 ? ICore.lockController.selector : (which == 1 ? ICore.lockBalanceModule.selector : ICore.lockTargets.selector)
         );
         vm.prank(stranger);
         (bool ok, bytes memory out) = address(core).call(data);
         if (ok || bytes4(out) != ICore.OnlyOwner.selector) _flag(V_LOCK, "a stranger locked a door");
-        bool noModule = which == 1 && core.exitModule() == address(0);
+        bool noModule = which == 1 && core.balanceModule() == address(0);
         vm.prank(owner);
         (ok, out) = address(core).call(data);
         if (noModule) {
-            if (ok || bytes4(out) != ICore.NoExitModule.selector) _flag(V_LOCK, "the module lock worked with no module");
+            if (ok || bytes4(out) != ICore.NoBalanceModule.selector) _flag(V_LOCK, "the module lock worked with no module");
         } else {
             if (!ok) _flag(V_LOCK, "the owner could not lock a door");
-            bool nowLocked = which == 0 ? core.controllerLocked() : (which == 1 ? core.exitModuleLocked() : core.targetsLocked());
+            bool nowLocked = which == 0 ? core.controllerLocked() : (which == 1 ? core.balanceModuleLocked() : core.targetsLocked());
             if (!nowLocked) _flag(V_LOCK, "a lock did not set its flag");
             if (which == 0) gLockedC = true;
             else if (which == 1) gLockedE = true;
@@ -840,7 +840,7 @@ abstract contract HandlerSale is HandlerOwner {
         bytes memory data = which == 0
             ? abi.encodeCall(ICore.setController, (v1))
             : (which == 1
-                    ? abi.encodeCall(ICore.setExitModule, (core.exitModule()))
+                    ? abi.encodeCall(ICore.setBalanceModule, (core.balanceModule()))
                     : abi.encodeCall(ICore.addTarget, (address(0xA110C))));
         vm.prank(owner);
         (bool ok, bytes memory out) = address(core).call(data);
@@ -854,7 +854,7 @@ abstract contract HandlerSale is HandlerOwner {
             _setterShut(0);
         }
         if (gLockedE) {
-            if (!core.exitModuleLocked()) _flag(V_LOCK, "the exit module lock came undone");
+            if (!core.balanceModuleLocked()) _flag(V_LOCK, "the balance module lock came undone");
             _setterShut(1);
         }
         if (gLockedT) {

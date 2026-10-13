@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {ERC20} from "solady/tokens/ERC20.sol";
 
 /// plain mintable erc20 for tests.
-contract MockExitToken is ERC20 {
+contract MockBalanceToken is ERC20 {
     string private _name;
     string private _symbol;
 

@@ -546,7 +546,7 @@ contract SaleBuyTest is SaleShapeBase {
     }
 
     /// the compaction of the held list: selling the first statement moves the last into its slot, and the moved
-    /// statement still sells, exits and reports right
+    /// statement still sells, redeems and reports right
     function test_buy_theHeldListStaysRightAfterASaleOutOfTheMiddle() public {
         uint256 a = _composeOnce().sid;
         uint256 b = _another();
@@ -724,7 +724,7 @@ contract SaleSellToTest is SaleBase {
         assertTrue(rb.buyBlocked(), "a second buy from the refund is refused");
         assertEq(rb.buySel(), IControllerV1.Reentrant.selector);
         assertTrue(rb.sellBlocked(), "sellTo is the controller's alone");
-        assertTrue(rb.exitBlocked());
+        assertTrue(rb.redeemBlocked());
         assertEq(STATEMENTS.ownerOf(b), address(core), "the other statement is untouched");
         assertEq(core.ethPot() - pot0 + core.ethToBuyback() - bb0, price, "booked exactly once");
         _solvent();

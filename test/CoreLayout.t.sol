@@ -30,7 +30,7 @@ contract CoreLayoutTest is Fixture {
         uint256[] memory sold = _credits(seller, 3);
         vm.prank(seller);
         core.sellForEth(sold);
-        // a large exit token balance is booked into the exit pot and the reserve holds fee eth, so both nonzero words
+        // a large balance token balance is booked into the balance pot and the reserve holds fee eth, so both nonzero words
         // are compared
         xt.mint(address(core), 1_000_000_000e18);
         core.skim();
@@ -45,7 +45,7 @@ contract CoreLayoutTest is Fixture {
         core.transferOwnership(address(0xBEEF));
         vm.startPrank(owner);
         core.lockController();
-        core.lockExitModule();
+        core.lockBalanceModule();
         core.lockTargets();
         core.setSuccessor(address(this));
         core.lockSuccessor();
@@ -53,17 +53,17 @@ contract CoreLayoutTest is Fixture {
 
         assertEq(_field(0, 0, 20), uint256(uint160(core.controller())), "controller");
         assertEq(_field(0, 20, 1), core.controllerLocked() ? 1 : 0, "controllerLocked");
-        assertEq(_field(0, 21, 1), core.exitModuleLocked() ? 1 : 0, "exitModuleLocked");
+        assertEq(_field(0, 21, 1), core.balanceModuleLocked() ? 1 : 0, "balanceModuleLocked");
         assertEq(_field(0, 22, 1), core.targetsLocked() ? 1 : 0, "targetsLocked");
-        assertEq(_field(1, 0, 20), uint256(uint160(core.exitModule())), "exitModule");
-        assertEq(_field(2, 0, 20), uint256(uint160(core.exitToken())), "exitToken");
+        assertEq(_field(1, 0, 20), uint256(uint160(core.balanceModule())), "balanceModule");
+        assertEq(_field(2, 0, 20), uint256(uint160(core.balanceToken())), "balanceToken");
         assertEq(_field(4, 0, 20), uint256(uint160(core.owner())), "owner");
         assertEq(_field(5, 0, 20), uint256(uint160(core.pendingOwner())), "pendingOwner");
         assertEq(_field(6, 0, 32), core.ethPot(), "ethPot");
         assertEq(_field(7, 0, 32), core.ethToBuyback(), "ethToBuyback");
         assertEq(_field(8, 0, 32), core.ethRedeemBurn(), "ethRedeemBurn");
         assertEq(core.ethRedeemBurn(), 1 ether, "ethRedeemBurn value");
-        assertEq(_field(9, 0, 32), core.xPot(), "xPot");
+        assertEq(_field(9, 0, 32), core.balancePot(), "balancePot");
         assertEq(_field(10, 0, 32), core.rateAtCheckpoint(), "rateAtCheckpoint");
         assertEq(_field(11, 0, 8), core.checkpointTime(), "checkpointTime");
         assertEq(_field(11, 8, 8), core.lastFillTime(), "lastFillTime");
@@ -73,7 +73,7 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(20, 20, 1), core.successorLocked() ? 1 : 0, "successorLocked");
         assertEq(core.successor(), address(this), "successor value");
         assertTrue(core.successorLocked(), "successorLocked value");
-        assertTrue(core.controllerLocked() && core.exitModuleLocked() && core.targetsLocked(), "locks");
+        assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.targetsLocked(), "locks");
         // the standalone settings pack after retired: creditCostToPotBps and chosenComposeOn finish slot 20 (offsets
         // 22 and 24), minCcToChoose (uint96, 12 bytes) cannot straddle so it starts slot 21
         vm.startPrank(owner);

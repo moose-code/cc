@@ -9,7 +9,7 @@ contract ScriptedController is IController {
     uint256[80] internal _pageIds;
     uint8 public pageFormat;
     bool public revertPage;
-    /// the eligibility answer the core reads for a phase 2 redemption
+    /// the eligibility answer the core reads for the balance side redemption
     bool public atFloorFlag;
     /// the window answer the core reads for a chosen compose, and whether the call reverts
     bool public pastWindowFlag = true;

@@ -5,9 +5,9 @@ import {InvariantsBase} from "./Invariants.t.sol";
 
 /// @notice the invariant suites of the sale controller and the owner as an adversary. same real system, same invariants as
 /// `InvariantsBase` (pots never above balances, every statement in one place, the owner and the controllers never gain)
-/// plus 12, 13 and 14: a statement leaves only by a `sellTo` sale at or above the hard floor or an exit that paid in
-/// full; locks and handovers never come undone; no call from inside an exit ever goes through.
-/// the fuzzer lists `buy`, the selling controller, the sale settings, the owner replacing the controller and the exit
+/// plus 12, 13 and 14: a statement leaves only by a `sellTo` sale at or above the hard floor or a redemption that paid in
+/// full; locks and handovers never come undone; no call from inside a redemption ever goes through.
+/// the fuzzer lists `buy`, the selling controller, the sale settings, the owner replacing the controller and the redemption
 /// module in one go, locks and the handover chain.
 /// forge-config: default.invariant.runs = 16
 /// forge-config: default.invariant.depth = 80
@@ -100,7 +100,7 @@ contract InvariantsSalePhase1 is SaleSuite {
     }
 }
 
-/// phase 2 with the exit module set, the owner swapping module and controller at once, the fuzz controller benign
+/// the balance side with the balance module set, the owner swapping module and controller at once, the fuzz controller benign
 /// forge-config: default.invariant.runs = 16
 /// forge-config: default.invariant.depth = 80
 /// forge-config: default.invariant.fail-on-revert = false
@@ -114,7 +114,7 @@ contract InvariantsSalePhase2 is SaleSuite {
     }
 }
 
-/// phase 2 under the hostile controller: it fails and answers short, and the owner can swap it away and back
+/// the balance side under the hostile controller: it fails and answers short, and the owner can swap it away and back
 /// forge-config: default.invariant.runs = 16
 /// forge-config: default.invariant.depth = 80
 /// forge-config: default.invariant.fail-on-revert = false

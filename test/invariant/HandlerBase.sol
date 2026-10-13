@@ -25,8 +25,8 @@ import {
 } from "../../src/interfaces/Interfaces.sol";
 import {IArtCoinsTokenV2, IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
-import {MockExitModule} from "../standins/MockExitModule.sol";
-import {MockExitToken} from "../standins/MockExitToken.sol";
+import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
+import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {ProbeTarget} from "../attackers/ProbeTarget.sol";
 import {FuzzController} from "../attackers/FuzzController.sol";
 import {TestSwapRouter} from "../utils/TestSwapRouter.sol";
@@ -45,8 +45,8 @@ struct Wiring {
     address v1;
     FuzzController fuzz;
     ProbeTarget probe;
-    MockExitModule module;
-    MockExitToken exitToken;
+    MockBalanceModule module;
+    MockBalanceToken balanceToken;
     bool canSwapController;
     string tag;
 }
@@ -81,8 +81,8 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_CONTROLLER_SEED = 11;
     uint8 internal constant A_CONTROLLER_SWAP = 12;
     uint8 internal constant A_PROBE_CONTROLLER = 13;
-    uint8 internal constant A_SELL_FOR_EXIT = 14;
-    uint8 internal constant A_EXIT_STATEMENT = 15;
+    uint8 internal constant A_SELL_FOR_BALANCE = 14;
+    uint8 internal constant A_REDEEM_STATEMENT = 15;
     uint8 internal constant A_MODULE_MODE = 16;
     uint8 internal constant A_WALLET_MOVE = 17;
     uint8 internal constant A_SET_SETTINGS = 18;
@@ -123,13 +123,13 @@ abstract contract HandlerBase is Test {
     // violation codes
     uint256 internal constant V_ETH_OUT = 1; // eth left the core beyond what the action explains
     uint256 internal constant V_ETH_IN = 2; // eth arrived in the core beyond what the action explains
-    uint256 internal constant V_X_OUT = 3; // exit token left the core beyond what the action explains
-    uint256 internal constant V_X_IN = 4; // exit token arrived in the core beyond what the action explains
+    uint256 internal constant V_X_OUT = 3; // balance token left the core beyond what the action explains
+    uint256 internal constant V_X_IN = 4; // balance token arrived in the core beyond what the action explains
     uint256 internal constant V_ABOVE_CAP = 5; // a credit was bought above the rate read before the action
     uint256 internal constant V_LISTING_PAY = 6; // a buyListing payment outside min(bid less cost, gas cap at the base fee plus keeperFee)
     uint256 internal constant V_SALE_FLOOR = 7; // a statement sold below the hard floor, or at another price than the controller asks
-    uint256 internal constant V_DEPART = 8; // a statement left the core without a recorded legal exit
-    uint256 internal constant V_EXIT_SHORT = 9; // an exit that returned less than credits * unit per credit
+    uint256 internal constant V_DEPART = 8; // a statement left the core without a recorded legal redemption
+    uint256 internal constant V_REDEEM_SHORT = 9; // a redemption that returned less than credits * unit per credit
     uint256 internal constant V_MODEL = 10; // the core disagrees with the handler's ghost model
     uint256 internal constant V_RATE_BOUND = 11; // the rate moved faster or slower than the settings in force allow
     uint256 internal constant V_FUNDED_STALE = 12; // the stored funded flag disagrees with pot and rate
@@ -141,12 +141,12 @@ abstract contract HandlerBase is Test {
     uint256 internal constant V_BUYBACK = 18; // a buyback slice or tip outside the rules
     /// the gas bounds of the caller payment (private constants of the core, restated here)
     uint256 internal constant COMPOSE_GAS = 13_700_000;
-    uint256 internal constant EXIT_GAS = 1_500_000;
+    uint256 internal constant REDEEM_GAS = 1_500_000;
     uint256 internal constant V_COMPOSE = 19; // a compose that paid its caller outside the caller payment rule, took an invalid page or made another statement than the next id
     uint256 internal constant V_POT = 20; // pot bookkeeping off from the action's flows
     uint256 internal constant V_RECEIVE = 21; // the core's receive() reverted, or a swap failed for an unexplained reason
     uint256 internal constant V_SUPPLY = 22; // coin supply differs from the ghost, or rose
-    uint256 internal constant V_AUCTION = 23; // the exit token auction broke its price, slice or restart rules
+    uint256 internal constant V_AUCTION = 23; // the balance token auction broke its price, slice or restart rules
     uint256 internal constant V_SETTINGS = 24; // settings changed outside the owner's call, or an owner call misbehaved
     uint256 internal constant V_OWNER = 25; // an owner action moved assets or the books it must not touch
     uint256 internal constant V_SALE_PATH = 26; // a sellTo or buy sale outside the rules: price, booking, holder or record
@@ -189,8 +189,8 @@ abstract contract HandlerBase is Test {
     address public v1;
     FuzzController public fuzz;
     ProbeTarget public probe;
-    MockExitModule public module;
-    MockExitToken public exitToken;
+    MockBalanceModule public module;
+    MockBalanceToken public balanceToken;
     bool public canSwapController;
     string public tag;
 
@@ -209,7 +209,7 @@ abstract contract HandlerBase is Test {
         uint256 coin;
         uint256 credits;
         uint256 statements;
-        uint256 exitToken;
+        uint256 balanceToken;
     }
 
     mapping(address => Base) public baseOf;
@@ -231,7 +231,7 @@ abstract contract HandlerBase is Test {
     string[N_VIOL] public violMsg;
 
     // coin supply ghost. the expected supply falls by the coin the eth buyback bought and burned, and by the coin
-    // burned out of a taker in an exit auction fill. coin taxed to the burn address is held there, not burned
+    // burned out of a taker in a redemption auction fill. coin taxed to the burn address is held there, not burned
     uint256 public gSupply;
     uint256 public gDead;
     uint256 public gBurnedByBuyback;
@@ -257,9 +257,9 @@ abstract contract HandlerBase is Test {
     uint256[] internal cgList;
 
     // ghost statements. status: the one place every statement ever composed sits at any time
-    uint8 public constant S_HELD = 1; // held by the core for sale or exit
+    uint8 public constant S_HELD = 1; // held by the core for sale or redemption
     uint8 public constant S_SOLD = 2; // sold by the controller through `sellTo`, the buyer holds it
-    uint8 public constant S_EXITED = 3; // handed to the exit module
+    uint8 public constant S_REDEEMED = 3; // handed to the balance module
 
     struct SG {
         uint8 status;
@@ -268,9 +268,9 @@ abstract contract HandlerBase is Test {
         uint256 floor; // sold: the hard floor (cost * saleFloorBps) in force at the sale
         uint256 price; // sold: the price paid
         address buyer; // sold: who holds it
-        uint256 required; // exit: credit count times unit per credit
-        uint256 received; // exit: exit token the core received
-        address module; // exit: the module that took it
+        uint256 required; // redeem: credit count times unit per credit
+        uint256 received; // redeem: balance token the core received
+        address module; // redeem: the module that took it
     }
 
     mapping(uint256 => SG) internal _sg;
@@ -281,7 +281,7 @@ abstract contract HandlerBase is Test {
 
     /// ledger of the eth books: the pots (`ethPot + ethToBuyback`) when the run began, the eth the core booked into them
     /// since (fee flushes, sale payments, skims) and the eth that left them (credit purchases, tips,
-    /// exit repayments, buyback spends, migrations). each amount is the one measured at the recipient by the action
+    /// redemption repayments, buyback spends, migrations). each amount is the one measured at the recipient by the action
     uint256 public gEthStart;
     uint256 public gEthIn;
     uint256 public gEthOut;
@@ -302,7 +302,7 @@ abstract contract HandlerBase is Test {
         fuzz = w.fuzz;
         probe = w.probe;
         module = w.module;
-        exitToken = w.exitToken;
+        balanceToken = w.balanceToken;
         canSwapController = w.canSwapController;
         tag = w.tag;
         keeper = makeAddr("credeng.inv.keeper");
@@ -321,8 +321,8 @@ abstract contract HandlerBase is Test {
             "controllerSeed",
             "controllerSwap",
             "probeController",
-            "sellForExit",
-            "exitStatement",
+            "sellForBalance",
+            "redeemStatement",
             "moduleMode",
             "walletMove",
             "setSettings",
@@ -366,9 +366,9 @@ abstract contract HandlerBase is Test {
         gDead = coin.balanceOf(DEAD);
     }
 
-    /// true once the exit module is set in the core
+    /// true once the balance module is set in the core
     function phase2() public view returns (bool) {
-        return core.exitModule() != address(0);
+        return core.balanceModule() != address(0);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -536,7 +536,7 @@ abstract contract HandlerBase is Test {
     }
 
     /// after a migrate the core is retired and `sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen` and
-    /// `sellForExitToken` revert `Retired`. the action sends its call instead of its own body, checks the selector and
+    /// `sellForBalance` revert `Retired`. the action sends its call instead of its own body, checks the selector and
     /// that the books stayed, and ends. returns false while the core is not retired
     function _retiredRefusal(uint8 a, address who, bytes memory data) internal returns (bool) {
         if (!gRetired) return false;
@@ -595,14 +595,14 @@ abstract contract HandlerBase is Test {
         if (ok && out.length == 32) o = abi.decode(out, (address));
     }
 
-    /// the exit token the core has set, zero before phase 2
-    function _xt() internal view returns (MockExitToken) {
-        return MockExitToken(core.exitToken());
+    /// the balance token the core has set, zero before the balance side
+    function _xt() internal view returns (MockBalanceToken) {
+        return MockBalanceToken(core.balanceToken());
     }
 
     function _xBal(address who) internal view returns (uint256) {
-        address t = core.exitToken();
-        return t == address(0) ? 0 : MockExitToken(t).balanceOf(who);
+        address t = core.balanceToken();
+        return t == address(0) ? 0 : MockBalanceToken(t).balanceOf(who);
     }
 
     /// pool price helpers, coin and eth in raw units at the current launch pool price.
@@ -643,7 +643,7 @@ abstract contract HandlerBase is Test {
     }
 
     function _x(uint256 b0, uint256 out, uint256 in_, string memory what) internal {
-        if (core.exitToken() == address(0)) return;
+        if (core.balanceToken() == address(0)) return;
         uint256 b1 = _xBal(address(core));
         // forge-lint: disable-next-line(unsafe-typecast)
         int256 expected = int256(b0) + int256(in_) - int256(out);
@@ -968,7 +968,7 @@ abstract contract HandlerBase is Test {
         b.coin = coin.balanceOf(who);
         b.credits = CREDITS.balanceOf(who);
         b.statements = STATEMENTS.balanceOf(who);
-        b.exitToken = _xBal(who);
+        b.balanceToken = _xBal(who);
     }
 
     modifier checked() {
@@ -1675,7 +1675,7 @@ abstract contract HandlerBase is Test {
         }
     }
 
-    /// @dev the caller payment of `compose`, `composeChosen` and `exitStatement`: at most the counted gas bound at the base
+    /// @dev the caller payment of `compose`, `composeChosen` and `redeemStatement`: at most the counted gas bound at the base
     /// fee capped by `callerMaxBaseFee` plus `callerFee`, at least the fee when the pot covers it, at most the pot,
     /// exactly zero when both settings are zero, and exactly the debit of the pot and the outflow of the core
     function _callerPayment(uint256 code, Settings memory st, uint256 gasBound, uint256 pot0, uint256 bal0, uint256 callerBal0, string memory what)
@@ -1856,7 +1856,7 @@ abstract contract HandlerBase is Test {
         uint256 pot0 = core.ethPot();
         uint256 tb0 = core.ethToBuyback();
         uint256 xb0 = _xBal(address(core));
-        uint256 xp0 = core.xPot();
+        uint256 xp0 = core.balancePot();
         uint256 reserve0 = core.ethRedeemBurn();
         uint256 rate0 = core.ethRate();
         RS memory rs = _rs();
@@ -1870,10 +1870,10 @@ abstract contract HandlerBase is Test {
             }
             _booked(booked);
             _eth(b0, 0, 0, "skim");
-            if (core.exitToken() != address(0)) {
+            if (core.balanceToken() != address(0)) {
                 uint256 xbooked = xb0 > xp0 ? xb0 - xp0 : 0;
-                if (core.xPot() != xp0 + xbooked) {
-                    _flag(V_POT, "skim booked the wrong exit token");
+                if (core.balancePot() != xp0 + xbooked) {
+                    _flag(V_POT, "skim booked the wrong balance token");
                 }
                 _x(xb0, 0, 0, "skim");
             }
@@ -1884,7 +1884,7 @@ abstract contract HandlerBase is Test {
         _rsCheck(rs, 0);
     }
 
-    /// sends eth to the core's receive(), and in phase 2 exit token. a send from an account is accepted and not
+    /// sends eth to the core's receive(), and in the balance side balance token. a send from an account is accepted and not
     /// booked, the core books it only through skim. now and then the eth is sent to the fee router and flushed, which the
     /// core books into the pot at once. receive() must accept every one of them
     function donate(uint256 aSeed, uint256 amtSeed) external checked {
@@ -2233,32 +2233,32 @@ abstract contract HandlerBase is Test {
 
     struct XPre {
         uint256 xbal;
-        uint256 xpot;
+        uint256 balancePotPre;
         uint256 xto;
         uint256 unit;
         uint256 rate;
         uint256 actorX;
     }
 
-    /// @dev the exit token the per point bid pays for credit `id`: `score * unitPerPoint * (10_000 - exitBidMarginBps)
-    /// / 10_000`, the same figure the core computes in `sellForExitToken`
-    function _exitBid(uint256 id, uint256 unit, uint256 net) internal view returns (uint256) {
+    /// @dev the balance token the per point bid pays for credit `id`: `score * unitPerPoint * (10_000 - balanceBidMarginBps)
+    /// / 10_000`, the same figure the core computes in `sellForBalance`
+    function _balanceBid(uint256 id, uint256 unit, uint256 net) internal view returns (uint256) {
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
         return score * unit * net / 10_000;
     }
 
-    /// @dev the ids `sellForExit` offers: walks the actor inventory from a picked offset while the exit prices fit the pot
-    function _pickExitIds(address who, uint256 len, uint256 want, uint256 pick, uint256 unit)
+    /// @dev the ids `sellForBalance` offers: walks the actor inventory from a picked offset while the redemption prices fit the pot
+    function _pickBalanceIds(address who, uint256 len, uint256 want, uint256 pick, uint256 unit)
         internal
         view
         returns (uint256[] memory ids, uint256 n)
     {
         ids = new uint256[](want);
-        uint256 pot = core.xPot();
-        uint256 net = 10_000 - core.settings().exitBidMarginBps;
+        uint256 pot = core.balancePot();
+        uint256 net = 10_000 - core.settings().balanceBidMarginBps;
         for (uint256 k; k < len && k < want * 3 + 4 && n < want; ++k) {
             uint256 id = inventory[who][(pick % len + k) % len];
-            uint256 price = _exitBid(id, unit, net);
+            uint256 price = _balanceBid(id, unit, net);
             if (price != 0 && price <= pot) {
                 pot -= price;
                 ids[n++] = id;
@@ -2266,15 +2266,15 @@ abstract contract HandlerBase is Test {
         }
     }
 
-    /// sells credits into the exit token bid. ids are picked so the prices fit the pot. the recorded eth cost basis is
+    /// sells credits into the balance token bid. ids are picked so the prices fit the pot. the recorded eth cost basis is
     /// the score-scaled floor rate backstop and reads `refScore` from the core's controller, so the bid is exercised
     /// with the real controller in force; a hostile controller swapped in is left alone so the backstop is modeled
-    function sellForExit(uint256 aSeed, uint256 nSeed, uint256 pick) external checked {
-        uint8 a = A_SELL_FOR_EXIT;
-        if (!phase2() || core.settings().exitMode != 2) return _skip(a);
+    function sellForBalance(uint256 aSeed, uint256 nSeed, uint256 pick) external checked {
+        uint8 a = A_SELL_FOR_BALANCE;
+        if (!phase2() || core.settings().balanceMode != 2) return _skip(a);
         address who = _actor(aSeed);
         // the retired refusal is checked first: a retired core reverts before it reads the controller's refScore
-        if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForExitToken(uint256[])", _firstOf(who)))) return;
+        if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForBalance(uint256[])", _firstOf(who)))) return;
         // the bid reads refScore from the core's controller; exercise it only with the real controller in force so the
         // recorded backstop is modeled, a hostile controller swapped in is left alone
         if (core.controller() != v1) return _skip(a);
@@ -2285,20 +2285,20 @@ abstract contract HandlerBase is Test {
         uint256 unit = _bidUnit();
         if (unit == 0) return _skip(a);
         uint256 want = bound(nSeed, 1, 10);
-        (uint256[] memory ids, uint256 n) = _pickExitIds(who, len, want, pick, unit);
+        (uint256[] memory ids, uint256 n) = _pickBalanceIds(who, len, want, pick, unit);
         if (n == 0) return _skip(a);
         assembly {
             mstore(ids, n)
         }
         XPre memory p;
         p.xbal = _xBal(address(core));
-        p.xpot = core.xPot();
+        p.balancePotPre = core.balancePot();
         p.unit = unit;
         p.actorX = _xBal(who);
-        uint256 net = 10_000 - core.settings().exitBidMarginBps;
+        uint256 net = 10_000 - core.settings().balanceBidMarginBps;
         uint256 bound_;
         for (uint256 i; i < n; ++i) {
-            bound_ += _exitBid(ids[i], unit, net);
+            bound_ += _balanceBid(ids[i], unit, net);
         }
         uint256 b0 = address(core).balance;
         uint256 pot0 = core.ethPot();
@@ -2307,47 +2307,47 @@ abstract contract HandlerBase is Test {
         vm.recordLogs();
         _att(a);
         vm.prank(who);
-        try core.sellForExitToken(ids) {
+        try core.sellForBalance(ids) {
             if (module.revertUnit()) _flag(V_MODEL, "the bid went through with a failing live unit read");
             _ok(a);
-            _afterSellExit(who, p, bound_, b0);
+            _afterSellBalance(who, p, bound_, b0);
         } catch (bytes memory why) {
-            _failed(b0, pot0, rate0, "sellForExit");
+            _failed(b0, pot0, rate0, "sellForBalance");
             if (module.revertUnit()) _ok(a);
             else _unexpected(a, why);
         }
         _rsCheck(rs, 0);
     }
 
-    /// @dev the checks after a successful `sellForExit` (a helper so the locals fit the stack). the credit enters the
-    /// one pile with an eth cost basis (the `CreditBought` event), the seller is paid exit tokens from `xPot`
-    function _afterSellExit(address who, XPre memory p, uint256 bound_, uint256 b0) internal {
+    /// @dev the checks after a successful `sellForBalance` (a helper so the locals fit the stack). the credit enters the
+    /// one pile with an eth cost basis (the `CreditBought` event), the seller is paid balance tokens from `balancePot`
+    function _afterSellBalance(address who, XPre memory p, uint256 bound_, uint256 b0) internal {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.CreditBought.selector) continue;
             uint256 cost = abi.decode(logs[i].data, (uint256));
             uint256 id = uint256(logs[i].topics[1]);
             // the recorded eth cost is the score-scaled floor rate backstop, at least 1 wei
-            if (cost == 0) _flag(V_MODEL, "sellForExit recorded a zero eth cost basis");
+            if (cost == 0) _flag(V_MODEL, "sellForBalance recorded a zero eth cost basis");
             _addCredit(id, cost);
             _removeFrom(inventory[who], id);
         }
         uint256 paid = _xBal(who) - p.actorX;
-        // the exit tokens paid are score * unit * net / 10_000 per credit, so they equal the figure read before
-        if (paid != bound_) _flag(V_ABOVE_CAP, "sellForExit paid differs from the per point bid read before");
-        _x(p.xbal, paid, 0, "sellForExit");
-        if (core.xPot() != p.xpot - paid) _flag(V_POT, "sellForExit exit pot not reduced by the price");
-        _eth(b0, 0, 0, "sellForExit");
+        // the balance tokens paid are score * unit * net / 10_000 per credit, so they equal the figure read before
+        if (paid != bound_) _flag(V_ABOVE_CAP, "sellForBalance paid differs from the per point bid read before");
+        _x(p.xbal, paid, 0, "sellForBalance");
+        if (core.balancePot() != p.balancePotPre - paid) _flag(V_POT, "sellForBalance balance pot not reduced by the price");
+        _eth(b0, 0, 0, "sellForBalance");
     }
 
-    /// the stored unit: read when the module was last set or refreshed. the exit check basis `exitStatement` uses for
+    /// the stored unit: read when the module was last set or refreshed. the redemption check basis `redeemStatement` uses for
     /// its required minimum. the module can change what it reports, the core keeps the stored value until a set or a
     /// `refreshUnitPerPoint`
     function _unitOf() internal view returns (uint256 u) {
         return core.unitPerPoint();
     }
 
-    /// the unit the exit token bid pays by: the lower of the stored unit and the module's live unit, so a module that
+    /// the unit the balance token bid pays by: the lower of the stored unit and the module's live unit, so a module that
     /// lowered its rate cannot make the bid overpay. the core reads both and takes the smaller
     function _bidUnit() internal view returns (uint256) {
         uint256 stored = core.unitPerPoint();
@@ -2365,7 +2365,7 @@ abstract contract HandlerBase is Test {
 
     struct EPre {
         uint256 xbal;
-        uint256 xpot;
+        uint256 balancePotPre;
         uint256 b0;
         uint256 pot0;
         uint256 rate0;
@@ -2383,11 +2383,11 @@ abstract contract HandlerBase is Test {
         Settings st;
     }
 
-    /// exits a held statement through the module. a statement is eligible when its asking price is at or below its
-    /// cost. redemption runs only while `exitMode` is at least 1. the module may be set to underpay, and then the exit
+    /// redeems a held statement through the module. a statement is eligible when its asking price is at or below its
+    /// cost. redemption runs only while `balanceMode` is at least 1. the module may be set to underpay, and then the redemption
     /// must revert
-    function exitStatement(uint256 sIdx, uint256 aSeed) external checked {
-        uint8 a = A_EXIT_STATEMENT;
+    function redeemStatement(uint256 sIdx, uint256 aSeed) external checked {
+        uint8 a = A_REDEEM_STATEMENT;
         if (!phase2()) return _skip(a);
         uint256[] memory held = core.heldStatements();
         if (held.length == 0) return _skip(a);
@@ -2395,15 +2395,15 @@ abstract contract HandlerBase is Test {
         EPre memory p;
         p.st = core.settings();
         SG storage g = _sg[sid];
-        bool modeOn = p.st.exitMode >= 1;
+        bool modeOn = p.st.balanceMode >= 1;
         bool eligible = _ctlAtFloor(sid);
         p.ripe = modeOn && eligible;
-        if (!modeOn) p.refusal = ICore.ExitModeOff.selector;
+        if (!modeOn) p.refusal = ICore.BalanceModeOff.selector;
         else if (!eligible) p.refusal = ICore.NotEligible.selector;
         // an ineligible statement is only tried now and then, to see the refusal
         if (!p.ripe && aSeed % 6 != 0) return _skip(a);
         p.xbal = _xBal(address(core));
-        p.xpot = core.xPot();
+        p.balancePotPre = core.balancePot();
         p.b0 = address(core).balance;
         p.pot0 = core.ethPot();
         p.rate0 = core.ethRate();
@@ -2411,48 +2411,48 @@ abstract contract HandlerBase is Test {
         p.reserve0 = core.ethRedeemBurn();
         p.rating = core.ratingOf(sid);
         p.unit = _unitOf();
-        p.required = p.rating * p.unit * (10_000 - p.st.exitSlippageBps) / 10_000;
+        p.required = p.rating * p.unit * (10_000 - p.st.redeemSlippageBps) / 10_000;
         p.callerBal = keeper.balance;
         p.cost = g.cost;
         RS memory rs = _rs();
         _att(a);
         uint256 g0 = gasleft();
         vm.prank(keeper);
-        try core.exitStatement(sid) {
+        try core.redeemStatement(sid) {
             p.gasUsed = g0 - gasleft();
             _ok(a);
-            _afterExit(sid, p);
+            _afterRedeem(sid, p);
         } catch (bytes memory why) {
-            _failed(p.b0, p.pot0, p.rate0, "exitStatement");
+            _failed(p.b0, p.pot0, p.rate0, "redeemStatement");
             if (_ownerOf(sid) == address(0) || _ownerOf(sid) == address(module)) {
-                _flag(V_DEPART, "an exit reverted but the statement left the core");
+                _flag(V_DEPART, "a redemption reverted but the statement left the core");
             }
             if (p.refusal != 0 && bytes4(why) != p.refusal) {
                 _unexpected(a, why);
             } else if (p.refusal == 0 && p.unit != 0 && module.payBps() >= 10_000) {
-                // the module overpays or pays exactly, so the required amount arrives: the exit must not revert
+                // the module overpays or pays exactly, so the required amount arrives: the redemption must not revert
                 if (module.currentUnit() >= p.unit) _unexpected(a, why);
             }
         }
         _rsCheck(rs, 0);
     }
 
-    function _afterExit(uint256 sid, EPre memory p) internal {
-        if (!p.ripe) _flag(V_DEPART, "an ineligible statement exited");
+    function _afterRedeem(uint256 sid, EPre memory p) internal {
+        if (!p.ripe) _flag(V_DEPART, "an ineligible statement redeemed");
         uint256 received = _xBal(address(core)) - p.xbal;
-        if (received < p.required) _flag(V_EXIT_SHORT, "exit returned less than rating * unitPerPoint less slippage");
-        if (p.unit == 0) _flag(V_EXIT_SHORT, "exit with an unreadable unit per point");
-        // every exit token received goes to the exit bid pot
-        if (core.xPot() != p.xpot + received) _flag(V_POT, "exit pot did not take the whole received amount");
-        _x(p.xbal, 0, received, "exitStatement");
+        if (received < p.required) _flag(V_REDEEM_SHORT, "redemption returned less than rating * unitPerPoint less slippage");
+        if (p.unit == 0) _flag(V_REDEEM_SHORT, "redemption with an unreadable unit per point");
+        // every balance token received goes to the balance bid pot
+        if (core.balancePot() != p.balancePotPre + received) _flag(V_POT, "balance pot did not take the whole received amount");
+        _x(p.xbal, 0, received, "redeemStatement");
         // every redemption moves redeemBurnBps of the reserve into the coin buyback
         uint256 released = p.reserve0 * p.st.redeemBurnBps / 10_000;
         if (core.ethRedeemBurn() != p.reserve0 - released) _flag(V_POT, "redeem burn reserve not reduced by redeemBurnBps");
         if (core.ethToBuyback() != p.toBuyback0 + released) _flag(V_POT, "the released reserve did not reach the coin buyback");
-        _callerPayment(V_EXIT_SHORT, p.st, EXIT_GAS, p.pot0, p.b0, p.callerBal, "exitStatement");
-        if (_ownerOf(sid) != address(module)) _flag(V_DEPART, "exited statement is not with the module");
+        _callerPayment(V_REDEEM_SHORT, p.st, REDEEM_GAS, p.pot0, p.b0, p.callerBal, "redeemStatement");
+        if (_ownerOf(sid) != address(module)) _flag(V_DEPART, "redeemed statement is not with the module");
         SG storage g = _sg[sid];
-        g.status = S_EXITED;
+        g.status = S_REDEEMED;
         g.required = p.required;
         g.received = received;
         g.module = address(module);
@@ -2468,7 +2468,7 @@ abstract contract HandlerBase is Test {
             module.setPayBps(10_000);
             module.setRevertUnit(false);
         } else if (m == 4) {
-            // underpay below the slippage floor so the exit must revert
+            // underpay below the slippage floor so the redemption must revert
             module.setPayBps(10_000 - (1 + (s >> 8) % 5000));
         } else if (m == 5) {
             module.setRevertUnit(true);

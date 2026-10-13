@@ -5,14 +5,14 @@ import {Prod} from "./utils/Prod.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Settings, Sale, Mainnet, IExitModule, IStatements} from "../src/interfaces/Interfaces.sol";
+import {Settings, Sale, Mainnet, IBalanceModule, IStatements} from "../src/interfaces/Interfaces.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {SetSettings} from "../script/SetSettings.s.sol";
 import {LaunchConfig} from "../script/LaunchConfig.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
-import {MockExitToken} from "./standins/MockExitToken.sol";
-import {MockExitModule} from "./standins/MockExitModule.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
+import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {StatementInfoStub} from "./standins/StatementInfoStub.sol";
 
 /// a controller that can call sellTo with any statement, buyer and payment
@@ -68,14 +68,14 @@ contract EvilBuyer {
     }
 }
 
-/// an exit module that burns gas before it pays, for the gas bound of the exit caller payment
-contract BurnModule is IExitModule {
-    address public immutable exitToken;
+/// a balance module that burns gas before it pays, for the gas bound of the redemption caller payment
+contract BurnModule is IBalanceModule {
+    address public immutable balanceToken;
     uint256 public immutable unit;
     uint256 public immutable burn;
 
     constructor(address token, uint256 unit_, uint256 burn_) {
-        exitToken = token;
+        balanceToken = token;
         unit = unit_;
         burn = burn_;
     }
@@ -84,11 +84,11 @@ contract BurnModule is IExitModule {
         return unit;
     }
 
-    function exit(uint256 sid) external returns (uint256 out) {
+    function redeem(uint256 sid) external returns (uint256 out) {
         uint256 stop = gasleft() - burn;
         while (gasleft() > stop) {}
         out = IStatements(Mainnet.STATEMENTS).creditScoreOf(sid) * unit;
-        MockExitToken(exitToken).mint(msg.sender, out);
+        MockBalanceToken(balanceToken).mint(msg.sender, out);
     }
 }
 
@@ -388,11 +388,11 @@ contract ReviewSaleTest is Fixture {
         bytes[10] memory calls = [
             abi.encodeCall(ICore.transferOwnership, (bob)),
             abi.encodeCall(ICore.setController, (bob)),
-            abi.encodeCall(ICore.setExitModule, (bob)),
+            abi.encodeCall(ICore.setBalanceModule, (bob)),
             abi.encodeCall(ICore.addTarget, (bob)),
             abi.encodeCall(ICore.removeTarget, (bob)),
             abi.encodeCall(ICore.lockController, ()),
-            abi.encodeCall(ICore.lockExitModule, ()),
+            abi.encodeCall(ICore.lockBalanceModule, ()),
             abi.encodeCall(ICore.lockTargets, ()),
             abi.encodeCall(ICore.setSettings, (core.settings())),
             abi.encodeCall(ICore.setRate, (OPEN_RATE))
@@ -403,7 +403,7 @@ contract ReviewSaleTest is Fixture {
             assertFalse(ok);
             assertEq(bytes4(why), ICore.OnlyOwner.selector);
         }
-        assertFalse(core.controllerLocked() || core.exitModuleLocked() || core.targetsLocked());
+        assertFalse(core.controllerLocked() || core.balanceModuleLocked() || core.targetsLocked());
         assertEq(core.pendingOwner(), address(0));
     }
 
@@ -412,7 +412,7 @@ contract ReviewSaleTest is Fixture {
         vm.expectRevert(ICore.ZeroAddress.selector);
         core.setController(address(0));
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(0xdead));
+        core.setBalanceModule(address(0xdead));
         address[3] memory bad = [lc.stack.hook, address(core), core.COIN()];
         for (uint256 i; i < bad.length; ++i) {
             vm.expectRevert(ICore.ForbiddenTarget.selector);
@@ -421,19 +421,19 @@ contract ReviewSaleTest is Fixture {
         vm.stopPrank();
         _enterPhase2();
         vm.startPrank(owner);
-        MockExitModule zero = new MockExitModule(address(xt), 0);
+        MockBalanceModule zero = new MockBalanceModule(address(xt), 0);
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(zero));
-        MockExitModule other = new MockExitModule(address(new MockExitToken("O", "O")), 1 * UNIT);
-        vm.expectRevert(ICore.ExitTokenChanged.selector);
-        core.setExitModule(address(other));
+        core.setBalanceModule(address(zero));
+        MockBalanceModule other = new MockBalanceModule(address(new MockBalanceToken("O", "O")), 1 * UNIT);
+        vm.expectRevert(ICore.BalanceTokenChanged.selector);
+        core.setBalanceModule(address(other));
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(core));
+        core.setBalanceModule(address(core));
         // a target flag set before a module is named is cleared when it becomes the module
-        MockExitModule m2 = new MockExitModule(address(xt), 2 * UNIT);
+        MockBalanceModule m2 = new MockBalanceModule(address(xt), 2 * UNIT);
         core.addTarget(address(m2));
         assertTrue(core.allowedTarget(address(m2)));
-        core.setExitModule(address(m2));
+        core.setBalanceModule(address(m2));
         assertFalse(core.allowedTarget(address(m2)));
         vm.expectRevert(ICore.ForbiddenTarget.selector);
         core.addTarget(address(m2));
@@ -449,7 +449,7 @@ contract ReviewSaleTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("controller")));
         core.setController(address(0xC0DE));
         // everything else stays open
-        core.setExitModule(address(new MockExitModule(address(xt), 3 * UNIT)));
+        core.setBalanceModule(address(new MockBalanceModule(address(xt), 3 * UNIT)));
         core.addTarget(address(0x7A9));
         core.removeTarget(address(0x7A9));
         core.transferOwnership(alice);
@@ -459,29 +459,29 @@ contract ReviewSaleTest is Fixture {
         _setSettings(s);
         vm.prank(owner);
         ctl.setFastDecayBpsPerHour(500);
-        assertFalse(core.exitModuleLocked() || core.targetsLocked());
+        assertFalse(core.balanceModuleLocked() || core.targetsLocked());
     }
 
-    function test_OK_lockExitModule_revertsWhileUnsetThenBlocksOnlyTheModuleDoor() public {
+    function test_OK_lockBalanceModule_revertsWhileUnsetThenBlocksOnlyTheModuleDoor() public {
         vm.prank(owner);
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.lockExitModule();
-        assertFalse(core.exitModuleLocked());
+        vm.expectRevert(ICore.NoBalanceModule.selector);
+        core.lockBalanceModule();
+        assertFalse(core.balanceModuleLocked());
         uint256 sid = _composeOnce().sid;
         _enterPhase2();
         vm.startPrank(owner);
-        core.lockExitModule();
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("exitModule")));
-        core.setExitModule(address(mod));
-        address fresh = address(new MockExitModule(address(xt), 3 * UNIT));
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("exitModule")));
-        core.setExitModule(fresh);
+        core.lockBalanceModule();
+        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("balanceModule")));
+        core.setBalanceModule(address(mod));
+        address fresh = address(new MockBalanceModule(address(xt), 3 * UNIT));
+        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("balanceModule")));
+        core.setBalanceModule(fresh);
         SellProbe probe = new SellProbe(core);
         probe.setAtFloor(true); // the eth lane statement is eligible under this controller
         core.setController(address(probe));
         core.addTarget(address(0x7A9));
         vm.stopPrank();
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod), "redeem still works");
     }
 
@@ -502,7 +502,7 @@ contract ReviewSaleTest is Fixture {
         _enterPhase2();
         vm.startPrank(owner);
         core.lockController();
-        core.lockExitModule();
+        core.lockBalanceModule();
         core.lockTargets();
         vm.stopPrank();
         Settings memory s = core.settings();
@@ -701,7 +701,7 @@ contract ReviewSaleTest is Fixture {
         assertGe(address(core).balance, core.ethPot() + core.ethToBuyback());
     }
 
-    // ------------------------------------------------------------------ exit caller payment
+    // ------------------------------------------------------------------ redeem caller payment
 
     /// @dev the caller payment on: 0.0005 ether and a 10 gwei base fee ceiling
     function _callerPayOn() internal {
@@ -711,43 +711,43 @@ contract ReviewSaleTest is Fixture {
         _setSettings(s);
     }
 
-    /// gas of the last measured exit as a transaction, before the refund
-    uint256 internal lastExitGross;
+    /// gas of the last measured redemption as a transaction, before the refund
+    uint256 internal lastRedeemGross;
 
-    function _exitAndMeasure(uint256 sid) internal returns (uint256 got, uint256 gasUsed, uint256 potDrop) {
+    function _redeemAndMeasure(uint256 sid) internal returns (uint256 got, uint256 gasUsed, uint256 potDrop) {
         uint256 pot = core.ethPot();
         uint256 before_ = keeper.balance;
         uint256 g = gasleft();
         vm.prank(keeper);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         gasUsed = g - gasleft();
-        (lastExitGross,) = _lastCallGross();
+        (lastRedeemGross,) = _lastCallGross();
         got = keeper.balance - before_;
         potDrop = pot - core.ethPot();
     }
 
-    function test_OK_exitPay_paidFromThePotOnceAndCappedAtTheBaseFeeCeiling() public {
+    function test_OK_redeemPay_paidFromThePotOnceAndCappedAtTheBaseFeeCeiling() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         _callerPayOn();
         _warp(105 hours);
         vm.fee(300 gwei);
-        (uint256 got,, uint256 drop) = _exitAndMeasure(sid);
+        (uint256 got,, uint256 drop) = _redeemAndMeasure(sid);
         assertEq(got, drop, "paid from the pot, nowhere else");
         assertGt(got, 0.0005 ether, "the gas refund is paid on top of the fee");
         assertEq((got - 0.0005 ether) % 10 gwei, 0, "a high basefee pays at the ceiling");
         assertLe(got, 1_500_000 * 10 gwei + 0.0005 ether, "within the gas bound at the ceiling plus the fee");
         vm.prank(keeper);
         vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         _solvent();
     }
 
-    function test_OK_exitPay_gasBurningModuleCannotPassTheGasBound() public {
-        xt = new MockExitToken("X", "X");
+    function test_OK_redeemPay_gasBurningModuleCannotPassTheGasBound() public {
+        xt = new MockBalanceToken("X", "X");
         BurnModule bm = new BurnModule(address(xt), UNIT, 6_000_000);
-        _setExitModule(address(bm));
-        _setExitMode(2);
+        _setBalanceModule(address(bm));
+        _setBalanceMode(2);
         uint256 sid = _composeOnce().sid;
         _callerPayOn();
         _makeEligible(sid);
@@ -755,14 +755,14 @@ contract ReviewSaleTest is Fixture {
         uint256 pot = core.ethPot();
         uint256 before_ = keeper.balance;
         vm.prank(keeper);
-        core.exitStatement{gas: 9_000_000}(sid);
+        core.redeemStatement{gas: 9_000_000}(sid);
         uint256 got = keeper.balance - before_;
         // the counted gas stops at 1_500_000, whatever the module burned
         assertEq(got, 1_500_000 * composeBasefee + 0.0005 ether);
         assertEq(pot - core.ethPot(), got);
     }
 
-    function test_OK_exitPay_aRevertingExitPaysNothing() public {
+    function test_OK_redeemPay_aRevertingRedeemPaysNothing() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         _callerPayOn();
@@ -772,7 +772,7 @@ contract ReviewSaleTest is Fixture {
         uint256 bal = keeper.balance;
         vm.prank(keeper);
         vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         assertEq(keeper.balance, bal);
         assertEq(core.ethPot(), pot);
         (bool held,,) = core.statementInfo(sid);
@@ -781,7 +781,7 @@ contract ReviewSaleTest is Fixture {
 
     /// the payment is the counted gas at the base fee. the counted gas is the metered gas of the call plus a fixed
     /// overhead that includes the transaction base cost, so it covers the gross gas of the transaction
-    function test_exitPayCoversTheGrossGasOfTheTransaction() public {
+    function test_redeemPayCoversTheGrossGasOfTheTransaction() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         Settings memory s = core.settings();
@@ -789,8 +789,8 @@ contract ReviewSaleTest is Fixture {
         _setSettings(s);
         _warp(105 hours);
         vm.fee(composeBasefee);
-        (uint256 got,,) = _exitAndMeasure(sid);
-        uint256 gross = lastExitGross;
+        (uint256 got,,) = _redeemAndMeasure(sid);
+        uint256 gross = lastRedeemGross;
         emit log_named_uint("paid", got);
         emit log_named_uint("gross gas of the transaction at the base fee", gross * composeBasefee);
         assertGe(got + 15_000 * composeBasefee, gross * composeBasefee, "covers the gross gas of the transaction but for the part of the overhead the constant leaves out");
@@ -1014,7 +1014,7 @@ contract ReviewSaleTest is Fixture {
         postflightAs(lc, address(core), owner);
         (string memory failed, uint256 n) = _failed();
         assertGt(n, 0);
-        assertTrue(vm.contains(failed, "core: no locks, no exit module"), failed);
+        assertTrue(vm.contains(failed, "core: no locks, no balance module"), failed);
         locksChangedFlag = true;
         postflightAs(lc, address(core), owner);
         (failed, n) = _failed();
