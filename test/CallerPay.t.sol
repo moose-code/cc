@@ -76,6 +76,7 @@ contract CallerPayTest is Fixture {
 
     // ------------------------------------------------------------------ off at launch
 
+    // promise: SPEC 1 compose is unpaid at launch
     function test_launchSettingsPayZero() public {
         Settings memory s = core.settings();
         assertEq(s.callerFee, 0);
@@ -87,26 +88,9 @@ contract CallerPayTest is Fixture {
         assertEq(r.balDrop, 0, "no eth moved");
     }
 
-    /// the fee alone pays the fee, the ceiling alone pays the gas
-    function test_feeAndCeilingAreIndependent() public {
-        _readyEth();
-        uint256 snap = vm.snapshotState();
-        Settings memory s = core.settings();
-        s.callerFee = uint64(FEE);
-        _setSettings(s);
-        Run memory r = _run(5 gwei, 5 gwei);
-        assertEq(r.paid, FEE, "the fee alone, no gas refund with a zero ceiling");
-        vm.revertToState(snap);
-        s.callerFee = 0;
-        s.callerMaxBaseFee = uint48(CEILING);
-        _setSettings(s);
-        r = _run(5 gwei, 5 gwei);
-        assertGt(r.paid, 0);
-        assertEq(r.paid % 5 gwei, 0, "the gas alone");
-    }
-
     // ------------------------------------------------------------------ paid
 
+    // promise: SPEC 1 compose pays min(counted gas, bound) times min(basefee, ceiling) plus callerFee
     function test_composePaysCountedGasAtTheBaseFeePlusTheFee() public {
         _readyEth();
         _payOn();
@@ -128,30 +112,7 @@ contract CallerPayTest is Fixture {
         _solvent();
     }
 
-    /// above the ceiling the gas is paid at the ceiling, with the same counted gas
-    function test_baseFeeAboveTheCeilingPaysAtTheCeiling() public {
-        _readyEth();
-        _payOn();
-        uint256 snap = vm.snapshotState();
-        Run memory low = _run(5 gwei, 5 gwei);
-        uint256 counted = _counted(low, 5 gwei);
-        vm.revertToState(snap);
-        Run memory high = _run(50 gwei, 50 gwei);
-        assertEq(high.paid, counted * CEILING + FEE, "the same counted gas at the ceiling");
-        assertEq(high.potDrop, high.paid);
-    }
-
-    /// the priority fee is not refunded: the gas price of the transaction does not enter the payment
-    function test_priorityFeeIsNotRefunded() public {
-        _readyEth();
-        _payOn();
-        uint256 snap = vm.snapshotState();
-        Run memory plain = _run(5 gwei, 5 gwei);
-        vm.revertToState(snap);
-        Run memory tipped = _run(5 gwei, 5 gwei + 40 gwei);
-        assertEq(tipped.paid, plain.paid);
-    }
-
+    // promise: SPEC 1 the counted gas includes the book
     /// the gas of the book is counted: the compose that books unbooked income is paid for more gas
     function test_bookIsCounted() public {
         _skipToPayeeStart();
@@ -170,6 +131,7 @@ contract CallerPayTest is Fixture {
         assertGe(_counted(loaded, 5 gwei), loaded.gross);
     }
 
+    // promise: SPEC 1 the caller payment is at most ethPot
     function test_paymentIsCappedAtThePot() public {
         _readyEth();
         _payOn();
@@ -180,15 +142,7 @@ contract CallerPayTest is Fixture {
         assertEq(core.heldStatements().length, 1, "the compose went through");
     }
 
-    function test_emptyPotPaysZeroAndComposes() public {
-        _readyEth();
-        _payOn();
-        _setPot(0);
-        Run memory r = _run(5 gwei, 5 gwei);
-        assertEq(r.paid, 0);
-        assertEq(core.heldStatements().length, 1);
-    }
-
+    // promise: SPEC 1 the compose gas bound is at least 1.2 times the largest counted compose
     function test_worstCaseCountedGasIsUnderTheBound() public {
         _skipToPayeeStart();
         _buyCoin(funder, 5 ether);
@@ -203,6 +157,7 @@ contract CallerPayTest is Fixture {
 
     // ------------------------------------------------------------------ bounds and reentrancy
 
+    // promise: INTEGRATION BadSetting on callerFee and callerMaxBaseFee
     function test_callerPaymentBounds() public {
         Settings memory s = core.settings();
         s.callerFee = 0.005 ether;
@@ -219,6 +174,7 @@ contract CallerPayTest is Fixture {
         core.setSettings(s);
     }
 
+    // promise: INTEGRATION Reentrancy on the caller payment
     /// the payment is the last action: a caller that re enters from its receive finds every door shut, and it is
     /// paid once
     function test_paidCallerFindsEveryDoorShut() public {

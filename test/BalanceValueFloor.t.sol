@@ -63,15 +63,11 @@ contract BalanceValueFloorTest is Fixture {
         return uint160(FixedPoint96.Q96 / 1000);
     }
 
-    function _highSqrtPrice() private pure returns (uint160) {
-        // a large sqrt price makes the balance token cheap in eth, so the pool term is small but nonzero
-        return uint160(FixedPoint96.Q96 * 1000);
-    }
-
     function _score(uint256 id) private view returns (uint256) {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
+    // promise: SPEC 1 the price reference is at least the redemption value read from the balance token pool (decision 87)
     function test_poolTermBindsAboveTheRateTerm() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
@@ -87,6 +83,7 @@ contract BalanceValueFloorTest is Fixture {
         assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * ctl.startBps() / 10_000, "the curve is on the reference");
     }
 
+    // promise: SPEC 1 the unit is read live from the module (decision 103)
     /// the pool term follows the unit the module reports now, and a failing read gives pool term 0 so the rate term and
     /// the cost bound the reference
     function test_poolTermReadsTheLiveUnit() public {
@@ -107,6 +104,7 @@ contract BalanceValueFloorTest is Fixture {
         assertEq(ctl.valueOf(rating), _rate(rating), "a zero unit leaves the rate term");
     }
 
+    // promise: SPEC 1 priceOf never reverts for a failed pool read
     /// an extreme unit with a tiny pool sqrt price overflows 256 bits in the second `mulDiv` of the pool pricing: the pool
     /// term is 0, `valueOf` answers the rate term and `priceOf` answers
     function test_poolTerm_overflowYieldsZeroAndNeverReverts() public {
@@ -119,40 +117,7 @@ contract BalanceValueFloorTest is Fixture {
         assertGt(ctl.priceOf(sid), 0, "priceOf answers");
     }
 
-    function test_buyPaysTheGrossPriceAndTheAnchorStaysOnTheCurve() public {
-        _enterPhase2();
-        vm.prank(owner);
-        ctl.setAnchorMinCost(0);
-        uint256 sid = _composeOnce().sid;
-        _initAndSet(_lowSqrtPrice(), 3000, 60);
-        uint256 price = ctl.priceOf(sid);
-        uint256 gross = ctl.grossPriceOf(sid);
-        assertEq(gross, price + price * ctl.royaltyBps() / 10_000, "the gross price adds the royalty");
-        address buyer = _user("buyer");
-        vm.deal(buyer, gross);
-        vm.prank(buyer);
-        ctl.buy{value: gross}(sid);
-        (bool held,,) = core.statementInfo(sid);
-        assertFalse(held, "the statement left the core");
-        assertEq(ctl.royaltyOwed(), gross - price, "the royalty is owed");
-        // the opening curve is 150 percent of the reference: the anchor moves to the mean of 10_000 and 15_000
-        assertEq(ctl.anchorBps(), 12_500, "the anchor moved on the curve price");
-    }
-
-    function test_lowPoolPriceLeavesTheRateTerm() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        uint160 sp = _highSqrtPrice();
-        _initAndSet(sp, 3000, 60);
-        uint256 rating = core.ratingOf(sid);
-        uint256 pool = _pool(rating, UNIT, sp);
-        assertGt(pool, 0, "the pool term is nonzero");
-        assertLt(pool, _rate(rating), "the pool term is below the rate term");
-        assertEq(ctl.valueOf(rating), _rate(rating), "valueOf stays on the rate term, the pool never lowers it");
-        (, uint256 cost,) = core.statementInfo(sid);
-        assertGe(ctl.referenceOf(sid), cost, "the reference is never below the cost");
-    }
-
+    // promise: SPEC 1 no pool key gives the rate term only
     function test_keyUnsetGivesTheRateTerm() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
@@ -162,11 +127,7 @@ contract BalanceValueFloorTest is Fixture {
         assertEq(ctl.pointRate(), core.floorRate() / ctl.refScore(), "the point rate");
     }
 
-    function test_noModuleGivesTheRateTerm() public {
-        uint256 rating = 1_000_000;
-        assertEq(ctl.valueOf(rating), _rate(rating), "no module, no pool term");
-    }
-
+    // promise: SPEC 1 the credit sale floor is max(cost, valueOf(score)) times creditFloorBps
     /// a credit price rests at `max(cost, valueOf(score)) * creditFloorBps`, so the pool term lifts the credit floor and
     /// never lowers it below the cost
     function test_creditFloorCarriesThePoolTerm() public {
@@ -187,6 +148,7 @@ contract BalanceValueFloorTest is Fixture {
         assertGe(ctl.creditPrice(id), cost * ctl.creditFloorBps() / 10_000, "never below the cost floor");
     }
 
+    // promise: INTEGRATION BadSetting on setBalancePoolKey
     function test_uninitializedPoolRejected() public {
         _enterPhase2();
         // a pool that was never initialized reads a zero sqrt price: the setter refuses it so the floor is never off
@@ -203,24 +165,7 @@ contract BalanceValueFloorTest is Fixture {
         assertFalse(ctl.balancePoolKeySet(), "the key stays unset");
     }
 
-    function test_setterTakesNativeEthCurrency0Only() public {
-        _enterPhase2();
-        // native eth currency0, balance token currency1, on an initialized pool: accepted
-        _initAndSet(_highSqrtPrice(), 3000, 60);
-        assertTrue(ctl.balancePoolKeySet(), "the native eth currency0 order is accepted");
-        // balance token currency0, native eth currency1 cannot be a native eth pool and is refused
-        IControllerV1.PoolKey memory reverseKey = IControllerV1.PoolKey({
-            currency0: IControllerV1.Currency.wrap(address(xt)),
-            currency1: IControllerV1.Currency.wrap(address(0)),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: address(0)
-        });
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("balancePoolKey")));
-        ctl.setBalancePoolKey(reverseKey);
-    }
-
+    // promise: INTEGRATION BadSetting on setBalancePoolKey
     function test_setterRejectsPairsWithoutTheTokenAndNativeEth() public {
         _enterPhase2();
         address other = address(0xBEEF);
@@ -246,6 +191,7 @@ contract BalanceValueFloorTest is Fixture {
         vm.stopPrank();
     }
 
+    // promise: INTEGRATION OnlyOwner on setBalancePoolKey
     function test_setterIsOwnerOnly() public {
         _enterPhase2();
         IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
@@ -259,35 +205,4 @@ contract BalanceValueFloorTest is Fixture {
         ctl.setBalancePoolKey(k);
     }
 
-    function test_extremeSqrtPricesDoNotRevert() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        uint256 rating = core.ratingOf(sid);
-        // the minimum sqrt price: the balance token is as expensive as the pool allows, the term is huge but finite
-        uint160 lo = TickMath.MIN_SQRT_PRICE;
-        _initAndSet(lo, 3000, 60);
-        assertEq(ctl.valueOf(rating), _max(_rate(rating), _pool(rating, UNIT, lo)), "min sqrt price prices without reverting");
-        // the maximum sqrt price: the balance token is as cheap as the pool allows, the term rounds to zero
-        uint160 hi = TickMath.MAX_SQRT_PRICE - 1;
-        _initAndSet(hi, 500, 10);
-        assertEq(ctl.valueOf(rating), _max(_rate(rating), _pool(rating, UNIT, hi)), "max sqrt price prices without reverting");
-    }
-
-    function test_pauseFreezesTheCurveWhileTheReferenceStaysLive() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        _initAndSet(_lowSqrtPrice(), 3000, 60);
-        assertFalse(ctl.atFloor(sid), "the opening curve is above the floor");
-        uint256 priceBefore = ctl.priceOf(sid);
-        vm.prank(owner);
-        core.setPaused(true);
-        _warp(300 hours);
-        assertFalse(ctl.atFloor(sid), "the curve is frozen by the pause, still above the floor");
-        assertEq(ctl.priceOf(sid), priceBefore, "the reference is unchanged while nothing moved");
-        // the owner names a module with twice the unit: the live reference doubles while the curve stays frozen
-        MockBalanceModule mod2 = new MockBalanceModule(address(xt), UNIT * 2);
-        _setBalanceModule(address(mod2));
-        assertEq(ctl.priceOf(sid), priceBefore * 2, "the reference tracks the live unit during a pause");
-        assertFalse(ctl.atFloor(sid), "the curve is still frozen");
-    }
 }

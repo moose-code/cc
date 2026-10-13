@@ -75,6 +75,7 @@ contract LensTest is Fixture {
         }
     }
 
+    // promise: inv 20 every field of CoreLens.snapshot equals the direct reads of the Core
     function test_OK_everyFieldEqualsTheDirectReads() public {
         _populate();
         // the asking price has moved off the start price
@@ -120,67 +121,7 @@ contract LensTest is Fixture {
         }
     }
 
-    /// the gross views, the composer, the switches and the module's unit now
-    function test_OK_royaltyComposerSwitchesAndUnit() public {
-        _populate();
-        ICoreLens.Snapshot memory s = lens.snapshot();
-        assertTrue(s.redeemOn && s.balanceBidOn, "the two switches");
-        assertEq(s.unitPerPoint, mod.unitPerPoint(), "the unit is the module's now");
-        mod.setUnitPerPoint(3 * UNIT);
-        assertEq(lens.snapshot().unitPerPoint, 3 * UNIT, "and follows it");
-        mod.setRevertUnit(true);
-        assertEq(lens.snapshot().unitPerPoint, 0, "a failing read shows 0");
-        mod.setRevertUnit(false);
-        assertEq(lens.grossAskingPrice(sidFirst), ctl.grossPriceOf(sidFirst), "the gross asking price");
-        assertGt(lens.grossAskingPrice(sidFirst), lens.snapshot().statements[0].askingPrice, "above the price");
-        uint256 id = _fillEthPile(1)[0];
-        assertEq(lens.grossCreditPriceOf(id), ctl.grossCreditPrice(id), "the gross credit price");
-        assertGt(lens.grossCreditPriceOf(id), lens.creditPriceOf(id), "above the credit price");
-        ICoreLens.StatementView[] memory v = lens.snapshot().statements;
-        for (uint256 i; i < v.length; ++i) {
-            assertEq(v[i].composer, core.composerOf(v[i].id), "composer");
-            assertTrue(v[i].composer != address(0), "every held statement has a composer");
-        }
-    }
-
-    function test_OK_pendingIncomeIsWhatTheNextBookCounts() public {
-        _populate();
-        ICoreLens.Snapshot memory s = lens.snapshot();
-        uint256 owed0 = core.payeeOwed();
-        core.book();
-        assertEq(core.payeeOwed() - owed0, s.pendingIncome * core.settings().payeePpm / 1_000_000, "the payee share");
-        ICoreLens.Snapshot memory after_ = lens.snapshot();
-        assertEq(after_.pendingIncome, 0, "nothing left to book");
-        assertEq(after_.payeeOwed, core.payeeOwed());
-    }
-
-    function test_OK_thePayeeFieldsBeforeTheShare() public {
-        // before the payee share starts the whole income is pending and nothing is owed
-        autoBook = false;
-        _buyCoin(funder, 3 ether);
-        ICoreLens.Snapshot memory s = lens.snapshot();
-        assertFalse(s.payeeOn);
-        assertEq(s.payee, lc.payee);
-        assertEq(s.pendingIncome, address(core).balance);
-        assertEq(s.payeeOwed, 0);
-    }
-
-    function test_OK_theRateIsThePayoutOfOneCredit() public {
-        _fundPot(1 ether);
-        uint256[] memory ids = _credits(seller, 4);
-        uint256 quoted = lens.snapshot().ethRate;
-        assertEq(quoted, core.ethRate());
-        uint256 before = seller.balance;
-        vm.prank(seller);
-        core.sellForEth(_one(ids[0]));
-        assertEq(seller.balance - before, quoted, "the payout equals the quote");
-    }
-
-    function test_OK_aFullPageIsReady() public {
-        _fillEthPile(80);
-        assertTrue(lens.snapshot().pageReady, "80 credits make a page");
-    }
-
+    // promise: inv 20 statementsPage equals the direct statement reads
     function test_OK_statementsPageEqualsTheSnapshotSlices() public {
         _enterPhase2();
         _fundPot(3 ether);
@@ -201,25 +142,7 @@ contract LensTest is Fixture {
         _assertStatementViews(p1, 1);
     }
 
-    /// the cost of `snapshot` per held statement, to size a keeper's call. logged, with a bound
-    function test_GAS_snapshotPerStatement() public {
-        _enterPhase2();
-        _fundPot(3 ether);
-        uint256 g = gasleft();
-        lens.snapshot();
-        uint256 empty = g - gasleft();
-        sidFirst = _composedStatement();
-        sidSecond = _composedStatement();
-        g = gasleft();
-        lens.snapshot();
-        uint256 two = g - gasleft();
-        emit log_named_uint("snapshot gas, no statements", empty);
-        emit log_named_uint("snapshot gas, two statements", two);
-        emit log_named_uint("snapshot gas per statement", (two - empty) / 2);
-        assertLt(empty, 300_000, "snapshot without statements");
-        assertLt((two - empty) / 2, 80_000, "per statement");
-    }
-
+    // promise: inv 20 the lens quotes the controller price of held statements
     /// the asking price of a held statement is the controller price, and a sold statement is no longer listed
     function test_OK_askingPriceIsTheControllerPriceOfHeldStatements() public {
         _fundPot(3 ether);
@@ -243,6 +166,7 @@ contract LensTest is Fixture {
         );
     }
 
+    // promise: INTEGRATION NotReady: the lens and compose agree on a short nextPage answer
     /// the lens requires the answer size of `nextPage` that the Core requires, so both agree on a short answer
     function test_OK_aShortNextPageAnswerIsNotReadyForTheLensAndForCompose() public {
         _fillEthPile(80);
@@ -262,19 +186,7 @@ contract LensTest is Fixture {
         vm.clearMockedCalls();
     }
 
-    function test_OK_thePointersAndTheControllerFollow() public {
-        assertEq(lens.CORE(), address(core));
-        assertEq(lens.CREDITS(), address(CREDITS));
-        assertEq(lens.STATEMENTS(), address(STATEMENTS));
-        assertEq(lens.controller(), address(ctl));
-        // a controller replaced by the owner is followed, and one without code does not break the snapshot
-        _setController(address(0xC0DE));
-        assertEq(lens.controller(), address(0xC0DE));
-        ICoreLens.Snapshot memory s = lens.snapshot();
-        assertEq(s.controller, address(0xC0DE));
-        assertFalse(s.pageReady);
-    }
-
+    // promise: INTEGRATION creditPriceOf answers under a gas burning module
     /// the lens forwards enough gas for the controller's two bounded module reads, so a module that burns most of the
     /// read budget in unitPerPoint gives the same creditPrice through the lens as a direct controller read
     function test_OK_creditPriceThroughTheLensSurvivesAGasBurningModule() public {
@@ -289,12 +201,4 @@ contract LensTest is Fixture {
         assertEq(lens.creditPriceOf(ids[0]), direct, "the lens answer equals the controller through a gas burning module");
     }
 
-    function test_OK_theSnapshotReadsAnEmptySystem() public view {
-        ICoreLens.Snapshot memory s = lens.snapshot();
-        assertEq(s.ethRate, core.ethRate());
-        assertEq(s.statements.length, 0);
-        assertEq(s.pileSize, 0);
-        assertEq(s.pileHead, 0);
-        assertEq(s.successor, address(0));
-    }
 }

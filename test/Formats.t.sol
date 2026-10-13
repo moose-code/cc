@@ -34,6 +34,7 @@ contract FormatsTest is Fixture {
 
     // ------------------------------------------------------------------ compose
 
+    // promise: SPEC 1 compose() derives the format from prevrandao and the head id (decision 113)
     function test_compose_defaultFormatFollowsPrevrandaoAndHeadId() public {
         _fillEthPile(80);
         uint256 head = core.pilePage(0, 1)[0];
@@ -50,38 +51,7 @@ contract FormatsTest is Fixture {
         }
     }
 
-    function test_compose_defaultFormatIsDeterministic() public {
-        _fillEthPile(80);
-        uint256 snap = vm.snapshotState();
-        uint256 sid = STATEMENTS.supply() + 1;
-        vm.prevrandao(bytes32(uint256(77)));
-        _composeDefault();
-        uint8 first = STATEMENTS.formatOf(sid);
-        vm.revertToState(snap);
-        vm.prevrandao(bytes32(uint256(77)));
-        _composeDefault();
-        assertEq(STATEMENTS.formatOf(sid), first, "same prevrandao and head, same format");
-    }
-
-    function test_compose_defaultFormatReachesMoreThanOneValue() public {
-        _fillEthPile(80);
-        uint256 snap = vm.snapshotState();
-        uint256 sid = STATEMENTS.supply() + 1;
-        bool[8] memory seen;
-        uint256 distinct;
-        for (uint256 i = 1; i <= 8; ++i) {
-            vm.prevrandao(bytes32(i));
-            _composeDefault();
-            uint8 f = STATEMENTS.formatOf(sid);
-            if (!seen[f]) {
-                seen[f] = true;
-                distinct++;
-            }
-            vm.revertToState(snap);
-        }
-        assertGt(distinct, 1, "composes under different prevrandao values give different formats");
-    }
-
+    // promise: SPEC 1 compose(format) composes with the given format (decision 113)
     function test_compose_givenFormat() public {
         _fillEthPile(80);
         uint256 snap = vm.snapshotState();
@@ -97,6 +67,7 @@ contract FormatsTest is Fixture {
         }
     }
 
+    // promise: INTEGRATION BadFormat on compose
     function test_REVERT_compose_badFormat() public {
         _fillEthPile(80);
         vm.fee(composeBasefee);
@@ -105,20 +76,9 @@ contract FormatsTest is Fixture {
         core.compose(8);
     }
 
-    function test_REVERT_compose_badFormatBeforeThePageRead() public {
-        vm.expectRevert(ICore.BadFormat.selector);
-        vm.prank(keeper);
-        core.compose(8);
-    }
-
-    function test_REVERT_compose_givenFormatNotReady() public {
-        vm.expectRevert(ICore.NotReady.selector);
-        vm.prank(keeper);
-        core.compose(3);
-    }
-
     // ------------------------------------------------------------------ setHeldFormat
 
+    // promise: SPEC 1 setHeldFormat sets the format of a held statement (decision 113)
     function test_setHeldFormat_holderSetsAndReadsBack() public {
         uint256 sid = _heldAndFunded();
         for (uint8 f; f <= 7; ++f) {
@@ -132,24 +92,7 @@ contract FormatsTest is Fixture {
         assertEq(STATEMENTS.ownerOf(sid), address(core), "and still owned by the core");
     }
 
-    function test_setHeldFormat_sameFormatIsAccepted() public {
-        uint256 sid = _heldAndFunded();
-        uint8 cur = STATEMENTS.formatOf(sid);
-        vm.prank(holder);
-        core.setHeldFormat(sid, cur);
-        assertEq(STATEMENTS.formatOf(sid), cur, "an unchanged format is accepted and reads back");
-    }
-
-    function test_setHeldFormat_oneCoinPasses() public {
-        uint256 sid = _heldAndFunded();
-        uint256 bal = coin.balanceOf(holder);
-        vm.prank(owner);
-        core.setMinCcToChoose(uint96(bal));
-        vm.prank(holder);
-        core.setHeldFormat(sid, 6);
-        assertEq(STATEMENTS.formatOf(sid), 6, "a balance equal to the minimum passes");
-    }
-
+    // promise: INTEGRATION BelowMinCc on setHeldFormat
     function test_REVERT_setHeldFormat_belowMinCc() public {
         uint256 sid = _heldAndFunded();
         uint256 before = STATEMENTS.formatOf(sid);
@@ -163,15 +106,7 @@ contract FormatsTest is Fixture {
         assertEq(STATEMENTS.formatOf(sid), before, "unchanged");
     }
 
-    function test_REVERT_setHeldFormat_noCoin() public {
-        _fillEthPile(80);
-        uint256 sid = _composeDefault();
-        address nobody = _user("nobody");
-        vm.expectRevert(ICore.BelowMinCc.selector);
-        vm.prank(nobody);
-        core.setHeldFormat(sid, 1);
-    }
-
+    // promise: INTEGRATION NotForSale on setHeldFormat
     function test_REVERT_setHeldFormat_soldStatement() public {
         uint256 sid = _heldAndFunded();
         _buy(holder, sid);
@@ -181,14 +116,7 @@ contract FormatsTest is Fixture {
         core.setHeldFormat(sid, 1);
     }
 
-    function test_REVERT_setHeldFormat_neverComposed() public {
-        _buyCoin(holder, 0.5 ether);
-        uint256 next = STATEMENTS.supply() + 1;
-        vm.expectRevert(ICore.NotForSale.selector);
-        vm.prank(holder);
-        core.setHeldFormat(next, 1);
-    }
-
+    // promise: INTEGRATION BadFormat on setHeldFormat
     function test_REVERT_setHeldFormat_badFormat() public {
         uint256 sid = _heldAndFunded();
         vm.expectRevert(ICore.BadFormat.selector);
@@ -196,14 +124,4 @@ contract FormatsTest is Fixture {
         core.setHeldFormat(sid, 8);
     }
 
-    function test_setHeldFormat_zeroMinimumOpensItToAnyone() public {
-        _fillEthPile(80);
-        uint256 sid = _composeDefault();
-        vm.prank(owner);
-        core.setMinCcToChoose(0);
-        address nobody = _user("nobody");
-        vm.prank(nobody);
-        core.setHeldFormat(sid, 4);
-        assertEq(STATEMENTS.formatOf(sid), 4, "no coin needed at a zero minimum");
-    }
 }

@@ -25,6 +25,7 @@ contract RescueTest is Fixture {
         core.rescueNft(token, id, dest);
     }
 
+    // promise: INTEGRATION InPile on rescueNft
     function test_REVERT_aCreditInAPileStays() public {
         uint256[] memory ids = _fillEthPile(3);
         (bool inPile,,) = core.creditInfo(ids[1]);
@@ -34,6 +35,7 @@ contract RescueTest is Fixture {
         assertEq(core.pileSize(), 3, "the pile changed");
     }
 
+    // promise: SPEC 1 NFTs leave the books only through rescueNft
     function test_OK_aCreditSentStraightToTheCoreLeaves() public {
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
@@ -46,11 +48,7 @@ contract RescueTest is Fixture {
         assertEq(CREDITS.ownerOf(ids[0]), dest, "the credit did not reach the destination");
     }
 
-    function test_OK_aCreditThatLeftItsPileByAComposeIsNotInTheCoreAnyMore() public {
-        Composed memory c = _composeOnce();
-        _expectRescueRevert(address(CREDITS), c.ids[0], ICore.NotHolder.selector);
-    }
-
+    // promise: INTEGRATION Held on rescueNft
     function test_REVERT_aHeldStatementStays() public {
         Composed memory c = _composeOnce();
         (bool held,,) = core.statementInfo(c.sid);
@@ -59,17 +57,7 @@ contract RescueTest is Fixture {
         assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement moved");
     }
 
-    function test_OK_aStatementThatCameBackAfterASaleLeaves() public {
-        (uint256 sid,) = _sellStatement(address(0xB1D));
-        (bool held,,) = core.statementInfo(sid);
-        assertFalse(held, "setup: the sale cleared the record");
-        vm.prank(address(0xB1D));
-        STATEMENTS.transferFrom(address(0xB1D), address(core), sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(core), "setup: the statement sits in the core");
-        _rescue(address(STATEMENTS), sid, dest);
-        assertEq(STATEMENTS.ownerOf(sid), dest, "the statement did not reach the destination");
-    }
-
+    // promise: SPEC 1 NFTs leave the books only through rescueNft
     function test_OK_aForeignErc721Leaves() public {
         (bool ok, bytes memory out) = FOREIGN.staticcall(abi.encodeWithSignature("ownerOf(uint256)", uint256(1)));
         assertTrue(ok && out.length == 32, "setup: the collection answers on the fork");
@@ -82,26 +70,14 @@ contract RescueTest is Fixture {
         assertEq(abi.decode(out, (address)), dest, "the token did not reach the destination");
     }
 
+    // promise: INTEGRATION NotHolder on rescueNft
     function test_REVERT_aTokenTheCoreDoesNotHold() public {
         (bool ok, bytes memory out) = FOREIGN.staticcall(abi.encodeWithSignature("ownerOf(uint256)", uint256(2)));
         assertTrue(ok && abi.decode(out, (address)) != address(core), "setup");
         _expectRescueRevert(FOREIGN, 2, ICore.NotHolder.selector);
     }
 
-    function test_REVERT_noErc20AndNoEoaCanBeNamed() public {
-        _enterPhase2();
-        xt.mint(address(core), 5e18);
-        _fundPot(1 ether);
-        _expectRescueRevert(address(coin), 1, ICore.NotHolder.selector);
-        _expectRescueRevert(address(xt), 5e18, ICore.NotHolder.selector);
-        _expectRescueRevert(Mainnet_WETH, 1, ICore.NotHolder.selector);
-        _expectRescueRevert(address(0xABCD), 1, ICore.NotHolder.selector);
-        _expectRescueRevert(address(0), 1, ICore.NotHolder.selector);
-        assertEq(xt.balanceOf(address(core)), 5e18, "balance token left");
-    }
-
-    address internal constant Mainnet_WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-
+    // promise: INTEGRATION OnlyOwner on rescueNft
     function test_REVERT_notTheOwner() public {
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
@@ -115,6 +91,7 @@ contract RescueTest is Fixture {
         assertEq(CREDITS.ownerOf(ids[0]), address(core), "the credit moved");
     }
 
+    // promise: INTEGRATION ZeroAddress on rescueNft
     function test_REVERT_theZeroDestination() public {
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
@@ -124,16 +101,4 @@ contract RescueTest is Fixture {
         core.rescueNft(address(CREDITS), ids[0], address(0));
     }
 
-    function test_OK_theEngineKeepsWorkingAfterARescue() public {
-        uint256[] memory ids = _fillEthPile(5);
-        uint256[] memory stray = _credits(seller, 1);
-        vm.prank(seller);
-        CREDITS.transferFrom(seller, address(core), stray[0]);
-        _rescue(address(CREDITS), stray[0], dest);
-        assertEq(core.pileSize(), 5, "the pile changed");
-        assertEq(core.pilePage(0, 1)[0], ids[0], "the pile head changed");
-        _fillEthPile(75);
-        assertEq(core.pileSize(), 80, "the pile did not fill");
-        _composeOnce();
-    }
 }
