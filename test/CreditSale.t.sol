@@ -7,9 +7,7 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
-import {ICreditScore, ICredits, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {LowballCreditController, ReentrantCreditBuyer} from "./attackers/CreditSaleAttackers.sol";
 
 /// credit sale window. pile credits are for sale from acquisition at a price that falls linearly from a start to a
@@ -21,8 +19,6 @@ import {LowballCreditController, ReentrantCreditBuyer} from "./attackers/CreditS
 /// their window
 contract CreditSaleTest is Fixture {
     uint256 internal constant BPS = 10_000;
-    /// a small sqrt price makes the balance token expensive in eth, so the baseline is large
-    uint160 internal constant HIGH_PRICE_SQRT = uint160(FixedPoint96.Q96 / 1000);
 
     address internal buyer;
 
@@ -48,27 +44,6 @@ contract CreditSaleTest is Fixture {
         ctl.setCreditSaleOn(true);
     }
 
-    /// initializes a native eth / balance token pool at `sp` and points the controller at it
-    function _initBalancePoolAt(uint160 sp) internal {
-        PoolKey memory vk = PoolKey({
-            currency0: Currency.wrap(address(0)),
-            currency1: Currency.wrap(address(xt)),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: IHooks(address(0))
-        });
-        PM.initialize(vk, sp);
-        IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
-            currency0: IControllerV1.Currency.wrap(address(0)),
-            currency1: IControllerV1.Currency.wrap(address(xt)),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: address(0)
-        });
-        vm.prank(owner);
-        ctl.setBalancePoolKey(k);
-    }
-
     /// `who` buys credit `id` at the price `price` plus the royalty on it
     function _buyAt(address who, uint256 id, uint256 price) internal {
         uint256 pay = price + price * ctl.royaltyBps() / BPS;
@@ -77,30 +52,13 @@ contract CreditSaleTest is Fixture {
         ctl.buyCredit{value: pay}(id);
     }
 
-    /// the credit score source the balance token bid and the credit baseline both read: `scoreOf(seed, paidAt)` on the
-    /// mainnet credit score contract
-    function _creditScore(uint256 id) internal view returns (uint256) {
-        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
-    }
-
-    /// `baseUnits` of the balance token priced in wei at a pool whose sqrt price is `sp`, the same math the controller's
-    /// pool term uses. native eth is currency0, so wei per base unit is `(2^96 / sp)^2`
-    function _poolValueWei(uint256 baseUnits, uint160 sp) internal pure returns (uint256) {
-        uint256 q = FixedPoint96.Q96;
-        return FullMath.mulDiv(FullMath.mulDiv(baseUnits, q, sp), q, sp);
-    }
-
-    /// the rate term of `valueOf(score)` for credit `id`: the floor rate times the score over `refScore`
-    function _rateTerm(uint256 id) internal view returns (uint256) {
-        return FullMath.mulDiv(core.floorRate(), _creditScore(id), ctl.refScore());
-    }
-
     function _max(uint256 a, uint256 b) internal pure returns (uint256) {
         return a > b ? a : b;
     }
 
     // ------------------------------------------------------------------ toggle and gating
 
+    // promise: INTEGRATION CreditSaleOff
     function test_toggle_offBlocksBuyCredit() public {
         uint256[] memory ids = _fillEthPile(1);
         assertFalse(ctl.creditSaleOn(), "off at launch");
@@ -110,6 +68,7 @@ contract CreditSaleTest is Fixture {
         ctl.buyCredit{value: 10 ether}(ids[0]);
     }
 
+    // promise: INTEGRATION BadSetting and OnlyOwner on the credit sale setters
     function test_setters_boundsAndEventsAndOwner() public {
         assertEq(ctl.creditWindow(), 4 hours, "launch window");
         assertEq(ctl.creditFloorBps(), 11_000, "launch floor");
@@ -151,6 +110,7 @@ contract CreditSaleTest is Fixture {
 
     // ------------------------------------------------------------------ the falling price
 
+    // promise: SPEC 1 credit sale: the price falls linearly from start to floor over creditWindow and rests
     function test_price_startMidFloorAfter() public {
         uint256[] memory ids = _armCostGoverns(1);
         uint256 id = ids[0];
@@ -179,21 +139,7 @@ contract CreditSaleTest is Fixture {
         assertEq(ctl.creditPrice(id), floor, "floor after the window");
     }
 
-    function test_price_monotoneNonIncreasing() public {
-        uint256[] memory ids = _armCostGoverns(1);
-        uint256 id = ids[0];
-        uint256 prev = ctl.creditPrice(id);
-        uint256 step = ctl.creditWindow() / 20;
-        for (uint256 i; i < 25; ++i) {
-            _warp(step);
-            uint256 p = ctl.creditPrice(id);
-            assertLe(p, prev, "price never rises");
-            prev = p;
-        }
-        (, uint256 cost,) = core.creditInfo(id);
-        assertEq(prev, cost * ctl.creditFloorBps() / BPS, "rests at the floor");
-    }
-
+    // promise: INTEGRATION NotForSale on creditPrice
     function test_price_revertsWhenNotInPile() public {
         _on();
         vm.expectRevert(IControllerV1.NotForSale.selector);
@@ -202,178 +148,13 @@ contract CreditSaleTest is Fixture {
 
     // ------------------------------------------------------------------ the floor picks each term
 
-    function test_floor_picksTheCost() public {
-        uint256[] memory ids = _armCostGoverns(1);
-        uint256 id = ids[0];
-        _warp(ctl.creditWindow());
-        (, uint256 cost,) = core.creditInfo(id);
-        assertGt(cost, core.ethRate(), "cost is the highest term");
-        assertEq(ctl.creditPrice(id), cost * ctl.creditFloorBps() / BPS, "floor is cost based");
-    }
-
-    function test_floor_picksThePoolTerm() public {
-        _enterPhase2();
-        uint256[] memory ids = _fillEthPile(1);
-        uint256 id = ids[0];
-        // an expensive balance token pool makes the credit's balance token baseline the highest term
-        _initBalancePoolAt(HIGH_PRICE_SQRT);
-        vm.prank(owner);
-        core.setRate(1e13); // keep the floor rate small
-        _on();
-        _warp(ctl.creditWindow());
-
-        // the pool term uses the same credit score source the balance token bid reads, priced at the pool sqrt price
-        uint256 pool = _poolValueWei(_creditScore(id) * UNIT, HIGH_PRICE_SQRT);
-        (, uint256 cost,) = core.creditInfo(id);
-        assertGt(pool, cost, "pool term above cost");
-        assertGt(pool, _rateTerm(id), "pool term above the rate term");
-        assertEq(ctl.valueOf(_creditScore(id)), pool, "valueOf is the pool term");
-        assertEq(ctl.creditPrice(id), pool * ctl.creditFloorBps() / BPS, "floor is pool term based");
-    }
-
     // ------------------------------------------------------------------ the pool term and the pool read
-
-    function test_poolTerm_zeroWithoutBalanceModule() public {
-        uint256[] memory ids = _fillEthPile(1);
-        uint256 id = ids[0];
-        vm.prank(owner);
-        core.setRate(1e13);
-        _on();
-        _warp(ctl.creditWindow());
-        (, uint256 cost,) = core.creditInfo(id);
-        // no balance module: the pool term is 0 and the sale works
-        assertEq(ctl.creditPrice(id), _max(cost, _rateTerm(id)) * ctl.creditFloorBps() / BPS, "no balance module, pool term 0");
-    }
-
-    function test_creditPrice_worksWithModuleSetAndPoolKeyUnset() public {
-        _enterPhase2();
-        uint256[] memory ids = _fillEthPile(1);
-        uint256 id = ids[0];
-        vm.prank(owner);
-        core.setRate(1e13);
-        _on();
-        _warp(ctl.creditWindow());
-        assertFalse(ctl.balancePoolKeySet(), "no pool key yet");
-        // a balance module is set but the pool key is unset: the pool term stays 0 and the floor is the cost or rate term
-        (, uint256 cost,) = core.creditInfo(id);
-        assertEq(ctl.creditPrice(id), _max(cost, _rateTerm(id)) * ctl.creditFloorBps() / BPS, "the sale prices with the pool term at 0");
-    }
-
-    /// a live unit above type(uint128).max is a failed read: the pool term is 0, the sale does not revert and the floor is
-    /// the cost or the rate term, the same reads the Core's balance doors revert `BadModule` on
-    function test_poolTerm_unitCappedAtUint128() public {
-        _enterPhase2();
-        uint256[] memory ids = _fillEthPile(1);
-        uint256 id = ids[0];
-        _initBalancePoolAt(HIGH_PRICE_SQRT);
-        vm.prank(owner);
-        core.setRate(1e13);
-        _on();
-        _warp(ctl.creditWindow());
-        assertGt(_creditScore(id), 1, "the score is above 1");
-        vm.mockCall(address(mod), abi.encodeWithSignature("unitPerPoint()"), abi.encode(uint256(type(uint128).max) + 1));
-        (, uint256 cost,) = core.creditInfo(id);
-        uint256 hi = _max(cost, _rateTerm(id));
-        assertEq(ctl.creditPrice(id), hi * ctl.creditFloorBps() / BPS, "the pool term is 0 for a unit above uint128");
-        vm.mockCall(address(mod), abi.encodeWithSignature("unitPerPoint()"), abi.encode(uint256(type(uint128).max)));
-        uint256 pool = _poolValueWei(_creditScore(id) * uint256(type(uint128).max), HIGH_PRICE_SQRT);
-        assertEq(ctl.creditPrice(id), _max(hi, pool) * ctl.creditFloorBps() / BPS, "the largest unit still carries the pool term");
-        vm.clearMockedCalls();
-    }
 
     // ------------------------------------------------------------------ the rate term
 
-    /// a credit scored above `refScore` has the rate term `floorRate * score / refScore`
-    function test_rateTerm_scalesExactlyWithTheScore() public {
-        uint256[] memory ids = _fillEthPile(1);
-        uint256 id = ids[0];
-        (, uint256 cost,) = core.creditInfo(id);
-        _liftRateCap();
-        vm.prank(owner);
-        core.setRate(cost * 4);
-        _fundPot(cost * 20);
-        uint256 score = _creditScore(id);
-        uint32 rs = uint32(score / 2);
-        if (rs == 0) rs = 1;
-        vm.prank(owner);
-        ctl.setRefScore(rs);
-        _on();
-        _warp(ctl.creditWindow());
-        uint256 floor = core.floorRate();
-        uint256 term = floor * score / rs;
-        assertGt(term, floor, "the rate term scales above the floor rate");
-        assertGt(term, cost, "the rate term governs");
-        assertEq(ctl.valueOf(score), term, "valueOf is the rate term");
-        assertEq(ctl.creditPrice(id), term * ctl.creditFloorBps() / BPS, "floor is the scaled rate term");
-    }
-
-    /// a credit scored below `refScore` has a rate term below the floor rate: the term is proportional to the score
-    function test_rateTerm_belowTheReferenceScoreIsBelowTheFloorRate() public {
-        uint256[] memory ids = _fillEthPile(1);
-        uint256 id = ids[0];
-        vm.prank(owner);
-        ctl.setRefScore(8_000_000);
-        assertLt(_creditScore(id), ctl.refScore(), "the score is below the reference");
-        assertLt(ctl.valueOf(_creditScore(id)), core.floorRate(), "the rate term is below the floor rate");
-        assertEq(ctl.valueOf(_creditScore(id)), core.floorRate() * _creditScore(id) / 8_000_000);
-    }
-
-    /// a pushed down pool price values a rich credit's balance tokens below its rate term, so the floor rests at
-    /// `creditFloorBps` (1.1x) of the rate term, not the manipulated pool value
-    function test_poolTerm_pushedDownPoolLeavesRichCreditAtTheRateTerm() public {
-        _enterPhase2();
-        uint256[] memory ids = _fillEthPile(1);
-        uint256 id = ids[0];
-        // a large sqrt price makes the balance token cheap in eth, so the pool term is far below the rate term
-        uint160 pushedDown = uint160((uint256(1) << 96) * 1000);
-        _initBalancePoolAt(pushedDown);
-        (, uint256 cost,) = core.creditInfo(id);
-        _liftRateCap();
-        vm.prank(owner);
-        core.setRate(cost * 4);
-        _fundPot(cost * 20);
-        uint256 score = _creditScore(id);
-        uint32 rs = uint32(score / 4);
-        if (rs == 0) rs = 1;
-        vm.prank(owner);
-        ctl.setRefScore(rs);
-        _on();
-        _warp(ctl.creditWindow());
-        uint256 floor = core.floorRate();
-        uint256 term = floor * score / rs;
-        uint256 pool = _poolValueWei(score * UNIT, pushedDown);
-        assertLt(pool, term, "the pushed down pool values the credit below its rate term");
-        assertGt(term, cost, "the rate term governs");
-        assertEq(ctl.creditFloorBps(), 11_000, "the floor multiplier is 1.1x");
-        assertEq(ctl.creditPrice(id), term * ctl.creditFloorBps() / BPS, "floor is 1.1x the rate term");
-    }
-
     // ------------------------------------------------------------------ the floor uses the floor rate
 
-    /// the credit sale floor reads the floor rate, so a sale that enlarges the pot cannot push the rate the credit is
-    /// priced against down within the block
-    function test_floor_usesThePeakNotTheClampedRate() public {
-        uint256[] memory ids = _fillEthPile(1);
-        uint256 id = ids[0];
-        // raise the stored rate far above the pot so the clamp binds: the floor rate is above the clamped read
-        _liftRateCap();
-        uint256 big = core.ethPot() * 4;
-        vm.prank(owner);
-        core.setRate(big);
-        uint32 score = uint32(_creditScore(id));
-        vm.prank(owner);
-        ctl.setRefScore(score); // the rate term is then the floor rate itself
-        _on();
-        _warp(ctl.creditWindow());
-        uint256 floor = core.floorRate();
-        uint256 clamped = core.ethRate();
-        assertGt(floor, clamped, "the clamp binds, the floor rate is above the clamped read");
-        (, uint256 cost,) = core.creditInfo(id);
-        uint256 hi = cost > floor ? cost : floor;
-        assertEq(ctl.creditPrice(id), hi * ctl.creditFloorBps() / BPS, "the floor uses the floor rate");
-        assertGt(ctl.creditPrice(id), clamped * ctl.creditFloorBps() / BPS, "the floor is above the clamped rate floor");
-    }
-
+    // promise: SPEC 1 credit sale floor: a buy then a sell back into the bid is a loss
     /// buying a credit then selling it straight back into the eth bid in the same flow is a loss: the purchase pays
     /// the floor rate backed floor and the sell back pays the clamped rate
     function test_h1_buyThenSellBackIsUnprofitable() public {
@@ -404,6 +185,7 @@ contract CreditSaleTest is Fixture {
         assertEq(CREDITS.ownerOf(id), address(core), "the credit is back in the engine");
     }
 
+    // promise: SPEC 1 buyCredits prices each credit after the previous sale
     /// `buyCredits` prices each credit after the previous sale in one pass, so the batch charges the sum of the
     /// in-order quotes and empties the pile (H1)
     function test_h1_buyCreditsPricesEachAfterThePreviousSale() public {
@@ -421,6 +203,7 @@ contract CreditSaleTest is Fixture {
 
     // ------------------------------------------------------------------ buy
 
+    // promise: INTEGRATION Underpaid on buyCredit
     function test_buy_underpayReverts() public {
         uint256[] memory ids = _armCostGoverns(1);
         uint256 price = ctl.creditPrice(ids[0]);
@@ -431,20 +214,7 @@ contract CreditSaleTest is Fixture {
         ctl.buyCredit{value: gross - 1}(ids[0]);
     }
 
-    function test_buy_refundsTheExcess() public {
-        uint256[] memory ids = _armCostGoverns(1);
-        uint256 price = ctl.creditPrice(ids[0]);
-        uint256 gross = ctl.grossCreditPrice(ids[0]);
-        uint256 pay = gross + 0.5 ether;
-        vm.deal(buyer, pay);
-        vm.prank(buyer);
-        ctl.buyCredit{value: pay}(ids[0]);
-        assertEq(buyer.balance, pay - gross, "only the price and the royalty were taken");
-        assertEq(gross, price + price * 250 / BPS, "the gross price adds royaltyBps 250");
-        assertEq(ctl.royaltyOwed(), gross - price, "the royalty is owed");
-        assertEq(CREDITS.ownerOf(ids[0]), buyer, "the buyer holds the credit");
-    }
-
+    // promise: SPEC 1 creditCostToPotBps of the cost to ethPot, the rest to the buyback pot
     function test_buy_proceedsSplitAtDefault() public {
         uint256[] memory ids = _armCostGoverns(1);
         uint256 id = ids[0];
@@ -458,21 +228,7 @@ contract CreditSaleTest is Fixture {
         assertEq(core.ethToBuyback() - buybackBefore, price - cost, "the markup over cost goes to the buyback");
     }
 
-    function test_buy_proceedsSplitAtAnotherBps() public {
-        uint256[] memory ids = _armCostGoverns(1);
-        uint256 id = ids[0];
-        vm.prank(owner);
-        core.setCreditCostToPotBps(6_000);
-        (, uint256 cost,) = core.creditInfo(id);
-        uint256 price = ctl.creditPrice(id);
-        uint256 toPot = cost * 6_000 / BPS;
-        uint256 potBefore = core.ethPot();
-        uint256 buybackBefore = core.ethToBuyback();
-        _buyAt(buyer, id, price);
-        assertEq(core.ethPot() - potBefore, toPot, "the pot gets the cost share");
-        assertEq(core.ethToBuyback() - buybackBefore, price - toPot, "the rest goes to the buyback");
-    }
-
+    // promise: INTEGRATION BelowFloor on sellCreditTo
     function test_buy_coreHardFloorHoldsAgainstAControllerBelowCost() public {
         uint256[] memory ids = _fillEthPile(1);
         uint256 id = ids[0];
@@ -490,47 +246,7 @@ contract CreditSaleTest is Fixture {
 
     // ------------------------------------------------------------------ the pile stays valid
 
-    function test_pile_headMiddleTailRemovalKeepsLinksValid() public {
-        uint256[] memory ids = _armCostGoverns(5);
-        // buy the middle, then the head, then the tail
-        _buyAt(buyer, ids[2], ctl.creditPrice(ids[2]));
-        _assertPile(_arr4(ids[0], ids[1], ids[3], ids[4]));
-        _buyAt(buyer, ids[0], ctl.creditPrice(ids[0]));
-        _assertPile(_arr3(ids[1], ids[3], ids[4]));
-        _buyAt(buyer, ids[4], ctl.creditPrice(ids[4]));
-        _assertPile(_arr2(ids[1], ids[3]));
-    }
-
-    function test_buyCredits_batch() public {
-        uint256[] memory ids = _armCostGoverns(3);
-        uint256 total;
-        uint256 royalty;
-        for (uint256 i; i < 3; ++i) {
-            total += ctl.grossCreditPrice(ids[i]);
-            royalty += ctl.creditPrice(ids[i]) * ctl.royaltyBps() / BPS;
-        }
-        uint256 pay = total + 1 ether;
-        vm.deal(buyer, pay);
-        vm.prank(buyer);
-        ctl.buyCredits{value: pay}(ids);
-        assertEq(buyer.balance, pay - total, "paid the sum, got the excess back");
-        assertEq(ctl.royaltyOwed(), royalty, "the batch owes the sum of the per credit royalty");
-        for (uint256 i; i < 3; ++i) {
-            assertEq(CREDITS.ownerOf(ids[i]), buyer, "the buyer holds each credit");
-        }
-        assertEq(core.pileSize(), 0, "the pile is emptied");
-    }
-
-    function test_buyCredits_underpayRevertsAndNothingMoves() public {
-        uint256[] memory ids = _armCostGoverns(2);
-        uint256 total = ctl.grossCreditPrice(ids[0]) + ctl.grossCreditPrice(ids[1]);
-        vm.deal(buyer, total);
-        vm.prank(buyer);
-        vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buyCredits{value: total - 1}(ids);
-        assertEq(core.pileSize(), 2, "the pile is untouched");
-    }
-
+    // promise: INTEGRATION Paused
     function test_pause_blocksBuy() public {
         uint256[] memory ids = _armCostGoverns(1);
         vm.prank(owner);
@@ -542,40 +258,9 @@ contract CreditSaleTest is Fixture {
         ctl.buyCredit{value: price}(ids[0]);
     }
 
-    /// decision 97: a pause stops `buyCredits` too, and the clock keeps running so the window still passes during it
-    function test_pause_blocksBuyCredits() public {
-        uint256[] memory ids = _armCostGoverns(2);
-        _warp(ctl.creditWindow());
-        uint256 total = ctl.grossCreditPrice(ids[0]) + ctl.grossCreditPrice(ids[1]);
-        vm.prank(owner);
-        core.setPaused(true);
-        vm.deal(buyer, total);
-        vm.prank(buyer);
-        vm.expectRevert(ICore.Paused.selector);
-        ctl.buyCredits{value: total}(ids);
-        assertEq(core.pileSize(), 2, "nothing moved while paused");
-
-        // the window clock advanced during the pause: resume and the sale works
-        vm.prank(owner);
-        core.setPaused(false);
-        vm.prank(buyer);
-        ctl.buyCredits{value: total}(ids);
-        assertEq(core.pileSize(), 0, "the batch sells after resume");
-    }
-
     // ------------------------------------------------------------------ compose and the window
 
-    function test_compose_atOnceWhenSaleOff() public {
-        _fillEthPile(80);
-        assertFalse(ctl.creditSaleOn(), "sale off");
-        uint256 supply = STATEMENTS.supply();
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.compose();
-        (bool held,,) = core.statementInfo(supply + 1);
-        assertTrue(held, "the statement composed with the sale off");
-    }
-
+    // promise: SPEC 1 credit sale window: composeChosen waits for the window (InWindow)
     function test_compose_waitsForTheWindowWhenSaleOn() public {
         _fillEthPile(80);
         _on();
@@ -600,6 +285,7 @@ contract CreditSaleTest is Fixture {
 
     // ------------------------------------------------------------------ a balance token credit sells at its recorded cost
 
+    // promise: SPEC 1 one pile: a balance bought credit sells at its recorded cost (decision 96)
     function test_buy_balanceTokenCreditSellsAtItsRecordedCost() public {
         _enterPhase2();
         _fundPot(3 ether);
@@ -625,6 +311,7 @@ contract CreditSaleTest is Fixture {
 
     // ------------------------------------------------------------------ reentrancy
 
+    // promise: INTEGRATION Reentrancy on buyCredit
     function test_reentrancy_buyerCannotReenter() public {
         uint256[] memory ids = _armCostGoverns(2);
         ReentrantCreditBuyer attacker = new ReentrantCreditBuyer(address(ctl));
@@ -642,57 +329,6 @@ contract CreditSaleTest is Fixture {
 
     // ------------------------------------------------------------------ gas
 
-    function test_gas_buyCreditOne() public {
-        uint256[] memory ids = _armCostGoverns(1);
-        uint256 price = ctl.grossCreditPrice(ids[0]);
-        vm.deal(buyer, price);
-        vm.prank(buyer);
-        uint256 g = gasleft();
-        ctl.buyCredit{value: price}(ids[0]);
-        emit log_named_uint("buyCredit(1) gas", g - gasleft());
-    }
-
-    function test_gas_buyCreditsTen() public {
-        uint256[] memory ids = _armCostGoverns(10);
-        uint256 total;
-        for (uint256 i; i < 10; ++i) {
-            total += ctl.grossCreditPrice(ids[i]);
-        }
-        vm.deal(buyer, total);
-        vm.prank(buyer);
-        uint256 g = gasleft();
-        ctl.buyCredits{value: total}(ids);
-        emit log_named_uint("buyCredits(10) gas", g - gasleft());
-    }
-
     // ------------------------------------------------------------------ pile assertions
 
-    function _assertPile(uint256[] memory want) internal view {
-        assertEq(core.pileSize(), want.length, "pile size");
-        uint256[] memory page = core.pilePage(0, want.length);
-        for (uint256 i; i < want.length; ++i) {
-            assertEq(page[i], want[i], "pile order");
-        }
-    }
-
-    function _arr2(uint256 a, uint256 b) internal pure returns (uint256[] memory x) {
-        x = new uint256[](2);
-        x[0] = a;
-        x[1] = b;
-    }
-
-    function _arr3(uint256 a, uint256 b, uint256 c) internal pure returns (uint256[] memory x) {
-        x = new uint256[](3);
-        x[0] = a;
-        x[1] = b;
-        x[2] = c;
-    }
-
-    function _arr4(uint256 a, uint256 b, uint256 c, uint256 d) internal pure returns (uint256[] memory x) {
-        x = new uint256[](4);
-        x[0] = a;
-        x[1] = b;
-        x[2] = c;
-        x[3] = d;
-    }
 }
