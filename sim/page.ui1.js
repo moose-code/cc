@@ -198,9 +198,9 @@ function toParams(s) {
     basefeeGwei: s.basefeeGwei, keeperFee: s.keeperFee, keeperMaxBaseFee: s.keeperMaxBaseFee,
     buyerWaits: s.buyerWaits, feeToRedeemBurnBps: s.feeToRedeemBurnBps, saleToBuybackBps: s.saleToBuybackBps, royaltyBps: s.royaltyBps,
     anchorHalfLife: Math.round(s.anchorHalfLifeDays * 86400), anchorMinCost: s.anchorMinCost,
-    bidRule: 'stepped', dropPerCreditPct: s.dropPerCreditPct, dropToPct: s.dropToPct, climbPerMin: s.climbPerMin, ceilPct: s.ceilPct, idleLoosenPct: s.idleLoosenPct,
+    dropPerCreditPct: s.dropPerCreditPct, dropToPct: s.dropToPct, climbPerMin: s.climbPerMin, ceilPct: s.ceilPct, idleLoosenPct: s.idleLoosenPct,
     recoveryClimbPerMin: Math.max(s.recoveryClimbPerMin, s.climbPerMin), recoveryGapPct: s.recoveryGapPct, peakHalfLifeHours: s.peakHalfLifeHours, // the Core needs the recovery climb at least the climb
-    stepSec: 300, // 5 minute steps keep a live page responsive, credits within 1 percent of the 60 second steps of the batches
+    stepSec: 300, // 5 minute steps keep a live page responsive: credits within 6 percent of the 60 second steps (30 day runs, seeds 1 to 5)
     rateCap: Math.max(s.rateCap, rateOf(s)), // the Core refuses a deploy with rateStart above rateCap
     creditSaleOn: !!s.creditSaleOn, creditWindow: Math.max(60, Math.round(s.creditWindowHours * 3600)), creditFloorBps: s.creditFloorBps, creditStartBps: s.creditStartBps, creditCostToPotBps: s.creditCostToPotBps, creditBuyersPerDay: s.creditBuyersPerDay, creditWtpMult: s.creditWtpMult,
     refScore: Math.round(s.refScore), chosenComposeOn: !!s.chosenComposeOn, composeChoice: s.composeChoice, balancePoolMult: s.balancePoolMult,

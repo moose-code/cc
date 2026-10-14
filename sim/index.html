@@ -135,10 +135,19 @@ const W = 1e18;
 const BPS = 10000;
 
 // the Core's Settings struct (src/interfaces/Interfaces.sol), same field names, launch values from script/config/mainnet.json.
-// the stepped bid fields of the struct (dropPerCreditBps, dropFloorBps, climbPerMinBps, ceilBps, idleLoosenBps, recoveryClimbPerMinBps,
-// recoveryGapBps, peakHalfLife) are the sim parameters of bidRule stepped below, in percent and hours.
-// durations in seconds, buybackSlice in eth (the Core holds wei). every one can change mid run through `schedule`
+// the stepped bid fields are Settings fields in percent and hours here: dropPerCreditPct = dropPerCreditBps / 100, dropToPct = dropFloorBps / 100,
+// climbPerMin = climbPerMinBps / 100, ceilPct = ceilBps / 100, idleLoosenPct = idleLoosenBps / 100, recoveryClimbPerMin = recoveryClimbPerMinBps / 100,
+// recoveryGapPct = recoveryGapBps / 100, peakHalfLifeHours = peakHalfLife / 3600. durations in seconds, buybackSlice in eth (the Core holds wei).
+// every one can change mid run through `schedule`
 const SETTINGS = {
+  dropPerCreditPct: 0.5, // fall of the bid per credit bought, percent of the bid before that credit (dropPerCreditBps 50)
+  dropToPct: 50, // within one minute the bid stays at or above this percent of the bid at the first fill of that minute (dropFloorBps 5000)
+  climbPerMin: 0.5, // climb of the bid per minute, percent, compounded (climbPerMinBps 50)
+  ceilPct: 110, // the bid stays at or below this percent of the ceiling anchor, the larger of the last fill rate and the remembered peak (ceilBps 11000)
+  idleLoosenPct: 2, // percent added to the ceiling anchor for every full 10 minutes since the last fill, linear (idleLoosenBps 200)
+  recoveryClimbPerMin: 2, // climb per minute while the price state is more than recoveryGapPct below the remembered peak (recoveryClimbPerMinBps 200)
+  recoveryGapPct: 10, // the recovery climb applies only below the remembered peak less this percent (recoveryGapBps 1000)
+  peakHalfLifeHours: 6, // the remembered peak halves in this many hours (peakHalfLife 21600)
   saleFloorBps: 10000, // the one floor (decision 105): the Core takes no sale of a statement below cost * saleFloorBps / 10000 and the controller's curve falls to the reference times saleFloorBps / 10000. launch 100 percent
   saleToBuybackBps: 5000, // share of sale proceeds to the coin buyback, rest to the pot
   buybackSlice: 0.5,
@@ -148,18 +157,13 @@ const SETTINGS = {
   rateCap: 26700000000000000, // wei per credit, 3 times rateStart: the eth rate never passes it (climb clamp, setRate)
   callerFee: 0, // eth. paid to the caller of compose, composeChosen and redeemStatement from the pot, with the gas refund below. launch 0: the simulator does not model these payments
   callerMaxBaseFee: 0, // gwei, the cap on the base fee the refund of those three doors uses. 0 refunds no gas
-  feeToRedeemBurnBps: 1000, // share of swap fee eth booked in _book() that fills the redeem burn reserve, the rest goes to the pot (decision 106)
+  feeToRedeemBurnBps: 1000, // share of the fee income booked by _book() after the payee share that fills the redeem burn reserve, the rest goes to the pot (decision 106)
   payeePpm: 75185, // the payee's share of the fee income booked by _book() once the payee share is on, ppm. 0.5 points of volume at the baseline (docs/DECISIONS.md 112)
   redeemOn: false, // whether redeemStatement runs (decision 107)
   balanceBidOn: false, // whether sellForBalance runs (decision 107)
   redeemSlippageBps: 200, // a redemption must return at least rating * unit * (10000 - redeemSlippageBps) / 10000 (FLOW 84)
   balanceBidMarginBps: 2000, // the balance token bid pays score * unit * (10000 - balanceBidMarginBps) / 10000 per credit (FLOW 84)
   redeemBurnBps: 2000, // share of the redeem burn reserve moved to the coin buyback on each redemption (FLOW 86)
-  // the earlier built bid rule (bidRule 'built') and the dropToLast rule read these. they are not Core settings and are not in the config
-  climbBaseBps: 100, // per hour
-  climbDoubleEvery: 24 * 3600,
-  climbMaxBps: 800, // per hour
-  dropBps: 2000,
 };
 const SETTING_KEYS = Object.keys(SETTINGS);
 // the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement with price reference r (below), in bps of r, starts at
@@ -236,12 +240,16 @@ function controllerViolation(c) {
   return null;
 }
 
-// src/lib/SettingsBounds.sol: the name of the first field out of bounds, or null. the built rule fields come first (sim only)
+// src/lib/SettingsBounds.sol: the name of the first field out of bounds, or null
 function firstViolation(s) {
-  if (s.climbBaseBps > 1000) return 'climbBaseBps';
-  if (s.climbDoubleEvery < 3600 || s.climbDoubleEvery > 30 * 86400) return 'climbDoubleEvery';
-  if (s.climbMaxBps < s.climbBaseBps || s.climbMaxBps > 2000) return 'climbMaxBps';
-  if (s.dropBps < 500 || s.dropBps > 5000) return 'dropBps';
+  if (!(s.dropPerCreditPct >= 0.01 && s.dropPerCreditPct <= 10)) return 'dropPerCreditPct'; // dropPerCreditBps 1 to 1_000
+  if (!(s.dropToPct >= 50 && s.dropToPct <= 100)) return 'dropToPct'; // dropFloorBps 5_000 to 10_000
+  if (!(s.climbPerMin >= 0.01 && s.climbPerMin <= 10)) return 'climbPerMin'; // climbPerMinBps 1 to 1_000
+  if (!(s.ceilPct >= 100 && s.ceilPct <= 300)) return 'ceilPct'; // ceilBps 10_000 to 30_000
+  if (!(s.idleLoosenPct >= 0.01 && s.idleLoosenPct <= 20)) return 'idleLoosenPct'; // idleLoosenBps 1 to 2_000
+  if (!(s.recoveryClimbPerMin >= s.climbPerMin && s.recoveryClimbPerMin <= 10)) return 'recoveryClimbPerMin'; // at least climbPerMinBps, at most 1_000
+  if (!(s.recoveryGapPct >= 0 && s.recoveryGapPct <= 50)) return 'recoveryGapPct'; // recoveryGapBps 0 to 5_000
+  if (!(s.peakHalfLifeHours >= 600 / 3600 && s.peakHalfLifeHours <= 604800 / 3600)) return 'peakHalfLifeHours'; // peakHalfLife 600 to 604_800 seconds
   if (s.saleFloorBps < 1000 || s.saleFloorBps > 40000) return 'saleFloorBps';
   if (s.saleToBuybackBps > 10000) return 'saleToBuybackBps';
   if (s.buybackSlice < 0.01 || s.buybackSlice > 1) return 'buybackSlice';
@@ -259,6 +267,7 @@ function firstViolation(s) {
   if (s.balanceBidMarginBps > 9000) return 'balanceBidMarginBps';
   if (s.redeemSlippageBps > s.balanceBidMarginBps) return 'redeemSlippageBps'; // the balance cycle (bid then redeem) cannot lose more than its margin
   if (s.redeemBurnBps > 10000) return 'redeemBurnBps';
+  if (s.payeePpm > 200000) return 'payeePpm';
   return null;
 }
 // the eth rate bounds of setRate, rateStart and rateCap, wei per credit (Interfaces.sol)
@@ -271,6 +280,7 @@ const CORE_PARAMS = {
   BUYBACK_GAS: 600000, // Core.sol: the gas that sizes the swap budget reserve of a buyback (reserve = BUYBACK_GAS * capped base fee + keeperFee)
   BUYBACK_GAS_USED: 270000, // counted gas of one buyback (measured 270,237 in docs/INTEGRATION.md): what the caller is paid at the capped base fee
   BUYLISTING_GAS: 1500000, // Interfaces.sol: the most gas of a buyListing the caller payment counts
+  LOOSEN_MINUTES: 10, // CoreLib.climb: the ceiling anchor grows by idleLoosenBps per full 10 minutes since the last fill
   BUYLISTING_GAS_USED: 470000, // counted gas of one buyListing through the CreditStrategy (466,714 in test/CoreUnit.t.sol): gas used 418,000 plus the 250,000 overhead less the work after the count
 };
 
@@ -280,25 +290,9 @@ const SIM_DEFAULTS = {
   days: 90,
   stepSec: 60, // time step after the first hour, seconds. a divisor of 3600. 60 matches the minute bucket of the contract's drop floor and climb; hourly steps distort the stepped rule (bid up to 3x market). rates quoted per hour or per day, the hourly cap and arrival counts scale with the step
   rateStart: 8900000000000000, // launch opening rate (script/config/mainnet.json rateStart): 100 percent of the market price of one credit, 0.0089e18
-  // bid rule. 'stepped' is the launch rule (src/lib/CoreLib.sol climb and drop) and the default. 'built' is the earlier rule, kept for the
-  // comparison in docs/notes/BID-STUDY.md: climbs per hour (doubling per idle day), drops dropBps times the share of the pot spent.
-  // 'dropToLast': after a fill the bid is dropToPct of the rate that fill paid, then climbs climbPerMin percent per minute, no ceiling.
-  // 'stepped': a fill drops the bid dropPerCreditPct, not below dropToPct of the bid at the first fill of that timestamp; climbs climbPerMin
-  // percent per minute, never above ceilPct of the rate of the last fill (of rateStart before any fill). the funded clamp and rateCap apply to all rules
-  bidRule: 'stepped',
-  dropToPct: 50,
-  climbPerMin: 0.5,
-  recoveryClimbPerMin: 2, // stepped: percent per minute while the price state is below the recovery level (recoveryGapPct under the remembered peak) (launch recoveryClimbPerMinBps 200); at or above the level the climb is climbPerMin
-  recoveryGapPct: 10, // stepped: the recovery climb applies only below peak * (1 - recoveryGapPct / 100) (launch recoveryGapBps 1000); 0 makes every fill start the recovery climb
-  peakHalfLifeHours: 6, // stepped: the remembered peak (the ceiling anchor, with the last fill rate) halves in this many hours (launch peakHalfLife 21600 seconds)
-  dropPerCreditPct: 0.5,
-  ceilPct: 110,
   // seller model toggle: one seller with an unlimited supply sells one credit per step whenever the bid has reached throttleFrac of the market price
   throttler: false,
   throttleFrac: 0.95,
-  idleLoosenPct: 2, // stepped: percent added to the ceiling anchor every idleLoosenMin minutes while no fill happens (launch 2, linear), 0 = none
-  idleLoosenMin: 10,
-  ceilDecayHours: 0, // stepped: half life of the ceiling headroom since the last fill, 0 = none
   askFloor: 0, // lowest seller ask as a multiple of the market price (0: none, asks are lognormal around 1)
   onStep: null, // optional callback (t, core, marketPrice, rate) after each step, for traces
   gapPct: 30, // pricePath 'gap': size of the jump, percent
@@ -306,7 +300,6 @@ const SIM_DEFAULTS = {
   forceFillHour: null, // one forced fill at forceFillFrac of the market price at this hour: the bid is set to that level first (test hook)
   forceFillFrac: 0.5,
   holdPot: 0, // test hook: eth. the pot is topped up to this level after every step (accounting checks do not hold)
-  gateAt: 20, // counterfactual only: hours with at least this many unsold statements held are counted in gateClosedHours
   whipsawStartDay: 2, // pricePath 'whipsaw': day the fall starts
   schedule: [], // [{ day, patch }]: owner changes settings on that day. patch may hold any setting and `rate` (setRate, wei per credit), `moduleUnit` (the balance module reports a new eth value per point), `releaseRedeemBurn: eth`
   baselineSkimBps: 690, // bps of volume: 6.9 points (script/config/mainnet.json launch.baselineSkimBps)
@@ -356,7 +349,7 @@ const SIM_DEFAULTS = {
   // a per point balance token bid, one pile for every credit. balance token amounts are held as eth value. the unit is read from the module at every use (decision 104)
   balanceDay: null, // day the balance module is set. the same step sets the switches to balanceDayMode (the owner switches the side on)
   balanceDayMode: 2, // switches set at balanceDay: 1 redeemOn only, 2 redeemOn and balanceBidOn
-  xpPerPoint: 0.0108 / 440, // eth value of the balance token a redemption returns per score point (unitPerPoint at the balance token price). a 440 point credit redeems 0.0108 eth. the unit the module reports when it is set
+  xpPerPoint: 0.0108 / 440, // eth value of the balance token per whole score point, at the balance token price. a 440 point credit redeems 0.0108 eth. the module's unitPerPoint is per stored unit (1/10000 point), so this value is 10000 times the module's unit read times the price
   redeemPayFrac: 1, // share of rating * unitPerPoint the balance module returns. the Core requires at least 1 - redeemSlippageBps / 10000, else the redemption reverts
   balancePoolSet: false, // ControllerV1.setBalancePoolKey done (native eth as currency0, the balance token as currency1, pool initialized): the pool term of valueOf (points * unitPerPoint at the pool price) joins the statement reference and the credit floor, unset at launch. the balance token bid works without it
   balancePoolMult: 1, // the balance token pool price against the price the unit assumes. values the pool term. 1 at the unit; below 1 is a pool price pushed down
@@ -437,87 +430,62 @@ class Core {
     this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0; this.funded = false;
     this.xpLive = 0; this.moduleSet = false; // the balance module is set by setBalanceModule. xpLive is the unitPerPoint it reports now
     this.lastBuybackTime = -1e12;
-    this.clampTime = 0;
-    this.lastPaidRate = p.rateStart; this.burstTime = -1; this.burstBase = 0; // bidRule stepped
-    this.peakRate = p.rateStart; this.peakTime = t0; // bidRule stepped: the remembered peak
+    this.lastPaidRate = p.rateStart; this.burstTime = -1; this.burstBase = 0; // CoreLib.drop minute bucket: its first fill price and the bucket time
+    this.peakRate = p.rateStart; this.peakTime = t0; // the remembered peak (Anchor.peakRate and peakTime)
+    this.payeeOn = false; this.payeeOwed = 0; // the payee share starts with the first book at or after sniperSeconds that has income, and the share booked so far
+    this.fundedTotal = 0; // cumulative eth added with fund(), which bypasses the fee split
   }
-  // the remembered peak now: peakRate halved over the time since peakTime (stepped rule)
+  // the remembered peak now: peakRate halved over the time since peakTime (CoreLib.drop, Halving.halve)
   peakAt(now) {
-    return this.peakRate * Math.pow(0.5, (now - this.peakTime) / (this.p.peakHalfLifeHours * 3600));
+    return this.peakRate * Math.pow(0.5, (now - this.peakTime) / (this.s.peakHalfLifeHours * 3600));
   }
   // the climb stops where the pot no longer affords one credit at the rate, or at rateCap, whichever is lower
   clamp() {
     return Math.min(this.ethPot * W, this.s.rateCap);
   }
-  // stepped rule: the ceiling in rate terms, ceilPct of the anchor, the anchor loosened while idle. the anchor is
-  // max(last rate paid, peak now)
+  // the ceiling in rate terms: ceilPct of the anchor, the anchor loosened while idle. the anchor is max(last rate paid, peak now)
   stepCeil(now) {
-    const p = this.p;
-    // ceilDecayHours > 0: the headroom above the anchor halves every ceilDecayHours since the last fill
-    const decay = p.ceilDecayHours > 0 ? Math.pow(0.5, (now - this.lastFillTime) / (p.ceilDecayHours * 3600)) : 1;
-    // idleLoosenPct: the anchor grows linearly, by that percent of the anchor for every full idleLoosenMin minutes since the last fill (CoreLib.climb)
-    const loosen = p.idleLoosenPct > 0 ? 1 + (p.idleLoosenPct / 100) * Math.floor((now - this.lastFillTime) / (p.idleLoosenMin * 60)) : 1;
+    const s = this.s, p = this.p;
+    // idleLoosenPct: the anchor grows linearly, by that percent of the anchor for every full LOOSEN_MINUTES since the last fill (CoreLib.climb)
+    const loosen = 1 + (s.idleLoosenPct / 100) * Math.floor((now - this.lastFillTime) / (p.LOOSEN_MINUTES * 60));
     const anchor = Math.max(this.lastPaidRate, this.peakAt(now));
-    return anchor * loosen * (1 + (p.ceilPct / 100 - 1) * decay);
+    return anchor * loosen * (s.ceilPct / 100);
   }
-  // stepped rule, price state: the stored rate climbed per minute toward min(ceiling, rateCap, clamp). Below the
-  // recovery level (recoveryGapPct under the remembered peak) the climb is recoveryClimbPerMin, at or above it
-  // climbPerMin; the crossing is solved so the trajectory is continuous and monotone in time (CoreLib._recover). A
-  // stored rate above the ceiling or rateCap reads as that bound; a stored rate above the clamp holds its value
+  // the price state: the stored rate climbed per minute toward min(ceiling, rateCap, clamp). Below the recovery level
+  // (recoveryGapPct under the remembered peak) the climb is recoveryClimbPerMin, at or above it climbPerMin; the crossing
+  // is solved so the trajectory is continuous and monotone in time (CoreLib._recover). A stored rate above the ceiling
+  // or rateCap reads as that bound; a stored rate above the clamp holds its value
   priceRate(now) {
     const r = this.rateAtCheckpoint, cap = Math.min(this.s.rateCap, this.stepCeil(now));
     if (r >= cap) return cap;
     const target = Math.min(cap, this.clamp());
     if (r >= target || now <= this.checkpointTime) return r;
-    const fast = this.p.recoveryClimbPerMin / 100, slow = this.p.climbPerMin / 100;
+    const fast = this.s.recoveryClimbPerMin / 100, slow = this.s.climbPerMin / 100;
     const lnFast = Math.log(1 + fast), lnSlow = Math.log(1 + slow);
     const elapsed = now - this.checkpointTime;
-    const peakT = this.peakRate * Math.pow(0.5, (this.checkpointTime - this.peakTime) / (this.p.peakHalfLifeHours * 3600));
-    const levelT = peakT * (1 - this.p.recoveryGapPct / 100);
+    const peakT = this.peakRate * Math.pow(0.5, (this.checkpointTime - this.peakTime) / (this.s.peakHalfLifeHours * 3600));
+    const levelT = peakT * (1 - this.s.recoveryGapPct / 100);
     const climb = (base, lnRate, sec) => Math.min(base * Math.exp(lnRate * sec / 60), target);
     if (levelT <= r) return climb(r, lnSlow, elapsed);
-    const denom = lnFast / 60 + Math.LN2 / (this.p.peakHalfLifeHours * 3600);
+    const denom = lnFast / 60 + Math.LN2 / (this.s.peakHalfLifeHours * 3600);
     const crossSec = Math.log(levelT / r) / denom;
     if (elapsed <= crossSec) return climb(r, lnFast, elapsed);
     const priceCross = climb(r, lnFast, crossSec);
     if (priceCross >= target) return target;
     return climb(priceCross, lnSlow, elapsed - crossSec);
   }
-  // the bid read by a seller. stepped: the price state bid, lowered to the clamp (the pot). the clamp bounds
-  // what is paid and is never stored: checkpoint, the drop and the anchor all use the price state rate
-  ethRate(now) {
-    const s = this.s;
-    if (this.p.bidRule === 'stepped') return Math.min(this.priceRate(now), this.clamp()); // funded or not; an empty pot reads 0
-    let r = this.rateAtCheckpoint;
-    if (!this.funded) return r;
-    let cap = this.clamp();
-    const rule = this.p.bidRule;
-    if (rule !== 'built') {
-      if (rule === 'stepped') cap = Math.min(cap, this.stepCeil(now));
-      if (cap <= r) return r;
-      return Math.min(r * Math.pow(1 + this.p.climbPerMin / 100, (now - this.checkpointTime) / 60), cap);
-    }
-    if (cap <= r || s.climbBaseBps === 0) return r;
-    const last = this.lastFillTime;
-    let t = this.checkpointTime;
-    while (t < now && r < cap) {
-      const k = t > last ? Math.floor((t - last) / s.climbDoubleEvery) : 0;
-      const bps = Math.min(s.climbBaseBps * Math.pow(2, Math.min(k, 16)), s.climbMaxBps);
-      const end = k >= 11 ? now : Math.min(now, last + (k + 1) * s.climbDoubleEvery);
-      r *= Math.pow(1 + bps / BPS, (end - t) / 3600);
-      t = end;
-    }
-    return Math.min(r, cap);
-  }
+  // the bid read by a seller: the price state lowered to the clamp (the pot). the clamp bounds what is paid and is never
+  // stored: checkpoint, the drop and the anchor all use the price state rate. an empty pot reads 0
+  ethRate(now) { return Math.min(this.priceRate(now), this.clamp()); }
   // Core.ethPrice(): the price state before the pot clamp (wei per credit). the clamp is the read only lowering that ethRate applies. the cost floor of a credit
   // bought with the balance token and the eth bid term of the credit sale floor read it, so an empty pot does not zero them (FLOW 93)
-  ethPrice(now) { return this.p.bidRule === 'stepped' ? this.priceRate(now) : this.ethRate(now); }
+  ethPrice(now) { return this.priceRate(now); }
   // Core.floorRate(): the floor rate now (wei per credit): the larger of ethPrice, the price state climbed before the
   // pot clamp, and the remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak
   // decays between fills, so the maximum follows the climb and holds against a sale within the block. the statement
   // reference, the credit floor and the cost of a credit bought with the balance token read it
-  floorRate(now) { return this.p.bidRule === 'stepped' ? Math.max(this.priceRate(now), this.peakAt(now)) : this.ethRate(now); }
-  checkpoint(now) { this.rateAtCheckpoint = this.p.bidRule === 'stepped' ? this.priceRate(now) : this.ethRate(now); this.checkpointTime = now; }
+  floorRate(now) { return Math.max(this.priceRate(now), this.peakAt(now)); }
+  checkpoint(now) { this.rateAtCheckpoint = this.priceRate(now); this.checkpointTime = now; }
   syncFunded() {
     this.funded = this.ethPot * W >= this.rateAtCheckpoint;
   }
@@ -536,6 +504,8 @@ class Core {
     if (rate !== undefined && !(rate >= RATE_MIN && rate <= RATE_MAX && rate <= next.rateCap)) throw new Error('BadRate');
     this.checkpoint(now);
     const anchorNow = this.anchorAt(now);
+    // CoreLib.setSettings: a change of peakHalfLife restates the remembered peak at the old half life before the new one applies
+    if (next.peakHalfLifeHours !== this.s.peakHalfLifeHours) { this.peakRate = this.peakAt(now); this.peakTime = now; }
     this.s = next; this.c = nextC; this.cr = nextCr;
     if (patch.anchorHalfLife !== undefined) this.setAnchor(anchorNow, now);
     if (this.c.startCapBps < anchorNow) this.setAnchor(this.c.startCapBps, now);
@@ -544,41 +514,50 @@ class Core {
     this.rateAtCheckpoint = Math.min(this.rateAtCheckpoint, next.rateCap); // a lower cap pulls the rate down now
     if (rate !== undefined) {
       this.rateAtCheckpoint = rate; this.checkpointTime = now;
-      // setRate restates the last fill rate and the remembered peak (CoreLib / Core.setRate)
-      if (this.p.bidRule === 'stepped') { this.lastPaidRate = rate; this.peakRate = rate; this.peakTime = now; }
+      // setRate restates the last fill rate and the remembered peak (Core.setRate)
+      this.lastPaidRate = rate; this.peakRate = rate; this.peakTime = now;
     }
     this.syncFunded();
   }
-  // _spend: checkpoint, drop on fill. false means the Core would revert
+  // _spend: checkpoint, then the drop on fill (CoreLib.drop). false means the Core would revert
   spend(x, now) {
     this.checkpoint(now);
     const pot = this.ethPot;
     if (!(x > 0) || x > pot + 1e-18) return false;
-    const paid = this.rateAtCheckpoint, rule = this.p.bidRule;
-    let r = paid;
-    if (rule === 'dropToLast') r = (paid * this.p.dropToPct) / 100;
-    else if (rule === 'stepped') {
-      // CoreLib.drop: the minute floor is dropFloorBps of the price at the first fill of the minute bucket (now / 60), and restarts at the price when the price is already under the floor (setRate, lowered caps)
-      const bucket = Math.floor(now / 60);
-      if (bucket !== this.burstTime || paid < (this.burstBase * this.p.dropToPct) / 100) { this.burstTime = bucket; this.burstBase = paid; }
-      r = Math.max(paid * (1 - this.p.dropPerCreditPct / 100), (this.burstBase * this.p.dropToPct) / 100);
-    } else r -= (r * this.s.dropBps * Math.min(x, pot)) / (BPS * pot);
-    if (rule !== 'built') this.lastPaidRate = paid;
-    if (rule === 'stepped') { this.peakRate = Math.max(paid, this.peakAt(now)); this.peakTime = now; }
+    const paid = this.rateAtCheckpoint;
+    // CoreLib.drop: the minute floor is dropFloorBps of the price at the first fill of the minute bucket (now / 60), and restarts at the price when the price is already under the floor (setRate, lowered caps)
+    const bucket = Math.floor(now / 60);
+    if (bucket !== this.burstTime || paid < (this.burstBase * this.s.dropToPct) / 100) { this.burstTime = bucket; this.burstBase = paid; }
+    const r = Math.max(paid * (1 - this.s.dropPerCreditPct / 100), (this.burstBase * this.s.dropToPct) / 100);
+    this.lastPaidRate = paid;
+    this.peakRate = Math.max(paid, this.peakAt(now)); this.peakTime = now;
     this.rateAtCheckpoint = r;
     this.lastFillTime = now;
     this.ethPot = pot - x;
     this.syncFunded();
     return true;
   }
-  // _book(): swap fee eth the hook pushed to the Core, after the payee share. feeToRedeemBurnBps of it goes to the redeem burn reserve, the rest to the pot (checkpoint first, resync after)
+  // Core._book: swap fee eth booked by the Core. once payeeOn the payee takes payeePpm of it. the first book at or after sniperSeconds
+  // with income sets payeeOn and takes 0. feeToRedeemBurnBps of the rest fills the redeem burn reserve, the rest goes to the pot.
+  // checkpoint first, resync after
   addFees(amount, now) {
-    const toRedeemBurn = (amount * this.s.feeToRedeemBurnBps) / BPS;
+    if (!(amount > 0)) return { toPayee: 0, toRedeemBurn: 0, toPot: 0 };
+    let toPayee = 0;
+    if (this.payeeOn) { toPayee = (amount * this.s.payeePpm) / 1e6; this.payeeOwed += toPayee; }
+    else if (now >= this.p.sniperSeconds) this.payeeOn = true;
+    const income = amount - toPayee;
+    const toRedeemBurn = (income * this.s.feeToRedeemBurnBps) / BPS;
     this.feeToRedeemBurn += toRedeemBurn; this.ethRedeemBurn += toRedeemBurn;
     this.checkpoint(now);
-    this.ethPot += amount - toRedeemBurn;
+    this.ethPot += income - toRedeemBurn;
     this.syncFunded();
-    return { toRedeemBurn, toPot: amount - toRedeemBurn };
+    return { toPayee, toRedeemBurn, toPot: income - toRedeemBurn };
+  }
+  // Core.fund: eth added to the pot whole. the payee and the redeem burn reserve take no share. checkpoint first
+  fund(amount, now) {
+    this.checkpoint(now);
+    this.ethPot += amount; this.fundedTotal += amount;
+    this.syncFunded();
   }
   // door one: sell into the bid at the rate. every credit is paid the same. returns the price paid or 0
   sellForEth(now) {
@@ -701,9 +680,10 @@ class Core {
   // ---- the credit sale window (FLOW 88, 92, 93). a pile credit is {pts, cost, t0}: its score in points, its cost basis in eth and its acquisition time
   // ControllerV1.pastWindow: a credit acquired at `acquiredAt` may compose now. always while the sale is off, else once creditWindow has passed
   pastWindow(acquiredAt, now) { return !this.cr.creditSaleOn || acquiredAt + this.cr.creditWindow <= now; }
-  // the eth cost the Core records for a credit bought with the balance token: the floor rate times max(1, score / refScore), where the floor rate is the larger of the climbed
-  // price state and the decayed peak. refScore is in ten-thousandths of a point, so refScore/1e4 is the reference score in points; read from no pool
-  balanceCostBasis(pts, now) { return (this.floorRate(now) / W) * Math.max(1, pts / (this.cr.refScore / 1e4)); }
+  // the eth cost the Core records for a credit bought with the balance token: the floor rate times score / refScore (CoreLib.sellForBalance, at least 1 wei). the floor
+  // rate is the larger of the climbed price state and the decayed peak. refScore is in ten-thousandths of a point, so refScore/1e4 is the reference score in points.
+  // the cost basis reads the price state and the peak
+  balanceCostBasis(pts, now) { return (this.floorRate(now) / W) * (pts / (this.cr.refScore / 1e4)); }
   // the credit sale floor: the larger of the credit's cost and valueOf(score), times creditFloorBps
   creditFloor(cr, now) { return (Math.max(cr.cost, this.valueOf(cr.pts, now)) * this.cr.creditFloorBps) / BPS; }
   // ControllerV1.creditPrice: falls linearly from floor * creditStartBps to the floor over creditWindow from the acquisition time and rests at the floor
@@ -763,7 +743,7 @@ class Core {
     return price;
   }
   // sellForBalance for one credit at `now`: the credit enters the pile at an eth cost of the score-scaled floor rate
-  // cost basis, at least 1 wei, read from no pool. returns {paid, cost}, or null when the bid would revert
+  // cost basis, at least 1 wei, from the price state and the peak. returns {paid, cost}, or null when the bid would revert
   xBuyCredit(pts, now) {
     const paid = this.xBuy(pts);
     if (!(paid > 0)) return null;
@@ -902,13 +882,6 @@ function bountyFeeFraction(p, f) {
   const base = p.baselineSkimBps / 1e4;
   return base * (p.bountyBps / BPS) + Math.max(0, f - base);
 }
-// share of a swap's notional that lands in the engine's books at t seconds after launch: the Core's inflow, and after the
-// end of the anti sniper window less the payee's parts per million of the income. 6.15 points at the baseline once the
-// payee share is on
-function engineFeeFraction(p, f, t) {
-  const inflow = bountyFeeFraction(p, f);
-  return inflow * (1 - (t >= p.sniperSeconds ? p.payeePpm / 1e6 : 0));
-}
 // volume in a step [t, t+dt). the first hour runs in 120 s sub steps, 15 of them inside the anti sniper window
 function stepVolume(p, t, dt) {
   const d = Math.floor(t / 86400);
@@ -999,9 +972,9 @@ function simulate(userParams = {}) {
     strat.sort((a, b) => b.need - a.need);
   }
   const peff = (t) => pathPrice(p, t) * Math.exp(lnM);
-  let stepW = 1, peffNow = 0; // weight of the current step in hours, market price in the step
+  let stepW = 1; // weight of the current step in hours
   let idle = 0, idleMax = 0, forceDone = false;
-  let stallRun = 0, stallTotal = 0, stallMax = 0, gapRun = 0, gapMax = 0, gateClosed = 0, rateCapSec = 0;
+  let stallRun = 0, stallTotal = 0, stallMax = 0, gapRun = 0, gapMax = 0, rateCapSec = 0;
   const stallRuns = [];
   let runCause = {}; const stallCause = {};
   let prevRate = p.rateStart, signChanges = 0, lastDir = 0, rateMaxRatio = 0, rateAbsMove = 0, rateMoves = 0;
@@ -1227,7 +1200,7 @@ function simulate(userParams = {}) {
       const notional = info.budget / (1 + f);
       T.burned += pool.buy(notional);
       T.buybackSpent += info.budget; T.buybackTips += info.tip;
-      feeBack += notional * engineFeeFraction(p, f, tb);
+      feeBack += notional * bountyFeeFraction(p, f);
       tb += delay;
     }
     if (feeBack > 0) { core.addFees(feeBack, now); T.feesBuyback += feeBack; }
@@ -1289,7 +1262,7 @@ function simulate(userParams = {}) {
     const V = stepVolume(p, t0, dt), f = skimFraction(p, mid), b = t0 < 86400 ? p.buyShare0 : bLate;
     const net = b * V - (1 - b) * V; // notional is the pool's own delta, the skim comes on top
     if (net > 0) pool.buy(net); else if (net < 0) pool.sell(-net);
-    const fee = V * engineFeeFraction(p, f, mid);
+    const fee = V * bountyFeeFraction(p, f);
     core.addFees(fee, mid);
     T.fees += fee; T.vol += V;
     if (!core.moduleSet && t1 >= balanceAt) { core.setBalanceModule(t1, p.xpPerPoint); if (p.balanceDayMode != null) core.setSettings({ redeemOn: p.balanceDayMode >= 1, balanceBidOn: p.balanceDayMode === 2 }, t1); }
@@ -1311,10 +1284,9 @@ function simulate(userParams = {}) {
       if (book.length > 6000) book = book.slice(book.length - 6000); // keep the cheapest to clear
     }
     // the engine acts. there is no inventory gate: unsold statements never close the bid
-    peffNow = Pe;
     const filledBefore = T.bought + T.boughtX;
     const spentEth = engineBuys(t1, Pe);
-    if (p.holdPot > 0 && core.ethPot < p.holdPot) core.addFees(p.holdPot - core.ethPot, t1);
+    if (p.holdPot > 0 && core.ethPot < p.holdPot) core.fund(p.holdPot - core.ethPot, t1);
     // stall: the pot affords the cheapest ask, no purchase for a stretch; a run longer than 2 hours counts. gap: the same run, any length
     {
       let cheapest = Infinity;
@@ -1327,7 +1299,7 @@ function simulate(userParams = {}) {
         if (bidPrice >= cheapest * (1 - 1e-9)) cause = bidPrice > core.ethPot ? 'room' : 'other';
         else {
           // the lowest of the climb limits names the cause: the pot (the clamp), the rateCap or the stepped ceiling
-          const lim = { clamp: core.ethPot, rateCap: core.s.rateCap / W, ceiling: p.bidRule === 'stepped' ? core.stepCeil(t1) / W : Infinity };
+          const lim = { clamp: core.ethPot, rateCap: core.s.rateCap / W, ceiling: core.stepCeil(t1) / W };
           cause = 'low_climbing';
           let lo = cheapest * (1 - 1e-9);
           for (const k of Object.keys(lim)) if (lim[k] < lo) { lo = lim[k]; cause = 'low_' + k; }
@@ -1338,7 +1310,6 @@ function simulate(userParams = {}) {
         if (stallRun > 7200) { for (const k of Object.keys(runCause)) stallCause[k] = (stallCause[k] || 0) + runCause[k]; stallTotal += stallRun; stallMax = Math.max(stallMax, stallRun); if (stallRuns.length < 300) stallRuns.push([t1 - stallRun - dt, stallRun]); }
         stallRun = 0; runCause = {}; gapMax = Math.max(gapMax, gapRun); gapRun = 0;
       }
-      if (unbid.length >= p.gateAt) gateClosed += dt;
       if (core.ethRate(t1) >= core.s.rateCap * (1 - 1e-9)) rateCapSec += dt;
     }
     // idle: time since the last purchase that the pot held at least one bid
@@ -1388,14 +1359,14 @@ function simulate(userParams = {}) {
     saleOverCost: T.soldCost ? T.soldPrice / T.soldCost : 0, saleOverFloor: T.soldFloor ? T.soldPrice / T.soldFloor : 0,
     saleAgeHours: T.sold ? T.soldAge / T.sold / 3600 : 0, saleAtFloorShare: T.sold ? T.soldAtFloor / T.sold : 0,
     stmtArrivals: T.stmtArrivals, stmtMiss: T.stmtMiss,
-    potCheck: T.fees + T.feesBuyback - core.feeToRedeemBurn + T.saleToPot + T.creditToPot - T.spent - core.ethPot,
+    potCheck: T.fees + T.feesBuyback - core.feeToRedeemBurn - core.payeeOwed + T.saleToPot + T.creditToPot - T.spent + core.fundedTotal - core.ethPot,
     buybackCheck: T.saleToBuyback + T.creditToBuyback + core.redeemBurnMoved - core.ethToBuyback - T.buybackSpent - T.buybackTips,
     royaltyCheck: T.royalty - core.royaltyOwed,
     creditCheck: T.creditGross - T.creditToPot - T.creditToBuyback,
     creditSaleOverCost: T.creditCost ? T.creditGross / T.creditCost : 0, creditSaleAgeHours: T.creditSold ? T.creditAge / T.creditSold / 3600 : 0,
     redeemCheck: core.feeToRedeemBurn - core.redeemBurnMoved - core.ethRedeemBurn,
     saleCheck: T.saleGross - T.saleToPot - T.saleToBuyback,
-    stallHours: stallTotal / 3600, stallHoursMax: stallMax / 3600, gapHoursMax: gapMax / 3600, stallRuns, stallCauseHours: Object.fromEntries(Object.entries(stallCause).map(([k, v]) => [k, v / 3600])), gateClosedHours: gateClosed / 3600, rateCapHours: rateCapSec / 3600,
+    stallHours: stallTotal / 3600, stallHoursMax: stallMax / 3600, gapHoursMax: gapMax / 3600, stallRuns, stallCauseHours: Object.fromEntries(Object.entries(stallCause).map(([k, v]) => [k, v / 3600])), rateCapHours: rateCapSec / 3600,
     idleHoursMax: idleMax / 3600, maxPaidRatio: T.maxPaidRatio, throttled: T.throttled,
     finalRate: core.ethRate(H * 3600), finalPot: core.ethPot, finalAnchorBps: core.anchorAt(H * 3600),
   };
@@ -1628,9 +1599,9 @@ function toParams(s) {
     basefeeGwei: s.basefeeGwei, keeperFee: s.keeperFee, keeperMaxBaseFee: s.keeperMaxBaseFee,
     buyerWaits: s.buyerWaits, feeToRedeemBurnBps: s.feeToRedeemBurnBps, saleToBuybackBps: s.saleToBuybackBps, royaltyBps: s.royaltyBps,
     anchorHalfLife: Math.round(s.anchorHalfLifeDays * 86400), anchorMinCost: s.anchorMinCost,
-    bidRule: 'stepped', dropPerCreditPct: s.dropPerCreditPct, dropToPct: s.dropToPct, climbPerMin: s.climbPerMin, ceilPct: s.ceilPct, idleLoosenPct: s.idleLoosenPct,
+    dropPerCreditPct: s.dropPerCreditPct, dropToPct: s.dropToPct, climbPerMin: s.climbPerMin, ceilPct: s.ceilPct, idleLoosenPct: s.idleLoosenPct,
     recoveryClimbPerMin: Math.max(s.recoveryClimbPerMin, s.climbPerMin), recoveryGapPct: s.recoveryGapPct, peakHalfLifeHours: s.peakHalfLifeHours, // the Core needs the recovery climb at least the climb
-    stepSec: 300, // 5 minute steps keep a live page responsive, credits within 1 percent of the 60 second steps of the batches
+    stepSec: 300, // 5 minute steps keep a live page responsive: credits within 6 percent of the 60 second steps (30 day runs, seeds 1 to 5)
     rateCap: Math.max(s.rateCap, rateOf(s)), // the Core refuses a deploy with rateStart above rateCap
     creditSaleOn: !!s.creditSaleOn, creditWindow: Math.max(60, Math.round(s.creditWindowHours * 3600)), creditFloorBps: s.creditFloorBps, creditStartBps: s.creditStartBps, creditCostToPotBps: s.creditCostToPotBps, creditBuyersPerDay: s.creditBuyersPerDay, creditWtpMult: s.creditWtpMult,
     refScore: Math.round(s.refScore), chosenComposeOn: !!s.chosenComposeOn, composeChoice: s.composeChoice, balancePoolMult: s.balancePoolMult,
@@ -1906,7 +1877,7 @@ function buildCalibration() {
     ['credit scores', 'uniform 80 to 800, mean 440', 'census of 122,154 credits'],
     ['statement buyer willingness to pay', 'p10 0.48, p25 0.71, median 0.84, p75 1.07, 21% at 1.2 or more, max 1.32 of the MARKET cost of the 80 credits. the asking price is a share of what the engine PAID, a different number', '42 priced sales, 33 statements'],
     ['statement asking price', 'starts at 150% of the anchor (the running level of sale prices, at least 100% of the price reference), falls 1 point of the reference an hour to 100% (hour 50 at the launch anchor), then 1 point every 4 hours. the reference is the larger of the cost and the value of the rating: the floor rate times the rating over 80 times refScore (433 points), or the balance token pool term once the pool key is set. the floor is saleFloorBps of the reference, 100% at launch, so an unsold statement is asked at its reference. the buyer pays the price and 2.5% royalty on top, the engine books the price', 'docs/DECISIONS.md decisions 62 to 65, 85, 90, 104, 105, 112'],
-    ['credit sale window', 'off at launch. while on, a pile credit sells at a price falling from 3.3 times (30000 over 11000) its floor to the floor over 4 hours. the floor is 1.1 times the larger of its cost and the value of its score. buyers are a model input: 40 a day, each taking the lowest priced credit that fits a willingness to pay around the market price, royalty included. the cost share returns to the pot, the markup buys and burns $CC', 'docs/DECISIONS.md decisions 88, 92, 93, 104, 112'],
+    ['credit sale window', 'off at launch. while on, a pile credit sells at a price falling from 3 times its floor (creditStartBps 30000) to the floor over 4 hours. the floor is 1.1 times the larger of its cost and the value of its score, so the start is 3.3 times that value. buyers are a model input: 40 a day, each taking the lowest priced credit that fits a willingness to pay around the market price, royalty included. the cost share returns to the pot, the markup buys and burns $CC', 'docs/DECISIONS.md decisions 88, 92, 93, 104, 112'],
     ['the balance side', 'redeemOn and balanceBidOn are false at launch. with redeemOn a statement redeems once its curve price has reached its floor and the balance token stays in the engine, with balanceBidOn the balance token bid pays score times the per point amount less 20%. a credit bought that way enters the one pile at the eth cost the Core records from the floor rate. each redemption moves 20% of the redeem burn reserve (10% of the fees) to buy and burn $CC', 'docs/DECISIONS.md decisions 84 to 87, 92, 93, 104, 107. balance token amounts are held as eth value, the module is assumed to return the whole rating times the per point value'],
     ['statement buyers a day', '13, 11, 8, 6, 4 in the first five days, model 8 decaying to 2', 'composed 119, 19, 9, 3, 3 a day'],
     ['comparable coin volume', 'day one 1,557 eth, 912 in hour one, then 81, 42, 46, 57, 13, 28, 58, 12, 41, 5, 2, 3', 'fit 123 exp(-0.286 d), floor 0.5 eth a day'],

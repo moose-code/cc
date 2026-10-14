@@ -1,7 +1,7 @@
 // unit checks that the port matches src/Core.sol on hand computed cases. run: node engine.test.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { Core, Pool, DEFAULTS, SETTINGS, CONTROLLER, CREDIT, CREDIT_CONFIG_KEY, creditViolation, simulate, controllerViolation, summary, firstViolation, skimFraction, pathPrice, bountyFeeFraction, engineFeeFraction, stepVolume, W } from './engine.js';
+import { Core, Pool, DEFAULTS, SETTINGS, CONTROLLER, CREDIT, CREDIT_CONFIG_KEY, creditViolation, simulate, controllerViolation, summary, firstViolation, skimFraction, pathPrice, bountyFeeFraction, stepVolume, W } from './engine.js';
 
 let n = 0;
 const near = (a, b, tol, msg) => {
@@ -11,10 +11,11 @@ const near = (a, b, tol, msg) => {
 };
 const ok = (c, msg) => { n++; assert.ok(c, msg); };
 const H = 3600;
-// the sim defaults are the launch values. the checks below that port the earlier bid rule and the earlier statement curve (floors at 75 percent of cost, no
-// redeem burn reserve) with their hand computed values run on these earlier defaults; the launch values have their own checks
-const LEGACY = { stepSec: 3600, bidRule: 'built', rateStart: 6.668e15, climbPerMin: 1, idleLoosenPct: 0, rateCap: 53344000000000000, saleFloorBps: 7500, feeToRedeemBurnBps: 0 };
+// LEGACY: the checks below that hand compute a single bid (a 0.0067 eth opening rate, one percent a minute climb, a 75 percent floor, feeToRedeemBurnBps 0) run on it. the launch values have their own checks against mainnet.json
+const LEGACY = { stepSec: 3600, rateStart: 6.668e15, climbPerMin: 1, recoveryClimbPerMin: 1, idleLoosenPct: 0.01, ceilPct: 300, rateCap: 53344000000000000, saleFloorBps: 7500, feeToRedeemBurnBps: 0 };
 const simL = (o = {}) => simulate(Object.assign({}, LEGACY, o));
+// the sale and stall runs use the launch ceiling (ceilPct 110): at 300 the bid sits far above the market and few statements sell
+const simC = (o = {}) => simL(Object.assign({ ceilPct: 110 }, o));
 const fresh = (over = {}, pot = 1000) => {
   const p = Object.assign({}, DEFAULTS, LEGACY, over);
   // the ported single rate climb tests set only climbPerMin; match the recovery rate to it unless a test opts into the
@@ -30,12 +31,12 @@ const R0 = 6.668e15;
 // carries a field of the rules in docs/DECISIONS.md section 9 it must match, and a field of the old rules (reserveBps) must be gone from the model
 {
   const cfg = JSON.parse(fs.readFileSync(new URL('../script/config/mainnet.json', import.meta.url), 'utf8'));
-  // the stepped bid rule fields of the Core are sim parameters of the bidRule stepped (setting B of docs/notes/BID-STUDY.md), under other names. the built rule fields are sim only
+  // the stepped bid fields of the Core, config name to model name (percent and hours in the model)
   const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 5000, climbPerMinBps: 50, ceilBps: 11000, idleLoosenBps: 200, peakHalfLife: 21600, recoveryClimbPerMinBps: 200, recoveryGapBps: 1000 };
-  const BUILT_ONLY = ['climbBaseBps', 'climbDoubleEvery', 'climbMaxBps', 'dropBps'];
+  const STEPPED_SIM = { dropPerCreditPct: 'dropPerCreditBps', dropToPct: 'dropFloorBps', climbPerMin: 'climbPerMinBps', ceilPct: 'ceilBps', idleLoosenPct: 'idleLoosenBps', recoveryClimbPerMin: 'recoveryClimbPerMinBps', recoveryGapPct: 'recoveryGapBps', peakHalfLifeHours: 'peakHalfLife' };
   for (const [k, v] of Object.entries(STEPPED)) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
-  // the sim defaults are the launch bid rule: stepped, field for field with the config (bps to percent)
-  ok(DEFAULTS.bidRule === 'stepped', 'the default bid rule is stepped');
+  // the sim defaults are the launch bid rule, field for field with the config (bps to percent). the model has one bid rule
+  ok(DEFAULTS.bidRule === undefined, 'the bid rule is one rule: the model carries no bidRule key');
   near(DEFAULTS.dropPerCreditPct, cfg.settings.dropPerCreditBps / 100, 1e-12, 'default dropPerCreditPct');
   near(DEFAULTS.dropToPct, cfg.settings.dropFloorBps / 100, 1e-12, 'default dropToPct');
   near(DEFAULTS.climbPerMin, cfg.settings.climbPerMinBps / 100, 1e-12, 'default climbPerMin');
@@ -51,7 +52,7 @@ const R0 = 6.668e15;
     if (k in STEPPED) continue;
     near(SETTINGS[k], k === 'buybackSlice' || k === 'keeperFee' || k === 'callerFee' ? v / 1e18 : k === 'keeperMaxBaseFee' || k === 'callerMaxBaseFee' ? v / 1e9 : v, 1e-12, 'setting ' + k);
   }
-  for (const k of Object.keys(SETTINGS)) ok(BUILT_ONLY.includes(k) || cfg.settings[k] !== undefined, 'the config carries ' + k);
+  for (const k of Object.keys(SETTINGS)) ok(cfg.settings[STEPPED_SIM[k] ?? k] !== undefined, 'the config carries ' + k);
   for (const k of Object.keys(cfg.settings)) ok(k in STEPPED || k in SETTINGS, 'the model carries ' + k);
   for (const k of Object.keys(CONTROLLER)) near(+CONTROLLER[k], k === 'anchorMinCost' ? +cfg.sale[k] / 1e18 : +cfg.sale[k], 1e-12, 'controller ' + k); // eth in the model, wei in the config
   assert.deepEqual(Object.keys(cfg.sale).sort(), Object.keys(CONTROLLER).sort()); n++; // the sale block and the model carry the same fields
@@ -111,23 +112,25 @@ const R0 = 6.668e15;
   ok(DEFAULTS.inventoryGate === undefined && Core.prototype.setGate === undefined, 'no gate in the defaults or the Core');
   ok(!/reserveBps/.test(src) && DEFAULTS.reserveBps === undefined && Core.prototype.reprice === undefined, 'reserveBps is gone from the model, the reprice step is folded into the first bid');
 }
-// climb tiers: 100 bps an hour, doubling every 24 hours without a fill, capped at 800 (rateCap raised above its bounds so it does not clamp)
+// climb: the price state climbs climbPerMin percent a minute, compounded (CoreLib.climb). the ceiling is raised above its bounds here so it does not bind
 {
-  const c = fresh({ rateCap: 1e21 }); // the climb function alone, above the bounds
-  near(c.ethRate(1 * H), R0 * 1.01, 1e-12, 'one hour at 1 percent');
-  near(c.ethRate(24 * H), R0 * Math.pow(1.01, 24), 1e-12, '24h at 1 percent');
-  near(c.ethRate(48 * H), R0 * Math.pow(1.01, 24) * Math.pow(1.02, 24), 1e-12, '48h: 24h at 1 percent then 24h at 2 percent');
-  near(c.ethRate(72 * H), R0 * Math.pow(1.01, 24) * Math.pow(1.02, 24) * Math.pow(1.04, 24), 1e-12, '72h: then 24h at 4 percent');
-  const r96 = R0 * Math.pow(1.01, 24) * Math.pow(1.02, 24) * Math.pow(1.04, 24) * Math.pow(1.08, 24);
-  near(c.ethRate(96 * H), r96, 1e-12, '96h: then 24h at 8 percent');
-  near(c.ethRate(120 * H), r96 * Math.pow(1.08, 24), 1e-12, '120h: speed stays at the 8 percent cap');
+  const c = fresh({ rateCap: 1e21, ceilPct: 1e6 });
+  near(c.ethRate(1 * H), R0 * Math.pow(1.01, 60), 1e-12, 'one hour at 1 percent a minute');
+  near(c.ethRate(6 * H), R0 * Math.pow(1.01, 360), 1e-12, 'six hours');
+  near(c.ethRate(12 * H), R0 * Math.pow(1.01, 720), 1e-12, 'twelve hours');
 }
-// a fill resets the doubling clock: 25 hours after a fill the speed is 2 percent
+// the ceiling: ceilPct of the anchor, the larger of the last fill rate and the remembered peak, loosened by idleLoosenPct for every full 10 idle minutes
 {
-  const c = fresh();
+  const c = fresh({ rateCap: 1e21, climbPerMin: 50, recoveryClimbPerMin: 50, ceilPct: 110, idleLoosenPct: 1 }); // 50 percent a minute reaches the ceiling within the first minute
+  near(c.ethRate(5 * 60), R0 * 1.1, 1e-12, 'before the first full 10 idle minutes the ceiling is ceilPct of the opening rate');
+  near(c.ethRate(H), R0 * 1.1 * 1.06, 1e-12, 'after 60 idle minutes (6 full intervals) the anchor is loosened by 6 percent');
+}
+// a fill drops the bid by dropPerCreditPct, then the price state climbs from the dropped rate
+{
+  const c = fresh({ rateCap: 1e21, ceilPct: 1e6 });
   ok(c.spend(1e-9, 0));
-  const r0 = c.rateAtCheckpoint;
-  near(c.ethRate(25 * H), r0 * Math.pow(1.01, 24) * 1.02, 1e-12, 'tier after a fill at t0');
+  near(c.rateAtCheckpoint, R0 * 0.995, 1e-12, 'one credit drops the bid 0.5 percent');
+  near(c.ethRate(H), R0 * 0.995 * Math.pow(1.01, 60), 1e-12, 'an hour after the fill the climb runs from the dropped rate at 1 percent a minute');
 }
 // funded flag: the pot affords one credit at the rate, pot * 1e18 >= rate
 {
@@ -135,7 +138,8 @@ const R0 = 6.668e15;
   const lo = new Core(Object.assign({}, DEFAULTS, LEGACY), 0);
   lo.addFees(need * 0.999, 0);
   assert.equal(lo.funded, false); n++;
-  near(lo.ethRate(100 * H), R0, 1e-12, 'unfunded rate does not climb');
+  near(lo.ethPrice(100 * H), R0, 1e-12, 'unfunded: the price state holds');
+  near(lo.ethRate(100 * H), need * 0.999 * W, 1e-12, 'unfunded: the read is the pot');
   const hi = new Core(Object.assign({}, DEFAULTS, LEGACY), 0);
   hi.addFees(need * 1.001, 0);
   assert.equal(hi.funded, true); n++;
@@ -146,17 +150,21 @@ const R0 = 6.668e15;
   near(c.clamp(), 1e-4 * W, 1e-12, 'clamp at pot 0.0001 eth is the pot');
   near(fresh({}, 1000).clamp(), 53344000000000000, 1e-12, 'clamp at pot 1000 eth is the rate cap, 8 times rateStart');
 }
-// drop on fill: rate * (1 - dropBps * x / pot / 10000), x capped by the pot
+// drop on fill: a fill drops the bid dropPerCreditPct of the rate paid, whatever share of the pot it spends. within one minute the bid stays
+// at or above dropToPct of the bid at the first fill of that minute
 {
   const c = fresh({ rateStart: 1e13 }, 1);
-  ok(c.spend(0.1, 0)); // inside the 20 percent cap
-  near(c.rateAtCheckpoint, 1e13 * (1 - 0.2 * 0.1), 1e-12, 'drop for a tenth of the pot');
+  ok(c.spend(0.1, 0)); // a tenth of the pot
+  near(c.rateAtCheckpoint, 1e13 * (1 - 0.005), 1e-12, 'a tenth of the pot drops the bid 0.5 percent');
   near(c.ethPot, 0.9, 1e-12, 'pot after the spend');
   const w = fresh({ rateStart: 1e13 }, 1);
   ok(w.spend(0.5, 0));
-  near(w.rateAtCheckpoint, 9e12, 1e-12, 'half the pot spent drops 10 percent');
-  const z = fresh({ rateStart: 1e13, dropBps: 500 }, 1);
-  ok(z.spend(0.1, 0)); near(z.rateAtCheckpoint, 1e13 * (1 - 0.05 * 0.1), 1e-12, 'dropBps 500 is the least drop');
+  near(w.rateAtCheckpoint, 1e13 * 0.995, 1e-12, 'half the pot spent drops the bid the same 0.5 percent');
+  const z = fresh({ rateStart: 1e13, dropPerCreditPct: 5 }, 1);
+  ok(z.spend(0.1, 0)); near(z.rateAtCheckpoint, 1e13 * 0.95, 1e-12, 'dropPerCreditPct 5 drops 5 percent');
+  const f = fresh({ rateStart: 1e13, dropPerCreditPct: 60 }, 1);
+  ok(f.spend(0.1, 0)); near(f.rateAtCheckpoint, 1e13 * 0.5, 1e-12, 'a drop of 60 percent stops at dropToPct (50 percent) of the bid at the first fill');
+  ok(f.spend(0.1, 59)); near(f.rateAtCheckpoint, 1e13 * 0.5, 1e-12, 'a second fill in the same minute stays at that floor');
 }
 // every credit is paid the rate: no score, no window
 {
@@ -208,7 +216,7 @@ const R0 = 6.668e15;
   near(at(151), 0.75, 1e-12, 'floor after hour 150'); near(at(5000), 0.75, 1e-12, 'floor long after');
   near(c.askingPrice({ cost: 2.4, t0: 10 * H }, 62.5 * H), 2.4 * 0.99375, 1e-12, 'age counts from listedAt, price scales with cost');
   near(c.askingPrice({ cost: 1, t0: 100 }, 50), 1.50, 1e-12, 'a clock before listedAt is age zero');
-  assert.equal(c.lowestPrice(st), 0.75); n++;
+  assert.equal(c.lowestPrice(st, 0), 0.75); n++;
   // the settings are read live: another markup, cap, both rates, knee and floor
   const d = fresh({ markupBps: 20000, startCapBps: 100000, fastDecayBpsPerHour: 1000, kneeBps: 15000, slowDecayBpsPerHour: 500, saleFloorBps: 9000 }, 10);
   near(d.askingPrice(st, 0), 2.00, 1e-12, 'start 200'); near(d.askingPrice(st, 5 * H), 1.50, 1e-12, 'the knee at 150 after 5 hours');
@@ -321,7 +329,7 @@ const R0 = 6.668e15;
   const c = fresh({ saleFloorBps: 6000 }, 10);
   near(c.askingPrice(st, 1000 * H), 0.60, 1e-12, 'with the floor lowered the price walks to 60');
   near(fresh({ saleFloorBps: 9500 }, 10).askingPrice(st, 1000 * H), 0.95, 1e-12, 'a floor of 95');
-  near(fresh({ saleFloorBps: 9500 }, 10).lowestPrice(st), 0.95, 1e-12, 'lowest price is the floor of the reference');
+  near(fresh({ saleFloorBps: 9500 }, 10).lowestPrice(st, 0), 0.95, 1e-12, 'lowest price is the floor of the reference');
   near(a.floorPrice({ cost: 2 }), 1.5, 1e-12, 'floorPrice is cost times saleFloorBps');
   // the floor is a share of the reference, and the Core still takes the cost based floor
   const rich = { cost: 1, t0: 0, rating: 80 * 433 * 3 }; const r = fresh({ saleFloorBps: 7500, rateStart: 1e16, rateCap: 1e16 }, 10);
@@ -414,15 +422,15 @@ const R0 = 6.668e15;
 // setSettings: validates, checkpoints both rates first, applies at once
 {
   const c = fresh({}, 1000);
-  c.setSettings({ dropBps: 1000 }, 10 * H);
+  c.setSettings({ climbPerMin: 2, recoveryClimbPerMin: 2 }, 600);
   near(c.rateAtCheckpoint, R0 * Math.pow(1.01, 10), 1e-12, 'the climb to the change is credited under the old numbers');
-  assert.equal(c.checkpointTime, 10 * H); n++;
-  near(c.ethRate(11 * H), R0 * Math.pow(1.01, 11), 1e-12, 'the climb goes on after the change');
+  assert.equal(c.checkpointTime, 600); n++;
+  near(c.ethRate(660), R0 * Math.pow(1.01, 10) * 1.02, 1e-12, 'the climb goes on at the new speed after the change');
   assert.throws(() => c.setSettings({ saleToBuybackBps: 10001 }, 0), /saleToBuybackBps/); n++;
-  assert.throws(() => c.setSettings({ climbBaseBps: 900, climbMaxBps: 800 }, 0), /climbMaxBps/); n++;
+  assert.throws(() => c.setSettings({ dropPerCreditPct: 0 }, 0), /dropPerCreditPct/); n++;
   assert.throws(() => c.setSettings({ saleFloorBps: 999 }, 0), /saleFloorBps/); n++;
   assert.throws(() => c.setSettings({ rate: 1e10 }, 0), /BadRate/); n++;
-  near(c.s.dropBps, 1000, 1e-12, 'a rejected change leaves the settings alone');
+  near(c.s.dropPerCreditPct, 0.5, 1e-12, 'a rejected change leaves the settings alone');
   c.setSettings({ rate: 2e13, saleToBuybackBps: 100 }, 20 * H);
   near(c.ethRate(20 * H), 2e13, 1e-12, 'setRate resets the limit'); near(c.s.saleToBuybackBps, 100, 1e-12, 'sale split changed');
   // the clamp reads the live pot
@@ -430,7 +438,10 @@ const R0 = 6.668e15;
   near(d.clamp(), 0.1 * W, 1e-12, 'clamp is the pot');
   // the tightened bounds of the audit fixes (FC-1 accepted with bounds, FC-2, FC-3, FC-7) and the rate cap (FC-5)
   const bad = (patch, name) => { assert.equal(firstViolation(Object.assign({}, SETTINGS, patch)), name); n++; };
-  bad({ dropBps: 499 }, 'dropBps');
+  bad({ dropPerCreditPct: 0 }, 'dropPerCreditPct'); bad({ dropPerCreditPct: 10.01 }, 'dropPerCreditPct'); bad({ dropToPct: 49 }, 'dropToPct'); bad({ climbPerMin: 0 }, 'climbPerMin');
+  bad({ ceilPct: 301 }, 'ceilPct'); bad({ ceilPct: 99 }, 'ceilPct'); bad({ idleLoosenPct: 0 }, 'idleLoosenPct'); bad({ recoveryClimbPerMin: 0.4 }, 'recoveryClimbPerMin');
+  bad({ recoveryGapPct: 50.01 }, 'recoveryGapPct'); bad({ peakHalfLifeHours: 599 / 3600 }, 'peakHalfLifeHours'); bad({ peakHalfLifeHours: 604801 / 3600 }, 'peakHalfLifeHours');
+  bad({ payeePpm: 200001 }, 'payeePpm'); assert.equal(firstViolation(Object.assign({}, SETTINGS, { payeePpm: 200000 })), null); n++;
   bad({ saleFloorBps: 999 }, 'saleFloorBps'); bad({ saleFloorBps: 40001 }, 'saleFloorBps');
   bad({ buybackSlice: 1.01 }, 'buybackSlice'); bad({ buybackDelay: 0 }, 'buybackDelay'); bad({ buybackDelay: 7201 }, 'buybackDelay');
   bad({ rateCap: 1e13 - 1e6 }, 'rateCap'); bad({ rateCap: 1.1e18 }, 'rateCap');
@@ -440,7 +451,7 @@ const R0 = 6.668e15;
   assert.equal(firstViolation(Object.assign({}, SETTINGS, { redeemSlippageBps: 200, balanceBidMarginBps: 200 })), null); assert.equal(firstViolation(Object.assign({}, SETTINGS, { redeemSlippageBps: 0, balanceBidMarginBps: 0 })), null); n += 2;
   bad({ redeemBurnBps: 10001 }, 'redeemBurnBps'); bad({ feeToRedeemBurnBps: 10001 }, 'feeToRedeemBurnBps');
   assert.equal(firstViolation(Object.assign({}, SETTINGS, { feeToRedeemBurnBps: 10000 })), null); n++;
-  assert.equal(firstViolation(Object.assign({}, SETTINGS, { dropBps: 500, saleFloorBps: 1000, feeToRedeemBurnBps: 10000, buybackSlice: 1, rateCap: 1e18, redeemOn: true, balanceBidOn: true, redeemSlippageBps: 1000, balanceBidMarginBps: 9000, redeemBurnBps: 10000 })), null); n++;
+  assert.equal(firstViolation(Object.assign({}, SETTINGS, { dropPerCreditPct: 1, saleFloorBps: 1000, feeToRedeemBurnBps: 10000, buybackSlice: 1, rateCap: 1e18, redeemOn: true, balanceBidOn: true, redeemSlippageBps: 1000, balanceBidMarginBps: 9000, redeemBurnBps: 10000 })), null); n++;
   assert.equal(SETTINGS.rateCap, 26700000000000000); assert.equal(SETTINGS.rateCap, 3 * DEFAULTS.rateStart); n++;
   const c2 = fresh({}, 10);
   assert.throws(() => c2.setSettings({ feeToRedeemBurnBps: 10001 }, 0), /feeToRedeemBurnBps/); n++;
@@ -552,16 +563,17 @@ const R0 = 6.668e15;
   const h = mk(); const px = h.xBuy(35200 / 80 * 1); const rec = h.redeemStatement(h.compose(0, 0, 440 * 80), 5000 * H); // redeemed once the curve has reached its floor
   near(rec.received, 440 * 80 * 1e-5, 1e-12, 'the redemption returns the full value'); ok(rec.received > 80 * px, 'more than the 80 credits were bought for');
 }
-// a credit bought with the balance token enters the one pile at an eth cost (FLOW 96): the score-scaled eth backstop,
-// the remembered peak of the eth bid times max(1, score / refScore), at least 1 wei. it reads no pool, so the pool
-// price never moves it and the bid needs no pool key
+// a credit bought with the balance token enters the one pile at an eth cost (FLOW 96): the floor rate times score / refScore
+// (CoreLib.sellForBalance), at least 1 wei. the floor rate is the larger of the price state and the remembered peak. it reads the price state and the peak,
+// so the pool price never moves it and the bid needs no pool key
 {
-  const mk = (over = {}, pot = 10) => { const c = fresh(Object.assign({ redeemOn: true, balanceBidOn: true, balancePoolSet: true, rateStart: 1e15, rateCap: 1e16, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 2, idleLoosenPct: 2, saleFloorBps: 10000 }, over), pot); c.setBalanceModule(0, 1e-5); c.balancePot = 1; return c; };
+  const mk = (over = {}, pot = 10) => { const c = fresh(Object.assign({ redeemOn: true, balanceBidOn: true, balancePoolSet: true, rateStart: 1e15, rateCap: 1e16, climbPerMin: 0.5, recoveryClimbPerMin: 2, idleLoosenPct: 2, saleFloorBps: 10000 }, over), pot); c.setBalanceModule(0, 1e-5); c.balancePot = 1; return c; };
   // the peak is 0.001 eth per credit; 440 points is above refScore (4330000/1e4 = 433), so the backstop scales to 0.001 * 440 / 433
   const c = mk(); const r = c.xBuyCredit(440, 0); near(r.paid, 0.00352, 1e-12, 'the tokens paid'); near(r.cost, 0.001 * 440 / 433, 1e-12, 'the cost is the scaled peak backstop'); n += 2;
   const lo = mk({ balancePoolMult: 0.1 }), rl = lo.xBuyCredit(440, 0); near(rl.cost, 0.001 * 440 / 433, 1e-12, 'a pushed down pool price does not move the cost'); n++;
   const hi = mk({ balancePoolMult: 3 }), rh = hi.xBuyCredit(440, 0); near(rh.cost, 0.001 * 440 / 433, 1e-12, 'a pushed up pool price does not move the cost'); n++;
-  const empty = mk({ rateStart: 4e15 }, 0); empty.balancePot = 1; const re = empty.xBuyCredit(1, 0); near(re.cost, 4e-3, 1e-12, 'an empty pot does not lower the floor: the peak at the opening rate'); n++;
+  const empty = mk({ rateStart: 4e15 }, 0); empty.balancePot = 1; const re = empty.xBuyCredit(1, 0); near(re.cost, 4e-3 / 433, 1e-12, 'an empty pot leaves the floor at the opening rate, scaled to one point'); n++;
+  const under = mk(), ru = under.xBuyCredit(100, 0); near(ru.cost, 0.001 * 100 / 433, 1e-12, 'a score under refScore scales the cost down'); n++;
   const np = mk({ balancePoolSet: false }); const rn = np.xBuyCredit(440, 0); near(rn.cost, 0.001 * 440 / 433, 1e-12, 'the bid works with no pool key and records the backstop'); n++;
   const off = mk({ balanceBidOn: false }); assert.equal(off.xBuyCredit(440, 0), null); n++;
 }
@@ -615,7 +627,7 @@ const R0 = 6.668e15;
   near(set.poolTerm(60000), 2, 1e-12, 'the pool term'); near(set.reference(st, 0), 2, 1e-12, 'the pool term lifts the reference above the cost');
   near(set.askingPrice(st, 0), 3, 1e-12, 'the curve starts at 150 percent of the lifted reference'); near(set.askingPrice(st, 40 * H), 2.2, 1e-12, 'and falls on it'); near(set.askingPrice(st, 100 * H), 2, 1e-12, 'to the floor, 100 percent of the reference');
   near(set.askingPrice({ cost: 1, t0: 0, rating: 1000 }, 0), 1.5, 1e-12, 'a low pool term leaves the reference at the cost');
-  near(set.lowestPrice(st), 2, 1e-12, 'the lowest price is the floor of the reference');
+  near(set.lowestPrice(st, 0), 2, 1e-12, 'the lowest price is the floor of the reference');
   assert.equal(set.atFloor(st, 49 * H), false); assert.equal(set.atFloor(st, 50 * H), true); n += 2; // eligibility reads the age, whatever lifts the reference
   const r = set.buy(set.compose(1, 0, 60000), 0);
   near(r.price, 3, 1e-12, 'the engine price'); near(r.royalty, 3 * 0.025, 1e-12, 'the royalty on it'); assert.equal(r.saleBps, 15000); assert.equal(set.anchorAt(0), 12500); n += 3; // the anchor moves on the curve in bps of the reference
@@ -666,13 +678,14 @@ const R0 = 6.668e15;
 // creditStartBps / 10000, a straight line over creditWindow from the acquisition time, resting at the floor. Core.sellCreditTo takes at least the cost, creditCostToPotBps of the cost
 // to the pot and the rest of the payment to the buyback pot. compose waits for the window while the sale is on
 {
-  const mk = (over = {}, pot = 10) => fresh(Object.assign({ creditSaleOn: true, rateStart: 1e15, rateCap: 1e16, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 2, idleLoosenPct: 2 }, over), pot);
+  // the rate is flat here (the contract minimum climb), so the floor is the cost; the long run check below climbs
+  const mk = (over = {}, pot = 10) => fresh(Object.assign({ creditSaleOn: true, rateStart: 1e15, rateCap: 1e16, climbPerMin: 0.01, recoveryClimbPerMin: 0.01, idleLoosenPct: 2 }, over), pot);
   const cr = { pts: 440, cost: 0.002, t0: 0 }, W4 = 4 * H;
   const c = mk();
   ok(DEFAULTS.creditSaleOn === false && fresh({}, 10).cr.creditSaleOn === false, 'the credit sale is off at launch'); n++;
   near(c.ethPrice(0) / W, 1e-3, 1e-9, 'the eth bid before the clamp'); // the bid is under the cost here: the cost term wins
   near(c.creditFloor(cr, 0), 0.002 * 1.1, 1e-12, 'floor = cost * 11000 / 10000'); near(c.creditPrice(cr, 0), 0.002 * 1.1 * 3, 1e-12, 'start = floor * 30000 / 10000');
-  near(c.creditPrice(cr, W4 / 2), 0.002 * 1.1 * 2, 1e-12, 'half way down at half the window'); near(c.creditPrice(cr, W4), 0.002 * 1.1, 1e-12, 'the floor at the end of the window'); near(c.creditPrice(cr, W4 + 60), 0.002 * 1.1, 1e-12, 'and just after it'); near(c.creditPrice(cr, 1000 * H), 0.01 * (440 / 433) * 1.1, 1e-9, 'long after the window the floor follows the climbed floor rate capped at rateCap, scaled by the score');
+  near(c.creditPrice(cr, W4 / 2), 0.002 * 1.1 * 2, 1e-12, 'half way down at half the window'); near(c.creditPrice(cr, W4), 0.002 * 1.1, 1e-12, 'the floor at the end of the window'); near(c.creditPrice(cr, W4 + 60), 0.002 * 1.1, 1e-12, 'and just after it'); const cl = mk({ climbPerMin: 0.5, recoveryClimbPerMin: 2 }); near(cl.creditPrice(cr, 1000 * H), 0.01 * (440 / 433) * 1.1, 1e-9, 'long after the window the floor follows the climbed floor rate capped at rateCap, scaled by the score');
   n += 6;
   // the rate term: a cost under it is floored at it, read before the pot clamp (an empty pot does not zero it). 440 points scales it by 440 / 433, a score under refScore scales it down
   const e = mk({ rateStart: 4e15, rateCap: 1e16 }, 0.0001);
@@ -756,10 +769,17 @@ const R0 = 6.668e15;
   near(skimFraction(DEFAULTS, 0), 0.9, 1e-12, 'launch skim'); near(skimFraction(DEFAULTS, 900), (0.9 + 0.069) / 2, 1e-12, 'midway');
   near(skimFraction(DEFAULTS, 1800), 0.069, 1e-12, 'end of window'); near(skimFraction(DEFAULTS, 99999), 0.069, 1e-12, 'baseline');
   near(bountyFeeFraction(DEFAULTS, 0.069), 0.0665022, 1e-12, 'Core 6.65022 points'); near(bountyFeeFraction(DEFAULTS, 0.9), 0.0665022 + 0.831, 1e-12, 'extra to the Core');
-  near(engineFeeFraction(DEFAULTS, 0.069, 3600), 0.0665022 * (1 - 75185 / 1e6), 1e-12, 'engine share after the window');
-  near(engineFeeFraction(DEFAULTS, 0.069, 3600) * 1e3, 61.502232, 1e-4, 'engine 6.15022 points of 100 eth is 61.50 finney of 1 eth');
-  near(engineFeeFraction(DEFAULTS, 0.9, 0), (0.0665022 + 0.831), 1e-12, 'the window is not shared with the payee');
-  near(engineFeeFraction(DEFAULTS, 0.069, 1799), 0.0665022, 1e-12, 'nor is anything before the end of the window');
+  // Core._book: the payee takes payeePpm of each book once payeeOn. the first book at or after sniperSeconds with income sets payeeOn and takes 0
+  const pc = new Core(DEFAULTS, 0);
+  pc.addFees(100, 1799); near(pc.ethPot, 90, 1e-12, 'before the window the pot gets 90 of 100, the reserve 10'); near(pc.payeeOwed, 0, 1e-12, 'the payee gets 0 before the window');
+  pc.addFees(100, 1800); near(pc.ethPot, 180, 1e-12, 'the first book at the window end shares 0'); ok(pc.payeeOn && pc.payeeOwed === 0, 'the payee share starts');
+  pc.addFees(100, 1900); near(pc.payeeOwed, 7.5185, 1e-12, 'the payee takes payeePpm after the window');
+  near(pc.ethPot, 180 + 83.23335, 1e-9, 'the pot gets the income less the payee and the reserve share');
+  near(pc.ethRedeemBurn, 20 + 9.24815, 1e-9, 'the reserve takes feeToRedeemBurnBps of the income after the payee');
+  const pz = new Core(DEFAULTS, 0); pz.addFees(0, 5000); ok(!pz.payeeOn, 'a zero income book leaves payeeOn false');
+  // Core.fund: whole, the payee and reserve shares are 0
+  const pf = new Core(DEFAULTS, 0); pf.addFees(100, 1900); pf.fund(50, 1900);
+  near(pf.ethPot, 90 + 50, 1e-12, 'fund adds to the pot whole'); near(pf.ethRedeemBurn, 10, 1e-12, 'fund books a reserve share of 0'); near(pf.payeeOwed, 0, 1e-12, 'and a payee share of 0');
   let d0 = 0;
   for (let t = 0; t < 3600; t += 120) d0 += stepVolume(DEFAULTS, t, 120);
   near(d0, 1557 * 0.586, 1e-9, 'first hour volume');
@@ -768,10 +788,10 @@ const R0 = 6.668e15;
 }
 // whole runs: deterministic, every eth identity closes, nothing negative
 {
-  const a = simL({ days: 20, seed: 3 }), b = simL({ days: 20, seed: 3 }), c = simL({ days: 20, seed: 4 });
+  const a = simC({ days: 20, seed: 3 }), b = simC({ days: 20, seed: 3 }), c = simC({ days: 20, seed: 4 });
   assert.deepEqual(a.S.pot, b.S.pot); n++;
   assert.notDeepEqual(a.S.pot, c.S.pot); n++;
-  for (const r of [a, simL({ days: 40, saleFloorBps: 6000, seed: 5 }), simL({ days: 40, feeToRedeemBurnBps: 2500, seed: 6 }), simL({ days: 40, basefeeGwei: 40, seed: 9 }), simL({ days: 40, buyerWaits: 'floor', feeToRedeemBurnBps: 10000, seed: 8 }), simL({ days: 40, balanceDay: 12, xpPerPoint: 3e-5 / 440, stmtPick: 'random' }), simL({ days: 40, balanceDay: 12, balanceDayMode: 1, feeToRedeemBurnBps: 1000, seed: 11 }), simL({ days: 40, balanceDay: 12, balancePoolSet: true, feeToRedeemBurnBps: 3000, seed: 12 })]) {
+  for (const r of [a, simC({ days: 40, saleFloorBps: 6000, seed: 5 }), simC({ days: 40, feeToRedeemBurnBps: 2500, seed: 6 }), simC({ days: 40, basefeeGwei: 40, seed: 9 }), simC({ days: 40, buyerWaits: 'floor', feeToRedeemBurnBps: 10000, seed: 8 }), simC({ days: 40, balanceDay: 12, xpPerPoint: 3e-5 / 440, stmtPick: 'random' }), simC({ days: 40, balanceDay: 12, balanceDayMode: 1, feeToRedeemBurnBps: 1000, seed: 11 }), simC({ days: 40, balanceDay: 12, balancePoolSet: true, feeToRedeemBurnBps: 3000, seed: 12 })]) {
     ok(Math.abs(r.stats.potCheck) < 1e-6, 'pot accounting ' + r.stats.potCheck);
     ok(Math.abs(r.stats.buybackCheck) < 1e-9, 'buyback accounting ' + r.stats.buybackCheck);
     ok(Math.abs(r.stats.redeemCheck) < 1e-9, 'redeem burn reserve accounting ' + r.stats.redeemCheck);
@@ -781,36 +801,36 @@ const R0 = 6.668e15;
     ok(r.S.burned[r.H] <= 1e9);
   }
   // the engine never stops buying because statements are unsold: no buyers at all, statements pile up, credits keep coming
-  const none = simL({ days: 30, stmtPerDay: 0, stmtFloorPerDay: 0, seed: 3 });
+  const none = simC({ days: 30, stmtPerDay: 0, stmtFloorPerDay: 0, seed: 3 });
   ok(none.T.sold === 0 && none.S.waiting[none.H] > 100, 'no statement sells, many wait');
-  ok(none.S.credits[none.H] > 0.8 * simL({ days: 30, seed: 3 }).S.credits[30 * 24], 'credits keep coming with no sale at all, at least 80 percent of the base run at day 30');
+  ok(none.S.credits[none.H] > 0.8 * simC({ days: 30, seed: 3 }).S.credits[30 * 24], 'credits keep coming with no statement buyers, at least 80 percent of the base run at day 30');
   // every sale clears at or above the hard floor (cost * saleFloorBps) and at or above the price the buyer saw
-  const bo = simL({ days: 30, seed: 3 });
+  const bo = simC({ days: 30, seed: 3 });
   ok(bo.T.sold > 0 && bo.T.soldPrice >= bo.T.soldFloor * (1 - 1e-9), 'sales clear at or above the hard floor');
   ok(bo.stats.saleOverCost >= 0.75 && bo.stats.saleOverCost <= 1.5, 'average sale price over cost sits between the floor and the start');
   const boEnd = bo.core.anchorAt(bo.H * 3600); ok(boEnd >= 10000 && boEnd <= bo.core.c.startCapBps, 'the anchor stays between 10000 and the cap'); ok(bo.stats.finalAnchorBps === boEnd, 'stats carry the anchor');
   // the pessimistic run: a buyer who waits for the floor pays the lowest price of every statement it takes, and none sells young
-  const wf = simL({ days: 30, seed: 3, buyerWaits: 'floor' });
-  ok(wf.T.sold > 0 && wf.stats.saleOverCost >= 0.75 - 1e-9 && wf.stats.saleOverCost < 0.8 && wf.stats.saleAtFloorShare === 1, 'waiting buyers pay the floor, 75 percent of the reference, which is the cost scaled up by the rating above the average (FLOW 90)');
+  const wf = simC({ days: 30, seed: 3, buyerWaits: 'floor' });
+  ok(wf.T.sold > 0 && wf.stats.saleOverCost >= 0.75 - 1e-9 && wf.stats.saleAtFloorShare === 1, 'waiting buyers pay the floor, saleFloorBps of the reference, which is at least 75 percent of the cost (FLOW 90)');
   ok(wf.stats.saleAgeHours >= 150, 'and only after the asking price has reached it');
   // a settings change mid run: controller settings on day 5, the floors and splits on day 10, all read at once
-  const sw = simL({ days: 20, seed: 3, schedule: [{ day: 5, patch: { markupBps: 13000, fastDecayBpsPerHour: 200 } }, { day: 10, patch: { saleFloorBps: 6000, feeToRedeemBurnBps: 2500, saleToBuybackBps: 7500 } }] });
+  const sw = simC({ days: 20, seed: 3, schedule: [{ day: 5, patch: { markupBps: 13000, fastDecayBpsPerHour: 200 } }, { day: 10, patch: { saleFloorBps: 6000, feeToRedeemBurnBps: 2500, saleToBuybackBps: 7500 } }] });
   assert.equal(sw.core.c.floorBps, undefined); assert.equal(sw.core.s.saleFloorBps, 6000); n += 2;
   assert.equal(sw.core.c.markupBps, 13000); assert.equal(sw.core.c.fastDecayBpsPerHour, 200); assert.equal(sw.core.s.saleToBuybackBps, 7500); assert.equal(sw.core.s.feeToRedeemBurnBps, 2500); assert.equal(sw.T.settingsChanges, 2); n += 4;
   ok(sw.core.feeToRedeemBurn > 0, 'the fee share starts at its change'); ok(Math.abs(sw.stats.potCheck) < 1e-6, 'accounting closes across settings changes');
   ok(Math.abs(sw.stats.buybackCheck) < 1e-9, 'buyback accounting closes across settings changes');
-  const f0 = simL({ days: 20, seed: 3 }), f1 = simL({ days: 20, seed: 3, feeToRedeemBurnBps: 10000 });
+  const f0 = simC({ days: 20, seed: 3 }), f1 = simC({ days: 20, seed: 3, feeToRedeemBurnBps: 10000 });
   assert.equal(f0.core.feeToRedeemBurn, 0); ok(f1.core.feeToRedeemBurn > 0.9 * f1.S.cumFees[f1.H], 'at 10000 every fee goes to the reserve'); n++;
   ok(f1.T.sold >= 0 && f1.S.credits[f1.H] < f0.S.credits[f0.H], 'sending the fees to the reserve leaves less to buy credits');
   // the buyer's willingness to pay is a multiple of the MARKET cost of 80 credits, the asking price a share of what the engine PAID: a low willingness
   // sells less under the same asking curve (the engine paid more than market for most parts), and lowering the asking curve lets it buy again
-  const w55 = simL({ days: 30, seed: 3, wtpMult: 0.55 }), w100 = simL({ days: 30, seed: 3 });
+  const w55 = simC({ days: 30, seed: 3, wtpMult: 0.55 }), w100 = simC({ days: 30, seed: 3 });
   ok(w55.T.sold > 0 && w55.T.sold < 0.7 * w100.T.sold, 'a lower willingness to pay sells fewer statements at the same asking prices');
-  const w55low = simL({ days: 30, seed: 3, wtpMult: 0.55, markupBps: 10000, saleFloorBps: 3000 });
+  const w55low = simC({ days: 30, seed: 3, wtpMult: 0.55, markupBps: 10000, saleFloorBps: 3000 });
   ok(w55low.T.sold > 1.8 * w55.T.sold, 'the same buyers buy more when the asking curve is lower'); ok(w55low.stats.saleOverCost < 0.5, 'and they pay a lower share of cost');
-  const p2 = simL({ days: 30, balanceDay: 10, xpPerPoint: 3e-5 / 440, seed: 3 });
+  const p2 = simC({ days: 30, balanceDay: 10, xpPerPoint: 3e-5 / 440, seed: 3 });
   ok(p2.T.redeemed > 0 && p2.T.redeemedAge > 0, 'held statements are redeemed through the balanceModule');
-  const s = summary(a); ok(s.credits > 0 && s.potGoneDay > 1 && s.statements > 0, 'summary reads the run');
+  const s = summary(a); ok(s.credits > 0 && s.statements > 0 && (s.potGoneDay === null || s.potGoneDay > 1), 'summary reads the run: the pot is spent after day one, or lasts the 20 days');
 }
 // whole runs at the launch values (FLOW 85, 86): statements fall to their reference and wait there while redeemOn is false, the redeem burn reserve takes 10 percent of the fees,
 // the balance side in hold mode redeems at the floor and stops the bid, the balance side on adds the balance token bid, whose credits join the one pile (FLOW 92)
@@ -825,7 +845,7 @@ const R0 = 6.668e15;
   const endSec = L.H * 3600, hoursToCost = (L.core.startBps(endSec) - 10000) / 100, old = L.unbid.filter((st) => endSec - st.t0 >= hoursToCost * H);
   ok(L.unbid.length > 100 && old.length > 20, 'statements wait'); ok(old.every((st) => Math.abs(L.core.askingPrice(st, endSec) - L.core.reference(st, endSec)) < 1e-12 * L.core.reference(st, endSec)), 'and every one past that age is asked at its reference');
   ok(L.unbid.every((st) => L.core.askingPrice(st, endSec) >= st.cost * (1 - 1e-12)), 'none is asked under its cost');
-  near(L.core.feeToRedeemBurn, 0.1 * (L.T.fees + L.T.feesBuyback), 1e-9, 'the reserve takes 10 percent of the fees booked'); near(L.core.ethRedeemBurn, L.core.feeToRedeemBurn, 1e-12, 'and nothing leaves it without a redemption');
+  near(L.core.feeToRedeemBurn, 0.1 * (L.T.fees + L.T.feesBuyback - L.core.payeeOwed), 1e-9, 'the reserve takes 10 percent of the fees booked'); near(L.core.ethRedeemBurn, L.core.feeToRedeemBurn, 1e-12, 'the reserve equals the fee share, redemptions and releases aside');
   ok(L.core.redeemBurnMoved === 0, 'no redemption, no move to the buyback');
   // the pot buys with the other 90 percent
   const noRes = simulate(Object.assign({ feeToRedeemBurnBps: 0 }, base));
@@ -883,41 +903,26 @@ const R0 = 6.668e15;
   const gated = simulate(Object.assign({ composeChoice: 'richest' }, win)); assert.equal(gated.T.composedChosen, 0); assert.deepEqual(gated.S.composed, std.S.composed); n += 4; // the composer needs chosenComposeOn
   ok(Math.abs(pick.stats.potCheck) < 1e-6 && Math.abs(pick.stats.creditCheck) < 1e-9, 'the books close with chosen composition'); n++;
 }
-// sub-hour step: the default is the hourly step, minute and five minute steps give the same economy within sampling noise, and the books close
+// sub-hour step: five minute and one minute steps give the same economy within 10 percent, and the books close. the hourly step is a
+// different run here: the stepped rule reads its drop floor and climb per minute, and an hour step distorts it
 {
   const h = simL({ days: 30, seed: 1 }), h2 = simL({ days: 30, seed: 1, stepSec: 3600 });
   assert.deepEqual(h.S.credits, h2.S.credits); n++;
   const m5 = simL({ days: 30, seed: 1, stepSec: 300 }), m1 = simL({ days: 30, seed: 1, stepSec: 60 });
+  near(m5.S.credits[m5.H], m1.S.credits[m1.H], 0.1, 'credits at a five minute step are within 10 percent of the one minute step');
   for (const m of [m5, m1]) {
-    const c = m.S.credits[m.H], c0 = h.S.credits[h.H];
-    ok(c > 0.9 * c0 && c < 1.1 * c0, 'credits bought at a sub hour step stay within 10 percent of the hourly step');
     ok(Math.abs(m.stats.potCheck) < 1e-6 && Math.abs(m.stats.saleCheck) < 1e-6, 'accounting closes at a sub hour step');
     assert.equal(m.S.pot.length, h.S.pot.length); n++;
   }
   assert.throws(() => simL({ days: 2, stepSec: 7 })); n++;
 }
-// bid rules dropToLast and stepped
+// bid rule: the stepped rule (CoreLib.climb and drop)
 {
   const R = 1e13, MIN = 60;
-  const mk = (over) => fresh(Object.assign({ rateStart: R }, over), 1000);
-  // dropToLast: a fill sets the bid to dropToPct of the rate that fill paid, whatever share of the pot it spent; the climb is climbPerMin per minute
-  {
-    const c = mk({ bidRule: 'dropToLast', dropToPct: 80, climbPerMin: 1 });
-    near(c.ethRate(0), R, 1e-12, 'dropToLast opens at rateStart');
-    near(c.ethRate(30 * MIN), R * Math.pow(1.01, 30), 1e-12, 'dropToLast climbs 1 percent a minute before any fill');
-    ok(c.spend(0.001, 30 * MIN));
-    near(c.rateAtCheckpoint, R * Math.pow(1.01, 30) * 0.8, 1e-12, 'a one credit fill drops the bid to 80 percent of the rate paid');
-    const r1 = c.rateAtCheckpoint;
-    near(c.ethRate(30 * MIN + 10 * MIN), r1 * Math.pow(1.01, 10), 1e-12, 'climb after 10 minutes');
-    ok(c.spend(100, 30 * MIN + 10 * MIN));
-    near(c.rateAtCheckpoint, r1 * Math.pow(1.01, 10) * 0.8, 1e-12, 'a fill of a tenth of the pot drops to the same 80 percent');
-    const c2 = mk({ bidRule: 'dropToLast', dropToPct: 90, climbPerMin: 2 });
-    ok(c2.spend(0.001, 0)); near(c2.rateAtCheckpoint, R * 0.9, 1e-12, 'dropToPct 90');
-    near(c2.ethRate(5 * MIN), R * 0.9 * Math.pow(1.02, 5), 1e-12, 'climbPerMin 2');
-  }
+  const mk = (over) => fresh(Object.assign({ rateStart: R, idleLoosenPct: 0 }, over), 1000); // idleLoosenPct 0 here: the ceiling is ceilPct of the anchor
   // stepped: a fixed drop per credit, a floor of dropToPct of the bid at the first fill of the timestamp, a ceiling of ceilPct of the last rate paid
   {
-    const c = mk({ bidRule: 'stepped', dropPerCreditPct: 0.5, dropToPct: 80, climbPerMin: 1, ceilPct: 125 });
+    const c = mk({ dropPerCreditPct: 0.5, dropToPct: 80, climbPerMin: 1, ceilPct: 125 });
     ok(c.spend(0.001, 0));
     near(c.rateAtCheckpoint, R * 0.995, 1e-12, 'one credit drops the bid 0.5 percent');
     ok(c.spend(0.001, 0)); near(c.rateAtCheckpoint, R * 0.995 * 0.995, 1e-12, 'a second credit in the same minute drops it again');
@@ -932,13 +937,13 @@ const R0 = 6.668e15;
     const t = 60 + 1000 * MIN; c.checkpoint(t); c.spend(0.001, t);
     const r0 = c.rateAtCheckpoint; near(c.ethRate(t + 10 * MIN), Math.min(r0 * Math.pow(1.01, 10), c.lastPaidRate * 1.25), 1e-12, 'climb after 10 minutes');
     // before any fill the ceiling is the opening bid times ceilPct
-    const d = mk({ bidRule: 'stepped', climbPerMin: 2, ceilPct: 110 });
+    const d = mk({ climbPerMin: 2, ceilPct: 110 });
     near(d.ethRate(1000 * MIN), R * 1.1, 1e-12, 'opening ceiling is rateStart times ceilPct');
     near(d.ethRate(3 * MIN), R * Math.pow(1.02, 3), 1e-12, 'climb 2 percent a minute');
   }
   // CoreLib.drop: the minute floor belongs to the bucket now / 60. fills at seconds 0 and 59 share one floor, a fill at second 60 starts a new one
   {
-    const c = mk({ bidRule: 'stepped', dropPerCreditPct: 10, dropToPct: 80, climbPerMin: 0.1, recoveryClimbPerMin: 0.1, ceilPct: 300 });
+    const c = mk({ dropPerCreditPct: 10, dropToPct: 80, climbPerMin: 0.1, recoveryClimbPerMin: 0.1, ceilPct: 300 });
     c.spend(0.001, 0); c.spend(0.001, 30); c.spend(0.001, 59); // 0.9, 0.81, then the floor 0.8 of the first fill
     near(c.rateAtCheckpoint, R * 0.8, 1e-12, 'seconds 0 to 59 are one bucket, the floor holds at 80 percent of the first fill');
     const first = c.rateAtCheckpoint; c.spend(0.001, 60);
@@ -948,7 +953,7 @@ const R0 = 6.668e15;
   // reaches the peak, then at climbPerMin. the peak decays over peakHalfLifeHours and anchors the ceiling
   {
     const R = 1e13, MIN = 60;
-    const c = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 2, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 50 }, 1000);
+    const c = fresh({ rateStart: R, climbPerMin: 0.5, recoveryClimbPerMin: 2, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 50 }, 1000);
     // one fill drops the bid to 50 percent of R, the peak stays at R
     ok(c.spend(0.001, 0));
     near(c.rateAtCheckpoint, R * 0.5, 1e-12, 'the fill halves the bid');
@@ -956,7 +961,7 @@ const R0 = 6.668e15;
     // one minute later the bid climbs at the fast recovery rate (2 percent), not the slow rate
     near(c.ethRate(MIN), R * 0.5 * 1.02, 1e-9, 'below the peak the bid climbs at recoveryClimbPerMin');
     // the fast climb reaches the peak, then the slow rate takes over: faster than a pure slow climb would be
-    const slowOnly = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 0.5, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 50 }, 1000);
+    const slowOnly = fresh({ rateStart: R, climbPerMin: 0.5, recoveryClimbPerMin: 0.5, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 50 }, 1000);
     ok(slowOnly.spend(0.001, 0));
     ok(c.ethRate(30 * MIN) > slowOnly.ethRate(30 * MIN), 'recovery reaches the pre fill price sooner than the slow climb');
     // the ceiling anchors on the peak, so right after the fill the bid may climb back toward the pre fill level
@@ -967,31 +972,25 @@ const R0 = 6.668e15;
   {
     const R = 1e13, MIN = 60;
     // a single credit drop of 0.5 percent stays inside the 10 percent gap: the climb is the slow climbPerMin
-    const c = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 2, recoveryGapPct: 10, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 0.5 }, 1000);
+    const c = fresh({ rateStart: R, climbPerMin: 0.5, recoveryClimbPerMin: 2, recoveryGapPct: 10, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 0.5 }, 1000);
     ok(c.spend(0.001, 0));
     near(c.rateAtCheckpoint, R * 0.995, 1e-12, 'the single credit drop is 0.5 percent');
     near(c.ethRate(MIN), R * 0.995 * 1.005, 1e-9, 'inside the gap the bid climbs at the slow rate');
     // a zero gap restores the old rule: the same small drop starts on the fast recovery climb, so a minute later the
     // bid is higher than under the gap (the fast leg here is short because the drop is only 0.5 percent under the peak)
-    const g0 = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 0.5, recoveryClimbPerMin: 2, recoveryGapPct: 0, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 0.5 }, 1000);
+    const g0 = fresh({ rateStart: R, climbPerMin: 0.5, recoveryClimbPerMin: 2, recoveryGapPct: 0, ceilPct: 150, peakHalfLifeHours: 6, dropToPct: 50, dropPerCreditPct: 0.5 }, 1000);
     ok(g0.spend(0.001, 0));
     ok(g0.ethRate(MIN) > c.ethRate(MIN), 'with no gap the small drop climbs faster than under the gap');
   }
-  // the built rule is unchanged by the new params
-  {
-    const c = mk({ bidRule: 'built', dropPerCreditPct: 5, dropToPct: 10, climbPerMin: 50 });
-    ok(c.spend(100, 0)); near(c.rateAtCheckpoint, R * (1 - 0.2 * 100 / 1000), 1e-12, 'built drop is dropBps times the share of the pot');
-    near(c.ethRate(3600), c.rateAtCheckpoint * 1.01, 1e-12, 'built climb is 1 percent an hour');
-  }
-  // whole runs: books close, the stepped bid never exceeds its ceiling at a step end, the throttler sells at its fraction of the market
+  // whole runs: books close, the stepped bid stays at or under its ceiling at the end of a run, the throttler sells at its fraction of the market
   const rs = (share) => share * 0.0089e18;
-  for (const o of [{ bidRule: 'dropToLast' }, { bidRule: 'stepped', ceilPct: 110 }]) {
+  for (const o of [{ ceilPct: 110 }, { ceilPct: 150, climbPerMin: 2, recoveryClimbPerMin: 2 }]) {
     const r = simL(Object.assign({ days: 6, seed: 2, stepSec: 60, rateStart: rs(1), climbPerMin: 1 }, o));
-    ok(Math.abs(r.stats.potCheck) < 1e-6 && Math.abs(r.stats.saleCheck) < 1e-6, 'accounting closes under ' + o.bidRule);
+    ok(Math.abs(r.stats.potCheck) < 1e-6 && Math.abs(r.stats.saleCheck) < 1e-6, 'accounting closes under ceilPct ' + o.ceilPct);
     ok(r.S.credits[r.H] > 0 && r.stats.idleHoursMax >= 0);
-    if (o.bidRule === 'stepped') ok(r.core.ethRate(r.H * 3600) <= r.core.lastPaidRate * 1.1 * (1 + 1e-9) || r.core.ethRate(r.H * 3600) <= r.p.rateStart * 1.1, 'stepped ceiling at the end of a run');
+    ok(r.core.ethRate(r.H * 3600) <= r.core.stepCeil(r.H * 3600) * (1 + 1e-9) || r.core.ethRate(r.H * 3600) <= r.core.clamp(), 'the bid is under its ceiling or the pot at the end of a run');
   }
-  const a = simL({ days: 4, seed: 2, stepSec: 60, bidRule: 'dropToLast', rateStart: rs(1) }), b = simL({ days: 4, seed: 2, stepSec: 60, bidRule: 'dropToLast', rateStart: rs(1), throttler: true });
+  const a = simL({ days: 4, seed: 2, stepSec: 60, rateStart: rs(1) }), b = simL({ days: 4, seed: 2, stepSec: 60, rateStart: rs(1), throttler: true });
   ok(a.T.throttled === 0 && b.T.throttled > 0, 'the throttler sells credits when on');
   ok(Math.abs(b.stats.potCheck) < 1e-6, 'accounting closes with the throttler');
   // market paths
@@ -1001,43 +1000,39 @@ const R0 = 6.668e15;
   near(q('whipsaw', 48), 1, 1e-12, 'whipsaw before the fall'); near(q('whipsaw', 60), 0.4, 1e-12, 'whipsaw falls 60 percent in 12 hours');
   near(q('whipsaw', 108), 1, 1e-12, 'whipsaw recovers over 2 days'); near(q('whipsaw', 300), 1, 1e-12, 'whipsaw flat after');
 }
-// clamp, ceilDecayHours, askFloor
+// clamp, askFloor
 {
   const R = 1e13, MIN = 60;
-  const c1 = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 50, ceilPct: 1000, rateCap: 1e18 }, 0.1);
+  const c1 = fresh({ rateStart: R, climbPerMin: 50, ceilPct: 1000, rateCap: 1e18 }, 0.1);
   near(c1.clamp(), 0.1 * W, 1e-12, 'clamp affords one credit: the pot');
-  const d = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 100, ceilPct: 150, ceilDecayHours: 1 }, 1000);
-  near(d.ethRate(10 * 3600), R * (1 + 0.5 * Math.pow(2, -10)), 1e-12, 'no fill yet: headroom halves every hour from time zero');
-  d.spend(0.001, 0); const lp = d.lastPaidRate;
-  near(d.ethRate(3600), Math.min(R * 0.995 * Math.pow(2, 60), lp * 1.25), 1e-9, 'after one half life the headroom is halved');
   const f = simL({ days: 3, seed: 2, askFloor: 0.8 });
   const g = simL({ days: 3, seed: 2 }); ok(f.stats.costVsMarket >= g.stats.costVsMarket - 0.2, 'a floor on seller asks does not lower the price paid');
 }
 // idle loosening of the stepped ceiling anchor, gap path, forced fill, bot drain, stall metric
 {
   const R = 1e13, MIN = 60;
-  const c = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 100, ceilPct: 110, idleLoosenPct: 1, idleLoosenMin: 10 }, 1000);
+  const c = fresh({ rateStart: R, climbPerMin: 100, ceilPct: 110, idleLoosenPct: 1 }, 1000);
   near(c.ethRate(5 * MIN), R * 1.1, 1e-12, 'before the first interval the ceiling is ceilPct of the anchor');
   near(c.ethRate(25 * MIN), R * 1.1 * (1 + 0.01 * 2), 1e-12, 'two idle intervals raise the anchor by 1 percent of itself each, linearly');
   ok(c.spend(0.001, 25 * MIN)); const lp = c.lastPaidRate;
   near(c.ethRate(25 * MIN + 9 * MIN), Math.min(c.rateAtCheckpoint * Math.pow(2, 9), lp * 1.1), 1e-12, 'a fill resets the idle clock');
   near(c.ethRate(25 * MIN + 31 * MIN), lp * 1.1 * (1 + 0.01 * 3), 1e-12, 'three intervals after the fill');
-  const o = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 100, ceilPct: 110 }, 1000);
-  near(o.ethRate(10000 * MIN), R * 1.1, 1e-12, 'idleLoosenPct 0 leaves the ceiling at ceilPct of the anchor');
+  const o = fresh({ rateStart: R, climbPerMin: 100, ceilPct: 110, idleLoosenPct: 0.01 }, 1000);
+  near(o.ethRate(10000 * MIN), R * 1.1 * (1 + 0.0001 * Math.floor(10000 * MIN / 600)), 1e-12, 'the contract minimum idleLoosenPct 0.01 loosens the ceiling by 0.01 percent per full 10 idle minutes');
   const q = (h, g) => pathPrice(Object.assign({}, DEFAULTS, { pricePath: 'gap', gapPct: g, gapHour: 6 }), h * 3600) / DEFAULTS.priceP0;
   near(q(5.9, 30), 1, 1e-12, 'gap path before the jump'); near(q(6, 30), 1.3, 1e-12, 'gap path after the jump'); near(q(80, 100), 2, 1e-12, 'gap path stays');
   const rs = (share) => share * 0.0089e18;
-  const base = { days: 2, seed: 2, stepSec: 60, bidRule: 'stepped', rateStart: rs(1) };
-  const ff = simL(Object.assign({ forceFillHour: 6, forceFillFrac: 0.5 }, base));
+  const base = { days: 2, seed: 2, stepSec: 60, rateStart: rs(1) };
+  const ff = simC(Object.assign({ forceFillHour: 6, forceFillFrac: 0.5 }, base));
   ok(Math.abs(ff.stats.potCheck) < 1e-6, 'accounting closes with a forced fill'); ok(ff.T.throttled === 0, 'a forced fill is not counted as a throttler credit');
-  const st0 = simL(Object.assign({ pricePath: 'gap', gapPct: 300, gapHour: 6, idleLoosenPct: 0, days: 3 }, { seed: 2, stepSec: 60, bidRule: 'stepped', rateStart: rs(1) }));
-  const st1 = simL(Object.assign({ pricePath: 'gap', gapPct: 300, gapHour: 6, idleLoosenPct: 2, days: 3 }, { seed: 2, stepSec: 60, bidRule: 'stepped', rateStart: rs(1) }));
+  const st0 = simC(Object.assign({ pricePath: 'gap', gapPct: 300, gapHour: 6, idleLoosenPct: 0.01, days: 3 }, { seed: 2, stepSec: 60, rateStart: rs(1) }));
+  const st1 = simC(Object.assign({ pricePath: 'gap', gapPct: 300, gapHour: 6, idleLoosenPct: 2, days: 3 }, { seed: 2, stepSec: 60, rateStart: rs(1) }));
   ok(st0.stats.stallHours > st1.stats.stallHours, 'idle loosening shortens the stall after a gap up'); ok(st0.stats.stallRuns.length >= 1 && st0.stats.stallHoursMax > 2, 'a stall run is recorded');
 }
 // stepped: the clamp bounds the bid that is read and paid, and is never stored. the drop and the anchor use the price state rate
 {
   const R = 1e13, MIN = 60;
-  const c = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 1, ceilPct: 125 }, 3e-6);
+  const c = fresh({ rateStart: R, climbPerMin: 1, ceilPct: 125 }, 3e-6);
   const clamp = c.clamp(); ok(clamp < R / 3, 'the clamp of a 3e-6 eth pot is far under the stored rate');
   near(c.ethRate(0), clamp, 1e-12, 'the read bid is held at the clamp');
   near(c.priceRate(0), R, 1e-12, 'the price state rate is the stored rate');
@@ -1047,20 +1042,20 @@ const R0 = 6.668e15;
   c.addFees(1000, 10 * MIN);
   near(c.ethRate(10 * MIN), R * 0.995, 1e-12, 'the price state held its value while above the clamp, it did not climb');
   near(c.ethRate(20 * MIN), Math.min(R * 0.995 * Math.pow(1.01, 10), R * 1.25), 1e-9, 'once the pot affords it the price state climbs again from the held value');
-  const z = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 1, ceilPct: 125, dropPerCreditPct: 1 }, 0);
+  const z = fresh({ rateStart: R, climbPerMin: 1, ceilPct: 125, dropPerCreditPct: 1 }, 0);
   near(z.ethRate(0) + 1e-30, 1e-30, 1e-6, 'an empty pot reads 0 whether funded or not'); ok(!z.funded);
-  const w = fresh({ rateStart: R, bidRule: 'stepped', dropPerCreditPct: 1, dropToPct: 80 }, 1000);
+  const w = fresh({ rateStart: R, dropPerCreditPct: 1, dropToPct: 80 }, 1000);
   w.spend(0.001, 0); w.rateAtCheckpoint = R * 0.5; w.checkpointTime = 0; w.lastPaidRate = R * 0.5; w.spend(0.001, 0);
   near(w.rateAtCheckpoint, R * 0.5 * 0.99, 1e-9, 'the minute floor restarts at a price that is already under it');
-  const e = fresh({ rateStart: R / 10, bidRule: 'stepped', climbPerMin: 1, ceilPct: 1000 }, 5e-6);
+  const e = fresh({ rateStart: R / 10, climbPerMin: 1, ceilPct: 1000 }, 5e-6);
   near(e.priceRate(1000 * MIN), e.clamp(), 1e-12, 'the climb target is the clamp when it is under the ceiling'); near(e.ethRate(1000 * MIN), e.clamp(), 1e-12, 'read at the clamp');
-  const d = fresh({ rateStart: R, bidRule: 'stepped', climbPerMin: 1, ceilPct: 125, rateCap: R * 1.2 }, 1000);
+  const d = fresh({ rateStart: R, climbPerMin: 1, ceilPct: 125, rateCap: R * 1.2 }, 1000);
   near(d.ethRate(100 * MIN), R * 1.2, 1e-12, 'rateCap bounds the price state'); d.rateAtCheckpoint = R * 3; near(d.ethRate(100 * MIN), R * 1.2, 1e-12, 'a stored rate above a bound reads as the bound');
 }
-// the unmodified defaults are the launch run: stepped rule at 60 second steps, the launch router split, books close
+// the unmodified defaults are the launch run: minute steps, the launch fee split, books close
 {
   const r = simulate({ days: 6, seed: 3 });
-  ok(r.params.bidRule === 'stepped' && r.params.stepSec === 60, 'the default run is the stepped launch rule at minute steps');
+  ok(r.params.stepSec === 60, 'the default run is the launch rule at minute steps');
   ok(Math.abs(r.stats.potCheck) < 1e-6 && Math.abs(r.stats.saleCheck) < 1e-6, 'accounting closes on the default run');
   ok(r.stats.rateMaxBidRatio < 1.6, 'the default bid stays under 1.6x the market (rate cap and ceiling): ' + r.stats.rateMaxBidRatio);
   ok(summary(r, 6).credits > 5000, 'the default run buys credits in week one');
