@@ -137,6 +137,7 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     ethRedeemBurn,
     balancePot,
     payeeOwed,
+    payeeOn,
     pileSize,
     held: held.map(Number),
     settings,

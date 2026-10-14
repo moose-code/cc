@@ -4,12 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useAccount, useBalance, usePublicClient, useReadContract, useReadContracts, useSwitchChain } from "wagmi";
 import { formatUnits, maxUint256, parseEther, parseEventLogs, parseUnits, zeroAddress, type Address } from "viem";
 import { engineDeployed, chain } from "@/lib/config";
+import { STATEMENT_SIZE } from "@/lib/engine";
 import { useCcMarket, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
-import { changePct, commas, evmNowAddress, evmNowTx, leftLabel, shortHash, tokens, usdCompact, usdPrice } from "@/lib/format";
+import { changePct, commas, eth, evmNowAddress, evmNowTx, leftLabel, shortHash, tokens, usdCompact, usdPrice } from "@/lib/format";
 import { lsGet, lsSet } from "@/lib/cache";
-import { useNow } from "@/lib/live";
+import { useNow, useSnapshot } from "@/lib/live";
+import { Track, Tween, useEngineGauge } from "./Gauge";
 import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
 
 const HOOK_FEE_BPS = 1000; // fallback when the hook reads fail
@@ -196,6 +198,20 @@ export function TradePanel({ market }: { market?: Market }) {
   };
   const closeSlip = () => setSlipOpen(false);
 
+  // eth into the pot per eth of volume (1e18 scale): the skim's bounty share to the Core, less the
+  // payee and redeem burn cuts of Core._book. the volume is the eth side of the swap; the sell side
+  // uses the quote, so the figure is an estimate.
+  const { data: snap } = useSnapshot();
+  const potPerEth =
+    hookFee && snap
+      ? (((((10n ** 18n * BigInt(hookFee.skimBps) * BigInt(hookFee.bountyBps)) / 10n ** 8n) *
+          (1_000_000n - (snap.payeeOn ? BigInt(snap.settings.payeePpm) : 0n))) /
+          1_000_000n) *
+          (10_000n - BigInt(snap.settings.feeToRedeemBurnBps))) /
+        10_000n
+      : undefined;
+  const potAdd = potPerEth != null ? ((side === "buy" ? amountIn : quoteOut ?? 0n) * potPerEth) / 10n ** 18n : 0n;
+
   const inUnit = side === "buy" ? "ETH" : tag;
   const outUnit = side === "buy" ? tag : "ETH";
   const bal = payBal != null ? (side === "buy" ? Number(formatUnits(payBal, 18)).toFixed(4) : tokens(payBal, dec)) : null;
@@ -358,7 +374,47 @@ export function TradePanel({ market }: { market?: Market }) {
       ) : (
         <p className="tp-fee">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
       )}
+      {market == null && engineDeployed && <SwapEngine add={potAdd} sharePct={potPerEth != null ? Number(potPerEth) / 1e16 : undefined} />}
       {!engineDeployed && <p className="panel-note tp-note">engine not deployed.</p>}
     </aside>
+  );
+}
+
+// The engine state a cc swap feeds: a connector carrying the pot's share of each trade, then the
+// pot, next credit and next statement. `add` is the typed swap's estimated pot increase, shown as the
+// value after the swap and a lighter bar segment.
+function SwapEngine({ add, sharePct }: { add: bigint; sharePct?: number }) {
+  const g = useEngineGauge();
+  const after = g.pot != null && add > 0n ? g.pctOf(g.pot + add) : undefined;
+  return (
+    <section className="tp-engine" aria-label="engine fed by this swap">
+      <div className="tp-feed">
+        <span className="tp-feed-line" aria-hidden />
+        {sharePct != null ? `${parseFloat(sharePct.toFixed(2))}% of each trade goes to the pot` : "each trade feeds the pot"}
+      </div>
+      <div className="tp-eg">
+        <div className="tp-eg-row">
+          <span>pot</span>
+          <span className="v">
+            <Tween wei={g.pot} />
+            {g.pot != null && add > 0n && <em> → {eth(g.pot + add)}</em>} eth
+          </span>
+        </div>
+        <div className="tp-eg-row" title={`avg bid ${eth(g.bid)} eth; each credit's own bid scales with its score`}>
+          <span>next credit</span>
+          <span className="v">
+            {commas(g.creditPct)}%{after != null && <em> → {commas(after)}%</em>}
+          </span>
+        </div>
+        <Track pct={g.creditPct} next={after} kind="credit" />
+        <div className="tp-eg-row">
+          <span>next statement</span>
+          <span className="v">
+            {g.ready}/{STATEMENT_SIZE} credits
+          </span>
+        </div>
+        <Track pct={(g.ready / STATEMENT_SIZE) * 100} kind="statement" />
+      </div>
+    </section>
   );
 }

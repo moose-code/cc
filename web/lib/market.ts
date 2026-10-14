@@ -104,7 +104,8 @@ export function useQuote(market: Market | undefined, side: "buy" | "sell", amoun
 // schedule's end skim and the baseline skim, plus the LP fee. Refetched every
 // 12 s (the head poll) while the window is active, every 60 s otherwise. null
 // when a read fails.
-export type HookFee = { bps: number; baseBps: number; active: boolean; endsAt?: number; perMin?: number };
+// bps: skim plus lp fee, the swapper's total. skimBps: the skim alone. bountyBps: the bounty recipient's share of the skim.
+export type HookFee = { bps: number; baseBps: number; skimBps: number; bountyBps: number; active: boolean; endsAt?: number; perMin?: number };
 
 const scheduleAbi = parseAbi([
   "function schedule(bytes32 poolId) view returns ((uint24 startingSkimBps, uint24 endSkimBps, uint32 windowSeconds, uint40 startTime))",
@@ -146,7 +147,7 @@ export function useHookFeeBps(market?: Market) {
             }
           }
         }
-        return { bps: skim + lp, baseBps: end + lp, active, endsAt, perMin };
+        return { bps: skim + lp, baseBps: end + lp, skimBps: skim, bountyBps: Number(cfg.bountyBps), active, endsAt, perMin };
       } catch {
         return null;
       }
