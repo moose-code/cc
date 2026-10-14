@@ -6,9 +6,9 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
 import { formatUnits, parseAbi, zeroAddress, type Address } from "viem";
-import { core, ethUsdFeed } from "./config";
-import { chainlinkAbi, controllerAbi, coreAbi, erc20Abi, hookAbi, mevAbi, quoterAbi, stateViewAbi } from "./abis";
-import { MULTICALL3, useHead, useSnapshot } from "./live";
+import { ethUsdFeed } from "./config";
+import { chainlinkAbi, controllerAbi, erc20Abi, hookAbi, mevAbi, quoterAbi, stateViewAbi } from "./abis";
+import { useHead, useSnapshot } from "./live";
 import { SCOPE, lsGet, lsSet } from "./cache";
 import { V4, ccPerEthFromSqrt, poolIdOf, poolKey, type PoolKey } from "./v4";
 
@@ -211,47 +211,4 @@ export function useMarketStats(market?: Market) {
   const marketCap = priceUsd != null && supply != null && market ? priceUsd * Number(formatUnits(supply, market.decimals)) : undefined;
   const change = perEth && perEthThen != null ? (perEthThen / perEth - 1) * 100 : undefined;
   return { priceUsd, marketCap, change };
-}
-
-// Engine pot and bid, refetched every 15 s like the snapshot and on every
-// invalidation (a swap's receipt). undefined until the first read.
-export function usePots() {
-  const client = usePublicClient();
-  return useQuery<Pots>({
-    queryKey: ["pots", core],
-    enabled: Boolean(client && core),
-    refetchInterval: 15000,
-    queryFn: () => readPots(client!),
-  });
-}
-
-// Engine pots read at the latest block: `pot` is ethPot plus the share of the
-// unbooked fee income that the next Core._book adds (Core._income, _split),
-// `bid` is ethRate, `balancePot` is the balance token pot.
-export type Pots = { pot: bigint; bid: bigint; balancePot: bigint };
-
-export async function readPots(client: NonNullable<ReturnType<typeof usePublicClient>>): Promise<Pots> {
-  const c = { address: core!, abi: coreAbi } as const;
-  const [[bid, ethPot, toBuyback, redeemBurn, owed, balancePot, payeeOn, st], held] = await Promise.all([
-    client.multicall({
-      multicallAddress: MULTICALL3,
-      allowFailure: false,
-      contracts: [
-        { ...c, functionName: "ethRate" },
-        { ...c, functionName: "ethPot" },
-        { ...c, functionName: "ethToBuyback" },
-        { ...c, functionName: "ethRedeemBurn" },
-        { ...c, functionName: "payeeOwed" },
-        { ...c, functionName: "balancePot" },
-        { ...c, functionName: "payeeOn" },
-        { ...c, functionName: "settings" },
-      ] as const,
-    }),
-    client.getBalance({ address: core! }),
-  ]);
-  const booked = ethPot + toBuyback + redeemBurn + owed;
-  const income = held > booked ? held - booked : 0n;
-  const toPayee = payeeOn ? (income * BigInt(st.payeePpm)) / 1_000_000n : 0n;
-  const toRedeemBurn = ((income - toPayee) * BigInt(st.feeToRedeemBurnBps)) / 10000n;
-  return { pot: ethPot + income - toPayee - toRedeemBurn, bid, balancePot };
 }

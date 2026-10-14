@@ -7,7 +7,6 @@ import {
   type FeedKind,
 } from "@/lib/engine";
 import { engineDeployed } from "@/lib/config";
-import { usePots } from "@/lib/market";
 import { useNow, useSnapshot } from "@/lib/live";
 import { useBlockTs } from "@/lib/engine";
 import { useEffect, useRef, useState } from "react";
@@ -68,7 +67,6 @@ function Tween({ wei }: { wei: bigint | undefined }) {
 export function EngineFeed() {
   const { data: feed } = useFeed();
   const { data: snap } = useSnapshot();
-  const { data: pots } = usePots();
   const now = useNow();
   const [limit, setLimit] = useState(PAGE);
 
@@ -94,12 +92,12 @@ export function EngineFeed() {
         <div className="nextcredit">
           <span>pot</span>
           <span className="amt">
-            <Tween wei={pots?.pot} /> eth
+            <Tween wei={snap?.potWithPending} /> eth
           </span>
           <span className="bid">
             bid{" "}
             <b>
-              <Tween wei={pots?.bid} /> eth
+              <Tween wei={snap?.ethRate} /> eth
             </b>
           </span>
         </div>

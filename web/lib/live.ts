@@ -79,6 +79,8 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     coin,
     balanceModule,
     balanceToken,
+    payeeOn,
+    coreEth,
   ] = await client.multicall({
     ...mc,
     allowFailure: false,
@@ -102,8 +104,15 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
       { ...c, functionName: "COIN" },
       { ...c, functionName: "balanceModule" },
       { ...c, functionName: "balanceToken" },
+      { ...c, functionName: "payeeOn" },
+      { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [coreAddr] },
     ] as const,
   });
+  // ethPot plus the share of the unbooked fee income that the next Core._book adds (Core._income, _split)
+  const income = coreEth > ethPot + ethToBuyback + ethRedeemBurn + payeeOwed ? coreEth - (ethPot + ethToBuyback + ethRedeemBurn + payeeOwed) : 0n;
+  const toPayee = payeeOn ? (income * BigInt(settings.payeePpm)) / 1_000_000n : 0n;
+  const toRedeemBurn = ((income - toPayee) * BigInt(settings.feeToRedeemBurnBps)) / 10000n;
+  const potWithPending = ethPot + income - toPayee - toRedeemBurn;
   const k = { address: controller, abi: controllerAbi } as const;
   const [creditSaleOn, creditWindow, pointRate, royaltyOwed, page] = await client.multicall({
     ...mc,
@@ -121,6 +130,7 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     ethPrice,
     floorRate,
     ethPot,
+    potWithPending,
     ethToBuyback,
     ethRedeemBurn,
     balancePot,
