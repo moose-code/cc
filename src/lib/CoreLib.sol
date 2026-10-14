@@ -161,6 +161,8 @@ library CoreLib {
     event CoinRescued(address indexed to, uint256 amount);
     /// the credit is in a pile of the Core
     error InPile();
+    /// `rescueNft` on the Credits contract
+    error NoCreditRescue();
     /// the statement is on the books of the Core
     error Held();
     /// the Core is not the holder of the token, or the token is not an ERC721
@@ -361,19 +363,18 @@ library CoreLib {
         emit CoinRescued(to, amount);
     }
 
-    /// @notice sends the ERC721 token `id` of `token` that the Core holds to `to` with `transferFrom`. a credit leaves only
-    /// while it is not in a pile (`Credit.inPile`), a statement only while the Core has no record of it
-    /// (`Statement.held`), every other ERC721 leaves. `ownerOf` must answer with the Core, which an ERC20 or an
-    /// address without code cannot. the Core forwards its call here untouched, the owner check and the reentrancy
-    /// guard are here
+    /// @notice sends the ERC721 token `id` of `token` that the Core holds to `to` with `transferFrom`. Credits are
+    /// refused in every state: a credit enters the pile through `adopt` and leaves the Core at the owner's call only
+    /// through `migrate`. A statement leaves only while the Core has no record of it (`Statement.held`), every other
+    /// ERC721 leaves. `ownerOf` must answer with the Core, which an ERC20 or an address without code cannot. the Core
+    /// forwards its call here untouched, the owner check and the reentrancy guard are here
     function rescueNft(address token, uint256 id, address to) external {
         _onlyOwner();
         if (to == address(0)) revert ZeroAddress();
+        if (token == address(CREDITS)) revert NoCreditRescue();
         _enter();
         State storage c = state();
-        if (token == address(CREDITS)) {
-            if (c.credits[id].inPile) revert InPile();
-        } else if (token == Mainnet.STATEMENTS) {
+        if (token == Mainnet.STATEMENTS) {
             if (c.statements[id].held) revert Held();
         }
         (bool ok, bytes memory out) = token.staticcall(abi.encodeCall(ICredits.ownerOf, (id)));

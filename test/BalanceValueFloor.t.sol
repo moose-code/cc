@@ -127,9 +127,9 @@ contract BalanceValueFloorTest is Fixture {
         assertEq(ctl.pointRate(), core.floorRate() / ctl.refScore(), "the point rate");
     }
 
-    // promise: SPEC 1 the credit sale floor is max(cost, valueOf(score)) times creditFloorBps
-    /// a credit price rests at `max(cost, valueOf(score)) * creditFloorBps`, so the pool term lifts the credit floor and
-    /// never lowers it below the cost
+    // promise: SPEC 1 the credit sale floor is max(cost, floorRate, valueOf(score)) times creditFloorBps
+    /// a credit price rests at `max(cost, floorRate, valueOf(score)) * creditFloorBps`, so the pool term lifts the
+    /// credit floor and never lowers it below the cost
     function test_creditFloorCarriesThePoolTerm() public {
         _enterPhase2();
         uint256 id = _fillEthPile(1)[0];
@@ -137,14 +137,19 @@ contract BalanceValueFloorTest is Fixture {
         uint256 score = _score(id);
         vm.warp(acquiredAt + ctl.creditWindow());
         uint256 base = ctl.creditPrice(id);
-        assertEq(base, _max(cost, _rate(score)) * ctl.creditFloorBps() / 10_000, "no pool key: the rate term and the cost");
+        uint256 fr = core.floorRate();
+        assertEq(
+            base,
+            _max(_max(cost, fr), _rate(score)) * ctl.creditFloorBps() / 10_000,
+            "no pool key: the rate term, the floor rate and the cost"
+        );
         uint160 sp = _lowSqrtPrice();
         _initAndSet(sp, 3000, 60);
         uint256 pool = _pool(score, UNIT, sp);
-        assertGt(pool, cost, "the pool term is above the cost");
+        assertGt(pool, _max(cost, fr), "the pool term is above the cost and the floor rate");
         assertEq(ctl.creditPrice(id), pool * ctl.creditFloorBps() / 10_000, "the pool term lifts the credit floor");
         mod.setRevertUnit(true);
-        assertEq(ctl.creditPrice(id), base, "a failing unit read leaves the floor on the cost and the rate term");
+        assertEq(ctl.creditPrice(id), base, "a failing unit read leaves the floor on the cost, the floor rate and the rate term");
         assertGe(ctl.creditPrice(id), cost * ctl.creditFloorBps() / 10_000, "never below the cost floor");
     }
 

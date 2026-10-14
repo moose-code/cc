@@ -4,7 +4,7 @@ the current reading of the owner's intent and of the system that implements it. 
 
 ## 1. the product
 
-CC is a coin whose trading fees fund a permanent public bid for Credits. anyone sells Credits to the engine at that bid, and the engine sweeps cheaper listings on approved venues, keeping the discount. the engine composes 80 Credits into a Statement, holds it, and sells it at a price that starts above cost and falls to a floor the owner sets. half of every sale burns CC, half buys more Credits. when the balance token is live, Statements at their floor redeem into it by rating, the engine buys Credits with it by score, and every redemption burns CC from a reserve. the owner sets every number at once, with no delay; holders trust the owner key, and one way locks and a successor migration are the owner's ways to narrow or move that power. the engine launches before the balance token; the balance side, the credit sale window and chosen composition ship built and switched off. (decisions 99 to 114, DECISIONS.md section 11.)
+CC is a coin whose trading fees fund a permanent public bid for Credits. anyone sells Credits to the engine at that bid, and the engine sweeps cheaper listings on approved venues, keeping the discount. the engine composes 80 Credits into a Statement, holds it, and sells it at a price that starts above cost and falls to a floor the owner sets. half of every sale burns CC, half buys more Credits. when the balance token is live, Statements at their floor redeem into it by rating, the engine buys Credits with it by score, and every redemption burns CC from a reserve. the owner sets every number at once, with no delay; holders trust the owner key, and one way locks and a successor migration are the owner's ways to narrow or move that power. the engine launches before the balance token; the balance side, the credit sale window and chosen composition ship built and switched off. (decisions 99 to 115, DECISIONS.md section 11.)
 
 ### intent at a glance
 
@@ -13,7 +13,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 | kind | intent | decisions |
 |---|---|---|
 | guarantee | while the engine has not migrated and the market price is at or below `rateCap`, a credit priced at the bid that the pot covers can always be sold to it | 42, 48 |
-| guarantee | eth, credits and the balance token leave the Core only through its doors at their rules or through `migrate` to the successor; coin leaves through `rescueCoin`, untracked NFTs through `rescueNft`; no function sends them to the owner | 8, 28, 32, 33 |
+| guarantee | eth, credits and the balance token leave the Core only through its doors at their rules or through `migrate` to the successor; coin leaves through `rescueCoin`, untracked NFTs other than Credits through `rescueNft`; no function sends them to the owner | 8, 28, 32, 33 |
 | guarantee | a statement leaves the Core by a `sellTo` sale at or above `saleFloorBps` of its cost, read at the sale, or by a redemption that returns at least its rating times the module's unit less `redeemSlippageBps` | 56, 68, 84, 105 |
 | guarantee | the four locks (controller, balance module, adapters, successor) are one way | 9.6, 10.2 |
 | guarantee | the engine pays at most its bid for a credit, keeper payment included | 71, 100 |
@@ -22,7 +22,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 | behavior | the eth bid is flat per credit; the bid rule and its ten settings are as built | 55, 80, 103 |
 | behavior | `buyListing` buys only a listing an approved adapter priced; the gap between the listing and the bid stays in the pot | 100 |
 | behavior | statements sell on a falling curve from `markupBps` of the anchor down to `saleFloorBps` of the reference; the anchor moves up with sales and down with time | 62, 64, 65, 70, 105 |
-| behavior | the price reference of a statement is `max(cost, valueOf(rating))`; a credit's sale floor is `max(cost, valueOf(score)) * creditFloorBps`; a balance bought credit costs `score * pointRate` | 104 |
+| behavior | the price reference of a statement is `max(cost, valueOf(rating))`; a credit's sale floor is `max(cost, floorRate, valueOf(score)) * creditFloorBps`; a balance bought credit costs `score * pointRate` | 104, 115 |
 | behavior | every engine sale carries a royalty of `royaltyBps` on top of the engine price, paid to `royaltyRecipient` by the controller | 112 |
 | behavior | the balance side: redeem at the floor by rating, buy by score, burn from the reserve; two switches, off at launch | 82, 84, 86, 107 |
 | behavior | the credit sale window and chosen composition are owner switches, off at launch | 88, 89 |
@@ -140,7 +140,7 @@ the controller prices. `pointRate = floorRate / refScore` (wei per score unit; `
 
 `buy(sid)` takes `price + price * royaltyBps / 10,000`, forwards `price` to `sellTo`, adds the royalty to `royaltyOwed`, refunds the excess last. `grossPriceOf(sid)` is that total. `claimRoyalty()` sends `royaltyOwed` to `royaltyRecipient`.
 
-the credit sale window (`saleOn`): every pile credit is for sale from its acquisition: `creditPrice(id)` falls in a straight line from `floor * startBps / 10,000` to `floor = max(cost, valueOf(score)) * floorBps / 10,000` over `window` and rests there. `buyCredit(id)` and `buyCredits(ids)` take the price plus the royalty each and forward the price to `sellCreditTo`. `pastWindow(acquiredAt)` is true while the sale is off or `window` has passed; compose takes only credits past their window.
+the credit sale window (`saleOn`): every pile credit is for sale from its acquisition: `creditPrice(id)` falls in a straight line from `floor * startBps / 10,000` to `floor = max(cost, floorRate, valueOf(score)) * floorBps / 10,000` over `window` and rests there. the floor rate term keeps the price at or above `floorBps` of the eth bid, so a buy followed by `sellForEth` cannot profit. `buyCredit(id)` and `buyCredits(ids)` take the price plus the royalty each and forward the price to `sellCreditTo`. `pastWindow(acquiredAt)` is true while the sale is off or `window` has passed; compose takes only credits past their window.
 
 the pause: `setPaused(bool)` on the Core, owner only. `pausedTotal` accumulates closed pauses and `pausedSince` marks the open one; a statement's record stores the paused seconds at its compose, so its age `(now - composedAt) - (paused seconds since compose)` holds through a pause. the credit window and the anchor run on wall time.
 
@@ -163,7 +163,7 @@ the pause: `setPaused(bool)` on the Core, owner only. `pausedTotal` accumulates 
 | `setBalanceModule` | at once; closed by `lockBalanceModule`, which needs a module set |
 | `addAdapter`, `removeAdapter` | at once; `addAdapter` refuses zero and forbidden addresses; closed by `lockAdapters` (removing stays open; the Seaport adapter refuses new recipients after the lock) |
 | `setSuccessor`, `lockSuccessor`, `migrate(maxCredits)` | the successor must have code and pass the forbidden list; `migrate` moves `ethPot` (through `fund()`, or a plain send when that fails), `balancePot` (a failed transfer is logged and retried later) and up to `maxCredits` credits, and retires the engine on the first call; `lockSuccessor` with the successor zero disables migration |
-| `rescueCoin(to, amount)`, `rescueNft(token, id, to)` | coin the Core holds, and an ERC721 the Core holds that is not in the pile and not a held statement |
+| `rescueCoin(to, amount)`, `rescueNft(token, id, to)` | coin the Core holds, and an ERC721 the Core holds that is not a Credit and not a held statement; a Credit is refused in every state (`NoCreditRescue`), credits leave at the owner's call only through `migrate` |
 | `releaseRedeemBurn` | reserve eth to the buyback |
 | `transferOwnership`, `acceptOwnership` | two step, no renounce |
 | on the controller: `setSale`, `setCredit`, `setAnchorBps`, `setBalancePoolKey` | at once, by the Core's live owner |
@@ -217,7 +217,7 @@ invariants 15 (the fee router) and 20 (the lens) are retired with their subjects
 | 5 | the coin is restricted: trading works only through the canonical pool; the owner can `unrestrict` |
 | 6 | the buyback has no minimum output; the slice and the pool depth bound a sandwich |
 | 7 | a fee on transfer or rebasing balance token is unsupported |
-| 8 | credits sent to the Core outside the doors sit in no pile until `adopt`; eth from a non hook sender must come through `fund` |
+| 8 | credits sent to the Core outside the doors sit in no pile until `adopt`, and `rescueNft` does not return them; eth from a non hook sender must come through `fund` |
 | 9 | the stack and the coin are deploy inputs; a new stack is a new Core; a new Core on the same coin takes the fee stream through the coin admin's `setBountyRecipient` |
 | 10 | the module door stays open until `lockBalanceModule`; a dishonest module takes every statement for dust |
 | 11 | a pool price pushed down lowers `valueOf` to the rate term and never below cost; pushed up, it raises asks and a buyer pays the quote or waits; the cost basis of a balance bought credit reads no pool |

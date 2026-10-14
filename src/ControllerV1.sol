@@ -35,8 +35,9 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// current anchor at every call, so held statements follow it.
 /// `buy` sells a held statement at once at the asking price. `atFloor(sid)` is true once the statement's curve price has
 /// reached the floor.
-/// a pile credit sells at `max(cost, valueOf(score)) * creditFloorBps / 10_000` at the end of its window, from
-/// `creditStartBps` of that at its acquisition.
+/// a pile credit sells at `max(cost, core.floorRate(), valueOf(score)) * creditFloorBps / 10_000` at the end of its
+/// window, from `creditStartBps` of that at its acquisition. the floor rate term keeps the price at or above
+/// `creditFloorBps` of the eth bid, which is at most `core.floorRate()`.
 /// every sale adds `royaltyBps` of the engine price on top. `buy`, `buyCredit` and `buyCredits` take the engine price
 /// plus the royalty, forward the engine price to the core and add the royalty to `royaltyOwed`, which `claimRoyalty`
 /// pays to `royaltyRecipient`. the controller holds `royaltyOwed` between calls and has no `receive`.
@@ -333,15 +334,17 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ credit sale window
 
-    /// the sale price of pile credit `id` now, wei. the floor is the larger of the credit's cost and `valueOf` of its
-    /// score, times `creditFloorBps`. the start is the floor times `creditStartBps`. the price falls in a straight line
-    /// from the start at the acquisition time to the floor at the acquisition time plus `creditWindow`, and rests at the
-    /// floor after. reverts `NotForSale` for a credit not in the pile. answers whether or not the sale is on
+    /// the sale price of pile credit `id` now, wei. the floor is the largest of the credit's cost, `core.floorRate()` and
+    /// `valueOf` of its score, times `creditFloorBps`. the start is the floor times `creditStartBps`. the price falls in
+    /// a straight line from the start at the acquisition time to the floor at the acquisition time plus `creditWindow`,
+    /// and rests at the floor after. reverts `NotForSale` for a credit not in the pile. answers whether or not the sale is on
     function creditPrice(uint256 id) public view returns (uint256 price) {
         (bool inPile, uint256 cost, uint64 acquiredAt) = CORE.creditInfo(id);
         if (!inPile) revert NotForSale();
         uint256 hi = valueOf(_scoreOf(id));
         if (cost > hi) hi = cost;
+        uint256 fr = CORE.floorRate();
+        if (fr > hi) hi = fr;
         uint256 floor = hi * creditFloorBps / BPS;
         uint256 start = floor * creditStartBps / BPS;
         uint256 age = block.timestamp - acquiredAt;

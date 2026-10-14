@@ -644,10 +644,9 @@ abstract contract HandlerOwner is HandlerBase {
                                RESCUE AN NFT
     //////////////////////////////////////////////////////////////*/
 
-    /// the owner calls `rescueNft` on every kind of token: a credit in a pile and a held statement (both refused, the
-    /// books and the holder unchanged), a credit an actor sent straight to the core (leaves, to a fresh address, and the
-    /// piles keep their sizes), the coin, the balance token and an address with no code (refused), and a stranger (refused).
-    /// no eth, pot or balance token moves in any of them
+    /// the owner calls `rescueNft` on every kind of token: a credit in a pile, a credit an actor sent straight to the
+    /// core and a held statement (all refused, the books and the holder unchanged), the coin, the balance token and an
+    /// address with no code (refused), and a stranger (refused). no eth, pot or balance token moves in any of them
     function rescueNft(uint256 seed, uint256 mode) external checked {
         uint8 a = A_RESCUE_NFT;
         Rescue memory r = _rescuePick(seed, mode % 6);
@@ -658,12 +657,11 @@ abstract contract HandlerOwner is HandlerBase {
         _att(a);
         vm.prank(r.who);
         try core.rescueNft(r.token, r.id, to) {
-            if (!r.leaves) _flag(V_OWNER, "rescueNft moved a token that must stay");
-            else if (CREDITS.ownerOf(r.id) != to) _flag(V_OWNER, "a stray credit did not reach the destination");
+            _flag(V_OWNER, "rescueNft moved a token that must stay");
         } catch (bytes memory why) {
-            if (r.leaves || bytes4(why) != r.want) _unexpected(a, why);
+            if (bytes4(why) != r.want) _unexpected(a, why);
         }
-        if (r.token == address(CREDITS) && !r.leaves && CREDITS.ownerOf(r.id) == to) {
+        if (r.token == address(CREDITS) && CREDITS.ownerOf(r.id) == to) {
             _flag(V_OWNER, "a credit that must stay left the core");
         }
         if (r.token == address(STATEMENTS) && _ownerOf(r.id) == to) _flag(V_OWNER, "a held statement left the core");
@@ -674,7 +672,6 @@ abstract contract HandlerOwner is HandlerBase {
 
     struct Rescue {
         bool ok;
-        bool leaves;
         address token;
         uint256 id;
         address who;
@@ -698,7 +695,7 @@ abstract contract HandlerOwner is HandlerBase {
             r.token = address(CREDITS);
             r.id = _head();
             r.ok = r.id != 0;
-            r.want = ICore.InPile.selector;
+            r.want = ICore.NoCreditRescue.selector;
         } else if (m == 1) {
             uint256[] memory held = core.heldStatements();
             r.ok = held.length != 0;
@@ -712,8 +709,8 @@ abstract contract HandlerOwner is HandlerBase {
             r.id = inventory[from][seed % len];
             if (CREDITS.ownerOf(r.id) != from) return r;
             r.token = address(CREDITS);
-            r.leaves = true;
             r.ok = true;
+            r.want = ICore.NoCreditRescue.selector;
             vm.prank(from);
             CREDITS.transferFrom(from, address(core), r.id);
             _removeFrom(inventory[from], r.id);

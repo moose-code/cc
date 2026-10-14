@@ -18,6 +18,7 @@ interface ICoreLib {
     error Locked(bytes32 what);
     error NoBalanceModule();
     error NoCode(address who);
+    error NoCreditRescue();
     error NoSuccessor();
     error NotHolder();
     error NotOwner();

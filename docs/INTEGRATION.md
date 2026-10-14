@@ -75,7 +75,7 @@ off at launch (`redeemOn`, `balanceBidOn` false, no module). once on: `core.rede
 
 ## 10. adopt, migrate, rescue
 
-`core.adopt(ids)` puts credits the Core holds without a record into the pile (anyone). the owner's `migrate(maxCredits)` sends the pots and credits to the successor and retires the engine (`Retired` from the buying and composing doors after it); the successor takes the eth through `fund()`. `rescueCoin` and `rescueNft` are owner only. events `CreditAdopted`, `Migrated`, `EngineRetired`, `BalanceTokenMigrationSkipped`, `CoinRescued`, `NftRescued`.
+`core.adopt(ids)` puts credits the Core holds without a record into the pile (anyone). the owner's `migrate(maxCredits)` sends the pots and credits to the successor and retires the engine (`Retired` from the buying and composing doors after it); the successor takes the eth through `fund()`. `rescueCoin` and `rescueNft` are owner only; `rescueNft` reverts `NoCreditRescue` for Credits in every state, and a credit sent to the Core leaves through `adopt` and the doors. events `CreditAdopted`, `Migrated`, `EngineRetired`, `BalanceTokenMigrationSkipped`, `CoinRescued`, `NftRescued`.
 
 ## 11. owner events to watch
 
