@@ -79,6 +79,7 @@ interface ICore {
     event AdaptersLocked();
     event BalanceModuleLocked();
     event BalanceModuleSet(address balanceModule, address balanceToken, uint256 unitPerPoint);
+    event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     event ChosenComposeOnSet(bool on);
     event CoinRescued(address indexed to, uint256 amount);
@@ -134,8 +135,10 @@ interface ICore {
     function addAdapter(address a) external;
     function adopt(uint256[] memory) external;
     function allowedAdapter(address adapter) external view returns (bool);
+    function balanceBidOf(uint256 id) external view returns (uint256);
     function balanceModule() external view returns (address);
     function balanceModuleLocked() external view returns (bool);
+    function balanceRate() external view returns (uint256);
     function balanceToken() external view returns (address);
     function bidOf(uint256 id) external view returns (uint256);
     function book() external;

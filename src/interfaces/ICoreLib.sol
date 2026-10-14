@@ -30,6 +30,7 @@ interface ICoreLib {
     error ZeroAmount();
     error ZeroId();
 
+    event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
     event CoinRescued(address indexed to, uint256 amount);
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
@@ -40,6 +41,8 @@ interface ICoreLib {
     event SuccessorLocked();
     event SuccessorSet(address successor);
 
+    function balanceBidOf(uint256 id) external view returns (uint256);
+    function balanceRate() external view returns (uint256 rate);
     function climb(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
         external
         view

@@ -36,8 +36,12 @@ contract BalanceCustodyTest is Fixture {
 
     // promise: SPEC 9 sellForBalance reverts PotTooSmall when the module's available is below the batch
     function test_sellForBalance_availableBelowBatchRevertsPotTooSmall() public {
-        uint256[] memory ids = _credits(user, 1);
-        mod.setAvailable(1); // one wei committed, below one credit's price
+        uint256[] memory ids = _credits(user, 6);
+        uint256 refScore = core.settings().refScore;
+        uint256 floorBps = 10_000 - core.settings().balanceBidMarginBps;
+        // available fixed so its bps of par is exactly the floor: each credit pays score * unit * floor / 10_000. six
+        // credits keep the summed score above refScore, so the running total passes available before the batch ends
+        mod.setAvailable(UNIT * floorBps * refScore / 10_000);
         vm.prank(user);
         vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForBalance(ids);

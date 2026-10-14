@@ -2498,27 +2498,74 @@ abstract contract HandlerBase is Test {
         uint256 actorX;
     }
 
-    /// @dev the balance token the per point bid pays for credit `id`: `score * unitPerPoint * (10_000 - balanceBidMarginBps)
-    /// / 10_000`, the same figure the core computes in `sellForBalance`
-    function _balanceBid(uint256 id, uint256 unit, uint256 net) internal view returns (uint256) {
-        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
-        return score * unit * net / 10_000;
+    /// @dev slots of `State.balance` (the balance bid Rate instance): rateAtCheckpoint at 32, checkpointTime|lastFillTime
+    /// at 33, its Anchor (lastFillRate, minuteStartRate, minuteBucket|peakTime, peakRate) at 34 to 37
+    bytes32 internal constant BAL_RATE_SLOT = bytes32(uint256(32));
+    bytes32 internal constant BAL_CP_SLOT = bytes32(uint256(33));
+    bytes32 internal constant BAL_ANCHOR_SLOT = bytes32(uint256(34));
+
+    /// @dev the balance bid clamp now, available as bps of par for a refScore credit, read from the module
+    function _availBps(uint256 unit) internal view returns (uint256) {
+        uint256 denom = uint256(core.settings().refScore) * unit;
+        uint256 avail = module.available();
+        return (denom == 0 || avail >= denom) ? 10_000 : avail * 10_000 / denom;
     }
 
-    /// @dev the ids `sellForBalance` offers: walks the actor inventory from a picked offset while the prices fit the module's available holding
+    /// @dev the balance instance price state as a BidModel.Bid, the clamp set to `availBps` and the cap 10_000
+    function _balanceBidState(uint256 availBps) internal view returns (BidModel.Bid memory b) {
+        uint256 cp = uint256(vm.load(address(core), BAL_CP_SLOT));
+        b = BidModel.Bid({
+            r: uint256(vm.load(address(core), BAL_RATE_SLOT)),
+            pot: availBps,
+            lastFillRate: uint256(vm.load(address(core), BAL_ANCHOR_SLOT)),
+            peakRate: uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 3))),
+            peakTime: uint64(uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 2))) >> 64),
+            lastFillTime: uint64(cp >> 64),
+            checkpointTime: uint64(cp),
+            nowTs: block.timestamp
+        });
+    }
+
+    /// @dev the exact balance token total a batch of `ids` pays, the shared model on the balance instance: the price
+    /// state climbed to now (cap 10_000, clamp availBps), each credit paid score * unit * min(rate, availBps) / 10_000,
+    /// the rate dropped per credit floored at 10_000 - balanceBidMarginBps
+    function _balanceExpected(uint256[] memory ids, uint256 n, uint256 unit) internal view returns (uint256 total) {
+        Settings memory st = core.settings();
+        uint256 availBps = _availBps(unit);
+        uint256 price = BidModel.priceNow(st, _balanceBidState(availBps), 10_000);
+        uint256 floorBps = 10_000 - st.balanceBidMarginBps;
+        uint256 bucket = uint64(uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 2))));
+        uint256 minuteStart = bucket == block.timestamp / 60
+            ? uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 1)))
+            : price;
+        uint256 refScore = st.refScore;
+        for (uint256 i; i < n; ++i) {
+            uint256 score = _scoreOf(ids[i]);
+            total += score * unit * BidModel.read(st, availBps, price, 10_000) / 10_000;
+            minuteStart = BidModel.startAfter(st, price, minuteStart);
+            price = BidModel.dropOnce(st, price, minuteStart, score, refScore, floorBps);
+        }
+    }
+
+    /// @dev the ids `sellForBalance` offers: walks the actor inventory from a picked offset while the rising prices fit
+    /// the module's available holding. the per credit price uses the undropped rate, an upper bound since later credits
+    /// drop lower, so a picked batch never passes available
     function _pickBalanceIds(address who, uint256 len, uint256 want, uint256 pick, uint256 unit)
         internal
         view
         returns (uint256[] memory ids, uint256 n)
     {
         ids = new uint256[](want);
-        uint256 pot = module.available();
-        uint256 net = 10_000 - core.settings().balanceBidMarginBps;
+        uint256 avail = module.available();
+        uint256 used;
+        Settings memory st = core.settings();
+        uint256 availBps = _availBps(unit);
+        uint256 rate = BidModel.read(st, availBps, BidModel.priceNow(st, _balanceBidState(availBps), 10_000), 10_000);
         for (uint256 k; k < len && k < want * 3 + 4 && n < want; ++k) {
             uint256 id = inventory[who][(pick % len + k) % len];
-            uint256 price = _balanceBid(id, unit, net);
-            if (price != 0 && price <= pot) {
-                pot -= price;
+            uint256 price = _scoreOf(id) * unit * rate / 10_000;
+            if (price != 0 && used + price <= avail) {
+                used += price;
                 ids[n++] = id;
             }
         }
@@ -2549,11 +2596,7 @@ abstract contract HandlerBase is Test {
         p.balancePotPre = _xBal(address(module));
         p.unit = unit;
         p.actorX = _xBal(who);
-        uint256 net = 10_000 - core.settings().balanceBidMarginBps;
-        uint256 bound_;
-        for (uint256 i; i < n; ++i) {
-            bound_ += _balanceBid(ids[i], unit, net);
-        }
+        uint256 bound_ = _balanceExpected(ids, n, unit);
         uint256 b0 = address(core).balance;
         uint256 pot0 = core.ethPot();
         uint256 rate0 = core.ethRate();
@@ -2587,7 +2630,7 @@ abstract contract HandlerBase is Test {
             _removeFrom(inventory[who], id);
         }
         uint256 paid = _xBal(who) - p.actorX;
-        // the balance tokens paid are score * unit * net / 10_000 per credit, so they equal the figure read before
+        // the balance tokens paid are the rising per credit bid summed with its drops, the shared-model figure above
         if (paid != bound_) _flag(V_ABOVE_CAP, "sellForBalance paid differs from the per point bid read before");
         // the module paid the seller: its holding fell by the price, the core holds no balance token
         if (_xBal(address(core)) != p.xbal) _flag(V_POT, "sellForBalance moved the core's balance token");

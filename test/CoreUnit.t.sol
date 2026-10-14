@@ -934,22 +934,21 @@ contract CoreComposedTest is CoreBase {
                               balance token bid
     //////////////////////////////////////////////////////////////*/
 
-    // promise: SPEC 1 the balance token bid pays score times unit less the margin
-    /// the per point bid pays each credit its score times the unit less the margin
+    // promise: SPEC 1 the balance token bid pays score times unit times the balance rate
+    /// the per point bid pays a credit its score times the unit times the current balance rate, bps of par, and
+    /// balanceBidOf reports that figure
     function test_xBid_paysScoreTimesUnit() public {
         _fillBalanceBuyback();
         _setBalancePool();
-        uint256[] memory ids = _credits(alice, 2);
-        uint256 net = 10_000 - core.settings().balanceBidMarginBps;
-        uint256 expect;
-        for (uint256 i; i < 2; ++i) {
-            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(ids[i]), CREDITS.timestampOf(ids[i]));
-            expect += score * UNIT * net / 10_000;
-        }
+        uint256[] memory ids = _credits(alice, 1);
+        uint256 rate = core.balanceRate();
+        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(ids[0]), CREDITS.timestampOf(ids[0]));
+        uint256 expect = score * UNIT * rate / 10_000;
+        assertEq(core.balanceBidOf(ids[0]), expect, "balanceBidOf is score times unit times the rate");
         uint256 before = xt.balanceOf(alice);
         vm.prank(alice);
         core.sellForBalance(ids);
-        assertEq(xt.balanceOf(alice) - before, expect, "paid score times the unit less the margin");
+        assertEq(xt.balanceOf(alice) - before, expect, "paid score times the unit times the rate");
         _solvent();
     }
 
@@ -967,10 +966,10 @@ contract CoreComposedTest is CoreBase {
         vm.prank(keeper);
         vm.expectRevert(ICore.NotOwner.selector);
         core.sellForBalance(ids);
-        // the module commits only 1 wei to the bid, below one credit's price, so the batch total passes it
+        // the module commits only 1 wei: available as bps of par rounds to zero, so the credit's bid is zero
         mod.setAvailable(1);
         vm.prank(alice);
-        vm.expectRevert(ICore.PotTooSmall.selector);
+        vm.expectRevert(ICore.ZeroAmount.selector);
         core.sellForBalance(ids);
     }
 

@@ -146,6 +146,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
+    /// one credit filled into the balance token bid: the balance token paid, the balance rate (bps of par) after this
+    /// credit's drop, and the module available left for the rest of the batch. mirrors EthRateFill
+    event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
     /// `price` is the controller's `priceOf(sid)` at the compose, 0 when the read fails
     event Composed(
         uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, uint256 price, address indexed caller
@@ -491,6 +494,17 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// floors read it. the math is in `CoreLib.floorRate`
     function floorRate() external view returns (uint256) {
         return CoreLib.floorRate(s.rateAtCheckpoint, s.ethPot, s.lastFillTime, s.checkpointTime, block.timestamp);
+    }
+
+    /// the balance token bid rate now, bps of par (par is a credit's score times the module unitPerPoint): the balance
+    /// price state climbed and clamped to the module available(), at most 10_000. the web and the keeper read it
+    function balanceRate() external view returns (uint256) {
+        return CoreLib.balanceRate();
+    }
+
+    /// the balance token payout for credit id now: score times unitPerPoint times balanceRate() over 10_000
+    function balanceBidOf(uint256 id) external view returns (uint256) {
+        return CoreLib.balanceBidOf(id);
     }
 
     function _checkpoint() private {

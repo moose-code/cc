@@ -116,6 +116,19 @@ contract CoreLayoutTest is Fixture {
         assertTrue(core.retired(), "retired value");
     }
 
+    // promise: SPEC 1 the balance bid instance is appended after the eth anchor
+    /// `State.balance` (the balance bid Rate) follows `anchor` (slots 28 to 31): rateAtCheckpoint at 32,
+    /// checkpointTime and lastFillTime packed at 33, its anchor (lastFillRate, minuteStartRate, minuteBucket and
+    /// peakTime, peakRate) at 34 to 37. at launch the instance is reset to the floor 10_000 - balanceBidMarginBps, which
+    /// the stored rate keeps until a balance fill or a margin change
+    function test_OK_balanceInstanceSitsAfterTheAnchor() public view {
+        uint256 floor = 10_000 - core.settings().balanceBidMarginBps;
+        assertEq(_field(32, 0, 32), floor, "balance.rateAtCheckpoint is the floor at launch");
+        assertEq(_field(34, 0, 32), floor, "balance.anchor.lastFillRate is the floor");
+        assertEq(_field(35, 0, 32), floor, "balance.anchor.minuteStartRate is the floor");
+        assertEq(_field(37, 0, 32), floor, "balance.anchor.peakRate is the floor");
+    }
+
     // promise: SPEC 1 the Core state is one State struct at slot 0
     function test_OK_pilesCreditsAndStatementsSitWhereTheMirrorSays() public {
         uint256[] memory ids = _fillEthPile(5);

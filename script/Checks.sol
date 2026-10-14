@@ -72,13 +72,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0xaff2af5e691f3462f232ee6d0dc15b74a7aa3b0a112c2972a31c9418bd2d53a1;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x36a999490ffc10805e9ce5e738951314f236c560d7606161d56705fe37997e66;
+    bytes32 internal constant BUILD_HASH_CORE = 0x19e1c24020c2aebb4c6c74d5ae4b82191ca5bec1b51cb1dc9f0958b36ca1bc60;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x4594d5586014b5a15c760fec555d3c5085c20ee6e7183460678914df39ded647;
     bytes32 internal constant BUILD_HASH_CONTROLLER = 0x0fb0a4b8efa93e8ba7971a8f5aea33a315945172cbcd2710eee079448329a0c5;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x17737708a8b9bc236fc0503effeea377a91db3d088b4200a9aacb8045e121a18;
+        0x468facc8952a74292d03995d9609466aa4f0eec7d485b2d60bfafeb603331459;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
