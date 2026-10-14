@@ -31,6 +31,8 @@ KEEPER=0x4444444444444444444444444444444444444444
 TRADER=0x5555555555555555555555555555555555555555
 FUND=0x152d02c7e14af6800000   # 100000 ether
 REC=deployments/31337.json
+CFG=script/config/anvil.json
+DEV_WALLET="$(jq -r '.dev.wallet // empty' $CFG)"   # the owner's browser wallet, funded below and by the seed
 
 say() { echo; echo "=== $* ==="; }
 rpc() { cast rpc "$@" --rpc-url "$E2E_RPC_URL" >/dev/null; }
@@ -55,12 +57,16 @@ CTL="$(jq -r .controller $REC)"
 
 say "seed, PHASE=$PHASE"
 for a in "$A1" "$A2" "$A3" "$KEEPER" "$TRADER"; do rpc anvil_setBalance "$a" "$FUND"; done
+if [ -n "$DEV_WALLET" ]; then   # at least dev.walletEth; the owner already holds more after the deploy
+  WANT="$(jq -r .dev.walletEth $CFG)"
+  python3 -c "import sys; sys.exit(not int(sys.argv[1]) < int(sys.argv[2]))" "$(cast balance "$DEV_WALLET" --rpc-url "$E2E_RPC_URL")" "$WANT" && rpc anvil_setBalance "$DEV_WALLET" "$(cast to-hex "$WANT")"
+fi
 SEED="$(PHASE="$PHASE" CORE="$CORE" DEPLOYER="$OWNER" A1="$A1" A2="$A2" A3="$A3" TRADER="$TRADER" \
   forge script script/dev/Seed.s.sol --rpc-url "$E2E_RPC_URL" --broadcast --slow --unlocked --sender "$OWNER" 2>&1)" \
   || { echo "$SEED" | tail -40; echo "seed failed" >&2; exit 1; }
 tmp="$(mktemp)"
-jq --arg phase "$PHASE" --arg a1 "$A1" --arg a2 "$A2" --arg a3 "$A3" --arg k "$KEEPER" --arg t "$TRADER" \
-  '.accounts = {a1: $a1, a2: $a2, a3: $a3, keeper: $k, trader: $t} | .phase = $phase' $REC > "$tmp" && mv "$tmp" $REC
+jq --arg phase "$PHASE" --arg a1 "$A1" --arg a2 "$A2" --arg a3 "$A3" --arg k "$KEEPER" --arg t "$TRADER" --arg o "$DEV_WALLET" \
+  '.accounts = ({a1: $a1, a2: $a2, a3: $a3, keeper: $k, trader: $t} + (if $o == "" then {} else {owner: $o} end)) | .phase = $phase' $REC > "$tmp" && mv "$tmp" $REC
 if [ "$PHASE" = "post" ]; then
   pick() { printf '%s\n' "$SEED" | grep -oE "$1 0x[0-9a-fA-F]{40}" | tail -1 | grep -oE '0x[0-9a-fA-F]{40}'; }
   TOKEN="$(pick BALANCE_TOKEN)"; MODULE="$(pick BALANCE_MODULE)"
@@ -85,7 +91,7 @@ stage() {
   local name="$1" out; out="$(mktemp)"
   say "stage $name"
   rm -f broadcast/Scenario.s.sol/31337/run-latest.json
-  if ! STAGE="$name" CORE="$CORE" OWNER="$OWNER" A1="$A1" A2="$A2" A3="$A3" KEEPER="$KEEPER" TRADER="$TRADER" \
+  if ! STAGE="$name" CORE="$CORE" OWNER="$OWNER" A1="$A1" A2="$A2" A3="$A3" KEEPER="$KEEPER" TRADER="$TRADER" DEV_WALLET="$DEV_WALLET" \
     forge script script/dev/Scenario.s.sol --rpc-url "$E2E_RPC_URL" --broadcast --slow --unlocked --sender "$OWNER" > "$out" 2>&1; then
     echo "stage $name FAILED:"; tail -40 "$out"; exit 1
   fi
@@ -100,6 +106,7 @@ past_window() { warp $(($(window) + 60)); }
 
 warp 2000   # past the anti sniper window
 stage a
+[ -z "$DEV_WALLET" ] || stage dev-wallet   # the dev wallet buys coin through the pool once the sniper window has passed
 stage fill-a
 stage adopt
 past_window; stage compose-a

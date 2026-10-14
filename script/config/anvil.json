@@ -94,6 +94,11 @@
   "dev": {
     "balanceUnitPerPoint": "100000000000000",
     "balancePoolSqrtPriceX96": "17475456469331761571636063502336",
-    "balanceMintToCore": "1000000000000000000000000"
+    "balanceMintToCore": "1000000000000000000000000",
+    "wallet": "0xCB43078C32423F5348Cab5885911C3B5faE217F9",
+    "walletEth": "100000000000000000000",
+    "walletCredits": 5,
+    "walletCoinEth": "500000000000000000",
+    "walletBalance": "1000000000000000000000"
   }
 }

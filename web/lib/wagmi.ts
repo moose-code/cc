@@ -1,5 +1,6 @@
 import { connectorsForWallets, getDefaultConfig } from "@rainbow-me/rainbowkit";
 import { createConfig, createConnector, http } from "wagmi";
+import { injectedWallet } from "@rainbow-me/rainbowkit/wallets";
 import { mock } from "wagmi/connectors";
 import { chain, isLocal, localAccounts, rpcUrl, wcProjectId } from "./config";
 
@@ -16,12 +17,13 @@ const recentId = () => {
   }
 };
 
-// Local: one wallet in RainbowKit's list per record account, each a mock
-// connector that anvil (--auto-impersonate) signs for. The mock connector holds
-// its connected state in memory, so the last used account starts connected and
+// Local: one wallet in RainbowKit's list per record account except `owner`, each a
+// mock connector that anvil (--auto-impersonate) signs for. `owner` is the dev wallet
+// address; the injected browser wallet (any EIP-6963 wallet) signs for it. The mock
+// connector holds its connected state in memory, so the last used account starts connected and
 // wagmi reconnects it on reload. No WalletConnect connector exists, so the page
 // makes no WalletConnect requests.
-const localWallets = localAccounts.map((a) => () => ({
+const localWallets = localAccounts.filter((a) => a.name !== "owner").map((a) => () => ({
   id: `local-${a.name}`,
   name: a.name,
   iconUrl: ICON,
@@ -35,10 +37,16 @@ export const wagmiConfig = isLocal
   ? createConfig({
       chains: [chain],
       transports: { 1: http(rpcUrl), 31337: http(rpcUrl) },
-      connectors: connectorsForWallets([{ groupName: "local accounts", wallets: localWallets as any }], {
-        appName: "credits engine",
-        projectId: wcProjectId,
-      }),
+      connectors: connectorsForWallets(
+        [
+          { groupName: "local accounts", wallets: localWallets as any },
+          { groupName: "browser wallet", wallets: [injectedWallet] },
+        ],
+        {
+          appName: "credits engine",
+          projectId: wcProjectId,
+        }
+      ),
       ssr: true,
     })
   : getDefaultConfig({

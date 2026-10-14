@@ -44,7 +44,7 @@ interface IERC20R {
 /// `fill-d`, `compose-d`, `redeem` and `balance-bid` before the fresh stages and needs the balance side from Seed.
 ///
 /// env: CORE, OWNER, A1 A2 A3 (credit holders), KEEPER (calls keeper doors), TRADER (trades the coin and holds the CC that
-/// `composeChosen` and `setHeldFormat` require).
+/// `composeChosen` and `setHeldFormat` require), DEV_WALLET (stage `dev-wallet` only).
 contract Scenario is Script {
     ICore internal core;
     IControllerV1 internal ctl;
@@ -78,6 +78,7 @@ contract Scenario is Script {
 
         bytes32 stage = keccak256(bytes(vm.envString("STAGE")));
         if (stage == keccak256("a")) _a();
+        else if (stage == keccak256("dev-wallet")) _devWallet();
         else if (stage == keccak256("fill-a")) _fillA();
         else if (stage == keccak256("adopt")) _adopt();
         else if (stage == keccak256("compose-a")) _composeA();
@@ -127,6 +128,18 @@ contract Scenario is Script {
         console.log("stage a: ethPot before", potBefore);
         console.log("stage a: ethPot after", core.ethPot());
         console.log("stage a: ethRedeemBurn", core.ethRedeemBurn());
+    }
+
+    /// the dev wallet `DEV_WALLET` buys coin with `dev.walletCoinEth` of the launch config. the restricted coin moves only
+    /// through the pool, so the wallet trades like any holder
+    function _devWallet() internal {
+        address wallet = vm.envAddress("DEV_WALLET");
+        string memory cfg = vm.readFile(vm.envOr("LAUNCH_CONFIG", string("script/config/anvil.json")));
+        uint256 eth = vm.parseJsonUint(cfg, ".dev.walletCoinEth");
+        vm.broadcast(wallet);
+        IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: eth}(hex"10", _v4Swap(true, eth), block.timestamp + 1 hours);
+        require(IERC20R(coin).balanceOf(wallet) > 0, "dev-wallet: no coin bought");
+        console.log("dev-wallet: coin", IERC20R(coin).balanceOf(wallet));
     }
 
     function _buyCoin() internal {

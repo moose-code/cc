@@ -30,6 +30,10 @@ import {TestLiquidityHelper} from "../../test/utils/TestLiquidityHelper.sol";
 /// `price = 4.33e20 / 8.9e15` = 48,651.7 and `sqrtPriceX96` = 17475456469331761571636063502336, so `valueOf` of such a
 /// credit equals the bid.
 ///
+/// the dev wallet `dev.wallet` of the launch config also receives `dev.walletCredits` credits from the strategy in both
+/// phases and, in post, `dev.walletBalance` of the balance token. its eth (`dev.walletEth`) is set by
+/// `script/dev/e2e.sh` and its coin comes from the Scenario stage `dev-wallet`. a config without `dev.wallet` skips it.
+///
 /// env: A1 A2 A3, DEPLOYER (the owner), PHASE (pre or post, default post), and for post CORE and TRADER. optional
 /// N1 N2 N3 (credits moved, default 330 10 10), LAUNCH_CONFIG (default script/config/anvil.json).
 contract Seed is Script {
@@ -51,14 +55,17 @@ contract Seed is Script {
 
     function run() external {
         address owner = vm.envAddress("DEPLOYER");
+        string memory cfg = vm.readFile(vm.envOr("LAUNCH_CONFIG", string("script/config/anvil.json")));
+        bool hasWallet = vm.keyExistsJson(cfg, ".dev.wallet");
+        address wallet = hasWallet ? vm.parseJsonAddress(cfg, ".dev.wallet") : address(0);
         _move(vm.envAddress("A1"), vm.envOr("N1", uint256(330)));
         _move(vm.envAddress("A2"), vm.envOr("N2", uint256(10)));
         _move(vm.envAddress("A3"), vm.envOr("N3", uint256(10)));
+        if (hasWallet) _move(wallet, vm.parseJsonUint(cfg, ".dev.walletCredits"));
         if (keccak256(bytes(vm.envOr("PHASE", string("post")))) == keccak256("pre")) return;
 
         ICore core = ICore(payable(vm.envAddress("CORE")));
         address trader = vm.envAddress("TRADER");
-        string memory cfg = vm.readFile(vm.envOr("LAUNCH_CONFIG", string("script/config/anvil.json")));
 
         vm.startBroadcast(owner);
         MockBalanceToken token = new MockBalanceToken("Balance", "BALANCE");
@@ -75,6 +82,7 @@ contract Seed is Script {
         vm.startBroadcast(trader);
         token.mint(address(core), vm.parseJsonUint(cfg, ".dev.balanceMintToCore"));
         token.mint(trader, LP_TOKENS);
+        if (hasWallet) token.mint(wallet, vm.parseJsonUint(cfg, ".dev.walletBalance"));
         IPoolManager(Mainnet.POOL_MANAGER).initialize(pool, uint160(vm.parseJsonUint(cfg, ".dev.balancePoolSqrtPriceX96")));
         TestLiquidityHelper lp = new TestLiquidityHelper();
         token.approve(address(lp), type(uint256).max);
