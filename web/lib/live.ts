@@ -323,7 +323,7 @@ export function useStatements() {
 
 // State.anchor starts at slot 28 (test/CoreLayout.t.sol, src/lib/CoreLib.sol):
 // lastFillRate, minuteStartRate, minuteBucket (uint64) + peakTime, peakRate.
-const ANCHOR_SLOT = 27n;
+const ANCHOR_SLOT = 28n;
 const CREDIT_SCORE = "0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7" as const;
 const scoreAbi = parseAbi(["function scoreOf(bytes21 seed, uint64 paidAt) view returns (uint256)"]);
 const multicallAbi = parseAbi(["function getEthBalance(address a) view returns (uint256)"]);
@@ -417,6 +417,24 @@ export function useBidsOf(ids: bigint[], now: number) {
       const bids = await bidsOf(client!, ids);
       const m: Record<string, bigint> = {};
       ids.forEach((id, i) => (m[id.toString()] = bids[i]));
+      return m;
+    },
+  });
+}
+
+// the credit score (CreditScore.scoreOf(seedOf, timestampOf)) for each id, id to score. the score does not change, so
+// it is cached and not polled. used by the credit swap, where score(inId) must be at or above score(outId)
+export function useScores(ids: bigint[]) {
+  const client = usePublicClient();
+  const key = ids.map(String).join(",");
+  return useQuery<Record<string, bigint>>({
+    queryKey: ["scores-of", key],
+    enabled: engineDeployed && Boolean(client) && ids.length > 0,
+    staleTime: Infinity,
+    queryFn: async () => {
+      const scores = await creditScores(client!, ids);
+      const m: Record<string, bigint> = {};
+      ids.forEach((id, i) => (m[id.toString()] = scores[i]));
       return m;
     },
   });

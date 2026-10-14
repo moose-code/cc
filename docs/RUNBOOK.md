@@ -42,6 +42,7 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 | the bid | `rateStart` (market price on launch day of a credit of score `refScore`, wei), `rateCap` (3 times it), `refScore` 4,330,000 (the launch average credit score), the nine bid settings |
 | the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 5,000, the `Sale` struct (markup 15,000, cap 100,000, fast 100, knee 10,000, slow 25, anchor half life 604,800, anchor min cost 0.1 eth) |
 | the credit side | `creditCostToPotBps` 10,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` false, `window` 14,400, `floorBps` 11,000, `startBps` 30,000, `royaltyBps` 250, `royaltyRecipient` (`refScore` is a bid setting above) |
+| the credit swap | `swapFeeCc` 1e18 (one coin burned per `swapCredit`) |
 | the balance side | `redeemOn` false, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 2,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
 | the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0005 eth, `keeperMaxBaseFee` 10 gwei, `callerFee` 0, `callerMaxBaseFee` 0 |
 | the payee | `payee` the owner, `payeePpm` 75,185 (0.5 points of volume) |

@@ -54,7 +54,8 @@ export type CreditEvt =
       tx: string;
     }
   | { t: "sold"; buyer: string; price: bigint; block: bigint; tx: string }
-  | { t: "composed"; sid: number; block: bigint; tx: string };
+  | { t: "composed"; sid: number; block: bigint; tx: string }
+  | { t: "swapped"; dir: "in" | "out"; other: number; caller: string; fee: bigint; block: bigint; tx: string };
 
 export type ComposeMode = "default" | "chosen";
 
@@ -185,6 +186,21 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         cr(id).push({ t: "bought", how: "adopted", cost: a.cost, block, tx });
         stats.creditsAdopted++;
         creditRow(id, eth(a.cost));
+        break;
+      }
+      case "CreditSwapped": {
+        const inId = Number(a.inId);
+        const outId = Number(a.outId);
+        cr(inId).push({ t: "swapped", dir: "in", other: outId, caller: a.caller, fee: a.fee, block, tx });
+        cr(outId).push({ t: "swapped", dir: "out", other: inId, caller: a.caller, fee: a.fee, block, tx });
+        row({
+          kind: "credit",
+          label: "credit swapped",
+          detail: `credit #${inId} in for #${outId} · fee ${eth(a.fee)} CC · by`,
+          addr: a.caller,
+          link: { text: `credit #${inId}`, href: `/credits/${inId}` },
+          tile: { kind: "credit", id: inId },
+        });
         break;
       }
 

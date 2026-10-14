@@ -26,6 +26,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 | behavior | every engine sale carries a royalty of `royaltyBps` on top of the engine price, paid to `royaltyRecipient` by the controller | 112 |
 | behavior | the balance side: redeem at the floor by rating, buy by score, burn from the reserve; the module holds the token and redemptions keep filling it, so the bid off is the accumulate mode; two switches, off at launch | 82, 84, 86, 107, 117 |
 | behavior | the credit sale window and chosen composition are owner switches, off at launch | 88, 89 |
+| behavior | a holder swaps a pile credit for one it owns of equal or higher score through `swapCredit`, for a `swapFeeCc` coin fee it burns | 118 |
 | behavior | system compose picks a random format or takes one; holders of `minCcToChoose` CC restyle held statements | 113 |
 | behavior | the composer of every statement is recorded | 111 |
 | behavior | the owner pauses sales; a pause holds every statement's age | 81, 97 |
@@ -82,6 +83,7 @@ one `Settings` struct in Core storage, `setSettings(Settings)` owner only and ef
 | `feeToRedeemBurnBps` | 1,000 | 0 to 10,000 | share of fee income to the redeem burn reserve, the rest to the pot |
 | `payeePpm` | 75,185 | 0 to 200,000 | share of fee income to the payee claim, parts per million |
 | `refScore` | 4,330,000 | 1 to 8,000,000 | the per-credit score the eth bid divides by: a credit of score `s` is paid `ethRate() * s / refScore`. the controller reads it for the point rate and the statement reference |
+| `swapFeeCc` | 1e18 | 0 to 1e24 | coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, one coin at launch |
 
 three standalone Core settings, each with its own setter and event: `creditCostToPotBps` (10,000; 0 to 10,000; share of a sold credit's cost booked to the pot, the rest of the payment to the buyback), `chosenComposeOn` (false), `minCcToChoose` (1e18 base units, one coin; the least CC balance of a caller of `composeChosen` and `setHeldFormat`, read at the call).
 
@@ -123,8 +125,9 @@ per 100 eth of volume at launch values: 0.25 eth to the protocol, 6.65 eth to th
 | `buyListing(adapter, id, params)` | the adapter must be approved; its `price(id, params)` is read by staticcall (300,000 gas, 8,192 bytes); the target passes the forbidden list; `value` is at most `bidOf(id)` and the pot; the Core must not own `id` before and must own it after with its balance up one; the balance may fall by at most `value`. the caller is paid `min(counted gas, 1,500,000) * min(basefee, keeperMaxBaseFee) + keeperFee`, at most `bidOf(id) - value`. cost basis `value + payment` |
 | `sellForBalance(ids)`, `(ids, minOut)` | requires `balanceBidOn` and a module; pays `score * unit * (10,000 - balanceBidMarginBps) / 10,000` in balance token per credit, the unit read from the module in the call; the running total must not exceed the module's `available()` (`PotTooSmall`), the module pays the seller with one `pay(seller, total)` and the seller's holding must rise by at least the total (`BadModule`); cost basis `floorRate * score / refScore`, at least 1 wei |
 | `adopt(ids)` | puts credits the Core holds without a record into the pile at `ethPrice * score / refScore`, at least 1 wei |
+| `swapCredit(inId, outId)` | not paused, not retired; `outId` in the pile (`NotInPile`), `inId` owned by the caller and not in a pile (`InPile`), `score(inId) >= score(outId)` (`ScoreTooLow`). the caller burns `swapFeeCc` coin through `burnFrom(caller, fee)` (approve the Core first, a zero fee burns nothing); `inId` takes `outId`'s pile node (position, cost basis, acquisition time) and `outId` returns to the caller. `CreditSwapped(inId, outId, caller, fee)` |
 
-the first `migrate` retires the engine: these four doors and both composes revert `Retired`. forbidden targets, checked for adapters and their targets: Credits, Statements, the Core, the coin, the hook, the pool manager, the factory, the locker, the escrow, Permit2, the position manager, the universal router, the balance module and token.
+the first `migrate` retires the engine: these four doors and both composes revert `Retired`. `swapCredit` reverts `Retired` as well. forbidden targets, checked for adapters and their targets: Credits, Statements, the Core, the coin, the hook, the pool manager, the factory, the locker, the escrow, Permit2, the position manager, the universal router, the balance module and token.
 
 the adapters: `SeaportBasicAdapter` prices a Seaport 1.6 basic order of one credit for native eth on an open route (the zone is ignored), with every additional recipient the offerer or an address on the adapter's allowlist (the OpenSea fee collector at launch; `setAllowedRecipient` by the Core's owner, additions refused after `lockAdapters`); `value` is the sum of every payout, so Seaport refunds nothing. `CreditStrategyAdapter` prices `nftForSale(id)` and calls `sellTargetNFT(id)`. a tip to the offerer or an allowlisted recipient can raise `value` up to the bid, which is what `sellForEth` pays.
 
@@ -231,3 +234,4 @@ invariants 15 (the fee router) and 20 (the lens) are retired with their subjects
 | 15 | a tip in a Seaport order to the offerer or an allowlisted recipient raises the engine's payment up to the bid, the price `sellForEth` pays |
 | 16 | mainnet caps a transaction at 16,777,216 gas; `compose` uses about 8.5 million after refunds and a `sellForEth` batch stops at about 91 credits (per point, each credit reads its score) |
 | 17 | the engine launches on AI run reviews (docs/reviews/) with no human audit |
+| 18 | `swapCredit` treats a higher score as more desirable: it takes an incoming credit of equal or higher score and holds the pile's total score. a holder who values a lower score credit more cannot swap for it; the `swapFeeCc` burn and the score floor are the only gates |
