@@ -157,7 +157,7 @@ export function useMarketStats(market?: Market) {
   const { data: supply } = useReadContract({ address: market?.token, abi: erc20Abi, functionName: "totalSupply", query: { enabled: Boolean(market) } });
 
   const ref = head != null && head > DAY_BLOCKS ? ((head - DAY_BLOCKS) / BUCKET) * BUCKET : undefined;
-  const { data: perEthThen } = useQuery<number | undefined>({
+  const { data: perEthThen } = useQuery<number | null>({
     queryKey: ["spot24", market && poolIdOf(market.key), ref?.toString()],
     enabled: Boolean(client && market && ref),
     staleTime: Infinity,
@@ -169,18 +169,18 @@ export function useMarketStats(market?: Market) {
       if (hit != null) return hit;
       try {
         const [sqrt] = await client!.readContract({ address: V4.stateView, abi: stateViewAbi, functionName: "getSlot0", args: [id], blockNumber: ref });
-        if (sqrt === 0n) return undefined;
+        if (sqrt === 0n) return null;
         const v = ccPerEthFromSqrt(sqrt, market!.decimals);
         lsSet(key, v);
         return v;
       } catch {
-        return undefined; // pruned state, or a pool younger than the reference block
+        return null; // pruned state, or a pool younger than the reference block
       }
     },
   });
 
   const priceUsd = ethUsd != null && perEth ? ethUsd / perEth : undefined;
   const marketCap = priceUsd != null && supply != null && market ? priceUsd * Number(formatUnits(supply, market.decimals)) : undefined;
-  const change = perEth && perEthThen ? (perEthThen / perEth - 1) * 100 : undefined;
+  const change = perEth && perEthThen != null ? (perEthThen / perEth - 1) * 100 : undefined;
   return { priceUsd, marketCap, change };
 }
