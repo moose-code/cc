@@ -89,6 +89,14 @@ export function shortHash(h: string): string {
   return `${h.slice(0, 6)}…`;
 }
 
+// "1h 5m", "3m 20s", "40s" from a remaining-seconds count.
+export function leftLabel(s: number): string {
+  s = Math.max(0, Math.floor(s));
+  if (s >= 3600) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  if (s >= 60) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${s}s`;
+}
+
 // "just now", "5s ago", "3m ago" from an elapsed-seconds count.
 export function agoLabel(s: number): string {
   s = Math.max(0, Math.floor(s));

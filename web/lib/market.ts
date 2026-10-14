@@ -5,7 +5,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
-import { formatUnits, zeroAddress, type Address } from "viem";
+import { formatUnits, parseAbi, zeroAddress, type Address } from "viem";
 import { core, ethUsdFeed } from "./config";
 import { chainlinkAbi, controllerAbi, coreAbi, erc20Abi, hookAbi, mevAbi, quoterAbi, stateViewAbi } from "./abis";
 import { MULTICALL3, useHead, useSnapshot } from "./live";
@@ -95,17 +95,25 @@ export function useQuote(market: Market | undefined, side: "buy" | "sell", amoun
   });
 }
 
-// Swap fee in bps of a hooked market: the pool's current skim (the MEV module's
-// value when one is set, else the baseline) plus the hook's LP fee (pips / 100).
-// null when a read fails.
+// Swap fee of a hooked market, in bps: the pool's current skim plus the hook's
+// LP fee (pips / 100). While the MEV module reports an active window, the skim
+// is its decaying value (not below the baseline) and `endsAt` is its windowEnd
+// in unix seconds (undefined when the module has no windowEnd). `baseBps` is the
+// fee after the window. Refetched every 12 s (the head poll) while the window is
+// active, every 60 s otherwise. null when a read fails.
+export type HookFee = { bps: number; baseBps: number; active: boolean; endsAt?: number };
+
+const windowEndAbi = parseAbi(["function windowEnd(bytes32 poolId) view returns (uint40)"]);
+
 export function useHookFeeBps(market?: Market) {
   const client = usePublicClient();
   const hook = market?.key.hooks;
   const on = Boolean(client && market && hook !== zeroAddress);
-  return useQuery<number | null>({
+  return useQuery<HookFee | null>({
     queryKey: ["hook-fee", market && poolIdOf(market.key)],
     enabled: on,
-    staleTime: 60000,
+    staleTime: 0,
+    refetchInterval: (q) => (q.state.data?.active ? 12000 : 60000),
     queryFn: async () => {
       try {
         const id = poolIdOf(market!.key);
@@ -113,12 +121,23 @@ export function useHookFeeBps(market?: Market) {
           client!.readContract({ address: hook!, abi: hookAbi, functionName: "skimConfig", args: [id] }),
           client!.readContract({ address: hook!, abi: hookAbi, functionName: "poolInfo", args: [id] }),
         ]);
-        let skim = Number(cfg.baselineSkimBps);
+        const baseline = Number(cfg.baselineSkimBps);
+        const lp = Number(cfg.lpFeePips) / 100;
+        let skim = baseline;
+        let active = false;
+        let endsAt: number | undefined;
         if (info.mevModule !== zeroAddress) {
-          const [now] = await client!.readContract({ address: info.mevModule, abi: mevAbi, functionName: "currentSkimBps", args: [id] });
-          skim = Number(now);
+          const [now, running] = await client!.readContract({ address: info.mevModule, abi: mevAbi, functionName: "currentSkimBps", args: [id] });
+          if (running) {
+            active = true;
+            skim = Math.max(Number(now), baseline);
+            endsAt = await client!
+              .readContract({ address: info.mevModule, abi: windowEndAbi, functionName: "windowEnd", args: [id] })
+              .then((t) => (t > 0n ? Number(t) : undefined))
+              .catch(() => undefined);
+          }
         }
-        return skim + Number(cfg.lpFeePips) / 100;
+        return { bps: skim + lp, baseBps: baseline + lp, active, endsAt };
       } catch {
         return null;
       }

@@ -642,6 +642,10 @@ button.tp-row:disabled {
   color: var(--muted);
   font-size: 0.78rem;
 }
+.tp-fee.tp-launch {
+  margin-top: 0.35rem;
+  color: var(--fg);
+}
 .tp-pot {
   display: grid;
   gap: 0.7rem;

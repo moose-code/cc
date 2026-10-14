@@ -7,8 +7,9 @@ import { engineDeployed, chain } from "@/lib/config";
 import { readPots, useCcMarket, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market, type Pots } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
-import { changePct, commas, evmNowAddress, evmNowTx, shortHash, tokens, usdCompact, usdPrice } from "@/lib/format";
+import { changePct, commas, evmNowAddress, evmNowTx, leftLabel, shortHash, tokens, usdCompact, usdPrice } from "@/lib/format";
 import { lsGet, lsSet } from "@/lib/cache";
+import { useNow } from "@/lib/live";
 import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
 
 const HOOK_FEE_BPS = 690; // fallback when the hook reads fail
@@ -82,7 +83,8 @@ export function TradePanel({ market }: { market?: Market }) {
   const dec = m?.decimals ?? 18;
   const hooked = m != null && m.key.hooks !== zeroAddress;
   const hookFee = useHookFeeBps(m).data;
-  const feeBps = hooked ? hookFee ?? HOOK_FEE_BPS : (m?.key.fee ?? 0) / 100; // LP fee is in hundredths of a bip
+  const now = useNow();
+  const feeBps = hooked ? hookFee?.bps ?? HOOK_FEE_BPS : (m?.key.fee ?? 0) / 100; // LP fee is in hundredths of a bip
 
   const { priceUsd: tokenUsd, marketCap, change } = useMarketStats(m);
 
@@ -399,6 +401,12 @@ export function TradePanel({ market }: { market?: Market }) {
         </div>
       )}
       <p className="tp-fee">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
+      {hookFee?.active && (
+        <p className="tp-fee tp-launch">
+          launch fee {(hookFee.bps / 100).toFixed(1)}%, decaying to {(hookFee.baseBps / 100).toFixed(1)}%
+          {hookFee.endsAt != null && hookFee.endsAt > now && ` · ${leftLabel(hookFee.endsAt - now)} left`}
+        </p>
+      )}
       {growth && <PotGrowth key={growth.to.pot.toString()} from={potOf(growth.from)} to={potOf(growth.to)} label="pot" />}
       {!engineDeployed && <p className="panel-note tp-note">engine not deployed.</p>}
     </aside>
