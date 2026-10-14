@@ -72,7 +72,7 @@ export default function KeeperPage() {
             {row("delay", `${commas(s.settings.buybackDelay)} blocks`)}
             {row("slice", `${eth(slice)} of ${eth(s.settings.buybackSlice)} eth`)}
           </div>
-          <p className="panel-note">swaps a slice of the buyback pot for coin and burns it.</p>
+          <p className="panel-note">swaps a slice of the buyback pot for $CC and burns it.</p>
           <div className="actions">
             <Act
               label="buyback"

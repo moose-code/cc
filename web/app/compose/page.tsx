@@ -129,10 +129,10 @@ export default function ComposePage() {
           <p className="muted">
             pick {size} credits that are past their sale window and a format (0 to 7).{" "}
             {minCc > 0n
-              ? `requires holding at least ${Number(formatUnits(minCc, 18)).toLocaleString("en-US")} cc${
+              ? `requires holding at least ${Number(formatUnits(minCc, 18)).toLocaleString("en-US")} $CC${
                   address ? ` (you hold ${Number(formatUnits(ccBal ?? 0n, 18)).toLocaleString("en-US")})` : ""
                 }.`
-              : "no coin balance required."}
+              : "no $CC balance required."}
           </p>
           <div className="sell-head">
             <span className="muted">
@@ -175,7 +175,7 @@ export default function ComposePage() {
             <Act
               label="compose chosen"
               disabled={sel.size !== size || !ccOk}
-              title={!ccOk ? "coin balance below the minimum" : undefined}
+              title={!ccOk ? "$CC balance below the minimum" : undefined}
               steps={async (write) => {
                 await write({ address: core, abi: coreAbi, functionName: "composeChosen", args: [[...sel].map(BigInt) as any, chosenFormat] });
                 setSel(new Set());

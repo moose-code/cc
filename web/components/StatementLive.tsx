@@ -212,11 +212,11 @@ function StatementActions({ s, snap }: { s: HeldStatement; snap: Snapshot }) {
         <Act
           label="restyle"
           disabled={!ccOk}
-          title={!ccOk ? "coin balance below the minimum" : undefined}
+          title={!ccOk ? "$CC balance below the minimum" : undefined}
           steps={async (write) => void (await write({ address: core, abi: coreAbi, functionName: "setHeldFormat", args: [BigInt(s.sid), format] }))}
         />
         <p className="muted small">
-          restyle sets the format of this held statement. it needs at least {Number(formatUnits(snap.minCcToChoose, 18)).toLocaleString("en-US")} cc in the
+          restyle sets the format of this held statement. it needs at least {Number(formatUnits(snap.minCcToChoose, 18)).toLocaleString("en-US")} $CC in the
           account.
         </p>
       </div>

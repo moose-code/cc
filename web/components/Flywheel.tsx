@@ -22,6 +22,7 @@ const ICONS: Record<string, React.ReactNode> = {
     />
   ),
   tag: <path d="M3 4h8l8 8-8 8-8-8zM7 8h.01M21 2v6m-2-2 2 2 2-2" />,
+  redeem: <path d="M12 3v11m-4-4 4 4 4-4M4 15v5h16v-5" />,
   flame: (
     <path d="M12 3c1 4 5 6 5 11a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3 0-4-1-6 1-10z" />
   ),
@@ -42,20 +43,19 @@ type Step = {
   later?: boolean;
 };
 
-function Box({ t, half }: { t: Step; half?: boolean }) {
+// box: a step in the row. half: one side of the list or redeem step. mini: the burn node on the return loop.
+function Box({ t, kind = "box" }: { t: Step; kind?: "box" | "half" | "mini" }) {
   const body = (
     <>
-      {!half && (
-        <svg viewBox="0 0 24 24" aria-hidden>
-          {ICONS[t.icon]}
-        </svg>
-      )}
+      <svg viewBox="0 0 24 24" aria-hidden>
+        {ICONS[t.icon]}
+      </svg>
       <span className="fw-label">{t.label}</span>
       <span className="fw-line">{t.line}</span>
       {SHOW_LIVE && <span className="fw-num">{t.num ?? "later"}</span>}
     </>
   );
-  const cls = `${half ? "fw-half" : "fw-box"}${t.later ? " fw-later" : ""}`;
+  const cls = `fw-${kind}${t.later ? " fw-later" : ""}`;
   if (!t.href) return <div className={cls}>{body}</div>;
   if (t.href.startsWith("/"))
     return (
@@ -70,8 +70,10 @@ function Box({ t, half }: { t: Step; half?: boolean }) {
   );
 }
 
-// The steps of the engine, each with a live number, under the header of the home page.
-// After compose a statement is either listed or redeemed (one box, two halves joined by "or"); both feed the buyback that burns cc.
+// The steps of the engine under the header of the home page: trade, buy credits, compose, then a
+// statement is listed or redeemed (one box, two halves joined by "or"). The return loop runs from
+// the sale back to buy credits: sale proceeds refill the pot, and the burn node on the loop is the
+// part that buys $CC and burns it.
 export function Flywheel() {
   const { data: s } = useStats();
   const { data: snap } = useSnapshot();
@@ -81,7 +83,7 @@ export function Flywheel() {
   const balanceOn = !!snap?.balanceOn;
   const trade: Step = {
     icon: "swap",
-    label: "trade cc",
+    label: "trade $CC",
     line: "every trade pays 9.9% into the engine",
     num: `${n(s.feesBooked, 3)} eth booked`,
     href: snap ? evmNowAddress(snap.coin) : undefined,
@@ -108,7 +110,7 @@ export function Flywheel() {
     href: "/statements",
   };
   const redeem: Step = {
-    icon: "swap",
+    icon: "redeem",
     label: "redeem",
     line: `redeemed for ${BALANCE_SYMBOL} at the floor`,
     num: balanceOn ? `${n(s.redeemed)} statements redeemed` : undefined,
@@ -117,9 +119,9 @@ export function Flywheel() {
   };
   const burn: Step = {
     icon: "flame",
-    label: "burn cc",
-    line: "a quarter of each sale and the redeem reserve burn cc",
-    num: `${n(s.ccBurned)} cc burned${on ? ` · ${commas(burnedPct, 2)}%` : ""}`,
+    label: "burn $CC",
+    line: "proceeds refill the pot; part buys $CC and burns it",
+    num: `${n(s.ccBurned)} $CC burned${on ? ` · ${commas(burnedPct, 2)}%` : ""}`,
     href: "/statements",
   };
   return (
@@ -133,23 +135,19 @@ export function Flywheel() {
           <Box t={compose} />
           <Arrow />
           <div className="fw-box fw-split" role="group" aria-label="list or redeem">
-            {/* timeline icon, shown on narrow screens */}
-            <svg className="fw-split-icon" viewBox="0 0 24 24" aria-hidden>
-              {ICONS.tag}
-            </svg>
-            <Box t={list} half />
+            <Box t={list} kind="half" />
             <span className="fw-or" aria-hidden>
               or
             </span>
-            <Box t={redeem} half />
+            <Box t={redeem} kind="half" />
           </div>
-          <Arrow />
-          <Box t={burn} />
         </div>
-        <div className="fw-loop" aria-hidden />
+        <div className="fw-loop">
+          <Box t={burn} kind="mini" />
+        </div>
         <div className="fw-back" aria-hidden>
           <Arrow />
-          back to trade cc
+          back to buy credits
         </div>
       </div>
     </section>

@@ -10,7 +10,7 @@ export function Footer() {
   const contracts = [
     { label: "core", address: core },
     { label: "controller", address: snap?.controller },
-    { label: "cc", address: snap?.coin },
+    { label: "$CC", address: snap?.coin },
     { label: "credits", address: credits },
     { label: "statements", address: statements },
   ].filter((c): c is { label: string; address: `0x${string}` } => Boolean(c.address) && Boolean(core));

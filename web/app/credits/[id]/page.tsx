@@ -157,7 +157,7 @@ function Step({ e }: { e: CreditEvt }) {
             <Link href={`/credits/${e.other}`} className="xlink-inline">
               credit {e.other}
             </Link>
-            {` · fee ${eth(e.fee)} CC`}
+            {` · fee ${eth(e.fee)} $CC`}
           </>
         }
         block={e.block}
@@ -231,7 +231,7 @@ function SwapPanel({ outId, snap }: { outId: number; snap: Snapshot }) {
     <div className="section">
       <h2>swap</h2>
       <p className="muted">
-        swap this credit for one you own of equal or higher score, for a {eth(fee)} CC fee the engine burns.
+        swap this credit for one you own of equal or higher score, for a {eth(fee)} $CC fee the engine burns.
       </p>
       {!isConnected ? (
         <button className="action" onClick={openConnectModal}>

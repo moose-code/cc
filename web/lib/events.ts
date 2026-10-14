@@ -196,7 +196,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         row({
           kind: "credit",
           label: "credit swapped",
-          detail: `· in for #${outId} · fee ${eth(a.fee)} CC · by`,
+          detail: `· in for #${outId} · fee ${eth(a.fee)} $CC · by`,
           addr: a.caller,
           link: { text: `credit #${inId}`, href: `/credits/${inId}` },
           tile: { kind: "credit", id: inId },
