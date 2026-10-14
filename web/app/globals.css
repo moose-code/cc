@@ -857,15 +857,21 @@ button.tp-row:disabled {
   margin: 0.2rem 0 0;
   color: var(--muted);
 }
-/* engine row at the top of the swap column: pot, next credit, next statement */
+/* engine row, the header of the swap column: pot, next credit, next statement over a rule */
 .tp-eg {
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 0.75rem;
-  margin-bottom: 1.25rem;
-  padding: 0.7rem 0.8rem;
-  border: 1px solid var(--line);
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
   font-size: 0.78rem;
+}
+/* home: spans the column edge to edge; the padding puts its rule level with the rule under the
+   feed's column headings */
+.body > .trade .tp-eg {
+  margin: -2rem -1.75rem 1.75rem;
+  padding: 1.48rem 1.75rem;
 }
 .tp-eg > div {
   display: flex;
