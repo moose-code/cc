@@ -40,7 +40,8 @@ contract DemoCoin {
     }
 
     function description() external pure returns (string memory) {
-        return "demo: a wallet's credits drawn as the pile";
+        return
+            "CC is a coin whose trading fees fund a permanent public bid for Credits. Anyone can sell Credits to the engine at that bid, and the engine sweeps cheaper listings on approved venues. The engine composes 80 Credits into a Statement, holds it, and sells it at a price that starts above cost and falls to a floor. A quarter of every sale burns CC and three quarters buys more Credits. The image is the engine's pile of Credits, up to 80 of them, drawn as a Statement page and re-sampled every block.";
     }
 }
 
