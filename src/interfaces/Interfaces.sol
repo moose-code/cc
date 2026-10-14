@@ -26,8 +26,13 @@ interface IBalanceModule {
     /// redemption owes `rating * unitPerPoint`, where `rating` is the sum of its credits' stored scores. the core and
     /// the controller read it at each use
     function unitPerPoint() external view returns (uint256);
-    /// called by the core after it transfers the statement to the module
+    /// called by the core after it transfers the statement to the module. the proceeds stay in the module
     function redeem(uint256 statementId) external returns (uint256 out);
+    /// the balance token the module will pay out for the balance bid. the module may hold more and keep the rest for
+    /// other uses. the core checks a sell batch against it and the core's `setBalanceModule` requires it to answer
+    function available() external view returns (uint256);
+    /// moves `amount` of the balance token to `to`, the core only. reverts when `amount` exceeds `available()`
+    function pay(address to, uint256 amount) external;
 }
 
 interface ICreditScore {

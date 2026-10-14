@@ -30,12 +30,11 @@ interface ICoreLib {
     error ZeroAmount();
     error ZeroId();
 
-    event BalanceTokenMigrationSkipped(address indexed successor, uint256 amount);
     event CoinRescued(address indexed to, uint256 amount);
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event EngineRetired(address indexed successor);
-    event Migrated(address indexed successor, uint256 eth, uint256 balanceTokens, uint256 credits);
+    event Migrated(address indexed successor, uint256 eth, uint256 credits);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
     event SettingsSet(Settings settings);
     event SuccessorLocked();

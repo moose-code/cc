@@ -461,12 +461,12 @@ contract Scenario is Script {
         require(ctl.atFloor(sid), "redeem: the statement has not reached its floor");
 
         uint256 owed = core.ratingOf(sid) * IBalanceModule(core.balanceModule()).unitPerPoint();
-        uint256 potBefore = core.balancePot();
+        uint256 potBefore = IBalanceModule(core.balanceModule()).available();
         vm.broadcast(KEEPER);
         core.redeemStatement(sid);
         (bool stillHeld,,) = core.statementInfo(sid);
         require(!stillHeld, "redeem: the statement is still held");
-        require(core.balancePot() >= potBefore + owed * 98 / 100, "redeem: the balance pot did not grow by the rating");
+        require(IBalanceModule(core.balanceModule()).available() >= potBefore + owed * 98 / 100, "redeem: the balance pot did not grow by the rating");
         require(core.heldStatements().length == held.length - 1, "redeem: held count did not fall by one");
 
         uint256 reserve = core.ethRedeemBurn();
@@ -478,7 +478,7 @@ contract Scenario is Script {
             console.log("redeem: released redeem burn reserve", reserve);
         }
         console.log("redeem: redeemed statement", sid);
-        console.log("redeem: balancePot", core.balancePot());
+        console.log("redeem: module holding", IBalanceModule(core.balanceModule()).available());
     }
 
     /// A3 sells credits into the balance bid, a single and a batch, and is paid in the balance token
@@ -500,7 +500,7 @@ contract Scenario is Script {
 
         require(token.balanceOf(A3) > paidBefore, "balance-bid: the seller was not paid in the balance token");
         console.log("balance-bid: seller paid", token.balanceOf(A3) - paidBefore);
-        console.log("balance-bid: balancePot", core.balancePot());
+        console.log("balance-bid: module holding", IBalanceModule(core.balanceModule()).available());
     }
 
     /// the cost basis of a credit bought with the balance token is `score * pointRate`, at least 1 wei
@@ -543,7 +543,7 @@ contract Scenario is Script {
         console.log("ethPot", core.ethPot());
         console.log("ethToBuyback", core.ethToBuyback());
         console.log("ethRedeemBurn", core.ethRedeemBurn());
-        console.log("balancePot", core.balancePot());
+        console.log("module holding", IBalanceModule(core.balanceModule()).available());
         console.log("pileSize", core.pileSize());
         console.log("heldStatements", core.heldStatements().length);
         console.log("coin totalSupply", IERC20R(coin).totalSupply());

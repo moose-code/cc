@@ -759,7 +759,6 @@ contract CoreUnitTest is CoreBase {
         // redeemStatement reverts NoBalanceModule whatever the switch while no module is set
         vm.expectRevert(ICore.NoBalanceModule.selector);
         core.redeemStatement(1);
-        core.bookBalance();
     }
 
     // promise: INTEGRATION NothingToBuy, TooSoon, SliceTooSmall
@@ -890,17 +889,17 @@ contract CoreComposedTest is CoreBase {
         core.redeemStatement(c.sid);
     }
 
-    // promise: SPEC 9 a redemption books its eth into the pots
-    /// an eth lane redemption books the whole received amount into the bid pot
-    function test_redeem_ethLaneAllToTheBidPot() public {
+    // promise: SPEC 9 a redemption keeps its balance token in the module, not the core
+    /// an eth lane redemption mints the whole owed amount into the module; the core holds no balance token
+    function test_redeem_ethLaneStaysInTheModule() public {
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         uint256 out = core.ratingOf(c.sid) * UNIT;
-        uint256 pot = core.balancePot();
+        uint256 held = _moduleHolding();
         core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "the module keeps the statement");
-        assertEq(xt.balanceOf(address(core)), out);
-        assertEq(core.balancePot() - pot, out, "all received to the bid pot");
+        assertEq(_moduleHolding() - held, out, "all received stays in the module");
+        assertEq(xt.balanceOf(address(core)), 0, "the core holds no balance token");
         assertEq(_held().length, 0);
         assertFalse(_isHeld(c.sid));
     }
@@ -922,12 +921,13 @@ contract CoreComposedTest is CoreBase {
         // is short, the full payout of the live unit passes
         mod.setUnitPerPoint(3 * UNIT);
         mod.setPayBps(5_000);
-        vm.expectRevert(ICore.Underpaid.selector);
+        vm.expectRevert(ICore.BadModule.selector);
         core.redeemStatement(c.sid);
         mod.setPayBps(10_000);
         uint256 out = core.ratingOf(c.sid) * 3 * UNIT;
+        uint256 held = _moduleHolding();
         core.redeemStatement(c.sid);
-        assertEq(xt.balanceOf(address(core)), out);
+        assertEq(_moduleHolding() - held, out, "the owed amount is minted into the module");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -939,8 +939,6 @@ contract CoreComposedTest is CoreBase {
     function test_xBid_paysScoreTimesUnit() public {
         _fillBalanceBuyback();
         _setBalancePool();
-        xt.mint(address(core), 1e22);
-        core.bookBalance();
         uint256[] memory ids = _credits(alice, 2);
         uint256 net = 10_000 - core.settings().balanceBidMarginBps;
         uint256 expect;
@@ -958,8 +956,6 @@ contract CoreComposedTest is CoreBase {
     // promise: INTEGRATION BadModule, BadQuote, Empty on sellForBalance
     function test_xBid_guards() public {
         _fillBalanceBuyback();
-        xt.mint(address(core), 1e22);
-        core.bookBalance();
         uint256[] memory ids = _credits(alice, 1);
         uint256[] memory none = new uint256[](0);
         vm.prank(alice);
@@ -971,24 +967,21 @@ contract CoreComposedTest is CoreBase {
         vm.prank(keeper);
         vm.expectRevert(ICore.NotOwner.selector);
         core.sellForBalance(ids);
-        stdstore.target(address(core)).sig("balancePot()").checked_write(uint256(1));
+        // the module commits only 1 wei to the bid, below one credit's price, so the batch total passes it
+        mod.setAvailable(1);
         vm.prank(alice);
         vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForBalance(ids);
     }
 
-    // promise: SPEC 9 bookBalance books balance token into balancePot (inv 5)
-    /// balance token that arrives outside a redemption is booked only by `bookBalance`, into the bid pot
-    function test_xFees_bookBalanceBooksPlainTransfers() public {
+    // promise: SPEC 9 the module holds the balance token: a plain transfer to the module raises its available holding
+    /// balance token that arrives at the module is part of its holding at once; the core holds none and has no book step
+    function test_xFees_moduleHoldsTheBalanceToken() public {
         _fillBalanceBuyback();
-        uint256 pot = core.balancePot();
-        core.bookBalance();
-        assertEq(core.balancePot(), pot, "nothing above the pot");
-        xt.mint(address(core), 3e18);
-        assertEq(core.balancePot(), pot);
-        core.bookBalance();
-        assertEq(core.balancePot(), pot + 3e18);
-        _solvent();
+        uint256 held = _moduleHolding();
+        xt.mint(address(mod), 3e18);
+        assertEq(_moduleHolding(), held + 3e18, "the module holding rose by the transfer");
+        assertEq(xt.balanceOf(address(core)), 0, "the core holds no balance token");
     }
 
 }

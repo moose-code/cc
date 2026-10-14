@@ -69,7 +69,6 @@ interface ICore {
     error SliceTooSmall();
     error Slippage();
     error TooSoon();
-    error Underpaid();
     error UseFund();
     error ZeroAddress();
     error ZeroAmount();
@@ -77,10 +76,8 @@ interface ICore {
 
     event AdapterSet(address indexed adapter, bool allowed);
     event AdaptersLocked();
-    event BalanceBooked(uint256 amount);
     event BalanceModuleLocked();
     event BalanceModuleSet(address balanceModule, address balanceToken, uint256 unitPerPoint);
-    event BalanceTokenMigrationSkipped(address indexed successor, uint256 amount);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     event ChosenComposeOnSet(bool on);
     event CoinRescued(address indexed to, uint256 amount);
@@ -102,7 +99,7 @@ interface ICore {
     event ListingBought(
         uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
-    event Migrated(address indexed successor, uint256 eth, uint256 balanceTokens, uint256 credits);
+    event Migrated(address indexed successor, uint256 eth, uint256 credits);
     event MinCcToChooseSet(uint96 min);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
@@ -137,11 +134,9 @@ interface ICore {
     function allowedAdapter(address adapter) external view returns (bool);
     function balanceModule() external view returns (address);
     function balanceModuleLocked() external view returns (bool);
-    function balancePot() external view returns (uint256);
     function balanceToken() external view returns (address);
     function bidOf(uint256 id) external view returns (uint256);
     function book() external;
-    function bookBalance() external;
     function buyListing(address adapter, uint256 id, bytes memory params) external;
     function buyback() external;
     function checkpointTime() external view returns (uint64);

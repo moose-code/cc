@@ -75,7 +75,7 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_ROLL = 6;
     uint8 internal constant A_COMPOSE = 7;
     uint8 internal constant A_BUYBACK = 8;
-    uint8 internal constant A_BOOK_BALANCE = 9;
+    uint8 internal constant A_RESERVED_9 = 9; // was bookBalance, removed when the module took balance custody
     uint8 internal constant A_DONATE = 10;
     uint8 internal constant A_CONTROLLER_SEED = 11;
     uint8 internal constant A_CONTROLLER_SWAP = 12;
@@ -314,7 +314,7 @@ abstract contract HandlerBase is Test {
             "roll",
             "compose",
             "buyback",
-            "bookBalance",
+            "reserved",
             "donate",
             "controllerSeed",
             "controllerSwap",
@@ -699,7 +699,7 @@ abstract contract HandlerBase is Test {
     }
 
     /// first slot of `State.anchor` in the Core (four words)
-    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(27));
 
     /// the bid anchor state of the core, read from its storage: the rate of the last fill, the rate of the first fill in
     /// the current minute bucket, and that bucket
@@ -1972,35 +1972,6 @@ abstract contract HandlerBase is Test {
         gBurnedByBuyback += bought;
     }
 
-    /// anyone books the balance token held above `balancePot`. no effect before the balance side
-    function bookBalance(uint256 aSeed) external checked {
-        uint8 a = A_BOOK_BALANCE;
-        address who = _actor(aSeed);
-        uint256 b0 = address(core).balance;
-        uint256 pot0 = core.ethPot();
-        uint256 xb0 = _xBal(address(core));
-        uint256 xp0 = core.balancePot();
-        uint256 rate0 = core.ethRate();
-        RS memory rs = _rs();
-        _att(a);
-        vm.prank(who);
-        try core.bookBalance() {
-            _ok(a);
-            if (core.ethPot() != pot0) _flag(V_POT, "bookBalance moved the eth pot");
-            _eth(b0, 0, 0, "bookBalance");
-            if (core.balanceToken() != address(0)) {
-                uint256 xbooked = xb0 > xp0 ? xb0 - xp0 : 0;
-                if (core.balancePot() != xp0 + xbooked) {
-                    _flag(V_POT, "bookBalance booked the wrong balance token");
-                }
-                _x(xb0, 0, 0, "bookBalance");
-            }
-        } catch (bytes memory why) {
-            _failed(b0, pot0, rate0, "bookBalance");
-            _unexpected(a, why);
-        }
-        _rsCheck(rs, 0);
-    }
 
     /// puts eth into the core five ways, and in the balance side balance token. by mode: a plain send from an account
     /// (refused with UseFund), `fund` (added to the pot whole), a push from the hook or from the escrow (accepted, left for
@@ -2433,14 +2404,14 @@ abstract contract HandlerBase is Test {
         return score * unit * net / 10_000;
     }
 
-    /// @dev the ids `sellForBalance` offers: walks the actor inventory from a picked offset while the redemption prices fit the pot
+    /// @dev the ids `sellForBalance` offers: walks the actor inventory from a picked offset while the prices fit the module's available holding
     function _pickBalanceIds(address who, uint256 len, uint256 want, uint256 pick, uint256 unit)
         internal
         view
         returns (uint256[] memory ids, uint256 n)
     {
         ids = new uint256[](want);
-        uint256 pot = core.balancePot();
+        uint256 pot = module.available();
         uint256 net = 10_000 - core.settings().balanceBidMarginBps;
         for (uint256 k; k < len && k < want * 3 + 4 && n < want; ++k) {
             uint256 id = inventory[who][(pick % len + k) % len];
@@ -2474,7 +2445,7 @@ abstract contract HandlerBase is Test {
         }
         XPre memory p;
         p.xbal = _xBal(address(core));
-        p.balancePotPre = core.balancePot();
+        p.balancePotPre = _xBal(address(module));
         p.unit = unit;
         p.actorX = _xBal(who);
         uint256 net = 10_000 - core.settings().balanceBidMarginBps;
@@ -2502,7 +2473,7 @@ abstract contract HandlerBase is Test {
     }
 
     /// @dev the checks after a successful `sellForBalance` (a helper so the locals fit the stack). the credit enters the
-    /// one pile with an eth cost basis (the `CreditBought` event), the seller is paid balance tokens from `balancePot`
+    /// one pile with an eth cost basis (the `CreditBought` event), the module pays the seller balance tokens from its holding
     function _afterSellBalance(address who, XPre memory p, uint256 bound_, uint256 b0) internal {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i; i < logs.length; ++i) {
@@ -2517,8 +2488,9 @@ abstract contract HandlerBase is Test {
         uint256 paid = _xBal(who) - p.actorX;
         // the balance tokens paid are score * unit * net / 10_000 per credit, so they equal the figure read before
         if (paid != bound_) _flag(V_ABOVE_CAP, "sellForBalance paid differs from the per point bid read before");
-        _x(p.xbal, paid, 0, "sellForBalance");
-        if (core.balancePot() != p.balancePotPre - paid) _flag(V_POT, "sellForBalance balance pot not reduced by the price");
+        // the module paid the seller: its holding fell by the price, the core holds no balance token
+        if (_xBal(address(core)) != p.xbal) _flag(V_POT, "sellForBalance moved the core's balance token");
+        if (p.balancePotPre - _xBal(address(module)) != paid) _flag(V_POT, "the module holding did not fall by the price");
         _eth(b0, 0, 0, "sellForBalance");
     }
 
@@ -2578,7 +2550,7 @@ abstract contract HandlerBase is Test {
         // an ineligible statement is only tried now and then, to see the refusal
         if (!p.ripe && aSeed % 6 != 0) return _skip(a);
         p.xbal = _xBal(address(core));
-        p.balancePotPre = core.balancePot();
+        p.balancePotPre = _xBal(address(module));
         p.b0 = address(core).balance;
         p.pot0 = core.ethPot();
         p.rate0 = core.ethRate();
@@ -2613,12 +2585,11 @@ abstract contract HandlerBase is Test {
 
     function _afterRedeem(uint256 sid, EPre memory p) internal {
         if (!p.ripe) _flag(V_DEPART, "an ineligible statement redeemed");
-        uint256 received = _xBal(address(core)) - p.xbal;
+        // the proceeds stay in the module: its holding rises by at least the required amount, the core holds no balance token
+        uint256 received = _xBal(address(module)) - p.balancePotPre;
         if (received < p.required) _flag(V_REDEEM_SHORT, "redemption returned less than rating * unitPerPoint less slippage");
         if (p.unit == 0) _flag(V_REDEEM_SHORT, "redemption with an unreadable unit per point");
-        // every balance token received goes to the balance bid pot
-        if (core.balancePot() != p.balancePotPre + received) _flag(V_POT, "balance pot did not take the whole received amount");
-        _x(p.xbal, 0, received, "redeemStatement");
+        if (_xBal(address(core)) != p.xbal) _flag(V_POT, "a redemption moved the core's balance token");
         // every redemption moves redeemBurnBps of the reserve into the coin buyback
         uint256 released = p.reserve0 * p.st.redeemBurnBps / 10_000;
         if (core.ethRedeemBurn() != p.reserve0 - released) _flag(V_POT, "redeem burn reserve not reduced by redeemBurnBps");

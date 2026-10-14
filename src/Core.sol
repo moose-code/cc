@@ -83,7 +83,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the quoted `value` of `buyListing` is above the bid
     error AboveBid();
     error Slippage();
-    error Underpaid();
     error NoBalanceModule();
     error BalanceTokenChanged();
     /// `redeemStatement` while `redeemOn` is false
@@ -138,8 +137,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event Funded(address indexed from, uint256 amount);
     /// `collectEscrow` claimed `amount` from the fee escrow into the pot
     event EscrowCollected(uint256 amount);
-    /// `bookBalance` added `amount` of the balance token to `balancePot`
-    event BalanceBooked(uint256 amount);
     event PayeeSet(address indexed payee);
     event PayeeClaimed(address indexed payee, uint256 amount);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
@@ -177,12 +174,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event SuccessorLocked();
     /// `adopt` put a credit the core held without a record into the pile at cost basis `cost`
     event CreditAdopted(uint256 indexed id, uint256 cost);
-    /// `migrate` moved eth, balance token and credits to the successor
-    event Migrated(address indexed successor, uint256 eth, uint256 balanceTokens, uint256 credits);
+    /// `migrate` moved eth and credits to the successor
+    event Migrated(address indexed successor, uint256 eth, uint256 credits);
     /// the first `migrate` set `retired`
     event EngineRetired(address indexed successor);
-    /// `migrate` could not transfer `balancePot` (`amount`) to the successor; the pot stays
-    event BalanceTokenMigrationSkipped(address indexed successor, uint256 amount);
     /// share of a sold credit's cost booked to ethPot, the rest of the payment to ethToBuyback (decision 88)
     event CreditCostToPotBpsSet(uint16 bps);
     /// whether a caller may pick the 80 credits and the format of a compose (decision 89)
@@ -386,16 +381,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit PayeeClaimed(to, amount);
     }
 
-    /// adds the balance token held above `balancePot` to `balancePot`. no effect while no balance module is set
-    function bookBalance() external nonReentrant {
-        address token = s.balanceToken;
-        uint256 amount;
-        if (token != address(0)) {
-            amount = SafeTransferLib.balanceOf(token, address(this)).zeroFloorSub(s.balancePot);
-            s.balancePot += amount;
-        }
-        emit BalanceBooked(amount);
-    }
 
     /// the eth held above `ethPot`, `ethToBuyback`, `ethRedeemBurn` and `payeeOwed`, without `value` of the current call
     function _income(uint256 value) private view returns (uint256) {
@@ -924,12 +909,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                 REDEEM
     //////////////////////////////////////////////////////////////*/
 
-    /// hands a held statement to the balance module and books the balance token it returns into `balancePot`. requires
-    /// `redeemOn` and a module set. a statement is eligible when the controller's curve price has reached its floor.
-    /// the redemption must raise the balance token holding by at least
+    /// hands a held statement to the balance module. the balance token the redemption returns stays in the module.
+    /// requires `redeemOn` and a module set. a statement is eligible when the controller's curve price has reached its
+    /// floor. the module's balance token holding must rise by at least
     /// `rating * unitPerPoint * (10_000 - redeemSlippageBps) / 10_000`, with `unitPerPoint` read from the module in the
-    /// call (`BadModule` when the read fails, is zero or exceeds uint128). every redemption moves `redeemBurnBps` of the
-    /// redeem burn reserve into the coin buyback
+    /// call. a module whose read fails, is zero or exceeds uint128, or whose holding rises by less than that, reverts
+    /// `BadModule`. every redemption moves `redeemBurnBps` of the redeem burn reserve into the coin buyback
     function redeemStatement(uint256 sid) external nonReentrant {
         uint256 gasStart = gasleft();
         _book();
@@ -943,13 +928,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 required = uint256(st.rating) * _unitOf(module) * (BPS - s.settings.redeemSlippageBps) / BPS;
         _unhold(sid);
 
-        uint256 balanceBefore = SafeTransferLib.balanceOf(token, address(this));
+        uint256 heldBefore = SafeTransferLib.balanceOf(token, module);
         STATEMENTS.transferFrom(address(this), module, sid);
         IBalanceModule(module).redeem(sid);
-        uint256 balanceAfter = SafeTransferLib.balanceOf(token, address(this));
-        if (balanceAfter < balanceBefore + required) revert Underpaid();
-        uint256 received = balanceAfter - balanceBefore;
-        s.balancePot += received;
+        uint256 heldAfter = SafeTransferLib.balanceOf(token, module);
+        if (heldAfter < heldBefore + required) revert BadModule();
+        uint256 received = heldAfter - heldBefore;
 
         uint256 toBurn = s.ethRedeemBurn * s.settings.redeemBurnBps / BPS;
         if (toBurn != 0) {
@@ -1122,12 +1106,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _toLib();
     }
 
-    /// moves `ethPot`, `balancePot` and up to `maxCredits` credits from the head of the pile to the successor,
+    /// moves `ethPot` and up to `maxCredits` credits from the head of the pile to the successor,
     /// in batches. callable again until nothing is left. `ethToBuyback` and `ethRedeemBurn` stay for the coin buyback.
-    /// the held statements and their records stay with the core. a balance token transfer that fails leaves `balancePot` and
-    /// logs `BalanceTokenMigrationSkipped`, the eth and credit legs go on. the first call sets `retired` and logs
-    /// `EngineRetired`. owner only and guarded, both checked by the library, to which the call is handed untouched.
-    /// reverts `NoSuccessor` while the successor is zero
+    /// the balance token is held by the module, not the core, so there is no balance leg. the held statements and their
+    /// records stay with the core. the first call sets `retired` and logs `EngineRetired`. owner only and guarded, both
+    /// checked by the library, to which the call is handed untouched. reverts `NoSuccessor` while the successor is zero
     function migrate(uint256) external {
         _toLib();
     }
@@ -1261,6 +1244,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (old != address(0) && token != s.balanceToken) revert BalanceTokenChanged();
         if (token.code.length == 0 || _forbiddenBase(module) || _forbiddenBase(token)) revert BadModule();
         uint256 unit = _unitOf(module);
+        // the module must answer `available()`, the token it commits to the balance bid
+        (bool hasAvailable,) = module.staticcall(abi.encodeCall(IBalanceModule.available, ()));
+        if (!hasAvailable) revert BadModule();
         s.balanceModule = module;
         s.balanceToken = token;
         if (s.allowedAdapter[module]) delete s.allowedAdapter[module];
@@ -1283,7 +1269,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function ethPot() external view returns (uint256) { return s.ethPot; }
     function ethToBuyback() external view returns (uint256) { return s.ethToBuyback; }
     function ethRedeemBurn() external view returns (uint256) { return s.ethRedeemBurn; }
-    function balancePot() external view returns (uint256) { return s.balancePot; }
     function rateAtCheckpoint() external view returns (uint256) { return s.rateAtCheckpoint; }
     function checkpointTime() external view returns (uint64) { return s.checkpointTime; }
     function lastFillTime() external view returns (uint64) { return s.lastFillTime; }

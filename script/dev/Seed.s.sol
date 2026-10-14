@@ -80,7 +80,8 @@ contract Seed is Script {
             hooks: IHooks(address(0))
         });
         vm.startBroadcast(trader);
-        token.mint(address(core), vm.parseJsonUint(cfg, ".dev.balanceMintToCore"));
+        // the launch allocation mints to the module, which holds the balance token (the Core holds none)
+        token.mint(address(module), vm.parseJsonUint(cfg, ".dev.balanceMintToModule"));
         token.mint(trader, LP_TOKENS);
         if (hasWallet) token.mint(wallet, vm.parseJsonUint(cfg, ".dev.walletBalance"));
         IPoolManager(Mainnet.POOL_MANAGER).initialize(pool, uint160(vm.parseJsonUint(cfg, ".dev.balancePoolSqrtPriceX96")));
@@ -92,7 +93,6 @@ contract Seed is Script {
         IControllerV1 ctl = IControllerV1(core.controller());
         vm.startBroadcast(owner);
         core.setBalanceModule(address(module));
-        core.bookBalance();
         Settings memory s = core.settings();
         s.redeemOn = true;
         s.balanceBidOn = true;
@@ -121,7 +121,7 @@ contract Seed is Script {
 
         console.log("BALANCE_TOKEN", address(token));
         console.log("BALANCE_MODULE", address(module));
-        console.log("balancePot", core.balancePot());
+        console.log("module holding", token.balanceOf(address(module)));
     }
 
     /// @dev moves `n` real credits from the strategy to `to`, skipping the listed ids

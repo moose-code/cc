@@ -48,8 +48,7 @@ contract OnePileTest is Fixture {
     function _ready() internal {
         _enterPhase2();
         _fundPot(3 ether);
-        xt.mint(address(core), 1e24);
-        core.bookBalance();
+        xt.mint(address(mod), 1e24);
     }
 
     // ------------------------------------------------------------------ the balance bid's eth cost basis

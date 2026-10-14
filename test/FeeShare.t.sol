@@ -294,7 +294,7 @@ contract FeeShareTest is FeeBase {
         }
     }
 
-    // ------------------------------------------------------------------ book and bookBalance
+    // ------------------------------------------------------------------ book
 
     // promise: SPEC 4 eth above the tracked pots is booked as fee income
     /// eth forced into the core is fee income at the next book: split by the settings like the hook's push

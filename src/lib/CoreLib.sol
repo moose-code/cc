@@ -40,8 +40,6 @@ struct State {
     /// eth reserve filled by `feeToRedeemBurnBps` of the fee stream. each redemption moves `redeemBurnBps` of it into
     /// `ethToBuyback`
     uint256 ethRedeemBurn;
-    /// balance token held for the balance token bid. redemptions add to it, `sellForBalance` pays from it
-    uint256 balancePot;
     uint256 rateAtCheckpoint;
     uint64 checkpointTime;
     uint64 lastFillTime;
@@ -179,9 +177,8 @@ library CoreLib {
     event SuccessorSet(address successor);
     event SuccessorLocked();
     event CreditAdopted(uint256 indexed id, uint256 cost);
-    event Migrated(address indexed successor, uint256 eth, uint256 balanceTokens, uint256 credits);
+    event Migrated(address indexed successor, uint256 eth, uint256 credits);
     event EngineRetired(address indexed successor);
-    event BalanceTokenMigrationSkipped(address indexed successor, uint256 amount);
 
     /// @notice validates the settings, stores them and logs them. the Core forwards its own `setSettings` call here
     /// untouched (same selector), after it checkpointed the eth rate. the constructor calls it too. a change of
@@ -439,17 +436,15 @@ library CoreLib {
         emit SuccessorLocked();
     }
 
-    /// @notice moves `ethPot`, `balancePot` and the credits the Core tracks to the successor, in batches. the Core
+    /// @notice moves `ethPot` and the credits the Core tracks to the successor, in batches. the Core
     /// forwards its call here untouched, the owner check and the reentrancy guard are here.
     /// the first call sets `retired`, which stays set: `sellForEth`, `buyListing`, `sellForBalance`, `adopt` and
     /// `compose` then revert `Retired`. logs `EngineRetired` once.
     /// eth: `ethPot`, by `fund()` of the successor, or by a plain send when `fund()` fails, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
     /// trackers stays.
-    /// balance token: `balancePot`, by `transfer`, the tracker zeroed. a transfer that reverts, returns false or returns less
-    /// than a word leaves the pot as it is, logs `BalanceTokenMigrationSkipped` and the call goes on; a later `migrate`
-    /// retries. the coin stays. `ethToBuyback` and `ethRedeemBurn` stay for the coin buyback.
+    /// the balance token is held by the module, not the Core, so there is no balance leg. `ethToBuyback` and `ethRedeemBurn` stay for the coin buyback.
     /// credits: up to `maxCredits` from the head of the pile, by `transferFrom`, the pile membership cleared (the
-    /// cost and arrival time of the record stay). zero moves the pots only.
+    /// cost and arrival time of the record stay). zero moves the pot only.
     /// the held statements and their records stay with the Core, which sells or redeems them itself.
     /// the eth rate is checkpointed before `ethPot` is zeroed. a call with nothing left to move logs zeros
     function migrate(uint256 maxCredits) external {
@@ -464,9 +459,8 @@ library CoreLib {
         }
         uint256 eth = _moveEth(c, to);
         uint256 credits = _moveCredits(c, to, maxCredits);
-        uint256 balanceTokens = _moveBalanceToken(c, to);
         _leave();
-        emit Migrated(to, eth, balanceTokens, credits);
+        emit Migrated(to, eth, credits);
     }
 
     function _moveEth(State storage c, address to) private returns (uint256 eth) {
@@ -478,30 +472,6 @@ library CoreLib {
         (bool ok,) = to.call{value: eth}(abi.encodeCall(IFund.fund, ()));
         if (!ok) (ok,) = to.call{value: eth}("");
         if (!ok) revert CallFailed();
-    }
-
-    /// the transfer is a low level call that accepts no return data or `true`. on failure the pot stays as it is and
-    /// `BalanceTokenMigrationSkipped` is logged
-    function _moveBalanceToken(State storage c, address to) private returns (uint256 amount) {
-        amount = c.balancePot;
-        if (amount == 0) return 0;
-        address token = c.balanceToken;
-        bool ok;
-        assembly ("memory-safe") {
-            let p := mload(0x40)
-            mstore(p, 0xa9059cbb00000000000000000000000000000000000000000000000000000000)
-            mstore(add(p, 4), to)
-            mstore(add(p, 36), amount)
-            ok := call(gas(), token, 0, p, 68, 0, 32)
-            switch returndatasize()
-            case 0 { ok := and(ok, gt(extcodesize(token), 0)) }
-            default { ok := and(ok, and(gt(returndatasize(), 31), eq(mload(0), 1))) }
-        }
-        if (!ok) {
-            emit BalanceTokenMigrationSkipped(to, amount);
-            return 0;
-        }
-        c.balancePot = 0;
     }
 
     /// pops up to `max` credits from the head of the pile
@@ -591,9 +561,11 @@ library CoreLib {
         _sellForBalance(ids, minOut);
     }
 
-    /// pays each credit `score * unit * (10_000 - balanceBidMarginBps) / 10_000` in balance token from `balancePot`, where
-    /// `unit` is the module's `unitPerPoint()` read in the call. reads the score from the credit score contract. runs
-    /// only while `balanceBidOn` is true. each credit's price must not exceed the remaining pot. the credit enters the single pile
+    /// pays each credit `score * unit * (10_000 - balanceBidMarginBps) / 10_000` in balance token, where `unit` is the
+    /// module's `unitPerPoint()` read in the call. reads the score from the credit score contract. runs only while
+    /// `balanceBidOn` is true. the balance token is held by the module: the running total must not exceed the module's
+    /// `available()` (`PotTooSmall` when it passes it), the module pays the seller with one `pay(seller, total)`, and the
+    /// seller's token holding must rise by at least `total` (`BadModule` otherwise). the credit enters the single pile
     /// with an eth cost basis of `floorRate * score / refScore`, at least 1 wei, where `floorRate` is the larger of the
     /// climbed price state and the remembered eth bid peak decayed to now (the Core's `floorRate()`). the peak rises with
     /// fills and falls only with time, so neither a pot move nor a pool move can push a recorded cost down, and no pool
@@ -605,10 +577,11 @@ library CoreLib {
         Settings storage s = c.settings;
         if (!s.balanceBidOn) revert BalanceBidOff();
         if (ids.length == 0) revert Empty();
-        if (c.balanceModule == address(0)) revert NoBalanceModule();
-        uint256 unit = _liveUnit(c.balanceModule);
+        address module = c.balanceModule;
+        if (module == address(0)) revert NoBalanceModule();
+        uint256 unit = _liveUnit(module);
         uint256 net = BPS - s.balanceBidMarginBps;
-        uint256 pot = c.balancePot;
+        uint256 avail = IBalanceModule(module).available();
         // the floor rate now, the base of a credit's recorded eth cost basis: the larger of the price state climbed
         // before the pot clamp and the decayed peak. selling credits lowers only the rate and the peak decays between
         // fills, so the maximum follows the climb and holds against the walk down. read only
@@ -622,17 +595,18 @@ library CoreLib {
             uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
             uint256 paid = score * unit * net / BPS;
             if (paid == 0) revert ZeroAmount();
-            if (paid > pot) revert PotTooSmall();
-            pot -= paid;
             total += paid;
+            if (total > avail) revert PotTooSmall();
             uint256 cost = floor.mulDiv(score, refScore).max(1);
             push(c.pile, c.credits, id, cost);
             CREDITS.transferFrom(msg.sender, address(this), id);
             emit CreditBought(id, msg.sender, cost);
         }
-        c.balancePot = pot;
         if (total < minOut) revert Slippage();
-        SafeTransferLib.safeTransfer(c.balanceToken, msg.sender, total);
+        address token = c.balanceToken;
+        uint256 heldBefore = SafeTransferLib.balanceOf(token, msg.sender);
+        IBalanceModule(module).pay(msg.sender, total);
+        if (SafeTransferLib.balanceOf(token, msg.sender).zeroFloorSub(heldBefore) < total) revert BadModule();
     }
 
     /// gas forwarded to the bounded module and controller reads of the balance token bid

@@ -231,9 +231,8 @@ abstract contract InvariantFixture is Fixture {
             (sold2, price2) = _saleOf(firstStatement + 1);
         }
         if (phase2) {
-            // the balance token bid is funded the way the module would: balance token arrives and bookBalance books it
-            xt.mint(address(core), 1e20);
-            core.bookBalance();
+            // the balance token bid is funded the way the launch would: the launch allocation mints to the module
+            xt.mint(address(mod), 1e20);
             uint256[] memory balanceIds = new uint256[](80);
             for (uint256 i; i < 80; ++i) {
                 balanceIds[i] = ids[ethN + i];
@@ -345,7 +344,6 @@ abstract contract InvariantFixture is Fixture {
         s[n++] = HandlerSale.buyCredit.selector;
         s[n++] = HandlerSale.buyCredits.selector;
         s[n++] = HandlerBase.buyback.selector;
-        s[n++] = HandlerBase.bookBalance.selector;
         s[n++] = HandlerBase.donate.selector;
         s[n++] = HandlerBase.adopt.selector;
         s[n++] = HandlerBase.controllerSeed.selector;

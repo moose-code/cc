@@ -144,7 +144,7 @@ contract HostileModule is IBalanceModule {
     function redeem(uint256 sid) external returns (uint256 out) {
         uint256 rating = IStatements(Mainnet.STATEMENTS).creditScoreOf(sid);
         out = rating * unit * payBps / 10_000;
-        MockBalanceToken(balanceToken).mint(msg.sender, out);
+        MockBalanceToken(balanceToken).mint(address(this), out);
         if (target != address(0)) {
             called = true;
             (calledOk, calledOut) = target.call(data);
@@ -152,6 +152,16 @@ contract HostileModule is IBalanceModule {
         uint256 end = gasleft() > burn ? gasleft() - burn : 0;
         // forge-lint: disable-next-line(asm-keccak256)
         while (gasleft() > end && burn != 0) {}
+    }
+
+    /// the token the module commits to the bid: its holding
+    function available() external view returns (uint256) {
+        return MockBalanceToken(balanceToken).balanceOf(address(this));
+    }
+
+    /// moves `amount` to `to`, sending `payBps` of it, so a hostile module can underpay the seller (BadModule in the core)
+    function pay(address to, uint256 amount) external {
+        MockBalanceToken(balanceToken).transfer(to, (amount * payBps) / 10_000);
     }
 }
 

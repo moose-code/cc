@@ -221,6 +221,15 @@ contract GasCapTest is SeaportBase {
         _searchBatch("sellForEth (launch)", false);
     }
 
+    // promise: SPEC 1 the balance bid batch fits the transaction cap; the module holds the token and pays the seller
+    function test_gas_sellForBalance_batch() public {
+        _enterPhase2();
+        _fundPot(30 ether);
+        _warp(1 hours + 1);
+        xt.mint(address(mod), 1e30); // the module commits enough to the bid for the largest batch the search walks to
+        _searchBatch("sellForBalance (launch)", true);
+    }
+
     // ------------------------------------------------------------------ buyListing, sales proceeds, buybacks
 
     // promise: SPEC 1 buyListing counted gas bound (1,500,000) and the transaction cap

@@ -158,7 +158,6 @@ abstract contract HandlerOwner is HandlerBase {
         uint256 reserve;
         uint256 rate;
         uint256 price;
-        uint256 balancePot;
         uint256 xBal;
     }
 
@@ -169,18 +168,16 @@ abstract contract HandlerOwner is HandlerBase {
         p.reserve = core.ethRedeemBurn();
         p.rate = core.ethRate();
         p.price = _priceNow(core.settings());
-        p.balancePot = core.balancePot();
         p.xBal = _xBal(address(core));
     }
 
-    /// what no owner call may touch: the core's eth, its pots and its balance token
+    /// what no owner call may touch: the core's eth and its pots. the core holds no balance token (the module does)
     function _opost(OPre memory p, string memory what) internal {
         _eth(p.bal, 0, 0, what);
         _x(p.xBal, 0, 0, what);
         if (
             core.ethPot() != p.pot || core.ethToBuyback() != p.toBuyback || core.ethRedeemBurn() != p.reserve
         ) _flag(V_OWNER, "an owner call moved a pot");
-        if (core.balancePot() != p.balancePot) _flag(V_OWNER, "an owner call moved the balance pot");
         gOwnerCalls++;
     }
 
@@ -617,7 +614,6 @@ abstract contract HandlerOwner is HandlerBase {
         uint256 pot = core.ethPot();
         uint256 tb = core.ethToBuyback();
         uint256 bal = address(core).balance;
-        uint256 xp = core.balancePot();
         uint256 rate = core.ethRate();
         _att(a);
         vm.prank(stranger ? _actor(seed >> 8) : owner);
@@ -626,7 +622,7 @@ abstract contract HandlerOwner is HandlerBase {
             if (move == 0) _flag(V_OWNER, "a zero release was accepted");
             if (core.ethRedeemBurn() != reserve - move) _flag(V_OWNER, "the reserve did not fall by the move");
             if (core.ethToBuyback() != tb + move) _flag(V_OWNER, "the released reserve did not reach the coin buyback");
-            if (core.ethPot() != pot || core.balancePot() != xp) _flag(V_OWNER, "a release moved the pot or the balance pot");
+            if (core.ethPot() != pot) _flag(V_OWNER, "a release moved the pot");
             if (address(core).balance != bal) _flag(V_ETH_OUT, "a release moved eth out of the core");
             _ok(a);
         } catch (bytes memory why) {
@@ -754,7 +750,6 @@ abstract contract HandlerOwner is HandlerBase {
     struct MigPre {
         uint256 eth;
         uint256 balance;
-        uint256 x;
         uint256 xBalance;
         uint256 sinkEth;
         uint256 sinkX;
@@ -768,7 +763,7 @@ abstract contract HandlerOwner is HandlerBase {
 
     /// the owner's successor doors and `migrate`. by mode: set the successor (refused after the lock), a stranger on the
     /// three doors (refused), the lock (only with a successor set, rarely), and mostly `migrate` with random batch sizes.
-    /// a migration is modelled from the ghosts: `ethPot` and `balancePot` go to the sink whole, `ethToBuyback` and `xToBuyback` stay, the first
+    /// a migration is modelled from the ghosts: `ethPot` goes to the sink whole, `ethToBuyback` stays, the balance token is held by the module and does not move, the first
     /// `maxCredits` of each pile go to the sink, and the held statements stay as they are. eth, balance token, credits,
     /// the held list, trackers and the event are compared with that model
     function migrate(uint256 seed, uint256 mode) external checked {
@@ -874,7 +869,6 @@ abstract contract HandlerOwner is HandlerBase {
         q.reserve = core.ethRedeemBurn();
         q.wasRetired = gRetired;
         q.balance = address(core).balance;
-        q.x = core.balancePot();
         q.xBalance = _xBal(address(core));
         q.sinkEth = to.balance;
         q.sinkX = _xBal(to);
@@ -887,13 +881,12 @@ abstract contract HandlerOwner is HandlerBase {
     function _migPost(MigPre memory q, address to) internal {
         gRetired = true;
         if (!core.retired()) _flag(V_RETIRED, "migrate did not set retired");
-        // eth and balance token: the trackers went to the successor whole
-        // the pot goes to the successor, the buyback pot stays
+        // the eth pot goes to the successor, the buyback pot stays; the balance token is held by the module, not moved
         _eth(q.balance, q.eth, 0, "migrate");
-        _x(q.xBalance, q.x, 0, "migrate");
+        _x(q.xBalance, 0, 0, "migrate");
         if (to.balance != q.sinkEth + q.eth) _flag(V_OWNER, "the successor did not get the eth pots");
-        if (_xBal(to) != q.sinkX + q.x) _flag(V_OWNER, "the successor did not get balancePot");
-        if (core.ethPot() != 0 || core.balancePot() != 0) _flag(V_OWNER, "a tracker is not zero after a migration");
+        if (_xBal(to) != q.sinkX) _flag(V_OWNER, "the successor got balance token from migrate");
+        if (core.ethPot() != 0) _flag(V_OWNER, "the eth pot is not zero after a migration");
         if (core.ethToBuyback() != q.buyback) _flag(V_OWNER, "migrate moved the eth buyback pot");
         if (core.ethRedeemBurn() != q.reserve) _flag(V_OWNER, "migrate moved the redeem burn reserve");
         // credits: the first of the pile
@@ -929,8 +922,8 @@ abstract contract HandlerOwner is HandlerBase {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.Migrated.selector) continue;
             seen = true;
             if (address(uint160(uint256(logs[i].topics[1]))) != to) _flag(V_OWNER, "Migrated names another successor");
-            (uint256 eth, uint256 x, uint256 credits) = abi.decode(logs[i].data, (uint256, uint256, uint256));
-            if (eth != q.eth || x != q.x || credits != q.credits.length) _flag(V_OWNER, "Migrated differs from the model");
+            (uint256 eth, uint256 credits) = abi.decode(logs[i].data, (uint256, uint256));
+            if (eth != q.eth || credits != q.credits.length) _flag(V_OWNER, "Migrated differs from the model");
         }
         if (!seen) _flag(V_OWNER, "migrate emitted no Migrated");
         if (retiredLogs != (q.wasRetired ? 0 : 1)) _flag(V_RETIRED, "EngineRetired is not logged exactly by the first migrate");

@@ -138,10 +138,7 @@ abstract contract InvariantsBase is InvariantFixture {
             address(core).balance,
             "eth pots above balance"
         );
-        address t = core.balanceToken();
-        if (t != address(0)) {
-            assertLe(core.balancePot(), _balanceOf(t, address(core)), "balance token pot above balance");
-        }
+        // the balance token is held by the module, not the core, so there is no balance pot to bound
     }
 
     /// 6. the stored price state and the read follow the model around every action and every warp, against the
@@ -554,7 +551,7 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 6) handler.roll(w);
         else if (a == 7) handler.compose(w, x);
         else if (a == 8) handler.buyback(w);
-        else if (a == 9) handler.bookBalance(w);
+        else if (a == 9) {} // bookBalance removed when the module took balance custody; the slot stays reserved
         else if (a == 10) handler.donate(w, x);
         else if (a == 11) handler.controllerSeed(w);
         else if (a == 12) handler.controllerSwap(w);
@@ -651,6 +648,8 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     function _available(uint256 a) internal view returns (bool) {
+        // action 9 (bookBalance) was removed when the module took balance custody; the slot stays reserved, never run
+        if (a == 9) return false;
         // pause and composeChosen are exercised by their own tests, not by test_everyActionSucceeds (a chosen compose
         // needs a fresh page of 80 pile credits, which its own test builds)
         if (a == 34 || a == 39) return false;
@@ -862,8 +861,8 @@ contract InvariantsPhase1 is InvariantsBase {
     /// the storage slots used by the handler match the public getters.
     function test_storageLayoutMatchesTheHandlerSlots() public view {
         assertEq(uint256(vm.load(address(core), bytes32(uint256(6)))), core.ethPot());
-        assertEq(uint256(vm.load(address(core), bytes32(uint256(10)))), core.rateAtCheckpoint());
-        assertEq((uint256(vm.load(address(core), bytes32(uint256(11)))) >> 64) & type(uint64).max, core.lastFillTime());
+        assertEq(uint256(vm.load(address(core), bytes32(uint256(9)))), core.rateAtCheckpoint());
+        assertEq((uint256(vm.load(address(core), bytes32(uint256(10)))) >> 64) & type(uint64).max, core.lastFillTime());
     }
 }
 

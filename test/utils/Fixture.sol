@@ -477,7 +477,7 @@ abstract contract Fixture is Test, ProdDeployer {
     }
 
     /// first slot of `State.anchor` in the Core (four words)
-    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(27));
 
     /// @notice the bid anchor state of the Core, read from its storage: the rate of the last fill, the rate of the first fill
     /// in the current minute bucket and that bucket
@@ -642,12 +642,19 @@ abstract contract Fixture is Test, ProdDeployer {
     // ------------------------------------------------------------------ the balance side
 
     /// @notice sets the stand in balance module and balance token and turns both balance side switches on, so redemptions and the
-    /// balance token bid both run. the balance token the core receives from a redemption goes to `balancePot`
+    /// balance token bid both run. the module holds the balance token (the Core holds none): it is funded a launch
+    /// allocation, and redemptions mint their proceeds into it
     function _enterPhase2() internal {
         xt = new MockBalanceToken("Balance Token", "XT");
         mod = new MockBalanceModule(address(xt), UNIT);
+        xt.mint(address(mod), 1e24);
         _setBalanceModule(address(mod));
         _setSwitches(true, true);
+    }
+
+    /// @notice the balance token the module holds, the pot of the balance bid (`available()` of the stand in)
+    function _moduleHolding() internal view returns (uint256) {
+        return xt.balanceOf(address(mod));
     }
 
     /// @notice initializes a native eth / balance token uniswap v4 pool and points the controller at it, so the balance bid
@@ -687,14 +694,14 @@ abstract contract Fixture is Test, ProdDeployer {
         }
     }
 
-    /// @notice composes the eth pile, makes the statement eligible and redeems it, which books the balance token into
-    /// `balancePot`. needs the balance side. returns the balance token the core received
+    /// @notice composes the eth pile, makes the statement eligible and redeems it, which mints the balance token into
+    /// the module. needs the balance side. returns the balance token the module received
     function _fillBalanceBuyback() internal returns (uint256 received) {
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
-        uint256 before = xt.balanceOf(address(core));
+        uint256 before = _moduleHolding();
         core.redeemStatement(c.sid);
-        received = xt.balanceOf(address(core)) - before;
+        received = _moduleHolding() - before;
     }
 
     // ------------------------------------------------------------------ checks and small helpers
@@ -710,17 +717,14 @@ abstract contract Fixture is Test, ProdDeployer {
         return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed();
     }
 
-    /// @notice invariant 5 of the spec: the pots never exceed what the core holds
+    /// @notice invariant 5 of the spec: the eth pots never exceed what the core holds. the balance token is held by the
+    /// module, not the core, so there is no balance pot to check
     function _solvent() internal view {
         assertLe(
             core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed(),
             address(core).balance,
             "eth pots exceed balance"
         );
-        address t = core.balanceToken();
-        if (t != address(0)) {
-            assertLe(core.balancePot(), MockBalanceToken(t).balanceOf(address(core)), "balance pot exceeds");
-        }
     }
 
     function _one(uint256 id) internal pure returns (uint256[] memory ids) {
