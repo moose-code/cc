@@ -161,7 +161,7 @@ contract CoreUnitTest is CoreBase {
         _setSettings(s0);
         _buyCoin(funder, 1 ether);
         uint256 pot = core.ethPot();
-        assertEq(pot, 0.0665022 ether, "6.65022 points of a 1 eth buy");
+        assertEq(pot, 0.09 ether, "9 points of a 1 eth buy (decision 120: bounty 9000 of the 10 point skim)");
         assertEq(address(core).balance, pot);
 
         vm.deal(alice, 3 ether);

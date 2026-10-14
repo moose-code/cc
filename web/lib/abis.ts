@@ -13,6 +13,8 @@ export const coreAbi = parseAbi([
   "function ethRate() view returns (uint256)",
   "function ethPrice() view returns (uint256)",
   "function bidOf(uint256 id) view returns (uint256)",
+  "function balanceRate() view returns (uint256)",
+  "function balanceBidOf(uint256 id) view returns (uint256)",
   "function floorRate() view returns (uint256)",
   "function ethPot() view returns (uint256)",
   "function ethToBuyback() view returns (uint256)",
@@ -117,6 +119,7 @@ export const engineEventsAbi = parseAbi([
   // Core
   "event CreditBought(uint256 indexed id, address indexed from, uint256 cost)",
   "event EthRateFill(uint256 spent, uint256 rate, uint256 pot)",
+  "event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available)",
   "event ListingBought(uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate)",
   "event CreditAdopted(uint256 indexed id, uint256 cost)",
   "event CreditSwapped(uint256 indexed inId, uint256 indexed outId, address indexed caller, uint256 fee)",

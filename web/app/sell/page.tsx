@@ -8,7 +8,7 @@ import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
 import { core, credits, engineDeployed } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
-import { balanceQuote, sellQuote, useBidsOf, useNow, useSellQuote, useSnapshot } from "@/lib/live";
+import { balanceQuote, sellQuote, useBidsOf, useNow, useScores, useSellQuote, useSnapshot } from "@/lib/live";
 import { BALANCE_SYMBOL } from "@/lib/events";
 import { commas, eth } from "@/lib/format";
 import type { Write } from "@/lib/tx";
@@ -45,6 +45,12 @@ export default function SellPage() {
   const { data: bids } = useBidsOf(mine.map((id) => BigInt(id)), now);
   const bidForId = (id: number): bigint => bids?.[id.toString()] ?? 0n;
   const total = quote.data ?? mine.filter((id) => selected.has(id)).reduce((t, id) => t + bidForId(id), 0n);
+  // the per-credit balance payout, score * unitPerPoint * balanceRate / 10_000, derived from the cached scores and the
+  // snapshot rate and unit (no extra poll). the batch drops the rate per credit, so the summed figure is the top
+  const { data: scores } = useScores(balanceBid ? mine.map((id) => BigInt(id)) : []);
+  const balanceForId = (id: number): bigint =>
+    balanceBid && scores ? ((scores[id.toString()] ?? 0n) * (snap?.balanceUnit ?? 0n) * (snap?.balanceRate ?? 0n)) / 10000n : 0n;
+  const balanceTotal = mine.filter((id) => selected.has(id)).reduce((t, id) => t + balanceForId(id), 0n);
 
   const toggle = (id: number) =>
     setSelected((prev) => {
@@ -129,7 +135,7 @@ export default function SellPage() {
                     <button key={id} className={`sell-item${on ? " on" : ""}`} onClick={() => toggle(id)} aria-pressed={on}>
                       <CreditTile id={id} />
                       <span className="rl-id">credit #{id}</span>
-                      <span className="muted">{bids ? `${eth(bidForId(id))} eth` : "…"}</span>
+                      <span className="muted">{bids ? `${eth(bidForId(id))} eth` : "…"}{balanceBid && scores ? ` \u00b7 ${eth(balanceForId(id))} ${BALANCE_SYMBOL}` : ""}</span>
                       <span className="sell-check">{on ? "✓" : ""}</span>
                     </button>
                   );
@@ -145,6 +151,12 @@ export default function SellPage() {
                   <span className="muted">you receive</span>
                   <span className="big-sm">about {eth(total)} eth</span>
                 </div>
+                {balanceBid && (
+                  <div className="r">
+                    <span className="muted">or for {BALANCE_SYMBOL}</span>
+                    <span className="big-sm">about {eth(balanceTotal)} {BALANCE_SYMBOL} ({(Number(snap?.balanceRate ?? 0n) / 100).toFixed(1)}% of par)</span>
+                  </div>
+                )}
               </div>
 
               <Act
@@ -167,7 +179,7 @@ export default function SellPage() {
                     disabled={n === 0}
                     steps={async (write) => {
                       await approve(write);
-                      const expected = await balanceQuote(client!, ids(), snap!.balanceModule, snap!.settings.balanceBidMarginBps);
+                      const expected = await balanceQuote(client!, ids());
                       await write({ address: core, abi: coreAbi, functionName: "sellForBalance", args: [ids(), (expected * MIN_OUT_BPS) / 10000n] });
                       setSelected(new Set());
                     }}
@@ -177,7 +189,7 @@ export default function SellPage() {
               <p className="muted small">
                 the first sale approves the collection to the engine. each credit is paid the rate times its score over the reference score, and the rate
                 drops with each credit sold in one call; the amount shown is the batch total at the current rates and the sale reverts if it pays under 99.5% of it.
-                {balanceBid && ` the ${BALANCE_SYMBOL} bid pays by credit score.`}
+                {balanceBid && ` the ${BALANCE_SYMBOL} bid pays by credit score at the rate shown (bps of par), and drops with each credit sold.`}
               </p>
             </>
           )}

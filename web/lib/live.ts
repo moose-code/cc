@@ -10,7 +10,7 @@ import { usePublicClient } from "wagmi";
 import { numberToHex, parseAbi, zeroAddress, type Address } from "viem";
 import { core, credits, engineDeployed } from "./config";
 import { controllerAbi, coreAbi } from "./abis";
-import { replayBalance, replayEth } from "./sell";
+import { replayEth } from "./sell";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
@@ -80,6 +80,7 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     balanceToken,
     payeeOn,
     coreEth,
+    balanceRate,
   ] = await client.multicall({
     ...mc,
     allowFailure: false,
@@ -104,6 +105,7 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
       { ...c, functionName: "balanceToken" },
       { ...c, functionName: "payeeOn" },
       { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [coreAddr] },
+      { ...c, functionName: "balanceRate" },
     ] as const,
   });
   // ethPot plus the share of the unbooked fee income that the next Core._book adds (Core._income, _split)
@@ -112,9 +114,16 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
   const toRedeemBurn = ((income - toPayee) * BigInt(settings.feeToRedeemBurnBps)) / 10000n;
   const potWithPending = ethPot + income - toPayee - toRedeemBurn;
   // the balance token is held by the module, not the Core: the pot of the bid is the module's available() holding
-  const balancePot = balanceModule !== zeroAddress
-    ? await client.readContract({ address: balanceModule, abi: moduleAbi, functionName: "available" })
-    : 0n;
+  const [balancePot, balanceUnit] = balanceModule !== zeroAddress
+    ? await client.multicall({
+        ...mc,
+        allowFailure: false,
+        contracts: [
+          { address: balanceModule, abi: moduleAbi, functionName: "available" },
+          { address: balanceModule, abi: moduleAbi, functionName: "unitPerPoint" },
+        ] as const,
+      })
+    : [0n, 0n];
   const k = { address: controller, abi: controllerAbi } as const;
   const [creditSaleOn, creditWindow, pointRate, royaltyOwed, page] = await client.multicall({
     ...mc,
@@ -136,6 +145,8 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     ethToBuyback,
     ethRedeemBurn,
     balancePot,
+    balanceRate,
+    balanceUnit,
     payeeOwed,
     pileSize,
     held: held.map(Number),
@@ -453,14 +464,16 @@ export function useSellQuote(ids: bigint[], now: number) {
   });
 }
 
-// Balance token Core.sellForBalance pays for the credits `ids`: each credit's
-// score from the credit score contract times the module's unitPerPoint, less the margin.
-export async function balanceQuote(client: Client, ids: bigint[], module: Address, marginBps: number): Promise<bigint> {
-  const [unit, scores] = await Promise.all([
-    client.readContract({ address: module, abi: moduleAbi, functionName: "unitPerPoint" }),
-    creditScores(client, ids),
-  ]);
-  return replayBalance(scores, unit, BigInt(marginBps));
+// the balance token total for `ids` at the current rate: the sum of each credit's balanceBidOf (one multicall). the
+// batch drops the rate per credit, so the paid total is at most this; the sell sets minOut under it
+export async function balanceQuote(client: Client, ids: bigint[]): Promise<bigint> {
+  if (ids.length === 0) return 0n;
+  const res = await client.multicall({
+    ...mc,
+    allowFailure: false,
+    contracts: ids.map((id) => ({ address: core!, abi: coreAbi, functionName: "balanceBidOf", args: [id] }) as const),
+  });
+  return (res as bigint[]).reduce((a, b) => a + b, 0n);
 }
 
 // ---- helpers --------------------------------------------------------------------

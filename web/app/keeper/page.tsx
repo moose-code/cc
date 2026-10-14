@@ -54,6 +54,7 @@ export default function KeeperPage() {
             {row("payee owed", `${eth(s.payeeOwed)} eth`)}
             {row("royalty owed", `${eth(s.royaltyOwed)} eth`)}
             {s.balanceOn && row(`${BALANCE_SYMBOL} in the module`, eth(s.balancePot))}
+            {s.balanceOn && row(`${BALANCE_SYMBOL} bid, % of par`, `${(Number(s.balanceRate) / 100).toFixed(1)}%`)}
           </div>
         </section>
 

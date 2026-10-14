@@ -21,7 +21,9 @@ export default function BalancePage() {
       {snap?.balanceOn && (
         <p className="muted">
           {BALANCE_SYMBOL} in the module: {eth(snap.balancePot)}
-          {snap.settings.balanceBidOn ? "" : " · balance bid paused"}
+          {snap.settings.balanceBidOn
+            ? ` · balance bid ${(Number(snap.balanceRate) / 100).toFixed(1)}% of par`
+            : " · balance bid paused"}
         </p>
       )}
       {loading ? null : market ? <TradePanel market={market} /> : <p className="muted">{BALANCE_SYMBOL} is not live yet</p>}

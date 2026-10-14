@@ -53,7 +53,8 @@ export function replayEth(scores: bigint[], a: EthReplay): bigint {
 }
 
 // Total balance token sellForBalance pays: each credit pays
-// score * unit * (10000 - balanceBidMarginBps) / 10000.
+// the balance bid floor (opening) payout per credit: score * unit * (10000 - balanceBidMarginBps) / 10000. the
+// live bid climbs above this (Core.balanceBidOf); the web reads that from the chain.
 export function replayBalance(scores: bigint[], unit: bigint, marginBps: bigint): bigint {
   return scores.reduce((t, s) => t + (s * unit * (10000n - marginBps)) / 10000n, 0n);
 }
