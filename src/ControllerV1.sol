@@ -13,8 +13,8 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// first policy module. pages the oldest 80 pile credits for the Core, which picks the format.
-/// it prices and sells statements and pile credits. `refScore` (an owner setting, in the per-credit score unit of one
-/// ten-thousandth of a point) sets the point rate, `core.floorRate() / refScore`, and `valueOf(points)` is the larger of
+/// it prices and sells statements and pile credits. `refScore` (the Core setting, read live, in the per-credit score
+/// unit of one ten-thousandth of a point) sets the point rate, `core.floorRate() / refScore`, and `valueOf(points)` is the larger of
 /// `floorRate * points / refScore` and the balance token pool value of `points * unitPerPoint` base units, with
 /// `unitPerPoint` read from the balance module at each call. the reference of a statement is the larger of its cost and
 /// `valueOf(rating)`. the asking price is a fraction of the reference in bps that starts at
@@ -87,9 +87,6 @@ contract ControllerV1 is IController {
     uint16 public slowDecayBpsPerHour;
     /// the price where the fast fall ends and the slow fall starts, bps of the reference. 1_000 to `startCapBps`
     uint32 public kneeBps;
-    /// the per-credit score that divides the floor rate into the point rate, in ten-thousandths of a point. a lower
-    /// `refScore` lifts the rate term of `valueOf`. 1 to 8_000_000
-    uint32 public refScore;
     /// the anchor at `anchorTime`, bps of the reference. 10_000 to `startCapBps`. `anchorBps()` is the value now
     uint32 public storedAnchorBps;
     /// when `storedAnchorBps` was last set
@@ -136,7 +133,6 @@ contract ControllerV1 is IController {
                 window: credit.window,
                 floorBps: credit.floorBps,
                 startBps: credit.startBps,
-                refScore: credit.refScore,
                 royaltyBps: credit.royaltyBps,
                 royaltyRecipient: credit.royaltyRecipient
             })
@@ -203,11 +199,10 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ credit sale settings, owner, at once
 
-    /// sets the credit sale, the rating reference and the royalty at once. `saleOn` turns the credit sale window on or
+    /// sets the credit sale and the royalty at once. `saleOn` turns the credit sale window on or
     /// off: while on, pile credits are for sale through `buyCredit` and compose takes only credits past their window.
-    /// `window` 1 minute to 30 days, `floorBps` 10_000 to 40_000, `startBps` 10_000 to 200_000, `refScore` 1 to
-    /// 8_000_000 (applies to `valueOf` at the next call), `royaltyBps` 0 to 1_000 (applies to the next sale),
-    /// `royaltyRecipient` never zero (it is paid the royalty already owed)
+    /// `window` 1 minute to 30 days, `floorBps` 10_000 to 40_000, `startBps` 10_000 to 200_000, `royaltyBps` 0 to 1_000
+    /// (applies to the next sale), `royaltyRecipient` never zero (it is paid the royalty already owed)
     function setCredit(CreditSale calldata v) external onlyOwner {
         _setCredit(v);
         emit CreditSaleSet(v);
@@ -217,14 +212,12 @@ contract ControllerV1 is IController {
         if (!CreditBounds.windowOk(v.window)) revert BadSetting("creditWindow");
         if (!CreditBounds.floorBpsOk(v.floorBps)) revert BadSetting("creditFloorBps");
         if (!CreditBounds.startBpsOk(v.startBps)) revert BadSetting("creditStartBps");
-        if (!CreditBounds.refScoreOk(v.refScore)) revert BadSetting("refScore");
         if (!CreditBounds.royaltyBpsOk(v.royaltyBps)) revert BadSetting("royaltyBps");
         if (!CreditBounds.royaltyRecipientOk(v.royaltyRecipient)) revert BadSetting("royaltyRecipient");
         creditSaleOn = v.saleOn;
         creditWindow = v.window;
         creditFloorBps = v.floorBps;
         creditStartBps = v.startBps;
-        refScore = v.refScore;
         royaltyBps = v.royaltyBps;
         royaltyRecipient = v.royaltyRecipient;
     }
@@ -256,9 +249,15 @@ contract ControllerV1 is IController {
         return start < startCapBps ? start : startCapBps;
     }
 
+    /// the per-credit score the point rate and the statement reference divide by, in ten-thousandths of a point. the
+    /// Core setting `refScore`, read live so the eth doors and the controller share one source. 1 to 8_000_000
+    function refScore() public view returns (uint32) {
+        return ICoreSale(address(CORE)).settings().refScore;
+    }
+
     /// wei per score unit: `core.floorRate()` over `refScore`, rounded down. `valueOf` divides once on the product
     function pointRate() public view returns (uint256) {
-        return CORE.floorRate() / refScore;
+        return CORE.floorRate() / refScore();
     }
 
     /// the value in wei of `points` score units: the larger of `floorRate * points / refScore` and the balance token pool
@@ -266,7 +265,7 @@ contract ControllerV1 is IController {
     /// term is 0 when the pool key is unset, no balance module is set, the unit read fails, is zero or exceeds
     /// `uint128.max`, the pool reads zero, or the pool pricing exceeds 256 bits
     function valueOf(uint256 points) public view returns (uint256) {
-        uint256 rate = FullMath.mulDiv(CORE.floorRate(), points, refScore);
+        uint256 rate = FullMath.mulDiv(CORE.floorRate(), points, refScore());
         uint256 pool = _poolValue(points);
         return pool > rate ? pool : rate;
     }

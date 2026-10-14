@@ -570,7 +570,6 @@ contract Scenario is Script {
             window: ctl.creditWindow(),
             floorBps: ctl.creditFloorBps(),
             startBps: ctl.creditStartBps(),
-            refScore: ctl.refScore(),
             royaltyBps: ctl.royaltyBps(),
             royaltyRecipient: ctl.royaltyRecipient()
         });

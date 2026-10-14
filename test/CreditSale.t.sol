@@ -102,18 +102,9 @@ contract CreditSaleTest is Fixture {
         c.startBps = 9_999;
         _creditBad(c, "creditStartBps");
         c.startBps = 200_000;
-
-        // refScore 1 to 8_000_000
-        c.refScore = 1;
-        ctl.setCredit(c);
-        c.refScore = 8_000_000;
-        ctl.setCredit(c);
-        c.refScore = 0;
-        _creditBad(c, "refScore");
-        c.refScore = 8_000_001;
-        _creditBad(c, "refScore");
         vm.stopPrank();
-        assertEq(ctl.refScore(), 8_000_000);
+
+        // refScore is a Core setting now, its bound is covered by test/SetSettings.t.sol
 
         // owner only
         c.saleOn = false;

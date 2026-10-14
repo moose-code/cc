@@ -15,7 +15,6 @@ interface IControllerV1 {
         uint32 window;
         uint16 floorBps;
         uint32 startBps;
-        uint32 refScore;
         uint16 royaltyBps;
         address royaltyRecipient;
     }

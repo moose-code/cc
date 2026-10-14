@@ -41,14 +41,18 @@ interface ICoreViews {
     function pileSize() external view returns (uint256);
     function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids); // startAfter 0 starts at head
     function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
-    /// wei per credit the eth bid pays now, the price state lowered to the pot
+    /// the eth bid for a credit of score `refScore` now, wei, the price state lowered to the pot. a credit of score
+    /// `s` is paid `ethRate() * s / refScore`; `bidOf` applies the scaling for a given credit
     function ethRate() external view returns (uint256);
-    /// wei per credit of the price state now, before the pot clamp `ethRate` applies. the cost basis of an adopted
-    /// credit is this price. in later blocks the climb heads toward the larger pot
+    /// the eth bid for credit `id` now, wei: `ethRate()` times the credit's score over `refScore`
+    function bidOf(uint256 id) external view returns (uint256);
+    /// the eth bid for a credit of score `refScore` of the price state now, before the pot clamp `ethRate` applies. the
+    /// cost basis of an adopted credit is this price times its score over `refScore`. in later blocks the climb heads
+    /// toward the larger pot
     function ethPrice() external view returns (uint256);
     /// wei per credit of the floor rate now: the larger of the price state climbed before the pot clamp and the
     /// remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays between
-    /// fills, so the maximum holds against a sale within the block. the controller's `pointRate` divides it by `refScore`
+    /// fills, so the maximum holds against a sale within the block. the eth doors and `bidOf` divide it by `refScore`
     function floorRate() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the seconds a held statement has aged outside every pause. reverts `NotForSale` when the core does not hold it
@@ -124,8 +128,8 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`, bounds
 /// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into three storage slots
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
-/// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields and fee
-/// split. docs/SPEC.md section 3 has the meaning of every field
+/// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields, fee
+/// split and `refScore`. docs/SPEC.md section 3 has the meaning of every field
 struct Settings {
     // slot 0
     /// fall of the eth rate per credit bought, bps of the rate before that credit
@@ -188,6 +192,9 @@ struct Settings {
     /// share of the fee income booked by `_book` that is credited to the payee once the payee share is on, ppm. at most
     /// 200_000
     uint24 payeePpm;
+    /// the per-credit score the eth bid divides by: every eth door pays `rate * score / refScore` per credit and the
+    /// controller reads it for the point rate and the statement reference. ten-thousandths of a point, 1 to 8_000_000
+    uint32 refScore;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -222,8 +229,6 @@ struct CreditSale {
     uint16 floorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
     uint32 startBps;
-    /// the per-credit score the statement reference divides the rating by, in ten-thousandths of a point. 1 to 8_000_000
-    uint32 refScore;
     /// the share of every sale price added on top and claimable by `royaltyRecipient`, bps. 0 to 1_000
     uint16 royaltyBps;
     /// the address `claimRoyalty` pays. never zero
@@ -231,9 +236,9 @@ struct CreditSale {
 }
 
 /// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
-/// window, chosen composition and the rating reference. owner adjustable afterwards, so the launch rules only check
+/// window and chosen composition. owner adjustable afterwards, so the launch rules only check
 /// bounds (`src/lib/CreditBounds.sol`). the Core reads `costToPotBps`, `chosenComposeOn` and `minCcToChoose`; the
-/// controller reads `saleOn`, `window`, `floorBps`, `startBps` and `refScore`
+/// controller reads `saleOn`, `window`, `floorBps` and `startBps`. `refScore` is a Core setting, read from the Core
 struct Credit {
     // core
     /// share of the sold credit's cost booked to the buying pot, bps. the rest of the payment funds the coin buyback.
@@ -253,8 +258,6 @@ struct Credit {
     uint16 floorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
     uint32 startBps;
-    /// the per-credit score the statement reference divides the rating by, in ten-thousandths of a point. 1 to 8_000_000
-    uint32 refScore;
     /// the share of every sale price added on top and claimable by `royaltyRecipient`, bps. 0 to 1_000
     uint16 royaltyBps;
     /// the address `claimRoyalty` pays
@@ -276,7 +279,8 @@ struct Stack {
 library Mainnet {
     address internal constant CREDITS = 0x97630aA70AB14ed9883B41dAfccBc11349723043;
     address internal constant STATEMENTS = 0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b;
-    /// scores a credit from its seed and paid time. read for the balance token bid, once per credit sold
+    /// scores a credit from its seed and paid time. read by every eth door, the balance token bid and `bidOf`, once per
+    /// credit
     address internal constant CREDIT_SCORE = 0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7;
     address internal constant CREDIT_STRATEGY = 0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6;
     address internal constant SEAPORT = 0x0000000000000068F116a894984e2DB1123eB395;
@@ -322,7 +326,8 @@ library Mainnet {
             callerFee: 0,
             callerMaxBaseFee: 0,
             feeToRedeemBurnBps: 1_000,
-            payeePpm: 75_185
+            payeePpm: 75_185,
+            refScore: 4_330_000
         });
     }
 
@@ -342,7 +347,7 @@ library Mainnet {
     }
 
     /// the launch credit settings: the credit sale is off, its window is 4 hours, the floor is 110 percent and the
-    /// start 300 percent of the floor, the reference per-credit score is the launch average, the whole credit cost
+    /// start 300 percent of the floor, the whole credit cost
     /// funds the pot, chosen composition is off, and the coin balance a caller needs to choose a compose or a held format is 1 coin
     function defaultCredit() internal pure returns (Credit memory) {
         return Credit({
@@ -353,7 +358,6 @@ library Mainnet {
             window: 4 hours,
             floorBps: 11_000,
             startBps: 30_000,
-            refScore: 4_330_000,
             royaltyBps: 250,
             royaltyRecipient: address(0)
         });

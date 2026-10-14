@@ -143,7 +143,7 @@ library CoreLib {
     error Empty();
     error NoBalanceModule();
     error BadModule();
-    /// the controller's `refScore()` read failed or returned zero
+    /// a listing adapter answered with a bad quote. declared here for abi parity with the Core
     error BadQuote();
     error ZeroId();
     error NotOwner();
@@ -295,12 +295,13 @@ library CoreLib {
         // forge-lint: disable-end(unsafe-typecast)
     }
 
-    /// @notice the rate after one credit is bought with the price state `price` at the fill, and the anchor update of
-    /// that fill. The rate falls `dropPerCreditBps` below `price` and stays at or above `dropFloorBps` of the price state
-    /// at the first fill of the current minute bucket (`nowTs / 60`). A `price` already below that floor (restated by
+    /// @notice the rate after one credit of score `score` is bought with the price state `price` at the fill, and the
+    /// anchor update of that fill. The fall below `price` is `dropPerCreditBps * score / refScore`, bounded at 10_000,
+    /// so the drop tracks the eth spent on the credit. The rate stays at or above `dropFloorBps` of the price state at
+    /// the first fill of the current minute bucket (`nowTs / 60`). A `price` already below that floor (restated by
     /// `setRate` or lowered by a bound) starts a new floor at `price`. `price` becomes the last fill rate, and the
     /// remembered peak becomes `max(price, peak now)` with `peakTime` set to `nowTs`
-    function drop(uint256 price, uint256 nowTs) external returns (uint256) {
+    function drop(uint256 price, uint256 nowTs, uint256 score, uint256 refScore) external returns (uint256) {
         State storage c = state();
         Settings storage s = c.settings;
         Anchor storage a = c.anchor;
@@ -315,7 +316,9 @@ library CoreLib {
         a.peakRate = price.max(peakNow);
         // forge-lint: disable-next-line(unsafe-typecast)
         a.peakTime = uint64(nowTs);
-        return (price * (10_000 - s.dropPerCreditBps) / 10_000).max(a.minuteStartRate * s.dropFloorBps / 10_000);
+        uint256 fall = uint256(s.dropPerCreditBps) * score / refScore;
+        if (fall > 10_000) fall = 10_000;
+        return (price * (10_000 - fall) / 10_000).max(a.minuteStartRate * s.dropFloorBps / 10_000);
     }
 
     /// @notice the swap of the coin buyback, run inside the pool manager unlock callback of the Core: exact eth in for
@@ -385,8 +388,8 @@ library CoreLib {
     }
 
     /// @notice puts credits the Core holds without a record into the eth pile, anyone may call. The cost basis of a
-    /// credit is the price state per credit at `block.timestamp` (`climb`, before the clamp, no checkpoint is
-    /// written), at least 1 wei. The price state is what the engine pays with a funded
+    /// credit is the price state at `block.timestamp` (`climb`, before the clamp, no checkpoint is written) times the
+    /// credit's score over `refScore`, at least 1 wei. The price state is what the engine pays with a funded
     /// pot, so statements built from adopted credits are priced at that level; the clamp of a thin pot would book a
     /// basis of 1 wei. A donor who inflates the basis of a statement gives credits away. The basis is booked and the
     /// eth pile grows: the rate state and the pots keep their values. `acquiredAt` is the current
@@ -397,12 +400,14 @@ library CoreLib {
         if (ids.length == 0) revert Empty();
         State storage c = state();
         (uint256 price,,) = _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
+        uint256 refScore = c.settings.refScore;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = ids[i];
             if (id == 0) revert ZeroId();
             if (c.credits[id].inPile) revert InPile();
             if (CREDITS.ownerOf(id) != address(this)) revert NotHolder();
-            uint256 cost = price.max(1);
+            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
+            uint256 cost = price.mulDiv(score, refScore).max(1);
             push(c.pile, c.credits, id, cost);
             emit CreditAdopted(id, cost);
         }
@@ -592,8 +597,8 @@ library CoreLib {
     /// with an eth cost basis of `floorRate * score / refScore`, at least 1 wei, where `floorRate` is the larger of the
     /// climbed price state and the remembered eth bid peak decayed to now (the Core's `floorRate()`). the peak rises with
     /// fills and falls only with time, so neither a pot move nor a pool move can push a recorded cost down, and no pool
-    /// key is needed. a failing, short or zero live unit read reverts the whole bid (`BadModule`). `refScore` is read
-    /// from the controller with a bounded staticcall; a failed or zero read reverts `BadQuote`
+    /// key is needed. a failing, short or zero live unit read reverts the whole bid (`BadModule`). `refScore` is the
+    /// Core setting, read from storage
     function _sellForBalance(uint256[] calldata ids, uint256 minOut) private {
         State storage c = state();
         if (c.retired) revert Retired();
@@ -610,7 +615,7 @@ library CoreLib {
         (uint256 price,, uint256 peakNow) =
             _climb(c.rateAtCheckpoint, c.ethPot, c.lastFillTime, c.checkpointTime, block.timestamp);
         uint256 floor = price.max(peakNow);
-        uint256 refScore = _refScore(c.controller);
+        uint256 refScore = s.refScore;
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = owned(ids[i]);
@@ -645,20 +650,6 @@ library CoreLib {
             unit := mload(0)
         }
         if (!ok || unit == 0 || unit > type(uint128).max) revert BadModule();
-    }
-
-    /// the controller's `refScore()` through a bounded staticcall of at most `READ_GAS`, copying at most 32 bytes of
-    /// returndata. a revert, an answer shorter than 32 bytes or a zero answer reverts `BadQuote`
-    function _refScore(address controller) private view returns (uint256 refScore) {
-        bytes4 sel = 0x0dd34cf6; // refScore()
-        bool ok;
-        assembly ("memory-safe") {
-            mstore(0, sel)
-            ok := staticcall(READ_GAS, controller, 0, 4, 0, 32)
-            ok := and(ok, iszero(lt(returndatasize(), 32)))
-            refScore := mload(0)
-        }
-        if (!ok || refScore == 0) revert BadQuote();
     }
 }
 

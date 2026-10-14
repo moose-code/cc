@@ -72,13 +72,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0xf7c7254185ffb99aa870264a7ca9cd06a038a19d0d852e46dfac658c735fd359;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0xcebd4aa823f09bdc0c857d3169a998a0edf404a2fa3714197ee1ec9bb35592b5;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xf33c9cf9707fd3ad9699cc91553722ab5a77067c2c2a7b06db5214e71f482f66;
+    bytes32 internal constant BUILD_HASH_CORE = 0x7927068adf942d28e344fd35f28c43015d01a03ac99d2495e327781cfc54d389;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xbb0b53a9fc14a10a1d53fdba84bee46e55a4d6f3fac71a3e6b7ebfafe27d5f85;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x4d4aad46d5e47e9266a6ccdaa73024787bf031d45e152d955766e5398bda6575;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0xa994b7f476442a95fe2ac0824047ccd8800a56c1b0e59a5c45bec5f506df2877;
+        0x35985c39b786d38adb66942297272e277e02ced271c38e776029440148534caa;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -174,7 +174,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "credit settings inside the bounds",
             badCredit == 0,
-            badCredit == 0 ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps refScore royaltyBps royaltyRecipient" : string(abi.encodePacked("out of bounds: ", badCredit))
+            badCredit == 0 ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps royaltyBps royaltyRecipient" : string(abi.encodePacked("out of bounds: ", badCredit))
         );
         _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);
     }
@@ -901,7 +901,7 @@ abstract contract LaunchChecks is PostflightChecks {
                 " bps, cost to pot ",
                 vm.toString(c.credit.costToPotBps),
                 " bps, refScore ",
-                vm.toString(c.credit.refScore)
+                vm.toString(c.settings.refScore)
             )
         );
         _info(

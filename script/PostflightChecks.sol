@@ -286,7 +286,7 @@ abstract contract PostflightChecks is PostflightPool {
         }
         bool creditSame = k.creditSaleOn() == c.credit.saleOn && k.creditWindow() == c.credit.window
             && k.creditFloorBps() == c.credit.floorBps && k.creditStartBps() == c.credit.startBps
-            && k.refScore() == c.credit.refScore && k.royaltyBps() == c.credit.royaltyBps
+            && k.royaltyBps() == c.credit.royaltyBps
             && k.royaltyRecipient() == c.credit.royaltyRecipient;
         if (_settingsChanged()) {
             _warn(
@@ -298,7 +298,7 @@ abstract contract PostflightChecks is PostflightPool {
             _check(
                 "controller: credit sale settings equal the config",
                 creditSame,
-                "creditSaleOn creditWindow creditFloorBps creditStartBps refScore royaltyBps royaltyRecipient"
+                "creditSaleOn creditWindow creditFloorBps creditStartBps royaltyBps royaltyRecipient"
             );
         }
     }

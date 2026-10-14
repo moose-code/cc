@@ -526,18 +526,16 @@ abstract contract Fixture is Test, ProdDeployer {
             window: ctl.creditWindow(),
             floorBps: ctl.creditFloorBps(),
             startBps: ctl.creditStartBps(),
-            refScore: ctl.refScore(),
             royaltyBps: ctl.royaltyBps(),
             royaltyRecipient: ctl.royaltyRecipient()
         });
     }
 
-    /// @notice the owner sets `refScore` through `setCredit`, the other credit settings unchanged
+    /// @notice the owner sets the Core setting `refScore` through `setSettings`, the other settings unchanged
     function _setRefScore(uint32 v) internal {
-        CreditSale memory c = _creditSale();
-        c.refScore = v;
-        vm.prank(owner);
-        ctl.setCredit(c);
+        Settings memory s = core.settings();
+        s.refScore = v;
+        _setSettings(s);
     }
 
     /// @notice the owner turns the credit sale window on or off through `setCredit`, the other credit settings unchanged

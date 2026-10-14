@@ -88,20 +88,19 @@ contract OnePileTest is Fixture {
         assertLt(cost - pointValue, _score(id), "and above it by less than the rounding of the point rate");
     }
 
-    // promise: INTEGRATION BadQuote when refScore does not answer
-    /// a failed `refScore()` read reverts the bid with `BadQuote` instead of recording the floor rate
-    function test_sellForBalance_failedRefScoreReadReverts() public {
+    // promise: SPEC 1 the balance bid reads refScore from the Core setting, not the controller
+    /// the bid records the score-scaled cost from the Core setting `refScore` even when the controller's `refScore()`
+    /// read reverts, so a reverting or hostile controller cannot block or distort the bid
+    function test_sellForBalance_usesCoreRefScoreNotTheController() public {
         _ready();
         uint256[] memory ids = _credits(seller, 1);
+        uint256 want = _backstop(ids[0]);
         vm.mockCallRevert(address(ctl), abi.encodeWithSignature("refScore()"), "");
         vm.prank(seller);
-        vm.expectRevert(ICore.BadQuote.selector);
-        core.sellForBalance(ids);
-        vm.mockCall(address(ctl), abi.encodeWithSignature("refScore()"), abi.encode(uint256(0)));
-        vm.prank(seller);
-        vm.expectRevert(ICore.BadQuote.selector);
         core.sellForBalance(ids);
         vm.clearMockedCalls();
+        (, uint256 cost,) = core.creditInfo(ids[0]);
+        assertEq(cost, want, "the recorded cost uses the Core setting refScore");
     }
 
     // promise: SPEC 1 the recorded cost reads no pool price (decision 96)

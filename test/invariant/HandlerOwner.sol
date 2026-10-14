@@ -937,9 +937,10 @@ abstract contract HandlerOwner is HandlerBase {
     /// the owner sets one of the eight credit settings (three on the core, five on the controller) to a value inside or
     /// outside its bounds, or a stranger tries. inside: it goes through and reads back. outside a bounded numeric field:
     /// BadSetting. a stranger: OnlyOwner. no asset or pot moves
+    // refScore left the controller credit settings for the Core settings; the settings fuzz mutates it
     function creditSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_CREDIT_SETTINGS;
-        uint256 which = mode % 8;
+        uint256 which = mode % 7;
         bool stranger = (mode >> 8) % 6 == 0;
         bool bad = (mode >> 12) % 4 == 0;
         (address target, bytes memory data, bool valid, uint256 want, uint256 cur) = _creditCase(which, seed, bad);
@@ -1027,15 +1028,6 @@ abstract contract HandlerOwner is HandlerBase {
             data = abi.encodeCall(IControllerV1.setCredit, (cs));
             valid = v >= 10_000 && v <= 200_000;
             want = v;
-        } else {
-            target = v1;
-            cur = c.refScore();
-            uint256 v = bad ? (seed % 2 == 0 ? 0 : 8_000_001) : _f(seed, 1, 8_000_000, cur);
-            CreditSale memory cs = _creditSaleOf(c);
-            cs.refScore = uint32(v);
-            data = abi.encodeCall(IControllerV1.setCredit, (cs));
-            valid = v >= 1 && v <= 8_000_000;
-            want = v;
         }
     }
 
@@ -1046,7 +1038,6 @@ abstract contract HandlerOwner is HandlerBase {
             window: c.creditWindow(),
             floorBps: c.creditFloorBps(),
             startBps: c.creditStartBps(),
-            refScore: c.refScore(),
             royaltyBps: c.royaltyBps(),
             royaltyRecipient: c.royaltyRecipient()
         });
@@ -1061,7 +1052,6 @@ abstract contract HandlerOwner is HandlerBase {
         if (which == 3) return c.creditSaleOn() ? 1 : 0;
         if (which == 4) return c.creditWindow();
         if (which == 5) return c.creditFloorBps();
-        if (which == 6) return c.creditStartBps();
-        return c.refScore();
+        return c.creditStartBps();
     }
 }

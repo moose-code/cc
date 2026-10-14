@@ -41,7 +41,8 @@
     "callerFee": 0,
     "callerMaxBaseFee": 0,
     "feeToRedeemBurnBps": 1000,
-    "payeePpm": 75185
+    "payeePpm": 75185,
+    "refScore": 4330000
   },
   "sale": {
     "markupBps": 15000,
@@ -60,7 +61,6 @@
     "window": 14400,
     "floorBps": 11000,
     "startBps": 30000,
-    "refScore": 4330000,
     "royaltyBps": 250,
     "royaltyRecipient": "0xCB43078C32423F5348Cab5885911C3B5faE217F9"
   },

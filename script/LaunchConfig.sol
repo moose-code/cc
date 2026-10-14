@@ -192,6 +192,7 @@ abstract contract ConfigReader is CommonBase {
         // forge-lint: disable-end(unsafe-typecast)
         s.feeToRedeemBurnBps = _u16(j, ".settings.feeToRedeemBurnBps");
         s.payeePpm = _u24(j, ".settings.payeePpm");
+        s.refScore = _u32(j, ".settings.refScore");
     }
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {
@@ -215,7 +216,6 @@ abstract contract ConfigReader is CommonBase {
             window: _u32(j, ".credit.window"),
             floorBps: _u16(j, ".credit.floorBps"),
             startBps: _u32(j, ".credit.startBps"),
-            refScore: _u32(j, ".credit.refScore"),
             royaltyBps: _u16(j, ".credit.royaltyBps"),
             royaltyRecipient: vm.parseJsonAddress(j, ".credit.royaltyRecipient")
         });

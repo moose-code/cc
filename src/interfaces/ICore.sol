@@ -13,7 +13,6 @@ interface ICore {
         uint32 window;
         uint16 floorBps;
         uint32 startBps;
-        uint32 refScore;
         uint16 royaltyBps;
         address royaltyRecipient;
     }
@@ -140,6 +139,7 @@ interface ICore {
     function balanceModuleLocked() external view returns (bool);
     function balancePot() external view returns (uint256);
     function balanceToken() external view returns (address);
+    function bidOf(uint256 id) external view returns (uint256);
     function book() external;
     function bookBalance() external;
     function buyListing(address adapter, uint256 id, bytes memory params) external;

@@ -656,9 +656,9 @@ contract ConfigTest is Fixture {
 
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[24] memory lo = SettingsFields.lo();
-        uint256[24] memory hi = SettingsFields.hi();
-        bytes32[24] memory names = SettingsFields.names();
+        uint256[25] memory lo = SettingsFields.lo();
+        uint256[25] memory hi = SettingsFields.hi();
+        bytes32[25] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // the top itself (the fields bound by another field start from a free partner)
