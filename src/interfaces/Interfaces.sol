@@ -360,7 +360,7 @@ library Mainnet {
     /// funds the pot, chosen composition is off, and the coin balance a caller needs to choose a compose or a held format is 1 coin
     function defaultCredit() internal pure returns (Credit memory) {
         return Credit({
-            costToPotBps: 10_000,
+            costToPotBps: 8_000,
             chosenComposeOn: false,
             minCcToChoose: 1e18,
             saleOn: true,

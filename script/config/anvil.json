@@ -55,7 +55,7 @@
     "anchorMinCost": 100000000000000000
   },
   "credit": {
-    "costToPotBps": 10000,
+    "costToPotBps": 8000,
     "chosenComposeOn": false,
     "minCcToChoose": "1000000000000000000",
     "saleOn": true,

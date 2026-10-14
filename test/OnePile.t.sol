@@ -152,7 +152,7 @@ contract OnePileTest is Fixture {
 
     // promise: SPEC 1 creditCostToPotBps owner setting
     function test_setter_creditCostToPotBps() public {
-        assertEq(core.creditCostToPotBps(), 10_000, "launch value");
+        assertEq(core.creditCostToPotBps(), 8_000, "launch value");
         vm.expectEmit(address(core));
         emit ICore.CreditCostToPotBpsSet(6_000);
         vm.prank(owner);

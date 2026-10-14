@@ -285,10 +285,11 @@ contract CreditSaleTest is Fixture {
         uint256 price = ctl.creditPrice(id);
         uint256 potBefore = core.ethPot();
         uint256 buybackBefore = core.ethToBuyback();
-        assertEq(core.creditCostToPotBps(), 10_000, "default");
+        assertEq(core.creditCostToPotBps(), 8_000, "default");
+        uint256 toPot = cost * 8_000 / 10_000;
         _buyAt(buyer, id, price);
-        assertEq(core.ethPot() - potBefore, cost, "the whole cost goes to the pot at the default");
-        assertEq(core.ethToBuyback() - buybackBefore, price - cost, "the markup over cost goes to the buyback");
+        assertEq(core.ethPot() - potBefore, toPot, "80 percent of the cost goes to the pot at the default");
+        assertEq(core.ethToBuyback() - buybackBefore, price - toPot, "the rest of the payment goes to the buyback");
     }
 
     // promise: INTEGRATION BelowFloor on sellCreditTo
@@ -368,7 +369,7 @@ contract CreditSaleTest is Fixture {
         uint256 potBefore = core.ethPot();
         _buyAt(buyer, id, price);
         assertEq(CREDITS.ownerOf(id), buyer, "the balance token credit is sold");
-        assertEq(core.ethPot() - potBefore, cost, "the pot books the recorded cost at the default split");
+        assertEq(core.ethPot() - potBefore, cost * 8_000 / 10_000, "the pot books 80 percent of the recorded cost at the default split");
     }
 
     // ------------------------------------------------------------------ reentrancy
