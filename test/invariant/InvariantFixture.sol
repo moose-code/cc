@@ -238,19 +238,10 @@ abstract contract InvariantFixture is Fixture {
             for (uint256 i; i < 80; ++i) {
                 balanceIds[i] = ids[ethN + i];
             }
-            // the balance bid reads `refScore` from the core's controller, so the real one is put in force (the hostile
-            // suite set the fuzz controller). the credits enter the single pile with an eth cost basis
-            address current = core.controller();
-            if (current != address(ctl)) {
-                vm.prank(owner);
-                core.setController(address(ctl));
-            }
+            // the balance bid reads `refScore` from the core setting, so it does not depend on the controller in force.
+            // the credits enter the single pile with an eth cost basis
             vm.prank(filler);
             core.sellForBalance(balanceIds);
-            if (current != address(ctl)) {
-                vm.prank(owner);
-                core.setController(current);
-            }
             assertEq(core.pileSize(), LEFT_IN_PILE + 80);
         }
     }

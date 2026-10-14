@@ -9,7 +9,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {ICredits, IStatements, IBalanceModule, Mainnet, Settings, Stack, Sale, CreditSale, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
+import {ICredits, IStatements, IBalanceModule, ICreditScore, Mainnet, Settings, Stack, Sale, CreditSale, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2, IArtCoinsFeeEscrowV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {V2Stack} from "./V2Stack.sol";
 import {Deployed} from "../../script/SystemDeployer.sol";
@@ -377,10 +377,11 @@ abstract contract Fixture is Test, ProdDeployer {
 
     /// @notice warps an hour at a time until the ceiling of credit `id` reaches `price`. the real listings cost more
     /// than the launch `rateCap` allows the bid to reach, so the owner lifts the cap to its bound first
+    /// warps until the eth bid for credit `id` (`bidOf`, the rate scaled by its score over refScore) covers `price`
     function _warpUntilCeiling(uint256 id, uint256 price) internal {
         _liftRateCap();
         for (uint256 i; i < 400; ++i) {
-            if (core.ethRate() >= price) return;
+            if (core.bidOf(id) >= price) return;
             vm.warp(block.timestamp + 1 hours);
         }
         revert("ceiling never cleared");
@@ -394,6 +395,9 @@ abstract contract Fixture is Test, ProdDeployer {
 
     /// @notice sells `n` fresh credits into the eth bid, which puts them in the eth pile in the order returned.
     /// funds the pot first when it cannot carry the sale
+    /// fills the eth pile with `n` credits, each recorded at the full rate (`refScore` set to its score per credit, so
+    /// score / refScore is 1), which reproduces the flat per-credit cost basis the compose and sale tests are written
+    /// against; `refScore` is restored after. the per-point payout is covered by the invariant suite and test/PerPoint.t.sol
     function _fillEthPile(uint256 n) internal returns (uint256[] memory ids) {
         ids = _credits(seller, n);
         // a price state that idle time loosened above the opening rate is restated to the opening rate
@@ -406,8 +410,13 @@ abstract contract Fixture is Test, ProdDeployer {
         if (core.ethPot() < room) _fundPot(room);
         uint256 total = core.ethRate() * n;
         if (core.ethPot() < total * 6) _fundPot(total * 6);
-        vm.prank(seller);
-        core.sellForEth(ids);
+        uint32 savedRef = core.settings().refScore;
+        for (uint256 i; i < n; ++i) {
+            _refScoreToCredit(ids[i]);
+            vm.prank(seller);
+            core.sellForEth(_one(ids[i]));
+        }
+        if (core.settings().refScore != savedRef) _setRefScore(savedRef);
     }
 
     /// @notice composes the eth pile through the real controller, once per state lineage. fills the pile to 80
@@ -536,6 +545,17 @@ abstract contract Fixture is Test, ProdDeployer {
         Settings memory s = core.settings();
         s.refScore = v;
         _setSettings(s);
+    }
+
+    /// @notice the score of credit `id` from the CreditScore contract, the per-credit source every eth door reads
+    function _scoreOf(uint256 id) internal view returns (uint256) {
+        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
+    }
+
+    /// @notice sets `refScore` to credit `id`'s score, so the eth bid pays the full rate for it (score / refScore is 1).
+    /// isolates the rate mechanics from the per-point scaling, which the invariants and the dedicated per-point tests cover
+    function _refScoreToCredit(uint256 id) internal {
+        _setRefScore(uint32(_scoreOf(id)));
     }
 
     /// @notice the owner turns the credit sale window on or off through `setCredit`, the other credit settings unchanged

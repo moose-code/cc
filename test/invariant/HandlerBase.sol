@@ -804,17 +804,18 @@ abstract contract HandlerBase is Test {
 
     /// the stored price state and the read after the sells of one call at `costs`: each credit drops the price state, and the
     /// read after it is the price state lowered to the clamp of the smaller pot
-    function _rateAfterSells(Settings memory st, SellPre memory p, uint256[] memory costs)
+    function _rateAfterSells(Settings memory st, SellPre memory p, uint256[] memory costs, uint256[] memory scores)
         internal
-        pure
+        view
         returns (uint256 stored, uint256 r)
     {
         stored = p.price;
         uint256 pot = p.pot;
         uint256 start = p.minuteStart;
+        uint256 refScore = core.settings().refScore;
         for (uint256 i; i < costs.length; ++i) {
             start = BidModel.startAfter(st, stored, start);
-            stored = _dropped(st, stored, start);
+            stored = _dropped(st, stored, start, scores[i], refScore);
             pot = pot > costs[i] ? pot - costs[i] : 0;
         }
         r = _readAfterFill(st, stored, pot);
@@ -825,10 +826,19 @@ abstract contract HandlerBase is Test {
         return BidModel.read(st, pot, stored);
     }
 
-    /// the rate after one credit bought with the price state `r`, where `start` is the price state at the first fill of
-    /// the minute
-    function _dropped(Settings memory st, uint256 r, uint256 start) internal pure returns (uint256) {
-        return BidModel.dropOnce(st, r, start);
+    /// the rate after one credit of score `score` bought with the price state `r`, where `start` is the price state at
+    /// the first fill of the minute. the fall scales by `score / refScore`
+    function _dropped(Settings memory st, uint256 r, uint256 start, uint256 score, uint256 refScore)
+        internal
+        pure
+        returns (uint256)
+    {
+        return BidModel.dropOnce(st, r, start, score, refScore);
+    }
+
+    /// the score of credit `id` from the CreditScore contract, the per-credit source the Core reads
+    function _scoreOf(uint256 id) internal view returns (uint256) {
+        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1265,7 +1275,7 @@ abstract contract HandlerBase is Test {
         uint256 sum;
         for (uint256 k; k < len && k < want * 3 + 4 && n < want; ++k) {
             uint256 id = inventory[who][(pick % len + k) % len];
-            uint256 c = core.ethRate();
+            uint256 c = core.bidOf(id);
             // a credit priced at zero (an empty pot clamps the bid to zero) cannot be sold: the core refuses a zero spend
             if (c != 0 && (sum + c <= budget || overshoot)) {
                 ids[n++] = id;
@@ -1302,7 +1312,7 @@ abstract contract HandlerBase is Test {
         p.sellerBal = who.balance;
         p.ceil = new uint256[](n);
         for (uint256 i; i < n; ++i) {
-            p.ceil[i] = core.ethRate();
+            p.ceil[i] = core.bidOf(ids[i]);
         }
         RS memory rs = _rs();
         _endPull(p.pull);
@@ -1355,14 +1365,16 @@ abstract contract HandlerBase is Test {
         _eth(p.bal, paid, 0, "sellForEth");
         if (core.ethPot() != potLeft) _flag(V_POT, "sellForEth pot not reduced by the price");
 
-        // the drop on each fill, independently: dropPerCreditBps per credit, no lower than the minute floor
+        // the drop on each fill, independently: dropPerCreditBps times score over refScore, no lower than the minute floor
+        uint256[] memory scores = new uint256[](ids.length);
         for (uint256 i; i < ids.length; ++i) {
+            scores[i] = _scoreOf(ids[i]);
             _addCredit(ids[i], costs[i]);
             _removeFrom(inventory[who], ids[i]);
         }
-        (uint256 stored, uint256 r) = _rateAfterSells(st, p, costs);
+        (uint256 stored, uint256 r) = _rateAfterSells(st, p, costs, scores);
         if (core.rateAtCheckpoint() != stored || core.ethRate() != r) {
-            _flag(V_RATE_BOUND, "drop on fill differs from dropPerCreditBps with the minute floor");
+            _flag(V_RATE_BOUND, "drop on fill differs from the scaled dropPerCreditBps with the minute floor");
         }
         if (core.lastFillTime() != block.timestamp) _flag(V_RATE_BOUND, "fill did not reset the fill clock");
     }
@@ -1382,7 +1394,7 @@ abstract contract HandlerBase is Test {
             uint256 p = ICreditStrategy(STRATEGY).nftForSale(cand);
             if (p == 0) continue;
             // the keeper payment is booked as spend on top of the price and stays inside the bid, which is inside the pot
-            if (core.ethRate() >= p) {
+            if (core.bidOf(cand) >= p) {
                 id = cand;
                 price = p;
                 allowed = true;
@@ -1411,7 +1423,7 @@ abstract contract HandlerBase is Test {
         uint256 id = probeIds[pick % n];
         uint256 wrongId = probeIds[(pick % n + 1) % n];
         if (gone[id] || gone[wrongId]) return _skip(a);
-        uint256 ceiling = core.ethRate();
+        uint256 ceiling = core.bidOf(id);
         uint256 budget = _budget();
         uint256 cap = ceiling < budget ? ceiling : budget;
         if (cap < 100) return _skip(a);
@@ -1460,7 +1472,7 @@ abstract contract HandlerBase is Test {
         p.price = _priceNow(core.settings());
         p.minuteStart = _minuteStartNow(p.price);
         p.keeperBal = keeper.balance;
-        p.ceiling = core.ethRate();
+        p.ceiling = core.bidOf(id);
         RS memory rs = _rs();
         _endPull(p.pull);
         vm.recordLogs();
@@ -1494,7 +1506,7 @@ abstract contract HandlerBase is Test {
         uint256 potLeft = _recordSpend(cost + paid, p.pot);
         _eth(p.bal, paid + cost, refund, "buyListing");
         if (core.ethPot() != potLeft) _flag(V_POT, "listing pot not reduced by cost and the payment");
-        uint256 stored = _dropped(st, p.price, p.minuteStart);
+        uint256 stored = _dropped(st, p.price, p.minuteStart, _scoreOf(id), core.settings().refScore);
         if (core.rateAtCheckpoint() != stored || core.ethRate() != _readAfterFill(st, stored, potLeft)) {
             _flag(V_RATE_BOUND, "drop on fill differs from dropPerCreditBps with the minute floor");
         }
@@ -2050,8 +2062,8 @@ abstract contract HandlerBase is Test {
     //////////////////////////////////////////////////////////////*/
 
     /// anyone adopts credits the core holds without a record. by mode: an actor sends 1 to 4 of its credits straight to
-    /// the core and adopts them (each gets the cost basis of the model price state, at least 1 wei, and
-    /// the rate state, the pots and the balance stay as they were), adopts a credit that is in a pile
+    /// the core and adopts them (each gets the cost basis of the model price state times its score over refScore, at
+    /// least 1 wei, and the rate state, the pots and the balance stay as they were), adopts a credit that is in a pile
     /// (`InPile`), adopts a credit an actor holds (`NotHolder`), adopts an empty list (`Empty`) or the zero id
     /// (`ZeroId`). a refused call changes nothing
     function adopt(uint256 aSeed, uint256 nSeed, uint256 mode) external pulls {
@@ -2137,9 +2149,10 @@ abstract contract HandlerBase is Test {
         p.tb0 = core.ethToBuyback();
         p.size0 = core.pileSize();
         uint256 price = _priceNow(p.rs.st);
+        uint256 refScore = core.settings().refScore;
         p.costs = new uint256[](ids.length);
         for (uint256 k; k < ids.length; ++k) {
-            p.costs[k] = price.max(1);
+            p.costs[k] = FullMath.mulDiv(price, _scoreOf(ids[k]), refScore).max(1);
         }
         (p.anchor0, p.floor0, p.bucket0) = _anchorState();
     }
@@ -2434,17 +2447,13 @@ abstract contract HandlerBase is Test {
     }
 
     /// sells credits into the balance token bid. ids are picked so the prices fit the pot. the recorded eth cost basis is
-    /// the score-scaled floor rate backstop and reads `refScore` from the core's controller, so the bid is exercised
-    /// with the real controller in force; a hostile controller swapped in is left alone so the backstop is modeled
+    /// the score-scaled floor rate backstop and reads `refScore` from the core setting, so the bid does not call the
+    /// controller
     function sellForBalance(uint256 aSeed, uint256 nSeed, uint256 pick) external checked {
         uint8 a = A_SELL_FOR_BALANCE;
         if (!phase2() || !core.settings().balanceBidOn) return _skip(a);
         address who = _actor(aSeed);
-        // the retired refusal is checked first: a retired core reverts before it reads the controller's refScore
         if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForBalance(uint256[])", _firstOf(who)))) return;
-        // the bid reads refScore from the core's controller; exercise it only with the real controller in force so the
-        // recorded backstop is modeled, a hostile controller swapped in is left alone
-        if (core.controller() != v1) return _skip(a);
         uint256 len = inventory[who].length;
         if (len == 0) return _skip(a);
         // the bid pays by the module's live unit (`_unitOf`), nonzero here. a module set to fail its unit read

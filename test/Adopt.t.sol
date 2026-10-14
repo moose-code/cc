@@ -44,8 +44,10 @@ contract AdoptTest is Fixture {
         }
     }
 
+    /// the cost basis adopt records for `id`: the price state times its score over refScore, at least 1 wei
     function _basis(uint256 id) internal view returns (uint256) {
-        return core.ethPrice();
+        uint256 b = core.ethPrice() * _scoreOf(id) / core.settings().refScore;
+        return b == 0 ? 1 : b;
     }
 
     function _adopt(uint256[] memory ids) internal {
@@ -65,7 +67,7 @@ contract AdoptTest is Fixture {
         assertEq(core.ethPrice(), core.RATE_START(), "the price state is the opening rate");
         uint256 want = _basis(id);
         assertGt(want, 0);
-        assertEq(want, core.RATE_START());
+        assertEq(want, core.RATE_START() * _scoreOf(id) / core.settings().refScore, "the basis is the price state scaled by score / refScore");
 
         vm.expectEmit(true, false, false, true, address(core));
         emit ICore.CreditAdopted(id, want);
@@ -230,10 +232,13 @@ contract AdoptTest is Fixture {
         succ.adopt(ids);
         assertEq(succ.pileSize(), ids.length, "the pile is restored");
         assertEq(succ.pilePage(0, 1)[0], ids[0], "in the order of the call");
+        uint256 refScore = succ.settings().refScore;
         for (uint256 i; i < ids.length; ++i) {
             (bool p, uint256 cost,) = succ.creditInfo(ids[i]);
             assertTrue(p);
-            assertEq(cost, price);
+            uint256 want = price * _scoreOf(ids[i]) / refScore;
+            if (want == 0) want = 1;
+            assertEq(cost, want);
             sum += cost;
         }
     }
@@ -331,11 +336,11 @@ contract AdoptTest is Fixture {
         assertEq(address(core).balance, _tracked(), "the fees were booked");
         assertGt(core.ethPot(), pot, "the fees are in the pot");
         (, uint256 cost,) = core.creditInfo(ids[0]);
-        assertEq(cost, core.ethPrice(), "the basis is read after the book");
+        assertEq(cost, _basis(ids[0]), "the basis is read after the book");
     }
 
-    // promise: SPEC 4 an adopted credit enters at the price state (cost basis)
-    function test_FUZZ_theBasisIsThePriceState(uint256 wait, uint8 count) public {
+    // promise: SPEC 4 an adopted credit enters at the price state times its score over refScore (cost basis)
+    function test_FUZZ_theBasisIsThePriceStateScaledByScore(uint256 wait, uint8 count) public {
         wait = bound(wait, 0, 30 days);
         count = uint8(bound(count, 1, 6));
         _fundPot(1 ether);
@@ -345,7 +350,9 @@ contract AdoptTest is Fixture {
         _adopt(ids);
         for (uint256 i; i < count; ++i) {
             (, uint256 cost,) = core.creditInfo(ids[i]);
-            assertEq(cost, price, "basis");
+            uint256 want = price * _scoreOf(ids[i]) / core.settings().refScore;
+            if (want == 0) want = 1;
+            assertEq(cost, want, "basis is the price state scaled by score / refScore");
             assertGt(cost, 0);
         }
     }

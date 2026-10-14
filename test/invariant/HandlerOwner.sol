@@ -62,6 +62,7 @@ abstract contract HandlerOwner is HandlerBase {
         s.rateCap = uint64(_f(_r(seed, 26), RATE_START_MIN_WEI, RATE_START_MAX_WEI, c.rateCap));
         s.feeToRedeemBurnBps = uint16(_f(_r(seed, 27), 0, 10_000, c.feeToRedeemBurnBps));
         s.payeePpm = uint24(_f(_r(seed, 40), 0, 200_000, c.payeePpm));
+        s.refScore = uint32(_f(_r(seed, 41), 1, 8_000_000, c.refScore));
         s.callerFee = uint64(_f(_r(seed, 10), 0, 0.005 ether, c.callerFee));
         s.callerMaxBaseFee = uint48(_f(_r(seed, 11), 0, 100 gwei, c.callerMaxBaseFee));
         _corner(s, corner);
@@ -259,6 +260,7 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.redeemSlippageBps > s.balanceBidMarginBps) return "redeemSlippageBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         if (s.payeePpm > 200_000) return "payeePpm";
+        if (s.refScore < 1 || s.refScore > 8_000_000) return "refScore";
         return bytes32(0);
     }
 
@@ -269,7 +271,7 @@ abstract contract HandlerOwner is HandlerBase {
     /// breaks exactly one field of valid settings, `which` picks it. returns the name the library must report
     function _break(Settings memory s, uint256 which) internal pure returns (bytes32 name) {
         // forge-lint: disable-start(unsafe-typecast)
-        which = which % 46;
+        which = which % 48;
         if (which == 0) {
             (s.dropPerCreditBps, name) = (1_001, "dropPerCreditBps");
         } else if (which == 1) {
@@ -361,8 +363,12 @@ abstract contract HandlerOwner is HandlerBase {
             (s.recoveryClimbPerMinBps, name) = (0, "recoveryClimbPerMinBps");
         } else if (which == 44) {
             (s.payeePpm, name) = (200_001, "payeePpm");
-        } else {
+        } else if (which == 45) {
             (s.recoveryGapBps, name) = (5_001, "recoveryGapBps");
+        } else if (which == 46) {
+            (s.refScore, name) = (0, "refScore");
+        } else {
+            (s.refScore, name) = (8_000_001, "refScore");
         }
         // forge-lint: disable-end(unsafe-typecast)
     }

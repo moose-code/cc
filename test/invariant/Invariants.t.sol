@@ -74,8 +74,8 @@ abstract contract InvariantsBase is InvariantFixture {
         _zero(g1);
     }
 
-    /// 2. no credit is bought above the read, the eth rate taken just before the action. every credit has the same
-    /// price, so the sum paid by a batch is at most the number of credits times that read.
+    /// 2. no credit is bought above its bid, `bidOf(id)` = the read times the credit's score over refScore, taken just
+    /// before the action. the sum paid by a batch is at most the sum of the per-credit bids.
     function invariant_02_noCreditAboveTheRead() public view {
         _zero(g2);
     }
@@ -284,8 +284,8 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// 16. the eth bid stays open while the core has not migrated. when the read (`ethRate`) is not zero, a one credit
-    /// `sellForEth` by a holder succeeds. the check runs after every action
+    /// 16. the eth bid stays open while the core has not migrated. when a held credit's bid (`bidOf`) is not zero and the
+    /// pot covers it, a one credit `sellForEth` by its holder succeeds. the check runs after every action
     /// under a snapshot that is reverted, so the state is unchanged. it starts with the book of the fee income that
     /// every `sellForEth` makes first, so the price is the one the sale itself reads.
     function invariant_16_theBidNeverCloses() public {
@@ -328,7 +328,7 @@ abstract contract InvariantsBase is InvariantFixture {
             address actor = handler.actors(a);
             uint256[] memory held = CREDITS.tokensOf(actor);
             for (uint256 j; j < held.length && j < 4; ++j) {
-                uint256 price = core.ethRate();
+                uint256 price = core.bidOf(held[j]);
                 if (price != 0 && price <= afford) return (actor, held[j]);
             }
         }

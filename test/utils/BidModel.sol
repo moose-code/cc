@@ -33,12 +33,18 @@ library BidModel {
         return fillState < minuteStart * s.dropFloorBps / 10_000 ? fillState : minuteStart;
     }
 
-    /// @dev the rate after one credit bought with the price state `fillState`, where `minuteStart` is the price state at
-    /// the first fill of the same minute bucket
-    function dropOnce(Settings memory s, uint256 fillState, uint256 minuteStart) internal pure returns (uint256) {
+    /// @dev the rate after one credit of score `score` bought with the price state `fillState`, where `minuteStart` is
+    /// the price state at the first fill of the same minute bucket. the fall is `dropPerCreditBps * score / refScore`,
+    /// bounded at 10_000, the same as `CoreLib.drop`
+    function dropOnce(Settings memory s, uint256 fillState, uint256 minuteStart, uint256 score, uint256 refScore)
+        internal
+        pure
+        returns (uint256)
+    {
         minuteStart = startAfter(s, fillState, minuteStart);
-        return
-            FixedPointMathLib.max(fillState * (10_000 - s.dropPerCreditBps) / 10_000, minuteStart * s.dropFloorBps / 10_000);
+        uint256 fall = uint256(s.dropPerCreditBps) * score / refScore;
+        if (fall > 10_000) fall = 10_000;
+        return FixedPointMathLib.max(fillState * (10_000 - fall) / 10_000, minuteStart * s.dropFloorBps / 10_000);
     }
 
     /// @dev the clamp: the price of one credit that a pot affords, at most `rateCap`

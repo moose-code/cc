@@ -67,7 +67,7 @@ const R0 = 6.668e15;
   // the credit block (the Credit struct of the launch config) is the model's CREDIT, field for field, and the launch values are the ones of FLOW 88 to 90
   assert.deepEqual(Object.keys(cfg.credit).sort(), [...Object.values(CREDIT_CONFIG_KEY), 'royaltyRecipient'].sort()); n++; // the recipient is an address the model has no use for
   for (const [k, ck] of Object.entries(CREDIT_CONFIG_KEY)) near(+CREDIT[k], +cfg.credit[ck], 1e-12, 'credit ' + k);
-  assert.deepEqual(CREDIT, { creditCostToPotBps: 10000, chosenComposeOn: false, minCcToChoose: 1e18, creditSaleOn: false, creditWindow: 4 * H, creditFloorBps: 11000, creditStartBps: 30000, refScore: 4330000, royaltyBps: 250 }); n++;
+  assert.deepEqual(CREDIT, { creditCostToPotBps: 10000, chosenComposeOn: false, minCcToChoose: 1e18, creditSaleOn: false, creditWindow: 4 * H, creditFloorBps: 11000, creditStartBps: 30000, royaltyBps: 250 }); n++;
   assert.equal(creditViolation(CREDIT), null); n++;
   assert.equal(firstViolation(SETTINGS), null); n++;
   assert.equal(controllerViolation(CONTROLLER), null); n++;
@@ -442,6 +442,7 @@ const R0 = 6.668e15;
   bad({ ceilPct: 301 }, 'ceilPct'); bad({ ceilPct: 99 }, 'ceilPct'); bad({ idleLoosenPct: 0 }, 'idleLoosenPct'); bad({ recoveryClimbPerMin: 0.4 }, 'recoveryClimbPerMin');
   bad({ recoveryGapPct: 50.01 }, 'recoveryGapPct'); bad({ peakHalfLifeHours: 599 / 3600 }, 'peakHalfLifeHours'); bad({ peakHalfLifeHours: 604801 / 3600 }, 'peakHalfLifeHours');
   bad({ payeePpm: 200001 }, 'payeePpm'); assert.equal(firstViolation(Object.assign({}, SETTINGS, { payeePpm: 200000 })), null); n++;
+  bad({ refScore: 0 }, 'refScore'); bad({ refScore: 8000001 }, 'refScore'); assert.equal(firstViolation(Object.assign({}, SETTINGS, { refScore: 8000000 })), null); n++;
   bad({ saleFloorBps: 999 }, 'saleFloorBps'); bad({ saleFloorBps: 40001 }, 'saleFloorBps');
   bad({ buybackSlice: 1.01 }, 'buybackSlice'); bad({ buybackDelay: 0 }, 'buybackDelay'); bad({ buybackDelay: 7201 }, 'buybackDelay');
   bad({ rateCap: 1e13 - 1e6 }, 'rateCap'); bad({ rateCap: 1.1e18 }, 'rateCap');

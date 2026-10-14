@@ -5,7 +5,7 @@ import {console} from "forge-std/console.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
-import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, Settings, ICreditScore} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {BidModel} from "./utils/BidModel.sol";
@@ -55,6 +55,8 @@ abstract contract SeaportBase is Fixture {
     /// hands the next usable credit to the maker and approves Seaport itself as operator, no conduit.
     function _list() internal returns (uint256 id) {
         id = _credits(maker, 1)[0];
+        // refScore set to the listed credit's score, so its bid is the full rate and the ethRate based order prices hold
+        _refScoreToCredit(id);
         vm.prank(maker);
         CREDITS.setApprovalForAll(address(SEAPORT), true);
         assertEq(CREDITS.ownerOf(id), maker);
@@ -168,9 +170,10 @@ abstract contract SeaportBase is Fixture {
     /// calls the door as the keeper and checks everything a successful buy must leave behind.
     /// `cost` is the exact eth the adapter prices: the sum of every payout of the order.
     function _buy(uint256 id, bytes memory params, uint256 cost) internal returns (uint256 paid) {
-        uint256 ceiling = core.ethRate();
+        uint256 ceiling = core.bidOf(id);
         Snap memory before = _snap();
         uint256 rate = core.ethRate();
+        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
 
         vm.prank(keeper);
         core.buyListing(seaportAdapter, id, params);
@@ -186,7 +189,11 @@ abstract contract SeaportBase is Fixture {
         assertEq(core.ethPot(), before.pot - cost - paid, "pot down by exactly cost and the payment");
         assertEq(address(core).balance, before.balance - cost - paid, "balance down by exactly cost and the payment");
         assertEq(core.ethToBuyback(), before.toBuyback);
-        assertEq(core.rateAtCheckpoint(), BidModel.dropOnce(core.settings(), rate, rate), "rate drop");
+        assertEq(
+            core.rateAtCheckpoint(),
+            BidModel.dropOnce(core.settings(), rate, rate, score, core.settings().refScore),
+            "rate drop"
+        );
         assertEq(core.lastFillTime(), block.timestamp);
         assertLe(cost + paid, ceiling, "never above the ceiling");
         _solvent();

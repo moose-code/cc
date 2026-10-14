@@ -15,7 +15,6 @@ import {ListingTarget} from "./attackers/ListingTarget.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
-import {BidModel} from "./utils/BidModel.sol";
 
 /// shared helpers of the core unit suites. everything runs on the real stack of the Fixture: the live coin, hook,
 /// pool, Credits, Statements, CreditStrategy and Seaport. a test that needs an exact pot donates
@@ -37,11 +36,6 @@ abstract contract CoreBase is Fixture {
         vm.deal(funder, funder.balance + amount);
         vm.prank(funder);
         core.fund{value: amount}();
-    }
-
-    /// @dev the rate after one credit bought at `r`, the first fill of its minute, at the drop of the settings now
-    function _dropped(uint256 r) internal view returns (uint256) {
-        return BidModel.dropOnce(core.settings(), r, r);
     }
 
     function _listing(uint256 id) internal pure returns (bytes memory) {
@@ -197,7 +191,7 @@ contract CoreUnitTest is CoreBase {
     function test_sellForEth_minOut() public {
         _fund(10 ether);
         uint256 id = _credits(alice, 1)[0];
-        uint256 price = core.ethRate();
+        uint256 price = core.bidOf(id);
 
         vm.prank(alice);
         vm.expectRevert(ICore.Slippage.selector);
@@ -214,6 +208,8 @@ contract CoreUnitTest is CoreBase {
     /// reads 1 wei: a sale pays it and a purchase of 2 wei reverts `PotTooSmall`
     function test_tinyPotSellsItsWeiAndBuysNothing() public {
         uint256[] memory ids = _credits(alice, 2);
+        // refScore set to the sold credit's score, so a 1 wei pot reads a 1 wei bid for it (score / refScore is 1)
+        _refScoreToCredit(ids[0]);
         bytes memory data = abi.encodeCall(ICreditStrategy.sellTargetNFT, (LISTED_A));
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);
@@ -340,6 +336,8 @@ contract CoreUnitTest is CoreBase {
     function test_buyListing_paysCountedGasAtTheBaseFeePlusTheFee() public {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         assertEq(price, 0.036 ether);
+        // refScore set to the listed credit's score, so its bid is the full rate with room for the keeper payment
+        _refScoreToCredit(LISTED_A);
         _fundAndClimb(LISTED_A, price);
         _warp(30 hours);
         uint256 snap = vm.snapshotState();
@@ -362,10 +360,12 @@ contract CoreUnitTest is CoreBase {
     /// a gap smaller than the payment is the payment, so cost plus payment equals the bid. a zero gap pays nothing
     function test_buyListing_paymentIsCappedAtTheGap() public {
         _fund(10 ether);
-        uint256 ceiling = core.ethRate();
         uint256[4] memory gaps = [uint256(0), 1, 1000, 0.0004 ether];
         for (uint256 i; i < gaps.length; ++i) {
             uint256 id = CreditIds.at(545 + i);
+            // refScore set to this credit's score, so its bid is the full rate and the gap and fee math is the flat case
+            _refScoreToCredit(id);
+            uint256 ceiling = core.bidOf(id);
             ListingTarget t = _listingTarget(id);
             uint256 snap = vm.snapshotState();
             PayRun memory r =
@@ -501,7 +501,7 @@ contract CoreUnitTest is CoreBase {
         uint256 id = CreditIds.at(630);
         ProbeTarget p = _probe(id, 5);
         _fund(10 ether);
-        uint256 value = core.ethRate() * 3 / 4;
+        uint256 value = core.bidOf(id) * 3 / 4;
         uint256 pot = core.ethPot();
         uint256 bal = address(core).balance;
         vm.prank(keeper);

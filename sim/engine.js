@@ -35,6 +35,7 @@ export const SETTINGS = {
   redeemSlippageBps: 200, // a redemption must return at least rating * unit * (10000 - redeemSlippageBps) / 10000 (FLOW 84)
   balanceBidMarginBps: 2000, // the balance token bid pays score * unit * (10000 - balanceBidMarginBps) / 10000 per credit (FLOW 84)
   redeemBurnBps: 2000, // share of the redeem burn reserve moved to the coin buyback on each redemption (FLOW 86)
+  refScore: 4330000, // the per-credit score the eth bid divides by: every eth door pays rate * score / refScore per credit, ten-thousandths of a point, 1 to 8_000_000
 };
 export const SETTING_KEYS = Object.keys(SETTINGS);
 // the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement with price reference r (below), in bps of r, starts at
@@ -45,7 +46,7 @@ export const SETTING_KEYS = Object.keys(SETTINGS);
 // contract). the part of the anchor above 10000 halves every anchorHalfLife, continuously.
 // a buyer pays the asking price and gets the statement at once through Core.sellTo.
 // the price reference of a statement is max(cost, valueOf(rating)) (ControllerV1.referenceOf). valueOf(points) is the larger of floorRate * points / refScore, where the floor rate is
-// the larger of the climbed price state and the decayed peak and refScore is in CREDIT below, and the balance token pool term points * unitPerPoint at the pool price
+// the larger of the climbed price state and the decayed peak and refScore is a SETTINGS field above, and the balance token pool term points * unitPerPoint at the pool price
 export const CONTROLLER = {
   markupBps: 15000,
   startCapBps: 100000,
@@ -57,8 +58,8 @@ export const CONTROLLER = {
 };
 export const CONTROLLER_KEYS = Object.keys(CONTROLLER);
 // the credit settings (script/config/mainnet.json credit block, the Credit struct). creditCostToPotBps, chosenComposeOn and minCcToChoose are Core settings
-// (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditFloorBps, creditStartBps and refScore are controller
-// settings (FLOW 88 to 90, 93, 94). while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
+// (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditFloorBps and creditStartBps are controller
+// settings (FLOW 88 to 90, 93, 94). refScore is a Core setting the eth doors and the controller share. while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
 // start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, floorRate, valueOf(score)) * creditFloorBps / 10000 (decisions 104, 115). valueOf is the larger of the rate term
 // floorRate * score / refScore (the floor rate is the larger of the climbed price state and the decayed peak) and the pool term score * unitPerPoint at the balance token pool price, 0 while no module or pool key is set.
 // every sale adds royaltyBps of the engine price on top, paid by the buyer and claimed by the royalty recipient (decision 112).
@@ -73,12 +74,11 @@ export const CREDIT = {
   creditWindow: 14400, // seconds (4 hours)
   creditFloorBps: 11000,
   creditStartBps: 30000,
-  refScore: 4330000,
   royaltyBps: 250,
 };
 export const CREDIT_KEYS = Object.keys(CREDIT);
 // the config names of the credit block (script/config/mainnet.json credit.*)
-export const CREDIT_CONFIG_KEY = { creditCostToPotBps: 'costToPotBps', chosenComposeOn: 'chosenComposeOn', minCcToChoose: 'minCcToChoose', creditSaleOn: 'saleOn', creditWindow: 'window', creditFloorBps: 'floorBps', creditStartBps: 'startBps', refScore: 'refScore', royaltyBps: 'royaltyBps' };
+export const CREDIT_CONFIG_KEY = { creditCostToPotBps: 'costToPotBps', chosenComposeOn: 'chosenComposeOn', minCcToChoose: 'minCcToChoose', creditSaleOn: 'saleOn', creditWindow: 'window', creditFloorBps: 'floorBps', creditStartBps: 'startBps', royaltyBps: 'royaltyBps' };
 // the config credit block also holds royaltyRecipient, an address the model has no use for
 // src/lib/CreditBounds.sol: the name of the first credit field out of bounds, or null
 export function creditViolation(c) {
@@ -86,7 +86,6 @@ export function creditViolation(c) {
   if (!(c.creditWindow >= 60 && c.creditWindow <= 30 * 86400)) return 'creditWindow';
   if (!(c.creditFloorBps >= 10000 && c.creditFloorBps <= 40000)) return 'creditFloorBps';
   if (!(c.creditStartBps >= 10000 && c.creditStartBps <= 200000)) return 'creditStartBps';
-  if (!(c.refScore >= 1 && c.refScore <= 8000000)) return 'refScore';
   if (!(c.royaltyBps >= 0 && c.royaltyBps <= 1000)) return 'royaltyBps';
   return null;
 }
@@ -139,6 +138,7 @@ export function firstViolation(s) {
   if (s.redeemSlippageBps > s.balanceBidMarginBps) return 'redeemSlippageBps'; // the balance cycle (bid then redeem) cannot lose more than its margin
   if (s.redeemBurnBps > 10000) return 'redeemBurnBps';
   if (s.payeePpm > 200000) return 'payeePpm';
+  if (!(s.refScore >= 1 && s.refScore <= 8000000)) return 'refScore';
   return null;
 }
 // the eth rate bounds of setRate, rateStart and rateCap, wei per credit (Interfaces.sol)
@@ -390,8 +390,14 @@ export class Core {
     }
     this.syncFunded();
   }
-  // _spend: checkpoint, then the drop on fill (CoreLib.drop). false means the Core would revert
-  spend(x, now) {
+  // the score of a credit of `pts` points over refScore: the eth doors scale the rate and the drop by it (CoreLib).
+  // refScore is in ten-thousandths of a point, points are whole points here, so score is pts * 1e4
+  scoreRatio(pts) {
+    return (pts * 1e4) / this.s.refScore;
+  }
+  // _spend: checkpoint, then the drop on fill for a credit of score ratio `ratio` (CoreLib.drop). the fall is
+  // dropPerCreditPct * ratio, bounded at 100 percent. false means the Core would revert
+  spend(x, now, ratio = 1) {
     this.checkpoint(now);
     const pot = this.ethPot;
     if (!(x > 0) || x > pot + 1e-18) return false;
@@ -399,7 +405,8 @@ export class Core {
     // CoreLib.drop: the minute floor is dropFloorBps of the price at the first fill of the minute bucket (now / 60), and restarts at the price when the price is already under the floor (setRate, lowered caps)
     const bucket = Math.floor(now / 60);
     if (bucket !== this.burstTime || paid < (this.burstBase * this.s.dropToPct) / 100) { this.burstTime = bucket; this.burstBase = paid; }
-    const r = Math.max(paid * (1 - this.s.dropPerCreditPct / 100), (this.burstBase * this.s.dropToPct) / 100);
+    const fall = Math.min((this.s.dropPerCreditPct / 100) * ratio, 1);
+    const r = Math.max(paid * (1 - fall), (this.burstBase * this.s.dropToPct) / 100);
     this.lastPaidRate = paid;
     this.peakRate = Math.max(paid, this.peakAt(now)); this.peakTime = now;
     this.rateAtCheckpoint = r;
@@ -430,24 +437,27 @@ export class Core {
     this.ethPot += amount; this.fundedTotal += amount;
     this.syncFunded();
   }
-  // door one: sell into the bid at the rate. every credit is paid the same. returns the price paid or 0
-  sellForEth(now) {
-    const price = this.ethRate(now) / W;
-    return this.spend(price, now) ? price : 0;
+  // door one: sell into the bid. a credit of `pts` points is paid the rate times its score over refScore. returns the price paid or 0
+  sellForEth(now, pts = this.s.refScore / 1e4) {
+    const ratio = this.scoreRatio(pts);
+    const price = (this.ethRate(now) / W) * ratio;
+    return this.spend(price, now, ratio) ? price : 0;
   }
   // the largest payment of a buyListing at the base fee now: counted gas (at most BUYLISTING_GAS) at min(basefee, keeperMaxBaseFee) plus keeperFee
   listingPayMax() {
     const s = this.s, p = this.p;
     return Math.min(p.BUYLISTING_GAS_USED, p.BUYLISTING_GAS) * Math.min(p.basefeeGwei, s.keeperMaxBaseFee) * 1e-9 + s.keeperFee;
   }
-  // door two: buy a listing at its ask. the caller is paid the largest payment, at most the bid less the ask, and the payment is booked as spend with the cost.
+  // door two: buy a listing of a credit of `pts` points at its ask. the ceiling is the rate times the credit's score
+  // over refScore. the caller is paid the largest payment, at most the bid less the ask, booked as spend with the cost.
   // returns {cost, paid} or null
-  buyListing(ask, now) {
+  buyListing(ask, now, pts = this.s.refScore / 1e4) {
     this.checkpoint(now);
-    const ceil = this.ethRate(now) / W;
+    const ratio = this.scoreRatio(pts);
+    const ceil = (this.ethRate(now) / W) * ratio;
     if (ask > this.ethPot || ask > ceil) return null;
     const paid = Math.min(this.listingPayMax(), ceil - ask);
-    if (!this.spend(ask + paid, now)) return null;
+    if (!this.spend(ask + paid, now, ratio)) return null;
     return { cost: ask, paid };
   }
   // compose 80 credits (compose() and composeChosen() share this path). repays nothing: cost is the sum of their costs. returns the statement, held by the
@@ -459,7 +469,7 @@ export class Core {
   // the floor rate is the larger of the climbed price state and the decayed peak. points are in points here, refScore in ten-thousandths of a point, so refScore/1e4 is the
   // reference score in points and floorRate/W is the per-credit rate in eth. the pool term is 0 while the pool key or the module is unset or the unit reads 0
   valueOf(pts, now) {
-    const rateTerm = (this.floorRate(now) / W) * (pts / (this.cr.refScore / 1e4));
+    const rateTerm = (this.floorRate(now) / W) * (pts / (this.s.refScore / 1e4));
     return Math.max(rateTerm, this.poolTerm(pts));
   }
   poolTerm(pts) { return this.p.balancePoolSet && this.moduleSet && this.xpLive > 0 ? pts * this.xpLive * this.p.balancePoolMult : 0; }
@@ -554,7 +564,7 @@ export class Core {
   // the eth cost the Core records for a credit bought with the balance token: the floor rate times score / refScore (CoreLib.sellForBalance, at least 1 wei). the floor
   // rate is the larger of the climbed price state and the decayed peak. refScore is in ten-thousandths of a point, so refScore/1e4 is the reference score in points.
   // the cost basis reads the price state and the peak
-  balanceCostBasis(pts, now) { return (this.floorRate(now) / W) * (pts / (this.cr.refScore / 1e4)); }
+  balanceCostBasis(pts, now) { return (this.floorRate(now) / W) * (pts / (this.s.refScore / 1e4)); }
   // the credit sale floor: the largest of the credit's cost, the floor rate (eth per credit) and valueOf(score), times creditFloorBps (decision 115)
   creditFloor(cr, now) { return (Math.max(cr.cost, this.floorRate(now) / W, this.valueOf(cr.pts, now)) * this.cr.creditFloorBps) / BPS; }
   // ControllerV1.creditPrice: falls linearly from floor * creditStartBps to the floor over creditWindow from the acquisition time and rests at the floor
@@ -864,8 +874,11 @@ export function simulate(userParams = {}) {
       const listing = isStrat || it.listed;
       const ask = isStrat ? it.price : it.m * it.prem * Pe;
       const xPrice = isStrat ? 0 : it.pts * xPerPoint;
+      // the eth bid and the seller reservation both scale with the credit's score over refScore, so the buy decision is
+      // `need <= r` as under a flat bid; the eth the pot pays is the scaled per-credit cost `(r / W) * ratio`
+      const ethCost = (r / W) * core.scoreRatio(it.pts);
       const ethOk = need <= r, xOk = xPrice > 0 && ask * W <= xPrice * W;
-      const ethFits = ethOk && (listing ? Math.min(ask + core.listingPayMax(), r / W) <= afford : r / W <= afford);
+      const ethFits = ethOk && (listing ? Math.min(ask + core.listingPayMax(), ethCost) <= afford : ethCost <= afford);
       const xFits = xOk && xPrice <= xAfford;
       if (ethFits || xFits) return { i, need, ethFits, xFits, isStrat, it, ask, listing };
     }
@@ -907,7 +920,9 @@ export function simulate(userParams = {}) {
       if (inj) c = Object.assign(inj, { i: -1, need: r, ethFits: true, xFits: false, isStrat: false, it: { pts: 440, m: 1, prem: 1, listed: false }, ask: Pe, listing: false, thr: true });
       if (!c) { noteBind(); break; }
       const it = c.it, useS = c.isStrat;
-      let door = c.ethFits && c.xFits ? (r / W >= it.pts * xPerPoint ? 'eth' : 'x') : c.ethFits ? 'eth' : 'x';
+      // the eth bid for this credit is the rate times its score over refScore; the seller takes the door that pays more
+      const ethBid = (r / W) * core.scoreRatio(it.pts);
+      let door = c.ethFits && c.xFits ? (ethBid >= it.pts * xPerPoint ? 'eth' : 'x') : c.ethFits ? 'eth' : 'x';
       let cost = 0, paid = 0, viaListing = false, ok = false, xCost = 0;
       if (door === 'x') {
         // the balance token bid pays score * unitPerPoint less the margin for the credit. the credit enters the pile at an eth cost (FLOW 92, 93)
@@ -918,10 +933,10 @@ export function simulate(userParams = {}) {
       }
       if (door === 'eth') {
         if (c.listing) {
-          const res = core.buyListing(c.ask, now);
+          const res = core.buyListing(c.ask, now, it.pts);
           if (res) { cost = res.cost; paid = res.paid; ok = true; viaListing = true; }
         } else {
-          cost = core.sellForEth(now);
+          cost = core.sellForEth(now, it.pts);
           ok = cost > 0;
         }
       }

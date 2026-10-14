@@ -32,8 +32,12 @@ contract BidRuleTest is Fixture {
         _setSettings(s);
     }
 
+    /// sells one credit with `refScore` set to its score, so the eth bid pays the full rate (score / refScore is 1) and
+    /// the drop is exactly `dropPerCreditBps`. the per-point scaling of the bid and the drop is covered by the invariant
+    /// suite and test/PerPoint.t.sol
     function _sellOne() internal returns (uint256 price) {
         uint256 id = _credits(seller, 1)[0];
+        _refScoreToCredit(id);
         price = core.ethRate();
         vm.prank(seller);
         core.sellForEth(_one(id));
@@ -63,6 +67,8 @@ contract BidRuleTest is Fixture {
         uint256 r0 = core.ethRate();
         uint256[] memory ids = _credits(seller, 140);
         for (uint256 i; i < ids.length; ++i) {
+            // each credit drops the rate by the full dropPerCreditBps: refScore set to its score (score / refScore is 1)
+            _refScoreToCredit(ids[i]);
             vm.prank(seller);
             core.sellForEth(_one(ids[i]));
             if (i == 137) assertGt(core.rateAtCheckpoint(), r0 * 5_000 / 10_000, "138 fills are above the floor");
@@ -277,6 +283,8 @@ contract BidRuleTest is Fixture {
     function _forListing() internal returns (uint256 price) {
         _with(_openCeiling);
         _potTo(30 ether);
+        // refScore set to the listed credit's score, so its bid is the full rate and the fill drops the rate by dropPerCreditBps
+        _refScoreToCredit(LISTED_A);
         price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         _liftRateCap();
         _warpUntilCeiling(LISTED_A, price);

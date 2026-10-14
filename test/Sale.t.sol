@@ -753,6 +753,8 @@ contract SaleAnchorTest is SaleShapeBase {
                 vm.deal(attacker, attacker.balance + 1);
                 vm.prank(attacker);
                 core.fund{value: 1}();
+                // refScore set to this credit's score, so a 1 wei pot reads a 1 wei bid for it (score / refScore is 1)
+                _refScoreToCredit(ids[i]);
                 uint256[] memory one = new uint256[](1);
                 one[0] = ids[i];
                 vm.prank(attacker);
