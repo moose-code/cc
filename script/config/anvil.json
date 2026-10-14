@@ -42,7 +42,8 @@
     "callerMaxBaseFee": 0,
     "feeToRedeemBurnBps": 1000,
     "payeePpm": 75185,
-    "refScore": 4330000
+    "refScore": 4330000,
+    "swapFeeCc": 1000000000000000000
   },
   "sale": {
     "markupBps": 15000,

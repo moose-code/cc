@@ -66,6 +66,7 @@ interface ICore {
     error RedeemOff();
     error Reentrancy();
     error Retired();
+    error ScoreTooLow(uint256 inId, uint256 outId);
     error SliceTooSmall();
     error Slippage();
     error TooSoon();
@@ -90,6 +91,7 @@ interface ICore {
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event CreditCostToPotBpsSet(uint16 bps);
     event CreditSold(uint256 indexed id, address indexed buyer, uint256 price);
+    event CreditSwapped(uint256 indexed inId, uint256 indexed outId, address indexed caller, uint256 fee);
     event EngineRetired(address indexed successor);
     event EscrowCollected(uint256 amount);
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
@@ -208,6 +210,7 @@ interface ICore {
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     function successor() external view returns (address);
     function successorLocked() external view returns (bool);
+    function swapCredit(uint256 inId, uint256 outId) external;
     function transferOwnership(address to) external;
     function unlockCallback(bytes memory data) external returns (bytes memory);
 }

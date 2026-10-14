@@ -75,7 +75,7 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_ROLL = 6;
     uint8 internal constant A_COMPOSE = 7;
     uint8 internal constant A_BUYBACK = 8;
-    uint8 internal constant A_RESERVED_9 = 9; // was bookBalance, removed when the module took balance custody
+    uint8 internal constant A_SWAP_CREDIT = 9; // a holder swaps a pile credit for one of equal or higher score (was bookBalance)
     uint8 internal constant A_DONATE = 10;
     uint8 internal constant A_CONTROLLER_SEED = 11;
     uint8 internal constant A_CONTROLLER_SWAP = 12;
@@ -232,6 +232,8 @@ abstract contract HandlerBase is Test {
     uint256 public gSupply;
     uint256 public gDead;
     uint256 public gBurnedByBuyback;
+    /// coin burned by the swapCredit fee (`swapFeeCc` per swap)
+    uint256 public gBurnedBySwap;
     uint256 internal gSupplyLast;
     /// swaps and buybacks that ran while the anti sniper skim was above the baseline
     uint256 public windowSwaps;
@@ -314,7 +316,7 @@ abstract contract HandlerBase is Test {
             "roll",
             "compose",
             "buyback",
-            "reserved",
+            "swapCredit",
             "donate",
             "controllerSeed",
             "controllerSwap",
@@ -699,7 +701,7 @@ abstract contract HandlerBase is Test {
     }
 
     /// first slot of `State.anchor` in the Core (four words)
-    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(27));
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
 
     /// the bid anchor state of the core, read from its storage: the rate of the last fill, the rate of the first fill in
     /// the current minute bucket, and that bucket
@@ -2032,6 +2034,105 @@ abstract contract HandlerBase is Test {
         }
         if (phase2() && amtSeed % 3 == 0) _xt().mint(address(core), amt * 1000);
         _rsCheck(rs, 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                               SWAP CREDIT
+    //////////////////////////////////////////////////////////////*/
+
+    /// the sum of the scores of the credits in the pile, read from the chain
+    function _pileScore() internal view returns (uint256 sum) {
+        uint256[] memory ids = core.pilePage(0, core.pileSize());
+        for (uint256 i; i < ids.length; ++i) sum += _scoreOf(ids[i]);
+    }
+
+    /// the dedicated swapper and the credits it holds outside the pile. no other action spends them, so the swap always
+    /// has an incoming credit
+    address public swapper;
+    uint256[] internal swapperCredits;
+
+    function setSwapper(address who, uint256[] calldata ids) external {
+        swapper = who;
+        for (uint256 i; i < ids.length; ++i) swapperCredits.push(ids[i]);
+    }
+
+    /// the swapper swaps a pile credit for one it owns of equal or higher score, for the `swapFeeCc` coin fee it burns.
+    /// the swapper's highest score credit goes in for the pile's lowest score credit, so a payable pair is used when one
+    /// exists. the pile score must not fall, the incoming credit inherits the node and the outgoing one returns to the
+    /// swapper, and the fee burns the swapper's coin
+    function swapCredit(uint256, uint256 pick) external checked {
+        uint8 a = A_SWAP_CREDIT;
+        if (_retiredRefusal(a, swapper, abi.encodeCall(ICore.swapCredit, (1, 1)))) return;
+
+        // the incoming credit: the swapper's credit of the highest score
+        uint256 len = swapperCredits.length;
+        if (len == 0) return _skip(a);
+        uint256 inId;
+        uint256 inScore;
+        for (uint256 i; i < len; ++i) {
+            uint256 id = swapperCredits[(pick + i) % len];
+            uint256 sc = _scoreOf(id);
+            if (inId == 0 || sc > inScore) {
+                inId = id;
+                inScore = sc;
+            }
+        }
+        // the outgoing credit: the pile credit of the lowest score
+        uint256 outId;
+        uint256 outScore = type(uint256).max;
+        for (uint256 i; i < cgList.length; ++i) {
+            uint256 id = cgList[i];
+            if (!cg[id].inPile) continue;
+            uint256 sc = _scoreOf(id);
+            if (sc < outScore) {
+                outScore = sc;
+                outId = id;
+            }
+        }
+        if (outId == 0) return _skip(a);
+
+        uint256 fee = core.settings().swapFeeCc;
+        // the swapper burns the fee from coin it already holds, part of the launch supply
+        if (fee != 0 && coin.balanceOf(swapper) < fee) return _skip(a);
+
+        if (inScore < outScore) {
+            // the score rule refuses the swap and changes nothing
+            _att(a);
+            vm.prank(swapper);
+            try core.swapCredit(inId, outId) {
+                _flag(V_MODEL, "swapCredit took a lower score credit");
+            } catch (bytes memory why) {
+                if (bytes4(why) != ICore.ScoreTooLow.selector) _unexpected(a, why);
+            }
+            return;
+        }
+
+        if (fee != 0) {
+            vm.prank(swapper);
+            coin.approve(address(core), fee);
+        }
+        // the incoming credit inherits the outgoing one's cost basis, read from the chain
+        (, uint256 cost,) = core.creditInfo(outId);
+        uint256 before = _pileScore();
+        _att(a);
+        vm.prank(swapper);
+        try core.swapCredit(inId, outId) {
+            _ok(a);
+            // the pile score of the swap must not fall
+            if (_pileScore() < before) _flag(V_MODEL, "swapCredit lowered the pile score");
+            // the incoming credit inherits the outgoing one's node, the outgoing one returns to the swapper
+            cg[outId].inPile = false;
+            _addCredit(inId, cost);
+            _removeFrom(swapperCredits, inId);
+            swapperCredits.push(outId);
+            // the fee burned the swapper's coin
+            if (fee != 0) {
+                gSupply -= fee;
+                gBurnedBySwap += fee;
+            }
+        } catch (bytes memory why) {
+            _unexpected(a, why);
+        }
     }
 
     /*//////////////////////////////////////////////////////////////

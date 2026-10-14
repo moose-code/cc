@@ -193,6 +193,8 @@ abstract contract ConfigReader is CommonBase {
         s.feeToRedeemBurnBps = _u16(j, ".settings.feeToRedeemBurnBps");
         s.payeePpm = _u24(j, ".settings.payeePpm");
         s.refScore = _u32(j, ".settings.refScore");
+        // forge-lint: disable-next-line(unsafe-typecast)
+        s.swapFeeCc = uint96(_uint(j, ".settings.swapFeeCc", type(uint96).max));
     }
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {

@@ -131,10 +131,10 @@ uint256 constant BUYBACK_GAS = 600_000;
 uint256 constant BUYLISTING_GAS = 1_500_000;
 
 /// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`, bounds
-/// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into three storage slots
+/// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into four storage slots
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
 /// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields, fee
-/// split and `refScore`. docs/SPEC.md section 3 has the meaning of every field
+/// split and `refScore`, slot 3 `swapFeeCc`. docs/SPEC.md section 3 has the meaning of every field
 struct Settings {
     // slot 0
     /// fall of the eth rate per credit bought, bps of the rate before that credit
@@ -200,6 +200,9 @@ struct Settings {
     /// the per-credit score the eth bid divides by: every eth door pays `rate * score / refScore` per credit and the
     /// controller reads it for the point rate and the statement reference. ten-thousandths of a point, 1 to 8_000_000
     uint32 refScore;
+    // slot 3
+    /// coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, 0 to 1e24
+    uint96 swapFeeCc;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -332,7 +335,8 @@ library Mainnet {
             callerMaxBaseFee: 0,
             feeToRedeemBurnBps: 1_000,
             payeePpm: 75_185,
-            refScore: 4_330_000
+            refScore: 4_330_000,
+            swapFeeCc: 1e18
         });
     }
 

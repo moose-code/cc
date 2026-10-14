@@ -177,8 +177,13 @@ abstract contract InvariantFixture is Fixture {
         assertEq(address(core).balance, _tracked());
     }
 
+    /// how many of actor 0's credits are carved out for the dedicated swapper
+    uint256 internal constant SWAPPER_CREDITS = 6;
+
     /// four actors with credits, eth and coin, all approved for the core and the router. every approval and every
-    /// swap is real
+    /// swap is real. a dedicated swapper for the swapCredit action takes `SWAPPER_CREDITS` of actor 0's allocation, so no
+    /// other action ever spends them and the swap always has an incoming credit; it holds coin for the fuzzed fee. the
+    /// carve out keeps `creditCursor` where it was, clear of the listing candidates
     function _actors() internal {
         for (uint256 i; i < 4; ++i) {
             address a = _user(string.concat("inv.actor", vm.toString(i)));
@@ -186,8 +191,32 @@ abstract contract InvariantFixture is Fixture {
             vm.prank(a);
             coin.approve(address(router), type(uint256).max);
             _buyCoin(a, 2 ether);
+            uint256[] memory ids = _credits(a, ACTOR_CREDITS);
             handler.addActor(a);
-            handler.giveCredits(a, _credits(a, ACTOR_CREDITS));
+            if (i != 0) {
+                handler.giveCredits(a, ids);
+                continue;
+            }
+            address sw = _user("inv.swapper");
+            vm.deal(sw, 100 ether);
+            vm.prank(sw);
+            coin.approve(address(router), type(uint256).max);
+            _buyCoin(sw, 20 ether);
+            uint256[] memory swIds = new uint256[](SWAPPER_CREDITS);
+            uint256[] memory keep = new uint256[](ACTOR_CREDITS - SWAPPER_CREDITS);
+            for (uint256 j; j < ACTOR_CREDITS; ++j) {
+                if (j < SWAPPER_CREDITS) {
+                    vm.prank(a);
+                    CREDITS.transferFrom(a, sw, ids[j]);
+                    swIds[j] = ids[j];
+                } else {
+                    keep[j - SWAPPER_CREDITS] = ids[j];
+                }
+            }
+            vm.prank(sw);
+            CREDITS.setApprovalForAll(address(core), true);
+            handler.giveCredits(a, keep);
+            handler.setSwapper(sw, swIds);
         }
     }
 

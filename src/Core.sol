@@ -125,6 +125,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error NoSuccessor();
     /// `sellForEth`, `buyListing`, `sellForBalance`, `adopt`, `compose` or `composeChosen` after `migrate`
     error Retired();
+    /// `swapCredit`: the incoming credit's score is below the pile credit's score
+    error ScoreTooLow(uint256 inId, uint256 outId);
     /// `setSuccessor` with the core or a contract the core works with
     error BadSuccessor(address who);
 
@@ -174,6 +176,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event SuccessorLocked();
     /// `adopt` put a credit the core held without a record into the pile at cost basis `cost`
     event CreditAdopted(uint256 indexed id, uint256 cost);
+    /// `swapCredit` replaced pile credit `outId` with `inId` of equal or higher score for `fee` coin burned
+    event CreditSwapped(uint256 indexed inId, uint256 indexed outId, address indexed caller, uint256 fee);
     /// `migrate` moved eth and credits to the successor
     event Migrated(address indexed successor, uint256 eth, uint256 credits);
     /// the first `migrate` set `retired`
@@ -1140,6 +1144,46 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function adopt(uint256[] calldata) external nonReentrant {
         _openDoor();
         _toLib();
+    }
+
+    /// swaps pile credit `outId` for `inId` of equal or higher score, for a `swapFeeCc` coin fee the caller burns.
+    /// anyone may call while not paused and not retired. `outId` must be in the pile, `inId` owned by the caller and not
+    /// in a pile, and `score(inId) >= score(outId)` (`ScoreTooLow`), with the score read the way the eth doors read it.
+    /// `inId` takes `outId`'s pile node: the same position in the order, the same cost basis and acquisition time, so the
+    /// pile size and the credit sale window state of the slot are unchanged. the fee burns the caller's coin through
+    /// `burnFrom`, which the restricted coin allows without the Core holding or receiving the coin; a zero fee burns
+    /// nothing. the incoming credit is pulled in before the outgoing one is sent out
+    function swapCredit(uint256 inId, uint256 outId) external nonReentrant {
+        if (s.retired) revert Retired();
+        if (s.paused) revert Paused();
+        if (inId == 0) revert ZeroId();
+        CoreLib.Credit storage out = s.credits[outId];
+        if (!out.inPile) revert NotInPile(outId);
+        if (s.credits[inId].inPile) revert InPile();
+        if (CREDITS.ownerOf(inId) != msg.sender) revert NotOwner();
+        if (_scoreOf(inId) < _scoreOf(outId)) revert ScoreTooLow(inId, outId);
+
+        uint256 fee = s.settings.swapFeeCc;
+        if (fee != 0) ICoin(COIN).burnFrom(msg.sender, fee);
+
+        // `inId` inherits `outId`'s node: same neighbours, cost and acquisition time; the pile size does not change
+        uint256 prev = out.prev;
+        uint256 next = out.next;
+        CoreLib.Credit storage inC = s.credits[inId];
+        inC.cost = out.cost;
+        inC.prev = prev;
+        inC.next = next;
+        inC.acquiredAt = out.acquiredAt;
+        inC.inPile = true;
+        if (prev == 0) s.pile.head = inId;
+        else s.credits[prev].next = inId;
+        if (next == 0) s.pile.tail = inId;
+        else s.credits[next].prev = inId;
+        delete s.credits[outId];
+
+        CREDITS.transferFrom(msg.sender, address(this), inId);
+        CREDITS.transferFrom(address(this), msg.sender, outId);
+        emit CreditSwapped(inId, outId, msg.sender, fee);
     }
 
     /// removes an approved adapter at once.

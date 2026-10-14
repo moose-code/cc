@@ -72,13 +72,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0xa0c9f5658e7691ecf3fce70a9cd281da0ce853d8c14bbd1215ddbce61dd03006;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0xe9f39a47aa7c42de19b3aefb1143622e802fe751d04c6535c461be5f6f99d1a1;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x4d4aad46d5e47e9266a6ccdaa73024787bf031d45e152d955766e5398bda6575;
+    bytes32 internal constant BUILD_HASH_CORE = 0xaff2af5e691f3462f232ee6d0dc15b74a7aa3b0a112c2972a31c9418bd2d53a1;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x36a999490ffc10805e9ce5e738951314f236c560d7606161d56705fe37997e66;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xaf64404782c2d2a11e9a71b945d313f96542150f7a30a8f773cca21a0dcee64b;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x7aabfd1bee2dd7d76dc3b2650a701ddc7c31705b7e61edc65217631d2880dd20;
+        0x17737708a8b9bc236fc0503effeea377a91db3d088b4200a9aacb8045e121a18;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -835,6 +835,10 @@ abstract contract LaunchChecks is PostflightChecks {
         _info(
             "signoff: statement sale",
             string.concat("saleFloorBps ", vm.toString(c.settings.saleFloorBps))
+        );
+        _info(
+            "signoff: credit swap",
+            string.concat("swapFeeCc ", vm.toString(c.settings.swapFeeCc), " coin burned per swapCredit")
         );
         _info(
             "signoff: balance side",

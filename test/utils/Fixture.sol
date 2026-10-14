@@ -477,7 +477,7 @@ abstract contract Fixture is Test, ProdDeployer {
     }
 
     /// first slot of `State.anchor` in the Core (four words)
-    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(27));
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
 
     /// @notice the bid anchor state of the Core, read from its storage: the rate of the last fill, the rate of the first fill
     /// in the current minute bucket and that bucket
@@ -543,6 +543,13 @@ abstract contract Fixture is Test, ProdDeployer {
     function _setRefScore(uint32 v) internal {
         Settings memory s = core.settings();
         s.refScore = v;
+        _setSettings(s);
+    }
+
+    /// @notice the owner sets the Core setting `swapFeeCc` through `setSettings`, the other settings unchanged
+    function _setSwapFeeCc(uint96 v) internal {
+        Settings memory s = core.settings();
+        s.swapFeeCc = v;
         _setSettings(s);
     }
 

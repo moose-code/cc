@@ -287,6 +287,34 @@ contract GasCapTest is SeaportBase {
         _row("buyback (swaps, burns), cold", g, abi.encodeCall(core.buyback, ()));
     }
 
+    // promise: SPEC 1 swapCredit gas, a pile credit swapped for one of higher score with the fee burned, cold
+    function test_gas_swapCredit() public {
+        uint256[] memory two = _credits(taker, 2);
+        (uint256 outId, uint256 inId) =
+            _scoreOf(two[0]) <= _scoreOf(two[1]) ? (two[0], two[1]) : (two[1], two[0]);
+        // the outgoing credit goes into the pile through a full rate sell
+        _liftRateCap();
+        _fundPot(5 ether);
+        _warp(1 hours + 1);
+        _refScoreToCredit(outId);
+        vm.prank(taker);
+        core.sellForEth(_one(outId));
+        // a representative nonzero fee the caller burns, and the coin and approval for it
+        _setSwapFeeCc(1e18);
+        _buyCoin(taker, 1 ether);
+        vm.prank(taker);
+        coin.approve(address(core), 1e18);
+
+        bytes memory data = abi.encodeCall(core.swapCredit, (inId, outId));
+        _cool(address(core));
+        vm.prank(taker);
+        uint256 g = gasleft();
+        core.swapCredit(inId, outId);
+        g -= gasleft();
+        assertEq(CREDITS.ownerOf(inId), address(core), "the incoming credit is in the pile");
+        _row("swapCredit, one pile credit for one of higher score, fee burned, cold", g, data);
+    }
+
     // ------------------------------------------------------------------ statements: sellTo
 
     function _cost(uint256 sid) internal view returns (uint256 c) {

@@ -182,9 +182,10 @@ abstract contract InvariantsBase is InvariantFixture {
         assertTrue(known, "the installed controller is not tracked");
     }
 
-    /// 9. coin total supply never increases, and it falls by exactly the coin the eth buyback bought and burned.
-    /// coin taxed to the burn address is a transfer, not a burn: 0xdEaD holds it and the supply does not move. the
-    /// handler keeps a ghost of the expected supply and the burn total from the token's own transfer events.
+    /// 9. coin total supply never increases, and it falls by exactly the coin the eth buyback bought and burned plus the
+    /// coin the swapCredit fee burned. coin taxed to the burn address is a transfer, not a burn: 0xdEaD holds it and the
+    /// supply does not move. the handler keeps a ghost of the expected supply and the burn total from the token's own
+    /// transfer events.
     function invariant_09_coinSupplyOnlyFallsByBurns() public view {
         _zero(g9);
         uint256 launchSupply = 1_000_000_000e18;
@@ -193,8 +194,8 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(supply, handler.gSupply(), "coin supply differs from the ghost of expected supply");
         assertEq(
             launchSupply - supply,
-            handler.gBurnedByBuyback(),
-            "supply fell by something other than buyback burns"
+            handler.gBurnedByBuyback() + handler.gBurnedBySwap(),
+            "supply fell by something other than buyback and swap burns"
         );
         assertGe(coin.balanceOf(Mainnet.DEAD), handler.gDead(), "the burn address lost coin");
         assertEq(coin.balanceOf(Mainnet.DEAD), handler.gDead(), "the burn address holds coin nothing sent it");
@@ -551,7 +552,7 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 6) handler.roll(w);
         else if (a == 7) handler.compose(w, x);
         else if (a == 8) handler.buyback(w);
-        else if (a == 9) {} // bookBalance removed when the module took balance custody; the slot stays reserved
+        else if (a == 9) handler.swapCredit(w, x);
         else if (a == 10) handler.donate(w, x);
         else if (a == 11) handler.controllerSeed(w);
         else if (a == 12) handler.controllerSwap(w);
@@ -628,8 +629,8 @@ abstract contract InvariantsBase is InvariantFixture {
         }
         assertTrue(handler.gRetired(), "the handler never migrated");
         assertTrue(core.retired(), "the core is not retired");
-        // sellForEth, listingStrategy, listingHostile, compose, adopt, composeChosen, then sellForBalance in the balance side
-        uint8[7] memory doors = [2, 3, 4, 7, 33, 39, 14];
+        // sellForEth, listingStrategy, listingHostile, compose, adopt, composeChosen, swapCredit, then sellForBalance in the balance side
+        uint8[8] memory doors = [2, 3, 4, 7, 33, 39, 9, 14];
         for (uint256 k; k < doors.length; ++k) {
             if (!_available(doors[k])) continue;
             assertTrue(_try(doors[k], 40), string.concat("no refusal checked: ", handler.actionName(doors[k])));
@@ -648,8 +649,6 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     function _available(uint256 a) internal view returns (bool) {
-        // action 9 (bookBalance) was removed when the module took balance custody; the slot stays reserved, never run
-        if (a == 9) return false;
         // pause and composeChosen are exercised by their own tests, not by test_everyActionSucceeds (a chosen compose
         // needs a fresh page of 80 pile credits, which its own test builds)
         if (a == 34 || a == 39) return false;
@@ -681,7 +680,6 @@ abstract contract InvariantsBase is InvariantFixture {
         assertTrue(_try(17, 20), "no taxed side pool buy");
         _try(5, 5);
         _try(6, 5);
-        _try(9, 5);
         _try(10, 5);
         _try(11, 5);
         _try(13, 5);
@@ -698,7 +696,12 @@ abstract contract InvariantsBase is InvariantFixture {
         wide.ceilBps = 30_000;
         wide.idleLoosenBps = 2_000;
         wide.rateCap = 1e17;
+        // a fee free swap, so the smoke success needs only a credit pair; the fuzz campaign drives the fee from the
+        // settings action and the swap handler models the burn
+        wide.swapFeeCc = 0;
         handler.setSettingsExact(wide);
+        // a holder swaps a pile credit for one it owns of equal or higher score
+        assertTrue(_try(9, 80), "no credit swap");
         // the real listings need the ceiling to clear the price, so warp until one passes
         for (uint256 i; i < 12 && !_try(3, 20); ++i) {
             handler.warp(uint256(keccak256(abi.encode("w", i))) / 10 * 10 + 1);

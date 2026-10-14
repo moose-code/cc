@@ -76,7 +76,7 @@ struct State {
     /// true once the payee share runs. set by the first `_book` with income at or after `launchedAt + SNIPER_SECONDS`,
     /// which shares nothing. one way
     bool payeeOn;
-    /// the economic settings, three packed slots
+    /// the economic settings, four packed slots
     Settings settings;
     /// the bid anchor state, four words
     CoreLib.Anchor anchor;

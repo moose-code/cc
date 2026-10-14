@@ -38,6 +38,7 @@ library SettingsBounds {
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         if (s.payeePpm > 200_000) return "payeePpm";
         if (s.refScore == 0 || s.refScore > 8_000_000) return "refScore";
+        if (s.swapFeeCc > 1e24) return "swapFeeCc";
         return bytes32(0);
     }
 
