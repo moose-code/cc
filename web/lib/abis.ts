@@ -18,6 +18,7 @@ export const coreAbi = parseAbi([
   "function ethRedeemBurn() view returns (uint256)",
   "function balancePot() view returns (uint256)",
   "function payeeOwed() view returns (uint256)",
+  "function payeeOn() view returns (bool)",
   "function pileSize() view returns (uint256)",
   "function pilePage(uint256 startAfter, uint256 n) view returns (uint256[] ids)",
   "function creditInfo(uint256 id) view returns (bool inPile, uint256 cost, uint64 acquiredAt)",

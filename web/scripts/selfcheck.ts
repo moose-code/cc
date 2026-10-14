@@ -1,19 +1,36 @@
-// Runnable check for the sell estimate. No chain needed.
+// Runnable check for the sell replays. No chain needed.
 //   npm run check
 import assert from "node:assert/strict";
-import { estimateSell } from "../lib/sell.ts";
+import { replayBalance, replayEth, type EthReplay } from "../lib/sell.ts";
 
-const s = { ethRate: 1000n, ethPrice: 1000n, ethPot: 10_000n, dropPerCreditBps: 50, dropFloorBps: 5000 };
+const a: EthReplay = {
+  price: 1000n,
+  peak: 1000n,
+  pot: 10_000n,
+  start: 0n,
+  bucket: 0n,
+  nowBucket: 7n,
+  dropPerCreditBps: 50n,
+  dropFloorBps: 5000n,
+  ceilBps: 10000n,
+  rateCap: 10n ** 18n,
+};
 
-assert.equal(estimateSell(0, s), 0n);
-assert.equal(estimateSell(1, s), 1000n);
-// the second credit pays the rate after one 0.5% drop
-assert.equal(estimateSell(2, s), 1000n + 995n);
+assert.equal(replayEth(0, a), 0n);
+assert.equal(replayEth(1, a), 1000n);
+// the second credit pays the state after one 0.5% drop
+assert.equal(replayEth(2, a), 1000n + 995n);
 // the pot bounds the total
-assert.equal(estimateSell(50, { ...s, ethPot: 2500n }), 2500n);
-// the rate never falls under dropFloorBps of the first fill
-assert.ok(estimateSell(200, { ...s, ethPot: 10n ** 9n }) >= 500n * 200n);
-// an ethRate above ethPot (unbooked fees) lifts the pot to the rate
-assert.equal(estimateSell(1, { ...s, ethPot: 400n, ethRate: 1000n }), 1000n);
+assert.equal(replayEth(50, { ...a, pot: 2500n }), 2500n);
+// the state never falls under dropFloorBps of the minute's first fill
+assert.ok(replayEth(200, { ...a, pot: 10n ** 9n }) >= 500n * 200n);
+// a fill earlier in the same minute holds the floor at that minute's start
+assert.equal(replayEth(2, { ...a, bucket: 7n, start: 1000n, dropFloorBps: 9990n }), 1000n + 999n);
+// the ceiling caps the state after a fill
+assert.equal(replayEth(2, { ...a, ceilBps: 9000n }), 1000n + 900n);
+// the rate cap bounds the state after a fill
+assert.equal(replayEth(2, { ...a, rateCap: 800n }), 1000n + 800n);
+// balance: score * unit less the margin, per credit
+assert.equal(replayBalance([3n, 5n], 1000n, 100n), 2970n + 4950n);
 
 console.log("selfcheck ok");

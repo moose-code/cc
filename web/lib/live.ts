@@ -7,9 +7,10 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
-import { zeroAddress, type Address } from "viem";
-import { core, engineDeployed } from "./config";
+import { numberToHex, parseAbi, zeroAddress, type Address } from "viem";
+import { core, credits, engineDeployed } from "./config";
 import { controllerAbi, coreAbi } from "./abis";
+import { replayBalance, replayEth } from "./sell";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
@@ -304,6 +305,95 @@ export function useStatements() {
     },
   });
   return { ...q, data: q.data ?? [] };
+}
+
+// ---- sell quotes ----------------------------------------------------------------
+
+// State.anchor starts at slot 28 (test/CoreLayout.t.sol, src/lib/CoreLib.sol):
+// lastFillRate, minuteStartRate, minuteBucket (uint64) + peakTime, peakRate.
+const ANCHOR_SLOT = 28n;
+const CREDIT_SCORE = "0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7" as const;
+const scoreAbi = parseAbi(["function scoreOf(bytes21 seed, uint64 paidAt) view returns (uint256)"]);
+const multicallAbi = parseAbi(["function getEthBalance(address a) view returns (uint256)"]);
+const moduleAbi = parseAbi(["function unitPerPoint() view returns (uint256)"]);
+const seedAbi = parseAbi(["function seedOf(uint256 id) view returns (bytes21)", "function timestampOf(uint256 id) view returns (uint64)"]);
+
+// Eth Core.sellForEth pays for n credits sold in one call at chain time `now`
+// (CoreLib.drop and CoreLib.climb replayed in sell.ts). Reads ethPrice,
+// floorRate, the pot with the unbooked fee share the first book adds (Core._book,
+// _split), the settings and the minute anchor.
+export async function sellQuote(client: Client, n: number, now: number): Promise<bigint> {
+  const c = { address: core!, abi: coreAbi } as const;
+  const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ANCHOR_SLOT + i, { size: 32 }) });
+  const [[price, peak, ethPot, toBuyback, redeemBurn, owed, payeeOn, st, held], startWord, bucketWord] = await Promise.all([
+    client.multicall({
+      ...mc,
+      allowFailure: false,
+      contracts: [
+        { ...c, functionName: "ethPrice" },
+        { ...c, functionName: "floorRate" },
+        { ...c, functionName: "ethPot" },
+        { ...c, functionName: "ethToBuyback" },
+        { ...c, functionName: "ethRedeemBurn" },
+        { ...c, functionName: "payeeOwed" },
+        { ...c, functionName: "payeeOn" },
+        { ...c, functionName: "settings" },
+        { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [core!] },
+      ] as const,
+    }),
+    word(1n),
+    word(2n),
+  ]);
+  const booked = ethPot + toBuyback + redeemBurn + owed;
+  const income = held > booked ? held - booked : 0n;
+  const toPayee = payeeOn ? (income * BigInt(st.payeePpm)) / 1_000_000n : 0n;
+  const toRedeemBurn = ((income - toPayee) * BigInt(st.feeToRedeemBurnBps)) / 10000n;
+  return replayEth(n, {
+    price,
+    peak,
+    pot: ethPot + income - toPayee - toRedeemBurn,
+    start: BigInt(startWord ?? "0x0"),
+    bucket: BigInt(bucketWord ?? "0x0") & ((1n << 64n) - 1n),
+    nowBucket: BigInt(Math.floor(now / 60)),
+    dropPerCreditBps: BigInt(st.dropPerCreditBps),
+    dropFloorBps: BigInt(st.dropFloorBps),
+    ceilBps: BigInt(st.ceilBps),
+    rateCap: BigInt(st.rateCap),
+  });
+}
+
+// sellQuote for n credits, refreshed with the chain clock's minute.
+export function useSellQuote(n: number, now: number) {
+  const client = usePublicClient();
+  const minute = Math.floor(now / 60);
+  return useQuery<bigint | undefined>({
+    queryKey: ["sell-quote", n, minute],
+    enabled: engineDeployed && Boolean(client) && n > 0,
+    refetchInterval: 15000,
+    queryFn: () => sellQuote(client!, n, now),
+  });
+}
+
+// Balance token Core.sellForBalance pays for the credits `ids`: each credit's
+// score from the credit score contract times the module's unitPerPoint, less the margin.
+export async function balanceQuote(client: Client, ids: bigint[], module: Address, marginBps: number): Promise<bigint> {
+  const seeds = await client.multicall({
+    ...mc,
+    allowFailure: false,
+    contracts: ids.flatMap((id) => [
+      { address: credits, abi: seedAbi, functionName: "seedOf", args: [id] },
+      { address: credits, abi: seedAbi, functionName: "timestampOf", args: [id] },
+    ] as const),
+  });
+  const [unit, scores] = await Promise.all([
+    client.readContract({ address: module, abi: moduleAbi, functionName: "unitPerPoint" }),
+    client.multicall({
+      ...mc,
+      allowFailure: false,
+      contracts: ids.map((_, i) => ({ address: CREDIT_SCORE, abi: scoreAbi, functionName: "scoreOf", args: [seeds[2 * i] as `0x${string}`, seeds[2 * i + 1] as bigint] }) as const),
+    }),
+  ]);
+  return replayBalance([...scores], unit, BigInt(marginBps));
 }
 
 // ---- helpers --------------------------------------------------------------------

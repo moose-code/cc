@@ -11,7 +11,7 @@ import { countdown, useNow, usePile, useSnapshot } from "@/lib/live";
 import { useScan, type CreditEvt } from "@/lib/engine";
 import { agoLabel, eth } from "@/lib/format";
 
-const BUFFER_BPS = 100n; // value above the summed gross prices; the controller refunds the excess
+const BUFFER_BPS = 200n; // value above the summed gross prices; the controller refunds the excess
 
 // The engine's pile of credits. While the credit sale is on, each pile credit
 // has a falling price (controller.creditPrice, plus the royalty) and can be bought.

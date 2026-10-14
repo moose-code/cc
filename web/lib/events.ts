@@ -6,7 +6,7 @@ import { eth } from "./format";
 
 export const BALANCE_SYMBOL = "$BALANCE";
 
-export type FeedKind = "credit" | "composed" | "sold" | "redeemed" | "engine";
+export type FeedKind = "credit" | "composed" | "sold" | "redeemed";
 
 export interface FeedEvent {
   key: string;
@@ -254,26 +254,12 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         break;
       }
 
-      // ---- the engine itself -------------------------------------------------
+      // ---- engine events that feed the stats --------------------------------
       case "Buyback":
         stats.buybacks++;
-        row({ kind: "engine", label: "buyback", detail: `· keeper ${eth(a.paid)} eth · called by`, eth: eth(a.amountIn), addr: a.caller });
         break;
       case "FeesAdded":
         stats.feesBooked += Number(formatUnits(a.amount, 18));
-        row({ kind: "engine", label: "fees booked", detail: "", eth: eth(a.amount) });
-        break;
-      case "Funded":
-        row({ kind: "engine", label: "pot funded", detail: "funded by", eth: eth(a.amount), addr: a.from });
-        break;
-      case "RoyaltyClaimed":
-        row({ kind: "engine", label: "royalty claimed", detail: "paid to", eth: eth(a.amount), addr: a.to });
-        break;
-      case "PausedSet":
-        row({ kind: "engine", label: a.paused ? "sales paused" : "sales resumed", detail: "" });
-        break;
-      case "SettingsSet":
-        row({ kind: "engine", label: "settings set", detail: "the owner set the settings" });
         break;
     }
   }

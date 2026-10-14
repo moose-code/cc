@@ -20,7 +20,6 @@ const CHIP_COLOR: Record<FeedKind, string> = {
   composed: "var(--composed)",
   sold: "var(--sold)",
   redeemed: "var(--redeemed)",
-  engine: "var(--engine)",
 };
 
 const PAGE = 100; // rows per page of the feed
@@ -31,7 +30,7 @@ export function EngineFeed() {
   const now = useNow();
   const [limit, setLimit] = useState(PAGE);
 
-  const ready = Math.min(STATEMENT_SIZE, Number(snap?.pileSize ?? 0n));
+  const ready = Number((snap?.pileSize ?? 0n) % BigInt(STATEMENT_SIZE)); // credits in the pile toward the next statement
   const stmtPct = (ready / STATEMENT_SIZE) * 100;
 
   if (!engineDeployed)

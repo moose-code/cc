@@ -8,13 +8,12 @@ import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
 import { core, credits, engineDeployed } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
-import { useSnapshot } from "@/lib/live";
-import { estimateSell } from "@/lib/sell";
+import { balanceQuote, sellQuote, useNow, useSellQuote, useSnapshot } from "@/lib/live";
 import { BALANCE_SYMBOL } from "@/lib/events";
 import { commas, eth } from "@/lib/format";
 import type { Write } from "@/lib/tx";
 
-const MIN_OUT_BPS = 9800n; // 2% under the batch estimate, which can sit above the contract's total (lib/sell.ts)
+const MIN_OUT_BPS = 9950n; // 0.5% under the batch total quoted at click time
 
 // Holders sell their credits (the external Credits NFT) into the engine:
 // Credits.setApprovalForAll(Core, true) once, then Core.sellForEth(ids, minOut),
@@ -30,9 +29,9 @@ export default function SellPage() {
   const pot = snap?.ethPot ?? 0n;
   const buyableNow = bid > 0n ? Number(pot / bid) : 0;
   const balanceBid = Boolean(snap?.balanceOn && snap.settings.balanceBidOn);
-  const total = snap
-    ? estimateSell(selected.size, { ...snap, dropPerCreditBps: snap.settings.dropPerCreditBps, dropFloorBps: snap.settings.dropFloorBps })
-    : 0n;
+  const now = useNow(5000);
+  const quote = useSellQuote(selected.size, now);
+  const total = quote.data ?? bid * BigInt(selected.size);
 
   const { data: held } = useReadContract({
     address: credits,
@@ -149,7 +148,10 @@ export default function SellPage() {
                 disabled={n === 0 || !snap}
                 steps={async (write) => {
                   await approve(write);
-                  await write({ address: core, abi: coreAbi, functionName: "sellForEth", args: [ids(), (total * MIN_OUT_BPS) / 10000n] });
+                  // the bid drops with each credit sold in one call: minOut is a share of the whole batch's total,
+                  // replayed from the contract's rate loop
+                  const expected = await sellQuote(client!, n, now);
+                  await write({ address: core, abi: coreAbi, functionName: "sellForEth", args: [ids(), (expected * MIN_OUT_BPS) / 10000n] });
                   setSelected(new Set());
                 }}
               />
@@ -161,16 +163,16 @@ export default function SellPage() {
                     disabled={n === 0}
                     steps={async (write) => {
                       await approve(write);
-                      // the payout is score times the module unit; minOut 1 only refuses an empty payout
-                      await write({ address: core, abi: coreAbi, functionName: "sellForBalance", args: [ids(), 1n] });
+                      const expected = await balanceQuote(client!, ids(), snap!.balanceModule, snap!.settings.balanceBidMarginBps);
+                      await write({ address: core, abi: coreAbi, functionName: "sellForBalance", args: [ids(), (expected * MIN_OUT_BPS) / 10000n] });
                       setSelected(new Set());
                     }}
                   />
                 </>
               )}
               <p className="muted small">
-                the first sale approves the collection to the engine. the eth bid drops with each credit sold in one call; the amount shown is an
-                estimate and the sale reverts if it pays under 98% of it.
+                the first sale approves the collection to the engine. the eth bid drops with each credit sold in one call; the amount shown is the
+                batch total at the current rates and the sale reverts if it pays under 99.5% of it.
                 {balanceBid && ` the ${BALANCE_SYMBOL} bid pays by credit score.`}
               </p>
             </>

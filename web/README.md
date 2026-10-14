@@ -31,7 +31,7 @@ npm run dev                  # or npm run build && npm start
 The controller, coin and balance module are read from the Core. Without
 `NEXT_PUBLIC_CORE` the engine pages show "engine not deployed". Wallets connect
 through RainbowKit. `npm run check` runs `scripts/selfcheck.ts` (the sell
-estimate) and `scripts/v4-selfcheck.ts` (the swap encoders). `npm run build`
+replays) and `scripts/v4-selfcheck.ts` (the swap encoders). `npm run build`
 type checks.
 
 ## pages and actions
@@ -50,7 +50,7 @@ with the engine price and the royalty as the breakdown. The balance side
 | `/compose` | `nextPage`, `pileSize`, `chosenComposeOn`, `minCcToChoose` | `core.compose()`, `core.compose(format)`, `core.composeChosen(ids, format)` while `chosenComposeOn` |
 | `/statements`, `/statements/[id]` | `heldStatements`, `statementInfo`, `statementAge`, `ratingOf`, `composerOf`, `priceOf`, `grossPriceOf`, `referenceOf`, `atFloor`, `valueOf` | `controller.buy(sid)` at the gross price, `core.setHeldFormat(sid, format)`, `core.redeemStatement(sid)` when `redeemOn` and `atFloor` |
 
-`sellForEth` sends `minOut` at 98% of an estimate of the batch total
-(`lib/sell.ts`). `sellForBalance` sends `minOut` 1: the payout is score times the
-module unit and the app does not read scores. A sweep of a listing
+`sellForEth` and `sellForBalance` send `minOut` at 99.5% of the batch total,
+replayed from the Core's per-credit rules at click time (`lib/sell.ts`, read by
+`sellQuote` and `balanceQuote` in `lib/live.ts`). A sweep of a listing
 (`buyListing`) is a keeper action and has no page.
