@@ -183,39 +183,51 @@ a.fw-box:hover {
   stroke: var(--muted2);
   stroke-width: 1;
 }
-/* fourth column: one box, two halves (list, redeem) divided by a horizontal rule */
-.fw-split {
+/* fourth column: one box, two halves (list, redeem) side by side on a vertical rule with an "or" marker */
+.fw-row > .fw-split {
+  flex: 1.5;
+  position: relative;
+  flex-direction: row;
   padding: 0;
   gap: 0;
 }
 .fw-half {
   flex: 1;
-  min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  padding: 0.4rem 0.8rem;
+  gap: 0.3rem;
+  padding: 0.6rem 0.8rem;
   color: var(--fg);
 }
-.fw-half + .fw-half {
-  border-top: 1px solid var(--line);
+.fw-half + .fw-or + .fw-half {
+  border-left: 1px solid var(--line);
 }
 a.fw-half:hover {
   background: var(--rowhover);
   text-decoration: none;
 }
-.fw-head {
-  display: flex;
-  justify-content: space-between;
-  column-gap: 0.4rem;
+.fw-half .fw-line {
+  font-size: 0.72rem;
 }
 .fw-half .fw-num {
-  margin-top: 0;
-  font-size: 0.7rem;
+  font-size: 0.72rem;
+}
+.fw-or {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0.15rem 0;
+  background: var(--bg);
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.72rem;
+  pointer-events: none;
 }
 /* in the row the regular boxes set the height; the split box takes it and does not contribute */
 @media (min-width: 861px) {
-  .fw-split {
+  .fw-row > .fw-split {
     contain: size;
   }
   .fw-half {
@@ -223,11 +235,11 @@ a.fw-half:hover {
   }
 }
 /* loop arrow from burn back to trade (box centers at half a box width from each end;
-   a box is one fifth of the row less the four 28px connectors) */
+   the row is 5.5 box widths less the four 28px connectors, the split box counting 1.5) */
 .fw-loop {
   position: relative;
   height: 14px;
-  margin: 0 calc(1.5rem + (100% - 3rem - 112px) / 10) 0.9rem;
+  margin: 0 calc(1.5rem + (100% - 3rem - 112px) / 11) 0.9rem;
   border: 1px solid var(--muted2);
   border-top: 0;
 }

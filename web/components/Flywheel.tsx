@@ -50,12 +50,9 @@ function Box({ t, half }: { t: Step; half?: boolean }) {
           {ICONS[t.icon]}
         </svg>
       )}
-      <span className={half ? "fw-head" : "fw-label"}>
-        {half ? <span className="fw-label">{t.label}</span> : t.label}
-        {half && <span className="fw-num">{t.num ?? "later"}</span>}
-      </span>
+      <span className="fw-label">{t.label}</span>
       <span className="fw-line">{t.line}</span>
-      {!half && <span className="fw-num">{t.num ?? "later"}</span>}
+      <span className="fw-num">{t.num ?? "later"}</span>
     </>
   );
   const cls = `${half ? "fw-half" : "fw-box"}${t.later ? " fw-later" : ""}`;
@@ -74,7 +71,7 @@ function Box({ t, half }: { t: Step; half?: boolean }) {
 }
 
 // The steps of the engine, each with a live number, under the header of the home page.
-// After compose a statement is either listed or redeemed (one split box); both feed the buyback that burns cc.
+// After compose a statement is either listed or redeemed (one box, two halves joined by "or"); both feed the buyback that burns cc.
 export function Flywheel() {
   const { data: s } = useStats();
   const { data: snap } = useSnapshot();
@@ -137,6 +134,9 @@ export function Flywheel() {
           <Arrow />
           <div className="fw-box fw-split" role="group" aria-label="list or redeem">
             <Box t={list} half />
+            <span className="fw-or" aria-hidden>
+              or
+            </span>
             <Box t={redeem} half />
           </div>
           <Arrow />
