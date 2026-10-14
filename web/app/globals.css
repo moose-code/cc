@@ -123,18 +123,18 @@ a:hover {
 .flywheel {
   order: -1;
   border-bottom: 1px solid var(--line);
-  overflow-x: auto;
-}
-.fw-inner {
-  min-width: 960px;
 }
 .fw-row {
   display: flex;
   align-items: stretch;
   padding: 0.9rem 1.5rem 0;
 }
-.fw-box {
+.fw-row > .fw-box,
+.fw-branches {
   flex: 1;
+  min-width: 0;
+}
+.fw-box {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -160,7 +160,8 @@ a.fw-box:hover {
 .fw-label {
   font-weight: 700;
 }
-.fw-line {
+.fw-line,
+.fw-end {
   color: var(--muted);
   font-size: 0.78rem;
 }
@@ -168,6 +169,13 @@ a.fw-box:hover {
   margin-top: auto;
   font-weight: 600;
   font-size: 0.82rem;
+}
+.fw-later {
+  opacity: 0.55;
+}
+.fw-later .fw-num {
+  font-weight: 400;
+  color: var(--muted);
 }
 .fw-arrow {
   flex: none;
@@ -177,11 +185,68 @@ a.fw-box:hover {
   stroke: var(--muted2);
   stroke-width: 1;
 }
-/* loop arrow from box 5 back to box 1 (box centers at 10% and 90%) */
+/* the two branches after compose */
+.fw-branches {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.fw-branches > .fw-box {
+  flex: 1;
+}
+.fw-fork {
+  flex: none;
+  width: 28px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.fw-fork svg {
+  flex: 1;
+  width: 28px;
+  min-height: 0;
+  fill: none;
+  stroke: var(--muted2);
+  stroke-width: 1;
+}
+.fw-fork .fw-stub {
+  position: absolute;
+  top: calc(50% - 4px);
+  left: 0;
+  flex: none;
+  height: 8px;
+}
+.fw-fork .fw-single {
+  display: none;
+}
+/* trunk joining the two branches, at x=10 (out) or x=18 (in) */
+.fw-fork::before {
+  content: "";
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  border-left: 1px solid var(--muted2);
+}
+.fw-fork-out::before {
+  left: 10px;
+}
+.fw-fork-in::before {
+  left: 18px;
+}
+.fw-fork-out::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 10px;
+  border-top: 1px solid var(--muted2);
+}
+/* loop arrow from burn back to trade (box centers at half a box width from each end;
+   a box is one fifth of the row less the four 28px connectors) */
 .fw-loop {
   position: relative;
   height: 14px;
-  margin: 0 calc(1.5rem + 9.5%) 0.9rem;
+  margin: 0 calc(1.5rem + (100% - 3rem - 112px) / 10) 0.9rem;
   border: 1px solid var(--muted2);
   border-top: 0;
 }
@@ -193,6 +258,55 @@ a.fw-box:hover {
   border: 4.5px solid transparent;
   border-bottom: 7px solid var(--muted2);
   border-top: 0;
+}
+.fw-back {
+  display: none;
+}
+@media (max-width: 860px) {
+  .fw-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .fw-arrow,
+  .fw-fork .fw-single {
+    display: block;
+    align-self: center;
+    width: 28px;
+    height: 8px;
+    flex: none;
+    margin: 12px 0;
+    transform: rotate(90deg);
+  }
+  .fw-fork {
+    width: auto;
+    align-items: center;
+  }
+  .fw-fork svg:not(.fw-single),
+  .fw-fork::before,
+  .fw-fork::after {
+    display: none;
+  }
+  .fw-branches {
+    flex-direction: row;
+  }
+  .fw-branches > .fw-box {
+    flex: 1;
+  }
+  .fw-loop {
+    display: none;
+  }
+  .fw-back {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 1.5rem 0.9rem;
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+  .fw-back .fw-arrow {
+    margin: 0;
+    transform: rotate(-90deg);
+  }
 }
 
 /* ---- body split ----------------------------------------------------------- */
