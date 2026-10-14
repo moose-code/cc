@@ -17,7 +17,8 @@ one multicall over these views answers everything a seller, a buyer or a keeper 
 
 | view | answers |
 |---|---|
-| `core.ethRate()` | the bid per credit now, with the unbooked fees counted into the pot |
+| `core.ethRate()` | the bid for a credit of score `refScore` now, with the unbooked fees counted into the pot |
+| `core.bidOf(id)` | the bid for credit `id` now: `ethRate()` times its score over `refScore`, the number a seller or keeper uses |
 | `core.ethPrice()`, `core.floorRate()` | the price state before the pot clamp; the rate under every price floor |
 | `core.ethPot()`, `core.ethToBuyback()`, `core.ethRedeemBurn()`, `core.balancePot()`, `core.payeeOwed()` | the pots |
 | `core.pileSize()`, `core.pilePage(startAfter, n)`, `core.creditInfo(id)` | the pile, oldest first, with cost and acquisition time |
@@ -30,9 +31,9 @@ one multicall over these views answers everything a seller, a buyer or a keeper 
 
 ## 3. selling credits for eth
 
-1. read `core.ethRate()` and `core.ethPot()`.
+1. read `core.bidOf(id)` for each credit (or `core.ethRate()` and scale by `score / refScore`) and `core.ethPot()`.
 2. `credits.setApprovalForAll(core, true)` once.
-3. `core.sellForEth(ids, minOut)` with `minOut` a little under `rate * ids.length` (each credit drops the rate 0.5 percent for the next). the eth arrives in the same call. a batch whose total passes the pot reverts whole (`ZeroAmount` or `PotTooSmall`); up to about 115 credits fit under the gas cap.
+3. `core.sellForEth(ids, minOut)` pays `core.bidOf(id)` = `ethRate() * score / refScore` per credit; set `minOut` a little under the sum of `bidOf` over the ids (each credit drops the rate by `dropPerCreditBps * score / refScore` for the next). the eth arrives in the same call. a batch whose total passes the pot reverts whole (`ZeroAmount` or `PotTooSmall`); up to about 91 credits fit under the gas cap (each credit reads its score).
 
 reverts: `Empty`, `ZeroId`, `NotOwner`, `ZeroAmount`, `PotTooSmall`, `Slippage`, `Retired`. event `CreditBought(id, from, cost)` per credit, `EthRateFill(spent, rate, pot)` per fill.
 
@@ -71,7 +72,7 @@ fees reach the Core from the pool's hook on every swap and are booked at the nex
 
 ## 9. the balance side
 
-off at launch (`redeemOn`, `balanceBidOn` false, no module). once on: `core.redeemStatement(sid)` for a held statement with `controller.atFloor(sid)` true; `core.sellForBalance(ids, minOut)` pays balance token per credit by score. reverts `NoBalanceModule`, `RedeemOff`, `BalanceBidOff`, `NotHeld`, `NotEligible`, `Underpaid`, `BadModule`, `BadQuote`, `PotTooSmall`, `Slippage`, `Retired`. events `StatementRedeemed(sid, received)`, `CreditBought(id, from, cost)`.
+off at launch (`redeemOn`, `balanceBidOn` false, no module). once on: `core.redeemStatement(sid)` for a held statement with `controller.atFloor(sid)` true; `core.sellForBalance(ids, minOut)` pays balance token per credit by score. reverts `NoBalanceModule`, `BalanceBidOff`, `Empty`, `BadModule`, `ZeroAmount`, `PotTooSmall`, `Slippage`, `Retired`. events `StatementRedeemed(sid, received)`, `CreditBought(id, from, cost)`.
 
 ## 10. adopt, migrate, rescue
 
@@ -83,4 +84,4 @@ off at launch (`redeemOn`, `balanceBidOn` false, no module). once on: `core.rede
 
 ## 12. gas
 
-measured by test/GasCap.t.sol at the candidate, execution gas of one call, cold: `compose` about 8.5 million after refunds (10.6 million before), `buyListing` through the Seaport adapter about 480,000 and through the strategy adapter about 470,000, `buyback` about 270,000, `redeemStatement` under 1,500,000 with a real module, `sellForEth` about 315,000 for one credit and about 115 credits at the 16,777,216 transaction cap. the bounded reads: `nextPage` 500,000, `atFloor` 400,000, the adapter quote 300,000, the module unit 200,000 in the Core and 50,000 in the controller.
+measured by test/GasCap.t.sol at the candidate, execution gas of one call, cold: `compose` about 8.5 million after refunds (10.6 million before), `buyListing` through the Seaport adapter about 480,000 and through the strategy adapter about 470,000, `buyback` about 270,000, `redeemStatement` under 1,500,000 with a real module, `sellForEth` about 400,000 for one credit and about 91 credits at the 16,777,216 transaction cap (per point, each credit reads its score). the bounded reads: `nextPage` 500,000, `atFloor` 400,000, the adapter quote 300,000, the module unit 200,000 in the Core and 50,000 in the controller.

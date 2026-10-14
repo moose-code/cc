@@ -4,7 +4,7 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
-decisions 1 to 115 are settled (docs/DECISIONS.md; section 11 is the product agreement of 2026-10-13). the simplification plan of docs/reviews/SIMPLIFICATION-v1.md ran on branch `simplify/v1` on 2026-10-13: every packet is merged; an independent Opus review of 63e011c found two highs (docs/reviews/REVIEW-security-opus-63e011c.md), fixed in 43c9f94 (decision 115); the local end to end on anvil and the web app (packets 12a to 12c) are merged; the candidate is c8b42d6 (section 4). the system is three contracts plus two adapters, deployed by nine CREATE2 transactions, with 445 tests that each name their promise. `main` holds the system before the plan; the owner decides the merge.
+decisions 1 to 116 are settled (docs/DECISIONS.md; section 11 is the product agreement of 2026-10-13). decision 116 (2026-10-14) makes the eth bid per point (`ethRate() * score / refScore` per credit, the drop scaled, `refScore` the 25th Core setting, a `bidOf` view); it is built on branch `points/v1` and re-opens the freeze (section 4): the full suite, the deep invariant and fuzz runs, the rehearsal and a review must run again on the new candidate. the simplification plan of docs/reviews/SIMPLIFICATION-v1.md ran on branch `simplify/v1` on 2026-10-13: every packet is merged; an independent Opus review of 63e011c found two highs (docs/reviews/REVIEW-security-opus-63e011c.md), fixed in 43c9f94 (decision 115); the local end to end on anvil and the web app (packets 12a to 12c) are merged; the candidate is c8b42d6 (section 4). the system is three contracts plus two adapters, deployed by nine CREATE2 transactions, with 445 tests that each name their promise. `main` holds the system before the plan; the owner decides the merge.
 
 measured on the branch tip against `main` (lines without the generated interfaces):
 
@@ -17,7 +17,7 @@ measured on the branch tip against `main` (lines without the generated interface
 | contracts | 5 | 3 plus 2 adapters |
 | deploy transactions | 10 | 9 |
 
-runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, ControllerV1 13,129, SeaportBasicAdapter 2,558, CreditStrategyAdapter 508.
+runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, ControllerV1 13,129, SeaportBasicAdapter 2,558, CreditStrategyAdapter 508. after decision 116 (branch `points/v1`): Core 22,300, CoreLib 14,945, ControllerV1 13,138, adapters unchanged.
 
 ## 2. the plan
 

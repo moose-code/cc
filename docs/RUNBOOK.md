@@ -18,7 +18,7 @@ the launch, the owner commands after it, and what to do when something stops hal
 
 | step | action | command or note |
 |---|---|---|
-| 1 | local config | `cp script/config/mainnet.json script/config/local.json` (gitignored). fill `image` (at most 2048 bytes, with a scheme) and `description` (at most 4096 bytes). set `rateStart` to the market price of one credit on launch day in wei and `rateCap` to 3 times it (preflight checks the ratio). set `credit.royaltyRecipient` to the artist's address (the tracked file holds the owner as a placeholder). review every value against docs/SPEC.md section 3 |
+| 1 | local config | `cp script/config/mainnet.json script/config/local.json` (gitignored). fill `image` (at most 2048 bytes, with a scheme) and `description` (at most 4096 bytes). set `rateStart` to the market price on launch day of a credit of score `settings.refScore` (4,330,000, the launch average) in wei and `rateCap` to 3 times it (preflight checks the ratio). set `credit.royaltyRecipient` to the artist's address (the tracked file holds the owner as a placeholder). review every value against docs/SPEC.md section 3 |
 | 2 | rehearse | `REHEARSAL=1 LAUNCH_CONFIG=script/config/local.json forge test --match-path test/Rehearsal.t.sol -vv`: a fork of the latest block, the owner command, the whole deploy, postflight and a trading smoke. it prints the gas of each transaction and the eth the owner needs at 1, 5 and 20 gwei. the addresses it prints are the CREATE2 addresses the launch will use |
 | 3 | owner command on the factory | the factory's minimum protocol skim share is 1,000 and the launch needs at most 362: `cast send $FACTORY "setMinProtocolSkimShareBps(uint16)" 362 --rpc-url $MAINNET_RPC_URL --ledger`, confirm with `cast call $FACTORY "minProtocolSkimShareBps()(uint16)"`. after step 6, set it back to 1,000 in its own transaction |
 | 4 | preflight and sign off | `DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json forge script script/Preflight.s.sol --rpc-url $MAINNET_RPC_URL \| grep -E '^ +(WARN\|FAIL\|[0-9]+ of\|CONFIG_HASH\|signoff)'`. 116 rows, every one ok (WARN rows never fail). read the `signoff:` rows. `export CONFIG_HASH=0x...` from the printed value |
@@ -39,9 +39,9 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 
 | block | rows |
 |---|---|
-| the bid | `rateStart` (market price of a credit, wei), `rateCap` (3 times it), the nine bid settings |
+| the bid | `rateStart` (market price on launch day of a credit of score `refScore`, wei), `rateCap` (3 times it), `refScore` 4,330,000 (the launch average credit score), the nine bid settings |
 | the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 5,000, the `Sale` struct (markup 15,000, cap 100,000, fast 100, knee 10,000, slow 25, anchor half life 604,800, anchor min cost 0.1 eth) |
-| the credit side | `creditCostToPotBps` 10,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` false, `window` 14,400, `floorBps` 11,000, `startBps` 30,000, `refScore` 4,330,000, `royaltyBps` 250, `royaltyRecipient` |
+| the credit side | `creditCostToPotBps` 10,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` false, `window` 14,400, `floorBps` 11,000, `startBps` 30,000, `royaltyBps` 250, `royaltyRecipient` (`refScore` is a bid setting above) |
 | the balance side | `redeemOn` false, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 2,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
 | the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0005 eth, `keeperMaxBaseFee` 10 gwei, `callerFee` 0, `callerMaxBaseFee` 0 |
 | the payee | `payee` the owner, `payeePpm` 75,185 (0.5 points of volume) |

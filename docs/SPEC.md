@@ -12,14 +12,14 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
-| guarantee | while the engine has not migrated and the market price is at or below `rateCap`, a credit priced at the bid that the pot covers can always be sold to it | 42, 48 |
+| guarantee | while the engine has not migrated and the market price is at or below `rateCap`, a credit whose bid (`ethRate() * score / refScore`) the pot covers can always be sold to it | 42, 48, 116 |
 | guarantee | eth, credits and the balance token leave the Core only through its doors at their rules or through `migrate` to the successor; coin leaves through `rescueCoin`, untracked NFTs other than Credits through `rescueNft`; no function sends them to the owner | 8, 28, 32, 33 |
 | guarantee | a statement leaves the Core by a `sellTo` sale at or above `saleFloorBps` of its cost, read at the sale, or by a redemption that returns at least its rating times the module's unit less `redeemSlippageBps` | 56, 68, 84, 105 |
 | guarantee | the four locks (controller, balance module, adapters, successor) are one way | 9.6, 10.2 |
-| guarantee | the engine pays at most its bid for a credit, keeper payment included | 71, 100 |
+| guarantee | the engine pays at most `ethRate() * score / refScore` for a credit, keeper payment included | 71, 100, 116 |
 | guarantee | fees reach the pot at the next door with no keeper; the payee is paid its share of fee income only, and nothing during the anti sniper window | 26, 109 |
 | behavior | the engine never stops buying because statements are unsold | 2 |
-| behavior | the eth bid is flat per credit; the bid rule and its ten settings are as built | 55, 80, 103 |
+| behavior | the eth bid is per point: a credit is paid `ethRate() * score / refScore` and a fill drops the rate by `dropPerCreditBps * score / refScore`; the bid rule and its settings are as built | 103, 116 |
 | behavior | `buyListing` buys only a listing an approved adapter priced; the gap between the listing and the bid stays in the pot | 100 |
 | behavior | statements sell on a falling curve from `markupBps` of the anchor down to `saleFloorBps` of the reference; the anchor moves up with sales and down with time | 62, 64, 65, 70, 105 |
 | behavior | the price reference of a statement is `max(cost, valueOf(rating))`; a credit's sale floor is `max(cost, floorRate, valueOf(score)) * creditFloorBps`; a balance bought credit costs `score * pointRate` | 104, 115 |
@@ -31,7 +31,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 | behavior | the owner pauses sales; a pause holds every statement's age | 81, 97 |
 | behavior | the first `migrate` retires the engine, which keeps selling and redeeming its statements and burning its buyback pot | 33, 48, 52 |
 | parameter | every economic number is an owner setting, effective at once, no timelock | 3, 15 |
-| parameter | `rateCap` 3 times the opening bid; the opening bid is the market price of a credit on launch day | 46, 60, 69 |
+| parameter | `rateCap` 3 times the opening bid; the opening bid is the market price on launch day of a credit of score `refScore`; `refScore` is a Core setting (the launch average credit score) | 46, 60, 69, 116 |
 | parameter | payee 0.5 points of volume to the owner (75,185 ppm of the engine's inflow), protocol 0.25 points, engine the rest | 31, 112 |
 | parameter | buyback slice 0.5 eth, at most 1 eth | 51 |
 | risk | a market above `rateCap` stops buying until the owner raises it | 49 |
@@ -81,29 +81,31 @@ one `Settings` struct in Core storage, `setSettings(Settings)` owner only and ef
 | `callerMaxBaseFee` | 0 | 0 to 100 gwei | base fee ceiling of those refunds; 0 pays no gas |
 | `feeToRedeemBurnBps` | 1,000 | 0 to 10,000 | share of fee income to the redeem burn reserve, the rest to the pot |
 | `payeePpm` | 75,185 | 0 to 200,000 | share of fee income to the payee claim, parts per million |
+| `refScore` | 4,330,000 | 1 to 8,000,000 | the per-credit score the eth bid divides by: a credit of score `s` is paid `ethRate() * s / refScore`. the controller reads it for the point rate and the statement reference |
 
 three standalone Core settings, each with its own setter and event: `creditCostToPotBps` (10,000; 0 to 10,000; share of a sold credit's cost booked to the pot, the rest of the payment to the buyback), `chosenComposeOn` (false), `minCcToChoose` (1e18 base units, one coin; the least CC balance of a caller of `composeChosen` and `setHeldFormat`, read at the call).
 
-the controller's settings, each struct set at once by the Core's owner: `Sale` (`markupBps` 15,000, 10,000 to 40,000 and at most `startCapBps`; `startCapBps` 100,000, at least `markupBps` and `kneeBps`, at most 200,000; `fastDecayBpsPerHour` 100, 1 to 10,000; `kneeBps` 10,000, 1,000 to `startCapBps`; `slowDecayBpsPerHour` 25, 1 to 10,000; `anchorHalfLife` 7 days, 1 to 90 days; `anchorMinCost` 0.1 ether, 0 to 10 ether) through `setSale`, and `CreditSale` (`saleOn` false; `window` 14,400 s, 1 minute to 30 days; `floorBps` 11,000, 10,000 to 40,000; `startBps` 30,000, 10,000 to 200,000; `refScore` 4,330,000, 1 to 8,000,000; `royaltyBps` 250, 0 to 1,000; `royaltyRecipient`, never zero) through `setCredit`. `setAnchorBps` (10,000 to `startCapBps`) and `setBalancePoolKey` are actions.
+the controller's settings, each struct set at once by the Core's owner: `Sale` (`markupBps` 15,000, 10,000 to 40,000 and at most `startCapBps`; `startCapBps` 100,000, at least `markupBps` and `kneeBps`, at most 200,000; `fastDecayBpsPerHour` 100, 1 to 10,000; `kneeBps` 10,000, 1,000 to `startCapBps`; `slowDecayBpsPerHour` 25, 1 to 10,000; `anchorHalfLife` 7 days, 1 to 90 days; `anchorMinCost` 0.1 ether, 0 to 10 ether) through `setSale`, and `CreditSale` (`saleOn` false; `window` 14,400 s, 1 minute to 30 days; `floorBps` 11,000, 10,000 to 40,000; `startBps` 30,000, 10,000 to 200,000; `royaltyBps` 250, 0 to 1,000; `royaltyRecipient`, never zero) through `setCredit`. `setAnchorBps` (10,000 to `startCapBps`) and `setBalancePoolKey` are actions.
 
 fixed inside the pool at launch and not adjustable: skim 6.9 points of volume, 96.38 percent of it to the engine as bounty recipient and 3.62 percent to the protocol, anti sniper skim 90 points falling to the baseline over 30 minutes, lp fee 0.
 
 ## 4. the bid
 
-the rate is wei per credit, the same for every credit; the eth doors read no score. `ethRate()` is the read: the price state lowered to the pot, where the pot is `ethPot` plus the pot share of unbooked fee income. the doors book first, then read the bid of the booked pot.
+the rate is wei for a credit of score `refScore`. `ethRate()` is the read: the price state lowered to the pot, where the pot is `ethPot` plus the pot share of unbooked fee income. a credit of score `s` is paid `ethRate() * s / refScore`; `bidOf(id)` is that number for one credit. the eth doors read the score from the CreditScore contract (`scoreOf(seedOf, timestampOf)`, the same source the balance side reads), 800,000 to 8,000,000, never 0. `refScore` is a Core setting, 1 to 8,000,000, 4,330,000 at launch (the mean score over the first 2,000 credits within 0.015 percent). the doors book first, then read the bid of the booked pot.
 
 | rule | as built |
 |---|---|
-| opening | `rateStart`, the market price of one credit on launch day in wei (8.9e15 at the pin), in [1e13, 1e18] and at most `rateCap` |
+| opening | `rateStart`, the market price on launch day of a credit of score `refScore` in wei (8.9e15 at the pin), in [1e13, 1e18] and at most `rateCap` |
+| per credit | a credit of score `s` is paid `ethRate() * s / refScore` (`bidOf(id)`); `buyListing` caps the quote at it; `adopt` records `ethPrice() * s / refScore`, at least 1 wei |
 | price state | the stored rate climbed per minute since its checkpoint: `recoveryClimbPerMinBps` below the recovery level, `climbPerMinBps` at or above it, compounded, continuous at the crossing, up to `min(ceiling, rateCap, pot)`; a price state above that bound holds its value |
 | peak | the highest recent fill rate, halved every `peakHalfLife` since the last fill or `setRate`; every fill sets it to `max(fill rate, peak now)` |
 | ceiling | `ceilBps` of `max(last fill rate, peak now)` grown by `idleLoosenBps` per full 10 minutes since the last fill |
 | clamp | the read is at most the pot. a sale whose running total passes the pot reverts whole |
-| drop | each credit bought at price state `p` sets it to `p * (10,000 - dropPerCreditBps) / 10,000`, at least `dropFloorBps` of the price state at the minute's first fill |
+| drop | a credit of score `s` bought at price state `p` sets it to `p * (10,000 - dropPerCreditBps * s / refScore) / 10,000` (the fall bounded at 10,000), at least `dropFloorBps` of the price state at the minute's first fill. the drop tracks the eth spent |
 | floor rate | `max(price state, peak now)`: the rate under every price floor of the engine (`floorRate()`) |
 | reset | `setRate(rate)` restates the stored rate, the last fill rate and the peak |
 
-the pile: one insertion ordered doubly linked list of credit ids, oldest first, with cost basis and acquisition time per credit. every credit enters the pile through `sellForEth` (cost the price paid), `buyListing` (cost the quote plus the keeper payment), `sellForBalance` (cost `score * pointRate`) or `adopt` (cost the price state).
+the pile: one insertion ordered doubly linked list of credit ids, oldest first, with cost basis and acquisition time per credit. every credit enters the pile through `sellForEth` (cost the per-credit bid paid), `buyListing` (cost the quote plus the keeper payment, at most the per-credit bid), `sellForBalance` (cost `floorRate * score / refScore`) or `adopt` (cost `ethPrice * score / refScore`).
 
 ## 5. fee intake
 
@@ -117,10 +119,10 @@ per 100 eth of volume at launch values: 0.25 eth to the protocol, 6.65 eth to th
 
 | door | rule |
 |---|---|
-| `sellForEth(ids)`, `(ids, minOut)` | pays the bid per credit from the pot, one checkpoint and one drop per credit, the credit into the pile at that cost. `minOut` floors the total. up to about 115 credits fit under the transaction gas cap |
-| `buyListing(adapter, id, params)` | the adapter must be approved; its `price(id, params)` is read by staticcall (300,000 gas, 8,192 bytes); the target passes the forbidden list; `value` is at most the bid and the pot; the Core must not own `id` before and must own it after with its balance up one; the balance may fall by at most `value`. the caller is paid `min(counted gas, 1,500,000) * min(basefee, keeperMaxBaseFee) + keeperFee`, at most `bid - value`. cost basis `value + payment` |
-| `sellForBalance(ids)`, `(ids, minOut)` | requires `balanceBidOn` and a module; pays `score * unit * (10,000 - balanceBidMarginBps) / 10,000` in balance token per credit from `balancePot`, the unit read from the module in the call; cost basis `score * pointRate`, at least 1 wei |
-| `adopt(ids)` | puts credits the Core holds without a record into the pile at the price state, at least 1 wei |
+| `sellForEth(ids)`, `(ids, minOut)` | pays `bidOf(id)` = `ethRate() * score / refScore` per credit from the pot, one checkpoint and one score-scaled drop per credit, the credit into the pile at that cost. `minOut` floors the total. up to about 91 credits fit under the transaction gas cap |
+| `buyListing(adapter, id, params)` | the adapter must be approved; its `price(id, params)` is read by staticcall (300,000 gas, 8,192 bytes); the target passes the forbidden list; `value` is at most `bidOf(id)` and the pot; the Core must not own `id` before and must own it after with its balance up one; the balance may fall by at most `value`. the caller is paid `min(counted gas, 1,500,000) * min(basefee, keeperMaxBaseFee) + keeperFee`, at most `bidOf(id) - value`. cost basis `value + payment` |
+| `sellForBalance(ids)`, `(ids, minOut)` | requires `balanceBidOn` and a module; pays `score * unit * (10,000 - balanceBidMarginBps) / 10,000` in balance token per credit from `balancePot`, the unit read from the module in the call; cost basis `floorRate * score / refScore`, at least 1 wei |
+| `adopt(ids)` | puts credits the Core holds without a record into the pile at `ethPrice * score / refScore`, at least 1 wei |
 
 the first `migrate` retires the engine: these four doors and both composes revert `Retired`. forbidden targets, checked for adapters and their targets: Credits, Statements, the Core, the coin, the hook, the pool manager, the factory, the locker, the escrow, Permit2, the position manager, the universal router, the balance module and token.
 
@@ -225,5 +227,5 @@ invariants 15 (the fee router) and 20 (the lens) are retired with their subjects
 | 13 | a restyle can front run a purchase; the buyer restyles after the sale. the `minCcToChoose` gate is a balance read at the call |
 | 14 | the payee latch: fees that arrive between the end of the sniper window and the first `book()` are not shared; the owner calls `book()` at the window's end |
 | 15 | a tip in a Seaport order to the offerer or an allowlisted recipient raises the engine's payment up to the bid, the price `sellForEth` pays |
-| 16 | mainnet caps a transaction at 16,777,216 gas; `compose` uses about 8.5 million after refunds and a `sellForEth` batch stops at about 115 credits |
+| 16 | mainnet caps a transaction at 16,777,216 gas; `compose` uses about 8.5 million after refunds and a `sellForEth` batch stops at about 91 credits (per point, each credit reads its score) |
 | 17 | the engine launches on AI run reviews (docs/reviews/) with no human audit |
