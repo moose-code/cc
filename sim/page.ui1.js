@@ -28,7 +28,7 @@ const CHG = {
 };
 // every control: key in the state object, how to show it. launch values are the Core's (script/config/mainnet.json)
 const BASE_STATE = { volPreset: 'comparable', volScale: 1, volTail: 17, volHalfLifeDays: 3, buyShareLate: 'auto', pricePath: 'flat', priceP0: 0.0089, wtpMult: 1, stmtPerDay: 8, buyerWaits: 'no', impactElast: 0.12,
-  openPct: 100, markupBps: 15000, startCapBps: 100000, fastBpsH: 100, kneeBps: 10000, slowBpsH: 25, saleFloorBps: 10000, saleToBuybackBps: 5000, feeToRedeemBurnBps: 1000, royaltyBps: 250, anchorHalfLifeDays: 7, anchorMinCost: 0.1, dropPerCreditPct: 0.5, dropToPct: 50, climbPerMin: 0.5, ceilPct: 110, idleLoosenPct: 2, recoveryClimbPerMin: 2, recoveryGapPct: 10, peakHalfLifeHours: 6, rateCap: 26700000000000000,
+  openPct: 100, markupBps: 15000, startCapBps: 100000, decayHours: 12, saleFloorBps: 10000, saleToBuybackBps: 5000, feeToRedeemBurnBps: 1000, royaltyBps: 250, anchorHalfLifeDays: 7, anchorMinCost: 0.1, dropPerCreditPct: 0.5, dropToPct: 50, climbPerMin: 0.5, ceilPct: 110, idleLoosenPct: 2, recoveryClimbPerMin: 2, recoveryGapPct: 10, peakHalfLifeHours: 6, rateCap: 26700000000000000,
   basefeeGwei: 1, keeperFee: 0.0005, keeperMaxBaseFee: 10,
   pauseOn: false, pauseDay: 20, pauseDays: 7,
   creditSaleOn: false, creditWindowHours: 4, creditFloorBps: 11000, creditStartBps: 30000, creditCostToPotBps: 10000, creditBuyersPerDay: 40, creditWtpMult: 1, refScore: 4330000, chosenComposeOn: false, composeChoice: 'oldest', balancePoolMult: 1,
@@ -54,9 +54,7 @@ const GROUPS = [
   { title: 'selling statements', open: true, ctl: [
     { k: 'markupBps', t: 'range', label: 'start price over the anchor (markupBps)', min: 10000, max: 40000, step: 500, fmt: (v) => v / 100 + '%', hint: 'asking price when a statement is listed, as a share of the anchor, the running level of sale prices in percent of the price reference (100% at launch, each sale moves it halfway to the price paid, never below 100%)' },
     { k: 'startCapBps', t: 'range', label: 'cap on the start price (startCapBps)', min: 15000, max: 200000, step: 5000, fmt: (v) => v / 100 + '%', hint: 'the start price never passes this share of the price reference, whatever the anchor' },
-    { k: 'fastBpsH', t: 'range', label: 'fast fall, bps of the reference an hour (fastDecayBpsPerHour)', min: 10, max: 2000, log: true, fmt: (v) => Math.round(v), hint: 'asking price walk:', hintFn: (s) => walkText(s) },
-    { k: 'kneeBps', t: 'range', label: 'knee, where the fast fall ends (kneeBps)', min: 2000, max: 100000, step: 500, fmt: (v) => v / 100 + '%', hint: 'a start at or below the knee falls at the slow rate from the first second' },
-    { k: 'slowBpsH', t: 'range', label: 'slow fall, bps of the reference an hour (slowDecayBpsPerHour)', min: 5, max: 1000, log: true, fmt: (v) => Math.round(v), hint: 'the rate below the knee, down to the floor' },
+    { k: 'decayHours', t: 'range', label: 'hours for the asking price to fall to the floor (decayHours)', min: 1, max: 720, step: 1, fmt: (v) => Math.round(v) + 'h', hint: 'asking price walk:', hintFn: (s) => walkText(s) },
     { k: 'saleFloorBps', t: 'range', label: 'floor of the asking price, set in the Core (saleFloorBps)', min: 1000, max: 12000, step: 500, fmt: (v) => v / 100 + '%', hint: 'the price falls to here, in percent of the price reference, and stops. the Core takes no sale under this share of cost either. launch 10000: unsold statements sit at their reference, and redeem once redeemOn allows' },
     { k: 'saleToBuybackBps', t: 'range', label: 'saleToBuybackBps, sale proceeds to burn $CC', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of sale proceeds that buys and burns $CC, the rest goes to the pot' },
     { k: 'feeToRedeemBurnBps', t: 'range', label: 'feeToRedeemBurnBps, fee share to the redeem burn reserve', min: 0, max: 10000, step: 500, fmt: (v) => v, hint: 'share of $CC swap fee eth held back for redemptions. each redemption of a held statement moves redeemBurnBps of the reserve to buy and burn $CC. launch 1000. the rest goes to the pot' },
@@ -120,13 +118,9 @@ const GROUPS = [
 ];
 // the asking price walk in plain words: where it starts at the launch anchor, where it stops and when it gets there
 function walkText(s) {
-  const fast = Math.round(s.fastBpsH), slow = Math.round(s.slowBpsH), knee = s.kneeBps;
   const floor = s.saleFloorBps, top = Math.max(Math.min(s.markupBps, s.startCapBps), floor);
-  const hrs = (x) => (+x).toFixed(x < 10 ? 1 : 0) + 'h';
   const head = (top / 100) + '% of the reference at listing (anchor 100%), ';
-  if (floor >= knee) return head + (floor / 100) + '% at hour ' + hrs(Math.max(0, top - floor) / fast);
-  const tKnee = Math.max(0, top - knee) / fast;
-  return head + (top > knee ? (knee / 100) + '% at hour ' + hrs(tKnee) + ', ' : '') + (floor / 100) + '% at hour ' + hrs(tKnee + (Math.min(top, knee) - floor) / slow);
+  return head + 'falling in a straight line to ' + (floor / 100) + '% at hour ' + Math.round(s.decayHours) + ', then resting there';
 }
 const rateOf = (s) => (s.openPct / 100) * (s.priceP0 * 1e18);
 let state = Object.assign({}, BASE_STATE);
@@ -194,7 +188,7 @@ function toParams(s) {
   const p = {
     volPreset: s.volPreset, volScale: s.volScale, volTail: s.volTail, volHalfLifeDays: s.volHalfLifeDays, buyShareLate: s.buyShareLate === 'auto' ? null : +s.buyShareLate,
     pricePath: s.pricePath, priceP0: s.priceP0, wtpMult: s.wtpMult, stmtPerDay: s.stmtPerDay, impactElast: s.impactElast, rateStart: rateOf(s),
-    markupBps: s.markupBps, startCapBps: Math.max(s.startCapBps, s.markupBps), fastDecayBpsPerHour: Math.round(s.fastBpsH), kneeBps: Math.min(Math.max(s.kneeBps, 1000), Math.max(s.startCapBps, s.markupBps)), slowDecayBpsPerHour: Math.round(s.slowBpsH), saleFloorBps: s.saleFloorBps,
+    markupBps: s.markupBps, startCapBps: Math.max(s.startCapBps, s.markupBps), decayHours: Math.round(s.decayHours), saleFloorBps: s.saleFloorBps,
     basefeeGwei: s.basefeeGwei, keeperFee: s.keeperFee, keeperMaxBaseFee: s.keeperMaxBaseFee,
     buyerWaits: s.buyerWaits, feeToRedeemBurnBps: s.feeToRedeemBurnBps, saleToBuybackBps: s.saleToBuybackBps, royaltyBps: s.royaltyBps,
     anchorHalfLife: Math.round(s.anchorHalfLifeDays * 86400), anchorMinCost: s.anchorMinCost,

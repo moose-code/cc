@@ -26,7 +26,7 @@ interface ICoreOwner {
 /// * `SETTINGS_PATCH`, a json object as text or the path of a json file, for example `{"saleFloorBps":8000}`
 /// `SET_RATE=<wei per credit>` also prepares `setRate`.
 /// with `CONTROLLER=0x...` the same `SET_<field>` variables also change the controller: the fields of `Sale` (`markupBps`,
-/// `startCapBps`, `fastDecayBpsPerHour`, `kneeBps`, `slowDecayBpsPerHour`, `anchorHalfLife`, `anchorMinCost`) go to `setSale`
+/// `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`) go to `setSale`
 /// and the fields of `CreditSale` (`saleOn`, `window`, `floorBps`, `startBps`, `refScore`, `royaltyBps`, `royaltyRecipient`)
 /// to `setCredit`. each struct is read live, patched and checked by a simulated call as the owner, which reverts with
 /// the first field out of bounds.
@@ -107,9 +107,7 @@ contract SetSettings is Script {
         ns = Sale({
             markupBps: uint16(_field("markupBps", c.markupBps(), type(uint16).max)),
             startCapBps: uint32(_field("startCapBps", c.startCapBps(), type(uint32).max)),
-            fastDecayBpsPerHour: uint16(_field("fastDecayBpsPerHour", c.fastDecayBpsPerHour(), type(uint16).max)),
-            kneeBps: uint32(_field("kneeBps", c.kneeBps(), type(uint32).max)),
-            slowDecayBpsPerHour: uint16(_field("slowDecayBpsPerHour", c.slowDecayBpsPerHour(), type(uint16).max)),
+            decayHours: uint16(_field("decayHours", c.decayHours(), type(uint16).max)),
             anchorHalfLife: uint32(_field("anchorHalfLife", c.anchorHalfLife(), type(uint32).max)),
             anchorMinCost: uint128(_field("anchorMinCost", c.anchorMinCost(), type(uint128).max))
         });
@@ -127,9 +125,7 @@ contract SetSettings is Script {
                     Sale(
                         c.markupBps(),
                         c.startCapBps(),
-                        c.fastDecayBpsPerHour(),
-                        c.kneeBps(),
-                        c.slowDecayBpsPerHour(),
+                        c.decayHours(),
                         c.anchorHalfLife(),
                         c.anchorMinCost()
                     )

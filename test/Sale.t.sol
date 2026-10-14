@@ -31,18 +31,10 @@ abstract contract SaleBase is Fixture {
     }
 
     /// sets the six sale numbers in one call. the floor is the core `saleFloorBps`
-    function _saleSettings(
-        uint16 markup,
-        uint32 cap,
-        uint16 fast,
-        uint32 knee,
-        uint16 slow,
-        uint16 floor_
-    ) internal {
+    function _saleSettings(uint16 markup, uint32 cap, uint16 decayH, uint16 floor_) internal {
         _floorBps(floor_);
         Sale memory s = _sale();
-        (s.markupBps, s.startCapBps, s.fastDecayBpsPerHour, s.kneeBps, s.slowDecayBpsPerHour) =
-            (markup, cap, fast, knee, slow);
+        (s.markupBps, s.startCapBps, s.decayHours) = (markup, cap, decayH);
         vm.prank(owner);
         ctl.setSale(s);
     }
@@ -52,29 +44,26 @@ abstract contract SaleBase is Fixture {
         ctl.setAnchorBps(bps);
     }
 
-    /// the asking price in wei at `age` seconds: `start` falls `fast` bps an hour to `knee`, then `slow` bps an hour to
-    /// `floor_`. all bps of `cost`. the price is counted in 1/3600 bps, the second of the rate
-    function _curve(uint256 cost, uint256 start, uint256 knee, uint256 fast, uint256 slow, uint256 floor_, uint256 age)
+    /// the asking price in wei at `age` seconds: `start` bps of `cost` falls in a straight line to `floor_` bps over
+    /// `decayH` hours, then rests. mirrors `ControllerV1._ask`
+    function _curve(uint256 cost, uint256 start, uint256 floor_, uint256 decayH, uint256 age)
         internal
         pure
         returns (uint256)
     {
-        uint256 units;
-        uint256 fastSpan = start > knee ? (start - knee) * 3600 : 0;
-        if (age * fast <= fastSpan) {
-            units = start * 3600 - age * fast;
+        uint256 span = decayH * 3600;
+        uint256 n;
+        if (start <= floor_ || age >= span) {
+            n = floor_;
         } else {
-            uint256 base = (start < knee ? start : knee) * 3600;
-            uint256 drop = (slow * (age * fast - fastSpan) + fast - 1) / fast;
-            units = base > drop ? base - drop : 0;
+            n = start - (start - floor_) * age / span;
         }
-        if (units < floor_ * 3600) units = floor_ * 3600;
-        return cost * units / (3600 * 10_000);
+        return cost * n / 10_000;
     }
 
-    /// the launch curve: 150 percent falling 1 percent an hour to 100, then 0.25 percent an hour to 75 at hour 150
-    function _launch(uint256 cost, uint256 age) internal pure returns (uint256) {
-        return _curve(cost, 15_000, 10_000, 100, 25, 7_500, age);
+    /// the launch curve: 150 percent of the reference falling in a straight line to the floor over `decayHours`
+    function _launch(uint256 cost, uint256 age) internal view returns (uint256) {
+        return _curve(cost, ctl.startBps(), core.settings().saleFloorBps, ctl.decayHours(), age);
     }
 
     function _floorBps(uint16 bps) internal {
@@ -139,10 +128,9 @@ abstract contract SaleBase is Fixture {
     }
 }
 
-/// the two stage curve tests. the launch sale holds floor and knee at 100 percent of cost (decision 85), so the
-/// price falls from its start to cost and stays there. these tests exercise the shape of a two stage curve, so setUp
-/// sets `saleFloorBps` to 7_500 through the owner setter. the launch curve itself is
-/// `SaleLaunchCurveTest`
+/// the linear curve tests. the launch sale holds the floor at 100 percent of cost (decision 85), so the price falls
+/// from its start to cost and stays there. these tests exercise the slope of the line, so setUp sets `saleFloorBps` to
+/// 7_500 through the owner setter. the launch curve itself is `SaleLaunchCurveTest`
 abstract contract SaleShapeBase is SaleBase {
     function setUp() public virtual override {
         super.setUp();
@@ -151,7 +139,7 @@ abstract contract SaleShapeBase is SaleBase {
     }
 }
 
-/// the curve at the launch values: floor and knee at 100 percent of cost
+/// the curve at the launch values: the floor at 100 percent of cost
 contract SaleLaunchCurveTest is SaleBase {
     function setUp() public override {
         super.setUp();
@@ -160,24 +148,26 @@ contract SaleLaunchCurveTest is SaleBase {
 
     // promise: SPEC 1 launch curve falls from the start price to the statement reference and rests there (decision 85)
     function test_launchCurve_startsAtStartFallsToCostAndStaysAtCost() public {
-        assertEq(ctl.kneeBps(), 10_000, "knee at launch");
+        assertEq(ctl.decayHours(), 12, "decay hours at launch");
         assertEq(core.settings().saleFloorBps, 10_000, "floor at launch");
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        uint256[11] memory t =
-            [uint256(0), 1, 25 * H, 49 * H, 50 * H - 1, 50 * H, 50 * H + 1, 100 * H, 150 * H, 1000 * H, 100_000 * H];
+        uint256 start = cost * 15_000 / 10_000;
+        uint256[8] memory t = [uint256(0), 1, 6 * H, 12 * H - 1, 12 * H, 12 * H + 1, 100 * H, 100_000 * H];
         for (uint256 i; i < t.length; ++i) {
             _age(sid, t[i]);
             uint256 ask = ctl.priceOf(sid);
-            assertEq(ask, _curve(cost, 15_000, 10_000, 100, 25, 10_000, t[i]), "closed form at launch values");
-            assertGe(ask, cost, "never below cost");
-            assertLe(ask, cost * 15_000 / 10_000, "never above the start");
+            assertEq(ask, _curve(cost, 15_000, 10_000, 12, t[i]), "closed form at launch values");
+            assertGe(ask, cost, "never below the floor (cost)");
+            assertLe(ask, start, "never above the start");
         }
         _age(sid, 0);
-        assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000, "starts at 150 percent");
-        _age(sid, 50 * H);
-        assertEq(ctl.priceOf(sid), cost, "reaches cost at hour 50");
-        _age(sid, 50 * H - 1);
+        assertEq(ctl.priceOf(sid), start, "starts at 150 percent");
+        _age(sid, 6 * H);
+        assertEq(ctl.priceOf(sid), cost * 12_500 / 10_000, "halfway through the window it is 125 percent");
+        _age(sid, 12 * H);
+        assertEq(ctl.priceOf(sid), cost, "reaches cost (the floor) at hour 12");
+        _age(sid, 12 * H - 1);
         assertGt(ctl.priceOf(sid), cost, "one second before it is above cost");
         _age(sid, 5000 * H);
         assertEq(ctl.priceOf(sid), cost, "stays at cost");
@@ -191,12 +181,12 @@ contract SaleCurveTest is SaleShapeBase {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
         uint16[3] memory hard = [uint16(1_000), 7_500, 12_000];
-        uint256[5] memory t = [uint256(0), 1, 52 * H, 150 * H, 5000 * H];
+        uint256[5] memory t = [uint256(0), 1, 6 * H, 12 * H, 5000 * H];
         for (uint256 i; i < hard.length; ++i) {
             _floorBps(hard[i]);
             for (uint256 j; j < t.length; ++j) {
                 _age(sid, t[j]);
-                uint256 ask = _curve(cost, 15_000, 10_000, 100, 25, hard[i], t[j]);
+                uint256 ask = _curve(cost, 15_000, hard[i], 12, t[j]);
                 uint256 floor = cost * hard[i] / 10_000;
                 assertEq(ctl.priceOf(sid), ask, "the curve with the floor from the setting");
                 assertGe(ctl.priceOf(sid), floor);
@@ -253,8 +243,8 @@ contract SaleBuyTest is SaleShapeBase {
         for (uint256 i; i < 4; ++i) {
             uint256 snap = vm.snapshotState();
             _buybackBps(shares[i]);
-            (uint256 sid, uint256 price) = _buyAt(90 * H);
-            assertEq(price, _cost(sid) * 9_000 / 10_000, "90 hours down the curve: 90 percent");
+            (uint256 sid, uint256 price) = _buyAt(10 * H);
+            assertEq(price, _cost(sid) * 8_750 / 10_000, "10 hours down the 12 hour line (150 to 75 percent): 87.5 percent");
             (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
             uint256 n = core.heldStatements().length;
             vm.expectEmit(address(core));
@@ -442,9 +432,7 @@ contract SaleSettingsTest is SaleBase {
         return Sale({
             markupBps: lc.sale.markupBps,
             startCapBps: lc.sale.startCapBps,
-            fastDecayBpsPerHour: lc.sale.fastDecayBpsPerHour,
-            kneeBps: lc.sale.kneeBps,
-            slowDecayBpsPerHour: lc.sale.slowDecayBpsPerHour,
+            decayHours: lc.sale.decayHours,
             anchorHalfLife: lc.sale.anchorHalfLife,
             anchorMinCost: lc.sale.anchorMinCost
         });
@@ -458,17 +446,13 @@ contract SaleSettingsTest is SaleBase {
     function test_settings_launchValues() public view {
         assertEq(lc.sale.markupBps, 15_000);
         assertEq(lc.sale.startCapBps, 100_000);
-        assertEq(lc.sale.fastDecayBpsPerHour, 100);
-        assertEq(lc.sale.kneeBps, 10_000);
-        assertEq(lc.sale.slowDecayBpsPerHour, 25);
+        assertEq(lc.sale.decayHours, 12);
         assertEq(lc.sale.anchorHalfLife, 7 days);
         assertEq(lc.sale.anchorMinCost, 0.1 ether);
         assertEq(abi.encode(Mainnet.defaultSale()), abi.encode(lc.sale), "the launch sale");
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.startCapBps(), 100_000);
-        assertEq(ctl.fastDecayBpsPerHour(), 100);
-        assertEq(ctl.kneeBps(), 10_000);
-        assertEq(ctl.slowDecayBpsPerHour(), 25);
+        assertEq(ctl.decayHours(), 12);
         assertEq(core.settings().saleFloorBps, 10_000);
         assertEq(ctl.royaltyBps(), 250);
         assertEq(ctl.royaltyRecipient(), creator);
@@ -483,11 +467,11 @@ contract SaleSettingsTest is SaleBase {
 
     /// every upper edge of the sale settings, and every lower edge
     function _hi() internal pure returns (Sale memory) {
-        return Sale(40_000, 200_000, 10_000, 200_000, 10_000, 90 days, 10 ether);
+        return Sale(40_000, 200_000, 720, 90 days, 10 ether);
     }
 
     function _lo() internal pure returns (Sale memory) {
-        return Sale(10_000, 10_000, 1, 1_000, 1, 1 days, 0);
+        return Sale(10_000, 10_000, 1, 1 days, 0);
     }
 
     function _saleBad(Sale memory s, bytes32 field) internal {
@@ -515,30 +499,15 @@ contract SaleSettingsTest is SaleBase {
         _saleBad(s, "startCapBps");
         s.startCapBps = 200_001;
         _saleBad(s, "startCapBps");
-        s = _hi();
-        s.kneeBps = 200_001;
-        _saleBad(s, "kneeBps");
-        s = _hi();
-        s.startCapBps = 100_000;
-        _saleBad(s, "kneeBps");
         s = _lo();
         s.markupBps = 9_999;
         _saleBad(s, "markupBps");
-        s = _lo();
-        s.kneeBps = 999;
-        _saleBad(s, "kneeBps");
         s = _hi();
-        s.fastDecayBpsPerHour = 10_001;
-        _saleBad(s, "fastDecayBpsPerHour");
+        s.decayHours = 721;
+        _saleBad(s, "decayHours");
         s = _lo();
-        s.fastDecayBpsPerHour = 0;
-        _saleBad(s, "fastDecayBpsPerHour");
-        s = _hi();
-        s.slowDecayBpsPerHour = 10_001;
-        _saleBad(s, "slowDecayBpsPerHour");
-        s = _lo();
-        s.slowDecayBpsPerHour = 0;
-        _saleBad(s, "slowDecayBpsPerHour");
+        s.decayHours = 0;
+        _saleBad(s, "decayHours");
         s = _lo();
         s.anchorHalfLife = 1 days - 1;
         _saleBad(s, "anchorHalfLife");
@@ -574,9 +543,7 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.anchorHalfLife(), 90 days);
         assertEq(ctl.markupBps(), 40_000);
         assertEq(ctl.startCapBps(), 200_000);
-        assertEq(ctl.fastDecayBpsPerHour(), 10_000);
-        assertEq(ctl.slowDecayBpsPerHour(), 10_000);
-        assertEq(ctl.kneeBps(), 200_000);
+        assertEq(ctl.decayHours(), 720);
         assertEq(ctl.royaltyBps(), 1_000);
         assertEq(ctl.anchorBps(), 200_000);
         assertEq(ctl.startBps(), 200_000, "800_000 is held at the cap");
@@ -584,7 +551,7 @@ contract SaleSettingsTest is SaleBase {
 
     // promise: SPEC 1 every economic number is an owner setting, effective at once
     function test_settings_eventsAndValues() public {
-        Sale memory s = Sale(12_000, 150_000, 200, 12_000, 50, 3 days, 0.25 ether);
+        Sale memory s = Sale(12_000, 150_000, 24, 3 days, 0.25 ether);
         CreditSale memory c = _creditSale();
         c.royaltyBps = 300;
         c.royaltyRecipient = address(0xA27);
@@ -601,9 +568,7 @@ contract SaleSettingsTest is SaleBase {
         vm.stopPrank();
         assertEq(ctl.markupBps(), 12_000);
         assertEq(ctl.startCapBps(), 150_000);
-        assertEq(ctl.fastDecayBpsPerHour(), 200);
-        assertEq(ctl.slowDecayBpsPerHour(), 50);
-        assertEq(ctl.kneeBps(), 12_000);
+        assertEq(ctl.decayHours(), 24);
         assertEq(ctl.royaltyBps(), 300);
         assertEq(ctl.royaltyRecipient(), address(0xA27));
         assertEq(ctl.anchorBps(), 11_000);
@@ -656,28 +621,12 @@ contract SaleSettingsTest is SaleBase {
         vm.expectRevert(_bad("startCapBps"));
         Prod.newController(address(core), s);
         s = _fresh();
-        s.fastDecayBpsPerHour = 0;
-        vm.expectRevert(_bad("fastDecayBpsPerHour"));
+        s.decayHours = 0;
+        vm.expectRevert(_bad("decayHours"));
         Prod.newController(address(core), s);
         s = _fresh();
-        s.fastDecayBpsPerHour = 10_001;
-        vm.expectRevert(_bad("fastDecayBpsPerHour"));
-        Prod.newController(address(core), s);
-        s = _fresh();
-        s.slowDecayBpsPerHour = 0;
-        vm.expectRevert(_bad("slowDecayBpsPerHour"));
-        Prod.newController(address(core), s);
-        s = _fresh();
-        s.slowDecayBpsPerHour = 10_001;
-        vm.expectRevert(_bad("slowDecayBpsPerHour"));
-        Prod.newController(address(core), s);
-        s = _fresh();
-        s.kneeBps = 999;
-        vm.expectRevert(_bad("kneeBps"));
-        Prod.newController(address(core), s);
-        s = _fresh();
-        s.kneeBps = s.startCapBps + 1;
-        vm.expectRevert(_bad("kneeBps"));
+        s.decayHours = 721;
+        vm.expectRevert(_bad("decayHours"));
         Prod.newController(address(core), s);
         s = _fresh();
         s.anchorHalfLife = 1 days - 1;
@@ -853,7 +802,7 @@ contract SaleAnchorTest is SaleShapeBase {
     /// a sale above the cap (a hard floor above it) cannot take the anchor past the cap
     function test_anchor_neverPassesTheCap() public {
         uint256 sid = _composeN(1)[0];
-        _saleSettings(12_000, 12_000, 100, 10_000, 25, 7_500);
+        _saleSettings(12_000, 12_000, 12, 7_500);
         _floorBps(30_000);
         _age(sid, 0);
         uint256 price = ctl.priceOf(sid);
@@ -897,7 +846,7 @@ contract SaleAnchorTest is SaleShapeBase {
     }
 }
 
-/// the two stage fall of the asking price: exact points, a start below the knee, live settings on held statements, the
+/// the linear fall of the asking price: exact points, live settings on held statements, the
 /// order of the setters, and the shape of the price in the age
 contract SaleDecayTest is SaleShapeBase {
     // promise: SPEC 1 every economic number is an owner setting, effective at once
@@ -905,53 +854,43 @@ contract SaleDecayTest is SaleShapeBase {
     function test_decay_settingsMoveAnOpenListingAtOnce() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        _age(sid, 60 * H);
-        assertEq(ctl.priceOf(sid), cost * 9_750 / 10_000, "launch rule: 10 hours past the knee at 25 bps an hour");
+        // this suite holds saleFloorBps at 7_500, so the launch line runs 150 percent to 75 percent over 12 hours
+        _age(sid, 6 * H);
+        assertEq(ctl.priceOf(sid), cost * 11_250 / 10_000, "launch rule: halfway through the 12 hour window at hour 6");
         vm.startPrank(owner);
         Sale memory s = _sale();
-        s.slowDecayBpsPerHour = 50;
+        s.decayHours = 24;
         ctl.setSale(s);
-        assertEq(ctl.priceOf(sid), cost * 9_500 / 10_000, "slow 50: 10 hours at 50");
-        s.fastDecayBpsPerHour = 200;
-        ctl.setSale(s);
-        assertEq(ctl.priceOf(sid), cost * 8_250 / 10_000, "fast 200: the knee is at hour 25, 35 hours at 50");
-        s.kneeBps = 12_000;
-        ctl.setSale(s);
-        assertEq(ctl.priceOf(sid), cost * 9_750 / 10_000, "knee 12_000: reached at hour 15, 45 hours at 50");
         vm.stopPrank();
-        _floorBps(9_900);
-        assertEq(ctl.priceOf(sid), cost * 9_900 / 10_000, "floor 9_900 lifts it");
+        assertEq(ctl.priceOf(sid), cost * 13_125 / 10_000, "decay 24 hours: hour 6 is a quarter of the way down");
+        _floorBps(20_000);
+        assertEq(ctl.priceOf(sid), cost * 20_000 / 10_000, "a floor above the curve lifts it");
         _floorBps(7_500);
-        s.kneeBps = 10_000;
-        s.fastDecayBpsPerHour = 100;
-        s.slowDecayBpsPerHour = 25;
+        s.decayHours = 12;
         vm.prank(owner);
         ctl.setSale(s);
-        assertEq(ctl.priceOf(sid), cost * 9_750 / 10_000, "back to the launch rule");
+        assertEq(ctl.priceOf(sid), cost * 11_250 / 10_000, "back to the launch rule");
     }
 
     // promise: SPEC 2 sale settings reachable inside their bounds
-    /// one `setSale` call reaches any valid combination: the knee over the old cap, the cap under the old knee, and the
-    /// knee at the cap
+    /// one `setSale` call reaches any valid combination: the cap and the markup rise together, then fall together to
+    /// their floors, and `decayHours` moves across its whole range
     function test_decay_oneCallReachesAnyValidCombination() public {
         Sale memory s = _sale();
         vm.startPrank(owner);
-        // up: the knee and the cap rise together
-        s.startCapBps = 150_000;
-        s.kneeBps = 150_000;
+        s.markupBps = 40_000;
+        s.startCapBps = 200_000;
+        s.decayHours = 720;
         ctl.setSale(s);
-        assertEq(ctl.kneeBps(), 150_000);
-        // down: the cap and the knee fall together, the knee to its floor
-        s.startCapBps = 15_000;
-        s.kneeBps = 1_000;
-        ctl.setSale(s);
-        assertEq(ctl.kneeBps(), 1_000);
-        assertEq(ctl.startCapBps(), 15_000);
-        // the knee at the cap
-        s.kneeBps = 15_000;
+        assertEq(ctl.startCapBps(), 200_000);
+        assertEq(ctl.decayHours(), 720);
+        s.markupBps = 10_000;
+        s.startCapBps = 10_000;
+        s.decayHours = 1;
         ctl.setSale(s);
         vm.stopPrank();
-        assertEq(ctl.kneeBps(), 15_000);
+        assertEq(ctl.startCapBps(), 10_000);
+        assertEq(ctl.decayHours(), 1);
     }
 
     /// answers the controller's reads of the Core for the price fuzz: the cost and the compose time of any statement
@@ -970,9 +909,7 @@ contract SaleDecayTest is SaleShapeBase {
         stub.setSaleFloorBps(fuzzFloor);
         k.markupBps = uint16(bound(x[0], 10_000, 40_000));
         k.startCapBps = uint32(bound(x[1], k.markupBps, 200_000));
-        k.kneeBps = uint32(bound(x[3], 1_000, k.startCapBps));
-        k.fastDecayBpsPerHour = uint16(bound(x[4], 1, 10_000));
-        k.slowDecayBpsPerHour = uint16(bound(x[5], 1, 10_000));
+        k.decayHours = uint16(bound(x[3], 1, 720));
         k.anchorHalfLife = 7 days;
         c = Prod.newController(address(stub), k);
         anchor = bound(x[6], 10_000, k.startCapBps);
@@ -987,9 +924,7 @@ contract SaleDecayTest is SaleShapeBase {
     }
 
     function _closedForm(IControllerV1 c, Sale memory k, uint256 cost, uint256 age) internal view returns (uint256) {
-        return _curve(
-            cost, c.startBps(), k.kneeBps, k.fastDecayBpsPerHour, k.slowDecayBpsPerHour, fuzzFloor, age
-        );
+        return _curve(cost, c.startBps(), fuzzFloor, k.decayHours, age);
     }
 
     // promise: SPEC 1 the asking price never rises with age

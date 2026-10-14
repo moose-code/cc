@@ -365,9 +365,7 @@ contract Scenario is Script {
         Sale memory sale = Sale({
             markupBps: ctl.markupBps(),
             startCapBps: ctl.startCapBps(),
-            fastDecayBpsPerHour: ctl.fastDecayBpsPerHour(),
-            kneeBps: ctl.kneeBps(),
-            slowDecayBpsPerHour: ctl.slowDecayBpsPerHour(),
+            decayHours: ctl.decayHours(),
             anchorHalfLife: ctl.anchorHalfLife(),
             anchorMinCost: ctl.anchorMinCost()
         });

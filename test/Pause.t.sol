@@ -124,9 +124,9 @@ contract PauseTest is SaleShapeBase {
     function testFuzz_priceIsFrozenAndResumesAtTheSameAge(uint32 length) public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        _age(sid, 20 * H);
+        _age(sid, 6 * H);
         uint256 before = ctl.priceOf(sid);
-        assertEq(before, _launch(cost, 20 * H), "hour 20 of the launch curve");
+        assertEq(before, _launch(cost, 6 * H), "hour 6 of the launch curve");
         _setPaused(true);
         assertEq(ctl.priceOf(sid), before, "the price at the pause");
         vm.warp(block.timestamp + length);
@@ -134,7 +134,7 @@ contract PauseTest is SaleShapeBase {
         _setPaused(false);
         assertEq(ctl.priceOf(sid), before, "the price at the resume");
         vm.warp(block.timestamp + 1 hours);
-        assertEq(ctl.priceOf(sid), _launch(cost, 21 * H), "hour 21 an hour after the resume");
+        assertEq(ctl.priceOf(sid), _launch(cost, 7 * H), "hour 7 an hour after the resume");
         assertLt(ctl.priceOf(sid), before);
     }
 
@@ -173,7 +173,7 @@ contract PauseTest is SaleShapeBase {
         assertEq(ctl.anchorBps(), 20_000, "the excess over 10_000 halved in the pause");
         assertEq(
             ctl.priceOf(sid),
-            _curve(cost, ctl.startBps(), 10_000, 100, 25, 7_500, frozenAge),
+            _curve(cost, ctl.startBps(), core.settings().saleFloorBps, ctl.decayHours(), frozenAge),
             "the start follows the anchor, the age is held"
         );
         _setPaused(false);

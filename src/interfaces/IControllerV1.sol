@@ -63,10 +63,9 @@ interface IControllerV1 {
     function creditSaleOn() external view returns (bool);
     function creditStartBps() external view returns (uint32);
     function creditWindow() external view returns (uint32);
-    function fastDecayBpsPerHour() external view returns (uint16);
+    function decayHours() external view returns (uint16);
     function grossCreditPrice(uint256 id) external view returns (uint256);
     function grossPriceOf(uint256 sid) external view returns (uint256);
-    function kneeBps() external view returns (uint32);
     function markupBps() external view returns (uint16);
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
     function pastWindow(uint64 acquiredAt) external view returns (bool);
@@ -81,7 +80,6 @@ interface IControllerV1 {
     function setBalancePoolKey(PoolKey memory key) external;
     function setCredit(CreditSale memory v) external;
     function setSale(Sale memory v) external;
-    function slowDecayBpsPerHour() external view returns (uint16);
     function startBps() external view returns (uint256);
     function startCapBps() external view returns (uint32);
     function storedAnchorBps() external view returns (uint32);

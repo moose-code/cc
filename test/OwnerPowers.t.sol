@@ -23,8 +23,7 @@ abstract contract OwnerBase is Fixture {
     /// the controller's sale and credit settings with every changed field set, for the owner door tests
     function _newSaleAndCredit() internal view returns (Sale memory s, CreditSale memory c) {
         s = _sale();
-        (s.markupBps, s.startCapBps, s.fastDecayBpsPerHour, s.kneeBps, s.slowDecayBpsPerHour) =
-            (12_000, 150_000, 200, 12_000, 50);
+        (s.markupBps, s.startCapBps, s.decayHours) = (12_000, 150_000, 24);
         c = _creditSale();
         (c.royaltyBps, c.royaltyRecipient) = (300, address(0xA27));
     }

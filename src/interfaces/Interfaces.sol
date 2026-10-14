@@ -213,12 +213,8 @@ struct Sale {
     uint16 markupBps;
     /// the most the start price can be, bps of the price reference, `max(cost, valueOf(rating))`
     uint32 startCapBps;
-    /// fall of the asking price per hour above the knee, bps of the price reference, `max(cost, valueOf(rating))`
-    uint16 fastDecayBpsPerHour;
-    /// the price where the fast fall ends and the slow fall starts, bps of the price reference, `max(cost, valueOf(rating))`
-    uint32 kneeBps;
-    /// fall of the asking price per hour at or below the knee, bps of the price reference, `max(cost, valueOf(rating))`
-    uint16 slowDecayBpsPerHour;
+    /// hours for the asking price to fall in a straight line from the start to the floor, then rest. 1 to 720
+    uint16 decayHours;
     /// seconds for the part of the anchor above 10_000 to halve
     uint32 anchorHalfLife;
     /// the least statement cost, in wei, whose sale moves the anchor
@@ -347,9 +343,7 @@ library Mainnet {
         return Sale({
             markupBps: 15_000,
             startCapBps: 100_000,
-            fastDecayBpsPerHour: 100,
-            kneeBps: 10_000,
-            slowDecayBpsPerHour: 25,
+            decayHours: 12,
             anchorHalfLife: 7 days,
             anchorMinCost: 0.1 ether
         });

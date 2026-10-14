@@ -18,12 +18,10 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// `floorRate * points / refScore` and the balance token pool value of `points * unitPerPoint` base units, with
 /// `unitPerPoint` read from the balance module at each call. the reference of a statement is the larger of its cost and
 /// `valueOf(rating)`. the asking price is a fraction of the reference in bps that starts at
-/// `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls at a fixed rate per second in two stages: at
-/// `fastDecayBpsPerHour` from `start` to `kneeBps`, then at `slowDecayBpsPerHour` to the core setting `saleFloorBps`,
-/// where it stays. a `start` at or below `kneeBps` falls at the slow rate from the first second. the price is computed
-/// at every call from the age of the statement (time since its compose) and the current settings, so a setting change
-/// applies to held statements at once. a `kneeBps` below `saleFloorBps` has no effect, because the price is the larger
-/// of the curve and the floor.
+/// `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls in a straight line to the core setting
+/// `saleFloorBps` over `decayHours` hours, where it rests. a `start` at or below `saleFloorBps` is the floor from the
+/// first second. the price is computed at every call from the age of the statement (time since its compose) and the
+/// current settings, so a setting change applies to held statements at once.
 /// `saleFloorBps` has two readings: the core takes no payment below `cost * saleFloorBps / 10_000`, and the curve here
 /// floors at `reference * saleFloorBps / 10_000`. the reference is at least the cost, so the curve floor is at least the
 /// core floor.
@@ -79,14 +77,10 @@ contract ControllerV1 is IController {
 
     /// start price over the anchor, bps. 10_000 to 40_000, at most `startCapBps`
     uint16 public markupBps;
-    /// the most the start price can be, bps of the reference. the larger of `markupBps` and `kneeBps` to 200_000
+    /// the most the start price can be, bps of the reference. `markupBps` to 200_000
     uint32 public startCapBps;
-    /// fall of the asking price per hour above `kneeBps`, bps of the reference. 1 to 10_000
-    uint16 public fastDecayBpsPerHour;
-    /// fall of the asking price per hour at or below `kneeBps`, bps of the reference. 1 to 10_000
-    uint16 public slowDecayBpsPerHour;
-    /// the price where the fast fall ends and the slow fall starts, bps of the reference. 1_000 to `startCapBps`
-    uint32 public kneeBps;
+    /// hours for the asking price to fall in a straight line from the start to the floor, then rest. 1 to 720
+    uint16 public decayHours;
     /// the anchor at `anchorTime`, bps of the reference. 10_000 to `startCapBps`. `anchorBps()` is the value now
     uint32 public storedAnchorBps;
     /// when `storedAnchorBps` was last set
@@ -146,9 +140,9 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ sale settings, owner, at once
 
-    /// sets the seven sale settings at once. every field is checked against the bounds of the others in the call:
-    /// `markupBps` 10_000 to 40_000 and at most `startCapBps`; `startCapBps` at least `markupBps` and `kneeBps`, at most
-    /// 200_000; `kneeBps` 1_000 to `startCapBps`; each decay 1 to 10_000; `anchorHalfLife` 1 day to 90 days;
+    /// sets the five sale settings at once. every field is checked against the bounds of the others in the call:
+    /// `markupBps` 10_000 to 40_000 and at most `startCapBps`; `startCapBps` at least `markupBps`, at most
+    /// 200_000; `decayHours` 1 to 720; `anchorHalfLife` 1 day to 90 days;
     /// `anchorMinCost` 0 to 10 ether. an `anchorBps()` above the new `startCapBps` is lowered to it. a change of
     /// `anchorHalfLife` stores the anchor at the call first, so the new half life applies from now on
     function setSale(Sale calldata v) external onlyOwner {
@@ -161,16 +155,12 @@ contract ControllerV1 is IController {
     function _setSale(Sale memory v) private {
         if (v.markupBps < BPS || v.markupBps > 40_000) revert BadSetting("markupBps");
         if (v.startCapBps < v.markupBps || v.startCapBps > 200_000) revert BadSetting("startCapBps");
-        if (v.kneeBps < 1_000 || v.kneeBps > v.startCapBps) revert BadSetting("kneeBps");
-        if (v.fastDecayBpsPerHour < 1 || v.fastDecayBpsPerHour > BPS) revert BadSetting("fastDecayBpsPerHour");
-        if (v.slowDecayBpsPerHour < 1 || v.slowDecayBpsPerHour > BPS) revert BadSetting("slowDecayBpsPerHour");
+        if (v.decayHours < 1 || v.decayHours > 720) revert BadSetting("decayHours");
         if (v.anchorHalfLife < 1 days || v.anchorHalfLife > 90 days) revert BadSetting("anchorHalfLife");
         if (v.anchorMinCost > MAX_ANCHOR_MIN_COST) revert BadSetting("anchorMinCost");
         markupBps = v.markupBps;
         startCapBps = v.startCapBps;
-        kneeBps = v.kneeBps;
-        fastDecayBpsPerHour = v.fastDecayBpsPerHour;
-        slowDecayBpsPerHour = v.slowDecayBpsPerHour;
+        decayHours = v.decayHours;
         anchorHalfLife = v.anchorHalfLife;
         anchorMinCost = v.anchorMinCost;
     }
@@ -522,27 +512,19 @@ contract ControllerV1 is IController {
     }
 
     /// the asking price in wei after `age` seconds, a fraction of `ref` by the bps curve. the bps is held in units of
-    /// 1/3600 so each stage is an integer line of the second: it falls by `fastDecayBpsPerHour` units a second from the
-    /// start to the knee and by `slowDecayBpsPerHour` units a second after, never below `floor`. the slow stage
-    /// starts at the second the fast stage reaches the knee, which is `(start - knee) / fastDecayBpsPerHour` hours and
-    /// need not be a whole second, so its fall is rounded up. the rounding keeps the price non-increasing in `age`
+    /// the asking price in wei: the asking bps falls in a straight line from `startBps()` at `age` 0 to `floor` at `age`
+    /// `decayHours`, and rests at `floor` after. a start at or below the floor is the floor from the first second. the bps
+    /// is non-increasing in `age`
     function _ask(uint256 ref, uint256 age, uint256 floor) private view returns (uint256) {
-        uint256 start = startBps() * 1 hours;
-        uint256 knee = uint256(kneeBps) * 1 hours;
-        uint256 fast = fastDecayBpsPerHour;
-        uint256 fallen = fast * age;
-        uint256 span = start > knee ? start - knee : 0;
+        uint256 start = startBps();
+        uint256 span = uint256(decayHours) * 1 hours;
         uint256 n;
-        if (fallen <= span) {
-            n = start - fallen;
+        if (start <= floor || age >= span) {
+            n = floor;
         } else {
-            uint256 drop = (slowDecayBpsPerHour * (fallen - span) + fast - 1) / fast;
-            uint256 base = start < knee ? start : knee;
-            n = base > drop ? base - drop : 0;
+            n = start - (start - floor) * age / span;
         }
-        uint256 low = floor * 1 hours;
-        if (n < low) n = low;
-        return ref * n / (1 hours * BPS);
+        return ref * n / BPS;
     }
 
     // ------------------------------------------------------------------ credit picking

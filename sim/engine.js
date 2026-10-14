@@ -39,8 +39,7 @@ export const SETTINGS = {
 };
 export const SETTING_KEYS = Object.keys(SETTINGS);
 // the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement with price reference r (below), in bps of r, starts at
-// start = min(anchorBps * markupBps / 10000, startCapBps) and falls per second in two stages: fastDecayBpsPerHour from start to kneeBps, then
-// slowDecayBpsPerHour to the Core's saleFloorBps, where it stays. a start at or below kneeBps falls at the slow rate from the first second (askBps).
+// start = min(anchorBps * markupBps / 10000, startCapBps) and falls in a straight line to the Core's saleFloorBps over decayHours hours, then rests there (askBps).
 // the anchor (ControllerV1.anchorBps, starts at 10000) is the running level of sale prices in bps of the reference. a sale above the anchor now sets it to the
 // mean of the anchor now and the sale price, a sale at or below it leaves it, and so does a sale of a statement that costs less than anchorMinCost (eth here, wei in the
 // contract). the part of the anchor above 10000 halves every anchorHalfLife, continuously.
@@ -50,9 +49,7 @@ export const SETTING_KEYS = Object.keys(SETTINGS);
 export const CONTROLLER = {
   markupBps: 15000,
   startCapBps: 100000,
-  fastDecayBpsPerHour: 100,
-  kneeBps: 10000,
-  slowDecayBpsPerHour: 25,
+  decayHours: 12,
   anchorHalfLife: 7 * 86400,
   anchorMinCost: 0.1,
 };
@@ -89,22 +86,19 @@ export function creditViolation(c) {
   if (!(c.royaltyBps >= 0 && c.royaltyBps <= 1000)) return 'royaltyBps';
   return null;
 }
-// the asking price in bps of the reference after `age` seconds from a start price of `start` bps (ControllerV1._ask without its integer rounding):
-// start less fastDecayBpsPerHour an hour while above kneeBps, then slowDecayBpsPerHour an hour, never below `floor` (the Core's saleFloorBps)
+// the asking price in bps of the reference after `age` seconds from a start price of `start` bps (ControllerV1._ask):
+// start falls in a straight line to `floor` (the Core's saleFloorBps) over decayHours hours, then rests at `floor`
 export function askBps(c, start, age, floor) {
-  const hours = age / 3600, span = Math.max(0, start - c.kneeBps);
-  const p = c.fastDecayBpsPerHour * hours <= span
-    ? start - c.fastDecayBpsPerHour * hours
-    : Math.min(start, c.kneeBps) - c.slowDecayBpsPerHour * (hours - span / c.fastDecayBpsPerHour);
-  return Math.max(p, floor);
+  if (start <= floor) return floor;
+  const span = c.decayHours * 3600;
+  if (age >= span) return floor;
+  return start - (start - floor) * age / span;
 }
 // ControllerV1 bounds: the name of the first controller field out of bounds, or null
 export function controllerViolation(c) {
   if (c.markupBps < 10000 || c.markupBps > 40000) return 'markupBps';
   if (c.startCapBps < c.markupBps || c.startCapBps > 200000) return 'startCapBps';
-  if (c.kneeBps < 1000 || c.kneeBps > c.startCapBps) return 'kneeBps';
-  if (c.fastDecayBpsPerHour < 1 || c.fastDecayBpsPerHour > 10000) return 'fastDecayBpsPerHour';
-  if (c.slowDecayBpsPerHour < 1 || c.slowDecayBpsPerHour > 10000) return 'slowDecayBpsPerHour';
+  if (c.decayHours < 1 || c.decayHours > 720) return 'decayHours';
   if (c.anchorHalfLife < 86400 || c.anchorHalfLife > 90 * 86400) return 'anchorHalfLife';
   if (c.anchorMinCost < 0 || c.anchorMinCost > 10) return 'anchorMinCost';
   return null;
@@ -361,7 +355,7 @@ export class Core {
     this.funded = this.ethPot * W >= this.rateAtCheckpoint;
   }
   // owner: setSettings. validates, checkpoints both rates first, then applies at once. patch.rate is setRate.
-  // the patch may also hold `paused` (Core.setPaused: true opens a pause, false closes it), controller settings (markupBps, startCapBps, fastDecayBpsPerHour, kneeBps, slowDecayBpsPerHour, anchorHalfLife, anchorMinCost), the credit settings (CREDIT, royaltyBps included) and anchorBps (setAnchorBps): the controller reads them live.
+  // the patch may also hold `paused` (Core.setPaused: true opens a pause, false closes it), controller settings (markupBps, startCapBps, decayHours, anchorHalfLife, anchorMinCost), the credit settings (CREDIT, royaltyBps included) and anchorBps (setAnchorBps): the controller reads them live.
   // a new anchorHalfLife stores the anchor now first, and a start cap below the anchor now lowers the anchor to the cap
   setSettings(patch, now) {
     const rate = patch.rate;

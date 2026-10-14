@@ -700,7 +700,7 @@ contract ConfigTest is Fixture {
         this.requireExt(c);
         // the sale settings of the controller have their own row and guard
         c = lc;
-        c.sale.kneeBps = 999;
+        c.sale.decayHours = 0;
         _pre(c, d2);
         assertEq(_failedNames(), "sale settings inside the bounds");
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "sale"));

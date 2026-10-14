@@ -201,9 +201,7 @@ abstract contract ConfigReader is CommonBase {
         c.sale = Sale({
             markupBps: _u16(j, ".sale.markupBps"),
             startCapBps: _u32(j, ".sale.startCapBps"),
-            fastDecayBpsPerHour: _u16(j, ".sale.fastDecayBpsPerHour"),
-            kneeBps: _u32(j, ".sale.kneeBps"),
-            slowDecayBpsPerHour: _u16(j, ".sale.slowDecayBpsPerHour"),
+            decayHours: _u16(j, ".sale.decayHours"),
             anchorHalfLife: _u32(j, ".sale.anchorHalfLife"),
             anchorMinCost: _u128(j, ".sale.anchorMinCost")
         });
@@ -316,9 +314,7 @@ abstract contract ConfigReader is CommonBase {
         Sale memory k = c.sale;
         if (k.markupBps < 10_000 || k.markupBps > 40_000) return "markupBps";
         if (k.startCapBps < k.markupBps || k.startCapBps > 200_000) return "startCapBps";
-        if (k.kneeBps < 1_000 || k.kneeBps > k.startCapBps) return "kneeBps";
-        if (k.fastDecayBpsPerHour < 1 || k.fastDecayBpsPerHour > 10_000) return "fastDecayBpsPerHour";
-        if (k.slowDecayBpsPerHour < 1 || k.slowDecayBpsPerHour > 10_000) return "slowDecayBpsPerHour";
+        if (k.decayHours < 1 || k.decayHours > 720) return "decayHours";
         if (k.anchorHalfLife < 1 days || k.anchorHalfLife > 90 days) return "anchorHalfLife";
         if (k.anchorMinCost > 10 ether) return "anchorMinCost";
         return bytes32(0);

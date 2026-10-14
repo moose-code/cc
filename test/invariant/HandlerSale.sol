@@ -582,14 +582,14 @@ abstract contract HandlerSale is HandlerOwner {
         }
     }
 
-    /// the asking price of statement `sid` written out again from docs/SPEC.md section 7: the price in units of
-    /// 1/3600 bps falls `fastDecayBpsPerHour` a second to the knee and `slowDecayBpsPerHour` after it (rounded up), at
-    /// the age outside every pause, at least `saleFloorBps` of the reference
+    /// the asking price of statement `sid` written out again from docs/SPEC.md section 8: the bps falls in a straight
+    /// line from `startBps()` to `saleFloorBps` over `decayHours`, then rests, at the age outside every pause, at least
+    /// `saleFloorBps` of the reference
     function _modelAsk(uint256 sid) internal returns (uint256) {
         (, uint256 cost, uint64 at) = core.statementInfo(sid);
         uint256 ref = _modelRef(sid, cost);
         uint256 n = _modelUnits(_modelAge(at));
-        uint256 ask = ref * n / (3600 * 10_000);
+        uint256 ask = ref * n / 10_000;
         uint256 hard = cost * core.settings().saleFloorBps / 10_000;
         return ask < hard ? hard : ask;
     }
@@ -607,19 +607,14 @@ abstract contract HandlerSale is HandlerOwner {
 
     function _modelUnits(uint256 age) internal view returns (uint256 n) {
         IControllerV1 c = IControllerV1(v1);
-        uint256 start = c.startBps() * 3600;
-        uint256 knee = uint256(c.kneeBps()) * 3600;
-        uint256 fast = c.fastDecayBpsPerHour();
-        uint256 span = start > knee ? start - knee : 0;
-        if (age * fast <= span) {
-            n = start - age * fast;
+        uint256 start = c.startBps();
+        uint256 floor = core.settings().saleFloorBps;
+        uint256 span = uint256(c.decayHours()) * 1 hours;
+        if (start <= floor || age >= span) {
+            n = floor;
         } else {
-            uint256 drop = (c.slowDecayBpsPerHour() * (age * fast - span) + fast - 1) / fast;
-            uint256 base = start < knee ? start : knee;
-            n = base > drop ? base - drop : 0;
+            n = start - (start - floor) * age / span;
         }
-        uint256 low = uint256(core.settings().saleFloorBps) * 3600;
-        if (n < low) n = low;
     }
 
     /// the owner pauses or resumes sales on the Core, or a stranger tries. a repeat of the current state is
@@ -700,38 +695,27 @@ abstract contract HandlerSale is HandlerOwner {
         returns (uint256 v, bool valid, uint256 cur)
     {
         uint256 cap = c.startCapBps();
-        uint256 knee = c.kneeBps();
         if (which == 0) {
             cur = c.markupBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : 40_001) : _f(seed, 10_000, 40_000, cur);
             valid = v >= 10_000 && v <= 40_000 && v <= cap;
         } else if (which == 1) {
             cur = cap;
-            v = bad
-                ? (seed % 3 == 0 ? c.markupBps() - 1 : (seed % 3 == 1 ? 200_001 : knee - 1))
-                : _f(seed, _max(c.markupBps(), knee), 200_000, cur);
-            valid = v >= c.markupBps() && v >= knee && v <= 200_000;
+            v = bad ? (seed % 2 == 0 ? c.markupBps() - 1 : 200_001) : _f(seed, c.markupBps(), 200_000, cur);
+            valid = v >= c.markupBps() && v <= 200_000;
         } else if (which == 2) {
-            cur = c.fastDecayBpsPerHour();
-            v = bad ? (seed % 2 == 0 ? 0 : 10_001) : _f(seed, 1, 10_000, cur);
-            valid = v >= 1 && v <= 10_000;
+            cur = c.decayHours();
+            v = bad ? (seed % 2 == 0 ? 0 : 721) : _f(seed, 1, 720, cur);
+            valid = v >= 1 && v <= 720;
         } else if (which == 3) {
-            cur = c.slowDecayBpsPerHour();
-            v = bad ? (seed % 2 == 0 ? 0 : 10_001) : _f(seed, 1, 10_000, cur);
-            valid = v >= 1 && v <= 10_000;
-        } else if (which == 4) {
-            cur = knee;
-            v = bad ? (seed % 2 == 0 ? 999 : cap + 1) : _f(seed, 1_000, cap, cur);
-            valid = v >= 1_000 && v <= cap;
-        } else if (which == 5) {
             cur = c.royaltyBps();
             v = bad ? 1_001 + seed % 60_000 : _f(seed, 0, 1_000, cur);
             valid = v <= 1_000;
-        } else if (which == 6) {
+        } else if (which == 4) {
             cur = c.anchorBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : cap + 1) : _f(seed, 10_000, cap, cur);
             valid = v >= 10_000 && v <= cap;
-        } else if (which == 7) {
+        } else if (which == 5) {
             cur = c.anchorHalfLife();
             v = bad ? (seed % 2 == 0 ? 1 days - 1 : 90 days + 1) : _f(seed, 1 days, 90 days, cur);
             valid = v >= 1 days && v <= 90 days;
@@ -742,15 +726,11 @@ abstract contract HandlerSale is HandlerOwner {
         }
     }
 
-    function _max(uint256 x, uint256 y) private pure returns (uint256) {
-        return x > y ? x : y;
-    }
-
     /// @dev the call that sets sale number `which` to `v`: `setSale` with every other field as it is, `setCredit` for the
     /// royalty, `setAnchorBps` for the anchor
     function _saleCall(IControllerV1 c, uint256 which, uint256 v) internal view returns (bytes memory) {
-        if (which == 6) return abi.encodeCall(IControllerV1.setAnchorBps, (uint32(v)));
-        if (which == 5) {
+        if (which == 4) return abi.encodeCall(IControllerV1.setAnchorBps, (uint32(v)));
+        if (which == 3) {
             CreditSale memory cs = _creditSaleOf(c);
             cs.royaltyBps = uint16(v);
             return abi.encodeCall(IControllerV1.setCredit, (cs));
@@ -758,18 +738,14 @@ abstract contract HandlerSale is HandlerOwner {
         Sale memory s = Sale({
             markupBps: c.markupBps(),
             startCapBps: c.startCapBps(),
-            fastDecayBpsPerHour: c.fastDecayBpsPerHour(),
-            kneeBps: c.kneeBps(),
-            slowDecayBpsPerHour: c.slowDecayBpsPerHour(),
+            decayHours: c.decayHours(),
             anchorHalfLife: c.anchorHalfLife(),
             anchorMinCost: c.anchorMinCost()
         });
         if (which == 0) s.markupBps = uint16(v);
         else if (which == 1) s.startCapBps = uint32(v);
-        else if (which == 2) s.fastDecayBpsPerHour = uint16(v);
-        else if (which == 3) s.slowDecayBpsPerHour = uint16(v);
-        else if (which == 4) s.kneeBps = uint32(v);
-        else if (which == 7) s.anchorHalfLife = uint32(v);
+        else if (which == 2) s.decayHours = uint16(v);
+        else if (which == 5) s.anchorHalfLife = uint32(v);
         else s.anchorMinCost = uint128(v);
         return abi.encodeCall(IControllerV1.setSale, (s));
     }
@@ -777,22 +753,20 @@ abstract contract HandlerSale is HandlerOwner {
     function _saleGot(IControllerV1 c, uint256 which) internal view returns (uint256) {
         if (which == 0) return c.markupBps();
         if (which == 1) return c.startCapBps();
-        if (which == 2) return c.fastDecayBpsPerHour();
-        if (which == 3) return c.slowDecayBpsPerHour();
-        if (which == 4) return c.kneeBps();
-        if (which == 5) return c.royaltyBps();
-        if (which == 6) return c.anchorBps();
-        if (which == 7) return c.anchorHalfLife();
+        if (which == 2) return c.decayHours();
+        if (which == 3) return c.royaltyBps();
+        if (which == 4) return c.anchorBps();
+        if (which == 5) return c.anchorHalfLife();
         return c.anchorMinCost();
     }
 
-    /// the owner sets one of the nine sale numbers (the royalty included) of the first controller to a value inside or outside the bounds of
-    /// docs/DECISIONS.md 9.3 (written out again here), or a stranger tries. inside: it goes through and reads back. outside:
+    /// the owner sets one of the seven sale numbers (the royalty included) of the first controller to a value inside or outside the bounds,
+    /// written out again here, or a stranger tries. inside: it goes through and reads back. outside:
     /// BadSetting with the field. a stranger: OnlyOwner. no asset or pot moves
     function saleSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_SALE_SETTINGS;
         IControllerV1 c = IControllerV1(v1);
-        uint256 which = mode % 9;
+        uint256 which = mode % 7;
         bool stranger = (mode >> 8) % 6 == 0;
         uint256 anchor0 = c.anchorBps();
         bool bad = (mode >> 12) % 4 == 0;
@@ -1023,8 +997,8 @@ abstract contract HandlerSale is HandlerOwner {
         (ok,) = address(core).call(abi.encodeCall(ICore.removeAdapter, (target)));
         if (ok) _flag(V_LOCK, "the old owner kept a power after the handover");
         // the argument is read before the prank: a call in the argument list would use it up
-        bytes memory same = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).fastDecayBpsPerHour());
-        bytes memory changed = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).fastDecayBpsPerHour() == 200 ? 201 : 200);
+        bytes memory same = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).decayHours());
+        bytes memory changed = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).decayHours() == 24 ? 25 : 24);
         vm.prank(old);
         (ok,) = address(v1).call(changed);
         if (ok) _flag(V_LOCK, "the old owner kept the sale settings");
