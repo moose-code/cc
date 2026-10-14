@@ -4,7 +4,7 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
-decisions 1 to 114 are settled (docs/DECISIONS.md; section 11 is the product agreement of 2026-10-13). the simplification plan of docs/reviews/SIMPLIFICATION-v1.md ran on branch `simplify/v1` on 2026-10-13: packets 0 to 10 are merged, packet 11 (the freeze) is in progress. the system is three contracts plus two adapters, deployed by nine CREATE2 transactions, with 445 tests that each name their promise. `main` holds the system before the plan; the owner decides the merge.
+decisions 1 to 114 are settled (docs/DECISIONS.md; section 11 is the product agreement of 2026-10-13). the simplification plan of docs/reviews/SIMPLIFICATION-v1.md ran on branch `simplify/v1` on 2026-10-13: every packet is merged and the candidate is frozen (section 4). the system is three contracts plus two adapters, deployed by nine CREATE2 transactions, with 445 tests that each name their promise. `main` holds the system before the plan; the owner decides the merge.
 
 measured on the branch tip against `main` (lines without the generated interfaces):
 
@@ -33,9 +33,9 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,502, Controller
 | 6b | one State struct, CoreLens deleted, setSale and setCredit (decision 114) | done |
 | 7 | CREATE2 deploy, preflight and postflight trimmed (116 and 70 rows), env vars trimmed, the script tests cut | done |
 | 8 | the test cut: 983 to 452 tests, every survivor names its promise | done |
-| 9 | the simulator follows | in progress |
+| 9 | the simulator follows | done |
 | 10 | SPEC, RUNBOOK, INTEGRATION, README, AGENTS rewritten; comment references fixed; the simplification review archived | done |
-| 11 | the freeze: full suite, deep runs, rehearsal, security review, acceptance | in progress |
+| 11 | the freeze: full suite, deep runs, rehearsal, security review, acceptance | done, section 4 |
 
 ## 3. open items
 
@@ -52,14 +52,14 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,502, Controller
 
 | gate | commit | result |
 |---|---|---|
-| candidate | pending | pending |
-| full suite | pending | pending |
-| deep runs | pending | pending |
-| rehearsal | pending | pending |
+| candidate | 63e011c | the tip of simplify/v1 with every packet merged; the commits after it are docs only |
+| full suite | ff0a2af | docs/reviews/SUITE-ff0a2af.md |
+| deep runs | b88940c | docs/reviews/DEEP-b88940c.md |
+| rehearsal | ff0a2af | docs/reviews/REHEARSAL-ff0a2af.md |
 | security review | b88940c | docs/reviews/REVIEW-security-b88940c.md |
 | acceptance | b88940c | docs/reviews/ACCEPTANCE-b88940c.md |
 
-the security review and the acceptance examined b88940c; the commits after it change comments, tests and docs only, so the runtime logic they reviewed is the candidate's.
+the src/ of the candidate is b88940c plus comment edits (086a946) that leave the masked build hashes unchanged; ff0a2af adds the simulator packet. the deep runs, the security review and the acceptance therefore examined the candidate's runtime logic.
 
 ## 5. how to work in this repo
 
