@@ -29,6 +29,9 @@ export const localAccounts: { name: string; address: Address }[] = (() => {
   }
 })();
 
+// The coin's launch supply in whole cc (1e27 wei).
+export const LAUNCH_SUPPLY_CC = 1e9;
+
 // The Core. The controller, the coin and the balance module are read from it.
 export const core = addr(process.env.NEXT_PUBLIC_CORE);
 

@@ -3,13 +3,11 @@
 import Link from "next/link";
 import { useStats } from "@/lib/engine";
 import { useSnapshot } from "@/lib/live";
-import { engineDeployed } from "@/lib/config";
+import { engineDeployed, LAUNCH_SUPPLY_CC } from "@/lib/config";
 import { BALANCE_SYMBOL } from "@/lib/events";
 import { commas, evmNowAddress } from "@/lib/format";
 
 const SHOW_LIVE = false; // live numbers under each step, off while the copy settles
-
-const LAUNCH_SUPPLY_CC = 1e9; // the coin's launch supply, 1e27 wei
 
 // 24 by 24 line icons; strokes are currentColor.
 const lines = (n: number, a: number, b: number, f: (v: number) => string) =>
@@ -135,6 +133,10 @@ export function Flywheel() {
           <Box t={compose} />
           <Arrow />
           <div className="fw-box fw-split" role="group" aria-label="list or redeem">
+            {/* timeline icon, shown on narrow screens */}
+            <svg className="fw-split-icon" viewBox="0 0 24 24" aria-hidden>
+              {ICONS.tag}
+            </svg>
             <Box t={list} half />
             <span className="fw-or" aria-hidden>
               or

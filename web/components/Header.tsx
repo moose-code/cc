@@ -7,8 +7,9 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 const LOGO_BARS = ["#0a9b41", "#16b6d8", "#f5c400", "#ff0080"];
 
-// feed lives on the logo; keeper sits at the end of the row.
-const NAV = [
+// feed lives on the logo; keeper sits at the end of the row. swap is a mobile item; desktop has it beside the feed.
+const NAV: { href: string; label: string; mobile?: boolean }[] = [
+  { href: "/swap", label: "swap", mobile: true },
   { href: "/credits", label: "credits" },
   { href: "/statements", label: "statements" },
   { href: "/sell", label: "sell" },
@@ -52,7 +53,7 @@ export function Header() {
             <Link
               key={n.href}
               href={n.href}
-              className={active(n.href) ? "on" : undefined}
+              className={[active(n.href) && "on", n.mobile && "mobile-only"].filter(Boolean).join(" ") || undefined}
             >
               {n.label}
             </Link>
