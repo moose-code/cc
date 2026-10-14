@@ -126,3 +126,19 @@ cast code $COIN --rpc-url $MAINNET_RPC_URL | head -c 12     # 0x means the launc
 | nothing or only the library sent | rerun `Deploy`; what has code is skipped |
 | the Core sent, the launch not | `CORE=$CORE DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Resume.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger`: creates what has no code, sends the owner calls and the launch that are missing, runs postflight. it refuses a `CORE` that is not this config's address (`CoreMismatch`), no Core (`NotStarted`), a launched coin (`AlreadyLaunched`) |
 | launched | `Postflight`, then step 9 |
+
+## 7. local end to end
+
+an anvil fork of block 26158000 (chain id 31337) with the system deployed by the launch scripts, a seed and a scenario that fires every user and keeper door. the web app reads the record `deployments/31337.json` (gitignored).
+
+| item | how |
+|---|---|
+| start the chain | `script/dev/local.sh` leaves anvil running on port 8545 (`PORT=` changes it). the first run builds the state with `script/dev/e2e.sh` (about 5 minutes, most of it the seed's credit transfers) and saves it under `script/dev/.cache/`; a later run with unchanged src, script, test/standins and test/utils loads the saved state in seconds. `FRESH=1` rebuilds, `script/dev/local.sh stop` stops anvil |
+| the run itself | `script/dev/e2e.sh` starts its own anvil, runs everything and stops it. `KEEP=1` leaves anvil running, `STOP_AFTER=<stage>` stops after a stage, `NO_ANVIL=1` and `E2E_RPC_URL` reuse a node. `FORK_URL` is the archive rpc, the Tenderly public gateway by default |
+| deploy | `script/deploy.sh local` funds the factory owner, lowers `minProtocolSkimShareBps` to 362 and restores it, then runs Preflight, Deploy (`--unlocked --broadcast --slow`) and Postflight. the scripts require chain id 1, so forge runs with `--chain-id 1` |
+| phase `pre` | the credits move to three accounts (`script/dev/Seed.s.sol`); the balance side, the credit sale and chosen composition start off |
+| phase `post` (default) | the seed also deploys `MockBalanceToken` and `MockBalanceModule` (which mints `rating * unit` on redeem), mints the token to the Core, creates an eth / balance pool at the config's `dev.balancePoolSqrtPriceX96` with full range liquidity from the trader, then as owner sets the module, books the balance, switches `redeemOn`, `balanceBidOn`, the credit sale and chosen composition on, and sets the controller's pool key |
+| stages | `script/dev/Scenario.s.sol`, one `STAGE` per forge run: `a` (coin trades, `book`, payee latch), `fill-a` (`sellForEth` both forms), `adopt`, `compose-a` (`compose()`, `buy` at `grossPriceOf`), `claims` (`claimRoyalty`, `claimPayee`), `d-open`, `d-buy` (`buyCredit`, `buyCredits`), `fill-b`, `compose-b` (`composeChosen`), `format` (`setHeldFormat`), `settings` (`setSale`, `setCredit`, `setRate`, `setSettings`, `fund`), `pause`, `buyback`; in `post` also `fill-d`, `compose-d` (`compose(uint8)`), `redeem` (`redeemStatement`, `releaseRedeemBurn`), `balance-bid` (`sellForBalance` both forms); then `fresh-fill`, `fresh-compose`, `report`. node time warps run between the stages |
+| the record | `chainId`, `rpcUrl`, `deployBlock`, the five contracts and the library, the live Credits, Statements, pool manager and hook, `poolFee`, `tickSpacing`, `owner`, `accounts` (a1, a2, a3, keeper, trader), `phase`, and in `post` `balanceToken`, `balanceModule` and `balancePool` (`null` in `pre`) |
+
+`buyListing` is outside the scenario: the CreditStrategy lists at about four times the rate cap and the Seaport adapter prices an order that needs an external signature.

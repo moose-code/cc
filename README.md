@@ -63,6 +63,7 @@ one script, script/Deploy.s.sol, nine transactions through the deterministic dep
 | docs/STATUS.md | where the work stands, the plan, the freeze table, how to work in this repo |
 | docs/RUNBOOK.md | the launch, the owner commands after it, recovery |
 | docs/INTEGRATION.md | the call surface for keepers and frontends |
+| script/dev/, script/deploy.sh | the local end to end on an anvil fork: `local.sh`, `e2e.sh`, `anvil.sh`, `Seed.s.sol`, `Scenario.s.sol`; docs/RUNBOOK.md section 7 |
 | docs/reviews/ | reviews, rehearsals and acceptances, each pinned to a commit |
 | docs/notes/ | the market data notes and the bid study |
 | sim/README.md | the simulator |
