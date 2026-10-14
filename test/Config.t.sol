@@ -83,7 +83,7 @@ contract ConfigTest is Fixture {
         assertEq(f.sniperSeconds, 1800);
         assertTrue(f.restricted);
         assertEq(f.allowed.length, 0);
-        assertEq(f.settings.payeePpm, 50_505);
+        assertEq(f.settings.payeePpm, 90_909);
         // the owner's launch values of decision 119
         assertTrue(f.credit.saleOn);
         assertEq(f.settings.saleToBuybackBps, 2_500);
@@ -109,8 +109,8 @@ contract ConfigTest is Fixture {
     /// bounty leg = skim * bountyBps / 10_000, protocol leg = skim - bounty leg (steady state, no referral).
     /// the protocol keeps 1 percent of the skim: bountyBps 9_900 gives 1000 * 100 / 10_000 = 10 bps (0.1 points), and the
     /// factory needs minProtocolSkimShareBps at most 10_000 - 9_900 = 100 (`BPS - bountyBps - minProtocolSkimShareBps >= 0`
-    /// in `_validateFee`). Core inflow = bounty leg = 0.1 * 9_900 / 10_000 = 0.099 ether (990 bps). payee target 0.5 points =
-    /// 50 bps = 0.005 ether, payeePpm = 50 / 990 * 1e6 = 50_505.05, rounded down to 50_505. the engine keeps the rest
+    /// in `_validateFee`). Core inflow = bounty leg = 0.1 * 9_900 / 10_000 = 0.099 ether (990 bps). payee target 0.9 points =
+    /// 90 bps = 0.009 ether, payeePpm = 90 / 990 * 1e6 = 90_909.09, rounded down to 90_909. the engine keeps the rest
     function test_feeSplitDerivation() public pure {
         LaunchConfig memory d = defaultConfig();
         uint256 v = 1 ether;
@@ -121,15 +121,15 @@ contract ConfigTest is Fixture {
         assertEq(inflow, 99_000_000_000_000_000, "Core inflow 9.9 points");
         assertEq(protocol, 1_000_000_000_000_000, "protocol leg 0.1 points");
         assertEq(10_000 - uint256(d.bountyBps), 100, "the factory minProtocolSkimShareBps the bounty needs");
-        // payee: the largest ppm whose share of the Core inflow does not exceed 0.5 points (0.005 ether)
-        uint256 payeeTarget = 0.005 ether;
+        // payee: the largest ppm whose share of the Core inflow does not exceed 0.9 points (0.009 ether)
+        uint256 payeeTarget = 0.009 ether;
         uint256 payee = inflow * d.settings.payeePpm / 1e6;
         assertLe(payee, payeeTarget);
         assertGt(
-            inflow * (uint256(d.settings.payeePpm) + 1) / 1e6, payeeTarget, "50_505 is the largest ppm under 0.5 points"
+            inflow * (uint256(d.settings.payeePpm) + 1) / 1e6, payeeTarget, "90_909 is the largest ppm under 0.9 points"
         );
-        assertEq(payee, 4_999_995_000_000_000, "payee 0.4999995 points");
-        assertEq(inflow - payee, 94_000_005_000_000_000, "engine 9.4 points");
+        assertEq(payee, 8_999_991_000_000_000, "payee 0.8999991 points");
+        assertEq(inflow - payee, 90_000_009_000_000_000, "engine 9.0 points");
     }
 
     /// the deploy refuses to run while any placeholder is unset or the rate is out of bounds

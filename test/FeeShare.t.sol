@@ -55,7 +55,7 @@ contract PayeeShareTest is FeeBase {
         // the next book shares
         f = _flow(Kind.BuyExactIn, 1 ether, "");
         assertGt(f.toPayee, 0);
-        assertEq(f.toPayee, f.bountyRise * 50_505 / 1_000_000, "50,505 ppm of the income");
+        assertEq(f.toPayee, f.bountyRise * 90_909 / 1_000_000, "90,909 ppm of the income");
     }
 
     // promise: SPEC 1 the payee share starts with the first income after the window
@@ -77,14 +77,14 @@ contract PayeeShareTest is FeeBase {
     function test_bookCreditsThePayeeAndClaimPaysIt() public {
         _stock();
         assertEq(core.payee(), lc.payee);
-        assertEq(core.settings().payeePpm, 50_505);
+        assertEq(core.settings().payeePpm, 90_909);
         address a = lc.payee;
         uint256 a0 = a.balance;
         uint256 owed0 = core.payeeOwed();
         Flow memory f = _flow(Kind.BuyExactIn, 10 ether, "");
         assertEq(a.balance, a0, "the book pays nothing out");
-        assertEq(core.payeeOwed() - owed0, f.bountyRise * 50_505 / 1_000_000);
-        assertApproxEqRel(core.payeeOwed() - owed0, 0.05 ether, 0.01e18);
+        assertEq(core.payeeOwed() - owed0, f.bountyRise * 90_909 / 1_000_000);
+        assertApproxEqRel(core.payeeOwed() - owed0, 0.09 ether, 0.01e18);
         uint256 owed = core.payeeOwed();
         address anyone = _user("claimer");
         vm.expectEmit(true, false, false, true, address(core));
@@ -288,7 +288,7 @@ contract FeeShareTest is FeeBase {
             uint256 want = b.inflow * bps[i] / BASIS;
             assertEq(b.dRb, want, "exact redeem burn share");
             assertEq(b.dPot, b.inflow - want, "exact pot share");
-            assertApproxEqAbs(b.inflow, 0.094 ether, 0.00001 ether, "9.4 points of the buy reach the engine (core 9.9 less the payee 0.5)");
+            assertApproxEqAbs(b.inflow, 0.090 ether, 0.00001 ether, "9.0 points of the buy reach the engine (core 9.9 less the payee 0.9)");
             _check(b, bps[i]);
             _solvent();
         }

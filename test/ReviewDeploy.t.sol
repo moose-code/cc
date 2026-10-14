@@ -173,7 +173,7 @@ contract ReviewDeployTest is ReviewHarness {
         assertEq(this.parse(j).bountyBps, 9900, "the untouched file parses");
         string[11] memory from = [
             '"bountyBps": 9900',
-            '"payeePpm": 50505',
+            '"payeePpm": 90909',
             '"baselineSkimBps": 1000',
             '"sniperSeconds": 1800',
             '"startTick": -175000',

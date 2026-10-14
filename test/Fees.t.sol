@@ -152,8 +152,8 @@ contract FeeFlowTest is FeeBase {
     // promise: SPEC 1 payee 0.5 points, protocol 0.1 points, engine the rest
     /// the full split at launch values, per 1 eth of volume (multiply by 100 for 100 eth), steady state and inside the anti
     /// sniper window. skim 10 points: protocol 0.1 (bountyBps 9_900 leaves 100 of 10_000), core 9.9.
-    /// steady state, out of the income of 99_000_000_000_000_000 wei: payee 50_505 ppm 0.49999 points, engine
-    /// 9.4 points. window, skim 90 points (0.9 eth): the protocol keeps 0.1 points, the core gets
+    /// steady state, out of the income of 99_000_000_000_000_000 wei: payee 90_909 ppm 0.9 points, engine
+    /// 9.0 points. window, skim 90 points (0.9 eth): the protocol keeps 0.1 points, the core gets
     /// 0.099 + 0.8 = 0.899 eth, the payee gets nothing and the engine the rest
     function test_launchSplitPerHundredEthOfVolume() public {
         Flow memory w = _flow(Kind.BuyExactIn, 1 ether, "");
@@ -165,7 +165,7 @@ contract FeeFlowTest is FeeBase {
         Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
         assertEq(f.skimProtocol * 100, 0.1 ether, "protocol 0.1 per 100 eth");
         assertEq(f.bountyRise * 100, 9.9 ether, "core 9.9 per 100 eth");
-        assertApproxEqAbs(f.toPayee * 100, 0.5 ether, 0.0001 ether, "payee 0.5 points of volume");
+        assertApproxEqAbs(f.toPayee * 100, 0.9 ether, 0.0001 ether, "payee 0.9 points of volume");
         assertEq(f.skimProtocol + f.bountyRise, 0.1 ether, "protocol and core are the 10 point skim");
         assertEq(f.bountyRise - f.toPayee, uint256(99_000_000_000_000_000) - f.toPayee, "the engine part is the rest");
     }

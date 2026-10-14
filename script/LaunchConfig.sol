@@ -84,8 +84,8 @@ struct LaunchConfig {
     address[] seaportRecipients;
     /// the address `Core.claimPayee` pays at launch. the owner replaces it with `Core.setPayee`. its share is
     /// `settings.payeePpm`: the Core receives bountyBps / 10_000 of the baseline skim, 9_900 / 10_000 of 1000 bps is
-    /// 990 bps of volume (9.9 points). 50_505 ppm of that is 0.5 points of volume:
-    /// 0.5 / 9.9 * 1e6 = 50_505.05, rounded down
+    /// 990 bps of volume (9.9 points). 90_909 ppm of that is 0.9 points of volume:
+    /// 0.9 / 9.9 * 1e6 = 90_909.09, rounded down
     address payee;
     // explicit overrides of pinned preflight rules. all false by default. each one is part of the config hash
     /// allow a bountyBps other than 9900

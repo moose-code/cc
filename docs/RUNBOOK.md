@@ -45,7 +45,7 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 | the credit swap | `swapFeeCc` 10,000e18 (ten thousand coins burned per `swapCredit`) |
 | the balance side | `redeemOn` true, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 9,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
 | the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0003 eth, `keeperMaxBaseFee` 5 gwei, `callerFee` 0, `callerMaxBaseFee` 0 |
-| the payee | `payee` the owner, `payeePpm` 50,505 (0.5 points of volume) |
+| the payee | `payee` the owner, `payeePpm` 90,909 (0.9 points of volume) |
 | the adapters | the Seaport recipient allowlist (the OpenSea fee collector 0x0000a26b00c1F0DF003000390027140000fAa719) |
 | the coin | name CC, symbol CC, supply 1e27, start tick -175000, position -175000 to 887200, skim 1,000 bps, bounty 9,900, lp fee 0, sniper 9,000 bps over 1,800 s, protocol 2,000 bps, restricted, allowlist empty, image, description |
 | the build | the masked runtime code hashes of the five contracts and the library creation hash |
