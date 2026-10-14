@@ -7,6 +7,8 @@ import { engineDeployed } from "@/lib/config";
 import { BALANCE_SYMBOL } from "@/lib/events";
 import { commas, evmNowAddress } from "@/lib/format";
 
+const SHOW_LIVE = false; // live numbers under each step, off while the copy settles
+
 const LAUNCH_SUPPLY_CC = 1e9; // the coin's launch supply, 1e27 wei
 
 // 24 by 24 line icons; strokes are currentColor.
@@ -52,7 +54,7 @@ function Box({ t, half }: { t: Step; half?: boolean }) {
       )}
       <span className="fw-label">{t.label}</span>
       <span className="fw-line">{t.line}</span>
-      <span className="fw-num">{t.num ?? "later"}</span>
+      {SHOW_LIVE && <span className="fw-num">{t.num ?? "later"}</span>}
     </>
   );
   const cls = `${half ? "fw-half" : "fw-box"}${t.later ? " fw-later" : ""}`;
