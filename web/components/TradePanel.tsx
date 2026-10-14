@@ -2,15 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAccount, useBalance, usePublicClient, useReadContract, useReadContracts, useSwitchChain } from "wagmi";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { formatUnits, maxUint256, parseEther, parseEventLogs, parseUnits, zeroAddress, type Address } from "viem";
 import { engineDeployed, chain } from "@/lib/config";
-import { useCcMarket, useEthUsd, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
+import { readPots, useCcMarket, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market, type Pots } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
-import { changePct, commas, evmNowTx, shortHash, tokens, usd, usdCompact, usdPrice } from "@/lib/format";
+import { changePct, commas, evmNowAddress, evmNowTx, shortHash, tokens, usdCompact, usdPrice } from "@/lib/format";
 import { lsGet, lsSet } from "@/lib/cache";
-import { CANCELLED, useTx, type Plan, type StepStatus, type Write } from "@/lib/tx";
+import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
 
 const HOOK_FEE_BPS = 690; // fallback when the hook reads fail
 const SLIPPAGE_PRESETS = [50, 100, 200, 500]; // bps
@@ -19,8 +18,52 @@ const IMPACT_WARN = 0.02;
 const GAS_RESERVE = parseEther("0.01"); // left by "max" for gas
 const PERMIT2_MAX = (1n << 160n) - 1n;
 const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as number
+const GROW_MS = 1200;
 
-const STEP_TEXT: Record<StepStatus, string> = { todo: "todo", wallet: "confirm in wallet…", pending: "pending", done: "done", failed: "failed" };
+const ethNum = (wei: bigint) => Number(formatUnits(wei, 18));
+
+// Pot before and after a swap, animated from the first to the second:
+// "pot a -> b eth" counts up, the bar shows (pot mod bid) / bid and wraps when
+// the pot crosses a credit. `bid` is 0n for a pot without a bid (the balance pot).
+function PotGrowth({ from, to, label }: { from: { pot: bigint; bid: bigint }; to: { pot: bigint; bid: bigint }; label: string }) {
+  const [t, setT] = useState(0);
+  useEffect(() => {
+    const t0 = performance.now();
+    let id = requestAnimationFrame(function tick(now) {
+      const k = Math.min(1, (now - t0) / GROW_MS);
+      setT(1 - (1 - k) ** 3);
+      if (k < 1) id = requestAnimationFrame(tick);
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
+  const lerp = (a: bigint, b: bigint) => ethNum(a) + (ethNum(b) - ethNum(a)) * t;
+  const pot = lerp(from.pot, to.pot);
+  const bid = lerp(from.bid, to.bid);
+  const credits = bid > 0 ? pot / bid : 0;
+  return (
+    <div className="tp-pot">
+      <div className="tp-row">
+        <span>{label}</span>
+        <span>
+          {ethNum(from.pot).toFixed(4)} → <b>{pot.toFixed(4)}</b> eth
+        </span>
+      </div>
+      {bid > 0 && (
+        <>
+          <div className="tp-row">
+            <span>next credit</span>
+            <span>
+              covers {Math.floor(credits)} {Math.floor(credits) === 1 ? "credit" : "credits"}
+            </span>
+          </div>
+          <div className="tp-bar">
+            <i style={{ width: `${(credits - Math.floor(credits)) * 100}%` }} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 // Swap panel: eth for a market's token and back through the v4 Universal
 // Router; `market` defaults to the coin. A sell first grants the token
@@ -28,15 +71,14 @@ const STEP_TEXT: Record<StepStatus, string> = { todo: "todo", wallet: "confirm i
 export function TradePanel({ market }: { market?: Market }) {
   const cc = useCcMarket();
   const m = market ?? cc;
+  const isBalance = market != null;
   const { data: perEth } = useTokensPerEth(m);
-  const { data: ethUsd } = useEthUsd();
   const { address, chainId } = useAccount();
-  const { openConnectModal } = useConnectModal();
   const { switchChain } = useSwitchChain();
   const client = usePublicClient();
   const { run, pending, err, steps, reset } = useTx();
 
-  const sym = m?.symbol.toLowerCase() ?? "";
+  const tag = m ? `$${m.symbol.replace(/^\$/, "").toUpperCase()}` : "";
   const dec = m?.decimals ?? 18;
   const hooked = m != null && m.key.hooks !== zeroAddress;
   const hookFee = useHookFeeBps(m).data;
@@ -47,6 +89,7 @@ export function TradePanel({ market }: { market?: Market }) {
   // slippage tolerance in bps, kept in localStorage; a custom percent is applied once it is within 0.1 to 50
   const [slipBps, setSlipBps] = useState(100);
   const [slipCustom, setSlipCustom] = useState("");
+  const [slipOpen, setSlipOpen] = useState(false);
   useEffect(() => {
     const v = Number(lsGet<number>(SLIPPAGE_KEY));
     if (v >= 10 && v <= 5000) {
@@ -62,9 +105,9 @@ export function TradePanel({ market }: { market?: Market }) {
   };
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [pay, setPay] = useState("0.50");
+  const [pay, setPay] = useState(""); // empty reads as 0
   const [result, setResult] = useState<{ text: string; hash: `0x${string}` } | null>(null);
-  const [ranMulti, setRanMulti] = useState(false);
+  const [growth, setGrowth] = useState<{ from: Pots; to: Pots } | null>(null);
 
   const inDec = side === "buy" ? 18 : dec;
   const outDec = side === "buy" ? dec : 18;
@@ -84,10 +127,8 @@ export function TradePanel({ market }: { market?: Market }) {
   const spot = perEth ? (side === "buy" ? amount * perEth : amount / perEth) : 0;
   const receive = quoteOut != null ? Number(formatUnits(quoteOut, outDec)) : spot;
   const f = feeBps / 10000;
-  const feeEth = side === "buy" ? amount * f : (amount / (perEth || Infinity)) * f;
   // quote against the spot proceeds after the fee
   const impact = quoteOut != null && spot > 0 ? Math.max(0, 1 - receive / (spot * (1 - f))) : undefined;
-  const fmtOut = (n: number) => (side === "buy" ? `${commas(Math.floor(n))} ${sym}` : `${n.toFixed(5)} eth`);
 
   const { data: tokBal } = useReadContract({
     address: m?.token,
@@ -111,11 +152,14 @@ export function TradePanel({ market }: { market?: Market }) {
   const plan: Plan[] =
     side === "buy"
       ? [{ label: "buy" }]
-      : [{ label: `approve ${sym}`, done: erc20Allow != null && erc20Allow >= amountIn }, { label: "permit", done: p2Allow != null && p2Allow[0] >= amountIn }, { label: "sell" }];
-  const multi = plan.filter((p) => !p.done).length > 1;
+      : [{ label: `approve ${tag}`, done: erc20Allow != null && erc20Allow >= amountIn }, { label: "permit", done: p2Allow != null && p2Allow[0] >= amountIn }, { label: "sell" }];
+
+  // the pot shown after a swap: the engine pot with its bid, or the balance pot
+  const potOf = (p: Pots) => (isBalance ? { pot: p.balancePot, bid: 0n } : { pot: p.pot, bid: p.bid });
 
   async function swap(write: Write) {
     const t = m!.token as Address;
+    const before = await readPots(client!).catch(() => undefined);
     if (!plan[0].done && side === "sell") await write({ address: t, abi: erc20Abi, functionName: "approve", args: [V4.permit2, maxUint256] });
     if (!plan[1]?.done && side === "sell")
       await write({ address: V4.permit2, abi: permit2Abi, functionName: "approve", args: [t, V4.universalRouter, PERMIT2_MAX, PERMIT2_EXP] });
@@ -138,28 +182,31 @@ export function TradePanel({ market }: { market?: Market }) {
       const logs = parseEventLogs({ abi: transferEventAbi, logs: rc.logs, eventName: "Transfer" });
       got = logs.filter((l) => l.address.toLowerCase() === t.toLowerCase() && l.args.to === address).reduce((a, l) => a + l.args.value, 0n) || (quoteOut as bigint);
     }
-    setResult({ text: `${side === "buy" ? "bought" : "sold"} ${tokens(got, dec)} ${sym}`, hash });
+    setResult({ text: `${side === "buy" ? "bought" : "sold"} ${tokens(got, dec)} ${tag}`, hash });
     setPay("");
+    // the block shows once the pot moved
+    const after = before && (await readPots(client!).catch(() => undefined));
+    if (before && after && potOf(before).pot !== potOf(after).pot) setGrowth({ from: before, to: after });
   }
 
   const over = payBal != null && amountIn > payBal;
   const wrongChain = address != null && chainId !== chain.id;
   const gate = !address
-    ? { label: "connect wallet", go: openConnectModal }
+    ? { label: "connect wallet", off: true } // the header's connect button is the way in
     : wrongChain
       ? { label: "switch network", go: () => switchChain({ chainId: chain.id }) }
       : amountIn === 0n
         ? { label: "enter an amount", off: true }
         : over
-          ? { label: `not enough ${side === "buy" ? "eth" : sym}`, off: true }
+          ? { label: `insufficient ${side === "buy" ? "ETH" : tag}`, off: true }
           : quote.isLoading
             ? { label: "quoting…", off: true }
             : {
-                label: `${side} ${sym}`,
+                label: `${side} ${tag}`,
                 off: !(quoteOut != null && quoteOut > 0n),
                 go: () => {
                   setResult(null);
-                  setRanMulti(multi);
+                  setGrowth(null);
                   run(swap, plan);
                 },
               };
@@ -188,6 +235,7 @@ export function TradePanel({ market }: { market?: Market }) {
   // a result belongs to the account that traded
   useEffect(() => {
     setResult(null);
+    setGrowth(null);
     reset();
   }, [address]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -201,25 +249,28 @@ export function TradePanel({ market }: { market?: Market }) {
     const v = side === "buy" ? (payBal > GAS_RESERVE ? payBal - GAS_RESERVE : 0n) : payBal;
     edit(() => setPay(formatUnits(v, inDec)));
   };
+  const closeSlip = () => setSlipOpen(false);
 
-  const balLine = (bal: bigint | undefined, unit: string, isEth: boolean) => {
-    if (bal == null) return null;
-    const n = Number(formatUnits(bal, isEth ? 18 : dec));
-    const price = isEth ? ethUsd : tokenUsd;
-    return (
-      <div className="bal">
-        bal {isEth ? n.toFixed(3) : tokens(bal, dec)} {unit}
-        {price != null && ` · ${usd(n * price)}`}
-      </div>
-    );
-  };
-
-  const shown = steps.length ? steps : plan.map((p) => ({ label: p.label, status: (p.done ? "done" : "todo") as StepStatus, hash: undefined }));
+  const inUnit = side === "buy" ? "ETH" : tag;
+  const outUnit = side === "buy" ? tag : "ETH";
+  const bal = payBal != null ? (side === "buy" ? Number(formatUnits(payBal, 18)).toFixed(4) : tokens(payBal, dec)) : null;
+  const outText = amountIn === 0n ? "0" : side === "buy" ? commas(Math.floor(receive)) : receive.toFixed(5);
 
   return (
     <aside className="trade">
+      <div className="tp-head">
+        <h2>{tag}</h2>
+        {m && (
+          <a href={evmNowAddress(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} contract on evm.now`}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+              <path d="M5 11 11 5M6 5h5v5" />
+            </svg>
+          </a>
+        )}
+      </div>
+
       {(marketCap != null || tokenUsd != null) && (
-        <dl className="stats">
+        <dl className="tp-stats">
           {marketCap != null && (
             <div>
               <dt>market cap</dt>
@@ -237,14 +288,8 @@ export function TradePanel({ market }: { market?: Market }) {
           )}
         </dl>
       )}
-      <div className="price-small">
-        <div className="r">
-          <span>{sym} / eth</span>
-          <span>{perEth ? (1 / perEth).toFixed(9) : "—"}</span>
-        </div>
-      </div>
 
-      <div className="tabs">
+      <div className="tp-tabs">
         {(["buy", "sell"] as const).map((s) => (
           <button key={s} className={side === s ? "active" : ""} disabled={pending} onClick={() => edit(() => setSide(s))}>
             {s}
@@ -252,48 +297,63 @@ export function TradePanel({ market }: { market?: Market }) {
         ))}
       </div>
 
-      <div className="field">
-        <label>
-          <span>pay</span>
-        </label>
-        <div className="box">
+      <div className={`tp-card${over ? " err" : ""}`}>
+        <div className="tp-top">
+          <span>in</span>
+          {bal != null && (
+            <span>
+              balance {bal}
+              <button className="max" disabled={pending} onClick={max}>
+                max
+              </button>
+            </span>
+          )}
+        </div>
+        <div className="tp-main">
           <input
-            className={over ? "err" : ""}
             inputMode="decimal"
+            placeholder="0"
+            aria-label="amount in"
             disabled={pending}
             value={pay}
             onChange={(e) => edit(() => setPay(e.target.value.replace(/[^0-9.]/g, "")))}
           />
-          <button className="max" disabled={pending} onClick={max}>
-            max
-          </button>
-          <span className="unit">{side === "buy" ? "eth" : sym}</span>
+          <span className="unit">{inUnit}</span>
         </div>
-        {balLine(payBal, side === "buy" ? "eth" : sym, side === "buy")}
       </div>
 
-      <div className="field">
-        <label>
-          <span>receive</span>
-          <span>{quoteOut != null ? "quoted" : "estimate"}</span>
-        </label>
-        <div className="box">
-          <span className="out">{side === "buy" ? commas(Math.floor(receive)) : receive.toFixed(5)}</span>
-          <span className="unit">{side === "buy" ? sym : "eth"}</span>
+      <div className="tp-card">
+        <div className="tp-top">
+          <span>out</span>
         </div>
-        {balLine(side === "buy" ? tokBal : ethBal?.value, side === "buy" ? sym : "eth", side === "sell")}
+        <div className="tp-main">
+          <span className={`num${amountIn === 0n ? " zero" : ""}`}>{outText}</span>
+          <span className="unit">{outUnit}</span>
+        </div>
       </div>
 
-      <div className="quote">
-        <div className="r">
-          <span>minimum after slippage</span>
-          <span>{quoteOut != null ? fmtOut(Number(formatUnits(minOut(quoteOut, slipBps), outDec))) : "—"}</span>
+      <div className="tp-rows">
+        <div className={`tp-row${impact != null && impact > IMPACT_WARN ? " warn" : ""}`}>
+          <span>price impact</span>
+          <span>{impact != null ? `${impact > 0 ? "−" : ""}${(impact * 100).toFixed(2)}%` : "—"}</span>
         </div>
-        <div className="r slip">
+        <button className="tp-row" disabled={pending} aria-expanded={slipOpen} onClick={() => setSlipOpen(!slipOpen)}>
           <span>slippage</span>
           <span>
+            {slipBps / 100}% {slipOpen ? "▴" : "▾"}
+          </span>
+        </button>
+        {slipOpen && (
+          <div className="tp-opts">
             {SLIPPAGE_PRESETS.map((p) => (
-              <button key={p} className={slipBps === p && slipCustom === "" ? "on" : ""} disabled={pending} onClick={() => pickSlip(p, "")}>
+              <button
+                key={p}
+                className={slipBps === p && slipCustom === "" ? "on" : ""}
+                onClick={() => {
+                  pickSlip(p, "");
+                  closeSlip();
+                }}
+              >
                 {p / 100}%
               </button>
             ))}
@@ -302,7 +362,6 @@ export function TradePanel({ market }: { market?: Market }) {
               inputMode="decimal"
               placeholder="custom"
               aria-label="custom slippage percent"
-              disabled={pending}
               value={slipCustom}
               onChange={(e) => {
                 const v = e.target.value.replace(/[^0-9.]/g, "");
@@ -310,45 +369,12 @@ export function TradePanel({ market }: { market?: Market }) {
                 if (v !== "" && n >= 0.1 && n <= 50) pickSlip(Math.round(n * 100), v);
                 else setSlipCustom(v);
               }}
+              onKeyDown={(e) => e.key === "Enter" && slipValid && closeSlip()}
+              onBlur={() => slipValid && closeSlip()}
             />
-          </span>
-        </div>
-        <div className="r">
-          <span>fee {feeBps / 100}%</span>
-          <span>{feeEth.toFixed(5)} eth</span>
-        </div>
-        <div className="r">
-          <span>rate</span>
-          <span>
-            <b>1 eth = {perEth ? commas(Math.round(perEth)) : "—"}</b> {sym}
-          </span>
-        </div>
-        <div className={`r${impact != null && impact > IMPACT_WARN ? " warn" : ""}`}>
-          <span>price impact</span>
-          <span>{impact != null ? `${impact > 0 ? "−" : ""}${(impact * 100).toFixed(2)}%` : "—"}</span>
-        </div>
+          </div>
+        )}
       </div>
-
-      {(steps.length ? ranMulti : multi) && (
-        <ol className="steps">
-          {shown.map((s) => (
-            <li key={s.label} className={s.status}>
-              <span>{s.label}</span>
-              <span>
-                {STEP_TEXT[s.status]}
-                {s.status === "pending" && s.hash && (
-                  <>
-                    {" "}
-                    <a href={evmNowTx(s.hash)} target="_blank" rel="noreferrer">
-                      {shortHash(s.hash)}
-                    </a>
-                  </>
-                )}
-              </span>
-            </li>
-          ))}
-        </ol>
-      )}
 
       <button
         className={`action${busy ? " busy" : result ? " ok" : failing && !settled ? " fail" : ""}`}
@@ -358,19 +384,23 @@ export function TradePanel({ market }: { market?: Market }) {
         {busy && <span className="spin" aria-hidden />}
         {label}
       </button>
-      <div className="status">
-        <div>
+      {(txHash || err) && (
+        <div className="tp-status">
           {txHash && (
             <a href={evmNowTx(txHash)} target="_blank" rel="noreferrer">
               tx {shortHash(txHash)}
             </a>
           )}
+          {err && (
+            <p key={err} className={`err${err === CANCELLED ? " fade" : ""}`}>
+              {err}
+            </p>
+          )}
         </div>
-        <p key={err} className={err ? `err${err === CANCELLED ? " fade" : ""}` : ""}>
-          {err}
-        </p>
-      </div>
-      {!engineDeployed && <p className="panel-note">engine not deployed.</p>}
+      )}
+      <p className="tp-fee">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
+      {growth && <PotGrowth key={growth.to.pot.toString()} from={potOf(growth.from)} to={potOf(growth.to)} label="pot" />}
+      {!engineDeployed && <p className="panel-note tp-note">engine not deployed.</p>}
     </aside>
   );
 }

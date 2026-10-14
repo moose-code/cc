@@ -211,10 +211,10 @@ a.fw-box:hover {
 }
 
 .trade {
-  width: 360px;
+  width: 380px;
   flex: none;
   border-left: 1px solid var(--line);
-  padding: 1.25rem 1.5rem;
+  padding: 2rem 1.75rem;
 }
 
 /* ---- feed ----------------------------------------------------------------- */
@@ -410,140 +410,272 @@ a.fw-box:hover {
 
 /* ---- trade panel ---------------------------------------------------------- */
 
-.stats {
+.tp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+.tp-head h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+.tp-head a {
+  display: inline-flex;
+  margin-right: -0.25rem;
+  padding: 0.25rem;
+  color: var(--muted);
+}
+.tp-head a:hover {
+  color: var(--fg);
+  text-decoration: none;
+}
+.tp-stats {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
-  margin: 0;
-  border-bottom: 1px solid var(--line);
+  margin: 0 0 2rem;
 }
-.stats > div {
-  padding: 0 0 0.75rem;
-}
-.stats > div + div {
-  padding-left: 1rem;
+.tp-stats > div + div {
+  padding-left: 1.25rem;
   border-left: 1px solid var(--line);
 }
-.stats dt {
+.tp-stats dt {
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
-.stats dd {
-  margin: 0.15rem 0 0;
+.tp-stats dd {
+  margin: 0.25rem 0 0;
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
   flex-wrap: wrap;
+  gap: 0.2rem 0.5rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.stats dd span {
+.tp-stats dd span {
   font-size: 0.8rem;
   font-weight: 400;
   color: var(--muted);
 }
-.stats dd span.up {
+.tp-stats dd span.up {
   color: var(--sold);
 }
-.stats dd span.down {
+.tp-stats dd span.down {
   color: var(--credit);
 }
-.price-small {
-  margin-top: 0.75rem;
-  display: grid;
-  gap: 0.3rem;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-.price-small .r {
+.tp-tabs {
   display: flex;
-  justify-content: space-between;
-}
-.tabs {
-  display: flex;
-  margin: 1.25rem 0 1rem;
+  margin-bottom: 1.25rem;
   border: 1px solid var(--fg);
 }
-.tabs button {
+.tp-tabs button {
   flex: 1;
   padding: 0.65rem;
   background: var(--bg);
   border: 0;
   font-family: var(--mono);
   font-size: 0.95rem;
-  cursor: pointer;
   color: var(--fg);
+  cursor: pointer;
 }
-.tabs button.active {
+.tp-tabs button.active {
   background: var(--fg);
   color: var(--bg);
 }
-.field {
-  margin-bottom: 1rem;
+.tp-tabs button:disabled {
+  cursor: not-allowed;
 }
-.field label {
+.tp-card {
+  margin-bottom: 0.75rem;
+  padding: 1rem 1.1rem 1.15rem;
+  border: 1px solid var(--line);
+  transition: border-color 150ms;
+}
+.tp-card:focus-within {
+  border-color: var(--fg);
+}
+.tp-card.err {
+  border-color: var(--credit);
+}
+.tp-top {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 1.25rem;
   color: var(--muted);
   font-size: 0.8rem;
-  margin-bottom: 0.35rem;
 }
-.field .box {
-  border: 1px solid var(--line);
-  padding: 0.75rem 0.85rem;
+.tp-top .max {
+  margin-left: 0.4rem;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: inherit;
+  cursor: pointer;
+}
+.tp-top .max:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+.tp-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+}
+.tp-main input,
+.tp-main .num {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 1.9rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tp-main input::placeholder,
+.tp-main .num.zero {
+  color: var(--muted2);
+}
+.tp-card.err .tp-main input {
+  color: var(--credit);
+}
+.tp-main .unit {
+  flex: none;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+.tp-rows {
+  display: grid;
+  gap: 0.7rem;
+  margin: 1.5rem 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.tp-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.75rem;
 }
-.field input {
-  border: 0;
-  outline: 0;
-  font-family: var(--mono);
-  font-size: 1.6rem;
-  width: 100%;
-  background: transparent;
-  color: var(--fg);
-}
-.field .unit {
-  color: var(--muted);
-  font-size: 0.9rem;
-  padding-left: 0.5rem;
-}
-.field .out {
-  font-size: 1.6rem;
-  font-variant-numeric: tabular-nums;
-}
-.page .trade {
-  border-left: 0;
-  padding: 1rem 0 0;
-}
-.field .bal {
-  margin-top: 0.3rem;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-.field .max {
-  background: none;
-  border: 0;
-  padding: 0 0.25rem;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 0.85rem;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.field .max:disabled {
-  cursor: not-allowed;
-}
-.field input.err {
+.tp-row.warn {
   color: var(--credit);
 }
-.field .box:has(input.err) {
+button.tp-row {
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font-family: var(--mono);
+  font-size: inherit;
+  cursor: pointer;
+}
+button.tp-row:disabled {
+  cursor: not-allowed;
+}
+.tp-opts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  margin-top: -0.2rem;
+}
+.tp-opts button,
+.tp-opts input {
+  padding: 0.2rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: color 150ms, border-color 150ms;
+}
+.tp-opts button.on,
+.tp-opts input.on {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+.tp-opts input {
+  width: 4.75rem;
+  cursor: text;
+}
+.tp-opts input.err {
+  color: var(--credit);
   border-color: var(--credit);
 }
-.tabs button:disabled {
-  cursor: not-allowed;
+.trade .action {
+  min-height: 3.25rem;
+  text-transform: none;
+}
+.tp-status {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.2rem;
+  text-align: center;
+  font-size: 0.78rem;
+}
+.tp-status .err {
+  margin: 0;
+  color: var(--credit);
+  animation: appear 150ms;
+}
+.tp-status .err.fade {
+  animation: appear 150ms, fade 4s forwards;
+}
+.tp-fee {
+  margin: 0.9rem 0 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.tp-pot {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.tp-pot .tp-row > span:first-child {
+  color: var(--muted);
+}
+.tp-bar {
+  height: 4px;
+  background: var(--line);
+}
+.tp-bar i {
+  display: block;
+  height: 100%;
+  background: var(--fg);
+}
+.panel-note.tp-note {
+  margin-top: 1rem;
+}
+@media (max-width: 640px) {
+  .trade {
+    padding: 1.5rem 1.25rem;
+  }
+}
+.page .trade {
+  max-width: 420px;
+  border-left: 0;
+  border-top: 0;
+  padding: 0.5rem 0 0;
 }
 
 .quote {
@@ -560,66 +692,6 @@ a.fw-box:hover {
 .quote .r b {
   color: var(--fg);
   font-weight: 600;
-}
-
-.steps {
-  list-style: none;
-  margin: 0 0 1rem;
-  padding: 0;
-  display: grid;
-  gap: 0.35rem;
-  font-size: 0.85rem;
-}
-.steps li {
-  transition: color 150ms;
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  color: var(--muted);
-}
-.steps li.wallet,
-.steps li.pending {
-  color: var(--fg);
-}
-.steps li.failed {
-  color: var(--credit);
-}
-.quote .r.warn {
-  color: var(--credit);
-}
-.quote .slip > span:last-child {
-  display: inline-flex;
-  gap: 0.25rem;
-  align-items: center;
-}
-.quote .slip button,
-.quote .slip input {
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  padding: 0.1rem 0.4rem;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  color: var(--muted);
-  cursor: pointer;
-  transition: color 150ms, border-color 150ms;
-}
-.quote .slip button.on,
-.quote .slip input.on {
-  color: var(--fg);
-  border-color: var(--fg);
-}
-.quote .slip input {
-  width: 4.5rem;
-  cursor: text;
-}
-.quote .slip input.err {
-  color: var(--credit);
-  border-color: var(--credit);
-}
-.quote .slip button:disabled,
-.quote .slip input:disabled {
-  cursor: not-allowed;
 }
 
 .action {
@@ -669,22 +741,6 @@ a.fw-box:hover {
   to {
     transform: rotate(360deg);
   }
-}
-.status {
-  margin-top: 0.5rem;
-  font-size: 0.78rem;
-}
-.status > div,
-.status > p {
-  min-height: 1.3rem;
-  margin: 0;
-}
-.status .err {
-  color: var(--credit);
-  animation: appear 150ms;
-}
-.status .err.fade {
-  animation: appear 150ms, fade 4s forwards;
 }
 @keyframes appear {
   from {
