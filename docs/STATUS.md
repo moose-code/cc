@@ -35,7 +35,7 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 | 8 | the test cut: 983 to 452 tests, every survivor names its promise | done |
 | 9 | the simulator follows | done |
 | 10 | SPEC, RUNBOOK, INTEGRATION, README, AGENTS rewritten; comment references fixed; the simplification review archived | done |
-| 11 | the freeze: full suite, deep runs, rehearsal, security review, acceptance | rerun on c8b42d6, section 4 |
+| 11 | the freeze: full suite, deep runs, rehearsal, security review, acceptance | done on c8b42d6, section 4 |
 | 11b | the two high findings of the independent review fixed (decision 115) | done |
 | 12 | the local end to end on anvil (12a), the web app ported with a local mode (12b), the flywheel bar (12c) | done; the browser run is in progress |
 
@@ -55,7 +55,7 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 |---|---|---|
 | candidate | c8b42d6 | the tip of simplify/v1 with every packet merged; the commits after it are docs only |
 | full suite | c8b42d6 | docs/reviews/SUITE-c8b42d6.md |
-| deep runs | pending | pending |
+| deep runs | c8b42d6 | docs/reviews/DEEP-c8b42d6.md |
 | rehearsal | c8b42d6 | docs/reviews/REHEARSAL-c8b42d6.md |
 | security review | 63e011c | docs/reviews/REVIEW-security-opus-63e011c.md (independent, Opus), docs/reviews/REVIEW-security-b88940c.md (the director's); the two highs are fixed in 43c9f94, decision 115 |
 | acceptance | b88940c | docs/reviews/ACCEPTANCE-b88940c.md |
