@@ -53,7 +53,7 @@ export default function KeeperPage() {
             {row("redeem burn reserve", `${eth(s.ethRedeemBurn)} eth`)}
             {row("payee owed", `${eth(s.payeeOwed)} eth`)}
             {row("royalty owed", `${eth(s.royaltyOwed)} eth`)}
-            {s.balanceOn && row(`${BALANCE_SYMBOL} pot`, eth(s.balancePot))}
+            {s.balanceOn && row(`${BALANCE_SYMBOL} in the module`, eth(s.balancePot))}
           </div>
         </section>
 

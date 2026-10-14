@@ -66,7 +66,6 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     ethPot,
     ethToBuyback,
     ethRedeemBurn,
-    balancePot,
     payeeOwed,
     pileSize,
     held,
@@ -91,7 +90,6 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
       { ...c, functionName: "ethPot" },
       { ...c, functionName: "ethToBuyback" },
       { ...c, functionName: "ethRedeemBurn" },
-      { ...c, functionName: "balancePot" },
       { ...c, functionName: "payeeOwed" },
       { ...c, functionName: "pileSize" },
       { ...c, functionName: "heldStatements" },
@@ -113,6 +111,10 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
   const toPayee = payeeOn ? (income * BigInt(settings.payeePpm)) / 1_000_000n : 0n;
   const toRedeemBurn = ((income - toPayee) * BigInt(settings.feeToRedeemBurnBps)) / 10000n;
   const potWithPending = ethPot + income - toPayee - toRedeemBurn;
+  // the balance token is held by the module, not the Core: the pot of the bid is the module's available() holding
+  const balancePot = balanceModule !== zeroAddress
+    ? await client.readContract({ address: balanceModule, abi: moduleAbi, functionName: "available" })
+    : 0n;
   const k = { address: controller, abi: controllerAbi } as const;
   const [creditSaleOn, creditWindow, pointRate, royaltyOwed, page] = await client.multicall({
     ...mc,
@@ -321,11 +323,11 @@ export function useStatements() {
 
 // State.anchor starts at slot 28 (test/CoreLayout.t.sol, src/lib/CoreLib.sol):
 // lastFillRate, minuteStartRate, minuteBucket (uint64) + peakTime, peakRate.
-const ANCHOR_SLOT = 28n;
+const ANCHOR_SLOT = 27n;
 const CREDIT_SCORE = "0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7" as const;
 const scoreAbi = parseAbi(["function scoreOf(bytes21 seed, uint64 paidAt) view returns (uint256)"]);
 const multicallAbi = parseAbi(["function getEthBalance(address a) view returns (uint256)"]);
-const moduleAbi = parseAbi(["function unitPerPoint() view returns (uint256)"]);
+const moduleAbi = parseAbi(["function unitPerPoint() view returns (uint256)", "function available() view returns (uint256)"]);
 const seedAbi = parseAbi(["function seedOf(uint256 id) view returns (bytes21)", "function timestampOf(uint256 id) view returns (uint64)"]);
 
 // Eth Core.sellForEth pays for n credits sold in one call at chain time `now`

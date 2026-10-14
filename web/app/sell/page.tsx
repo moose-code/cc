@@ -97,7 +97,7 @@ export default function SellPage() {
               </div>
               {snap?.balanceOn && (
                 <div className="r">
-                  <span>balance pot</span>
+                  <span>balance in the module</span>
                   <span>{eth(snap.balancePot)}</span>
                 </div>
               )}

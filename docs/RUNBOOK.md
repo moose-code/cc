@@ -86,8 +86,8 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 
 1. deploy and verify the successor (a Core built with the live coin address, which takes `fund()`), set its controller and adapters.
 2. as coin admin, point the pool's bounty recipient at the successor (`setBountyRecipient` on the hook), so fees flow there from the next swap.
-3. `setSuccessor(successor)` on the old Core, then dry run `migrate` on a fork (`cast call $CORE "migrate(uint256)" 150 --from $OWNER`), then `migrate(150)` repeatedly until `ethPot`, `balancePot` and the pile are 0 (about 44,800 gas per credit; 370 is the largest batch under the cap). the first call retires the old engine.
-4. on the successor: `adopt` the credits it received, `bookBalance()` once its module is set. the old engine keeps selling and redeeming its statements and burning its buyback pot.
+3. `setSuccessor(successor)` on the old Core, then dry run `migrate` on a fork (`cast call $CORE "migrate(uint256)" 150 --from $OWNER`), then `migrate(150)` repeatedly until `ethPot` and the pile are 0 (about 44,800 gas per credit; 370 is the largest batch under the cap). the balance token is held by the module, not the Core, so migrate has no balance leg. the first call retires the old engine.
+4. on the successor: `adopt` the credits it received, and set its balance module (which holds the token; there is no `bookBalance`). the old engine keeps selling and redeeming its statements and burning its buyback pot.
 
 ### keeper duties
 

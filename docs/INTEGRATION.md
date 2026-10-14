@@ -20,7 +20,8 @@ one multicall over these views answers everything a seller, a buyer or a keeper 
 | `core.ethRate()` | the bid for a credit of score `refScore` now, with the unbooked fees counted into the pot |
 | `core.bidOf(id)` | the bid for credit `id` now: `ethRate()` times its score over `refScore`, the number a seller or keeper uses |
 | `core.ethPrice()`, `core.floorRate()` | the price state before the pot clamp; the rate under every price floor |
-| `core.ethPot()`, `core.ethToBuyback()`, `core.ethRedeemBurn()`, `core.balancePot()`, `core.payeeOwed()` | the pots |
+| `core.ethPot()`, `core.ethToBuyback()`, `core.ethRedeemBurn()`, `core.payeeOwed()` | the eth pots |
+| `IBalanceModule(core.balanceModule()).available()` | the balance token the module commits to the bid (the Core holds none) |
 | `core.pileSize()`, `core.pilePage(startAfter, n)`, `core.creditInfo(id)` | the pile, oldest first, with cost and acquisition time |
 | `core.heldStatements()`, `core.statementInfo(sid)`, `core.statementAge(sid)`, `core.ratingOf(sid)`, `core.composerOf(sid)` | the held statements |
 | `controller.nextPage()` | whether a page is ready for `compose` |
@@ -64,7 +65,7 @@ reverts: `NotReady`, `BadFormat`, `NotInPile(id)`, `NotHeld`, `BadStatement`, `C
 
 ## 7. fees, booking and funding
 
-fees reach the Core from the pool's hook on every swap and are booked at the next door. `core.book()` books them now (a keeper calls it at the end of the anti sniper window, launch plus 30 minutes). `core.fund()` payable adds eth to the pot whole. `core.collectEscrow()` claims the Core's fee escrow credit into the pot. `core.claimPayee()` pays the payee claim. `core.bookBalance()` books balance token held above the pot. a plain send to the Core reverts `UseFund`. events `FeesAdded(amount)`, `Funded(from, amount)`, `EscrowCollected(amount)`, `PayeeClaimed(payee, amount)`, `BalanceBooked(amount)`.
+fees reach the Core from the pool's hook on every swap and are booked at the next door. `core.book()` books them now (a keeper calls it at the end of the anti sniper window, launch plus 30 minutes). `core.fund()` payable adds eth to the pot whole. `core.collectEscrow()` claims the Core's fee escrow credit into the pot. `core.claimPayee()` pays the payee claim. the balance token is held by the module, not the Core, so there is no balance booking door. a plain send to the Core reverts `UseFund`. events `FeesAdded(amount)`, `Funded(from, amount)`, `EscrowCollected(amount)`, `PayeeClaimed(payee, amount)`.
 
 ## 8. the buyback
 
@@ -72,11 +73,11 @@ fees reach the Core from the pool's hook on every swap and are booked at the nex
 
 ## 9. the balance side
 
-off at launch (`redeemOn`, `balanceBidOn` false, no module). once on: `core.redeemStatement(sid)` for a held statement with `controller.atFloor(sid)` true; `core.sellForBalance(ids, minOut)` pays balance token per credit by score. reverts `NoBalanceModule`, `BalanceBidOff`, `Empty`, `BadModule`, `ZeroAmount`, `PotTooSmall`, `Slippage`, `Retired`. events `StatementRedeemed(sid, received)`, `CreditBought(id, from, cost)`.
+the module holds the balance token; the Core holds none. its interface adds `available()` (the token it commits to the bid) and `pay(to, amount)` (the Core only). off at launch (`redeemOn`, `balanceBidOn` false, no module). `core.redeemStatement(sid)` for a held statement with `controller.atFloor(sid)` true leaves its proceeds in the module; reverts `BadModule` when the module's holding rises by less than `rating * unit * (10,000 - redeemSlippageBps) / 10,000`. `core.sellForBalance(ids, minOut)` pays balance token per credit by score from the module: the batch must fit `available()` and the seller's holding must rise by the total, else it reverts `NoBalanceModule`, `BalanceBidOff`, `Empty`, `BadModule`, `ZeroAmount`, `PotTooSmall`, `Slippage`, `Retired`. with the bid off and `redeemOn`, redemptions keep filling the module (the accumulate mode). events `StatementRedeemed(sid, received)`, `CreditBought(id, from, cost)`.
 
 ## 10. adopt, migrate, rescue
 
-`core.adopt(ids)` puts credits the Core holds without a record into the pile (anyone). the owner's `migrate(maxCredits)` sends the pots and credits to the successor and retires the engine (`Retired` from the buying and composing doors after it); the successor takes the eth through `fund()`. `rescueCoin` and `rescueNft` are owner only; `rescueNft` reverts `NoCreditRescue` for Credits in every state, and a credit sent to the Core leaves through `adopt` and the doors. events `CreditAdopted`, `Migrated`, `EngineRetired`, `BalanceTokenMigrationSkipped`, `CoinRescued`, `NftRescued`.
+`core.adopt(ids)` puts credits the Core holds without a record into the pile (anyone). the owner's `migrate(maxCredits)` sends the eth pot and credits to the successor and retires the engine (`Retired` from the buying and composing doors after it); the successor takes the eth through `fund()`; the balance token is held by the module, not the Core, so migrate has no balance leg. `rescueCoin` and `rescueNft` are owner only; `rescueNft` reverts `NoCreditRescue` for Credits in every state, and a credit sent to the Core leaves through `adopt` and the doors. events `CreditAdopted`, `Migrated`, `EngineRetired`, `CoinRescued`, `NftRescued`.
 
 ## 11. owner events to watch
 
