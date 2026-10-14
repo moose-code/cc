@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../interfaces/Interfaces.sol";
 
-/// the sanity bounds of every setting (docs/FLOW.md section 2). internal only: the Core reaches it through the linked
+/// the sanity bounds of every setting (docs/SPEC.md section 3). internal only: the Core reaches it through the linked
 /// `CoreLib.validate`, and the deploy scripts inline it, so there is one definition. the bounds stop typos and keep
 /// the hard rule that settings cannot become a withdrawal path: every caller payment and keeper reward stays capped
 library SettingsBounds {

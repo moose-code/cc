@@ -26,7 +26,7 @@ import {SettingsBounds} from "./SettingsBounds.sol";
 /// raw storage words
 struct State {
     address controller;
-    /// one way locks of the owner (docs/ARCHITECTURE.md): once set, the door never opens again
+    /// one way locks of the owner (docs/SPEC.md section 11): once set, the door never opens again
     bool controllerLocked;
     bool balanceModuleLocked;
     bool adaptersLocked;
@@ -88,7 +88,7 @@ struct State {
 /// clamp and ceiling, and the drop on a fill), the pool manager swap of the coin buyback, the
 /// sale of credits into the balance token bid.
 /// it holds no state of its own and is called by delegatecall, so it works on the Core's storage and balance, and the
-/// Core keeps its runtime under the size limit. deployed once before the Core (docs/DEPLOY.md)
+/// Core keeps its runtime under the size limit. deployed once before the Core (docs/RUNBOOK.md)
 library CoreLib {
     using FixedPointMathLib for uint256;
 

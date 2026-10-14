@@ -12,7 +12,7 @@ import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
-/// first policy module. composes the oldest 80 pile credits with format 0.
+/// first policy module. pages the oldest 80 pile credits for the Core, which picks the format.
 /// it prices and sells statements and pile credits. `refScore` (an owner setting, in the per-credit score unit of one
 /// ten-thousandth of a point) sets the point rate, `core.floorRate() / refScore`, and `valueOf(points)` is the larger of
 /// `floorRate * points / refScore` and the balance token pool value of `points * unitPerPoint` base units, with

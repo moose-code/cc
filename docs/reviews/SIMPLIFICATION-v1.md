@@ -1,3 +1,5 @@
+> executed on branch simplify/v1 (packets 0 to 11); the state of the work is docs/STATUS.md. this is the review that produced the plan.
+
 # simplification review: the agreed product, built today
 
 date 2026-10-13. basis: docs/DECISIONS.md section 11 (the product agreement, decisions 99 to 108). method: four read-only measurement sweeps of src, script, test, sim and docs, a clean sheet design, an independent adversarial challenge of that design against the code, and this report with the challenge's fixes folded in. nothing is changed yet. "measured" means read from the tree today; "projected" means an estimate for the design.

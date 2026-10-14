@@ -1,24 +1,21 @@
 # credits engine: agent entrypoint
 
-Read `docs/STATUS.md` first. `CLAUDE.md` points here.
+read docs/STATUS.md first. CLAUDE.md points here.
 
-## Authority
+## authority
 
-1. The owner's latest explicit instruction.
-2. `docs/SPEC.md`: the current reading of intent and of the system (section 1 lists guarantees, behavior, parameters and accepted risks).
-3. `docs/DECISIONS.md`: the dated owner decision log. A later dated decision supersedes an earlier one.
-4. Code, tests, simulations and reviews: evidence, never authority over intent.
+1. the owner's latest explicit instruction.
+2. docs/SPEC.md: the current reading of intent and of the system (section 1 is the intent table).
+3. docs/DECISIONS.md: the dated owner decision log. a later dated decision supersedes an earlier one.
+4. code, tests, simulations and reviews: evidence, never authority over intent.
 
-Record each owner instruction in `docs/DECISIONS.md` and `docs/SPEC.md` section 1 in the turn it is given. When a test agrees with the code and conflicts with the owner's goal, raise it as a defect.
+record each owner instruction in docs/DECISIONS.md and docs/SPEC.md section 1 in the turn it is given. when a test agrees with the code and conflicts with the owner's goal, raise it as a defect.
 
-## Objective
+## working rules
 
-The plan, the open items and the freeze table are in `docs/STATUS.md`. A fix or a green suite is progress toward the freeze. Before ending a turn, compare the plan with what is done, state what remains, and continue the next authorized step.
-
-## Working rules
-
-- One active director. Implementers get bounded packets. Reviewers inspect an immutable commit, challenge the director's reasoning, and do not fix their own findings.
-- Each change gets `forge build` and `forge test --match-path` for the test files it touched. Nothing more. The full suite, the deep invariants and the rehearsal run once, on the frozen candidate. A builder packet never asks for a full suite on a work item. Before a command over 30 seconds, say what it must establish.
-- No mainnet broadcast, deploy, push, merge or private key without the owner's explicit instruction.
-- The vocabulary is "balance", never "exit" (docs/DECISIONS.md decision 102). Code, comments, tests and docs use the balance names: `balanceToken`, `balanceModule`, `balanceMode`, `redeemStatement`, `sellForBalance`, `balancePot`.
-- Toolchain, timings and test rules: `docs/STATUS.md` section 5.
+- every line, test, helper and document justifies its existence by the promise it protects; else it is not written. a kept test carries a `// promise:` line.
+- each change gets `forge build` and `forge test --match-path` for the test files it touched, nothing more. the full suite, the deep invariants and the rehearsal run once, on the frozen candidate, marked `CANDIDATE_RUN=1`. a hook refuses a whole suite run without the marker.
+- after a forge run: `git checkout foundry.lock; git submodule update -- lib/solady`. after a change of a production contract's external surface: `script/tools/gen-interfaces.sh`, then re-pin the build hashes in script/Checks.sol and test/BuildIdentity.t.sol.
+- no mainnet broadcast, deploy, push to main, merge or private key without the owner's explicit instruction.
+- the vocabulary is "balance", never "exit" (decision 102). comments state rules, invariants and caveats in plain technical voice; no em or en dashes.
+- toolchain, timings and the fork env: docs/STATUS.md section 5.

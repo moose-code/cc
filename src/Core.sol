@@ -34,7 +34,7 @@ import {CreditBounds} from "./lib/CreditBounds.sol";
 
 /// custody and every rule of the credits engine. the owner sets the controller, the balance module and the adapter list at
 /// once, can set a successor that receives the assets on `migrate`, and can close each of the controller, the balance
-/// module, the adapters and the successor door with a one way lock (docs/ARCHITECTURE.md).
+/// module, the adapters and the successor door with a one way lock (docs/SPEC.md section 11).
 /// credits and statements sent to the core outside its doors are not tracked and stay in the core.
 /// the Core is the bounty recipient of the pool. `receive()` accepts eth from the hook and the fee escrow only, and every
 /// door starts with `_book()`, which splits the eth above the tracked pots into the payee claim, the coin buyback, the
@@ -178,11 +178,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event EngineRetired(address indexed successor);
     /// `migrate` could not transfer `balancePot` (`amount`) to the successor; the pot stays
     event BalanceTokenMigrationSkipped(address indexed successor, uint256 amount);
-    /// share of a sold credit's cost booked to ethPot, the rest of the payment to ethToBuyback (docs/FLOW.md 88)
+    /// share of a sold credit's cost booked to ethPot, the rest of the payment to ethToBuyback (decision 88)
     event CreditCostToPotBpsSet(uint16 bps);
-    /// whether a caller may pick the 80 credits and the format of a compose (docs/FLOW.md 89)
+    /// whether a caller may pick the 80 credits and the format of a compose (decision 89)
     event ChosenComposeOnSet(bool on);
-    /// least coin balance a caller of a chosen compose must hold (docs/FLOW.md 89)
+    /// least coin balance a caller of a chosen compose must hold (decision 89)
     event MinCcToChooseSet(uint96 min);
     event PausedSet(bool paused);
 
@@ -1130,20 +1130,20 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// sets the share of a sold credit's cost booked to ethPot, the rest of the payment to ethToBuyback. 0 to 10_000.
-    /// read by `sellCreditTo` (docs/FLOW.md 88)
+    /// read by `sellCreditTo` (decision 88)
     function setCreditCostToPotBps(uint16 v) external onlyOwner {
         if (!CreditBounds.costToPotBpsOk(v)) revert BadSetting("creditCostToPotBps");
         s.creditCostToPotBps = v;
         emit CreditCostToPotBpsSet(v);
     }
 
-    /// turns chosen composition on or off. gates `composeChosen`; `compose` is unaffected (docs/FLOW.md 89)
+    /// turns chosen composition on or off. gates `composeChosen`; `compose` is unaffected (decision 89)
     function setChosenComposeOn(bool v) external onlyOwner {
         s.chosenComposeOn = v;
         emit ChosenComposeOnSet(v);
     }
 
-    /// sets the least coin balance a caller of `composeChosen` must hold (docs/FLOW.md 89)
+    /// sets the least coin balance a caller of `composeChosen` must hold (decision 89)
     function setMinCcToChoose(uint96 v) external onlyOwner {
         s.minCcToChoose = v;
         emit MinCcToChooseSet(v);

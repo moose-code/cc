@@ -122,7 +122,7 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into three storage slots
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
 /// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields and fee
-/// split. docs/FLOW.md section 2 has the meaning of every field
+/// split. docs/SPEC.md section 3 has the meaning of every field
 struct Settings {
     // slot 0
     /// fall of the eth rate per credit bought, bps of the rate before that credit
@@ -188,7 +188,7 @@ struct Settings {
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
-/// bounds are enforced by the controller (docs/FLOW.md 9.3). the controller keeps one more value, the anchor, which
+/// bounds are enforced by the controller (docs/SPEC.md section 3). the controller keeps one more value, the anchor, which
 /// starts at 10_000
 struct Sale {
     /// the start price over the anchor, bps
@@ -293,7 +293,7 @@ library Mainnet {
     uint24 internal constant POOL_FEE = 0x800000;
     int24 internal constant TICK_SPACING = 200;
 
-    /// the launch values of docs/FLOW.md section 2
+    /// the launch values of docs/SPEC.md section 3
     function defaultSettings() internal pure returns (Settings memory) {
         return Settings({
             dropPerCreditBps: 50,
