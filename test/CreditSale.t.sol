@@ -12,8 +12,8 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {LowballCreditController, ReentrantCreditBuyer} from "./attackers/CreditSaleAttackers.sol";
 
 /// credit sale window. pile credits are for sale from acquisition at a price that falls linearly from a start to a
-/// floor over `creditWindow` and rests at the floor. the floor is the larger of the credit's cost and `valueOf(score)`,
-/// times `creditFloorBps`; the start is the floor times `creditStartBps`. `valueOf` is the larger of the rate term
+/// floor over `creditWindow` and rests at the floor. the floor is the largest of the credit's cost, `floorRate` and
+/// `valueOf(score)`, times `creditFloorBps`; the start is the floor times `creditStartBps`. `valueOf` is the larger of the rate term
 /// `floorRate * score / refScore` and the balance token pool term, which reads the live pool and the live unit: a
 /// missing or failed pool read leaves the pool term at 0 and the sale never reverts for it. the core keeps a hard floor
 /// at the credit's cost. a buy pays the price plus the royalty. while the sale is on compose takes only credits past
@@ -201,6 +201,33 @@ contract CreditSaleTest is Fixture {
         core.sellForEth(back);
         assertLt(buyer.balance - ethBefore, price, "the sell back pays less than the purchase cost");
         assertEq(CREDITS.ownerOf(id), address(core), "the credit is back in the engine");
+    }
+
+    // promise: an outsider gains nothing at the engine's cost: a credit bought at its sale price and sold straight
+    // back into the eth bid returns less than it cost, for the credit with the lowest sale price
+    function test_floorRate_buyThenSellBackNeverBeatsTheBid() public {
+        uint256[] memory ids = _fillEthPile(40);
+        _on();
+        _warp(ctl.creditWindow());
+        uint256 id = ids[0];
+        uint256 pay = ctl.grossCreditPrice(id);
+        for (uint256 i = 1; i < ids.length; ++i) {
+            uint256 g = ctl.grossCreditPrice(ids[i]);
+            if (g < pay) {
+                pay = g;
+                id = ids[i];
+            }
+        }
+        address arb = _user("arb");
+        vm.deal(arb, pay);
+        vm.startPrank(arb);
+        ctl.buyCredit{value: pay}(id);
+        CREDITS.setApprovalForAll(address(core), true);
+        uint256[] memory one = new uint256[](1);
+        one[0] = id;
+        core.sellForEth(one);
+        vm.stopPrank();
+        assertLe(arb.balance, pay, "the round trip returned more eth than the credit cost");
     }
 
     // promise: SPEC 1 buyCredits prices each credit after the previous sale

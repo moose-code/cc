@@ -25,27 +25,43 @@ contract RescueTest is Fixture {
         core.rescueNft(token, id, dest);
     }
 
-    // promise: INTEGRATION InPile on rescueNft
+    // promise: INTEGRATION NoCreditRescue on rescueNft
     function test_REVERT_aCreditInAPileStays() public {
         uint256[] memory ids = _fillEthPile(3);
         (bool inPile,,) = core.creditInfo(ids[1]);
         assertTrue(inPile, "setup: the credit is in the pile");
-        _expectRescueRevert(address(CREDITS), ids[1], ICore.InPile.selector);
+        _expectRescueRevert(address(CREDITS), ids[1], ICore.NoCreditRescue.selector);
         assertEq(CREDITS.ownerOf(ids[1]), address(core), "the credit moved");
         assertEq(core.pileSize(), 3, "the pile changed");
     }
 
-    // promise: SPEC 1 NFTs leave the books only through rescueNft
-    function test_OK_aCreditSentStraightToTheCoreLeaves() public {
+    // promise: SPEC 11 credits leave the Core at the owner's call only through migrate
+    function test_REVERT_aCreditSentStraightToTheCoreStays() public {
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
         CREDITS.transferFrom(seller, address(core), ids[0]);
         (bool inPile,,) = core.creditInfo(ids[0]);
         assertFalse(inPile, "a straight transfer is not in a pile");
-        vm.expectEmit(true, true, true, true, address(core));
-        emit NftRescued(address(CREDITS), ids[0], dest);
-        _rescue(address(CREDITS), ids[0], dest);
-        assertEq(CREDITS.ownerOf(ids[0]), dest, "the credit did not reach the destination");
+        _expectRescueRevert(address(CREDITS), ids[0], ICore.NoCreditRescue.selector);
+        assertEq(CREDITS.ownerOf(ids[0]), address(core), "the credit moved");
+    }
+
+    // promise: SPEC 11 credits leave the Core at the owner's call only through migrate: the successor's owner cannot
+    // rescue a migrated credit before adopt
+    function test_REVERT_aMigratedCreditIsNotRescuableOnTheSuccessor() public {
+        uint256[] memory ids = _fillEthPile(3);
+        ICore next = _successorCore(address(ctl), core.RATE_START(), _settings());
+        vm.startPrank(owner);
+        core.setSuccessor(address(next));
+        core.lockSuccessor();
+        core.migrate(3);
+        vm.stopPrank();
+        (bool inPile,,) = next.creditInfo(ids[0]);
+        assertFalse(inPile, "setup: the migrated credit is untracked on the successor");
+        vm.expectRevert(ICore.NoCreditRescue.selector);
+        vm.prank(owner);
+        next.rescueNft(address(CREDITS), ids[0], owner);
+        assertEq(CREDITS.ownerOf(ids[0]), address(next), "the credit left the successor");
     }
 
     // promise: INTEGRATION Held on rescueNft

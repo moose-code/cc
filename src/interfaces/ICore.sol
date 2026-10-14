@@ -47,6 +47,7 @@ interface ICore {
     error NoBalanceModule();
     error NoCode(address who);
     error NoCredit();
+    error NoCreditRescue();
     error NoSuccessor();
     error NotEligible();
     error NotForSale();

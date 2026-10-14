@@ -114,8 +114,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error Paused();
     /// a stack member that must be a contract has no code
     error NoCode(address who);
-    /// `rescueNft`: the credit is in a pile
+    /// `adopt`: the credit is in a pile
     error InPile();
+    /// `rescueNft`: the token is the Credits contract
+    error NoCreditRescue();
     /// `rescueNft`: the statement is on the books of the core
     error Held();
     /// `rescueNft`: the core is not the holder of the token, or the token is not an ERC721
@@ -1064,8 +1066,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _toLib();
     }
 
-    /// sends an ERC721 token the core holds to `to` with `transferFrom`: a credit only while it is not in a pile, a
-    /// statement only while the core has no record of it, any other ERC721 freely. owner only and guarded, both checked
+    /// sends an ERC721 token the core holds to `to` with `transferFrom`: a credit never (`NoCreditRescue`: credits
+    /// leave the core at the owner's call only through `migrate`), a statement only while the core has no record of it,
+    /// any other ERC721 freely. owner only and guarded, both checked
     /// by the library, to which the call is handed untouched. a token whose `ownerOf(id)` does not answer with the
     /// core is refused. logs `NftRescued`
     function rescueNft(address, uint256, address) external {
