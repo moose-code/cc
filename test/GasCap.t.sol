@@ -214,7 +214,7 @@ contract GasCapTest is SeaportBase {
         assertGt(g40, g10);
     }
 
-    // promise: SPEC 1 a batch of 115 credits fits the transaction cap
+    // promise: SPEC 1 a batch of about 91 credits fits the transaction cap (per point: each credit reads its score)
     function test_gas_sellForEth_batch_launchSettings() public {
         _fundPot(30 ether);
         _warp(1 hours + 1);

@@ -768,7 +768,9 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat(
                 "rateStart ",
                 vm.toString(c.rateStart),
-                " wei per credit (launch day rule: the market price of a credit)"
+                " wei for a credit of score refScore ",
+                vm.toString(c.settings.refScore),
+                " (launch day rule: the market price of a credit of the reference score)"
             )
         );
         _info(
