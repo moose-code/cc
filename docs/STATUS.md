@@ -44,6 +44,7 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 - the artist's address for `credit.royaltyRecipient` (the tracked config holds the owner as a placeholder; the launch config needs the real one).
 - `coin.lockRecipients()` and `lockSuccessor()`: later owner decisions (RUNBOOK section 4, the lock table). `coin.lockAllowlist()`: the owner's.
 - the owner keeper: post launch, a bounty bot (decision 100).
+- the coin's metadata renderer: `CoinRenderer` is built and tested (decision 122); deploy and `setMetadataRenderer` after the launch (RUNBOOK, the owner commands).
 - the local seed gives a1 no CC and under a page of credits, so the restyle and the composes are driven by the scenario stages, not the UI; a seed change (one coin and 80 credits to a1) would close that.
 - the flywheel presentation: a design brief for three directions was written on 2026-10-13; the current bar is the first draft.
 - the balance module: written when the redeem contract is final (decision 101).

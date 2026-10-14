@@ -72,6 +72,7 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 | the reserve | `releaseRedeemBurn(uint256)` moves reserve eth into the buyback pot |
 | composing | `compose()`, `compose(uint8)` or `composeChosen` when nobody else does; switch the payment on with `callerFee` and `callerMaxBaseFee` if pages sit |
 | the coin | `coin.lockRecipients()` (script/Lock.s.sol: postflight, then the lock) seals the bounty recipient and ends fee stream migration; take it together with `lockSuccessor`. `lockAllowlist()`, `unrestrict()`, `renounceAdmin()`, `setMetadataRenderer`, `updateImage`, `updateDescription` are the coin admin's |
+| the coin's metadata renderer | after the launch: `CORE=$CORE forge script script/DeployCoinRenderer.s.sol --rpc-url $MAINNET_RPC_URL --broadcast --ledger` (without `--broadcast` a simulation; it prints the renderer address and the image size), verify the source on etherscan, then `cast send $COIN "setMetadataRenderer(address)" $RENDERER --rpc-url $MAINNET_RPC_URL --ledger` (the coin refuses an address without code). read back `cast call $COIN "metadataRenderer()(address)"` and `cast call $COIN "contractURI()(string)" \| head -c 200`. `setMetadataRenderer(address(0))` returns to the built in json; `renounceAdmin()` freezes the choice |
 
 ### the lock table
 
