@@ -108,7 +108,7 @@ export const engineEventsAbi = parseAbi([
   "event EthRateFill(uint256 spent, uint256 rate, uint256 pot)",
   "event ListingBought(uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate)",
   "event CreditAdopted(uint256 indexed id, uint256 cost)",
-  "event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, address indexed caller)",
+  "event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, uint256 price, address indexed caller)",
   "event HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller)",
   "event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback)",
   "event CreditSold(uint256 indexed id, address indexed buyer, uint256 price)",

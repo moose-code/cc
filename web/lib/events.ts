@@ -200,7 +200,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
           kind: "composed",
           label: mode === "chosen" ? "composed · chosen" : "statement composed",
           link: stmtLink(sid),
-          detail: `· format ${a.format} · cost ${eth(a.cost)} eth`,
+          detail: `${a.price > 0n ? `· listed at ${eth(a.price)} eth ` : ""}· format ${a.format} · cost ${eth(a.cost)} eth`,
           tile: { kind: "statement", id: sid },
         });
         break;
