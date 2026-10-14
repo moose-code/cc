@@ -196,7 +196,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         row({
           kind: "credit",
           label: "credit swapped",
-          detail: `credit #${inId} in for #${outId} · fee ${eth(a.fee)} CC · by`,
+          detail: `· in for #${outId} · fee ${eth(a.fee)} CC · by`,
           addr: a.caller,
           link: { text: `credit #${inId}`, href: `/credits/${inId}` },
           tile: { kind: "credit", id: inId },
@@ -257,9 +257,18 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
       }
       case "CreditSold": {
         const id = Number(a.id);
+        // profit over the cost basis of the credit's latest acquisition; unknown when it predates the scan
+        const bought = cr(id).findLast((e) => e.t === "bought");
         cr(id).push({ t: "sold", buyer: a.buyer, price: a.price, block, tx });
         stats.creditsSold++;
-        row({ kind: "sold", label: "credit sold", detail: `credit #${id} bought from the credit sale by`, eth: eth(a.price), addr: a.buyer, tile: { kind: "credit", id } });
+        row({
+          kind: "sold",
+          label: "credit sold",
+          link: { text: `credit #${id}`, href: `/credits/${id}` },
+          detail: bought?.t === "bought" ? `· profit ${eth(a.price - bought.cost)} eth` : "",
+          eth: eth(a.price),
+          tile: { kind: "credit", id },
+        });
         break;
       }
       case "StatementRedeemed": {
