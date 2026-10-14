@@ -33,8 +33,8 @@ contract BidRuleTest is Fixture {
     }
 
     /// sells one credit with `refScore` set to its score, so the eth bid pays the full rate (score / refScore is 1) and
-    /// the drop is exactly `dropPerCreditBps`. the per-point scaling of the bid and the drop is covered by the invariant
-    /// suite and test/PerPoint.t.sol
+    /// the drop is exactly `dropPerCreditBps`. the scaled bid and scaled drop at ratios other than 1 are in
+    /// test/PerPointExact.t.sol
     function _sellOne() internal returns (uint256 price) {
         uint256 id = _credits(seller, 1)[0];
         _refScoreToCredit(id);

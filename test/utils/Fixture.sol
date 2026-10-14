@@ -393,11 +393,10 @@ abstract contract Fixture is Test, ProdDeployer {
         return core.rateAtCheckpoint();
     }
 
-    /// @notice sells `n` fresh credits into the eth bid, which puts them in the eth pile in the order returned.
-    /// funds the pot first when it cannot carry the sale
-    /// fills the eth pile with `n` credits, each recorded at the full rate (`refScore` set to its score per credit, so
-    /// score / refScore is 1), which reproduces the flat per-credit cost basis the compose and sale tests are written
-    /// against; `refScore` is restored after. the per-point payout is covered by the invariant suite and test/PerPoint.t.sol
+    /// @notice fills the eth pile with `n` fresh credits in the order returned, funding the pot first when needed. each
+    /// credit is sold with `refScore` set to its own score, so score / refScore is 1 and it is recorded at the full
+    /// rate; `refScore` is restored after. this gives the compose and sale tests a flat per-credit cost basis. the tests
+    /// of the per-point payout and the scaled drop are test/PerPoint.t.sol, test/PerPointExact.t.sol and the invariants
     function _fillEthPile(uint256 n) internal returns (uint256[] memory ids) {
         ids = _credits(seller, n);
         // a price state that idle time loosened above the opening rate is restated to the opening rate

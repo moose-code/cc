@@ -191,7 +191,9 @@ contract CoreUnitTest is CoreBase {
     function test_sellForEth_minOut() public {
         _fund(10 ether);
         uint256 id = _credits(alice, 1)[0];
-        uint256 price = core.bidOf(id);
+        // the payout by the hand formula, not bidOf
+        uint256 price = (core.ethRate() * _scoreOf(id)) / core.settings().refScore;
+        assertTrue(_scoreOf(id) != core.settings().refScore, "the fork credit's score is not refScore");
 
         vm.prank(alice);
         vm.expectRevert(ICore.Slippage.selector);
@@ -285,7 +287,8 @@ contract CoreUnitTest is CoreBase {
     function test_buyListing_aboveCeilingReverts() public {
         _fund(10 ether);
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
-        assertGt(price, core.ethRate(), "start rate is far below the listing");
+        // above the credit's bid (the rate scaled by its score over refScore), so the buy reverts AboveBid
+        assertGt(price, (core.ethRate() * _scoreOf(LISTED_A)) / core.settings().refScore, "listing is above the credit's bid");
         vm.prank(keeper);
         vm.expectRevert(ICore.AboveBid.selector);
         _buyRaw(price, _listing(LISTED_A), LISTED_A, STRATEGY);
@@ -313,7 +316,8 @@ contract CoreUnitTest is CoreBase {
     {
         vm.fee(bf);
         vm.txGasPrice(gp);
-        uint256 ceiling = core.ethRate();
+        // the per-credit bid: the rate scaled by the credit's score over refScore (the hand formula, not bidOf)
+        uint256 ceiling = (core.ethRate() * _scoreOf(id)) / core.settings().refScore;
         r.gap = ceiling - cost;
         uint256 pot = core.ethPot();
         uint256 before = keeper.balance;
@@ -328,6 +332,21 @@ contract CoreUnitTest is CoreBase {
         assertEq(basis, cost + r.paid, "the cost basis is the cost plus the payment");
         assertLe(basis, ceiling, "the engine pays at most its bid");
         _solvent();
+    }
+
+    // promise: SPEC 6 buyListing caps value at the credit's scaled bid and the payment at that bid less value, at score != refScore
+    function test_buyListing_capAndPaymentAtScoreNotRefScore() public {
+        uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
+        assertTrue(_scoreOf(LISTED_A) != core.settings().refScore, "the listed credit's score is not refScore");
+        _fundAndClimb(LISTED_A, price);
+        _warp(30 hours);
+        // the credit's bid by the hand formula, not bidOf
+        uint256 handBid = (core.ethRate() * _scoreOf(LISTED_A)) / core.settings().refScore;
+        PayRun memory r = _payRun(strategyAdapter, "", LISTED_A, price, 1 gwei, 1 gwei);
+        assertEq(r.gap, handBid - price, "the gap is the scaled bid less the listing price");
+        (, uint256 basis,) = core.creditInfo(LISTED_A);
+        assertLe(basis, handBid, "the cost basis is at most the scaled bid");
+        assertEq(basis, price + r.paid, "and is the listing plus the keeper payment");
     }
 
     // promise: SPEC 1 keeper doors pay counted gas plus keeperFee

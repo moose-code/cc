@@ -244,6 +244,33 @@ contract SeaportTest is SeaportBase {
                     1. the basic order through the adapter
     //////////////////////////////////////////////////////////////*/
 
+    // promise: SPEC 6 buyListing caps value and the keeper payment at the credit's scaled bid, at score != refScore
+    function test_basic_capAndPaymentAtScoreNotRefScore() public {
+        // a fresh listing without forcing refScore to the credit's score, so score / refScore is not 1
+        uint256 id = _credits(maker, 1)[0];
+        vm.prank(maker);
+        CREDITS.setApprovalForAll(address(SEAPORT), true);
+        uint256 ref = core.settings().refScore;
+        uint256 s = _scoreOf(id);
+        assertTrue(s != ref, "the credit's score is not refScore");
+        _fundPot(10 ether);
+        // the per-credit bid by the hand formula, not bidOf
+        uint256 handBid = (core.ethRate() * s) / ref;
+        uint256 gap = 1000; // below the keeper fee, so the payment is capped at the gap
+        uint256 value = handBid - gap;
+        OrderComponents memory c = _open(id, value, 0);
+        bytes memory order = _basicData(c);
+        vm.fee(1 gwei);
+        vm.txGasPrice(1 gwei);
+        uint256 kb = keeper.balance;
+        vm.prank(keeper);
+        core.buyListing(seaportAdapter, id, order);
+        assertEq(keeper.balance - kb, gap, "the keeper payment is capped at the scaled bid less value");
+        (, uint256 basis,) = core.creditInfo(id);
+        assertEq(basis, handBid, "the cost basis is the scaled bid: value plus the capped payment");
+        assertEq(CREDITS.ownerOf(id), address(core), "the engine owns the credit");
+    }
+
     // promise: SPEC 1 buyListing buys an adapter priced Seaport basic order (decision 100)
     function test_basic_singleConsiderationToSeller() public {
         uint256 id = _list();

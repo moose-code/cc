@@ -229,7 +229,9 @@ contract FeeFlowTest is FeeBase {
         _buyCoin(trader, 5 ether);
         uint256 booked = _tracked();
         assertGt(address(core).balance, booked, "the fees are unbooked");
-        uint256 quote = core.bidOf(ids[0]);
+        // the payout by the hand formula, not bidOf: ethRate (the booked pot's rate) times the credit's score over refScore
+        uint256 quote = (core.ethRate() * _scoreOf(ids[0])) / core.settings().refScore;
+        assertTrue(_scoreOf(ids[0]) != core.settings().refScore, "the fork credit's score is not refScore");
         uint256 owed = core.payeeOwed();
         uint256 before = seller.balance;
         vm.prank(seller);
@@ -270,7 +272,9 @@ contract ReceiveTest is FeeBase {
         _stock();
         _fundPot(1 ether);
         uint256 id = _credits(address(t), 1)[0];
-        uint256 ceiling = core.bidOf(id);
+        // the per-credit bid by the hand formula, not bidOf
+        uint256 ceiling = (core.ethRate() * _scoreOf(id)) / core.settings().refScore;
+        assertTrue(_scoreOf(id) != core.settings().refScore, "the fork credit's score is not refScore");
         uint256 swapEth = ceiling * 5;
         vm.deal(address(t), swapEth);
         t.arm(id, swapEth);

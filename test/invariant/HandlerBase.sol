@@ -806,7 +806,6 @@ abstract contract HandlerBase is Test {
     /// read after it is the price state lowered to the clamp of the smaller pot
     function _rateAfterSells(Settings memory st, SellPre memory p, uint256[] memory costs, uint256[] memory scores)
         internal
-        view
         returns (uint256 stored, uint256 r)
     {
         stored = p.price;
@@ -814,6 +813,10 @@ abstract contract HandlerBase is Test {
         uint256 start = p.minuteStart;
         uint256 refScore = core.settings().refScore;
         for (uint256 i; i < costs.length; ++i) {
+            // the exact per-credit payout: the read (the price state lowered to the pot left) times the credit's score
+            // over refScore, computed from the handler's own rate model, not from `bidOf`
+            uint256 expected = FullMath.mulDiv(BidModel.read(st, pot, stored), scores[i], refScore);
+            if (costs[i] != expected) _flag(V_MODEL, "sellForEth payout differs from read times score over refScore");
             start = BidModel.startAfter(st, stored, start);
             stored = _dropped(st, stored, start, scores[i], refScore);
             pot = pot > costs[i] ? pot - costs[i] : 0;
@@ -1498,15 +1501,18 @@ abstract contract HandlerBase is Test {
         }
         uint256 paid = keeper.balance - p.keeperBal;
         uint256 cost = value;
-        // the rate was read before the action. the ceiling of the buy and the payment rule are checked against it
-        uint256 ceiling = p.ceiling;
+        uint256 score = _scoreOf(id);
+        uint256 refScore = core.settings().refScore;
+        // the per-credit bid from the handler's own rate model, not from `bidOf`: the read before the action times the
+        // credit's score over refScore. the value and the payment are capped at it
+        uint256 ceiling = FullMath.mulDiv(BidModel.read(st, p.pot, p.price), score, refScore);
         if (value > ceiling) _flag(V_ABOVE_CAP, "listing value above the ceiling");
         if (cost + paid > ceiling) _flag(V_ABOVE_CAP, "listing cost plus payment above the ceiling");
         _listingPayChecks(paid, ceiling > cost ? ceiling - cost : 0, st);
         uint256 potLeft = _recordSpend(cost + paid, p.pot);
         _eth(p.bal, paid + cost, refund, "buyListing");
         if (core.ethPot() != potLeft) _flag(V_POT, "listing pot not reduced by cost and the payment");
-        uint256 stored = _dropped(st, p.price, p.minuteStart, _scoreOf(id), core.settings().refScore);
+        uint256 stored = _dropped(st, p.price, p.minuteStart, score, refScore);
         if (core.rateAtCheckpoint() != stored || core.ethRate() != _readAfterFill(st, stored, potLeft)) {
             _flag(V_RATE_BOUND, "drop on fill differs from dropPerCreditBps with the minute floor");
         }
