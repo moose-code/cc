@@ -2,7 +2,6 @@
 
 import { useAccount } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { isLocal } from "@/lib/config";
 import { useTx, type Write } from "@/lib/tx";
 
 // A button that runs wagmi writes with the connected account: `steps` receives
@@ -29,8 +28,8 @@ export function Act({
           {pending ? "confirm in wallet…" : label}
         </button>
       ) : (
-        <button className="action" onClick={openConnectModal} disabled={isLocal}>
-          {isLocal ? "connecting…" : `connect to ${label}`}
+        <button className="action" onClick={openConnectModal}>
+          connect to {label}
         </button>
       )}
       {err && <p className="panel-note err">{err}</p>}

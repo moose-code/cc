@@ -17,9 +17,9 @@ npm run dev:local        # http://localhost:3000
 `dev:local` runs `scripts/local-env.mjs`, which reads `../deployments/31337.json`
 (`RECORD=<path>` reads another file), writes the ignored `.env.local`, then
 starts `next dev`. When the record is missing it prints the reason and exits.
-Run anvil with `--auto-impersonate`: the header select switches between the
-accounts of the record, and writes are signed by anvil for that address, so no
-wallet is needed.
+Run anvil with `--auto-impersonate`: RainbowKit's wallet list shows the
+accounts of the record as wallets, and writes are signed by anvil for the
+connected address, so no wallet extension is needed.
 
 ## run against mainnet
 
@@ -31,7 +31,8 @@ npm run dev                  # or npm run build && npm start
 The controller, coin and balance module are read from the Core. Without
 `NEXT_PUBLIC_CORE` the engine pages show "engine not deployed". Wallets connect
 through RainbowKit. `npm run check` runs `scripts/selfcheck.ts` (the sell
-estimate). `npm run build` type checks.
+estimate) and `scripts/v4-selfcheck.ts` (the swap encoders). `npm run build`
+type checks.
 
 ## pages and actions
 
@@ -42,7 +43,8 @@ with the engine price and the royalty as the breakdown. The balance side
 
 | page | reads | actions |
 |---|---|---|
-| `/` engine feed, stats bar, engine panel | event scan, snapshot | `core.book()`, `core.buyback()`, `controller.claimRoyalty()` |
+| `/` flywheel, stats bar, engine feed, swap panel | event scan, snapshot, pool slot0 (StateView), v4 Quoter, Chainlink ETH/USD | Universal Router `execute` (eth for coin and back), coin `approve` and Permit2 `approve` before a sell |
+| `/keeper` | snapshot, `lastBuybackBlock`, head block | `core.book()`, `core.buyback()`, `core.claimPayee()`, `controller.claimRoyalty()` |
 | `/credits`, `/credits/[id]` | `pilePage`, `creditInfo`, `creditPrice`, `grossCreditPrice`, `pastWindow` | `controller.buyCredit(id)`, `buyCredits(ids)` while `creditSaleOn` |
 | `/sell` | `ethRate`, `ethPot`, `settings`, `Credits.tokensOf` | `Credits.setApprovalForAll(core)`, `core.sellForEth(ids, minOut)`, `core.sellForBalance(ids, minOut)` while `balanceBidOn` |
 | `/compose` | `nextPage`, `pileSize`, `chosenComposeOn`, `minCcToChoose` | `core.compose()`, `core.compose(format)`, `core.composeChosen(ids, format)` while `chosenComposeOn` |

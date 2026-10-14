@@ -1,6 +1,6 @@
 import { EngineFeed } from "@/components/EngineFeed";
-import { EnginePanel } from "@/components/EnginePanel";
 import { Flywheel } from "@/components/Flywheel";
+import { TradePanel } from "@/components/TradePanel";
 
 export default function Page() {
   return (
@@ -8,7 +8,7 @@ export default function Page() {
       <Flywheel />
       <div className="body">
         <EngineFeed />
-        <EnginePanel />
+        <TradePanel />
       </div>
     </>
   );

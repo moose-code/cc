@@ -35,6 +35,18 @@ export const core = addr(process.env.NEXT_PUBLIC_CORE);
 export const credits: Address = "0x97630aA70AB14ed9883B41dAfccBc11349723043";
 export const statements: Address = "0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b";
 
+// The coin/eth v4 pool: the live skim hook, the dynamic-fee flag and the tick
+// spacing. The defaults are the mainnet launch params; the local record
+// overrides them (scripts/local-env.mjs). Native ETH is currency0.
+export const pool = {
+  hook: (addr(process.env.NEXT_PUBLIC_POOL_HOOK) ?? "0x2f7976bf73dE8e1D49D4c687404e527a75b0e8Cc") as Address,
+  fee: Number(process.env.NEXT_PUBLIC_POOL_FEE || 8388608), // 0x800000 dynamic
+  tickSpacing: Number(process.env.NEXT_PUBLIC_POOL_TICK_SPACING || 200),
+};
+
+// Chainlink ETH/USD feed (8 decimals).
+export const ethUsdFeed: Address = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
+
 export const deployBlock = process.env.NEXT_PUBLIC_DEPLOY_BLOCK
   ? BigInt(process.env.NEXT_PUBLIC_DEPLOY_BLOCK)
   : undefined;

@@ -28,6 +28,8 @@ if (rec.chainId !== 31337) fail(`record chainId ${rec.chainId}, expected 31337`)
 const isAddr = (v) => typeof v === "string" && /^0x[0-9a-fA-F]{40}$/.test(v);
 if (!isAddr(rec.core)) fail(`record.core is not an address: ${rec.core}`);
 if (!Number.isInteger(rec.deployBlock) || rec.deployBlock < 0) fail(`record.deployBlock invalid: ${rec.deployBlock}`);
+if (!isAddr(rec.hook)) fail(`record.hook is not an address: ${rec.hook}`);
+if (!Number.isInteger(rec.poolFee) || !Number.isInteger(rec.tickSpacing)) fail("record.poolFee or record.tickSpacing missing");
 const accounts = Object.fromEntries(Object.entries(rec.accounts ?? {}).filter(([, a]) => isAddr(a)));
 if (Object.keys(accounts).length === 0) fail("record.accounts has no address");
 
@@ -36,6 +38,9 @@ const env = {
   NEXT_PUBLIC_RPC_URL: rec.rpcUrl ?? rpc,
   NEXT_PUBLIC_CORE: rec.core,
   NEXT_PUBLIC_DEPLOY_BLOCK: String(rec.deployBlock),
+  NEXT_PUBLIC_POOL_HOOK: rec.hook,
+  NEXT_PUBLIC_POOL_FEE: String(rec.poolFee),
+  NEXT_PUBLIC_POOL_TICK_SPACING: String(rec.tickSpacing),
   NEXT_PUBLIC_LOCAL_ACCOUNTS: JSON.stringify(accounts),
 };
 

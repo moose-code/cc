@@ -6,7 +6,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CreditTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
-import { core, credits, engineDeployed, isLocal } from "@/lib/config";
+import { core, credits, engineDeployed } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
 import { useSnapshot } from "@/lib/live";
 import { estimateSell } from "@/lib/sell";
@@ -106,7 +106,7 @@ export default function SellPage() {
           {!isConnected ? (
             <div className="sell-connect">
               <p className="muted">connect a wallet to see your credits.</p>
-              <button className="action" onClick={openConnectModal} disabled={isLocal}>
+              <button className="action" onClick={openConnectModal}>
                 connect wallet
               </button>
             </div>

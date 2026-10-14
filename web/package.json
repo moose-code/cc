@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "check": "node --experimental-strip-types scripts/selfcheck.ts",
+    "check": "node --experimental-strip-types scripts/selfcheck.ts && node --experimental-strip-types scripts/v4-selfcheck.ts",
     "dev:local": "node scripts/local-env.mjs \"${RECORD:-../deployments/31337.json}\" && next dev"
   },
   "dependencies": {

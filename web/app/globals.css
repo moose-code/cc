@@ -211,7 +211,7 @@ a.fw-box:hover {
   flex-direction: column;
 }
 
-.side {
+.trade {
   width: 360px;
   flex: none;
   border-left: 1px solid var(--line);
@@ -409,7 +409,7 @@ a.fw-box:hover {
   height: auto;
 }
 
-/* ---- engine panel --------------------------------------------------------- */
+/* ---- trade panel ---------------------------------------------------------- */
 
 .price-row {
   display: flex;
@@ -420,6 +420,85 @@ a.fw-box:hover {
 .price-row .pair {
   font-weight: 600;
 }
+.price-small {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.price-small .r {
+  display: flex;
+  justify-content: space-between;
+}
+.tabs {
+  display: flex;
+  margin: 1.25rem 0 1rem;
+  border: 1px solid var(--fg);
+}
+.tabs button {
+  flex: 1;
+  padding: 0.65rem;
+  background: var(--bg);
+  border: 0;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  cursor: pointer;
+  color: var(--fg);
+}
+.tabs button.active {
+  background: var(--fg);
+  color: var(--bg);
+}
+.field {
+  margin-bottom: 1rem;
+}
+.field label {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-bottom: 0.35rem;
+}
+.field .box {
+  border: 1px solid var(--line);
+  padding: 0.75rem 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.field input {
+  border: 0;
+  outline: 0;
+  font-family: var(--mono);
+  font-size: 1.6rem;
+  width: 100%;
+  background: transparent;
+  color: var(--fg);
+}
+.field .unit {
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding-left: 0.5rem;
+}
+.field .out {
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+}
+.balances {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.balances .r {
+  display: flex;
+  justify-content: space-between;
+}
+
 .quote {
   display: grid;
   gap: 0.35rem;
@@ -504,7 +583,7 @@ a.fw-box:hover {
   .body {
     flex-direction: column;
   }
-  .side {
+  .trade {
     width: 100%;
     border-left: 0;
     border-top: 1px solid var(--line);
@@ -1265,7 +1344,7 @@ button.slot:disabled {
   padding: 0.5rem 1.25rem;
 }
 
-/* ---- engine panel actions, statement restyle / redeem, local account ------ */
+/* ---- keeper page, statement restyle / redeem ------------------------------ */
 
 .actions {
   display: grid;
@@ -1281,7 +1360,6 @@ button.slot:disabled {
   display: grid;
   gap: 0.5rem;
 }
-.connect select,
 .compose-action select,
 .restyle select {
   font-family: var(--mono);
@@ -1290,4 +1368,16 @@ button.slot:disabled {
   border: 1px solid var(--fg);
   background: var(--bg);
   color: var(--fg);
+}
+
+.keeper {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem 2rem;
+  align-items: start;
+}
+.keeper h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  font-weight: 600;
 }

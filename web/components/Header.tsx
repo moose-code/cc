@@ -4,17 +4,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { LocalAccount } from "./LocalAccount";
-import { isLocal } from "@/lib/config";
 
 const LOGO_BARS = ["#0a9b41", "#16b6d8", "#f5c400", "#ff0080"];
 
-// feed lives on the logo; compose sits at the end of the row.
+// feed lives on the logo; keeper sits at the end of the row.
 const NAV = [
   { href: "/credits", label: "credits" },
   { href: "/statements", label: "statements" },
   { href: "/sell", label: "sell" },
   { href: "/compose", label: "compose" },
+  { href: "/keeper", label: "keeper" },
 ];
 
 export function Header() {
@@ -59,11 +58,7 @@ export function Header() {
           ))}
         </nav>
         <div className="connect">
-          {isLocal ? (
-            <LocalAccount />
-          ) : (
-            <ConnectButton showBalance={false} accountStatus="address" chainStatus="none" />
-          )}
+          <ConnectButton showBalance={false} accountStatus="address" chainStatus="none" />
         </div>
       </div>
     </header>
