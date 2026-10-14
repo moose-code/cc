@@ -53,7 +53,7 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 
 | gate | commit | result |
 |---|---|---|
-| candidate | c8b42d6 | the tip of simplify/v1 with every packet merged; the commits after it are docs only |
+| candidate | ecf51f3 | the tip of simplify/v1 with every packet merged (src/ as of 43c9f94; the suite, deep and rehearsal records name c8b42d6, whose src/, script/ and test/ are identical: the commits between change docs and .claude/launch.json); the commits after it are docs only |
 | full suite | c8b42d6 | docs/reviews/SUITE-c8b42d6.md |
 | deep runs | c8b42d6 | docs/reviews/DEEP-c8b42d6.md |
 | rehearsal | c8b42d6 | docs/reviews/REHEARSAL-c8b42d6.md |
