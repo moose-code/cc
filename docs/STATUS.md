@@ -37,13 +37,15 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 | 10 | SPEC, RUNBOOK, INTEGRATION, README, AGENTS rewritten; comment references fixed; the simplification review archived | done |
 | 11 | the freeze: full suite, deep runs, rehearsal, security review, acceptance | done on c8b42d6, section 4 |
 | 11b | the two high findings of the independent review fixed (decision 115) | done |
-| 12 | the local end to end on anvil (12a), the web app ported with a local mode (12b), the flywheel bar (12c) | done; the browser run is in progress |
+| 12 | the local end to end on anvil (12a), the web app ported with a local mode (12b), the flywheel bar (12c), the browser run (docs/reviews/E2E-ecf51f3.md) | done |
 
 ## 3. open items
 
 - the artist's address for `credit.royaltyRecipient` (the tracked config holds the owner as a placeholder; the launch config needs the real one).
 - `coin.lockRecipients()` and `lockSuccessor()`: later owner decisions (RUNBOOK section 4, the lock table). `coin.lockAllowlist()`: the owner's.
 - the owner keeper: post launch, a bounty bot (decision 100).
+- the local seed gives a1 no CC and under a page of credits, so the restyle and the composes are driven by the scenario stages, not the UI; a seed change (one coin and 80 credits to a1) would close that.
+- the flywheel presentation: a design brief for three directions was written on 2026-10-13; the current bar is the first draft.
 - the balance module: written when the redeem contract is final (decision 101).
 - unmerged branches for the owner to keep or delete: claude/v1-ui-nextjs-web3-1d1637 (a Next.js frontend that read the deleted lens; it needs the multicall list of INTEGRATION section 2), feat/ui-anvil-local, feat/local-e2e, claude/repair-project-director-1366be, codex/independent-security-audit, codex/issue-3-spec.
 
