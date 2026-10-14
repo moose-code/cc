@@ -241,8 +241,8 @@ contract FlowTest is Fixture {
     // ------------------------------------------------------------------ compose holds the statement
 
     // promise: INTEGRATION Composed event carries the 80 ids and the cost
-    /// the `Composed` log: `sid` and `caller` are indexed, the data is `(ids[80], format, cost)` with the cost the sum
-    /// of the 80 bases of the page and `ids` the 80 composed credits
+    /// the `Composed` log: `sid` and `caller` are indexed, the data is `(ids[80], format, cost, price)` with the cost the sum
+    /// of the 80 bases of the page, `ids` the 80 composed credits and `price` the controller's `priceOf(sid)` after the compose
     function test_compose_emitsComposedWithTheSumOfTheBases() public {
         _fillEthPile(80);
         uint256[] memory page = core.pilePage(0, 80);
@@ -263,14 +263,16 @@ contract FlowTest is Fixture {
             assertEq(logs[i].topics.length, 3, "sid and caller are indexed");
             assertEq(uint256(logs[i].topics[1]), STATEMENTS.supply(), "sid");
             assertEq(address(uint160(uint256(logs[i].topics[2]))), keeper, "caller");
-            (uint256[80] memory ids, uint8 format, uint256 cost) =
-                abi.decode(logs[i].data, (uint256[80], uint8, uint256));
+            (uint256[80] memory ids, uint8 format, uint256 cost, uint256 price) =
+                abi.decode(logs[i].data, (uint256[80], uint8, uint256, uint256));
             for (uint256 j; j < 80; ++j) {
                 assertEq(ids[j], page[j], "the 80 composed ids");
             }
             assertEq(format, defaultFormat(page[0]), "the derived format");
             assertEq(cost, sum, "cost is the sum of the 80 bases");
-            assertEq(logs[i].data.length, (80 + 2) * 32, "ids, format and cost only");
+            assertGt(price, 0, "a listing price");
+            assertEq(price, ctl.priceOf(STATEMENTS.supply()), "price is the controller's priceOf(sid) at the compose");
+            assertEq(logs[i].data.length, (80 + 3) * 32, "ids, format, cost and price");
         }
         assertEq(seen, 1, "one Composed");
     }

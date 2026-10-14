@@ -14,6 +14,9 @@ interface IController {
     /// true when a credit acquired at `acquiredAt` may be composed: always while the credit sale is off, otherwise once
     /// the credit window has passed. the core reads it to gate a chosen compose
     function pastWindow(uint64 acquiredAt) external view returns (bool);
+    /// the asking price of statement `sid` now. the core reads it once per compose for the `Composed` event, and a
+    /// failed read is logged as 0
+    function priceOf(uint256 sid) external view returns (uint256);
 }
 
 interface IBalanceModule {

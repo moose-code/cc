@@ -53,7 +53,7 @@ a listing whose price is above the bid is not swept; a holder sells it with `sel
 
 `controller.nextPage()` ready means 80 credits wait (and, while the credit sale is on, the newest is past its window). `core.compose()` composes them with a random format, `core.compose(format)` with the given one. `core.composeChosen(ids, format)` composes 80 credits the caller names (requires `chosenComposeOn`, a CC balance of at least `minCcToChoose`, every credit past its window). the caller pays the gas, about 8.5 million after refunds; the payment settings `callerFee` and `callerMaxBaseFee` are 0 at launch. `core.setHeldFormat(sid, format)` restyles a held statement for a holder of `minCcToChoose` CC.
 
-reverts: `NotReady`, `BadFormat`, `NotInPile(id)`, `NotHeld`, `BadStatement`, `ChosenComposeOff`, `BelowMinCc`, `InWindow(id)`, `NotForSale` (restyle of an unheld statement), `Retired`. events `Composed(sid, ids, format, cost, caller)`, `HeldFormatSet(sid, format, caller)`.
+reverts: `NotReady`, `BadFormat`, `NotInPile(id)`, `NotHeld`, `BadStatement`, `ChosenComposeOff`, `BelowMinCc`, `InWindow(id)`, `NotForSale` (restyle of an unheld statement), `Retired`. events `Composed(sid, ids, format, cost, price, caller)`, `HeldFormatSet(sid, format, caller)`.
 
 ## 6. buying statements and credits
 

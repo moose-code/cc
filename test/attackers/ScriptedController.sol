@@ -39,6 +39,20 @@ contract ScriptedController is IController {
         return pastWindowFlag;
     }
 
+    /// the asking price answer, and whether the call reverts
+    uint256 public price;
+    bool public priceReverts;
+
+    function setPrice(uint256 p, bool reverts) external {
+        price = p;
+        priceReverts = reverts;
+    }
+
+    function priceOf(uint256) external view returns (uint256) {
+        if (priceReverts) revert();
+        return price;
+    }
+
     /// sets the page answer.
     function setPage(bool ready, uint256[80] calldata ids, uint8 format) external {
         pageReady = ready;

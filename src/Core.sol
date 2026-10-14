@@ -147,7 +147,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
-    event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, address indexed caller);
+    /// `price` is the controller's `priceOf(sid)` at the compose, 0 when the read fails
+    event Composed(
+        uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, uint256 price, address indexed caller
+    );
     event HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller);
     event SettingsSet(Settings settings);
     event RateSet(uint256 rate);
@@ -221,6 +224,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant QUOTE_GAS = 300_000;
     /// bytes of the answer of a listing adapter the Core accepts
     uint256 private constant QUOTE_MAX = 8_192;
+    /// gas the controller's `priceOf` may use: its reads of the Core, the settings, `floorRate`, the module's
+    /// `unitPerPoint` and the pool `getSlot0`
+    uint256 private constant PRICE_GAS = 400_000;
     /// gas the controller's `nextPage` may use. a full page of ControllerV1 costs under 250,000 gas on a
     /// cold read
     uint256 private constant PAGE_GAS = 500_000;
@@ -534,6 +540,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return ok && abi.decode(out, (bool));
     }
 
+    /// bounded read of the controller's asking price for a statement. a revert or a short answer reads as 0
+    function _priceOf(uint256 sid) private view returns (uint256) {
+        (bool ok, bytes memory out) = _ask(s.controller, abi.encodeCall(IController.priceOf, (sid)), PRICE_GAS, 32);
+        return ok ? abi.decode(out, (uint256)) : 0;
+    }
+
     /// bounded read of the controller's window answer for a credit acquired at `acquiredAt`. a revert, a short answer
     /// or a `false` reads as not past the window
     function _pastWindow(uint64 acquiredAt) private view returns (bool) {
@@ -800,7 +812,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             pauseMark: pausedNow()
         });
         // forge-lint: disable-next-line(unsafe-typecast)
-        emit Composed(sid, ids, uint8(format), cost, msg.sender);
+        emit Composed(sid, ids, uint8(format), cost, _priceOf(sid), msg.sender);
         _payCaller(gasStart, COMPOSE_OVERHEAD_GAS, COMPOSE_GAS);
     }
 

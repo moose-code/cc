@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Prod} from "./utils/Prod.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditStrategy, ICreditScore, Stack, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
@@ -619,6 +620,41 @@ contract CoreUnitTest is CoreBase {
         vm.prank(alice);
         core.sellForEth(more);
         assertEq(core.pileSize(), 3);
+    }
+
+    // promise: INTEGRATION Composed price is 0 when the controller's priceOf fails
+    /// a controller whose `priceOf` reverts does not block a compose, and the event carries price 0. the same
+    /// controller answering 777 puts 777 in the event
+    function test_compose_priceOfRevertingControllerLogsZero() public {
+        ScriptedController scripted = new ScriptedController();
+        _setController(address(scripted));
+        uint256[] memory ids = _sellN(alice, 80);
+        uint256[80] memory page;
+        for (uint256 i; i < 80; ++i) {
+            page[i] = ids[i];
+        }
+        scripted.setPage(true, page, 0);
+        scripted.setPrice(777, false);
+        uint256 sid = STATEMENTS.supply() + 1;
+        uint256 snap = vm.snapshotState();
+        assertEq(_composedPrice(), 777, "the controller's price");
+        vm.revertToState(snap);
+        scripted.setPrice(777, true);
+        assertEq(_composedPrice(), 0, "a reverting priceOf logs 0");
+        assertEq(STATEMENTS.supply(), sid, "the compose landed");
+    }
+
+    /// the `price` word of the `Composed` log of one `compose()`
+    function _composedPrice() internal returns (uint256 price) {
+        vm.recordLogs();
+        core.compose();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.Composed.selector) continue;
+            (,,, price) = abi.decode(logs[i].data, (uint256[80], uint8, uint256, uint256));
+            return price;
+        }
+        revert("no Composed log");
     }
 
     // promise: inv 17 the pile links stay valid
