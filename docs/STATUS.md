@@ -4,7 +4,7 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
-decisions 1 to 114 are settled (docs/DECISIONS.md; section 11 is the product agreement of 2026-10-13). the simplification plan of docs/reviews/SIMPLIFICATION-v1.md ran on branch `simplify/v1` on 2026-10-13: every packet is merged and the candidate is frozen (section 4). the system is three contracts plus two adapters, deployed by nine CREATE2 transactions, with 445 tests that each name their promise. `main` holds the system before the plan; the owner decides the merge.
+decisions 1 to 115 are settled (docs/DECISIONS.md; section 11 is the product agreement of 2026-10-13). the simplification plan of docs/reviews/SIMPLIFICATION-v1.md ran on branch `simplify/v1` on 2026-10-13: every packet is merged; an independent Opus review of 63e011c found two highs (docs/reviews/REVIEW-security-opus-63e011c.md), fixed in 43c9f94 (decision 115); the local end to end on anvil and the web app (packets 12a to 12c) are merged; the candidate is c8b42d6 (section 4). the system is three contracts plus two adapters, deployed by nine CREATE2 transactions, with 445 tests that each name their promise. `main` holds the system before the plan; the owner decides the merge.
 
 measured on the branch tip against `main` (lines without the generated interfaces):
 
@@ -17,7 +17,7 @@ measured on the branch tip against `main` (lines without the generated interface
 | contracts | 5 | 3 plus 2 adapters |
 | deploy transactions | 10 | 9 |
 
-runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,502, ControllerV1 13,018, SeaportBasicAdapter 2,558, CreditStrategyAdapter 508.
+runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, ControllerV1 13,129, SeaportBasicAdapter 2,558, CreditStrategyAdapter 508.
 
 ## 2. the plan
 
@@ -35,7 +35,9 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,502, Controller
 | 8 | the test cut: 983 to 452 tests, every survivor names its promise | done |
 | 9 | the simulator follows | done |
 | 10 | SPEC, RUNBOOK, INTEGRATION, README, AGENTS rewritten; comment references fixed; the simplification review archived | done |
-| 11 | the freeze: full suite, deep runs, rehearsal, security review, acceptance | done, section 4 |
+| 11 | the freeze: full suite, deep runs, rehearsal, security review, acceptance | rerun on c8b42d6, section 4 |
+| 11b | the two high findings of the independent review fixed (decision 115) | done |
+| 12 | the local end to end on anvil (12a), the web app ported with a local mode (12b), the flywheel bar (12c) | done; the browser run is in progress |
 
 ## 3. open items
 
@@ -44,7 +46,6 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,502, Controller
 - the owner keeper: post launch, a bounty bot (decision 100).
 - the balance module: written when the redeem contract is final (decision 101).
 - unmerged branches for the owner to keep or delete: claude/v1-ui-nextjs-web3-1d1637 (a Next.js frontend that read the deleted lens; it needs the multicall list of INTEGRATION section 2), feat/ui-anvil-local, feat/local-e2e, claude/repair-project-director-1366be, codex/independent-security-audit, codex/issue-3-spec.
-- the sonnet and opus reviewers were unavailable on 2026-10-13 (weekly API limit); the security review of the candidate is the directing agent's own (docs/reviews/REVIEW-security-b88940c.md). a second independent review before launch is the owner's call.
 
 ## 4. the freeze table
 
@@ -52,14 +53,14 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,502, Controller
 
 | gate | commit | result |
 |---|---|---|
-| candidate | 63e011c | the tip of simplify/v1 with every packet merged; the commits after it are docs only |
-| full suite | ff0a2af | docs/reviews/SUITE-ff0a2af.md |
-| deep runs | b88940c | docs/reviews/DEEP-b88940c.md |
-| rehearsal | ff0a2af | docs/reviews/REHEARSAL-ff0a2af.md |
-| security review | b88940c | docs/reviews/REVIEW-security-b88940c.md |
+| candidate | c8b42d6 | the tip of simplify/v1 with every packet merged; the commits after it are docs only |
+| full suite | c8b42d6 | docs/reviews/SUITE-c8b42d6.md |
+| deep runs | pending | pending |
+| rehearsal | c8b42d6 | docs/reviews/REHEARSAL-c8b42d6.md |
+| security review | 63e011c | docs/reviews/REVIEW-security-opus-63e011c.md (independent, Opus), docs/reviews/REVIEW-security-b88940c.md (the director's); the two highs are fixed in 43c9f94, decision 115 |
 | acceptance | b88940c | docs/reviews/ACCEPTANCE-b88940c.md |
 
-the src/ of the candidate is b88940c plus comment edits (086a946) that leave the masked build hashes unchanged; ff0a2af adds the simulator packet. the deep runs, the security review and the acceptance therefore examined the candidate's runtime logic.
+the src/ of the candidate is 43c9f94 (the two fixes on top of b88940c and the comment edits of 086a946). the review and the acceptance examined the logic before the fixes; the fixes are the two lines they asked for, each with its regression test.
 
 ## 5. how to work in this repo
 
