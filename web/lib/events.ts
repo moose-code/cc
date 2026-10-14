@@ -34,6 +34,7 @@ export interface Stats {
   buybacks: number;
   ethIntoCredits: number; // sum of EthRateFill.spent
   ccBurned: number;
+  feesBooked: number; // sum of FeesAdded, eth
 }
 
 export type CreditHow = "eth bid" | `${typeof BALANCE_SYMBOL} bid` | "listing" | "adopted";
@@ -118,6 +119,7 @@ export function emptyStats(): Stats {
     buybacks: 0,
     ethIntoCredits: 0,
     ccBurned: 0,
+    feesBooked: 0,
   };
 }
 
@@ -258,6 +260,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         row({ kind: "engine", label: "buyback", detail: `· keeper ${eth(a.paid)} eth · called by`, eth: eth(a.amountIn), addr: a.caller });
         break;
       case "FeesAdded":
+        stats.feesBooked += Number(formatUnits(a.amount, 18));
         row({ kind: "engine", label: "fees booked", detail: "", eth: eth(a.amount) });
         break;
       case "Funded":
