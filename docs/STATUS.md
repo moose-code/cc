@@ -44,7 +44,6 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 - the artist's address for `credit.royaltyRecipient` (the tracked config holds the owner as a placeholder; the launch config needs the real one).
 - `coin.lockRecipients()` and `lockSuccessor()`: later owner decisions (RUNBOOK section 4, the lock table). `coin.lockAllowlist()`: the owner's.
 - the owner keeper: post launch, a bounty bot (decision 100).
-- the coin's metadata renderer: `CoinRenderer` is built and tested (decision 122); deploy and `setMetadataRenderer` after the launch (RUNBOOK, the owner commands).
 - the local seed gives a1 no CC and under a page of credits, so the restyle and the composes are driven by the scenario stages, not the UI; a seed change (one coin and 80 credits to a1) would close that.
 - the flywheel presentation: a design brief for three directions was written on 2026-10-13; the current bar is the first draft.
 - the balance module: written when the redeem contract is final (decision 101).
@@ -86,4 +85,4 @@ the security review row is the independent Opus review; its two highs are fixed 
 | balance module gas | `redeemStatement` forwards gas to a contract that does not exist yet; measure it against `REDEEM_GAS` when it does |
 | v2 audit | pending. preflight pins the code hash of the live v2 contracts at block 26158000; a changed stack means new addresses and pins |
 | owner key | a stolen owner key moves everything at once (docs/SPEC.md section 11). a multisig owner and watching `SuccessorSet` and `Migrated` are the mitigations |
-| rehearsal gas estimate | `DEPLOY_GAS_ESTIMATE` 18,600,000 was measured at block 26186912 with nine transactions; the freeze re-measures it |
+| rehearsal gas estimate | `DEPLOY_GAS_ESTIMATE` 21,100,000 covers 18,287,408 gas measured at block 26193893 with eleven transactions (the coin renderer and `setMetadataRenderer` added, decision 122); the freeze re-measures it |

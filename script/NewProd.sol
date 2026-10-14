@@ -5,6 +5,8 @@ import {Core} from "../src/Core.sol";
 import {ControllerV1} from "../src/ControllerV1.sol";
 import {SeaportBasicAdapter} from "../src/adapters/SeaportBasicAdapter.sol";
 import {CreditStrategyAdapter} from "../src/adapters/CreditStrategyAdapter.sol";
+import {CoinRenderer} from "../src/CoinRenderer.sol";
+import {ICore} from "../src/interfaces/ICore.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemDeployer} from "./SystemDeployer.sol";
 
@@ -31,5 +33,9 @@ abstract contract NewProd is SystemDeployer {
 
     function _newStrategyAdapter() internal virtual override returns (address) {
         return address(new CreditStrategyAdapter{salt: STRATEGY_ADAPTER_SALT}());
+    }
+
+    function _newRenderer(address core) internal virtual override returns (address) {
+        return address(new CoinRenderer{salt: RENDERER_SALT}(ICore(payable(core))));
     }
 }

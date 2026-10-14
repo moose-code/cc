@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ICore} from "../src/interfaces/ICore.sol";
+import {IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemDeployer, Deployed} from "./SystemDeployer.sol";
 
@@ -12,27 +13,36 @@ abstract contract SystemResumer is SystemDeployer {
     error CoreMismatch(address want, address got);
     /// @notice the Core of this config and deployer has no code: run `Deploy`
     error NotStarted();
-    /// @notice the coin is launched already: nothing to resume
+    /// @notice the coin is launched and points at its renderer: nothing to resume
     error AlreadyLaunched();
 
     /// @notice everything the resume checks before it sends: that `core_` is the Core of this config and deployer, that
-    /// it exists and has no coin yet, and the preflight rows that still apply. reverts on any failure. the script runs it
+    /// it exists, and that a step is missing. before the launch the preflight rows that still apply run too; after it
+    /// the one step left is `setMetadataRenderer`, which needs no preflight. reverts on any failure. the script runs it
     /// outside the broadcast
     function resumeChecks(address deployer, LaunchConfig memory c, address core_) internal {
         _requireConfig(c);
         address want = coreAddress(c, deployer);
         if (core_ != want) revert CoreMismatch(want, core_);
         if (want.code.length == 0) revert NotStarted();
-        if (ICore(payable(want)).COIN().code.length != 0) revert AlreadyLaunched();
+        address coin = ICore(payable(want)).COIN();
+        if (coin.code.length != 0) {
+            if (IArtCoinsTokenV2(coin).metadataRenderer() == rendererAddress(want)) revert AlreadyLaunched();
+            return;
+        }
         preflightResume(c, deployer);
         _require();
     }
 
-    /// @notice sends the steps the chain is still missing (after `resumeChecks`), then runs postflight and reverts on any
-    /// failed row. the caller must be the deployer of the original run, because the Core address and the coin address
-    /// depend on it
+    /// @notice sends the steps the chain is still missing (after `resumeChecks`). the caller must be the deployer of the
+    /// original run, because the Core address and the coin address depend on it. the postflight runs after it, outside
+    /// the broadcast (`resumePostflight`)
     function resumeSend(address deployer, LaunchConfig memory c) internal returns (Deployed memory d) {
         d = deploySystem(deployer, c);
+    }
+
+    /// @notice the postflight of a resumed deploy, reverting on any failed row
+    function resumePostflight(address deployer, LaunchConfig memory c, Deployed memory d) internal {
         postflightAs(c, d.core, deployer);
         _require();
     }

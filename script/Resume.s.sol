@@ -28,6 +28,8 @@ contract Resume is Script, SystemResumer, NewProd {
         vm.startBroadcast();
         Deployed memory d = resumeSend(deployer, c);
         vm.stopBroadcast();
+        resumePostflight(deployer, c, d);
         console.log("coin", d.coin);
+        console.log("renderer", d.renderer);
     }
 }

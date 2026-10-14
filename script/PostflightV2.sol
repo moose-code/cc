@@ -6,9 +6,25 @@ import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemBuilder} from "./Builder.sol";
 import {Report} from "./Report.sol";
 
+
+/// the reads postflight makes on the coin renderer
+interface ICoinRendererReads {
+    function core() external view returns (address);
+    function contractURI(address token) external view returns (string memory);
+}
 /// @notice the safe readers and the coin side of the postflight (docs/DECISIONS.md 10.4): every read is a staticcall that
 /// reports a failure instead of reverting, so a wrong address turns into a failed row and never aborts the table
 abstract contract PostflightV2 is SystemBuilder, Report {
+    /// @dev the CREATE2 salt of `CoinRenderer`; the deterministic deployer is `PostflightChecks.CREATE2_DEPLOYER`
+    bytes32 internal constant RENDERER_SALT = keccak256("credits.coinRenderer.v1");
+
+    /// @notice the address of `CoinRenderer` for `core_`: CREATE2 through the deterministic deployer with `RENDERER_SALT`
+    /// and the creation code with the Core as constructor argument
+    function rendererAddress(address core_) internal view returns (address) {
+        bytes memory init = abi.encodePacked(vm.getCode("CoinRenderer.sol:CoinRenderer"), abi.encode(core_));
+        return vm.computeCreate2Address(RENDERER_SALT, keccak256(init), 0x4e59b44847b379578588920cA78FbF26c0B4956C);
+    }
+
     // ------------------------------------------------------------------ runtime code identity
 
     /// @dev json objects decode in key order: length, then start
@@ -144,7 +160,15 @@ abstract contract PostflightV2 is SystemBuilder, Report {
     }
 
     function _idEnsure(string memory name) private {
-        if (!vm.envExists(_idKey(name, "HASH"))) _idLoad(name);
+        if (!vm.envExists(_idKey(name, "HASH"))) this.loadArtifact(name);
+    }
+
+    /// @notice reads the artifact `name` from `out/` and keeps its masked runtime hash, length and slots in the process
+    /// environment. an external call into this contract: the json and the copies each cheatcode call makes of it are
+    /// freed when the frame returns, so a run that loads six artifacts stays under a block's gas. never run inside a
+    /// broadcast, where the call would be recorded as a transaction
+    function loadArtifact(string calldata name) external {
+        _idLoad(name);
     }
 
     function _idSlots(string memory name) private returns (uint256[] memory imm, uint256[] memory lnk) {
@@ -323,11 +347,40 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         _soft(ch, "coin: restricted as in the config", t.restricted() == c.restricted, "restricted()", "COIN_CHANGED=1");
         _soft(ch, "coin: image equals the config", _same(t.imageUrl(), c.image), t.imageUrl(), "COIN_CHANGED=1");
         _soft(ch, "coin: description equals the config", _same(t.description(), c.description), t.description(), "COIN_CHANGED=1");
-        _soft(ch, "coin: no metadata renderer", t.metadataRenderer() == address(0), vm.toString(t.metadataRenderer()), "COIN_CHANGED=1");
+        _postRenderer(core, t, ch);
         _postAllowlist(c, core, t, ch);
         _warn("warn: coin allowlist is not locked", !t.allowlistLocked(), "allowlistLocked(): the admin can no longer change the allowlist");
         _postRecipientsLock(t);
         _warn("warn: core holds no coin", t.balanceOf(core) == 0, "coin sent by an allowlisted holder, the owner can call rescueCoin");
+    }
+
+    /// @dev the coin's metadata renderer is the `CoinRenderer` of the Core at its CREATE2 address, built for this Core,
+    /// and its `contractURI` returns a json data uri. the admin may replace it (`COIN_CHANGED=1`)
+    function _postRenderer(address core, IArtCoinsTokenV2 t, bool ch) private {
+        address at = rendererAddress(core);
+        _code("code: coin renderer", at);
+        if (at.code.length == 0) return;
+        _check(
+            "renderer: runtime code is the compiled CoinRenderer", runtimeMatchesArtifact(at, "CoinRenderer"), vm.toString(at)
+        );
+        _eq("renderer: core is the Core", ICoinRendererReads(at).core(), core);
+        _soft(ch, "coin: metadata renderer is the CoinRenderer of the core", t.metadataRenderer() == at, vm.toString(t.metadataRenderer()), "COIN_CHANGED=1");
+        string memory uri = ICoinRendererReads(at).contractURI(address(t));
+        _check(
+            "renderer: contractURI returns a json data uri",
+            _hasPrefix(uri, "data:application/json;base64,"),
+            string.concat(vm.toString(bytes(uri).length), " bytes")
+        );
+    }
+
+    function _hasPrefix(string memory s, string memory p) private pure returns (bool) {
+        bytes memory a = bytes(s);
+        bytes memory b = bytes(p);
+        if (a.length < b.length) return false;
+        for (uint256 i; i < b.length; ++i) {
+            if (a[i] != b[i]) return false;
+        }
+        return true;
     }
 
     /// @dev `coin.lockRecipients()` freezes the hook bounty recipient and the locker reward recipients. it is a later

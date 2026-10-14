@@ -47,9 +47,9 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the per transaction gas cap of the target chain (EIP 7825, 2^24). the launch is simulated with what is left of
     /// it, so a launch that does not fit fails the simulation row, and a collision cannot burn more than that
     uint256 internal constant TX_GAS_CAP = 16_777_216;
-    /// @dev the gas of the nine deploy transactions as the launch rehearsal measures it (16,120,826), plus 15 percent, rounded up.
-    /// `test/Rehearsal.t.sol` asserts that the measured total stays under it
-    uint256 internal constant DEPLOY_GAS_ESTIMATE = 18_600_000;
+    /// @dev the gas of the eleven deploy transactions as the launch rehearsal measures it (18,287,408 at block 26193893),
+    /// plus 15 percent, rounded up. `test/Rehearsal.t.sol` asserts that the measured total stays under it
+    uint256 internal constant DEPLOY_GAS_ESTIMATE = 21_100_000;
     /// @dev the coin supply of the launch. test/Config.t.sol checks the config against it
     uint256 internal constant COIN_SUPPLY = 1_000_000_000e18;
     /// @dev the byte caps of the coin's `image` and `description` (`ArtCoinsTokenV2.MAX_IMAGE_BYTES` and
@@ -77,6 +77,7 @@ abstract contract LaunchChecks is PostflightChecks {
     bytes32 internal constant BUILD_HASH_CONTROLLER = 0x0fb0a4b8efa93e8ba7971a8f5aea33a315945172cbcd2710eee079448329a0c5;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
+    bytes32 internal constant BUILD_HASH_RENDERER = 0x3d3dc266eee6c4329f8d53ae7c2969e626064ffe9d277205006ee9fd98893c35;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
         0x17737708a8b9bc236fc0503effeea377a91db3d088b4200a9aacb8045e121a18;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
@@ -394,6 +395,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _pinBuild("ControllerV1", BUILD_HASH_CONTROLLER);
         _pinBuild("SeaportBasicAdapter", BUILD_HASH_SEAPORT_ADAPTER);
         _pinBuild("CreditStrategyAdapter", BUILD_HASH_STRATEGY_ADAPTER);
+        _pinBuild("CoinRenderer", BUILD_HASH_RENDERER);
         bytes32 got = keccak256(vm.getCode("CoreLib.sol:CoreLib"));
         _check(
             "build: CoreLib creation code hash equals the pinned build",
@@ -431,6 +433,7 @@ abstract contract LaunchChecks is PostflightChecks {
     function _prePredictions(LaunchConfig memory c, address deployer) private {
         address coreAt = coreAddress(c, deployer);
         _noCode("predicted core is empty", coreAt);
+        _noCode("predicted renderer is empty", rendererAddress(coreAt));
         (bool ok, address coinAt) = _predict(c, deployer, coreAt);
         _check(
             "predicted coin is empty",
@@ -800,8 +803,8 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat(
                 "Core ", vm.toString(BUILD_HASH_CORE), " CoreLib ", vm.toString(BUILD_HASH_CORELIB), " ControllerV1 ",
                 vm.toString(BUILD_HASH_CONTROLLER), " SeaportBasicAdapter ", vm.toString(BUILD_HASH_SEAPORT_ADAPTER),
-                " CreditStrategyAdapter ", vm.toString(BUILD_HASH_STRATEGY_ADAPTER), " CoreLib creation ",
-                vm.toString(BUILD_CREATION_HASH_CORELIB)
+                " CreditStrategyAdapter ", vm.toString(BUILD_HASH_STRATEGY_ADAPTER), " CoinRenderer ",
+                vm.toString(BUILD_HASH_RENDERER), " CoreLib creation ", vm.toString(BUILD_CREATION_HASH_CORELIB)
             )
         );
         _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));

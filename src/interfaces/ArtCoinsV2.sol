@@ -196,6 +196,8 @@ interface IArtCoinsTokenV2 {
     function imageUrl() external view returns (string memory);
     function description() external view returns (string memory);
     function metadataRenderer() external view returns (address);
+    function setMetadataRenderer(address renderer_) external;
+    function contractURI() external view returns (string memory);
 }
 
 interface IArtCoinsLpLockerV2 {

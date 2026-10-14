@@ -12,7 +12,8 @@ import {NewProd} from "./NewProd.sol";
 /// LAUNCH_CONFIG. refuses to run while owner, creator, name, symbol or salt is unset, while SETTINGS_CHANGED or
 /// COIN_CHANGED is set, unless CONFIG_HASH is the hash that preflight printed for this config, and unless the signer is
 /// the factory owner. the order of the transactions (docs/DECISIONS.md 10.4): the library, the Core, the controller, the
-/// two adapters, `setController`, `addAdapter` for each adapter, the launch. preflight runs first and
+/// two adapters, the coin renderer, `setController`, `addAdapter` for each adapter, the launch, `setMetadataRenderer`.
+/// preflight runs first and
 /// postflight runs on the simulated result, both before anything is sent. the full runbook is docs/RUNBOOK.md
 contract Deploy is Script, NewProd {
     /// @notice runs the deploy as the broadcaster
@@ -45,6 +46,7 @@ contract Deploy is Script, NewProd {
         console.log("controller", d.controller);
         console.log("seaport adapter", d.seaportAdapter);
         console.log("strategy adapter", d.strategyAdapter);
+        console.log("renderer", d.renderer);
         console.log("fee recipients NOT locked: script/Lock.s.sol is an owner command for later (docs/RUNBOOK.md)");
         for (uint256 i; i < STEPS; ++i) {
             console.log(string.concat("gas of step ", vm.toString(i)), stepGas[i]);

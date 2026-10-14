@@ -52,7 +52,7 @@ tests run on a mainnet fork against the live v2 stack. during work: `forge build
 
 ## deploy
 
-one script, script/Deploy.s.sol, nine transactions through the deterministic deployer, driven by script/config/mainnet.json copied to the gitignored local.json. the runbook is docs/RUNBOOK.md.
+one script, script/Deploy.s.sol, eleven transactions through the deterministic deployer, driven by script/config/mainnet.json copied to the gitignored local.json. the runbook is docs/RUNBOOK.md.
 
 ## docs
 
