@@ -154,13 +154,9 @@ a:hover {
   border-bottom: 1px solid var(--line);
 }
 .fw-row {
-  display: flex;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1.5fr);
   padding: 0.9rem 1.5rem 0;
-}
-.fw-row > .fw-box {
-  flex: 1;
-  min-width: 0;
 }
 .fw-box {
   min-width: 0;
@@ -217,13 +213,23 @@ a.fw-mini:hover {
   stroke: var(--muted2);
   stroke-width: 1;
 }
-/* fourth column: one box, two halves (list, redeem) side by side on a vertical rule with an "or" marker */
+/* fourth column: one box, two halves (list, redeem) side by side on a vertical rule with an "or"
+   marker, and a footer across both */
 .fw-row > .fw-split {
-  flex: 1.5;
-  position: relative;
-  flex-direction: row;
   padding: 0;
   gap: 0;
+}
+.fw-split-row {
+  position: relative;
+  flex: 1;
+  display: flex;
+}
+.fw-split-foot {
+  padding: 0.35rem 0.8rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-align: center;
 }
 .fw-half {
   flex: 1;
@@ -279,14 +285,7 @@ a.fw-half:hover {
   display: none;
 }
 @media (min-width: 861px) {
-  /* in the row the regular boxes set the height; the split box takes it and does not contribute */
-  .fw-row > .fw-split {
-    contain: size;
-  }
-  .fw-half {
-    overflow: hidden;
-  }
-  /* return loop from the list or redeem box down, left and up into buy credits. the row is
+  /* return loop from the list or redeem box down, left and up into buy credits. the row grid is
      4.5 box widths (the split box counts 1.5) plus three 28px connectors: buy credits is
      centered 1.5 widths plus a connector from the left, the split box 0.75 widths from the right */
   .fw-loop {
@@ -327,6 +326,7 @@ a.fw-half:hover {
     border-left: 1px solid var(--line);
   }
   .fw-row {
+    display: flex;
     flex-direction: column;
     padding: 0.75rem 1rem 0;
   }
@@ -369,6 +369,7 @@ a.fw-half:hover {
     background: var(--bg);
   }
   .fw-mini svg {
+    grid-row: auto;
     padding: 4px 3px;
   }
   .fw-label,
@@ -376,10 +377,20 @@ a.fw-half:hover {
     grid-column: 2;
   }
   .fw-row > .fw-split {
+    display: block;
+    padding: 0;
+  }
+  .fw-split-row {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: start;
-    padding: 0;
+  }
+  .fw-split-foot {
+    display: block;
+    margin-left: calc(22px + 0.85rem);
+    padding: 0 0 0.4rem;
+    border: 0;
+    text-align: left;
   }
   .fw-half + .fw-or + .fw-half {
     border-left: 0;

@@ -37,7 +37,7 @@ const Arrow = () => (
 type Step = {
   icon: string;
   label: string;
-  line: string;
+  line?: string;
   num?: string;
   href?: string;
   later?: boolean;
@@ -51,7 +51,7 @@ function Box({ t, kind = "box" }: { t: Step; kind?: "box" | "half" | "mini" }) {
         {ICONS[t.icon]}
       </svg>
       <span className="fw-label">{t.label}</span>
-      <span className="fw-line">{t.line}</span>
+      {t.line && <span className="fw-line">{t.line}</span>}
       {SHOW_LIVE && <span className="fw-num">{t.num ?? "later"}</span>}
     </>
   );
@@ -71,9 +71,9 @@ function Box({ t, kind = "box" }: { t: Step; kind?: "box" | "half" | "mini" }) {
 }
 
 // The steps of the engine under the header of the home page: trade, buy credits, compose, then a
-// statement is listed or redeemed (one box, two halves joined by "or"). The return loop runs from
-// the sale back to buy credits: sale proceeds refill the pot, and the burn node on the loop is the
-// part that buys $CC and burns it.
+// statement is listed or redeemed (one box, two halves joined by "or", with a footer: proceeds go
+// back to the pot). The return loop runs from that box back to buy credits; the burn node on the
+// loop is the part of the proceeds that buys $CC and burns it.
 export function Flywheel() {
   const { data: s } = useStats();
   const { data: snap } = useSnapshot();
@@ -120,7 +120,6 @@ export function Flywheel() {
   const burn: Step = {
     icon: "flame",
     label: "burn $CC",
-    line: "proceeds refill the pot; part buys $CC and burns it",
     num: `${n(s.ccBurned)} $CC burned${on ? ` · ${commas(burnedPct, 2)}%` : ""}`,
     href: "/statements",
   };
@@ -135,11 +134,14 @@ export function Flywheel() {
           <Box t={compose} />
           <Arrow />
           <div className="fw-box fw-split" role="group" aria-label="list or redeem">
-            <Box t={list} kind="half" />
-            <span className="fw-or" aria-hidden>
-              or
-            </span>
-            <Box t={redeem} kind="half" />
+            <div className="fw-split-row">
+              <Box t={list} kind="half" />
+              <span className="fw-or" aria-hidden>
+                or
+              </span>
+              <Box t={redeem} kind="half" />
+            </div>
+            <span className="fw-split-foot">proceeds go back to the pot</span>
           </div>
         </div>
         <div className="fw-loop">
