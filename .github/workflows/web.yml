@@ -1,18 +1,8 @@
-# web/: typecheck, the selfchecks and a production build. Runs on changes under web/ and is
-# called by the candidate workflow.
+# web/: typecheck, the selfchecks and a production build. Reusable: called by ci and candidate.
 name: web
 
 on:
-  pull_request:
-    paths: ["web/**", ".github/workflows/web.yml"]
-  push:
-    branches: [main, points/v1]
-    paths: ["web/**", ".github/workflows/web.yml"]
   workflow_call:
-
-concurrency:
-  group: web-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
