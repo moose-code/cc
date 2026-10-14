@@ -63,8 +63,8 @@ abstract contract LaunchChecks is PostflightChecks {
     string internal constant PLACEHOLDER_MARKER = "PLACEHOLDER";
     // the pinned launch rules (docs/RUNBOOK.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
-    uint24 internal constant PIN_BASELINE_SKIM = 690;
-    uint16 internal constant PIN_BOUNTY_BPS = 9638;
+    uint24 internal constant PIN_BASELINE_SKIM = 1000;
+    uint16 internal constant PIN_BOUNTY_BPS = 9900;
     uint16 internal constant PIN_PROTOCOL_BPS = 2000;
     /// @dev the most the launch pays the factory. a fee above it is a factory state change the signed config never saw
     uint256 internal constant PIN_DEPLOY_FEE_MAX = 0.1 ether;
@@ -231,10 +231,10 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     function _ruleEconomics(LaunchConfig memory c) private {
-        _eq("rule: baseline skim bps is 690", uint256(c.baselineSkimBps), PIN_BASELINE_SKIM);
+        _eq("rule: baseline skim bps is 1000", uint256(c.baselineSkimBps), PIN_BASELINE_SKIM);
         bool bountyOk = c.bountyBps == PIN_BOUNTY_BPS || (c.allowBounty && c.bountyBps <= 9999);
         _check(
-            "rule: bounty bps is 9638",
+            "rule: bounty bps is 9900",
             bountyOk,
             string.concat("bounty ", vm.toString(c.bountyBps), c.allowBounty ? " (override on)" : "")
         );
@@ -572,7 +572,7 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     /// @dev the fee knobs of the factory against the config: the deploy fee and the deployer balance, the protocol skim
-    /// share floor against the bounty (`setMinProtocolSkimShareBps(362)` is the owner command that opens bountyBps 9_638)
+    /// share floor against the bounty (`setMinProtocolSkimShareBps(100)` is the owner command that opens bountyBps 9_900)
     function _preFees(LaunchConfig memory c, address deployer) private {
         address fa = c.stack.factory;
         (bool ok, uint256 fee) = _word(fa, abi.encodeCall(IArtCoinsFactoryV2.deployFee, ()));
@@ -792,7 +792,7 @@ abstract contract LaunchChecks is PostflightChecks {
         );
         _info(
             "signoff: protocol leg",
-            "the protocol leg (362 of 10_000 of the baseline skim, 0.24978 points of volume) and the protocol locker slot belong to the launcher protocol, a separate business from this engine and its owner"
+            "the protocol leg (100 of 10_000 of the baseline skim, 0.1 points of volume) and the protocol locker slot belong to the launcher protocol, a separate business from this engine and its owner"
         );
         _preSettingsRows(c);
         _info(

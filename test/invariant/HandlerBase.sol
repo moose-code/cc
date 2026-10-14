@@ -864,20 +864,20 @@ abstract contract HandlerBase is Test {
     }
 
     /// the skim rate the live anti sniper module reports for the next swap, in bps of volume. 9_000 (90 percent) at
-    /// launch, falling linearly to the 690 bps (6.9 percent) baseline over the window
+    /// launch, falling linearly to the 1000 bps (10 percent) baseline over the window
     function _skimBps() internal view returns (uint256 bps) {
         (uint24 b,) = IArtCoinsMevSkimV2(mev).currentSkimBps(poolId);
         bps = b;
-        if (bps < 690) bps = 690;
+        if (bps < 1000) bps = 1000;
     }
 
     /// the legs of a skim of `skim` eth at the rate `bps`, from the rules of the hook written out independently: the
-    /// baseline part of the skim (6.9 points over the live rate) splits 90 percent to the bounty recipient (the Core)
+    /// baseline part of the skim (10 points over the live rate) splits 99 percent to the bounty recipient (the Core)
     /// and the rest to the protocol, and the whole extra above the baseline goes to the bounty recipient
     function _expectSkim(uint256 skim, uint256 bps) internal pure returns (uint256 bounty, uint256 protocol) {
-        uint256 base = skim * 690 / bps;
+        uint256 base = skim * 1000 / bps;
         if (base > skim) base = skim;
-        uint256 share = base * 9_638 / 10_000;
+        uint256 share = base * 9_900 / 10_000;
         protocol = base - share;
         bounty = share + (skim - base);
     }
@@ -1224,7 +1224,7 @@ abstract contract HandlerBase is Test {
     /// be booked into the pot. `exactVolume` is the eth volume the swap must have skimmed on, when known
     function _afterSwap(SwapPre memory p, Vm.Log[] memory logs, uint256 exactVolume, string memory what) internal {
         (uint256 volume, uint256 bounty, uint256 protocol) = _skimOf(logs);
-        if (p.bps > 690) windowSwaps++;
+        if (p.bps > 1000) windowSwaps++;
         // the hook pushed the bounty leg to the core, which books nothing inside the swap. the book that follows counts it
         if (core.ethPot() != p.pot || core.ethToBuyback() != p.tb) _flag(V_POT, "the core booked inside the swap");
         if (address(core).balance != p.bal + bounty) _flag(V_POT, "the core received other than the hook bounty leg");
@@ -1919,7 +1919,7 @@ abstract contract HandlerBase is Test {
         }
         (uint256 volume, uint256 bounty, uint256 protocol) = _skimOf(logs);
         uint256 budget = p.slice - p.maxPay;
-        if (p.bps > 690) windowSwaps++;
+        if (p.bps > 1000) windowSwaps++;
         if (bought == 0) _flag(V_BUYBACK, "buyback bought no coin");
         if (burned != bought) _flag(V_BUYBACK, "buyback did not burn exactly the coin it bought");
         if (spent == 0 || spent > budget) _flag(V_BUYBACK, "buyback spent more than the slice less the largest payment");

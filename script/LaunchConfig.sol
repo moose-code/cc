@@ -64,7 +64,7 @@ struct LaunchConfig {
     int24 startTick;
     int24 positionLower;
     int24 positionUpper;
-    /// the baseline skim in bps of volume (690 is 6.9 percent)
+    /// the baseline skim in bps of volume (1000 is 10 percent)
     uint24 baselineSkimBps;
     /// the engine's share of the baseline skim, bps. the protocol keeps the rest
     uint16 bountyBps;
@@ -83,12 +83,12 @@ struct LaunchConfig {
     /// the recipients of additional payouts that `SeaportBasicAdapter` accepts at launch. the OpenSea fee collector
     address[] seaportRecipients;
     /// the address `Core.claimPayee` pays at launch. the owner replaces it with `Core.setPayee`. its share is
-    /// `settings.payeePpm`: the Core receives bountyBps / 10_000 of the baseline skim, 9_638 / 10_000 of 690 bps is
-    /// 665.022 bps of volume (6.65022 points). 75_185 ppm of that is 0.5 points of volume:
-    /// 0.5 / 6.65022 * 1e6 = 75_185.2, rounded down
+    /// `settings.payeePpm`: the Core receives bountyBps / 10_000 of the baseline skim, 9_900 / 10_000 of 1000 bps is
+    /// 990 bps of volume (9.9 points). 50_505 ppm of that is 0.5 points of volume:
+    /// 0.5 / 9.9 * 1e6 = 50_505.05, rounded down
     address payee;
     // explicit overrides of pinned preflight rules. all false by default. each one is part of the config hash
-    /// allow a bountyBps other than 9638
+    /// allow a bountyBps other than 9900
     bool allowBounty;
     /// allow launching while the factory is not deprecated (a future public factory)
     bool allowOpenFactory;
@@ -117,8 +117,8 @@ abstract contract ConfigReader is CommonBase {
         c.startTick = -175_000;
         c.positionLower = -175_000;
         c.positionUpper = 887_200;
-        c.baselineSkimBps = 690;
-        c.bountyBps = 9638;
+        c.baselineSkimBps = 1000;
+        c.bountyBps = 9900;
         c.maxReferralBps = 0;
         c.lpFeePips = 0;
         c.sniperStartBps = 9_000;

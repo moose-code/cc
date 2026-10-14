@@ -334,7 +334,7 @@ library Mainnet {
             callerFee: 0,
             callerMaxBaseFee: 0,
             feeToRedeemBurnBps: 1_000,
-            payeePpm: 75_185,
+            payeePpm: 50_505,
             refScore: 4_330_000,
             swapFeeCc: 10_000e18
         });

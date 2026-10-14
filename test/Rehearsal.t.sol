@@ -129,7 +129,7 @@ contract RehearsalTest is Test, ProdDeployer {
         // before the factory owner sets the minimum protocol skim share to 362 the preflight names exactly that
         IArtCoinsFactoryV2 f = IArtCoinsFactoryV2(c.stack.factory);
         preflight(c, deployer);
-        _print("preflight before the owner command setMinProtocolSkimShareBps(362)");
+        _print("preflight before the owner command setMinProtocolSkimShareBps(100)");
         string memory before_ = _failedNames();
         if (f.minProtocolSkimShareBps() > 10_000 - c.bountyBps) {
             assertEq(

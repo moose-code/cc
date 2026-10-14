@@ -33,7 +33,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 | behavior | the first `migrate` retires the engine, which keeps selling and redeeming its statements and burning its buyback pot | 33, 48, 52 |
 | parameter | every economic number is an owner setting, effective at once, no timelock | 3, 15 |
 | parameter | `rateCap` 3 times the opening bid; the opening bid is the market price on launch day of a credit of score `refScore`; `refScore` is a Core setting (the launch average credit score) | 46, 60, 69, 116 |
-| parameter | payee 0.5 points of volume to the owner (75,185 ppm of the engine's inflow), protocol 0.25 points, engine the rest | 31, 112 |
+| parameter | payee 0.5 points of volume to the owner (50,505 ppm of the engine's inflow), protocol 0.1 points, engine the rest | 31, 112, 120 |
 | parameter | buyback slice 0.5 eth, at most 1 eth | 51 |
 | risk | a market above `rateCap` stops buying until the owner raises it | 49 |
 | risk | holders trust the owner key fully: the owner can overpay a seller it controls, set a module that returns dust, and move everything to a successor at once | 8, 9.4 |
@@ -81,7 +81,7 @@ one `Settings` struct in Core storage, `setSettings(Settings)` owner only and ef
 | `callerFee` | 0 | 0 to 0.005 ether | fee to the caller of `compose`, `composeChosen` and `redeemStatement`, from the pot |
 | `callerMaxBaseFee` | 0 | 0 to 100 gwei | base fee ceiling of those refunds; 0 pays no gas |
 | `feeToRedeemBurnBps` | 1,000 | 0 to 10,000 | share of fee income to the redeem burn reserve, the rest to the pot |
-| `payeePpm` | 75,185 | 0 to 200,000 | share of fee income to the payee claim, parts per million |
+| `payeePpm` | 50,505 | 0 to 200,000 | share of fee income to the payee claim, parts per million |
 | `refScore` | 4,330,000 | 1 to 8,000,000 | the per-credit score the eth bid divides by: a credit of score `s` is paid `ethRate() * s / refScore`. the controller reads it for the point rate and the statement reference |
 | `swapFeeCc` | 10,000e18 | 0 to 1e24 | coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, ten thousand coins at launch |
 
@@ -89,7 +89,7 @@ three standalone Core settings, each with its own setter and event: `creditCostT
 
 the controller's settings, each struct set at once by the Core's owner: `Sale` (`markupBps` 15,000, 10,000 to 40,000 and at most `startCapBps`; `startCapBps` 100,000, at least `markupBps` and `kneeBps`, at most 200,000; `fastDecayBpsPerHour` 100, 1 to 10,000; `kneeBps` 10,000, 1,000 to `startCapBps`; `slowDecayBpsPerHour` 25, 1 to 10,000; `anchorHalfLife` 7 days, 1 to 90 days; `anchorMinCost` 0.1 ether, 0 to 10 ether) through `setSale`, and `CreditSale` (`saleOn` true; `window` 14,400 s, 1 minute to 30 days; `floorBps` 11,000, 10,000 to 40,000; `startBps` 30,000, 10,000 to 200,000; `royaltyBps` 250, 0 to 1,000; `royaltyRecipient`, never zero) through `setCredit`. `setAnchorBps` (10,000 to `startCapBps`) and `setBalancePoolKey` are actions.
 
-fixed inside the pool at launch and not adjustable: skim 6.9 points of volume, 96.38 percent of it to the engine as bounty recipient and 3.62 percent to the protocol, anti sniper skim 90 points falling to the baseline over 30 minutes, lp fee 0.
+fixed inside the pool at launch and not adjustable: skim 10 points of volume, 99 percent of it to the engine as bounty recipient and 1 percent to the protocol, anti sniper skim 90 points falling to the baseline over 30 minutes, lp fee 0.
 
 ## 4. the bid
 
@@ -115,7 +115,7 @@ the Core is the pool's bounty recipient. `receive()` accepts eth from the hook a
 
 other eth enters through doors that book it to the pot whole: `fund()` (payable, anyone, also the predecessor engine on `migrate`) and `collectEscrow()` (claims the Core's escrow credit, the refund of a partial buyback fill). `claimPayee()` sends the payee claim; a payee that reverts blocks only its own claim. the balance token is held by the module, not the Core, so there is no balance booking door. a stray external `escrow.claim(core, 0)` lands as fee income at the next book.
 
-per 100 eth of volume at launch values: 0.25 eth to the protocol, 6.65 eth to the Core, of which 0.5 eth to the payee (75,185 ppm), 0.615 eth to the reserve, 5.535 eth to the pot.
+per 100 eth of volume at launch values: 0.1 eth to the protocol, 9.9 eth to the Core, of which 0.5 eth to the payee (50,505 ppm), 0.94 eth to the reserve, 8.46 eth to the pot.
 
 ## 6. doors
 
@@ -182,7 +182,7 @@ what the rule does not cover, accepted by the owner (decisions 8, 9.4): the owne
 
 ## 12. launch
 
-nine transactions, all but the launch through the deterministic deployer (CREATE2) at addresses that depend on the config and the salts, never on the deployer's nonce: the library, the Core (its constructor computes the coin address through the factory's `predictToken` with itself as bounty recipient), the controller (built with the Core address), the Seaport adapter, the CreditStrategy adapter, `setController`, `addAdapter` twice, and `deployTokenAsOwner` with the deploy fee (0.069 eth at the pin). measured on a fork of block 26186912: 16,120,826 gas in all, the Core creation 5,242,833, the launch 3,627,708; every transaction under the 16,777,216 cap. the factory owner key signs every transaction and is the Core's owner, the config owner and the payee. before the launch the factory owner lowers `minProtocolSkimShareBps` to 362. after the launch: `book()` at the end of the anti sniper window. `lockRecipients` is a later owner decision. the runbook is docs/RUNBOOK.md.
+nine transactions, all but the launch through the deterministic deployer (CREATE2) at addresses that depend on the config and the salts, never on the deployer's nonce: the library, the Core (its constructor computes the coin address through the factory's `predictToken` with itself as bounty recipient), the controller (built with the Core address), the Seaport adapter, the CreditStrategy adapter, `setController`, `addAdapter` twice, and `deployTokenAsOwner` with the deploy fee (0.069 eth at the pin). measured on a fork of block 26186912: 16,120,826 gas in all, the Core creation 5,242,833, the launch 3,627,708; every transaction under the 16,777,216 cap. the factory owner key signs every transaction and is the Core's owner, the config owner and the payee. before the launch the factory owner lowers `minProtocolSkimShareBps` to 100. after the launch: `book()` at the end of the anti sniper window. `lockRecipients` is a later owner decision. the runbook is docs/RUNBOOK.md.
 
 ## 13. tests
 

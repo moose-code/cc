@@ -170,11 +170,11 @@ contract ReviewDeployTest is ReviewHarness {
         vm.expectRevert(abi.encodeWithSelector(ConfigReader.ConfigOutOfRange.selector, ".stack.tickSpacing"));
         this.load("test/data/ReviewTruncated.json");
         string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
-        assertEq(this.parse(j).bountyBps, 9638, "the untouched file parses");
+        assertEq(this.parse(j).bountyBps, 9900, "the untouched file parses");
         string[11] memory from = [
-            '"bountyBps": 9638',
-            '"payeePpm": 75185',
-            '"baselineSkimBps": 690',
+            '"bountyBps": 9900',
+            '"payeePpm": 50505',
+            '"baselineSkimBps": 1000',
             '"sniperSeconds": 1800',
             '"startTick": -175000',
             '"positionUpper": 887200',

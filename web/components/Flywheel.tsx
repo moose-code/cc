@@ -85,7 +85,7 @@ export function Flywheel() {
   const trade: Step = {
     icon: "swap",
     label: "trade cc",
-    line: "every trade pays 6.9% into the engine",
+    line: "every trade pays 9.9% into the engine",
     num: `${n(s.feesBooked, 3)} eth booked`,
     href: snap ? evmNowAddress(snap.coin) : undefined,
   };

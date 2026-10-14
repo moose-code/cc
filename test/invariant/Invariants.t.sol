@@ -893,7 +893,7 @@ contract InvariantsPhase1Window is InvariantsBase {
     /// the run starts inside the window with the skim well above the baseline
     function test_startsInsideTheSniperWindow() public view {
         assertLt(block.timestamp, launchTime + SNIPER_WINDOW / 2);
-        assertGt(_skimBpsNow(), 690);
+        assertGt(_skimBpsNow(), 1000);
     }
 
     function _skimBpsNow() internal view returns (uint256) {
@@ -903,7 +903,7 @@ contract InvariantsPhase1Window is InvariantsBase {
 
     /// everything the money side does inside the window first, then the standard smoke after a week
     function _smoke() internal override {
-        assertGt(_skimBpsNow(), 690);
+        assertGt(_skimBpsNow(), 1000);
         _try(0, 20);
         _try(1, 20);
         _try(2, 40);
