@@ -625,7 +625,6 @@ button.tp-row:disabled {
   margin-top: 0.75rem;
   display: grid;
   gap: 0.2rem;
-  text-align: center;
   font-size: 0.78rem;
 }
 .tp-status .err {
@@ -638,13 +637,15 @@ button.tp-row:disabled {
 }
 .tp-fee {
   margin: 0.9rem 0 0;
-  text-align: center;
   color: var(--muted);
   font-size: 0.78rem;
 }
 .tp-fee.tp-launch {
-  margin-top: 0.35rem;
   color: var(--fg);
+}
+.tp-launch p {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
 }
 .tp-pot {
   display: grid;

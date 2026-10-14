@@ -97,13 +97,18 @@ export function useQuote(market: Market | undefined, side: "buy" | "sell", amoun
 
 // Swap fee of a hooked market, in bps: the pool's current skim plus the hook's
 // LP fee (pips / 100). While the MEV module reports an active window, the skim
-// is its decaying value (not below the baseline) and `endsAt` is its windowEnd
-// in unix seconds (undefined when the module has no windowEnd). `baseBps` is the
-// fee after the window. Refetched every 12 s (the head poll) while the window is
-// active, every 60 s otherwise. null when a read fails.
-export type HookFee = { bps: number; baseBps: number; active: boolean; endsAt?: number };
+// is its decaying value (not below the baseline), `endsAt` is the window end in
+// unix seconds and `perMin` the decay in bps per minute, both from the module's
+// schedule(poolId) (startingSkimBps, endSkimBps, windowSeconds, startTime; undefined
+// when the read fails). `baseBps` is the fee after the window: the higher of the
+// schedule's end skim and the baseline skim, plus the LP fee. Refetched every
+// 12 s (the head poll) while the window is active, every 60 s otherwise. null
+// when a read fails.
+export type HookFee = { bps: number; baseBps: number; active: boolean; endsAt?: number; perMin?: number };
 
-const windowEndAbi = parseAbi(["function windowEnd(bytes32 poolId) view returns (uint40)"]);
+const scheduleAbi = parseAbi([
+  "function schedule(bytes32 poolId) view returns ((uint24 startingSkimBps, uint24 endSkimBps, uint32 windowSeconds, uint40 startTime))",
+]);
 
 export function useHookFeeBps(market?: Market) {
   const client = usePublicClient();
@@ -126,18 +131,22 @@ export function useHookFeeBps(market?: Market) {
         let skim = baseline;
         let active = false;
         let endsAt: number | undefined;
+        let perMin: number | undefined;
+        let end = baseline;
         if (info.mevModule !== zeroAddress) {
           const [now, running] = await client!.readContract({ address: info.mevModule, abi: mevAbi, functionName: "currentSkimBps", args: [id] });
           if (running) {
             active = true;
             skim = Math.max(Number(now), baseline);
-            endsAt = await client!
-              .readContract({ address: info.mevModule, abi: windowEndAbi, functionName: "windowEnd", args: [id] })
-              .then((t) => (t > 0n ? Number(t) : undefined))
-              .catch(() => undefined);
+            const sch = await client!.readContract({ address: info.mevModule, abi: scheduleAbi, functionName: "schedule", args: [id] }).catch(() => undefined);
+            if (sch && sch.windowSeconds > 0) {
+              endsAt = Number(sch.startTime) + sch.windowSeconds;
+              perMin = ((sch.startingSkimBps - sch.endSkimBps) / sch.windowSeconds) * 60;
+              end = Math.max(sch.endSkimBps, baseline);
+            }
           }
         }
-        return { bps: skim + lp, baseBps: baseline + lp, active, endsAt };
+        return { bps: skim + lp, baseBps: end + lp, active, endsAt, perMin };
       } catch {
         return null;
       }

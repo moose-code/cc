@@ -400,12 +400,20 @@ export function TradePanel({ market }: { market?: Market }) {
           )}
         </div>
       )}
-      <p className="tp-fee">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
-      {hookFee?.active && (
-        <p className="tp-fee tp-launch">
-          launch fee {(hookFee.bps / 100).toFixed(1)}%, decaying to {(hookFee.baseBps / 100).toFixed(1)}%
-          {hookFee.endsAt != null && hookFee.endsAt > now && ` · ${leftLabel(hookFee.endsAt - now)} left`}
-        </p>
+      {hookFee?.active ? (
+        <div className="tp-fee tp-launch">
+          <div className="tp-row">
+            <span>LAUNCH FEE {(hookFee.bps / 100).toFixed(1)}%</span>
+            {hookFee.endsAt != null && hookFee.endsAt > now && <span>{leftLabel(hookFee.endsAt - now)} left</span>}
+          </div>
+          {hookFee.perMin != null && (
+            <p>
+              decays {(hookFee.perMin / 100).toFixed(1)}% per minute until it reaches the base fee of {(hookFee.baseBps / 100).toFixed(1)}%
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="tp-fee">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
       )}
       {growth && <PotGrowth key={growth.to.pot.toString()} from={potOf(growth.from)} to={potOf(growth.to)} label="pot" />}
       {!engineDeployed && <p className="panel-note tp-note">engine not deployed.</p>}
