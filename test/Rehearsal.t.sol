@@ -9,7 +9,7 @@ import {IV4Router} from "v4-periphery/src/interfaces/IV4Router.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {ICredits, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {ICredits, ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {SystemDeployer, Deployed} from "../script/SystemDeployer.sol";
 import {V2Stack} from "./utils/V2Stack.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
@@ -377,7 +377,9 @@ contract RehearsalTest is Test, ProdDeployer {
                 continue;
             }
             if (who.code.length != 0 || core.ethRate() > cap) continue;
-            uint256 price = core.ethRate();
+            // the per-point payout: the rate scaled by the credit's score over refScore (Core.bidOf, by hand)
+            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(credits.seedOf(id), credits.timestampOf(id));
+            uint256 pay = (core.ethRate() * score) / core.settings().refScore;
             uint256 pot = core.ethPot();
             uint256 before = who.balance;
             vm.startPrank(who);
@@ -387,10 +389,10 @@ contract RehearsalTest is Test, ProdDeployer {
             core.sellForEth(ids);
             vm.stopPrank();
             assertEq(credits.ownerOf(id), address(core), "the core holds the credit");
-            assertEq(who.balance - before, price, "the seller was paid the ceiling");
-            assertEq(pot - core.ethPot(), price, "the pot paid it");
+            assertEq(who.balance - before, pay, "the seller was paid the rate scaled by score over refScore");
+            assertEq(pot - core.ethPot(), pay, "the pot paid it");
             assertEq(core.pileSize(), 1);
-            console.log("sold credit", id, "for wei", price);
+            console.log("sold credit", id, "for wei", pay);
             return;
         }
         revert("no sellable real credit found");

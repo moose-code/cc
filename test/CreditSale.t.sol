@@ -12,7 +12,7 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {LowballCreditController, ReentrantCreditBuyer} from "./attackers/CreditSaleAttackers.sol";
 
 /// credit sale window. pile credits are for sale from acquisition at a price that falls linearly from a start to a
-/// floor over `creditWindow` and rests at the floor. the floor is the largest of the credit's cost, `floorRate` and
+/// floor over `creditWindow` and rests at the floor. the floor is the larger of the credit's cost and
 /// `valueOf(score)`, times `creditFloorBps`; the start is the floor times `creditStartBps`. `valueOf` is the larger of the rate term
 /// `floorRate * score / refScore` and the balance token pool term, which reads the live pool and the live unit: a
 /// missing or failed pool read leaves the pool term at 0 and the sale never reverts for it. the core keeps a hard floor
@@ -195,8 +195,9 @@ contract CreditSaleTest is Fixture {
     }
 
     // promise: an outsider gains nothing at the engine's cost: a credit bought at its sale price and sold straight
-    // back into the eth bid returns less than it cost, for the credit with the lowest sale price
-    function test_floorRate_buyThenSellBackNeverBeatsTheBid() public {
+    // back into the eth bid returns less than it cost, for the credit with the lowest sale price. the floor is
+    // `valueOf(score) * creditFloorBps >= floorRate * score / refScore * creditFloorBps >= bidOf`, so the round trip loses
+    function test_noProfit_buyThenSellBackNeverBeatsTheBid() public {
         uint256[] memory ids = _fillEthPile(40);
         _on();
         _warp(ctl.creditWindow());
@@ -219,6 +220,32 @@ contract CreditSaleTest is Fixture {
         core.sellForEth(one);
         vm.stopPrank();
         assertLe(arb.balance, pay, "the round trip returned more eth than the credit cost");
+    }
+
+    // promise: SPEC 8 the credit sale floor is max(cost, valueOf(score)) * creditFloorBps, the flat floorRate term dropped
+    /// a credit scoring well below refScore floors at its per-point value, not the average-credit floor rate. the
+    /// dropped term (decision 115a, redundant under the per-point bid of decision 116) would have priced it at floorRate * creditFloorBps, far above
+    function test_floor_usesValueOfNotTheFlatFloorRate() public {
+        uint256 id = _fillEthPile(1)[0];
+        _on();
+        // raise the rate well above the credit's recorded cost, so the flat floorRate sits above both the cost and the
+        // per-point value term; a high refScore puts the credit's score well below it, so valueOf(score) is a fraction of floorRate
+        _liftRateCap();
+        vm.prank(owner);
+        core.setRate(1e17);
+        _setRefScore(8_000_000);
+        uint256 s = _scoreOf(id);
+        assertLt(s, 8_000_000, "the credit scores below refScore");
+        (, uint256 cost,) = core.creditInfo(id);
+        uint256 fr = core.floorRate();
+        uint256 value = ctl.valueOf(s);
+        assertEq(value, FullMath.mulDiv(fr, s, 8_000_000), "valueOf is the rate term, no pool");
+        uint256 hi = _max(cost, value);
+        assertLt(hi, fr, "the governing term is below the flat floor rate that was dropped");
+        uint256 fb = ctl.creditFloorBps();
+        _warp(ctl.creditWindow());
+        assertEq(ctl.creditPrice(id), hi * fb / BPS, "the floor is max(cost, valueOf(score)) * creditFloorBps");
+        assertLt(ctl.creditPrice(id), fr * fb / BPS, "and below floorRate * creditFloorBps, the dropped flat term");
     }
 
     // promise: SPEC 1 buyCredits prices each credit after the previous sale

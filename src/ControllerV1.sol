@@ -333,8 +333,8 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ credit sale window
 
-    /// the sale price of pile credit `id` now, wei. the floor is the largest of the credit's cost, `core.floorRate()` and
-    /// `valueOf` of its score, times `creditFloorBps`. the start is the floor times `creditStartBps`. the price falls in
+    /// the sale price of pile credit `id` now, wei. the floor is the larger of the credit's cost and `valueOf` of its
+    /// score, times `creditFloorBps`. the start is the floor times `creditStartBps`. the price falls in
     /// a straight line from the start at the acquisition time to the floor at the acquisition time plus `creditWindow`,
     /// and rests at the floor after. reverts `NotForSale` for a credit not in the pile. answers whether or not the sale is on
     function creditPrice(uint256 id) public view returns (uint256 price) {
@@ -342,8 +342,6 @@ contract ControllerV1 is IController {
         if (!inPile) revert NotForSale();
         uint256 hi = valueOf(_scoreOf(id));
         if (cost > hi) hi = cost;
-        uint256 fr = CORE.floorRate();
-        if (fr > hi) hi = fr;
         uint256 floor = hi * creditFloorBps / BPS;
         uint256 start = floor * creditStartBps / BPS;
         uint256 age = block.timestamp - acquiredAt;

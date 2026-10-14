@@ -17,7 +17,7 @@ measured on the branch tip against `main` (lines without the generated interface
 | contracts | 5 | 3 plus 2 adapters |
 | deploy transactions | 10 | 9 |
 
-runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, ControllerV1 13,129, SeaportBasicAdapter 2,558, CreditStrategyAdapter 508. after decisions 116 and 117 (branch `points/v1`): Core 22,119, CoreLib 14,985, ControllerV1 13,138, adapters unchanged. after decision 118: Core 23,118, CoreLib 15,190, ControllerV1 13,167, adapters unchanged.
+runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, ControllerV1 13,129, SeaportBasicAdapter 2,558, CreditStrategyAdapter 508. after decisions 116 and 117 (branch `points/v1`): Core 22,119, CoreLib 14,985, ControllerV1 13,138, adapters unchanged. after decision 118: Core 23,118, CoreLib 15,190, ControllerV1 13,167, adapters unchanged. after the credit sale floor dropped the flat floorRate term (part of decision 116, per-point): ControllerV1 13,056, the rest unchanged.
 
 ## 2. the plan
 
