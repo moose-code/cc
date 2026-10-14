@@ -5,14 +5,14 @@ import { useAccount, useBalance, usePublicClient, useReadContract, useReadContra
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { formatUnits, maxUint256, parseEther, parseEventLogs, parseUnits, zeroAddress, type Address } from "viem";
 import { engineDeployed, chain } from "@/lib/config";
-import { useCcMarket, useEthUsd, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
+import { useCcMarket, useEthUsd, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
 import { changePct, commas, evmNowTx, shortHash, tokens, usd, usdCompact, usdPrice } from "@/lib/format";
 import { lsGet, lsSet } from "@/lib/cache";
 import { CANCELLED, useTx, type Plan, type StepStatus, type Write } from "@/lib/tx";
 
-const HOOK_FEE_BPS = 690; // 6.9% hook skim
+const HOOK_FEE_BPS = 690; // fallback when the hook reads fail
 const SLIPPAGE_PRESETS = [50, 100, 200, 500]; // bps
 const SLIPPAGE_KEY = "cc:slippage-bps";
 const IMPACT_WARN = 0.02;
@@ -39,7 +39,8 @@ export function TradePanel({ market }: { market?: Market }) {
   const sym = m?.symbol.toLowerCase() ?? "";
   const dec = m?.decimals ?? 18;
   const hooked = m != null && m.key.hooks !== zeroAddress;
-  const feeBps = hooked ? HOOK_FEE_BPS : (m?.key.fee ?? 0) / 100; // LP fee is in hundredths of a bip
+  const hookFee = useHookFeeBps(m).data;
+  const feeBps = hooked ? hookFee ?? HOOK_FEE_BPS : (m?.key.fee ?? 0) / 100; // LP fee is in hundredths of a bip
 
   const { priceUsd: tokenUsd, marketCap, change } = useMarketStats(m);
 

@@ -94,6 +94,12 @@ export const chainlinkAbi = parseAbi([
 export const stateViewAbi = parseAbi([
   "function getSlot0(bytes32 poolId) view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)",
 ]);
+// The hook's per-pool skim config and pool info, and the MEV module's current skim (decays after launch).
+export const hookAbi = parseAbi([
+  "function skimConfig(bytes32 poolId) view returns ((uint24 baselineSkimBps, uint16 bountyBps, uint24 maxReferralBpsOfVolume, uint24 lpFeePips, address bountyRecipient, address protocolRecipient))",
+  "function poolInfo(bytes32 poolId) view returns ((uint16 version, bool restricted, uint40 createdAt, address launcher, address token, address locker, address mevModule, address extension))",
+]);
+export const mevAbi = parseAbi(["function currentSkimBps(bytes32 poolId) view returns (uint24 skimBps, bool active)"]);
 export const quoterAbi = parseAbi([
   "function quoteExactInputSingle(((address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool zeroForOne, uint128 exactAmount, bytes hookData) params) view returns (uint256 amountOut, uint256 gasEstimate)",
 ]);

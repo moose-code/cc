@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
 import { formatUnits, zeroAddress, type Address } from "viem";
 import { ethUsdFeed } from "./config";
-import { chainlinkAbi, controllerAbi, erc20Abi, quoterAbi, stateViewAbi } from "./abis";
+import { chainlinkAbi, controllerAbi, erc20Abi, hookAbi, mevAbi, quoterAbi, stateViewAbi } from "./abis";
 import { useHead, useSnapshot } from "./live";
 import { SCOPE, lsGet, lsSet } from "./cache";
 import { V4, ccPerEthFromSqrt, poolIdOf, poolKey, type PoolKey } from "./v4";
@@ -90,6 +90,37 @@ export function useQuote(market: Market | undefined, side: "buy" | "sell", amoun
         return out;
       } catch {
         return undefined;
+      }
+    },
+  });
+}
+
+// Swap fee in bps of a hooked market: the pool's current skim (the MEV module's
+// value when one is set, else the baseline) plus the hook's LP fee (pips / 100).
+// null when a read fails.
+export function useHookFeeBps(market?: Market) {
+  const client = usePublicClient();
+  const hook = market?.key.hooks;
+  const on = Boolean(client && market && hook !== zeroAddress);
+  return useQuery<number | null>({
+    queryKey: ["hook-fee", market && poolIdOf(market.key)],
+    enabled: on,
+    staleTime: 60000,
+    queryFn: async () => {
+      try {
+        const id = poolIdOf(market!.key);
+        const [cfg, info] = await Promise.all([
+          client!.readContract({ address: hook!, abi: hookAbi, functionName: "skimConfig", args: [id] }),
+          client!.readContract({ address: hook!, abi: hookAbi, functionName: "poolInfo", args: [id] }),
+        ]);
+        let skim = Number(cfg.baselineSkimBps);
+        if (info.mevModule !== zeroAddress) {
+          const [now] = await client!.readContract({ address: info.mevModule, abi: mevAbi, functionName: "currentSkimBps", args: [id] });
+          skim = Number(now);
+        }
+        return skim + Number(cfg.lpFeePips) / 100;
+      } catch {
+        return null;
       }
     },
   });
