@@ -33,49 +33,32 @@ const Arrow = () => (
   </svg>
 );
 
-// Connector with two branches. "out" fans one box into two (arrowheads at the branch ends);
-// "in" joins two branches into one box (arrowhead at the stub). Below 860px both collapse to one down arrow.
-const Fork = ({ dir }: { dir: "out" | "in" }) => (
-  <div className={`fw-fork fw-fork-${dir}`} aria-hidden>
-    {[0, 1].map((i) => (
-      <svg key={i} viewBox="0 0 28 8">
-        <path d={dir === "out" ? "M10 4h16m-3-3 3 3-3 3" : "M0 4h18"} />
-      </svg>
-    ))}
-    {dir === "in" && (
-      <svg className="fw-stub" viewBox="0 0 28 8">
-        <path d="M18 4h8m-3-3 3 3-3 3" />
-      </svg>
-    )}
-    <svg className="fw-single" viewBox="0 0 28 8">
-      <path d="M0 4h26m-3-3 3 3-3 3" />
-    </svg>
-  </div>
-);
-
 type Step = {
   icon: string;
   label: string;
   line: string;
-  end?: string;
   num?: string;
   href?: string;
   later?: boolean;
 };
 
-function Box({ t }: { t: Step }) {
+function Box({ t, half }: { t: Step; half?: boolean }) {
   const body = (
     <>
-      <svg viewBox="0 0 24 24" aria-hidden>
-        {ICONS[t.icon]}
-      </svg>
-      <span className="fw-label">{t.label}</span>
+      {!half && (
+        <svg viewBox="0 0 24 24" aria-hidden>
+          {ICONS[t.icon]}
+        </svg>
+      )}
+      <span className={half ? "fw-head" : "fw-label"}>
+        {half ? <span className="fw-label">{t.label}</span> : t.label}
+        {half && <span className="fw-num">{t.num ?? "later"}</span>}
+      </span>
       <span className="fw-line">{t.line}</span>
-      {t.end && <span className="fw-end">{t.end}</span>}
-      <span className="fw-num">{t.num ?? "later"}</span>
+      {!half && <span className="fw-num">{t.num ?? "later"}</span>}
     </>
   );
-  const cls = `fw-box${t.later ? " fw-later" : ""}`;
+  const cls = `${half ? "fw-half" : "fw-box"}${t.later ? " fw-later" : ""}`;
   if (!t.href) return <div className={cls}>{body}</div>;
   if (t.href.startsWith("/"))
     return (
@@ -91,7 +74,7 @@ function Box({ t }: { t: Step }) {
 }
 
 // The steps of the engine, each with a live number, under the header of the home page.
-// After compose the flow forks into list and redeem; both branches feed the buyback that burns cc.
+// After compose a statement is either listed or redeemed (one split box); both feed the buyback that burns cc.
 export function Flywheel() {
   const { data: s } = useStats();
   const { data: snap } = useSnapshot();
@@ -123,15 +106,14 @@ export function Flywheel() {
   const list: Step = {
     icon: "tag",
     label: "list",
-    line: "listed for eth, 1.5x down to its floor, half of it buys more credits",
+    line: "listed for eth, 1.5x down to the floor",
     num: `${n(s.sold)} statements sold`,
     href: "/statements",
   };
   const redeem: Step = {
     icon: "swap",
     label: "redeem",
-    line: "a statement at its floor can be redeemed",
-    end: `for ${BALANCE_SYMBOL}`,
+    line: `redeemed for ${BALANCE_SYMBOL} at the floor`,
     num: balanceOn ? `${n(s.redeemed)} statements redeemed` : undefined,
     href: "/statements",
     later: !balanceOn,
@@ -139,7 +121,7 @@ export function Flywheel() {
   const burn: Step = {
     icon: "flame",
     label: "burn cc",
-    line: "the other half of each sale and the redeem reserve burn the coin",
+    line: "half of each sale and the redeem reserve burn cc",
     num: `${n(s.ccBurned)} cc burned${on ? ` · ${commas(burnedPct, 2)}%` : ""}`,
     href: "/statements",
   };
@@ -152,12 +134,12 @@ export function Flywheel() {
           <Box t={buy} />
           <Arrow />
           <Box t={compose} />
-          <Fork dir="out" />
-          <div className="fw-branches">
-            <Box t={list} />
-            <Box t={redeem} />
+          <Arrow />
+          <div className="fw-box fw-split" role="group" aria-label="list or redeem">
+            <Box t={list} half />
+            <Box t={redeem} half />
           </div>
-          <Fork dir="in" />
+          <Arrow />
           <Box t={burn} />
         </div>
         <div className="fw-loop" aria-hidden />
