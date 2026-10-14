@@ -41,7 +41,7 @@
     "callerFee": 0,
     "callerMaxBaseFee": 0,
     "feeToRedeemBurnBps": 1000,
-    "payeePpm": 90909,
+    "payeePpm": 0,
     "refScore": 4330000,
     "swapFeeCc": 10000000000000000000000
   },
@@ -69,7 +69,7 @@
     "positionLower": -175000,
     "positionUpper": 887200,
     "baselineSkimBps": 1000,
-    "bountyBps": 9900,
+    "bountyBps": 9000,
     "maxReferralBps": 0,
     "lpFeePips": 0,
     "sniperStartBps": 9000,

@@ -76,14 +76,14 @@ contract ConfigTest is Fixture {
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()), "settings block is the launch values");
         // the launch values of docs/DECISIONS.md 10.1 and 10.6, the fee split of decision 120
         assertEq(f.baselineSkimBps, 1000);
-        assertEq(f.bountyBps, 9_900);
+        assertEq(f.bountyBps, 9_000);
         assertEq(f.lpFeePips, 0);
         assertEq(f.maxReferralBps, 0);
         assertEq(f.sniperStartBps, 9_000);
         assertEq(f.sniperSeconds, 1800);
         assertTrue(f.restricted);
         assertEq(f.allowed.length, 0);
-        assertEq(f.settings.payeePpm, 90_909);
+        assertEq(f.settings.payeePpm, 0);
         // the owner's launch values of decision 119
         assertTrue(f.credit.saleOn);
         assertEq(f.settings.saleToBuybackBps, 2_500);
@@ -107,10 +107,10 @@ contract ConfigTest is Fixture {
     /// the launch fee split derived from the v2 hook math (`ArtCoinsHookV2._split`), per 1 ether of volume. all rates in bps
     /// of volume (decision 120). baseline skim 1000 bps (10 points), skim = V * 1000 / 10_000 = 0.1 ether.
     /// bounty leg = skim * bountyBps / 10_000, protocol leg = skim - bounty leg (steady state, no referral).
-    /// the protocol keeps 1 percent of the skim: bountyBps 9_900 gives 1000 * 100 / 10_000 = 10 bps (0.1 points), and the
-    /// factory needs minProtocolSkimShareBps at most 10_000 - 9_900 = 100 (`BPS - bountyBps - minProtocolSkimShareBps >= 0`
-    /// in `_validateFee`). Core inflow = bounty leg = 0.1 * 9_900 / 10_000 = 0.099 ether (990 bps). payee target 0.9 points =
-    /// 90 bps = 0.009 ether, payeePpm = 90 / 990 * 1e6 = 90_909.09, rounded down to 90_909. the engine keeps the rest
+    /// the protocol keeps 10 percent of the skim: bountyBps 9_000 gives 1000 * 1000 / 10_000 = 100 bps (1.0 point), and the
+    /// factory needs minProtocolSkimShareBps at most 10_000 - 9_000 = 1000 (`BPS - bountyBps - minProtocolSkimShareBps >= 0`
+    /// in `_validateFee`). Core inflow = bounty leg = 0.1 * 9_000 / 10_000 = 0.09 ether (900 bps, 9.0 points). payeePpm is 0
+    /// at launch, so the engine keeps the whole Core inflow
     function test_feeSplitDerivation() public pure {
         LaunchConfig memory d = defaultConfig();
         uint256 v = 1 ether;
@@ -118,18 +118,14 @@ contract ConfigTest is Fixture {
         assertEq(skim, 0.1 ether);
         uint256 inflow = skim * d.bountyBps / 10_000;
         uint256 protocol = skim - inflow;
-        assertEq(inflow, 99_000_000_000_000_000, "Core inflow 9.9 points");
-        assertEq(protocol, 1_000_000_000_000_000, "protocol leg 0.1 points");
-        assertEq(10_000 - uint256(d.bountyBps), 100, "the factory minProtocolSkimShareBps the bounty needs");
-        // payee: the largest ppm whose share of the Core inflow does not exceed 0.9 points (0.009 ether)
-        uint256 payeeTarget = 0.009 ether;
+        assertEq(inflow, 90_000_000_000_000_000, "Core inflow 9.0 points");
+        assertEq(protocol, 10_000_000_000_000_000, "protocol leg 1.0 point");
+        assertEq(10_000 - uint256(d.bountyBps), 1000, "the factory minProtocolSkimShareBps the bounty needs");
+        // the payee share is 0 at launch, so the engine keeps the whole Core inflow
+        assertEq(d.settings.payeePpm, 0, "payeePpm 0 at launch");
         uint256 payee = inflow * d.settings.payeePpm / 1e6;
-        assertLe(payee, payeeTarget);
-        assertGt(
-            inflow * (uint256(d.settings.payeePpm) + 1) / 1e6, payeeTarget, "90_909 is the largest ppm under 0.9 points"
-        );
-        assertEq(payee, 8_999_991_000_000_000, "payee 0.8999991 points");
-        assertEq(inflow - payee, 90_000_009_000_000_000, "engine 9.0 points");
+        assertEq(payee, 0, "no payee share at launch");
+        assertEq(inflow - payee, 90_000_000_000_000_000, "engine 9.0 points");
     }
 
     /// the deploy refuses to run while any placeholder is unset or the rate is out of bounds
@@ -341,18 +337,18 @@ contract ConfigTest is Fixture {
         );
         assertEq(
             _rowDetail("factory: min protocol skim share leaves room for the bounty"),
-            "factory minProtocolSkimShareBps is 1500, above the 100 the bounty 9900 leaves. the factory owner runs setMinProtocolSkimShareBps(100) first"
+            "factory minProtocolSkimShareBps is 1500, above the 1000 the bounty 9000 leaves. the factory owner runs setMinProtocolSkimShareBps(1000) first"
         );
-        // the floor of the launch bounty 9900 is 100
+        // the floor of the launch bounty 9000 is 1000
         vm.prank(owner);
-        FACTORY.setMinProtocolSkimShareBps(363);
+        FACTORY.setMinProtocolSkimShareBps(1001);
         _pre(lc, d2);
         assertEq(
             _failedNames(),
             "factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
         );
         vm.prank(owner);
-        FACTORY.setMinProtocolSkimShareBps(100);
+        FACTORY.setMinProtocolSkimShareBps(1000);
         _pre(lc, d2);
         assertEq(_failedNames(), "");
     }

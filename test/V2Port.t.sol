@@ -123,11 +123,11 @@ contract V2PortMigrationTest is FeeBase {
 
         autoBook = false;
         _buyCoin(trader, 1 ether);
-        assertEq(address(core2).balance, 0.099 ether, "the bounty leg reached the new Core");
+        assertEq(address(core2).balance, 0.09 ether, "the bounty leg reached the new Core");
         core2.book();
         // the first book of the new Core latches its payee share and shares nothing
         Settings memory s = core2.settings();
-        uint256 toPot = 0.099 ether - uint256(0.099 ether) * s.feeToRedeemBurnBps / 10_000;
+        uint256 toPot = 0.09 ether - uint256(0.09 ether) * s.feeToRedeemBurnBps / 10_000;
         assertEq(core2.ethPot(), toPot, "the new Core booked the fees");
         assertTrue(core2.payeeOn());
         assertEq(core.ethPot(), pot1, "the old Core books nothing more");
@@ -136,7 +136,7 @@ contract V2PortMigrationTest is FeeBase {
         // the second book shares
         _buyCoin(trader, 1 ether);
         core2.book();
-        assertEq(core2.payeeOwed(), uint256(0.099 ether) * s.payeePpm / 1_000_000);
+        assertEq(core2.payeeOwed(), uint256(0.09 ether) * s.payeePpm / 1_000_000);
 
         // the old Core still composes and sells with what it holds
         vm.fee(composeBasefee);

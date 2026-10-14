@@ -115,7 +115,7 @@ abstract contract FeeBase is Fixture {
     /// core, the rest the protocol leg
     function _expected(uint256 gross) internal pure returns (uint256 toCore, uint256 toProtocol) {
         uint256 skim = gross * 1000 / 10_000;
-        toCore = skim * 9_900 / 10_000;
+        toCore = skim * 9_000 / 10_000;
         toProtocol = skim - toCore;
     }
 
@@ -149,29 +149,29 @@ abstract contract FeeBase is Fixture {
 
 /// fee flow of the real v2 skim hook into the core
 contract FeeFlowTest is FeeBase {
-    // promise: SPEC 1 payee 0.5 points, protocol 0.1 points, engine the rest
+    // promise: SPEC 1 payee 0 at launch, protocol 1.0 point, engine the rest
     /// the full split at launch values, per 1 eth of volume (multiply by 100 for 100 eth), steady state and inside the anti
-    /// sniper window. skim 10 points: protocol 0.1 (bountyBps 9_900 leaves 100 of 10_000), core 9.9.
-    /// steady state, out of the income of 99_000_000_000_000_000 wei: payee 90_909 ppm 0.9 points, engine
-    /// 9.0 points. window, skim 90 points (0.9 eth): the protocol keeps 0.1 points, the core gets
-    /// 0.099 + 0.8 = 0.899 eth, the payee gets nothing and the engine the rest
+    /// sniper window. skim 10 points: protocol 1.0 (bountyBps 9_000 leaves 1000 of 10_000), core 9.0.
+    /// steady state, out of the income of 90_000_000_000_000_000 wei: payee 0 at launch, so the engine
+    /// keeps all 9.0 points. window, skim 90 points (0.9 eth): the protocol keeps 1.0 point, the core gets
+    /// 0.09 + 0.8 = 0.89 eth, the payee gets nothing and the engine the rest
     function test_launchSplitPerHundredEthOfVolume() public {
         Flow memory w = _flow(Kind.BuyExactIn, 1 ether, "");
-        assertEq(w.skimProtocol * 100, 0.1 ether, "window: protocol 0.1 per 100 eth");
-        assertEq(w.bountyRise * 100, 89.9 ether, "window: core 89.9 per 100 eth");
+        assertEq(w.skimProtocol * 100, 1 ether, "window: protocol 1.0 per 100 eth");
+        assertEq(w.bountyRise * 100, 89 ether, "window: core 89 per 100 eth");
         assertEq(w.toPayee, 0, "window: no payee share");
 
         _stock();
         Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
-        assertEq(f.skimProtocol * 100, 0.1 ether, "protocol 0.1 per 100 eth");
-        assertEq(f.bountyRise * 100, 9.9 ether, "core 9.9 per 100 eth");
-        assertApproxEqAbs(f.toPayee * 100, 0.9 ether, 0.0001 ether, "payee 0.9 points of volume");
+        assertEq(f.skimProtocol * 100, 1 ether, "protocol 1.0 per 100 eth");
+        assertEq(f.bountyRise * 100, 9 ether, "core 9.0 per 100 eth");
+        assertEq(f.toPayee, 0, "no payee share at launch");
         assertEq(f.skimProtocol + f.bountyRise, 0.1 ether, "protocol and core are the 10 point skim");
-        assertEq(f.bountyRise - f.toPayee, uint256(99_000_000_000_000_000) - f.toPayee, "the engine part is the rest");
+        assertEq(f.bountyRise - f.toPayee, uint256(90_000_000_000_000_000) - f.toPayee, "the engine part is the rest");
     }
 
-    // promise: SPEC 1 payee 0.5 points, protocol 0.1 points, engine the rest
-    /// the protocol leg of the skim (0.1 points) is not the engine's: it goes to the v2 protocol controller, by push
+    // promise: SPEC 1 payee 0 at launch, protocol 1.0 point, engine the rest
+    /// the protocol leg of the skim (1.0 point) is not the engine's: it goes to the v2 protocol controller, by push
     /// or by escrow credit
     function test_protocolLegGoesToTheProtocolController() public {
         _stock();
@@ -180,8 +180,8 @@ contract FeeFlowTest is FeeBase {
         Flow memory f = _flow(Kind.BuyExactIn, 5 ether, "");
         uint256 got = ctlr.balance + ESCROW.balances(ctlr, address(0)) - before;
         assertEq(got, f.skimProtocol);
-        // 5 eth * 10 points = 0.5 eth of skim, the protocol keeps 100 of 10_000: 0.005 eth
-        assertEq(got, 5 ether * 1000 / 10_000 * 100 / 10_000);
+        // 5 eth * 10 points = 0.5 eth of skim, the protocol keeps 1000 of 10_000: 0.05 eth
+        assertEq(got, 5 ether * 1000 / 10_000 * 1000 / 10_000);
     }
 
     // promise: SPEC 4 the anti sniper window extra reaches the pot, the payee takes none of it
@@ -192,13 +192,13 @@ contract FeeFlowTest is FeeBase {
         assertFalse(core.payeeOn(), "no payee share in the window");
         Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
         uint256 base = 1 ether * 1000 / 10_000;
-        uint256 bountyShare = base * 9_900 / 10_000;
+        uint256 bountyShare = base * 9_000 / 10_000;
         uint256 extra = 1 ether * uint256(bps) / 10_000 - base;
         assertEq(f.bountyRise, bountyShare + extra, "the whole extra goes to the bounty recipient");
         assertEq(f.skimProtocol, base - bountyShare, "the protocol leg does not grow in the window");
         assertEq(f.toPayee, 0);
         assertEq(f.potRise, _toPot(f.bountyRise), "the pot gets the window inflow less the redeem burn share");
-        assertApproxEqAbs(f.potRise, _toPot(0.899 ether), 0.005 ether);
+        assertApproxEqAbs(f.potRise, _toPot(0.89 ether), 0.005 ether);
         assertFalse(core.payeeOn());
 
         // halfway through the window the rate has decayed to 50 percent (linearly from 90 to the baseline, 10)
@@ -212,11 +212,11 @@ contract FeeFlowTest is FeeBase {
         // sells pay the extra too
         f = _flow(Kind.SellExactIn, coin.balanceOf(trader) / 4, "");
         (bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
-        assertGt(f.bountyRise, f.gross * 1000 / 10_000 * 9_900 / 10_000);
+        assertGt(f.bountyRise, f.gross * 1000 / 10_000 * 9_000 / 10_000);
 
         _skipSniperWindow();
         f = _flow(Kind.BuyExactIn, 1 ether, "");
-        assertEq(f.bountyRise, 0.099 ether, "steady state after the window");
+        assertEq(f.bountyRise, 0.09 ether, "steady state after the window");
     }
 
     // promise: SPEC 4 every door books pending fee eth before it prices
@@ -224,6 +224,10 @@ contract FeeFlowTest is FeeBase {
     /// the sale at a door pays exactly the quoted rate
     function test_aDoorBooksTheFeesFirstAndPaysTheQuote() public {
         _stock();
+        // payeePpm is 0 at launch (decision 120); the owner raises it so the door's book credits the payee, the evidence here
+        Settings memory sp = core.settings();
+        sp.payeePpm = 90_909;
+        _setSettings(sp);
         autoBook = false;
         uint256[] memory ids = _credits(seller, 1);
         _buyCoin(trader, 5 ether);
@@ -509,12 +513,12 @@ contract BuybackTest is FeeBase {
             / (core.settings().buybackSlice - (600_000 * 5 gwei + core.settings().keeperFee));
         assertGt(paid, feePart, "the gas refund is paid on top of the fee");
         assertEq((paid - feePart) % 5 gwei, 0, "the refund is counted gas at the base fee");
-        // the skim on the buyback reaches the core inside the unlock (9.9 points of the eth spent) and waits above
+        // the skim on the buyback reaches the core inside the unlock (9.0 points of the eth spent) and waits above
         // the pots: the pot is unchanged until the next book
         (uint256 toCore,) = _expected(budget);
         assertEq(core.ethPot(), b.pot, "the skim does not return inside the call");
         assertEq(address(core).balance, b.coreBal - budget - paid + f.skimBounty, "the bounty leg reached the core");
-        assertApproxEqAbs(f.skimBounty, toCore, 2, "9.9 points of the eth spent");
+        assertApproxEqAbs(f.skimBounty, toCore, 2, "9.0 points of the eth spent");
         (, uint256 toEngine) = _payeeSplit(f.skimBounty);
         _book();
         assertEq(
@@ -868,8 +872,8 @@ contract UniversalRouterTest is FeeBase {
         UR.execute{value: 1 ether}(hex"10", _v4Swap(true, 1 ether), block.timestamp + 1 hours);
         uint256 bought = coin.balanceOf(trader);
         assertEq(bought, viaRouter, "same amount out as the plain swapper");
-        assertEq(address(core).balance - _tracked(), 0.099 ether, "skim on the buy: 9.9 points to the core");
-        (, uint256 toEngine) = _payeeSplit(0.099 ether);
+        assertEq(address(core).balance - _tracked(), 0.09 ether, "skim on the buy: 9.0 points to the core");
+        (, uint256 toEngine) = _payeeSplit(0.09 ether);
         _book();
         uint256 redeemBurn = toEngine * core.settings().feeToRedeemBurnBps / 10_000;
         assertEq(core.ethPot() - pot, toEngine - redeemBurn, "and the book adds the engine share less the redeem burn");
@@ -894,7 +898,7 @@ contract UniversalRouterTest is FeeBase {
         // a sell skims 10 points of the pool eth out, taken from the seller, 99 percent of it to the core
         uint256 gross = ethOut * 1000 / 900;
         uint256 inflow = address(core).balance - _tracked();
-        assertApproxEqAbs(inflow, gross * 100 / 1000 * 9_900 / 10_000, 3, "skim on the sell");
+        assertApproxEqAbs(inflow, gross * 100 / 1000 * 9_000 / 10_000, 3, "skim on the sell");
         (, uint256 eng) = _payeeSplit(inflow);
         _book();
         assertEq(core.ethPot() - pot, _toPot(eng));

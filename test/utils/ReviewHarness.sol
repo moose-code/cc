@@ -32,7 +32,7 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         creator = makeAddr("review.creator");
         FACTORY = IArtCoinsFactoryV2(v2.factory);
         vm.startPrank(owner);
-        FACTORY.setMinProtocolSkimShareBps(100);
+        FACTORY.setMinProtocolSkimShareBps(1000);
         vm.stopPrank();
         vm.deal(deployer, 5 ether);
         base = defaultConfig();

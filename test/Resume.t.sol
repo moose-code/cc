@@ -29,7 +29,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         creator = makeAddr("resume.creator");
         FACTORY = IArtCoinsFactoryV2(v2.factory);
         vm.prank(deployer);
-        FACTORY.setMinProtocolSkimShareBps(100);
+        FACTORY.setMinProtocolSkimShareBps(1000);
         vm.deal(deployer, 5 ether);
         base = defaultConfig();
         base.owner = deployer;

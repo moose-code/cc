@@ -9,7 +9,7 @@ import {IV4Router} from "v4-periphery/src/interfaces/IV4Router.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {ICredits, ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {ICredits, ICreditScore, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {SystemDeployer, Deployed} from "../script/SystemDeployer.sol";
 import {V2Stack} from "./utils/V2Stack.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
@@ -129,7 +129,7 @@ contract RehearsalTest is Test, ProdDeployer {
         // before the factory owner sets the minimum protocol skim share to 362 the preflight names exactly that
         IArtCoinsFactoryV2 f = IArtCoinsFactoryV2(c.stack.factory);
         preflight(c, deployer);
-        _print("preflight before the owner command setMinProtocolSkimShareBps(100)");
+        _print("preflight before the owner command setMinProtocolSkimShareBps(1000)");
         string memory before_ = _failedNames();
         if (f.minProtocolSkimShareBps() > 10_000 - c.bountyBps) {
             assertEq(
@@ -344,6 +344,8 @@ contract RehearsalTest is Test, ProdDeployer {
         assertGt(core.ethPot(), pot, "the sell skim reached the pot too");
         assertEq(coin.balanceOf(Mainnet.DEAD), deadBefore, "no tax and no burn on canonical swaps");
 
+        // payeePpm is 0 at launch (decision 120); the owner raises it, as it would later, to prove the claim path
+        _raisePayeePpm(core, c.owner, 90_909);
         // from the book after that the payee is credited its parts per million of the fee income
         uint256 payee0 = c.payee.balance;
         uint256 owed0 = core.payeeOwed();
@@ -354,7 +356,7 @@ contract RehearsalTest is Test, ProdDeployer {
         uint256 gross = d.core.balance - bal;
         vm.prank(keeper);
         core.book();
-        assertEq(core.payeeOwed() - owed0, gross * c.settings.payeePpm / 1e6, "exactly its share of the inflow");
+        assertEq(core.payeeOwed() - owed0, gross * 90_909 / 1e6, "exactly its share of the inflow");
         core.claimPayee();
         assertGt(c.payee.balance, payee0, "the payee claims its share");
         assertEq(core.payeeOwed(), 0, "the claim clears the share");
@@ -363,6 +365,14 @@ contract RehearsalTest is Test, ProdDeployer {
     }
 
     /// finds a real credit held by an account without code and sells it into the bid
+    /// the owner raises `payeePpm` to `v` (it is 0 at launch), in its own frame to keep `_rehearsal`'s stack shallow
+    function _raisePayeePpm(ICore core_, address owner_, uint24 v) internal {
+        Settings memory sp = core_.settings();
+        sp.payeePpm = v;
+        vm.prank(owner_);
+        core_.setSettings(sp);
+    }
+
     function _sellRealCredit(ICore core) internal {
         assertGt(core.ethPot(), 0, "the pot holds the fees");
         // the price state starts at the config rate. the read is clamped by a thin pot

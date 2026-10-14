@@ -198,7 +198,7 @@ abstract contract Fixture is Test, ProdDeployer {
         FACTORY = IArtCoinsFactoryV2(v2.factory);
         ESCROW = IArtCoinsFeeEscrowV2(v2.escrow);
         vm.startPrank(owner);
-        FACTORY.setMinProtocolSkimShareBps(100);
+        FACTORY.setMinProtocolSkimShareBps(1000);
         vm.stopPrank();
         vm.deal(owner, 1 ether);
 

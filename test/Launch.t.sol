@@ -33,7 +33,7 @@ contract LaunchTest is Fixture {
 
         IArtCoinsHookV2.SkimConfig memory k = HOOK.skimConfig(poolId);
         assertEq(k.baselineSkimBps, 1000);
-        assertEq(k.bountyBps, 9_900);
+        assertEq(k.bountyBps, 9_000);
         assertEq(k.bountyRecipient, address(core), "the bounty goes to the Core");
         IArtCoinsMevSkimV2 mev = IArtCoinsMevSkimV2(lc.mevModule);
         IArtCoinsMevSkimV2.SkimSchedule memory sched = mev.schedule(poolId);

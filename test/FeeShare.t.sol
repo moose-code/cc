@@ -30,6 +30,10 @@ contract PayeeShareTest is FeeBase {
     // promise: SPEC 1 the payee share starts after the anti sniper window (decision 109)
     /// the share starts after the window, read from the factory record of the coin
     function test_theShareStartsAfterTheWindowFromTheFactoryRecord() public {
+        // payeePpm is 0 at launch (decision 120); the owner raises it to observe the share crediting
+        Settings memory sp = core.settings();
+        sp.payeePpm = 90_909;
+        _setSettings(sp);
         (, uint256 launchedAt) = _launchRecord();
         assertEq(launchedAt, launchTime, "the launch time of the factory record");
         assertEq(core.SNIPER_SECONDS(), 1800);
@@ -77,14 +81,17 @@ contract PayeeShareTest is FeeBase {
     function test_bookCreditsThePayeeAndClaimPaysIt() public {
         _stock();
         assertEq(core.payee(), lc.payee);
-        assertEq(core.settings().payeePpm, 90_909);
+        assertEq(core.settings().payeePpm, 0, "payeePpm 0 at launch");
+        Settings memory sp = core.settings();
+        sp.payeePpm = 90_909;
+        _setSettings(sp);
         address a = lc.payee;
         uint256 a0 = a.balance;
         uint256 owed0 = core.payeeOwed();
         Flow memory f = _flow(Kind.BuyExactIn, 10 ether, "");
         assertEq(a.balance, a0, "the book pays nothing out");
         assertEq(core.payeeOwed() - owed0, f.bountyRise * 90_909 / 1_000_000);
-        assertApproxEqRel(core.payeeOwed() - owed0, 0.09 ether, 0.01e18);
+        assertApproxEqRel(core.payeeOwed() - owed0, 0.082 ether, 0.01e18);
         uint256 owed = core.payeeOwed();
         address anyone = _user("claimer");
         vm.expectEmit(true, false, false, true, address(core));
@@ -167,6 +174,7 @@ contract PayeeShareTest is FeeBase {
     /// share stays owed. the owner replaces the payee and the claim goes through
     function test_aPayeeThatRevertsOrBurnsGasBlocksOnlyItsOwnClaim() public {
         _stock();
+        { Settings memory sp = core.settings(); sp.payeePpm = 90_909; _setSettings(sp); }
         address[2] memory bad = [address(new RevertingPayee()), address(new GasBurningPayee())];
         for (uint256 i; i < 2; ++i) {
             vm.prank(owner);
@@ -195,6 +203,7 @@ contract PayeeShareTest is FeeBase {
     /// the payee cannot reenter the Core during its claim
     function test_claimIsGuardedAgainstReentry() public {
         _stock();
+        { Settings memory sp = core.settings(); sp.payeePpm = 90_909; _setSettings(sp); }
         ReenteringPayee p = new ReenteringPayee(core);
         vm.prank(owner);
         core.setPayee(address(p));
@@ -284,7 +293,7 @@ contract FeeShareTest is FeeBase {
         for (uint256 i; i < 3; ++i) {
             _share(bps[i]);
             Books memory b = _swap(Kind.BuyExactIn, 1 ether);
-            assertEq(b.bounty, 0.099 ether, "9.9 points of one eth reach the core");
+            assertEq(b.bounty, 0.09 ether, "9.0 points of one eth reach the core");
             uint256 want = b.inflow * bps[i] / BASIS;
             assertEq(b.dRb, want, "exact redeem burn share");
             assertEq(b.dPot, b.inflow - want, "exact pot share");

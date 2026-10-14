@@ -82,13 +82,12 @@ struct LaunchConfig {
     address[] allowed;
     /// the recipients of additional payouts that `SeaportBasicAdapter` accepts at launch. the OpenSea fee collector
     address[] seaportRecipients;
-    /// the address `Core.claimPayee` pays at launch. the owner replaces it with `Core.setPayee`. its share is
-    /// `settings.payeePpm`: the Core receives bountyBps / 10_000 of the baseline skim, 9_900 / 10_000 of 1000 bps is
-    /// 990 bps of volume (9.9 points). 90_909 ppm of that is 0.9 points of volume:
-    /// 0.9 / 9.9 * 1e6 = 90_909.09, rounded down
+    /// the address `Core.claimPayee` pays. its share is `settings.payeePpm`, 0 at launch: the Core receives bountyBps /
+    /// 10_000 of the baseline skim, 9_000 / 10_000 of 1000 bps is 900 bps of volume (9.0 points), and the owner keeps all
+    /// of it. the setting and the push stay for later use, and the owner can raise it with `Core.setPayee`
     address payee;
     // explicit overrides of pinned preflight rules. all false by default. each one is part of the config hash
-    /// allow a bountyBps other than 9900
+    /// allow a bountyBps other than 9000
     bool allowBounty;
     /// allow launching while the factory is not deprecated (a future public factory)
     bool allowOpenFactory;
@@ -118,7 +117,7 @@ abstract contract ConfigReader is CommonBase {
         c.positionLower = -175_000;
         c.positionUpper = 887_200;
         c.baselineSkimBps = 1000;
-        c.bountyBps = 9900;
+        c.bountyBps = 9000;
         c.maxReferralBps = 0;
         c.lpFeePips = 0;
         c.sniperStartBps = 9_000;

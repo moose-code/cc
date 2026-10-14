@@ -170,8 +170,8 @@ contract ReviewMatrixStateTest is ReviewHarness {
             (l, w) = ("the linked library plus one trailing byte", Class.Post);
             (lateEtchAt, lateEtchCode, lateEtchAppend) = (_linked(), hex"00", true);
         } else if (i == 6) {
-            (l, w) = ("factory min protocol skim share 1000 (the owner command setMinProtocolSkimShareBps(100) not run)", Class.Pre);
-            FACTORY.setMinProtocolSkimShareBps(1000);
+            (l, w) = ("factory min protocol skim share 1001 (the owner command setMinProtocolSkimShareBps(1000) not run)", Class.Pre);
+            FACTORY.setMinProtocolSkimShareBps(1001);
         } else if (i == 7) {
             (l, w) = ("the fee escrow has no code", Class.Pre);
             vm.etch(v2.escrow, "");

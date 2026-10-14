@@ -872,12 +872,12 @@ abstract contract HandlerBase is Test {
     }
 
     /// the legs of a skim of `skim` eth at the rate `bps`, from the rules of the hook written out independently: the
-    /// baseline part of the skim (10 points over the live rate) splits 99 percent to the bounty recipient (the Core)
+    /// baseline part of the skim (10 points over the live rate) splits 90 percent to the bounty recipient (the Core)
     /// and the rest to the protocol, and the whole extra above the baseline goes to the bounty recipient
     function _expectSkim(uint256 skim, uint256 bps) internal pure returns (uint256 bounty, uint256 protocol) {
         uint256 base = skim * 1000 / bps;
         if (base > skim) base = skim;
-        uint256 share = base * 9_900 / 10_000;
+        uint256 share = base * 9_000 / 10_000;
         protocol = base - share;
         bounty = share + (skim - base);
     }
