@@ -674,7 +674,7 @@ const R0 = 6.668e15;
   const e = fresh(L, 10); near(e.reference({ cost: 0.6, rating: 80 * 433 }, 0), 0.8, 1e-12, 'before the change the rate term binds'); e.setSettings({ refScore: 8000000 }, 0); near(e.reference({ cost: 0.6, rating: 80 * 433 }, 0), 0.6, 1e-12, 'refScore 800 points shrinks the rate term under cost, which is the reference'); n += 2;
   assert.throws(() => e.setSettings({ refScore: 0 }, 2), /refScore/); assert.throws(() => e.setSettings({ refScore: 8000001 }, 2), /refScore/); n += 2;
 }
-// the credit sale window (ControllerV1.creditPrice, FLOW 88, 92, 93, 94): off at launch. floor = max(cost, valueOf(score)) * creditFloorBps / 10000, start = floor *
+// the credit sale window (ControllerV1.creditPrice, FLOW 88, 92, 93, 94): off at launch. floor = max(cost, floorRate, valueOf(score)) * creditFloorBps / 10000 (decision 115), start = floor *
 // creditStartBps / 10000, a straight line over creditWindow from the acquisition time, resting at the floor. Core.sellCreditTo takes at least the cost, creditCostToPotBps of the cost
 // to the pot and the rest of the payment to the buyback pot. compose waits for the window while the sale is on
 {
@@ -690,7 +690,7 @@ const R0 = 6.668e15;
   // the rate term: a cost under it is floored at it, read before the pot clamp (an empty pot does not zero it). 440 points scales it by 440 / 433, a score under refScore scales it down
   const e = mk({ rateStart: 4e15, rateCap: 1e16 }, 0.0001);
   near(e.ethRate(0), 0.0001 * W, 1e-12, 'the clamped read is the pot'); near(e.ethPrice(0) / W, 4e-3, 1e-12, 'the price state is unclamped'); near(e.creditFloor(cr, 0), 4e-3 * (440 / 433) * 1.1, 1e-12, 'the floor follows the unclamped rate term');
-  const low = { pts: 200, cost: 0.0001, t0: 0 }; near(e.creditFloor(low, 0), 4e-3 * (200 / 433) * 1.1, 1e-12, 'a score under refScore scales the rate term down'); n += 4;
+  const low = { pts: 200, cost: 0.0001, t0: 0 }; near(e.valueOf(200, 0), 4e-3 * (200 / 433), 1e-12, 'a score under refScore scales the rate term down'); near(e.creditFloor(low, 0), 4e-3 * 1.1, 1e-12, 'the floor rate itself floors the credit sale (decision 115), whatever the score'); n += 5;
   // the pool term: score * unit at the pool price, 0 until the pool key and the module are set, and the unit is the one the module reports now
   const b = mk({ redeemOn: true, balanceBidOn: true, balancePoolSet: true }); near(b.poolTerm(440), 0, 1e-15, 'no module: pool term 0'); b.setBalanceModule(0, 1e-5);
   near(b.poolTerm(440), 440 * 1e-5, 1e-12, 'pool term = score * unit'); near(b.creditFloor(cr, 0), 440 * 1e-5 * 1.1, 1e-12, 'a pool term over the cost sets the floor');
