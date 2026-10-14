@@ -7,7 +7,7 @@ import {ICore} from "../src/interfaces/ICore.sol";
 
 /// @notice proof that the suite exercises the production build. tests and scripts compile on the default profile (no
 /// via_ir), the production contracts on the via_ir profile (foundry.toml). this test fails unless
-///  1. the runtime code the fixture deployed for the Core, the ControllerV1, the CoreLens and the linked CoreLib equals, byte for byte,
+///  1. the runtime code the fixture deployed for the Core, the ControllerV1, the two listing adapters and the linked CoreLib equals, byte for byte,
 ///     the runtime code of the artifact in `out/` (the immutable slots and the library address slots are masked in both:
 ///     they are the constructor arguments and the link, not compiler output),
 ///  2. every one of those artifacts records, in its own solc metadata, viaIR true, optimizer 200 runs, cancun, no
@@ -20,10 +20,11 @@ import {ICore} from "../src/interfaces/ICore.sol";
 /// the generated interfaces are not part of the proof: `script/tools/gen-interfaces.sh --check` covers them, and the
 /// two library functions the abi does not list are pinned to the artifact selectors below.
 contract BuildIdentityTest is Fixture {
-    uint256 internal constant CORE_RUNTIME = 18_796;
-    uint256 internal constant CONTROLLER_RUNTIME = 15_704;
-    uint256 internal constant LIB_RUNTIME = 16_615;
-    uint256 internal constant LENS_RUNTIME = 10_866;
+    uint256 internal constant CORE_RUNTIME = 21_644;
+    uint256 internal constant CONTROLLER_RUNTIME = 13_129;
+    uint256 internal constant LIB_RUNTIME = 14_495;
+    uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_558;
+    uint256 internal constant STRATEGY_ADAPTER_RUNTIME = 508;
 
     function _json(string memory name) internal view returns (string memory) {
         return vm.readFile(string.concat("out/", name, ".sol/", name, ".json"));
@@ -105,9 +106,15 @@ contract BuildIdentityTest is Fixture {
     /// @dev the build pins preflight checks (script/Checks.sol) are the artifacts of this tree, by two independent
     /// computations of the masked hash
     function test_pinnedBuildHashesEqualTheArtifacts() public {
-        string[5] memory names = ["Core", "CoreLib", "ControllerV1", "FeeRouter", "CoreLens"];
-        bytes32[5] memory pins =
-            [BUILD_HASH_CORE, BUILD_HASH_CORELIB, BUILD_HASH_CONTROLLER, BUILD_HASH_ROUTER, BUILD_HASH_LENS];
+        string[5] memory names =
+            ["Core", "CoreLib", "ControllerV1", "SeaportBasicAdapter", "CreditStrategyAdapter"];
+        bytes32[5] memory pins = [
+            BUILD_HASH_CORE,
+            BUILD_HASH_CORELIB,
+            BUILD_HASH_CONTROLLER,
+            BUILD_HASH_SEAPORT_ADAPTER,
+            BUILD_HASH_STRATEGY_ADAPTER
+        ];
         for (uint256 i; i < 5; ++i) {
             assertEq(_maskedHash(names[i]), pins[i], string.concat(names[i], ": masked hash of the artifact"));
             assertEq(artifactHash(names[i]), pins[i], string.concat(names[i], ": hash the preflight row reads"));
@@ -118,7 +125,8 @@ contract BuildIdentityTest is Fixture {
     function test_theFixtureDeploysTheViaIrArtifacts() public view {
         _identical(address(core), "Core", CORE_RUNTIME);
         _identical(address(ctl), "ControllerV1", CONTROLLER_RUNTIME);
-        _identical(address(lens), "CoreLens", LENS_RUNTIME);
+        _identical(seaportAdapter, "SeaportBasicAdapter", SEAPORT_ADAPTER_RUNTIME);
+        _identical(strategyAdapter, "CreditStrategyAdapter", STRATEGY_ADAPTER_RUNTIME);
         address lib = findLibrary(address(core).code);
         assertTrue(lib != address(0), "the core is linked to a compiled CoreLib");
         _identical(lib, "CoreLib", LIB_RUNTIME);

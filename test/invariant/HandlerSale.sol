@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Vm} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {Settings} from "../../src/interfaces/Interfaces.sol";
+import {Sale, CreditSale} from "../../src/interfaces/Interfaces.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 import {HandlerOwner} from "./HandlerOwner.sol";
-import {MockExitModule} from "../standins/MockExitModule.sol";
+import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {SellingController} from "../attackers/SaleAttackers.sol";
+import {ComposeCall} from "../utils/ComposeCall.sol";
 
 /// @notice the sale controller and the owner as an adversary. actions: `buy` through the first controller, the
 /// controller's own `sellTo` through a selling controller the owner installs, the controller's sale settings, the owner
-/// swapping the controller and the exit module in one go, the three one way locks and the two step handover. every call is checked against a model written from docs/FLOW.md: who may
+/// swapping the controller and the balance module in one go, the three one way locks and the two step handover. every call is checked against a model written from docs/DECISIONS.md: who may
 /// sell, at what least price, what is booked where, who holds the statement after. a refusal must carry the selector
 /// the model names. nothing here reverts, a violation goes to `viol`.
 abstract contract HandlerSale is HandlerOwner {
@@ -22,14 +22,17 @@ abstract contract HandlerSale is HandlerOwner {
     address[] public formerOwners;
     address[] public heirs;
     uint256 public heirNext;
-    /// every exit module the owner ever installed: none may have called the core successfully from inside an exit
-    MockExitModule[] public modulesEver;
+    /// every balance module the owner ever installed: none may have called the core successfully from inside a redemption
+    MockBalanceModule[] public modulesEver;
     /// the one way locks seen by the handler. they must never come undone
     bool public gLockedC;
     bool public gLockedE;
     bool public gLockedT;
     /// sales through `sellTo`
     uint256 public gSoldTo;
+    /// the first controller's royalty owed and balance before the action under check
+    uint256 internal _owed0;
+    uint256 internal _ctlBal0;
 
     /// the fixture hands over what only it can build (from artifacts, so the contract stays small)
     function setSaleParts(address selling_, address[] calldata heirs_) external {
@@ -47,6 +50,11 @@ abstract contract HandlerSale is HandlerOwner {
 
     function moduleEverCount() external view returns (uint256) {
         return modulesEver.length;
+    }
+
+    /// the royalty on an engine price `price` at the first controller's current `royaltyBps`
+    function _royaltyOn(uint256 price) internal view returns (uint256) {
+        return price * IControllerV1(v1).royaltyBps() / 10_000;
     }
 
     function _bps() internal view returns (uint256) {
@@ -79,9 +87,10 @@ abstract contract HandlerSale is HandlerOwner {
     }
 
     /// the refusal the core's own order of checks gives for a statement in ghost state `g` once the caller is the
-    /// controller (`sellTo`): the record (a held statement), then the hard floor. zero when the sale must go
+    /// controller (`sellTo`): the pause, the record (a held statement), then the hard floor. zero when the sale must go
     /// through
     function _sellToRefusal(SG storage g, uint256 value, uint256 floor) internal view returns (bytes4) {
+        if (core.paused()) return ICore.Paused.selector;
         if (g.status != S_HELD) return ICore.NotForSale.selector;
         if (value < floor) return ICore.BelowFloor.selector;
         return bytes4(0);
@@ -137,10 +146,9 @@ abstract contract HandlerSale is HandlerOwner {
                          buy (the first controller)
     //////////////////////////////////////////////////////////////*/
 
-    /// the refusal of `ControllerV1.buy` in the order of its checks: the pause, the record `priceOf` reads, the payment, the
-    /// controller in force (the core takes `sellTo` from the controller only), then what `sellTo` checks
+    /// the refusal of `ControllerV1.buy` in the order of its checks: the record `priceOf` reads, the payment, the
+    /// controller in force (the core takes `sellTo` from the controller only), then what `sellTo` checks, the pause first
     function _buyRefusal(uint256 sid, SalePre memory p, bool short_) internal view returns (bytes4) {
-        if (IControllerV1(v1).paused()) return IControllerV1.Paused.selector;
         (bool held,,) = core.statementInfo(sid);
         if (!held) return IControllerV1.NotForSale.selector;
         if (short_) return IControllerV1.Underpaid.selector;
@@ -169,9 +177,42 @@ abstract contract HandlerSale is HandlerOwner {
         if (next > cap) next = cap;
     }
 
-    /// a buyer pays the asking price of the first controller, with an excess now and then and a short payment now and
-    /// then. with another controller in force, on a sold, exited or exit lane statement it must refuse with the model's
-    /// selector. a sale pays the ask exactly, the excess comes back
+    /// reads the royalty owed and the balance of the first controller before a sale
+    function _royaltyPre() internal {
+        _owed0 = IControllerV1(v1).royaltyOwed();
+        _ctlBal0 = address(v1).balance;
+    }
+
+    /// after a sale that collected `royalty`, the first controller owes `royalty` more and holds `royalty` more eth
+    function _royaltyCheck(uint256 royalty) internal {
+        if (IControllerV1(v1).royaltyOwed() != _owed0 + royalty) {
+            _flag(V_SALE_PATH, "royaltyOwed differs from the royalty of the sale");
+        }
+        if (address(v1).balance != _ctlBal0 + royalty) _flag(V_SALE_PATH, "the controller holds other than the royalty owed");
+    }
+
+    /// anyone claims the royalty: the recipient receives exactly what is owed and nothing stays in the controller
+    function _claimChecked() internal {
+        IControllerV1 c = IControllerV1(v1);
+        address to = c.royaltyRecipient();
+        uint256 owed = c.royaltyOwed();
+        if (owed == 0) return;
+        uint256 before_ = to.balance;
+        _ctlBal0 = address(c).balance;
+        (bool ok,) = address(c).call(abi.encodeCall(IControllerV1.claimRoyalty, ()));
+        if (!ok) {
+            _flag(V_SALE_PATH, "claimRoyalty reverted with a royalty owed");
+            return;
+        }
+        if (to.balance - before_ != owed) _flag(V_SALE_PATH, "the recipient did not receive the royalty owed");
+        if (c.royaltyOwed() != 0 || address(c).balance != _ctlBal0 - owed) {
+            _flag(V_SALE_PATH, "the controller kept eth after the royalty claim");
+        }
+    }
+
+    /// a buyer pays the asking price of the first controller plus the royalty, with an excess now and then and a short
+    /// payment now and then. with another controller in force, on a sold, redeemed or balance side statement it must
+    /// refuse with the model's selector. a sale pays the ask and the royalty exactly, the excess comes back
     function buy(uint256 sIdx, uint256 aSeed, uint256 xSeed, uint256 mode) external checked {
         uint8 a = A_BUY;
         (uint256 sid, bool found) = _pickBy(sIdx, mode % 4 == 0 ? K_ANY : K_HELD);
@@ -191,11 +232,16 @@ abstract contract HandlerSale is HandlerOwner {
             priced = true;
         } catch {}
         if (priced && price != _modelAsk(sid)) {
-            _flag(V_SALE_PATH, "the asking price differs from the curve at the age outside every pause window");
+            _flag(V_SALE_PATH, "the asking price differs from the curve at the age outside every pause");
+        }
+        uint256 gross = price + _royaltyOn(price);
+        if (priced && IControllerV1(v1).grossPriceOf(sid) != gross) {
+            _flag(V_SALE_PATH, "the gross price is not the asking price plus the royalty");
         }
         bool short_ = priced && price != 0 && xSeed % 7 == 0;
-        uint256 value = !priced ? 1 ether : (short_ ? price - 1 : price + (xSeed % 3 == 0 ? 0 : _logBound(xSeed, 1, 1 ether)));
+        uint256 value = !priced ? 1 ether : (short_ ? gross - 1 : gross + (xSeed % 3 == 0 ? 0 : _logBound(xSeed, 1, 1 ether)));
         SalePre memory p = _salePre(sid, who, who, value);
+        _royaltyPre();
         p.price = price;
         p.want = _buyRefusal(sid, p, short_);
         vm.deal(who, who.balance + value);
@@ -221,11 +267,12 @@ abstract contract HandlerSale is HandlerOwner {
             ) {
                 _flag(V_SALE_PATH, "a buy at or below the anchor, or of a statement under the minimum cost, stored the anchor");
             }
-            if (p.payerBal - who.balance != price) {
-                _flag(V_SALE_PATH, "the buyer did not pay exactly the ask, or the excess was not refunded");
+            if (p.payerBal - who.balance != gross) {
+                _flag(V_SALE_PATH, "the buyer did not pay exactly the ask plus the royalty, or the excess was not refunded");
             }
-            if (address(v1).balance != baseOf[v1].eth) _flag(V_SALE_PATH, "the controller kept eth after a buy");
+            _royaltyCheck(gross - price);
             _saleDone(sid, p, price);
+            if (mode % 5 == 2) _claimChecked();
         } catch (bytes memory why) {
             _saleRefused(sid, p, why, a);
         }
@@ -254,19 +301,19 @@ abstract contract HandlerSale is HandlerOwner {
         return (0, 0, false);
     }
 
-    /// the refusal of `ControllerV1.buyCredit` in the order of its checks: the sale window, the pause, the price read
+    /// the refusal of `ControllerV1.buyCredit` in the order of its checks: the sale window, the price read
     /// (`priceErr`, nonzero when `creditPrice` reverts, e.g. NotForSale for a credit not in the pile), the payment,
-    /// then the core's `sellCreditTo`, which refuses any controller but the one the core named
+    /// then the core's `sellCreditTo`, which refuses any controller but the one the core named, then a pause
     function _buyCreditRefusal(bool saleOn, bool paused_, bytes4 priceErr, bool short_, bool realCtl)
         internal
         pure
         returns (bytes4)
     {
         if (!saleOn) return IControllerV1.CreditSaleOff.selector;
-        if (paused_) return IControllerV1.Paused.selector;
         if (priceErr != 0) return priceErr;
         if (short_) return IControllerV1.Underpaid.selector;
         if (!realCtl) return ICore.OnlyController.selector;
+        if (paused_) return ICore.Paused.selector;
         return bytes4(0);
     }
 
@@ -274,6 +321,7 @@ abstract contract HandlerSale is HandlerOwner {
     /// expects when the call must revert
     struct CQ {
         uint256 price;
+        uint256 royalty;
         uint256 value;
         bytes4 want;
     }
@@ -295,9 +343,10 @@ abstract contract HandlerSale is HandlerOwner {
         } catch (bytes memory reason) {
             priceErr = reason.length >= 4 ? bytes4(reason) : bytes4(0);
         }
+        q.royalty = _royaltyOn(q.price);
         bool short_ = priced && q.price != 0 && xSeed % 7 == 0;
-        q.value = _creditValue(priced, q.price, short_, xSeed);
-        q.want = _buyCreditRefusal(c.creditSaleOn(), c.paused(), priceErr, short_, core.controller() == v1);
+        q.value = _creditValue(priced, q.price + q.royalty, short_, xSeed);
+        q.want = _buyCreditRefusal(c.creditSaleOn(), core.paused(), priceErr, short_, core.controller() == v1);
     }
 
     function _quoteMany(uint256[] memory ids, uint256 xSeed) internal view returns (CQ memory q) {
@@ -307,6 +356,7 @@ abstract contract HandlerSale is HandlerOwner {
         for (uint256 i; i < ids.length; ++i) {
             try c.creditPrice(ids[i]) returns (uint256 pr) {
                 q.price += pr;
+                q.royalty += _royaltyOn(pr);
             } catch (bytes memory reason) {
                 priced = false;
                 // the batch loop prices ids in order and reverts at the first credit whose price reverts, so the first
@@ -315,15 +365,15 @@ abstract contract HandlerSale is HandlerOwner {
             }
         }
         bool short_ = priced && q.price != 0 && xSeed % 6 == 0;
-        q.value = _creditValue(priced, q.price, short_, xSeed);
-        q.want = _buyCreditsRefusal(c.creditSaleOn(), c.paused(), priceErr, short_, core.controller() == v1);
+        q.value = _creditValue(priced, q.price + q.royalty, short_, xSeed);
+        q.want = _buyCreditsRefusal(c.creditSaleOn(), core.paused(), priceErr, short_, core.controller() == v1);
     }
 
-    /// the refusal of `ControllerV1.buyCredits` in the order its one pass loop reaches: the sale window, the pause,
-    /// then per credit a price read, a payment check and the core's `sellCreditTo`. a price read that reverts on ids[0]
+    /// the refusal of `ControllerV1.buyCredits` in the order its one pass loop reaches: the sale window, then per
+    /// credit a price read, a payment check and the core's `sellCreditTo`. a price read that reverts on ids[0]
     /// precedes both. a short batch payment is `total - 1`, which clears the first credit's cumulative check, so a
-    /// wrong controller reverts `OnlyController` on the first sale before the short payment reverts `Underpaid` on the
-    /// last credit. this flips the payment and controller order of
+    /// wrong controller reverts `OnlyController` and a pause reverts `Paused` on the first sale before the short
+    /// payment reverts `Underpaid` on the last credit. this flips the payment and controller order of
     /// the single `buyCredit` refusal
     function _buyCreditsRefusal(bool saleOn, bool paused_, bytes4 priceErr, bool short_, bool realCtl)
         internal
@@ -331,11 +381,11 @@ abstract contract HandlerSale is HandlerOwner {
         returns (bytes4)
     {
         if (!saleOn) return IControllerV1.CreditSaleOff.selector;
-        if (paused_) return IControllerV1.Paused.selector;
         // the price read of ids[0] runs before its payment check and its `sellCreditTo`, so a price revert precedes the
         // wrong controller and the short payment
         if (priceErr != 0) return priceErr;
         if (!realCtl) return ICore.OnlyController.selector;
+        if (paused_) return ICore.Paused.selector;
         if (short_) return IControllerV1.Underpaid.selector;
         return bytes4(0);
     }
@@ -352,13 +402,14 @@ abstract contract HandlerSale is HandlerOwner {
         CreditPre memory p = _creditPre(q.value);
         vm.deal(who, who.balance + q.value);
         p.payerBal = who.balance;
+        _royaltyPre();
         RS memory rs = _rs();
         _att(a);
         vm.prank(who);
         try IControllerV1(v1).buyCredit{value: q.value}(id) {
             _ok(a);
             if (q.want != 0) _flag(V_SALE_PATH, "a credit sale the model refuses went through");
-            _afterCreditBuyOne(id, cost, q.price, p, who);
+            _afterCreditBuyOne(id, cost, q.price, q.royalty, p, who);
         } catch (bytes memory why) {
             _creditRefused(p, why, a, q.want);
         }
@@ -378,13 +429,14 @@ abstract contract HandlerSale is HandlerOwner {
         CreditPre memory p = _creditPre(q.value);
         vm.deal(who, who.balance + q.value);
         p.payerBal = who.balance;
+        _royaltyPre();
         RS memory rs = _rs();
         _att(a);
         vm.prank(who);
         try IControllerV1(v1).buyCredits{value: q.value}(ids) {
             _ok(a);
             if (q.want != 0) _flag(V_SALE_PATH, "a credit batch the model refuses went through");
-            _afterCreditBuy(ids, costs, q.price, p, who);
+            _afterCreditBuy(ids, costs, q.price, q.royalty, p, who);
         } catch (bytes memory why) {
             _creditRefused(p, why, a, q.want);
         }
@@ -438,21 +490,30 @@ abstract contract HandlerSale is HandlerOwner {
         p.value = value;
     }
 
-    function _afterCreditBuyOne(uint256 id, uint256 cost, uint256 price, CreditPre memory p, address who) internal {
+    function _afterCreditBuyOne(uint256 id, uint256 cost, uint256 price, uint256 royalty, CreditPre memory p, address who)
+        internal
+    {
         uint256[] memory ids = new uint256[](1);
         uint256[] memory costs = new uint256[](1);
         ids[0] = id;
         costs[0] = cost;
-        _afterCreditBuy(ids, costs, price, p, who);
+        _afterCreditBuy(ids, costs, price, royalty, p, who);
     }
 
-    /// a credit sale went through: the buyer paid the price exactly and got the excess back, the credits left the pile
+    /// a credit sale went through: the buyer paid the price and the royalty exactly and got the excess back, the credits left the pile
     /// to the buyer, the cost share went to the pot and the markup to the buyback, and no credit left for less than its
     /// recorded cost
-    function _afterCreditBuy(uint256[] memory ids, uint256[] memory costs, uint256 price, CreditPre memory p, address who)
-        internal
-    {
-        if (p.payerBal - who.balance != price) _flag(V_SALE_PATH, "the credit buyer did not pay exactly the price");
+    function _afterCreditBuy(
+        uint256[] memory ids,
+        uint256[] memory costs,
+        uint256 price,
+        uint256 royalty,
+        CreditPre memory p,
+        address who
+    ) internal {
+        if (p.payerBal - who.balance != price + royalty) {
+            _flag(V_SALE_PATH, "the credit buyer did not pay exactly the price plus the royalty");
+        }
         uint256 toPotSum;
         uint256 costSum;
         for (uint256 i; i < ids.length; ++i) {
@@ -470,7 +531,7 @@ abstract contract HandlerSale is HandlerOwner {
         }
         _eth(p.bal, 0, price, "credit buy");
         _booked(price);
-        if (address(v1).balance != baseOf[v1].eth) _flag(V_SALE_PATH, "the controller kept eth after a credit buy");
+        _royaltyCheck(royalty);
     }
 
     function _creditRefused(CreditPre memory p, bytes memory why, uint8 a, bytes4 want) internal {
@@ -480,10 +541,12 @@ abstract contract HandlerSale is HandlerOwner {
     }
 
     /*//////////////////////////////////////////////////////////////
-                    the pause of the first controller
+                              the pause of the Core
     //////////////////////////////////////////////////////////////*/
 
-    /// the pause windows the handler applied to the first controller: start and end, an end of 0 for the open window
+    /// the pauses the handler applied to the Core: start and end, an end of 0 for the open pause. the ghost
+    /// integrates the overlap of a pause with a statement's life, so it is a model of the age that does not share the
+    /// accumulator arithmetic of the Core. the Core's `pausedTotal` and `pausedSince` are compared with it
     uint256[] internal _pauseStart;
     uint256[] internal _pauseEnd;
 
@@ -496,7 +559,7 @@ abstract contract HandlerSale is HandlerOwner {
         return n != 0 && _pauseEnd[n - 1] == 0;
     }
 
-    /// the age of a statement composed at `composedAt`: the seconds to now outside every pause window
+    /// the age of a statement composed at `composedAt`: the seconds to now outside every pause
     function _modelAge(uint256 composedAt) internal view returns (uint256 age) {
         age = block.timestamp - composedAt;
         for (uint256 i; i < _pauseStart.length; ++i) {
@@ -506,10 +569,23 @@ abstract contract HandlerSale is HandlerOwner {
         }
     }
 
-    /// the asking price of statement `sid` written out again from docs/ARCHITECTURE.md section 7: the price in units of
+    /// the Core's accumulator against the ghost pauses: `pausedTotal` is the length of the closed pauses and
+    /// `pausedSince` the start of the open one
+    function _checkPauseClock() internal {
+        uint256 closed;
+        for (uint256 i; i < _pauseStart.length; ++i) {
+            if (_pauseEnd[i] != 0) closed += _pauseEnd[i] - _pauseStart[i];
+        }
+        uint256 open = _modelPaused() ? _pauseStart[_pauseStart.length - 1] : 0;
+        if (core.pausedTotal() != closed || core.pausedSince() != open) {
+            _flag(V_SALE_PATH, "the pause clock of the core differs from the model");
+        }
+    }
+
+    /// the asking price of statement `sid` written out again from docs/SPEC.md section 7: the price in units of
     /// 1/3600 bps falls `fastDecayBpsPerHour` a second to the knee and `slowDecayBpsPerHour` after it (rounded up), at
-    /// the age outside every pause window, at least `floorBps` and at least the hard floor of the core
-    function _modelAsk(uint256 sid) internal view returns (uint256) {
+    /// the age outside every pause, at least `saleFloorBps` of the reference
+    function _modelAsk(uint256 sid) internal returns (uint256) {
         (, uint256 cost, uint64 at) = core.statementInfo(sid);
         uint256 ref = _modelRef(sid, cost);
         uint256 n = _modelUnits(_modelAge(at));
@@ -518,13 +594,15 @@ abstract contract HandlerSale is HandlerOwner {
         return ask < hard ? hard : ask;
     }
 
-    /// the price reference of statement `sid`: the larger of its cost and the floor rate times its rating over
-    /// `refScore`, the same value the controller prices against. the product cannot overflow a word, so the plain
-    /// divide matches the controller `mulDiv`
-    function _modelRef(uint256 sid, uint256 cost) internal view returns (uint256) {
+    /// the price reference of statement `sid`: the larger of its cost and `valueOf(rating)`, the same value the
+    /// controller prices against. `valueOf` is at least the floor rate times the rating over `refScore`, which is
+    /// written out here (the product cannot overflow a word, so the plain divide matches the controller `mulDiv`)
+    function _modelRef(uint256 sid, uint256 cost) internal returns (uint256) {
         uint256 rating = core.ratingOf(sid);
         uint256 rate = core.floorRate() * rating / uint256(IControllerV1(v1).refScore());
-        return rate > cost ? rate : cost;
+        uint256 value = IControllerV1(v1).valueOf(rating);
+        if (value < rate) _flag(V_SALE_PATH, "valueOf is below the floor rate times the points over refScore");
+        return value > cost ? value : cost;
     }
 
     function _modelUnits(uint256 age) internal view returns (uint256 n) {
@@ -540,27 +618,26 @@ abstract contract HandlerSale is HandlerOwner {
             uint256 base = start < knee ? start : knee;
             n = base > drop ? base - drop : 0;
         }
-        uint256 low = uint256(c.floorBps()) * 3600;
+        uint256 low = uint256(core.settings().saleFloorBps) * 3600;
         if (n < low) n = low;
     }
 
-    /// the owner pauses or resumes sales of the first controller, or a stranger tries. a repeat of the current state is
+    /// the owner pauses or resumes sales on the Core, or a stranger tries. a repeat of the current state is
     /// accepted and changes nothing. a stranger gets OnlyOwner. the state reads back as the model says, and no asset or
     /// pot moves
     function pause(uint256 seed, uint256 mode) external checked {
         uint8 a = A_PAUSE;
-        IControllerV1 c = IControllerV1(v1);
         bool stranger = mode % 5 == 0;
         bool want = (mode >> 4) % 8 < 2;
-        bool was = c.paused();
+        bool was = core.paused();
         if (was != _modelPaused()) _flag(V_SALE_PATH, "the pause state differs from the model");
         OPre memory pre = _opre();
         _att(a);
         vm.prank(stranger ? address(uint160(uint256(keccak256(abi.encode("stranger", seed))))) : owner);
-        (bool ok, bytes memory out) = address(c).call(abi.encodeCall(IControllerV1.setPaused, (want)));
+        (bool ok, bytes memory out) = address(core).call(abi.encodeCall(ICore.setPaused, (want)));
         if (stranger) {
             if (ok) _flag(V_OWNER, "a stranger changed the pause");
-            else if (bytes4(out) != IControllerV1.OnlyOwner.selector) _unexpected(a, out);
+            else if (bytes4(out) != ICore.OnlyOwner.selector) _unexpected(a, out);
         } else if (!ok) {
             _unexpected(a, out);
         } else if (want != was) {
@@ -571,7 +648,8 @@ abstract contract HandlerSale is HandlerOwner {
                 _pauseEnd[_pauseEnd.length - 1] = block.timestamp;
             }
         }
-        if (c.paused() != (stranger || !ok ? was : want)) _flag(V_SALE_PATH, "the pause state differs from the model");
+        if (core.paused() != (stranger || !ok ? was : want)) _flag(V_SALE_PATH, "the pause state differs from the model");
+        _checkPauseClock();
         _opost(pre, "pause");
         _ok(a);
     }
@@ -614,59 +692,50 @@ abstract contract HandlerSale is HandlerOwner {
                     the controller's sale settings
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev the sale setting the handler tries: its selector, the value, and whether the model says it is inside the bounds
+    /// @dev the sale setting the handler tries: the value, and whether the model says it is inside the bounds
     /// (a helper so the locals of `saleSettings` fit the stack). `cur` is the live value of the setting
     function _saleCase(IControllerV1 c, uint256 seed, uint256 which, bool bad)
         internal
         view
-        returns (bytes4 sel, uint256 v, bool valid, uint256 cur)
+        returns (uint256 v, bool valid, uint256 cur)
     {
         uint256 cap = c.startCapBps();
         uint256 knee = c.kneeBps();
         if (which == 0) {
-            sel = IControllerV1.setMarkupBps.selector;
             cur = c.markupBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : 40_001) : _f(seed, 10_000, 40_000, cur);
             valid = v >= 10_000 && v <= 40_000 && v <= cap;
         } else if (which == 1) {
-            sel = IControllerV1.setStartCapBps.selector;
             cur = cap;
             v = bad
                 ? (seed % 3 == 0 ? c.markupBps() - 1 : (seed % 3 == 1 ? 200_001 : knee - 1))
                 : _f(seed, _max(c.markupBps(), knee), 200_000, cur);
             valid = v >= c.markupBps() && v >= knee && v <= 200_000;
         } else if (which == 2) {
-            sel = IControllerV1.setFastDecayBpsPerHour.selector;
             cur = c.fastDecayBpsPerHour();
             v = bad ? (seed % 2 == 0 ? 0 : 10_001) : _f(seed, 1, 10_000, cur);
             valid = v >= 1 && v <= 10_000;
         } else if (which == 3) {
-            sel = IControllerV1.setSlowDecayBpsPerHour.selector;
             cur = c.slowDecayBpsPerHour();
             v = bad ? (seed % 2 == 0 ? 0 : 10_001) : _f(seed, 1, 10_000, cur);
             valid = v >= 1 && v <= 10_000;
         } else if (which == 4) {
-            sel = IControllerV1.setKneeBps.selector;
             cur = knee;
-            v = bad ? (seed % 2 == 0 ? c.floorBps() - 1 : cap + 1) : _f(seed, c.floorBps(), cap, cur);
-            valid = v >= c.floorBps() && v <= cap;
+            v = bad ? (seed % 2 == 0 ? 999 : cap + 1) : _f(seed, 1_000, cap, cur);
+            valid = v >= 1_000 && v <= cap;
         } else if (which == 5) {
-            sel = IControllerV1.setFloorBps.selector;
-            cur = c.floorBps();
-            v = bad ? (seed % 3 == 0 ? 999 : (seed % 3 == 1 ? 10_001 : knee + 1)) : _f(seed, 1_000, _min(10_000, knee), cur);
-            valid = v >= 1_000 && v <= 10_000 && v <= knee;
+            cur = c.royaltyBps();
+            v = bad ? 1_001 + seed % 60_000 : _f(seed, 0, 1_000, cur);
+            valid = v <= 1_000;
         } else if (which == 6) {
-            sel = IControllerV1.setAnchorBps.selector;
             cur = c.anchorBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : cap + 1) : _f(seed, 10_000, cap, cur);
             valid = v >= 10_000 && v <= cap;
         } else if (which == 7) {
-            sel = IControllerV1.setAnchorHalfLife.selector;
             cur = c.anchorHalfLife();
             v = bad ? (seed % 2 == 0 ? 1 days - 1 : 90 days + 1) : _f(seed, 1 days, 90 days, cur);
             valid = v >= 1 days && v <= 90 days;
         } else {
-            sel = IControllerV1.setAnchorMinCost.selector;
             cur = c.anchorMinCost();
             v = bad ? 10 ether + 1 + seed % 1e18 : _f(seed, 0, 10 ether, cur);
             valid = v <= 10 ether;
@@ -677,8 +746,32 @@ abstract contract HandlerSale is HandlerOwner {
         return x > y ? x : y;
     }
 
-    function _min(uint256 x, uint256 y) private pure returns (uint256) {
-        return x < y ? x : y;
+    /// @dev the call that sets sale number `which` to `v`: `setSale` with every other field as it is, `setCredit` for the
+    /// royalty, `setAnchorBps` for the anchor
+    function _saleCall(IControllerV1 c, uint256 which, uint256 v) internal view returns (bytes memory) {
+        if (which == 6) return abi.encodeCall(IControllerV1.setAnchorBps, (uint32(v)));
+        if (which == 5) {
+            CreditSale memory cs = _creditSaleOf(c);
+            cs.royaltyBps = uint16(v);
+            return abi.encodeCall(IControllerV1.setCredit, (cs));
+        }
+        Sale memory s = Sale({
+            markupBps: c.markupBps(),
+            startCapBps: c.startCapBps(),
+            fastDecayBpsPerHour: c.fastDecayBpsPerHour(),
+            kneeBps: c.kneeBps(),
+            slowDecayBpsPerHour: c.slowDecayBpsPerHour(),
+            anchorHalfLife: c.anchorHalfLife(),
+            anchorMinCost: c.anchorMinCost()
+        });
+        if (which == 0) s.markupBps = uint16(v);
+        else if (which == 1) s.startCapBps = uint32(v);
+        else if (which == 2) s.fastDecayBpsPerHour = uint16(v);
+        else if (which == 3) s.slowDecayBpsPerHour = uint16(v);
+        else if (which == 4) s.kneeBps = uint32(v);
+        else if (which == 7) s.anchorHalfLife = uint32(v);
+        else s.anchorMinCost = uint128(v);
+        return abi.encodeCall(IControllerV1.setSale, (s));
     }
 
     function _saleGot(IControllerV1 c, uint256 which) internal view returns (uint256) {
@@ -687,14 +780,14 @@ abstract contract HandlerSale is HandlerOwner {
         if (which == 2) return c.fastDecayBpsPerHour();
         if (which == 3) return c.slowDecayBpsPerHour();
         if (which == 4) return c.kneeBps();
-        if (which == 5) return c.floorBps();
+        if (which == 5) return c.royaltyBps();
         if (which == 6) return c.anchorBps();
         if (which == 7) return c.anchorHalfLife();
         return c.anchorMinCost();
     }
 
-    /// the owner sets one of the nine sale numbers of the first controller to a value inside or outside the bounds of
-    /// docs/FLOW.md 9.3 (written out again here), or a stranger tries. inside: it goes through and reads back. outside:
+    /// the owner sets one of the nine sale numbers (the royalty included) of the first controller to a value inside or outside the bounds of
+    /// docs/DECISIONS.md 9.3 (written out again here), or a stranger tries. inside: it goes through and reads back. outside:
     /// BadSetting with the field. a stranger: OnlyOwner. no asset or pot moves
     function saleSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_SALE_SETTINGS;
@@ -703,12 +796,13 @@ abstract contract HandlerSale is HandlerOwner {
         bool stranger = (mode >> 8) % 6 == 0;
         uint256 anchor0 = c.anchorBps();
         bool bad = (mode >> 12) % 4 == 0;
-        (bytes4 sel, uint256 v, bool valid, uint256 cur) = _saleCase(c, seed, which, bad);
+        (uint256 v, bool valid, uint256 cur) = _saleCase(c, seed, which, bad);
         address caller = stranger ? address(uint160(uint256(keccak256(abi.encode("stranger", seed))))) : owner;
+        bytes memory data = _saleCall(c, which, v);
         OPre memory pre = _opre();
         _att(a);
         vm.prank(caller);
-        (bool ok, bytes memory out) = address(c).call(abi.encodeWithSelector(sel, v));
+        (bool ok, bytes memory out) = address(c).call(data);
         bytes4 want = stranger ? IControllerV1.OnlyOwner.selector : (valid ? bytes4(0) : IControllerV1.BadSetting.selector);
         if (ok) {
             if (want != 0) _flag(V_OWNER, "a sale setting the model refuses was accepted");
@@ -728,10 +822,10 @@ abstract contract HandlerSale is HandlerOwner {
                     the owner swapping the controller and the module
     //////////////////////////////////////////////////////////////*/
 
-    /// the call a hostile module makes from inside an exit: nothing, or one door of the core, or the selling controller.
-    /// k = 1..11 selects compose, skim, buyback, exitStatement, the selling controller's sell, adopt, releaseRedeemBurn,
-    /// sellForEth, buyListing, sellTo and sellForExitToken
-    function _callout(uint256 k, uint256 seed, MockExitModule next) internal {
+    /// the call a hostile module makes from inside a redemption: nothing, or one door of the core, or the selling controller.
+    /// k = 1..11 selects compose, book, buyback, redeemStatement, the selling controller's sell, adopt, releaseRedeemBurn,
+    /// sellForEth, buyListing, sellTo and sellForBalance
+    function _callout(uint256 k, uint256 seed, MockBalanceModule next) internal {
         if (k == 0) return;
         address target = address(core);
         bytes memory data;
@@ -739,16 +833,16 @@ abstract contract HandlerSale is HandlerOwner {
         uint256 sid = n == 0 ? 1 : everHeld[seed % n];
         uint256[] memory ids = new uint256[](1);
         ids[0] = seed >> 8;
-        if (k == 1) data = abi.encodeCall(ICore.compose, ());
-        else if (k == 2) data = abi.encodeCall(ICore.skim, ());
+        if (k == 1) data = ComposeCall.noArgs();
+        else if (k == 2) data = abi.encodeCall(ICore.book, ());
         else if (k == 3) data = abi.encodeCall(ICore.buyback, ());
-        else if (k == 4) data = abi.encodeCall(ICore.exitStatement, (sid));
+        else if (k == 4) data = abi.encodeCall(ICore.redeemStatement, (sid));
         else if (k == 6) data = abi.encodeCall(ICore.adopt, (ids));
         else if (k == 7) data = abi.encodeCall(ICore.releaseRedeemBurn, (1));
         else if (k == 8) data = abi.encodeWithSignature("sellForEth(uint256[])", ids);
-        else if (k == 9) data = abi.encodeCall(ICore.buyListing, (1, "", seed >> 8, address(next)));
+        else if (k == 9) data = abi.encodeCall(ICore.buyListing, (rawAdapter, seed >> 8, abi.encode(address(next), uint256(1), bytes(""))));
         else if (k == 10) data = abi.encodeCall(ICore.sellTo, (sid, address(next)));
-        else if (k == 11) data = abi.encodeWithSignature("sellForExitToken(uint256[])", ids);
+        else if (k == 11) data = abi.encodeWithSignature("sellForBalance(uint256[])", ids);
         else {
             target = address(selling);
             data = abi.encodeCall(SellingController.sell, (sid, address(next)));
@@ -756,42 +850,41 @@ abstract contract HandlerSale is HandlerOwner {
         next.setCall(target, data);
     }
 
-    /// the owner replaces the controller and, in phase 2, the exit module in one go. the controller is any of the three
-    /// the run knows, the module a new one with the same exit token, a new unit, and now and then a gas burning body and a
-    /// call into the core from inside the exit. both take effect at once unless the owner locked the door. the call must
-    /// not move an asset or a pot, and no call from inside an exit may ever go through
+    /// the owner replaces the controller and, in the balance side, the balance module in one go. the controller is any of the three
+    /// the run knows, the module a new one with the same balance token, a new unit, and now and then a gas burning body and a
+    /// call into the core from inside the redemption. both take effect at once unless the owner locked the door. the call must
+    /// not move an asset or a pot, and no call from inside a redemption may ever go through
     function hostileOwner(uint256 seed, uint256 mode) external checked {
         uint8 a = A_HOSTILE_OWNER;
         address c = seed % 3 == 0 ? v1 : (seed % 3 == 1 && canSwapController ? address(fuzz) : address(selling));
         bool swapMod = phase2() && mode % 2 == 0;
-        MockExitModule next;
+        MockBalanceModule next;
         if (swapMod) {
-            next = new MockExitModule(core.exitToken(), _logBound(seed >> 8, 2e9, 5e10));
+            next = new MockBalanceModule(core.balanceToken(), _logBound(seed >> 8, 2e9, 5e10));
             uint256 burn = (mode >> 4) % 4;
             if (burn == 1) next.setBurn(300_000);
             else if (burn == 2) next.setBurn(2_000_000);
             _callout((mode >> 8) % 12, seed >> 16, next);
         }
         bool lockedC = core.controllerLocked();
-        bool lockedE = core.exitModuleLocked();
+        bool lockedE = core.balanceModuleLocked();
         address oldC = core.controller();
-        address oldM = core.exitModule();
+        address oldM = core.balanceModule();
         OPre memory pre = _opre();
         _att(a);
         vm.startPrank(owner);
         (bool okC,) = address(core).call(abi.encodeCall(ICore.setController, (c)));
         bool okM = true;
-        if (swapMod) (okM,) = address(core).call(abi.encodeCall(ICore.setExitModule, (address(next))));
+        if (swapMod) (okM,) = address(core).call(abi.encodeCall(ICore.setBalanceModule, (address(next))));
         vm.stopPrank();
         if (okC == lockedC) _flag(V_LOCK, "the controller door and its lock disagree");
         if (core.controller() != (okC ? c : oldC)) _flag(V_OWNER, "the controller is not what the owner set at once");
         if (swapMod) {
-            if (okM == lockedE) _flag(V_LOCK, "the exit module door and its lock disagree");
-            if (core.exitModule() != (okM ? address(next) : oldM)) _flag(V_OWNER, "the exit module is not what the owner set");
+            if (okM == lockedE) _flag(V_LOCK, "the balance module door and its lock disagree");
+            if (core.balanceModule() != (okM ? address(next) : oldM)) _flag(V_OWNER, "the balance module is not what the owner set");
             if (okM) {
                 module = next;
                 modulesEver.push(next);
-                if (core.unitPerPoint() != next.currentUnit()) _flag(V_OWNER, "the unit was not read from the new module");
             }
         }
         _opost(pre, "hostileOwner");
@@ -812,19 +905,19 @@ abstract contract HandlerSale is HandlerOwner {
         OPre memory pre = _opre();
         _att(a);
         bytes memory data = abi.encodeWithSelector(
-            which == 0 ? ICore.lockController.selector : (which == 1 ? ICore.lockExitModule.selector : ICore.lockTargets.selector)
+            which == 0 ? ICore.lockController.selector : (which == 1 ? ICore.lockBalanceModule.selector : ICore.lockAdapters.selector)
         );
         vm.prank(stranger);
         (bool ok, bytes memory out) = address(core).call(data);
         if (ok || bytes4(out) != ICore.OnlyOwner.selector) _flag(V_LOCK, "a stranger locked a door");
-        bool noModule = which == 1 && core.exitModule() == address(0);
+        bool noModule = which == 1 && core.balanceModule() == address(0);
         vm.prank(owner);
         (ok, out) = address(core).call(data);
         if (noModule) {
-            if (ok || bytes4(out) != ICore.NoExitModule.selector) _flag(V_LOCK, "the module lock worked with no module");
+            if (ok || bytes4(out) != ICore.NoBalanceModule.selector) _flag(V_LOCK, "the module lock worked with no module");
         } else {
             if (!ok) _flag(V_LOCK, "the owner could not lock a door");
-            bool nowLocked = which == 0 ? core.controllerLocked() : (which == 1 ? core.exitModuleLocked() : core.targetsLocked());
+            bool nowLocked = which == 0 ? core.controllerLocked() : (which == 1 ? core.balanceModuleLocked() : core.adaptersLocked());
             if (!nowLocked) _flag(V_LOCK, "a lock did not set its flag");
             if (which == 0) gLockedC = true;
             else if (which == 1) gLockedE = true;
@@ -840,8 +933,8 @@ abstract contract HandlerSale is HandlerOwner {
         bytes memory data = which == 0
             ? abi.encodeCall(ICore.setController, (v1))
             : (which == 1
-                    ? abi.encodeCall(ICore.setExitModule, (core.exitModule()))
-                    : abi.encodeCall(ICore.addTarget, (address(0xA110C))));
+                    ? abi.encodeCall(ICore.setBalanceModule, (core.balanceModule()))
+                    : abi.encodeCall(ICore.addAdapter, (address(0xA110C))));
         vm.prank(owner);
         (bool ok, bytes memory out) = address(core).call(data);
         if (ok || bytes4(out) != ICore.Locked.selector) _flag(V_LOCK, "a locked door's setter did not revert Locked");
@@ -854,11 +947,11 @@ abstract contract HandlerSale is HandlerOwner {
             _setterShut(0);
         }
         if (gLockedE) {
-            if (!core.exitModuleLocked()) _flag(V_LOCK, "the exit module lock came undone");
+            if (!core.balanceModuleLocked()) _flag(V_LOCK, "the balance module lock came undone");
             _setterShut(1);
         }
         if (gLockedT) {
-            if (!core.targetsLocked()) _flag(V_LOCK, "the targets lock came undone");
+            if (!core.adaptersLocked()) _flag(V_LOCK, "the adapters lock came undone");
             _setterShut(2);
         }
         if (core.retired() != gRetired) _flag(V_RETIRED, "the retired flag differs from the ghost");
@@ -893,10 +986,10 @@ abstract contract HandlerSale is HandlerOwner {
         if (core.owner() != old || core.pendingOwner() != (m == 2 ? other : heir)) _flag(V_LOCK, "the first step moved the owner");
         // the old owner still holds every power, the pending owner none
         vm.prank(old);
-        (bool ok,) = address(core).call(abi.encodeCall(ICore.removeTarget, (target)));
+        (bool ok,) = address(core).call(abi.encodeCall(ICore.removeAdapter, (target)));
         if (!ok) _flag(V_LOCK, "the owner lost a power before the handover was accepted");
         vm.prank(m == 2 ? other : heir);
-        (ok,) = address(core).call(abi.encodeCall(ICore.removeTarget, (target)));
+        (ok,) = address(core).call(abi.encodeCall(ICore.removeAdapter, (target)));
         if (ok) _flag(V_LOCK, "a pending owner had a power before accepting");
         address next = heir;
         if (m == 1) {
@@ -927,15 +1020,16 @@ abstract contract HandlerSale is HandlerOwner {
         heirNext += 1;
         // the old owner has no power: the core and the controller's settings
         vm.prank(old);
-        (ok,) = address(core).call(abi.encodeCall(ICore.removeTarget, (target)));
+        (ok,) = address(core).call(abi.encodeCall(ICore.removeAdapter, (target)));
         if (ok) _flag(V_LOCK, "the old owner kept a power after the handover");
         // the argument is read before the prank: a call in the argument list would use it up
-        uint16 decay0 = IControllerV1(v1).fastDecayBpsPerHour();
+        bytes memory same = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).fastDecayBpsPerHour());
+        bytes memory changed = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).fastDecayBpsPerHour() == 200 ? 201 : 200);
         vm.prank(old);
-        (ok,) = address(v1).call(abi.encodeCall(IControllerV1.setFastDecayBpsPerHour, (decay0 == 200 ? 201 : 200)));
+        (ok,) = address(v1).call(changed);
         if (ok) _flag(V_LOCK, "the old owner kept the sale settings");
         vm.prank(next);
-        (ok,) = address(v1).call(abi.encodeCall(IControllerV1.setFastDecayBpsPerHour, (decay0)));
+        (ok,) = address(v1).call(same);
         if (!ok) _flag(V_LOCK, "the new owner has no say over the sale settings");
         _opost(pre, "handover");
         _ok(a);
@@ -945,13 +1039,13 @@ abstract contract HandlerSale is HandlerOwner {
     function formerOwnersCheck() external {
         for (uint256 i; i < formerOwners.length; ++i) {
             vm.prank(formerOwners[i]);
-            (bool ok,) = address(core).call(abi.encodeCall(ICore.lockTargets, ()));
+            (bool ok,) = address(core).call(abi.encodeCall(ICore.lockAdapters, ()));
             if (ok) _flag(V_LOCK, "a former owner locked a door");
             vm.prank(formerOwners[i]);
             (ok,) = address(core).call(abi.encodeCall(ICore.transferOwnership, (formerOwners[i])));
             if (ok) _flag(V_LOCK, "a former owner started a handover");
             vm.prank(formerOwners[i]);
-            (ok,) = address(v1).call(abi.encodeCall(IControllerV1.setFastDecayBpsPerHour, (200)));
+            (ok,) = address(v1).call(_saleCall(IControllerV1(v1), 2, 200));
             if (ok) _flag(V_LOCK, "a former owner set a sale setting");
         }
         if (core.owner() != owner) _flag(V_LOCK, "the core owner is not the handler's owner");

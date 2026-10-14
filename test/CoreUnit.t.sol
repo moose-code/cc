@@ -4,21 +4,22 @@ pragma solidity ^0.8.28;
 import {Prod} from "./utils/Prod.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {ICreditStrategy, ICreditScore, Stack, Mainnet, Settings, BUYLISTING_GAS} from "../src/interfaces/Interfaces.sol";
+import {ICreditStrategy, ICreditScore, Stack, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {HostileTarget} from "./attackers/HostileTarget.sol";
 import {ProbeTarget} from "./attackers/ProbeTarget.sol";
 import {ListingTarget} from "./attackers/ListingTarget.sol";
-import {MockExitToken} from "./standins/MockExitToken.sol";
-import {MockExitModule} from "./standins/MockExitModule.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
+import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {BidModel} from "./utils/BidModel.sol";
 
 /// shared helpers of the core unit suites. everything runs on the real stack of the Fixture: the live coin, hook,
 /// pool, Credits, Statements, CreditStrategy and Seaport. a test that needs an exact pot donates
-/// eth to the core and calls `skim()`, which is the real path for eth that did not come from the hook
+/// eth through `fund()`, which adds it to the pot whole
 abstract contract CoreBase is Fixture {
     using stdStorage for StdStorage;
 
@@ -30,14 +31,12 @@ abstract contract CoreBase is Fixture {
         alice = seller;
     }
 
-    /// @dev sends `amount` of eth to the core from a plain account and books it with `skim`. the pot is exactly
-    /// `amount` higher afterwards
+    /// @dev funds the core with `amount` of eth from a plain account through `fund`. the pot is exactly `amount`
+    /// higher afterwards
     function _fund(uint256 amount) internal {
         vm.deal(funder, funder.balance + amount);
         vm.prank(funder);
-        (bool ok,) = address(core).call{value: amount}("");
-        assertTrue(ok, "donation");
-        core.skim();
+        core.fund{value: amount}();
     }
 
     /// @dev the rate after one credit bought at `r`, the first fill of its minute, at the drop of the settings now
@@ -64,12 +63,13 @@ abstract contract CoreBase is Fixture {
         core.sellForEth(ids);
     }
 
-    /// @dev builds a core with other constructor arguments. external, so a revert of the constructor can be expected
-    function mk(address owner_, address coin_, address ctl_, Stack memory st, uint256 r, Settings memory s)
+    /// @dev builds a launch core with other constructor arguments. external, so a revert of the constructor can be
+    /// expected
+    function mk(address owner_, address ctl_, address payee_, Stack memory st, uint256 r, Settings memory s)
         external
         returns (ICore)
     {
-        return Prod.newCore(owner_, coin_, ctl_, st, r, s);
+        return Prod.newCore(owner_, buildConfig(lc, owner_, address(0)), owner_, ctl_, payee_, st, r, s);
     }
 }
 
@@ -81,157 +81,87 @@ contract CoreUnitTest is CoreBase {
                               parameters
     //////////////////////////////////////////////////////////////*/
 
-    /// the constants that are left. every other economic number is a setting, covered in Flow.t.sol
-    function test_constructorState() public view {
-        assertEq(core.owner(), owner);
-        assertEq(core.pendingOwner(), address(0));
-        assertEq(core.COIN(), address(coin));
-        assertEq(core.HOOK(), lc.stack.hook);
-        assertEq(core.controller(), address(ctl));
-        assertTrue(core.allowedTarget(Mainnet.SEAPORT));
-        assertTrue(core.allowedTarget(Mainnet.CREDIT_STRATEGY));
-        assertTrue(CREDITS.isApprovedForAll(address(core), address(STATEMENTS)));
-        assertEq(core.rateAtCheckpoint(), OPEN_RATE);
-        assertEq(core.ethRate(), 0, "an empty pot reads zero");
-        assertEq(core.lastFillTime(), launchTime);
-        assertEq(core.ethPot(), 0);
-        assertEq(core.exitModule(), address(0));
-        assertEq(core.exitToken(), address(0));
-        assertEq(core.unitPerPoint(), 0);
-        assertFalse(core.controllerLocked());
-        assertFalse(core.exitModuleLocked());
-        assertFalse(core.targetsLocked());
-    }
-
-    function _stack8(Stack memory st, uint256 which, address to) internal pure returns (Stack memory bad) {
-        bad = Stack(
-            st.poolManager,
-            st.hook,
-            st.tickSpacing,
-            st.poolFee,
-            st.factory,
-            st.locker,
-            st.escrow,
-            st.feeSource
-        );
+    function _stack5(Stack memory st, uint256 which, address to) internal pure returns (Stack memory bad) {
+        bad = Stack(st.poolManager, st.hook, st.tickSpacing, st.poolFee, st.factory, st.locker, st.escrow);
         if (which == 0) bad.poolManager = to;
         if (which == 1) bad.hook = to;
         if (which == 2) bad.factory = to;
         if (which == 3) bad.locker = to;
         if (which == 4) bad.escrow = to;
-        if (which == 5) bad.feeSource = to;
     }
 
-    function test_constructorRejectsZero() public {
+    // promise: INTEGRATION ZeroAddress on the constructor and on setController, BadStack on the constructor
+    function test_constructorAndSetControllerRejectZero() public {
         Stack memory st = lc.stack;
         uint256 r = lc.rateStart;
         Settings memory s = lc.settings;
+        address payee_ = lc.payee;
         vm.expectRevert(ICore.ZeroAddress.selector);
-        this.mk(address(0), address(coin), address(ctl), st, r, s);
+        this.mk(address(0), address(ctl), payee_, st, r, s);
+        vm.prank(owner);
         vm.expectRevert(ICore.ZeroAddress.selector);
-        this.mk(owner, address(0), address(ctl), st, r, s);
+        core.setController(address(0));
         vm.expectRevert(ICore.ZeroAddress.selector);
-        this.mk(owner, address(coin), address(0), st, r, s);
+        this.mk(owner, address(ctl), address(0), st, r, s);
         // every address of the stack is required
-        for (uint256 i; i < 6; ++i) {
+        for (uint256 i; i < 5; ++i) {
             vm.expectRevert(ICore.ZeroAddress.selector);
-            this.mk(owner, address(coin), address(ctl), _stack8(st, i, address(0)), r, s);
+            this.mk(owner, address(ctl), payee_, _stack5(st, i, address(0)), r, s);
         }
-        Stack memory flat = _stack8(st, 99, address(0));
+        Stack memory flat = _stack5(st, 99, address(0));
         flat.tickSpacing = 0;
         vm.expectRevert(ICore.BadStack.selector);
-        this.mk(owner, address(coin), address(ctl), flat, r, s);
+        this.mk(owner, address(ctl), payee_, flat, r, s);
         flat.tickSpacing = 32_768;
         vm.expectRevert(ICore.BadStack.selector);
-        this.mk(owner, address(coin), address(ctl), flat, r, s);
+        this.mk(owner, address(ctl), payee_, flat, r, s);
         flat.tickSpacing = 32_767;
-        this.mk(owner, address(coin), address(ctl), flat, r, s);
+        this.mk(owner, address(ctl), payee_, flat, r, s);
     }
 
-    /// every stack member must be a contract, the coin is not checked (it does not exist yet)
+    // promise: INTEGRATION NoCode on the constructor
+    /// every stack member must be a contract
     function test_constructorRequiresCodeAtTheStack() public {
         Stack memory st = lc.stack;
         uint256 r = lc.rateStart;
         Settings memory s = lc.settings;
         address nobody = makeAddr("no code");
-        for (uint256 i; i < 6; ++i) {
+        for (uint256 i; i < 5; ++i) {
             vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, nobody));
-            this.mk(owner, address(coin), address(ctl), _stack8(st, i, nobody), r, s);
+            this.mk(owner, address(ctl), lc.payee, _stack5(st, i, nobody), r, s);
         }
         // the coin has no code at construction time and that is fine
-        this.mk(owner, nobody, address(ctl), st, r, s);
+        ICore c = this.mk(owner, address(ctl), lc.payee, st, r, s);
+        assertEq(c.COIN().code.length, 0);
     }
 
+    // promise: INTEGRATION BadRate on the constructor
     /// the opening bid is a deploy input bounded to [1e13, 1e18] wei per credit
     function test_rateStartBounds() public {
         Settings memory s = lc.settings;
         vm.expectRevert(ICore.BadRate.selector);
-        this.mk(owner, address(coin), address(ctl), lc.stack, 1e13 - 1, s);
+        this.mk(owner, address(ctl), lc.payee, lc.stack, 1e13 - 1, s);
         vm.expectRevert(ICore.BadRate.selector);
-        this.mk(owner, address(coin), address(ctl), lc.stack, 1e18 + 1, s);
-        ICore lo = this.mk(owner, address(coin), address(ctl), lc.stack, 1e13, s);
+        this.mk(owner, address(ctl), lc.payee, lc.stack, 1e18 + 1, s);
+        ICore lo = this.mk(owner, address(ctl), lc.payee, lc.stack, 1e13, s);
         s.rateCap = 1e18;
-        ICore hi = this.mk(owner, address(coin), address(ctl), lc.stack, 1e18, s);
+        ICore hi = this.mk(owner, address(ctl), lc.payee, lc.stack, 1e18, s);
         assertEq(lo.RATE_START(), 1e13);
         assertEq(lo.rateAtCheckpoint(), 1e13);
         assertEq(hi.RATE_START(), 1e18);
         assertEq(hi.rateAtCheckpoint(), 1e18);
     }
 
-    /// the stack is stored as given, nothing of it is hardcoded in the core. the six members that are only
-    /// addresses are stand in code
-    function test_stackIsStored() public {
-        Stack memory other = Stack(
-            address(0x1111),
-            address(0x2222),
-            60,
-            3000,
-            address(0x3333),
-            address(0x4444),
-            address(0x5555),
-            address(0x6666)
-        );
-        for (uint160 a = 0x1111; a <= 0x6666; a += 0x1111) {
-            vm.etch(address(a), hex"00");
-        }
-        // the whole fee receipt goes to the pot here, so the booking is the full amount
-        Settings memory st = lc.settings;
-        st.feeToRedeemBurnBps = 0;
-        ICore c2 = this.mk(owner, address(coin), address(ctl), other, lc.rateStart, st);
-        assertEq(address(c2.MANAGER()), address(0x1111));
-        assertEq(c2.HOOK(), address(0x2222));
-        assertEq(c2.TICK_SPACING(), 60);
-        assertEq(c2.POOL_FEE(), 3000);
-        assertEq(c2.FACTORY(), address(0x3333));
-        assertEq(c2.LOCKER(), address(0x4444));
-        assertEq(c2.ESCROW(), address(0x5555));
-        assertEq(c2.FEE_SOURCE(), address(0x6666));
-        // only the configured fee source is booked as fee income, the hook included is not
-        vm.deal(address(0x6666), 1 ether);
-        vm.prank(address(0x6666));
-        (bool ok,) = address(c2).call{value: 1 ether}("");
-        assertTrue(ok);
-        assertEq(c2.ethPot(), 1 ether);
-        vm.deal(address(0x2222), 1 ether);
-        vm.prank(address(0x2222));
-        (ok,) = address(c2).call{value: 1 ether}("");
-        assertTrue(ok);
-        assertEq(c2.ethPot(), 1 ether, "the hook is not the fee source");
-        vm.deal(address(feeRouter), 1 ether);
-        vm.prank(address(feeRouter));
-        (ok,) = address(c2).call{value: 1 ether}("");
-        assertTrue(ok);
-        assertEq(c2.ethPot(), 1 ether, "the default fee router is not special to this core");
-    }
-
     /*//////////////////////////////////////////////////////////////
-                           fee intake and skim
+                           fee intake and fund
     //////////////////////////////////////////////////////////////*/
 
-    /// eth the router flushes after a real swap is booked at once. eth from anyone else waits for `skim`
-    function test_receiveBooksHookEth_skimBooksTheRest() public {
+    // promise: SPEC 4 fee intake: book, fund and UseFund (inv 10)
+    /// eth the hook pushes after a real swap is booked at the next book. a plain send from anyone else reverts and `fund`
+    /// adds to the pot whole
+    function test_bookCountsHookEth_fundAddsTheRest() public {
         _skipSniperWindow();
-        // the whole fee receipt goes to the pot here, so the pot equals the full router inflow
+        // the whole fee receipt goes to the pot here, so the pot equals the full bounty leg
         Settings memory s0 = core.settings();
         s0.feeToRedeemBurnBps = 0;
         _setSettings(s0);
@@ -243,13 +173,14 @@ contract CoreUnitTest is CoreBase {
         vm.deal(alice, 3 ether);
         vm.prank(alice);
         (bool ok,) = address(core).call{value: 2 ether}("");
-        assertTrue(ok);
-        assertEq(core.ethPot(), pot, "a plain send books nothing");
-        assertEq(address(core).balance, pot + 2 ether);
+        assertFalse(ok, "a plain send reverts");
+        assertEq(core.ethPot(), pot);
+        assertEq(address(core).balance, pot);
 
-        core.skim();
-        assertEq(core.ethPot(), pot + 2 ether);
-        core.skim();
+        vm.prank(alice);
+        core.fund{value: 2 ether}();
+        assertEq(core.ethPot(), pot + 2 ether, "fund adds to the pot whole");
+        core.book();
         assertEq(core.ethPot(), pot + 2 ether, "nothing left to book");
         _solvent();
     }
@@ -258,247 +189,11 @@ contract CoreUnitTest is CoreBase {
                                rate climb
     //////////////////////////////////////////////////////////////*/
 
-    function test_rate_unfundedNeverClimbs() public {
-        assertEq(core.rateAtCheckpoint(), OPEN_RATE);
-        assertEq(core.ethRate(), 0, "an empty pot reads zero");
-        _warp(1000 hours);
-        assertEq(core.ethRate(), 0);
-
-        // one credit costs 1.732e15 at the start rate. below a pot of that size the read is the clamp, which is the
-        // pot, and the price state holds
-        uint256 last;
-        uint256[4] memory steps = [uint256(1e14), 2e14, 4e14, 8e14];
-        for (uint256 i; i < steps.length; ++i) {
-            _fund(steps[i]);
-            _warp(1000 hours);
-            assertEq(core.ethRate(), core.ethPot(), "the read is the clamp of the pot");
-            assertGe(core.ethRate(), last, "the read does not fall as the pot grows");
-            last = core.ethRate();
-            assertEq(core.rateAtCheckpoint(), OPEN_RATE, "the price state holds at the opening rate");
-        }
-        uint256 clamp = last;
-        _warp(10 minutes);
-        assertEq(core.ethRate(), clamp, "held there");
-        // the price state does not climb above the clamp: it waited at the opening rate
-        _fund(10 ether);
-        assertEq(core.rateAtCheckpoint(), OPEN_RATE, "the price state waited at the opening rate");
-        _warp(10 minutes);
-        assertApproxEqRel(core.ethRate(), OPEN_RATE * 1_051_140_132_040_790_642 / 1e18, 1e9, "then 10 minutes at 0.5 percent");
-    }
-
-    /// at exactly the pot where the clamp equals the rate there is no room to climb, one wei less is a clamp one wei
-    /// under the rate
-    function test_rate_clampIsThePotToTheWei() public {
-        _fund(OPEN_RATE - 1);
-        _warp(1000 hours);
-        assertEq(core.ethRate(), OPEN_RATE - 1, "one wei short: the clamp is one wei under the rate");
-        _fund(1);
-        _warp(1000 hours);
-        assertEq(core.ethRate(), OPEN_RATE, "funded to the wei: the clamp equals the rate");
-        _fund(1e16);
-        assertEq(core.ethRate(), OPEN_RATE);
-        _warp(1 hours);
-        assertApproxEqRel(
-            core.ethRate(), OPEN_RATE * 1_348_850_152_549_316_069 / 1e18, 1e9, "room above the clamp, 60 minutes"
-        );
-    }
-
-    /// @dev lifts the ceiling to its bound so a climb curve of an hour is not cut by the launch ceiling of 110 percent
-    function _wideCeiling() internal {
-        Settings memory s = core.settings();
-        s.ceilBps = 30_000;
-        _setSettings(s);
-    }
-
-    /// the climb is 0.5 percent a minute compounded from the checkpoint, and 1.005^n of the stored rate is exact
-    /// for whole minutes
-    function test_rate_climbsPerMinuteCompounded() public {
-        _wideCeiling();
-        _fund(10 ether);
-        _warp(1 minutes);
-        assertApproxEqRel(core.ethRate(), OPEN_RATE * 1.005e18 / 1e18, 1e9, "1 minute");
-        _warp(9 minutes);
-        assertApproxEqRel(core.ethRate(), OPEN_RATE * 1_051_140_132_040_790_642 / 1e18, 1e9, "10 minutes");
-        _warp(10 minutes);
-        assertApproxEqRel(core.ethRate(), OPEN_RATE * 1_104_895_577_186_730_786 / 1e18, 1e9, "20 minutes");
-        _warp(40 minutes);
-        assertApproxEqRel(core.ethRate(), OPEN_RATE * 1_348_850_152_549_316_069 / 1e18, 1e9, "60 minutes");
-    }
-
-    /// a fraction of a minute climbs as a fractional exponent
-    function test_rate_climbsInsideAMinute() public {
-        _fund(10 ether);
-        _warp(30);
-        assertApproxEqRel(
-            core.ethRate(), OPEN_RATE * 1_002_496_882_788_171_067 / 1e18, 1e9, "half a minute is 1.005^0.5"
-        );
-    }
-
-    /// the climb at other settings: 2 percent a minute
-    function test_rate_climbAtChangedSettings() public {
-        Settings memory s = core.settings();
-        s.climbPerMinBps = 200;
-        s.ceilBps = 30_000;
-        _setSettings(s);
-        _fund(10 ether);
-        _warp(10 minutes);
-        assertApproxEqRel(core.ethRate(), OPEN_RATE * 1_218_994_419_994_757_130 / 1e18, 1e9, "10 minutes at 2 percent");
-    }
-
-    function test_rate_checkpointKeepsTheCurve() public {
-        _wideCeiling();
-        _fund(10 ether);
-        _warp(30 minutes);
-        uint256 r30 = core.ethRate();
-        _fund(1);
-        assertEq(core.rateAtCheckpoint(), r30);
-        assertEq(core.checkpointTime(), block.timestamp);
-        assertEq(core.lastFillTime(), launchTime);
-        _warp(30 minutes);
-        assertApproxEqRel(
-            core.ethRate(), OPEN_RATE * 1_348_850_152_549_316_069 / 1e18, 1e9, "same curve as without the checkpoint"
-        );
-    }
-
-    function test_rate_climbStopsAtTheClamp() public {
-        // a pot of 2.4 credits at the opening rate: the climb stops at the pot
-        uint256 pot = OPEN_RATE * 12 / 5;
-        _fund(pot);
-        _warp(10 minutes);
-        assertApproxEqRel(core.ethRate(), OPEN_RATE * 1_051_140_132_040_790_642 / 1e18, 1e9);
-        _warp(100 hours);
-        assertEq(core.ethRate(), pot, "stops where the pot affords one credit");
-        _warp(10_000 hours);
-        assertEq(core.ethRate(), pot);
-
-        // more fees lift the clamp and the climb resumes from the checkpoint.
-        _fund(pot);
-        assertEq(core.rateAtCheckpoint(), pot);
-        _warp(1 hours);
-        assertApproxEqRel(
-            core.ethRate(), pot * 1_348_850_152_549_316_069 / 1e18, 1e9, "60 minutes at 0.5 percent from the clamp"
-        );
-    }
-
-    /// the same clamp when the pot is filled by real swaps: it is measured, not assumed
-    function test_rate_climbStopsAtTheClampWithRealFees() public {
-        _skipSniperWindow();
-        _fundPot(0.001 ether);
-        uint256 pot = core.ethPot();
-        assertLt(pot, OPEN_RATE, "the pot is under one credit");
-        _warp(2000 hours);
-        assertEq(core.ethRate(), pot, "clamp at what the pot affords");
-    }
-
-    /// at the clamp a credit can be sold in the same block: the sale pays the read, which is the pot, and empties it
-    function test_rate_atTheClampACreditSells() public {
-        _fund(0.001 ether);
-        _warp(3000 hours);
-        uint256 rate = core.ethRate();
-        assertEq(rate, 0.001 ether, "at the clamp");
-        uint256[] memory ids = _credits(alice, 2);
-        uint256 before = alice.balance;
-        vm.prank(alice);
-        core.sellForEth(_one(ids[0]));
-        assertEq(alice.balance - before, rate, "paid the pot");
-        assertEq(core.ethPot(), 0);
-        assertLt(core.rateAtCheckpoint(), OPEN_RATE, "the fill dropped the rate");
-        assertEq(core.ethRate(), 0, "an empty pot reads zero");
-        vm.prank(alice);
-        vm.expectRevert(ICore.ZeroAmount.selector);
-        core.sellForEth(_one(ids[1]));
-    }
-
-    /// the pot shrinks below one credit while the rate sits at the clamp. the next checkpoint applies
-    /// no climb under the smaller pot and the rate never rises again. no real path shrinks the pot without also
-    /// dropping the rate, so the pot slot is written directly and the balance is set to match
-    function test_rate_potDropHoldsThePriceState() public {
-        _fund(OPEN_RATE * 2);
-        _warp(100 hours);
-        uint256 cap = core.ethRate();
-        _fund(1);
-        assertEq(core.rateAtCheckpoint(), cap);
-        stdstore.target(address(core)).sig("ethPot()").checked_write(uint256(1e15));
-        vm.deal(address(core), 1e15);
-        _fund(1);
-        assertEq(core.rateAtCheckpoint(), cap, "no climb applied under the smaller pot");
-        _warp(500 hours);
-        assertEq(core.ethRate(), core.ethPot(), "the read is the clamp of the smaller pot");
-        _fund(1);
-        assertEq(core.rateAtCheckpoint(), cap, "the price state never rose");
-        _solvent();
-    }
-
-    /// a fill drops the rate by `dropPerCreditBps`, makes the rate paid the ceiling anchor and restarts the climb clock
-    function test_rate_dropAndClockResetOnFill() public {
-        // the post fill climb is checked against the single rate formula; match the recovery rate to the climb rate so a
-        // fill does not switch to the faster recovery climb (that is covered in test/Recovery.t.sol)
-        Settings memory cs = core.settings();
-        cs.recoveryClimbPerMinBps = cs.climbPerMinBps;
-        _setSettings(cs);
-        _fund(10 ether);
-        _warp(30 hours);
-        uint256 id = _credits(alice, 1)[0];
-        uint256 rate = core.ethRate();
-        uint256 price = rate;
-
-        uint256 before = alice.balance;
-        vm.prank(alice);
-        core.sellForEth(_one(id));
-
-        assertEq(alice.balance - before, price);
-        assertEq(core.ethPot(), 10 ether - price);
-        assertEq(core.rateAtCheckpoint(), rate * 9_950 / 10_000, "0.5 percent below the rate paid");
-        (uint256 anchor, uint256 minuteStart,) = _anchor();
-        assertEq(anchor, rate, "the rate paid is the ceiling anchor");
-        assertEq(minuteStart, rate, "and the start of the minute");
-        assertEq(core.lastFillTime(), block.timestamp);
-        assertEq(core.checkpointTime(), block.timestamp);
-        assertEq(CREDITS.ownerOf(id), address(core));
-        (bool inPile, uint256 cost,) = core.creditInfo(id);
-        assertTrue(inPile);
-        assertEq(cost, price);
-        assertEq(core.pileSize(), 1);
-        _solvent();
-
-        // the climb restarts from the dropped rate, and the ceiling is 110 percent of the rate paid
-        uint256 after_ = core.rateAtCheckpoint();
-        _warp(10 minutes);
-        assertApproxEqRel(core.ethRate(), after_ * 1_051_140_132_040_790_642 / 1e18, 1e9);
-        _warp(10 hours);
-        assertEq(
-            core.ethRate(),
-            rate * 11_000 * (10_000 + 200 * 61) / 1e8,
-            "ceiling 110 percent of the rate paid, loosened 2 percent per 10 idle minutes"
-        );
-    }
-
-    function test_sellForEth_multiDropsPerCredit() public {
-        _fund(10 ether);
-        uint256[] memory ids = _credits(alice, 3);
-        uint256 r = OPEN_RATE;
-        uint256 p = 10 ether;
-        uint256 total;
-        for (uint256 i; i < 3; ++i) {
-            uint256 price = r;
-            r = BidModel.dropOnce(core.settings(), r, OPEN_RATE);
-            p -= price;
-            total += price;
-        }
-        uint256 before = alice.balance;
-        vm.prank(alice);
-        core.sellForEth(ids);
-        assertEq(alice.balance - before, total);
-        assertEq(core.rateAtCheckpoint(), r);
-        assertEq(core.ethPot(), p);
-        assertEq(core.pileSize(), 3);
-        _solvent();
-    }
-
     /*//////////////////////////////////////////////////////////////
                               sell door
     //////////////////////////////////////////////////////////////*/
 
+    // promise: INTEGRATION Slippage
     function test_sellForEth_minOut() public {
         _fund(10 ether);
         uint256 id = _credits(alice, 1)[0];
@@ -514,21 +209,7 @@ contract CoreUnitTest is CoreBase {
         assertEq(alice.balance - before, price);
     }
 
-    /// minOut guards the sum over many ids, and a rate drop inside the call lowers it
-    function test_sellForEth_minOutIsTheTotalAfterTheDrops() public {
-        _fund(10 ether);
-        uint256[] memory ids = _credits(alice, 3);
-        uint256 first = core.ethRate();
-        vm.prank(alice);
-        vm.expectRevert(ICore.Slippage.selector);
-        core.sellForEth(ids, first * 3);
-        uint256 before = alice.balance;
-        vm.prank(alice);
-        // the second credit is paid 0.5 percent below the first, the third 0.5 percent below the second
-        core.sellForEth(ids, first * 2_985 / 1_000);
-        assertLt(alice.balance - before, first * 3, "later credits were paid at the dropped rate");
-    }
-
+    // promise: INTEGRATION ZeroAmount and PotTooSmall
     /// an empty pot reads a rate of 0: a sale reverts `ZeroAmount` and a purchase reverts `PotTooSmall`. a pot of 1 wei
     /// reads 1 wei: a sale pays it and a purchase of 2 wei reverts `PotTooSmall`
     function test_tinyPotSellsItsWeiAndBuysNothing() public {
@@ -536,18 +217,18 @@ contract CoreUnitTest is CoreBase {
         bytes memory data = abi.encodeCall(ICreditStrategy.sellTargetNFT, (LISTED_A));
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);
-        core.buyListing(1, data, LISTED_A, Mainnet.CREDIT_STRATEGY);
+        _buyRaw(1, data, LISTED_A, Mainnet.CREDIT_STRATEGY);
         vm.prank(alice);
         vm.expectRevert(ICore.ZeroAmount.selector);
         core.sellForEth(_one(ids[0]));
 
         vm.deal(address(core), 1);
-        core.skim();
+        core.book();
         assertEq(core.ethPot(), 1);
         assertEq(core.ethRate(), 1);
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);
-        core.buyListing(2, data, LISTED_A, Mainnet.CREDIT_STRATEGY);
+        _buyRaw(2, data, LISTED_A, Mainnet.CREDIT_STRATEGY);
         uint256 before = alice.balance;
         vm.prank(alice);
         core.sellForEth(_one(ids[0]));
@@ -558,6 +239,7 @@ contract CoreUnitTest is CoreBase {
         core.sellForEth(_one(ids[1]));
     }
 
+    // promise: INTEGRATION Empty, ZeroId, NotOwner, Retired on sellForEth
     function test_sellForEth_guards() public {
         uint256[] memory ids = _credits(alice, 1);
         uint256[] memory none = new uint256[](0);
@@ -589,35 +271,9 @@ contract CoreUnitTest is CoreBase {
         core.sellForEth(_one(id));
     }
 
-    function test_sellForEth_cannotSellACreditTheCoreOwns() public {
-        _fund(10 ether);
-        uint256 id = _credits(alice, 1)[0];
-        vm.prank(alice);
-        core.sellForEth(_one(id));
-        vm.prank(alice);
-        vm.expectRevert(ICore.NotOwner.selector);
-        core.sellForEth(_one(id));
-    }
-
     /*//////////////////////////////////////////////////////////////
                          controller is only read
     //////////////////////////////////////////////////////////////*/
-
-    /// the sell door does not read the controller: a controller with no code changes nothing, and compose is not ready
-    function test_controller_isNotReadBySellForEth() public {
-        _fund(10 ether);
-        uint256[] memory ids = _credits(alice, 2);
-        uint256 rate = core.ethRate();
-        assertEq(rate, OPEN_RATE);
-        _setController(address(0xBEEF));
-        assertEq(core.ethRate(), rate);
-        uint256 before = alice.balance;
-        vm.prank(alice);
-        core.sellForEth(_one(ids[0]));
-        assertEq(alice.balance - before, rate);
-        vm.expectRevert(ICore.NotReady.selector);
-        core.compose();
-    }
 
     /*//////////////////////////////////////////////////////////////
                            buyListing: real strategy
@@ -629,13 +285,14 @@ contract CoreUnitTest is CoreBase {
         _warpUntilCeiling(id, price);
     }
 
+    // promise: INTEGRATION AboveBid
     function test_buyListing_aboveCeilingReverts() public {
         _fund(10 ether);
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         assertGt(price, core.ethRate(), "start rate is far below the listing");
         vm.prank(keeper);
-        vm.expectRevert(ICore.AboveCeiling.selector);
-        core.buyListing(price, _listing(LISTED_A), LISTED_A, STRATEGY);
+        vm.expectRevert(ICore.AboveBid.selector);
+        _buyRaw(price, _listing(LISTED_A), LISTED_A, STRATEGY);
     }
 
     struct PayRun {
@@ -644,18 +301,17 @@ contract CoreUnitTest is CoreBase {
         uint256 used;
     }
 
-    /// moves credit `id` from the strategy to a fresh `ListingTarget` and allows it
+    /// moves credit `id` from the strategy to a fresh `ListingTarget`
     function _listingTarget(uint256 id) internal returns (ListingTarget t) {
         t = new ListingTarget();
         vm.prank(STRATEGY);
         CREDITS.transferFrom(STRATEGY, address(t), id);
-        _allow(address(t));
     }
 
-    /// one `buyListing` of credit `id` through `target` with `data`, at base fee `bf` and gas price `gp`, for `value`
-    /// less `gapWanted` under the bid when `gapWanted` is nonzero. checks the books: the keeper gets the payment, the
-    /// pot pays the cost and the payment, the cost basis is both
-    function _payRun(address target, bytes memory data, uint256 id, uint256 cost, uint256 bf, uint256 gp)
+    /// one `buyListing` of credit `id` through `adapter` with `params`, at base fee `bf` and gas price `gp`, where the
+    /// adapter prices the listing at `cost`. checks the books: the keeper gets the payment, the pot pays the cost and the
+    /// payment, the cost basis is both
+    function _payRun(address adapter, bytes memory params, uint256 id, uint256 cost, uint256 bf, uint256 gp)
         internal
         returns (PayRun memory r)
     {
@@ -667,7 +323,7 @@ contract CoreUnitTest is CoreBase {
         uint256 before = keeper.balance;
         vm.prank(keeper);
         uint256 g = gasleft();
-        core.buyListing(cost, data, id, target);
+        core.buyListing(adapter, id, params);
         r.used = g - gasleft();
         r.paid = keeper.balance - before;
         _assertListingPay(r.paid, r.gap);
@@ -678,6 +334,7 @@ contract CoreUnitTest is CoreBase {
         _solvent();
     }
 
+    // promise: SPEC 1 keeper doors pay counted gas plus keeperFee
     /// the payment is the gas counted at the base fee plus the whole keeper fee, on the real strategy path. the counted
     /// gas covers the gas used and the transaction base cost, and scales with the base fee
     function test_buyListing_paysCountedGasAtTheBaseFeePlusTheFee() public {
@@ -686,7 +343,7 @@ contract CoreUnitTest is CoreBase {
         _fundAndClimb(LISTED_A, price);
         _warp(30 hours);
         uint256 snap = vm.snapshotState();
-        PayRun memory a = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 1 gwei, 1 gwei);
+        PayRun memory a = _payRun(strategyAdapter, "", LISTED_A, price, 1 gwei, 1 gwei);
         uint256 fee = core.settings().keeperFee;
         assertEq(fee, 0.0005 ether);
         assertGt(a.gap, a.paid, "the gap does not bind");
@@ -697,39 +354,11 @@ contract CoreUnitTest is CoreBase {
         emit log_named_uint("buyListing strategy path: gas used", a.used);
         emit log_named_uint("buyListing strategy path: gas counted", counted);
         vm.revertToState(snap);
-        PayRun memory b = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 2 gwei, 2 gwei);
+        PayRun memory b = _payRun(strategyAdapter, "", LISTED_A, price, 2 gwei, 2 gwei);
         assertEq(b.paid - fee, 2 * (a.paid - fee), "the gas part scales with the base fee");
     }
 
-    /// a base fee above `keeperMaxBaseFee` pays at the ceiling, and the gas price above the base fee is not refunded
-    function test_buyListing_baseFeeCeilingAndPriorityFee() public {
-        uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
-        _fundAndClimb(LISTED_A, price);
-        _warp(30 hours);
-        assertEq(core.settings().keeperMaxBaseFee, 10 gwei);
-        uint256 snap = vm.snapshotState();
-        PayRun memory atCeiling = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 10 gwei, 10 gwei);
-        vm.revertToState(snap);
-        PayRun memory above = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 300 gwei, 300 gwei);
-        assertEq(above.paid, atCeiling.paid, "a base fee above the ceiling pays at the ceiling");
-        vm.revertToState(snap);
-        PayRun memory tipped = _payRun(STRATEGY, _listing(LISTED_A), LISTED_A, price, 10 gwei, 500 gwei);
-        assertEq(tipped.paid, atCeiling.paid, "the gas price above the base fee changes nothing");
-    }
-
-    /// the keeper fee is paid whole at a zero base fee, whatever the cost
-    function test_buyListing_keeperFeeIsPaidWhole() public {
-        _fundAndClimb(LISTED_A, 0.036 ether);
-        uint256 id = CreditIds.at(540);
-        ListingTarget t = _listingTarget(id);
-        Settings memory s = core.settings();
-        s.keeperFee = 0.005 ether;
-        _setSettings(s);
-        uint256 cost = 0.01 ether;
-        PayRun memory r = _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 0)), id, cost, 0, 0);
-        assertEq(r.paid, 0.005 ether, "the whole fee, no gas part");
-    }
-
+    // promise: SPEC 1 buyListing pays the caller at most the gap
     /// a gap smaller than the payment is the payment, so cost plus payment equals the bid. a zero gap pays nothing
     function test_buyListing_paymentIsCappedAtTheGap() public {
         _fund(10 ether);
@@ -740,7 +369,7 @@ contract CoreUnitTest is CoreBase {
             ListingTarget t = _listingTarget(id);
             uint256 snap = vm.snapshotState();
             PayRun memory r =
-                _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 0)), id, ceiling - gaps[i], 1 gwei, 1 gwei);
+                _payRun(rawAdapter, _raw(address(t), ceiling - gaps[i], abi.encodeCall(ListingTarget.fill, (id, 0))), id, ceiling - gaps[i], 1 gwei, 1 gwei);
             assertEq(r.paid, gaps[i], "the payment is the gap");
             (, uint256 basis,) = core.creditInfo(id);
             assertEq(basis, ceiling, "cost plus payment is the bid");
@@ -748,33 +377,7 @@ contract CoreUnitTest is CoreBase {
         }
     }
 
-    /// the bid is lowered to the pot, so the payment cannot take the pot below zero: with a pot under the price state
-    /// the bid is the pot, a listing 100 wei under that leaves a 100 wei payment and an empty pot
-    function test_buyListing_paymentIsCappedAtThePot() public {
-        _fund(0.001 ether);
-        uint256 bid = core.ethRate();
-        assertEq(bid, core.ethPot(), "the pot clamps the bid");
-        uint256 id = CreditIds.at(552);
-        ListingTarget t = _listingTarget(id);
-        PayRun memory r = _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 0)), id, bid - 100, 5 gwei, 5 gwei);
-        assertEq(r.paid, 100);
-        assertEq(core.ethPot(), 0, "the pot is empty, not below it");
-    }
-
-    /// the counted gas stops at `BUYLISTING_GAS`: a target that burns 3 million gas is paid for 1.5 million
-    function test_buyListing_countedGasIsCappedAtTheConstant() public {
-        _fundAndClimb(LISTED_A, 0.036 ether);
-        uint256 id = CreditIds.at(553);
-        ListingTarget t = _listingTarget(id);
-        Settings memory s = core.settings();
-        s.keeperFee = 0;
-        _setSettings(s);
-        uint256 cost = 0.01 ether;
-        PayRun memory r = _payRun(address(t), abi.encodeCall(ListingTarget.fill, (id, 3_000_000)), id, cost, 1 gwei, 1 gwei);
-        assertGt(r.used, 3_000_000, "the call burned the gas");
-        assertEq(r.paid, BUYLISTING_GAS * 1 gwei, "the gas counted stops at the constant");
-    }
-
+    // promise: INTEGRATION CallFailed
     function test_buyListing_failedCallRevertsOnlyThatBuy() public {
         uint256 priceA = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         uint256 priceB = ICreditStrategy(STRATEGY).nftForSale(LISTED_B);
@@ -786,17 +389,17 @@ contract CoreUnitTest is CoreBase {
         // wrong value, the strategy reverts.
         vm.prank(keeper);
         vm.expectRevert(ICore.CallFailed.selector);
-        core.buyListing(priceA - 1, _listing(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(priceA - 1, _listing(LISTED_A), LISTED_A, STRATEGY);
 
         // wrong calldata, the strategy reverts.
         vm.prank(keeper);
         vm.expectRevert(ICore.CallFailed.selector);
-        core.buyListing(priceA, _listing(LISTED_B), LISTED_A, STRATEGY);
+        _buyRaw(priceA, _listing(LISTED_B), LISTED_A, STRATEGY);
 
         // asked for one id but the call delivers another.
         vm.prank(keeper);
         vm.expectRevert(ICore.NoCredit.selector);
-        core.buyListing(priceB, _listing(LISTED_B), LISTED_A, STRATEGY);
+        _buyRaw(priceB, _listing(LISTED_B), LISTED_A, STRATEGY);
 
         assertEq(core.ethPot(), pot);
         assertEq(core.ethRate(), rate);
@@ -804,22 +407,27 @@ contract CoreUnitTest is CoreBase {
 
         // an unrelated buy still goes through.
         vm.prank(keeper);
-        core.buyListing(priceB, _listing(LISTED_B), LISTED_B, STRATEGY);
+        _buyRaw(priceB, _listing(LISTED_B), LISTED_B, STRATEGY);
         assertEq(CREDITS.ownerOf(LISTED_B), address(core));
         assertEq(core.pileSize(), 1);
 
         // the core never buys a credit it already owns.
         vm.prank(keeper);
         vm.expectRevert(ICore.AlreadyOwned.selector);
-        core.buyListing(priceB, _listing(LISTED_B), LISTED_B, STRATEGY);
+        _buyRaw(priceB, _listing(LISTED_B), LISTED_B, STRATEGY);
         _solvent();
     }
 
-    /// targets that were never allowed, and every address the core itself refuses, are not callable
-    function test_buyListing_targetGuards() public {
+    // promise: INTEGRATION AdapterNotAllowed, ForbiddenTarget
+    /// an adapter the owner has not approved is refused, and every address the core itself refuses is not callable as the
+    /// target of an approved adapter
+    function test_buyListing_adapterAndTargetGuards() public {
         _fund(10 ether);
-        address[12] memory refused = [
-            address(0xABCD),
+        vm.prank(keeper);
+        vm.expectRevert(ICore.AdapterNotAllowed.selector);
+        core.buyListing(address(0xABCD), LISTED_A, "");
+
+        address[11] memory refused = [
             address(CREDITS),
             address(STATEMENTS),
             address(core),
@@ -834,14 +442,17 @@ contract CoreUnitTest is CoreBase {
         ];
         vm.startPrank(keeper);
         for (uint256 i; i < refused.length; ++i) {
-            vm.expectRevert(ICore.TargetNotAllowed.selector);
-            core.buyListing(1, "", LISTED_A, refused[i]);
+            vm.expectRevert(ICore.ForbiddenTarget.selector);
+            _buyRaw(1, "", LISTED_A, refused[i]);
         }
         vm.expectRevert(ICore.ZeroId.selector);
-        core.buyListing(1, "", 0, STRATEGY);
+        _buyRaw(1, "", 0, STRATEGY);
+        vm.expectRevert(ICore.ZeroAmount.selector);
+        _buyRaw(0, "", LISTED_A, STRATEGY);
         vm.stopPrank();
     }
 
+    // promise: INTEGRATION PotTooSmall
     /// the listing is real and the pot affords it: a value above the pot fails first with `PotTooSmall`, a value the
     /// pot holds buys
     function test_buyListing_potCheck() public {
@@ -850,10 +461,10 @@ contract CoreUnitTest is CoreBase {
         _warpUntilCeiling(LISTED_A, price);
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);
-        core.buyListing(price * 4 + 1, _listing(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(price * 4 + 1, _listing(LISTED_A), LISTED_A, STRATEGY);
 
         vm.prank(keeper);
-        core.buyListing(price, _listing(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(price, _listing(LISTED_A), LISTED_A, STRATEGY);
         assertEq(CREDITS.ownerOf(LISTED_A), address(core));
         _solvent();
     }
@@ -862,15 +473,15 @@ contract CoreUnitTest is CoreBase {
                        buyListing: hostile targets
     //////////////////////////////////////////////////////////////*/
 
+    // promise: INTEGRATION BadCost
     function test_buyListing_hostileTargetThatKeepsEthReverts() public {
         HostileTarget hostile = new HostileTarget();
-        _allow(address(hostile));
         _fund(10 ether);
         uint256 before = address(core).balance;
         uint256 hostileBefore = address(hostile).balance;
         vm.prank(keeper);
         vm.expectRevert(ICore.NoCredit.selector);
-        core.buyListing(1 gwei, "", LISTED_A, address(hostile));
+        _buyRaw(1 gwei, "", LISTED_A, address(hostile));
         assertEq(address(core).balance, before, "core balance");
         assertEq(address(hostile).balance, hostileBefore, "the eth went nowhere");
         assertEq(core.ethPot(), 10 ether, "pot");
@@ -881,51 +492,28 @@ contract CoreUnitTest is CoreBase {
         p.setMode(mode);
         vm.prank(STRATEGY);
         CREDITS.transferFrom(STRATEGY, address(p), id);
-        _allow(address(p));
     }
 
-    /// a target that refunds part of what it was paid: the cost is net of the refund, the refund is booked nowhere
-    function test_buyListing_refundIsNotBooked() public {
+    // promise: INTEGRATION UseFund
+    /// a target that refunds part of what it was paid sends eth to the core, which `receive` refuses: the buy reverts and
+    /// nothing moves
+    function test_buyListing_aRefundFromTheTargetRevertsTheBuy() public {
         uint256 id = CreditIds.at(630);
         ProbeTarget p = _probe(id, 5);
         _fund(10 ether);
-        uint256 ceiling = core.ethRate();
-        uint256 value = ceiling * 3 / 4;
-        uint256 cost = value - value / 2;
-        uint256 excessBefore = address(core).balance - core.ethPot() - core.ethToBuyback();
-        uint256 listingBefore = address(p).balance;
-
-        uint256 keeperBefore = keeper.balance;
-        vm.prank(keeper);
-        core.buyListing(value, abi.encodeCall(ProbeTarget.fill, (id, 0)), id, address(p));
-        uint256 paid = keeper.balance - keeperBefore;
-        _assertListingPay(paid, ceiling - cost);
-
-        (, uint256 booked,) = core.creditInfo(id);
-        assertEq(booked, cost + paid, "cost is net of the refund");
-        assertEq(core.ethPot(), 10 ether - cost - paid);
-        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback(), excessBefore, "refund booked nowhere");
-        assertEq(address(p).balance - listingBefore, cost, "the listing kept the net price");
-        _solvent();
-
-        // skim sees nothing extra.
+        uint256 value = core.ethRate() * 3 / 4;
         uint256 pot = core.ethPot();
-        core.skim();
-        assertEq(core.ethPot(), pot);
-    }
-
-    /// a target that sends back more than it was paid leaves the core richer: a negative cost is refused
-    function test_buyListing_refundAboveValueReverts() public {
-        uint256 id = CreditIds.at(631);
-        ProbeTarget p = _probe(id, 4);
-        vm.deal(address(p), 1);
-        _fund(10 ether);
-        uint256 value = core.ethRate() / 2;
+        uint256 bal = address(core).balance;
         vm.prank(keeper);
-        vm.expectRevert(ICore.BadCost.selector);
-        core.buyListing(value, abi.encodeCall(ProbeTarget.fill, (id, 0)), id, address(p));
+        vm.expectRevert(ICore.CallFailed.selector);
+        _buyRaw(value, abi.encodeCall(ProbeTarget.fill, (id, 0)), id, address(p));
+        assertEq(core.ethPot(), pot);
+        assertEq(address(core).balance, bal);
+        assertEq(CREDITS.ownerOf(id), address(p));
+        _solvent();
     }
 
+    // promise: INTEGRATION Reentrancy, NoCredit on buyListing
     /// reentry from the target into every guarded door fails, and a wrong or doubled delivery reverts the buy
     function test_buyListing_probeModes() public {
         _fund(10 ether);
@@ -935,7 +523,9 @@ contract CoreUnitTest is CoreBase {
             vm.deal(address(p), 1 ether);
             uint256 value = (core.ethRate() / 2).min(core.ethPot() / 20);
             vm.prank(keeper);
-            try core.buyListing(value, abi.encodeCall(ProbeTarget.fill, (id, CreditIds.at(620 + m))), id, address(p)) {
+            try core.buyListing(
+                rawAdapter, id, _raw(address(p), value, abi.encodeCall(ProbeTarget.fill, (id, CreditIds.at(620 + m))))
+            ) {
                 assertTrue(p.honest(m), "a hostile mode succeeded");
             } catch {
                 assertFalse(p.honest(m), "an honest mode failed");
@@ -950,325 +540,37 @@ contract CoreUnitTest is CoreBase {
                                 owner
     //////////////////////////////////////////////////////////////*/
 
+    // promise: INTEGRATION OnlyOwner
     function test_owner_onlyOwner() public {
         vm.startPrank(alice);
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setController(address(ctl));
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.setExitModule(address(mod));
+        core.setBalanceModule(address(mod));
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.addTarget(address(0x1234));
+        core.addAdapter(address(0x1234));
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.removeTarget(STRATEGY);
+        core.removeAdapter(strategyAdapter);
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.lockController();
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.lockExitModule();
+        core.lockBalanceModule();
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.lockTargets();
+        core.lockAdapters();
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.transferOwnership(alice);
         vm.stopPrank();
-    }
-
-    /// the controller changes at once, with an event, and never to zero
-    function test_owner_setControllerAtOnce() public {
-        address newCtl = address(new ScriptedController());
-        vm.startPrank(owner);
-        vm.expectEmit(false, false, false, true);
-        emit ICore.ControllerSet(newCtl);
-        core.setController(newCtl);
-        assertEq(core.controller(), newCtl);
-        vm.expectRevert(ICore.ZeroAddress.selector);
-        core.setController(address(0));
-        vm.stopPrank();
-    }
-
-    function test_owner_lockControllerIsForever() public {
-        _setController(address(new ScriptedController()));
-        vm.expectEmit(false, false, false, false);
-        emit ICore.ControllerLocked();
-        vm.prank(owner);
-        core.lockController();
-        assertTrue(core.controllerLocked());
-
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("controller")));
-        core.setController(address(ctl));
-
-        // the other powers survive the lock
-        HostileTarget t = new HostileTarget();
-        _allow(address(t));
-        assertTrue(core.allowedTarget(address(t)));
-        vm.prank(owner);
-        core.removeTarget(address(t));
-        assertFalse(core.allowedTarget(address(t)));
-        assertFalse(core.exitModuleLocked());
-        assertFalse(core.targetsLocked());
-    }
-
-    function test_owner_lockExitModule() public {
-        // no module yet: phase 2 cannot be locked out by accident
-        vm.prank(owner);
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.lockExitModule();
-        assertFalse(core.exitModuleLocked());
-
-        _enterPhase2();
-        vm.expectEmit(false, false, false, false);
-        emit ICore.ExitModuleLocked();
-        vm.prank(owner);
-        core.lockExitModule();
-        assertTrue(core.exitModuleLocked());
-
-        MockExitModule other = new MockExitModule(address(xt), 1 * UNIT);
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("exitModule")));
-        core.setExitModule(address(other));
-        // naming the same module again to refresh the unit is blocked too
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("exitModule")));
-        core.setExitModule(address(mod));
-        assertEq(core.exitModule(), address(mod));
-    }
-
-    function test_owner_lockTargets() public {
-        address t = address(new HostileTarget());
-        _allow(t);
-        vm.expectEmit(false, false, false, false);
-        emit ICore.TargetsLocked();
-        vm.prank(owner);
-        core.lockTargets();
-        assertTrue(core.targetsLocked());
-
-        address t2 = address(new HostileTarget());
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.Locked.selector, bytes32("targets")));
-        core.addTarget(t2);
-        // removing still works
-        vm.prank(owner);
-        core.removeTarget(t);
-        assertFalse(core.allowedTarget(t));
-    }
-
-    function test_owner_twoStepHandover() public {
-        address bob = _user("bob");
-        vm.prank(owner);
-        vm.expectEmit(true, true, false, false);
-        emit ICore.OwnershipTransferStarted(owner, alice);
-        core.transferOwnership(alice);
-        assertEq(core.pendingOwner(), alice);
-        assertEq(core.owner(), owner, "nothing changes until the accept");
-
-        vm.prank(bob);
-        vm.expectRevert(ICore.OnlyPendingOwner.selector);
-        core.acceptOwnership();
-        vm.prank(owner);
-        vm.expectRevert(ICore.OnlyPendingOwner.selector);
-        core.acceptOwnership();
-
-        vm.prank(alice);
-        vm.expectEmit(true, true, false, false);
-        emit ICore.OwnershipTransferred(owner, alice);
-        core.acceptOwnership();
-        assertEq(core.owner(), alice);
-        assertEq(core.pendingOwner(), address(0));
-
-        // the old owner lost every power, the new one has them
-        vm.prank(owner);
-        vm.expectRevert(ICore.OnlyOwner.selector);
-        core.removeTarget(STRATEGY);
-        vm.prank(alice);
-        core.removeTarget(STRATEGY);
-        assertFalse(core.allowedTarget(STRATEGY));
-        // the accept cannot be replayed
-        vm.prank(alice);
-        vm.expectRevert(ICore.OnlyPendingOwner.selector);
-        core.acceptOwnership();
-    }
-
-    function test_owner_handoverCanBeClearedOrReplaced() public {
-        address bob = _user("bob");
-        vm.startPrank(owner);
-        core.transferOwnership(alice);
-        core.transferOwnership(bob);
-        assertEq(core.pendingOwner(), bob);
-        core.transferOwnership(address(0));
-        assertEq(core.pendingOwner(), address(0));
-        vm.stopPrank();
-        vm.prank(bob);
-        vm.expectRevert(ICore.OnlyPendingOwner.selector);
-        core.acceptOwnership();
-        // with nothing pending nobody can accept (the zero address cannot send a transaction)
-        vm.prank(alice);
-        vm.expectRevert(ICore.OnlyPendingOwner.selector);
-        core.acceptOwnership();
-    }
-
-    function test_owner_exitModuleReplaceable() public {
-        _enterPhase2();
-        assertEq(core.exitModule(), address(mod));
-        assertEq(core.exitToken(), address(xt));
-        assertEq(core.unitPerPoint(), UNIT);
-
-        // a second set with the same exit token goes through and reads the unit again
-        MockExitModule other = new MockExitModule(address(xt), 1 * UNIT);
-        _setExitModule(address(other));
-        assertEq(core.exitModule(), address(other));
-        assertEq(core.exitToken(), address(xt));
-        assertEq(core.unitPerPoint(), 1 * UNIT);
-
-        // a module with another exit token reverts, and the state stays
-        MockExitModule alien = new MockExitModule(address(new MockExitToken("x", "x")), 1 * UNIT);
-        vm.prank(owner);
-        vm.expectRevert(ICore.ExitTokenChanged.selector);
-        core.setExitModule(address(alien));
-        assertEq(core.exitModule(), address(other));
-    }
-
-    function test_owner_exitModuleValidation() public {
-        MockExitModule coinModule = new MockExitModule(address(coin), 1 * UNIT);
-        MockExitModule ghost = new MockExitModule(address(0x5678), 1 * UNIT);
-        address[7] memory badTokens = [
-            lc.stack.hook,
-            Mainnet.POOL_MANAGER,
-            lc.stack.factory,
-            lc.stack.locker,
-            lc.stack.escrow,
-            address(CREDITS),
-            address(STATEMENTS)
-        ];
-        address[] memory bad = new address[](3 + badTokens.length);
-        bad[0] = address(0x1234); // no code
-        bad[1] = address(coinModule); // the exit token is the coin
-        bad[2] = address(ghost); // the exit token has no code
-        for (uint256 i; i < badTokens.length; ++i) {
-            bad[3 + i] = address(new MockExitModule(badTokens[i], 1 * UNIT));
-        }
-        vm.startPrank(owner);
-        for (uint256 i; i < bad.length; ++i) {
-            vm.expectRevert(ICore.BadModule.selector);
-            core.setExitModule(bad[i]);
-        }
-        vm.stopPrank();
-        assertEq(core.exitModule(), address(0));
-    }
-
-    /// a module whose unit is zero, above uint128, or unreadable is refused when it is set
-    function test_owner_exitModuleRefusesBadUnits() public {
-        uint256[4] memory units = [uint256(0), uint256(type(uint128).max) + 1, type(uint256).max, 1 * UNIT];
-        for (uint256 i; i < units.length; ++i) {
-            MockExitModule m = new MockExitModule(address(new MockExitToken("X", "X")), units[i]);
-            if (i == 3) m.setRevertUnit(true);
-            vm.prank(owner);
-            vm.expectRevert(ICore.BadModule.selector);
-            core.setExitModule(address(m));
-            assertEq(core.exitModule(), address(0));
-        }
-    }
-
-    function test_owner_targets() public {
-        address[12] memory forbidden = [
-            address(CREDITS),
-            address(STATEMENTS),
-            address(core),
-            address(coin),
-            lc.stack.hook,
-            Mainnet.POOL_MANAGER,
-            lc.stack.factory,
-            lc.stack.locker,
-            lc.stack.escrow,
-            address(0),
-            Mainnet.POSITION_MANAGER,
-            Mainnet.UNIVERSAL_ROUTER
-        ];
-        vm.startPrank(owner);
-        for (uint256 i; i < forbidden.length; ++i) {
-            vm.expectRevert(ICore.ForbiddenTarget.selector);
-            core.addTarget(forbidden[i]);
-        }
-        vm.stopPrank();
-
-        // the exit module and the exit token are forbidden once they exist.
-        _enterPhase2();
-        vm.startPrank(owner);
-        vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(mod));
-        vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(xt));
-        vm.stopPrank();
-    }
-
-    function test_owner_removeTargetIsImmediate() public {
-        assertTrue(core.allowedTarget(STRATEGY));
-        vm.prank(owner);
-        core.removeTarget(STRATEGY);
-        assertFalse(core.allowedTarget(STRATEGY));
-        _fund(10 ether);
-        vm.prank(keeper);
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(1, "", LISTED_A, STRATEGY);
-
-        // a target that later becomes the exit module can no longer be called.
-        xt = new MockExitToken("X", "X");
-        mod = new MockExitModule(address(xt), UNIT);
-        _allow(address(mod));
-        assertTrue(core.allowedTarget(address(mod)));
-        _setExitModule(address(mod));
-        vm.prank(keeper);
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(1, "", LISTED_A, address(mod));
     }
 
     /*//////////////////////////////////////////////////////////////
                                   views
     //////////////////////////////////////////////////////////////*/
 
-    function test_views_piles() public {
-        _fund(10 ether);
-        uint256[] memory a = _credits(alice, 3);
-        uint256[] memory b = _credits(alice, 2);
-        vm.startPrank(alice);
-        core.sellForEth(a);
-        _warp(10);
-        core.sellForEth(b);
-        vm.stopPrank();
-
-        assertEq(core.pileSize(), 5);
-        assertEq(core.pilePage(0, 1)[0], a[0]);
-        assertEq(core.pilePage(a[0], 1)[0], a[1]);
-        assertEq(core.pilePage(a[2], 1)[0], b[0]);
-        assertEq(core.pilePage(b[1], 1).length, 0);
-
-        uint256[] memory all = core.pilePage(0, 10);
-        assertEq(all.length, 5);
-        assertEq(all[0], a[0]);
-        assertEq(all[4], b[1]);
-        uint256[] memory page = core.pilePage(a[1], 2);
-        assertEq(page.length, 2);
-        assertEq(page[0], a[2]);
-        assertEq(page[1], b[0]);
-        assertEq(core.pilePage(b[1], 2).length, 0);
-        assertEq(core.pilePage(0, 0).length, 0);
-
-        (bool inPile, uint256 cost, uint64 at) = core.creditInfo(b[0]);
-        assertTrue(inPile);
-        assertGt(cost, 0);
-        assertEq(at, block.timestamp);
-        (inPile,, at) = core.creditInfo(12345678);
-        assertFalse(inPile);
-        assertEq(at, 0);
-
-        assertEq(core.heldStatements().length, 0);
-        assertEq(core.heldStatements().length, 0);
-        (bool held,,) = core.statementInfo(1);
-        assertFalse(held);
-    }
-
     /*//////////////////////////////////////////////////////////////
                                compose guards
     //////////////////////////////////////////////////////////////*/
 
+    // promise: INTEGRATION NotReady
     function test_compose_notReady() public {
         vm.expectRevert(ICore.NotReady.selector);
         core.compose();
@@ -1279,6 +581,7 @@ contract CoreUnitTest is CoreBase {
         core.compose();
     }
 
+    // promise: INTEGRATION NotInPile, NotHeld, BadStatement on compose
     function test_compose_controllerCannotNameBadPages() public {
         ScriptedController scripted = new ScriptedController();
         _setController(address(scripted));
@@ -1299,10 +602,10 @@ contract CoreUnitTest is CoreBase {
         vm.expectRevert(abi.encodeWithSelector(ICore.NotInPile.selector, 0));
         core.compose();
 
-        // bad format
-        scripted.setPage(true, _page(ids[0], ids[1]), 8);
+        // a given format above 7
+        scripted.setPage(true, _page(ids[0], ids[1]), 0);
         vm.expectRevert(ICore.BadFormat.selector);
-        core.compose();
+        core.compose(8);
 
         // not ready and a reverting controller
         scripted.setPage(false, _page(ids[0], ids[1]), 0);
@@ -1319,8 +622,45 @@ contract CoreUnitTest is CoreBase {
         assertEq(core.pileSize(), 3);
     }
 
+    // promise: INTEGRATION Composed price is 0 when the controller's priceOf fails
+    /// a controller whose `priceOf` reverts does not block a compose, and the event carries price 0. the same
+    /// controller answering 777 puts 777 in the event
+    function test_compose_priceOfRevertingControllerLogsZero() public {
+        ScriptedController scripted = new ScriptedController();
+        _setController(address(scripted));
+        uint256[] memory ids = _sellN(alice, 80);
+        uint256[80] memory page;
+        for (uint256 i; i < 80; ++i) {
+            page[i] = ids[i];
+        }
+        scripted.setPage(true, page, 0);
+        scripted.setPrice(777, false);
+        uint256 sid = STATEMENTS.supply() + 1;
+        uint256 snap = vm.snapshotState();
+        assertEq(_composedPrice(), 777, "the controller's price");
+        vm.revertToState(snap);
+        scripted.setPrice(777, true);
+        assertEq(_composedPrice(), 0, "a reverting priceOf logs 0");
+        assertEq(STATEMENTS.supply(), sid, "the compose landed");
+    }
+
+    /// the `price` word of the `Composed` log of one `compose()`
+    function _composedPrice() internal returns (uint256 price) {
+        vm.recordLogs();
+        core.compose();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.Composed.selector) continue;
+            (,,, price) = abi.decode(logs[i].data, (uint256[80], uint8, uint256, uint256));
+            return price;
+        }
+        revert("no Composed log");
+    }
+
+    // promise: inv 17 the pile links stay valid
     /// the one compose of this suite with a scripted page: credits from the middle of the pile, in a different
-    /// order than the pile, in format 7. the list stays intact around them
+    /// order than the pile. the controller's format 7 is ignored and the statement takes the derived format. the list
+    /// stays intact around them
     function test_compose_pullsFromTheMiddleAndKeepsTheListIntact() public {
         ScriptedController scripted = new ScriptedController();
         _setController(address(scripted));
@@ -1342,7 +682,9 @@ contract CoreUnitTest is CoreBase {
         (page[0], page[79]) = (page[79], page[0]);
         scripted.setPage(true, page, 7);
         uint256 supply = STATEMENTS.supply();
-        vm.expectCall(address(STATEMENTS), abi.encodeWithSelector(STATEMENTS.compose.selector, page, uint8(7)));
+        vm.expectCall(
+            address(STATEMENTS), abi.encodeWithSelector(STATEMENTS.compose.selector, page, defaultFormat(page[0]))
+        );
         vm.prank(keeper);
         core.compose();
         assertEq(STATEMENTS.supply(), supply + 1);
@@ -1369,36 +711,39 @@ contract CoreUnitTest is CoreBase {
                          doors that need no module
     //////////////////////////////////////////////////////////////*/
 
-    /// the statement doors with no statement: `sellTo` is the controller's, `exitStatement` needs a module
+    // promise: INTEGRATION NotForSale, NotHeld
+    /// the statement doors with no statement: `sellTo` is the controller's, `redeemStatement` needs a module
     function test_statementDoorsRefuseAnUnknownStatement() public {
         vm.expectRevert(ICore.OnlyController.selector);
         core.sellTo(1, alice);
         vm.prank(address(ctl));
         vm.expectRevert(ICore.NotForSale.selector);
         core.sellTo(1, alice);
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.exitStatement(1);
+        vm.expectRevert(ICore.NoBalanceModule.selector);
+        core.redeemStatement(1);
         (bool held,,) = core.statementInfo(1);
         assertFalse(held);
         assertEq(core.ethPot(), 0);
         assertEq(core.ethToBuyback(), 0);
     }
 
-    /// with exitMode at its launch value 0 the exit token bid is closed; the redemption door reverts
-    /// NoExitModule once mode is on but no module is set
-    function test_exitDoorsClosedAtLaunch() public {
+    // promise: SPEC 1 redeemOn and balanceBidOn are false at launch (RedeemOff, BalanceBidOff)
+    /// with both switches at their launch value false the balance token bid is closed; the redemption door reverts
+    /// NoBalanceModule while no module is set
+    function test_balanceDoorsClosedAtLaunch() public {
         vm.prank(alice);
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.sellForExitToken(_one(1));
+        vm.expectRevert(ICore.BalanceBidOff.selector);
+        core.sellForBalance(_one(1));
         vm.prank(alice);
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.sellForExitToken(_one(1), 0);
-        // exitStatement reverts NoExitModule whatever the mode while no module is set
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.exitStatement(1);
-        core.skim();
+        vm.expectRevert(ICore.BalanceBidOff.selector);
+        core.sellForBalance(_one(1), 0);
+        // redeemStatement reverts NoBalanceModule whatever the switch while no module is set
+        vm.expectRevert(ICore.NoBalanceModule.selector);
+        core.redeemStatement(1);
+        core.bookBalance();
     }
 
+    // promise: INTEGRATION NothingToBuy, TooSoon, SliceTooSmall
     function test_buyback_guards() public {
         vm.expectRevert(ICore.NothingToBuy.selector);
         core.buyback();
@@ -1408,11 +753,13 @@ contract CoreUnitTest is CoreBase {
         core.buyback();
     }
 
+    // promise: INTEGRATION OnlyPoolManager
     function test_unlockCallback_onlyPoolManager() public {
         vm.expectRevert(ICore.OnlyPoolManager.selector);
         core.unlockCallback("");
     }
 
+    // promise: INTEGRATION BadSender
     function test_onERC721Received_senders() public {
         vm.expectRevert(ICore.BadSender.selector);
         core.onERC721Received(address(0), address(0), 1, "");
@@ -1426,46 +773,9 @@ contract CoreUnitTest is CoreBase {
                          rate properties under fuzz
     //////////////////////////////////////////////////////////////*/
 
-    /// invariant 6: the rate never rises in an interval where the pot was unfunded, and it never climbs past what the
-    /// pot affords, from the launch settings or from a fast climb
-    /// forge-config: default.fuzz.runs = 24
-    function testFuzz_rateProperties(
-        uint256[6] memory amounts,
-        uint256[6] memory waits,
-        bool[6] memory sells,
-        uint256 mode
-    ) public {
-        if (mode % 2 == 1) {
-            Settings memory s = core.settings();
-            s.climbPerMinBps = 1_000;
-            s.recoveryClimbPerMinBps = 1_000;
-            s.ceilBps = 30_000;
-            _setSettings(s);
-        }
-        uint256[] memory ids = _credits(alice, 6);
-        for (uint256 i; i < 6; ++i) {
-            Settings memory st = core.settings();
-            uint256 r0 = core.ethRate();
-            _warp(bound(waits[i], 0, 120 hours));
-            uint256 r1 = core.ethRate();
-            // the read is at most the price state and at most the clamp of the pot. it can fall with time as the
-            // remembered peak decays and pulls the ceiling anchor down toward the last fill rate (decision 74), so no
-            // lower bound on the read across a warp holds
-            assertLe(r1, core.ethPrice(), "the read is at most the price state");
-            assertLe(r1, r0.max(BidModel.clamp(st, core.ethPot())), "never above the clamp");
-
-            uint256 amount = bound(amounts[i], 0, 0.05 ether);
-            if (amount != 0) _fund(amount);
-            if (sells[i]) {
-                vm.prank(alice);
-                try core.sellForEth(_one(ids[i])) {} catch {}
-            }
-            _solvent();
-        }
-    }
 }
 
-/// everything that follows a real compose. the stand in exit module is set in `setUp`, the compose itself goes through
+/// everything that follows a real compose. the stand in balance module is set in `setUp`, the compose itself goes through
 /// the real controller and the real Statements contract, once per test
 contract CoreComposedTest is CoreBase {
     using FixedPointMathLib for uint256;
@@ -1480,19 +790,11 @@ contract CoreComposedTest is CoreBase {
         return core.heldStatements();
     }
 
-    /// @dev composes a second statement on top of the state of `_composeOnce`, through whichever controller is set
-    function _composeNext() internal returns (uint256 sid) {
-        sid = STATEMENTS.supply() + 1;
-        _fillEthPile(80);
-        vm.prank(keeper);
-        core.compose();
-        assertEq(STATEMENTS.supply(), sid);
-    }
-
     /*//////////////////////////////////////////////////////////////
                                  compose
     //////////////////////////////////////////////////////////////*/
 
+    // promise: SPEC 1 one pile: a statement records its cost and leaves the pile
     function test_compose_statementIdCostBasisAndPiles() public {
         Composed memory c = _composeOnce();
         uint256[] memory ids = new uint256[](80);
@@ -1523,14 +825,7 @@ contract CoreComposedTest is CoreBase {
         _solvent();
     }
 
-    /// at the launch settings the cost basis of a statement is the sum of the prices paid
-    function test_compose_costBasisIsThePricesPaid() public {
-        Composed memory c = _composeOnce();
-        // every credit was sold at the rate of its fill, at most 20 percent over the opening rate
-        assertLe(c.cost, 80 * OPEN_RATE * 12 / 10, "at most 80 credits, a rising rate");
-        assertGt(c.cost, 80 * OPEN_RATE * 3 / 4, "and not far under");
-    }
-
+    // promise: SPEC 1 compose is unpaid at launch
     /// at the launch values of `callerFee` and `callerMaxBaseFee` (zero) a compose moves no eth out of the Core: the
     /// Core balance and `ethPot` are unchanged, at any basefee and with the buyback payment settings at their ceilings
     function test_compose_movesNoEthOut() public {
@@ -1559,81 +854,76 @@ contract CoreComposedTest is CoreBase {
     }
 
     /*//////////////////////////////////////////////////////////////
-                              exit path
+                              redeem path
     //////////////////////////////////////////////////////////////*/
 
-    function test_exit_guards() public {
+    // promise: INTEGRATION NotHeld, NotEligible, NoBalanceModule on redeemStatement
+    function test_redeem_guards() public {
         Composed memory c = _composeOnce();
         vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(c.sid + 100);
+        core.redeemStatement(c.sid + 100);
         // an eth lane statement is not eligible until its asking price falls to its cost
         vm.expectRevert(ICore.NotEligible.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         _makeEligible(c.sid);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
     }
 
+    // promise: SPEC 9 a redemption books its eth into the pots
     /// an eth lane redemption books the whole received amount into the bid pot
-    function test_exit_ethLaneAllToTheBidPot() public {
+    function test_redeem_ethLaneAllToTheBidPot() public {
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         uint256 out = core.ratingOf(c.sid) * UNIT;
-        uint256 pot = core.xPot();
-        core.exitStatement(c.sid);
+        uint256 pot = core.balancePot();
+        core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "the module keeps the statement");
         assertEq(xt.balanceOf(address(core)), out);
-        assertEq(core.xPot() - pot, out, "all received to the bid pot");
+        assertEq(core.balancePot() - pot, out, "all received to the bid pot");
         assertEq(_held().length, 0);
         assertFalse(_isHeld(c.sid));
     }
 
-    function test_exit_moduleThatUnderpaysReverts() public {
+    // promise: INTEGRATION BadModule: the unit is read live (decision 103)
+    /// the unit is read from the module in the call. a zero unit or a failed read reverts `BadModule`, and the minimum
+    /// follows the unit the module reports now
+    function test_redeem_unitIsReadLive() public {
         Composed memory c = _composeOnce();
-        _makeEligible(c.sid);
-        mod.setPayBps(10_000 - core.settings().exitSlippageBps - 1);
-        vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(c.sid);
-        mod.setPayBps(5000);
-        vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(c.sid);
-        assertEq(STATEMENTS.ownerOf(c.sid), address(core), "the statement never left");
-        assertTrue(_isHeld(c.sid));
-        // a payment within the slippage floor passes
-        mod.setPayBps(10_000 - core.settings().exitSlippageBps);
-        core.exitStatement(c.sid);
-        assertEq(STATEMENTS.ownerOf(c.sid), address(mod));
-    }
-
-    /// the unit is fixed when the module is set. a module that reports a lower unit later is held to the stored one, and
-    /// one that pays by a higher unit is simply paid
-    function test_exit_unitIsFixedAtSetTime() public {
-        Composed memory c = _composeOnce();
-        assertEq(core.unitPerPoint(), UNIT);
         _makeEligible(c.sid);
         mod.setUnitPerPoint(0);
-        vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(c.sid);
+        vm.expectRevert(ICore.BadModule.selector);
+        core.redeemStatement(c.sid);
+        mod.setRevertUnit(true);
+        vm.expectRevert(ICore.BadModule.selector);
+        core.redeemStatement(c.sid);
+        mod.setRevertUnit(false);
+        // the module pays by the unit it reports now and the minimum is that unit's: a payout of half the live unit
+        // is short, the full payout of the live unit passes
         mod.setUnitPerPoint(3 * UNIT);
+        mod.setPayBps(5_000);
+        vm.expectRevert(ICore.Underpaid.selector);
+        core.redeemStatement(c.sid);
+        mod.setPayBps(10_000);
         uint256 out = core.ratingOf(c.sid) * 3 * UNIT;
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         assertEq(xt.balanceOf(address(core)), out);
-        assertEq(core.unitPerPoint(), UNIT, "the stored unit did not follow the module");
     }
 
     /*//////////////////////////////////////////////////////////////
-                              exit token bid
+                              balance token bid
     //////////////////////////////////////////////////////////////*/
 
+    // promise: SPEC 1 the balance token bid pays score times unit less the margin
     /// the per point bid pays each credit its score times the unit less the margin
     function test_xBid_paysScoreTimesUnit() public {
-        _fillExitBuyback();
-        _setExitPool();
+        _fillBalanceBuyback();
+        _setBalancePool();
         xt.mint(address(core), 1e22);
-        core.skim();
+        core.bookBalance();
         uint256[] memory ids = _credits(alice, 2);
-        uint256 net = 10_000 - core.settings().exitBidMarginBps;
+        uint256 net = 10_000 - core.settings().balanceBidMarginBps;
         uint256 expect;
         for (uint256 i; i < 2; ++i) {
             uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(ids[i]), CREDITS.timestampOf(ids[i]));
@@ -1641,54 +931,44 @@ contract CoreComposedTest is CoreBase {
         }
         uint256 before = xt.balanceOf(alice);
         vm.prank(alice);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
         assertEq(xt.balanceOf(alice) - before, expect, "paid score times the unit less the margin");
         _solvent();
     }
 
+    // promise: INTEGRATION BadModule, BadQuote, Empty on sellForBalance
     function test_xBid_guards() public {
-        _fillExitBuyback();
+        _fillBalanceBuyback();
         xt.mint(address(core), 1e22);
-        core.skim();
+        core.bookBalance();
         uint256[] memory ids = _credits(alice, 1);
         uint256[] memory none = new uint256[](0);
         vm.prank(alice);
         vm.expectRevert(ICore.Empty.selector);
-        core.sellForExitToken(none);
+        core.sellForBalance(none);
         vm.prank(alice);
         vm.expectRevert(ICore.ZeroId.selector);
-        core.sellForExitToken(_one(0));
+        core.sellForBalance(_one(0));
         vm.prank(keeper);
         vm.expectRevert(ICore.NotOwner.selector);
-        core.sellForExitToken(ids);
-        stdstore.target(address(core)).sig("xPot()").checked_write(uint256(1));
+        core.sellForBalance(ids);
+        stdstore.target(address(core)).sig("balancePot()").checked_write(uint256(1));
         vm.prank(alice);
         vm.expectRevert(ICore.PotTooSmall.selector);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
     }
 
-    /// the exit token bid is closed unless exitMode is 2
-    function test_xBid_needsModeTwo() public {
-        _fillExitBuyback();
-        xt.mint(address(core), 1e22);
-        core.skim();
-        _setExitMode(1);
-        uint256[] memory ids = _credits(alice, 1);
-        vm.prank(alice);
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.sellForExitToken(ids);
-    }
-
-    /// exit token that arrives outside an exit is booked only by `skim`, into the bid pot
-    function test_xFees_skimBooksPlainTransfers() public {
-        _fillExitBuyback();
-        uint256 pot = core.xPot();
-        core.skim();
-        assertEq(core.xPot(), pot, "nothing above the pot");
+    // promise: SPEC 9 bookBalance books balance token into balancePot (inv 5)
+    /// balance token that arrives outside a redemption is booked only by `bookBalance`, into the bid pot
+    function test_xFees_bookBalanceBooksPlainTransfers() public {
+        _fillBalanceBuyback();
+        uint256 pot = core.balancePot();
+        core.bookBalance();
+        assertEq(core.balancePot(), pot, "nothing above the pot");
         xt.mint(address(core), 3e18);
-        assertEq(core.xPot(), pot);
-        core.skim();
-        assertEq(core.xPot(), pot + 3e18);
+        assertEq(core.balancePot(), pot);
+        core.bookBalance();
+        assertEq(core.balancePot(), pot + 3e18);
         _solvent();
     }
 

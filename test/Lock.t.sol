@@ -47,19 +47,14 @@ contract LockProbe is Lock {
     }
 }
 
-/// the launch step that freezes the fee recipients (docs/DEPLOY.md section 4) and the postflight rows around it
+/// the owner command that freezes the fee recipients (docs/RUNBOOK.md section 4) and the postflight rows around it
 contract LockTest is Fixture {
     LockProbe internal probe;
-    bool internal lockExpected;
     bool internal coinChangedFlag;
 
     function setUp() public override {
         super.setUp();
         probe = new LockProbe();
-    }
-
-    function _recipientsLockExpected() internal view override returns (bool) {
-        return lockExpected;
     }
 
     function _coinChanged() internal view override returns (bool) {
@@ -93,11 +88,12 @@ contract LockTest is Fixture {
 
     /// COIN_CHANGED=1 relaxes the postflight row, and the lock still refuses a pool that pays another address
     function test_aRepointedBountyRecipientRefusesTheLockWhateverCoinChangedSays() public {
+        address elsewhere = makeAddr("elsewhere");
         vm.prank(owner);
-        IArtCoinsHookV2(lc.stack.hook).setBountyRecipient(poolId, payable(address(core)));
+        IArtCoinsHookV2(lc.stack.hook).setBountyRecipient(poolId, payable(elsewhere));
         probe.setCoinChanged(true);
         probe.configure(lc, address(core), owner, true);
-        vm.expectRevert(abi.encodeWithSelector(Lock.BountyRecipientNotRouter.selector, address(core), address(feeRouter)));
+        vm.expectRevert(abi.encodeWithSelector(Lock.BountyRecipientNotCore.selector, elsewhere, address(core)));
         probe.run();
         assertFalse(coin.recipientsLocked());
     }
@@ -113,24 +109,18 @@ contract LockTest is Fixture {
     /// the run stops before it sends when the postflight has a failed row
     function test_aFailedPostflightStopsTheLock() public {
         LaunchConfig memory c = lc;
-        c.rateStart = lc.rateStart + 1;
+        c.owner = creator;
         probe.configure(c, address(core), owner, true);
         vm.expectRevert();
         probe.run();
         assertFalse(coin.recipientsLocked());
     }
 
-    /// unlocked recipients are a warning until the operator names the lock as sent, a failure from then on, and the row
-    /// passes once the recipients are locked
-    function test_theLockRowIsSoftBeforeAndHardAfter() public {
+    /// postflight prints the state of the recipients as an info row and passes before and after the lock
+    function test_thePostflightPassesBeforeAndAfterTheLock() public {
         postflightAs(lc, address(core), owner);
         (string memory failed, uint256 n) = _failed();
         assertEq(n, 0, failed);
-
-        lockExpected = true;
-        postflightAs(lc, address(core), owner);
-        (failed,) = _failed();
-        assertTrue(vm.contains(failed, "coin: fee recipients are locked"), "hard once the lock is expected");
 
         vm.prank(owner);
         coin.lockRecipients();
@@ -142,14 +132,14 @@ contract LockTest is Fixture {
     /// the bounty recipient row fails when the coin admin repointed it, and is a warning with COIN_CHANGED=1
     function test_theBountyRecipientRowIsSoft() public {
         vm.prank(owner);
-        IArtCoinsHookV2(lc.stack.hook).setBountyRecipient(poolId, payable(address(core)));
+        IArtCoinsHookV2(lc.stack.hook).setBountyRecipient(poolId, payable(makeAddr("elsewhere")));
         postflightAs(lc, address(core), owner);
         (string memory failed,) = _failed();
-        assertTrue(vm.contains(failed, "hook: bounty recipient is the fee router"), "fails without the flag");
+        assertTrue(vm.contains(failed, "hook: bounty recipient is the Core"), "fails without the flag");
 
         coinChangedFlag = true;
         postflightAs(lc, address(core), owner);
         (failed,) = _failed();
-        assertFalse(vm.contains(failed, "hook: bounty recipient is the fee router"), "a warning with the flag");
+        assertFalse(vm.contains(failed, "hook: bounty recipient is the Core"), "a warning with the flag");
     }
 }

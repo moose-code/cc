@@ -13,7 +13,7 @@ import {SystemDeployer, Deployed} from "../../script/SystemDeployer.sol";
 import {LaunchConfig, ConfigReader} from "../../script/LaunchConfig.sol";
 import {Report} from "../../script/Report.sol";
 
-/// @notice independent review of the deploy package (docs/archive/REVIEW-deploy.md), ported to the v2 stack: the config mutation
+/// @notice independent review of the deploy package (REVIEW-deploy.md, git history before packet 0), ported to the v2 stack: the config mutation
 /// matrix, the state mutations (factory, library, deployer), proofs of the readbacks and a fuzz of the funded
 /// rule. forks mainnet at FORK_BLOCK and attaches to the live v2 stack. the deployer is the factory owner and the
 /// config owner (the only path into a deprecated v2 factory)
@@ -24,13 +24,6 @@ abstract contract ReviewHarness is Test, ProdDeployer {
     address internal owner;
     address internal creator;
     LaunchConfig internal base;
-    /// @dev what `_scriptContext` answers: false is a test run (no library transaction), true rehearses `forge script`
-    bool internal scriptMode;
-
-    function _scriptContext() internal view override returns (bool) {
-        return scriptMode;
-    }
-
     function setUp() public {
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envUint("FORK_BLOCK"));
         v2 = V2Stack.attach();
@@ -45,7 +38,8 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         base = defaultConfig();
         base.owner = owner;
         base.creator = creator;
-        base.creatorPayee = makeAddr("review.payee");
+        base.credit.royaltyRecipient = creator;
+        base.payee = makeAddr("review.payee");
         base.name = "Review Coin";
         base.symbol = "REV";
         // a launch ready config: the tracked mainnet.json leaves both strings empty for the owner to fill
@@ -57,6 +51,14 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         base.stack.locker = v2.locker;
         base.stack.escrow = v2.escrow;
         base.mevModule = v2.mev;
+        // the artifact data of the build rows is read once into the process environment. a mutation (preflight and
+        // deploy) runs in one call under the block gas limit, so the cold read happens here
+        string[5] memory names =
+            ["Core", "CoreLib", "ControllerV1", "SeaportBasicAdapter", "CreditStrategyAdapter"];
+        for (uint256 i; i < names.length; ++i) {
+            artifactHash(names[i]);
+        }
+        coreAddress(base, deployer);
     }
 
     // ------------------------------------------------------------------ matrix harness
@@ -67,7 +69,6 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         vm.startPrank(who);
         d = deploySystem(who, c);
         vm.stopPrank();
-        splitStartPending = true;
         postflightAs(c, d.core, who);
         _require();
     }
@@ -152,6 +153,8 @@ abstract contract ReviewHarness is Test, ProdDeployer {
     /// reads (libraryAddress()), so a change to that code that preflight must not see is applied between the two
     address internal lateEtchAt;
     bytes internal lateEtchCode;
+    /// true: `lateEtchCode` is appended to the code at `lateEtchAt` when applied, so a large code is not stored
+    bool internal lateEtchAppend;
 
     /// @dev runs preflight, then the deploy, on a snapshot, as `Deploy.run` does: the hash gate first (a stale hash
     /// stops everything), then preflight, then the deploy. logs one matrix row. `signed` is the hash of the base config.
@@ -169,7 +172,9 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         if (bytes(detail).length != 0) {
             k = Class.Pre;
         } else {
-            if (lateEtchAt != address(0)) vm.etch(lateEtchAt, lateEtchCode);
+            if (lateEtchAt != address(0)) {
+                vm.etch(lateEtchAt, lateEtchAppend ? bytes.concat(lateEtchAt.code, lateEtchCode) : lateEtchCode);
+            }
             try this.tryDeploy(c, who) returns (Deployed memory) {
                 (k, detail) = (hashSame ? Class.Slip : Class.Hash, "DEPLOYED, every check passed");
             } catch (bytes memory why) {
@@ -198,16 +203,8 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         (l, w) = ("", Class.Slip);
     }
 
-    function _controllerAt() internal view returns (address) {
-        return vm.computeCreateAddress(deployer, vm.getNonce(deployer));
-    }
-
-    function _routerAt() internal view returns (address) {
-        return vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
-    }
-
-    function _coreAt() internal view returns (address) {
-        return vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 2);
+    function _coreAt() internal returns (address) {
+        return coreAddress(base, deployer);
     }
 
     /// @dev the library address the test build links the Core against

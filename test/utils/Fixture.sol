@@ -9,32 +9,25 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {ICredits, IStatements, Mainnet, Settings, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
-import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
-import {ICoreLens} from "../../src/interfaces/ICoreLens.sol";
-import {
-    IArtCoinsFactoryV2,
-    IArtCoinsTokenV2,
-    IArtCoinsFeeEscrowV2,
-    IArtCoinsHookV2
-} from "../../src/interfaces/ArtCoinsV2.sol";
+import {ICredits, IStatements, IBalanceModule, Mainnet, Settings, Stack, Sale, CreditSale, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
+import {IArtCoinsFactoryV2, IArtCoinsTokenV2, IArtCoinsFeeEscrowV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {V2Stack} from "./V2Stack.sol";
 import {Deployed} from "../../script/SystemDeployer.sol";
 import {ProdDeployer} from "./ProdDeployer.sol";
 import {LaunchConfig} from "../../script/LaunchConfig.sol";
-import {MockExitToken} from "../standins/MockExitToken.sol";
-import {MockExitModule} from "../standins/MockExitModule.sol";
+import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
+import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {CreditIds} from "./CreditIds.sol";
 import {TestSwapRouter} from "./TestSwapRouter.sol";
-import {RateStore} from "../../src/lib/RateStore.sol";
+import {Prod} from "./Prod.sol";
 
 /// @notice the full system on a mainnet fork, built only from real contracts. the artcoins v2 stack is the live one
 /// (`V2Stack`, script/config/v2-mainnet.json), the factory owner (`owner`, who is also the engine owner) sets the
-/// factory minimum protocol skim share to 362 as the launch needs, then Core, ControllerV1 and the fee router are
+/// factory minimum protocol skim share to 362 as the launch needs, then Core and ControllerV1 are
 /// deployed through `SystemDeployer.deploySystem` and the coin is launched with `deployTokenAsOwner`. the pool lives in
-/// the live pool manager under the v2 hook. fees reach the Core through the fee router: `_buyCoin` and `_sellCoin`
-/// flush it right after the swap (set `autoFlush` false to hold the eth in the router), `_flush` does it on demand.
-/// the only stand ins are the exit module and exit token, which appear only after `_enterPhase2`.
+/// the live pool manager under the v2 hook. the hook pushes the fees straight to the Core: `_buyCoin` and `_sellCoin`
+/// book them right after the swap (set `autoBook` false to leave the eth unbooked), `_book` does it on demand.
+/// the only stand ins are the balance module and balance token, which appear only after `_enterPhase2`.
 /// the sniper window is OPEN after setUp (the pool was just born). call `_skipSniperWindow` for steady state fees.
 /// @dev every address is namespaced because common labels are delegated accounts on mainnet that sweep eth
 abstract contract Fixture is Test, ProdDeployer {
@@ -51,9 +44,9 @@ abstract contract Fixture is Test, ProdDeployer {
 
     /// @dev the opening bid of the fixture core, wei per credit
     uint256 internal constant OPEN_RATE = 1_732_000_000_000_000;
-    /// @dev exit token base units per credit reported by the stand in exit module
-    /// exit token base units per stored score unit (one ten-thousandth of a point). a credit of average score (about
-    /// 4.33e6 in stored units) is paid about 4.33e16 of exit token, the magnitude the per credit unit had before the
+    /// @dev balance token base units per credit reported by the stand in balance module
+    /// balance token base units per stored score unit (one ten-thousandth of a point). a credit of average score (about
+    /// 4.33e6 in stored units) is paid about 4.33e16 of balance token, the magnitude the per credit unit had before the
     /// per point rebuild
     uint256 internal constant UNIT = 1e10;
     /// @dev the sniper window of the launch, seconds
@@ -93,15 +86,14 @@ abstract contract Fixture is Test, ProdDeployer {
     V2Stack.Stack internal v2;
     IArtCoinsFactoryV2 internal FACTORY;
     IArtCoinsFeeEscrowV2 internal ESCROW;
-    /// @dev the fee router: the pool's bounty recipient. `_flush` forwards its eth to the Core
-    IFeeRouter internal feeRouter;
-    /// @dev the account that calls `flush` in the helpers
-    address internal flusher;
-    /// @dev when true the swap helpers flush the router right after the swap, so the Core books the fees at once
-    bool internal autoFlush = true;
+    /// @dev when true the swap helpers book the fees right after the swap (`core.book()`)
+    bool internal autoBook = true;
     IControllerV1 internal ctl;
-    /// @dev the read only lens `deploySystem` created for the Core
-    ICoreLens internal lens;
+    /// @dev the launch adapters `deploySystem` created and the Core approves
+    address internal seaportAdapter;
+    address internal strategyAdapter;
+    /// @dev the test adapter that prices any call (`_buyRaw`), approved by the owner in `setUp`
+    address internal rawAdapter;
     PoolKey internal launchKey;
     bytes32 internal poolId;
     TestSwapRouter internal router;
@@ -116,10 +108,10 @@ abstract contract Fixture is Test, ProdDeployer {
 
     uint256 internal creditCursor;
 
-    // ------------------------------------------------------------------ phase 2
+    // ------------------------------------------------------------------ the balance side
 
-    MockExitToken internal xt;
-    MockExitModule internal mod;
+    MockBalanceToken internal xt;
+    MockBalanceModule internal mod;
 
     // ------------------------------------------------------------------ compose
 
@@ -136,6 +128,11 @@ abstract contract Fixture is Test, ProdDeployer {
         uint256 gasUsed;
     }
 
+    /// @notice the format `compose()` derives for a page whose first credit id is `headId`, at the current prevrandao
+    function defaultFormat(uint256 headId) internal view returns (uint8) {
+        return uint8(uint256(keccak256(abi.encode(block.prevrandao, headId))) % 8);
+    }
+
     /// @notice basefee of the compose call. low enough that the 5 percent cap does not bind
     uint256 internal composeBasefee = 0.2 gwei;
     Composed internal composed;
@@ -143,7 +140,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @notice state right before the compose, valid while `isComposed`. revert to it to compose again
     uint256 internal preComposeSnap;
 
-    /// @notice the settings the fixture core is deployed with. the default is the launch values of docs/FLOW.md. a
+    /// @notice the settings the fixture core is deployed with. the default is the launch values of docs/DECISIONS.md. a
     /// suite that tests another set overrides this
     function _settings() internal view virtual returns (Settings memory) {
         return Mainnet.defaultSettings();
@@ -182,7 +179,7 @@ abstract contract Fixture is Test, ProdDeployer {
         else assertEq((paid - s.keeperFee) % rate, 0, "whole gas units at the base fee");
     }
 
-    /// @dev the test contract is a caller of the doors that pay eth to their caller (the compose and exit caller payment, the buyListing and buyback payments), so it takes eth
+    /// @dev the test contract is a caller of the doors that pay eth to their caller (the compose and redeem caller payment, the buyListing and buyback payments), so it takes eth
     receive() external payable {}
 
     function setUp() public virtual {
@@ -195,10 +192,9 @@ abstract contract Fixture is Test, ProdDeployer {
         keeper = _user("keeper");
         seller = _user("seller");
         funder = _user("funder");
-        flusher = _user("flusher");
         router = new TestSwapRouter();
 
-        // the launch bounty needs the factory minimum protocol skim share at 362: the owner command of docs/DEPLOY.md step 3
+        // the launch bounty needs the factory minimum protocol skim share at 362: the owner command of docs/RUNBOOK.md step 3
         FACTORY = IArtCoinsFactoryV2(v2.factory);
         ESCROW = IArtCoinsFeeEscrowV2(v2.escrow);
         vm.startPrank(owner);
@@ -212,7 +208,8 @@ abstract contract Fixture is Test, ProdDeployer {
         lc.settings = _settings();
         lc.owner = owner;
         lc.creator = creator;
-        lc.creatorPayee = _user("creatorPayee");
+        lc.credit.royaltyRecipient = creator;
+        lc.payee = _user("payee");
         lc.name = "Fixture Coin";
         lc.symbol = "FIXT";
         lc.image = FIXTURE_IMAGE;
@@ -225,17 +222,18 @@ abstract contract Fixture is Test, ProdDeployer {
         lc.mevModule = v2.mev;
         vm.startPrank(owner);
         Deployed memory d = deploySystem(owner, lc);
-        // the launch is mined in this block: the split starts when the anti sniper window ends
-        startSplitAfterLaunch(lc, d.router, d.coin);
         vm.stopPrank();
 
-        // `deploySystem` filled the router into its own copy of the config
-        lc.stack.feeSource = d.router;
         core = ICore(payable(d.core));
         coin = IArtCoinsTokenV2(d.coin);
         ctl = IControllerV1(d.controller);
-        lens = ICoreLens(d.lens);
-        feeRouter = IFeeRouter(payable(d.router));
+        seaportAdapter = d.seaportAdapter;
+        strategyAdapter = d.strategyAdapter;
+        // placed with `etch` at a fixed address, so the creation nonces of the test contract stay as the suites expect
+        rawAdapter = _user("rawAdapter");
+        vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
+        vm.prank(owner);
+        core.addAdapter(rawAdapter);
         launchKey = d.launchKey;
         poolId = d.poolId;
         launchTime = block.timestamp;
@@ -257,7 +255,7 @@ abstract contract Fixture is Test, ProdDeployer {
     {
         LaunchConfig memory l = _cfg(name, symbol, salt);
         l.owner = tokenAdmin;
-        return predictCoin(l, owner, address(feeRouter));
+        return predictCoin(l, owner, address(core));
     }
 
     function buildConfig(
@@ -269,7 +267,24 @@ abstract contract Fixture is Test, ProdDeployer {
     ) internal view returns (IArtCoinsFactoryV2.DeploymentConfigV2 memory) {
         LaunchConfig memory l = _cfg(name, symbol, salt);
         l.creator = creator_;
-        return buildConfig(l, tokenAdmin, address(feeRouter));
+        return buildConfig(l, tokenAdmin, address(core));
+    }
+
+    /// @notice a Core built as `deploySystem` builds it, on the stack `st`: the Core is the bounty recipient of its own
+    /// config, so its `COIN` is the factory prediction for that config and not the fixture coin
+    function _launchCore(address controller_, Stack memory st, uint256 rate, Settings memory s)
+        internal
+        returns (ICore)
+    {
+        return Prod.newCore(owner, buildConfig(lc, owner, address(0)), owner, controller_, lc.payee, st, rate, s);
+    }
+
+    /// @notice a successor Core of the fixture coin: it is bound to the launched coin, the bounty recipient of the pool
+    /// stays where it is until the coin admin repoints it
+    function _successorCore(address controller_, uint256 rate, Settings memory s) internal returns (ICore) {
+        return Prod.newCoreOf(
+            address(coin), owner, buildConfig(lc, owner, address(0)), controller_, lc.payee, lc.stack, rate, s
+        );
     }
 
     function poolKeyOf(address coin_) internal view returns (PoolKey memory) {
@@ -292,7 +307,7 @@ abstract contract Fixture is Test, ProdDeployer {
         vm.prank(who);
         router.swap{value: ethIn}(launchKey, true, -int256(ethIn), who);
         coinOut = coin.balanceOf(who) - before;
-        if (autoFlush) _flush();
+        if (autoBook) _book();
     }
 
     /// @notice sells `coinIn` coin for eth, exact in, through the real pool
@@ -304,16 +319,12 @@ abstract contract Fixture is Test, ProdDeployer {
         vm.prank(who);
         router.swap(launchKey, false, -int256(coinIn), who);
         ethOut = who.balance - before;
-        if (autoFlush) _flush();
+        if (autoBook) _book();
     }
 
-    /// @notice flushes the fee router as `flusher`. the Core books what the router sends.
-    /// returns the eth the Core received from the router (zero when the router held nothing)
-    function _flush() internal returns (uint256 toCore) {
-        uint256 before = address(core).balance;
-        vm.prank(flusher);
-        feeRouter.flush();
-        toCore = address(core).balance - before;
+    /// @notice books the fee income the pool pushed into the Core
+    function _book() internal {
+        core.book();
     }
 
     /// @notice swap hook data that names `referrer` and asks for `bps` of volume (100k denominator)
@@ -328,16 +339,13 @@ abstract contract Fixture is Test, ProdDeployer {
         if (block.timestamp < end) vm.warp(end);
     }
 
-    /// @notice moves past the sniper window and the router split start (the window end plus the deploy margin). the first
-    /// flush at or after the start turns the split on
-    function _skipToSplitStart() internal {
+    /// @notice moves past the sniper window. the first book with income after it turns the payee share on
+    function _skipToPayeeStart() internal {
         _skipSniperWindow();
-        uint256 at = feeRouter.splitStart();
-        if (block.timestamp < at) vm.warp(at);
     }
 
     /// @notice generates fees through real buys until the eth pot holds at least `eth`. in steady state about 5.90 percent
-    /// of every buy reaches the pot (6.9 points of skim, 96.38 percent to the router, minus the payee), inside
+    /// of every buy reaches the pot (6.9 points of skim, 96.38 percent to the Core, minus the payee), inside
     /// the sniper window more
     function _fundPot(uint256 eth) internal {
         // about 5.31 percent of a buy reaches the pot now (5.90 points to the engine, less the 10 percent redeem burn
@@ -345,15 +353,6 @@ abstract contract Fixture is Test, ProdDeployer {
         for (uint256 i; i < 16 && core.ethPot() < eth; ++i) {
             uint256 need = eth - core.ethPot();
             _buyCoin(funder, need * 10_000 / 460 + 1000);
-        }
-        assertGe(core.ethPot(), eth, "pot not funded");
-    }
-
-    /// @notice like `_fundPot` but never buys more than the gap needs (the guess is the first flush rate, the highest one),
-    /// so the pot lands just over `eth`. for tests that need a pot close to an exact figure
-    function _fundPotNear(uint256 eth) internal {
-        for (uint256 i; i < 16 && core.ethPot() < eth; ++i) {
-            _buyCoin(funder, (eth - core.ethPot()) * 10_000 / 531 + 1e12);
         }
         assertGe(core.ethPot(), eth, "pot not funded");
     }
@@ -412,7 +411,8 @@ abstract contract Fixture is Test, ProdDeployer {
     }
 
     /// @notice composes the eth pile through the real controller, once per state lineage. fills the pile to 80
-    /// first. the call checks that the core hands Statements the 80 oldest credits with format 0. the state before the
+    /// first. the call checks that the core hands Statements the 80 oldest credits with the format `compose()` derives from
+    /// `prevrandao` and the first page id. the state before the
     /// compose is kept in `preComposeSnap`, so a test can revert to it and compose again under other conditions
     function _composeOnce() internal returns (Composed memory c) {
         if (isComposed) return composed;
@@ -430,7 +430,7 @@ abstract contract Fixture is Test, ProdDeployer {
         vm.fee(composeBasefee);
         preComposeSnap = vm.snapshotState();
 
-        vm.expectCall(address(STATEMENTS), abi.encodeWithSelector(IStatements.compose.selector, c.ids, uint8(0)));
+        vm.expectCall(address(STATEMENTS), abi.encodeWithSelector(IStatements.compose.selector, c.ids, defaultFormat(c.ids[0])));
         uint256 gasBefore = gasleft();
         vm.prank(keeper);
         core.compose();
@@ -453,9 +453,10 @@ abstract contract Fixture is Test, ProdDeployer {
     /// for it. returns the price paid
     function _buy(address who, uint256 sid) internal returns (uint256 price) {
         price = ctl.priceOf(sid);
-        vm.deal(who, who.balance + price);
+        uint256 gross = ctl.grossPriceOf(sid);
+        vm.deal(who, who.balance + gross);
         vm.prank(who);
-        ctl.buy{value: price}(sid);
+        ctl.buy{value: gross}(sid);
     }
 
     /// @notice the owner lifts `rateCap` to its upper bound, for suites that climb past the launch cap
@@ -467,10 +468,13 @@ abstract contract Fixture is Test, ProdDeployer {
         }
     }
 
+    /// first slot of `State.anchor` in the Core (four words)
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
+
     /// @notice the bid anchor state of the Core, read from its storage: the rate of the last fill, the rate of the first fill
     /// in the current minute bucket and that bucket
     function _anchor() internal view returns (uint256 lastFillRate, uint256 minuteStartRate, uint256 minuteBucket) {
-        bytes32 slot = RateStore.SLOT;
+        bytes32 slot = ANCHOR_SLOT;
         lastFillRate = uint256(vm.load(address(core), slot));
         minuteStartRate = uint256(vm.load(address(core), bytes32(uint256(slot) + 1)));
         minuteBucket = uint64(uint256(vm.load(address(core), bytes32(uint256(slot) + 2))));
@@ -479,7 +483,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @notice the remembered peak state of the Core, read from its storage: `peakRate` and `peakTime` (peakTime is the
     /// high 64 bits of the word that holds the minute bucket)
     function _peak() internal view returns (uint256 peakRate, uint256 peakTime) {
-        bytes32 slot = RateStore.SLOT;
+        bytes32 slot = ANCHOR_SLOT;
         peakTime = uint64(uint256(vm.load(address(core), bytes32(uint256(slot) + 2))) >> 64);
         peakRate = uint256(vm.load(address(core), bytes32(uint256(slot) + 3)));
     }
@@ -502,6 +506,72 @@ abstract contract Fixture is Test, ProdDeployer {
         core.setSettings(s);
     }
 
+    /// @notice the sale settings of the controller as a struct
+    function _sale() internal view returns (Sale memory s) {
+        s = Sale({
+            markupBps: ctl.markupBps(),
+            startCapBps: ctl.startCapBps(),
+            fastDecayBpsPerHour: ctl.fastDecayBpsPerHour(),
+            kneeBps: ctl.kneeBps(),
+            slowDecayBpsPerHour: ctl.slowDecayBpsPerHour(),
+            anchorHalfLife: ctl.anchorHalfLife(),
+            anchorMinCost: ctl.anchorMinCost()
+        });
+    }
+
+    /// @notice the credit sale, rating reference and royalty settings of the controller as a struct
+    function _creditSale() internal view returns (CreditSale memory c) {
+        c = CreditSale({
+            saleOn: ctl.creditSaleOn(),
+            window: ctl.creditWindow(),
+            floorBps: ctl.creditFloorBps(),
+            startBps: ctl.creditStartBps(),
+            refScore: ctl.refScore(),
+            royaltyBps: ctl.royaltyBps(),
+            royaltyRecipient: ctl.royaltyRecipient()
+        });
+    }
+
+    /// @notice the owner sets `refScore` through `setCredit`, the other credit settings unchanged
+    function _setRefScore(uint32 v) internal {
+        CreditSale memory c = _creditSale();
+        c.refScore = v;
+        vm.prank(owner);
+        ctl.setCredit(c);
+    }
+
+    /// @notice the owner turns the credit sale window on or off through `setCredit`, the other credit settings unchanged
+    function _setCreditSaleOn(bool on) internal {
+        CreditSale memory c = _creditSale();
+        c.saleOn = on;
+        vm.prank(owner);
+        ctl.setCredit(c);
+    }
+
+    /// @notice the owner sets the royalty recipient through `setCredit`, the other credit settings unchanged
+    function _setRoyaltyRecipient(address v) internal {
+        CreditSale memory c = _creditSale();
+        c.royaltyRecipient = v;
+        vm.prank(owner);
+        ctl.setCredit(c);
+    }
+
+    /// @notice the owner sets `royaltyBps` through `setCredit`, the other credit settings unchanged
+    function _setRoyaltyBps(uint16 v) internal {
+        CreditSale memory c = _creditSale();
+        c.royaltyBps = v;
+        vm.prank(owner);
+        ctl.setCredit(c);
+    }
+
+    /// @notice the owner sets `anchorMinCost` through `setSale`, the other sale settings unchanged
+    function _setAnchorMinCost(uint128 v) internal {
+        Sale memory s = _sale();
+        s.anchorMinCost = v;
+        vm.prank(owner);
+        ctl.setSale(s);
+    }
+
     /// @notice composes and buys the statement with `buyer` at the asking price. the buyer now holds the statement and
     /// the proceeds are booked
     function _sellStatement(address buyer) internal returns (uint256 sid, uint256 price) {
@@ -511,52 +581,68 @@ abstract contract Fixture is Test, ProdDeployer {
 
     // ------------------------------------------------------------------ owner actions
 
+    /// @notice the `unitPerPoint()` the module set on the core reports now
+    function _moduleUnit() internal view returns (uint256) {
+        return IBalanceModule(core.balanceModule()).unitPerPoint();
+    }
+
     /// @notice the owner sets the controller at once
     function _setController(address c) internal {
         vm.prank(owner);
         core.setController(c);
     }
 
-    /// @notice the owner sets the exit module at once
-    function _setExitModule(address m) internal {
+    /// @notice the owner sets the balance module at once
+    function _setBalanceModule(address m) internal {
         vm.prank(owner);
-        core.setExitModule(m);
+        core.setBalanceModule(m);
     }
 
-    /// @notice the owner sets the phase 2 mode (0 off, 1 hold, 2 on)
-    function _setExitMode(uint8 m) internal {
+    /// @notice the owner sets the two balance side switches
+    function _setSwitches(bool redeemOn, bool balanceBidOn) internal {
         Settings memory s = core.settings();
-        s.exitMode = m;
+        s.redeemOn = redeemOn;
+        s.balanceBidOn = balanceBidOn;
         _setSettings(s);
     }
 
-    /// @notice adds a target to the core allowlist
-    function _allow(address target) internal {
+    /// @notice the `params` the test adapter turns into the call of `target` with `value` and `data`
+    function _raw(address target, uint256 value, bytes memory data) internal pure returns (bytes memory) {
+        return abi.encode(target, value, data);
+    }
+
+    /// @notice `buyListing` through the test adapter: the Core calls `target` with `value` and `data`
+    function _buyRaw(uint256 value, bytes memory data, uint256 id, address target) internal {
+        core.buyListing(rawAdapter, id, _raw(target, value, data));
+    }
+
+    /// @notice the owner approves a listing adapter
+    function _approveAdapter(address adapter) internal {
         vm.prank(owner);
-        core.addTarget(target);
+        core.addAdapter(adapter);
     }
 
-    // ------------------------------------------------------------------ phase 2
+    // ------------------------------------------------------------------ the balance side
 
-    /// @notice sets the stand in exit module and exit token and turns phase 2 on (exitMode 2), so redemptions and the
-    /// exit token bid both run. the exit token the core receives from a redemption goes to `xPot`
+    /// @notice sets the stand in balance module and balance token and turns both balance side switches on, so redemptions and the
+    /// balance token bid both run. the balance token the core receives from a redemption goes to `balancePot`
     function _enterPhase2() internal {
-        xt = new MockExitToken("Exit Token", "XT");
-        mod = new MockExitModule(address(xt), UNIT);
-        _setExitModule(address(mod));
-        _setExitMode(2);
+        xt = new MockBalanceToken("Balance Token", "XT");
+        mod = new MockBalanceModule(address(xt), UNIT);
+        _setBalanceModule(address(mod));
+        _setSwitches(true, true);
     }
 
-    /// @notice initializes a native eth / exit token uniswap v4 pool and points the controller at it, so the exit bid
-    /// can price its eth cost basis (decision 92). the pool sqrt price makes the exit token cheap in eth, so the
-    /// decision 87 value floor is far below the sale curve and the exit bid's eth cost basis is the eth market bid.
-    /// a suite that needs the value floor to bind sets its own pool price. needs phase 2 (the exit token set)
-    function _setExitPool() internal {
-        _setExitPoolFor(address(xt));
+    /// @notice initializes a native eth / balance token uniswap v4 pool and points the controller at it, so the balance bid
+    /// can price its eth cost basis (decision 92). the pool sqrt price makes the balance token cheap in eth, so the
+    /// decision 87 value floor is far below the sale curve and the balance bid's eth cost basis is the eth market bid.
+    /// a suite that needs the value floor to bind sets its own pool price. needs the balance side (the balance token set)
+    function _setBalancePool() internal {
+        _setBalancePoolFor(address(xt));
     }
 
-    /// @notice the same for an arbitrary exit token (a suite that sets a non default exit token on the core)
-    function _setExitPoolFor(address token) internal {
+    /// @notice the same for an arbitrary balance token (a suite that sets a non default balance token on the core)
+    function _setBalancePoolFor(address token) internal {
         PoolKey memory vk = PoolKey({
             currency0: Currency.wrap(address(0)),
             currency1: Currency.wrap(token),
@@ -573,7 +659,7 @@ abstract contract Fixture is Test, ProdDeployer {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setExitPoolKey(k);
+        ctl.setBalancePoolKey(k);
     }
 
     /// @notice warps until the controller's curve price of a statement has reached its floor, which makes it eligible
@@ -584,28 +670,39 @@ abstract contract Fixture is Test, ProdDeployer {
         }
     }
 
-    /// @notice composes the eth pile, makes the statement eligible and redeems it, which books the exit token into
-    /// `xPot`. needs phase 2. returns the exit token the core received
-    function _fillExitBuyback() internal returns (uint256 received) {
+    /// @notice composes the eth pile, makes the statement eligible and redeems it, which books the balance token into
+    /// `balancePot`. needs the balance side. returns the balance token the core received
+    function _fillBalanceBuyback() internal returns (uint256 received) {
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         uint256 before = xt.balanceOf(address(core));
-        core.exitStatement(c.sid);
+        core.redeemStatement(c.sid);
         received = xt.balanceOf(address(core)) - before;
     }
 
     // ------------------------------------------------------------------ checks and small helpers
 
+    /// @notice adds `amount` to the eth pot whole through `fund`. the fee income above the pots is booked first
+    function _addToPot(uint256 amount) internal {
+        vm.deal(address(this), address(this).balance + amount);
+        core.fund{value: amount}();
+    }
+
+    /// @notice the eth the core tracks: the pots, the redeem burn reserve and the payee claim
+    function _tracked() internal view returns (uint256) {
+        return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed();
+    }
+
     /// @notice invariant 5 of the spec: the pots never exceed what the core holds
     function _solvent() internal view {
         assertLe(
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed(),
             address(core).balance,
             "eth pots exceed balance"
         );
-        address t = core.exitToken();
+        address t = core.balanceToken();
         if (t != address(0)) {
-            assertLe(core.xPot(), MockExitToken(t).balanceOf(address(core)), "exit pot exceeds");
+            assertLe(core.balancePot(), MockBalanceToken(t).balanceOf(address(core)), "balance pot exceeds");
         }
     }
 

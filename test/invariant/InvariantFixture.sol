@@ -9,8 +9,8 @@ import {ICreditStrategy, Mainnet, Settings} from "../../src/interfaces/Interface
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Fixture} from "../utils/Fixture.sol";
 import {CreditIds} from "../utils/CreditIds.sol";
-import {MockExitModule} from "../standins/MockExitModule.sol";
-import {MockExitToken} from "../standins/MockExitToken.sol";
+import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
+import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {ProbeTarget} from "../attackers/ProbeTarget.sol";
 import {FuzzController} from "../attackers/FuzzController.sol";
 import {TestLiquidityHelper} from "../utils/TestLiquidityHelper.sol";
@@ -22,9 +22,9 @@ import {HandlerSale} from "./HandlerSale.sol";
 /// @notice builds the real system on the fork for the invariant suites on top of the single real stack `Fixture`:
 /// the real Core and ControllerV1 deployed through the deploy path, the coin launched through the live artcoins
 /// factory, the live skim hook, locker, mev module and pool manager, and the live Credits, Statements
-/// and CreditStrategy. the only stand ins are the exit module and exit token of phase 2. the attack contracts are
+/// and CreditStrategy. the only stand ins are the balance module and balance token of the balance side. the attack contracts are
 /// the fuzz controller and the hostile listing target. the owner adds the hostile target, the fuzz controller and,
-/// in phase 2, the exit module at once. the eth pot is funded by real swap fees, the piles are
+/// in the balance side, the balance module at once. the eth pot is funded by real swap fees, the piles are
 /// pre filled with real credits so that composes happen, and the clock is moved so that the rate has climbed far
 /// enough for the real CreditStrategy listings to fit under the ceiling.
 ///
@@ -43,8 +43,8 @@ abstract contract InvariantFixture is Fixture {
     /// real listings are read from this index of the strategy list, after the credits that move
     uint256 internal constant CANDIDATE_START = 600;
 
-    /// @dev the credit budget (the first 600 of the 640 ids) is kept in the phase 2 suites, which also sell 80 credits
-    /// into the exit lane, by giving the four actors 25 credits each
+    /// @dev the credit budget (the first 600 of the 640 ids) is kept in the balance side suites, which also sell 80 credits
+    /// into the balance side, by giving the four actors 25 credits each
     uint256 internal constant ACTOR_CREDITS = 25;
 
     FuzzController internal fuzz;
@@ -53,7 +53,7 @@ abstract contract InvariantFixture is Fixture {
     address internal filler;
     address internal whale;
 
-    /// @dev the suites differ in the exit phase, the controller, the start state and the tag of their counters.
+    /// @dev the suites differ in the redemption phase, the controller, the start state and the tag of their counters.
     function _build(bool phase2, bool hostile, bool canSwapController, bool inWindow, string memory tag) internal {
         Fixture.setUp();
         filler = _user("inv.filler");
@@ -61,8 +61,8 @@ abstract contract InvariantFixture is Fixture {
         fuzz = new FuzzController(address(core));
         probeTarget = new ProbeTarget(address(core));
         if (phase2) {
-            xt = new MockExitToken("Exit Token", "XT");
-            mod = new MockExitModule(address(xt), UNIT);
+            xt = new MockBalanceToken("Balance Token", "XT");
+            mod = new MockBalanceModule(address(xt), UNIT);
         }
         _ownerSetup(phase2, hostile, inWindow);
         _fundWhale();
@@ -74,14 +74,14 @@ abstract contract InvariantFixture is Fixture {
             launchKey: launchKey,
             hook: lc.stack.hook,
             mev: lc.mevModule,
-            feeRouter: feeRouter,
             poolId: poolId,
             owner: owner,
             v1: address(ctl),
             fuzz: fuzz,
             probe: probeTarget,
+            rawAdapter: rawAdapter,
             module: mod,
-            exitToken: xt,
+            balanceToken: xt,
             canSwapController: canSwapController,
             tag: tag
         });
@@ -129,19 +129,19 @@ abstract contract InvariantFixture is Fixture {
                                   STEPS
     //////////////////////////////////////////////////////////////*/
 
-    /// the owner allows the hostile target, and in the suites that need it sets the fuzz controller and the exit module.
+    /// the owner allows the hostile target, and in the suites that need it sets the fuzz controller and the balance module.
     /// everything is at once. outside the sniper window variant a week passes first, so the run starts past the
     /// window; inside it the run starts a few seconds after launch
     function _ownerSetup(bool phase2, bool hostile, bool inWindow) internal {
         if (!inWindow) vm.warp(block.timestamp + 7 days + 1);
         vm.startPrank(owner);
-        core.addTarget(address(probeTarget));
         if (phase2) {
-            core.setExitModule(address(mod));
+            core.setBalanceModule(address(mod));
             Settings memory es = core.settings();
-            es.exitMode = 2;
+            es.redeemOn = true;
+            es.balanceBidOn = true;
             core.setSettings(es);
-            // the exit token / native eth pool prices the statement value floor and the credit sale baseline. a
+            // the balance token / native eth pool prices the statement value floor and the credit sale baseline. a
             // real initialized pool at a 1:1 sqrt price, pointed at by the real controller
             PoolKey memory vk = PoolKey({
                 currency0: Currency.wrap(address(0)),
@@ -150,7 +150,7 @@ abstract contract InvariantFixture is Fixture {
                 tickSpacing: 60,
                 hooks: IHooks(address(0))
             });
-            // the exit token is cheap in eth, so the exit bid's eth cost basis is the eth market bid and the decision
+            // the balance token is cheap in eth, so the balance bid's eth cost basis is the eth market bid and the decision
             // 87 value floor stays below the sale curve
             PM.initialize(vk, uint160((uint256(1) << 96) * 1000));
             IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
@@ -160,12 +160,12 @@ abstract contract InvariantFixture is Fixture {
                 tickSpacing: 60,
                 hooks: address(0)
             });
-            ctl.setExitPoolKey(k);
+            ctl.setBalancePoolKey(k);
         }
         // the hostile controller swap comes after the pool key is set on the real controller, so the key survives it
         if (hostile) core.setController(address(fuzz));
         vm.stopPrank();
-        assertTrue(core.allowedTarget(address(probeTarget)));
+        assertTrue(core.allowedAdapter(rawAdapter));
     }
 
     /// the whale buys coin through the real launch pool. the skim funds the eth pot, and the whale holds coin
@@ -174,7 +174,7 @@ abstract contract InvariantFixture is Fixture {
         vm.prank(whale);
         coin.approve(address(router), type(uint256).max);
         assertGt(core.ethPot(), 3 ether);
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
+        assertEq(address(core).balance, _tracked());
     }
 
     /// four actors with credits, eth and coin, all approved for the core and the router. every approval and every
@@ -197,9 +197,9 @@ abstract contract InvariantFixture is Fixture {
     uint256 internal price1;
     uint256 internal price2;
 
-    /// real credits sold into the piles, four composes so statements exist for the sale and the exit. outside the
+    /// real credits sold into the piles, four composes so statements exist for the sale and the redemption. outside the
     /// sniper window two of them are bought by the whale at the asking price, so the buyback pot is not empty when the
-    /// run starts. in phase 2 the exit token bid is funded and 80 more credits are sold into it, so the exit lane has a
+    /// run starts. in the balance side the balance token bid is funded and 80 more credits are sold into it, so the balance side has a
     /// full page
     function _prefill(bool phase2, bool inWindow) internal {
         uint256 ethN = COMPOSES * 80 + LEFT_IN_PILE;
@@ -231,14 +231,14 @@ abstract contract InvariantFixture is Fixture {
             (sold2, price2) = _saleOf(firstStatement + 1);
         }
         if (phase2) {
-            // the exit token bid is funded the way the module would: exit token arrives and skim books it
+            // the balance token bid is funded the way the module would: balance token arrives and bookBalance books it
             xt.mint(address(core), 1e20);
-            core.skim();
-            uint256[] memory exitIds = new uint256[](80);
+            core.bookBalance();
+            uint256[] memory balanceIds = new uint256[](80);
             for (uint256 i; i < 80; ++i) {
-                exitIds[i] = ids[ethN + i];
+                balanceIds[i] = ids[ethN + i];
             }
-            // the exit bid reads `refScore` from the core's controller, so the real one is put in force (the hostile
+            // the balance bid reads `refScore` from the core's controller, so the real one is put in force (the hostile
             // suite set the fuzz controller). the credits enter the single pile with an eth cost basis
             address current = core.controller();
             if (current != address(ctl)) {
@@ -246,7 +246,7 @@ abstract contract InvariantFixture is Fixture {
                 core.setController(address(ctl));
             }
             vm.prank(filler);
-            core.sellForExitToken(exitIds);
+            core.sellForBalance(balanceIds);
             if (current != address(ctl)) {
                 vm.prank(owner);
                 core.setController(current);
@@ -347,25 +347,27 @@ abstract contract InvariantFixture is Fixture {
         s[n++] = HandlerBase.roll.selector;
         s[n++] = HandlerBase.compose.selector;
         s[n++] = HandlerBase.composeChosen.selector;
+        s[n++] = HandlerBase.setHeldFormat.selector;
         s[n++] = HandlerSale.buy.selector;
         s[n++] = HandlerSale.buy.selector;
         s[n++] = HandlerSale.buyCredit.selector;
         s[n++] = HandlerSale.buyCredit.selector;
         s[n++] = HandlerSale.buyCredits.selector;
         s[n++] = HandlerBase.buyback.selector;
-        s[n++] = HandlerBase.skim.selector;
+        s[n++] = HandlerBase.bookBalance.selector;
         s[n++] = HandlerBase.donate.selector;
         s[n++] = HandlerBase.adopt.selector;
         s[n++] = HandlerBase.controllerSeed.selector;
         s[n++] = HandlerBase.controllerSwap.selector;
         s[n++] = HandlerBase.probeController.selector;
-        // the fee router: a flush by anyone (the router owner repointing the engine is in the owner list below)
-        s[n++] = HandlerBase.flush.selector;
-        s[n++] = HandlerBase.flush.selector;
-        // the exit module is set in the phase 2 suites before the run starts, so the exit actions are listed only there
+        // the book of the fee income by anyone, and the payee claim with the owner replacing the payee
+        s[n++] = HandlerBase.book.selector;
+        s[n++] = HandlerBase.book.selector;
+        s[n++] = HandlerBase.claimPayee.selector;
+        // the balance module is set in the balance side suites before the run starts, so the redemption actions are listed only there
         if (phase2) {
-            s[n++] = HandlerBase.sellForExit.selector;
-            s[n++] = HandlerBase.exitStatement.selector;
+            s[n++] = HandlerBase.sellForBalance.selector;
+            s[n++] = HandlerBase.redeemStatement.selector;
             s[n++] = HandlerBase.moduleMode.selector;
         }
         if (_saleActions()) {
@@ -382,7 +384,6 @@ abstract contract InvariantFixture is Fixture {
             s[n++] = HandlerOwner.setSettingsInvalid.selector;
             s[n++] = HandlerOwner.setRate.selector;
             s[n++] = HandlerOwner.ownerMisc.selector;
-            s[n++] = HandlerOwner.repoint.selector;
             s[n++] = HandlerOwner.rescueNft.selector;
             s[n++] = HandlerOwner.migrate.selector;
             s[n++] = HandlerOwner.creditSettings.selector;

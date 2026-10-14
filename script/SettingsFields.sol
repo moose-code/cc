@@ -3,16 +3,16 @@ pragma solidity ^0.8.28;
 
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
 
-/// @notice the 23 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
-/// docs/FLOW.md section 2, for the settings script and the config and deploy tests. the fields bounded by another
-/// field (recoveryClimbPerMinBps by climbPerMinBps, feeToRedeemBurnBps by the sum with feeToBuybackBps) have those
-/// bounds in the callers' hands
+/// @notice the 24 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
+/// docs/DECISIONS.md section 2, for the settings script and the config and deploy tests. the fields bounded by another
+/// field (recoveryClimbPerMinBps by climbPerMinBps, redeemSlippageBps by balanceBidMarginBps) have those bounds in the
+/// callers' hands. the two switches are 0 or 1
 library SettingsFields {
-    uint256 internal constant N = 23;
+    uint256 internal constant N = 24;
 
     /// @dev field i of the settings struct, in declaration order
     function get(Settings memory s, uint256 i) internal pure returns (uint256) {
-        uint256[23] memory f = [
+        uint256[24] memory f = [
             uint256(s.dropPerCreditBps),
             s.dropFloorBps,
             s.climbPerMinBps,
@@ -24,9 +24,10 @@ library SettingsFields {
             s.recoveryGapBps,
             s.peakHalfLife,
             s.buybackDelay,
-            s.exitMode,
-            s.exitSlippageBps,
-            s.exitBidMarginBps,
+            s.redeemOn ? 1 : 0,
+            s.balanceBidOn ? 1 : 0,
+            s.redeemSlippageBps,
+            s.balanceBidMarginBps,
             s.redeemBurnBps,
             s.buybackSlice,
             s.keeperFee,
@@ -34,8 +35,8 @@ library SettingsFields {
             s.rateCap,
             s.callerFee,
             s.callerMaxBaseFee,
-            s.feeToBuybackBps,
-            s.feeToRedeemBurnBps
+            s.feeToRedeemBurnBps,
+            s.payeePpm
         ];
         return f[i];
     }
@@ -54,24 +55,25 @@ library SettingsFields {
         else if (i == 8) s.recoveryGapBps = uint16(v);
         else if (i == 9) s.peakHalfLife = uint32(v);
         else if (i == 10) s.buybackDelay = uint16(v);
-        else if (i == 11) s.exitMode = uint8(v);
-        else if (i == 12) s.exitSlippageBps = uint16(v);
-        else if (i == 13) s.exitBidMarginBps = uint16(v);
-        else if (i == 14) s.redeemBurnBps = uint16(v);
-        else if (i == 15) s.buybackSlice = uint128(v);
-        else if (i == 16) s.keeperFee = uint64(v);
-        else if (i == 17) s.keeperMaxBaseFee = uint48(v);
-        else if (i == 18) s.rateCap = uint64(v);
-        else if (i == 19) s.callerFee = uint64(v);
-        else if (i == 20) s.callerMaxBaseFee = uint48(v);
-        else if (i == 21) s.feeToBuybackBps = uint16(v);
-        else s.feeToRedeemBurnBps = uint16(v);
+        else if (i == 11) s.redeemOn = v != 0;
+        else if (i == 12) s.balanceBidOn = v != 0;
+        else if (i == 13) s.redeemSlippageBps = uint16(v);
+        else if (i == 14) s.balanceBidMarginBps = uint16(v);
+        else if (i == 15) s.redeemBurnBps = uint16(v);
+        else if (i == 16) s.buybackSlice = uint128(v);
+        else if (i == 17) s.keeperFee = uint64(v);
+        else if (i == 18) s.keeperMaxBaseFee = uint48(v);
+        else if (i == 19) s.rateCap = uint64(v);
+        else if (i == 20) s.callerFee = uint64(v);
+        else if (i == 21) s.callerMaxBaseFee = uint48(v);
+        else if (i == 22) s.feeToRedeemBurnBps = uint16(v);
+        else s.payeePpm = uint24(v);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
-    /// @dev the documented lower bound of every field. recoveryClimbPerMinBps is bounded below by climbPerMinBps and
-    /// feeToRedeemBurnBps by the sum with feeToBuybackBps, handled by the callers
-    function lo() internal pure returns (uint256[23] memory) {
+    /// @dev the documented lower bound of every field. recoveryClimbPerMinBps is bounded below by climbPerMinBps,
+    /// handled by the callers
+    function lo() internal pure returns (uint256[24] memory) {
         return [
             uint256(1),
             5_000,
@@ -88,6 +90,7 @@ library SettingsFields {
             0,
             0,
             0,
+            0,
             0.01 ether,
             0,
             1 gwei,
@@ -99,7 +102,7 @@ library SettingsFields {
         ];
     }
 
-    function hi() internal pure returns (uint256[23] memory) {
+    function hi() internal pure returns (uint256[24] memory) {
         return [
             uint256(1_000),
             10_000,
@@ -112,7 +115,8 @@ library SettingsFields {
             5_000,
             604_800,
             7_200,
-            2,
+            1,
+            1,
             1_000,
             9_000,
             10_000,
@@ -123,11 +127,11 @@ library SettingsFields {
             0.005 ether,
             100 gwei,
             10_000,
-            10_000
+            200_000
         ];
     }
 
-    function names() internal pure returns (bytes32[23] memory) {
+    function names() internal pure returns (bytes32[24] memory) {
         return [
             bytes32("dropPerCreditBps"),
             "dropFloorBps",
@@ -140,9 +144,10 @@ library SettingsFields {
             "recoveryGapBps",
             "peakHalfLife",
             "buybackDelay",
-            "exitMode",
-            "exitSlippageBps",
-            "exitBidMarginBps",
+            "redeemOn",
+            "balanceBidOn",
+            "redeemSlippageBps",
+            "balanceBidMarginBps",
             "redeemBurnBps",
             "buybackSlice",
             "keeperFee",
@@ -150,8 +155,8 @@ library SettingsFields {
             "rateCap",
             "callerFee",
             "callerMaxBaseFee",
-            "feeToBuybackBps",
-            "feeToRedeemBurnBps"
+            "feeToRedeemBurnBps",
+            "payeePpm"
         ];
     }
 }

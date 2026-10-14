@@ -12,16 +12,15 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Mainnet, Stack, Settings} from "../src/interfaces/Interfaces.sol";
 import {ICoreLib} from "../src/interfaces/ICoreLib.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
-import {IFeeRouter} from "../src/interfaces/IFeeRouter.sol";
-import {ICoreLens} from "../src/interfaces/ICoreLens.sol";
+import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {PostflightPool} from "./PostflightPool.sol";
 
 /// @notice reads a launched system back and compares it with the config. read only, safe against mainnet any time.
 /// run it right after the launch: the supply and rate rows are exact at launch and tolerant once trading started.
-/// the rows that the owner can change afterwards (settings, locks, owner, the coin, the router) turn into warnings when the
-/// operator names the change: SETTINGS_CHANGED, LOCKS_CHANGED, OWNER_CHANGED, COIN_CHANGED, ROUTER_CHANGED = 1
+/// the rows that the owner can change afterwards (settings, the coin) turn into warnings when the operator names the
+/// change: SETTINGS_CHANGED, COIN_CHANGED = 1
 abstract contract PostflightChecks is PostflightPool {
     /// @notice the deployer of the launch from the environment (DEPLOYER), zero when not given. a test overrides it
     function _deployerEnv() internal view virtual returns (address) {
@@ -32,193 +31,193 @@ abstract contract PostflightChecks is PostflightPool {
         postflightAs(c, core_, _deployerEnv());
     }
 
-    /// @notice every postflight row. `deployer` (zero when unknown) adds the rows that need the creation nonces: the router
-    /// and the controller were created by it right before the Core, and the coin equals the factory prediction
+    /// @notice every postflight row. `deployer` (zero when unknown) adds the rows that need the sender of the deploy:
+    /// the Core address is the CREATE2 address of the config and the deployer, and the coin equals the factory prediction
     function postflightAs(LaunchConfig memory c, address core_, address deployer) internal {
         _reset();
         _code("code: core", core_);
         if (core_.code.length == 0) return;
         ICore core = ICore(payable(core_));
-        // derived, never signed: the fee source is an immutable of the Core, and the config hash leaves it out
-        c.stack.feeSource = core.FEE_SOURCE();
         _postCore(c, core);
         address coin = core.COIN();
         _code("code: coin", coin);
         if (coin.code.length == 0) return;
-        bytes32 poolId = _postPool(c, coin);
+        bytes32 poolId = _postPool(c, core_, coin);
         _postCoin(c, core_, coin, poolId);
-        _postRouter(c, core, deployer, coin);
-        _postLens(core);
-        _postPrediction(c, coin, deployer, core_);
-        _postUnreadable(c);
+        _postPayee(c, core);
+        _postAdapters(c, core);
+        _postIdentity(c, coin, deployer, core_);
+        _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));
     }
 
-    /// @dev the coin equals the factory's prediction for the deployer. the prediction reads mutable factory state (the
-    /// default allowlist, the hook escrow), so a later change of it is a warning, never a failure. it proves the allowlist
-    /// the coin was built with when the factory state is still the launch state
-    function _postPrediction(LaunchConfig memory c, address coin, address deployer, address core_) private {
+    /// @dev with the deployer known, the Core address is `coreAddress(c, deployer)`, which commits to the creation code
+    /// and every constructor argument. the coin equals the factory's prediction for the deployer. the prediction reads
+    /// mutable factory state (the default allowlist, the hook escrow), so a later change of it is a warning
+    function _postIdentity(LaunchConfig memory c, address coin, address deployer, address core_) private {
         if (deployer == address(0)) return;
-        (bool ok, uint256 n) = _coreNonce(core_, deployer);
-        if (!ok) return;
-        address routerAt = vm.computeCreateAddress(deployer, n - 1);
-        (bool okp, address want) = _predict(c, deployer, routerAt);
+        _eq("core: address is the CREATE2 address of the config and the deployer", core_, coreAddress(c, deployer));
+        (bool okp, address want) = _predict(c, deployer, core_);
         _warn("warn: coin equals the factory prediction for the deployer", okp && want == coin, vm.toString(want));
     }
 
-    /// @dev the deterministic deployer that `forge script` sends the library and the lens through (CREATE2)
+    /// @dev the deterministic deployer that `forge script` sends every contract of ours through (CREATE2)
     address internal constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
-    /// @dev the CREATE2 salt of the lens
-    bytes32 internal constant LENS_SALT = keccak256("credits.core.lens.v1");
+    /// @dev the CREATE2 salts of the contracts of the deploy. the creation code and the constructor arguments are part of
+    /// each address, so a fixed salt gives one address per config and deployer
+    bytes32 internal constant CORE_SALT = keccak256("credits.core.v1");
+    bytes32 internal constant CONTROLLER_SALT = keccak256("credits.controller.v1");
+    bytes32 internal constant SEAPORT_ADAPTER_SALT = keccak256("credits.core.seaportAdapter.v1");
+    bytes32 internal constant STRATEGY_ADAPTER_SALT = keccak256("credits.core.strategyAdapter.v1");
 
-    /// @notice the address of the lens of `core_`: CREATE2 through the deterministic deployer with `LENS_SALT` and the
-    /// creation code of `CoreLens` with the Core as constructor argument. a function of the Core address and the
-    /// compiled lens, so postflight and resume derive it without the deployer or its nonce
-    function lensAddress(address core_) internal view returns (address) {
-        bytes memory init = abi.encodePacked(vm.getCode("CoreLens.sol:CoreLens"), abi.encode(core_));
-        return vm.computeCreate2Address(LENS_SALT, keccak256(init), CREATE2_DEPLOYER);
+    /// @notice the address `forge script` gives the linked library `CoreLib`: CREATE2 through the deterministic deployer,
+    /// salt zero, the creation code of the compiled library. it depends on the compiler output only
+    function libraryAddress() internal view returns (address) {
+        return vm.computeCreate2Address(bytes32(0), keccak256(vm.getCode("CoreLib.sol:CoreLib")), CREATE2_DEPLOYER);
     }
 
-    /// @dev the lens at `lensAddress(core)` has code of the compiled size, points at this Core and at the router
-    /// the Core names, uses the Credits and Statements of mainnet, and answers `snapshot`. its controller is the Core's,
-    /// read on every call
-    function _postLens(ICore core) private {
-        address lensAt = lensAddress(address(core));
-        _code("code: lens", lensAt);
-        if (lensAt.code.length == 0) return;
-        ICoreLens lens = ICoreLens(lensAt);
-        bool sized = lensAt.code.length == vm.getDeployedCode("CoreLens.sol:CoreLens").length;
-        _check("lens: code size is the compiled CoreLens", sized, vm.toString(lensAt));
-        if (!sized) return;
-        _eq("lens: core", lens.CORE(), address(core));
-        _eq("lens: router is the Core fee source", lens.ROUTER(), core.FEE_SOURCE());
-        _eq("lens: credits", lens.CREDITS(), Mainnet.CREDITS);
-        _eq("lens: statements", lens.STATEMENTS(), Mainnet.STATEMENTS);
-        _eq("lens: controller is the Core controller", lens.controller(), core.controller());
-        (bool ok,) = lensAt.staticcall(abi.encodeCall(ICoreLens.snapshot, ()));
-        _check("lens: snapshot answers", ok, vm.toString(lensAt));
-    }
-
-    /// @notice the postflight of a run that has not set the split start yet (the Deploy script, a Resume that launches)
-    /// reports a split start of zero as a warning, not a failure. the split start is set by the next Resume, after the
-    /// launch is mined
-    bool internal splitStartPending;
-
-    /// @dev nonces to scan down from the deployer nonce when looking for the creation of the Core
-    uint256 internal constant NONCE_SCAN = 4096;
-
-    /// @notice the operator names the first controller by hand (FIRST_CONTROLLER) when the deployer is unknown. a test
-    /// overrides it
-    function _firstControllerEnv() internal view virtual returns (address) {
-        return vm.envOr("FIRST_CONTROLLER", address(0));
-    }
-
-    /// @notice the controller the Core was created with, never read from the Core: the deploy creates the controller at
-    /// the deployer nonce n, the router at n + 1 and the Core at n + 2 (`SystemDeployer.deploySystem`), so it is the create
-    /// address two nonces before the one that gives `core_`. scans down from the deployer nonce. `found` is false when the deployer is
-    /// unknown and FIRST_CONTROLLER is not set, or the scan finds nothing
-    function firstController(address core_, address deployer) internal view returns (address ctl, bool found) {
-        address named = _firstControllerEnv();
-        if (named != address(0)) return (named, true);
-        (bool ok, uint256 n) = _coreNonce(core_, deployer);
-        if (!ok) return (address(0), false);
-        return (vm.computeCreateAddress(deployer, n - 2), true);
-    }
-
-    /// @notice the deployer nonce the Core was created at, scanning down from the deployer nonce. the deploy creates the
-    /// controller at n - 2, the router at n - 1 and the Core at n (`SystemDeployer.deploySystem`)
-    function _coreNonce(address core_, address deployer) internal view returns (bool, uint256) {
-        if (deployer == address(0)) return (false, 0);
-        uint256 top = vm.getNonce(deployer);
-        uint256 stop = top > NONCE_SCAN ? top - NONCE_SCAN : 2;
-        if (stop < 2) stop = 2;
-        for (uint256 n = top; n >= stop; --n) {
-            if (vm.computeCreateAddress(deployer, n) == core_) return (true, n);
+    /// @dev the creation code of the Core with the library address linked in, without constructor arguments. the artifact
+    /// is read from `out/`, where the library is a placeholder. the result is kept in the process environment, which a
+    /// snapshot revert does not touch: the artifact json is large and a run calls `coreAddress` many times
+    function _coreCreation() private returns (bytes memory) {
+        string memory key = "POSTFLIGHT_CODE_CORE_CREATION";
+        if (!vm.envExists(key)) {
+            string memory o = vm.parseJsonString(vm.readFile("out/Core.sol/Core.json"), ".bytecode.object");
+            string memory lib = vm.toString(libraryAddress());
+            o = vm.replace(o, linkPlaceholder("src/lib/CoreLib.sol", "CoreLib"), vm.replace(lib, "0x", ""));
+            vm.setEnv(key, o);
         }
-        return (false, 0);
+        return vm.envBytes(key);
     }
 
-    /// @notice the constructor arguments of the Core as its creation transaction carried them, in the encoding etherscan
-    /// wants for verification: `(owner, coin, controller, stack, rateStart, settings, credit)`. built only from the signed
-    /// launch config and the first controller: the original owner `c.owner`, `c.stack`, `c.rateStart`, `c.settings` and
-    /// `c.credit`. the coin is the Core immutable `COIN`, which cannot change. nothing here reads the live `owner`,
-    /// `controller`, `settings` or credit settings, all of which the owner can change after launch (audit finding A02)
-    function coreConstructorArgs(ICore core, LaunchConfig memory c, address firstController_)
-        internal
-        view
-        returns (bytes memory)
-    {
-        // the fee source is an immutable of the Core: it cannot drift, so it is read from the Core (the config file has none)
-        c.stack.feeSource = core.FEE_SOURCE();
-        return abi.encode(c.owner, core.COIN(), firstController_, c.stack, c.rateStart, c.settings, c.credit);
+    /// @notice the creation code of the Core of `c` launched by `launcher`: the linked creation code and the
+    /// constructor arguments
+    function coreInitCode(LaunchConfig memory c, address launcher) internal returns (bytes memory) {
+        return abi.encodePacked(_coreCreation(), coreConstructorArgs(c, launcher));
     }
 
-    /// @notice prints what etherscan verification needs: the library address and the exact `--libraries` flag, the
-    /// constructor arguments of the Core (from the config, see `coreConstructorArgs`) and of the controller, then the
-    /// live controller and settings on separate lines labelled as live. docs/DEPLOY.md section 3. `deployer` is the
-    /// address that sent the deploy, it finds the first controller
+    /// @notice the address of the Core of `c` launched by `launcher`: CREATE2 through the deterministic deployer with
+    /// `CORE_SALT`. a function of the compiled Core and library, the config and the deployer
+    function coreAddress(LaunchConfig memory c, address launcher) internal returns (address) {
+        return vm.computeCreate2Address(CORE_SALT, keccak256(coreInitCode(c, launcher)), CREATE2_DEPLOYER);
+    }
+
+    /// @notice the constructor arguments of the Core, as the creation transaction carries them and as etherscan wants
+    /// them for verification: `(owner, cfg, launcher, coin, payee, stack, rateStart, settings, credit)`. built from the
+    /// signed launch config and the deployer only, never from live storage, which the owner can change after launch
+    function coreConstructorArgs(LaunchConfig memory c, address launcher) internal pure returns (bytes memory) {
+        return abi.encode(
+            c.owner,
+            buildConfig(c, c.owner, address(0)),
+            launcher,
+            address(0),
+            c.payee,
+            c.stack,
+            c.rateStart,
+            c.settings,
+            c.credit
+        );
+    }
+
+    /// @notice the address of the controller of `core_` and the sale and credit settings of `c`: CREATE2 through the
+    /// deterministic deployer with `CONTROLLER_SALT`
+    function controllerAddress(address core_, LaunchConfig memory c) internal view returns (address) {
+        bytes memory init =
+            abi.encodePacked(vm.getCode("ControllerV1.sol:ControllerV1"), abi.encode(core_, c.sale, c.credit));
+        return vm.computeCreate2Address(CONTROLLER_SALT, keccak256(init), CREATE2_DEPLOYER);
+    }
+
+    /// @notice the address of `SeaportBasicAdapter` for `core_` and the launch allowlist `recipients`: CREATE2 through
+    /// the deterministic deployer with `SEAPORT_ADAPTER_SALT` and the creation code with the Core and the recipients as
+    /// constructor arguments
+    function seaportAdapterAddress(address core_, address[] memory recipients) internal view returns (address) {
+        bytes memory init =
+            abi.encodePacked(vm.getCode("SeaportBasicAdapter.sol:SeaportBasicAdapter"), abi.encode(core_, recipients));
+        return vm.computeCreate2Address(SEAPORT_ADAPTER_SALT, keccak256(init), CREATE2_DEPLOYER);
+    }
+
+    /// @notice the address of `CreditStrategyAdapter`: CREATE2 through the deterministic deployer with
+    /// `STRATEGY_ADAPTER_SALT` and the creation code (no constructor arguments)
+    function strategyAdapterAddress() internal view returns (address) {
+        return vm.computeCreate2Address(
+            STRATEGY_ADAPTER_SALT,
+            keccak256(vm.getCode("CreditStrategyAdapter.sol:CreditStrategyAdapter")),
+            CREATE2_DEPLOYER
+        );
+    }
+
+    /// @dev both adapters have the compiled code, the Seaport adapter points at the Core and holds the config allowlist,
+    /// and the Core approves both and no stack contract
+    function _postAdapters(LaunchConfig memory c, ICore core) private {
+        (address seaportAt, address strategyAt) = (
+            seaportAdapterAddress(address(core), c.seaportRecipients), strategyAdapterAddress()
+        );
+        _code("code: seaport adapter", seaportAt);
+        _code("code: strategy adapter", strategyAt);
+        _check(
+            "adapters: runtime code is the compiled adapters (immutables masked)",
+            runtimeMatchesArtifact(seaportAt, "SeaportBasicAdapter")
+                && runtimeMatchesArtifact(strategyAt, "CreditStrategyAdapter"),
+            string.concat(vm.toString(seaportAt), " ", vm.toString(strategyAt))
+        );
+        if (seaportAt.code.length != 0) {
+            ISeaportBasicAdapter a = ISeaportBasicAdapter(seaportAt);
+            _eq("adapters: seaport adapter core", a.CORE(), address(core));
+            bool listed = true;
+            for (uint256 i; i < c.seaportRecipients.length; ++i) {
+                listed = listed && a.allowedRecipient(c.seaportRecipients[i]);
+            }
+            _check("adapters: seaport recipients are the config allowlist", listed, "fee collector allowed");
+        }
+        _check(
+            "adapters: both are allowed in the Core",
+            core.allowedAdapter(seaportAt) && core.allowedAdapter(strategyAt),
+            "seaport and CreditStrategy adapters"
+        );
+        _check(
+            "adapters: no stack contract is allowed",
+            !core.allowedAdapter(c.stack.hook) && !core.allowedAdapter(c.stack.factory)
+                && !core.allowedAdapter(c.stack.locker) && !core.allowedAdapter(c.stack.escrow)
+                && !core.allowedAdapter(c.stack.poolManager) && !core.allowedAdapter(core.COIN())
+                && !core.allowedAdapter(address(core)),
+            "hook, factory, locker, escrow, pool manager, coin, core"
+        );
+    }
+
+    /// @notice prints what etherscan verification needs: the library address and the exact `--libraries` flag, then the
+    /// constructor arguments of the Core, the controller and the Seaport adapter, built from the signed launch config
+    /// and `deployer`, the address that sent the deploy. docs/RUNBOOK.md section 3
     function printVerifyInputs(ICore core, LaunchConfig memory c, address deployer) internal view {
         address lib = findLibrary(address(core).code);
         console.log("verify: library CoreLib at", lib);
         console.log(string.concat("verify: flag  --libraries src/lib/CoreLib.sol:CoreLib:", vm.toString(lib)));
-        (address first, bool found) = firstController(address(core), deployer);
-        if (found) {
-            console.log("verify: first controller (creation input)", first);
-            console.log("verify: core constructor args");
-            console.logBytes(coreConstructorArgs(core, c, first));
-            console.log("verify: controller constructor args");
-            console.logBytes(abi.encode(address(core), c.sale, c.credit));
-        } else {
-            console.log(
-                "verify: core constructor args NOT printed: set DEPLOYER (the deploy signer) or FIRST_CONTROLLER"
-            );
+        if (deployer == address(0)) {
+            console.log("verify: constructor args NOT printed: set DEPLOYER (the deploy signer)");
+            return;
         }
-        // the live values are not constructor inputs: the owner can change them at any time
-        console.log("verify: router (the fee source) at", core.FEE_SOURCE());
-        console.log("verify: router constructor args (the owner)");
-        console.logBytes(abi.encode(c.owner));
-        console.log("verify: LIVE controller now, NOT a constructor input", core.controller());
-        console.log("verify: LIVE settings now, NOT a constructor input, abi encoded");
-        console.logBytes(abi.encode(core.settings()));
-        console.log("verify: LIVE owner now, NOT a constructor input", core.owner());
-        if (found && core.controller() != first) console.log("verify: note the live controller is not the first one");
+        console.log("verify: core constructor args");
+        console.logBytes(coreConstructorArgs(c, deployer));
+        console.log("verify: controller constructor args");
+        console.logBytes(abi.encode(address(core), c.sale, c.credit));
+        console.log("verify: seaport adapter constructor args");
+        console.logBytes(abi.encode(address(core), c.seaportRecipients));
     }
 
     function _postCore(LaunchConfig memory c, ICore core) private {
-        // after a handover the live owner is the new one: OWNER_CHANGED=1 turns the row into a warning
-        if (_ownerChanged()) {
-            _warn("warn: owner equals the config", core.owner() == c.owner, "OWNER_CHANGED=1, a handover ran");
-        } else {
-            _eq("core: owner", core.owner(), c.owner);
-        }
-        _eq("core: RATE_START", core.RATE_START(), c.rateStart);
+        _eq("core: owner", core.owner(), c.owner);
+        Stack memory st = c.stack;
+        _check(
+            "core: stack equals the config",
+            address(core.MANAGER()) == st.poolManager && core.HOOK() == st.hook
+                && core.TICK_SPACING() == st.tickSpacing && core.POOL_FEE() == st.poolFee
+                && core.FACTORY() == st.factory && core.LOCKER() == st.locker && core.ESCROW() == st.escrow,
+            "pool manager, hook, tick spacing, pool fee, factory, locker, escrow"
+        );
         _postSettings(c, core);
         _postLibrary(core);
-        _eq("core: pool manager", address(core.MANAGER()), c.stack.poolManager);
-        _eq("core: hook", core.HOOK(), c.stack.hook);
-        _eq("core: tick spacing", uint256(int256(core.TICK_SPACING())), uint256(int256(c.stack.tickSpacing)));
-        _eq("core: pool fee", uint256(core.POOL_FEE()), uint256(c.stack.poolFee));
-        _eq("core: factory", core.FACTORY(), c.stack.factory);
-        _eq("core: locker", core.LOCKER(), c.stack.locker);
-        _eq("core: escrow", core.ESCROW(), c.stack.escrow);
-        _check(
-            "code: stack addresses",
-            c.stack.poolManager.code.length != 0 && c.stack.hook.code.length != 0 && c.stack.factory.code.length != 0
-                && c.stack.locker.code.length != 0 && c.stack.escrow.code.length != 0,
-            "pool manager, hook, factory, locker, escrow"
-        );
         address ctl = core.controller();
+        _eq("core: controller is the deployed controller", ctl, controllerAddress(address(core), c));
         _code("code: controller", ctl);
         if (ctl.code.length != 0) _eq("controller: core", address(IControllerV1(ctl).CORE()), address(core));
-        _check(
-            "core: allowed targets",
-            core.allowedTarget(Mainnet.SEAPORT) && core.allowedTarget(Mainnet.CREDIT_STRATEGY)
-                && !core.allowedTarget(c.stack.hook) && !core.allowedTarget(c.stack.factory)
-                && !core.allowedTarget(c.stack.locker) && !core.allowedTarget(c.stack.escrow)
-                && !core.allowedTarget(c.stack.poolManager) && !core.allowedTarget(core.COIN())
-                && !core.allowedTarget(core.FEE_SOURCE()),
-            "seaport and CreditStrategy only, the router is not a target"
-        );
-        _code("code: fee source (the router)", core.FEE_SOURCE());
         _check(
             "core: runtime code is the compiled Core (immutables and the library address masked)",
             runtimeMatchesArtifact(address(core), "Core"),
@@ -234,21 +233,19 @@ abstract contract PostflightChecks is PostflightPool {
         _check(
             "controller: every CORE slot of the runtime code is the Core",
             runtimeSlotsMatch(ctl, "ControllerV1", address(0), ctlWant),
-            "the 28 immutable sites of the controller runtime code"
+            "the immutable CORE sites of the controller runtime code"
         );
-        // after launch the owner may lock or set the exit module: LOCKS_CHANGED=1 turns the row into a report line
-        bool launchState = !core.controllerLocked() && !core.exitModuleLocked() && !core.targetsLocked()
-            && core.exitModule() == address(0);
-        if (_locksChanged()) {
-            _warn("warn: no locks, no exit module", launchState, "LOCKS_CHANGED=1, the owner changed them");
-        } else {
-            _check("core: no locks, no exit module", launchState, "launch state");
-        }
+        _check(
+            "core: no locks, no balance module",
+            !core.controllerLocked() && !core.balanceModuleLocked() && !core.adaptersLocked()
+                && core.balanceModule() == address(0),
+            "launch state"
+        );
         _warn("warn: no pending owner", core.pendingOwner() == address(0), "an owner handover is offered");
         _postSale(c, ctl);
         _check(
             "core: pots covered by balance",
-            core.ethPot() + core.ethToBuyback() <= address(core).balance,
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed() <= address(core).balance,
             string.concat("balance ", vm.toString(address(core).balance))
         );
         // the stored price state moves once the pot is funded or a credit is bought, and the owner may reset it with
@@ -263,17 +260,6 @@ abstract contract PostflightChecks is PostflightPool {
         );
     }
 
-    /// @notice the operator says the owner locked a setter or set the exit module since launch (LOCKS_CHANGED=1). a test
-    /// overrides it
-    function _locksChanged() internal view virtual returns (bool) {
-        return vm.envOr("LOCKS_CHANGED", uint256(0)) == 1;
-    }
-
-    /// @notice the operator says the owner role was handed over since launch (OWNER_CHANGED=1). a test overrides it
-    function _ownerChanged() internal view virtual returns (bool) {
-        return vm.envOr("OWNER_CHANGED", uint256(0)) == 1;
-    }
-
     /// @dev the sale settings of the controller must equal the config, like the core settings (SETTINGS_CHANGED=1 turns
     /// the row into a warning once the owner changed them)
     function _postSale(LaunchConfig memory c, address ctl) private {
@@ -282,14 +268,14 @@ abstract contract PostflightChecks is PostflightPool {
         bool same = k.markupBps() == c.sale.markupBps
             && k.startCapBps() == c.sale.startCapBps && k.fastDecayBpsPerHour() == c.sale.fastDecayBpsPerHour
             && k.kneeBps() == c.sale.kneeBps && k.slowDecayBpsPerHour() == c.sale.slowDecayBpsPerHour
-            && k.floorBps() == c.sale.floorBps && k.anchorHalfLife() == c.sale.anchorHalfLife
+            && k.anchorHalfLife() == c.sale.anchorHalfLife
             && k.anchorMinCost() == c.sale.anchorMinCost;
         if (_settingsChanged()) {
             _warn(
                 "warn: sale settings equal the config", same, "SETTINGS_CHANGED=1, the owner changed them since launch"
             );
         } else {
-            _check("controller: sale settings equal the config", same, "markupBps startCapBps fastDecayBpsPerHour kneeBps slowDecayBpsPerHour floorBps anchorHalfLife anchorMinCost");
+            _check("controller: sale settings equal the config", same, "markupBps startCapBps fastDecayBpsPerHour kneeBps slowDecayBpsPerHour anchorHalfLife anchorMinCost");
         }
         // a fresh launch has no sales and no owner change, so the running level of sale prices is at its lower bound
         bool anchored = k.anchorBps() == 10_000;
@@ -298,15 +284,10 @@ abstract contract PostflightChecks is PostflightPool {
         } else {
             _check("controller: anchor is 10_000", anchored, vm.toString(k.anchorBps()));
         }
-        // sales are open until the owner pauses them
-        if (_settingsChanged()) {
-            _warn("warn: controller is not paused", !k.paused(), "SETTINGS_CHANGED=1, the owner paused sales since launch");
-        } else {
-            _check("controller: not paused", !k.paused(), k.paused() ? "paused" : "not paused");
-        }
         bool creditSame = k.creditSaleOn() == c.credit.saleOn && k.creditWindow() == c.credit.window
             && k.creditFloorBps() == c.credit.floorBps && k.creditStartBps() == c.credit.startBps
-            && k.refScore() == c.credit.refScore;
+            && k.refScore() == c.credit.refScore && k.royaltyBps() == c.credit.royaltyBps
+            && k.royaltyRecipient() == c.credit.royaltyRecipient;
         if (_settingsChanged()) {
             _warn(
                 "warn: credit sale settings equal the config",
@@ -317,33 +298,9 @@ abstract contract PostflightChecks is PostflightPool {
             _check(
                 "controller: credit sale settings equal the config",
                 creditSame,
-                "creditSaleOn creditWindow creditFloorBps creditStartBps refScore"
+                "creditSaleOn creditWindow creditFloorBps creditStartBps refScore royaltyBps royaltyRecipient"
             );
         }
-        _info(
-            "controller: sale",
-            string.concat(
-                "markup ",
-                vm.toString(k.markupBps()),
-                " start cap ",
-                vm.toString(k.startCapBps()),
-                " fast decay ",
-                vm.toString(k.fastDecayBpsPerHour()),
-                " bps/h to knee ",
-                vm.toString(k.kneeBps()),
-                " then slow decay ",
-                vm.toString(k.slowDecayBpsPerHour()),
-                " bps/h to floor ",
-                vm.toString(k.floorBps()),
-                " anchor ",
-                vm.toString(k.anchorBps()),
-                " anchor half life ",
-                vm.toString(k.anchorHalfLife()),
-                "s anchor min cost ",
-                vm.toString(k.anchorMinCost()),
-                " wei"
-            )
-        );
     }
 
     /// @notice the operator says the owner changed the settings since launch (SETTINGS_CHANGED=1). a test overrides it
@@ -383,39 +340,13 @@ abstract contract PostflightChecks is PostflightPool {
                 "creditCostToPotBps chosenComposeOn minCcToChoose"
             );
         }
-        _info(
-            "core: rate cap", string.concat("rateCap ", vm.toString(live.rateCap))
-        );
+        // sales are open until the owner pauses them
+        if (_settingsChanged()) {
+            _warn("warn: core is not paused", !core.paused(), "SETTINGS_CHANGED=1, the owner paused sales since launch");
+        } else {
+            _check("core: not paused", !core.paused(), core.paused() ? "paused" : "not paused");
+        }
         _check("core: ethRate at most rateCap", core.ethRate() <= live.rateCap, vm.toString(core.ethRate()));
-        _info(
-            "core: sale floor",
-            string.concat("saleFloorBps ", vm.toString(live.saleFloorBps))
-        );
-        _info(
-            "core: splits",
-            string.concat(
-                "sale to buyback ",
-                vm.toString(live.saleToBuybackBps),
-                " fee to buyback ",
-                vm.toString(live.feeToBuybackBps),
-                " fee to redeem burn ",
-                vm.toString(live.feeToRedeemBurnBps)
-            )
-        );
-        _info(
-            "core: phase 2",
-            string.concat(
-                "exitMode ",
-                vm.toString(live.exitMode),
-                " exit slippage ",
-                vm.toString(live.exitSlippageBps),
-                " exit bid margin ",
-                vm.toString(live.exitBidMarginBps),
-                " redeem burn ",
-                vm.toString(live.redeemBurnBps),
-                " (bps)"
-            )
-        );
     }
 
     /// @dev the Core is linked against `CoreLib`: its address is the operand of eight push20 sites in the Core runtime
@@ -434,12 +365,12 @@ abstract contract PostflightChecks is PostflightPool {
         want[1] = core.RATE_START();
         want[2] = uint256(uint160(address(core.MANAGER())));
         want[3] = uint256(uint160(core.HOOK()));
-        want[4] = uint256(uint160(core.FEE_SOURCE()));
-        want[5] = uint256(int256(core.TICK_SPACING()));
-        want[6] = uint256(core.POOL_FEE());
-        want[7] = uint256(uint160(core.FACTORY()));
-        want[8] = uint256(uint160(core.LOCKER()));
-        want[9] = uint256(uint160(core.ESCROW()));
+        want[4] = uint256(int256(core.TICK_SPACING()));
+        want[5] = uint256(core.POOL_FEE());
+        want[6] = uint256(uint160(core.FACTORY()));
+        want[7] = uint256(uint160(core.LOCKER()));
+        want[8] = uint256(uint160(core.ESCROW()));
+        want[9] = core.SNIPER_SECONDS();
         _check(
             "core: every library call site and every immutable slot holds the library or the getter value",
             found != address(0) && runtimeSlotsMatch(address(core), "Core", found, want),
@@ -453,11 +384,13 @@ abstract contract PostflightChecks is PostflightPool {
         bytes memory expected = vm.getDeployedCode("CoreLib.sol:CoreLib");
         bytes32 want = _tailHash(expected);
         for (uint256 i; i + 21 <= code.length; ++i) {
-            if (code[i] != 0x73) continue;
             address cand;
+            bool push20;
             assembly ("memory-safe") {
+                push20 := eq(byte(0, mload(add(add(code, 0x20), i))), 0x73)
                 cand := shr(96, mload(add(add(code, 0x21), i)))
             }
+            if (!push20) continue;
             // the size is read without copying the code: only a candidate of the right size is copied and hashed
             if (cand.code.length == expected.length && expected.length >= 39 && _tailHash(cand.code) == want) return cand;
         }
@@ -480,73 +413,19 @@ abstract contract PostflightChecks is PostflightPool {
         }
     }
 
-    /// @dev the router: the compiled code, created by the deployer right before the Core, the engine is the Core, the
-    /// owner is the config owner, payees and tip as signed, the split start exactly the launch time plus the anti sniper window, not locked by the
-    /// deploy. the owner can change every setting afterwards: ROUTER_CHANGED=1 turns those rows into warnings
-    function _postRouter(LaunchConfig memory c, ICore core, address deployer, address coin_) private {
-        IFeeRouter r = IFeeRouter(payable(core.FEE_SOURCE()));
-        address ra = address(r);
-        if (ra.code.length == 0) return;
-        _check(
-            "router: runtime code is the compiled FeeRouter",
-            keccak256(ra.code) == keccak256(vm.getDeployedCode("FeeRouter.sol:FeeRouter")),
-            vm.toString(ra)
-        );
-        if (deployer != address(0)) {
-            (bool ok, uint256 n) = _coreNonce(address(core), deployer);
-            _check(
-                "router: created by the deployer one nonce before the Core",
-                ok && vm.computeCreateAddress(deployer, n - 1) == ra,
-                vm.toString(ra)
-            );
-        }
-        bool ch = _routerChanged();
-        _soft(ch, "router: engine is the Core", r.engine() == address(core), vm.toString(r.engine()), "ROUTER_CHANGED=1");
-        _soft(ch, "router: owner is the config owner", r.owner() == c.owner, vm.toString(r.owner()), "ROUTER_CHANGED=1");
-        _soft(ch, "router: not locked", !r.locked(), "the deploy does not lock the router", "ROUTER_CHANGED=1");
-        _warn("warn: router has no pending owner", r.pendingOwner() == address(0), "an owner handover is offered");
-        _postRouterSettings(c, r, ch, coin_);
-    }
-
-    function _postRouterSettings(LaunchConfig memory c, IFeeRouter r, bool ch, address coin_) private {
-        (address[] memory who, uint32[] memory ppm) = r.payees();
-        bool payees = who.length == 1 && who[0] == c.creatorPayee && ppm[0] == c.payeePpm;
-        _soft(ch, "router: payee and share equal the config", payees, string.concat("payees ", vm.toString(who.length)), "ROUTER_CHANGED=1");
-        _postSplitStart(c, r, ch, coin_);
-        _info("router: split", r.splitOn() ? "on" : "not started, everything goes to the engine");
-        _info("router: eth held", string.concat(vm.toString(address(r).balance), " wei, owed to payees ", vm.toString(r.totalOwed())));
-    }
-
-    /// @dev the split start is the launch time recorded by the factory plus the anti sniper window, exactly. a difference
-    /// is a failure and is printed. zero (not set yet) is a warning only in a run that has not set it, i.e. the Deploy
-    /// script and a Resume that sent the launch (`splitStartPending`): the next Resume sets it from the mined launch time
-    function _postSplitStart(LaunchConfig memory c, IFeeRouter r, bool ch, address coin_) private {
-        (, IArtCoinsFactoryV2.DeploymentInfoV2 memory info) = _deployment(c.stack.factory, coin_);
-        uint256 want = uint256(info.launchedAt) + c.sniperSeconds;
-        uint256 got = r.splitStart();
-        string memory detail = string.concat("splitStart ", vm.toString(got), " want launchedAt plus window ", vm.toString(want));
-        if (got != want && got != 0) {
-            detail = string.concat(detail, got > want ? ", late by " : ", early by ", vm.toString(got > want ? got - want : want - got));
-        }
-        if (got == 0 && splitStartPending) {
-            _warn("warn: router split start is not set yet, run Resume after the launch is mined", false, detail);
-            return;
-        }
+    /// @dev the payee state of the Core: the payee is the config payee, the share starts after the launch window. the
+    /// owner can replace the payee afterwards (SETTINGS_CHANGED=1 turns the row into a warning). the share state and the
+    /// owed amount move once trading runs, so they are rows that are exact only at launch
+    function _postPayee(LaunchConfig memory c, ICore core) private {
         _soft(
-            ch || r.splitOn(),
-            "router: split start is the launch time plus the anti sniper window, exactly",
-            info.launchedAt != 0 && got == want,
-            detail,
-            "ROUTER_CHANGED=1 or the split is on"
+            _settingsChanged(),
+            "core: payee equals the config",
+            core.payee() == c.payee,
+            vm.toString(core.payee()),
+            "SETTINGS_CHANGED=1"
         );
-    }
-
-    /// @dev what a read back cannot cover, said in the output
-    function _postUnreadable(LaunchConfig memory c) private {
-        _info(
-            "not readable on chain",
-            "protocolBps argument, sniper fee config, the deploy fee paid, the salt itself"
-        );
-        _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));
+        _warn("warn: payee share is not on yet", !core.payeeOn(), "payeeOn: the first book after the window turned it on");
+        _warn("warn: payee owes nothing", core.payeeOwed() == 0, string.concat("payeeOwed ", vm.toString(core.payeeOwed())));
+        _eq("core: SNIPER_SECONDS equals the config", core.SNIPER_SECONDS(), uint256(c.sniperSeconds));
     }
 }

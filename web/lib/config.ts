@@ -6,69 +6,53 @@ const addr = (v?: string): Address | undefined =>
 
 // NEXT_PUBLIC_CHAIN_ID=31337 selects the local anvil fork (foundry chain).
 // Every other value selects mainnet.
-// Display symbol of the exit token, used for every user-facing reference to it.
-export const EXIT_TOKEN_SYMBOL = "$BALANCE" as const;
-
 export const isLocal = process.env.NEXT_PUBLIC_CHAIN_ID === "31337";
 
 export const rpcUrl =
   process.env.NEXT_PUBLIC_RPC_URL ||
   (isLocal ? "http://127.0.0.1:8545" : "https://eth.drpc.org");
 
-// The local chain's default rpc is rpcUrl: the mock connector sends wallet
-// requests to chain.rpcUrls.default.
+// The mock connector sends wallet requests to chain.rpcUrls.default. The injected
+// wallet's "add network" prompt takes id, name, currency and rpc from this definition.
 export const chain = isLocal
-  ? { ...foundry, rpcUrls: { default: { http: [rpcUrl] } } }
+  ? { ...foundry, name: "anvil", rpcUrls: { default: { http: [rpcUrl] } } }
   : mainnet;
 
-// Local only: the account the mock connector acts as. anvil runs with
-// --auto-impersonate, so it signs for this address without a key.
-export const localAccount = (addr(process.env.NEXT_PUBLIC_LOCAL_ACCOUNT) ||
-  "0x1111111111111111111111111111111111111111") as Address;
+// Local only: the accounts of the deployment record the app can act as. anvil
+// runs with --auto-impersonate, so it signs for them without a key.
+export const localAccounts: { name: string; address: Address }[] = (() => {
+  try {
+    const rec = JSON.parse(process.env.NEXT_PUBLIC_LOCAL_ACCOUNTS ?? "{}") as Record<string, string>;
+    return Object.entries(rec).flatMap(([name, a]) => (addr(a) ? [{ name, address: addr(a)! }] : []));
+  } catch {
+    return [];
+  }
+})();
 
-export const addresses = {
-  core: addr(process.env.NEXT_PUBLIC_CORE),
-  coreLens: addr(process.env.NEXT_PUBLIC_CORE_LENS),
-  credits: addr(process.env.NEXT_PUBLIC_CREDITS),
-  cc: addr(process.env.NEXT_PUBLIC_CC),
-  router: addr(process.env.NEXT_PUBLIC_ROUTER),
+// The Core. The controller, the coin and the balance module are read from it.
+export const core = addr(process.env.NEXT_PUBLIC_CORE);
+
+// Fixed collections (docs/INTEGRATION.md section 1).
+export const credits: Address = "0x97630aA70AB14ed9883B41dAfccBc11349723043";
+export const statements: Address = "0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b";
+
+// The coin/eth v4 pool: the live skim hook, the dynamic-fee flag and the tick
+// spacing. The defaults are the mainnet launch params; the local record
+// overrides them (scripts/local-env.mjs). Native ETH is currency0.
+export const pool = {
+  hook: (addr(process.env.NEXT_PUBLIC_POOL_HOOK) ?? "0x2f7976bf73dE8e1D49D4c687404e527a75b0e8Cc") as Address,
+  fee: Number(process.env.NEXT_PUBLIC_POOL_FEE || 8388608), // 0x800000 dynamic
+  tickSpacing: Number(process.env.NEXT_PUBLIC_POOL_TICK_SPACING || 200),
 };
 
-// Contract links shown in the footer: only those with a configured address.
-export type ContractLink = { label: string; address: Address };
-export const contracts: ContractLink[] = [
-  { label: "cc", address: addresses.cc },
-  { label: "core", address: addresses.core },
-  { label: "lens", address: addresses.coreLens },
-  { label: "credits", address: addresses.credits },
-  { label: "router", address: addresses.router },
-].filter((c): c is ContractLink => Boolean(c.address));
+// Chainlink ETH/USD feed (8 decimals).
+export const ethUsdFeed: Address = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
 
 export const deployBlock = process.env.NEXT_PUBLIC_DEPLOY_BLOCK
   ? BigInt(process.env.NEXT_PUBLIC_DEPLOY_BLOCK)
   : undefined;
 
-// The CC/ETH v4 pool. Params are fixed by the launch config
-// (script/config/mainnet.json): the live skim hook, the dynamic-fee flag and
-// the tick spacing. Native ETH is currency0 (address(0) sorts first). The pool
-// exists once the coin launches; price/quote/swap stay gated until then.
-export const pool = {
-  hook: (process.env.NEXT_PUBLIC_POOL_HOOK ||
-    "0x2f7976bf73dE8e1D49D4c687404e527a75b0e8Cc") as Address,
-  fee: Number(process.env.NEXT_PUBLIC_POOL_FEE || 8388608), // 0x800000 dynamic
-  tickSpacing: Number(process.env.NEXT_PUBLIC_POOL_TICK_SPACING || 200),
-};
+// Every engine read and page needs the Core; without it the pages render "engine not deployed".
+export const engineDeployed = Boolean(core);
 
-// pool reads/quotes/swaps need the coin address (deployed at launch).
-export const poolReady = Boolean(addresses.cc);
-
-// Chainlink ETH/USD feed (mainnet, 8 decimals). Always live; drives USD prices.
-export const ethUsdFeed =
-  "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" as Address;
-
-// True when the core and lens addresses are configured. Every engine read and
-// page needs both; without them the pages render an "engine not deployed" state.
-export const engineDeployed = Boolean(addresses.coreLens && addresses.core);
-
-export const wcProjectId =
-  process.env.NEXT_PUBLIC_WC_PROJECT_ID || "credits_engine";
+export const wcProjectId = process.env.NEXT_PUBLIC_WC_PROJECT_ID || "credits_engine";

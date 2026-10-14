@@ -1,0 +1,88 @@
+# status
+
+the baton for whoever directs this project next. read it first, then docs/SPEC.md. the authority order is AGENTS.md.
+
+## 1. where we are
+
+decisions 1 to 115 are settled (docs/DECISIONS.md; section 11 is the product agreement of 2026-10-13). the simplification plan of docs/reviews/SIMPLIFICATION-v1.md ran on branch `simplify/v1` on 2026-10-13: every packet is merged; an independent Opus review of 63e011c found two highs (docs/reviews/REVIEW-security-opus-63e011c.md), fixed in 43c9f94 (decision 115); the local end to end on anvil and the web app (packets 12a to 12c) are merged; the candidate is c8b42d6 (section 4). the system is three contracts plus two adapters, deployed by nine CREATE2 transactions, with 445 tests that each name their promise. `main` holds the system before the plan; the owner decides the merge.
+
+measured on the branch tip against `main` (lines without the generated interfaces):
+
+| | main | now |
+|---|---|---|
+| contract code | 3,248 | about 2,800 |
+| tests | 35,515 lines, 1,011 tests | about 23,300 lines, 445 tests |
+| scripts and tooling | 5,813 lines | about 3,000 |
+| docs | 102 files, 3.3 MB | 6 living files plus docs/reviews and docs/notes |
+| contracts | 5 | 3 plus 2 adapters |
+| deploy transactions | 10 | 9 |
+
+runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, ControllerV1 13,129, SeaportBasicAdapter 2,558, CreditStrategyAdapter 508.
+
+## 2. the plan
+
+| # | packet | status |
+|---|---|---|
+| 0 | structural cleanup: SPEC, DECISIONS, STATUS, RUNBOOK, reviews/, notes/; logs, archive, the director ledger removed | done |
+| 1 | rename exit to balance (decision 102) | done |
+| 2 | the pause clock in the Core, O(1) | done |
+| 3 | listing adapters replace measuring (decision 100), with the review fixes 3b | done |
+| 4 | the Core as fee recipient, FeeRouter deleted (decision 109), with the review fixes 4b | done |
+| 5 | pointRate and valueOf, unit live, one floor, two switches, feeToBuybackBps out, the royalty, the composer (decisions 104 to 107, 111, 112), with the review fixes 5b | done |
+| 6a | statement formats (decision 113), with the review fixes | done |
+| 6b | one State struct, CoreLens deleted, setSale and setCredit (decision 114) | done |
+| 7 | CREATE2 deploy, preflight and postflight trimmed (116 and 70 rows), env vars trimmed, the script tests cut | done |
+| 8 | the test cut: 983 to 452 tests, every survivor names its promise | done |
+| 9 | the simulator follows | done |
+| 10 | SPEC, RUNBOOK, INTEGRATION, README, AGENTS rewritten; comment references fixed; the simplification review archived | done |
+| 11 | the freeze: full suite, deep runs, rehearsal, security review, acceptance | done on c8b42d6, section 4 |
+| 11b | the two high findings of the independent review fixed (decision 115) | done |
+| 12 | the local end to end on anvil (12a), the web app ported with a local mode (12b), the flywheel bar (12c), the browser run (docs/reviews/E2E-ecf51f3.md) | done |
+
+## 3. open items
+
+- the artist's address for `credit.royaltyRecipient` (the tracked config holds the owner as a placeholder; the launch config needs the real one).
+- `coin.lockRecipients()` and `lockSuccessor()`: later owner decisions (RUNBOOK section 4, the lock table). `coin.lockAllowlist()`: the owner's.
+- the owner keeper: post launch, a bounty bot (decision 100).
+- the local seed gives a1 no CC and under a page of credits, so the restyle and the composes are driven by the scenario stages, not the UI; a seed change (one coin and 80 credits to a1) would close that.
+- the flywheel presentation: a design brief for three directions was written on 2026-10-13; the current bar is the first draft.
+- the balance module: written when the redeem contract is final (decision 101).
+- unmerged branches for the owner to keep or delete: claude/v1-ui-nextjs-web3-1d1637 (a Next.js frontend that read the deleted lens; it needs the multicall list of INTEGRATION section 2), feat/ui-anvil-local, feat/local-e2e, claude/repair-project-director-1366be, codex/independent-security-audit, codex/issue-3-spec.
+
+## 4. the freeze table
+
+`script/tools/check-freeze.sh` reads this table: the candidate row must equal `git rev-parse HEAD` and every row needs a commit and a result file that exists.
+
+| gate | commit | result |
+|---|---|---|
+| candidate | ecf51f3 | the tip of simplify/v1 with every packet merged (src/ as of 43c9f94; the suite, deep and rehearsal records name c8b42d6, whose src/, script/ and test/ are identical: the commits between change docs and .claude/launch.json); the commits after it are docs only |
+| full suite | c8b42d6 | docs/reviews/SUITE-c8b42d6.md |
+| deep runs | c8b42d6 | docs/reviews/DEEP-c8b42d6.md |
+| rehearsal | c8b42d6 | docs/reviews/REHEARSAL-c8b42d6.md |
+| security review | 63e011c | docs/reviews/REVIEW-security-opus-63e011c.md |
+| acceptance | b88940c | docs/reviews/ACCEPTANCE-b88940c.md |
+
+the security review row is the independent Opus review; its two highs are fixed in 43c9f94 (decision 115), and the director review is docs/reviews/REVIEW-security-b88940c.md. the src/ of the candidate is 43c9f94 (the two fixes on top of b88940c and the comment edits of 086a946). the review and the acceptance examined the logic before the fixes; the fixes are the two lines they asked for, each with its regression test.
+
+## 5. how to work in this repo
+
+| topic | rule |
+|---|---|
+| naming | "balance", never "exit", in code, comments, tests and docs (decision 102) |
+| tests | mainnet fork pinned to block 26158000 (`FORK_BLOCK`), real contracts only, the two stand ins are the balance module and the balance token. every kept test carries a `// promise:` line |
+| toolchain | foundry 1.8.1 (isolate on), solc 0.8.30. forge 1.8.1 rewrites foundry.lock and bumps lib/solady on build: `git checkout foundry.lock; git submodule update -- lib/solady` before committing. a fresh worktree needs the nested uniswap submodules: `git -C lib/v4-periphery submodule update --init lib/v4-core lib/permit2`, or an rsync of them from a checkout that has them |
+| fork env | `set -a; source <a .env with MAINNET_RPC_URL and FORK_BLOCK>; set +a` before fork tests; this repo tracks only .env.example |
+| timings | clean build 3 to 4 minutes, a test file change seconds, a src/Core.sol change about 40 seconds. a test file about 10 to 60 seconds. a Deep suite 10 to 15 minutes |
+| verification | during an edit run the smallest test that covers it (`--match-path`). the full suite, the deep invariants and the rehearsal belong to the frozen candidate, marked `CANDIDATE_RUN=1`; the hook in .claude/settings.json refuses a whole suite run without it |
+| interfaces and pins | after changing a production contract's external surface run `script/tools/gen-interfaces.sh` and re-pin test/BuildIdentity.t.sol and script/Checks.sol. never import src/Core.sol in a test |
+| Core size | 3,045 bytes of headroom at the tip; new logic goes into CoreLib; never drop a check to make room |
+| safety | no mainnet broadcast, deploy, push to main, merge or private key without the owner's explicit instruction |
+
+## 6. known and not fixed
+
+| item | detail |
+|---|---|
+| balance module gas | `redeemStatement` forwards gas to a contract that does not exist yet; measure it against `REDEEM_GAS` when it does |
+| v2 audit | pending. preflight pins the code hash of the live v2 contracts at block 26158000; a changed stack means new addresses and pins |
+| owner key | a stolen owner key moves everything at once (docs/SPEC.md section 11). a multisig owner and watching `SuccessorSet` and `Migrated` are the mitigations |
+| rehearsal gas estimate | `DEPLOY_GAS_ESTIMATE` 18,600,000 was measured at block 26186912 with nine transactions; the freeze re-measures it |

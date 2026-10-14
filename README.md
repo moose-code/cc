@@ -1,141 +1,73 @@
 # credits engine
 
-an erc20 on ethereum mainnet whose swap fees buy Credits nfts, compose them into Statements and sell each statement at a falling price. the coin, pool, hook and fee flow run on the artcoins v2 stack (restricted coin, skim hook, lp locker, fee escrow), with a fee router between the hook and the engine. every economic number is an owner setting, effective at once. status: unaudited, not deployed. `main` is the working branch.
-
-## what the engine does
-
-* **fees buy credits.** the v2 hook skims 6.9 points of swap volume. 6.65022 points reach the FeeRouter, which pays its payee 0.75 points and sends the rest to the Core. the Core books the eth into the eth pot (90 percent) and the redeem burn reserve (10 percent). the pot funds a bid, the rate in wei per credit, and every credit is paid the same rate. a seller calls `sellForEth`, or a caller fills a marketplace listing below the bid with `buyListing`. each fill drops the rate, and between fills the rate climbs toward a ceiling. every bought credit enters one pile with a cost basis in eth.
-* **credits compose into statements.** `compose()` takes the 80 oldest credits from the pile and mints a Statement. the Core holds it and records its cost, the sum of the 80 cost bases, and its rating, the sum of the credits' scores. `composeChosen(ids, format)` composes 80 credits the caller names with an art format 0 to 7. it is an owner switch (`chosenComposeOn`), off at launch.
-* **credits can sell before they compose.** the credit sale window is an owner switch (`creditSaleOn`), off at launch. while on, every pile credit is for sale through `ControllerV1.buyCredit` from its acquisition time. the price falls linearly from a start to a floor over `creditWindow` (4 hours at launch), and the floor is 1.1 times the highest of the credit's cost, its exit token baseline and its score-scaled eth backstop (the floor rate times `max(1, score / refScore)`, where the floor rate is the larger of the climbed eth bid rate and the remembered peak). the baseline reads the live exit token pool and only lifts the floor. the cost share of the proceeds refills the eth pot and the rest funds the coin buyback. compose waits for a credit's window.
-* **statements sell at a falling price.** `ControllerV1.buy` sells a held statement. the start price is 1.5 times an anchor (the anchor moves up with sales and decays with time). the price falls fast from the start to the knee, then slowly to the floor. the curve is in percent of the statement's price reference, the larger of its cost and the floor rate (the larger of the climbed eth bid rate and the remembered peak) times its rating over `refScore`. at launch the knee and the floor are both 100 percent of the reference, so the price reaches the reference at hour 50 and an unsold statement sits there.
-* **each sale funds a buy and burn.** 50 percent of the proceeds (`saleToBuybackBps`) go to the coin buyback, which swaps eth for the coin in the pool and burns it. the other 50 percent refill the eth pot.
-* **the redeem burn reserve.** each redemption of a statement moves 20 percent of the reserve (`redeemBurnBps`) to the buyback, so every statement that leaves the engine, sold or redeemed, funds a buy and burn.
-* **phase 2.** the owner sets an exitModule and switches `exitMode` from 0 (off) to 1 (hold) or 2 (on). from mode 1, `exitStatement` redeems a held statement once its curve price has reached its floor. a redemption must return at least `rating * unitPerPoint` of the exitToken less `exitSlippageBps`, and the Core keeps what arrives. in mode 2 the Core also buys credits with the exitToken, per point: `score * unitPerPoint` less `exitBidMarginBps` (20 percent at launch). such a credit enters the same pile with an eth cost basis of its score-scaled eth backstop (the floor rate times `max(1, score / refScore)`, where the floor rate is the larger of the climbed eth bid rate and the remembered peak), read from no pool, so the bid needs no pool key. once the exitToken trades, the owner sets its v4 pool key on the controller, and a statement's asking price is at least the higher of its curve price and its redemption value in eth.
-
-the full rules and the settings table are in docs/ARCHITECTURE.md. the owner decisions behind them are in docs/FLOW.md.
+an erc20 on ethereum mainnet (CC) whose trading fees fund a permanent public bid for Credits NFTs. the engine buys Credits at the bid or sweeps cheaper listings, composes 80 into a Statement, sells the Statement at a falling price, and burns CC with half of every sale. when the balance token is live, Statements redeem into it by rating and the engine buys Credits with it by score. the coin and pool run on the live artcoins v2 stack. status: unaudited by humans, launching on the AI run reviews in docs/reviews/, not deployed. the working branch is named in docs/STATUS.md.
 
 ```mermaid
 graph LR
-    swap["swap in the coin/eth pool"]
-    hook["v2 skim hook<br/>6.9 points of volume"]
-    router["FeeRouter<br/>6.65022 points, flush<br/>payee, engine"]
-    core["Core<br/>eth pot, redeem burn reserve"]
-    buy["sellForEth, buyListing<br/>credits at the bid"]
-    compose["compose<br/>80 credits, one Statement"]
-    pile["pile<br/>every credit, cost basis in eth"]
-    held["held by the Core<br/>1.5x anchor falling to the reference"]
-    credsale["ControllerV1.buyCredit<br/>sale window, off at launch"]
-    sold["ControllerV1.buy<br/>sellTo"]
-    burn["coin buy and burn"]
-    exit["exitStatement<br/>exitMode 1 or 2, at the floor"]
-
-    swap --> hook --> router --> core --> buy --> pile --> compose --> held
-    pile --> credsale
-    held --> sold
-    held --> exit
-    sold -->|50 percent| burn
-    sold -->|50 percent| core
-    exit -->|reserve share| burn
-    credsale -->|cost share| core
-    credsale -->|rest| burn
+    swap["swap in the coin/eth pool"] --> hook["v2 skim hook<br/>6.9 points of volume"]
+    hook --> core["Core: pot, reserve, payee claim"]
+    core --> buy["sellForEth, buyListing"]
+    buy --> pile["the pile, cost basis per credit"]
+    pile --> compose["compose, 80 credits"]
+    compose --> held["held Statement, 1.5x reference falling to the floor"]
+    held --> sold["ControllerV1.buy"]
+    held --> redeem["redeemStatement, balance side"]
+    sold -->|half| burn["coin buy and burn"]
+    sold -->|half| core
+    redeem -->|reserve share| burn
 ```
 
 ## contracts
 
-five contracts are ours. the artcoins v2 stack is live on mainnet (`script/config/v2-mainnet.json`) and enters the engine as a config input (`script/config/mainnet.json`).
-
 | name | role |
 |---|---|
-| Core | custody and every rule: pots, bid, the pile, doors, compose, `composeChosen`, `sellTo`, `sellCreditTo`, exit, buyback, settings, owner doors, locks |
-| CoreLib | library of the Core called by delegatecall: settings write, bid math, the buyback swap, the exitToken bid, `adopt`, `rescueCoin`, `rescueNft`, `migrate` |
-| ControllerV1 | statement sale: `priceOf`, `buy`, the price reference, the anchor, the pause, the exitToken pool key for the redemption value floor. credit sale: `creditPrice`, `buyCredit`, `buyCredits` |
-| CoreLens | read only view of the Core, the controller and the fee router in one call |
-| FeeRouter | bounty recipient of the pool: empty `receive`, `flush()` to the payees and the engine |
-| ArtCoinsTokenV2 and the v2 stack | the coin and its factory, hook, locker, escrow and anti sniper module (`script/config/v2-mainnet.json`) |
-
-each runtime contract stays under 24,576 bytes (`forge build --sizes`).
+| Core | custody and every rule: pots, the bid, the pile, compose, sales, fee booking, the pause, buyback, the balance side, owner powers, locks, migrate |
+| CoreLib | the Core's linked library, run by delegatecall in the Core's storage |
+| ControllerV1 | pricing: the statement curve and anchor, the credit sale, `valueOf`, the royalty |
+| SeaportBasicAdapter, CreditStrategyAdapter | read only pricers for `buyListing` |
 
 ## who can call what
 
 | caller | doors |
 |---|---|
-| anyone | `sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen` (when open), `sellForExitToken` (exitMode 2), `exitStatement`, `buyback`, `skim`, `ControllerV1.buy`, `ControllerV1.buyCredit` and `buyCredits` (when the credit sale is on), `FeeRouter.flush` |
-| owner of the Core | `setSettings`, `setRate`, `setController`, `setExitModule`, `refreshUnitPerPoint`, `releaseRedeemBurn`, `setCreditCostToPotBps`, `setChosenComposeOn`, `setMinCcToChoose`, `addTarget`, `removeTarget`, `rescueCoin`, `rescueNft`, `setSuccessor`, `migrate`, two step `transferOwnership` |
-| owner on the controller | the sale settings, `setRefScore`, the credit sale settings (`setCreditSaleOn`, `setCreditWindow`, `setCreditFloorBps`, `setCreditStartBps`), `setAnchorBps`, `setExitPoolKey`, `setPaused` (blocks `buy` and `buyCredit`, composing, the bid, exits and buybacks continue) |
-| owner of the router | `setEngine`, `setPayees`, `setSplitStart` |
-| locks, one way | `lockController`, `lockExitModule`, `lockTargets`, `lockSuccessor` on the Core, `lock` on the router |
+| anyone | `sellForEth`, `buyListing`, `compose`, `composeChosen` (when open), `setHeldFormat` (with 1 CC), `sellForBalance` (when on), `redeemStatement` (when on), `buyback`, `book`, `fund`, `collectEscrow`, `claimPayee`, `adopt`, `ControllerV1.buy`, `buyCredit`, `claimRoyalty` |
+| the owner | every setting, the controller, the balance module, the adapters, the successor, the four locks, `migrate`, `rescueCoin`, `rescueNft`, `setPaused`, `setPayee`, the handover |
 
-eth, credits and exitToken leave the Core at the owner's call only through `migrate` to the successor. coin leaves through `rescueCoin` and NFTs off the books through `rescueNft`. the owner sets the price the engine pays and the exitModule that redeems statements, so holders trust the owner key (docs/ARCHITECTURE.md section 10).
+eth, credits and the balance token leave the Core at the owner's call only through `migrate` to the successor. the owner sets the price the engine pays, so holders trust the owner key (docs/SPEC.md section 11).
 
 ## build and test
 
-prerequisites: foundry 1.8.1 and an archive mainnet rpc (drpc.org, mevblocker.io, blastapi.io or tenderly all work).
+prerequisites: foundry 1.8.1, an archive mainnet rpc.
 
 ```sh
 git clone --recurse-submodules <repo>
-cd credits-engine
-cp .env.example .env
+cd cc
+cp .env.example .env            # MAINNET_RPC_URL, FORK_BLOCK=26158000
 set -a; . ./.env; set +a
 forge build
 forge test --match-path test/Sale.t.sol
 ```
 
-* tests run on a mainnet fork pinned to block 26158000 (`FORK_BLOCK`) against the live v2 stack. foundry caches fork state on disk, so the first run is slow.
-* during work, run `forge build` and `forge test --match-path` on the test files the change touches. the full suite, the deep invariant runs and the rehearsal run once, on a frozen candidate, with `CANDIDATE_RUN=1`.
-* the guard `script/tools/guard-forge-test.sh` (a PreToolUse hook in `.claude/settings.json`) refuses a whole-suite `forge test` and any `INVARIANT_DEEP=1` run unless the command carries `CANDIDATE_RUN=1`.
-* the production contracts (`src/*.sol`, `src/lib/CoreLib.sol`) and the deploy scripts that use `new` compile with via_ir. tests reach them through `src/interfaces/ICore.sol`, `IControllerV1.sol` and `ICoreLib.sol` (generated by `script/tools/gen-interfaces.sh`, rerun after an abi change) and `test/utils/Prod.sol`. tests import the interfaces and leave `src/Core.sol` and `src/ControllerV1.sol` alone. `test/BuildIdentity.t.sol` pins the shipped build hashes.
-* stand ins are in `test/standins/`, attack contracts in `test/attackers/`.
-* the simulator runs on node: `node sim/engine.test.mjs`, `node sim/build.mjs`, `node sim/run.mjs q1`.
-
-toolchain notes and timings: docs/HANDOFF.md section 7.
+tests run on a mainnet fork against the live v2 stack. during work: `forge build` and `forge test --match-path` on the files touched. the full suite, the deep invariant runs and the rehearsal run once, on a frozen candidate, with `CANDIDATE_RUN=1`; a hook refuses a whole suite run without it. after a forge run: `git checkout foundry.lock; git submodule update -- lib/solady`. the simulator: `node sim/engine.test.mjs`.
 
 ## deploy
 
-one script, `script/Deploy.s.sol`, deploys the system and launches the coin through the v2 factory, driven by one config file (`script/config/mainnet.json`, copied to the gitignored `script/config/local.json`). the factory owner key signs everything, and `Resume.s.sol` sets the router split start after the launch. read-only `Preflight.s.sol` and `Postflight.s.sol` check the system before and after, and `Lock.s.sol` sends `coin.lockRecipients()`. the owner address is an EIP 7702 delegated account, so broadcasts use `--slow`. the owner decisions in docs/HANDOFF.md are settled before launch.
-
-the runbook, with the commands in order, is docs/DEPLOY.md.
-
-one wrapper, `script/deploy.sh <env>`, runs that path for every environment. it sources a values-only file (`script/env/<env>.env`) and runs the same build, preflight, deploy, resume and postflight. `script/deploy.sh local` deploys to a local anvil mainnet fork; `script/env/mainnet.env` ships with required values empty, so `script/deploy.sh mainnet` refuses until they are filled, and the mainnet launch still signs from the owner's own wallet per docs/DEPLOY.md. on success the wrapper writes `deployments/<chainId>.json` in the shape the UI reads.
-
-## local end to end
-
-one command deploys through the same path as mainnet on an anvil mainnet fork, seeds real Credits and the exit stand ins, and runs a full scenario with a check after each stage:
-
-```bash
-script/dev/e2e.sh            # PHASE=post: the full engine including the exit side
-PHASE=pre script/dev/e2e.sh  # the engine before the exit token exists
-KEEP=1 script/dev/e2e.sh     # leave anvil running for the UI, print the UI command
-```
-
-`PHASE` selects how far the engine is driven. `pre` is the engine before the exit token exists: no exit module, exitMode 0. The coin trades, the eth bid, the credit sale, composition, the statement sale, pause and the buyback all run. `post` (the default) adds the exit side: exit module, exit pool key, exitMode 2, a statement redemption and the exit token bid.
-
-Both phases fire every user facing and keeper transaction type the engine has in that phase at least once: coin buys and sells through the universal router, the fee flush, the payee split start, `sellForEth` (batch and single), `adopt`, `compose` and `composeChosen`, `buyCredit` and `buyCredits`, a statement buy at a curve point, the keeper buyback, pause and unpause, and owner settings changes (a sale setting, a credit setting, the rating reference, the rate and the settings struct). `post` also fires `sellForExitToken` (single and batch), `exitStatement` and `releaseRedeemBurn`. Both phases end with live content: at least two statements for sale (one composed early, one composed last) and at least three pile credits of mixed window status. After the stages the run prints an event inventory: every event the Core, the controller and the router emitted with its count, and every event in the ABI that never fired with a reason.
-
-`migrate` is excluded: it retires the engine, which would leave nothing for the UI to show. `buyListing` is not represented: the only local allowed target is the CreditStrategy, whose cheapest listing (0.036 eth) is about four times the rate cap, and the eth bid read is bounded by the cap, so no listing sits below the bid; a Seaport order needs an externally signed listing a bare fork cannot produce.
-
-The run starts anvil (block 26158000, chain id 31337, `--auto-impersonate`), runs `script/deploy.sh local`, seeds, warps the node between stages, prints a final report and the gas per stage, then stops anvil unless `KEEP=1`. No mainnet, no private key: the signer is the real v2 factory owner, impersonated on the fork. `PORT` and `E2E_RPC_URL` move it off the default 8545 (for example `PORT=8546 E2E_RPC_URL=http://127.0.0.1:8546`).
-
-To drive the UI against a running fork, run with `KEEP=1` (it prints the UI command and leaves the record at `deployments/31337.json`), or start anvil and deploy by hand:
-
-```bash
-script/dev/anvil.sh &                 # fork on http://127.0.0.1:8545
-script/deploy.sh local                # writes deployments/31337.json
-cd <ui worktree>/web && RECORD=../../<repo>/deployments/31337.json npm run dev:local
-```
+one script, script/Deploy.s.sol, nine transactions through the deterministic deployer, driven by script/config/mainnet.json copied to the gitignored local.json. the runbook is docs/RUNBOOK.md.
 
 ## docs
 
 | file | what |
 |---|---|
-| docs/ARCHITECTURE.md | the system as built: intent at a glance, settings, rules, owner powers, accepted risks |
-| docs/FLOW.md | the dated owner decision log |
-| docs/INTEGRATION.md | call sequences, events, reverts and gas for integrators and keepers |
-| docs/DEPLOY.md | the launch runbook, the parameter sign off table, owner commands after launch |
-| docs/HANDOFF.md | the objective, open owner decisions, evidence state, how to work in this repo |
-| docs/SIMULATION.md, sim/index.html | the simulator study and the offline simulator |
-| docs/REVIEW-*.md, docs/REHEARSAL-*.md | independent reviews and rehearsals, each pinned to the commit it examined |
-| docs/archive/ | history (see docs/archive/README.md) |
+| docs/SPEC.md | the system as built: intent at a glance, settings, every rule, owner powers, invariants, accepted risks |
+| docs/DECISIONS.md | the dated owner decision log; section 11 is the product agreement |
+| docs/STATUS.md | where the work stands, the plan, the freeze table, how to work in this repo |
+| docs/RUNBOOK.md | the launch, the owner commands after it, recovery |
+| docs/INTEGRATION.md | the call surface for keepers and frontends |
+| script/dev/, script/deploy.sh | the local end to end on an anvil fork: `local.sh`, `e2e.sh`, `anvil.sh`, `Seed.s.sol`, `Scenario.s.sol`; docs/RUNBOOK.md section 7 |
+| docs/reviews/ | reviews, rehearsals and acceptances, each pinned to a commit |
+| docs/notes/ | the market data notes and the bid study |
+| sim/README.md | the simulator |
 
 ## license
 
-MIT. listing purchase checks and twap buyback patterns adapted from tokenworks (MIT).
+MIT. the buyback swap pattern is adapted from tokenworks (MIT).

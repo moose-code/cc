@@ -26,7 +26,7 @@ bytes32 constant V2_CODEHASH_BURN_ROUTER = 0x937f1a92e636aed39eb430bd3be28822014
 
 // the EIP 7702 delegation of the owner account, read at V2_PIN_BLOCK. the account runs the code of OWNER_DELEGATE
 // (Uniswap Calibur, 24,504 bytes, no proxy). preflight requires the account code, the delegate code hash and an empty
-// key registry (`keyCount()` 0), so no registered key can act as the owner. docs/REVIEW-sandwich-delegate.md section 2
+// key registry (`keyCount()` 0), so no registered key can act as the owner. docs/reviews/REVIEW-sandwich-delegate.md section 2
 bytes constant OWNER_DELEGATION_CODE = hex"ef0100612373d7003d694220f7800eeaf8e3924c0951d3";
 address constant OWNER_DELEGATE = 0x612373D7003d694220f7800EeaF8E3924c0951D3;
 bytes32 constant OWNER_DELEGATE_CODEHASH = 0xff0357b543bbb94845b6791a8becac5e87d467814f86538a62649c877227d631;
@@ -36,7 +36,6 @@ bytes32 constant OWNER_DELEGATE_CODEHASH = 0xff0357b543bbb94845b6791a8becac5e87d
 /// arguments
 struct LaunchConfig {
     // the artcoins stack. the only block that changes when a new artcoins version ships
-    /// `feeSource` is not read from the config file: the deploy creates the fee router and fills it in
     Stack stack;
     address mevModule;
     // launch inputs. the shipped config file holds the live stack and every field below. test/Config.t.sol asserts that
@@ -45,7 +44,7 @@ struct LaunchConfig {
     address creator;
     string name;
     string symbol;
-    /// the coin's image url and description, set in the launch transaction (docs/FLOW.md decision 54). bytes are capped
+    /// the coin's image url and description, set in the launch transaction (docs/DECISIONS.md decision 54). bytes are capped
     /// by the coin (`MAX_IMAGE_BYTES` 2048, `MAX_DESCRIPTION_BYTES` 4096). empty is allowed, the coin admin sets them
     /// later with `updateImage` and `updateDescription`
     string image;
@@ -77,17 +76,17 @@ struct LaunchConfig {
     uint32 sniperSeconds;
     /// the protocol's share of the locker rewards, bps. 0 appends no protocol slot. the factory default is 2_000
     uint16 protocolBps;
-    /// the coin is launched restricted (docs/FLOW.md 18) and the extra allowlist entries beyond the factory's own seeds.
-    /// the Core is not listed (docs/FLOW.md 29)
+    /// the coin is launched restricted (docs/DECISIONS.md 18) and the extra allowlist entries beyond the factory's own seeds.
+    /// the Core is not listed (docs/DECISIONS.md 29)
     bool restricted;
     address[] allowed;
-    // the fee router (docs/FLOW.md 10.6): one payee at launch, by parts per million of a flush. later payees are set
-    // through `setPayees`
-    address creatorPayee;
-    /// the payee's share of the gross flush, ppm. the router receives bountyBps / 10_000 of the baseline skim: 9_638 / 10_000
-    /// of 690 bps is 665.022 bps of volume (6.65022 points). 112_778 ppm of that is 0.75 points of volume:
-    /// 0.75 / 6.65022 * 1e6 = 112_778.2, rounded down
-    uint32 payeePpm;
+    /// the recipients of additional payouts that `SeaportBasicAdapter` accepts at launch. the OpenSea fee collector
+    address[] seaportRecipients;
+    /// the address `Core.claimPayee` pays at launch. the owner replaces it with `Core.setPayee`. its share is
+    /// `settings.payeePpm`: the Core receives bountyBps / 10_000 of the baseline skim, 9_638 / 10_000 of 690 bps is
+    /// 665.022 bps of volume (6.65022 points). 75_185 ppm of that is 0.5 points of volume:
+    /// 0.5 / 6.65022 * 1e6 = 75_185.2, rounded down
+    address payee;
     // explicit overrides of pinned preflight rules. all false by default. each one is part of the config hash
     /// allow a bountyBps other than 9638
     bool allowBounty;
@@ -106,7 +105,7 @@ abstract contract ConfigReader is CommonBase {
     uint256 internal constant RATE_START_MAX = RATE_START_MAX_WEI;
 
     /// @notice the default config in memory: the fixed mainnet parts and the launch parameters of
-    /// docs/FLOW.md sections 10.1 and 10.6, with the v2 stack addresses, owner, creator, payees, name and salt left unset (the symbol is CC). tests fill them
+    /// docs/DECISIONS.md sections 10.1 and 10.6, with the v2 stack addresses, owner, creator, payees, name and salt left unset (the symbol is CC). tests fill them
     function defaultConfig() internal pure returns (LaunchConfig memory c) {
         c.stack = Mainnet.defaultStack();
         c.symbol = "CC";
@@ -126,7 +125,8 @@ abstract contract ConfigReader is CommonBase {
         c.sniperSeconds = 1800;
         c.protocolBps = 2000;
         c.restricted = true;
-        c.payeePpm = 112_778;
+        c.seaportRecipients = new address[](1);
+        c.seaportRecipients[0] = Mainnet.OPENSEA_FEE_COLLECTOR;
     }
 
     /// @notice parses a config file. a missing key reverts inside the cheatcode, a number that does not fit its field
@@ -144,8 +144,7 @@ abstract contract ConfigReader is CommonBase {
             poolFee: _u24(j, ".stack.poolFee"),
             factory: vm.parseJsonAddress(j, ".stack.factory"),
             locker: vm.parseJsonAddress(j, ".stack.locker"),
-            escrow: vm.parseJsonAddress(j, ".stack.escrow"),
-            feeSource: address(0)
+            escrow: vm.parseJsonAddress(j, ".stack.escrow")
         });
         c.mevModule = vm.parseJsonAddress(j, ".stack.mevModule");
         c.owner = vm.parseJsonAddress(j, ".owner");
@@ -179,9 +178,10 @@ abstract contract ConfigReader is CommonBase {
         s.peakHalfLife = _u32(j, ".settings.peakHalfLife");
         s.buybackDelay = _u16(j, ".settings.buybackDelay");
         // forge-lint: disable-start(unsafe-typecast)
-        s.exitMode = uint8(_uint(j, ".settings.exitMode", type(uint8).max));
-        s.exitSlippageBps = _u16(j, ".settings.exitSlippageBps");
-        s.exitBidMarginBps = _u16(j, ".settings.exitBidMarginBps");
+        s.redeemOn = vm.parseJsonBool(j, ".settings.redeemOn");
+        s.balanceBidOn = vm.parseJsonBool(j, ".settings.balanceBidOn");
+        s.redeemSlippageBps = _u16(j, ".settings.redeemSlippageBps");
+        s.balanceBidMarginBps = _u16(j, ".settings.balanceBidMarginBps");
         s.redeemBurnBps = _u16(j, ".settings.redeemBurnBps");
         s.buybackSlice = uint128(_uint(j, ".settings.buybackSlice", type(uint128).max));
         s.keeperFee = uint64(_uint(j, ".settings.keeperFee", type(uint64).max));
@@ -190,8 +190,8 @@ abstract contract ConfigReader is CommonBase {
         s.callerFee = uint64(_uint(j, ".settings.callerFee", type(uint64).max));
         s.callerMaxBaseFee = uint48(_uint(j, ".settings.callerMaxBaseFee", type(uint48).max));
         // forge-lint: disable-end(unsafe-typecast)
-        s.feeToBuybackBps = _u16(j, ".settings.feeToBuybackBps");
         s.feeToRedeemBurnBps = _u16(j, ".settings.feeToRedeemBurnBps");
+        s.payeePpm = _u24(j, ".settings.payeePpm");
     }
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {
@@ -201,7 +201,6 @@ abstract contract ConfigReader is CommonBase {
             fastDecayBpsPerHour: _u16(j, ".sale.fastDecayBpsPerHour"),
             kneeBps: _u32(j, ".sale.kneeBps"),
             slowDecayBpsPerHour: _u16(j, ".sale.slowDecayBpsPerHour"),
-            floorBps: _u16(j, ".sale.floorBps"),
             anchorHalfLife: _u32(j, ".sale.anchorHalfLife"),
             anchorMinCost: _u128(j, ".sale.anchorMinCost")
         });
@@ -216,7 +215,9 @@ abstract contract ConfigReader is CommonBase {
             window: _u32(j, ".credit.window"),
             floorBps: _u16(j, ".credit.floorBps"),
             startBps: _u32(j, ".credit.startBps"),
-            refScore: _u32(j, ".credit.refScore")
+            refScore: _u32(j, ".credit.refScore"),
+            royaltyBps: _u16(j, ".credit.royaltyBps"),
+            royaltyRecipient: vm.parseJsonAddress(j, ".credit.royaltyRecipient")
         });
     }
 
@@ -235,8 +236,8 @@ abstract contract ConfigReader is CommonBase {
         c.protocolBps = _u16(j, ".launch.protocolBps");
         c.restricted = vm.parseJsonBool(j, ".launch.restricted");
         c.allowed = vm.parseJsonAddressArray(j, ".launch.allowed");
-        c.creatorPayee = vm.parseJsonAddress(j, ".router.creatorPayee");
-        c.payeePpm = _u32(j, ".router.payeePpm");
+        c.seaportRecipients = vm.parseJsonAddressArray(j, ".adapters.seaportRecipients");
+        c.payee = vm.parseJsonAddress(j, ".payee.address");
     }
 
     // every narrowing below follows a bounds check, so the casts cannot truncate
@@ -283,14 +284,15 @@ abstract contract ConfigReader is CommonBase {
 
     /// @notice the placeholders every launch must fill: returns the names of those still unset
     function unsetFields(LaunchConfig memory c) internal pure returns (string[] memory out) {
-        string[] memory tmp = new string[](12);
+        string[] memory tmp = new string[](13);
         uint256 n;
         if (c.owner == address(0)) tmp[n++] = "owner";
         if (c.creator == address(0)) tmp[n++] = "creator";
+        if (c.credit.royaltyRecipient == address(0)) tmp[n++] = "credit.royaltyRecipient";
         if (bytes(c.name).length == 0) tmp[n++] = "name";
         if (bytes(c.symbol).length == 0) tmp[n++] = "symbol";
         if (c.salt == bytes32(0)) tmp[n++] = "salt";
-        if (c.creatorPayee == address(0)) tmp[n++] = "router.creatorPayee";
+        if (c.payee == address(0)) tmp[n++] = "payee.address";
         // a config file that leaves a stack address at zero is refused
         if (c.stack.hook == address(0)) tmp[n++] = "stack.hook";
         if (c.stack.factory == address(0)) tmp[n++] = "stack.factory";
@@ -312,8 +314,7 @@ abstract contract ConfigReader is CommonBase {
         Sale memory k = c.sale;
         if (k.markupBps < 10_000 || k.markupBps > 40_000) return "markupBps";
         if (k.startCapBps < k.markupBps || k.startCapBps > 200_000) return "startCapBps";
-        if (k.floorBps < 1_000 || k.floorBps > 10_000) return "floorBps";
-        if (k.kneeBps < k.floorBps || k.kneeBps > k.startCapBps) return "kneeBps";
+        if (k.kneeBps < 1_000 || k.kneeBps > k.startCapBps) return "kneeBps";
         if (k.fastDecayBpsPerHour < 1 || k.fastDecayBpsPerHour > 10_000) return "fastDecayBpsPerHour";
         if (k.slowDecayBpsPerHour < 1 || k.slowDecayBpsPerHour > 10_000) return "slowDecayBpsPerHour";
         if (k.anchorHalfLife < 1 days || k.anchorHalfLife > 90 days) return "anchorHalfLife";

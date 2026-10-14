@@ -9,9 +9,16 @@ import {IV4Router} from "v4-periphery/src/interfaces/IV4Router.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
-import {ICredits, IStatements, ICreditScore, ICoin, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
-import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {
+    ICredits,
+    IStatements,
+    ICreditScore,
+    IBalanceModule,
+    Mainnet,
+    Settings,
+    Sale,
+    CreditSale
+} from "../../src/interfaces/Interfaces.sol";
 
 interface IUniversalRouterR {
     function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
@@ -27,21 +34,20 @@ interface IERC20R {
     function totalSupply() external view returns (uint256);
 }
 
-/// @notice one local anvil fork scenario stage per run, selected by the STAGE env var. each stage broadcasts its actions
-/// from impersonated accounts and asserts its result, so a failed stage reverts the forge run with a clear message.
-/// `script/dev/e2e.sh` warps the node (evm_increaseTime) between stages and passes the env. no mainnet, no private key.
+/// @notice one stage of the anvil fork scenario per run, selected by the STAGE env var. each stage broadcasts from
+/// impersonated accounts and asserts its result, so a failed stage reverts the forge run with a message.
+/// `script/dev/e2e.sh` warps the node between stages. every door of the Core and the controller that a user or a keeper
+/// calls runs at least once. `buyListing` is outside the scenario: the CreditStrategy lists at about four times the
+/// rate cap and a Seaport order needs an external signature.
 ///
-/// the stages are the same for both PHASE values up to the exit side. PHASE=pre stops before the exit stages, so the
-/// engine ends with exitMode 0 and no exit module. PHASE=post runs the exit stages too: exit module, pool key,
-/// exitMode 2, a statement redemption and the exit token bid. the final state of both phases holds at least two
-/// statements for sale (one composed early, one composed last) and at least three pile credits of mixed window status.
+/// PHASE=pre runs the stages up to `buyback`, then `fresh-fill`, `fresh-compose` and `report`. PHASE=post adds
+/// `fill-d`, `compose-d`, `redeem` and `balance-bid` before the fresh stages and needs the balance side from Seed.
 ///
-/// env: CORE (the engine), OWNER (the engine and factory owner), A1 A2 A3 (actors), KEEPER, TRADER, and for the exit
-/// stages EXIT_TOKEN and EXIT_MODULE.
+/// env: CORE, OWNER, A1 A2 A3 (credit holders), KEEPER (calls keeper doors), TRADER (trades the coin and holds the CC that
+/// `composeChosen` and `setHeldFormat` require), DEV_WALLET (stage `dev-wallet` only).
 contract Scenario is Script {
     ICore internal core;
     IControllerV1 internal ctl;
-    IFeeRouter internal router;
     address internal coin;
     PoolKey internal key;
 
@@ -52,12 +58,9 @@ contract Scenario is Script {
     address internal KEEPER;
     address internal TRADER;
 
-    uint256 internal constant BPS = 10_000;
-
     function run() external {
         core = ICore(payable(vm.envAddress("CORE")));
         ctl = IControllerV1(core.controller());
-        router = IFeeRouter(payable(core.FEE_SOURCE()));
         coin = core.COIN();
         key = PoolKey({
             currency0: Currency.wrap(address(0)),
@@ -75,44 +78,42 @@ contract Scenario is Script {
 
         bytes32 stage = keccak256(bytes(vm.envString("STAGE")));
         if (stage == keccak256("a")) _a();
+        else if (stage == keccak256("dev-wallet")) _devWallet();
         else if (stage == keccak256("fill-a")) _fillA();
         else if (stage == keccak256("adopt")) _adopt();
         else if (stage == keccak256("compose-a")) _composeA();
+        else if (stage == keccak256("claims")) _claims();
         else if (stage == keccak256("d-open")) _dOpen();
         else if (stage == keccak256("d-buy")) _dBuy();
         else if (stage == keccak256("fill-b")) _fillB();
         else if (stage == keccak256("compose-b")) _composeB();
+        else if (stage == keccak256("format")) _format();
         else if (stage == keccak256("settings")) _settings();
         else if (stage == keccak256("pause")) _pause();
         else if (stage == keccak256("buyback")) _buyback();
-        else if (stage == keccak256("exit-setup")) _exitSetup();
-        else if (stage == keccak256("fill-d")) _fillD();
+        else if (stage == keccak256("fill-d")) _fill(A1, 80, "fill-d");
         else if (stage == keccak256("compose-d")) _composeD();
-        else if (stage == keccak256("exit-redeem")) _exitRedeem();
-        else if (stage == keccak256("fresh-fill")) _freshFill();
+        else if (stage == keccak256("redeem")) _redeem();
+        else if (stage == keccak256("balance-bid")) _balanceBid();
+        else if (stage == keccak256("fresh-fill")) _fill(A1, 80, "fresh-fill");
         else if (stage == keccak256("fresh-compose")) _freshCompose();
         else if (stage == keccak256("report")) _report();
         else revert(string.concat("unknown STAGE ", vm.envString("STAGE")));
     }
 
-    // ------------------------------------------------------------------ a: trade the coin, fund the pot, flush fees
+    // ------------------------------------------------------------------ a: trade the coin, fees reach the pot
 
-    /// coin buys and a sell through the universal router, each followed by a keeper flush of the fee router. the flush
-    /// books swap fee eth into the core (FeesAdded), fills the redeem burn reserve, and, past the split start, pays the
-    /// router payee (SplitStarted). leaves ethPot at or above the target the later stages draw on.
+    /// coin buys by the trader, each followed by a keeper `book`, until the pot holds the target, then a sell of half
+    /// the coin. the first `book` at or after the end of the anti sniper window latches the payee share.
     function _a() internal {
         uint256 target = 0.9 ether;
         uint256 potBefore = core.ethPot();
         for (uint256 i; i < 10 && core.ethPot() < target; ++i) {
-            vm.broadcast(TRADER);
-            IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: 3 ether}(
-                hex"10", _v4Swap(true, 3 ether), block.timestamp + 1 hours
-            );
+            _buyCoin();
             vm.broadcast(KEEPER);
-            router.flush();
+            core.book();
         }
-        uint256 bal = IERC20R(coin).balanceOf(TRADER);
-        uint256 sellIn = bal / 2;
+        uint256 sellIn = IERC20R(coin).balanceOf(TRADER) / 2;
         vm.broadcast(TRADER);
         IERC20R(coin).approve(Mainnet.PERMIT2, type(uint256).max);
         vm.broadcast(TRADER);
@@ -120,44 +121,59 @@ contract Scenario is Script {
         vm.broadcast(TRADER);
         IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute(hex"10", _v4Swap(false, sellIn), block.timestamp + 1 hours);
         vm.broadcast(KEEPER);
-        router.flush();
+        core.book();
 
         require(core.ethPot() >= target, "stage a: pot not funded to target");
+        require(core.payeeOn(), "stage a: the payee share did not latch");
         console.log("stage a: ethPot before", potBefore);
         console.log("stage a: ethPot after", core.ethPot());
         console.log("stage a: ethRedeemBurn", core.ethRedeemBurn());
     }
 
+    /// the dev wallet `DEV_WALLET` buys coin with `dev.walletCoinEth` of the launch config. the restricted coin moves only
+    /// through the pool, so the wallet trades like any holder
+    function _devWallet() internal {
+        address wallet = vm.envAddress("DEV_WALLET");
+        string memory cfg = vm.readFile(vm.envOr("LAUNCH_CONFIG", string("script/config/anvil.json")));
+        uint256 eth = vm.parseJsonUint(cfg, ".dev.walletCoinEth");
+        vm.broadcast(wallet);
+        IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: eth}(hex"10", _v4Swap(true, eth), block.timestamp + 1 hours);
+        require(IERC20R(coin).balanceOf(wallet) > 0, "dev-wallet: no coin bought");
+        console.log("dev-wallet: coin", IERC20R(coin).balanceOf(wallet));
+    }
+
+    function _buyCoin() internal {
+        vm.broadcast(TRADER);
+        IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: 3 ether}(
+            hex"10", _v4Swap(true, 3 ether), block.timestamp + 1 hours
+        );
+    }
+
     // ------------------------------------------------------------------ fill-a: sell credits into the eth bid
 
-    /// @dev the eth bid pays sellers from `ethPot` at the current rate. a long idle (the warps that drive a statement to
-    /// its floor) loosens the rate ceiling toward the cap, so an 80 credit fill can cost more than the pot holds. the
-    /// owner resets the rate to the launch rate, which also resets the idle loosening through the checkpoint, then coin
-    /// buys and a flush top the pot up, so every credit of a fill prices above zero and the pot covers the fill.
+    /// @dev a long idle loosens the bid toward its cap, so an 80 credit fill could cost more than the pot holds. the
+    /// owner restates the bid at the launch rate, then coin buys and `book` top the pot up to the target
     function _primeBid() internal {
         uint256 launchRate = core.RATE_START();
         vm.broadcast(OWNER);
         core.setRate(launchRate);
         uint256 target = 1 ether;
         for (uint256 i; i < 25 && core.ethPot() < target; ++i) {
-            vm.broadcast(TRADER);
-            IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: 3 ether}(
-                hex"10", _v4Swap(true, 3 ether), block.timestamp + 1 hours
-            );
+            _buyCoin();
             vm.broadcast(KEEPER);
-            router.flush();
+            core.book();
         }
         require(core.ethPot() >= target, "prime: pot not funded to target");
     }
 
-    /// a batch sell and a single sell into the eth bid, covering both the list and the minOut overloads of sellForEth.
+    /// a batch sell and a single sell with `minOut`, the two overloads of `sellForEth`
     function _fillA() internal {
         _primeBid();
         vm.broadcast(A1);
         ICredits(Mainnet.CREDITS).setApprovalForAll(address(core), true);
 
-        uint256[] memory batch = _creditsOf(A1, 80);
         uint256 pileBefore = core.pileSize();
+        uint256[] memory batch = _creditsOf(A1, 80);
         vm.broadcast(A1);
         core.sellForEth(batch);
         require(core.pileSize() == pileBefore + 80, "fill-a: the batch sell did not enter the pile");
@@ -169,9 +185,19 @@ contract Scenario is Script {
         console.log("fill-a: batch 80 and single 1 sold, pileSize", core.pileSize());
     }
 
+    /// 80 credits of `who` sold into the eth bid after the bid is primed
+    function _fill(address who, uint256 n, string memory name) internal {
+        _primeBid();
+        uint256[] memory ids = _creditsOf(who, n);
+        vm.broadcast(who);
+        core.sellForEth(ids);
+        require(core.pileSize() >= n, string.concat(name, ": fewer credits in the pile than sold"));
+        console.log(string.concat(name, ": sold, pileSize"), core.pileSize());
+    }
+
     // ------------------------------------------------------------------ adopt: credits sent straight to the engine
 
-    /// two credits transferred to the core with no sale, then adopted into the pile at the price state basis.
+    /// two credits transferred to the Core outside the doors, then adopted into the pile at the price state
     function _adopt() internal {
         uint256[] memory ids = _creditsOf(A3, 2);
         vm.broadcast(A3);
@@ -189,10 +215,10 @@ contract Scenario is Script {
         console.log("adopt: pileSize", core.pileSize());
     }
 
-    // ------------------------------------------------------------------ compose-a: default page, buy the statement
+    // ------------------------------------------------------------------ compose-a: system compose, buy the statement
 
-    /// composes the oldest 80 pile credits into a statement, then a buyer takes it at its curve price. the first
-    /// statement sale, and the one that funds the buyback pot.
+    /// `compose()` takes the 80 oldest pile credits. a buyer takes the statement at `grossPriceOf`, the price plus the
+    /// royalty, which is the first statement sale and the first buyback funding
     function _composeA() internal {
         require(core.pileSize() >= 80, "compose-a: fewer than 80 credits in the pile");
         vm.broadcast(KEEPER);
@@ -201,79 +227,107 @@ contract Scenario is Script {
         uint256[] memory held = core.heldStatements();
         require(held.length > 0, "compose-a: no statement held after compose");
         uint256 sid = held[held.length - 1];
+        require(core.composerOf(sid) == KEEPER, "compose-a: the composer is not recorded");
         uint256 price = ctl.priceOf(sid);
-        uint256 ref = ctl.referenceOf(sid);
-        require(price >= ref, "compose-a: the start price is below the reference");
+        uint256 gross = ctl.grossPriceOf(sid);
+        require(price >= ctl.referenceOf(sid), "compose-a: the start price is below the reference");
+        require(gross > price, "compose-a: the gross price carries no royalty");
 
+        uint256 owedBefore = ctl.royaltyOwed();
         vm.broadcast(A2);
-        ctl.buy{value: price}(sid);
+        ctl.buy{value: gross}(sid);
         (bool stillHeld,,) = core.statementInfo(sid);
         require(!stillHeld, "compose-a: the statement is still held after the buy");
         require(IStatements(Mainnet.STATEMENTS).ownerOf(sid) == A2, "compose-a: the buyer does not own the statement");
+        require(ctl.royaltyOwed() == owedBefore + (gross - price), "compose-a: the royalty was not booked");
         console.log("compose-a: statement id", sid);
-        console.log("compose-a: price paid", price);
+        console.log("compose-a: price", price);
+        console.log("compose-a: gross paid", gross);
         console.log("compose-a: ethToBuyback after", core.ethToBuyback());
     }
 
-    // ------------------------------------------------------------------ d-open: open the credit sale
+    // ------------------------------------------------------------------ claims: royalty and payee
 
+    function _claims() internal {
+        uint256 royalty = ctl.royaltyOwed();
+        require(royalty > 0, "claims: no royalty owed");
+        uint256 before = ctl.royaltyRecipient().balance;
+        vm.broadcast(KEEPER);
+        ctl.claimRoyalty();
+        require(ctl.royaltyOwed() == 0, "claims: the royalty is still owed");
+        require(ctl.royaltyRecipient().balance == before + royalty, "claims: the recipient was not paid");
+
+        uint256 owed = core.payeeOwed();
+        require(owed > 0, "claims: nothing owed to the payee");
+        vm.broadcast(KEEPER);
+        core.claimPayee();
+        require(core.payeeOwed() == 0, "claims: the payee claim is still owed");
+        console.log("claims: royalty paid", royalty);
+        console.log("claims: payee paid", owed);
+    }
+
+    // ------------------------------------------------------------------ d-open: the credit sale window
+
+    /// five credits sold into the pile, then the credit sale switched on if it is off
     function _dOpen() internal {
-        uint256[] memory ids = _creditsOf(A2, 5);
         vm.broadcast(A2);
         ICredits(Mainnet.CREDITS).setApprovalForAll(address(core), true);
+        uint256[] memory ids = _creditsOf(A2, 5);
         vm.broadcast(A2);
         core.sellForEth(ids);
 
-        vm.broadcast(OWNER);
-        ctl.setCreditSaleOn(true);
+        if (!ctl.creditSaleOn()) {
+            CreditSale memory cs = _credit();
+            cs.saleOn = true;
+            vm.broadcast(OWNER);
+            ctl.setCredit(cs);
+        }
         require(ctl.creditSaleOn(), "d-open: the credit sale is not on");
-
-        uint256[] memory page = _pilePage(0, 1);
-        console.log("d-open: credit sale on, fresh credit id", page[0]);
-        console.log("d-open: creditPrice now", ctl.creditPrice(page[0]));
+        uint256 id = core.pilePage(0, 1)[0];
+        console.log("d-open: credit sale on, oldest pile credit", id);
+        console.log("d-open: creditPrice now", ctl.creditPrice(id));
     }
 
     // ------------------------------------------------------------------ d-buy: buy credits out of the pile
 
+    /// `buyCredit` at `grossCreditPrice` and `buyCredits` at the sum of the gross prices
     function _dBuy() internal {
-        uint256[] memory pile = _pilePage(0, 3);
+        uint256[] memory pile = core.pilePage(0, 3);
         uint256 pileBefore = core.pileSize();
 
-        uint256 p0 = ctl.creditPrice(pile[0]);
+        uint256 g0 = ctl.grossCreditPrice(pile[0]);
+        require(g0 > ctl.creditPrice(pile[0]), "d-buy: the gross credit price carries no royalty");
         vm.broadcast(A3);
-        ctl.buyCredit{value: p0}(pile[0]);
+        ctl.buyCredit{value: g0}(pile[0]);
         require(ICredits(Mainnet.CREDITS).ownerOf(pile[0]) == A3, "d-buy: buyCredit did not transfer the credit");
 
         uint256[] memory two = new uint256[](2);
         two[0] = pile[1];
         two[1] = pile[2];
-        uint256 sum = ctl.creditPrice(two[0]) + ctl.creditPrice(two[1]);
+        uint256 sum = ctl.grossCreditPrice(two[0]) + ctl.grossCreditPrice(two[1]);
         vm.broadcast(A3);
         ctl.buyCredits{value: sum}(two);
 
         require(core.pileSize() == pileBefore - 3, "d-buy: three credits did not leave the pile");
-        console.log("d-buy: buyCredit price", p0);
-        console.log("d-buy: buyCredits total", sum);
+        console.log("d-buy: buyCredit gross", g0);
+        console.log("d-buy: buyCredits gross", sum);
         console.log("d-buy: pileSize after", core.pileSize());
     }
 
     // ------------------------------------------------------------------ fill-b, compose-b: chosen composition
 
     function _fillB() internal {
-        _primeBid();
-        uint256[] memory ids = _creditsOf(A1, 80);
-        vm.broadcast(A1);
-        core.sellForEth(ids);
-
-        vm.broadcast(OWNER);
-        core.setChosenComposeOn(true);
+        _fill(A1, 80, "fill-b");
+        if (!core.chosenComposeOn()) {
+            vm.broadcast(OWNER);
+            core.setChosenComposeOn(true);
+        }
         require(core.chosenComposeOn(), "fill-b: chosen composition is not on");
-        require(core.pileSize() >= 80, "fill-b: fewer than 80 credits in the pile");
-        console.log("fill-b: chosen compose on, pileSize", core.pileSize());
     }
 
+    /// the trader holds the CC that `composeChosen` requires and names the 80 oldest pile credits with format 3
     function _composeB() internal {
-        uint256[] memory page = _pilePage(0, 80);
+        uint256[] memory page = core.pilePage(0, 80);
         uint256[80] memory ids;
         for (uint256 i; i < 80; ++i) {
             ids[i] = page[i];
@@ -281,32 +335,52 @@ contract Scenario is Script {
         uint256 supplyBefore = IStatements(Mainnet.STATEMENTS).supply();
         uint256 pileBefore = core.pileSize();
 
-        vm.broadcast(KEEPER);
+        vm.broadcast(TRADER);
         core.composeChosen(ids, 3);
 
         require(IStatements(Mainnet.STATEMENTS).supply() == supplyBefore + 1, "compose-b: composeChosen minted no statement");
         require(core.pileSize() == pileBefore - 80, "compose-b: 80 credits did not leave the pile");
         uint256[] memory held = core.heldStatements();
-        console.log("compose-b: new statement id", held[held.length - 1]);
+        uint256 sid = held[held.length - 1];
+        require(IStatements(Mainnet.STATEMENTS).formatOf(sid) == 3, "compose-b: the format is not 3");
+        require(core.composerOf(sid) == TRADER, "compose-b: the composer is not recorded");
+        console.log("compose-b: new statement id", sid);
         console.log("compose-b: held statements", held.length);
     }
 
-    // ------------------------------------------------------------------ settings: owner changes that emit events
+    /// the trader restyles the newest held statement
+    function _format() internal {
+        uint256[] memory held = core.heldStatements();
+        uint256 sid = held[held.length - 1];
+        vm.broadcast(TRADER);
+        core.setHeldFormat(sid, 5);
+        require(IStatements(Mainnet.STATEMENTS).formatOf(sid) == 5, "format: the format is not 5");
+        console.log("format: statement restyled to 5", sid);
+    }
 
-    /// one sale setting, one credit setting and the rating reference on the controller, and the rate and the settings
-    /// struct on the core, so every owner setter that emits an event is exercised.
+    // ------------------------------------------------------------------ settings: owner setters, fund
+
+    /// the sale struct and the credit struct on the controller, the rate and the settings on the Core, and a `fund`
     function _settings() internal {
+        Sale memory sale = Sale({
+            markupBps: ctl.markupBps(),
+            startCapBps: ctl.startCapBps(),
+            fastDecayBpsPerHour: ctl.fastDecayBpsPerHour(),
+            kneeBps: ctl.kneeBps(),
+            slowDecayBpsPerHour: ctl.slowDecayBpsPerHour(),
+            anchorHalfLife: ctl.anchorHalfLife(),
+            anchorMinCost: ctl.anchorMinCost()
+        });
+        sale.markupBps = 16_000;
         vm.broadcast(OWNER);
-        ctl.setMarkupBps(16_000);
+        ctl.setSale(sale);
         require(ctl.markupBps() == 16_000, "settings: markupBps not set");
 
+        CreditSale memory cs = _credit();
+        cs.window = 7_200;
         vm.broadcast(OWNER);
-        ctl.setCreditWindow(7_200);
-        require(ctl.creditWindow() == 7_200, "settings: creditWindow not set");
-
-        vm.broadcast(OWNER);
-        ctl.setRefScore(4_000_000);
-        require(ctl.refScore() == 4_000_000, "settings: refScore not set");
+        ctl.setCredit(cs);
+        require(ctl.creditWindow() == 7_200, "settings: window not set");
 
         uint256 rate = core.ethPrice();
         vm.broadcast(OWNER);
@@ -315,188 +389,142 @@ contract Scenario is Script {
         Settings memory s = core.settings();
         vm.broadcast(OWNER);
         core.setSettings(s);
-        console.log("settings: markupBps 16000, creditWindow 7200, refScore 4000000, rate", rate);
+
+        uint256 potBefore = core.ethPot();
+        vm.broadcast(TRADER);
+        core.fund{value: 0.05 ether}();
+        require(core.ethPot() == potBefore + 0.05 ether, "settings: fund did not reach the pot");
+        console.log("settings: markupBps 16000, window 7200, rate", rate);
     }
 
-    // ------------------------------------------------------------------ pause: pause then unpause
+    // ------------------------------------------------------------------ pause
 
+    /// buys revert `Paused` while the Core is paused
     function _pause() internal {
         uint256[] memory held = core.heldStatements();
         require(held.length > 0, "pause: no held statement to price");
         uint256 sid = held[held.length - 1];
-        uint256 creditId = _pilePage(0, 1)[0];
+        uint256 creditId = core.pilePage(0, 1)[0];
 
         vm.broadcast(OWNER);
-        ctl.setPaused(true);
-        require(ctl.paused(), "pause: the controller is not paused");
+        core.setPaused(true);
+        require(core.paused(), "pause: the Core is not paused");
 
-        (bool okBuy,) = address(ctl).call(abi.encodeWithSelector(IControllerV1.buy.selector, sid));
-        require(!okBuy, "pause: buy did not revert while paused");
-        (bool okCredit,) = address(ctl).call(abi.encodeWithSelector(IControllerV1.buyCredit.selector, creditId));
-        require(!okCredit, "pause: buyCredit did not revert while paused");
+        (bool okBuy, bytes memory buyErr) =
+            address(ctl).call{value: ctl.grossPriceOf(sid)}(abi.encodeCall(IControllerV1.buy, (sid)));
+        require(!okBuy && bytes4(buyErr) == ICore.Paused.selector, "pause: buy did not revert Paused while paused");
+        (bool okCredit, bytes memory creditErr) =
+            address(ctl).call{value: ctl.grossCreditPrice(creditId)}(abi.encodeCall(IControllerV1.buyCredit, (creditId)));
+        require(!okCredit && bytes4(creditErr) == ICore.Paused.selector, "pause: buyCredit did not revert Paused while paused");
 
         vm.broadcast(OWNER);
-        ctl.setPaused(false);
-        require(!ctl.paused(), "pause: the controller is still paused");
+        core.setPaused(false);
+        require(!core.paused(), "pause: the Core is still paused");
         console.log("pause: paused then unpaused, buy and buyCredit reverted while paused");
     }
 
-    // ------------------------------------------------------------------ buyback: keeper buy and burn
+    // ------------------------------------------------------------------ buyback
 
     function _buyback() internal {
         require(core.ethToBuyback() > 0, "buyback: nothing in the buyback pot");
         uint256 supplyBefore = IERC20R(coin).totalSupply();
-        uint256 buybackBefore = core.ethToBuyback();
+        uint256 potBefore = core.ethToBuyback();
 
         vm.broadcast(KEEPER);
         core.buyback();
 
         require(IERC20R(coin).totalSupply() < supplyBefore, "buyback: the coin supply did not fall");
-        require(core.ethToBuyback() < buybackBefore, "buyback: the buyback pot did not move");
+        require(core.ethToBuyback() < potBefore, "buyback: the buyback pot did not move");
         console.log("buyback: supply burned", supplyBefore - IERC20R(coin).totalSupply());
-        console.log("buyback: pot before", buybackBefore);
+        console.log("buyback: pot before", potBefore);
         console.log("buyback: pot after", core.ethToBuyback());
     }
 
-    // ------------------------------------------------------------------ exit-setup: turn the exit side on (post)
-
-    function _exitSetup() internal {
-        address exitModule = vm.envAddress("EXIT_MODULE");
-        address exitToken = vm.envAddress("EXIT_TOKEN");
-
-        vm.broadcast(OWNER);
-        core.setExitModule(exitModule);
-        require(core.exitModule() == exitModule, "exit-setup: exit module not set");
-        require(core.exitToken() == exitToken, "exit-setup: exit token mismatch");
-
-        IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
-            currency0: IControllerV1.Currency.wrap(address(0)),
-            currency1: IControllerV1.Currency.wrap(exitToken),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: address(0)
-        });
-        vm.broadcast(OWNER);
-        ctl.setExitPoolKey(k);
-        require(ctl.exitPoolKeySet(), "exit-setup: exit pool key not set");
-
-        Settings memory s = core.settings();
-        s.exitMode = 2;
-        vm.broadcast(OWNER);
-        core.setSettings(s);
-        require(core.settings().exitMode == 2, "exit-setup: exit mode is not 2");
-
-        vm.broadcast(OWNER);
-        core.refreshUnitPerPoint();
-        console.log("exit-setup: exit module, pool key, exitMode 2 and unit refresh done");
-        console.log("exit-setup: unitPerPoint", core.unitPerPoint());
-    }
-
-    // ------------------------------------------------------------------ fill-d, compose-d: the redemption statement (post)
-
-    function _fillD() internal {
-        _primeBid();
-        uint256[] memory ids = _creditsOf(A1, 80);
-        vm.broadcast(A1);
-        core.sellForEth(ids);
-        require(core.pileSize() >= 80, "fill-d: fewer than 80 credits in the pile");
-        console.log("fill-d: 80 sold, pileSize", core.pileSize());
-    }
+    // ------------------------------------------------------------------ post: the balance side
 
     function _composeD() internal {
         require(core.pileSize() >= 80, "compose-d: fewer than 80 credits in the pile");
         uint256 heldBefore = core.heldStatements().length;
         vm.broadcast(KEEPER);
-        core.compose();
+        core.compose(2);
         uint256[] memory held = core.heldStatements();
         require(held.length == heldBefore + 1, "compose-d: no statement held after compose");
+        require(IStatements(Mainnet.STATEMENTS).formatOf(held[held.length - 1]) == 2, "compose-d: the format is not 2");
         console.log("compose-d: redemption statement id", held[held.length - 1]);
-        console.log("compose-d: held statements", held.length);
     }
 
-    // ------------------------------------------------------------------ exit-redeem: redeem, exit bid, release (post)
-
-    function _exitRedeem() internal {
+    /// redeems the newest held statement, which e2e.sh warped to its floor, and releases the redeem burn reserve
+    function _redeem() internal {
         uint256[] memory held = core.heldStatements();
-        require(held.length >= 2, "exit-redeem: need a redemption statement and one to keep held");
+        require(held.length >= 2, "redeem: need a statement to redeem and one to keep held");
         uint256 sid = held[held.length - 1];
-        require(ctl.atFloor(sid), "exit-redeem: the statement has not reached its floor");
+        require(ctl.atFloor(sid), "redeem: the statement has not reached its floor");
 
-        uint256 xpotBefore = core.xPot();
-        uint256 heldBefore = held.length;
+        uint256 owed = core.ratingOf(sid) * IBalanceModule(core.balanceModule()).unitPerPoint();
+        uint256 potBefore = core.balancePot();
         vm.broadcast(KEEPER);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         (bool stillHeld,,) = core.statementInfo(sid);
-        require(!stillHeld, "exit-redeem: the statement is still held after the redemption");
-        require(core.xPot() > xpotBefore, "exit-redeem: the exit token pot did not grow");
-        require(core.heldStatements().length == heldBefore - 1, "exit-redeem: held count did not fall by one");
+        require(!stillHeld, "redeem: the statement is still held");
+        require(core.balancePot() >= potBefore + owed * 98 / 100, "redeem: the balance pot did not grow by the rating");
+        require(core.heldStatements().length == held.length - 1, "redeem: held count did not fall by one");
 
-        // sell credits into the exit token bid: a single and a batch. the recorded cost of a sold credit equals the
-        // score-scaled eth backstop, read from no pool.
+        uint256 reserve = core.ethRedeemBurn();
+        if (reserve > 0) {
+            uint256 buybackBefore = core.ethToBuyback();
+            vm.broadcast(OWNER);
+            core.releaseRedeemBurn(reserve);
+            require(core.ethToBuyback() == buybackBefore + reserve, "redeem: the reserve did not reach the buyback pot");
+            console.log("redeem: released redeem burn reserve", reserve);
+        }
+        console.log("redeem: redeemed statement", sid);
+        console.log("redeem: balancePot", core.balancePot());
+    }
+
+    /// A3 sells credits into the balance bid, a single and a batch, and is paid in the balance token
+    function _balanceBid() internal {
+        IERC20R token = IERC20R(core.balanceToken());
         vm.broadcast(A3);
         ICredits(Mainnet.CREDITS).setApprovalForAll(address(core), true);
 
+        uint256 paidBefore = token.balanceOf(A3);
         uint256[] memory one = _creditsOf(A3, 1);
-        _assertExitBasis(one[0]);
         vm.broadcast(A3);
-        core.sellForExitToken(one);
-        (bool inPile,,) = core.creditInfo(one[0]);
-        require(inPile, "exit-redeem: the single exit sold credit is not in the pile");
+        core.sellForBalance(one);
+        _requireBalanceCost(one[0]);
 
         uint256[] memory batch = _creditsOf(A3, 2);
         vm.broadcast(A3);
-        core.sellForExitToken(batch, 0);
-        (bool inPile2,,) = core.creditInfo(batch[1]);
-        require(inPile2, "exit-redeem: the batch exit sold credit is not in the pile");
+        core.sellForBalance(batch, 0);
+        _requireBalanceCost(batch[1]);
 
-        // release the redeem burn reserve into the buyback pot
-        uint256 reserve = core.ethRedeemBurn();
-        if (reserve > 0) {
-            uint256 bbBefore = core.ethToBuyback();
-            vm.broadcast(OWNER);
-            core.releaseRedeemBurn(reserve);
-            require(core.ethRedeemBurn() < reserve, "exit-redeem: the redeem burn reserve did not fall");
-            require(core.ethToBuyback() == bbBefore + reserve, "exit-redeem: the released reserve did not reach the buyback pot");
-            console.log("exit-redeem: released redeem burn reserve", reserve);
-        }
-        console.log("exit-redeem: redeemed statement", sid);
-        console.log("exit-redeem: xPot", core.xPot());
-        console.log("exit-redeem: held statements", core.heldStatements().length);
+        require(token.balanceOf(A3) > paidBefore, "balance-bid: the seller was not paid in the balance token");
+        console.log("balance-bid: seller paid", token.balanceOf(A3) - paidBefore);
+        console.log("balance-bid: balancePot", core.balancePot());
     }
 
-    /// @dev the recorded cost of a credit sold into the exit bid is the floor rate scaled by the credit's score over
-    /// refScore, at least 1 wei. read live so a changed refScore is accounted for.
-    function _assertExitBasis(uint256 id) internal view {
-        uint256 floor = core.floorRate();
-        uint256 refScore = ctl.refScore();
+    /// the cost basis of a credit bought with the balance token is `score * pointRate`, at least 1 wei
+    function _requireBalanceCost(uint256 id) internal view {
+        (bool inPile, uint256 cost,) = core.creditInfo(id);
+        require(inPile, "balance-bid: the credit is not in the pile");
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(
             ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id)
         );
-        uint256 expected = (refScore == 0 || score <= refScore) ? floor : FullMath.mulDiv(floor, score, refScore);
-        if (expected == 0) expected = 1;
-        console.log("exit-redeem: backstop expected for id", id, expected);
+        uint256 expected = score * ctl.pointRate();
+        require(cost + score >= expected && cost <= expected + score, "balance-bid: the cost basis is not score * pointRate");
+        console.log("balance-bid: credit cost basis", id, cost);
     }
 
     // ------------------------------------------------------------------ fresh: the last statement, live pile content
 
-    function _freshFill() internal {
-        _primeBid();
-        uint256[] memory ids = _creditsOf(A1, 80);
-        vm.broadcast(A1);
-        core.sellForEth(ids);
-        require(core.pileSize() >= 80, "fresh-fill: fewer than 80 credits in the pile");
-        console.log("fresh-fill: 80 sold, pileSize", core.pileSize());
-    }
-
-    /// composes the fresh statement, then sells a few more credits that stay in the pile inside their window, so the
-    /// final pile holds credits of mixed window status and at least two statements stay for sale.
+    /// composes the last statement, then sells credits that stay in the pile inside their window, so the final state
+    /// holds a statement for sale and pile credits past and inside their window
     function _freshCompose() internal {
         require(core.pileSize() >= 80, "fresh-compose: fewer than 80 credits in the pile");
         uint256 heldBefore = core.heldStatements().length;
         vm.broadcast(KEEPER);
         core.compose();
-        uint256[] memory held = core.heldStatements();
-        require(held.length == heldBefore + 1, "fresh-compose: no statement held after compose");
+        require(core.heldStatements().length == heldBefore + 1, "fresh-compose: no statement held after compose");
 
         uint256[] memory dust = _creditsOf(A1, 3);
         vm.broadcast(A1);
@@ -504,7 +532,6 @@ contract Scenario is Script {
 
         require(core.heldStatements().length >= 2, "fresh-compose: fewer than two statements held");
         require(core.pileSize() >= 3, "fresh-compose: fewer than three credits in the pile");
-        console.log("fresh-compose: fresh statement id", held[held.length - 1]);
         console.log("fresh-compose: held statements", core.heldStatements().length);
         console.log("fresh-compose: pileSize", core.pileSize());
     }
@@ -516,7 +543,7 @@ contract Scenario is Script {
         console.log("ethPot", core.ethPot());
         console.log("ethToBuyback", core.ethToBuyback());
         console.log("ethRedeemBurn", core.ethRedeemBurn());
-        console.log("xPot", core.xPot());
+        console.log("balancePot", core.balancePot());
         console.log("pileSize", core.pileSize());
         console.log("heldStatements", core.heldStatements().length);
         console.log("coin totalSupply", IERC20R(coin).totalSupply());
@@ -524,7 +551,6 @@ contract Scenario is Script {
         console.log("ethRate", core.ethRate());
 
         require(core.heldStatements().length >= 2, "report: fewer than two statements held for sale");
-
         uint256 n = core.pileSize();
         require(n >= 3, "report: fewer than three credits in the pile");
         uint256[] memory page = core.pilePage(0, n);
@@ -537,6 +563,19 @@ contract Scenario is Script {
 
     // ------------------------------------------------------------------ helpers
 
+    /// @dev the controller's credit sale settings as they are now
+    function _credit() internal view returns (CreditSale memory) {
+        return CreditSale({
+            saleOn: ctl.creditSaleOn(),
+            window: ctl.creditWindow(),
+            floorBps: ctl.creditFloorBps(),
+            startBps: ctl.creditStartBps(),
+            refScore: ctl.refScore(),
+            royaltyBps: ctl.royaltyBps(),
+            royaltyRecipient: ctl.royaltyRecipient()
+        });
+    }
+
     /// @dev `n` credit ids owned by `who` right now
     function _creditsOf(address who, uint256 n) internal view returns (uint256[] memory out) {
         uint256[] memory all = ICredits(Mainnet.CREDITS).tokensOf(who);
@@ -545,10 +584,6 @@ contract Scenario is Script {
         for (uint256 i; i < n; ++i) {
             out[i] = all[i];
         }
-    }
-
-    function _pilePage(uint256 startAfter, uint256 n) internal view returns (uint256[] memory) {
-        return core.pilePage(startAfter, n);
     }
 
     /// @dev one v4 swap input: exact in single, settle, take. `zeroForOne` true buys the coin with eth

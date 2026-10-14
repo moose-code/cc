@@ -3,9 +3,9 @@
 // JSON in localStorage under one versioned scope per chain + core + deploy block.
 // Every storage access is guarded; without storage the in-memory copies still apply.
 
-import { addresses, chain, deployBlock } from "./config";
+import { chain, core, deployBlock } from "./config";
 
-export const SCOPE = `cc:v1:${chain.id}:${(addresses.core ?? "none").toLowerCase()}:${deployBlock ?? "head"}`;
+export const SCOPE = `cc:v2:${chain.id}:${(core ?? "none").toLowerCase()}:${deployBlock ?? "head"}`;
 
 // bigint <-> {"$b":"123"}
 const replacer = (_: string, v: unknown) => (typeof v === "bigint" ? { $b: v.toString() } : v);

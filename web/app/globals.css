@@ -116,6 +116,85 @@ a:hover {
   letter-spacing: -0.01em;
 }
 
+/* flywheel bar: under the header, above the stats bar */
+.header {
+  order: -2;
+}
+.flywheel {
+  order: -1;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+.fw-inner {
+  min-width: 960px;
+}
+.fw-row {
+  display: flex;
+  align-items: stretch;
+  padding: 0.9rem 1.5rem 0;
+}
+.fw-box {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  color: var(--fg);
+}
+a.fw-box:hover {
+  border-color: var(--muted2);
+  background: var(--rowhover);
+  text-decoration: none;
+}
+.fw-box svg {
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fw-label {
+  font-weight: 700;
+}
+.fw-line {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.fw-num {
+  margin-top: auto;
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+.fw-arrow {
+  flex: none;
+  width: 28px;
+  align-self: center;
+  fill: none;
+  stroke: var(--muted2);
+  stroke-width: 1;
+}
+/* loop arrow from box 5 back to box 1 (box centers at 10% and 90%) */
+.fw-loop {
+  position: relative;
+  height: 14px;
+  margin: 0 calc(1.5rem + 9.5%) 0.9rem;
+  border: 1px solid var(--muted2);
+  border-top: 0;
+}
+.fw-loop::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: -2px;
+  border: 4.5px solid transparent;
+  border-bottom: 7px solid var(--muted2);
+  border-top: 0;
+}
+
 /* ---- body split ----------------------------------------------------------- */
 
 .body {
@@ -132,10 +211,10 @@ a:hover {
 }
 
 .trade {
-  width: 360px;
+  width: 380px;
   flex: none;
   border-left: 1px solid var(--line);
-  padding: 1.25rem 1.5rem;
+  padding: 2rem 1.75rem;
 }
 
 /* ---- feed ----------------------------------------------------------------- */
@@ -197,6 +276,15 @@ a:hover {
   position: absolute;
   inset: 0 auto 0 0;
   background: var(--composed);
+  transition: width 1.2s cubic-bezier(0.33, 1, 0.68, 1);
+}
+.pulse {
+  animation: pulse 600ms ease-out;
+}
+@keyframes pulse {
+  40% {
+    color: var(--sold);
+  }
 }
 .nextcredit .amt,
 .nextstatement .amt {
@@ -331,81 +419,256 @@ a:hover {
 
 /* ---- trade panel ---------------------------------------------------------- */
 
-.price-row {
+.tp-head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  align-items: baseline;
-  font-weight: 600;
+  margin-bottom: 1.5rem;
 }
-.price-row .pair {
-  font-weight: 600;
+.tp-head h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
 }
-.price-small {
-  margin-top: 0.75rem;
-  display: grid;
-  gap: 0.3rem;
+.tp-head a {
+  display: inline-flex;
+  margin-right: -0.25rem;
+  padding: 0.25rem;
   color: var(--muted);
-  font-size: 0.85rem;
 }
-.price-small .r {
-  display: flex;
-  justify-content: space-between;
+.tp-head a:hover {
+  color: var(--fg);
+  text-decoration: none;
 }
-
-.tabs {
+.tp-stats {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  margin: 0 0 2rem;
+}
+.tp-stats > div + div {
+  padding-left: 1.25rem;
+  border-left: 1px solid var(--line);
+}
+.tp-stats dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.tp-stats dd {
+  margin: 0.25rem 0 0;
   display: flex;
-  margin: 1.25rem 0 1rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.tp-stats dd span {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+.tp-stats dd span.up {
+  color: var(--sold);
+}
+.tp-stats dd span.down {
+  color: var(--credit);
+}
+.tp-tabs {
+  display: flex;
+  margin-bottom: 1.25rem;
   border: 1px solid var(--fg);
 }
-.tabs button {
+.tp-tabs button {
   flex: 1;
   padding: 0.65rem;
   background: var(--bg);
   border: 0;
   font-family: var(--mono);
   font-size: 0.95rem;
-  cursor: pointer;
   color: var(--fg);
+  cursor: pointer;
 }
-.tabs button.active {
+.tp-tabs button.active {
   background: var(--fg);
   color: var(--bg);
 }
-
-.field {
-  margin-bottom: 1rem;
+.tp-tabs button:disabled {
+  cursor: not-allowed;
 }
-.field label {
+.tp-card {
+  margin-bottom: 0.75rem;
+  padding: 1rem 1.1rem 1.15rem;
+  border: 1px solid var(--line);
+  transition: border-color 150ms;
+}
+.tp-card:focus-within {
+  border-color: var(--fg);
+}
+.tp-card.err {
+  border-color: var(--credit);
+}
+.tp-top {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 1.25rem;
   color: var(--muted);
   font-size: 0.8rem;
-  margin-bottom: 0.35rem;
 }
-.field .box {
-  border: 1px solid var(--line);
-  padding: 0.75rem 0.85rem;
+.tp-top .max {
+  margin-left: 0.4rem;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: inherit;
+  cursor: pointer;
+}
+.tp-top .max:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+.tp-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+}
+.tp-main input,
+.tp-main .num {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 1.9rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tp-main input::placeholder,
+.tp-main .num.zero {
+  color: var(--muted2);
+}
+.tp-card.err .tp-main input {
+  color: var(--credit);
+}
+.tp-main .unit {
+  flex: none;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+.tp-rows {
+  display: grid;
+  gap: 0.7rem;
+  margin: 1.5rem 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.tp-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.75rem;
 }
-.field input {
-  border: 0;
-  outline: 0;
-  font-family: var(--mono);
-  font-size: 1.6rem;
+.tp-row.warn {
+  color: var(--credit);
+}
+button.tp-row {
   width: 100%;
-  background: transparent;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font-family: var(--mono);
+  font-size: inherit;
+  cursor: pointer;
+}
+button.tp-row:disabled {
+  cursor: not-allowed;
+}
+.tp-opts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  margin-top: -0.2rem;
+}
+.tp-opts button,
+.tp-opts input {
+  padding: 0.2rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: color 150ms, border-color 150ms;
+}
+.tp-opts button.on,
+.tp-opts input.on {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+.tp-opts input {
+  width: 4.75rem;
+  cursor: text;
+}
+.tp-opts input.err {
+  color: var(--credit);
+  border-color: var(--credit);
+}
+.trade .action {
+  min-height: 3.25rem;
+  text-transform: none;
+}
+.tp-status {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+}
+.tp-status .err {
+  margin: 0;
+  color: var(--credit);
+  animation: appear 150ms;
+}
+.tp-status .err.fade {
+  animation: appear 150ms, fade 4s forwards;
+}
+.tp-fee {
+  margin: 0.9rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.tp-fee.tp-launch {
   color: var(--fg);
 }
-.field .unit {
+.tp-launch p {
+  margin: 0.2rem 0 0;
   color: var(--muted);
-  font-size: 0.9rem;
-  padding-left: 0.5rem;
 }
-.field .out {
-  font-size: 1.6rem;
-  font-variant-numeric: tabular-nums;
+.panel-note.tp-note {
+  margin-top: 1rem;
+}
+@media (max-width: 640px) {
+  .trade {
+    padding: 1.5rem 1.25rem;
+  }
+}
+.page .trade {
+  max-width: 420px;
+  border-left: 0;
+  border-top: 0;
+  padding: 0.5rem 0 0;
 }
 
 .quote {
@@ -425,8 +688,13 @@ a:hover {
 }
 
 .action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
   width: 100%;
-  padding: 0.95rem;
+  min-height: 3.1rem;
+  padding: 0 0.95rem;
   background: var(--fg);
   color: var(--bg);
   border: 0;
@@ -434,10 +702,51 @@ a:hover {
   font-size: 1rem;
   cursor: pointer;
   text-transform: lowercase;
+  transition: background-color 150ms, color 150ms;
 }
 .action:disabled {
-  background: var(--muted2);
+  background: var(--line);
+  color: #6b6b6b;
   cursor: not-allowed;
+}
+.action.busy:disabled {
+  background: var(--fg);
+  color: var(--bg);
+  cursor: progress;
+}
+.action.ok:disabled {
+  background: var(--sold);
+  color: #fff;
+  cursor: default;
+}
+.action.fail {
+  background: var(--credit);
+}
+.spin {
+  width: 0.9em;
+  height: 0.9em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes fade {
+  60% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 
 .panel-note {
@@ -445,20 +754,6 @@ a:hover {
   font-size: 0.78rem;
   color: var(--muted);
   line-height: 1.5;
-}
-
-.balances {
-  margin-top: 1.5rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--line);
-  display: grid;
-  gap: 0.35rem;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-.balances .r {
-  display: flex;
-  justify-content: space-between;
 }
 
 /* ---- footer --------------------------------------------------------------- */
@@ -1265,4 +1560,42 @@ button.slot:disabled {
   margin: 1rem auto 2rem;
   width: auto;
   padding: 0.5rem 1.25rem;
+}
+
+/* ---- keeper page, statement restyle / redeem ------------------------------ */
+
+.actions {
+  display: grid;
+  gap: 0.5rem;
+}
+.panel-note.err {
+  color: var(--credit);
+}
+.restyle {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.5rem;
+}
+.compose-action select,
+.restyle select {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--fg);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.keeper {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem 2rem;
+  align-items: start;
+}
+.keeper h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  font-weight: 600;
 }

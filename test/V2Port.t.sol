@@ -4,24 +4,25 @@ pragma solidity ^0.8.28;
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {FeeBase} from "./Fees.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Settings} from "../src/interfaces/Interfaces.sol";
-import {IArtCoinsLpLockerV2} from "../src/interfaces/ArtCoinsV2.sol";
-import {ClaimMidListing, ClaimMidExit} from "./attackers/V2Port.sol";
-import {MockExitToken} from "./standins/MockExitToken.sol";
+import {Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
+import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
+import {IArtCoinsHookV2} from "../src/interfaces/ArtCoinsV2.sol";
+import {Prod} from "./utils/Prod.sol";
+import {LeftoverSpender} from "./attackers/V2Port.sol";
 
 interface IEscrowStore {
     function storeFeesNative(address feeOwner) external payable;
 }
 
-/// the fee path of the v2 port: router, flush, escrow credits and the places the v2 hook can put eth that the Core
-/// does not book. every number is from the real v2 hook and pool on the fork
+/// the fee path of the v2 port: the hook pushing straight to the Core, escrow credits and the places the v2 hook can
+/// put eth. every number is from the real v2 hook and pool on the fork
 contract V2PortFeeTest is FeeBase {
     using FixedPointMathLib for uint256;
 
     function _share(uint16 bps) internal {
         Settings memory s = core.settings();
-        s.feeToBuybackBps = bps;
-        s.feeToRedeemBurnBps = 0; // isolate the buyback share from the redeem burn share
+        s.feeToRedeemBurnBps = bps;
         _setSettings(s);
     }
 
@@ -34,62 +35,12 @@ contract V2PortFeeTest is FeeBase {
         IEscrowStore(address(ESCROW)).storeFeesNative{value: amount}(address(core));
     }
 
-    /// 1 eth buy in steady state at each split. 6.9 points of skim (0.069 eth) split by bountyBps 9_638: the router gets
-    /// 0.069 * 9_638 / 10_000 = 0.0665022 eth (6.65022 points), the protocol recipient 0.069 less 0.0665022 = 0.0024978 eth
-    /// (0.24978 points). of the router's 66_502_200_000_000_000 wei: payee 112_778 ppm =
-    /// 7_499_985_111_600_000 (0.7499985 points), engine the rest = 59_002_214_888_400_000 (5.9002215 points). the engine part splits between the pot and the buyback by the share setting
-    function test_exactNumbersAtEachSplit() public {
-        _stock();
-        uint256[3] memory bps = [uint256(0), 5_000, 10_000];
-        uint256[3] memory toBb = [uint256(0), 29_501_107_444_200_000, 59_002_214_888_400_000];
-        for (uint256 i; i < 3; ++i) {
-            _share(uint16(bps[i]));
-            uint256 payee0 = lc.creatorPayee.balance;
-            uint256 flusher0 = flusher.balance;
-            uint256 pot0 = core.ethPot();
-            uint256 bb0 = core.ethToBuyback();
-            Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
-            assertEq(f.skimVolume, 0.931 ether, "volume net of the skim");
-            assertEq(f.skimBounty, 0.0665022 ether, "6.65022 points to the router");
-            assertEq(f.skimProtocol, 0.0024978 ether, "0.24978 points to the protocol recipient");
-            assertEq(f.routerRise, 0.0665022 ether);
-            assertEq(flusher.balance, flusher0, "the flusher receives nothing");
-            assertEq(f.toPayees, 7_499_985_111_600_000, "the single payee");
-            assertEq(lc.creatorPayee.balance - payee0, 7_499_985_111_600_000);
-            assertEq(f.balanceRise, 59_002_214_888_400_000, "5.9002215 points to the engine");
-            assertEq(core.ethToBuyback() - bb0, toBb[i]);
-            assertEq(core.ethPot() - pot0, 59_002_214_888_400_000 - toBb[i]);
-            assertEq(address(feeRouter).balance, 0, "the router is empty");
-            _solvent();
-        }
-    }
-
-    /// eth that reaches the Core from anyone but the router (the hook, the escrow) is left for `skim()`, which books it
-    /// to the pot whatever the buyback share is
-    function test_directEthWaitsForSkimAndGoesToThePot() public {
-        _share(10_000);
-        address[2] memory from = [v2.hook, v2.escrow];
-        for (uint256 i; i < 2; ++i) {
-            vm.deal(from[i], 1 ether);
-            vm.prank(from[i]);
-            (bool ok,) = address(core).call{value: 1 ether}("");
-            assertTrue(ok);
-        }
-        assertEq(core.ethPot(), 0);
-        assertEq(core.ethToBuyback(), 0);
-        assertEq(address(core).balance, 2 ether);
-        vm.expectEmit(address(core));
-        emit ICore.Skimmed(2 ether, 0);
-        core.skim();
-        assertEq(core.ethPot(), 2 ether, "all of it to the pot");
-        assertEq(core.ethToBuyback(), 0, "none of it to the buyback, whatever the share");
-        _solvent();
-    }
-
+    // promise: SPEC 4 collectEscrow claims the Core credit in the fee escrow into ethPot
     /// a refund credited to the Core in the escrow (the shape of a partial fill refund of its own buyback): anyone can
-    /// claim it into the Core, nobody can send it elsewhere, and `skim()` books it to the pot. a partial fill itself
-    /// cannot be made on the launch pool (it needs about 3e42 wei, over the int128 range of a pool amount)
-    function test_escrowCreditOfTheCoreIsClaimedByAnyoneThenSkimmed() public {
+    /// claim it into the Core with `collectEscrow`, which adds it to the pot whole, whatever the share is. nobody can send
+    /// it elsewhere. a partial fill itself cannot be made on the launch pool (it needs about 3e42 wei, over the int128
+    /// range of a pool amount)
+    function test_escrowCreditOfTheCoreIsCollectedIntoThePot() public {
         _share(5_000);
         _creditCore(0.3 ether);
         assertEq(ESCROW.balances(address(core), address(0)), 0.3 ether);
@@ -98,107 +49,237 @@ contract V2PortFeeTest is FeeBase {
         vm.startPrank(stranger);
         vm.expectRevert();
         ESCROW.claimTo(address(core), address(0), payable(stranger));
-        ESCROW.claim(address(core), address(0));
+        vm.expectEmit(false, false, false, true, address(core));
+        emit ICore.EscrowCollected(0.3 ether);
+        core.collectEscrow();
         vm.stopPrank();
         assertEq(ESCROW.balances(address(core), address(0)), 0);
         assertEq(address(core).balance, 0.3 ether, "paid to the Core");
-        assertEq(core.ethPot(), 0, "not booked by the claim (the sender is the escrow)");
-        vm.prank(stranger);
-        core.skim();
-        assertEq(core.ethPot(), 0.3 ether);
-        assertEq(core.ethToBuyback(), 0);
+        assertEq(core.ethPot(), 0.3 ether, "the whole claim is in the pot");
+        assertEq(core.ethRedeemBurn(), 0, "none to the reserve, whatever the share");
+        assertEq(core.payeeOwed(), 0);
         _solvent();
     }
 
-    /// the credit claimed in the middle of `buyListing`: the Core sees less spent, books nothing, and stays consistent
-    function test_claimMidBuyListingKeepsThePotsConsistent() public {
-        ClaimMidListing t = new ClaimMidListing(v2.escrow, address(core));
-        _allow(address(t));
+    // promise: SPEC 4 collectEscrow reverts with the escrow error when nothing is owed
+    /// `collectEscrow` with nothing to claim reverts with the escrow's error and books nothing
+    function test_collectEscrowWithNothingOwedReverts() public {
+        vm.expectRevert();
+        core.collectEscrow();
+        assertEq(core.ethPot(), 0);
+        assertEq(address(core).balance, 0);
+    }
+
+}
+
+/// refuses every eth transfer
+contract RefusingRecipient {
+    receive() external payable {
+        revert("no");
+    }
+}
+
+/// moving the fee stream to a new engine: a second Core bound to the same coin and stack, and the coin admin repointing
+/// the bounty recipient of the pool with the hook's `setBountyRecipient`. real v2 stack, real pool
+contract V2PortMigrationTest is FeeBase {
+    ICore internal core2;
+    IControllerV1 internal ctl2;
+
+    /// @dev the second engine, deployed by a fresh account the way the first was: controller, then Core. it is built for
+    /// the launched coin, and the pool pays the first Core until the coin admin repoints it. the coin allowlist does not
+    /// list it
+    function _deployCore2() internal {
+        address dep = _user("second deployer");
+        uint64 n = vm.getNonce(dep);
+        address ctlAt = vm.computeCreateAddress(dep, n);
+        address coreAt = vm.computeCreateAddress(dep, n + 1);
+        vm.startPrank(dep);
+        ctl2 = Prod.newController(coreAt, lc.sale);
+        core2 = _successorCore(address(ctl2), lc.rateStart, lc.settings);
+        vm.stopPrank();
+        assertEq(address(ctl2), ctlAt);
+        assertEq(address(core2), coreAt);
+        assertEq(core2.COIN(), address(coin));
+    }
+
+    /// @dev the coin admin points the pool's bounty recipient at `to`
+    function _repoint(address to) internal {
+        vm.prank(owner);
+        IArtCoinsHookV2(lc.stack.hook).setBountyRecipient(poolId, payable(to));
+        assertEq(address(IArtCoinsHookV2(lc.stack.hook).skimConfig(poolId).bountyRecipient), to);
+    }
+
+    // promise: SPEC 9 the pool bounty recipient moves to the successor with setBountyRecipient
+    /// repointing: fees flow to the new Core and book there, the old Core books nothing more and keeps working on what it
+    /// holds, and the pool never moved what the old Core already had
+    function test_repointMovesTheFeesAndTheOldCoreKeepsWorking() public {
         _stock();
-        _fundPot(1 ether);
-        uint256 id = _credits(address(t), 1)[0];
-        uint256 ceiling = core.ethRate();
-        uint256 e = ceiling / 3;
-        _creditCore(e);
-        t.arm(id);
-        uint256 pot = core.ethPot();
-        uint256 bal = address(core).balance;
-        uint256 cost = ceiling - e;
-        uint256 keeperBefore = keeper.balance;
+        _fillEthPile(80);
+        _deployCore2();
+        uint256 pot1 = core.ethPot();
+        uint256 bal1 = address(core).balance;
+        assertGt(pot1, 0);
+        _repoint(address(core2));
+
+        autoBook = false;
+        _buyCoin(trader, 1 ether);
+        assertEq(address(core2).balance, 0.0665022 ether, "the bounty leg reached the new Core");
+        core2.book();
+        // the first book of the new Core latches its payee share and shares nothing
+        Settings memory s = core2.settings();
+        uint256 toPot = 0.0665022 ether - uint256(0.0665022 ether) * s.feeToRedeemBurnBps / 10_000;
+        assertEq(core2.ethPot(), toPot, "the new Core booked the fees");
+        assertTrue(core2.payeeOn());
+        assertEq(core.ethPot(), pot1, "the old Core books nothing more");
+        assertEq(address(core).balance, bal1, "and received nothing");
+
+        // the second book shares
+        _buyCoin(trader, 1 ether);
+        core2.book();
+        assertEq(core2.payeeOwed(), uint256(0.0665022 ether) * s.payeePpm / 1_000_000);
+
+        // the old Core still composes and sells with what it holds
+        vm.fee(composeBasefee);
         vm.prank(keeper);
-        core.buyListing(ceiling, hex"deadbeef", id, address(t));
-        uint256 paid = keeper.balance - keeperBefore;
-        _assertListingPay(paid, ceiling - cost);
-        assertEq(CREDITS.ownerOf(id), address(core));
-        assertEq(core.ethPot(), pot - cost - paid, "the pot paid the measured cost, which the claim lowered");
-        assertEq(address(core).balance, bal - cost - paid, "balance and pot moved together");
+        core.compose();
+        uint256 sid = STATEMENTS.supply();
+        _buy(trader, sid);
         _solvent();
+        assertEq(address(core).balance, _tracked(), "the old Core's books are exact");
+        assertEq(address(core2).balance, core2.ethPot() + core2.ethToBuyback() + core2.ethRedeemBurn() + core2.payeeOwed());
     }
 
-    /// a claim worth the whole price makes the measured cost zero: the buy reverts, nothing is booked wrong
-    function test_claimOfTheWholePriceMidBuyListingReverts() public {
-        ClaimMidListing t = new ClaimMidListing(v2.escrow, address(core));
-        _allow(address(t));
+    // promise: SPEC 1 the Core buys back without being on the coin allowlist
+    /// the new Core is not on the coin allowlist and still buys back: the hook grants exactly the allowance the take
+    /// needs. nobody can send it coin, which is the point of not listing it
+    function test_newCoreWithoutAllowlistBuysBack() public {
         _stock();
-        _fundPot(1 ether);
-        uint256 id = _credits(address(t), 1)[0];
-        uint256 ceiling = core.ethRate();
-        _creditCore(ceiling);
-        t.arm(id);
-        uint256 pot = core.ethPot();
+        _deployCore2();
+        _repoint(address(core2));
+        Settings memory s = core2.settings();
+        s.feeToRedeemBurnBps = 10_000;
+        vm.prank(owner);
+        core2.setSettings(s);
+        assertFalse(coin.isAllowed(address(core2)));
+        autoBook = false;
+        _buyCoin(trader, 5 ether);
+        core2.book();
+        // the fee eth sits in the redeem burn reserve; the owner moves it to the buyback pot
+        vm.prank(owner);
+        core2.releaseRedeemBurn(type(uint256).max);
+        assertGt(core2.ethToBuyback(), 0);
+        vm.prank(trader);
+        vm.expectRevert();
+        coin.transfer(address(core2), 1e18);
+
+        uint256 supply0 = coin.totalSupply();
+        uint256 bb0 = core2.ethToBuyback();
         vm.prank(keeper);
-        vm.expectRevert(ICore.BadCost.selector);
-        core.buyListing(ceiling, hex"deadbeef", id, address(t));
-        assertEq(core.ethPot(), pot);
-        assertEq(CREDITS.ownerOf(id), address(t), "the credit never moved");
-    }
-
-    /// the same during `exitStatement`: the pot only falls by the gas repay, the claimed eth is left unbooked for skim
-    function test_claimMidExitKeepsThePotsConsistent() public {
-        _stock();
-        MockExitToken token = new MockExitToken("Exit Token", "XT");
-        ClaimMidExit m = new ClaimMidExit(token, UNIT, v2.escrow, address(core));
-        _setExitModule(address(m));
-        _setExitMode(2);
-        Composed memory c = _composeOnce();
-        _makeEligible(c.sid);
-        _creditCore(0.2 ether);
-        uint256 pot = core.ethPot();
-        uint256 gas0 = address(this).balance;
-        core.exitStatement(c.sid);
-        assertEq(core.ethPot(), pot - (address(this).balance - gas0), "only the gas repay left the pot");
-        assertEq(
-            address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(),
-            0.2 ether,
-            "the claim is unbooked"
+        core2.buyback();
+        assertLt(coin.totalSupply(), supply0, "bought and burned");
+        assertLt(core2.ethToBuyback(), bb0);
+        assertEq(coin.balanceOf(address(core2)), 0);
+        assertEq(coin.transferAllowance(), 0, "the take consumed the whole allowance");
+        assertLe(
+            core2.ethPot() + core2.ethToBuyback() + core2.ethRedeemBurn() + core2.payeeOwed(), address(core2).balance
         );
-        _solvent();
-        core.skim();
-        assertEq(address(core).balance, core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn());
     }
 
-    /// lpFee is 0 at launch: the locker has nothing to pay and no reward slot reaches the router or the Core
-    function test_noLpIncomeAtLpFeeZero() public {
+    // promise: inv 10 a refusing bounty recipient never blocks swaps
+    /// a bounty recipient that refuses eth: every swap still works (the hook pushes with the stipend and credits the
+    /// escrow when the push fails), and the Core is repointed afterwards
+    function test_refusingRecipientNeverBlocksSwaps() public {
         _stock();
+        RefusingRecipient bad = new RefusingRecipient();
+        _repoint(address(bad));
+        autoBook = false;
+        uint256 owed0 = ESCROW.balances(address(bad), address(0));
         for (uint256 i; i < 3; ++i) {
-            _buyCoin(trader, 2 ether);
+            _buyCoin(trader, 1 ether);
+            _sellCoin(trader, coin.balanceOf(trader) / 10);
         }
-        IArtCoinsLpLockerV2 locker = IArtCoinsLpLockerV2(v2.locker);
-        address[] memory rec = locker.rewardRecipients(address(coin));
-        uint16[] memory bps = locker.rewardBps(address(coin));
-        assertEq(rec.length, 2, "the project slot and the factory protocol slot");
-        assertEq(rec[0], creator, "the project slot is the creator address");
-        assertEq(bps[0], 8_000);
-        assertEq(bps[1], 2_000, "the protocol slot is the factory default");
-        assertTrue(rec[1] != address(core) && rec[1] != address(feeRouter), "no slot reaches the engine");
-        uint256 core0 = address(core).balance;
-        uint256 router0 = address(feeRouter).balance;
-        uint256 creator0 = creator.balance;
-        uint256 coin0 = coin.balanceOf(creator);
-        locker.collectRewards(address(coin));
-        assertEq(address(core).balance, core0);
-        assertEq(address(feeRouter).balance, router0);
-        assertEq(creator.balance, creator0, "no lp fee eth accrued");
-        assertEq(coin.balanceOf(creator), coin0, "no lp fee coin accrued");
+        assertGt(ESCROW.balances(address(bad), address(0)), owed0 + 0.18 ether, "the escrow holds the bounty legs");
+        assertEq(address(bad).balance, 0, "the recipient received nothing");
+        _repoint(address(core));
+        uint256 pot0 = core.ethPot();
+        _buyCoin(trader, 1 ether);
+        core.book();
+        assertGt(core.ethPot(), pot0, "the Core books the stream again");
+        _solvent();
+    }
+
+}
+
+/// the restricted v2 coin as the engine meets it: the Core, the router and every holder are off the allowlist (FLOW 29).
+/// real coin, real pool, real hook
+contract V2PortRestrictionTest is FeeBase {
+    error TransferRestricted(address from, address to, uint256 amount);
+
+    function setUp() public override {
+        super.setUp();
+        _stock();
+    }
+
+    function _bought(uint256 pmBefore) internal view returns (uint256) {
+        return pmBefore - coin.balanceOf(Mainnet.POOL_MANAGER);
+    }
+
+    // promise: SPEC 1 the Core buys back on a restricted coin
+    /// the Core is off the allowlist: the take of the bought coin consumes the whole allowance the hook granted for the swap,
+    /// so no allowance is left to spend in the same transaction. the Core ends the buyback holding no coin
+    function test_buybackConsumesTheWholeAllowance() public {
+        _fillEthBuyback();
+        assertFalse(coin.isAllowed(address(core)), "the Core is not on the allowlist");
+        LeftoverSpender s = new LeftoverSpender(address(coin), address(core), Mainnet.POOL_MANAGER);
+        _buyCoin(address(s), 2 ether);
+        uint256 held = coin.balanceOf(address(s));
+        assertGt(held, 1_000e18);
+        uint256 supply0 = coin.totalSupply();
+        s.run(1_000e18);
+        assertGt(supply0 - coin.totalSupply(), 0, "the buyback burned");
+        assertEq(s.leftover(), 0, "the take consumed the whole allowance");
+        assertFalse(s.spent(), "nothing was left to spend");
+        assertEq(coin.balanceOf(address(s)), held, "the stranger's coin did not move");
+        assertEq(coin.balanceOf(address(core)), 0, "the Core holds no coin after the buyback");
+    }
+
+    // promise: SPEC 1 the coin is restricted: a wallet cannot send coin to the Core
+    /// a holder that is not on the allowlist cannot send coin to the Core: the Core is not on it either
+    function test_aWalletCannotSendCoinToTheCore() public {
+        uint256 pot = core.ethPot();
+        uint256 bb = core.ethToBuyback();
+        vm.prank(trader);
+        vm.expectRevert(abi.encodeWithSelector(TransferRestricted.selector, trader, address(core), 1_000e18));
+        coin.transfer(address(core), 1_000e18);
+        assertEq(coin.balanceOf(address(core)), 0);
+        assertEq(core.ethPot(), pot);
+        assertEq(core.ethToBuyback(), bb);
+        _solvent();
+    }
+
+    // promise: SPEC 1 the owner can remove the coin restriction (decision 83): coin sent to the Core is inert
+    /// with the restriction turned off by the coin admin, plain transfers work, a transfer to the Core is inert in the same
+    /// way, and the buyback behaves as before
+    function test_unrestrictedTransferToTheCoreIsInert() public {
+        vm.prank(owner);
+        coin.unrestrict();
+        assertFalse(coin.restricted());
+        address friend = _user("friend");
+        vm.prank(trader);
+        coin.transfer(friend, 1e18);
+        assertEq(coin.balanceOf(friend), 1e18);
+        vm.prank(friend);
+        coin.transfer(address(core), 1e18);
+        _fillEthBuyback();
+        uint256 pm0 = coin.balanceOf(Mainnet.POOL_MANAGER);
+        uint256 supply0 = coin.totalSupply();
+        vm.prank(keeper);
+        core.buyback();
+        assertEq(supply0 - coin.totalSupply(), _bought(pm0));
+        assertEq(coin.balanceOf(address(core)), 1e18, "the transferred coin stays");
+        _solvent();
+        vm.prank(owner);
+        core.rescueCoin(friend, 1e18);
+        assertEq(coin.balanceOf(address(core)), 0);
     }
 }

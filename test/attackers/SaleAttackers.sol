@@ -3,9 +3,10 @@ pragma solidity ^0.8.28;
 
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {IExitModule, IStatements, Mainnet} from "../../src/interfaces/Interfaces.sol";
+import {IBalanceModule, IStatements, Mainnet} from "../../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./ScriptedController.sol";
-import {MockExitToken} from "../standins/MockExitToken.sol";
+import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
+import {ComposeCall} from "../utils/ComposeCall.sol";
 
 /// a scripted controller that can also sell: it is the one address `sellTo` accepts once the owner installs it. it
 /// forwards a sale as it is told and can try the sale twice or from inside a reentry
@@ -46,7 +47,7 @@ contract ReentrantBuyer {
     uint256 public reentries;
     bool public buyBlocked;
     bool public sellBlocked;
-    bool public exitBlocked;
+    bool public redeemBlocked;
     bytes4 public buySel;
 
     constructor(IControllerV1 ctl_, ICore core_) {
@@ -73,11 +74,11 @@ contract ReentrantBuyer {
         catch {
             sellBlocked = true;
         }
-        try CORE.exitStatement(other) {}
+        try CORE.redeemStatement(other) {}
         catch {
-            exitBlocked = true;
+            redeemBlocked = true;
         }
-        try CORE.skim() {} catch {}
+        try CORE.book() {} catch {}
     }
 
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
@@ -102,14 +103,14 @@ contract RefundRefuser {
     }
 }
 
-/// an exit module that behaves like the stand in (pays rating times unit) and can burn gas or call out while the core
-/// is inside `exitStatement`. the call out is how a hostile module tries the core and the controller mid exit
-contract HostileModule is IExitModule {
-    address public immutable exitToken;
+/// a balance module that behaves like the stand in (pays rating times unit) and can burn gas or call out while the core
+/// is inside `redeemStatement`. the call out is how a hostile module tries the core and the controller mid redemption
+contract HostileModule is IBalanceModule {
+    address public immutable balanceToken;
     uint256 public unit;
-    /// gas to burn inside `exit`
+    /// gas to burn inside `redeem`
     uint256 public burn;
-    /// a target and calldata to call inside `exit`, and what happened
+    /// a target and calldata to call inside `redeem`, and what happened
     address public target;
     bytes public data;
     bool public called;
@@ -118,8 +119,8 @@ contract HostileModule is IExitModule {
     /// pay this share of the owed amount, bps
     uint256 public payBps = 10_000;
 
-    constructor(address exitToken_, uint256 unit_) {
-        exitToken = exitToken_;
+    constructor(address balanceToken_, uint256 unit_) {
+        balanceToken = balanceToken_;
         unit = unit_;
     }
 
@@ -140,10 +141,10 @@ contract HostileModule is IExitModule {
         data = data_;
     }
 
-    function exit(uint256 sid) external returns (uint256 out) {
+    function redeem(uint256 sid) external returns (uint256 out) {
         uint256 rating = IStatements(Mainnet.STATEMENTS).creditScoreOf(sid);
         out = rating * unit * payBps / 10_000;
-        MockExitToken(exitToken).mint(msg.sender, out);
+        MockBalanceToken(balanceToken).mint(msg.sender, out);
         if (target != address(0)) {
             called = true;
             (calledOk, calledOut) = target.call(data);
@@ -154,7 +155,7 @@ contract HostileModule is IExitModule {
     }
 }
 
-/// the caller of `exitStatement` that is repaid in eth and tries every door of the core from its `receive`
+/// the caller of `redeemStatement` that is repaid in eth and tries every door of the core from its `receive`
 contract RepaidCaller {
     ICore public immutable CORE;
     uint256 public other;
@@ -167,9 +168,9 @@ contract RepaidCaller {
         CORE = core_;
     }
 
-    function exit(uint256 sid, uint256 other_) external {
+    function redeem(uint256 sid, uint256 other_) external {
         other = other_;
-        CORE.exitStatement(sid);
+        CORE.redeemStatement(sid);
     }
 
     function compose(uint256 other_) external {
@@ -189,9 +190,9 @@ contract RepaidCaller {
     receive() external payable {
         repaid += msg.value;
         if (hits++ != 0) return;
-        _try(abi.encodeCall(ICore.exitStatement, (other)));
-        _try(abi.encodeCall(ICore.compose, ()));
-        _try(abi.encodeCall(ICore.skim, ()));
+        _try(abi.encodeCall(ICore.redeemStatement, (other)));
+        _try(ComposeCall.noArgs());
+        _try(abi.encodeCall(ICore.book, ()));
         _try(abi.encodeCall(ICore.buyback, ()));
     }
 }

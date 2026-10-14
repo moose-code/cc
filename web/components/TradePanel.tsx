@@ -1,293 +1,364 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import {
-  useAccount,
-  useBalance,
-  useReadContract,
-} from "wagmi";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
-import {
-  parseEther,
-  parseUnits,
-  formatUnits,
-  maxUint256,
-  type Address,
-} from "viem";
-import { useMarket, useQuote, useEthUsd, usePoolParams, useSwapFees } from "@/lib/engine";
-import { useNow } from "@/lib/live";
-import { addresses, chain, poolReady } from "@/lib/config";
-import { erc20Abi, permit2Abi, universalRouterAbi } from "@/lib/abis";
+import { useEffect, useMemo, useState } from "react";
+import { useAccount, useBalance, usePublicClient, useReadContract, useReadContracts, useSwitchChain } from "wagmi";
+import { formatUnits, maxUint256, parseEther, parseEventLogs, parseUnits, zeroAddress, type Address } from "viem";
+import { engineDeployed, chain } from "@/lib/config";
+import { useCcMarket, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
+import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
-import { commas, tokens, ethShort, usd } from "@/lib/format";
-import { useWriteWithBuffer } from "@/lib/tx";
+import { changePct, commas, evmNowAddress, evmNowTx, leftLabel, shortHash, tokens, usdCompact, usdPrice } from "@/lib/format";
+import { lsGet, lsSet } from "@/lib/cache";
+import { useNow } from "@/lib/live";
+import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
 
-const SLIPPAGE_BPS = 100; // 1.0%, the panel's own tolerance for the swap minimum
+const HOOK_FEE_BPS = 690; // fallback when the hook reads fail
+const SLIPPAGE_PRESETS = [50, 100, 200, 500]; // bps
+const SLIPPAGE_KEY = "cc:slippage-bps";
+const IMPACT_WARN = 0.02;
+const GAS_RESERVE = parseEther("0.01"); // left by "max" for gas
 const PERMIT2_MAX = (1n << 160n) - 1n;
 const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as number
 
-export function TradePanel() {
-  const { data: market } = useMarket();
-  const { data: ethUsd } = useEthUsd();
-  const { data: poolP } = usePoolParams();
-  const { data: fees } = useSwapFees();
-  const { address, isConnected } = useAccount();
-  const { openConnectModal } = useConnectModal();
-  const { writeWithBuffer, isPending } = useWriteWithBuffer();
-  const chainNow = useNow(30000); // swap deadline is chain time
+// Swap panel: eth for a market's token and back through the v4 Universal
+// Router; `market` defaults to the coin. A sell first grants the token
+// allowance to Permit2 and the Permit2 allowance to the router when they are short.
+export function TradePanel({ market }: { market?: Market }) {
+  const cc = useCcMarket();
+  const m = market ?? cc;
+  const { data: perEth } = useTokensPerEth(m);
+  const { address, chainId } = useAccount();
+  const { switchChain } = useSwitchChain();
+  const client = usePublicClient();
+  const { run, pending, err, steps, reset } = useTx();
 
-  // 1 CC in USD = (eth per cc) * (usd per eth) = ethUsd / ccPerEth.
-  const ccUsd =
-    ethUsd != null && market.ccPerEth > 0 ? ethUsd / market.ccPerEth : undefined;
+  const tag = m ? `$${m.symbol.replace(/^\$/, "").toUpperCase()}` : "";
+  const dec = m?.decimals ?? 18;
+  const hooked = m != null && m.key.hooks !== zeroAddress;
+  const hookFee = useHookFeeBps(m).data;
+  const now = useNow();
+  const feeBps = hooked ? hookFee?.bps ?? HOOK_FEE_BPS : (m?.key.fee ?? 0) / 100; // LP fee is in hundredths of a bip
+
+  const { priceUsd: tokenUsd, marketCap, change } = useMarketStats(m);
+
+  // slippage tolerance in bps, kept in localStorage; a custom percent is applied once it is within 0.1 to 50
+  const [slipBps, setSlipBps] = useState(100);
+  const [slipCustom, setSlipCustom] = useState("");
+  const [slipOpen, setSlipOpen] = useState(false);
+  useEffect(() => {
+    const v = Number(lsGet<number>(SLIPPAGE_KEY));
+    if (v >= 10 && v <= 5000) {
+      setSlipBps(v);
+      if (!SLIPPAGE_PRESETS.includes(v)) setSlipCustom(String(v / 100));
+    }
+  }, []);
+  const slipValid = slipCustom !== "" && Number(slipCustom) >= 0.1 && Number(slipCustom) <= 50;
+  const pickSlip = (bps: number, custom: string) => {
+    setSlipBps(bps);
+    setSlipCustom(custom);
+    lsSet(SLIPPAGE_KEY, bps);
+  };
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [pay, setPay] = useState("");
-  const [err, setErr] = useState<string | null>(null);
+  const [pay, setPay] = useState(""); // empty reads as 0
+  const [result, setResult] = useState<{ text: string; hash: `0x${string}` } | null>(null);
 
+  const inDec = side === "buy" ? 18 : dec;
+  const outDec = side === "buy" ? dec : 18;
   const amount = Number(pay) || 0;
-  const amountInWei = useMemo(() => {
+  const amountIn = useMemo(() => {
     try {
-      return side === "buy" ? parseEther(pay || "0") : parseUnits(pay || "0", 18);
+      return parseUnits(pay || "0", inDec);
     } catch {
       return 0n;
     }
-  }, [side, pay]);
+  }, [pay, inDec]);
 
-  const { data: quoteOut } = useQuote(side, amountInWei);
+  const quote = useQuote(m, side, amountIn);
+  const quoteOut = quote.data;
 
-  // receive: quoted when the pool is live, else spot math.
-  const spotReceive =
-    side === "buy" ? amount * market.ccPerEth : market.ccPerEth > 0 ? amount / market.ccPerEth : 0;
-  const receiveNum =
-    quoteOut != null
-      ? Number(formatUnits(quoteOut, 18))
-      : spotReceive;
-  const feeRate = fees?.fee ?? 0;
-  const feeEth = side === "buy" ? amount * feeRate : receiveNum * feeRate;
+  // quoted when the pool answers, else spot math
+  const spot = perEth ? (side === "buy" ? amount * perEth : amount / perEth) : 0;
+  const receive = quoteOut != null ? Number(formatUnits(quoteOut, outDec)) : spot;
+  const f = feeBps / 10000;
+  // quote against the spot proceeds after the fee
+  const impact = quoteOut != null && spot > 0 ? Math.max(0, 1 - receive / (spot * (1 - f))) : undefined;
 
-  // balances strip + sell approvals
-  const { data: ccBal } = useReadContract({
-    address: addresses.cc,
+  const { data: tokBal } = useReadContract({
+    address: m?.token,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: address ? [address] : undefined,
-    query: { enabled: Boolean(addresses.cc && address) },
+    query: { enabled: Boolean(m && address) },
   });
   const { data: ethBal } = useBalance({ address });
+  const payBal = side === "buy" ? ethBal?.value : tokBal;
 
-  const { data: erc20Allow } = useReadContract({
-    address: addresses.cc,
-    abi: erc20Abi,
-    functionName: "allowance",
-    args: address ? [address, V4.permit2] : undefined,
-    query: { enabled: Boolean(poolReady && address && side === "sell") },
+  const { data: allow } = useReadContracts({
+    contracts: [
+      { address: m?.token, abi: erc20Abi, functionName: "allowance", args: address ? [address, V4.permit2] : undefined },
+      { address: V4.permit2, abi: permit2Abi, functionName: "allowance", args: address && m ? [address, m.token, V4.universalRouter] : undefined },
+    ],
+    query: { enabled: Boolean(m && address && side === "sell") },
   });
-  const { data: p2Allow } = useReadContract({
-    address: V4.permit2,
-    abi: permit2Abi,
-    functionName: "allowance",
-    args: address && addresses.cc ? [address, addresses.cc, V4.universalRouter] : undefined,
-    query: { enabled: Boolean(poolReady && address && side === "sell") },
-  });
+  const erc20Allow = allow?.[0].result as bigint | undefined;
+  const p2Allow = allow?.[1].result as readonly [bigint, number, number] | undefined;
+  const plan: Plan[] =
+    side === "buy"
+      ? [{ label: "buy" }]
+      : [{ label: `approve ${tag}`, done: erc20Allow != null && erc20Allow >= amountIn }, { label: "permit", done: p2Allow != null && p2Allow[0] >= amountIn }, { label: "sell" }];
 
-  const needsErc20Approve =
-    side === "sell" && erc20Allow != null && (erc20Allow as bigint) < amountInWei;
-  const needsP2Approve =
-    side === "sell" &&
-    !needsErc20Approve &&
-    p2Allow != null &&
-    (p2Allow as readonly [bigint, number, number])[0] < amountInWei;
-
-  const canExecute =
-    poolReady && Boolean(poolP) && isConnected && amountInWei > 0n && quoteOut != null && quoteOut > 0n;
-
-  async function onAction() {
-    setErr(null);
-    try {
-      if (!addresses.cc || !poolP) return;
-      const deadline = BigInt(chainNow + 1200);
-
-      if (side === "sell" && needsErc20Approve) {
-        await writeWithBuffer({
-          address: addresses.cc,
-          abi: erc20Abi,
-          functionName: "approve",
-          chainId: chain.id,
-          args: [V4.permit2, maxUint256],
-        });
-        return;
-      }
-      if (side === "sell" && needsP2Approve) {
-        await writeWithBuffer({
-          address: V4.permit2,
-          abi: permit2Abi,
-          functionName: "approve",
-          chainId: chain.id,
-          args: [addresses.cc, V4.universalRouter, PERMIT2_MAX, PERMIT2_EXP],
-        });
-        return;
-      }
-
-      const out = minOut(quoteOut as bigint, SLIPPAGE_BPS);
-      const call =
-        side === "buy"
-          ? buildBuy(addresses.cc as Address, poolP, amountInWei, out)
-          : buildSell(addresses.cc as Address, poolP, amountInWei, out);
-      await writeWithBuffer({
-        address: V4.universalRouter,
-        abi: universalRouterAbi,
-        functionName: "execute",
-        chainId: chain.id,
-        args: [call.commands, call.inputs, deadline],
-        value: call.value,
-      });
-    } catch (e: any) {
-      setErr(e?.shortMessage || e?.message || "transaction failed");
+  async function swap(write: Write) {
+    const t = m!.token as Address;
+    if (!plan[0].done && side === "sell") await write({ address: t, abi: erc20Abi, functionName: "approve", args: [V4.permit2, maxUint256] });
+    if (!plan[1]?.done && side === "sell")
+      await write({ address: V4.permit2, abi: permit2Abi, functionName: "approve", args: [t, V4.universalRouter, PERMIT2_MAX, PERMIT2_EXP] });
+    const out = minOut(quoteOut as bigint, slipBps);
+    const call = side === "buy" ? buildBuy(m!.key, amountIn, out) : buildSell(m!.key, amountIn, out);
+    // the router checks the deadline against the timestamp of the block that includes the swap
+    const next = await client!.getBlock({ blockTag: "pending" }).catch(() => undefined);
+    const deadline = (next?.timestamp ?? BigInt(Math.floor(Date.now() / 1000))) + 1200n;
+    const hash = await write({
+      address: V4.universalRouter,
+      abi: universalRouterAbi,
+      functionName: "execute",
+      args: [call.commands, call.inputs, deadline],
+      value: call.value,
+    });
+    // a buy reports the token transferred to the account, a sell the amount sold
+    let got = amountIn;
+    if (side === "buy") {
+      const rc = await client!.getTransactionReceipt({ hash });
+      const logs = parseEventLogs({ abi: transferEventAbi, logs: rc.logs, eventName: "Transfer" });
+      got = logs.filter((l) => l.address.toLowerCase() === t.toLowerCase() && l.args.to === address).reduce((a, l) => a + l.args.value, 0n) || (quoteOut as bigint);
     }
+    setResult({ text: `${side === "buy" ? "bought" : "sold"} ${tokens(got, dec)} ${tag}`, hash });
+    setPay("");
   }
 
-  const actionLabel = isPending
-    ? "confirm in wallet…"
-    : needsErc20Approve
-      ? "approve cc"
-      : needsP2Approve
-        ? "enable permit2"
-        : `${side} cc`;
+  const over = payBal != null && amountIn > payBal;
+  const wrongChain = address != null && chainId !== chain.id;
+  const gate = !address
+    ? { label: "connect wallet", off: true } // the header's connect button is the way in
+    : wrongChain
+      ? { label: "switch network", go: () => switchChain({ chainId: chain.id }) }
+      : amountIn === 0n
+        ? { label: "enter an amount", off: true }
+        : over
+          ? { label: `insufficient ${side === "buy" ? "ETH" : tag}`, off: true }
+          : quote.isLoading
+            ? { label: "quoting…", off: true }
+            : {
+                label: `${side} ${tag}`,
+                off: !(quoteOut != null && quoteOut > 0n),
+                go: () => {
+                  setResult(null);
+                  run(swap, plan);
+                },
+              };
+  const active = steps.find((s) => s.status === "wallet" || s.status === "pending");
+  const busy = pending && !result;
+  // settled shows "failed" for 1.5 s, then "try again"
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    setSettled(false);
+    const t = err && err !== CANCELLED ? setTimeout(() => setSettled(true), 1500) : undefined;
+    return () => clearTimeout(t);
+  }, [err]);
+  const failing = Boolean(err) && err !== CANCELLED && !busy && !("off" in gate && gate.off);
+  const label = busy
+    ? active?.status === "pending"
+      ? active.label === side ? "pending…" : active.label === "permit" ? "permitting…" : "approving…"
+      : "confirm in wallet…"
+    : result
+      ? `✓ ${result.text}`
+      : failing
+        ? settled ? "try again" : "failed"
+        : gate.label;
+  // the transaction under the button: the one in flight, the one that failed on chain, or the result
+  const txHash = result?.hash ?? steps.find((s) => (s.status === "pending" || s.status === "failed") && s.hash)?.hash;
+
+  // a result belongs to the account that traded
+  useEffect(() => {
+    setResult(null);
+    reset();
+  }, [address]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const edit = (fn: () => void) => {
+    fn();
+    setResult(null);
+    reset();
+  };
+  const max = () => {
+    if (payBal == null) return;
+    const v = side === "buy" ? (payBal > GAS_RESERVE ? payBal - GAS_RESERVE : 0n) : payBal;
+    edit(() => setPay(formatUnits(v, inDec)));
+  };
+  const closeSlip = () => setSlipOpen(false);
+
+  const inUnit = side === "buy" ? "ETH" : tag;
+  const outUnit = side === "buy" ? tag : "ETH";
+  const bal = payBal != null ? (side === "buy" ? Number(formatUnits(payBal, 18)).toFixed(4) : tokens(payBal, dec)) : null;
+  const outText = amountIn === 0n ? "0" : side === "buy" ? commas(Math.floor(receive)) : receive.toFixed(5);
 
   return (
     <aside className="trade">
-      <div className="price-row">
-        <span className="pair">$cc</span>
-        <span>{ccUsd != null ? usd(ccUsd) : "—"}</span>
-      </div>
-      <div className="price-small">
-        <div className="r">
-          <span>cc / eth</span>
-          <span>
-            {market.ccPerEth > 0 ? (1 / market.ccPerEth).toFixed(9) : "—"}
-          </span>
-        </div>
-        <div className="r">
-          <span>24h</span>
-          <span>{"—"}</span>
-        </div>
-        <div className="r">
-          <span>mcap</span>
-          <span>{"—"}</span>
-        </div>
-        <div className="r">
-          <span>vol 24h</span>
-          <span>{"—"}</span>
-        </div>
+      <div className="tp-head">
+        <h2>{tag}</h2>
+        {m && (
+          <a href={evmNowAddress(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} contract on evm.now`}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+              <path d="M5 11 11 5M6 5h5v5" />
+            </svg>
+          </a>
+        )}
       </div>
 
-      <div className="tabs">
-        <button className={side === "buy" ? "active" : ""} onClick={() => setSide("buy")}>
-          buy
-        </button>
-        <button className={side === "sell" ? "active" : ""} onClick={() => setSide("sell")}>
-          sell
-        </button>
+      {(marketCap != null || tokenUsd != null) && (
+        <dl className="tp-stats">
+          {marketCap != null && (
+            <div>
+              <dt>market cap</dt>
+              <dd>{usdCompact(marketCap)}</dd>
+            </div>
+          )}
+          {tokenUsd != null && (
+            <div>
+              <dt>price</dt>
+              <dd>
+                {usdPrice(tokenUsd)}
+                {change != null && <span className={Math.abs(change) < 0.005 ? "" : change > 0 ? "up" : "down"}>{changePct(change)}</span>}
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
+
+      <div className="tp-tabs">
+        {(["buy", "sell"] as const).map((s) => (
+          <button key={s} className={side === s ? "active" : ""} disabled={pending} onClick={() => edit(() => setSide(s))}>
+            {s}
+          </button>
+        ))}
       </div>
 
-      <div className="field">
-        <label>
-          <span>pay</span>
-          <span>
-            bal{" "}
-            {side === "buy"
-              ? ethBal
-                ? `${Number(ethBal.formatted).toFixed(3)} eth`
-                : "0 eth"
-              : ccBal != null
-                ? `${tokens(ccBal as bigint)} cc`
-                : "0 cc"}
-          </span>
-        </label>
-        <div className="box">
+      <div className={`tp-card${over ? " err" : ""}`}>
+        <div className="tp-top">
+          <span>in</span>
+          {bal != null && (
+            <span>
+              balance {bal}
+              <button className="max" disabled={pending} onClick={max}>
+                max
+              </button>
+            </span>
+          )}
+        </div>
+        <div className="tp-main">
           <input
             inputMode="decimal"
             placeholder="0"
+            aria-label="amount in"
+            disabled={pending}
             value={pay}
-            onChange={(e) => setPay(e.target.value.replace(/[^0-9.]/g, ""))}
+            onChange={(e) => edit(() => setPay(e.target.value.replace(/[^0-9.]/g, "")))}
           />
-          <span className="unit">{side === "buy" ? "eth" : "cc"}</span>
+          <span className="unit">{inUnit}</span>
         </div>
       </div>
 
-      <div className="field">
-        <label>
-          <span>receive</span>
-          <span>{quoteOut != null ? "quoted" : ""}</span>
-        </label>
-        <div className="box">
-          <span className="out">
-            {side === "buy" ? commas(Math.floor(receiveNum)) : receiveNum.toFixed(5)}
-          </span>
-          <span className="unit">{side === "buy" ? "cc" : "eth"}</span>
+      <div className="tp-card">
+        <div className="tp-top">
+          <span>out</span>
+        </div>
+        <div className="tp-main">
+          <span className={`num${amountIn === 0n ? " zero" : ""}`}>{outText}</span>
+          <span className="unit">{outUnit}</span>
         </div>
       </div>
 
-      <div className="quote">
-        <div className="r">
-          <span>rate</span>
-          <span>
-            <b>1 eth = {commas(Math.round(market.ccPerEth))}</b> cc
-          </span>
+      <div className="tp-rows">
+        <div className={`tp-row${impact != null && impact > IMPACT_WARN ? " warn" : ""}`}>
+          <span>price impact</span>
+          <span>{impact != null ? `${impact > 0 ? "−" : ""}${(impact * 100).toFixed(2)}%` : "—"}</span>
         </div>
-        <div className="r">
-          <span>{fees ? `fee ${(feeRate * 100).toFixed(2)}%` : "fee"}</span>
-          <span>{fees ? `${feeEth.toFixed(5)} eth` : "—"}</span>
-        </div>
-        <div className="r">
-          <span>to engine</span>
-          <span>{fees ? `≈ ${(feeEth * fees.engineShare).toFixed(5)} eth` : "—"}</span>
-        </div>
-        <div className="r">
+        <button className="tp-row" disabled={pending} aria-expanded={slipOpen} onClick={() => setSlipOpen(!slipOpen)}>
           <span>slippage</span>
-          <span>{(SLIPPAGE_BPS / 100).toFixed(1)}%</span>
-        </div>
-      </div>
-
-      {!isConnected ? (
-        <button className="action" onClick={openConnectModal}>
-          connect wallet
+          <span>
+            {slipBps / 100}% {slipOpen ? "▴" : "▾"}
+          </span>
         </button>
-      ) : (
-        <button
-          className="action"
-          onClick={onAction}
-          disabled={!canExecute && !needsErc20Approve && !needsP2Approve}
-          title={!poolReady ? "coin not deployed" : undefined}
-        >
-          {actionLabel}
-        </button>
-      )}
-
-      {err && <p className="panel-note" style={{ color: "var(--credit)" }}>{err}</p>}
-
-      {!poolReady && <p className="panel-note">coin not deployed.</p>}
-
-      <div className="balances">
-        <div className="r">
-          <span>cc</span>
-          <span>{ccBal != null ? tokens(ccBal as bigint) : "—"}</span>
-        </div>
-        {poolReady && ccBal != null && ccUsd != null && (
-          <div className="r">
-            <span>balance</span>
-            <span>{usd(Number(formatUnits(ccBal as bigint, 18)) * ccUsd)}</span>
+        {slipOpen && (
+          <div className="tp-opts">
+            {SLIPPAGE_PRESETS.map((p) => (
+              <button
+                key={p}
+                className={slipBps === p && slipCustom === "" ? "on" : ""}
+                onClick={() => {
+                  pickSlip(p, "");
+                  closeSlip();
+                }}
+              >
+                {p / 100}%
+              </button>
+            ))}
+            <input
+              className={slipCustom !== "" ? (slipValid ? "on" : "err") : ""}
+              inputMode="decimal"
+              placeholder="custom"
+              aria-label="custom slippage percent"
+              value={slipCustom}
+              onChange={(e) => {
+                const v = e.target.value.replace(/[^0-9.]/g, "");
+                const n = Number(v);
+                if (v !== "" && n >= 0.1 && n <= 50) pickSlip(Math.round(n * 100), v);
+                else setSlipCustom(v);
+              }}
+              onKeyDown={(e) => e.key === "Enter" && slipValid && closeSlip()}
+              onBlur={() => slipValid && closeSlip()}
+            />
           </div>
         )}
-        <div className="r">
-          <span>engine</span>
-          <span>{ethShort(market.pot)} eth</span>
-        </div>
-        <div className="r">
-          <span>pool</span>
-          <span>{"—"}</span>
-        </div>
       </div>
+
+      <button
+        className={`action${busy ? " busy" : result ? " ok" : failing && !settled ? " fail" : ""}`}
+        disabled={busy || Boolean(result) || ("off" in gate && gate.off)}
+        onClick={"go" in gate ? gate.go : undefined}
+      >
+        {busy && <span className="spin" aria-hidden />}
+        {label}
+      </button>
+      {(txHash || err) && (
+        <div className="tp-status">
+          {txHash && (
+            <a href={evmNowTx(txHash)} target="_blank" rel="noreferrer">
+              tx {shortHash(txHash)}
+            </a>
+          )}
+          {err && (
+            <p key={err} className={`err${err === CANCELLED ? " fade" : ""}`}>
+              {err}
+            </p>
+          )}
+        </div>
+      )}
+      {hookFee?.active ? (
+        <div className="tp-fee tp-launch">
+          <div className="tp-row">
+            <span>LAUNCH FEE {(hookFee.bps / 100).toFixed(1)}%</span>
+            {hookFee.endsAt != null && hookFee.endsAt > now && <span>{leftLabel(hookFee.endsAt - now)} left</span>}
+          </div>
+          {hookFee.perMin != null && (
+            <p>
+              decays {(hookFee.perMin / 100).toFixed(1)}% per minute until it reaches the base fee of {(hookFee.baseBps / 100).toFixed(1)}%
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="tp-fee">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
+      )}
+      {!engineDeployed && <p className="panel-note tp-note">engine not deployed.</p>}
     </aside>
   );
 }

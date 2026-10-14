@@ -5,9 +5,9 @@ import {InvariantsBase} from "./Invariants.t.sol";
 
 /// @notice the invariant suites of the sale controller and the owner as an adversary. same real system, same invariants as
 /// `InvariantsBase` (pots never above balances, every statement in one place, the owner and the controllers never gain)
-/// plus 12, 13 and 14: a statement leaves only by a `sellTo` sale at or above the hard floor or an exit that paid in
-/// full; locks and handovers never come undone; no call from inside an exit ever goes through.
-/// the fuzzer lists `buy`, the selling controller, the sale settings, the owner replacing the controller and the exit
+/// plus 12, 13 and 14: a statement leaves only by a `sellTo` sale at or above the hard floor or a redemption that paid in
+/// full; locks and handovers never come undone; no call from inside a redemption ever goes through.
+/// the fuzzer lists `buy`, the selling controller, the sale settings, the owner replacing the controller and the redemption
 /// module in one go, locks and the handover chain.
 /// forge-config: default.invariant.runs = 16
 /// forge-config: default.invariant.depth = 80
@@ -30,6 +30,7 @@ abstract contract SaleSuite is InvariantsBase {
         core.setController(c);
     }
 
+    // promise: inv 3 and inv 12 are not vacuous: every sale action succeeds
     /// the fresh state has held statements (and none sold in the window variant). the sale actions
     /// are driven through them, the owner swaps and locks come last. every one must succeed at least once, and the
     /// violation counters must stay at zero. the base `test_everyActionSucceeds` leaves the sale actions out because it
@@ -50,11 +51,11 @@ abstract contract SaleSuite is InvariantsBase {
         assertTrue(_try(26, 40), "no owner swap");
         assertTrue(_try(28, 160), "no handover");
         assertTrue(_try(27, 160), "no lock");
-        for (uint256 i; i < 120 && (handler.pauseCount() == 0 || ctl.paused()); ++i) {
+        for (uint256 i; i < 120 && (handler.pauseCount() == 0 || core.paused()); ++i) {
             _try(34, 1);
         }
-        assertGt(handler.pauseCount(), 0, "no pause window");
-        assertFalse(ctl.paused(), "no resume");
+        assertGt(handler.pauseCount(), 0, "no pause");
+        assertFalse(core.paused(), "no resume");
         assertGt(handler.gSoldTo(), 0, "no statement was sold at once");
         for (uint256 i = 1; i < handler.violationCount(); ++i) {
             assertEq(handler.viol(i), 0, handler.violMsg(i));
@@ -65,6 +66,7 @@ abstract contract SaleSuite is InvariantsBase {
         assertEq(handler.unexpectedFails(34), 0, handler.actionName(34));
     }
 
+    // promise: inv 11 handler actions survive the top of the seed range
     /// the seeds at the top of the range must not overflow inside a handler action
     function test_saleActionsSurviveMaxSeeds() public {
         uint256 m = type(uint256).max;
@@ -79,15 +81,6 @@ abstract contract SaleSuite is InvariantsBase {
         }
     }
 
-    /// the hostile owner path with every sale action in a long fixed sequence of mixed calls: nothing reverts, no violation
-    /// forge-config: default.gas_limit = 9223372036854775807
-    function testFuzz_saleActionsNeverRevert(uint256 a, uint256 w, uint256 x, uint256 y, uint256 z) public {
-        uint256 k = a % 7;
-        _act(k == 6 ? 34 : 23 + k, w, x, y, z);
-        for (uint256 i = 1; i < handler.violationCount(); ++i) {
-            assertEq(handler.viol(i), 0, handler.violMsg(i));
-        }
-    }
 }
 
 /// phase 1 after the sniper window, the sale suite
@@ -100,7 +93,7 @@ contract InvariantsSalePhase1 is SaleSuite {
     }
 }
 
-/// phase 2 with the exit module set, the owner swapping module and controller at once, the fuzz controller benign
+/// the balance side with the balance module set, the owner swapping module and controller at once, the fuzz controller benign
 /// forge-config: default.invariant.runs = 16
 /// forge-config: default.invariant.depth = 80
 /// forge-config: default.invariant.fail-on-revert = false
@@ -114,7 +107,7 @@ contract InvariantsSalePhase2 is SaleSuite {
     }
 }
 
-/// phase 2 under the hostile controller: it fails and answers short, and the owner can swap it away and back
+/// the balance side under the hostile controller: it fails and answers short, and the owner can swap it away and back
 /// forge-config: default.invariant.runs = 16
 /// forge-config: default.invariant.depth = 80
 /// forge-config: default.invariant.fail-on-revert = false

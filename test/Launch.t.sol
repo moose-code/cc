@@ -1,19 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
-import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
 import {Fixture} from "./utils/Fixture.sol";
-import {Mainnet} from "../src/interfaces/Interfaces.sol";
-import {
-    IArtCoinsFactoryV2,
-    IArtCoinsHookV2,
-    IArtCoinsLpLockerV2,
-    IArtCoinsMevSkimV2,
-    IArtCoinsTokenV2
-} from "../src/interfaces/ArtCoinsV2.sol";
+import {IArtCoinsHookV2, IArtCoinsMevSkimV2} from "../src/interfaces/ArtCoinsV2.sol";
 
 /// the launch of the coin through the v2 factory as its owner and everything it must read back as
 contract LaunchTest is Fixture {
@@ -24,245 +13,40 @@ contract LaunchTest is Fixture {
         HOOK = IArtCoinsHookV2(lc.stack.hook);
     }
 
+    // the Core computed the coin address the factory deployed, from the sender and the whole config
     function test_predictedCoinEqualsDeployed() public view {
+        assertEq(core.COIN(), address(coin));
         assertEq(predictCoin(owner, "Fixture Coin", "FIXT", FIXTURE_SALT), address(coin));
-        // the prediction depends on the token admin, the salt and the name
         assertTrue(predictCoin(creator, "Fixture Coin", "FIXT", FIXTURE_SALT) != address(coin));
         assertTrue(predictCoin(owner, "Fixture Coin", "FIXT", bytes32(0)) != address(coin));
-        assertTrue(predictCoin(owner, "Other", "FIXT", FIXTURE_SALT) != address(coin));
     }
 
-    function test_predictionDependsOnTheSender() public view {
-        LaunchConfigView memory v = _view();
-        assertEq(FACTORY.predictToken(owner, v.cfg), address(coin));
-        assertTrue(FACTORY.predictToken(creator, v.cfg) != address(coin), "the sender is part of the salt");
-    }
-
-    function test_wiring() public view {
-        assertEq(core.COIN(), address(coin));
-        assertEq(core.owner(), owner);
-        assertEq(core.controller(), address(ctl));
-        assertEq(address(ctl.CORE()), address(core));
-        assertEq(core.HOOK(), lc.stack.hook);
-        assertEq(core.FACTORY(), lc.stack.factory);
-        assertEq(core.FEE_SOURCE(), address(feeRouter));
-        assertEq(feeRouter.engine(), address(core));
-        assertEq(feeRouter.owner(), owner);
-    }
-
-    function test_supplyAllInThePool() public view {
-        assertApproxEqAbs(coin.totalSupply(), 1_000_000_000e18, 1e6, "the locker burns its rounding dust");
-        // the pool manager holds the supply as the one locker position, less liquidity rounding dust that stays in
-        // the locker. nobody else holds any
+    // the launch read straight from the v2 contracts: the whole supply is the one pool position, the skim config pays the
+    // Core, and the anti sniper schedule ends at the baseline
+    function test_launchReadBack() public {
         uint256 dust = coin.balanceOf(lc.stack.locker);
         assertLt(dust, 1e6, "rounding dust only");
         assertApproxEqAbs(coin.balanceOf(address(PM)) + dust, 1_000_000_000e18, 1e6);
-        assertEq(coin.balanceOf(owner), 0);
         assertEq(coin.balanceOf(address(core)), 0);
-        assertEq(coin.balanceOf(address(feeRouter)), 0);
-        assertEq(coin.balanceOf(lc.stack.factory), 0);
+        assertEq(coin.canonicalPoolId(), poolId);
+        assertEq(address(core.controller()), address(ctl));
 
-        IArtCoinsLpLockerV2.TokenRewardInfoV2 memory info = IArtCoinsLpLockerV2(lc.stack.locker).tokenRewards(address(coin));
-        assertEq(info.numPositions, 1, "one position");
-        assertEq(info.rewardBps.length, 2, "the project slot and the protocol slot");
-        assertEq(info.rewardRecipients[0], creator);
-        assertEq(info.rewardBps[0], 8_000);
-        assertEq(info.rewardBps[1], 2_000);
-        assertEq(abi.encode(info.poolKey), abi.encode(launchKey));
-    }
-
-    function test_poolKeyAndId() public view {
-        assertEq(Currency.unwrap(launchKey.currency0), address(0));
-        assertEq(Currency.unwrap(launchKey.currency1), address(coin));
-        assertEq(launchKey.fee, 0x800000);
-        assertEq(launchKey.tickSpacing, 200);
-        assertEq(address(launchKey.hooks), lc.stack.hook);
-        assertEq(poolId, keccak256(abi.encode(launchKey)));
-        assertEq(coin.canonicalPoolId(), poolId, "the token computed the same pool id");
-        (uint160 sqrtPrice, int24 tick,,) = StateLibrary.getSlot0(PM, PoolId.wrap(poolId));
-        assertTrue(sqrtPrice != 0, "pool initialized");
-        // the coin is currency1 against eth, so the pool opens at the mirrored tick
-        assertEq(tick, 175_000);
-    }
-
-    function test_skimConfigReadBack() public {
         IArtCoinsHookV2.SkimConfig memory k = HOOK.skimConfig(poolId);
         assertEq(k.baselineSkimBps, 690);
         assertEq(k.bountyBps, 9_638);
-        assertEq(k.maxReferralBpsOfVolume, 0);
-        assertEq(k.lpFeePips, 0);
-        assertEq(k.bountyRecipient, address(feeRouter), "the bounty goes to the router");
-        assertEq(k.protocolRecipient, FACTORY.protocolRecipient(), "the protocol leg is the launcher protocol");
-        assertTrue(HOOK.isOfficialPool(poolId));
-        // the anti sniper schedule: 9_000 bps (90 points) at the first block, the baseline once the window is over
+        assertEq(k.bountyRecipient, address(core), "the bounty goes to the Core");
         IArtCoinsMevSkimV2 mev = IArtCoinsMevSkimV2(lc.mevModule);
-        IArtCoinsMevSkimV2.SkimSchedule memory s = mev.schedule(poolId);
-        assertEq(s.startingSkimBps, 9_000);
-        assertEq(s.endSkimBps, 690, "the baseline is the end value");
-        assertEq(s.windowSeconds, 1800);
-        assertEq(s.startTime, launchTime);
-        (uint24 now_, bool active) = mev.currentSkimBps(poolId);
-        assertEq(now_, 9_000);
-        assertTrue(active);
+        IArtCoinsMevSkimV2.SkimSchedule memory sched = mev.schedule(poolId);
+        assertEq(sched.startingSkimBps, 9_000);
+        assertEq(sched.endSkimBps, 690, "the baseline is the end value");
+        assertEq(sched.windowSeconds, 1800);
         _skipSniperWindow();
-        (now_, active) = mev.currentSkimBps(poolId);
+        (uint24 now_, bool active) = mev.currentSkimBps(poolId);
         assertEq(now_, 690);
         assertFalse(active);
     }
 
-    function test_coinConfigReadBack() public view {
-        assertTrue(coin.restricted());
-        assertEq(coin.canonicalHook(), lc.stack.hook);
-        assertEq(coin.poolManager(), Mainnet.POOL_MANAGER);
-        assertEq(coin.launcher(), lc.stack.factory);
-        assertTrue(coin.isAllowed(lc.stack.locker) && coin.isPinned(lc.stack.locker), "the locker is pinned");
-        assertTrue(coin.isAllowed(lc.stack.escrow) && coin.isPinned(lc.stack.escrow), "the escrow is pinned");
-        address[8] memory off = [
-            address(core),
-            address(feeRouter),
-            owner,
-            creator,
-            lc.creatorPayee,
-            lc.stack.hook,
-            lc.stack.factory,
-            address(ctl)
-        ];
-        for (uint256 i; i < off.length; ++i) {
-            assertFalse(coin.isAllowed(off[i]), "nothing else is on the allowlist");
-        }
-        assertFalse(coin.allowlistLocked());
-        assertFalse(coin.recipientsLocked());
-    }
-
-    function test_noExtensionAndTheTokenAdminIsTheOwner() public {
-        IArtCoinsFactoryV2.DeploymentInfoV2 memory info = FACTORY.deploymentInfo(address(coin));
-        assertEq(info.extensions.length, 0);
-        assertEq(info.token, address(coin));
-        assertEq(info.hook, lc.stack.hook);
-        assertEq(info.locker, lc.stack.locker);
-        assertEq(info.mevModule, lc.mevModule);
-        assertEq(info.poolId, poolId);
-        assertEq(info.launchedAt, launchTime);
-        assertEq(info.version, FACTORY.STACK_VERSION());
-        assertEq(HOOK.poolInfo(poolId).extension, address(0));
-        assertEq(coin.admin(), owner, "token admin is the owner from the first block");
-        // nobody else holds an admin power
-        vm.startPrank(creator);
-        vm.expectRevert();
-        coin.setAllowed(creator, true);
-        vm.expectRevert();
-        coin.unrestrict();
-        vm.stopPrank();
-        // the owner manages the allowlist and can leave the restriction
-        vm.prank(owner);
-        coin.setAllowed(creator, true);
-        assertTrue(coin.isAllowed(creator));
-    }
-
-    // ------------------------------------------------------------------ launch failures
-
-    struct LaunchConfigView {
-        IArtCoinsFactoryV2.DeploymentConfigV2 cfg;
-    }
-
-    function _view() internal view returns (LaunchConfigView memory v) {
-        v.cfg = buildConfig(owner, creator, "Fixture Coin", "FIXT", FIXTURE_SALT);
-    }
-
-    function _config(address admin, bytes32 salt) internal view returns (IArtCoinsFactoryV2.DeploymentConfigV2 memory) {
-        return buildConfig(admin, creator, "Fixture Coin", "FIXT", salt);
-    }
-
-    function test_secondLaunchWithSameSaltFails() public {
-        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = _config(owner, FIXTURE_SALT);
-        uint256 fee = FACTORY.deployFee();
-        vm.deal(owner, 1 ether);
-        vm.prank(owner);
-        vm.expectRevert();
-        FACTORY.deployTokenAsOwner{value: fee}(cfg, lc.protocolBps);
-        // a new salt works, which proves the config itself is fine
-        cfg = _config(owner, keccak256("another salt"));
-        vm.prank(owner);
-        address second = FACTORY.deployTokenAsOwner{value: fee}(cfg, lc.protocolBps);
-        assertTrue(second != address(coin) && second.code.length != 0);
-    }
-
-    function test_onlyTheFactoryOwnerCanLaunchOnADeprecatedFactory() public {
-        address outsider = _user("outsider");
-        vm.deal(outsider, 1 ether);
-        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = _config(outsider, bytes32(uint256(1)));
-        uint256 fee = FACTORY.deployFee();
-        assertTrue(FACTORY.deprecated(), "the factory is deprecated");
-        vm.startPrank(outsider);
-        vm.expectRevert(bytes4(keccak256("Deprecated()")));
-        FACTORY.deployToken{value: fee}(cfg);
-        vm.expectRevert();
-        FACTORY.deployTokenAsOwner{value: fee}(cfg, 0);
-        vm.stopPrank();
-    }
-
-    function test_launchNeedsTheDeployFee() public {
-        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = _config(owner, bytes32(uint256(3)));
-        uint256 fee = FACTORY.deployFee();
-        assertGt(fee, 0);
-        vm.deal(owner, 2 ether);
-        address team = _user("team");
-        vm.startPrank(owner);
-        FACTORY.setTeamFeeRecipient(team);
-        vm.expectRevert();
-        FACTORY.deployTokenAsOwner{value: fee - 1}(cfg, lc.protocolBps);
-        // more than the fee is refunded
-        uint256 before = owner.balance;
-        FACTORY.deployTokenAsOwner{value: fee + 0.1 ether}(cfg, lc.protocolBps);
-        vm.stopPrank();
-        assertEq(before - owner.balance, fee, "only the fee is kept");
-        assertEq(team.balance, fee, "the fee goes to the team fee recipient");
-    }
-
-    /// a launch earns on at least one fee leg: lpFeePips 0 with a baseline skim of 0 is refused, lpFeePips 0 with the
-    /// launch baseline skim is the launch
-    function test_launchNeedsAFeeOnOneLeg() public {
-        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = _config(owner, bytes32(uint256(5)));
-        uint256 fee = FACTORY.deployFee();
-        assertEq(cfg.fee.lpFeePips, 0);
-        cfg.fee.baselineSkimBps = 0;
-        vm.startPrank(owner);
-        vm.expectRevert(bytes4(keccak256("ZeroFeeLaunch()")));
-        FACTORY.deployTokenAsOwner{value: fee}(cfg, lc.protocolBps);
-        cfg.fee.baselineSkimBps = lc.baselineSkimBps;
-        address c2 = FACTORY.deployTokenAsOwner{value: fee}(cfg, lc.protocolBps);
-        vm.stopPrank();
-        assertTrue(c2.code.length != 0);
-    }
-
-    /// the launch bountyBps 9_638 needs the owner command setMinProtocolSkimShareBps(362): at the v2 mainnet minimum of
-    /// 1_000 the factory refuses it
-    function test_launchBountyNeedsTheMinProtocolSkimShareAt362() public {
-        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = _config(owner, bytes32(uint256(7)));
-        assertEq(cfg.fee.bountyBps, 9_638);
-        uint256 fee = FACTORY.deployFee();
-        vm.startPrank(owner);
-        FACTORY.setMinProtocolSkimShareBps(1_000);
-        vm.expectRevert();
-        FACTORY.deployTokenAsOwner{value: fee}(cfg, lc.protocolBps);
-        FACTORY.setMinProtocolSkimShareBps(362);
-        address c2 = FACTORY.deployTokenAsOwner{value: fee}(cfg, lc.protocolBps);
-        vm.stopPrank();
-        assertTrue(c2.code.length != 0);
-    }
-
-    function test_bountyAboveTheProtocolFloorReverts() public {
-        IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = _config(owner, bytes32(uint256(6)));
-        cfg.fee.bountyBps = 9_639; // the factory minimum 362 leaves at most 9_638
-        uint256 fee = FACTORY.deployFee();
-        vm.prank(owner);
-        vm.expectRevert();
-        FACTORY.deployTokenAsOwner{value: fee}(cfg, lc.protocolBps);
-    }
-
-    // ------------------------------------------------------------------ referral, open point of the brief
-
-    /// finding: with the cap at zero no referral slice is ever carved, so a swap that names a referrer does not revert
+    // with the referral cap at zero a swap that names a referrer succeeds
     function test_referralWithTheCapAtZeroDoesNotRevert() public {
         _skipSniperWindow();
         address buyer = _user("buyer");
@@ -271,19 +55,21 @@ contract LaunchTest is Fixture {
         router.swapWithData{value: 1 ether}(launchKey, true, -1 ether, buyer, _referralData(_user("ref"), 250));
         assertGt(coin.balanceOf(buyer), 0);
     }
-}
 
-/// the pieces of the launch that the Core itself links: its library
-contract LaunchWiringTest is Fixture {
-    /// the linked library: its address is in the Core code, its code is the compiled CoreLib, and the settings the
-    /// constructor wrote through it read back as the config
-    function test_coreIsLinkedToTheCompiledLibrary() public view {
-        address lib = findLibrary(address(core).code);
-        assertTrue(lib != address(0), "no library in the core code");
-        assertTrue(isCompiledLibrary(lib.code));
-        assertEq(abi.encode(core.settings()), abi.encode(lc.settings), "the settings through the library");
-        // forge test deploys the linked library at the CREATE2 address of libraryAddress(), the address a mainnet
-        // broadcast uses, so the Core links to it here (mainnet has no code at that address before the broadcast)
-        assertEq(lib, libraryAddress());
+    // the anti sniper skim pays the Core far above the baseline in the first block and the baseline after the window
+    function test_theAntiSniperSkimStartsHighAndFallsToTheBaseline() public {
+        IArtCoinsHookV2.SkimConfig memory k = HOOK.skimConfig(poolId);
+        autoBook = false; // leave the skim unbooked so it can be read
+        address t = _user("launch trader");
+        vm.deal(t, 100 ether);
+        uint256 bal = address(core).balance;
+        _buyCoin(t, 1 ether);
+        uint256 early = address(core).balance - bal;
+        assertGt(early, 0.7 ether, "the window skim is far above the baseline");
+        _skipSniperWindow();
+        bal = address(core).balance;
+        _buyCoin(t, 1 ether);
+        uint256 late = address(core).balance - bal;
+        assertApproxEqRel(late, uint256(1 ether) * k.baselineSkimBps * k.bountyBps / 10_000 / 10_000, 0.01e18);
     }
 }

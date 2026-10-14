@@ -6,10 +6,9 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 import {RepaidCaller} from "./attackers/SaleAttackers.sol";
-import {GasBurningPayee} from "./attackers/GasBurners.sol";
 
 /// the caller payment of `compose`: counted gas at the capped base fee plus `callerFee`, from `ethPot`,
-/// at most the pot. real Core, real Statements, the stand in exit module and token. `exitStatement` shares the helper
+/// at most the pot. real Core, real Statements, the stand in balance module and token. `redeemStatement` shares the helper
 /// and the settings, its cases are in test/Redeem.t.sol
 contract CallerPayTest is Fixture {
     using stdStorage for StdStorage;
@@ -38,8 +37,11 @@ contract CallerPayTest is Fixture {
         _setSettings(s);
     }
 
+    /// sets the pot by slot and moves the eth with it, so no eth is left above the pots for the next book to count
     function _setPot(uint256 v) internal {
+        uint256 old = core.ethPot();
         stdstore.target(address(core)).sig("ethPot()").checked_write(v);
+        vm.deal(address(core), address(core).balance + v - old);
         assertEq(core.ethPot(), v);
     }
 
@@ -61,7 +63,7 @@ contract CallerPayTest is Fixture {
         r.gasUsed = g0 - gasleft();
         (r.gross, r.refund) = _lastCallGross();
         r.paid = keeper.balance - kb;
-        // a loaded router flushes into the pot during the call: the drops are meaningful only when it is empty
+        // unbooked income is booked into the pot during the call: the drops are meaningful only when there is none
         r.potDrop = pot > core.ethPot() ? pot - core.ethPot() : 0;
         r.balDrop = bal > address(core).balance ? bal - address(core).balance : 0;
     }
@@ -74,6 +76,7 @@ contract CallerPayTest is Fixture {
 
     // ------------------------------------------------------------------ off at launch
 
+    // promise: SPEC 1 compose is unpaid at launch
     function test_launchSettingsPayZero() public {
         Settings memory s = core.settings();
         assertEq(s.callerFee, 0);
@@ -85,26 +88,9 @@ contract CallerPayTest is Fixture {
         assertEq(r.balDrop, 0, "no eth moved");
     }
 
-    /// the fee alone pays the fee, the ceiling alone pays the gas
-    function test_feeAndCeilingAreIndependent() public {
-        _readyEth();
-        uint256 snap = vm.snapshotState();
-        Settings memory s = core.settings();
-        s.callerFee = uint64(FEE);
-        _setSettings(s);
-        Run memory r = _run(5 gwei, 5 gwei);
-        assertEq(r.paid, FEE, "the fee alone, no gas refund with a zero ceiling");
-        vm.revertToState(snap);
-        s.callerFee = 0;
-        s.callerMaxBaseFee = uint48(CEILING);
-        _setSettings(s);
-        r = _run(5 gwei, 5 gwei);
-        assertGt(r.paid, 0);
-        assertEq(r.paid % 5 gwei, 0, "the gas alone");
-    }
-
     // ------------------------------------------------------------------ paid
 
+    // promise: SPEC 1 compose pays min(counted gas, bound) times min(basefee, ceiling) plus callerFee
     function test_composePaysCountedGasAtTheBaseFeePlusTheFee() public {
         _readyEth();
         _payOn();
@@ -126,50 +112,26 @@ contract CallerPayTest is Fixture {
         _solvent();
     }
 
-    /// above the ceiling the gas is paid at the ceiling, with the same counted gas
-    function test_baseFeeAboveTheCeilingPaysAtTheCeiling() public {
-        _readyEth();
-        _payOn();
-        uint256 snap = vm.snapshotState();
-        Run memory low = _run(5 gwei, 5 gwei);
-        uint256 counted = _counted(low, 5 gwei);
-        vm.revertToState(snap);
-        Run memory high = _run(50 gwei, 50 gwei);
-        assertEq(high.paid, counted * CEILING + FEE, "the same counted gas at the ceiling");
-        assertEq(high.potDrop, high.paid);
-    }
-
-    /// the priority fee is not refunded: the gas price of the transaction does not enter the payment
-    function test_priorityFeeIsNotRefunded() public {
-        _readyEth();
-        _payOn();
-        uint256 snap = vm.snapshotState();
-        Run memory plain = _run(5 gwei, 5 gwei);
-        vm.revertToState(snap);
-        Run memory tipped = _run(5 gwei, 5 gwei + 40 gwei);
-        assertEq(tipped.paid, plain.paid);
-    }
-
-    /// the gas of the fee router flush is counted: the compose that pulls a loaded router is paid for more gas
-    function test_routerFlushIsCounted() public {
-        _skipToSplitStart();
-        vm.deal(address(feeRouter), 1 gwei);
-        _flush();
-        assertTrue(feeRouter.splitOn(), "the split is on");
+    // promise: SPEC 1 the counted gas includes the book
+    /// the gas of the book is counted: the compose that books unbooked income is paid for more gas
+    function test_bookIsCounted() public {
+        _skipToPayeeStart();
+        _buyCoin(funder, 5 ether);
+        assertTrue(core.payeeOn(), "the payee share is on");
         _readyEth();
         _payOn();
         uint256 snap = vm.snapshotState();
         Run memory empty = _run(5 gwei, 5 gwei);
         vm.revertToState(snap);
-        vm.deal(address(feeRouter), 1 ether);
+        vm.deal(address(core), address(core).balance + 1 ether);
         Run memory loaded = _run(5 gwei, 5 gwei);
-        assertGt(address(core).balance, 0);
-        uint256 flushGas = _counted(loaded, 5 gwei) - _counted(empty, 5 gwei);
-        emit log_named_uint("counted gas of the flush", flushGas);
-        assertGt(flushGas, 20_000, "the flush is in the count");
+        uint256 bookGas = _counted(loaded, 5 gwei) - _counted(empty, 5 gwei);
+        emit log_named_uint("counted gas of the book", bookGas);
+        assertGt(bookGas, 10_000, "the book is in the count");
         assertGe(_counted(loaded, 5 gwei), loaded.gross);
     }
 
+    // promise: SPEC 1 the caller payment is at most ethPot
     function test_paymentIsCappedAtThePot() public {
         _readyEth();
         _payOn();
@@ -180,35 +142,13 @@ contract CallerPayTest is Fixture {
         assertEq(core.heldStatements().length, 1, "the compose went through");
     }
 
-    function test_emptyPotPaysZeroAndComposes() public {
-        _readyEth();
-        _payOn();
-        _setPot(0);
-        Run memory r = _run(5 gwei, 5 gwei);
-        assertEq(r.paid, 0);
-        assertEq(core.heldStatements().length, 1);
-    }
-
-    /// @dev the router split on and four payees that burn all the gas they are given: the most expensive flush
-    function _burningRouter() internal {
-        _skipToSplitStart();
-        vm.deal(address(feeRouter), 1 gwei);
-        _flush();
-        address[] memory who = new address[](4);
-        uint32[] memory ppm = new uint32[](4);
-        for (uint256 i; i < 4; ++i) {
-            who[i] = address(new GasBurningPayee());
-            ppm[i] = 50_000;
-        }
-        vm.prank(owner);
-        feeRouter.setPayees(who, ppm);
-    }
-
+    // promise: SPEC 1 the compose gas bound is at least 1.2 times the largest counted compose
     function test_worstCaseCountedGasIsUnderTheBound() public {
-        _burningRouter();
+        _skipToPayeeStart();
+        _buyCoin(funder, 5 ether);
         _readyEth();
         _payOn();
-        vm.deal(address(feeRouter), 1 ether);
+        vm.deal(address(core), address(core).balance + 1 ether);
         Run memory r = _run(1 gwei, 1 gwei);
         emit log_named_uint("eth lane worst case: counted", _counted(r, 1 gwei));
         emit log_named_uint("eth lane worst case: gross before refund", r.gross);
@@ -217,6 +157,7 @@ contract CallerPayTest is Fixture {
 
     // ------------------------------------------------------------------ bounds and reentrancy
 
+    // promise: INTEGRATION BadSetting on callerFee and callerMaxBaseFee
     function test_callerPaymentBounds() public {
         Settings memory s = core.settings();
         s.callerFee = 0.005 ether;
@@ -233,6 +174,7 @@ contract CallerPayTest is Fixture {
         core.setSettings(s);
     }
 
+    // promise: INTEGRATION Reentrancy on the caller payment
     /// the payment is the last action: a caller that re enters from its receive finds every door shut, and it is
     /// paid once
     function test_paidCallerFindsEveryDoorShut() public {

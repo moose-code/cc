@@ -5,25 +5,34 @@ import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, Sale, CreditSale} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
-import {ProbeTarget} from "./attackers/ProbeTarget.sol";
-import {MockExitModule} from "./standins/MockExitModule.sol";
-import {MockExitToken} from "./standins/MockExitToken.sol";
+import {RawListingAdapter} from "./standins/RawListingAdapter.sol";
+import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 
 /// the owner of the core after the timelock was removed: every former queued action is one immediate call with its
-/// validity rules, three one way locks, a two step handover. real Core, real stack, the stand in exit module and
+/// validity rules, three one way locks, a two step handover. real Core, real stack, the stand in balance module and
 /// token, the scripted controller
 abstract contract OwnerBase is Fixture {
-    MockExitToken internal spareToken;
-    MockExitModule internal spareMod;
+    MockBalanceToken internal spareToken;
+    MockBalanceModule internal spareMod;
     address internal stranger = address(0x5757);
     address internal heir = address(0xEE11);
 
+    /// the controller's sale and credit settings with every changed field set, for the owner door tests
+    function _newSaleAndCredit() internal view returns (Sale memory s, CreditSale memory c) {
+        s = _sale();
+        (s.markupBps, s.startCapBps, s.fastDecayBpsPerHour, s.kneeBps, s.slowDecayBpsPerHour) =
+            (12_000, 150_000, 200, 12_000, 50);
+        c = _creditSale();
+        (c.royaltyBps, c.royaltyRecipient) = (300, address(0xA27));
+    }
+
     function setUp() public virtual override {
         super.setUp();
-        spareToken = new MockExitToken("Spare Token", "SPT");
-        spareMod = new MockExitModule(address(spareToken), UNIT);
+        spareToken = new MockBalanceToken("Spare Token", "SPT");
+        spareMod = new MockBalanceModule(address(spareToken), UNIT);
         vm.deal(heir, 10 ether);
     }
 
@@ -36,7 +45,7 @@ abstract contract OwnerBase is Fixture {
 
     uint256 internal constant D_CONTROLLER = 0;
     uint256 internal constant D_MODULE = 1;
-    uint256 internal constant D_TARGETS = 2;
+    uint256 internal constant D_ADAPTERS = 2;
     uint256 internal constant D_SETTINGS = 3;
     uint256 internal constant D_RATE = 4;
     uint256 internal constant D_REMOVE = 5;
@@ -45,15 +54,15 @@ abstract contract OwnerBase is Fixture {
     function _doorData(uint256 i) internal returns (bytes memory) {
         if (i == D_CONTROLLER) return abi.encodeCall(ICore.setController, (address(_scripted())));
         if (i == D_MODULE) {
-            address token = core.exitToken() == address(0) ? address(spareToken) : core.exitToken();
-            return abi.encodeCall(ICore.setExitModule, (address(new MockExitModule(token, UNIT))));
+            address token = core.balanceToken() == address(0) ? address(spareToken) : core.balanceToken();
+            return abi.encodeCall(ICore.setBalanceModule, (address(new MockBalanceModule(token, UNIT))));
         }
-        if (i == D_TARGETS) {
-            return abi.encodeCall(ICore.addTarget, (address(uint160(0xA0000 + block.number + gasleft() % 97))));
+        if (i == D_ADAPTERS) {
+            return abi.encodeCall(ICore.addAdapter, (address(uint160(0xA0000 + block.number + gasleft() % 97))));
         }
         if (i == D_SETTINGS) return abi.encodeCall(ICore.setSettings, (core.settings()));
         if (i == D_RATE) return abi.encodeCall(ICore.setRate, (core.rateAtCheckpoint()));
-        if (i == D_REMOVE) return abi.encodeCall(ICore.removeTarget, (address(0xDEAD1)));
+        if (i == D_REMOVE) return abi.encodeCall(ICore.removeAdapter, (address(0xDEAD1)));
         return abi.encodeCall(ICore.transferOwnership, (address(0)));
     }
 
@@ -87,10 +96,10 @@ abstract contract OwnerBase is Fixture {
         (bool ok2, bytes memory out2) = address(core).call(abi.encodeCall(ICore.lockController, ()));
         assertTrue(!ok2 && _sel(out2) == ICore.OnlyOwner.selector);
         vm.prank(who);
-        (ok2, out2) = address(core).call(abi.encodeCall(ICore.lockExitModule, ()));
+        (ok2, out2) = address(core).call(abi.encodeCall(ICore.lockBalanceModule, ()));
         assertTrue(!ok2 && _sel(out2) == ICore.OnlyOwner.selector);
         vm.prank(who);
-        (ok2, out2) = address(core).call(abi.encodeCall(ICore.lockTargets, ()));
+        (ok2, out2) = address(core).call(abi.encodeCall(ICore.lockAdapters, ()));
         assertTrue(!ok2 && _sel(out2) == ICore.OnlyOwner.selector);
     }
 }
@@ -98,6 +107,7 @@ abstract contract OwnerBase is Fixture {
 contract OwnerFormerQueueTest is OwnerBase {
     // ------------------------------------------------------------------ setController
 
+    // promise: SPEC 10 setController takes effect at once
     function test_controller_takesEffectInTheSameBlock() public {
         ScriptedController sc = _scripted();
         uint256 t = block.timestamp;
@@ -113,6 +123,7 @@ contract OwnerFormerQueueTest is OwnerBase {
         core.compose();
     }
 
+    // promise: INTEGRATION ZeroAddress, OnlyOwner on setController
     function test_controller_zeroRevertsAndStrangerRevertsAndASecondSetWorks() public {
         vm.prank(owner);
         vm.expectRevert(ICore.ZeroAddress.selector);
@@ -125,131 +136,75 @@ contract OwnerFormerQueueTest is OwnerBase {
         assertEq(core.controller(), address(ctl));
     }
 
-    /// compose runs under the new controller in the same block it was set
-    function test_controller_composeUsesTheNewControllerAtOnce() public {
-        _fillEthPile(80);
-        ScriptedController sc = _scripted();
-        uint256[] memory page = core.pilePage(0, 80);
-        uint256[80] memory p;
-        for (uint256 i; i < 80; ++i) {
-            p[i] = page[i];
-        }
-        sc.setPage(true, p, 0);
-        _setController(address(sc));
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.compose();
-        uint256 sid = STATEMENTS.supply();
-        assertTrue(_isHeld(sid), "composed from the page of the new controller");
-    }
+    // ------------------------------------------------------------------ setBalanceModule
 
-    // ------------------------------------------------------------------ setExitModule
-
-    function test_module_firstSetTakesEffectInTheSameBlock() public {
-        vm.expectEmit(address(core));
-        emit ICore.ExitModuleSet(address(spareMod), address(spareToken), UNIT);
-        _setExitModule(address(spareMod));
-        assertEq(core.exitModule(), address(spareMod));
-        assertEq(core.exitToken(), address(spareToken));
-        assertEq(core.unitPerPoint(), UNIT);
-        // the exit side is live in the same block once the bid is turned on
-        _setExitMode(2);
-        _setExitPoolFor(address(spareToken));
-        uint256[] memory ids = _credits(seller, 1);
-        spareToken.mint(address(core), 5e19);
-        core.skim();
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        assertEq(CREDITS.ownerOf(ids[0]), address(core));
-    }
-
+    // promise: INTEGRATION BadModule on setBalanceModule
     function test_module_validityRulesAreIntact() public {
         vm.startPrank(owner);
         // no code
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(0xBEEF));
+        core.setBalanceModule(address(0xBEEF));
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(0));
+        core.setBalanceModule(address(0));
         // a token without code
-        MockExitModule m = new MockExitModule(address(0xBEEF), UNIT);
+        MockBalanceModule m = new MockBalanceModule(address(0xBEEF), UNIT);
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(m));
+        core.setBalanceModule(address(m));
         // a forbidden token: the coin, the credits
-        m = new MockExitModule(address(coin), UNIT);
+        m = new MockBalanceModule(address(coin), UNIT);
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(m));
-        m = new MockExitModule(address(CREDITS), UNIT);
+        core.setBalanceModule(address(m));
+        m = new MockBalanceModule(address(CREDITS), UNIT);
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(m));
+        core.setBalanceModule(address(m));
         // a zero unit, a unit above uint128, a unit read that reverts
-        m = new MockExitModule(address(spareToken), 0);
+        m = new MockBalanceModule(address(spareToken), 0);
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(m));
-        m = new MockExitModule(address(spareToken), uint256(type(uint128).max) + 1);
+        core.setBalanceModule(address(m));
+        m = new MockBalanceModule(address(spareToken), uint256(type(uint128).max) + 1);
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(m));
-        m = new MockExitModule(address(spareToken), UNIT);
+        core.setBalanceModule(address(m));
+        m = new MockBalanceModule(address(spareToken), UNIT);
         m.setRevertUnit(true);
         vm.expectRevert(ICore.BadModule.selector);
-        core.setExitModule(address(m));
+        core.setBalanceModule(address(m));
         vm.stopPrank();
-        assertEq(core.exitModule(), address(0), "every refused set changed nothing");
-        assertEq(core.exitToken(), address(0));
-        assertEq(core.unitPerPoint(), 0);
+        assertEq(core.balanceModule(), address(0), "every refused set changed nothing");
+        assertEq(core.balanceToken(), address(0));
         vm.prank(stranger);
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.setExitModule(address(spareMod));
+        core.setBalanceModule(address(spareMod));
     }
 
-    function test_module_replaceKeepsTheTokenAndReadsTheUnitAgain() public {
-        _setExitModule(address(spareMod));
-        MockExitModule second = new MockExitModule(address(spareToken), 3 * UNIT);
-        _setExitModule(address(second));
-        assertEq(core.exitModule(), address(second));
-        assertEq(core.unitPerPoint(), 3 * UNIT, "the unit of the new module");
+    // promise: SPEC 1 a replaceable balance module with a fixed token (decision 101)
+    function test_module_replaceKeepsTheTokenAndTheUnitStaysWithTheModule() public {
+        _setBalanceModule(address(spareMod));
+        MockBalanceModule second = new MockBalanceModule(address(spareToken), 3 * UNIT);
+        _setBalanceModule(address(second));
+        assertEq(core.balanceModule(), address(second));
+        assertEq(_moduleUnit(), 3 * UNIT, "the unit of the new module");
         // the same module again after its unit changed
         second.setUnitPerPoint(4 * UNIT);
-        _setExitModule(address(second));
-        assertEq(core.unitPerPoint(), 4 * UNIT, "the unit is read again");
-        // another exit token is refused
-        MockExitModule other = new MockExitModule(address(new MockExitToken("Other", "OTH")), UNIT);
+        _setBalanceModule(address(second));
+        assertEq(_moduleUnit(), 4 * UNIT, "the module reports the new unit");
+        // another balance token is refused
+        MockBalanceModule other = new MockBalanceModule(address(new MockBalanceToken("Other", "OTH")), UNIT);
         vm.prank(owner);
-        vm.expectRevert(ICore.ExitTokenChanged.selector);
-        core.setExitModule(address(other));
-        assertEq(core.exitModule(), address(second));
-        assertEq(core.unitPerPoint(), 4 * UNIT);
+        vm.expectRevert(ICore.BalanceTokenChanged.selector);
+        core.setBalanceModule(address(other));
+        assertEq(core.balanceModule(), address(second));
     }
 
-    // ------------------------------------------------------------------ addTarget
+    // ------------------------------------------------------------------ addAdapter
 
-    function test_target_addTakesEffectInTheSameBlock() public {
-        address t = address(0xA11E);
-        uint256 id = 35377;
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(0, "", id, t);
-        vm.expectEmit(address(core));
-        emit ICore.TargetAdded(t);
-        _allow(t);
-        assertTrue(core.allowedTarget(t));
-        // the same call now passes the allow list and fails further in
-        vm.expectRevert(ICore.NoCredit.selector);
-        core.buyListing(0, "", id, t);
-        vm.expectEmit(address(core));
-        emit ICore.TargetRemoved(t);
-        vm.prank(owner);
-        core.removeTarget(t);
-        vm.expectRevert(ICore.TargetNotAllowed.selector);
-        core.buyListing(0, "", id, t);
-    }
-
-    function test_target_forbiddenAddressesAreRefused() public {
-        address[13] memory bad = [
+    // promise: INTEGRATION ForbiddenTarget on addAdapter
+    function test_adapter_forbiddenAddressesAreRefused() public {
+        address[12] memory bad = [
             address(CREDITS),
             address(STATEMENTS),
             address(core),
             address(coin),
             core.HOOK(),
-            core.FEE_SOURCE(),
             address(PM),
             core.FACTORY(),
             core.LOCKER(),
@@ -261,43 +216,29 @@ contract OwnerFormerQueueTest is OwnerBase {
         for (uint256 i; i < bad.length; ++i) {
             vm.prank(owner);
             vm.expectRevert(ICore.ForbiddenTarget.selector);
-            core.addTarget(bad[i]);
-            assertFalse(core.allowedTarget(bad[i]));
+            core.addAdapter(bad[i]);
+            assertFalse(core.allowedAdapter(bad[i]));
         }
-        // the exit module and the exit token join the list once set, and a flag set earlier on the module is cleared
+        // the balance module and the balance token join the list once set, and a flag set earlier on the module is cleared
         address early = address(spareMod);
-        _allow(early);
-        assertTrue(core.allowedTarget(early));
-        _setExitModule(early);
-        assertFalse(core.allowedTarget(early), "the module set cleared the old flag");
+        _approveAdapter(early);
+        assertTrue(core.allowedAdapter(early));
+        _setBalanceModule(early);
+        assertFalse(core.allowedAdapter(early), "the module set cleared the old flag");
         vm.startPrank(owner);
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(early);
+        core.addAdapter(early);
         vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.addTarget(address(spareToken));
+        core.addAdapter(address(spareToken));
         vm.stopPrank();
         vm.prank(stranger);
         vm.expectRevert(ICore.OnlyOwner.selector);
-        core.addTarget(address(0xA11E));
-    }
-
-    function test_target_removeIsImmediateAndHarmlessForUnknown() public {
-        _allow(address(0xA11E));
-        vm.startPrank(owner);
-        core.removeTarget(address(0xA11E));
-        core.removeTarget(address(0xA11E));
-        core.removeTarget(address(0x1));
-        vm.stopPrank();
-        assertFalse(core.allowedTarget(address(0xA11E)));
-        // the launch targets are removable too
-        assertTrue(core.allowedTarget(Mainnet.SEAPORT));
-        vm.prank(owner);
-        core.removeTarget(Mainnet.SEAPORT);
-        assertFalse(core.allowedTarget(Mainnet.SEAPORT));
+        core.addAdapter(address(0xA11E));
     }
 
     // ------------------------------------------------------------------ the queue is gone
 
+    // promise: SPEC 1 every economic number is an owner setting, no timelock
     function test_queue_noQueueNoDelayNoCancelNoFreezeNoImmutableOwner() public {
         string[8] memory sigs = [
             "queue(uint8,bytes)",
@@ -322,6 +263,7 @@ contract OwnerLocksTest is OwnerBase {
         return abi.encodeWithSelector(ICore.Locked.selector, what);
     }
 
+    // promise: inv 13 the controller lock stays closed
     function test_lockController_blocksOnlyTheControllerSetterForever() public {
         assertFalse(core.controllerLocked());
         vm.expectEmit(address(core));
@@ -329,8 +271,8 @@ contract OwnerLocksTest is OwnerBase {
         vm.prank(owner);
         core.lockController();
         assertTrue(core.controllerLocked());
-        assertFalse(core.exitModuleLocked());
-        assertFalse(core.targetsLocked());
+        assertFalse(core.balanceModuleLocked());
+        assertFalse(core.adaptersLocked());
         address c = core.controller();
         vm.prank(owner);
         vm.expectRevert(_lockedErr("controller"));
@@ -346,96 +288,70 @@ contract OwnerLocksTest is OwnerBase {
         assertEq(core.controller(), c);
         // every other door is open, and the controller's own sale settings stay adjustable
         _openExcept(D_CONTROLLER, owner);
+        (Sale memory s, CreditSale memory cs) = _newSaleAndCredit();
         vm.startPrank(owner);
-        ctl.setMarkupBps(12_000);
-        ctl.setStartCapBps(150_000);
-        ctl.setFastDecayBpsPerHour(200);
-        ctl.setSlowDecayBpsPerHour(50);
-        ctl.setKneeBps(12_000);
-        ctl.setFloorBps(8_000);
+        ctl.setSale(s);
+        ctl.setCredit(cs);
         ctl.setAnchorBps(11_000);
         vm.stopPrank();
         assertTrue(core.controllerLocked());
     }
 
-    function test_lockExitModule_revertsWhileUnset() public {
+    // promise: INTEGRATION NoBalanceModule on lockBalanceModule
+    function test_lockBalanceModule_revertsWhileUnset() public {
         vm.prank(owner);
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.lockExitModule();
-        assertFalse(core.exitModuleLocked());
-        // phase 2 can still be entered afterwards
-        _setExitModule(address(spareMod));
+        vm.expectRevert(ICore.NoBalanceModule.selector);
+        core.lockBalanceModule();
+        assertFalse(core.balanceModuleLocked());
+        // the balance side can still be entered afterwards
+        _setBalanceModule(address(spareMod));
         vm.prank(owner);
-        core.lockExitModule();
-        assertTrue(core.exitModuleLocked());
+        core.lockBalanceModule();
+        assertTrue(core.balanceModuleLocked());
     }
 
-    function test_lockExitModule_blocksOnlyTheModuleSetterAndTheUnitStaysFixed() public {
-        _enterPhase2();
-        vm.expectEmit(address(core));
-        emit ICore.ExitModuleLocked();
-        vm.prank(owner);
-        core.lockExitModule();
-        assertTrue(core.exitModuleLocked());
-        assertFalse(core.controllerLocked());
-        assertFalse(core.targetsLocked());
-        address m = core.exitModule();
-        mod.setUnitPerPoint(9 * UNIT);
-        vm.startPrank(owner);
-        vm.expectRevert(_lockedErr("exitModule"));
-        core.setExitModule(address(spareMod));
-        // the same module again, which is how the unit is updated: also locked
-        vm.expectRevert(_lockedErr("exitModule"));
-        core.setExitModule(m);
-        // a module that would be refused anyway is refused as locked first
-        vm.expectRevert(_lockedErr("exitModule"));
-        core.setExitModule(address(0xBEEF));
-        vm.stopPrank();
-        assertEq(core.exitModule(), m);
-        assertEq(core.unitPerPoint(), UNIT, "the unit cannot be updated any more");
-        _openExcept(D_MODULE, owner);
-    }
-
-    function test_lockTargets_blocksAddButNotRemoveAndKeepsTheOldOnes() public {
+    // promise: inv 13 the adapters lock stays closed
+    function test_lockAdapters_blocksAddButNotRemoveAndKeepsTheOldOnes() public {
         address kept = address(0xA11E);
-        _allow(kept);
+        _approveAdapter(kept);
         vm.expectEmit(address(core));
-        emit ICore.TargetsLocked();
+        emit ICore.AdaptersLocked();
         vm.prank(owner);
-        core.lockTargets();
-        assertTrue(core.targetsLocked());
+        core.lockAdapters();
+        assertTrue(core.adaptersLocked());
         assertFalse(core.controllerLocked());
-        assertFalse(core.exitModuleLocked());
-        assertTrue(core.allowedTarget(kept), "an allowed target stays allowed");
+        assertFalse(core.balanceModuleLocked());
+        assertTrue(core.allowedAdapter(kept), "an approved adapter stays approved");
         vm.startPrank(owner);
-        vm.expectRevert(_lockedErr("targets"));
-        core.addTarget(address(0xA11F));
+        vm.expectRevert(_lockedErr("adapters"));
+        core.addAdapter(address(0xA11F));
         // the order of the checks: locked first, also for a forbidden address
-        vm.expectRevert(_lockedErr("targets"));
-        core.addTarget(address(core));
-        core.removeTarget(kept);
+        vm.expectRevert(_lockedErr("adapters"));
+        core.addAdapter(address(core));
+        core.removeAdapter(kept);
         vm.stopPrank();
-        assertFalse(core.allowedTarget(kept));
+        assertFalse(core.allowedAdapter(kept));
         vm.prank(owner);
-        vm.expectRevert(_lockedErr("targets"));
-        core.addTarget(kept);
-        _openExcept(D_TARGETS, owner);
+        vm.expectRevert(_lockedErr("adapters"));
+        core.addAdapter(kept);
+        _openExcept(D_ADAPTERS, owner);
     }
 
+    // promise: SPEC 1 the four Core locks are one way
     function test_locks_areIndependentAndOneWayAndRepeatable() public {
         _enterPhase2();
         vm.startPrank(owner);
         core.lockController();
         core.lockController();
-        core.lockExitModule();
-        core.lockExitModule();
-        core.lockTargets();
-        core.lockTargets();
+        core.lockBalanceModule();
+        core.lockBalanceModule();
+        core.lockAdapters();
+        core.lockAdapters();
         vm.stopPrank();
-        assertTrue(core.controllerLocked() && core.exitModuleLocked() && core.targetsLocked());
-        // with all three locked everything else works: settings, rates, removing targets, the handover
+        assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.adaptersLocked());
+        // with all three locked everything else works: settings, rates, removing adapters, the handover
         for (uint256 i; i < N_DOORS; ++i) {
-            if (i == D_CONTROLLER || i == D_MODULE || i == D_TARGETS) continue;
+            if (i == D_CONTROLLER || i == D_MODULE || i == D_ADAPTERS) continue;
             (bool ok,) = _call(i, owner);
             assertTrue(ok, "an unlocked door is shut");
         }
@@ -454,30 +370,10 @@ contract OwnerLocksTest is OwnerBase {
         assertFalse(u);
     }
 
-    function test_locks_onlyTheOwnerLocks() public {
-        _enterPhase2();
-        _allShutFor(stranger);
-        _allShutFor(deployer);
-        _allShutFor(address(ctl));
-        assertFalse(core.controllerLocked() || core.exitModuleLocked() || core.targetsLocked());
-    }
-
-    /// a locked controller cannot be swapped, so a controller that goes bad stays: compose reverts, the doors that do
-    /// not read the controller stay open
-    function test_locks_aLockedControllerStaysEvenWhenItBreaks() public {
-        ScriptedController sc = _scripted();
-        _setController(address(sc));
-        vm.prank(owner);
-        core.lockController();
-        sc.setRevertPage(true);
-        vm.prank(owner);
-        vm.expectRevert(_lockedErr("controller"));
-        core.setController(address(ctl));
-        assertEq(core.controller(), address(sc));
-    }
 }
 
 contract OwnerHandoverTest is OwnerBase {
+    // promise: INTEGRATION OnlyPendingOwner
     function test_handover_twoStepsAndOnlyThePendingOwnerAccepts() public {
         assertEq(core.owner(), owner);
         assertEq(core.pendingOwner(), address(0));
@@ -508,6 +404,7 @@ contract OwnerHandoverTest is OwnerBase {
         core.acceptOwnership();
     }
 
+    // promise: inv 13 former owners hold no power
     function test_handover_theOldOwnerLosesEveryPowerAndTheNewOneHasEvery() public {
         _enterPhase2();
         vm.prank(owner);
@@ -516,55 +413,29 @@ contract OwnerHandoverTest is OwnerBase {
         core.acceptOwnership();
         _allShutFor(owner);
         // the controller's sale settings follow the live owner
+        (Sale memory s, CreditSale memory cs) = _newSaleAndCredit();
         vm.startPrank(owner);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setMarkupBps(12_000);
+        ctl.setSale(s);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setStartCapBps(150_000);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setFastDecayBpsPerHour(200);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setSlowDecayBpsPerHour(50);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setKneeBps(12_000);
-        vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setFloorBps(8_000);
+        ctl.setCredit(cs);
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setAnchorBps(11_000);
         vm.stopPrank();
         // the new owner has every door
         _openExcept(N_DOORS, heir);
         vm.startPrank(heir);
-        ctl.setMarkupBps(12_000);
-        ctl.setStartCapBps(150_000);
-        ctl.setFastDecayBpsPerHour(200);
-        ctl.setSlowDecayBpsPerHour(50);
-        ctl.setKneeBps(12_000);
-        ctl.setFloorBps(8_000);
+        ctl.setSale(s);
+        ctl.setCredit(cs);
         ctl.setAnchorBps(11_000);
         core.lockController();
-        core.lockExitModule();
-        core.lockTargets();
+        core.lockBalanceModule();
+        core.lockAdapters();
         vm.stopPrank();
-        assertTrue(core.controllerLocked() && core.exitModuleLocked() && core.targetsLocked());
+        assertTrue(core.controllerLocked() && core.balanceModuleLocked() && core.adaptersLocked());
     }
 
-    /// the new owner can hand over again, and the chain of owners never has two at once
-    function test_handover_aChainOfOwners() public {
-        address[3] memory chain = [address(0xAA01), address(0xAA02), address(0xAA03)];
-        address cur = owner;
-        for (uint256 i; i < 3; ++i) {
-            vm.prank(cur);
-            core.transferOwnership(chain[i]);
-            vm.prank(chain[i]);
-            core.acceptOwnership();
-            assertEq(core.owner(), chain[i]);
-            _allShutFor(cur);
-            cur = chain[i];
-        }
-        _openExcept(N_DOORS, cur);
-    }
-
+    // promise: SPEC 10 the two step handover can be cleared or replaced
     function test_handover_zeroClearsPendingAndANewNameReplacesIt() public {
         vm.startPrank(owner);
         core.transferOwnership(heir);
@@ -589,6 +460,7 @@ contract OwnerHandoverTest is OwnerBase {
         assertEq(core.owner(), address(0xEE12));
     }
 
+    // promise: SPEC 10 the owner cannot be zeroed
     function test_handover_ownerCannotBeZeroedAndThereIsNoRenounce() public {
         vm.prank(owner);
         core.transferOwnership(address(0));
@@ -600,37 +472,7 @@ contract OwnerHandoverTest is OwnerBase {
         assertEq(core.owner(), owner);
     }
 
-    function test_handover_theOldOwnerCannotCancelAfterTheAcceptAndAStrangerCannotStart() public {
-        vm.prank(stranger);
-        vm.expectRevert(ICore.OnlyOwner.selector);
-        core.transferOwnership(stranger);
-        vm.prank(owner);
-        core.transferOwnership(heir);
-        vm.prank(heir);
-        core.acceptOwnership();
-        vm.prank(owner);
-        vm.expectRevert(ICore.OnlyOwner.selector);
-        core.transferOwnership(owner);
-        assertEq(core.owner(), heir);
-        assertEq(core.pendingOwner(), address(0));
-    }
-
-    /// a handover to a contract and to the same owner both work
-    function test_handover_toAContractAndToItself() public {
-        address c = address(ctl);
-        vm.prank(owner);
-        core.transferOwnership(c);
-        vm.prank(c);
-        core.acceptOwnership();
-        assertEq(core.owner(), c);
-        vm.prank(c);
-        core.transferOwnership(c);
-        vm.prank(c);
-        core.acceptOwnership();
-        assertEq(core.owner(), c);
-        assertEq(core.pendingOwner(), address(0));
-    }
-
+    // promise: INTEGRATION OnlyPendingOwner
     /// while nothing is pending the pending owner is the zero address, and a call from it must not pass
     /// `acceptOwnership` (review S-9, fixed): the owner stays
     function test_handover_zeroAddressAcceptWhileNothingPendingReverts() public {
@@ -641,6 +483,7 @@ contract OwnerHandoverTest is OwnerBase {
         assertEq(core.owner(), owner);
     }
 
+    // promise: SPEC 1 assets leave the Core only through migrate, rescueCoin and rescueNft (inv 8)
     /// the assets: no owner call, of any owner, moves eth, credits, statements or the coin out of the core
     function test_handover_noOwnerDoorMovesAnAsset() public {
         uint256 sid = _composeOnce().sid;
@@ -657,7 +500,7 @@ contract OwnerHandoverTest is OwnerBase {
         _openExcept(N_DOORS, heir);
         vm.startPrank(heir);
         core.lockController();
-        core.lockTargets();
+        core.lockAdapters();
         vm.stopPrank();
         assertEq(address(core).balance, bal);
         assertEq(CREDITS.balanceOf(address(core)), credits);

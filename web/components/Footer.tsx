@@ -1,11 +1,19 @@
 "use client";
 
-import { useHead } from "@/lib/live";
+import { useHead, useSnapshot } from "@/lib/live";
 import { commas, evmNowAddress } from "@/lib/format";
-import { contracts } from "@/lib/config";
+import { core, credits, statements } from "@/lib/config";
 
 export function Footer() {
   const block = useHead().data?.n;
+  const snap = useSnapshot().data;
+  const contracts = [
+    { label: "core", address: core },
+    { label: "controller", address: snap?.controller },
+    { label: "cc", address: snap?.coin },
+    { label: "credits", address: credits },
+    { label: "statements", address: statements },
+  ].filter((c): c is { label: string; address: `0x${string}` } => Boolean(c.address) && Boolean(core));
   return (
     <footer className="footer">
       <span>{block ? `block ${commas(Number(block))}` : "block —"}</span>

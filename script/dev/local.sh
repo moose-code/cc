@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# local chain for the UI, cached. starts anvil on the fork in the background and
-# loads the saved state of the last end to end run for this phase. the cache key
-# is a hash of the contract and script sources, the fork block and the phase, so
-# any code change misses the cache and reruns script/dev/e2e.sh once, then saves.
+# local chain for the web app, cached. starts anvil on the fork in the background and loads the saved state of the
+# last end to end run for this phase. the cache key is a hash of the contract, script and stand in sources, the fork
+# block and the phase, so a code change misses the cache and reruns script/dev/e2e.sh once, then saves.
 #
-#   script/dev/local.sh            PHASE=post (default), load or build, leave anvil running
-#   PHASE=pre script/dev/local.sh  the engine before the exit token
+#   script/dev/local.sh            PHASE=post (default): load or build, leave anvil running
+#   PHASE=pre script/dev/local.sh  the engine before the balance token
 #   FRESH=1 script/dev/local.sh    ignore the cache and rebuild
 #   script/dev/local.sh stop       stop the anvil this script started
 set -euo pipefail
@@ -32,8 +31,7 @@ stop_anvil() {
 
 if [ "${1:-}" = "stop" ]; then stop_anvil; exit 0; fi
 
-# content hash of every tracked or untracked, non-ignored source file the run
-# depends on. commits and stashes leave it unchanged. the cache dir is gitignored.
+# content hash of every non ignored source the run depends on; commits and stashes leave it unchanged
 KEY="$({
   echo "$PHASE $FORK_BLOCK"
   git ls-files -co --exclude-standard src script test/standins test/utils foundry.toml remappings.txt \
@@ -59,7 +57,7 @@ if [ "${FRESH:-0}" != "1" ] && [ -f "$STATE" ] && [ -f "$RECORD" ]; then
   printf '{"jsonrpc":"2.0","id":1,"method":"anvil_loadState","params":["%s"]}' "$(cat "$STATE")" \
     | curl -sf -X POST -H 'content-type: application/json' --data-binary @- "$RPC" >/dev/null
   mkdir -p deployments
-  cp "$RECORD" deployments/31337.json
+  jq --arg u "$RPC" '.rpcUrl = $u' "$RECORD" > deployments/31337.json
 else
   echo "cache miss: phase $PHASE key $KEY, running the end to end once"
   NO_ANVIL=1 E2E_RPC_URL="$RPC" PHASE="$PHASE" script/dev/e2e.sh
@@ -69,5 +67,4 @@ else
 fi
 
 echo "anvil running on $RPC (pid $(cat "$PID_FILE")), phase $PHASE, record deployments/31337.json"
-echo "UI: cd <ui worktree>/web && RECORD=$ROOT/deployments/31337.json npm run dev:local"
 echo "stop: script/dev/local.sh stop"

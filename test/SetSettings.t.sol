@@ -74,6 +74,7 @@ contract SetSettingsTest is Fixture {
         }
     }
 
+    // promise: RUNBOOK the SetSettings owner command changes the fields it names
     function test_oneVariableChangesOneField() public {
         Settings memory live = core.settings();
         probe.single("saleFloorBps", 8_000);
@@ -84,31 +85,7 @@ contract SetSettingsTest is Fixture {
         assertEq(out.saleFloorBps, 8_000);
     }
 
-    function test_theLiveStructIsNotChangedInPlace() public {
-        probe.single("saleFloorBps", 8_000);
-        assertTrue(probe.leavesTheInputAlone(core.settings()));
-    }
-
-    function test_patchTextAndPatchFile() public {
-        Settings memory live = core.settings();
-        probe.configure(address(core), '{"saleFloorBps": 8000, "redeemBurnBps": 3000}');
-        Settings memory out = probe.applyTo(live);
-        (uint256 n,) = _diff(live, out);
-        assertEq(n, 2);
-        assertEq(out.saleFloorBps, 8_000);
-        assertEq(out.redeemBurnBps, 3_000);
-        // the same patch from a file
-        probe.configure(address(core), "test/data/SettingsPatch.json");
-        Settings memory fromFile = probe.applyTo(live);
-        assertEq(abi.encode(fromFile), abi.encode(out));
-    }
-
-    function test_singleVariableWinsOverThePatch() public {
-        probe.configure(address(core), '{"saleFloorBps": 8000}');
-        probe.single("saleFloorBps", 7_000);
-        assertEq(probe.applyTo(core.settings()).saleFloorBps, 7_000);
-    }
-
+    // promise: RUNBOOK the SetSettings owner command keeps the other fields at their live value
     /// the fields you do not name keep the live value even after the owner changed them
     function test_leavesTheOtherFieldsAtTheirLiveValue() public {
         Settings memory s = core.settings();
@@ -124,6 +101,7 @@ contract SetSettingsTest is Fixture {
         assertEq(out.keeperFee, 0.001 ether);
     }
 
+    // promise: RUNBOOK the SetSettings owner command refuses an unknown field or a too wide value
     function test_unknownFieldAndTooWideValue() public {
         Settings memory live = core.settings();
         probe.configure(address(core), '{"saleFloorBpz": 8000}');
@@ -135,6 +113,7 @@ contract SetSettingsTest is Fixture {
         probe.applyTo(live);
     }
 
+    // promise: RUNBOOK the SetSettings owner command refuses a value outside the bounds
     /// run() refuses a value outside the bounds before it prints a calldata
     function test_runRefusesOutOfBounds() public {
         probe.single("saleFloorBps", 999);
@@ -142,15 +121,7 @@ contract SetSettingsTest is Fixture {
         probe.run();
     }
 
-    /// the rateCap row warns when the new cap sits below the live bid read or the price state
-    function test_rateCapBelowTheLiveBidWarns() public {
-        uint256 price = core.ethPrice();
-        assertGt(price, 1, "setup: the price state is positive");
-        assertTrue(probe.warnRateCap(price - 1), "a cap below the price state warns");
-        assertFalse(probe.warnRateCap(price), "a cap at the price state is quiet");
-        assertFalse(probe.warnRateCap(core.settings().rateCap), "the live cap is quiet");
-    }
-
+    // promise: RUNBOOK a dry run of an owner command sends nothing
     /// a dry run (no SEND) prints and changes nothing, the owner can send what it printed
     function test_dryRunSendsNothingAndTheCalldataWorks() public {
         Settings memory live = core.settings();

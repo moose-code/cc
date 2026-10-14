@@ -9,7 +9,7 @@ contract ScriptedController is IController {
     uint256[80] internal _pageIds;
     uint8 public pageFormat;
     bool public revertPage;
-    /// the eligibility answer the core reads for a phase 2 redemption
+    /// the eligibility answer the core reads for the balance side redemption
     bool public atFloorFlag;
     /// the window answer the core reads for a chosen compose, and whether the call reverts
     bool public pastWindowFlag = true;
@@ -39,6 +39,20 @@ contract ScriptedController is IController {
         return pastWindowFlag;
     }
 
+    /// the asking price answer, and whether the call reverts
+    uint256 public price;
+    bool public priceReverts;
+
+    function setPrice(uint256 p, bool reverts) external {
+        price = p;
+        priceReverts = reverts;
+    }
+
+    function priceOf(uint256) external view returns (uint256) {
+        if (priceReverts) revert();
+        return price;
+    }
+
     /// sets the page answer.
     function setPage(bool ready, uint256[80] calldata ids, uint8 format) external {
         pageReady = ready;
@@ -54,17 +68,5 @@ contract ScriptedController is IController {
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format) {
         if (revertPage) revert();
         return (pageReady, _pageIds, pageFormat);
-    }
-
-    /// the asking price the core stamps into the `Composed` event
-    uint256 public priceOfValue;
-
-    /// sets the asking price answer.
-    function setPriceOf(uint256 p) external {
-        priceOfValue = p;
-    }
-
-    function priceOf(uint256) external view returns (uint256) {
-        return priceOfValue;
     }
 }

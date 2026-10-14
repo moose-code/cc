@@ -5,9 +5,7 @@ broadcast/
 !.env.example
 script/config/local.json
 script/config/*.local.json
-# gitignored per-env overlays (the mainnet rpc url and other secrets-free local overrides)
-script/env/*.local.env
-# local anvil end to end: the fork deployment record and the state dumps are local
+# local anvil end to end: the fork deployment record and the state caches
 deployments/31337.json
 script/dev/.anvil-state.json
 script/dev/.cache/

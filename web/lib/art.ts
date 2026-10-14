@@ -8,8 +8,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
 import type { Address } from "viem";
-import { engineDeployed, addresses } from "./config";
-import { coreLensAbi, tokenUriAbi } from "./abis";
+import { credits, engineDeployed, statements } from "./config";
+import { tokenUriAbi } from "./abis";
 import { MULTICALL3 } from "./live";
 import { SCOPE, lsGet, lsSet, verifyScope } from "./cache";
 
@@ -123,33 +123,15 @@ async function loadMeta(kind: TokenKind, address: Address, id: number, client: C
   return m; // a null (reverted or unreadable tokenURI) is retried on the next mount
 }
 
-// The Credits and Statements contract addresses, from the lens.
-export function useCollections() {
-  const client = usePublicClient();
-  return useQuery<{ credits: Address; statements: Address } | undefined>({
-    queryKey: ["collections", addresses.coreLens],
-    enabled: engineDeployed && Boolean(client),
-    staleTime: Infinity,
-    queryFn: async () => {
-      const [credits, statements] = await Promise.all([
-        client!.readContract({ address: addresses.coreLens!, abi: coreLensAbi, functionName: "CREDITS" }),
-        client!.readContract({ address: addresses.coreLens!, abi: coreLensAbi, functionName: "STATEMENTS" }),
-      ]);
-      return { credits, statements };
-    },
-  });
-}
-
 // null: tokenURI reverted or could not be decoded. undefined: still loading.
 export function useTokenMeta(kind: TokenKind, id: number) {
   const client = usePublicClient();
-  const { data: col } = useCollections();
-  const address = kind === "credit" ? col?.credits : col?.statements;
+  const address = kind === "credit" ? credits : statements;
   return useQuery<TokenMeta | null>({
     queryKey: ["token-meta", kind, address, id],
-    enabled: Boolean(client && address),
+    enabled: engineDeployed && Boolean(client),
     staleTime: Infinity,
     gcTime: 30 * 60 * 1000,
-    queryFn: () => loadMeta(kind, address!, id, client!),
+    queryFn: () => loadMeta(kind, address, id, client!),
   });
 }

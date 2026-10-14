@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # local anvil mainnet fork for the credits engine end to end.
-# forks mainnet at the pin block, chain id 31337, auto impersonation on so the
-# wrapper and the scenario send from the real factory owner and from seeded
-# actors without a private key. optional state dump/load for fast restarts.
+# forks mainnet at the pin block with chain id 31337. auto impersonation lets the
+# deploy and the scenario send from the real factory owner and from the seeded
+# accounts. optional state dump/load for fast restarts.
 #
 #   script/dev/anvil.sh                 start a fresh fork on port 8545
 #   script/dev/anvil.sh --dump-state    dump state to the gitignored path on exit

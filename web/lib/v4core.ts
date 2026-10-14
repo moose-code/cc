@@ -2,10 +2,9 @@
 // node self-check load it cleanly. config-bound wrappers live in v4.ts.
 //
 // Addresses verified against docs.uniswap.org/contracts/v4/deployments (chain
-// 1). Command/action ids verified against v4-periphery Actions.sol and the
-// Universal Router commands. The CC pool does not exist until launch, so the
-// on-chain path is unexercised; these pure encoders are covered by
-// scripts/v4-selfcheck.ts.
+// 1; the local anvil fork has the same ones). Command/action ids verified
+// against v4-periphery Actions.sol and the Universal Router commands. The
+// encoders are covered by scripts/v4-selfcheck.ts.
 
 import {
   encodeAbiParameters,
@@ -56,11 +55,11 @@ export function poolIdOf(key: PoolKey): Hex {
   return keccak256(encodeAbiParameters(POOL_KEY_ABI, [key]));
 }
 
-// CC per 1 ETH from sqrtPriceX96. Both currencies are 18 decimals, so no
-// decimal shift. price = (sqrt/2^96)^2 = token1/token0 = CC per ETH.
-export function ccPerEthFromSqrt(sqrtPriceX96: bigint): number {
+// Tokens per 1 ETH from sqrtPriceX96. price = (sqrt/2^96)^2 = token1 wei per
+// ETH wei; the factor 10^(18 - decimals) converts it to whole tokens per ETH.
+export function ccPerEthFromSqrt(sqrtPriceX96: bigint, decimals = 18): number {
   const s = Number(sqrtPriceX96) / 2 ** 96;
-  return s * s;
+  return s * s * 10 ** (18 - decimals);
 }
 
 const EXACT_IN_SINGLE_ABI = parseAbiParameters(

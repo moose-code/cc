@@ -2,36 +2,14 @@
 pragma solidity ^0.8.28;
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {ICredits, IStatements, IExitModule, Mainnet} from "../../src/interfaces/Interfaces.sol";
-import {MockExitToken} from "../standins/MockExitToken.sol";
+import {ICredits, Mainnet} from "../../src/interfaces/Interfaces.sol";
 import {TestSwapRouter} from "../utils/TestSwapRouter.sol";
-import {IFeeRouter} from "../../src/interfaces/IFeeRouter.sol";
 
-/// the v2 hook pays the pool fee to the fee router, not to the core: these attackers flush the router right after each
-/// swap, which is the call that lands the eth in the core's `receive()`. inside a measured call the core refuses the
-/// router (V2R-1), so the flush fails whole and the attacker swallows the failure: `flushes` counts the tries,
-/// `flushFailed` the ones that reverted
-abstract contract Flushes {
-    IFeeRouter public feeRouter;
-    uint256 public flushes;
-    uint256 public flushFailed;
-
-    function setFeeRouter(address r) external {
-        feeRouter = IFeeRouter(payable(r));
-    }
-
-    function _flush() internal {
-        if (address(feeRouter) == address(0)) return;
-        ++flushes;
-        try feeRouter.flush() {} catch {
-            ++flushFailed;
-        }
-    }
-}
-
-/// a listing target that swaps in the real pool in the middle of the core's `buyListing` measurement, so the skim
-/// hook pushes eth into the core's `receive()` while the core's measuring flag is set. it then delivers its credit
-contract SwapMidListing is Flushes {
+/// the v2 hook pays the bounty of the pool fee to the Core: these attackers swap in the real pool in the middle of a Core
+/// call, so the hook pushes eth into `receive()` during the call. the Core books that eth at its next door
+/// a listing target that swaps in the real pool in the middle of the core's `buyListing` call, so the skim hook pushes
+/// eth into the core's `receive()` during the call. it then delivers its credit
+contract SwapMidListing {
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
 
     TestSwapRouter public immutable router;
@@ -53,77 +31,8 @@ contract SwapMidListing is Flushes {
 
     fallback() external payable {
         router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
-        _flush();
         CREDITS.transferFrom(address(this), core, creditId);
     }
 
     receive() external payable {}
-}
-
-/// an exit module that swaps in the real pool in the middle of the core's `exitStatement` measurement, so the skim
-/// hook pushes eth into the core's `receive()` while the core's measuring flag is set. it pays like the stand in
-contract SwapMidExit is IExitModule, Flushes {
-    MockExitToken public immutable token;
-    uint256 public immutable unit;
-    TestSwapRouter public immutable router;
-    PoolKey internal key;
-    uint256 public swapEth;
-
-    constructor(MockExitToken token_, uint256 unit_, TestSwapRouter router_, PoolKey memory key_, uint256 swapEth_) {
-        token = token_;
-        unit = unit_;
-        router = router_;
-        key = key_;
-        swapEth = swapEth_;
-    }
-
-    function exitToken() external view returns (address) {
-        return address(token);
-    }
-
-    function unitPerPoint() external view returns (uint256) {
-        return unit;
-    }
-
-    function exit(uint256 statementId) external returns (uint256 out) {
-        router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
-        _flush();
-        out = IStatements(Mainnet.STATEMENTS).creditScoreOf(statementId) * unit;
-        token.mint(msg.sender, out);
-    }
-
-    receive() external payable {}
-}
-
-interface IBuy {
-    function priceOf(uint256 sid) external view returns (uint256);
-    function buy(uint256 sid) external payable;
-}
-
-/// one transaction that swaps in the real pool (the skim hook pushes into the core's `receive`), buys statement `sid`
-/// through the controller, and swaps again, so the hook pushes into `receive` before and after the sale is booked
-contract SwapAroundBuy is Flushes {
-    TestSwapRouter public immutable router;
-    IBuy public immutable ctl;
-    PoolKey internal key;
-
-    constructor(TestSwapRouter router_, address ctl_, PoolKey memory key_) {
-        router = router_;
-        ctl = IBuy(ctl_);
-        key = key_;
-    }
-
-    function run(uint256 swapEth, uint256 sid) external payable {
-        router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
-        _flush();
-        ctl.buy{value: ctl.priceOf(sid)}(sid);
-        router.swap{value: swapEth}(key, true, -int256(swapEth), address(this));
-        _flush();
-    }
-
-    receive() external payable {}
-
-    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
-        return this.onERC721Received.selector;
-    }
 }

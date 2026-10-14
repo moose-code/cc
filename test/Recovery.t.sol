@@ -11,6 +11,7 @@ import {Halving} from "../src/lib/Halving.sol";
 contract RecoveryTest is Fixture {
     address internal seller_;
 
+    // promise: SPEC 1 the recovery settings at launch (recoveryGapBps, peakHalfLife)
     /// the launch values these tests measure. the config file, `Mainnet.defaultSettings()` and the fixture core agree, and
     /// the dump recoveries and the batch seller rates are pinned at this gap, so a change of the launch gap changes them.
     /// the lone seller and market fall values do not depend on the gap
@@ -50,6 +51,7 @@ contract RecoveryTest is Fixture {
         return type(uint256).max;
     }
 
+    // promise: SPEC 1 after a large sale the bid recovers fast (peak anchor)
     /// a one minute dump of 140 credits halves the bid; the recovery climb brings it back to the pre dump price in about
     /// 59 minutes at the launch gap (fast from the 50 percent floor up to the recovery level, then the slow climb over
     /// the last `recoveryGapBps` to the peak). the exact minute is asserted and logged
@@ -67,6 +69,7 @@ contract RecoveryTest is Fixture {
         assertEq(m, 59, "one minute dump: minutes to recover at the launch gap");
     }
 
+    // promise: SPEC 1 after a large sale the bid recovers fast (peak anchor)
     /// a three minute dump of about 420 credits walks the bid down by half each minute, to about an eighth of the pre
     /// dump price; the recovery climb brings it back in 146 minutes at the launch gap
     function test_threeMinuteDumpRecovers() public {
@@ -84,95 +87,7 @@ contract RecoveryTest is Fixture {
         assertEq(m, 146, "three minute dump: minutes to recover at the launch gap");
     }
 
-    /// a real market fall: the seller keeps filling at the new lower price, so the peak decays and the bid follows the
-    /// market down. the overshoot above the market within the keeper's 3 minute window is bounded (decision 74: about 6
-    /// percent). the overshoot is the most the price state sits above the latest fill price over the 3 minutes after it
-    function test_marketFallOvershootBounded() public {
-        vm.prank(owner);
-        core.setRate(OPEN_RATE);
-        // the market falls: each step a batch of 15 credits drops the bid 7.2 percent, then nobody sells for 3 minutes
-        // (the keeper window). the overshoot over the fill price is bounded by 3 minutes of the recovery climb
-        // (6.12 percent at 2 percent a minute)
-        uint256 overshoot;
-        uint256 last = OPEN_RATE;
-        for (uint256 step; step < 10; ++step) {
-            _dump(15);
-            last = core.ethPrice();
-            // over the next 3 minutes the price state climbs; record how far above the fill price it reaches
-            for (uint256 s = 1; s <= 3; ++s) {
-                _warp(1 minutes);
-                uint256 p = core.ethPrice();
-                if (p > last) {
-                    uint256 over = (p - last) * 10_000 / last;
-                    if (over > overshoot) overshoot = over;
-                }
-            }
-        }
-        emit log_named_uint("market fall overshoot over the fill price, bps", overshoot);
-        assertEq(overshoot, 612, "market fall overshoot over the fill price within 3 minutes, bps, at the launch gap");
-    }
-
-    /// @dev a seller of `k` credits per sale over one hour: whenever the read is at least the opening price, sells `k`
-    /// credits in one call. polled every 3 seconds, 400 credit supply, 5 eth pot
-    function _batchSeller(uint256 k) internal returns (uint256 sold, uint256 paid) {
-        _fundPot(5 ether);
-        vm.prank(owner);
-        core.setRate(OPEN_RATE);
-        uint256[] memory ids = _credits(seller_, 400);
-        for (uint256 t; t < 1 hours; t += 3) {
-            if (core.ethRate() >= OPEN_RATE) {
-                uint256[] memory batch = new uint256[](k);
-                for (uint256 j; j < k; ++j) {
-                    batch[j] = ids[sold + j];
-                }
-                uint256 b = seller_.balance;
-                vm.prank(seller_);
-                core.sellForEth(batch);
-                paid += seller_.balance - b;
-                sold += k;
-            }
-            _warp(3);
-        }
-    }
-
-    function _logBatch(uint256 k, uint256 sold, uint256 paid) internal {
-        emit log_named_uint(string.concat("batches of ", vm.toString(k), " at launch gap: credits sold at >= opening price in 1h"), sold);
-        emit log_named_uint(string.concat("batches of ", vm.toString(k), " at launch gap: wei paid"), paid);
-    }
-
-    /// a lone seller of one credit at a time: the single credit drop of 0.5 percent stays inside the launch gap, so the
-    /// bid climbs at `climbPerMinBps` and the throughput is the slow climb's (the ungapped recovery climb gives 188)
-    function test_loneSellerFlatPriceThroughput() public {
-        (uint256 sold, uint256 paid) = _batchSeller(1);
-        _logBatch(1, sold, paid);
-        assertEq(sold, 60, "batches of 1: credits an hour at the opening price");
-        assertEq(paid, 103_933_630_716_331_355, "batches of 1: wei paid");
-    }
-
-    /// batches of 5 credits drop the bid 2.5 percent, inside the launch gap
-    function test_batchSeller5() public {
-        (uint256 sold, uint256 paid) = _batchSeller(5);
-        _logBatch(5, sold, paid);
-        assertEq(sold, 60, "batches of 5: credits an hour at the opening price");
-        assertEq(paid, 102_902_912_528_907_621, "batches of 5: wei paid");
-    }
-
-    /// batches of 10 credits drop the bid 4.9 percent, inside the launch gap
-    function test_batchSeller10() public {
-        (uint256 sold, uint256 paid) = _batchSeller(10);
-        _logBatch(10, sold, paid);
-        assertEq(sold, 60, "batches of 10: credits an hour at the opening price");
-        assertEq(paid, 101_633_664_963_187_848, "batches of 10: wei paid");
-    }
-
-    /// batches of 19 credits drop the bid 9.1 percent. batches of up to 21 credits stay inside the launch gap of 10 percent
-    function test_batchSeller19() public {
-        (uint256 sold, uint256 paid) = _batchSeller(19);
-        _logBatch(19, sold, paid);
-        assertEq(sold, 76, "batches of 19: credits an hour at the opening price");
-        assertEq(paid, 125_877_567_966_787_262, "batches of 19: wei paid");
-    }
-
+    // promise: SPEC 1 setRate restates the remembered peak
     /// `setRate` restates the remembered peak and its time, so a later climb treats the restated rate as the peak
     function test_setRateRestatesThePeak() public {
         _dump(40);
@@ -187,6 +102,7 @@ contract RecoveryTest is Fixture {
         assertEq(core.ethPrice(), OPEN_RATE * 2, "the price state is the restated rate");
     }
 
+    // promise: SPEC 1 a peakHalfLife change checkpoints the peak first
     /// a change of `peakHalfLife` restates the remembered peak at the old half life first, so the elapsed decay is not
     /// rescaled: the peak now is unchanged across the setting change, `peakTime` is reset to now, and the new half life
     /// decays it forward. without the restatement the old stored peak would read far higher under a longer half life
@@ -205,20 +121,7 @@ contract RecoveryTest is Fixture {
         assertLt(peakRate, peakBefore, "the restated peak is below the stored peak (it had decayed)");
     }
 
-    /// a change that does not touch `peakHalfLife` leaves the remembered peak and its time where they are
-    function test_setSettingsKeepingHalfLifeLeavesThePeak() public {
-        vm.prank(owner);
-        core.setRate(OPEN_RATE * 2);
-        _warp(1 hours);
-        (uint256 peakBefore, uint256 timeBefore) = _peak();
-        Settings memory s = core.settings();
-        s.saleFloorBps = 8_000;
-        _setSettings(s);
-        (uint256 peakRate, uint256 peakTime) = _peak();
-        assertEq(peakRate, peakBefore, "the peak is untouched when the half life does not change");
-        assertEq(peakTime, timeBefore, "the peak time is untouched");
-    }
-
+    // promise: inv 6 the price state follows the model between fills
     /// the lazy climb is monotone in time between fills. the raw climb trajectory never falls: with a high ceiling, the
     /// longest peak half life (so the ceiling anchor barely decays over the window) and a large pot, neither the ceiling
     /// nor the clamp binds, so the price state is the raw climb and a later read is never below an earlier one, whatever

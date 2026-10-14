@@ -8,21 +8,22 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 
-/// one pile for every credit. the exit token bid records an eth cost basis of the score-scaled eth backstop
-/// `floorRate * max(1, score / refScore)`, at least 1 wei, where the floor rate is the larger of the climbed price
+/// one pile for every credit. the balance token bid records an eth cost basis of `floorRate * score / refScore`
+/// (decision 104), at least 1 wei, where the floor rate is the larger of the climbed price
 /// state and the decayed peak. the record reads no pool price, so a pushed up or pushed down pool cannot move it and
 /// the bid needs no pool key. every credit composes into the same statement. the three standalone settings have owner
 /// setters, bounds and events
 contract OnePileTest is Fixture {
     uint256 internal constant BPS = 10_000;
-    /// a small sqrt price makes the exit token expensive in eth (a pushed up redemption value)
+    /// a small sqrt price makes the balance token expensive in eth (a pushed up redemption value)
     uint160 internal constant LOW_SQRT = uint160(FixedPoint96.Q96 / 1000);
-    /// a large sqrt price makes the exit token cheap in eth (a pushed down redemption value)
+    /// a large sqrt price makes the balance token cheap in eth (a pushed down redemption value)
     uint160 internal constant HIGH_SQRT = uint160((uint256(1) << 96) * 1000);
 
-    /// initializes the exit pool at `sp` and points the controller at it
+    /// initializes the balance pool at `sp` and points the controller at it
     function _initPoolAt(uint160 sp) internal {
         PoolKey memory vk = PoolKey({
             currency0: Currency.wrap(address(0)),
@@ -40,151 +41,95 @@ contract OnePileTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setExitPoolKey(k);
+        ctl.setBalancePoolKey(k);
     }
 
-    /// funds the exit pot and the eth pot so the exit bid has a pot to pay from and the eth bid reads nonzero
+    /// funds the balance pot and the eth pot so the balance bid has a pot to pay from and the eth bid reads nonzero
     function _ready() internal {
         _enterPhase2();
         _fundPot(3 ether);
         xt.mint(address(core), 1e24);
-        core.skim();
+        core.bookBalance();
     }
 
-    // ------------------------------------------------------------------ the exit bid's eth cost basis
+    // ------------------------------------------------------------------ the balance bid's eth cost basis
 
-    /// the credit score source the exit token bid reads: `scoreOf(seed, paidAt)` on the mainnet credit score contract
+    /// the credit score source the balance token bid reads: `scoreOf(seed, paidAt)` on the mainnet credit score contract
     function _score(uint256 id) internal view returns (uint256) {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
-    /// the score-scaled eth backstop the sale records for `id`: the floor rate when the score is at or below `refScore`,
-    /// else `floorRate * score / refScore`, at least 1 wei. the floor rate is read at the current block, which the sale
-    /// does not move
+    /// the eth cost the sale records for `id`: `floorRate * score / refScore`, at least 1 wei. the floor rate is read at
+    /// the current block, which the sale does not move
     function _backstop(uint256 id) internal view returns (uint256 b) {
-        uint256 floor = core.floorRate();
-        uint256 rs = ctl.refScore();
-        uint256 score = _score(id);
-        b = score <= rs ? floor : floor * score / rs;
+        b = FullMath.mulDiv(core.floorRate(), _score(id), ctl.refScore());
         if (b == 0) b = 1;
     }
 
+    // promise: SPEC 1 sellForBalance records the score scaled eth cost and reads no pool (decision 96)
     /// the recorded eth cost is the score-scaled backstop, with no pool key set
-    function test_sellForExit_costIsTheScaledBackstopWithoutAPoolKey() public {
+    function test_sellForBalance_costIsScoreTimesPointRateWithoutAPoolKey() public {
         _ready();
-        assertFalse(ctl.exitPoolKeySet(), "no pool key");
+        assertFalse(ctl.balancePoolKeySet(), "no pool key");
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];
         uint32 rs = uint32(_score(id) / 4);
         if (rs == 0) rs = 1;
-        vm.prank(owner);
-        ctl.setRefScore(rs);
+        _setRefScore(rs);
         uint256 want = _backstop(id);
         vm.prank(seller);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
         (, uint256 cost,) = core.creditInfo(id);
         assertGt(want, core.floorRate(), "the backstop scales above the floor rate for a rich credit");
         assertEq(cost, want, "the recorded cost is the scaled backstop");
+        // the recorded cost is the point rate times the score (`pointRate` rounds down once, the cost once)
+        uint256 pointValue = _score(id) * ctl.pointRate();
+        assertGe(cost, pointValue, "at least score times the point rate");
+        assertLt(cost - pointValue, _score(id), "and above it by less than the rounding of the point rate");
     }
 
-    /// a credit scored at or below `refScore` records the unscaled floor rate as its cost
-    function test_sellForExit_costIsThePeakBelowRefScore() public {
+    // promise: INTEGRATION BadQuote when refScore does not answer
+    /// a failed `refScore()` read reverts the bid with `BadQuote` instead of recording the floor rate
+    function test_sellForBalance_failedRefScoreReadReverts() public {
         _ready();
         uint256[] memory ids = _credits(seller, 1);
-        uint256 id = ids[0];
-        vm.prank(owner);
-        ctl.setRefScore(8_000_000); // the max, so the score is at or below it
-        uint256 want = _backstop(id);
+        vm.mockCallRevert(address(ctl), abi.encodeWithSignature("refScore()"), "");
         vm.prank(seller);
-        core.sellForExitToken(ids);
-        (, uint256 cost,) = core.creditInfo(id);
-        assertEq(want, core.floorRate(), "the backstop is the unscaled floor rate");
-        assertEq(cost, want, "the recorded cost is the floor rate");
+        vm.expectRevert(ICore.BadQuote.selector);
+        core.sellForBalance(ids);
+        vm.mockCall(address(ctl), abi.encodeWithSignature("refScore()"), abi.encode(uint256(0)));
+        vm.prank(seller);
+        vm.expectRevert(ICore.BadQuote.selector);
+        core.sellForBalance(ids);
+        vm.clearMockedCalls();
     }
 
-    /// a pushed up pool price (an expensive exit token) does not move the recorded cost: it stays the backstop
-    function test_sellForExit_costUnaffectedByAPushedUpPool() public {
+    // promise: SPEC 1 the recorded cost reads no pool price (decision 96)
+    /// a pushed up pool price (an expensive balance token) does not move the recorded cost: it stays the backstop
+    function test_sellForBalance_costUnaffectedByAPushedUpPool() public {
         _ready();
         _initPoolAt(LOW_SQRT);
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];
         uint256 want = _backstop(id);
         vm.prank(seller);
-        core.sellForExitToken(ids);
+        core.sellForBalance(ids);
         (, uint256 cost,) = core.creditInfo(id);
         assertEq(cost, want, "the recorded cost is the backstop, not the inflated pool value");
     }
 
-    /// a pushed down pool price (a cheap exit token) does not move the recorded cost: it stays the backstop
-    function test_sellForExit_costUnaffectedByAPushedDownPool() public {
-        _ready();
-        _initPoolAt(HIGH_SQRT);
-        uint256[] memory ids = _credits(seller, 1);
-        uint256 id = ids[0];
-        uint32 rs = uint32(_score(id) / 4);
-        if (rs == 0) rs = 1;
-        vm.prank(owner);
-        ctl.setRefScore(rs);
-        uint256 want = _backstop(id);
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        (, uint256 cost,) = core.creditInfo(id);
-        assertEq(cost, want, "the recorded cost is the backstop, not the pushed down pool value");
-    }
-
-    /// with an empty eth pot the recorded cost is still the floor rate backstop, nonzero, so a credit bought with the
-    /// exit token is never resellable into the eth bid at a profit. buying it back costs at least `creditFloorBps` of it
-    function test_sellForExit_costIsThePeakWithAnEmptyPot() public {
-        _enterPhase2();
-        xt.mint(address(core), 1e24);
-        core.skim();
-        assertEq(core.ethPot(), 0, "the eth pot is empty");
-        assertEq(core.ethRate(), 0, "the clamped bid is zero with an empty pot");
-        uint256 floor = core.floorRate();
-        assertGt(floor, 0, "the floor rate is nonzero");
-
-        uint256[] memory ids = _credits(seller, 1);
-        uint256 id = ids[0];
-        vm.prank(owner);
-        ctl.setRefScore(8_000_000);
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        (, uint256 cost,) = core.creditInfo(id);
-        assertEq(cost, floor, "the recorded cost is the floor rate, not the clamped zero");
-        assertGe(cost, 1, "the recorded cost is at least 1 wei");
-
-        vm.prank(owner);
-        ctl.setCreditSaleOn(true);
-        vm.warp(block.timestamp + ctl.creditWindow());
-        assertEq(ctl.creditPrice(id), cost * ctl.creditFloorBps() / BPS, "the sale floor is 1.1x the recorded cost");
-    }
-
-    /// the bid works with no pool key set: the credit enters the pile and records its backstop
-    function test_sellForExit_worksWithoutThePoolKey() public {
-        _ready();
-        assertFalse(ctl.exitPoolKeySet(), "no pool key");
-        uint256[] memory ids = _credits(seller, 1);
-        uint256 id = ids[0];
-        uint256 want = _backstop(id);
-        vm.prank(seller);
-        core.sellForExitToken(ids);
-        assertEq(CREDITS.ownerOf(id), address(core), "the credit entered the pile");
-        (bool inPile, uint256 cost,) = core.creditInfo(id);
-        assertTrue(inPile, "the credit is in the pile");
-        assertEq(cost, want, "the recorded cost is the backstop");
-    }
-
     // ------------------------------------------------------------------ one pile, one compose
 
-    /// credits bought through the eth bid and the exit bid share one pile and compose into one statement
+    // promise: SPEC 1 one pile: credits from every door compose into one kind of statement
+    /// credits bought through the eth bid and the balance bid share one pile and compose into one statement
     function test_compose_oneKindFromMixedCredits() public {
         _ready();
-        _setExitPool();
-        // 40 credits through the eth bid, then 40 through the exit bid, into the single pile
+        _setBalancePool();
+        // 40 credits through the eth bid, then 40 through the balance bid, into the single pile
         _fillEthPile(40);
         uint256[] memory xIds = _credits(seller, 40);
         vm.prank(seller);
-        core.sellForExitToken(xIds);
+        core.sellForBalance(xIds);
         assertEq(core.pileSize(), 80, "one pile holds both kinds of credits");
 
         uint256[] memory page = core.pilePage(0, 80);
@@ -207,6 +152,7 @@ contract OnePileTest is Fixture {
 
     // ------------------------------------------------------------------ the standalone settings
 
+    // promise: SPEC 1 creditCostToPotBps owner setting
     function test_setter_creditCostToPotBps() public {
         assertEq(core.creditCostToPotBps(), 10_000, "launch value");
         vm.expectEmit(address(core));
@@ -224,6 +170,7 @@ contract OnePileTest is Fixture {
         core.setCreditCostToPotBps(0);
     }
 
+    // promise: SPEC 1 chosenComposeOn owner switch, off at launch
     function test_setter_chosenComposeOn() public {
         assertFalse(core.chosenComposeOn(), "off at launch");
         vm.expectEmit(address(core));
@@ -238,8 +185,9 @@ contract OnePileTest is Fixture {
         core.setChosenComposeOn(true);
     }
 
+    // promise: SPEC 1 minCcToChoose owner setting
     function test_setter_minCcToChoose() public {
-        assertEq(core.minCcToChoose(), 0, "zero at launch");
+        assertEq(core.minCcToChoose(), 1e18, "1 coin at launch");
         vm.expectEmit(address(core));
         emit ICore.MinCcToChooseSet(123e18);
         vm.prank(owner);

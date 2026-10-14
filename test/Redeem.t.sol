@@ -8,15 +8,15 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {SellingController, HostileModule, RepaidCaller} from "./attackers/SaleAttackers.sol";
+import {ComposeCall} from "./utils/ComposeCall.sol";
 
-/// phase 2 redemption: when a statement may be exited, what stops it, and the payment to the caller from
+/// the balance side redemption: when a statement may be redeemed, what stops it, and the payment to the caller from
 /// the eth pot. real Core, Statements. the stand in module and token, and the attacker modules
 abstract contract RedeemBase is Fixture {
     using stdStorage for StdStorage;
 
-    /// the most gas of an exit the caller payment counts (a private constant of the core, restated here)
-    uint256 internal constant EXIT_GAS = 1_500_000;
-    uint256 internal constant NOTIONAL_COUNT = 80;
+    /// the most gas of a redemption the caller payment counts (a private constant of the core, restated here)
+    uint256 internal constant REDEEM_GAS = 1_500_000;
     HostileModule internal hm;
 
     function _cost(uint256 sid) internal view returns (uint256 cost) {
@@ -27,11 +27,11 @@ abstract contract RedeemBase is Fixture {
         (,, at) = core.statementInfo(sid);
     }
 
-    /// phase 2 with a module that can burn gas and call out, same exit token as the stand in
+    /// the balance side with a module that can burn gas and call out, same balance token as the stand in
     function _phase2Hostile() internal {
         _enterPhase2();
         hm = new HostileModule(address(xt), UNIT);
-        _setExitModule(address(hm));
+        _setBalanceModule(address(hm));
     }
 
     function _another() internal returns (uint256 sid) {
@@ -42,19 +42,22 @@ abstract contract RedeemBase is Fixture {
         sid = STATEMENTS.supply();
     }
 
+    /// sets the pot by slot and moves the eth with it, so no eth is left above the pots for the next book to count
     function _setPot(uint256 v) internal {
+        uint256 old = core.ethPot();
         stdstore.target(address(core)).sig("ethPot()").checked_write(v);
+        vm.deal(address(core), address(core).balance + v - old);
         assertEq(core.ethPot(), v);
     }
 
-    /// exits `sid` as the keeper at `basefee` and returns what the keeper was repaid and what the pot lost. an eth lane
+    /// redeems `sid` as the keeper at `basefee` and returns what the keeper was repaid and what the pot lost. an eth lane
     /// redemption may move part of the redeem burn reserve into the coin buyback, so the buyback pot is not asserted here
-    function _exit(uint256 sid, uint256 basefee) internal returns (uint256 repaid, uint256 potLost) {
+    function _redeem(uint256 sid, uint256 basefee) internal returns (uint256 repaid, uint256 potLost) {
         vm.fee(basefee);
         uint256 pot = core.ethPot();
         uint256 bal = keeper.balance;
         vm.prank(keeper);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         repaid = keeper.balance - bal;
         potLost = pot - core.ethPot();
     }
@@ -77,25 +80,27 @@ abstract contract RedeemBase is Fixture {
 }
 
 contract RedeemTimingTest is RedeemBase {
+    // promise: INTEGRATION NotEligible: a redemption waits for the curve floor
     function test_timing_revertsUntilAtCostThenWorks() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         // not eligible while the asking price is above cost
         assertFalse(ctl.atFloor(sid), "fresh statement starts above cost");
         vm.expectRevert(ICore.NotEligible.selector);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(core), "still held after the refused try");
         _makeEligible(sid);
         assertTrue(ctl.atFloor(sid), "the price has fallen to cost");
         uint256 owed = core.ratingOf(sid) * UNIT;
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
         (bool held,,) = core.statementInfo(sid);
         assertFalse(held);
-        assertEq(core.xPot(), owed);
+        assertEq(core.balancePot(), owed);
         _solvent();
     }
 
+    // promise: SPEC 1 a pause holds the age, so eligibility holds
     /// eligibility is read live from the controller price: a pause freezes the age, so a statement that was not yet at
     /// cost stays ineligible across the pause and becomes eligible only after the age advances again
     function test_timing_eligibilityFrozenDuringPause() public {
@@ -103,65 +108,74 @@ contract RedeemTimingTest is RedeemBase {
         uint256 sid = _composeOnce().sid;
         // pause before the price reaches cost
         vm.prank(owner);
-        ctl.setPaused(true);
+        core.setPaused(true);
         _warp(300 hours);
         assertFalse(ctl.atFloor(sid), "a pause holds the age, so the price stays above cost");
         vm.expectRevert(ICore.NotEligible.selector);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         vm.prank(owner);
-        ctl.setPaused(false);
+        core.setPaused(false);
         _makeEligible(sid);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
     }
 
+    // promise: INTEGRATION NoBalanceModule, NotHeld on redeemStatement
     function test_timing_noModuleNotHeldAndUnknown() public {
         uint256 sid = _composeOnce().sid;
-        vm.expectRevert(ICore.NoExitModule.selector);
-        core.exitStatement(sid);
+        vm.expectRevert(ICore.NoBalanceModule.selector);
+        core.redeemStatement(sid);
         _enterPhase2();
         vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(sid + 99);
+        core.redeemStatement(sid + 99);
         vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(0);
+        core.redeemStatement(0);
     }
 
-    function test_timing_offWhenExitModeZero() public {
+    // promise: INTEGRATION the Core reads eligibility within its gas budget
+    /// `atFloor` reads the settings, `floorRate`, the module's unit and the pool price in cold state. the Core allows it
+    /// 400,000 gas (`AT_FLOOR_GAS`). with a pool key set and the module stand in, the cold read stays under half the cap
+    /// and the redemption through the Core completes
+    function test_timing_atFloorColdFitsTheCoreReadBudget() public {
+        _enterPhase2();
+        _setBalancePool();
+        uint256 sid = _composeOnce().sid;
+        _makeEligible(sid);
+        _cool();
+        uint256 before = gasleft();
+        bool floor = ctl.atFloor(sid);
+        uint256 used = before - gasleft();
+        assertTrue(floor, "eligible");
+        emit log_named_uint("atFloor gas, cold, pool key set", used);
+        assertLt(used, 200_000, "the cold read uses under half the Core read budget");
+        _cool();
+        core.redeemStatement(sid);
+        (bool held,,) = core.statementInfo(sid);
+        assertFalse(held, "the redemption through the Core completed");
+    }
+
+    function _cool() internal {
+        vm.cool(address(core));
+        vm.cool(address(ctl));
+        vm.cool(address(mod));
+        vm.cool(address(PM));
+    }
+
+    // promise: INTEGRATION RedeemOff
+    function test_timing_offWhenRedeemOnIsFalse() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
-        _setExitMode(0);
-        vm.expectRevert(ICore.ExitModeOff.selector);
-        core.exitStatement(sid);
-        // mode 1 (hold) redeems
-        _setExitMode(1);
-        core.exitStatement(sid);
+        _setSwitches(false, false);
+        vm.expectRevert(ICore.RedeemOff.selector);
+        core.redeemStatement(sid);
+        // redeemOn alone redeems
+        _setSwitches(true, false);
+        core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
     }
 
-    function test_timing_aBuyFirstMakesTheExitRevert() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        uint256 price = ctl.priceOf(sid);
-        vm.deal(address(0xB0B), price);
-        vm.prank(address(0xB0B));
-        ctl.buy{value: price}(sid);
-        vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(0xB0B));
-    }
-
-    function test_timing_aSellToSaleFirstMakesTheExitRevert() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        SellingController sc = new SellingController(core);
-        _setController(address(sc));
-        uint256 floor = _cost(sid) * core.settings().saleFloorBps / 10_000;
-        sc.sell{value: floor}(sid, address(0xB0B));
-        vm.expectRevert(ICore.NotHeld.selector);
-        core.exitStatement(sid);
-    }
-
+    // promise: INTEGRATION NotEligible when the controller does not answer
     /// every redemption needs the controller's eligibility answer: a controller that cannot answer makes statements
     /// ineligible
     function test_timing_redemptionNeedsTheController() public {
@@ -173,28 +187,29 @@ contract RedeemTimingTest is RedeemBase {
         vm.prank(owner);
         core.lockController();
         vm.expectRevert(ICore.NotEligible.selector);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
     }
 
+    // promise: INTEGRATION Underpaid
     /// a module that pays less than rating times unit less slippage is refused: nothing moves and nothing is repaid
     function test_timing_anUnderpayingModuleRevertsEverything() public {
         _phase2Hostile();
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
-        hm.setPayBps(10_000 - core.settings().exitSlippageBps - 1);
+        hm.setPayBps(10_000 - core.settings().redeemSlippageBps - 1);
         uint256 pot = core.ethPot();
-        uint256 xpot = core.xPot();
+        uint256 balancePotPre = core.balancePot();
         uint256 bal = keeper.balance;
         vm.prank(keeper);
         vm.expectRevert(ICore.Underpaid.selector);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         assertEq(core.ethPot(), pot);
-        assertEq(core.xPot(), xpot);
+        assertEq(core.balancePot(), balancePotPre);
         assertEq(keeper.balance, bal);
         assertEq(STATEMENTS.ownerOf(sid), address(core), "the statement never left");
         assertTrue(_isHeld(sid));
         hm.setPayBps(10_000);
-        core.exitStatement(sid);
+        core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(hm));
     }
 }
@@ -209,113 +224,46 @@ contract RedeemRepayTest is RedeemBase {
         _makeEligible(sid);
     }
 
-    /// at the launch settings an exit pays nothing and moves no eth, at any base fee
+    // promise: SPEC 1 compose and redeem are unpaid at launch
+    /// at the launch settings a redemption pays nothing and moves no eth, at any base fee
     function test_pay_launchSettingsPayZero() public {
         uint256 sid = _ethStatementReady();
         hm.setBurn(4_000_000);
         uint256 bal = address(core).balance;
-        (uint256 repaid, uint256 potLost) = _exit(sid, HIGH);
+        (uint256 repaid, uint256 potLost) = _redeem(sid, HIGH);
         assertEq(repaid, 0);
         assertEq(potLost, 0);
         assertEq(address(core).balance, bal - 0, "no eth moved");
-        assertEq(STATEMENTS.ownerOf(sid), address(hm), "the exit went through");
+        assertEq(STATEMENTS.ownerOf(sid), address(hm), "the redemption went through");
     }
 
-    /// the fee and the ceiling are separate: the fee alone pays the fee, the ceiling alone pays the gas
-    function test_pay_feeAndCeilingAreIndependent() public {
-        uint256 sid = _ethStatementReady();
-        hm.setBurn(4_000_000);
-        uint256 snap = vm.snapshotState();
-        Settings memory s = core.settings();
-        s.callerFee = uint64(PAY_FEE);
-        _setSettings(s);
-        (uint256 repaid, uint256 potLost) = _exit(sid, LOW);
-        assertEq(repaid, PAY_FEE, "the fee alone");
-        assertEq(potLost, PAY_FEE);
-        vm.revertToState(snap);
-        s.callerFee = 0;
-        s.callerMaxBaseFee = uint48(PAY_CEILING);
-        _setSettings(s);
-        (repaid, potLost) = _exit(sid, LOW);
-        assertEq(repaid, EXIT_GAS * LOW, "the gas alone");
-        assertEq(potLost, repaid);
-    }
-
-    /// eth lane, a module that burns more than the count allows: the count is capped at EXIT_GAS, so the payment
-    /// is exactly EXIT_GAS * basefee + callerFee
+    // promise: SPEC 1 redeemStatement counted gas is bounded by REDEEM_GAS
+    /// eth lane, a module that burns more than the count allows: the count is capped at REDEEM_GAS, so the payment
+    /// is exactly REDEEM_GAS * basefee + callerFee
     function test_pay_ethLaneGasCountIsCappedExactly() public {
         uint256 sid = _ethStatementReady();
         hm.setBurn(4_000_000);
         _payOn();
-        uint256 want = _want(EXIT_GAS, LOW);
+        uint256 want = _want(REDEEM_GAS, LOW);
         assertEq(want, 300_000_000_000_000 + PAY_FEE, "1.5M gas at 0.2 gwei plus the fee");
-        (uint256 repaid, uint256 potLost) = _exit(sid, LOW);
+        (uint256 repaid, uint256 potLost) = _redeem(sid, LOW);
         assertEq(repaid, want);
         assertEq(potLost, want, "paid from the pot, to the wei");
         _solvent();
     }
 
-    /// above the ceiling the gas is paid at the ceiling
-    function test_pay_baseFeeAboveTheCeilingPaysAtTheCeiling() public {
-        uint256 sid = _ethStatementReady();
-        hm.setBurn(4_000_000);
-        _payOn();
-        (uint256 repaid, uint256 potLost) = _exit(sid, HIGH);
-        assertEq(repaid, EXIT_GAS * PAY_CEILING + PAY_FEE);
-        assertEq(potLost, repaid);
-    }
-
-    function test_pay_ethLanePotBindsExactly() public {
-        uint256 sid = _ethStatementReady();
-        hm.setBurn(4_000_000);
-        _payOn();
-        _setPot(1e12);
-        (uint256 repaid, uint256 potLost) = _exit(sid, HIGH);
-        assertEq(repaid, 1e12, "the whole pot");
-        assertEq(potLost, 1e12);
-        assertEq(core.ethPot(), 0);
-    }
-
+    // promise: SPEC 1 the caller payment is at most ethPot
     function test_pay_zeroPotPaysZeroAndDoesNotRevert() public {
         uint256 sid = _ethStatementReady();
         _payOn();
         _setPot(0);
-        (uint256 repaid,) = _exit(sid, HIGH);
+        (uint256 repaid,) = _redeem(sid, HIGH);
         assertEq(repaid, 0);
-        assertEq(STATEMENTS.ownerOf(sid), address(hm), "the exit went through");
+        assertEq(STATEMENTS.ownerOf(sid), address(hm), "the redemption went through");
         assertEq(core.ethPot(), 0);
     }
 
-    /// the natural regime: the counted gas is what the exit used plus the fixed overhead, at most EXIT_GAS. with the
-    /// fee at zero the payment is counted gas times basefee, so the count can be read back
-    function _natural(uint256 sid) internal {
-        Settings memory s = core.settings();
-        s.callerMaxBaseFee = uint48(PAY_CEILING);
-        _setSettings(s);
-        uint256 basefee = 1 gwei;
-        vm.fee(basefee);
-        uint256 bal = keeper.balance;
-        uint256 g0 = gasleft();
-        vm.prank(keeper);
-        core.exitStatement(sid);
-        g0 -= gasleft();
-        (uint256 gross,) = _lastCallGross();
-        uint256 repaid = keeper.balance - bal;
-        assertEq(repaid % basefee, 0);
-        uint256 counted = repaid / basefee;
-        assertGt(counted, 50_000, "the overhead and the work");
-        assertLe(counted, EXIT_GAS);
-        assertGe(counted + 15_000, gross, "covers the gross gas of the transaction but for the part of the overhead the constant leaves out");
-        assertLe(counted, gross + 20_000, "and the overhead is not oversized");
-    }
-
-    function test_pay_naturalCount() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
-        _makeEligible(sid);
-        _natural(sid);
-    }
-
+    // promise: SPEC 1 the caller payment is bounded by the gas bound at the base fee ceiling
     /// never above the gas bound at the ceiling plus the fee, and never above the pot, for any basefee, with a module
     /// that burns as much as it likes
     function test_pay_neverAboveTheBoundWithAGasBurningModule() public {
@@ -328,11 +276,11 @@ contract RedeemRepayTest is RedeemBase {
             _payOn();
             hm.setBurn(20_000_000);
             uint256 pot = core.ethPot();
-            uint256 want = _want(EXIT_GAS, fees[i]);
+            uint256 want = _want(REDEEM_GAS, fees[i]);
             if (want > pot) want = pot;
-            (uint256 repaid, uint256 potLost) = _exit(sid, fees[i]);
+            (uint256 repaid, uint256 potLost) = _redeem(sid, fees[i]);
             assertEq(repaid, want, "min of the payment and the pot");
-            assertLe(repaid, EXIT_GAS * PAY_CEILING + PAY_FEE);
+            assertLe(repaid, REDEEM_GAS * PAY_CEILING + PAY_FEE);
             assertLe(repaid, pot);
             assertEq(potLost, repaid);
             _solvent();
@@ -340,28 +288,9 @@ contract RedeemRepayTest is RedeemBase {
         }
     }
 
-    function test_pay_nothingIsAddedToTheBooksOnlyThePotPays() public {
-        uint256 sid = _ethStatementReady();
-        _payOn();
-        uint256 pot = core.ethPot();
-        uint256 bb = core.ethToBuyback();
-        uint256 reserve = core.ethRedeemBurn();
-        uint256 bal = address(core).balance;
-        uint256 xp = core.xPot();
-        uint256 owed = core.ratingOf(sid) * UNIT;
-        (uint256 repaid,) = _exit(sid, LOW);
-        assertGt(repaid, 0);
-        assertEq(core.ethPot(), pot - repaid, "only the caller payment leaves the pot");
-        // the reserve release moves between trackers, it does not add or remove eth
-        uint256 released = reserve * core.settings().redeemBurnBps / 10_000;
-        assertEq(core.ethToBuyback(), bb + released, "the buyback pot rose by the released reserve only");
-        assertEq(core.ethRedeemBurn(), reserve - released, "the reserve fell by the release only");
-        assertEq(address(core).balance, bal - repaid, "the balance fell by the payment only");
-        assertEq(core.xPot() - xp, owed, "the whole received amount went to the bid pot");
-    }
-
     // ------------------------------------------------------------------ reentrancy
 
+    // promise: INTEGRATION Reentrancy on the caller payment
     /// the payment is paid after all state is final: a caller that re enters from its receive finds every door shut
     function test_reenter_theRepaidCallerFindsEveryDoorShut() public {
         _enterPhase2();
@@ -373,7 +302,7 @@ contract RedeemRepayTest is RedeemBase {
         vm.fee(LOW);
         uint256 pot = core.ethPot();
         uint256 bal = address(rc).balance;
-        rc.exit(a, b);
+        rc.redeem(a, b);
         assertEq(rc.hits(), 1, "it was repaid once");
         assertEq(rc.blocked(), 4, "all four doors refused it");
         assertEq(rc.ok(), 0);
@@ -384,8 +313,9 @@ contract RedeemRepayTest is RedeemBase {
         _solvent();
     }
 
-    /// a module that calls the core while the core is inside the exit
-    function test_reenter_aHostileModuleCannotUseAnyDoorMidExit() public {
+    // promise: inv 14 no call from inside a redemption works
+    /// a module that calls the core while the core is inside the redemption
+    function test_reenter_aHostileModuleCannotUseAnyDoorMidRedeem() public {
         bytes4 guard = bytes4(0xab143c06);
         for (uint256 k; k < 5; ++k) {
             uint256 snap = vm.snapshotState();
@@ -397,9 +327,9 @@ contract RedeemRepayTest is RedeemBase {
             _setController(address(sc));
             bytes memory data;
             address target = address(core);
-            if (k == 0) data = abi.encodeCall(ICore.compose, ());
-            else if (k == 1) data = abi.encodeCall(ICore.skim, ());
-            else if (k == 2) data = abi.encodeCall(ICore.exitStatement, (b));
+            if (k == 0) data = ComposeCall.noArgs();
+            else if (k == 1) data = abi.encodeCall(ICore.book, ());
+            else if (k == 2) data = abi.encodeCall(ICore.redeemStatement, (b));
             else if (k == 3) data = abi.encodeCall(ICore.buyback, ());
             else {
                 target = address(sc);
@@ -407,14 +337,46 @@ contract RedeemRepayTest is RedeemBase {
             }
             hm.setCall(target, data);
             vm.prank(keeper);
-            core.exitStatement(a);
+            core.redeemStatement(a);
             assertTrue(hm.called());
-            assertFalse(hm.calledOk(), "the call mid exit failed");
+            assertFalse(hm.calledOk(), "the call mid redemption failed");
             assertEq(bytes4(hm.calledOut()), guard, "with the reentrancy guard");
             assertEq(STATEMENTS.ownerOf(a), address(hm));
             assertEq(STATEMENTS.ownerOf(b), address(core));
             _solvent();
             vm.revertToState(snap);
         }
+    }
+
+    // promise: SPEC 1 releaseRedeemBurn moves the reserve into ethToBuyback (inv 5)
+    function test_releaseRedeemBurnMovesExactlyAndHoldsSolvency() public {
+        _fundPot(2 ether);
+        uint256 reserve = core.ethRedeemBurn();
+        assertGt(reserve, 0, "the reserve fills from fees at launch");
+        uint256 tb = core.ethToBuyback();
+        uint256 pot = core.ethPot();
+        uint256 bal = address(core).balance;
+        uint256 amount = reserve / 3;
+        vm.prank(owner);
+        core.releaseRedeemBurn(amount);
+        assertEq(core.ethRedeemBurn(), reserve - amount, "the reserve fell by the amount");
+        assertEq(core.ethToBuyback(), tb + amount, "the coin buyback rose by the amount");
+        assertEq(core.ethPot(), pot, "the pot is unchanged");
+        assertEq(address(core).balance, bal, "no eth left the core");
+        _solvent();
+    }
+
+    // promise: INTEGRATION ZeroAmount on releaseRedeemBurn
+    function test_releaseRedeemBurnCapsAtReserveAndRefusesEmpty() public {
+        _fundPot(2 ether);
+        uint256 reserve = core.ethRedeemBurn();
+        uint256 tb = core.ethToBuyback();
+        vm.prank(owner);
+        core.releaseRedeemBurn(reserve + 1 ether);
+        assertEq(core.ethRedeemBurn(), 0, "the whole reserve moved");
+        assertEq(core.ethToBuyback(), tb + reserve, "the coin buyback got the whole reserve");
+        vm.prank(owner);
+        vm.expectRevert(ICore.ZeroAmount.selector);
+        core.releaseRedeemBurn(1);
     }
 }

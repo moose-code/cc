@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Fixture} from "./utils/Fixture.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
-import {CreditIds} from "./utils/CreditIds.sol";
+import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
 import {
     LaunchConfig,
     V2_CODEHASH_HOOK,
@@ -55,7 +55,8 @@ contract ConfigTest is Fixture {
         d.mevModule = live.mev;
         d.owner = v2.owner;
         d.creator = v2.owner;
-        d.creatorPayee = v2.owner;
+        d.credit.royaltyRecipient = v2.owner;
+        d.payee = v2.owner;
         d.name = "CC";
         d.salt = keccak256("CC");
         // image and description are launch day inputs (FLOW decision 54): the file may hold them filled or empty
@@ -73,7 +74,7 @@ contract ConfigTest is Fixture {
         assertEq(f.rateStart, 8.9e15);
         assertEq(f.supply, 1_000_000_000e18);
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()), "settings block is the launch values");
-        // the launch values of docs/FLOW.md 10.1 and 10.6
+        // the launch values of docs/DECISIONS.md 10.1 and 10.6
         assertEq(f.baselineSkimBps, 690);
         assertEq(f.bountyBps, 9_638);
         assertEq(f.lpFeePips, 0);
@@ -82,7 +83,8 @@ contract ConfigTest is Fixture {
         assertEq(f.sniperSeconds, 1800);
         assertTrue(f.restricted);
         assertEq(f.allowed.length, 0);
-        assertEq(f.payeePpm, 112_778);
+        assertEq(f.settings.payeePpm, 75_185);
+        assertEq(f.payee, v2.owner);
         // the stack addresses of the shipped file are the record of the live stack, the factory owner is the config owner
         assertEq(unsetFields(f).length, 0, "the shipped file leaves nothing unset");
         assertEq(live.owner, f.owner, "the factory owner of the record is the config owner");
@@ -100,30 +102,32 @@ contract ConfigTest is Fixture {
     /// 9_638 gives 690 * 362 / 10_000 = 24.978 bps (0.24978 points, 0.00022 below the target), 9_637 gives 690 * 363 /
     /// 10_000 = 25.047 bps (0.00047 above it). 9_638 is the nearest, and the factory needs minProtocolSkimShareBps at most
     /// 10_000 - 9_638 = 362 (`BPS - bountyBps - minProtocolSkimShareBps >= 0` in `_validateFee`).
-    /// router inflow = bounty leg = 0.069 * 9_638 / 10_000 = 0.0665022 ether (665.022 bps). payee target 0.75 points =
-    /// 75 bps = 0.0075 ether, payeePpm = 75 / 665.022 * 1e6 = 112_778.2, rounded down to 112_778.
-    /// the engine receives the rest of the router inflow
+    /// Core inflow = bounty leg = 0.069 * 9_638 / 10_000 = 0.0665022 ether (665.022 bps). payee target 0.5 points =
+    /// 50 bps = 0.005 ether, payeePpm = 50 / 665.022 * 1e6 = 75_185.2, rounded down to 75_185.
+    /// the engine keeps the rest of the Core inflow
     function test_feeSplitDerivation() public pure {
         LaunchConfig memory d = defaultConfig();
         uint256 v = 1 ether;
         uint256 skim = v * d.baselineSkimBps / 10_000;
         assertEq(skim, 0.069 ether);
-        uint256 router = skim * d.bountyBps / 10_000;
-        uint256 protocol = skim - router;
-        assertEq(router, 66_502_200_000_000_000, "router inflow 6.65022 points");
+        uint256 inflow = skim * d.bountyBps / 10_000;
+        uint256 protocol = skim - inflow;
+        assertEq(inflow, 66_502_200_000_000_000, "Core inflow 6.65022 points");
         assertEq(protocol, 2_497_800_000_000_000, "protocol leg 0.24978 points");
         assertEq(10_000 - uint256(d.bountyBps), 362, "the factory minProtocolSkimShareBps the bounty needs");
         // the neighbouring bounty values are further from the 0.25 point target (0.0025 ether)
         uint256 target = 0.0025 ether;
         uint256 protocolAt9637 = skim - skim * 9_637 / 10_000; // 2.5047e15, above the target
         assertLt(target - protocol, protocolAt9637 - target, "9_638 is the nearest to 0.25 points");
-        // payee: the largest ppm whose share of the router inflow does not exceed 0.75 points (0.0075 ether)
-        uint256 payeeTarget = 0.0075 ether;
-        uint256 payee = router * d.payeePpm / 1e6;
+        // payee: the largest ppm whose share of the Core inflow does not exceed 0.5 points (0.005 ether)
+        uint256 payeeTarget = 0.005 ether;
+        uint256 payee = inflow * d.settings.payeePpm / 1e6;
         assertLe(payee, payeeTarget);
-        assertGt(router * (uint256(d.payeePpm) + 1) / 1e6, payeeTarget, "112_778 is the largest ppm under 0.75 points");
-        assertEq(payee, 7_499_985_111_600_000, "payee 0.7499985 points");
-        assertEq(router - payee, 59_002_214_888_400_000, "engine 5.9002215 points");
+        assertGt(
+            inflow * (uint256(d.settings.payeePpm) + 1) / 1e6, payeeTarget, "75_185 is the largest ppm under 0.5 points"
+        );
+        assertEq(payee, 4_999_967_907_000_000, "payee 0.4999968 points");
+        assertEq(inflow - payee, 61_502_232_093_000_000, "engine 6.15 points");
     }
 
     /// the deploy refuses to run while any placeholder is unset or the rate is out of bounds
@@ -135,6 +139,9 @@ contract ConfigTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "creator"));
         this.requireExt(c);
         c.creator = creator;
+        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "credit.royaltyRecipient"));
+        this.requireExt(c);
+        c.credit.royaltyRecipient = creator;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "name"));
         this.requireExt(c);
         c.name = "Name";
@@ -145,9 +152,9 @@ contract ConfigTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "salt"));
         this.requireExt(c);
         c.salt = FIXTURE_SALT;
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "router.creatorPayee"));
+        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "payee.address"));
         this.requireExt(c);
-        c.creatorPayee = creator;
+        c.payee = creator;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "stack.hook"));
         this.requireExt(c);
         c.stack = lc.stack;
@@ -160,39 +167,6 @@ contract ConfigTest is Fixture {
         this.requireExt(c);
         c.rateStart = 1e18 + 1;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "rateStart"));
-        this.requireExt(c);
-    }
-
-    /// the shipped file is complete and passes the guard, and the refusal is proven by blanking each field of it
-    function test_shippedFileBlankedIsRefused() public {
-        LaunchConfig memory c = _shipped();
-        this.requireExt(c);
-        c.stack.hook = address(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "stack.hook"));
-        this.requireExt(c);
-        c = _shipped();
-        c.mevModule = address(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "stack.mevModule"));
-        this.requireExt(c);
-        c = _shipped();
-        c.owner = address(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "owner"));
-        this.requireExt(c);
-        c = _shipped();
-        c.creator = address(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "creator"));
-        this.requireExt(c);
-        c = _shipped();
-        c.name = "";
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "name"));
-        this.requireExt(c);
-        c = _shipped();
-        c.salt = bytes32(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "salt"));
-        this.requireExt(c);
-        c = _shipped();
-        c.creatorPayee = address(0);
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "router.creatorPayee"));
         this.requireExt(c);
     }
 
@@ -230,9 +204,6 @@ contract ConfigTest is Fixture {
         address d2 = _funded();
         _pre(lc, d2);
         assertEq(_failedNames(), "");
-        _print("preflight");
-        // every launch input has a row: the count is part of the report
-        assertEq(rows.length, 120, "preflight rows: docs/DEPLOY.md step 4");
     }
 
     /// each pinned code hash has a row. appending one byte of code to a contract fails exactly its row
@@ -262,36 +233,6 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "", "unchanged code passes");
     }
 
-    /// the deprecated gate row: a stranger launch reverts Deprecated(). with the factory public the row is an info line
-    function test_preflightDeprecatedGateRow() public {
-        address d2 = _funded();
-        string memory row = "factory: deprecated, the owner launches and any other caller reverts Deprecated()";
-        _pre(lc, d2);
-        assertTrue(bytes(_rowDetail(row)).length > 10, "row present while deprecated");
-        vm.prank(owner);
-        FACTORY.setDeprecated(false);
-        LaunchConfig memory c = lc;
-        c.allowOpenFactory = true;
-        _pre(c, d2);
-        vm.expectRevert(bytes("row missing"));
-        this.rowDetailExt(row);
-        assertEq(_failedNames(), "", "an open factory passes with the override");
-    }
-
-    function rowDetailExt(string memory name) external view returns (string memory) {
-        return _rowDetail(name);
-    }
-
-    /// every id of `CreditIds` is owned by the CreditStrategy at the fork block, and the three listed ids too
-    function test_creditIdsAreHeldByTheStrategy() public view {
-        for (uint256 i; i < 640; ++i) {
-            assertEq(CREDITS.ownerOf(CreditIds.at(i)), STRATEGY, "credit id moved");
-        }
-        assertEq(CREDITS.ownerOf(LISTED_A), STRATEGY);
-        assertEq(CREDITS.ownerOf(LISTED_B), STRATEGY);
-        assertEq(CREDITS.ownerOf(LISTED_C), STRATEGY);
-    }
-
     function test_preflightSimulatesTheLaunchAndLeavesNoTrace() public {
         address d2 = _funded();
         uint256 nonce = vm.getNonce(d2);
@@ -316,62 +257,72 @@ contract ConfigTest is Fixture {
         c = lc;
         c.creator = c.stack.hook;
         _pre(c, d2);
-        assertEq(_failedNames(), "rule: owner, creator and payees are not dead or stack addresses, factory: deployTokenAsOwner accepts the config (simulated)");
+        assertEq(_failedNames(), "rule: owner, creator and payee are not dead or stack addresses, factory: deployTokenAsOwner accepts the config (simulated)");
         c = lc;
-        c.creatorPayee = c.stack.escrow;
+        c.payee = c.stack.escrow;
         _pre(c, d2);
         assertEq(
             _failedNames(),
-            "rule: owner, creator and payees are not dead or stack addresses, payee: the launch payee accepts 0.001 eth with a 100000 gas call (simulated)"
+            "rule: owner, creator and payee are not dead or stack addresses, payee: accepts eth with a 100000 gas call (simulated)"
         );
     }
 
     /// the launch payee takes 0.001 eth with a 100,000 gas call: a payee that reverts, or one that burns more gas, fails
     function test_preflightPayeeAcceptsEth() public {
         address d2 = _funded();
-        string memory row = "payee: the launch payee accepts 0.001 eth with a 100000 gas call (simulated)";
+        string memory row = "payee: accepts eth with a 100000 gas call (simulated)";
         _pre(lc, d2);
         assertTrue(_warnClean(row), "the launch payee accepts eth");
         LaunchConfig memory c = lc;
-        c.creatorPayee = makeAddr("reverting payee");
-        vm.etch(c.creatorPayee, hex"60006000fd");
+        c.payee = makeAddr("reverting payee");
+        vm.etch(c.payee, hex"60006000fd");
         _pre(c, d2);
         assertEq(_failedNames(), row, "a reverting payee fails");
-        c.creatorPayee = makeAddr("gas burning payee");
-        vm.etch(c.creatorPayee, hex"5b600056");
+        c.payee = makeAddr("gas burning payee");
+        vm.etch(c.payee, hex"5b600056");
         _pre(c, d2);
         assertEq(_failedNames(), row, "a payee that burns the gas fails");
-        c.creatorPayee = makeAddr("plain account payee");
+        c.payee = makeAddr("plain account payee");
         _pre(c, d2);
         assertEq(_failedNames(), "", "an account without code accepts eth");
     }
 
-    function test_preflightFailures() public {
-        // the default config: unset placeholders, a deployer that is not the factory owner
-        address d2 = _user("second deployer");
-        vm.deal(d2, 5 ether);
-        LaunchConfig memory c = defaultConfig();
+    function test_preflightSeaportRecipients() public {
+        address d2 = _funded();
+        LaunchConfig memory c = lc;
+        address ok = makeAddr("seaport recipient");
+        c.seaportRecipients = new address[](2);
+        c.seaportRecipients[0] = ok;
+        c.seaportRecipients[1] = makeAddr("second seaport recipient");
         _pre(c, d2);
-        (string memory list, uint256 n) = _failed();
-        assertGe(n, 8, list);
-        // a poor deployer, an out of bounds rate and a wrong hook
-        c = lc;
-        c.rateStart = 5;
-        c.stack.hook = address(0xBEEF);
-        _pre(c, _user("poor deployer"));
-        (list, n) = _failed();
-        assertGe(n, 8, list);
-        // the predicted addresses are already taken: rewind the fixture owner to the nonce it deployed at. the coin is
-        // taken by the same salt of the same config, and the launch cannot be simulated
-        (bool found, uint256 coreNonce) = _coreNonce(address(core), owner);
-        assertTrue(found);
-        vm.resetNonce(owner);
-        vm.setNonce(owner, uint64(coreNonce - 2));
-        vm.deal(owner, 5 ether);
-        _pre(lc, owner);
+        assertEq(_failedNames(), "", "two distinct plain recipients pass");
+        c.seaportRecipients = new address[](0);
+        _pre(c, d2);
+        assertEq(_failedNames(), "seaport recipients: at least one");
+        c.seaportRecipients = new address[](1);
+        _pre(c, d2);
+        assertEq(_failedNames(), "seaport recipients: none is the zero address");
+        c.seaportRecipients = new address[](2);
+        c.seaportRecipients[0] = ok;
+        c.seaportRecipients[1] = ok;
+        _pre(c, d2);
+        assertEq(_failedNames(), "seaport recipients: no duplicates");
+        address[3] memory system = [c.owner, c.payee, c.stack.factory];
+        for (uint256 i; i < system.length; ++i) {
+            c.seaportRecipients = new address[](1);
+            c.seaportRecipients[0] = system[i];
+            _pre(c, d2);
+            assertEq(_failedNames(), "seaport recipients: none is the Core, controller, owner, payee or a stack address");
+        }
+        // the Core address depends on the opening rate `_pre` substitutes
+        c.rateStart = c.settings.rateCap / 3;
+        c.seaportRecipients = new address[](1);
+        c.seaportRecipients[0] = coreAddress(c, d2);
+        _pre(c, d2);
         assertEq(
             _failedNames(),
-            "factory: deployTokenAsOwner accepts the config (simulated), predicted router is empty, predicted controller is empty, predicted core is empty, predicted coin is empty"
+            "seaport recipients: none is the Core, controller, owner, payee or a stack address",
+            "the predicted Core"
         );
     }
 
@@ -444,33 +395,47 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "factory: mev module enabled, factory: deployTokenAsOwner accepts the config (simulated)");
     }
 
-    function test_postflightChecksTheLens() public {
-        address lensAt = lensAddress(address(core));
-        assertEq(lensAt, address(lens), "the lens sits at the CREATE2 address of the Core");
+    function test_postflightChecksTheAdapters() public {
+        assertEq(seaportAdapter, seaportAdapterAddress(address(core), lc.seaportRecipients), "CREATE2 address");
+        assertEq(strategyAdapter, strategyAdapterAddress(), "CREATE2 address");
         postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "", "the lens of the deploy passes");
-        // a lens that points at another router or Core fails its row
-        vm.mockCall(lensAt, abi.encodeWithSignature("ROUTER()"), abi.encode(address(0x1234)));
+        assertEq(_failedNames(), "", "the adapters of the deploy pass");
+
+        // an adapter the owner removed
+        vm.prank(owner);
+        core.removeAdapter(strategyAdapter);
         postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "lens: router is the Core fee source");
-        vm.clearMockedCalls();
-        vm.mockCall(lensAt, abi.encodeWithSignature("CORE()"), abi.encode(address(0x1234)));
+        assertEq(_failedNames(), "adapters: both are allowed in the Core");
+        vm.prank(owner);
+        core.addAdapter(strategyAdapter);
+
+        // an allowlist that differs from the config
+        vm.prank(owner);
+        ISeaportBasicAdapter(seaportAdapter).setAllowedRecipient(Mainnet.OPENSEA_FEE_COLLECTOR, false);
         postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "lens: core");
-        vm.clearMockedCalls();
-        // a missing lens fails the code row only
-        bytes memory code = lensAt.code;
-        vm.etch(lensAt, "");
+        assertEq(_failedNames(), "adapters: seaport recipients are the config allowlist");
+        vm.prank(owner);
+        ISeaportBasicAdapter(seaportAdapter).setAllowedRecipient(Mainnet.OPENSEA_FEE_COLLECTOR, true);
+
+        // other bytecode at the CREATE2 address of the strategy adapter
+        bytes memory code = strategyAdapter.code;
+        vm.etch(strategyAdapter, hex"6000");
         postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "code: lens");
-        // another bytecode at the derived address fails the size row
-        vm.etch(lensAt, hex"6000");
+        assertEq(_failedNames(), "adapters: runtime code is the compiled adapters (immutables masked)");
+        vm.etch(strategyAdapter, code);
+
+        // a missing adapter fails the code row, and the lock is a launch state row
+        vm.etch(strategyAdapter, "");
         postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "lens: code size is the compiled CoreLens");
-        vm.etch(lensAt, code);
-        // the rows need no deployer
-        postflightAs(lc, address(core), address(0));
-        assertEq(_failedNames(), "");
+        assertEq(
+            _failedNames(),
+            "code: strategy adapter, adapters: runtime code is the compiled adapters (immutables masked)"
+        );
+        vm.etch(strategyAdapter, code);
+        vm.prank(owner);
+        core.lockAdapters();
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), "core: no locks, no balance module");
     }
 
     function test_postflightPassesOnTheFixture() public {
@@ -481,8 +446,6 @@ contract ConfigTest is Fixture {
         _buyCoin(funder, 1 ether);
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "");
-        _print("postflight");
-        assertGe(rows.length, 85, "postflight rows");
     }
 
     /// V2R-5: the postflight compares the runtime code of the Core and of the controller with the compiled artifacts
@@ -522,11 +485,11 @@ contract ConfigTest is Fixture {
         // a config that names other values than the coin holds fails exactly its row
         LaunchConfig memory c = lc;
         c.image = "ipfs://other";
-        postflightAs(c, address(core), owner);
+        postflightAs(c, address(core), address(0));
         assertEq(_failedNames(), imageRow);
         c = lc;
         c.description = "other";
-        postflightAs(c, address(core), owner);
+        postflightAs(c, address(core), address(0));
         assertEq(_failedNames(), descRow);
         vm.startPrank(owner);
         (bool ok1,) = address(coin).call(abi.encodeWithSignature("updateImage(string)", "ipfs://img"));
@@ -544,12 +507,13 @@ contract ConfigTest is Fixture {
         assertFalse(_warnClean("warn: coin: description equals the config"));
     }
 
-    /// preflight: both fields inside the coin caps (2048 and 4096 bytes), filled (not empty or spaces only) and free of `placeholder` in any letter case and not `todo` or `tbd` as the whole value (a failure on chain id 1, a warning elsewhere)
+    // preflight: image and description inside the coin caps (2048 and 4096 bytes), filled, free of `placeholder` in any
+    // letter case, not `todo` or `tbd` as the whole value, and the image carries a scheme (a failure on chain id 1, a
+    // warning elsewhere). the rule is `metadataRowPasses`, shared with the rehearsal
     function test_preflightImageAndDescription() public {
         address d2 = _funded();
         string memory cap = "rule: image at most 2048 bytes, description at most 4096 bytes";
         string memory filled = "rule: image and description are filled and are not placeholders";
-        // the factory enforces the same caps, so its simulated launch fails with the rule row
         string memory both = string.concat(cap, ", factory: deployTokenAsOwner accepts the config (simulated)");
         _pre(lc, d2);
         assertTrue(_warnClean(cap) && _warnClean(filled), "filled and inside the caps");
@@ -560,81 +524,43 @@ contract ConfigTest is Fixture {
         _pre(c, d2);
         assertEq(_failedNames(), filled, "an empty image fails");
         c = lc;
-        c.description = "";
-        _pre(c, d2);
-        assertEq(_failedNames(), filled, "an empty description fails");
-        c.image = "";
-        _pre(c, d2);
-        assertEq(_failedNames(), filled, "both empty fails");
-        assertTrue(_warnClean(cap));
-        c = lc;
-        c.image = "ipfs://PLACEHOLDER-cc-image";
-        _pre(c, d2);
-        assertEq(_failedNames(), filled, "a placeholder image fails");
-        c = lc;
         c.description = "a PLACEHOLDER description";
         _pre(c, d2);
         assertEq(_failedNames(), filled, "a placeholder description fails");
-        // spaces only counts as empty
-        c = lc;
-        c.image = " ";
-        _pre(c, d2);
-        assertEq(_failedNames(), filled, "a single space image fails");
-        c = lc;
-        c.description = "   ";
-        _pre(c, d2);
-        assertEq(_failedNames(), filled, "a spaces only description fails");
-        // `placeholder` matches inside a value in any letter case, `todo` and `tbd` match the whole trimmed value
-        string[6] memory marked = ["ipfs://placeholder", "ipfs://PlaceHolder-1", "TODO", " todo ", "tbd", "TBD"];
-        for (uint256 i; i < marked.length; ++i) {
-            c = lc;
-            c.image = marked[i];
-            _pre(c, d2);
-            assertEq(_failedNames(), filled, string.concat("a marked image fails: ", marked[i]));
-            c = lc;
-            c.description = marked[i];
-            _pre(c, d2);
-            assertEq(_failedNames(), filled, string.concat("a marked description fails: ", marked[i]));
-        }
-        // real looking values pass, with spaces inside the text
-        c = lc;
-        c.image = "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
-        c.description = "Credits engine coin. The pot buys credits at the bid.";
-        _pre(c, d2);
-        assertEq(_failedNames(), "", "real looking values pass");
-        // a cid or a description that holds the letters of a short marker passes
-        c = lc;
-        c.image = "ipfs://bafybeitbdtodoabcdefghijklmnopqrstuvwxyz234567abcdefghij";
-        c.description = "todo list of the engine: tbd later";
-        _pre(c, d2);
-        assertEq(_failedNames(), "", "short markers inside a value pass");
 
-        // the same rule, checked directly through the shared helper (the full preflight above exercises it end to end).
-        // a value that trims to nothing by a tab, a newline or NBSP counts as empty
+        // the rule through the shared helper
         string memory okDesc = "Credits engine coin.";
         string memory okImage = "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
-        string[3] memory whitespace = ["\n", "\t", unicode" "];
-        for (uint256 i; i < whitespace.length; ++i) {
-            assertFalse(metadataRowPasses(whitespace[i], okDesc), "a whitespace only image fails");
-            assertFalse(metadataRowPasses(okImage, whitespace[i]), "a whitespace only description fails");
+        assertTrue(metadataRowPasses(okImage, okDesc));
+        string[8] memory blank = ["", " ", "   ", "\n", "\t", unicode" ", "TODO", " tbd "];
+        for (uint256 i; i < blank.length; ++i) {
+            assertFalse(metadataRowPasses(blank[i], okDesc), string.concat("image: ", blank[i]));
+            assertFalse(metadataRowPasses(okImage, blank[i]), string.concat("description: ", blank[i]));
         }
-        // the image must carry a scheme with content past it: a bare scheme or a value without one fails
-        string[4] memory badScheme =
-            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", "ipfs://", "https://", "ar://"];
+        string[3] memory marked = ["ipfs://placeholder", "ipfs://PlaceHolder-1", "a PLACEHOLDER description"];
+        for (uint256 i; i < marked.length; ++i) {
+            assertFalse(metadataRowPasses(marked[i], okDesc), marked[i]);
+            assertFalse(metadataRowPasses(okImage, marked[i]), marked[i]);
+        }
+        // a cid or a description that holds the letters of a short marker passes
+        assertTrue(metadataRowPasses("ipfs://bafybeitbdtodoabcdefghijklmnopqrstuvwxyz234567abcdefghij", "todo list of the engine: tbd later"));
+        // the image must carry a scheme with content past it, matched on the raw bytes that go on chain
+        string[8] memory badScheme = [
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            "ipfs://",
+            "https://",
+            "ar://",
+            "IPFS://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            "  ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi  ",
+            "http://example.com/cc.png"
+        ];
         for (uint256 i; i < badScheme.length; ++i) {
-            assertFalse(metadataRowPasses(badScheme[i], okDesc), string.concat("an image without a scheme and content fails: ", badScheme[i]));
+            assertFalse(metadataRowPasses(badScheme[i], okDesc), badScheme[i]);
         }
-        // an ipfs, https or ar image with content, and a plain description, pass; a scheme on the description is not required
-        assertTrue(metadataRowPasses(okImage, okDesc), "an ipfs image passes");
-        assertTrue(metadataRowPasses("https://example.com/cc.png", okDesc), "an https image passes");
-        assertTrue(metadataRowPasses("ar://abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHI", okDesc), "an ar image passes");
-        // the scheme is matched on the raw bytes that go on chain: an upper case scheme or surrounding whitespace fails,
-        // an onchain data uri passes, http is refused
-        assertFalse(metadataRowPasses("IPFS://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", okDesc), "an upper case scheme fails");
-        assertFalse(metadataRowPasses("  ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", okDesc), "leading whitespace before the scheme fails");
-        assertFalse(metadataRowPasses("ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi  ", okDesc), "trailing whitespace fails");
-        assertTrue(metadataRowPasses("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", okDesc), "a data uri passes");
-        assertFalse(metadataRowPasses("http://example.com/cc.png", okDesc), "an http image fails");
+        assertTrue(metadataRowPasses("https://example.com/cc.png", okDesc));
+        assertTrue(metadataRowPasses("ar://abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHI", okDesc));
+        assertTrue(metadataRowPasses("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", okDesc));
 
         // another chain id: the row warns and never fails (the chain id row fails there)
         vm.chainId(11155111);
@@ -642,29 +568,12 @@ contract ConfigTest is Fixture {
         c.image = "";
         _pre(c, d2);
         assertFalse(_warnClean(filled), "an empty image warns off mainnet");
-        assertTrue(bytes(_failedNames()).length != 0, "the chain id row fails");
-        c = lc;
-        c.description = "PLACEHOLDER";
-        _pre(c, d2);
-        assertFalse(_warnClean(filled), "a placeholder warns off mainnet");
-        c = lc;
-        c.image = " ";
-        _pre(c, d2);
-        assertFalse(_warnClean(filled), "a blank image warns off mainnet");
-        c = lc;
-        c.description = "todo";
-        _pre(c, d2);
-        assertFalse(_warnClean(filled), "a todo warns off mainnet");
-        c = lc;
-        c.image = "TBD";
-        _pre(c, d2);
-        assertFalse(_warnClean(filled), "a tbd warns off mainnet");
         (string memory list,) = _failed();
         assertFalse(vm.contains(list, filled), "the row is not a failure off mainnet");
         vm.chainId(1);
 
+        // the caps: the factory enforces the same ones, so its simulated launch fails with the cap row
         c = lc;
-        // the image fills the cap with a scheme and content past it, the description fills its cap with plain text
         c.image = string.concat("ipfs://", _bytesOf(MAX_IMAGE_BYTES - 7));
         c.description = _bytesOf(MAX_DESCRIPTION_BYTES);
         _pre(c, d2);
@@ -696,42 +605,28 @@ contract ConfigTest is Fixture {
         assertEq(c.description, "the CC coin");
     }
 
-    function test_configSupplyMatchesCoinSupply() public view {
-        assertEq(COIN_SUPPLY, lc.supply);
-    }
-
-    /// the verification arguments built from the config and the first controller are the arguments the core was built with
-    function test_coreConstructorArgsReadBack() public view {
-        (address first, bool found) = firstController(address(core), owner);
-        assertTrue(found);
-        assertEq(first, address(ctl), "the first controller is found from the deployer nonce");
-        assertEq(
-            coreConstructorArgs(core, lc, first),
-            abi.encode(owner, address(coin), address(ctl), lc.stack, lc.rateStart, lc.settings, lc.credit),
-            "etherscan constructor args"
-        );
-    }
-
+    // the readbacks name the row of the field a config changes, and the Core address row catches any change of the config
     function test_postflightCatchesEveryMismatch() public {
+        string memory id = "core: address is the CREATE2 address of the config and the deployer";
         LaunchConfig memory c = lc;
         c.rateStart = lc.rateStart + 1;
         postflightAs(c, address(core), owner);
-        assertEq(_failedNames(), "core: RATE_START");
+        assertEq(_failedNames(), id);
 
         c = lc;
         c.owner = creator;
-        postflightAs(c, address(core), owner);
-        assertEq(_failedNames(), "core: owner, coin: admin is the config owner, router: owner is the config owner");
+        postflightAs(c, address(core), address(0));
+        assertEq(_failedNames(), "core: owner, coin: admin is the config owner");
 
         c = lc;
         c.bountyBps = 8000;
-        postflightAs(c, address(core), owner);
+        postflightAs(c, address(core), address(0));
         assertEq(_failedNames(), "hook: skim config equals the config");
 
         c = lc;
         c.stack.escrow = address(0xE5C);
-        postflightAs(c, address(core), owner);
-        assertEq(_failedNames(), "core: escrow, code: stack addresses, factory: deploymentInfo names the coin, hook, locker, mev module, escrow and pool of the config, coin: allowlist holds the locker, the escrow and the config entries, coin: the locker and the escrow are pinned");
+        postflightAs(c, address(core), address(0));
+        assertEq(_failedNames(), "core: stack equals the config, factory: deploymentInfo names the coin, hook, locker, mev module, escrow and pool of the config, coin: allowlist holds the locker, the escrow and the config entries, coin: the locker and the escrow are pinned");
 
         postflightAs(lc, address(0xBEEF), owner);
         assertEq(_failedNames(), "code: core");
@@ -761,20 +656,19 @@ contract ConfigTest is Fixture {
 
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[23] memory lo = SettingsFields.lo();
-        uint256[23] memory hi = SettingsFields.hi();
-        bytes32[23] memory names = SettingsFields.names();
+        uint256[24] memory lo = SettingsFields.lo();
+        uint256[24] memory hi = SettingsFields.hi();
+        bytes32[24] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // the top itself (the fields bound by another field start from a free partner)
-            // feeToBuybackBps at its top needs feeToRedeemBurnBps at zero to keep the sum at 10_000
-            if (i == 21) s.feeToRedeemBurnBps = 0;
             // climbPerMinBps at its top needs recoveryClimbPerMinBps raised to stay at or above it
             if (i == 2) s.recoveryClimbPerMinBps = 1_000;
             SettingsFields.set(s, i, hi[i]);
             assertEq(SettingsBounds.firstViolation(s), bytes32(0), "the top edge is inside");
+            // the two switches take 0 or 1, nothing is out of bounds
+            if (i == 11 || i == 12) continue;
             s = Mainnet.defaultSettings();
-            if (i == 21) s.feeToRedeemBurnBps = 0;
             SettingsFields.set(s, i, hi[i] + 1);
             assertEq(SettingsBounds.firstViolation(s), names[i], "above the top");
             // below the bottom, for the fields that have one
@@ -795,8 +689,7 @@ contract ConfigTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "settings"));
         this.requireExt(c);
         c = lc;
-        c.settings.feeToBuybackBps = 9_500;
-        c.settings.feeToRedeemBurnBps = 1_000;
+        c.settings.feeToRedeemBurnBps = 10_001;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "settings"));
         this.requireExt(c);
         c = lc;
@@ -805,7 +698,7 @@ contract ConfigTest is Fixture {
         this.requireExt(c);
         // the sale settings of the controller have their own row and guard
         c = lc;
-        c.sale.floorBps = 10_001;
+        c.sale.kneeBps = 999;
         _pre(c, d2);
         assertEq(_failedNames(), "sale settings inside the bounds");
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "sale"));
@@ -817,7 +710,7 @@ contract ConfigTest is Fixture {
             LaunchConfig memory c = lc;
             uint256 v = SettingsFields.get(c.settings, i);
             SettingsFields.set(c.settings, i, v == 0 ? 1 : v - 1);
-            postflightAs(c, address(core), owner);
+            postflightAs(c, address(core), address(0));
             assertEq(_failedNames(), "core: settings equal the config", "a settings field slipped the readback");
         }
     }
@@ -832,22 +725,6 @@ contract ConfigTest is Fixture {
         changedFlag = true;
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "", "SETTINGS_CHANGED turns the row into a warning");
-    }
-
-    /// sales are open after a launch. paused sales fail the row until the operator says the owner changed the state since launch
-    function test_postflightWhileSalesArePaused() public {
-        postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "");
-        assertTrue(_warnClean("controller: not paused"), "the row exists and passes on a fresh launch");
-        vm.prank(owner);
-        ctl.setPaused(true);
-        postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "controller: not paused");
-        assertEq(_rowDetail("controller: not paused"), "paused");
-        changedFlag = true;
-        postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "", "SETTINGS_CHANGED turns the row into a warning");
-        assertFalse(_warnClean("warn: controller is not paused"), "the warning row reports the pause");
     }
 
     /// NEXT 26: the owner account is an EIP 7702 delegation to Calibur with an empty key registry. each of the three

@@ -1,9 +1,10 @@
-// Turns the decoded Core, ControllerV1 and FeeRouter logs into feed rows and
-// per credit / per statement histories. Pure functions over decoded logs.
+// Turns the decoded Core and ControllerV1 logs into feed rows and per credit /
+// per statement histories. Pure functions over decoded logs.
 
 import { formatUnits, type Address } from "viem";
 import { eth } from "./format";
-import { EXIT_TOKEN_SYMBOL } from "./config";
+
+export const BALANCE_SYMBOL = "$BALANCE";
 
 export type FeedKind = "credit" | "composed" | "sold" | "redeemed";
 
@@ -23,18 +24,20 @@ export interface FeedEvent {
 
 export interface Stats {
   creditsEth: number; // CreditBought through the eth bid
-  creditsExit: number; // CreditBought through the $BALANCE bid
+  creditsBalance: number; // CreditBought through the balance bid
   creditsListing: number; // ListingBought
   creditsAdopted: number; // CreditAdopted
   creditsSold: number; // CreditSold from the credit sale
   composed: number;
   sold: number;
   redeemed: number;
+  buybacks: number;
   ethIntoCredits: number; // sum of EthRateFill.spent
   ccBurned: number;
+  feesBooked: number; // sum of FeesAdded, eth
 }
 
-export type CreditHow = "eth bid" | `${typeof EXIT_TOKEN_SYMBOL} bid` | "listing" | "adopted";
+export type CreditHow = "eth bid" | `${typeof BALANCE_SYMBOL} bid` | "listing" | "adopted";
 
 // One step in a credit's life, in log order.
 export type CreditEvt =
@@ -44,7 +47,7 @@ export type CreditEvt =
       cost: bigint; // recorded cost basis, wei
       from?: string; // seller (bids) or caller (listing)
       paid?: bigint; // listing: paid to the caller on top of the listing cost
-      target?: string; // listing: the market contract
+      adapter?: string; // listing: the adapter that priced it
       rate?: bigint; // eth bid and listing: rate state after the fill
       pot?: bigint; // eth bid: pot after the fill
       block: bigint;
@@ -66,9 +69,10 @@ export interface StatementRecord {
     block: bigint;
     tx: string;
   };
+  restyled: { format: number; caller: string; block: bigint; tx: string }[];
   anchor: { saleBps: bigint; anchorBps: number; block: bigint; tx: string }[];
   sold?: { buyer: string; price: bigint; toBuyback?: bigint; block: bigint; tx: string };
-  exited?: { received: bigint; block: bigint; tx: string };
+  redeemed?: { received: bigint; block: bigint; tx: string };
 }
 
 export interface Scan {
@@ -76,52 +80,58 @@ export interface Scan {
   stats: Stats;
   credits: Record<number, CreditEvt[]>;
   statements: Record<number, StatementRecord>;
+  balanceToken?: BalanceTokenInfo; // undefined while the Core has no module
 }
 
-export interface ExitTokenInfo {
+export interface BalanceTokenInfo {
   address: Address;
   decimals: number;
 }
 
 export interface ScanInput {
-  logs: any[]; // decoded logs of the three contracts, sorted by block and log index
+  logs: any[]; // decoded logs of the Core and the controllers, sorted by block and log index
   head: bigint;
   burned: bigint; // total coin burned by the core
   modes: Map<string, ComposeMode>; // Composed tx hash -> compose / composeChosen
-  exitToken?: ExitTokenInfo;
-  exitPaid: Map<string, bigint>; // `${tx}:${seller}` -> exit token sent by the core to the seller in that tx
+  balanceToken?: BalanceTokenInfo;
+  balancePaid: Map<string, bigint>; // `${tx}:${seller}` -> balance token sent by the core to the seller in that tx
 }
 
 function num(n: string | number): string {
   return Number(n).toLocaleString("en-US", { maximumFractionDigits: 6 });
 }
 
-// An exit token amount with its symbol; raw units until the token is read.
-export function formatExit(v: bigint, info?: ExitTokenInfo): string {
-  return info ? `${num(formatUnits(v, info.decimals))} ${EXIT_TOKEN_SYMBOL}` : `${v} ${EXIT_TOKEN_SYMBOL} units`;
+// A balance token amount with its symbol; raw units until the token is read.
+export function formatBalance(v: bigint, info?: BalanceTokenInfo): string {
+  return info ? `${num(formatUnits(v, info.decimals))} ${BALANCE_SYMBOL}` : `${v} ${BALANCE_SYMBOL} units`;
 }
 
-export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["credits"]; statements: Scan["statements"]; rows: FeedEvent[] } {
-  const { logs, head } = inp;
-  const stats: Stats = {
+export function emptyStats(): Stats {
+  return {
     creditsEth: 0,
-    creditsExit: 0,
+    creditsBalance: 0,
     creditsListing: 0,
     creditsAdopted: 0,
     creditsSold: 0,
     composed: 0,
     sold: 0,
     redeemed: 0,
+    buybacks: 0,
     ethIntoCredits: 0,
-    ccBurned: Number(formatUnits(inp.burned, 18)),
+    ccBurned: 0,
+    feesBooked: 0,
   };
+}
+
+export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["credits"]; statements: Scan["statements"]; rows: FeedEvent[] } {
+  const { logs, head } = inp;
+  const stats: Stats = { ...emptyStats(), ccBurned: Number(formatUnits(inp.burned, 18)) };
   const credits: Scan["credits"] = {};
   const statements: Scan["statements"] = {};
   const rows: FeedEvent[] = [];
   const cr = (id: number) => (credits[id] ??= []);
-  const st = (sid: number) => (statements[sid] ??= { sid, anchor: [] });
+  const st = (sid: number) => (statements[sid] ??= { sid, anchor: [], restyled: [] });
   const stmtLink = (sid: number) => ({ text: `statement ${sid}`, href: `/statements/${sid}` });
-  const xtok = (v: bigint) => formatExit(v, inp.exitToken);
 
   // StatementSoldTo and the controller's Bought are one sale; one row.
   const soldKeys = new Set<string>();
@@ -154,21 +164,20 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const id = Number(a.id);
         const viaEth = fill?.tx === tx;
         const f = viaEth ? fill : undefined;
-        cr(id).push({ t: "bought", how: viaEth ? "eth bid" : `${EXIT_TOKEN_SYMBOL} bid`, cost: a.cost, from: a.from, rate: f?.rate, pot: f?.pot, block, tx });
+        cr(id).push({ t: "bought", how: viaEth ? "eth bid" : `${BALANCE_SYMBOL} bid`, cost: a.cost, from: a.from, rate: f?.rate, pot: f?.pot, block, tx });
         if (viaEth) stats.creditsEth++;
-        else stats.creditsExit++;
-        const paid = inp.exitPaid.get(`${tx}:${String(a.from).toLowerCase()}`);
-        creditRow(id, viaEth ? eth(a.cost) : paid != null ? formatExit(paid, inp.exitToken) : undefined);
+        else stats.creditsBalance++;
+        const paid = inp.balancePaid.get(`${tx}:${String(a.from).toLowerCase()}`);
+        creditRow(id, viaEth ? eth(a.cost) : paid != null ? formatBalance(paid, inp.balanceToken) : undefined);
         fill = undefined;
         break;
       }
       case "ListingBought": {
         const id = Number(a.id);
         const total = a.cost + a.paid;
-        cr(id).push({ t: "bought", how: "listing", cost: total, from: a.caller, paid: a.paid, target: a.target, rate: a.rate, block, tx });
+        cr(id).push({ t: "bought", how: "listing", cost: total, from: a.caller, paid: a.paid, adapter: a.adapter, rate: a.rate, block, tx });
         stats.creditsListing++;
         creditRow(id, eth(total));
-        fill = undefined;
         break;
       }
       case "CreditAdopted": {
@@ -191,9 +200,15 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
           kind: "composed",
           label: mode === "chosen" ? "composed · chosen" : "statement composed",
           link: stmtLink(sid),
-          detail: `${a.price > 0n ? `· listed at ${eth(a.price)} eth ` : ""}· cost ${eth(a.cost)} eth`,
+          detail: `${a.price > 0n ? `· listed at ${eth(a.price)} eth ` : ""}· format ${a.format} · cost ${eth(a.cost)} eth`,
           tile: { kind: "statement", id: sid },
         });
+        break;
+      }
+      case "HeldFormatSet": {
+        const sid = Number(a.sid);
+        st(sid).restyled.push({ format: Number(a.format), caller: a.caller, block, tx });
+        row({ kind: "composed", label: "statement restyled", link: stmtLink(sid), detail: `· format ${a.format} · by`, addr: a.caller, tile: { kind: "statement", id: sid } });
         break;
       }
       case "StatementSoldTo": {
@@ -231,15 +246,22 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         row({ kind: "sold", label: "credit sold", detail: `credit #${id} bought from the credit sale by`, eth: eth(a.price), addr: a.buyer, tile: { kind: "credit", id } });
         break;
       }
-      case "StatementExited": {
+      case "StatementRedeemed": {
         const sid = Number(a.sid);
-        st(sid).exited = { received: a.received, block, tx };
+        st(sid).redeemed = { received: a.received, block, tx };
         stats.redeemed++;
-        row({ kind: "redeemed", label: "statement redeemed", link: stmtLink(sid), detail: `redeemed · received ${xtok(a.received)}`, tile: { kind: "statement", id: sid } });
+        row({ kind: "redeemed", label: "statement redeemed", link: stmtLink(sid), detail: `· received ${formatBalance(a.received, inp.balanceToken)}`, tile: { kind: "statement", id: sid } });
         break;
       }
 
-  }
+      // ---- engine events that feed the stats --------------------------------
+      case "Buyback":
+        stats.buybacks++;
+        break;
+      case "FeesAdded":
+        stats.feesBooked += Number(formatUnits(a.amount, 18));
+        break;
+    }
   }
   return { stats, credits, statements, rows };
 }

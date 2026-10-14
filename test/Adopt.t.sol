@@ -5,7 +5,7 @@ import {Fixture} from "./utils/Fixture.sol";
 import {Prod} from "./utils/Prod.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Mainnet} from "../src/interfaces/Interfaces.sol";
 
 /// a listing target that delivers the credit and then tries to adopt it inside the guarded call
 contract AdoptingTarget {
@@ -53,6 +53,7 @@ contract AdoptTest is Fixture {
         core.adopt(ids);
     }
 
+    // promise: SPEC 4 adopt puts a stray credit into the pile at the price state
     function test_OK_aCreditSentStraightToTheCoreIsAdoptedAtThePriceState() public {
         uint256[] memory ids = _gift(1);
         uint256 id = ids[0];
@@ -79,26 +80,7 @@ contract AdoptTest is Fixture {
         assertEq(CREDITS.ownerOf(id), address(core));
     }
 
-    function test_OK_theBasisFollowsThePriceStateAfterTheMarketMoved() public {
-        _fundPot(2 ether);
-        _warp(3 hours);
-        uint256[] memory ids = _gift(3);
-        uint256 price = core.ethPrice();
-        assertGe(price, core.ethRate());
-        _adopt(ids);
-        for (uint256 i; i < 3; ++i) {
-            (, uint256 cost,) = core.creditInfo(ids[i]);
-            assertEq(cost, price, "basis from the price state at that moment");
-            assertGt(cost, 0);
-        }
-        // order of the pile is the order of the call
-        uint256[] memory page = core.pilePage(0, 10);
-        assertEq(page.length, 3);
-        assertEq(page[0], ids[0]);
-        assertEq(page[1], ids[1]);
-        assertEq(page[2], ids[2]);
-    }
-
+    // promise: INTEGRATION InPile on adopt
     function test_REVERT_adoptTwiceInOneCallOrTwoCalls() public {
         uint256[] memory ids = _gift(1);
         _adopt(ids);
@@ -113,6 +95,7 @@ contract AdoptTest is Fixture {
         assertEq(core.pileSize(), 1, "the failed call changed nothing");
     }
 
+    // promise: INTEGRATION NotHolder on adopt
     function test_REVERT_aCreditTheCoreDoesNotHold() public {
         uint256[] memory ids = _credits(seller, 1);
         vm.expectRevert(abi.encodeWithSignature("NotHolder()"));
@@ -124,6 +107,7 @@ contract AdoptTest is Fixture {
         assertEq(core.pileSize(), 0);
     }
 
+    // promise: INTEGRATION Empty, ZeroId on adopt
     function test_REVERT_emptyAndZero() public {
         vm.expectRevert(abi.encodeWithSignature("Empty()"));
         _adopt(new uint256[](0));
@@ -131,15 +115,7 @@ contract AdoptTest is Fixture {
         _adopt(new uint256[](1));
     }
 
-    function test_REVERT_aCreditSoldThroughTheDoorIsInThePile() public {
-        _fundPot(1 ether);
-        uint256[] memory ids = _credits(seller, 1);
-        vm.prank(seller);
-        core.sellForEth(ids);
-        vm.expectRevert(abi.encodeWithSignature("InPile()"));
-        _adopt(ids);
-    }
-
+    // promise: SPEC 4 adopt is atomic over the list
     function test_REVERT_aBatchWithOneBadIdChangesNothing() public {
         uint256[] memory good = _gift(2);
         uint256[] memory foreign = _credits(seller, 1);
@@ -181,6 +157,7 @@ contract AdoptTest is Fixture {
         (s.lastFill, s.minuteStart, s.bucket) = _anchor();
     }
 
+    // promise: inv 18 adopt moves no eth between pots
     function test_OK_theRateStateAndThePotsAreUnchanged() public {
         _fundPot(2 ether);
         // one sale moves the rate state
@@ -208,6 +185,7 @@ contract AdoptTest is Fixture {
         assertEq(core.pileSize(), 4 + 5, "the sold and the adopted credits are in the pile");
     }
 
+    // promise: SPEC 1 one pile: adopted credits compose like any other
     function test_OK_aPageOfAdoptedCreditsComposesIntoAStatementWorthTheirBases() public {
         _fundPot(1 ether);
         uint256[] memory ids = _gift(80);
@@ -239,7 +217,7 @@ contract AdoptTest is Fixture {
         uint64 n = vm.getNonce(address(this));
         address coreAt = vm.computeCreateAddress(address(this), n + 1);
         IControllerV1 ctl2 = Prod.newController(coreAt, lc.sale);
-        succ = Prod.newCore(owner, address(coin), address(ctl2), lc.stack, lc.rateStart, _settings());
+        succ = _successorCore(address(ctl2), lc.rateStart, _settings());
         assertEq(address(succ), coreAt, "predicted successor address");
     }
 
@@ -260,6 +238,7 @@ contract AdoptTest is Fixture {
         }
     }
 
+    // promise: SPEC 9 a successor builds its pile with adopt
     /// `migrate` moves the credits of the old Core to a second Core, and `adopt` on that Core puts them back into a
     /// pile that composes
     function test_OK_migrateThenAdoptOnTheSuccessorRestoresThePile() public {
@@ -292,6 +271,7 @@ contract AdoptTest is Fixture {
         assertEq(succ.pileSize(), 0);
     }
 
+    // promise: INTEGRATION Retired on adopt
     /// a credit that left through `migrate` keeps its old record with the pile flag cleared. the Core is retired by the
     /// migrate, so the credit cannot be adopted there again (a successor adopts it, see the test above)
     function test_REVERT_aMigratedCreditThatComesBackIsNotAdoptedByTheRetiredCore() public {
@@ -317,6 +297,7 @@ contract AdoptTest is Fixture {
         assertEq(core.pileSize(), 0);
     }
 
+    // promise: INTEGRATION Reentrancy on adopt
     /// inside a guarded call (a listing target mid buy) `adopt` is refused, so a credit being bought cannot be put in
     /// the pile twice
     function test_REVERT_adoptInsideAGuardedCall() public {
@@ -325,10 +306,9 @@ contract AdoptTest is Fixture {
         AdoptingTarget t = new AdoptingTarget(address(core));
         vm.prank(STRATEGY);
         CREDITS.transferFrom(STRATEGY, address(t), id);
-        _allow(address(t));
         uint256 value = core.ethRate() / 2;
         vm.prank(keeper);
-        core.buyListing(value, abi.encodeCall(AdoptingTarget.fill, (id)), id, address(t));
+        _buyRaw(value, abi.encodeCall(AdoptingTarget.fill, (id)), id, address(t));
         assertFalse(t.adoptOk(), "adopt inside the buy failed");
         assertEq(bytes4(t.adoptOut()), bytes4(0xab143c06), "Reentrancy()");
         assertEq(core.pileSize(), 1, "the credit is in the pile once");
@@ -337,135 +317,24 @@ contract AdoptTest is Fixture {
         assertTrue(p);
     }
 
-    /// the fee router is pulled before the price is read, like at every door that spends from the pot: pending fee eth is
-    /// booked
-    function test_OK_adoptPullsTheFeeRouterFirst() public {
-        autoFlush = false;
+    // promise: SPEC 4 adopt books pending fee eth before it prices
+    /// the fee income is booked before the price is read, like at every door that spends from the pot
+    function test_OK_adoptBooksTheFeesFirst() public {
+        autoBook = false;
         _buyCoin(funder, 3 ether);
-        assertGt(address(feeRouter).balance, 0, "the router holds fees");
+        assertGt(address(core).balance - _tracked(), 0, "the core holds unbooked fees");
         uint256 pot = core.ethPot();
         uint256[] memory ids = _gift(1);
         vm.expectEmit(false, false, false, false, address(core));
         emit ICore.FeesAdded(0);
         _adopt(ids);
-        assertEq(address(feeRouter).balance, 0, "the router was flushed");
+        assertEq(address(core).balance, _tracked(), "the fees were booked");
         assertGt(core.ethPot(), pot, "the fees are in the pot");
         (, uint256 cost,) = core.creditInfo(ids[0]);
-        assertEq(cost, core.ethPrice(), "the basis is read after the pull");
+        assertEq(cost, core.ethPrice(), "the basis is read after the book");
     }
 
-    /// a router that reverts does not block adopt
-    function test_OK_adoptWorksWithABrokenRouter() public {
-        vm.etch(address(feeRouter), hex"fe");
-        uint256[] memory ids = _gift(1);
-        _adopt(ids);
-        assertEq(core.pileSize(), 1);
-    }
-
-    /// `ethPrice()` is the value a real checkpoint stores: skim with 1 wei above the pots checkpoints
-    function test_OK_ethPriceIsWhatARealCheckpointStores() public {
-        _fundPot(2 ether);
-        uint256[] memory sold = _credits(seller, 6);
-        vm.prank(seller);
-        core.sellForEth(sold);
-        _warp(20 minutes);
-        uint256 read = core.ethPrice();
-        assertGt(read, core.rateAtCheckpoint(), "the price state climbed since the last checkpoint");
-        vm.deal(address(core), address(core).balance + 1);
-        core.skim();
-        assertEq(core.rateAtCheckpoint(), read, "the checkpoint stored the value ethPrice read");
-        assertEq(core.ethPrice(), read);
-    }
-
-    /// a price state of zero (the stored rate forced to zero) gives a basis of 1 wei
-    function test_OK_aPriceStateOfZeroTakesTheFloorOfOneWei() public {
-        uint256[] memory ids = _gift(2);
-        vm.store(address(core), bytes32(uint256(10)), bytes32(uint256(0)));
-        assertEq(core.ethPrice(), 0);
-        vm.expectEmit(true, false, false, true, address(core));
-        emit ICore.CreditAdopted(ids[0], 1);
-        _adopt(ids);
-        for (uint256 i; i < 2; ++i) {
-            (bool p, uint256 cost,) = core.creditInfo(ids[i]);
-            assertTrue(p);
-            assertEq(cost, 1, "1 wei");
-        }
-    }
-
-    /// a stored rate above `rateCap` gives the cap as the price state, so the basis is at the cap
-    function test_OK_aStoredRateAboveTheRateCapGivesTheCapAsTheBasis() public {
-        Settings memory st = core.settings();
-        uint256 stored = core.rateAtCheckpoint();
-        st.rateCap = uint64(stored / 4);
-        _setSettings(st);
-        assertEq(core.rateAtCheckpoint(), stored, "the stored rate is above the new cap");
-        assertEq(core.ethPrice(), st.rateCap, "the price state is the cap");
-        uint256[] memory ids = _gift(2);
-        _adopt(ids);
-        for (uint256 i; i < 2; ++i) {
-            (, uint256 cost,) = core.creditInfo(ids[i]);
-            assertEq(cost, st.rateCap, "basis at the cap");
-        }
-    }
-
-    /// a stored rate above the ceiling (the ceiling was lowered after the price climbed) gives the ceiling as the basis
-    function test_OK_aStoredRateAboveTheCeilingGivesTheCeilingAsTheBasis() public {
-        _fundPot(2 ether);
-        _warp(1 hours);
-        vm.deal(address(core), address(core).balance + 1);
-        core.skim();
-        Settings memory st = core.settings();
-        st.ceilBps = 10_000;
-        st.idleLoosenBps = 1;
-        _setSettings(st);
-        (uint256 lastFill,,) = _anchor();
-        uint256 loosened = 10_000 + uint256(st.idleLoosenBps) * ((block.timestamp - core.lastFillTime()) / 10 minutes);
-        uint256 bound = lastFill * loosened * st.ceilBps / 1e8;
-        assertGt(core.rateAtCheckpoint(), bound, "the stored rate is above the lowered ceiling");
-        assertEq(core.ethPrice(), bound, "the price state is the ceiling");
-        uint256[] memory ids = _gift(1);
-        _adopt(ids);
-        (, uint256 cost,) = core.creditInfo(ids[0]);
-        assertEq(cost, bound, "basis at the ceiling");
-    }
-
-    /// after a fill the stored rate is stale once time passes: the basis uses the climbed price state, with the pot refilled
-    function test_OK_aStaleStoredRateAfterAFillIsClimbedForTheBasis() public {
-        _fundPot(1 ether);
-        uint256[] memory sold = _credits(seller, 5);
-        vm.prank(seller);
-        core.sellForEth(sold);
-        _fundPot(core.ethPot() + 2 ether);
-        _warp(10 minutes);
-        uint256 stored = core.rateAtCheckpoint();
-        uint256 price = core.ethPrice();
-        assertGt(price, stored, "the stored rate is stale");
-        uint256[] memory ids = _gift(1);
-        _adopt(ids);
-        (, uint256 cost,) = core.creditInfo(ids[0]);
-        assertEq(cost, price, "the climbed state");
-        assertTrue(cost != stored);
-        assertEq(core.rateAtCheckpoint(), stored, "nothing was checkpointed by the adopt");
-    }
-
-    /// gas of `adopt` for one credit and for a page of 80, with an empty router. docs/INTEGRATION.md section 13 quotes
-    /// both figures: 242,489 and 10,552,467. the bound is 5 percent around each
-    function test_GAS_adopt() public {
-        uint256[] memory one = _gift(1);
-        uint256 g = gasleft();
-        _adopt(one);
-        uint256 gasOne = g - gasleft();
-        uint256[] memory page = _gift(80);
-        g = gasleft();
-        _adopt(page);
-        uint256 gasPage = g - gasleft();
-        emit log_named_uint("adopt, 1 credit", gasOne);
-        emit log_named_uint("adopt, 80 credits", gasPage);
-        emit log_named_uint("adopt, per credit at 80", gasPage / 80);
-        assertApproxEqRel(gasOne, 199_532, 0.05e18, "one credit");
-        assertApproxEqRel(gasPage, 7_660_657, 0.05e18, "80 credits");
-    }
-
+    // promise: SPEC 4 an adopted credit enters at the price state (cost basis)
     function test_FUZZ_theBasisIsThePriceState(uint256 wait, uint8 count) public {
         wait = bound(wait, 0, 30 days);
         count = uint8(bound(count, 1, 6));

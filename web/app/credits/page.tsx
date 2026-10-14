@@ -2,39 +2,31 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useAccount, usePublicClient } from "wagmi";
-import { useQueryClient } from "@tanstack/react-query";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CreditTile } from "@/components/Tiles";
+import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
-import { chain, engineDeployed } from "@/lib/config";
+import { engineDeployed } from "@/lib/config";
 import { controllerAbi } from "@/lib/abis";
-import { countdown, errMsg, useNow, usePile, useSnapshot } from "@/lib/live";
+import { countdown, useNow, usePile, useSnapshot } from "@/lib/live";
 import { useScan, type CreditEvt } from "@/lib/engine";
 import { agoLabel, eth } from "@/lib/format";
-import { useWriteWithBuffer } from "@/lib/tx";
 
-const BUFFER_BPS = 200n; // value above the summed quotes; the controller refunds the excess
+const BUFFER_BPS = 200n; // value above the summed gross prices; the controller refunds the excess
 
 // The engine's pile of credits. While the credit sale is on, each pile credit
-// has a falling price (ControllerV1.creditPrice) and can be bought.
+// has a falling price (controller.creditPrice, plus the royalty) and can be bought.
 export default function CreditsPage() {
   const { data: pile } = usePile();
   const { data: snap } = useSnapshot();
   const { data: scan } = useScan();
   const now = useNow();
-  const { isConnected } = useAccount();
-  const { openConnectModal } = useConnectModal();
-  const { writeWithBuffer, isPending } = useWriteWithBuffer();
-  const client = usePublicClient();
-  const qc = useQueryClient();
   const [sel, setSel] = useState<Set<number>>(new Set());
-  const [err, setErr] = useState<string | null>(null);
 
-  const controller = snap?.controller;
-  const bid = snap ? eth(snap.ethRate) : "—";
-  const selected = pile.items.filter((c) => sel.has(c.id));
-  const total = selected.reduce((a, c) => a + c.price, 0n);
+  const saleOn = snap?.creditSaleOn ?? false;
+  const window = snap?.creditWindow ?? 0;
+  const selected = pile.filter((c) => sel.has(c.id));
+  const price = selected.reduce((a, c) => a + c.price, 0n);
+  const gross = selected.reduce((a, c) => a + c.gross, 0n);
 
   const toggle = (id: number) =>
     setSel((p) => {
@@ -43,24 +35,6 @@ export default function CreditsPage() {
       return n;
     });
 
-  async function onBuy() {
-    setErr(null);
-    try {
-      if (!controller || selected.length === 0) return;
-      const value = total + (total * BUFFER_BPS) / 10000n;
-      const ids = selected.map((c) => BigInt(c.id));
-      const hash =
-        ids.length === 1
-          ? await writeWithBuffer({ address: controller, abi: controllerAbi, functionName: "buyCredit", args: [ids[0]], value, chainId: chain.id })
-          : await writeWithBuffer({ address: controller, abi: controllerAbi, functionName: "buyCredits", args: [ids], value, chainId: chain.id });
-      await client?.waitForTransactionReceipt({ hash });
-      setSel(new Set());
-      qc.invalidateQueries();
-    } catch (e) {
-      setErr(errMsg(e));
-    }
-  }
-
   if (!engineDeployed) return <NotDeployed />;
 
   return (
@@ -68,26 +42,26 @@ export default function CreditsPage() {
       <div className="page-head">
         <h1>credits</h1>
         <span className="muted">
-          {`${pile.items.length} held by the engine · bid ${bid} eth`}
-          {pile.saleOn && ` · sale window ${countdown(pile.window)}`}
+          {`${pile.length} held by the engine · bid ${snap ? eth(snap.ethRate) : "—"} eth`}
+          {saleOn && ` · sale window ${countdown(window)}`}
         </span>
       </div>
 
       <div className="rowlist">
         <div className="rowlist-head">
-          {pile.saleOn && <span className="rl-check" />}
+          {saleOn && <span className="rl-check" />}
           <span className="rl-credit">credit</span>
           <span className="rl-meta">paid</span>
           <span className="rl-meta">got by</span>
-          {pile.saleOn && <span className="rl-price">price</span>}
-          {pile.saleOn && <span className="rl-price">window</span>}
+          {saleOn && <span className="rl-price">price</span>}
+          {saleOn && <span className="rl-price">window</span>}
           <span className="rl-time">bought</span>
         </div>
-        {pile.items.map((c) => {
-          const left = c.acquiredAt + pile.window - now;
+        {pile.map((c) => {
+          const left = c.acquiredAt + window - now;
           return (
             <div key={c.id} className="rowline">
-              {pile.saleOn && (
+              {saleOn && (
                 <input
                   type="checkbox"
                   className="rl-check"
@@ -103,10 +77,8 @@ export default function CreditsPage() {
                 </span>
                 <span className="rl-meta">{eth(c.cost)} eth</span>
                 <span className="rl-meta muted">{gotBy(scan.credits[c.id])}</span>
-                {pile.saleOn && <span className="rl-price">{eth(c.price)} eth</span>}
-                {pile.saleOn && (
-                  <span className="rl-price muted">{left > 0 ? countdown(left) : "past window"}</span>
-                )}
+                {saleOn && <span className="rl-price">{eth(c.gross)} eth</span>}
+                {saleOn && <span className="rl-price muted">{left > 0 ? countdown(left) : "past window"}</span>}
                 <span className="rl-time muted">{agoLabel(now - c.acquiredAt)}</span>
               </Link>
             </div>
@@ -114,26 +86,25 @@ export default function CreditsPage() {
         })}
       </div>
 
-      {pile.saleOn && (
+      {saleOn && (
         <div className="buybar">
           <span className="muted">
-            {selected.length} selected · {eth(total)} eth
+            {selected.length} selected · {eth(gross)} eth ({eth(price)} engine price + {eth(gross - price)} royalty)
           </span>
-          {isConnected ? (
-            <button
-              className="action"
-              onClick={onBuy}
-              disabled={isPending || selected.length === 0 || !controller}
-              title={!controller ? "controller address not read yet" : undefined}
-            >
-              {isPending ? "confirm in wallet…" : `buy ${selected.length || ""} credit${selected.length === 1 ? "" : "s"}`}
-            </button>
-          ) : (
-            <button className="action" onClick={openConnectModal}>
-              connect to buy
-            </button>
-          )}
-          {err && <span style={{ color: "var(--credit)" }}>{err}</span>}
+          <Act
+            label={`buy ${selected.length || ""} credit${selected.length === 1 ? "" : "s"}`}
+            disabled={selected.length === 0 || !snap}
+            steps={async (write) => {
+              const value = gross + (gross * BUFFER_BPS) / 10000n;
+              const ids = selected.map((c) => BigInt(c.id));
+              await write(
+                ids.length === 1
+                  ? { address: snap!.controller, abi: controllerAbi, functionName: "buyCredit", args: [ids[0]], value }
+                  : { address: snap!.controller, abi: controllerAbi, functionName: "buyCredits", args: [ids], value }
+              );
+              setSel(new Set());
+            }}
+          />
         </div>
       )}
     </main>

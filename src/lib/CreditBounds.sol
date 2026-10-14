@@ -32,6 +32,14 @@ library CreditBounds {
         return v != 0 && v <= MAX_REF_SCORE;
     }
 
+    function royaltyBpsOk(uint16 v) internal pure returns (bool) {
+        return v <= 1_000;
+    }
+
+    function royaltyRecipientOk(address v) internal pure returns (bool) {
+        return v != address(0);
+    }
+
     /// @notice the name of the first credit field out of bounds, or zero when every bounded field is inside its bounds.
     /// `chosenComposeOn`, `minCcToChoose` and `saleOn` take any value
     function firstViolation(Credit memory c) internal pure returns (bytes32) {
@@ -40,6 +48,8 @@ library CreditBounds {
         if (!floorBpsOk(c.floorBps)) return "creditFloorBps";
         if (!startBpsOk(c.startBps)) return "creditStartBps";
         if (!refScoreOk(c.refScore)) return "refScore";
+        if (!royaltyBpsOk(c.royaltyBps)) return "royaltyBps";
+        if (!royaltyRecipientOk(c.royaltyRecipient)) return "royaltyRecipient";
         return bytes32(0);
     }
 }

@@ -29,9 +29,10 @@
     "recoveryGapBps": 1000,
     "peakHalfLife": 21600,
     "buybackDelay": 25,
-    "exitMode": 0,
-    "exitSlippageBps": 200,
-    "exitBidMarginBps": 2000,
+    "redeemOn": false,
+    "balanceBidOn": false,
+    "redeemSlippageBps": 200,
+    "balanceBidMarginBps": 2000,
     "redeemBurnBps": 2000,
     "buybackSlice": 500000000000000000,
     "keeperFee": 500000000000000,
@@ -39,8 +40,8 @@
     "rateCap": 26700000000000000,
     "callerFee": 0,
     "callerMaxBaseFee": 0,
-    "feeToBuybackBps": 0,
-    "feeToRedeemBurnBps": 1000
+    "feeToRedeemBurnBps": 1000,
+    "payeePpm": 75185
   },
   "sale": {
     "markupBps": 15000,
@@ -48,19 +49,20 @@
     "fastDecayBpsPerHour": 100,
     "kneeBps": 10000,
     "slowDecayBpsPerHour": 25,
-    "floorBps": 10000,
     "anchorHalfLife": 604800,
     "anchorMinCost": 100000000000000000
   },
   "credit": {
     "costToPotBps": 10000,
     "chosenComposeOn": false,
-    "minCcToChoose": "0",
+    "minCcToChoose": "1000000000000000000",
     "saleOn": false,
     "window": 14400,
     "floorBps": 11000,
     "startBps": 30000,
-    "refScore": 4330000
+    "refScore": 4330000,
+    "royaltyBps": 250,
+    "royaltyRecipient": "0xCB43078C32423F5348Cab5885911C3B5faE217F9"
   },
   "launch": {
     "supply": "1000000000000000000000000000",
@@ -81,8 +83,10 @@
     "bounty": false,
     "openFactory": false
   },
-  "router": {
-    "creatorPayee": "0xCB43078C32423F5348Cab5885911C3B5faE217F9",
-    "payeePpm": 112778
+  "adapters": {
+    "seaportRecipients": ["0x0000a26b00c1F0DF003000390027140000fAa719"]
+  },
+  "payee": {
+    "address": "0xCB43078C32423F5348Cab5885911C3B5faE217F9"
   }
 }

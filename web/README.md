@@ -1,50 +1,56 @@
-# credits engine — v1 web ui
+# credits engine web app
 
-Independent dashboard for the credits engine: a live engine feed (fees in,
-credits bought, statements composed/listed/sold, coin burned) and a buy/sell
-panel for the CC coin.
+Next.js 14 (app router), wagmi 2, viem 2, RainbowKit. Every value comes from
+the chain: one viem multicall over the views of `docs/INTEGRATION.md` section 2
+(`lib/live.ts`) and one incremental event scan (`lib/engine.ts`, rows in
+`lib/events.ts`). `lib/abis.ts` is a hand written subset of
+`src/interfaces/ICore.sol`, `IControllerV1.sol` and `ISeaportBasicAdapter.sol`.
 
-Stack: Next.js (app router) · wagmi · viem · RainbowKit · TanStack Query.
-
-## run
+## run against anvil
 
 ```bash
 cd web
-cp .env.example .env   # optional; works without it
 npm install
-npm run dev            # http://localhost:3000
+npm run dev:local        # http://localhost:3000
 ```
 
-## local anvil
+`dev:local` runs `scripts/local-env.mjs`, which reads `../deployments/31337.json`
+(`RECORD=<path>` reads another file), writes the ignored `.env.local`, then
+starts `next dev`. When the record is missing it prints the reason and exits.
+Run anvil with `--auto-impersonate`: RainbowKit's wallet list shows the
+accounts of the record as wallets, and writes are signed by anvil for the
+connected address, so no wallet extension is needed.
 
-`npm run dev:local` runs the UI against a local anvil mainnet fork
-(chain 31337, `http://127.0.0.1:8545`) with addresses from
-`../deployments/31337.json` (`RECORD=<path>` overrides). Record format and env
-mapping: `CONNECTIONS.md`.
+## run against mainnet
 
-## data
+```bash
+cp .env.example .env.local   # set NEXT_PUBLIC_CORE and NEXT_PUBLIC_DEPLOY_BLOCK
+npm run dev                  # or npm run build && npm start
+```
 
-Every value comes from the chain. Without the engine addresses the engine
-pages render "engine not deployed".
+The controller, coin and balance module are read from the Core. Without
+`NEXT_PUBLIC_CORE` the engine pages show "engine not deployed". Wallets connect
+through RainbowKit. `npm run check` runs `scripts/selfcheck.ts` (the sell
+replays) and `scripts/v4-selfcheck.ts` (the swap encoders). `npm run build`
+type checks.
 
-Set the engine addresses in `.env`:
+## pages and actions
 
-- `NEXT_PUBLIC_CORE_LENS` + `NEXT_PUBLIC_CORE` — turns the feed and stats
-  on-chain. Stats aggregate the scanned log window (recent, not genesis
-  cumulative). The feed decodes every event of the Core, ControllerV1 and
-  the FeeRouter.
-- `NEXT_PUBLIC_CREDITS`, `NEXT_PUBLIC_CC` — credits NFT and coin.
-- `NEXT_PUBLIC_DEPLOY_BLOCK` — speeds up the feed log scan.
-- `NEXT_PUBLIC_RPC_URL` — mainnet RPC (public fallback otherwise).
-- `NEXT_PUBLIC_WC_PROJECT_ID` — WalletConnect id. Injected wallets work
-  without it; without a real id the WC relay calls 403/400 harmlessly.
+Prices shown to buyers are the gross ones (`grossPriceOf`, `grossCreditPrice`),
+with the engine price and the royalty as the breakdown. The balance side
+(redeem, sell for balance, the balance pot, rating value) shows once
+`core.balanceModule()` is set.
 
-## not in v1
+| page | reads | actions |
+|---|---|---|
+| `/` flywheel, stats bar, engine feed, swap panel | event scan, snapshot, pool slot0 (StateView), v4 Quoter, Chainlink ETH/USD | Universal Router `execute` (eth for coin and back), coin `approve` and Permit2 `approve` before a sell |
+| `/keeper` | snapshot, `lastBuybackBlock`, head block | `core.book()`, `core.buyback()`, `core.claimPayee()`, `controller.claimRoyalty()` |
+| `/credits`, `/credits/[id]` | `pilePage`, `creditInfo`, `creditPrice`, `grossCreditPrice`, `pastWindow` | `controller.buyCredit(id)`, `buyCredits(ids)` while `creditSaleOn` |
+| `/sell` | `ethRate`, `ethPot`, `settings`, `Credits.tokensOf` | `Credits.setApprovalForAll(core)`, `core.sellForEth(ids, minOut)`, `core.sellForBalance(ids, minOut)` while `balanceBidOn` |
+| `/compose` | `nextPage`, `pileSize`, `chosenComposeOn`, `minCcToChoose` | `core.compose()`, `core.compose(format)`, `core.composeChosen(ids, format)` while `chosenComposeOn` |
+| `/statements`, `/statements/[id]` | `heldStatements`, `statementInfo`, `statementAge`, `ratingOf`, `composerOf`, `priceOf`, `grossPriceOf`, `referenceOf`, `atFloor`, `valueOf` | `controller.buy(sid)` at the gross price, `core.setHeldFormat(sid, format)`, `core.redeemStatement(sid)` when `redeemOn` and `atFloor` |
 
-Swap execution is wired to the UI quote but gated until the coin and pool
-launch — the Uniswap v4 swap call lands when addresses go live. The trade
-panel computes quotes and connects a wallet today.
-
-ABIs in `lib/abis.ts` are a hand-written subset kept in sync with
-`src/interfaces/ICoreLens.sol` and the events in `src/Core.sol` /
-`src/ControllerV1.sol`.
+`sellForEth` and `sellForBalance` send `minOut` at 99.5% of the batch total,
+replayed from the Core's per-credit rules at click time (`lib/sell.ts`, read by
+`sellQuote` and `balanceQuote` in `lib/live.ts`). A sweep of a listing
+(`buyListing`) is a keeper action and has no page.

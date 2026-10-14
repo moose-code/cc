@@ -1,4 +1,4 @@
-// Shown by every engine page when the core and lens addresses are not configured.
+// Shown by every engine page when the Core address is not configured.
 export function NotDeployed() {
   return (
     <main className="page">

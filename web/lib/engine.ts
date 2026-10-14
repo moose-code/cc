@@ -3,59 +3,21 @@
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
 import { decodeFunctionData, zeroAddress, type Address } from "viem";
-import { addresses, deployBlock, engineDeployed, poolReady, ethUsdFeed, pool } from "./config";
-import {
-  coreAbi,
-  coreLensAbi,
-  engineEventsAbi,
-  stateViewAbi,
-  quoterAbi,
-  chainlinkAbi,
-  transferEventAbi,
-  erc20Abi,
-  hookAbi,
-  mevAbi,
-  routerAbi,
-} from "./abis";
-import { V4, poolId, poolKey, ccPerEthFromSqrt, type PoolParams } from "./v4";
+import { core, deployBlock, engineDeployed } from "./config";
+import { coreAbi, engineEventsAbi, erc20Abi, transferEventAbi } from "./abis";
 import { lsGet, lsSet, persistedMap, setAnchor, SCOPE, verifyScope } from "./cache";
 import { useHead } from "./live";
-import { processLogs, type ComposeMode, type ExitTokenInfo, type FeedEvent, type Scan } from "./events";
+import { emptyStats, processLogs, type BalanceTokenInfo, type ComposeMode, type Scan } from "./events";
 
 export type { FeedEvent, FeedKind, Stats, Scan, CreditEvt, CreditHow, StatementRecord, ComposeMode } from "./events";
 
-export const STATEMENT_SIZE = 80; // credits composed into one statement (Core PAGE, the length of Composed.ids)
-
-export interface Market {
-  ccPerEth: number; // tokens per 1 eth, from the v4 pool slot0
-  bid: bigint; // wei the engine pays per credit (snapshot.ethRate)
-  pot: bigint; // wei available to buy credits (snapshot.ethPot)
-  creditsReady: number; // credits in the pile toward the next statement
-}
-
-const EMPTY_MARKET: Market = { ccPerEth: 0, bid: 0n, pot: 0n, creditsReady: 0 };
+export const STATEMENT_SIZE = 80; // credits composed into one statement (the length of Composed.ids)
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
-// ---- event scan --------------------------------------------------------------
+const EMPTY_SCAN: Scan = { feed: [], stats: emptyStats(), credits: {}, statements: {} };
 
-const EMPTY_SCAN: Scan = {
-  feed: [],
-  stats: {
-    creditsEth: 0,
-    creditsExit: 0,
-    creditsListing: 0,
-    creditsAdopted: 0,
-    creditsSold: 0,
-    composed: 0,
-    sold: 0,
-    redeemed: 0,
-    ethIntoCredits: 0,
-    ccBurned: 0,
-  },
-  credits: {},
-  statements: {},
-};
+// ---- block timestamps and compose modes ----------------------------------------
 
 // block number -> timestamp. A mined block's timestamp does not change.
 const blockTime = persistedMap<number>("ts");
@@ -88,7 +50,7 @@ async function modeOf(client: Client, hash: string): Promise<ComposeMode | null>
   if (cached !== undefined) return cached;
   const t = await client.getTransaction({ hash: hash as `0x${string}` });
   let mode: ComposeMode | null = null;
-  if (t.to?.toLowerCase() === addresses.core?.toLowerCase()) {
+  if (t.to?.toLowerCase() === core?.toLowerCase()) {
     try {
       const fn = decodeFunctionData({ abi: coreAbi, data: t.input }).functionName;
       mode = fn === "compose" ? "default" : fn === "composeChosen" ? "chosen" : null;
@@ -100,47 +62,27 @@ async function modeOf(client: Client, hash: string): Promise<ComposeMode | null>
   return mode;
 }
 
-const tokenInfo = new Map<string, ExitTokenInfo>();
+// ---- event scan ------------------------------------------------------------------
 
-async function exitTokenInfo(client: Client): Promise<ExitTokenInfo | undefined> {
-  const token = await client.readContract({ address: addresses.core!, abi: coreAbi, functionName: "exitToken" });
-  if (token === zeroAddress) return undefined;
-  const hit = tokenInfo.get(token);
-  if (hit) return hit;
-  const decimals = await client.readContract({ address: token, abi: erc20Abi, functionName: "decimals" });
-  const info = { address: token, decimals };
-  tokenInfo.set(token, info);
-  return info;
-}
-
-export function useExitToken() {
-  const client = usePublicClient();
-  return useQuery<ExitTokenInfo | undefined>({
-    queryKey: ["exit-token", addresses.core],
-    enabled: engineDeployed && Boolean(client),
-    staleTime: 60000,
-    queryFn: () => exitTokenInfo(client!).catch(() => undefined),
-  });
-}
-
-// Decoded logs of the Core, the fee router, every controller the Core has used and
-// the coin burn transfers, kept per source. Each source records the first block not
-// yet scanned; a scan reads that block minus RESCAN up to the head, in CHUNK block
-// ranges. The state is saved in localStorage so a reload resumes where it stopped.
+// Decoded logs of the Core, every controller the Core has used, the coin burn
+// transfers and the balance token payments, kept per source. Each source records
+// the first block not yet scanned; a scan reads that block minus RESCAN up to the
+// head, in CHUNK block ranges. The state is saved in localStorage so a reload
+// resumes where it stopped.
 const RESCAN = 12n; // blocks re-read behind the last scanned block (reorg window)
 const CHUNK = 10_000n; // blocks per getLogs call
-const SCAN_KEY = `${SCOPE}:scan:${addresses.router?.toLowerCase()}:${addresses.cc?.toLowerCase()}`;
+const SCAN_KEY = `${SCOPE}:scan`;
 
 interface ScanState {
   start: bigint; // first block scanned
   next: Record<string, bigint>; // source -> first block not yet scanned
   logs: Record<string, any[]>; // source -> logs, oldest first
   controllers: Record<string, Address>;
-  exit?: ExitTokenInfo;
+  balance?: BalanceTokenInfo;
 }
 
 let state: ScanState | undefined;
-let exitChecked = false;
+let balanceChecked = false;
 let saved = { total: -1, head: 0n };
 let lastGood: Scan | undefined;
 let queue: Promise<unknown> = Promise.resolve();
@@ -156,7 +98,7 @@ const slim = (l: any) => ({
 });
 
 // Reads one source from its resume point to the head; returns the logs read.
-async function readSource(client: Client, st: ScanState, src: string, head: bigint, fetch: (from: bigint, to: bigint) => Promise<any[]>) {
+async function readSource(st: ScanState, src: string, head: bigint, fetch: (from: bigint, to: bigint) => Promise<any[]>) {
   const prev = st.next[src];
   if (prev != null && head < prev) return []; // head unchanged
   const from = prev == null || prev > head + 1n ? st.start : prev > st.start + RESCAN ? prev - RESCAN : st.start;
@@ -167,8 +109,16 @@ async function readSource(client: Client, st: ScanState, src: string, head: bigi
   return fresh;
 }
 
+// The balance token and its decimals, unset while the Core has no module.
+async function balanceTokenInfo(client: Client): Promise<BalanceTokenInfo | undefined> {
+  const address = await client.readContract({ address: core!, abi: coreAbi, functionName: "balanceToken" });
+  if (address === zeroAddress) return undefined;
+  const decimals = await client.readContract({ address, abi: erc20Abi, functionName: "decimals" });
+  return { address, decimals };
+}
+
 async function scanTo(client: Client, head: bigint): Promise<Scan> {
-  const core = addresses.core!;
+  const coreAddr = core!;
   await verifyScope(client);
   if (!state) {
     const s = lsGet<ScanState>(SCAN_KEY);
@@ -177,49 +127,47 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
   const st = state;
   const events = engineEventsAbi as any;
 
-  const [coreFresh, burnFresh] = await Promise.all([
-    readSource(client, st, "core", head, (fromBlock, toBlock) =>
-      client.getLogs({ address: [core, ...(addresses.router ? [addresses.router] : [])], events, fromBlock, toBlock })
-    ),
-    readSource(client, st, "burn", head, (fromBlock, toBlock) =>
-      addresses.cc
-        ? client.getLogs({ address: addresses.cc, event: transferEventAbi[0], args: { from: core, to: zeroAddress }, fromBlock, toBlock })
-        : Promise.resolve([])
+  // the coin is a Core immutable
+  const coin = await client.readContract({ address: coreAddr, abi: coreAbi, functionName: "COIN" });
+  const [coreFresh] = await Promise.all([
+    readSource(st, "core", head, (fromBlock, toBlock) => client.getLogs({ address: coreAddr, events, fromBlock, toBlock })),
+    readSource(st, "burn", head, (fromBlock, toBlock) =>
+      client.getLogs({ address: coin, event: transferEventAbi[0], args: { from: coreAddr, to: zeroAddress }, fromBlock, toBlock })
     ),
   ]);
 
   // every controller the Core has used: its own logs carry the sale events
   if (Object.keys(st.controllers).length === 0) {
-    const c = await client.readContract({ address: core, abi: coreAbi, functionName: "controller" });
+    const c = await client.readContract({ address: coreAddr, abi: coreAbi, functionName: "controller" });
     st.controllers[c.toLowerCase()] = c;
   }
   for (const l of st.logs.core) if (l.eventName === "ControllerSet") st.controllers[l.args.controller.toLowerCase()] = l.args.controller;
   const ctl = Object.entries(st.controllers);
-  const ctlFresh = await Promise.all(
-    ctl.map(([k, address]) => readSource(client, st, `ctl:${k}`, head, (fromBlock, toBlock) => client.getLogs({ address, events, fromBlock, toBlock })))
+  await Promise.all(
+    ctl.map(([k, address]) => readSource(st, `ctl:${k}`, head, (fromBlock, toBlock) => client.getLogs({ address, events, fromBlock, toBlock })))
   );
 
-  // the exit token changes only through ExitModuleSet
-  if (!exitChecked || coreFresh.some((l) => l.eventName === "ExitModuleSet")) {
-    st.exit = await exitTokenInfo(client).catch(() => st.exit);
-    exitChecked = true;
+  // the balance token changes only through BalanceModuleSet
+  if (!balanceChecked || coreFresh.some((l) => l.eventName === "BalanceModuleSet")) {
+    st.balance = await balanceTokenInfo(client).catch(() => st.balance);
+    balanceChecked = true;
   }
 
   const logs = [...st.logs.core, ...ctl.flatMap(([k]) => st.logs[`ctl:${k}`] ?? [])].sort((x, y) =>
     x.blockNumber === y.blockNumber ? Number(x.logIndex - y.logIndex) : x.blockNumber < y.blockNumber ? -1 : 1
   );
 
-  // exit token paid by the core to a credit seller, per transaction and seller
-  if (st.exit?.address) {
-    const token = st.exit.address;
-    await readSource(client, st, `xpay:${token.toLowerCase()}`, head, (fromBlock, toBlock) =>
-      client.getLogs({ address: token, event: transferEventAbi[0], args: { from: core }, fromBlock, toBlock })
+  // balance token paid by the core to a credit seller, per transaction and seller
+  if (st.balance?.address) {
+    const token = st.balance.address;
+    await readSource(st, `bpay:${token.toLowerCase()}`, head, (fromBlock, toBlock) =>
+      client.getLogs({ address: token, event: transferEventAbi[0], args: { from: coreAddr }, fromBlock, toBlock })
     );
   }
-  const exitPaid = new Map<string, bigint>();
-  for (const t of st.exit?.address ? st.logs[`xpay:${st.exit.address.toLowerCase()}`] ?? [] : []) {
+  const balancePaid = new Map<string, bigint>();
+  for (const t of st.balance?.address ? st.logs[`bpay:${st.balance.address.toLowerCase()}`] ?? [] : []) {
     const k = `${t.transactionHash}:${String(t.args.to).toLowerCase()}`;
-    exitPaid.set(k, (exitPaid.get(k) ?? 0n) + (t.args.value ?? 0n));
+    balancePaid.set(k, (balancePaid.get(k) ?? 0n) + (t.args.value ?? 0n));
   }
 
   // total coin burned by the core
@@ -236,6 +184,7 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
         if (m) modes.set(l.transactionHash, m);
       })
   );
+  
 
   // save when logs were added, else every 300 blocks
   const total = Object.values(st.logs).reduce((n, a) => n + a.length, 0);
@@ -246,16 +195,9 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
     saved = { total, head };
   }
 
-  const { stats, credits, statements, rows } = processLogs({
-    logs,
-    head,
-    burned,
-    modes,
-    exitToken: st.exit,
-    exitPaid,
-  });
+  const { stats, credits, statements, rows } = processLogs({ logs, head, burned, modes, balanceToken: st.balance, balancePaid });
   // logs arrive oldest first; the feed is newest first
-  return (lastGood = { feed: rows.reverse(), stats, credits, statements });
+  return (lastGood = { feed: rows.reverse(), stats, credits, statements, balanceToken: st.balance });
 }
 
 // Every row for the feed (newest first), totals and per credit / per statement
@@ -270,7 +212,7 @@ export function useScan() {
     gcTime: 30000,
     placeholderData: (prev) => prev,
     queryFn: () => {
-      if (!client || !addresses.core || !head) return EMPTY_SCAN;
+      if (!client || !head) return EMPTY_SCAN;
       const p = queue.then(() => scanTo(client, head)).catch(() => lastGood ?? EMPTY_SCAN);
       queue = p;
       return p;
@@ -283,185 +225,6 @@ export const useStats = () => {
   const { data, ...q } = useScan();
   return { ...q, data: data.stats };
 };
-
-// ---- pool params and fees, from the chain --------------------------------------
-
-// The pool key the Core buys back in: HOOK, POOL_FEE and TICK_SPACING are Core
-// immutables. Without a deployed Core the config values (the launch config) apply.
-const poolParamsCache = new Map<string, Promise<PoolParams>>();
-
-export function poolParams(client: Client): Promise<PoolParams> {
-  const core = addresses.core;
-  if (!core) return Promise.resolve(pool);
-  let hit = poolParamsCache.get(core);
-  if (!hit) {
-    hit = Promise.all([
-      client.readContract({ address: core, abi: coreAbi, functionName: "HOOK" }),
-      client.readContract({ address: core, abi: coreAbi, functionName: "POOL_FEE" }),
-      client.readContract({ address: core, abi: coreAbi, functionName: "TICK_SPACING" }),
-    ]).then(([hook, fee, tickSpacing]) => ({ hook, fee: Number(fee), tickSpacing: Number(tickSpacing) }));
-    hit.catch(() => poolParamsCache.delete(core));
-    poolParamsCache.set(core, hit);
-  }
-  return hit;
-}
-
-export function usePoolParams() {
-  const client = usePublicClient();
-  return useQuery<PoolParams>({
-    queryKey: ["pool-params", addresses.core],
-    enabled: Boolean(client),
-    staleTime: Infinity,
-    queryFn: () => poolParams(client!).catch(() => pool),
-  });
-}
-
-export interface SwapFees {
-  fee: number; // share of the swap amount taken as fee: the pool's current skim plus the lp fee
-  engineShare: number; // share of that fee that reaches the engine: the hook's bounty share, less the router payee split
-}
-
-// Reads the hook's skim config for the CC/ETH pool, the MEV module's current
-// skim (decays after launch) and the router's payee split.
-export function useSwapFees() {
-  const client = usePublicClient();
-  return useQuery<SwapFees | undefined>({
-    queryKey: ["swap-fees", addresses.cc, addresses.router],
-    enabled: poolReady && Boolean(client),
-    staleTime: 60000,
-    refetchInterval: 60000,
-    queryFn: async () => {
-      if (!client || !addresses.cc) return undefined;
-      try {
-        const p = await poolParams(client);
-        const id = poolId(addresses.cc, p);
-        const cfg = await client.readContract({ address: p.hook, abi: hookAbi, functionName: "skimConfig", args: [id] });
-        let skimBps = Number(cfg.baselineSkimBps);
-        const info = await client.readContract({ address: p.hook, abi: hookAbi, functionName: "poolInfo", args: [id] });
-        if (info.mevModule !== zeroAddress) {
-          const [now] = await client.readContract({ address: info.mevModule, abi: mevAbi, functionName: "currentSkimBps", args: [id] });
-          skimBps = Number(now);
-        }
-        let engineShare = Number(cfg.bountyBps) / 10000;
-        if (addresses.router) {
-          const [on, ppm] = await Promise.all([
-            client.readContract({ address: addresses.router, abi: routerAbi, functionName: "splitOn" }),
-            client.readContract({ address: addresses.router, abi: routerAbi, functionName: "payeePpmTotal" }),
-          ]);
-          if (on) engineShare *= 1 - Number(ppm) / 1e6;
-        }
-        return { fee: skimBps / 10000 + Number(cfg.lpFeePips) / 1e6, engineShare };
-      } catch {
-        return undefined;
-      }
-    },
-  });
-}
-
-export function useMarket() {
-  const client = usePublicClient();
-  const head = useHead().data?.n;
-  return useQuery<Market>({
-    queryKey: ["market", engineDeployed, poolReady, head?.toString()],
-    queryFn: async () => {
-      if (!client) return EMPTY_MARKET;
-      let ccPerEth = 0;
-      let bid = 0n;
-      let pot = 0n;
-      let creditsReady = 0;
-
-      // cc/eth spot from the v4 pool slot0 (coin deployed).
-      if (poolReady && addresses.cc) {
-        try {
-          const slot0 = (await client.readContract({
-            address: V4.stateView,
-            abi: stateViewAbi,
-            functionName: "getSlot0",
-            args: [poolId(addresses.cc, await poolParams(client))],
-          })) as readonly [bigint, number, number, number];
-          ccPerEth = Math.max(0, ccPerEthFromSqrt(slot0[0]));
-        } catch {
-          /* pool not initialized */
-        }
-      }
-
-      // engine state (bid, pot, pile) from the lens.
-      if (engineDeployed && addresses.coreLens) {
-        try {
-          const s = await client.readContract({
-            address: addresses.coreLens,
-            abi: coreLensAbi,
-            functionName: "snapshot",
-          });
-          bid = s.ethRate;
-          pot = s.ethPot;
-          creditsReady = Number(s.pileSize % BigInt(STATEMENT_SIZE));
-        } catch {
-          /* lens not readable */
-        }
-      }
-
-      return { ccPerEth, bid, pot, creditsReady };
-    },
-    initialData: EMPTY_MARKET,
-  });
-}
-
-// ETH/USD from the Chainlink feed (8 decimals). Cached 60s; always live.
-export function useEthUsd() {
-  const client = usePublicClient();
-  return useQuery<number | undefined>({
-    queryKey: ["ethusd"],
-    refetchInterval: 60000,
-    staleTime: 60000,
-    queryFn: async () => {
-      if (!client) return undefined;
-      try {
-        const r = (await client.readContract({
-          address: ethUsdFeed,
-          abi: chainlinkAbi,
-          functionName: "latestRoundData",
-        })) as readonly [bigint, bigint, bigint, bigint, bigint];
-        return Number(r[1]) / 1e8;
-      } catch {
-        return undefined;
-      }
-    },
-    initialData: undefined,
-  });
-}
-
-// Accurate exact-in quote from the v4 Quoter. Returns amountOut in wei, or
-// undefined when the pool is not live (panel falls back to spot math).
-export function useQuote(side: "buy" | "sell", amountInWei: bigint) {
-  const client = usePublicClient();
-  return useQuery<bigint | undefined>({
-    queryKey: ["quote", side, amountInWei.toString(), poolReady],
-    enabled: poolReady && amountInWei > 0n,
-    refetchInterval: 15000,
-    queryFn: async () => {
-      if (!poolReady || !client || !addresses.cc || amountInWei <= 0n) return undefined;
-      try {
-        const res = (await client.readContract({
-          address: V4.quoter,
-          abi: quoterAbi,
-          functionName: "quoteExactInputSingle",
-          args: [
-            {
-              poolKey: poolKey(addresses.cc, await poolParams(client)),
-              zeroForOne: side === "buy", // ETH(0)->CC on buy
-              exactAmount: amountInWei,
-              hookData: "0x",
-            },
-          ],
-        })) as readonly [bigint, bigint];
-        return res[0];
-      } catch {
-        return undefined;
-      }
-    },
-  });
-}
 
 export const useFeed = () => {
   const { data, ...q } = useScan();

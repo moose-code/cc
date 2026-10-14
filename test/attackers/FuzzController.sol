@@ -124,7 +124,7 @@ contract FuzzController {
         if (which == 0) {
             data = abi.encodeWithSignature("sellForEth(uint256[])", ids);
         } else if (which == 1) {
-            data = abi.encodeWithSignature("sellForExitToken(uint256[])", ids);
+            data = abi.encodeWithSignature("sellForBalance(uint256[])", ids);
         } else if (which == 2) {
             target = _coin();
             data = abi.encodeWithSignature("burnFrom(address,uint256)", core, uint256(1e18));
@@ -136,7 +136,7 @@ contract FuzzController {
         } else if (which == 5) {
             data = abi.encodeWithSignature("sellTo(uint256,address)", sid, address(this));
         } else if (which == 6) {
-            data = abi.encodeWithSignature("removeTarget(address)", Mainnet.CREDIT_STRATEGY);
+            data = abi.encodeWithSignature("removeAdapter(address)", Mainnet.CREDIT_STRATEGY);
         } else if (which == 7) {
             data = abi.encodeWithSignature("unlockCallback(bytes)", bytes(""));
         } else if (which == 8) {
@@ -161,7 +161,7 @@ contract FuzzController {
             target = _coin();
             data = abi.encodeWithSignature("updateAdmin(address)", address(this));
         } else if (which == 15) {
-            target = _exitToken();
+            target = _balanceToken();
             data = abi.encodeWithSignature("transferFrom(address,address,uint256)", core, address(this), uint256(1));
         } else if (which == 16) {
             target = manager;
@@ -186,8 +186,8 @@ contract FuzzController {
         if (ok && out.length == 32) c = abi.decode(out, (address));
     }
 
-    function _exitToken() internal view returns (address t) {
-        (bool ok, bytes memory out) = core.staticcall(abi.encodeWithSignature("exitToken()"));
+    function _balanceToken() internal view returns (address t) {
+        (bool ok, bytes memory out) = core.staticcall(abi.encodeWithSignature("balanceToken()"));
         if (ok && out.length == 32) t = abi.decode(out, (address));
     }
 
