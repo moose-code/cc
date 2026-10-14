@@ -47,7 +47,7 @@ export default function KeeperPage() {
         <section>
           <h2>pots</h2>
           <div className="quote">
-            {row("bid per credit", `${eth(s.ethRate)} eth`)}
+            {row("bid, average credit", `${eth(s.ethRate)} eth`)}
             {row("pot", `${eth(s.ethPot)} eth`)}
             {row("to buyback", `${eth(s.ethToBuyback)} eth`)}
             {row("redeem burn reserve", `${eth(s.ethRedeemBurn)} eth`)}

@@ -8,7 +8,7 @@ import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
 import { core, credits, engineDeployed } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
-import { balanceQuote, sellQuote, useNow, useSellQuote, useSnapshot } from "@/lib/live";
+import { balanceQuote, sellQuote, useBidsOf, useNow, useSellQuote, useSnapshot } from "@/lib/live";
 import { BALANCE_SYMBOL } from "@/lib/events";
 import { commas, eth } from "@/lib/format";
 import type { Write } from "@/lib/tx";
@@ -30,8 +30,8 @@ export default function SellPage() {
   const buyableNow = bid > 0n ? Number(pot / bid) : 0;
   const balanceBid = Boolean(snap?.balanceOn && snap.settings.balanceBidOn);
   const now = useNow(5000);
-  const quote = useSellQuote(selected.size, now);
-  const total = quote.data ?? bid * BigInt(selected.size);
+  const selectedIds = [...selected].map((id) => BigInt(id));
+  const quote = useSellQuote(selectedIds, now);
 
   const { data: held } = useReadContract({
     address: credits,
@@ -41,6 +41,10 @@ export default function SellPage() {
     query: { enabled: Boolean(address && engineDeployed) },
   });
   const mine: number[] = (held ?? []).map(Number);
+  // each credit's own eth bid, ethRate() * score / refScore (one multicall of Core.bidOf)
+  const { data: bids } = useBidsOf(mine.map((id) => BigInt(id)), now);
+  const bidForId = (id: number): bigint => bids?.[id.toString()] ?? 0n;
+  const total = quote.data ?? mine.filter((id) => selected.has(id)).reduce((t, id) => t + bidForId(id), 0n);
 
   const toggle = (id: number) =>
     setSelected((prev) => {
@@ -68,19 +72,19 @@ export default function SellPage() {
         <h1>sell to the engine</h1>
       </div>
       <p className="muted sell-intro">
-        the engine buys credits at the bid using its eth pot, then composes 80 into a statement. sell yours into the bid below.
+        the engine buys each credit at its own bid (the rate scaled by the credit&apos;s score) using its eth pot, then composes 80 into a statement. sell yours into the bid below.
       </p>
 
       <div className="sell-grid">
         <div>
           <div className="bidcard">
             <div className="buybox-price">
-              <span className="muted">current bid</span>
+              <span className="muted">bid, average credit</span>
               <span className="big">{eth(bid)} eth</span>
             </div>
             <div className="quote">
               <div className="r">
-                <span>per credit</span>
+                <span>average credit</span>
                 <span>{eth(bid)} eth</span>
               </div>
               <div className="r">
@@ -125,7 +129,7 @@ export default function SellPage() {
                     <button key={id} className={`sell-item${on ? " on" : ""}`} onClick={() => toggle(id)} aria-pressed={on}>
                       <CreditTile id={id} />
                       <span className="rl-id">credit #{id}</span>
-                      <span className="muted">{eth(bid)} eth</span>
+                      <span className="muted">{bids ? `${eth(bidForId(id))} eth` : "…"}</span>
                       <span className="sell-check">{on ? "✓" : ""}</span>
                     </button>
                   );
@@ -148,9 +152,9 @@ export default function SellPage() {
                 disabled={n === 0 || !snap}
                 steps={async (write) => {
                   await approve(write);
-                  // the bid drops with each credit sold in one call: minOut is a share of the whole batch's total,
-                  // replayed from the contract's rate loop
-                  const expected = await sellQuote(client!, n, now);
+                  // each credit pays its own bid (ethRate * score / refScore) and the bid drops per credit sold in one
+                  // call: minOut is a share of the whole batch's total, replayed from the contract's rate loop
+                  const expected = await sellQuote(client!, ids(), now);
                   await write({ address: core, abi: coreAbi, functionName: "sellForEth", args: [ids(), (expected * MIN_OUT_BPS) / 10000n] });
                   setSelected(new Set());
                 }}
@@ -171,8 +175,8 @@ export default function SellPage() {
                 </>
               )}
               <p className="muted small">
-                the first sale approves the collection to the engine. the eth bid drops with each credit sold in one call; the amount shown is the
-                batch total at the current rates and the sale reverts if it pays under 99.5% of it.
+                the first sale approves the collection to the engine. each credit is paid the rate times its score over the reference score, and the rate
+                drops with each credit sold in one call; the amount shown is the batch total at the current rates and the sale reverts if it pays under 99.5% of it.
                 {balanceBid && ` the ${BALANCE_SYMBOL} bid pays by credit score.`}
               </p>
             </>

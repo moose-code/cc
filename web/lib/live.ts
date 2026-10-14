@@ -332,10 +332,10 @@ const seedAbi = parseAbi(["function seedOf(uint256 id) view returns (bytes21)", 
 // (CoreLib.drop and CoreLib.climb replayed in sell.ts). Reads ethPrice,
 // floorRate, the pot with the unbooked fee share the first book adds (Core._book,
 // _split), the settings and the minute anchor.
-export async function sellQuote(client: Client, n: number, now: number): Promise<bigint> {
+export async function sellQuote(client: Client, ids: bigint[], now: number): Promise<bigint> {
   const c = { address: core!, abi: coreAbi } as const;
   const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ANCHOR_SLOT + i, { size: 32 }) });
-  const [[price, peak, ethPot, toBuyback, redeemBurn, owed, payeeOn, st, held], startWord, bucketWord] = await Promise.all([
+  const [[price, peak, ethPot, toBuyback, redeemBurn, owed, payeeOn, st, held], startWord, bucketWord, scores] = await Promise.all([
     client.multicall({
       ...mc,
       allowFailure: false,
@@ -353,12 +353,13 @@ export async function sellQuote(client: Client, n: number, now: number): Promise
     }),
     word(1n),
     word(2n),
+    creditScores(client, ids),
   ]);
   const booked = ethPot + toBuyback + redeemBurn + owed;
   const income = held > booked ? held - booked : 0n;
   const toPayee = payeeOn ? (income * BigInt(st.payeePpm)) / 1_000_000n : 0n;
   const toRedeemBurn = ((income - toPayee) * BigInt(st.feeToRedeemBurnBps)) / 10000n;
-  return replayEth(n, {
+  return replayEth(scores, {
     price,
     peak,
     pot: ethPot + income - toPayee - toRedeemBurn,
@@ -369,24 +370,13 @@ export async function sellQuote(client: Client, n: number, now: number): Promise
     dropFloorBps: BigInt(st.dropFloorBps),
     ceilBps: BigInt(st.ceilBps),
     rateCap: BigInt(st.rateCap),
+    refScore: BigInt(st.refScore),
   });
 }
 
-// sellQuote for n credits, refreshed with the chain clock's minute.
-export function useSellQuote(n: number, now: number) {
-  const client = usePublicClient();
-  const minute = Math.floor(now / 60);
-  return useQuery<bigint | undefined>({
-    queryKey: ["sell-quote", n, minute],
-    enabled: engineDeployed && Boolean(client) && n > 0,
-    refetchInterval: 15000,
-    queryFn: () => sellQuote(client!, n, now),
-  });
-}
-
-// Balance token Core.sellForBalance pays for the credits `ids`: each credit's
-// score from the credit score contract times the module's unitPerPoint, less the margin.
-export async function balanceQuote(client: Client, ids: bigint[], module: Address, marginBps: number): Promise<bigint> {
+// the score of each credit id, read the way the Core reads it (CreditScore.scoreOf(seedOf, timestampOf))
+async function creditScores(client: Client, ids: bigint[]): Promise<bigint[]> {
+  if (ids.length === 0) return [];
   const seeds = await client.multicall({
     ...mc,
     allowFailure: false,
@@ -395,15 +385,62 @@ export async function balanceQuote(client: Client, ids: bigint[], module: Addres
       { address: credits, abi: seedAbi, functionName: "timestampOf", args: [id] },
     ] as const),
   });
+  return client.multicall({
+    ...mc,
+    allowFailure: false,
+    contracts: ids.map((_, i) => ({ address: CREDIT_SCORE, abi: scoreAbi, functionName: "scoreOf", args: [seeds[2 * i] as `0x${string}`, seeds[2 * i + 1] as bigint] }) as const),
+  });
+}
+
+// the per-credit eth bid now, one multicall of Core.bidOf over the ids
+export async function bidsOf(client: Client, ids: bigint[]): Promise<bigint[]> {
+  if (ids.length === 0) return [];
+  return client.multicall({
+    ...mc,
+    allowFailure: false,
+    contracts: ids.map((id) => ({ address: core!, abi: coreAbi, functionName: "bidOf", args: [id] }) as const),
+  });
+}
+
+// the per-credit eth bid for `ids`, id to wei, refreshed with the chain clock's minute
+export function useBidsOf(ids: bigint[], now: number) {
+  const client = usePublicClient();
+  const minute = Math.floor(now / 60);
+  const key = ids.map(String).join(",");
+  return useQuery<Record<string, bigint>>({
+    queryKey: ["bids-of", key, minute],
+    enabled: engineDeployed && Boolean(client) && ids.length > 0,
+    refetchInterval: 15000,
+    queryFn: async () => {
+      const bids = await bidsOf(client!, ids);
+      const m: Record<string, bigint> = {};
+      ids.forEach((id, i) => (m[id.toString()] = bids[i]));
+      return m;
+    },
+  });
+}
+
+// sellQuote for the selected credit ids, refreshed with the chain clock's minute.
+export function useSellQuote(ids: bigint[], now: number) {
+  const client = usePublicClient();
+  const minute = Math.floor(now / 60);
+  const key = ids.map(String).join(",");
+  return useQuery<bigint | undefined>({
+    queryKey: ["sell-quote", key, minute],
+    enabled: engineDeployed && Boolean(client) && ids.length > 0,
+    refetchInterval: 15000,
+    queryFn: () => sellQuote(client!, ids, now),
+  });
+}
+
+// Balance token Core.sellForBalance pays for the credits `ids`: each credit's
+// score from the credit score contract times the module's unitPerPoint, less the margin.
+export async function balanceQuote(client: Client, ids: bigint[], module: Address, marginBps: number): Promise<bigint> {
   const [unit, scores] = await Promise.all([
     client.readContract({ address: module, abi: moduleAbi, functionName: "unitPerPoint" }),
-    client.multicall({
-      ...mc,
-      allowFailure: false,
-      contracts: ids.map((_, i) => ({ address: CREDIT_SCORE, abi: scoreAbi, functionName: "scoreOf", args: [seeds[2 * i] as `0x${string}`, seeds[2 * i + 1] as bigint] }) as const),
-    }),
+    creditScores(client, ids),
   ]);
-  return replayBalance([...scores], unit, BigInt(marginBps));
+  return replayBalance(scores, unit, BigInt(marginBps));
 }
 
 // ---- helpers --------------------------------------------------------------------

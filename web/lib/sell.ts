@@ -12,23 +12,27 @@ export interface EthReplay {
   dropFloorBps: bigint;
   ceilBps: bigint;
   rateCap: bigint;
+  refScore: bigint; // the Core setting the bid divides by
 }
 
-// Total eth sellForEth pays for n credits sold in one call. Each credit pays
-// min(price state, pot left). The fill then (CoreLib.drop) sets the minute
-// anchor, lowers the state by dropPerCreditBps held at or above dropFloorBps of
-// the minute's first-fill state, and raises the remembered peak to the fill
-// price. The next state is bounded by the ceiling, ceilBps of max(fill price,
-// peak) with no idle loosening in the same block, and by rateCap (CoreLib.climb).
-export function replayEth(n: number, a: EthReplay): bigint {
+// Total eth sellForEth pays for the credits `scores` (their scores, in order)
+// sold in one call. Each credit pays min(price state, pot left) * score /
+// refScore (Core.bidOf). The fill then (CoreLib.drop) sets the minute anchor,
+// lowers the price state by dropPerCreditBps * score / refScore (bounded at
+// 10000) held at or above dropFloorBps of the minute's first-fill state, and
+// raises the remembered peak to the fill price. The next state is bounded by the
+// ceiling, ceilBps of max(fill price, peak) with no idle loosening in the same
+// block, and by rateCap (CoreLib.climb).
+export function replayEth(scores: bigint[], a: EthReplay): bigint {
   let r = a.price;
   let peak = a.peak;
   let left = a.pot;
   let start = a.start;
   let bucket = a.bucket;
   let total = 0n;
-  for (let i = 0; i < n; i++) {
-    const x = r < left ? r : left;
+  for (const score of scores) {
+    const read = r < left ? r : left;
+    const x = (read * score) / a.refScore;
     total += x;
     left -= x;
     if (bucket !== a.nowBucket || r < (start * a.dropFloorBps) / 10000n) {
@@ -36,7 +40,9 @@ export function replayEth(n: number, a: EthReplay): bigint {
       start = r;
     }
     if (r > peak) peak = r;
-    const dropped = (r * (10000n - a.dropPerCreditBps)) / 10000n;
+    let fall = (a.dropPerCreditBps * score) / a.refScore;
+    if (fall > 10000n) fall = 10000n;
+    const dropped = (r * (10000n - fall)) / 10000n;
     const floor = (start * a.dropFloorBps) / 10000n;
     const next = dropped > floor ? dropped : floor;
     let cap = (peak * 10000n * a.ceilBps) / 100000000n;
