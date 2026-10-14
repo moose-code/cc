@@ -257,6 +257,16 @@ contract Scenario is Script {
         require(ctl.royaltyOwed() == 0, "claims: the royalty is still owed");
         require(ctl.royaltyRecipient().balance == before + royalty, "claims: the recipient was not paid");
 
+        // payeePpm is 0 at launch (decision 120); the owner raises it and a booked buy accrues the share, so the claim runs
+        if (core.settings().payeePpm == 0) {
+            Settings memory sp = core.settings();
+            sp.payeePpm = 90_909;
+            vm.broadcast(OWNER);
+            core.setSettings(sp);
+            _buyCoin();
+            vm.broadcast(KEEPER);
+            core.book();
+        }
         uint256 owed = core.payeeOwed();
         require(owed > 0, "claims: nothing owed to the payee");
         vm.broadcast(KEEPER);
