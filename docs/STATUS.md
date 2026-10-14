@@ -57,10 +57,10 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 | full suite | c8b42d6 | docs/reviews/SUITE-c8b42d6.md |
 | deep runs | c8b42d6 | docs/reviews/DEEP-c8b42d6.md |
 | rehearsal | c8b42d6 | docs/reviews/REHEARSAL-c8b42d6.md |
-| security review | 63e011c | docs/reviews/REVIEW-security-opus-63e011c.md (independent, Opus), docs/reviews/REVIEW-security-b88940c.md (the director's); the two highs are fixed in 43c9f94, decision 115 |
+| security review | 63e011c | docs/reviews/REVIEW-security-opus-63e011c.md |
 | acceptance | b88940c | docs/reviews/ACCEPTANCE-b88940c.md |
 
-the src/ of the candidate is 43c9f94 (the two fixes on top of b88940c and the comment edits of 086a946). the review and the acceptance examined the logic before the fixes; the fixes are the two lines they asked for, each with its regression test.
+the security review row is the independent Opus review; its two highs are fixed in 43c9f94 (decision 115), and the director review is docs/reviews/REVIEW-security-b88940c.md. the src/ of the candidate is 43c9f94 (the two fixes on top of b88940c and the comment edits of 086a946). the review and the acceptance examined the logic before the fixes; the fixes are the two lines they asked for, each with its regression test.
 
 ## 5. how to work in this repo
 
