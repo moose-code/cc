@@ -55,6 +55,8 @@ export const controllerAbi = parseAbi([
   "function creditPrice(uint256 id) view returns (uint256 price)",
   "function grossCreditPrice(uint256 id) view returns (uint256)",
   "function creditSaleOn() view returns (bool)",
+  "function balancePoolKeySet() view returns (bool)",
+  "function balancePoolKey() view returns (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)",
   "function creditWindow() view returns (uint32)",
   "function pastWindow(uint64 acquiredAt) view returns (bool)",
   "function nextPage() view returns (bool ready, uint256[80] ids, uint8 format)",
@@ -78,6 +80,8 @@ export const creditsAbi = parseAbi([
 export const erc20Abi = parseAbi([
   "function balanceOf(address a) view returns (uint256)",
   "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)",
+  "function totalSupply() view returns (uint256)",
   "function allowance(address owner, address spender) view returns (uint256)",
   "function approve(address spender, uint256 amount) returns (bool)",
 ]);

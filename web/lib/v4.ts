@@ -3,30 +3,16 @@
 
 import type { Address } from "viem";
 import { pool } from "./config";
-import {
-  makePoolKey,
-  poolIdOf,
-  buildBuyFor,
-  buildSellFor,
-  type PoolKey,
-  type SwapCall,
-} from "./v4core";
+import { makePoolKey, buildBuyFor, buildSellFor, type PoolKey, type SwapCall } from "./v4core";
 
-export { V4, ccPerEthFromSqrt, minOut } from "./v4core";
+export { V4, ccPerEthFromSqrt, minOut, poolIdOf } from "./v4core";
 export type { PoolKey, SwapCall } from "./v4core";
 
+// The coin market's pool key: the launch params of config.pool.
 export function poolKey(coin: Address): PoolKey {
   return makePoolKey(coin, pool.fee, pool.tickSpacing, pool.hook);
 }
 
-export function poolId(coin: Address) {
-  return poolIdOf(poolKey(coin));
-}
+export const buildBuy = (key: PoolKey, ethIn: bigint, minTokenOut: bigint): SwapCall => buildBuyFor(key, ethIn, minTokenOut);
 
-export function buildBuy(coin: Address, ethIn: bigint, minCcOut: bigint): SwapCall {
-  return buildBuyFor(poolKey(coin), ethIn, minCcOut);
-}
-
-export function buildSell(coin: Address, ccIn: bigint, minEthOut: bigint): SwapCall {
-  return buildSellFor(poolKey(coin), ccIn, minEthOut);
-}
+export const buildSell = (key: PoolKey, tokenIn: bigint, minEthOut: bigint): SwapCall => buildSellFor(key, tokenIn, minEthOut);

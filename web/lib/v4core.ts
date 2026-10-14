@@ -55,11 +55,11 @@ export function poolIdOf(key: PoolKey): Hex {
   return keccak256(encodeAbiParameters(POOL_KEY_ABI, [key]));
 }
 
-// CC per 1 ETH from sqrtPriceX96. Both currencies are 18 decimals, so no
-// decimal shift. price = (sqrt/2^96)^2 = token1/token0 = CC per ETH.
-export function ccPerEthFromSqrt(sqrtPriceX96: bigint): number {
+// Tokens per 1 ETH from sqrtPriceX96. price = (sqrt/2^96)^2 = token1 wei per
+// ETH wei; the factor 10^(18 - decimals) converts it to whole tokens per ETH.
+export function ccPerEthFromSqrt(sqrtPriceX96: bigint, decimals = 18): number {
   const s = Number(sqrtPriceX96) / 2 ** 96;
-  return s * s;
+  return s * s * 10 ** (18 - decimals);
 }
 
 const EXACT_IN_SINGLE_ABI = parseAbiParameters(

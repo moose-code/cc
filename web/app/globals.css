@@ -410,14 +410,43 @@ a.fw-box:hover {
 
 /* ---- trade panel ---------------------------------------------------------- */
 
-.price-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-weight: 600;
+.stats {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
 }
-.price-row .pair {
+.stats > div {
+  padding: 0 0 0.75rem;
+}
+.stats > div + div {
+  padding-left: 1rem;
+  border-left: 1px solid var(--line);
+}
+.stats dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.stats dd {
+  margin: 0.15rem 0 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.stats dd span {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+.stats dd span.up {
+  color: var(--sold);
+}
+.stats dd span.down {
+  color: var(--credit);
 }
 .price-small {
   margin-top: 0.75rem;
@@ -484,18 +513,37 @@ a.fw-box:hover {
   font-size: 1.6rem;
   font-variant-numeric: tabular-nums;
 }
-.balances {
-  margin-top: 1.5rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--line);
-  display: grid;
-  gap: 0.35rem;
-  color: var(--muted);
-  font-size: 0.85rem;
+.page .trade {
+  border-left: 0;
+  padding: 1rem 0 0;
 }
-.balances .r {
-  display: flex;
-  justify-content: space-between;
+.field .bal {
+  margin-top: 0.3rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.field .max {
+  background: none;
+  border: 0;
+  padding: 0 0.25rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.field .max:disabled {
+  cursor: not-allowed;
+}
+.field input.err {
+  color: var(--credit);
+}
+.field .box:has(input.err) {
+  border-color: var(--credit);
+}
+.tabs button:disabled {
+  cursor: not-allowed;
 }
 
 .quote {
@@ -514,9 +562,74 @@ a.fw-box:hover {
   font-weight: 600;
 }
 
+.steps {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+.steps li {
+  transition: color 150ms;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  color: var(--muted);
+}
+.steps li.wallet,
+.steps li.pending {
+  color: var(--fg);
+}
+.steps li.failed {
+  color: var(--credit);
+}
+.quote .r.warn {
+  color: var(--credit);
+}
+.quote .slip > span:last-child {
+  display: inline-flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+.quote .slip button,
+.quote .slip input {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 150ms, border-color 150ms;
+}
+.quote .slip button.on,
+.quote .slip input.on {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+.quote .slip input {
+  width: 4.5rem;
+  cursor: text;
+}
+.quote .slip input.err {
+  color: var(--credit);
+  border-color: var(--credit);
+}
+.quote .slip button:disabled,
+.quote .slip input:disabled {
+  cursor: not-allowed;
+}
+
 .action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
   width: 100%;
-  padding: 0.95rem;
+  min-height: 3.1rem;
+  padding: 0 0.95rem;
   background: var(--fg);
   color: var(--bg);
   border: 0;
@@ -524,10 +637,67 @@ a.fw-box:hover {
   font-size: 1rem;
   cursor: pointer;
   text-transform: lowercase;
+  transition: background-color 150ms, color 150ms;
 }
 .action:disabled {
-  background: var(--muted2);
+  background: var(--line);
+  color: #6b6b6b;
   cursor: not-allowed;
+}
+.action.busy:disabled {
+  background: var(--fg);
+  color: var(--bg);
+  cursor: progress;
+}
+.action.ok:disabled {
+  background: var(--sold);
+  color: #fff;
+  cursor: default;
+}
+.action.fail {
+  background: var(--credit);
+}
+.spin {
+  width: 0.9em;
+  height: 0.9em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.status {
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+}
+.status > div,
+.status > p {
+  min-height: 1.3rem;
+  margin: 0;
+}
+.status .err {
+  color: var(--credit);
+  animation: appear 150ms;
+}
+.status .err.fade {
+  animation: appear 150ms, fade 4s forwards;
+}
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes fade {
+  60% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 
 .panel-note {
