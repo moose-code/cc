@@ -362,7 +362,7 @@ contract CoreUnitTest is CoreBase {
         uint256 snap = vm.snapshotState();
         PayRun memory a = _payRun(strategyAdapter, "", LISTED_A, price, 1 gwei, 1 gwei);
         uint256 fee = core.settings().keeperFee;
-        assertEq(fee, 0.0005 ether);
+        assertEq(fee, 0.0003 ether);
         assertGt(a.gap, a.paid, "the gap does not bind");
         assertEq((a.paid - fee) % 1 gwei, 0, "whole gas units");
         uint256 counted = (a.paid - fee) / 1 gwei;

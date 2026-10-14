@@ -405,7 +405,7 @@ contract SeaportTest is SeaportBase {
 contract SeaportColdTest is SeaportBase {
 }
 
-/// the caller economics of `buyListing` at the launch settings (keeperFee 0.0005 ether, keeperMaxBaseFee 10 gwei) with
+/// the caller economics of `buyListing` at the launch settings (keeperFee 0.0003 ether, keeperMaxBaseFee 5 gwei) with
 /// the gas of the call measured cold, through a basic Seaport order. the caller pays gas at the base fee and no
 /// priority fee. profit is the payment less the transaction gas (21,000, the call, the calldata) at the base fee
 contract SeaportCallerPayTest is SeaportBase {

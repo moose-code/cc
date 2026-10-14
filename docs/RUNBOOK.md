@@ -40,11 +40,11 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 | block | rows |
 |---|---|
 | the bid | `rateStart` (market price on launch day of a credit of score `refScore`, wei), `rateCap` (3 times it), `refScore` 4,330,000 (the launch average credit score), the nine bid settings |
-| the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 5,000, the `Sale` struct (markup 15,000, cap 100,000, fast 100, knee 10,000, slow 25, anchor half life 604,800, anchor min cost 0.1 eth) |
-| the credit side | `creditCostToPotBps` 10,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` false, `window` 14,400, `floorBps` 11,000, `startBps` 30,000, `royaltyBps` 250, `royaltyRecipient` (`refScore` is a bid setting above) |
-| the credit swap | `swapFeeCc` 1e18 (one coin burned per `swapCredit`) |
-| the balance side | `redeemOn` false, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 2,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
-| the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0005 eth, `keeperMaxBaseFee` 10 gwei, `callerFee` 0, `callerMaxBaseFee` 0 |
+| the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 2,500, the `Sale` struct (markup 15,000, cap 100,000, fast 100, knee 10,000, slow 25, anchor half life 604,800, anchor min cost 0.1 eth) |
+| the credit side | `creditCostToPotBps` 10,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `floorBps` 11,000, `startBps` 30,000, `royaltyBps` 250, `royaltyRecipient` (`refScore` is a bid setting above) |
+| the credit swap | `swapFeeCc` 10,000e18 (ten thousand coins burned per `swapCredit`) |
+| the balance side | `redeemOn` true, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 9,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
+| the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0003 eth, `keeperMaxBaseFee` 5 gwei, `callerFee` 0, `callerMaxBaseFee` 0 |
 | the payee | `payee` the owner, `payeePpm` 75,185 (0.5 points of volume) |
 | the adapters | the Seaport recipient allowlist (the OpenSea fee collector 0x0000a26b00c1F0DF003000390027140000fAa719) |
 | the coin | name CC, symbol CC, supply 1e27, start tick -175000, position -175000 to 887200, skim 690 bps, bounty 9,638, lp fee 0, sniper 9,000 bps over 1,800 s, protocol 2,000 bps, restricted, allowlist empty, image, description |
@@ -66,9 +66,9 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 | pause and resume | `cast send $CORE "setPaused(bool)" true` and `false` |
 | the payee | `cast send $CORE "setPayee(address)" <to>`; anyone can `claimPayee()` |
 | the adapters | `addAdapter(address)`, `removeAdapter(address)`, `lockAdapters()`; on the Seaport adapter `setAllowedRecipient(address,bool)`. in the first days watch `buyListing` reverts for `RecipientNotAllowed` and add the recipient that Credits listings carry |
-| the credit sale window | `setCredit` with `saleOn` true; read `creditPrice(id)` back |
+| the credit sale window | on at launch; `setCredit` with `saleOn` false closes it and true reopens it; read `creditPrice(id)` back |
 | chosen composition | `setChosenComposeOn(bool)`, `setMinCcToChoose(uint96)` (also the gate of `setHeldFormat`) |
-| the balance side | once the balance module is written and verified: `setBalanceModule(address)` (replaceable until `lockBalanceModule()`), then `setSettings` with `redeemOn` and `balanceBidOn`, then on the controller `setBalancePoolKey((address,address,uint24,int24,address))` with native eth as currency0 and the balance token as currency1 once its pool is live. when the balance token's auction is announced: `setPaused(true)`, reprice with the live settings, `setPaused(false)` |
+| the balance side | once the balance module is written and verified: `setBalanceModule(address)` (replaceable until `lockBalanceModule()`), then `setSettings` with `balanceBidOn` (`redeemOn` is true at launch), then on the controller `setBalancePoolKey((address,address,uint24,int24,address))` with native eth as currency0 and the balance token as currency1 once its pool is live. when the balance token's auction is announced: `setPaused(true)`, reprice with the live settings, `setPaused(false)` |
 | the reserve | `releaseRedeemBurn(uint256)` moves reserve eth into the buyback pot |
 | composing | `compose()`, `compose(uint8)` or `composeChosen` when nobody else does; switch the payment on with `callerFee` and `callerMaxBaseFee` if pages sit |
 | the coin | `coin.lockRecipients()` (script/Lock.s.sol: postflight, then the lock) seals the bounty recipient and ends fee stream migration; take it together with `lockSuccessor`. `lockAllowlist()`, `unrestrict()`, `renounceAdmin()`, `setMetadataRenderer`, `updateImage`, `updateDescription` are the coin admin's |
@@ -94,10 +94,10 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 
 | duty | call | paid |
 |---|---|---|
-| sweep a listing below the bid | `buyListing(adapter, id, params)` | gas at the base fee up to 10 gwei plus 0.0005 eth, at most the gap |
+| sweep a listing below the bid | `buyListing(adapter, id, params)` | gas at the base fee up to 5 gwei plus 0.0003 eth, at most the gap |
 | burn | `buyback()` every 25 blocks while the buyback pot holds at least twice the largest payment | gas plus the scaled fee |
 | compose | `compose()` when `nextPage()` is ready | 0 until the owner switches the payment on |
-| redeem | `redeemStatement(sid)` when `atFloor(sid)` and `redeemOn` | 0 until switched on |
+| redeem | `redeemStatement(sid)` when `atFloor(sid)` and `redeemOn` | 0; reverts `NoBalanceModule` until the module is set |
 | book | `book()` at the window's end, `collectEscrow()` if the escrow holds a credit for the Core | nothing |
 
 ### a dump that walks the bid down, and statements above the floor
@@ -137,7 +137,7 @@ an anvil fork of block 26158000 (chain id 31337) with the system deployed by the
 | start the chain | `script/dev/local.sh` leaves anvil running on port 8545 (`PORT=` changes it). the first run builds the state with `script/dev/e2e.sh` (about 5 minutes, most of it the seed's credit transfers) and saves it under `script/dev/.cache/`; a later run with unchanged src, script, test/standins and test/utils loads the saved state in seconds. `FRESH=1` rebuilds, `script/dev/local.sh stop` stops anvil |
 | the run itself | `script/dev/e2e.sh` starts its own anvil, runs everything and stops it. `KEEP=1` leaves anvil running, `STOP_AFTER=<stage>` stops after a stage, `NO_ANVIL=1` and `E2E_RPC_URL` reuse a node. `FORK_URL` is the archive rpc, the Tenderly public gateway by default |
 | deploy | `script/deploy.sh local` funds the factory owner, lowers `minProtocolSkimShareBps` to 362 and restores it, then runs Preflight, Deploy (`--unlocked --broadcast --slow`) and Postflight. the scripts require chain id 1, so forge runs with `--chain-id 1` |
-| phase `pre` | the credits move to three accounts (`script/dev/Seed.s.sol`); the balance side, the credit sale and chosen composition start off |
+| phase `pre` | the credits move to three accounts (`script/dev/Seed.s.sol`); the balance bid and chosen composition start off; the credit sale and `redeemOn` follow the config |
 | phase `post` (default) | the seed also deploys `MockBalanceToken` and `MockBalanceModule` (which mints `rating * unit` on redeem), mints the token to the Core, creates an eth / balance pool at the config's `dev.balancePoolSqrtPriceX96` with full range liquidity from the trader, then as owner sets the module, books the balance, switches `redeemOn`, `balanceBidOn`, the credit sale and chosen composition on, and sets the controller's pool key |
 | stages | `script/dev/Scenario.s.sol`, one `STAGE` per forge run: `a` (coin trades, `book`, payee latch), `dev-wallet` (the dev wallet buys coin), `fill-a` (`sellForEth` both forms), `adopt`, `compose-a` (`compose()`, `buy` at `grossPriceOf`), `claims` (`claimRoyalty`, `claimPayee`), `d-open`, `d-buy` (`buyCredit`, `buyCredits`), `fill-b`, `compose-b` (`composeChosen`), `format` (`setHeldFormat`), `settings` (`setSale`, `setCredit`, `setRate`, `setSettings`, `fund`), `pause`, `buyback`; in `post` also `fill-d`, `compose-d` (`compose(uint8)`), `redeem` (`redeemStatement`, `releaseRedeemBurn`), `balance-bid` (`sellForBalance` both forms); then `fresh-fill`, `fresh-compose`, `report`. node time warps run between the stages |
 | the record | `chainId`, `rpcUrl`, `deployBlock`, the five contracts and the library, the live Credits, Statements, pool manager and hook, `poolFee`, `tickSpacing`, `owner`, `accounts` (a1, a2, a3, keeper, trader), `phase`, and in `post` `balanceToken`, `balanceModule` and `balancePool` (`null` in `pre`) |

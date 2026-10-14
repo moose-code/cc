@@ -356,12 +356,12 @@ contract SaleSellToTest is SaleBase {
         (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
         uint256 scBal = address(sc).balance;
         vm.expectEmit(address(core));
-        emit ICore.StatementSoldTo(sid, buyer, floor, floor * 5_000 / 10_000);
+        emit ICore.StatementSoldTo(sid, buyer, floor, floor * core.settings().saleToBuybackBps / 10_000);
         sc.sell{value: floor}(sid, buyer);
         assertEq(STATEMENTS.ownerOf(sid), buyer);
         assertEq(address(core).balance - bal0, floor);
-        assertEq(core.ethToBuyback() - bb0, floor * 5_000 / 10_000);
-        assertEq(core.ethPot() - pot0, floor - floor * 5_000 / 10_000);
+        assertEq(core.ethToBuyback() - bb0, floor * core.settings().saleToBuybackBps / 10_000);
+        assertEq(core.ethPot() - pot0, floor - floor * core.settings().saleToBuybackBps / 10_000);
         assertEq(address(sc).balance, scBal, "the controller keeps nothing");
         _solvent();
     }

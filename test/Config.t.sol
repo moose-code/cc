@@ -84,6 +84,15 @@ contract ConfigTest is Fixture {
         assertTrue(f.restricted);
         assertEq(f.allowed.length, 0);
         assertEq(f.settings.payeePpm, 75_185);
+        // the owner's launch values of decision 119
+        assertTrue(f.credit.saleOn);
+        assertEq(f.settings.saleToBuybackBps, 2_500);
+        assertEq(f.settings.swapFeeCc, 10_000e18);
+        assertEq(f.settings.keeperFee, 0.0003 ether);
+        assertEq(f.settings.keeperMaxBaseFee, 5 gwei);
+        assertTrue(f.settings.redeemOn);
+        assertEq(f.settings.balanceBidMarginBps, 9_000);
+        assertLe(f.settings.redeemSlippageBps, f.settings.balanceBidMarginBps);
         assertEq(f.payee, v2.owner);
         // the stack addresses of the shipped file are the record of the live stack, the factory owner is the config owner
         assertEq(unsetFields(f).length, 0, "the shipped file leaves nothing unset");

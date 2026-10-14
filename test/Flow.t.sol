@@ -90,15 +90,15 @@ contract FlowTest is Fixture {
         assertEq(s.ceilBps, 11_000);
         assertEq(s.idleLoosenBps, 200);
         assertEq(s.saleFloorBps, 10_000);
-        assertEq(s.saleToBuybackBps, 5_000);
+        assertEq(s.saleToBuybackBps, 2_500);
         assertEq(s.buybackSlice, 0.5 ether);
         assertEq(s.buybackDelay, 25);
-        assertEq(s.keeperFee, 0.0005 ether);
-        assertEq(s.keeperMaxBaseFee, 10 gwei);
-        assertFalse(s.redeemOn);
+        assertEq(s.keeperFee, 0.0003 ether);
+        assertEq(s.keeperMaxBaseFee, 5 gwei);
+        assertTrue(s.redeemOn);
         assertFalse(s.balanceBidOn);
         assertEq(s.redeemSlippageBps, 200);
-        assertEq(s.balanceBidMarginBps, 2_000);
+        assertEq(s.balanceBidMarginBps, 9_000);
         assertEq(s.redeemBurnBps, 2_000);
         assertEq(s.rateCap, 26_700_000_000_000_000);
         assertEq(s.feeToRedeemBurnBps, 1_000);
@@ -169,14 +169,15 @@ contract FlowTest is Fixture {
     function test_settings_buybackSliceCoversTwiceTheLargestPayment() public {
         Settings memory s = Mainnet.defaultSettings();
         bytes memory bad = abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("buybackSlice"));
-        // the launch payment is 600,000 gas at 10 gwei plus 0.0005 ether: twice that is 0.013 ether
-        s.buybackSlice = 0.013 ether - 1;
+        // the launch payment is 600,000 gas at 5 gwei plus 0.0003 ether: twice that is 0.0066 ether, under the 0.01 ether
+        // lower bound of the slice, so the lower bound governs
+        s.buybackSlice = 0.01 ether - 1;
         vm.prank(owner);
         vm.expectRevert(bad);
         core.setSettings(s);
-        s.buybackSlice = 0.013 ether;
+        s.buybackSlice = 0.01 ether;
         _owner(s);
-        assertEq(core.settings().buybackSlice, 0.013 ether);
+        assertEq(core.settings().buybackSlice, 0.01 ether);
         // a dearer payment raises the line, and a cheaper one lowers it
         s.keeperFee = 0.005 ether;
         s.keeperMaxBaseFee = 100 gwei;

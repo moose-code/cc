@@ -4,7 +4,7 @@ the current reading of the owner's intent and of the system that implements it. 
 
 ## 1. the product
 
-CC is a coin whose trading fees fund a permanent public bid for Credits. anyone sells Credits to the engine at that bid, and the engine sweeps cheaper listings on approved venues, keeping the discount. the engine composes 80 Credits into a Statement, holds it, and sells it at a price that starts above cost and falls to a floor the owner sets. half of every sale burns CC, half buys more Credits. when the balance token is live, Statements at their floor redeem into it by rating, the engine buys Credits with it by score, and every redemption burns CC from a reserve. the owner sets every number at once, with no delay; holders trust the owner key, and one way locks and a successor migration are the owner's ways to narrow or move that power. the engine launches before the balance token; the balance side, the credit sale window and chosen composition ship built and switched off. the balance token is held by its module, not the Core. (decisions 99 to 117, DECISIONS.md section 11.)
+CC is a coin whose trading fees fund a permanent public bid for Credits. anyone sells Credits to the engine at that bid, and the engine sweeps cheaper listings on approved venues, keeping the discount. the engine composes 80 Credits into a Statement, holds it, and sells it at a price that starts above cost and falls to a floor the owner sets. a quarter of every sale burns CC and three quarters buys more Credits. when the balance token is live, Statements at their floor redeem into it by rating, the engine buys Credits with it by score, and every redemption burns CC from a reserve. the owner sets every number at once, with no delay; holders trust the owner key, and one way locks and a successor migration are the owner's ways to narrow or move that power. the engine launches before the balance token; the balance bid and chosen composition ship built and switched off; the credit sale window and the redeem switch are on at launch, and redemptions revert `NoBalanceModule` until the module is set. the balance token is held by its module, not the Core. (decisions 99 to 117, DECISIONS.md section 11.)
 
 ### intent at a glance
 
@@ -24,8 +24,8 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 | behavior | statements sell on a falling curve from `markupBps` of the anchor down to `saleFloorBps` of the reference; the anchor moves up with sales and down with time | 62, 64, 65, 70, 105 |
 | behavior | the price reference of a statement is `max(cost, valueOf(rating))`; a credit's sale floor is `max(cost, floorRate, valueOf(score)) * creditFloorBps`; a balance bought credit costs `score * pointRate` | 104, 115 |
 | behavior | every engine sale carries a royalty of `royaltyBps` on top of the engine price, paid to `royaltyRecipient` by the controller | 112 |
-| behavior | the balance side: redeem at the floor by rating, buy by score, burn from the reserve; the module holds the token and redemptions keep filling it, so the bid off is the accumulate mode; two switches, off at launch | 82, 84, 86, 107, 117 |
-| behavior | the credit sale window and chosen composition are owner switches, off at launch | 88, 89 |
+| behavior | the balance side: redeem at the floor by rating, buy by score, burn from the reserve; the module holds the token and redemptions keep filling it, so the bid off is the accumulate mode; `redeemOn` is on at launch and `balanceBidOn` is off until the module is set | 82, 84, 86, 107, 117 |
+| behavior | the credit sale window is on at launch and chosen composition is off; both are owner switches | 88, 89, 119 |
 | behavior | a holder swaps a pile credit for one it owns of equal or higher score through `swapCredit`, for a `swapFeeCc` coin fee it burns | 118 |
 | behavior | system compose picks a random format or takes one; holders of `minCcToChoose` CC restyle held statements | 113 |
 | behavior | the composer of every statement is recorded | 111 |
@@ -64,30 +64,30 @@ one `Settings` struct in Core storage, `setSettings(Settings)` owner only and ef
 | `ceilBps` | 11,000 | 10,000 to 30,000 | the rate stays at or below this share of the ceiling anchor |
 | `idleLoosenBps` | 200 | 1 to 2,000 | growth of the ceiling anchor per full 10 minutes since the last fill |
 | `saleFloorBps` | 10,000 | 1,000 to 40,000 | the one sale floor: the Core takes no statement payment below this share of its cost, and the controller's curve floors at this share of the reference |
-| `saleToBuybackBps` | 5,000 | 0 to 10,000 | share of statement sale proceeds to the coin buyback, the rest to the pot |
+| `saleToBuybackBps` | 2,500 | 0 to 10,000 | share of statement sale proceeds to the coin buyback, the rest to the pot |
 | `recoveryClimbPerMinBps` | 200 | `climbPerMinBps` to 1,000 | climb per minute while the price state is below the recovery level |
 | `recoveryGapBps` | 1,000 | 0 to 5,000 | the recovery level is the remembered peak less this share |
 | `peakHalfLife` | 21,600 | 600 to 604,800 s | seconds in which the remembered peak halves |
 | `buybackDelay` | 25 | 1 to 7,200 blocks | blocks between buybacks |
-| `redeemOn` | false | | redemptions run |
+| `redeemOn` | true | | redemptions run; `redeemStatement` reverts `NoBalanceModule` until a module is set |
 | `balanceBidOn` | false | | the balance token bid runs |
 | `redeemSlippageBps` | 200 | 0 to 1,000, at most `balanceBidMarginBps` | a redemption must return at least `rating * unit * (10,000 - this) / 10,000` |
-| `balanceBidMarginBps` | 2,000 | 0 to 9,000 | the balance bid pays `score * unit * (10,000 - this) / 10,000` per credit |
+| `balanceBidMarginBps` | 9,000 | 0 to 9,000 | the balance bid pays `score * unit * (10,000 - this) / 10,000` per credit |
 | `redeemBurnBps` | 2,000 | 0 to 10,000 | share of the redeem burn reserve moved to the buyback on each redemption |
 | `buybackSlice` | 0.5 ether | 0.01 to 1 ether, at least twice the largest buyback payment | eth per buyback |
-| `keeperFee` | 0.0005 ether | 0 to 0.005 ether | fee to the caller of `buyback` and `buyListing` on top of the gas |
-| `keeperMaxBaseFee` | 10 gwei | 1 to 100 gwei | base fee ceiling of those gas refunds |
+| `keeperFee` | 0.0003 ether | 0 to 0.005 ether | fee to the caller of `buyback` and `buyListing` on top of the gas |
+| `keeperMaxBaseFee` | 5 gwei | 1 to 100 gwei | base fee ceiling of those gas refunds |
 | `rateCap` | 2.67e16 (3 times `rateStart`) | 1e13 to 1e18 | the most the bid can be, wei per credit |
 | `callerFee` | 0 | 0 to 0.005 ether | fee to the caller of `compose`, `composeChosen` and `redeemStatement`, from the pot |
 | `callerMaxBaseFee` | 0 | 0 to 100 gwei | base fee ceiling of those refunds; 0 pays no gas |
 | `feeToRedeemBurnBps` | 1,000 | 0 to 10,000 | share of fee income to the redeem burn reserve, the rest to the pot |
 | `payeePpm` | 75,185 | 0 to 200,000 | share of fee income to the payee claim, parts per million |
 | `refScore` | 4,330,000 | 1 to 8,000,000 | the per-credit score the eth bid divides by: a credit of score `s` is paid `ethRate() * s / refScore`. the controller reads it for the point rate and the statement reference |
-| `swapFeeCc` | 1e18 | 0 to 1e24 | coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, one coin at launch |
+| `swapFeeCc` | 10,000e18 | 0 to 1e24 | coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, ten thousand coins at launch |
 
 three standalone Core settings, each with its own setter and event: `creditCostToPotBps` (10,000; 0 to 10,000; share of a sold credit's cost booked to the pot, the rest of the payment to the buyback), `chosenComposeOn` (false), `minCcToChoose` (1e18 base units, one coin; the least CC balance of a caller of `composeChosen` and `setHeldFormat`, read at the call).
 
-the controller's settings, each struct set at once by the Core's owner: `Sale` (`markupBps` 15,000, 10,000 to 40,000 and at most `startCapBps`; `startCapBps` 100,000, at least `markupBps` and `kneeBps`, at most 200,000; `fastDecayBpsPerHour` 100, 1 to 10,000; `kneeBps` 10,000, 1,000 to `startCapBps`; `slowDecayBpsPerHour` 25, 1 to 10,000; `anchorHalfLife` 7 days, 1 to 90 days; `anchorMinCost` 0.1 ether, 0 to 10 ether) through `setSale`, and `CreditSale` (`saleOn` false; `window` 14,400 s, 1 minute to 30 days; `floorBps` 11,000, 10,000 to 40,000; `startBps` 30,000, 10,000 to 200,000; `royaltyBps` 250, 0 to 1,000; `royaltyRecipient`, never zero) through `setCredit`. `setAnchorBps` (10,000 to `startCapBps`) and `setBalancePoolKey` are actions.
+the controller's settings, each struct set at once by the Core's owner: `Sale` (`markupBps` 15,000, 10,000 to 40,000 and at most `startCapBps`; `startCapBps` 100,000, at least `markupBps` and `kneeBps`, at most 200,000; `fastDecayBpsPerHour` 100, 1 to 10,000; `kneeBps` 10,000, 1,000 to `startCapBps`; `slowDecayBpsPerHour` 25, 1 to 10,000; `anchorHalfLife` 7 days, 1 to 90 days; `anchorMinCost` 0.1 ether, 0 to 10 ether) through `setSale`, and `CreditSale` (`saleOn` true; `window` 14,400 s, 1 minute to 30 days; `floorBps` 11,000, 10,000 to 40,000; `startBps` 30,000, 10,000 to 200,000; `royaltyBps` 250, 0 to 1,000; `royaltyRecipient`, never zero) through `setCredit`. `setAnchorBps` (10,000 to `startCapBps`) and `setBalancePoolKey` are actions.
 
 fixed inside the pool at launch and not adjustable: skim 6.9 points of volume, 96.38 percent of it to the engine as bounty recipient and 3.62 percent to the protocol, anti sniper skim 90 points falling to the baseline over 30 minutes, lp fee 0.
 

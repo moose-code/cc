@@ -317,26 +317,26 @@ library Mainnet {
             ceilBps: 11_000,
             idleLoosenBps: 200,
             saleFloorBps: 10_000,
-            saleToBuybackBps: 5_000,
+            saleToBuybackBps: 2_500,
             recoveryClimbPerMinBps: 200,
             recoveryGapBps: 1_000,
             peakHalfLife: 21_600,
             buybackDelay: 25,
-            redeemOn: false,
+            redeemOn: true,
             balanceBidOn: false,
             redeemSlippageBps: 200,
-            balanceBidMarginBps: 2_000,
+            balanceBidMarginBps: 9_000,
             redeemBurnBps: 2_000,
             buybackSlice: 0.5 ether,
-            keeperFee: 0.0005 ether,
-            keeperMaxBaseFee: 10 gwei,
+            keeperFee: 0.0003 ether,
+            keeperMaxBaseFee: 5 gwei,
             rateCap: 26_700_000_000_000_000,
             callerFee: 0,
             callerMaxBaseFee: 0,
             feeToRedeemBurnBps: 1_000,
             payeePpm: 75_185,
             refScore: 4_330_000,
-            swapFeeCc: 1e18
+            swapFeeCc: 10_000e18
         });
     }
 
@@ -355,7 +355,7 @@ library Mainnet {
         });
     }
 
-    /// the launch credit settings: the credit sale is off, its window is 4 hours, the floor is 110 percent and the
+    /// the launch credit settings: the credit sale is on, its window is 4 hours, the floor is 110 percent and the
     /// start 300 percent of the floor, the whole credit cost
     /// funds the pot, chosen composition is off, and the coin balance a caller needs to choose a compose or a held format is 1 coin
     function defaultCredit() internal pure returns (Credit memory) {
@@ -363,7 +363,7 @@ library Mainnet {
             costToPotBps: 10_000,
             chosenComposeOn: false,
             minCcToChoose: 1e18,
-            saleOn: false,
+            saleOn: true,
             window: 4 hours,
             floorBps: 11_000,
             startBps: 30_000,

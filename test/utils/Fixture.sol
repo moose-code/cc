@@ -209,6 +209,9 @@ abstract contract Fixture is Test, ProdDeployer {
         lc.owner = owner;
         lc.creator = creator;
         lc.credit.royaltyRecipient = creator;
+        // the core tests compose right after the fill, so they start with the credit sale window off. the launch value is
+        // on (test/Config.t.sol pins it) and the sale tests switch it on
+        lc.credit.saleOn = false;
         lc.payee = _user("payee");
         lc.name = "Fixture Coin";
         lc.symbol = "FIXT";

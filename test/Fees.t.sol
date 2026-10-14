@@ -668,9 +668,9 @@ contract BuybackPaymentTest is FeeBase {
 
     // promise: SPEC 1 keeper doors pay counted gas plus keeperFee
     function test_callerIsPaidCountedGasAtTheBaseFeePlusTheFee() public {
-        Run memory r = _run(7 gwei, 7 gwei);
+        Run memory r = _run(4 gwei, 4 gwei);
         assertEq(r.callerGain, r.paid, "the event reports what the caller received");
-        uint256 counted = _countedGas(r, 7 gwei);
+        uint256 counted = _countedGas(r, 4 gwei);
         emit log_named_uint("counted gas of a full buyback", counted);
         emit log_named_uint("gas used of the call", r.gasUsed);
         // counted gas is the measured part of the call plus the fixed overhead. it covers the transaction base cost on
@@ -680,7 +680,7 @@ contract BuybackPaymentTest is FeeBase {
         assertGe(counted, r.gasUsed + 15_000, "covers the call and most of the transaction base cost");
         assertLe(counted, r.gasUsed + BUYBACK_OVERHEAD_GAS, "no more than the call plus the overhead");
         // a full slice spends the whole budget and pays the whole fee: the rest is whole gas at the base fee
-        assertEq(r.spent, core.settings().buybackSlice - (BUYBACK_GAS * 7 gwei + core.settings().keeperFee));
+        assertEq(r.spent, core.settings().buybackSlice - (BUYBACK_GAS * 4 gwei + core.settings().keeperFee));
         assertEq(r.potAfter, r.pool - r.spent - r.paid, "the pot fell by the spend and the payment");
         assertEq(address(core).balance, _tracked(), "no surplus, no deficit");
     }

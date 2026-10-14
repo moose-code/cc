@@ -266,6 +266,8 @@ contract AdoptTest is Fixture {
 
         uint256 sum = _adoptOnSuccessor(succ, ids);
 
+        // the successor controller carries the launch credit sale: the newest adopted credit must be past its window
+        _warp(Mainnet.defaultCredit().window + 1);
         uint256 supply = STATEMENTS.supply();
         vm.fee(composeBasefee);
         vm.prank(keeper);

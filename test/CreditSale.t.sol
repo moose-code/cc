@@ -60,7 +60,7 @@ contract CreditSaleTest is Fixture {
     // promise: INTEGRATION CreditSaleOff
     function test_toggle_offBlocksBuyCredit() public {
         uint256[] memory ids = _fillEthPile(1);
-        assertFalse(ctl.creditSaleOn(), "off at launch");
+        assertFalse(ctl.creditSaleOn(), "the fixture starts with the sale off");
         vm.deal(buyer, 10 ether);
         vm.prank(buyer);
         vm.expectRevert(IControllerV1.CreditSaleOff.selector);
