@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAccount, useBalance, usePublicClient, useReadContract, useReadContracts, useSwitchChain } from "wagmi";
 import { formatUnits, maxUint256, parseEther, parseEventLogs, parseUnits, zeroAddress, type Address } from "viem";
 import { engineDeployed, chain } from "@/lib/config";
-import { readPots, useCcMarket, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market, type Pots } from "@/lib/market";
+import { useCcMarket, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
 import { changePct, commas, evmNowAddress, evmNowTx, leftLabel, shortHash, tokens, usdCompact, usdPrice } from "@/lib/format";
@@ -19,52 +19,6 @@ const IMPACT_WARN = 0.02;
 const GAS_RESERVE = parseEther("0.01"); // left by "max" for gas
 const PERMIT2_MAX = (1n << 160n) - 1n;
 const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as number
-const GROW_MS = 1200;
-
-const ethNum = (wei: bigint) => Number(formatUnits(wei, 18));
-
-// Pot before and after a swap, animated from the first to the second:
-// "pot a -> b eth" counts up, the bar shows (pot mod bid) / bid and wraps when
-// the pot crosses a credit. `bid` is 0n for a pot without a bid (the balance pot).
-function PotGrowth({ from, to, label }: { from: { pot: bigint; bid: bigint }; to: { pot: bigint; bid: bigint }; label: string }) {
-  const [t, setT] = useState(0);
-  useEffect(() => {
-    const t0 = performance.now();
-    let id = requestAnimationFrame(function tick(now) {
-      const k = Math.min(1, (now - t0) / GROW_MS);
-      setT(1 - (1 - k) ** 3);
-      if (k < 1) id = requestAnimationFrame(tick);
-    });
-    return () => cancelAnimationFrame(id);
-  }, []);
-  const lerp = (a: bigint, b: bigint) => ethNum(a) + (ethNum(b) - ethNum(a)) * t;
-  const pot = lerp(from.pot, to.pot);
-  const bid = lerp(from.bid, to.bid);
-  const credits = bid > 0 ? pot / bid : 0;
-  return (
-    <div className="tp-pot">
-      <div className="tp-row">
-        <span>{label}</span>
-        <span>
-          {ethNum(from.pot).toFixed(4)} → <b>{pot.toFixed(4)}</b> eth
-        </span>
-      </div>
-      {bid > 0 && (
-        <>
-          <div className="tp-row">
-            <span>next credit</span>
-            <span>
-              covers {Math.floor(credits)} {Math.floor(credits) === 1 ? "credit" : "credits"}
-            </span>
-          </div>
-          <div className="tp-bar">
-            <i style={{ width: `${(credits - Math.floor(credits)) * 100}%` }} />
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
 
 // Swap panel: eth for a market's token and back through the v4 Universal
 // Router; `market` defaults to the coin. A sell first grants the token
@@ -72,7 +26,6 @@ function PotGrowth({ from, to, label }: { from: { pot: bigint; bid: bigint }; to
 export function TradePanel({ market }: { market?: Market }) {
   const cc = useCcMarket();
   const m = market ?? cc;
-  const isBalance = market != null;
   const { data: perEth } = useTokensPerEth(m);
   const { address, chainId } = useAccount();
   const { switchChain } = useSwitchChain();
@@ -109,7 +62,6 @@ export function TradePanel({ market }: { market?: Market }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [pay, setPay] = useState(""); // empty reads as 0
   const [result, setResult] = useState<{ text: string; hash: `0x${string}` } | null>(null);
-  const [growth, setGrowth] = useState<{ from: Pots; to: Pots } | null>(null);
 
   const inDec = side === "buy" ? 18 : dec;
   const outDec = side === "buy" ? dec : 18;
@@ -156,12 +108,8 @@ export function TradePanel({ market }: { market?: Market }) {
       ? [{ label: "buy" }]
       : [{ label: `approve ${tag}`, done: erc20Allow != null && erc20Allow >= amountIn }, { label: "permit", done: p2Allow != null && p2Allow[0] >= amountIn }, { label: "sell" }];
 
-  // the pot shown after a swap: the engine pot with its bid, or the balance pot
-  const potOf = (p: Pots) => (isBalance ? { pot: p.balancePot, bid: 0n } : { pot: p.pot, bid: p.bid });
-
   async function swap(write: Write) {
     const t = m!.token as Address;
-    const before = await readPots(client!).catch(() => undefined);
     if (!plan[0].done && side === "sell") await write({ address: t, abi: erc20Abi, functionName: "approve", args: [V4.permit2, maxUint256] });
     if (!plan[1]?.done && side === "sell")
       await write({ address: V4.permit2, abi: permit2Abi, functionName: "approve", args: [t, V4.universalRouter, PERMIT2_MAX, PERMIT2_EXP] });
@@ -186,9 +134,6 @@ export function TradePanel({ market }: { market?: Market }) {
     }
     setResult({ text: `${side === "buy" ? "bought" : "sold"} ${tokens(got, dec)} ${tag}`, hash });
     setPay("");
-    // the block shows once the pot moved
-    const after = before && (await readPots(client!).catch(() => undefined));
-    if (before && after && potOf(before).pot !== potOf(after).pot) setGrowth({ from: before, to: after });
   }
 
   const over = payBal != null && amountIn > payBal;
@@ -208,7 +153,6 @@ export function TradePanel({ market }: { market?: Market }) {
                 off: !(quoteOut != null && quoteOut > 0n),
                 go: () => {
                   setResult(null);
-                  setGrowth(null);
                   run(swap, plan);
                 },
               };
@@ -237,7 +181,6 @@ export function TradePanel({ market }: { market?: Market }) {
   // a result belongs to the account that traded
   useEffect(() => {
     setResult(null);
-    setGrowth(null);
     reset();
   }, [address]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -415,7 +358,6 @@ export function TradePanel({ market }: { market?: Market }) {
       ) : (
         <p className="tp-fee">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
       )}
-      {growth && <PotGrowth key={growth.to.pot.toString()} from={potOf(growth.from)} to={potOf(growth.to)} label="pot" />}
       {!engineDeployed && <p className="panel-note tp-note">engine not deployed.</p>}
     </aside>
   );

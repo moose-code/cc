@@ -276,6 +276,15 @@ a.fw-box:hover {
   position: absolute;
   inset: 0 auto 0 0;
   background: var(--composed);
+  transition: width 1.2s cubic-bezier(0.33, 1, 0.68, 1);
+}
+.pulse {
+  animation: pulse 600ms ease-out;
+}
+@keyframes pulse {
+  40% {
+    color: var(--sold);
+  }
 }
 .nextcredit .amt,
 .nextstatement .amt {
@@ -646,27 +655,6 @@ button.tp-row:disabled {
 .tp-launch p {
   margin: 0.2rem 0 0;
   color: var(--muted);
-}
-.tp-pot {
-  display: grid;
-  gap: 0.7rem;
-  margin-top: 2rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--line);
-  font-size: 0.8rem;
-  font-variant-numeric: tabular-nums;
-}
-.tp-pot .tp-row > span:first-child {
-  color: var(--muted);
-}
-.tp-bar {
-  height: 4px;
-  background: var(--line);
-}
-.tp-bar i {
-  display: block;
-  height: 100%;
-  background: var(--fg);
 }
 .panel-note.tp-note {
   margin-top: 1rem;

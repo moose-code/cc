@@ -213,6 +213,18 @@ export function useMarketStats(market?: Market) {
   return { priceUsd, marketCap, change };
 }
 
+// Engine pot and bid, refetched every 15 s like the snapshot and on every
+// invalidation (a swap's receipt). undefined until the first read.
+export function usePots() {
+  const client = usePublicClient();
+  return useQuery<Pots>({
+    queryKey: ["pots", core],
+    enabled: Boolean(client && core),
+    refetchInterval: 15000,
+    queryFn: () => readPots(client!),
+  });
+}
+
 // Engine pots read at the latest block: `pot` is ethPot plus the share of the
 // unbooked fee income that the next Core._book adds (Core._income, _split),
 // `bid` is ethRate, `balancePot` is the balance token pot.
