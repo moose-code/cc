@@ -60,8 +60,3 @@ export function StatementCard({
     </div>
   );
 }
-
-// Old statement detail badge, removed with that page's rewrite.
-export function StatusBadge({ status }: { status: "listed" | "sold" | "redeemed" | "not held" }) {
-  return <span className={`badge badge-${status.replace(" ", "-")}`}>{status === "listed" ? "for sale" : status}</span>;
-}
