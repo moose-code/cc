@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# the deploy path for the local anvil fork: fund the factory owner, lower the factory's minimum protocol skim share
-# (docs/RUNBOOK.md step 3), run Preflight, Deploy and Postflight, restore the factory floor and write
-# deployments/31337.json. values come from script/env/local.env; RPC_URL in the shell overrides it. the launch on
-# mainnet follows docs/RUNBOOK.md.
+# the deploy path for the local anvil fork: fund the factory owner, run Preflight, Deploy and Postflight and write
+# deployments/31337.json. values come from script/env/local.env; RPC_URL in the shell overrides it. STACK=master runs
+# against the master stack fork (script/config/v2-master.json). the launch on mainnet follows docs/RUNBOOK.md.
 #
 #   script/deploy.sh local
 #
@@ -19,6 +18,21 @@ RPC_OVERRIDE="${RPC_URL:-}"
 set -a; . "script/env/$ENV.env"; set +a
 [ -n "$RPC_OVERRIDE" ] && RPC_URL="$RPC_OVERRIDE"
 
+# STACK=master repoints the launch at the master stack fork record (script/config/v2-master.json) and STACK is exported
+# so the forge scripts overlay the same record. the node stays chain id 31337 and the signer stays local.env's dev
+# wallet, which is the master stack owner on the fork, so one key owns the factory and the engine as on mainnet. the
+# default is the live stack in the config file.
+STACK="${STACK:-live}"
+export STACK
+if [ "$STACK" = master ]; then
+  MASTER="script/config/v2-master.json"
+  FACTORY="$(jq -r .factory "$MASTER")"
+  HOOK="$(jq -r .hook "$MASTER")"
+else
+  FACTORY="$(jq -r .stack.factory "$LAUNCH_CONFIG")"
+  HOOK="$(jq -r .stack.hook "$LAUNCH_CONFIG")"
+fi
+
 case "$(printf '%s' "$RPC_URL" | sed -E 's#^[a-z]+://([^/@:]*@)?([^/:]+).*#\2#')" in
   127.0.0.1|localhost) ;;
   *) fail "env local refuses a non local rpc: $RPC_URL" ;;
@@ -26,18 +40,12 @@ esac
 [ "$(cast chain-id --rpc-url "$RPC_URL")" = "$CHAIN_ID" ] || fail "the rpc is not chain $CHAIN_ID"
 
 BUILD="$(forge build 2>&1)" || { echo "$BUILD" | tail -40; fail "build failed"; }
-echo "deploy.sh: build ok, rpc $RPC_URL config $LAUNCH_CONFIG"
+echo "deploy.sh: build ok, rpc $RPC_URL config $LAUNCH_CONFIG stack $STACK"
 
-FACTORY="$(jq -r .stack.factory "$LAUNCH_CONFIG")"
-HOOK="$(jq -r .stack.hook "$LAUNCH_CONFIG")"
 FLAGS=(--rpc-url "$RPC_URL" --chain-id 1 --sender "$DEPLOYER")
 
 START="$(cast block-number --rpc-url "$RPC_URL")"
-PREV_SKIM="$(cast call "$FACTORY" "minProtocolSkimShareBps()(uint16)" --rpc-url "$RPC_URL")"
 cast rpc anvil_setBalance "$DEPLOYER" 0x21e19e0c9bab2400000 --rpc-url "$RPC_URL" >/dev/null
-SHARE=$((10000 - $(jq -r .launch.bountyBps "$LAUNCH_CONFIG")))
-cast send "$FACTORY" "setMinProtocolSkimShareBps(uint16)" "$SHARE" --from "$DEPLOYER" --unlocked --rpc-url "$RPC_URL" >/dev/null
-echo "deploy.sh: setMinProtocolSkimShareBps($SHARE) as the factory owner"
 
 echo "deploy.sh: preflight"
 PRE="$(DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" forge script script/Preflight.s.sol "${FLAGS[@]}" 2>&1)" \
@@ -54,8 +62,6 @@ CORE="$(pick "$DEP" core)"; COIN="$(pick "$DEP" coin)"; CONTROLLER="$(pick "$DEP
 SEAPORT="$(pick "$DEP" 'seaport adapter')"; STRATEGY="$(pick "$DEP" 'strategy adapter')"
 [ -n "$CORE" ] && [ -n "$COIN" ] && [ -n "$CONTROLLER" ] && [ -n "$SEAPORT" ] && [ -n "$STRATEGY" ] \
   || { echo "$DEP" | tail -60; fail "could not read the deployed addresses"; }
-
-cast send "$FACTORY" "setMinProtocolSkimShareBps(uint16)" "$PREV_SKIM" --from "$DEPLOYER" --unlocked --rpc-url "$RPC_URL" >/dev/null
 
 echo "deploy.sh: postflight"
 POST="$(CORE="$CORE" DEPLOYER="$DEPLOYER" CONFIG_HASH="$CONFIG_HASH" LAUNCH_CONFIG="$LAUNCH_CONFIG" \

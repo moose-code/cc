@@ -21,6 +21,13 @@ import {
 import {Halving} from "./Halving.sol";
 import {SettingsBounds} from "./SettingsBounds.sol";
 
+/// the v2 hook swap `hookData` layout. `mevModuleSwapData` is `abi.encode(refundTo)`; the hook credits skim charged on
+/// an unfilled part of the swap to that address in the fee escrow
+struct SwapData {
+    bytes mevModuleSwapData;
+    bytes poolExtensionSwapData;
+}
+
 /// every state variable of the Core, in one struct. the Core declares it once (`State internal s`, slot 0) and the library
 /// reads it at slot 0 (`CoreLib.state`), so both address the same storage
 struct State {
@@ -426,7 +433,9 @@ library CoreLib {
 
     /// @notice the swap of the coin buyback, run inside the pool manager unlock callback of the Core: exact eth in for
     /// coin on the canonical pool, the eth settled from the Core balance and the coin taken to the Core. returns the eth
-    /// spent, skim included, and the coin bought. the pool took no more than it was given
+    /// spent, skim included, and the coin bought. the pool took no more than it was given. hookData carries the refund
+    /// address so the hook credits skim on an unfilled part of the input to the Core in the fee escrow, which
+    /// `collectEscrow` books to the pot; an empty refund address reverts the hook on a partial fill
     function swapIn(address manager, address coin, uint24 fee, int24 spacing, address hook, uint256 amountIn)
         external
         returns (uint256 owed, uint256 bought)
@@ -439,13 +448,15 @@ library CoreLib {
             tickSpacing: spacing,
             hooks: IHooks(hook)
         });
+        bytes memory hookData =
+            abi.encode(SwapData({mevModuleSwapData: abi.encode(address(this)), poolExtensionSwapData: ""}));
         // forge-lint: disable-start(unsafe-typecast)
         BalanceDelta d = pm.swap(
             key,
             SwapParams({
                 zeroForOne: true, amountSpecified: -int256(amountIn), sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
             }),
-            ""
+            hookData
         );
         if (d.amount0() > 0 || d.amount1() < 0) revert BadSwap();
         owed = uint256(uint128(-d.amount0()));

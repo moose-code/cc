@@ -31,8 +31,8 @@ contract WritingRecipient {
     }
 }
 
-/// @notice the live artcoins v2 stack on the pinned fork, with a restricted coin launched, traded and drained through
-/// the real hook, locker and escrow. gas is logged, run with -vv
+/// @notice the master artcoins v2 stack on the fork, with a restricted coin launched, traded and drained through the
+/// real hook, locker and escrow. gas is logged, run with -vv
 contract V2StackTest is Test {
     error TransferRestricted(address from, address to, uint256 amount);
 
@@ -44,7 +44,9 @@ contract V2StackTest is Test {
     TestSwapRouter internal swapper;
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envUint("FORK_BLOCK"));
+        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
+        else vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
         s = V2Stack.attach();
         owner = s.owner;
         creator = makeAddr("creator");
@@ -52,12 +54,11 @@ contract V2StackTest is Test {
         vm.deal(owner, 10 ether);
         vm.deal(buyer, 100 ether);
         swapper = new TestSwapRouter();
-        p = V2Stack.mainnetParams(owner);
+        p = V2Stack.masterParams(owner);
     }
 
-    /// a launch on the v2 factory at the mainnet factory minimums: bounty 9000 (the 1000 minimum protocol skim share
-    /// leaves 9000), lp fee 3000 pips, baseline skim 1000 bps (10 points), sniper 9000 bps falling to 1000 over 30
-    /// minutes, restricted, protocol slot at the factory default 2000
+    /// a launch on the v2 factory: bounty 9000 of the baseline skim (the protocol keeps 1000), baseline skim 1000 bps
+    /// (10 points), sniper 9000 bps falling to 1000 over 30 minutes, restricted. the pool charges no lp fee
     function _config(address bountyRecipient, bytes32 salt) internal view returns (F.DeploymentConfigV2 memory c) {
         c.token = F.TokenConfigV2({
             tokenAdmin: owner,
@@ -77,16 +78,11 @@ contract V2StackTest is Test {
             extensionData: ""
         });
         c.fee = F.FeeConfigV2({
-            lpFeePips: 3000,
             baselineSkimBps: 1000,
             bountyBps: 9000,
-            maxReferralBpsOfVolume: 0,
-            bountyRecipient: payable(bountyRecipient)
+            bountyRecipient: payable(bountyRecipient),
+            referralBps: 0
         });
-        address[] memory rr = new address[](1);
-        rr[0] = creator;
-        uint16[] memory rb = new uint16[](1);
-        rb[0] = 8000;
         int24[] memory lo = new int24[](1);
         lo[0] = -175000;
         int24[] memory hi = new int24[](1);
@@ -95,8 +91,6 @@ contract V2StackTest is Test {
         pb[0] = 10000;
         c.locker = F.LockerConfigV2({
             locker: s.locker,
-            rewardRecipients: rr,
-            rewardBps: rb,
             tickLower: lo,
             tickUpper: hi,
             positionBps: pb
@@ -111,7 +105,7 @@ contract V2StackTest is Test {
         // the factory stays deprecated: the owner may launch anyway
         vm.prank(owner);
         uint256 g = gasleft();
-        coin = F(s.factory).deployTokenAsOwner{value: p.deployFee}(c, p.protocolBps);
+        coin = F(s.factory).deployToken{value: p.deployFee}(c);
         console.log("launch gas", g - gasleft());
         assertEq(coin, predicted, "predictToken");
         key = PoolKey({
@@ -136,7 +130,7 @@ contract V2StackTest is Test {
         assertEq(F(s.factory).STACK_VERSION(), 2);
         assertEq(F(s.factory).owner(), owner);
         assertTrue(F(s.factory).deprecated());
-        assertEq(F(s.factory).deployFee(), V2Stack.MAINNET_DEPLOY_FEE);
+        assertEq(F(s.factory).deployFee(), V2Stack.MASTER_DEPLOY_FEE);
         assertEq(uint160(s.hook) & 0x3FFF, V2Stack.HOOK_LOW_BITS);
     }
 
@@ -153,11 +147,10 @@ contract V2StackTest is Test {
         assertEq(t.canonicalHook(), s.hook);
         assertEq(IArtCoinsHookV2(s.hook).skimConfig(t.canonicalPoolId()).bountyRecipient, address(r));
         assertEq(IArtCoinsHookV2(s.hook).skimConfig(t.canonicalPoolId()).bountyBps, 9000);
-        assertEq(IArtCoinsHookV2(s.hook).skimConfig(t.canonicalPoolId()).lpFeePips, 3000);
-        // the engine, router and swapper are not on the allowlist, the locker and escrow are seeded and pinned
+        // the swapper is not on the allowlist, the factory seeds the launch's locker; the escrow is not seeded
         assertFalse(t.isAllowed(address(swapper)));
-        assertTrue(t.isAllowed(s.locker) && t.isPinned(s.locker));
-        assertTrue(t.isAllowed(s.escrow) && t.isPinned(s.escrow));
+        assertTrue(t.isAllowed(s.locker));
+        assertFalse(t.isAllowed(s.escrow));
 
         // buy and sell through PoolManager.unlock, the bounty lands on the empty receive recipient at once
         uint256 before = address(r).balance;

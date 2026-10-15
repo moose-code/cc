@@ -77,7 +77,6 @@ contract RehearsalTest is Test, ProdDeployer {
         postflightAs(c, d.core, deployer);
         _print("postflight after the launch");
         assertEq(_failedNames(), "", "postflight");
-        _lock();
         _smoke();
     }
 
@@ -97,25 +96,11 @@ contract RehearsalTest is Test, ProdDeployer {
         c.mevModule = v2.mev;
     }
 
-    /// @dev the lock step after the postflight passes: the coin admin freezes the fee recipients, and the postflight then
-    /// requires the lock
-    function _lock() internal {
-        vm.prank(deployer);
-        IArtCoinsTokenV2(d.coin).lockRecipients();
-        postflightAs(c, d.core, deployer);
-        _print("postflight after the lock step");
-        assertEq(_failedNames(), "", "postflight after the lock step");
-    }
-
     /// @dev the metadata row fails on chain id 1 when the config's image and description do not pass the shared rule
     /// (blank, a placeholder marker, or an image without a scheme), as the rehearsal file does with its PLACEHOLDER
     /// values. it is the first row of the preflight table. uses the one rule in `script/Checks.sol`
     function _marked() internal view returns (bool) {
         return !metadataRowPasses(c.image, c.description);
-    }
-
-    function _metadataRow() internal view returns (string memory) {
-        return _marked() ? string.concat(METADATA_ROW, ", ") : "";
     }
 
     function _metadataRowOnly() internal view returns (string memory) {
@@ -127,29 +112,11 @@ contract RehearsalTest is Test, ProdDeployer {
     }
 
     function _preflight() internal {
-        // before the factory owner sets the minimum protocol skim share to 362 the preflight names exactly that
-        IArtCoinsFactoryV2 f = IArtCoinsFactoryV2(c.stack.factory);
+        // master launches need no factory owner command: the deployer is the factory owner, the simulate row passes
+        // and the only expected failure is the metadata row when the config holds placeholder values
         preflight(c, deployer);
-        _print("preflight before the owner command setMinProtocolSkimShareBps(1000)");
-        string memory before_ = _failedNames();
-        if (f.minProtocolSkimShareBps() > 10_000 - c.bountyBps) {
-            assertEq(
-                before_,
-                string.concat(
-                    _metadataRow(),
-                    "factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
-                ),
-                "preflight before the owner commands"
-            );
-            vm.startPrank(deployer);
-            f.setMinProtocolSkimShareBps(uint16(10_000 - c.bountyBps));
-            vm.stopPrank();
-        } else {
-            assertEq(before_, _metadataRowOnly(), "the factory minimums are already open");
-        }
-        preflight(c, deployer);
-        _print("preflight after the owner command");
-        assertEq(_failedNames(), _metadataRowOnly(), "preflight after the owner command");
+        _print("preflight");
+        assertEq(_failedNames(), _metadataRowOnly(), "preflight");
     }
 
     /// @dev gas of one creation through the deterministic deployer, from a call frame of its own. the frame of the test
@@ -213,7 +180,7 @@ contract RehearsalTest is Test, ProdDeployer {
         txGas[7] = used[6] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.strategyAdapter)));
         txGas[8] = used[7] + 21_000
             + _calldataGas(
-                abi.encodeCall(IArtCoinsFactoryV2.deployTokenAsOwner, (buildConfig(c, c.owner, d.core), c.protocolBps))
+                abi.encodeCall(IArtCoinsFactoryV2.deployToken, (buildConfig(c, c.owner, d.core)))
             );
         string[9] memory names = [
             "1 library CoreLib (create2 deployer)",
@@ -224,7 +191,7 @@ contract RehearsalTest is Test, ProdDeployer {
             "6 setController",
             "7 addAdapter seaport adapter",
             "8 addAdapter strategy adapter",
-            "9 launch through the factory (deployTokenAsOwner)"
+            "9 launch through the factory (deployToken)"
         ];
         uint256 total;
         for (uint256 i; i < 9; ++i) {

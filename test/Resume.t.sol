@@ -19,7 +19,9 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     LaunchConfig internal base;
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envUint("FORK_BLOCK"));
+        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
+        else vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
         // the test runner predeploys the linked CoreLib at libraryAddress() and keeps it across fork selection. mainnet has
         // no code there, so the account is reset to the state the script sees
         vm.etch(libraryAddress(), "");
@@ -28,8 +30,6 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         deployer = v2.owner;
         creator = makeAddr("resume.creator");
         FACTORY = IArtCoinsFactoryV2(v2.factory);
-        vm.prank(deployer);
-        FACTORY.setMinProtocolSkimShareBps(1000);
         vm.deal(deployer, 5 ether);
         base = defaultConfig();
         base.owner = deployer;

@@ -22,7 +22,7 @@ import {ICore} from "../src/interfaces/ICore.sol";
 contract BuildIdentityTest is Fixture {
     uint256 internal constant CORE_RUNTIME = 24_203;
     uint256 internal constant CONTROLLER_RUNTIME = 11_737;
-    uint256 internal constant LIB_RUNTIME = 17_708;
+    uint256 internal constant LIB_RUNTIME = 17_924;
     uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_558;
     uint256 internal constant STRATEGY_ADAPTER_RUNTIME = 508;
 

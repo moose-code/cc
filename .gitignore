@@ -5,7 +5,8 @@ broadcast/
 !.env.example
 script/config/local.json
 script/config/*.local.json
-# local anvil end to end: the fork deployment record and the state caches
+# local anvil end to end: the fork deployment records and the state caches
 deployments/31337.json
+deployments/1.json
 script/dev/.anvil-state.json
 script/dev/.cache/

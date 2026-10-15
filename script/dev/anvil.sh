@@ -7,7 +7,7 @@
 #   script/dev/anvil.sh                 start a fresh fork on port 8545 (live stack, chain id 31337)
 #   script/dev/anvil.sh --dump-state    dump state to the gitignored path on exit
 #   script/dev/anvil.sh --load-state    load state from the gitignored path at start
-#   STACK=master script/dev/anvil.sh    fork at chain id 1 and load the master stack dump
+#   STACK=master script/dev/anvil.sh    fork, then load the master stack dump
 #                                       (script/dev/.cache/stack-master-26158000.hex) via anvil_loadState
 set -euo pipefail
 
@@ -18,9 +18,10 @@ PORT="${PORT:-8545}"
 STATE_FILE="${STATE_FILE:-script/dev/.anvil-state.json}"
 MASTER_DUMP="${MASTER_DUMP:-script/dev/.cache/stack-master-26158000.hex}"
 
-# the master dump was taken on a chain id 1 fork; load it onto chain id 1. the live stack runs on 31337.
+# the local node is chain id 31337 for both stacks. the master dump is state, not a chain id (it was built on a chain
+# id 1 fork, which the forge scripts re-enter with --chain-id 1 against this 31337 node). the owner's wallet and the
+# web local mode key on 31337, so a chain id 1 node would make the wallet send to real mainnet.
 CHAIN_ID=31337
-[ "$STACK" = master ] && CHAIN_ID=1
 
 args=(
   --fork-url "$FORK_URL"
@@ -53,6 +54,6 @@ trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 for _ in $(seq 1 60); do cast chain-id --rpc-url "$RPC" >/dev/null 2>&1 && break; sleep 1; done
 printf '{"jsonrpc":"2.0","id":1,"method":"anvil_loadState","params":["%s"]}' "$(cat "$MASTER_DUMP")" |
   curl -s -X POST "$RPC" -H 'content-type: application/json' --data @- >/dev/null
-echo "master stack loaded onto chain id 1 at $RPC (factory 0xAbFd91B16D77a1F62Fe00Dea5aE6478bCc9c7615)"
+echo "master stack loaded onto chain id $CHAIN_ID at $RPC (factory 0x57bdE85D39AdE61146871029A850FC9E44EdbEd7)"
 trap - EXIT
 wait "$ANVIL_PID"

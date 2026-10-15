@@ -3,9 +3,10 @@ pragma solidity ^0.8.28;
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
-/// local copies of the artcoins v2 structs and the minimal interfaces this repo calls (v2 repo commit d4aa46b,
+/// local copies of the artcoins v2 structs and the minimal interfaces this repo calls (v2 repo commit 6d099486,
 /// src/v2/interfaces). artcoins is not a dependency. the field order must match the v2 abi exactly, so do not
-/// reorder anything. members the v2 interface files lack but the v2 contracts expose are marked.
+/// reorder anything. members the v2 interface files lack but the v2 contracts expose are marked. pool ids are
+/// bytes32 here; the v2 abi types them as PoolId, which is bytes32 and shares the function selector.
 
 interface IArtCoinsFactoryV2 {
     struct TokenConfigV2 {
@@ -28,17 +29,14 @@ interface IArtCoinsFactoryV2 {
     }
 
     struct FeeConfigV2 {
-        uint24 lpFeePips;
         uint24 baselineSkimBps;
         uint16 bountyBps;
-        uint24 maxReferralBpsOfVolume;
         address payable bountyRecipient;
+        uint24 referralBps;
     }
 
     struct LockerConfigV2 {
         address locker;
-        address[] rewardRecipients;
-        uint16[] rewardBps;
         int24[] tickLower;
         int24[] tickUpper;
         uint16[] positionBps;
@@ -87,10 +85,6 @@ interface IArtCoinsFactoryV2 {
     }
 
     function deployToken(DeploymentConfigV2 calldata c) external payable returns (address token);
-    function deployTokenAsOwner(DeploymentConfigV2 calldata c, uint16 protocolBps)
-        external
-        payable
-        returns (address token);
     function predictToken(address sender, DeploymentConfigV2 calldata c) external view returns (address);
     function configHash(DeploymentConfigV2 calldata c) external pure returns (bytes32);
 
@@ -102,15 +96,13 @@ interface IArtCoinsFactoryV2 {
     function deploymentInfo(address token) external view returns (DeploymentInfoV2 memory);
     function deprecated() external view returns (bool);
     function deployFee() external view returns (uint256);
-    function defaultProtocolFeeBps() external view returns (uint16);
-    function minProtocolSkimShareBps() external view returns (uint16);
     function protocolRecipient() external view returns (address payable);
     function teamFeeRecipient() external view returns (address);
     function enabledHooks(address hook) external view returns (bool);
     function enabledLockers(address locker) external view returns (bool);
     function enabledMevModules(address module) external view returns (bool);
     function enabledExtensions(address extension) external view returns (bool);
-    function defaultAllowed() external view returns (address[] memory);
+    function everEnabledExtensions(address extension) external view returns (bool);
 
     function setHook(address hook, bool enabled) external;
     function setLocker(address locker, bool enabled) external;
@@ -118,12 +110,9 @@ interface IArtCoinsFactoryV2 {
     function setExtension(address extension, bool enabled) external;
     function setDeprecated(bool deprecated_) external;
     function setDeployFee(uint256 fee) external;
-    function setDefaultProtocolFeeBps(uint16 bps) external;
-    function setMinProtocolSkimShareBps(uint16 bps) external;
     function setProtocolRecipient(address payable recipient) external;
     function setTeamFeeRecipient(address recipient) external;
-    function setDefaultAllowed(address[] calldata accounts) external;
-    function setTokenDeployer(address deployer) external; // not in the v2 interface file, on the contract
+    function setTokenDeployer(address deployer) external;
 }
 
 interface IArtCoinsHookV2 {
@@ -141,10 +130,9 @@ interface IArtCoinsHookV2 {
     struct SkimConfig {
         uint24 baselineSkimBps;
         uint16 bountyBps;
-        uint24 maxReferralBpsOfVolume;
-        uint24 lpFeePips;
         address payable bountyRecipient;
         address payable protocolRecipient;
+        uint24 referralBps;
     }
 
     struct HookGlobals {
@@ -155,15 +143,18 @@ interface IArtCoinsHookV2 {
     function poolInfo(bytes32 poolId) external view returns (PoolInfo memory);
     function isOfficialPool(bytes32 poolId) external view returns (bool);
     function skimConfig(bytes32 poolId) external view returns (SkimConfig memory);
-    function minProtocolShareBps(bytes32 poolId) external view returns (uint16);
+    function everFeeEscrow(address escrow) external view returns (bool);
     function globals() external view returns (HookGlobals memory);
     function isLauncher(address launcher) external view returns (bool);
     function constantsHash() external pure returns (bytes32);
     function poolManager() external view returns (address); // BaseHook getter, not in the v2 interface file
+    function STACK_VERSION() external view returns (uint16);
     function setLauncher(address launcher, bool enabled) external;
     function setFeeEscrow(address escrow) external;
     function setExtensionAllowlist(address allowlist) external;
     function setBountyRecipient(bytes32 poolId, address payable newRecipient) external;
+    function setReferralBps(bytes32 poolId, uint24 bps) external;
+    function lowerBaselineSkim(bytes32 poolId, uint24 bps) external;
 }
 
 interface IArtCoinsTokenV2 {
@@ -172,8 +163,8 @@ interface IArtCoinsTokenV2 {
     function allowance(address owner, address spender) external view returns (uint256);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
     function restricted() external view returns (bool);
+    function locked() external view returns (bool);
     function isAllowed(address account) external view returns (bool);
-    function isPinned(address account) external view returns (bool);
     function transferAllowance() external view returns (uint256);
     function canonicalHook() external view returns (address);
     function canonicalPoolId() external view returns (bytes32);
@@ -182,10 +173,7 @@ interface IArtCoinsTokenV2 {
     function launcher() external view returns (address);
     function setAllowed(address account, bool allowed) external;
     function unrestrict() external;
-    function lockAllowlist() external;
-    function lockRecipients() external;
-    function allowlistLocked() external view returns (bool);
-    function recipientsLocked() external view returns (bool);
+    function lock() external;
     function updateDescription(string calldata description_) external;
     function burn(uint256 amount) external;
     function burnFrom(address account, uint256 amount) external;
@@ -199,24 +187,15 @@ interface IArtCoinsTokenV2 {
 }
 
 interface IArtCoinsLpLockerV2 {
-    struct TokenRewardInfoV2 {
+    struct LockedLiquidity {
         address token;
         PoolKey poolKey;
         uint256 positionId;
         uint256 numPositions;
-        uint16[] rewardBps;
-        address[] rewardRecipients;
     }
 
-    function collectRewards(address token) external;
-    function tokenRewards(address token) external view returns (TokenRewardInfoV2 memory);
-    function rewardRecipients(address token) external view returns (address[] memory);
-    function rewardBps(address token) external view returns (uint16[] memory);
-    function keeperRewardBps() external view returns (uint256);
-    function feeEscrow() external view returns (address);
+    function lockedLiquidity(address token) external view returns (LockedLiquidity memory);
     function isLauncher(address launcher) external view returns (bool);
-    function setRewardRecipient(address token, uint256 index, address newRecipient) external;
-    function protocolSlotIndex(address token) external view returns (bool exists, uint256 index);
 }
 
 interface IArtCoinsFeeEscrowV2 {
@@ -245,11 +224,6 @@ interface IArtCoinsMevSkimV2 {
     function currentSkimBps(bytes32 poolId) external view returns (uint24 skimBps, bool active);
     function windowEnd(bytes32 poolId) external view returns (uint40);
     function hook() external view returns (address);
-}
-
-interface IArtCoinsKeeperV2 {
-    function collectAndForward(address token, bool doConvert, uint256 minOut) external;
-    function factory() external view returns (address);
 }
 
 /// @dev OpenZeppelin Ownable2Step surface of the v2 escrow, hook, locker, factory, controller, router

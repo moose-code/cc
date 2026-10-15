@@ -25,15 +25,14 @@ abstract contract ReviewHarness is Test, ProdDeployer {
     address internal creator;
     LaunchConfig internal base;
     function setUp() public {
-        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envUint("FORK_BLOCK"));
+        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
+        else vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
         v2 = V2Stack.attach();
         deployer = v2.owner;
         owner = deployer;
         creator = makeAddr("review.creator");
         FACTORY = IArtCoinsFactoryV2(v2.factory);
-        vm.startPrank(owner);
-        FACTORY.setMinProtocolSkimShareBps(1000);
-        vm.stopPrank();
         vm.deal(deployer, 5 ether);
         base = defaultConfig();
         base.owner = owner;

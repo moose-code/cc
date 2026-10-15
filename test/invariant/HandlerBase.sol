@@ -1164,7 +1164,7 @@ abstract contract HandlerBase is Test {
     /// the core, a stranger's `rescueCoin` reverts with OnlyOwner, the owner's `rescueCoin` returns exactly `amt` to
     /// `who` and leaves no coin in the core, and `who` is taken off the list again
     function _allowRescue(address who, uint256 amt) internal {
-        bool mayList = owner == coin.admin() && !coin.allowlistLocked();
+        bool mayList = owner == coin.admin() && !coin.locked();
         vm.prank(owner);
         try coin.setAllowed(who, true) {
             if (!mayList) _flag(V_OWNER, "the allowlist changed for a caller that is not the token admin");

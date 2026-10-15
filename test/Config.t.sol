@@ -79,8 +79,6 @@ contract ConfigTest is Fixture {
         // the launch values of docs/DECISIONS.md 10.1 and 10.6, the fee split of decision 120
         assertEq(f.baselineSkimBps, 1000);
         assertEq(f.bountyBps, 9_000);
-        assertEq(f.lpFeePips, 0);
-        assertEq(f.maxReferralBps, 0);
         assertEq(f.sniperStartBps, 9_000);
         assertEq(f.sniperSeconds, 1800);
         assertTrue(f.restricted);
@@ -108,9 +106,9 @@ contract ConfigTest is Fixture {
     /// the launch fee split derived from the v2 hook math (`ArtCoinsHookV2._split`), per 1 ether of volume. all rates in bps
     /// of volume (decision 120). baseline skim 1000 bps (10 points), skim = V * 1000 / 10_000 = 0.1 ether.
     /// bounty leg = skim * bountyBps / 10_000, protocol leg = skim - bounty leg (steady state, no referral).
-    /// the protocol keeps 10 percent of the skim: bountyBps 9_000 gives 1000 * 1000 / 10_000 = 100 bps (1.0 point), and the
-    /// factory needs minProtocolSkimShareBps at most 10_000 - 9_000 = 1000 (`BPS - bountyBps - minProtocolSkimShareBps >= 0`
-    /// in `_validateFee`). Core inflow = bounty leg = 0.1 * 9_000 / 10_000 = 0.09 ether (900 bps, 9.0 points). payeePpm is 0
+    /// the protocol keeps 10 percent of the skim: bountyBps 9_000 gives 1000 * 1000 / 10_000 = 100 bps (1.0 point), the
+    /// protocol share is 10_000 - bountyBps of the baseline skim, no factory floor sets it on master. Core inflow =
+    /// bounty leg = 0.1 * 9_000 / 10_000 = 0.09 ether (900 bps, 9.0 points). payeePpm is 0
     /// at launch, so the engine keeps the whole Core inflow
     // promise: the launch fee split derived from the v2 hook math (`ArtCoinsHookV2._split`), per 1 ether of volume
     function test_feeSplitDerivation() public pure {
@@ -122,7 +120,7 @@ contract ConfigTest is Fixture {
         uint256 protocol = skim - inflow;
         assertEq(inflow, 90_000_000_000_000_000, "Core inflow 9.0 points");
         assertEq(protocol, 10_000_000_000_000_000, "protocol leg 1.0 point");
-        assertEq(10_000 - uint256(d.bountyBps), 1000, "the factory minProtocolSkimShareBps the bounty needs");
+        assertEq(10_000 - uint256(d.bountyBps), 1000, "the protocol share of the baseline skim");
         // the payee share is 0 at launch, so the engine keeps the whole Core inflow
         assertEq(d.settings.payeePpm, 0, "payeePpm 0 at launch");
         uint256 payee = inflow * d.settings.payeePpm / 1e6;
@@ -244,7 +242,7 @@ contract ConfigTest is Fixture {
         _pre(lc, d2);
         assertEq(vm.getNonce(d2), nonce, "the simulation is reverted");
         assertEq(d2.balance, bal);
-        assertTrue(bytes(_rowDetail("factory: deployTokenAsOwner accepts the config (simulated)")).length > 10);
+        assertTrue(bytes(_rowDetail("factory: deployToken accepts the config (simulated)")).length > 10);
     }
 
     /// owner and creator may be one address, a warning and never a failure. a stack address as owner or creator fails
@@ -262,7 +260,8 @@ contract ConfigTest is Fixture {
         c = lc;
         c.creator = c.stack.hook;
         _pre(c, d2);
-        assertEq(_failedNames(), "rule: owner, creator and payee are not dead or stack addresses, factory: deployTokenAsOwner accepts the config (simulated)");
+        // creator is not a pool recipient on master, so a stack creator fails only the people rule, not the launch
+        assertEq(_failedNames(), "rule: owner, creator and payee are not dead or stack addresses");
         c = lc;
         c.payee = c.stack.escrow;
         _pre(c, d2);
@@ -313,34 +312,6 @@ contract ConfigTest is Fixture {
 
     // ------------------------------------------------------------------ the owner commands the launch needs on v2
 
-    // promise: preflight protocol skim floor against the bounty
-    function test_preflightProtocolSkimFloorAgainstTheBounty() public {
-        address d2 = _funded();
-        vm.prank(owner);
-        FACTORY.setMinProtocolSkimShareBps(1_500);
-        _pre(lc, d2);
-        assertEq(
-            _failedNames(),
-            "factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
-        );
-        assertEq(
-            _rowDetail("factory: min protocol skim share leaves room for the bounty"),
-            "factory minProtocolSkimShareBps is 1500, above the 1000 the bounty 9000 leaves. the factory owner runs setMinProtocolSkimShareBps(1000) first"
-        );
-        // the floor of the launch bounty 9000 is 1000
-        vm.prank(owner);
-        FACTORY.setMinProtocolSkimShareBps(1001);
-        _pre(lc, d2);
-        assertEq(
-            _failedNames(),
-            "factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
-        );
-        vm.prank(owner);
-        FACTORY.setMinProtocolSkimShareBps(1000);
-        _pre(lc, d2);
-        assertEq(_failedNames(), "");
-    }
-
     // promise: preflight the factory must be deprecated and owned by the deployer
     function test_preflightTheFactoryMustBeDeprecatedAndOwnedByTheDeployer() public {
         address d2 = _funded();
@@ -358,7 +329,7 @@ contract ConfigTest is Fixture {
         vm.deal(other, 5 ether);
         _pre(lc, other);
         (string memory list,) = _failed();
-        assertEq(list, "factory: owner is the deployer, factory: deployTokenAsOwner accepts the config (simulated)");
+        assertEq(list, "factory: owner is the deployer, factory: deployToken accepts the config (simulated)");
     }
 
     // promise: preflight enabled stack
@@ -368,19 +339,19 @@ contract ConfigTest is Fixture {
         FACTORY.setHook(lc.stack.hook, false);
         vm.stopPrank();
         _pre(lc, d2);
-        assertEq(_failedNames(), "factory: hook enabled, factory: deployTokenAsOwner accepts the config (simulated)");
+        assertEq(_failedNames(), "factory: hook enabled, factory: deployToken accepts the config (simulated)");
         vm.startPrank(owner);
         FACTORY.setHook(lc.stack.hook, true);
         FACTORY.setLocker(lc.stack.locker, false);
         vm.stopPrank();
         _pre(lc, d2);
-        assertEq(_failedNames(), "factory: locker enabled, factory: deployTokenAsOwner accepts the config (simulated)");
+        assertEq(_failedNames(), "factory: locker enabled, factory: deployToken accepts the config (simulated)");
         vm.startPrank(owner);
         FACTORY.setLocker(lc.stack.locker, true);
         FACTORY.setMevModule(lc.mevModule, false);
         vm.stopPrank();
         _pre(lc, d2);
-        assertEq(_failedNames(), "factory: mev module enabled, factory: deployTokenAsOwner accepts the config (simulated)");
+        assertEq(_failedNames(), "factory: mev module enabled, factory: deployToken accepts the config (simulated)");
     }
 
     // promise: postflight checks the adapters
@@ -507,7 +478,7 @@ contract ConfigTest is Fixture {
         address d2 = _funded();
         string memory cap = "rule: image at most 2048 bytes, description at most 4096 bytes";
         string memory filled = "rule: image and description are filled and are not placeholders";
-        string memory both = string.concat(cap, ", factory: deployTokenAsOwner accepts the config (simulated)");
+        string memory both = string.concat(cap, ", factory: deployToken accepts the config (simulated)");
         _pre(lc, d2);
         assertTrue(_warnClean(cap) && _warnClean(filled), "filled and inside the caps");
 
@@ -621,7 +592,8 @@ contract ConfigTest is Fixture {
         c = lc;
         c.stack.escrow = address(0xE5C);
         postflightAs(c, address(core), address(0));
-        assertEq(_failedNames(), "core: stack equals the config, factory: deploymentInfo names the coin, hook, locker, mev module, escrow and pool of the config, coin: allowlist holds the locker, the escrow and the config entries, coin: the locker and the escrow are pinned");
+        // the escrow is not on the coin allowlist on master, so only the Core immutable and the factory record fail
+        assertEq(_failedNames(), "core: stack equals the config, factory: deploymentInfo names the coin, hook, locker, mev module, escrow and pool of the config");
 
         postflightAs(lc, address(0xBEEF), owner);
         assertEq(_failedNames(), "code: core");
@@ -731,6 +703,9 @@ contract ConfigTest is Fixture {
     /// rows fails alone for its own change of state
     // promise: NEXT 26: the owner account is an EIP 7702 delegation to Calibur with an empty key registry
     function test_preflightPinsTheOwnerDelegation() public {
+        // the pins are the mainnet owner's Calibur delegation. the master stack fork owner is an anvil account with no
+        // delegation, so the preflight reports the owner as an info row and these pins have no fork coverage
+        if (keccak256(bytes(vm.envOr("STACK", string("")))) == keccak256("master")) vm.skip(true);
         address d2 = _funded();
         string memory codeRow = "owner: code is the pinned EIP 7702 delegation";
         string memory hashRow = "owner: delegate code hash is the pinned Calibur";

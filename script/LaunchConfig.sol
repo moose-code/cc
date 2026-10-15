@@ -6,23 +6,23 @@ import {Stack, Settings, Sale, Credit, Mainnet, RATE_START_MIN_WEI, RATE_START_M
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {CreditBounds} from "../src/lib/CreditBounds.sol";
 
-// the `constantsHash()` the live v2 stack reports (hook, factory, locker, escrow, mev module and the rest). preflight
-// requires it of the hook and of the other four members the config names
-bytes32 constant V2_CONSTANTS_HASH = 0x69b6027a6426e4db8d91e06f74d3977b5d6e616067cf30c29f74d7c785ae4027;
+// the `constantsHash()` the master v2 stack reports (hook, factory, locker, escrow, mev module and the rest).
+// preflight requires it of the hook and of the other four members the config names
+bytes32 constant V2_CONSTANTS_HASH = 0x1b7deab81425bd850537efbb78d999939ab5fe16c424268886a5554d864e23d0;
 
-// the runtime code hashes (`extcodehash`, immutables included) of the live v2 stack contracts, read at this block.
-// preflight requires the hash of each contract the config and the factory point at. script/config/v2-mainnet.json
-// holds the addresses
+// the runtime code hashes (`extcodehash`, immutables included) of the master v2 stack contracts. preflight requires
+// the hash of each contract the config and the factory point at. script/config/v2-master.json holds the addresses
+// and these hashes
 uint256 constant V2_PIN_BLOCK = 26158000;
-bytes32 constant V2_CODEHASH_HOOK = 0xdfd4453028eb0f5176cd00fdbbeb495e75754cef9fd36091767cdb593449562b;
-bytes32 constant V2_CODEHASH_FACTORY = 0x521076a0cde91c74a1c3a72f676818dd423d125647a5e038531443a86a9a9156;
-bytes32 constant V2_CODEHASH_LOCKER = 0xc0d3e2539d75cdaf225bd64266bfd3e6ee7c602abfd173f59dd04fc43195eaad;
-bytes32 constant V2_CODEHASH_ESCROW = 0x2f88e4ff28749a58a6710c291c1a17d05dd099b6da1289acf6116182c0c673a4;
-bytes32 constant V2_CODEHASH_MEV_MODULE = 0x5b513087e1c593a3d8a3932a9a768491658eadee76941502d2351a7081a3581b;
-bytes32 constant V2_CODEHASH_TOKEN_DEPLOYER = 0xa1ea224b73bee06c71738152d536147b9845ccd2969070ba01c01904670fbd98;
+bytes32 constant V2_CODEHASH_HOOK = 0x09eecbc3e49ea6f76a4b6d126a9a36b8ac7f2b3a63ad39155cdfa9953420331f;
+bytes32 constant V2_CODEHASH_FACTORY = 0xc81a73b9453ca0e93afd762d32b98e4a9e2b157cdccd05d28fda9080f98e0c65;
+bytes32 constant V2_CODEHASH_LOCKER = 0x191e433101a918cc441bf7c143de216757b9a40ed2402131434a8747861c386a;
+bytes32 constant V2_CODEHASH_ESCROW = 0xeb557e5be7ab0b29b0c77f8dc18aada8e1d17910ae9e3b92909a9126872b9975;
+bytes32 constant V2_CODEHASH_MEV_MODULE = 0x571d7cd93b30cfc3ddbd202a8f293696705cbe1729550aedb9ee0d205330f146;
+bytes32 constant V2_CODEHASH_TOKEN_DEPLOYER = 0x850c232a162c90dc03cc31b2e605a0d3e285f51b04b725734795f7e19b70fd10;
 bytes32 constant V2_CODEHASH_ALLOWLIST = 0x7a98bacb16f0ec968f5d450c37e6a5a4ef213a8d48c61c666b2cea3e0f6318c4;
-bytes32 constant V2_CODEHASH_FEE_CONTROLLER = 0x8c3e7bdfc124978e815095822a16b9f0c5fbd1f4925b99eaedeed542b5ca3feb;
-bytes32 constant V2_CODEHASH_BURN_ROUTER = 0x937f1a92e636aed39eb430bd3be2882201479768a84f5c253f3788114f4574fb;
+bytes32 constant V2_CODEHASH_FEE_CONTROLLER = 0xcb35ea27cea5514210e1de1dc44f4551638d7333ec1989ef7de4e79449999e38;
+bytes32 constant V2_CODEHASH_BURN_ROUTER = 0x446c38e7f907b120416c06e90f92f966a20cca49df8ea19711c6b12c4a40edd9;
 
 // the EIP 7702 delegation of the owner account, read at V2_PIN_BLOCK. the account runs the code of OWNER_DELEGATE
 // (Uniswap Calibur, 24,504 bytes, no proxy). preflight requires the account code, the delegate code hash and an empty
@@ -66,16 +66,11 @@ struct LaunchConfig {
     int24 positionUpper;
     /// the baseline skim in bps of volume (1000 is 10 percent)
     uint24 baselineSkimBps;
-    /// the engine's share of the baseline skim, bps. the protocol keeps the rest
+    /// the engine's share of the baseline skim, bps. the protocol keeps the rest, `10_000 - bountyBps` at the baseline
     uint16 bountyBps;
-    uint24 maxReferralBps;
-    /// pips (1e6)
-    uint24 lpFeePips;
     /// the anti sniper skim at the first block in bps of volume, falling to the baseline over `sniperSeconds`
     uint24 sniperStartBps;
     uint32 sniperSeconds;
-    /// the protocol's share of the locker rewards, bps. 0 appends no protocol slot. the factory default is 2_000
-    uint16 protocolBps;
     /// the coin is launched restricted (docs/DECISIONS.md 18) and the extra allowlist entries beyond the factory's own seeds.
     /// the Core is not listed (docs/DECISIONS.md 29)
     bool restricted;
@@ -98,6 +93,8 @@ struct LaunchConfig {
 /// @notice reads and checks a `LaunchConfig`
 abstract contract ConfigReader is CommonBase {
     string internal constant DEFAULT_CONFIG_FILE = "script/config/mainnet.json";
+    /// @dev the master stack fork record. STACK=master repoints a launch config at it
+    string internal constant MASTER_RECORD = "script/config/v2-master.json";
     /// @dev a json number does not fit the field it is cut into
     error ConfigOutOfRange(string key);
 
@@ -120,11 +117,8 @@ abstract contract ConfigReader is CommonBase {
         c.positionUpper = 887_200;
         c.baselineSkimBps = 1000;
         c.bountyBps = 9000;
-        c.maxReferralBps = 0;
-        c.lpFeePips = 0;
         c.sniperStartBps = 9_000;
         c.sniperSeconds = 1800;
-        c.protocolBps = 2000;
         c.restricted = true;
         c.seaportRecipients = new address[](1);
         c.seaportRecipients[0] = Mainnet.OPENSEA_FEE_COLLECTOR;
@@ -163,6 +157,25 @@ abstract contract ConfigReader is CommonBase {
         // the overrides are optional, a missing key means false
         c.allowBounty = _flag(j, ".overrides.bounty");
         c.allowOpenFactory = _flag(j, ".overrides.openFactory");
+        _applyStackSelector(c);
+    }
+
+    /// @notice STACK=master repoints the v2 members at the master stack fork record (script/config/v2-master.json) and
+    /// the launch identities (owner, creator, payee) at the master stack owner, the anvil account that owns the fork
+    /// deployment. the poolManager, tick spacing, pool fee, artist, name, salt and every other field stay. the default
+    /// is the live stack already in the file
+    function _applyStackSelector(LaunchConfig memory c) private view {
+        if (keccak256(bytes(vm.envOr("STACK", string("")))) != keccak256("master")) return;
+        string memory j = vm.readFile(MASTER_RECORD);
+        c.stack.hook = vm.parseJsonAddress(j, ".hook");
+        c.stack.factory = vm.parseJsonAddress(j, ".factory");
+        c.stack.locker = vm.parseJsonAddress(j, ".locker");
+        c.stack.escrow = vm.parseJsonAddress(j, ".escrow");
+        c.mevModule = vm.parseJsonAddress(j, ".mevModule");
+        address owner = vm.parseJsonAddress(j, ".owner");
+        c.owner = owner;
+        c.creator = owner;
+        c.payee = owner;
     }
 
     function _loadSettings(LaunchConfig memory c, string memory j) private pure {
@@ -230,11 +243,8 @@ abstract contract ConfigReader is CommonBase {
         c.positionUpper = _i24(j, ".launch.positionUpper");
         c.baselineSkimBps = _u24(j, ".launch.baselineSkimBps");
         c.bountyBps = _u16(j, ".launch.bountyBps");
-        c.maxReferralBps = _u24(j, ".launch.maxReferralBps");
-        c.lpFeePips = _u24(j, ".launch.lpFeePips");
         c.sniperStartBps = _u24(j, ".launch.sniperStartBps");
         c.sniperSeconds = _u32(j, ".launch.sniperSeconds");
-        c.protocolBps = _u16(j, ".launch.protocolBps");
         c.restricted = vm.parseJsonBool(j, ".launch.restricted");
         c.allowed = vm.parseJsonAddressArray(j, ".launch.allowed");
         c.seaportRecipients = vm.parseJsonAddressArray(j, ".adapters.seaportRecipients");
