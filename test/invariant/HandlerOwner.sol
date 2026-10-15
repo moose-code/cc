@@ -195,6 +195,12 @@ abstract contract HandlerOwner is HandlerBase {
         uint8 a = A_SET_SETTINGS;
         Settings memory cur = core.settings();
         Settings memory ns = _genSettings(seed, corner, cur);
+        // decision 124: keep the floor at or below the real controller's start so its setSale is never blocked. the core
+        // enforces this only while the live controller answers markupBps, so the handler holds the stronger bound itself
+        if (v1 != address(0)) {
+            uint16 mk = IControllerV1(v1).markupBps();
+            if (ns.saleFloorBps > mk) ns.saleFloorBps = mk;
+        }
         if (_firstViolation(ns) != 0) {
             _flag(V_SETTINGS, "the handler generated invalid settings");
             return _skip(a);

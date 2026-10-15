@@ -694,7 +694,8 @@ abstract contract HandlerSale is HandlerOwner {
         if (which == 0) {
             cur = c.markupBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : 40_001) : _f(seed, 10_000, 40_000, cur);
-            valid = v >= 10_000 && v <= 40_000 && v <= cap;
+            // decision 124: the start can never be below the core's current saleFloorBps
+            valid = v >= 10_000 && v <= 40_000 && v <= cap && v >= core.settings().saleFloorBps;
         } else if (which == 1) {
             cur = cap;
             v = bad ? (seed % 2 == 0 ? c.markupBps() - 1 : 200_001) : _f(seed, c.markupBps(), 200_000, cur);
