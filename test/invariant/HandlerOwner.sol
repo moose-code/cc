@@ -62,13 +62,11 @@ abstract contract HandlerOwner is HandlerBase {
         s.rateCap = uint64(_f(_r(seed, 26), RATE_START_MIN_WEI, RATE_START_MAX_WEI, c.rateCap));
         s.feeToRedeemBurnBps = uint16(_f(_r(seed, 27), 0, 10_000, c.feeToRedeemBurnBps));
         s.payeePpm = uint24(_f(_r(seed, 40), 0, 200_000, c.payeePpm));
-        s.refScore = uint32(_f(_r(seed, 41), 1, 8_000_000, c.refScore));
+        s.refScore = uint32(_f(_r(seed, 41), 800_000, 8_000_000, c.refScore));
         s.swapFeeCc = uint96(_f(_r(seed, 42), 0, 1e24, c.swapFeeCc));
         s.callerFee = uint64(_f(_r(seed, 10), 0, 0.005 ether, c.callerFee));
         s.callerMaxBaseFee = uint48(_f(_r(seed, 11), 0, 100 gwei, c.callerMaxBaseFee));
         _corner(s, corner);
-        // the balance side cycle cannot lose more than its margin: slippage stays at or below the bid margin
-        if (s.redeemSlippageBps > s.balanceBidMarginBps) s.redeemSlippageBps = s.balanceBidMarginBps;
         // recoveryClimbPerMinBps is at least the final climbPerMinBps, set after the corners so it stays valid
         s.recoveryClimbPerMinBps = uint16(_f(_r(seed, 31), s.climbPerMinBps, 1_000, c.recoveryClimbPerMinBps));
         s.peakHalfLife = uint32(_f(_r(seed, 32), 600, 604_800, c.peakHalfLife));
@@ -255,10 +253,9 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.callerMaxBaseFee > 100 gwei) return "callerMaxBaseFee";
         if (s.redeemSlippageBps > 1_000) return "redeemSlippageBps";
         if (s.balanceBidMarginBps > 9_000) return "balanceBidMarginBps";
-        if (s.redeemSlippageBps > s.balanceBidMarginBps) return "redeemSlippageBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         if (s.payeePpm > 200_000) return "payeePpm";
-        if (s.refScore < 1 || s.refScore > 8_000_000) return "refScore";
+        if (s.refScore < 800_000 || s.refScore > 8_000_000) return "refScore";
         if (s.swapFeeCc > 1e24) return "swapFeeCc";
         return bytes32(0);
     }

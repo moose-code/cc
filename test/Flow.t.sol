@@ -74,8 +74,6 @@ contract FlowTest is Fixture {
         // the slice is at least twice the largest buyback payment (field 16 is `buybackSlice`)
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
         if (s.buybackSlice < minSlice) _set(s, 16, minSlice);
-        // redeemSlippageBps (field 13) is bounded above by balanceBidMarginBps (field 14), set later in the loop
-        if (s.redeemSlippageBps > s.balanceBidMarginBps) _set(s, 13, s.balanceBidMarginBps);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -131,8 +129,6 @@ contract FlowTest is Fixture {
                 if (i == 2 && k == 1) s.recoveryClimbPerMinBps = 1_000;
                 // the smallest slice needs the cheapest buyback payment: 2 * (600,000 gas * 1 gwei + 0) is 0.0012 ether
                 if (i == 16 && k == 0) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
-                // balanceBidMarginBps at its bottom (0) needs redeemSlippageBps lowered to it, which it bounds
-                if (i == 14 && k == 0) s.redeemSlippageBps = 0;
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");

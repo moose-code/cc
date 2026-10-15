@@ -57,9 +57,9 @@ contract PerPointTest is Fixture {
         (, uint256 cost,) = core.creditInfo(id);
         assertEq(cost, want, "the cost basis is the per-credit bid");
 
-        uint256 fall = uint256(core.settings().dropPerCreditBps) * score / ref;
-        if (fall > 10_000) fall = 10_000;
-        uint256 dropped = rate * (10_000 - fall) / 10_000;
+        uint256 fallNum = uint256(core.settings().dropPerCreditBps) * score;
+        uint256 denom = 10_000 * ref;
+        uint256 dropped = fallNum >= denom ? 0 : rate * (denom - fallNum) / denom;
         uint256 floor = rate * core.settings().dropFloorBps / 10_000;
         assertEq(core.rateAtCheckpoint(), dropped > floor ? dropped : floor, "the drop scales by score over refScore");
     }

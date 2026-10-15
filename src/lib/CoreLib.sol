@@ -176,6 +176,8 @@ library CoreLib {
     event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
     error BadSetting(bytes32 field);
     event SettingsSet(Settings settings);
+    /// the balance bid rate was reset to `rateBps` (bps of par): the floor, on a margin raise or the bid turning on
+    event BalanceRateSet(uint256 rateBps);
     error BadSwap();
     error ZeroAddress();
     error OnlyOwner();
@@ -204,36 +206,64 @@ library CoreLib {
     event EngineRetired(address indexed successor);
 
     /// @notice validates the settings, stores them and logs them. the Core forwards its own `setSettings` call here
-    /// untouched (same selector), after it checkpointed the eth rate. the constructor calls it too. a change of
-    /// `peakHalfLife` restates the remembered peak at the old half life before storing the new one, so the new half
-    /// life decays the peak forward only
+    /// untouched (same selector), after it checkpointed the eth rate. the constructor calls it too. both bid instances
+    /// are checkpointed before the new settings apply: the eth instance by the Core, the balance instance here when the
+    /// bid is on. a change of `peakHalfLife` restates both remembered peaks at the old half life before storing the new
+    /// one, so the new half life decays the peaks forward only
     function setSettings(Settings calldata ns) external {
         bytes32 bad = SettingsBounds.firstViolation(ns);
         if (bad != 0) revert BadSetting(bad);
         State storage c = state();
-        // a change of the peak half life applies forward only: restate the remembered peak at the old half life before
-        // the new one is stored, so the elapsed decay is not rescaled. skipped at the first set (old half life zero,
-        // the constructor, where the peak was just written)
+        bool wasOn = c.settings.balanceBidOn;
+        // credit the elapsed climb of the balance instance under the old settings and clamp before the new ones apply,
+        // so a settings change compares against the climbed value, not a stale checkpoint. while the bid is off the
+        // instance does not climb (the read reports the floor), so the checkpoint is skipped
+        if (wasOn) _balanceCheckpointNow(c);
         uint256 oldHalf = c.settings.peakHalfLife;
         if (oldHalf != 0 && ns.peakHalfLife != oldHalf) {
-            Anchor storage a = c.anchor;
-            a.peakRate = Halving.halve(a.peakRate, block.timestamp.zeroFloorSub(a.peakTime), oldHalf);
-            // forge-lint: disable-next-line(unsafe-typecast)
-            a.peakTime = uint64(block.timestamp);
+            _restatePeak(c.anchor, oldHalf);
+            _restatePeak(c.balance.anchor, oldHalf);
         }
         c.settings = ns;
-        // the balance bid floor is 10_000 - balanceBidMarginBps. a margin change that raises the floor above the stored
-        // rate (and the first set, where the stored rate is zero) resets the instance to the floor: the opening value,
-        // the drop floor and what a reset returns to. a margin change that lowers the floor leaves the climbed rate
-        _resetBalanceToFloorIfBelow(c, BPS - ns.balanceBidMarginBps);
+        uint256 floor = BPS - ns.balanceBidMarginBps;
+        // turning the bid on opens it at the floor: a full reset of the instance and its clock. otherwise a floor
+        // raised above the stored rate (and the first set, where the stored rate is zero) resets to the floor, and a
+        // lowered floor leaves the climbed rate
+        if (!wasOn && ns.balanceBidOn) _resetBalanceToFloor(c, floor);
+        else _resetBalanceToFloorIfBelow(c, floor);
         emit SettingsSet(ns);
     }
 
-    /// resets the balance bid instance to `floor` when its stored rate is below `floor`: the rate, the fill clock and the
-    /// whole anchor start at `floor`. the climb heads up from there, the drop never falls under it
+    /// restates the remembered peak of `a` at `oldHalf`: decays it to now under the old half life and marks now, so a
+    /// half life change decays the peak forward only
+    function _restatePeak(Anchor storage a, uint256 oldHalf) private {
+        a.peakRate = Halving.halve(a.peakRate, block.timestamp.zeroFloorSub(a.peakTime), oldHalf);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        a.peakTime = uint64(block.timestamp);
+    }
+
+    /// climbs the balance instance to now with the live clamp (available as bps of par) and stores the price state. a
+    /// missing or failing module leaves the clamp at the 10_000 cap
+    function _balanceCheckpointNow(State storage c) private {
+        uint256 clampTo = BPS;
+        address module = c.balanceModule;
+        if (module != address(0)) {
+            (uint256 unit, bool ok) = _unitView(module);
+            if (ok) clampTo = _toBps(_availableView(module), uint256(c.settings.refScore) * unit);
+        }
+        _balanceCheckpoint(c.balance, clampTo);
+    }
+
+    /// resets the balance bid instance to `floor` when its stored rate is below `floor`
     function _resetBalanceToFloorIfBelow(State storage c, uint256 floor) private {
+        if (c.balance.rateAtCheckpoint >= floor) return;
+        _resetBalanceToFloor(c, floor);
+    }
+
+    /// resets the balance bid instance to `floor`: the rate, the fill clock and the whole anchor start at `floor`. the
+    /// climb heads up from there, the drop never falls under it
+    function _resetBalanceToFloor(State storage c, uint256 floor) private {
         Rate storage bal = c.balance;
-        if (bal.rateAtCheckpoint >= floor) return;
         bal.rateAtCheckpoint = floor;
         // forge-lint: disable-start(unsafe-typecast)
         bal.checkpointTime = uint64(block.timestamp);
@@ -244,6 +274,7 @@ library CoreLib {
         bal.anchor.peakRate = floor;
         bal.anchor.peakTime = uint64(block.timestamp);
         // forge-lint: disable-end(unsafe-typecast)
+        emit BalanceRateSet(floor);
     }
 
     /// @notice the price state and the read of the eth rate (wei per credit) at `nowTs`, from the stored rate `r` of
@@ -373,9 +404,13 @@ library CoreLib {
         a.peakRate = price.max(peakNow);
         // forge-lint: disable-next-line(unsafe-typecast)
         a.peakTime = uint64(nowTs);
-        uint256 fall = uint256(s.dropPerCreditBps) * score / refScore;
-        if (fall > 10_000) fall = 10_000;
-        return (price * (10_000 - fall) / 10_000).max(a.minuteStartRate * s.dropFloorBps / 10_000).max(absFloor);
+        // the fall is `dropPerCreditBps * score / refScore` bps of `price`, bounded at 10_000. one rounding: the rate
+        // is `price * (10_000 * refScore - dropPerCreditBps * score) / (10_000 * refScore)` rounded down, so the fall
+        // rounds up and a nonzero `dropPerCreditBps` always drops a nonzero amount
+        uint256 fallNum = uint256(s.dropPerCreditBps) * score;
+        uint256 denom = 10_000 * refScore;
+        uint256 dropped = fallNum >= denom ? 0 : price.mulDiv(denom - fallNum, denom);
+        return dropped.max(a.minuteStartRate * s.dropFloorBps / 10_000).max(absFloor);
     }
 
     /// @notice the swap of the coin buyback, run inside the pool manager unlock callback of the Core: exact eth in for
@@ -648,7 +683,7 @@ library CoreLib {
         address module = c.balanceModule;
         if (module == address(0)) revert NoBalanceModule();
         uint256 unit = _liveUnit(module);
-        uint256 avail = IBalanceModule(module).available();
+        uint256 avail = _liveAvailable(module);
         // the rate clamp: available expressed as bps of par for a refScore credit, read once from full available
         uint256 availBps = _toBps(avail, s.refScore * unit);
         // checkpoint the balance instance: climb to now with the clamp, store the price state so the per credit drops
@@ -741,7 +776,8 @@ library CoreLib {
         return scoreOf(id) * unit * rate / BPS;
     }
 
-    /// the balance bid rate (bps of par) and the live unit. the rate is the balance instance price state climbed with
+    /// the balance bid rate (bps of par) and the live unit. while the bid is off the instance does not climb and the
+    /// rate is the floor `10_000 - balanceBidMarginBps`. while on it is the balance instance price state climbed with
     /// cap 10_000, clamped to available as bps of par. with no module or a failed unit read there is no available clamp
     /// and the unit is zero
     function _balanceRead() private view returns (uint256 rate, uint256 unit) {
@@ -753,6 +789,7 @@ library CoreLib {
             (unit, ok) = _unitView(module);
             if (ok) clampTo = _toBps(_availableView(module), uint256(c.settings.refScore) * unit);
         }
+        if (!c.settings.balanceBidOn) return (BPS - c.settings.balanceBidMarginBps, unit);
         Rate storage bal = c.balance;
         (, rate,) =
             _climb(bal.anchor, bal.rateAtCheckpoint, clampTo, BPS, bal.lastFillTime, bal.checkpointTime, block.timestamp);
@@ -770,10 +807,32 @@ library CoreLib {
         if (!ok || unit == 0 || unit > type(uint128).max) return (0, false);
     }
 
-    /// a non reverting read of the module `available()`: the amount on a 32 byte answer, else 0
+    /// a non reverting bounded read of the module `available()`: at most `READ_GAS`, 32 bytes, the amount on a good
+    /// answer, else 0
     function _availableView(address module) private view returns (uint256 avail) {
-        (bool ok, bytes memory out) = module.staticcall(abi.encodeCall(IBalanceModule.available, ()));
-        if (ok && out.length >= 32) avail = abi.decode(out, (uint256));
+        bytes4 sel = IBalanceModule.available.selector;
+        bool ok;
+        assembly ("memory-safe") {
+            mstore(0, sel)
+            ok := staticcall(READ_GAS, module, 0, 4, 0, 32)
+            ok := and(ok, iszero(lt(returndatasize(), 32)))
+            avail := mload(0)
+        }
+        if (!ok) avail = 0;
+    }
+
+    /// a bounded read of the module `available()`: at most `READ_GAS`, 32 bytes returned. a revert or a short answer
+    /// reverts `BadModule`
+    function _liveAvailable(address module) private view returns (uint256 avail) {
+        bytes4 sel = IBalanceModule.available.selector;
+        bool ok;
+        assembly ("memory-safe") {
+            mstore(0, sel)
+            ok := staticcall(READ_GAS, module, 0, 4, 0, 32)
+            ok := and(ok, iszero(lt(returndatasize(), 32)))
+            avail := mload(0)
+        }
+        if (!ok) revert BadModule();
     }
 
     /// gas forwarded to the bounded module and controller reads of the balance token bid

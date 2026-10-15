@@ -500,7 +500,8 @@ abstract contract HandlerSale is HandlerOwner {
         if (p.payerBal - who.balance != acc.priceSum) {
             _flag(V_SALE_PATH, "the credit buyer did not pay exactly the sum of the prices");
         }
-        // no credit leaves the pot for less than it was bought for: the price is at least the sum of the costs
+        // the gross payment is at least the sum of the costs, the Core's hard floor before the artist and operator cuts
+        // come off; the engine books the rest after the cuts (checked below)
         if (acc.priceSum < acc.costSum) _flag(V_SALE_PATH, "a credit was sold below its recorded cost");
         if (core.ethPot() != p.pot + acc.toPotSum || core.ethToBuyback() != p.tb + acc.toBuybackSum) {
             _flag(V_SALE_PATH, "the credit sale rest was not booked by creditCostToPotBps");

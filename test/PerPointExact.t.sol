@@ -23,9 +23,10 @@ contract PerPointExactTest is Fixture {
         uint256 drop = core.settings().dropPerCreditBps;
         uint256 floorBps = core.settings().dropFloorBps;
         uint256 ref = core.settings().refScore;
-        uint256 fall = (drop * s) / ref;
-        if (fall > 10_000) fall = 10_000;
-        uint256 dropped = (r * (10_000 - fall)) / 10_000;
+        // one rounding, fall rounded up: rate = r * (10_000 * ref - drop * s) / (10_000 * ref)
+        uint256 fallNum = drop * s;
+        uint256 denom = 10_000 * ref;
+        uint256 dropped = fallNum >= denom ? 0 : (r * (denom - fallNum)) / denom;
         uint256 floor = (start * floorBps) / 10_000;
         return dropped > floor ? dropped : floor;
     }
@@ -82,7 +83,9 @@ contract PerPointExactTest is Fixture {
         uint256[3] memory sr = [s[2], s[1], s[0]];
         uint256 back = _expectBatch(rev, sr, R, ref);
 
-        assertTrue(fwd != back, "the call order changes the total");
+        // the per-credit payouts and the rate after each fill depend on the order (asserted in `_expectBatch`); the
+        // batch total does not, since the one-rounding drop is symmetric in the scores
+        assertEq(fwd, back, "the batch total is order independent");
     }
 
     // sells `ids` in order, asserts each payout, the rate after each fill and the cost basis, and returns the total paid
@@ -108,13 +111,16 @@ contract PerPointExactTest is Fixture {
     // promise: SPEC 4 a ratio above 1 reaches the minute floor in fewer fills than the ratio-1 count (139 in BidRule)
     function test_minuteFloor_reachedInFewerFillsAtRatioAboveOne() public {
         uint256 R = 1e16;
-        uint256[] memory ids = _credits(who, 140);
+        uint256[] memory ids = _credits(who, 300);
         _armRate(R);
         uint256 floor = (R * core.settings().dropFloorBps) / 10_000;
         uint256 fills;
         for (uint256 i; i < ids.length; ++i) {
-            // refScore half the score, so each fall is 1 percent: the floor is reached in about 69 fills
-            _setRefScore(uint32(_scoreOf(ids[i]) / 2));
+            uint256 sc = _scoreOf(ids[i]);
+            // refScore half the score (an even score at least 1_600_000 so refScore stays at or above its 800_000
+            // bound), so each fall is 1 percent: the floor is reached in about 69 fills
+            if (sc < 1_600_000 || sc % 2 != 0) continue;
+            _setRefScore(uint32(sc / 2));
             vm.prank(who);
             core.sellForEth(_one(ids[i]));
             fills++;
@@ -175,8 +181,9 @@ contract PerPointExactTest is Fixture {
         assertTrue(floored * (s + 1) < R * s, "a nonzero remainder, so it rounded down");
     }
 
-    // promise: SPEC 1 a buy at the credit sale floor then a sellForEth never profits, so rounding leaves no 1 wei gain
-    function test_rounding_buyAtTheFloorThenSellForEthDoesNotProfit() public {
+    // promise: SPEC 1 the credit sale floor price is above the sellForEth payout at the rounding boundary, so a round
+    // trip would lose even before the same block return guard refuses it
+    function test_rounding_buyAtTheFloorIsAboveTheSellForEthPayout() public {
         uint256 id = _fillEthPile(1)[0];
         uint256 s = _scoreOf(id);
         _setRefScore(uint32(s + 1)); // a remainder in both the credit sale floor and the sellForEth payout
@@ -186,14 +193,6 @@ contract PerPointExactTest is Fixture {
         _setCreditSaleOn(true);
         _warp(ctl.creditWindow()); // the price rests at the floor
         uint256 price = ctl.creditPrice(id);
-        address arb = _user("arb rounding");
-        vm.deal(arb, price);
-        uint256 start = arb.balance;
-        vm.startPrank(arb);
-        ctl.buyCredit{value: price}(id);
-        CREDITS.setApprovalForAll(address(core), true);
-        core.sellForEth(_one(id));
-        vm.stopPrank();
-        assertLt(arb.balance, start, "the round trip loses: no 1 wei profit at the rounding boundary");
+        assertLt(core.bidOf(id), price, "the floor buy price is above the sellForEth payout: no 1 wei profit");
     }
 }

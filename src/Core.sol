@@ -160,6 +160,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller);
     event SettingsSet(Settings settings);
     event RateSet(uint256 rate);
+    /// the balance bid rate was reset to `rateBps` (bps of par): the floor, on a margin raise or the bid turning on
+    event BalanceRateSet(uint256 rateBps);
     event StatementRedeemed(uint256 indexed sid, uint256 received);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     /// the controller sold a statement: the buyer, the price paid, the part of the rest booked to the coin buyback (the
@@ -903,10 +905,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit StatementSoldTo(sid, buyer, msg.value, toBuyback, toArtist, toOperator);
     }
 
-    /// the controller sells pile credit `id` to `buyer` for `msg.value`. the payment is at least the credit's cost: no
-    /// credit leaves the pot for less than it was bought for, whatever the controller quotes. `creditCostToPotBps` of
-    /// the cost goes to the pot and the rest of the payment to the coin buyback, so the markup over cost funds a coin
-    /// buy and burn. the controller refunds its own caller
+    /// the controller sells pile credit `id` to `buyer` for `msg.value`. the payment is at least the credit's cost. the
+    /// artist and operator cuts come off the payment; `creditCostToPotBps` of the cost, at most the rest, goes to the
+    /// pot and the remainder to the coin buyback, so the markup over cost funds a coin buy and burn. the controller
+    /// refunds its own caller
     function sellCreditTo(uint256 id, address buyer) external payable nonReentrant {
         if (msg.sender != s.controller) revert OnlyController();
         if (s.paused) revert Paused();
@@ -1049,9 +1051,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit ControllerSet(c);
     }
 
-    /// sets the address the payee fee share and the operator cut of nft sales are pushed to. never zero, effective at once
+    /// sets the address the payee fee share and the operator cut of nft sales are pushed to. never zero, a forbidden
+    /// target is refused, effective at once
     function setPayee(address to) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
+        if (_forbidden(to)) revert ForbiddenTarget();
         s.payee = to;
         emit PayeeSet(to);
     }
@@ -1333,8 +1337,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (old != address(0) && token != s.balanceToken) revert BalanceTokenChanged();
         if (token.code.length == 0 || _forbiddenBase(module) || _forbiddenBase(token)) revert BadModule();
         uint256 unit = _unitOf(module);
-        // the module must answer `available()`, the token it commits to the balance bid
-        (bool hasAvailable,) = module.staticcall(abi.encodeCall(IBalanceModule.available, ()));
+        // the module must answer `available()`, the token it commits to the balance bid, within the bounded read
+        (bool hasAvailable,) = _ask(module, abi.encodeCall(IBalanceModule.available, ()), READ_GAS, 32);
         if (!hasAvailable) revert BadModule();
         s.balanceModule = module;
         s.balanceToken = token;

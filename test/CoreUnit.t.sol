@@ -966,10 +966,10 @@ contract CoreComposedTest is CoreBase {
         vm.prank(keeper);
         vm.expectRevert(ICore.NotOwner.selector);
         core.sellForBalance(ids);
-        // the module commits only 1 wei: available as bps of par rounds to zero, so the credit's bid is zero
+        // the module commits only 1 wei: the clamp as bps of par is below the floor, so the bid closes (PotTooSmall)
         mod.setAvailable(1);
         vm.prank(alice);
-        vm.expectRevert(ICore.ZeroAmount.selector);
+        vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForBalance(ids);
     }
 

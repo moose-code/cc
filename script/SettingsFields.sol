@@ -103,7 +103,7 @@ library SettingsFields {
             0,
             0,
             0,
-            1,
+            800_000,
             0
         ];
     }

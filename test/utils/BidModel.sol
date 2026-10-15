@@ -55,9 +55,12 @@ library BidModel {
         uint256 absFloor
     ) internal pure returns (uint256) {
         minuteStart = startAfter(s, fillState, minuteStart);
-        uint256 fall = uint256(s.dropPerCreditBps) * score / refScore;
-        if (fall > 10_000) fall = 10_000;
-        uint256 lo = FixedPointMathLib.max(fillState * (10_000 - fall) / 10_000, minuteStart * s.dropFloorBps / 10_000);
+        // one rounding, fall rounded up: rate = fillState * (10_000 * refScore - dropPerCreditBps * score) /
+        // (10_000 * refScore), mirroring CoreLib._drop
+        uint256 fallNum = uint256(s.dropPerCreditBps) * score;
+        uint256 denom = 10_000 * refScore;
+        uint256 dropped = fallNum >= denom ? 0 : FixedPointMathLib.mulDiv(fillState, denom - fallNum, denom);
+        uint256 lo = FixedPointMathLib.max(dropped, minuteStart * s.dropFloorBps / 10_000);
         return FixedPointMathLib.max(lo, absFloor);
     }
 
