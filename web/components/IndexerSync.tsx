@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchIxHealth, ix, IX_MAX_BEHIND, setIxMode } from "@/lib/indexer";
 import { engine } from "@/lib/indexer-schema";
 import { useHead, useSnapshot } from "@/lib/live";
@@ -19,7 +19,7 @@ const QUARANTINE_BLOCKS = 5; // blocks the app stays in chain mode after an inde
 export function IndexerSync() {
   const qc = useQueryClient();
   const { data: head } = useHead();
-  const { data: snap } = useSnapshot();
+  const { data: snap, isPending: snapPending } = useSnapshot();
   const [live, setLive] = useState(false);
   const headSeen = useRef<bigint | undefined>(undefined);
   const badUntil = useRef<bigint>(0n);
@@ -29,18 +29,19 @@ export function IndexerSync() {
     enabled: Boolean(ix),
     retry: 0,
     staleTime: 0,
+    placeholderData: keepPreviousData,
     queryFn: fetchIxHealth,
   });
 
   useEffect(() => {
     if (!ix) return setIxMode("chain");
     if (health.isError) return setIxMode("chain");
-    if (!health.data) return; // first health result pending
+    if (!health.data || snapPending) return; // first health result and first Core snapshot pending (the parity check needs both)
     const behind = head ? Number(head.n) - health.data.block : 0;
     const consistent = !snap || health.data.held === Number(snap.pileSize);
     const quarantined = head != null && head.n < badUntil.current;
     setIxMode(behind > IX_MAX_BEHIND || !consistent || quarantined ? "chain" : "ix");
-  }, [health.data, health.isError, head, snap]);
+  }, [health.data, health.isError, head, snap, snapPending]);
 
   // an indexer query that fails (after its retry) puts the app in chain mode for a few blocks
   useEffect(() => {
