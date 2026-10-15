@@ -46,11 +46,12 @@ export default function SellPage() {
   const bidForId = (id: number): bigint => bids?.[id.toString()] ?? 0n;
   const total = quote.data ?? mine.filter((id) => selected.has(id)).reduce((t, id) => t + bidForId(id), 0n);
   // the per-credit balance payout, score * unitPerPoint * balanceRate / 10_000, derived from the cached scores and the
-  // snapshot rate and unit (no extra poll). the batch drops the rate per credit, so the summed figure is the top
+  // snapshot rate and unit (no extra poll). the batch total replays the per-credit drop (balanceQuote)
   const { data: scores } = useScores(balanceBid ? mine.map((id) => BigInt(id)) : []);
   const balanceForId = (id: number): bigint =>
     balanceBid && scores ? ((scores[id.toString()] ?? 0n) * (snap?.balanceUnit ?? 0n) * (snap?.balanceRate ?? 0n)) / 10000n : 0n;
-  const balanceTotal = mine.filter((id) => selected.has(id)).reduce((t, id) => t + balanceForId(id), 0n);
+  const balanceTotal =
+    balanceBid && scores && snap ? balanceQuote(snap, selectedIds.map((id) => scores[id.toString()] ?? 0n)) : 0n;
 
   const toggle = (id: number) =>
     setSelected((prev) => {
