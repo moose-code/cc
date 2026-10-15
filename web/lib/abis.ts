@@ -21,6 +21,7 @@ export const coreAbi = parseAbi([
   "function ethRedeemBurn() view returns (uint256)",
   "function payee() view returns (address)",
   "function artist() view returns (address)",
+  "function creditCostToPotBps() view returns (uint16)",
   "function payeeOn() view returns (bool)",
   "function pileSize() view returns (uint256)",
   "function pilePage(uint256 startAfter, uint256 n) view returns (uint256[] ids)",

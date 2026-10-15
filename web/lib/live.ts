@@ -97,6 +97,7 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
     coreEth,
     balanceRate,
     artist,
+    creditCostToPotBps,
   ] = await client.multicall({
     ...mc,
     blockNumber,
@@ -124,6 +125,7 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
       { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [coreAddr] },
       { ...c, functionName: "balanceRate" },
       { ...c, functionName: "artist" },
+      { ...c, functionName: "creditCostToPotBps" },
     ] as const,
   });
   // ethPot plus the share of the unbooked fee income that the next Core._book adds (Core._income, _split)
@@ -181,6 +183,9 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
     payee,
     payeeOn,
     artist,
+    // Credit sale proceeds (Core.sellCreditTo): after the artist and operator cuts, min(cost * creditCostToPotBps / 10000,
+    // rest) goes to the pot and the remainder to the buyback.
+    creditCostToPotBps,
     pileSize,
     held: held.map(Number),
     settings,

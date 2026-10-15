@@ -8,7 +8,8 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CreditTile, StatementTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { Addr } from "@/components/Addr";
-import { ArtFrame, Breadcrumb, RegMark } from "@/components/Shell";
+import { Breadcrumb } from "@/components/Shell";
+import { Fact, HeroArt, HistLine, type Ink } from "@/components/Detail";
 import { NotDeployed } from "@/components/NotDeployed";
 import { useComposeEta } from "@/components/ComposeEta";
 import { core, credits, engineDeployed } from "@/lib/config";
@@ -31,10 +32,9 @@ import {
 import { useTokenMeta } from "@/lib/art";
 import { buyCredits } from "@/lib/buy";
 import { etaLabel, windowLabel } from "@/lib/compose-eta";
-import { agoLabel, eth, evmNowAddress, evmNowTx, rating, shortAddr, tokens } from "@/lib/format";
+import { eth, evmNowTx, rating, shortAddr, tokens } from "@/lib/format";
 import type { Write } from "@/lib/tx";
 
-type Ink = "c" | "m" | "y" | "k";
 const PLATES: { letter: string; bit: number }[] = [
   { letter: "C", bit: 1 },
   { letter: "M", bit: 2 },
@@ -110,41 +110,20 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
     "—"
   );
 
-  const svg = meta?.image?.startsWith("data:image/svg") ? meta.image : undefined;
-
   return (
     <div className="detail-page">
       <Breadcrumb parent="credits" parentHref="/credits" id={id} prevHref={prevHref} nextHref={nextHref} />
 
       <div className="detail-split">
         <div className="detail-body">
-          <div className="detail-left">
-            <div className="hero-art">
-              <ArtFrame crop="lg">
-                <CreditTile id={id} />
-              </ArtFrame>
-            </div>
-            <div className="hero-links">
-              <span className="hero-dl">
-                {svg && (
-                  <a href={svg} download={`credit-${id}.svg`}>
-                    svg ↓
-                  </a>
-                )}
-                <a href={evmNowAddress(credits)} target="_blank" rel="noreferrer" className="muted">
-                  evm.now ↗
-                </a>
-              </span>
-              <RegMark />
-            </div>
-          </div>
+          <HeroArt tile={<CreditTile id={id} />} image={meta?.image} file={`credit-${id}.svg`} address={credits} />
 
           <div className="detail-right">
             <div className="label">credit</div>
             <h1 className="detail-id">#{id}</h1>
 
             {known && (
-              <dl className="facts dfacts">
+              <dl className="dfacts">
                 <Fact k="credit rating" v={score != null ? rating(score) : "—"} />
                 {mask != null && (
                   <Fact
@@ -208,7 +187,7 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
             <PriceBox id={id} c={c} snap={snap} left={left} now={now} acquiredAt={c.acquiredAt} />
           )}
           {state === "composed" && last?.t === "composed" && <StatementCard sid={last.sid} />}
-          {state === "sold" && last?.t === "sold" && <SoldSplit e={last} paid={lastBought?.cost} />}
+          {state === "sold" && last?.t === "sold" && <SoldSplit e={last} paid={lastBought?.cost} potBps={snap?.creditCostToPotBps} />}
           {inPile && snap && <SwapPanel outId={id} snap={snap} />}
         </aside>
       </div>
@@ -222,15 +201,6 @@ function utc(ts: number): string {
   const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
   const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
   return `${date} · ${time} UTC`;
-}
-
-function Fact({ k, v }: { k: string; v: ReactNode }) {
-  return (
-    <div className="fact">
-      <dt>{k}</dt>
-      <dd>{v}</dd>
-    </div>
-  );
 }
 
 function Status({
@@ -405,10 +375,13 @@ function StatementCard({ sid }: { sid: number }) {
   );
 }
 
-// Sale split from the CreditSold event: the artist and operator cuts come off the price and the engine keeps the
-// rest. TODO(missing read): the rest divides into pot and buyback by Core creditCostToPotBps, which the app does not
-// read, so "to buyback" is not shown.
-function SoldSplit({ e, paid }: { e: Extract<CreditEvt, { t: "sold" }>; paid?: bigint }) {
+// Sale split from the CreditSold event (Core.sellCreditTo): the artist and operator cuts come off the price, then
+// min(engine cost * creditCostToPotBps / 10000, rest) goes to the pot and the remainder to the buyback. The split uses
+// the current creditCostToPotBps.
+function SoldSplit({ e, paid, potBps }: { e: Extract<CreditEvt, { t: "sold" }>; paid?: bigint; potBps?: number }) {
+  const rest = e.price - e.toArtist - e.toOperator;
+  const toPot = paid != null && potBps != null ? (paid * BigInt(potBps)) / 10000n : undefined;
+  const toBuyback = toPot != null ? rest - (toPot < rest ? toPot : rest) : undefined;
   return (
     <section className="side-sec">
       <div className="kv">
@@ -433,28 +406,19 @@ function SoldSplit({ e, paid }: { e: Extract<CreditEvt, { t: "sold" }>; paid?: b
           <span>{eth(e.toOperator)} ETH</span>
         </div>
       )}
-      <div className="kv">
-        <span className="muted">kept by engine</span>
-        <span>{eth(e.price - e.toArtist - e.toOperator)} ETH</span>
-      </div>
+      {toBuyback != null && (
+        <div className="kv">
+          <span className="muted">to buyback</span>
+          <span>{eth(toBuyback)} ETH</span>
+        </div>
+      )}
+      {toBuyback != null && (
+        <div className="kv">
+          <span className="muted">to pot</span>
+          <span>{eth(rest - toBuyback)} ETH</span>
+        </div>
+      )}
     </section>
-  );
-}
-
-function HistLine({ mark, text, value, when, block }: { mark: Ink | "hollow"; text: ReactNode; value: ReactNode; when?: string; block?: bigint }) {
-  const now = useNow();
-  const { data: ts } = useBlockTs(block);
-  return (
-    <div className="hist-row">
-      <span className="t" suppressHydrationWarning>
-        {when ?? (ts != null ? agoLabel(now - ts) : "")}
-      </span>
-      <span className="what">
-        <span className={`mark ${mark}`} />
-        <span>{text}</span>
-      </span>
-      <span className="v">{value}</span>
-    </div>
   );
 }
 
