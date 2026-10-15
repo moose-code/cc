@@ -64,6 +64,7 @@ interface ICore {
     error RedeemOff();
     error Reentrancy();
     error Retired();
+    error SameBlockReturn(uint256 id);
     error ScoreTooLow(uint256 inId, uint256 outId);
     error SliceTooSmall();
     error Slippage();
@@ -79,6 +80,7 @@ interface ICore {
     event BalanceModuleLocked();
     event BalanceModuleSet(address balanceModule, address balanceToken, uint256 unitPerPoint);
     event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
+    event BalanceRateSet(uint256 rateBps);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     event ChosenComposeOnSet(bool on);
     event CoinRescued(address indexed to, uint256 amount);

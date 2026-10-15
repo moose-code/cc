@@ -10,7 +10,7 @@ import { usePublicClient } from "wagmi";
 import { numberToHex, parseAbi, zeroAddress, type Address } from "viem";
 import { core, credits, engineDeployed } from "./config";
 import { controllerAbi, coreAbi } from "./abis";
-import { replayEth } from "./sell";
+import { replayEth, replayBalance } from "./sell";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
@@ -116,7 +116,7 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
   const toRedeemBurn = ((income - toPayee) * BigInt(settings.feeToRedeemBurnBps)) / 10000n;
   const potWithPending = ethPot + income - toPayee - toRedeemBurn;
   // the balance token is held by the module, not the Core: the pot of the bid is the module's available() holding
-  const [balancePot, balanceUnit] = balanceModule !== zeroAddress
+  const [balanceAvailable, balanceUnit] = balanceModule !== zeroAddress
     ? await client.multicall({
         ...mc,
         allowFailure: false,
@@ -145,7 +145,7 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     potWithPending,
     ethToBuyback,
     ethRedeemBurn,
-    balancePot,
+    balanceAvailable,
     balanceRate,
     balanceUnit,
     payee,
@@ -323,7 +323,7 @@ export function useStatements() {
 
 // ---- sell quotes ----------------------------------------------------------------
 
-// State.anchor starts at slot 28 (test/CoreLayout.t.sol, src/lib/CoreLib.sol):
+// State.anchor starts at slot 27 (test/CoreLayout.t.sol, src/lib/CoreLib.sol):
 // lastFillRate, minuteStartRate, minuteBucket (uint64) + peakTime, peakRate.
 const ANCHOR_SLOT = 27n;
 const CREDIT_SCORE = "0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7" as const;
@@ -454,16 +454,18 @@ export function useSellQuote(ids: bigint[], now: number) {
   });
 }
 
-// the balance token total for `ids` at the current rate: the sum of each credit's balanceBidOf (one multicall). the
-// batch drops the rate per credit, so the paid total is at most this; the sell sets minOut under it
-export async function balanceQuote(client: Client, ids: bigint[]): Promise<bigint> {
-  if (ids.length === 0) return 0n;
-  const res = await client.multicall({
-    ...mc,
-    allowFailure: false,
-    contracts: ids.map((id) => ({ address: core!, abi: coreAbi, functionName: "balanceBidOf", args: [id] }) as const),
+// the balance token total sellForBalance pays for `scores` (in order), replaying the per-credit drop from the snapshot
+// rate and settings the way sellQuote replays the eth bid. the sell sets minOut to a share of this
+export function balanceQuote(snap: Snapshot, scores: bigint[]): bigint {
+  if (scores.length === 0) return 0n;
+  return replayBalance(scores, {
+    rate: snap.balanceRate,
+    unit: snap.balanceUnit,
+    refScore: BigInt(snap.settings.refScore),
+    dropPerCreditBps: BigInt(snap.settings.dropPerCreditBps),
+    dropFloorBps: BigInt(snap.settings.dropFloorBps),
+    floorBps: 10000n - BigInt(snap.settings.balanceBidMarginBps),
   });
-  return (res as bigint[]).reduce((a, b) => a + b, 0n);
 }
 
 // ---- helpers --------------------------------------------------------------------

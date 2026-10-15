@@ -2587,18 +2587,27 @@ abstract contract HandlerBase is Test {
     /// one pile with an eth cost basis (the `CreditBought` event), the module pays the seller balance tokens from its holding
     function _afterSellBalance(address who, XPre memory p, uint256 bound_, uint256 b0) internal {
         Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 floorBps = 10_000 - core.settings().balanceBidMarginBps;
+        uint256 floorSum;
+        uint256 parSum;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.CreditBought.selector) continue;
             uint256 cost = abi.decode(logs[i].data, (uint256));
             uint256 id = uint256(logs[i].topics[1]);
             // the recorded eth cost is the score-scaled floor rate backstop, at least 1 wei
             if (cost == 0) _flag(V_MODEL, "sellForBalance recorded a zero eth cost basis");
+            uint256 par = _scoreOf(id) * p.unit;
+            parSum += par;
+            floorSum += par * floorBps / 10_000;
             _addCredit(id, cost);
             _removeFrom(inventory[who], id);
         }
         uint256 paid = _xBal(who) - p.actorX;
         // the balance tokens paid are the rising per credit bid summed with its drops, the shared-model figure above
         if (paid != bound_) _flag(V_ABOVE_CAP, "sellForBalance paid differs from the per point bid read before");
+        // independent of the model: every paid credit is at or above the floor and at or below par
+        if (paid < floorSum) _flag(V_MODEL, "sellForBalance paid below the floor");
+        if (paid > parSum) _flag(V_ABOVE_CAP, "sellForBalance paid above par");
         // the module paid the seller: its holding fell by the price, the core holds no balance token
         if (_xBal(address(core)) != p.xbal) _flag(V_POT, "sellForBalance moved the core's balance token");
         if (p.balancePotPre - _xBal(address(module)) != paid) _flag(V_POT, "the module holding did not fall by the price");

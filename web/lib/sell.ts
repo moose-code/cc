@@ -40,9 +40,10 @@ export function replayEth(scores: bigint[], a: EthReplay): bigint {
       start = r;
     }
     if (r > peak) peak = r;
-    let fall = (a.dropPerCreditBps * score) / a.refScore;
-    if (fall > 10000n) fall = 10000n;
-    const dropped = (r * (10000n - fall)) / 10000n;
+    // one rounding, fall rounded up (CoreLib.drop): r * (10000*refScore - dropPerCreditBps*score) / (10000*refScore)
+    const denom = 10000n * a.refScore;
+    const fallNum = a.dropPerCreditBps * score;
+    const dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;
     const floor = (start * a.dropFloorBps) / 10000n;
     const next = dropped > floor ? dropped : floor;
     let cap = (peak * 10000n * a.ceilBps) / 100000000n;
@@ -52,9 +53,33 @@ export function replayEth(scores: bigint[], a: EthReplay): bigint {
   return total;
 }
 
-// Total balance token sellForBalance pays: each credit pays
-// the balance bid floor (opening) payout per credit: score * unit * (10000 - balanceBidMarginBps) / 10000. the
-// live bid climbs above this (Core.balanceBidOf); the web reads that from the chain.
-export function replayBalance(scores: bigint[], unit: bigint, marginBps: bigint): bigint {
-  return scores.reduce((t, s) => t + (s * unit * (10000n - marginBps)) / 10000n, 0n);
+export interface BalanceReplay {
+  rate: bigint; // balanceRate(): the balance bid rate now, bps of par
+  unit: bigint; // the module's unitPerPoint()
+  refScore: bigint;
+  dropPerCreditBps: bigint;
+  dropFloorBps: bigint;
+  floorBps: bigint; // 10000 - balanceBidMarginBps
+}
+
+// Total balance token sellForBalance pays for the credits `scores` (in order) in one call. Each credit pays
+// score * unit * rate / 10000 and the fill drops the rate per credit by dropPerCreditBps * score / refScore (one
+// rounding), held at or above the minute floor and the bid floor, mirroring CoreLib._drop. The quote is the first
+// fills of the minute, so the minute start is the starting rate. The available() clamp is not replayed: with ample
+// available it does not bind, and a module too short to pay the floor reverts PotTooSmall, which no minOut can clear.
+export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
+  let r = a.rate;
+  const start = a.rate;
+  let total = 0n;
+  for (const score of scores) {
+    total += (score * a.unit * r) / 10000n;
+    const denom = 10000n * a.refScore;
+    const fallNum = a.dropPerCreditBps * score;
+    let dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;
+    const mfloor = (start * a.dropFloorBps) / 10000n;
+    if (dropped < mfloor) dropped = mfloor;
+    if (dropped < a.floorBps) dropped = a.floorBps;
+    r = dropped;
+  }
+  return total;
 }

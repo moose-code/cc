@@ -31,7 +31,6 @@ interface IControllerV1 {
     error OnlyOwner();
     error Reentrant();
     error Underpaid();
-    error ZeroAmount();
 
     event AnchorBpsSet(uint32 anchorBps);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);

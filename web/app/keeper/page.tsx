@@ -49,11 +49,11 @@ export default function KeeperPage() {
         <section>
           <h2>pots</h2>
           <div className="quote">
-            {row("bid, average credit", `${eth(s.ethRate)} eth`)}
+            {row("bid, reference credit", `${eth(s.ethRate)} eth`)}
             {row("pot", `${eth(s.ethPot)} eth`)}
             {row("to buyback", `${eth(s.ethToBuyback)} eth`)}
             {row("redeem burn pot", `${eth(s.ethRedeemBurn)} eth`)}
-            {s.balanceOn && row(`${BALANCE_SYMBOL} in the module`, eth(s.balancePot))}
+            {s.balanceOn && row(`${BALANCE_SYMBOL} in the module`, eth(s.balanceAvailable))}
             {s.balanceOn && row(`${BALANCE_SYMBOL} bid, % of par`, `${(Number(s.balanceRate) / 100).toFixed(1)}%`)}
           </div>
         </section>

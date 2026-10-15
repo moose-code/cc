@@ -85,12 +85,12 @@ export default function SellPage() {
         <div>
           <div className="bidcard">
             <div className="buybox-price">
-              <span className="muted">bid, average credit</span>
+              <span className="muted">bid, reference credit</span>
               <span className="big">{eth(bid)} eth</span>
             </div>
             <div className="quote">
               <div className="r">
-                <span>average credit</span>
+                <span>reference credit</span>
                 <span>{eth(bid)} eth</span>
               </div>
               <div className="r">
@@ -104,7 +104,7 @@ export default function SellPage() {
               {snap?.balanceOn && (
                 <div className="r">
                   <span>balance in the module</span>
-                  <span>{eth(snap.balancePot)}</span>
+                  <span>{eth(snap.balanceAvailable)}</span>
                 </div>
               )}
             </div>
@@ -179,7 +179,9 @@ export default function SellPage() {
                     disabled={n === 0}
                     steps={async (write) => {
                       await approve(write);
-                      const expected = await balanceQuote(client!, ids());
+                      // minOut replays the per-credit drop from the snapshot, like the eth quote, so an ordinary batch
+                      // does not trip Slippage
+                      const expected = balanceQuote(snap!, ids().map((id) => scores?.[id.toString()] ?? 0n));
                       await write({ address: core, abi: coreAbi, functionName: "sellForBalance", args: [ids(), (expected * MIN_OUT_BPS) / 10000n] });
                       setSelected(new Set());
                     }}

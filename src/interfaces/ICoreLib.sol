@@ -25,12 +25,14 @@ interface ICoreLib {
     error OnlyOwner();
     error PotTooSmall();
     error Retired();
+    error SameBlockReturn(uint256 id);
     error Slippage();
     error ZeroAddress();
     error ZeroAmount();
     error ZeroId();
 
     event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
+    event BalanceRateSet(uint256 rateBps);
     event CoinRescued(address indexed to, uint256 amount);
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);

@@ -56,7 +56,6 @@ contract ControllerV1 is IController {
     error BadSetting(bytes32 field);
     error NotForSale();
     error Underpaid();
-    error ZeroAmount();
     error Reentrant();
     /// a credit sale door was called while the credit sale window is off
     error CreditSaleOff();

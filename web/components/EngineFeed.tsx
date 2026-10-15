@@ -94,7 +94,7 @@ export function EngineFeed() {
           <span className="amt">
             <Tween wei={snap?.potWithPending} /> eth
           </span>
-          <span className="bid" title="the bid for an average credit; each credit's own bid scales with its score">
+          <span className="bid" title="the bid for a reference credit (score refScore); each credit's own bid scales with its score">
             avg bid{" "}
             <b>
               <Tween wei={snap?.ethRate} /> eth

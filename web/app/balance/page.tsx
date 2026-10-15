@@ -20,7 +20,7 @@ export default function BalancePage() {
     <main className="page balance">
       {snap?.balanceOn && (
         <p className="muted">
-          {BALANCE_SYMBOL} in the module: {eth(snap.balancePot)}
+          {BALANCE_SYMBOL} in the module: {eth(snap.balanceAvailable)}
           {snap.settings.balanceBidOn
             ? ` · balance bid ${(Number(snap.balanceRate) / 100).toFixed(1)}% of par`
             : " · balance bid paused"}
