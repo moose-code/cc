@@ -20,6 +20,8 @@ args=(
   --chain-id 31337
   --port "$PORT"
   --auto-impersonate
+  --retries 10
+  --timeout 60000
 )
 
 for a in "$@"; do
