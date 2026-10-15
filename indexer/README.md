@@ -6,8 +6,11 @@ Ponder 0.17.8 indexer for the Core, its controllers, the coin burns, the balance
 
 ```
 cd indexer && npm ci
-DEPLOYMENT_RECORD=../deployments/31337.json npx ponder dev --port 42169   # PGlite in .ponder/, anvil fork at the record rpcUrl
+createdb cc_indexer_local   # once; local Postgres, same database kind as deployed
+DATABASE_URL=postgresql://localhost/cc_indexer_local npx ponder dev --port 42169   # anvil fork at the record rpcUrl
 ```
+
+Local runs use Postgres. With PGlite the `/sql` endpoint returns no rows for the `credit` table (a session temp table named `credit` shadows it), so the web health check stays in chain mode. The launch entry `indexer` in `.claude/launch.json` runs the command above.
 
 Endpoints: `/graphql`, `/sql` (`@ponder/client`), `/health/parity` (503 when a reconciliation check failed), `/health/rpc` (requests and failures per endpoint), `/ready`.
 

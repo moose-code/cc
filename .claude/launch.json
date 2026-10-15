@@ -15,19 +15,13 @@
     },
     {
       "name": "indexer",
-      "runtimeExecutable": "npx",
+      "runtimeExecutable": "sh",
       "runtimeArgs": [
-        "--prefix",
-        "indexer",
-        "ponder",
-        "dev",
-        "--root",
-        "indexer",
-        "--port",
-        "42169"
+        "-c",
+        "cd indexer && npx ponder dev --port 42169"
       ],
       "env": {
-        "DEPLOYMENT_RECORD": "deployments/31337.json"
+        "DATABASE_URL": "postgresql://localhost/cc_indexer_local"
       },
       "port": 42169
     }
