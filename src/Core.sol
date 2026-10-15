@@ -127,6 +127,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error Retired();
     /// `swapCredit`: the incoming credit's score is below the pile credit's score
     error ScoreTooLow(uint256 inId, uint256 outId);
+    /// a credit the engine sold through `sellCreditTo` in this block is offered back to an intake door
+    error SameBlockReturn(uint256 id);
     /// `setSuccessor` with the core or a contract the core works with
     error BadSuccessor(address who);
 
@@ -620,6 +622,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = _owned(ids[i]);
+            if (s.creditSaleBlock[id] == block.number) revert SameBlockReturn(id);
             uint256 score = _scoreOf(id);
             uint256 pay = _bid().mulDiv(score, refScore);
             _spend(pay, score, refScore);
@@ -644,6 +647,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _openDoor();
         if (!s.allowedAdapter[adapter]) revert AdapterNotAllowed();
         if (id == 0) revert ZeroId();
+        if (s.creditSaleBlock[id] == block.number) revert SameBlockReturn(id);
         if (CREDITS.ownerOf(id) == address(this)) revert AlreadyOwned();
         (address target, uint256 value, bytes memory data) = _quote(adapter, id, params);
         if (_forbidden(target)) revert ForbiddenTarget();
@@ -912,6 +916,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 cost = c.cost;
         if (msg.value < cost) revert BelowFloor();
         _pull(id);
+        // record the sale block so an intake door refuses this credit back in the same block (no round trip into a bid)
+        s.creditSaleBlock[id] = block.number;
         CREDITS.transferFrom(address(this), buyer, id);
         // the artist and operator cuts come off the top; the credit cost basis share of the rest goes to the pot, the
         // remainder to the buyback. the cut cannot push the pot share negative (bounded by the rest)
@@ -1195,6 +1201,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (s.retired) revert Retired();
         if (s.paused) revert Paused();
         if (inId == 0) revert ZeroId();
+        if (s.creditSaleBlock[inId] == block.number) revert SameBlockReturn(inId);
         CoreLib.Credit storage out = s.credits[outId];
         if (!out.inPile) revert NotInPile(outId);
         if (s.credits[inId].inPile) revert InPile();

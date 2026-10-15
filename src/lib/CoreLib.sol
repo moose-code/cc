@@ -80,10 +80,14 @@ struct State {
     Settings settings;
     /// the eth bid anchor state, four words
     CoreLib.Anchor anchor;
-    /// the balance token bid instance: its own stored rate, checkpoint, fill time and anchor. appended after the last
-    /// slot so the eth instance keeps its slots. the rate is bps of par, bounded to [10_000 - balanceBidMarginBps,
-    /// 10_000] and clamped to the module's available(); the climb and drop are the eth bid's, shared through CoreLib
+    /// the balance token bid price state, a `Rate`: its own stored rate, checkpoint, fill time and anchor. the rate is
+    /// bps of par, bounded to [10_000 - balanceBidMarginBps, 10_000] and clamped to the module's available(); the climb
+    /// and drop are the eth bid's, shared through CoreLib
     CoreLib.Rate balance;
+    /// the block of the last `sellCreditTo` per credit id, kept after the credit leaves the pile. an intake door
+    /// (`sellForEth`, `sellForBalance`, `buyListing`, `swapCredit` as `inId`) refuses a credit the engine sold in the
+    /// same block
+    mapping(uint256 => uint256) creditSaleBlock;
 }
 
 /// the one linked library of the Core: the settings write (validation, storage, event), the eth rate (the climb with its
@@ -164,6 +168,8 @@ library CoreLib {
     error Slippage();
     /// `sellForBalance` while `balanceBidOn` is false
     error BalanceBidOff();
+    /// a credit the engine sold through `sellCreditTo` in this block is offered back to an intake door
+    error SameBlockReturn(uint256 id);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     /// one credit filled into the balance token bid: the balance token paid, the balance rate (bps of par) after this
     /// credit's drop, and the module available left for the rest of the batch. mirrors `Core.EthRateFill`
@@ -606,6 +612,11 @@ library CoreLib {
         return id;
     }
 
+    /// the credit score of `id` from the CreditScore contract, `scoreOf(seedOf, timestampOf)`, the source every door reads
+    function scoreOf(uint256 id) internal view returns (uint256) {
+        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
+    }
+
     /// @notice sells the credits `ids` of the caller into the balance token bid. the Core's `sellForBalance` forwards its
     /// call here untouched, under its own reentrancy guard
     function sellForBalance(uint256[] calldata ids) external {
@@ -622,10 +633,11 @@ library CoreLib {
     /// instance price state, climbed by the eth bid's climb with cap 10_000 (so the payout never exceeds par) and floored
     /// at `10_000 - balanceBidMarginBps`, dropped per credit by the eth bid's drop. runs only while `balanceBidOn`. the
     /// balance token is held by the module: the running total must not exceed the module's live `available()`
-    /// (`PotTooSmall`), each credit's rate is clamped to the available left for the rest of the batch expressed as bps of
-    /// par, the module pays with one `pay(seller, total)`, and the seller's holding must rise by at least `total`
-    /// (`BadModule`). the credit enters the single pile with an eth cost basis of `floorRate * score / refScore`, at
-    /// least 1 wei (the Core's eth `floorRate()`, which fills and time only raise). a failing, short or zero live unit
+    /// (`PotTooSmall`). the rate clamp `availBps` is the full `available()` as bps of par for a refScore credit, read
+    /// once for the batch; a paid rate below the floor `10_000 - balanceBidMarginBps` reverts `PotTooSmall`, so a module
+    /// too short to pay the floor closes the bid. the module pays with one `pay(seller, total)`, and the seller's holding
+    /// must rise by at least `total` (`BadModule`). the credit enters the single pile with an eth cost basis of
+    /// `floorRate * score / refScore`, at least 1 wei (the Core's eth `floorRate()`). a failing, short or zero live unit
     /// read reverts the whole bid (`BadModule`). `refScore` is the Core setting, read from storage
     function _sellForBalance(uint256[] calldata ids, uint256 minOut) private {
         State storage c = state();
@@ -685,8 +697,12 @@ library CoreLib {
         uint256 refScore = c.settings.refScore;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = owned(ids[i]);
-            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
-            uint256 paid = score * unit * bal.rateAtCheckpoint.min(availBps) / BPS;
+            if (c.creditSaleBlock[id] == block.number) revert SameBlockReturn(id);
+            uint256 score = scoreOf(id);
+            // the paid rate never falls below the floor: a module too short to pay the floor closes the bid
+            uint256 rate = bal.rateAtCheckpoint.min(availBps);
+            if (rate < floorBps) revert PotTooSmall();
+            uint256 paid = score * unit * rate / BPS;
             if (paid == 0) revert ZeroAmount();
             total += paid;
             if (total > avail) revert PotTooSmall();
@@ -713,13 +729,16 @@ library CoreLib {
         (rate,) = _balanceRead();
     }
 
-    /// @notice the balance token payout for credit `id` now: `score * unitPerPoint * balanceRate() / 10_000`. zero when
-    /// no module is set or the live unit read fails. the Core forwards its `balanceBidOf(id)`
+    /// @notice the balance token payout for credit `id` now: `score * unitPerPoint * rate / 10_000`, the rate held at
+    /// or above the floor `10_000 - balanceBidMarginBps`. a module too short to pay the floor still reports the floor
+    /// payout, which `sellForBalance` refuses with `PotTooSmall`. zero only when no module is set or the live unit read
+    /// fails. the Core forwards its `balanceBidOf(id)`
     function balanceBidOf(uint256 id) external view returns (uint256) {
         (uint256 rate, uint256 unit) = _balanceRead();
         if (unit == 0) return 0;
-        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
-        return score * unit * rate / BPS;
+        uint256 floorBps = BPS - state().settings.balanceBidMarginBps;
+        if (rate < floorBps) rate = floorBps;
+        return scoreOf(id) * unit * rate / BPS;
     }
 
     /// the balance bid rate (bps of par) and the live unit. the rate is the balance instance price state climbed with
