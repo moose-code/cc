@@ -75,7 +75,7 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_ROLL = 6;
     uint8 internal constant A_COMPOSE = 7;
     uint8 internal constant A_BUYBACK = 8;
-    uint8 internal constant A_SWAP_CREDIT = 9; // a holder swaps a pile credit for one of equal or higher score (was bookBalance)
+    uint8 internal constant A_SWAP_CREDIT = 9; // a holder swaps a pile credit for one of equal or higher score
     uint8 internal constant A_DONATE = 10;
     uint8 internal constant A_CONTROLLER_SEED = 11;
     uint8 internal constant A_CONTROLLER_SWAP = 12;
@@ -98,7 +98,7 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_HANDOVER = 28;
     // anyone books the fee income and forces the payee share out, now and then after the owner replaces the payee
     uint8 internal constant A_BOOK = 29;
-    // reserved: the former standalone payee claim, folded into the book under the push model (decision 123)
+    // reserved: the former standalone payee claim, folded into the book under the push model
     uint8 internal constant A_CLAIM_PAYEE = 30;
     // the owner takes a stray NFT out of the core
     uint8 internal constant A_RESCUE_NFT = 31;

@@ -33,9 +33,8 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// current anchor at every call, so held statements follow it.
 /// `buy` sells a held statement at once at the asking price. `atFloor(sid)` is true once the statement's curve price has
 /// reached the floor.
-/// a pile credit sells at `max(cost, core.floorRate(), valueOf(score)) * creditFloorBps / 10_000` at the end of its
-/// window, from `creditStartBps` of that at its acquisition. the floor rate term keeps the price at or above
-/// `creditFloorBps` of the eth bid, which is at most `core.floorRate()`.
+/// a pile credit sells at `max(cost, valueOf(score)) * creditFloorBps / 10_000` at the end of its window, from
+/// `creditStartBps` of that at its acquisition.
 /// the owner of the core can pause sales (`core.setPaused`). while paused the core reverts `Paused` in `sellTo` and
 /// `sellCreditTo`, so `buy` and `buyCredit` revert, and `priceOf` answers. the age of a statement is
 /// `core.statementAge`, which excludes every paused second, so the age of a held statement stops advancing for the
@@ -94,7 +93,7 @@ contract ControllerV1 is IController {
     PoolKey public balancePoolKey;
 
     /// whether pile credits are for sale from their acquisition time and compose waits for a credit's window to pass.
-    /// launch value false
+    /// launch value true
     bool public creditSaleOn;
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit must sit before compose
     /// may take it. 1 minute to 30 days
@@ -289,8 +288,8 @@ contract ControllerV1 is IController {
         price = start - (start - floor) * age / creditWindow;
     }
 
-    /// the credit score of `id` from the credit score contract, the same `scoreOf(seed, paidAt)` source the balance token
-    /// bid reads in `sellForBalance`. `scoreOf` is pure on a fixed verified contract, so the call is direct.
+    /// the credit score of `id` from the credit score contract, `scoreOf(seed, paidAt)`, the score source of every Core
+    /// door. `scoreOf` is pure on a fixed verified contract, so the call is direct.
     /// `creditPrice` calls this only for a credit the core holds in the pile, so the reads cannot revert
     function _scoreOf(uint256 id) private view returns (uint256) {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(
@@ -449,10 +448,9 @@ contract ControllerV1 is IController {
         anchorTime = uint40(block.timestamp);
     }
 
-    /// the asking price in wei after `age` seconds, a fraction of `ref` by the bps curve. the bps is held in units of
-    /// the asking price in wei: the asking bps falls in a straight line from `startBps()` at `age` 0 to `floor` at `age`
-    /// `decayHours`, and rests at `floor` after. a start at or below the floor is the floor from the first second. the bps
-    /// is non-increasing in `age`
+    /// the asking price in wei after `age` seconds, a fraction of `ref` by the bps curve. the asking bps falls in a
+    /// straight line from `startBps()` at `age` 0 to `floor` at `age` `decayHours`, and rests at `floor` after. a start
+    /// at or below the floor is the floor from the first second. the bps is non-increasing in `age`
     function _ask(uint256 ref, uint256 age, uint256 floor) private view returns (uint256) {
         uint256 start = startBps();
         uint256 span = uint256(decayHours) * 1 hours;

@@ -4,9 +4,9 @@ pragma solidity ^0.8.28;
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 
-/// @notice the per-point eth bid (decisions 55 and 80 reversed, 2026-10-14): every eth door prices a credit at
+/// @notice the per-point eth bid: every eth door prices a credit at
 /// `ethRate() * score / refScore`, and a fill drops the rate by `dropPerCreditBps * score / refScore`. the balance side
-/// and the statement reference already read the score; these tests prove the eth doors scale with it too
+/// and the statement reference already read the score; the eth doors scale the bid and the drop by `score / refScore`
 contract PerPointTest is Fixture {
     address internal user;
 

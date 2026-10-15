@@ -322,7 +322,7 @@ contract GasCapTest is SeaportBase {
         (, c,) = core.statementInfo(sid);
     }
 
-    // promise: inv 18 the statement sale pushes the artist and operator cuts and books the rest (decision 123)
+    // promise: inv 18 the statement sale pushes the artist and operator cuts and books the rest
     /// @dev the door cost of `buy`, which forwards the price to `sellTo`: the core takes the artist and operator cuts off
     /// the top and forces them to the artist and the payee
     function test_gas_buy_statementSalePushesTheCuts() public {
@@ -340,7 +340,7 @@ contract GasCapTest is SeaportBase {
         _row("buy a statement (sellTo forces the artist and operator cuts), cold", g, data);
     }
 
-    // promise: inv 18 the credit sale pushes the artist and operator cuts and books the rest (decision 123)
+    // promise: inv 18 the credit sale pushes the artist and operator cuts and books the rest
     /// @dev the door cost of `buyCredit`, which forwards the price to `sellCreditTo`
     function test_gas_buyCredit_creditSalePushesTheCuts() public {
         uint256[] memory ids = _fillEthPile(1);
@@ -359,7 +359,7 @@ contract GasCapTest is SeaportBase {
         _row("buyCredit (sellCreditTo forces the artist and operator cuts), cold", g, data);
     }
 
-    // promise: inv 18 the booking door forces the payee share out (decision 123)
+    // promise: inv 18 the booking door forces the payee share out
     /// @dev the door cost of `book` when the payee share is on and nonzero: the book forces the share to the payee
     function test_gas_book_forcesThePayeeShare() public {
         Settings memory s = core.settings();

@@ -137,20 +137,20 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// split and `refScore`, slot 3 `swapFeeCc` and the two sale cuts. docs/SPEC.md section 3 has the meaning of every field
 struct Settings {
     // slot 0
-    /// fall of the eth rate per credit bought, bps of the rate before that credit
+    /// fall of a bid rate per credit of score `refScore`, bps of the rate before that credit, scaled by `score / refScore`; shared by the eth and balance bids
     uint16 dropPerCreditBps;
     /// within one minute the rate falls no lower than this share of the rate at the first fill of that minute, bps
     uint16 dropFloorBps;
-    /// climb of the eth rate per minute, bps, compounded
+    /// climb of a bid rate per minute, bps, compounded; shared by both bids
     uint16 climbPerMinBps;
-    /// the rate stays at or below this share of the ceiling anchor, bps. the anchor is the rate of the last fill
+    /// the rate stays at or below this share of the ceiling anchor, bps. the anchor is `max(last fill rate, peak now)`
     uint16 ceilBps;
     /// growth of the ceiling anchor per full 10 minutes since the last fill, bps of the anchor
     uint16 idleLoosenBps;
     /// the floor of a statement sale, bps of the statement cost in `sellTo` and bps of the controller reference in the
     /// controller's curve. the reference is at least the cost, so the controller's floor is at least the Core's
     uint16 saleFloorBps;
-    /// share of sale proceeds that goes to the coin buyback, bps
+    /// share of a statement sale payment after the artist and operator cuts that goes to the coin buyback, bps
     uint16 saleToBuybackBps;
     /// climb of the eth rate per minute while the price state is below the recovery level
     /// `peak * (10_000 - recoveryGapBps) / 10_000`, bps, compounded. at or above the level the rate climbs
@@ -171,7 +171,7 @@ struct Settings {
     /// a redemption must raise the balance token balance by at least `rating * unitPerPoint * (10_000 - redeemSlippageBps)
     /// / 10_000`, bps
     uint16 redeemSlippageBps;
-    /// the balance token bid pays `score * unitPerPoint * (10_000 - balanceBidMarginBps) / 10_000` per credit, bps
+    /// the floor and opening value of the balance bid rate is `10_000 - balanceBidMarginBps`, bps of par
     uint16 balanceBidMarginBps;
     /// share of `ethRedeemBurn` moved into the coin buyback on each redemption, bps
     uint16 redeemBurnBps;
@@ -194,7 +194,7 @@ struct Settings {
     /// share of the fee income booked by `_book`, after the payee share, that fills `ethRedeemBurn`, bps. the rest goes to
     /// the pot
     uint16 feeToRedeemBurnBps;
-    /// share of the fee income booked by `_book` that is credited to the payee once the payee share is on, ppm. at most
+    /// share of the fee income booked by `_book` that is pushed to the payee once the payee share is on, ppm. at most
     /// 200_000
     uint24 payeePpm;
     /// the per-credit score the eth bid divides by: every eth door pays `rate * score / refScore` per credit and the
@@ -350,8 +350,8 @@ library Mainnet {
     }
 
     /// the launch credit settings: the credit sale is on, its window is 4 hours, the floor is 110 percent and the
-    /// start 300 percent of the floor, the whole credit cost
-    /// funds the pot, chosen composition is off, and the coin balance a caller needs to choose a compose or a held format is 1 coin
+    /// start 300 percent of the floor, 80 percent of a sold credit's cost funds the pot, chosen composition is off, and
+    /// the coin balance a caller needs to choose a compose or a held format is 1 coin
     function defaultCredit() internal pure returns (Credit memory) {
         return Credit({
             costToPotBps: 8_000,

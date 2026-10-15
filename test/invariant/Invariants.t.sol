@@ -651,7 +651,7 @@ abstract contract InvariantsBase is InvariantFixture {
         // pause and composeChosen are exercised by their own tests, not by test_everyActionSucceeds (a chosen compose
         // needs a fresh page of 80 pile credits, which its own test builds)
         if (a == 34 || a == 39) return false;
-        // slot 30 is reserved: the former standalone payee claim, folded into the book under the push model (decision 123)
+        // slot 30 is reserved: the former standalone payee claim, folded into the book under the push model
         if (a == 30) return false;
         // changeUnit moves the module's unit, so it only lands in the balance side
         if (a == 35) return handler.phase2();

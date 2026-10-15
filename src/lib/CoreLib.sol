@@ -22,11 +22,10 @@ import {Halving} from "./Halving.sol";
 import {SettingsBounds} from "./SettingsBounds.sol";
 
 /// every state variable of the Core, in one struct. the Core declares it once (`State internal s`, slot 0) and the library
-/// reads it at slot 0 (`CoreLib.state`), so both address the same storage. test/CoreLayout.t.sol compares the fields with
-/// raw storage words
+/// reads it at slot 0 (`CoreLib.state`), so both address the same storage
 struct State {
     address controller;
-    /// one way locks of the owner (docs/SPEC.md section 11): once set, the door never opens again
+    /// one way locks of the owner (docs/SPEC.md section 11): once set, never cleared
     bool controllerLocked;
     bool balanceModuleLocked;
     bool adaptersLocked;
@@ -37,7 +36,7 @@ struct State {
     address pendingOwner;
     uint256 ethPot;
     uint256 ethToBuyback;
-    /// eth reserve filled by `feeToRedeemBurnBps` of the fee stream. each redemption moves `redeemBurnBps` of it into
+    /// the redeem burn pot, filled by `feeToRedeemBurnBps` of the fee stream. each redemption moves `redeemBurnBps` of it into
     /// `ethToBuyback`
     uint256 ethRedeemBurn;
     uint256 rateAtCheckpoint;
@@ -52,7 +51,7 @@ struct State {
     address successor;
     bool successorLocked;
     /// set by the first `migrate`, one way. a retired Core refuses `sellForEth`, `buyListing`, `sellForBalance`, `adopt`,
-    /// `compose` and `composeChosen` with `Retired`
+    /// `compose`, `composeChosen` and `swapCredit` with `Retired`
     bool retired;
     /// share of a sold credit's cost booked to `ethPot` in `sellCreditTo`, the rest of the payment to `ethToBuyback`.
     /// 0 to 10_000
@@ -286,8 +285,7 @@ library CoreLib {
     /// `recoveryClimbPerMinBps` per minute, at or above the level `climbPerMinBps`. The ceiling is `ceilBps` of
     /// `max(last fill rate, peak now)` grown by `idleLoosenBps` per full
     /// 10 minutes since `anchorTime`, where `peak now` is `peakRate` halved over the time since `peakTime`. The clamp is
-    /// `pot`, the price of one credit the pot affords. The read is min(price state, pot). Never reverts: the Core calls
-    /// it from `receive()`
+    /// `pot`, the price of one credit the pot affords. The read is min(price state, pot)
     function climb(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
         external
         view
@@ -313,8 +311,7 @@ library CoreLib {
 
     /// @notice the price state, read and peak of a bid instance at `nowTs`, from its stored rate `r` of checkpoint
     /// time `t`. `a` is the instance anchor, `clampTo` its clamp (eth: the pot; balance: available as bps of par),
-    /// `capMax` its hard cap (eth: `rateCap`; balance: 10_000). the shared climb settings are read from `state()`. the
-    /// body is unchanged from the eth-only version with `clampTo` for the pot and `capMax` for the cap
+    /// `capMax` its hard cap (eth: `rateCap`; balance: 10_000). the shared climb settings are read from `state()`
     function _climb(
         Anchor storage a,
         uint256 r,
@@ -388,9 +385,8 @@ library CoreLib {
         return _drop(state().anchor, price, nowTs, score, refScore, 0);
     }
 
-    /// @notice the rate after one credit of score `score` is bought with the price state `price` of anchor `a`. the
-    /// body is the eth-only version with an added lower bound `absFloor` (eth: 0; balance: 10_000 - balanceBidMarginBps),
-    /// so the balance rate never drops below its opening floor while the eth rate is unchanged
+    /// @notice the rate after one credit of score `score` is bought with the price state `price` of anchor `a`.
+    /// `absFloor` is a lower bound on the result: 0 for the eth bid, `10_000 - balanceBidMarginBps` for the balance bid
     function _drop(Anchor storage a, uint256 price, uint256 nowTs, uint256 score, uint256 refScore, uint256 absFloor)
         private
         returns (uint256)
@@ -537,11 +533,10 @@ library CoreLib {
 
     /// @notice moves `ethPot` and the credits the Core tracks to the successor, in batches. the Core
     /// forwards its call here untouched, the owner check and the reentrancy guard are here.
-    /// the first call sets `retired`, which stays set: `sellForEth`, `buyListing`, `sellForBalance`, `adopt` and
-    /// `compose` then revert `Retired`. logs `EngineRetired` once.
-    /// eth: `ethPot`, by `fund()` of the successor, or by a plain send when `fund()` fails, the tracker zeroed. `ethToBuyback` stays for the coin buyback. eth above the
-    /// trackers stays.
-    /// the balance token is held by the module, not the Core, so there is no balance leg. `ethToBuyback` and `ethRedeemBurn` stay for the coin buyback.
+    /// the first call sets `retired`, which stays set: `sellForEth`, `buyListing`, `sellForBalance`, `adopt`, `compose`,
+    /// `composeChosen` and `swapCredit` then revert `Retired`. logs `EngineRetired` once.
+    /// eth: `ethPot`, by `fund()` of the successor, or by a plain send when `fund()` fails, the tracker zeroed.
+    /// `ethToBuyback` and `ethRedeemBurn` stay for the coin buyback. eth above the trackers stays.
     /// credits: up to `maxCredits` from the head of the pile, by `transferFrom`, the pile membership cleared (the
     /// cost and arrival time of the record stay). zero moves the pot only.
     /// the held statements and their records stay with the Core, which sells or redeems them itself.
@@ -838,7 +833,7 @@ library CoreLib {
         if (!ok) revert BadModule();
     }
 
-    /// gas forwarded to the bounded module and controller reads of the balance token bid
+    /// gas of the bounded `unitPerPoint` and `available` reads of the balance module
     uint256 internal constant READ_GAS = 200_000;
 
     /// bounded read of `unitPerPoint()` of `module`: at most `READ_GAS`, exactly 32 bytes returned or more (a long

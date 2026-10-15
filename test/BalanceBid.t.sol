@@ -5,7 +5,7 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditScore, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 
-/// the rising balance token bid (decision 122). one credit's bid is `score * unitPerPoint * balanceRate() / 10_000`,
+/// the rising balance token bid. one credit's bid is `score * unitPerPoint * balanceRate() / 10_000`,
 /// where `balanceRate()` is the balance instance price state in bps of par, floored at `10_000 - balanceBidMarginBps`,
 /// capped at 10_000 so the payout never exceeds par, climbed by the eth bid's climb and dropped per credit by the eth
 /// bid's drop. the instance shares the eth bid's climb and drop settings

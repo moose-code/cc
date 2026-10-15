@@ -6,8 +6,8 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditScore, IStatements, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {MigrationSink} from "./standins/MigrationSink.sol";
 
-/// @notice `swapCredit` (decision 118): a holder replaces a pile credit with one of equal or higher score for a
-/// `swapFeeCc` coin fee. scores are mocked on the credit score contract so the score rule is exact, not fork dependent
+/// @notice `swapCredit`: a holder replaces a pile credit with one of equal or higher score for a
+/// `swapFeeCc` coin fee. scores are mocked on the credit score contract so the score rule is tested at exact values
 contract CreditSwapTest is Fixture {
     address internal who;
 
@@ -102,7 +102,7 @@ contract CreditSwapTest is Fixture {
     }
 
     // promise: SPEC 6 a zero fee skips the coin transfer
-    function test_feeZeroSkipsTransfer() public {
+    function test_feeZeroBurnsNothing() public {
         _setSwapFeeCc(0);
         (uint256 outId, uint256 inId) = _pair(100, 100);
         uint256 supply = coin.totalSupply();

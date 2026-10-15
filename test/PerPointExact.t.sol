@@ -5,7 +5,7 @@ import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 
-/// @notice exact per-point amounts at scores that are not refScore (decision 116). every expected value is hand derived
+/// @notice exact per-point amounts at scores that are not refScore. every expected value is hand derived
 /// from `rate * score / refScore` and the scaled drop, never read back from `bidOf`. the ratio-1 mechanics are in
 /// BidRule.t.sol; these cover the scaling the ratio-1 tests cannot see
 contract PerPointExactTest is Fixture {

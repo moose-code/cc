@@ -87,7 +87,7 @@ abstract contract SaleBase is Fixture {
         sid = STATEMENTS.supply();
     }
 
-    /// the artist and operator cuts of a sale payment and the rest after them (decision 123)
+    /// the artist and operator cuts of a sale payment and the rest after them
     function _saleCuts(uint256 pay) internal view returns (uint256 toArtist, uint256 toOperator, uint256 rest) {
         toArtist = pay * core.settings().saleToArtistBps / 10_000;
         toOperator = pay * core.settings().saleToOperatorBps / 10_000;
@@ -130,7 +130,7 @@ abstract contract SaleBase is Fixture {
     }
 }
 
-/// the linear curve tests. the launch sale holds the floor at 100 percent of cost (decision 85), so the price falls
+/// the linear curve tests. the launch sale holds the floor at 100 percent of cost, so the price falls
 /// from its start to cost and stays there. these tests exercise the slope of the line, so setUp sets `saleFloorBps` to
 /// 7_500 through the owner setter. the launch curve itself is `SaleLaunchCurveTest`
 abstract contract SaleShapeBase is SaleBase {
@@ -148,7 +148,7 @@ contract SaleLaunchCurveTest is SaleBase {
         _pinReferenceToCost();
     }
 
-    // promise: SPEC 1 launch curve falls from the start price to the statement reference and rests there (decision 85)
+    // promise: SPEC 1 launch curve falls from the start price to the statement reference and rests there
     function test_launchCurve_startsAtStartFallsToCostAndStaysAtCost() public {
         assertEq(ctl.decayHours(), 12, "decay hours at launch");
         assertEq(core.settings().saleFloorBps, 10_000, "floor at launch");
@@ -939,13 +939,13 @@ contract RejectsEth {
     }
 }
 
-/// the artist and operator cuts of nft sales (decision 123): a fixed share of each statement and credit sale payment,
+/// the artist and operator cuts of nft sales: a fixed share of each statement and credit sale payment,
 /// `saleToArtistBps` and `saleToOperatorBps`, is taken off the top and pushed to the artist and the payee, the rest is
 /// split by the existing rules. the pushes are forced, so a recipient that cannot receive never blocks the sale
 contract SaleCutsTest is SaleBase {
     address internal buyer = address(0xB0B);
 
-    // promise: SPEC 1 the statement sale splits sum to the payment (decision 123)
+    // promise: SPEC 1 the statement sale splits sum to the payment
     function test_cuts_statementSaleSplitsSumToThePayment() public {
         uint256 sid = _composeOnce().sid;
         uint256 price = ctl.priceOf(sid);
@@ -963,7 +963,7 @@ contract SaleCutsTest is SaleBase {
         _solvent();
     }
 
-    // promise: SPEC 1 the credit sale splits sum to the payment (decision 123)
+    // promise: SPEC 1 the credit sale splits sum to the payment
     function test_cuts_creditSaleSplitsSumToThePayment() public {
         uint256[] memory ids = _fillEthPile(1);
         _setCreditSaleOn(true);
@@ -983,7 +983,7 @@ contract SaleCutsTest is SaleBase {
         _solvent();
     }
 
-    // promise: SPEC 1 the forced push reaches an artist that reverts and the sale settles (decision 123)
+    // promise: SPEC 1 the forced push reaches an artist that reverts and the sale settles
     function test_cuts_pushReachesAnArtistThatReverts() public {
         RejectsEth bad = new RejectsEth();
         vm.prank(owner);
@@ -997,7 +997,7 @@ contract SaleCutsTest is SaleBase {
         assertEq(address(bad).balance - before, toArtist, "the forced push reached the reverting artist");
     }
 
-    // promise: SPEC 1 a zero cut skips its push (decision 123)
+    // promise: SPEC 1 a zero cut skips its push
     function test_cuts_zeroBpsSkipsThePush() public {
         Settings memory s = core.settings();
         s.saleToArtistBps = 0;
@@ -1013,7 +1013,7 @@ contract SaleCutsTest is SaleBase {
         assertEq(core.payee().balance - payee0, toOperator, "the operator cut still pushes");
     }
 
-    // promise: SPEC 1 setArtist refuses the zero address while the cut is on, accepts it at a zero cut (decision 123)
+    // promise: SPEC 1 setArtist refuses the zero address while the cut is on, accepts it at a zero cut
     function test_cuts_setArtistZeroRefusedWhileTheCutIsOn() public {
         assertGt(core.settings().saleToArtistBps, 0, "the cut is on at launch");
         vm.prank(owner);
@@ -1044,7 +1044,7 @@ contract SaleCutsTest is SaleBase {
         core.setSettings(s);
     }
 
-    // promise: SPEC 1 setArtist refuses a forbidden target (decision 123)
+    // promise: SPEC 1 setArtist refuses a forbidden target
     function test_cuts_setArtistRefusesAForbiddenTarget() public {
         vm.prank(owner);
         vm.expectRevert(ICore.ForbiddenTarget.selector);

@@ -38,8 +38,8 @@ import {CreditBounds} from "./lib/CreditBounds.sol";
 /// module, the adapters and the successor door with a one way lock (docs/SPEC.md section 11).
 /// credits and statements sent to the core outside its doors are not tracked and stay in the core.
 /// the Core is the bounty recipient of the pool. `receive()` accepts eth from the hook and the fee escrow only, and every
-/// door starts with `_book()`, which splits the eth above the tracked pots into the payee claim, the coin buyback, the
-/// redeem burn pot and the pot.
+/// door starts with `_book()`, which pushes `payeePpm` of the eth above the tracked pots to the payee and splits the
+/// rest between the redeem burn pot and the pot.
 contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     using FixedPointMathLib for uint256;
 
@@ -109,7 +109,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error BadSetting(bytes32 field);
     /// `sellTo`: the statement is not held by the core
     error NotForSale();
-    /// `sellTo` or `sellCreditTo` while sales are paused
+    /// `sellTo`, `sellCreditTo` or `swapCredit` while sales are paused
     error Paused();
     /// a stack member that must be a contract has no code
     error NoCode(address who);
@@ -123,7 +123,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error NotHolder();
     /// `migrate` with no successor set
     error NoSuccessor();
-    /// `sellForEth`, `buyListing`, `sellForBalance`, `adopt`, `compose` or `composeChosen` after `migrate`
+    /// `sellForEth`, `buyListing`, `sellForBalance`, `adopt`, `compose`, `composeChosen` or `swapCredit` after `migrate`
     error Retired();
     /// `swapCredit`: the incoming credit's score is below the pile credit's score
     error ScoreTooLow(uint256 inId, uint256 outId);
@@ -194,11 +194,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event Migrated(address indexed successor, uint256 eth, uint256 credits);
     /// the first `migrate` set `retired`
     event EngineRetired(address indexed successor);
-    /// share of a sold credit's cost booked to ethPot, the rest of the payment to ethToBuyback (decision 88)
+    /// share of a sold credit's cost booked to ethPot, the rest of the payment after the cuts to ethToBuyback
     event CreditCostToPotBpsSet(uint16 bps);
-    /// whether a caller may pick the 80 credits and the format of a compose (decision 89)
+    /// whether a caller may pick the 80 credits and the format of a compose
     event ChosenComposeOnSet(bool on);
-    /// least coin balance a caller of a chosen compose must hold (decision 89)
+    /// least coin balance a caller of a chosen compose must hold
     event MinCcToChooseSet(uint96 min);
     event PausedSet(bool paused);
 
@@ -399,7 +399,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// the parts of `income` that go to the payee and the redeem burn pot. the rest goes to the pot. the payee share
-    /// is `payeePpm` of the income while `payeeOn`, and the reserve share is `feeToRedeemBurnBps` of the income after it
+    /// is `payeePpm` of the income while `payeeOn`, and the redeem burn pot share is `feeToRedeemBurnBps` of the income after it
     function _split(uint256 income) private view returns (uint256 toPayee, uint256 toRedeemBurn) {
         Settings storage cfg = s.settings;
         if (s.payeeOn) {
@@ -428,7 +428,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (toRedeemBurn != 0) s.ethRedeemBurn += toRedeemBurn;
         income -= toPayee;
         s.ethPot += income - toRedeemBurn;
-        // the payee share is pushed, not claimed: a reverting payee cannot block the book (solady forces the transfer)
+        // forced push: a payee that reverts or exceeds `PUSH_GAS` receives the eth through a self destructing contract
         if (toPayee != 0) SafeTransferLib.forceSafeTransferETH(s.payee, toPayee, PUSH_GAS);
         emit FeesAdded(income, toPayee);
     }
@@ -887,8 +887,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// the controller sells a held statement to `buyer` for `msg.value`, at least `saleFloorBps` of the
-    /// statement cost. `saleToBuybackBps` of the payment goes to the coin buyback and the rest to the pot. the
-    /// controller refunds its own caller
+    /// statement cost. the artist and operator cuts come off the payment; `saleToBuybackBps` of the rest goes to the
+    /// coin buyback and the remainder to the pot. the controller refunds its own caller
     function sellTo(uint256 sid, address buyer) external payable nonReentrant {
         if (msg.sender != s.controller) revert OnlyController();
         if (s.paused) revert Paused();
@@ -898,7 +898,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (msg.value < st.cost * s.settings.saleFloorBps / BPS) revert BelowFloor();
         _unhold(sid);
         STATEMENTS.transferFrom(address(this), buyer, sid);
-        // the artist and operator cuts come off the top; the existing buyback split is on the rest
+        // the artist and operator cuts come off the payment; the buyback split applies to the rest
         Settings storage cfg = s.settings;
         uint256 toArtist = msg.value * cfg.saleToArtistBps / BPS;
         uint256 toOperator = msg.value * cfg.saleToOperatorBps / BPS;
@@ -927,8 +927,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         // record the sale block so an intake door refuses this credit back in the same block (no round trip into a bid)
         s.creditSaleBlock[id] = block.number;
         CREDITS.transferFrom(address(this), buyer, id);
-        // the artist and operator cuts come off the top; the credit cost basis share of the rest goes to the pot, the
-        // remainder to the buyback. the cut cannot push the pot share negative (bounded by the rest)
+        // the artist and operator cuts come off the payment; the credit cost basis share of the rest goes to the pot,
+        // the remainder to the buyback. the pot share is at most the rest
         uint256 toArtist = msg.value * s.settings.saleToArtistBps / BPS;
         uint256 toOperator = msg.value * s.settings.saleToOperatorBps / BPS;
         uint256 rest = msg.value - toArtist - toOperator;
@@ -1091,14 +1091,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _setBalanceModule(module);
     }
 
-    /// moves `amount` of the redeem burn pot into the coin buyback, capped at the reserve. the eth stays inside the
+    /// moves `amount` of the redeem burn pot into the coin buyback, capped at the pot. the eth stays inside the
     /// core for a coin buy and burn: `ethRedeemBurn` falls and `ethToBuyback` rises by the same amount, so the tracked
-    /// total and solvency hold. callable after `migrate`. reverts `ZeroAmount` when the reserve is empty or `amount` is 0
+    /// total and solvency hold. callable after `migrate`. reverts `ZeroAmount` when the pot is empty or `amount` is 0
     function releaseRedeemBurn(uint256 amount) external onlyOwner nonReentrant {
-        uint256 reserve = s.ethRedeemBurn;
-        uint256 move = amount < reserve ? amount : reserve;
+        uint256 pot = s.ethRedeemBurn;
+        uint256 move = amount < pot ? amount : pot;
         if (move == 0) revert ZeroAmount();
-        s.ethRedeemBurn = reserve - move;
+        s.ethRedeemBurn = pot - move;
         s.ethToBuyback += move;
         emit RedeemBurnReleased(move);
     }
@@ -1166,7 +1166,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// moves `ethPot` and up to `maxCredits` credits from the head of the pile to the successor,
     /// in batches. callable again until nothing is left. `ethToBuyback` and `ethRedeemBurn` stay for the coin buyback.
-    /// the balance token is held by the module, not the core, so there is no balance leg. the held statements and their
+    /// the held statements and their
     /// records stay with the core. the first call sets `retired` and logs `EngineRetired`. owner only and guarded, both
     /// checked by the library, to which the call is handed untouched. reverts `NoSuccessor` while the successor is zero
     function migrate(uint256) external {
@@ -1205,7 +1205,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// in a pile, and `score(inId) >= score(outId)` (`ScoreTooLow`), with the score read the way the eth doors read it.
     /// `inId` takes `outId`'s pile node: the same position in the order, the same cost basis and acquisition time, so the
     /// pile size and the credit sale window state of the slot are unchanged. the fee burns the caller's coin through
-    /// `burnFrom`, which the restricted coin allows without the Core holding or receiving the coin; a zero fee burns
+    /// `burnFrom`, which burns from the caller's balance as the restricted coin permits; a zero fee burns
     /// nothing. the incoming credit is pulled in before the outgoing one is sent out
     function swapCredit(uint256 inId, uint256 outId) external nonReentrant {
         if (s.retired) revert Retired();
@@ -1247,27 +1247,27 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit AdapterSet(a, false);
     }
 
-    /// sets the share of a sold credit's cost booked to ethPot, the rest of the payment to ethToBuyback. 0 to 10_000.
-    /// read by `sellCreditTo` (decision 88)
+    /// sets the share of a sold credit's cost booked to ethPot, the rest of the payment after the cuts to ethToBuyback.
+    /// 0 to 10_000. read by `sellCreditTo`
     function setCreditCostToPotBps(uint16 v) external onlyOwner {
         if (!CreditBounds.costToPotBpsOk(v)) revert BadSetting("creditCostToPotBps");
         s.creditCostToPotBps = v;
         emit CreditCostToPotBpsSet(v);
     }
 
-    /// turns chosen composition on or off. gates `composeChosen`; `compose` is unaffected (decision 89)
+    /// turns chosen composition on or off. gates `composeChosen`; `compose` is unaffected
     function setChosenComposeOn(bool v) external onlyOwner {
         s.chosenComposeOn = v;
         emit ChosenComposeOnSet(v);
     }
 
-    /// sets the least coin balance a caller of `composeChosen` must hold (decision 89)
+    /// sets the least coin balance a caller of `composeChosen` must hold
     function setMinCcToChoose(uint96 v) external onlyOwner {
         s.minCcToChoose = v;
         emit MinCcToChooseSet(v);
     }
 
-    /// pauses or resumes `sellTo` and `sellCreditTo` at once. a call that repeats the current state changes nothing.
+    /// pauses or resumes `sellTo`, `sellCreditTo` and `swapCredit` at once. a call that repeats the current state changes nothing.
     /// a pause records its start in `pausedSince`, a resume adds the length of the pause to `pausedTotal`. compose,
     /// the bids, redemptions, buybacks and fee booking run in a pause
     function setPaused(bool on) external onlyOwner {
@@ -1334,8 +1334,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// sets or replaces the balance module. the balance token never changes once set. the module's unit must be valid
-    /// at the set (`_unitOf`). a dormant approved adapter flag of the new module is cleared, so it cannot come back to
-    /// life when the module is replaced
+    /// at the set (`_unitOf`). an adapter approval of the new module is cleared when the module is set
     function _setBalanceModule(address module) private {
         address old = s.balanceModule;
         if (module.code.length == 0) revert BadModule();
