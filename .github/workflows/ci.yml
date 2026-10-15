@@ -1,0 +1,105 @@
+# Per-change checks. `changes` reads the changed paths, the web and contracts jobs run only when
+# their paths changed, and `ci-ok` always reports: it is the one required status check, and it
+# passes when every job succeeded or was skipped.
+# contracts follows the AGENTS.md rule: forge build plus the test files the change touched. The
+# full suite, the rehearsal and the deep invariants run in the candidate workflow.
+# Fork tests read MAINNET_RPC_URL and FORK_BLOCK. MAINNET_RPC_URL is the repo secret when set, else
+# the public tenderly gateway, which serves archive state at the pinned block. foundry's rpc cache
+# (saved by foundry-toolchain) holds the pinned block's state across runs.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, points/v1]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.diff.outputs.web }}
+      contracts: ${{ steps.diff.outputs.contracts }}
+      tests: ${{ steps.diff.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # a push that opens a branch has an all-zero `before`; compare with the parent commit
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=HEAD~1; fi
+          files=$(git diff --name-only "$BASE"...HEAD)
+          printf '%s\n' "$files"
+          has() { printf '%s\n' "$files" | grep -Eq "$1" && echo true || echo false; }
+          echo "web=$(has '^(web/|\.github/workflows/)')" >> "$GITHUB_OUTPUT"
+          echo "contracts=$(has '^(src/|test/|script/|lib/|foundry\.toml$|foundry\.lock$|remappings\.txt$|\.gitmodules$|\.github/workflows/)')" >> "$GITHUB_OUTPUT"
+          tests=$(git diff --name-only --diff-filter=d "$BASE"...HEAD -- 'test/*.t.sol' 'test/**/*.t.sol' | sort -u | tr '\n' ' ')
+          echo "tests=$tests" >> "$GITHUB_OUTPUT"
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    uses: ./.github/workflows/web.yml
+
+  contracts:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL || 'https://gateway.tenderly.co/public/mainnet' }}
+      FORK_BLOCK: "26158000"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.1
+      # compiler cache: a restored out/ and cache/ make the build incremental
+      - uses: actions/cache@v4
+        with:
+          path: |
+            cache
+            out
+          key: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-${{ hashFiles('src/**', 'test/**', 'script/**') }}
+          restore-keys: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-
+      - run: forge build
+      - name: touched test files
+        env:
+          TESTS: ${{ needs.changes.outputs.tests }}
+        run: |
+          if [ -z "${TESTS// /}" ]; then
+            echo "no test files touched"
+            exit 0
+          fi
+          for f in $TESTS; do
+            echo "::group::$f"
+            forge test --match-path "$f" -vv
+            echo "::endgroup::"
+          done
+
+  ci-ok:
+    if: always()
+    needs: [changes, web, contracts]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ needs.changes.result }} ${{ needs.web.result }} ${{ needs.contracts.result }}
+        run: |
+          for r in $RESULTS; do
+            case "$r" in
+              success | skipped) ;;
+              *) echo "a job ended $r"; exit 1 ;;
+            esac
+          done
+          echo "all jobs succeeded or were skipped"

@@ -1,0 +1,50 @@
+# The frozen candidate run (AGENTS.md): the full suite with the launch rehearsal, optionally the
+# deep invariants, and the web checks. Started by hand on the candidate commit.
+name: candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      deep:
+        description: "also run the deep invariant suites"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL || 'https://gateway.tenderly.co/public/mainnet' }}
+      FORK_BLOCK: "26158000"
+      CANDIDATE_RUN: "1"
+      REHEARSAL: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.1
+      - uses: actions/cache@v4
+        with:
+          path: |
+            cache
+            out
+          key: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-${{ hashFiles('src/**', 'test/**', 'script/**') }}
+          restore-keys: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-
+      - run: forge build
+      - run: forge test -vv
+      - name: deep invariants
+        if: ${{ inputs.deep }}
+        env:
+          INVARIANT_DEEP: "1"
+          FOUNDRY_INVARIANT_RUNS: "64"
+          FOUNDRY_INVARIANT_DEPTH: "200"
+        run: forge test --match-contract '.*Deep' -vv
+
+  web:
+    uses: ./.github/workflows/web.yml
