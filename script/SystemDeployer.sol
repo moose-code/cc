@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
+import {ICoinRenderer} from "../src/interfaces/ICoinRenderer.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {LaunchChecks} from "./Checks.sol";
@@ -14,6 +15,7 @@ struct Deployed {
     address controller;
     address seaportAdapter;
     address strategyAdapter;
+    address renderer;
     PoolKey launchKey;
     bytes32 poolId;
 }
@@ -23,8 +25,9 @@ struct Deployed {
 /// `deployToken`). every contract of ours is created through the deterministic deployer (CREATE2) at an address
 /// that is a function of the salts, the creation code and the config, so the addresses are known before the first
 /// transaction. order: the library `CoreLib` (linked and sent by `forge script` before `run`), the Core, the controller
-/// (constructed with the Core address), the two listing adapters, `setController`, `addAdapter` for each adapter,
-/// then the launch. a contract that has code at its address is skipped and a state step whose effect is on chain is
+/// (constructed with the Core address), the two listing adapters, the coin renderer (constructed with the config
+/// owner, salted with the config salt), `setCore` on the renderer, `setController`, `addAdapter` for each adapter, then the launch, which names the
+/// renderer in the token config. a contract that has code at its address is skipped and a state step whose effect is on chain is
 /// skipped, so a run that stopped half way continues from the chain state. the recipients of the coin are not locked
 /// here, the owner closes them as a separate step (`Lock`)
 abstract contract SystemDeployer is LaunchChecks {
@@ -47,12 +50,12 @@ abstract contract SystemDeployer is LaunchChecks {
     /// calldata of the largest creation (about 30 kb at 16 gas a byte, a bound)
     uint256 internal constant TX_OVERHEAD = 520_000;
     /// @dev the steps of `stepGas`, in the order they are first sent
-    uint256 internal constant STEPS = 8;
+    uint256 internal constant STEPS = 10;
 
     /// @notice execution gas of the transactions of the last `deploySystem`: Core, controller, Seaport adapter,
-    /// CreditStrategy adapter, `setController`, `addAdapter` of each adapter, launch. the library goes first and is
-    /// measured by the rehearsal
-    uint256[8] internal stepGas;
+    /// CreditStrategy adapter, coin renderer, `setCore`, `setController`, `addAdapter` of each adapter, launch. the
+    /// library goes first and is measured by the rehearsal
+    uint256[10] internal stepGas;
 
     /// @notice creates the Core at `coreAddress(c, launcher)`. the script (`NewProd`) uses `new` with `CORE_SALT`, a test
     /// base sends the creation code through the deterministic deployer, so the test contracts neither import the
@@ -70,6 +73,10 @@ abstract contract SystemDeployer is LaunchChecks {
     /// with `STRATEGY_ADAPTER_SALT`
     function _newStrategyAdapter() internal virtual returns (address);
 
+    /// @notice creates `CoinRenderer` at `rendererAddress(c)`: CREATE2 through the deterministic deployer with
+    /// `rendererSalt(c)`
+    function _newRenderer(LaunchConfig memory c) internal virtual returns (address);
+
     /// @notice deploys and launches the whole system
     /// @param owner the address that sends every transaction: the broadcaster or the active prank, the factory owner
     /// and the first owner of the Core
@@ -79,6 +86,7 @@ abstract contract SystemDeployer is LaunchChecks {
         d.core = _ensureCore(c, owner);
         d.controller = _ensureController(d.core, c);
         (d.seaportAdapter, d.strategyAdapter) = _ensureAdapters(d.core, c);
+        d.renderer = _ensureRenderer(d.core, c);
         _wire(c, d);
         d.coin = ICore(payable(d.core)).COIN();
         if (d.coin.code.length == 0) _launch(c, d.coin, d.core);
@@ -124,6 +132,23 @@ abstract contract SystemDeployer is LaunchChecks {
         }
     }
 
+    /// @dev creates the renderer of the config, then binds the Core to it once. each step is skipped when its effect
+    /// is on chain
+    function _ensureRenderer(address core_, LaunchConfig memory c) private returns (address at) {
+        at = rendererAddress(c);
+        if (at.code.length == 0) {
+            uint256 g = gasleft();
+            address made = _newRenderer(c);
+            _step(4, g);
+            if (made != at) revert AddressMismatch("renderer");
+        }
+        if (address(ICoinRenderer(at).core()) == address(0)) {
+            uint256 g = gasleft();
+            ICoinRenderer(at).setCore(ICore(payable(core_)));
+            _step(5, g);
+        }
+    }
+
     /// @dev the owner calls of the deploy: `setController`, then `addAdapter` for each adapter. a call whose effect is on
     /// chain is skipped
     function _wire(LaunchConfig memory c, Deployed memory d) private {
@@ -131,17 +156,17 @@ abstract contract SystemDeployer is LaunchChecks {
         if (core.controller() != d.controller) {
             uint256 g = gasleft();
             core.setController(d.controller);
-            _step(4, g);
+            _step(6, g);
         }
         if (!core.allowedAdapter(d.seaportAdapter)) {
             uint256 g = gasleft();
             core.addAdapter(d.seaportAdapter);
-            _step(5, g);
+            _step(7, g);
         }
         if (!core.allowedAdapter(d.strategyAdapter)) {
             uint256 g = gasleft();
             core.addAdapter(d.strategyAdapter);
-            _step(6, g);
+            _step(8, g);
         }
     }
 
@@ -164,7 +189,7 @@ abstract contract SystemDeployer is LaunchChecks {
         uint256 fee = factory.deployFee();
         uint256 g = gasleft();
         coin = factory.deployToken{value: fee}(buildConfig(c, c.owner, core));
-        _step(7, g);
+        _step(9, g);
         if (coin != coinAt) revert AddressMismatch("coin");
     }
 

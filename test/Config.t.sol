@@ -22,6 +22,7 @@ import {
 } from "../script/LaunchConfig.sol";
 import {V2Stack} from "./utils/V2Stack.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
+import {StandinRenderer} from "./standins/StandinRenderer.sol";
 
 /// @notice the config file, the placeholder guard, the preflight and the postflight on the pinned fork
 contract ConfigTest is Fixture {
@@ -298,10 +299,13 @@ contract ConfigTest is Fixture {
             _pre(c, d2);
             assertEq(_failedNames(), "seaport recipients: none is the Core, controller, owner, payee or a stack address");
         }
-        // the Core address depends on the opening rate `_pre` substitutes
+        // the Core address depends on the opening rate and the salt `_pre` substitutes
         c.rateStart = c.settings.rateCap / 3;
         c.seaportRecipients = new address[](1);
+        bytes32 salt = c.salt;
+        c.salt = keccak256(abi.encode(salt, "preflight"));
         c.seaportRecipients[0] = coreAddress(c, d2);
+        c.salt = salt;
         _pre(c, d2);
         assertEq(
             _failedNames(),
@@ -470,14 +474,79 @@ contract ConfigTest is Fixture {
         assertFalse(_warnClean("warn: coin: description equals the config"));
     }
 
-    // preflight: image and description inside the coin caps (2048 and 4096 bytes), filled, free of `placeholder` in any
+    /// the coin's renderer is the CoinRenderer of the config, bound to the Core, and `tokenURI()` answers. an admin
+    /// replacement fails the renderer row until the operator names the change (COIN_CHANGED=1); a renderer that reverts
+    /// fails the tokenURI row; a renderer bound to another address fails its Core row
+    // promise: the postflight reads the coin renderer, its Core and the coin's tokenURI
+    function test_FIXED_postflightReadsTheCoinRenderer() public {
+        string memory rendererRow = "coin: metadata renderer is the CoinRenderer of the config";
+        string memory uriRow = "coin: tokenURI returns a json data uri";
+        string memory coreRow = "renderer: core is the Core";
+        assertEq(coin.metadataRenderer(), rendererAddress(lc), "named by the launch");
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), "", "as launched");
+
+        // the Core slot of the renderer is storage slot 0 (the owner is immutable)
+        vm.store(rendererAddress(lc), bytes32(0), bytes32(uint256(uint160(address(0xBEEF)))));
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), string.concat(coreRow, ", ", uriRow), "a renderer bound to another address");
+        vm.store(rendererAddress(lc), bytes32(0), bytes32(uint256(uint160(address(core)))));
+
+        _setRenderer(address(new StandinRenderer(0)));
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), rendererRow, "a renderer the config does not name");
+        _setRenderer(address(new StandinRenderer(1)));
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), string.concat(rendererRow, ", ", uriRow), "a reverting renderer");
+        coinFlag = true;
+        postflightAs(lc, address(core), owner);
+        assertEq(_failedNames(), "");
+        assertFalse(_warnClean(string.concat("warn: ", uriRow)));
+    }
+
+    function _setRenderer(address r) internal {
+        vm.prank(owner);
+        (bool ok,) = address(coin).call(abi.encodeWithSignature("setMetadataRenderer(address)", r));
+        assertTrue(ok, "the admin sets the renderer");
+    }
+
+    /// the token config names the CoinRenderer of the config: its address is a function of the owner and the salt,
+    /// and the config holds no renderer field
+    // promise: the token config names the CoinRenderer of the config
+    function test_buildConfigNamesTheCoinRenderer() public view {
+        assertEq(buildConfig(lc, lc.owner, address(0)).token.renderer, rendererAddress(lc));
+        LaunchConfig memory c = lc;
+        c.salt = keccak256("another salt");
+        assertTrue(rendererAddress(c) != rendererAddress(lc), "another salt, another renderer");
+        assertEq(buildConfig(c, c.owner, address(0)).token.renderer, rendererAddress(c));
+        c = lc;
+        c.rateStart += 1;
+        assertEq(rendererAddress(c), rendererAddress(lc), "other fields do not move it");
+    }
+
+    /// a renderer with code at the predicted address fails the prediction row. a config with another salt predicts an empty
+    /// address and passes, and the simulated launch finds the renderer code at the address the token config names
+    // promise: preflight expects the predicted renderer address empty
+    function test_preflightPredictedRendererIsEmpty() public {
+        string memory row = "predicted renderer is empty";
+        address d2 = _funded();
+        LaunchConfig memory c = lc;
+        c.rateStart = c.settings.rateCap / 3;
+        preflight(c, d2);
+        assertEq(_failedNames(), row, "the fixture deployed the renderer of this owner and salt");
+        c.salt = keccak256("fresh salt");
+        preflight(c, d2);
+        assertEq(_failedNames(), "", "a fresh salt predicts an empty renderer and the simulated launch passes");
+    }
+
+    // preflight: image and description inside the coin caps (2048 and 4096 bytes), empty or filled, free of `placeholder` in any
     // letter case, not `todo` or `tbd` as the whole value, and the image carries a scheme (a failure on chain id 1, a
     // warning elsewhere). the rule is `metadataRowPasses`, shared with the rehearsal
     // promise: preflight image and description
     function test_preflightImageAndDescription() public {
         address d2 = _funded();
         string memory cap = "rule: image at most 2048 bytes, description at most 4096 bytes";
-        string memory filled = "rule: image and description are filled and are not placeholders";
+        string memory filled = METADATA_ROW;
         string memory both = string.concat(cap, ", factory: deployToken accepts the config (simulated)");
         _pre(lc, d2);
         assertTrue(_warnClean(cap) && _warnClean(filled), "filled and inside the caps");
@@ -486,7 +555,11 @@ contract ConfigTest is Fixture {
         LaunchConfig memory c = lc;
         c.image = "";
         _pre(c, d2);
-        assertEq(_failedNames(), filled, "an empty image fails");
+        assertEq(_failedNames(), "", "an empty image passes: the coin renderer draws the image");
+        c.image = " ";
+        _pre(c, d2);
+        assertEq(_failedNames(), filled, "a whitespace image fails");
+        c = lc;
         c = lc;
         c.description = "a PLACEHOLDER description";
         _pre(c, d2);
@@ -496,7 +569,10 @@ contract ConfigTest is Fixture {
         string memory okDesc = "Credits engine coin.";
         string memory okImage = "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
         assertTrue(metadataRowPasses(okImage, okDesc));
-        string[8] memory blank = ["", " ", "   ", "\n", "\t", unicode" ", "TODO", " tbd "];
+        assertTrue(metadataRowPasses("", okDesc), "an empty image passes");
+        assertTrue(metadataRowPasses(okImage, ""), "an empty description passes");
+        assertTrue(metadataRowPasses("", ""), "both empty pass");
+        string[7] memory blank = [" ", "   ", "\n", "\t", unicode" ", "TODO", " tbd "];
         for (uint256 i; i < blank.length; ++i) {
             assertFalse(metadataRowPasses(blank[i], okDesc), string.concat("image: ", blank[i]));
             assertFalse(metadataRowPasses(okImage, blank[i]), string.concat("description: ", blank[i]));
@@ -529,9 +605,9 @@ contract ConfigTest is Fixture {
         // another chain id: the row warns and never fails (the chain id row fails there)
         vm.chainId(11155111);
         c = lc;
-        c.image = "";
+        c.image = "ipfs://PLACEHOLDER";
         _pre(c, d2);
-        assertFalse(_warnClean(filled), "an empty image warns off mainnet");
+        assertFalse(_warnClean(filled), "a placeholder image warns off mainnet");
         (string memory list,) = _failed();
         assertFalse(vm.contains(list, filled), "the row is not a failure off mainnet");
         vm.chainId(1);
@@ -582,7 +658,7 @@ contract ConfigTest is Fixture {
         c = lc;
         c.owner = creator;
         postflightAs(c, address(core), address(0));
-        assertEq(_failedNames(), "core: owner, coin: admin is the config owner");
+        assertEq(_failedNames(), "core: owner, coin: admin is the config owner, coin: metadata renderer is the CoinRenderer of the config");
 
         c = lc;
         c.bountyBps = 8000;
@@ -749,6 +825,7 @@ contract ConfigTest is Fixture {
         assertEq(shipped.settings.rateCap, 2.67e16, "decision 69 opening cap");
         // the fixture opens at 1.732e15 under the launch cap: the row passes once the start is a third of the cap
         LaunchConfig memory c = lc;
+        c.salt = keccak256("preflight");
         c.rateStart = c.settings.rateCap / 3;
         preflight(c, d2);
         assertTrue(_warnClean(row), "3 times passes the row");
@@ -778,6 +855,7 @@ contract ConfigTest is Fixture {
     function test_preflightRateBoundsFailWithoutTheRatioRow() public {
         address d2 = _funded();
         LaunchConfig memory c = lc;
+        c.salt = keccak256("preflight");
         // rateStart 1e13 - 1 is below the minimum, 3 times it is inside the settings bounds for rateCap
         c.rateStart = 1e13 - 1;
         c.settings.rateCap = uint64(3 * c.rateStart);
@@ -798,8 +876,12 @@ contract ConfigTest is Fixture {
     /// sets itself is passed through
     function _pre(LaunchConfig memory c, address who) internal {
         uint256 start = c.rateStart;
+        bytes32 salt = c.salt;
         if (start == lc.rateStart) c.rateStart = c.settings.rateCap / 3;
+        // the fixture deployed the renderer of `lc.salt`: another salt gives the predicted renderer an empty address
+        c.salt = keccak256(abi.encode(salt, "preflight"));
         preflight(c, who);
         c.rateStart = start;
+        c.salt = salt;
     }
 }

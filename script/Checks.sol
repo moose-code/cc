@@ -47,19 +47,21 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the per transaction gas cap of the target chain (EIP 7825, 2^24). the launch is simulated with what is left of
     /// it, so a launch that does not fit fails the simulation row, and a collision cannot burn more than that
     uint256 internal constant TX_GAS_CAP = 16_777_216;
-    /// @dev the gas of the nine deploy transactions as the launch rehearsal measures it (16,120,826), plus 15 percent, rounded up.
-    /// `test/Rehearsal.t.sol` asserts that the measured total stays under it
-    uint256 internal constant DEPLOY_GAS_ESTIMATE = 18_600_000;
+    /// @dev the gas of the eleven deploy transactions as the launch rehearsal measures it (19,069,638 on the master stack fixture),
+    /// plus 15 percent, rounded up. `test/Rehearsal.t.sol` asserts that the measured total stays under it
+    uint256 internal constant DEPLOY_GAS_ESTIMATE = 22_000_000;
     /// @dev the coin supply of the launch. test/Config.t.sol checks the config against it
     uint256 internal constant COIN_SUPPLY = 1_000_000_000e18;
     /// @dev the byte caps of the coin's `image` and `description` (`ArtCoinsTokenV2.MAX_IMAGE_BYTES` and
     /// `MAX_DESCRIPTION_BYTES`, the factory reverts above them)
     uint256 internal constant MAX_IMAGE_BYTES = 2048;
     uint256 internal constant MAX_DESCRIPTION_BYTES = 4096;
+    /// @dev the name of the metadata row. test/Config.t.sol and test/Rehearsal.t.sol compare against it
+    string internal constant METADATA_ROW = "rule: image and description are empty or real values, not placeholders";
     /// @dev the text the rehearsal config holds in `image` and `description`. on chain id 1 the metadata row fails for a
-    /// value that is empty after trimming (spaces, tabs, newlines, carriage returns, NBSP), that contains `placeholder`
-    /// in any letter case, or is `todo` or `tbd`, and for an `image` that does not start with a lowercase `ipfs://`,
-    /// `https://`, `ar://` or `data:` scheme with content past it and no surrounding whitespace
+    /// non empty value that is only whitespace (spaces, tabs, newlines, carriage returns, NBSP), that contains
+    /// `placeholder` in any letter case, or is `todo` or `tbd`, and for a non empty `image` that does not start with a
+    /// lowercase `ipfs://`, `https://`, `ar://` or `data:` scheme with content past it and no surrounding whitespace
     string internal constant PLACEHOLDER_MARKER = "PLACEHOLDER";
     // the pinned launch rules (docs/RUNBOOK.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
@@ -76,6 +78,7 @@ abstract contract LaunchChecks is PostflightChecks {
     bytes32 internal constant BUILD_HASH_CONTROLLER = 0x2566b1f385ad14b96a2ec0c2616f7edc593c1ddb191cca08ea0ccc1237f2058a;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
+    bytes32 internal constant BUILD_HASH_RENDERER = 0x21bc6e3d0b34d0e43e48bdc78e106393a18ba34e6cc9dc81a722844d60b12ce6;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
         0x38f5cfb78601649724382d996862e336c7fc056ce34279adcd52bdabe92d0d39;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
@@ -276,7 +279,7 @@ abstract contract LaunchChecks is PostflightChecks {
             )
         );
         (bool metaOk, string memory filledDetail) = _metadataRow(c.image, c.description);
-        string memory filledName = "rule: image and description are filled and are not placeholders";
+        string memory filledName = METADATA_ROW;
         if (block.chainid == 1) _check(filledName, metaOk, filledDetail);
         else _warn(filledName, metaOk, filledDetail);
         bool set = c.owner != address(0) && c.creator != address(0);
@@ -284,32 +287,32 @@ abstract contract LaunchChecks is PostflightChecks {
         deployer;
     }
 
-    /// @notice whether `image` and `description` pass the metadata row, and the row detail. both must be non blank after
-    /// trimming, hold no placeholder marker, and `image` must start with a known scheme. the deploy test, the rehearsal
-    /// and the preflight share this one rule
+    /// @notice whether `image` and `description` pass the metadata row. the coin renderer draws the image and reads the
+    /// description from the coin, so each may be empty. a non empty value must not be blank after trimming or hold a
+    /// placeholder marker, and a non empty `image` must start with a known scheme. the deploy test, the rehearsal and the
+    /// preflight share this one rule
     function metadataRowPasses(string memory image, string memory description) public view returns (bool) {
         (bool ok,) = _metadataRow(image, description);
         return ok;
     }
 
-    /// @dev both fields non blank and free of markers, and `image` carrying a scheme. the detail names the first reason
-    /// it fails
+    /// @dev the detail names the first reason the row fails
     function _metadataRow(string memory image, string memory description)
         private
         view
         returns (bool ok, string memory detail)
     {
-        bool filled = !_blank(image) && !_blank(description);
+        bool blankValue = (bytes(image).length != 0 && _blank(image)) || (bytes(description).length != 0 && _blank(description));
         bool marked = _marked(image) || _marked(description);
-        bool scheme = _hasScheme(image);
-        ok = filled && !marked && scheme;
-        detail = !filled
-            ? "empty: fill image and description in the config before step 4"
+        bool scheme = bytes(image).length == 0 || _hasScheme(image);
+        ok = !blankValue && !marked && scheme;
+        detail = blankValue
+            ? "a value is only whitespace: leave it empty or fill it"
             : marked
                 ? "a value contains placeholder or is todo or tbd"
                 : !scheme
-                    ? "image must start with a lowercase ipfs://, https://, ar:// or data: scheme with content past it and no surrounding whitespace"
-                    : "both set in the launch transaction";
+                    ? "image must be empty or start with a lowercase ipfs://, https://, ar:// or data: scheme with content past it and no surrounding whitespace"
+                    : "empty or set in the launch transaction";
     }
 
     /// @dev true when `s` is empty or trims to nothing. `vm.trim` strips spaces, tabs, newlines, carriage returns and
@@ -386,6 +389,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _pinBuild("ControllerV1", BUILD_HASH_CONTROLLER);
         _pinBuild("SeaportBasicAdapter", BUILD_HASH_SEAPORT_ADAPTER);
         _pinBuild("CreditStrategyAdapter", BUILD_HASH_STRATEGY_ADAPTER);
+        _pinBuild("CoinRenderer", BUILD_HASH_RENDERER);
         bytes32 got = keccak256(vm.getCode("CoreLib.sol:CoreLib"));
         _check(
             "build: CoreLib creation code hash equals the pinned build",
@@ -423,6 +427,7 @@ abstract contract LaunchChecks is PostflightChecks {
     function _prePredictions(LaunchConfig memory c, address deployer) private {
         address coreAt = coreAddress(c, deployer);
         _noCode("predicted core is empty", coreAt);
+        _noCode("predicted renderer is empty", rendererAddress(c));
         (bool ok, address coinAt) = _predict(c, deployer, coreAt);
         _check(
             "predicted coin is empty",
@@ -657,6 +662,9 @@ abstract contract LaunchChecks is PostflightChecks {
         (bool okf, uint256 fee) = _word(c.stack.factory, abi.encodeCall(IArtCoinsFactoryV2.deployFee, ()));
         if (!okf || c.stack.factory.code.length == 0) return (false, address(0), 0, "no factory");
         uint256 snap = vm.snapshotState();
+        // the token config names the renderer, which the launch deploys before it. the simulation places its code
+        address renderer = cfg.token.renderer;
+        if (renderer.code.length == 0) vm.etch(renderer, vm.getDeployedCode("CoinRenderer.sol:CoinRenderer"));
         vm.deal(deployer, deployer.balance + fee);
         vm.prank(deployer);
         bytes memory out;
@@ -748,8 +756,8 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat(
                 "Core ", vm.toString(BUILD_HASH_CORE), " CoreLib ", vm.toString(BUILD_HASH_CORELIB), " ControllerV1 ",
                 vm.toString(BUILD_HASH_CONTROLLER), " SeaportBasicAdapter ", vm.toString(BUILD_HASH_SEAPORT_ADAPTER),
-                " CreditStrategyAdapter ", vm.toString(BUILD_HASH_STRATEGY_ADAPTER), " CoreLib creation ",
-                vm.toString(BUILD_CREATION_HASH_CORELIB)
+                " CreditStrategyAdapter ", vm.toString(BUILD_HASH_STRATEGY_ADAPTER), " CoinRenderer ",
+                vm.toString(BUILD_HASH_RENDERER), " CoreLib creation ", vm.toString(BUILD_CREATION_HASH_CORELIB)
             )
         );
         _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));
