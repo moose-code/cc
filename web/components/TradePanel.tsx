@@ -242,7 +242,6 @@ export function TradePanel({ market }: { market?: Market }) {
       : side === "buy"
         ? `${tokens(minOut(quoteOut, slipBps), dec)} ${tag}`
         : `${eth(minOut(quoteOut, slipBps))} ETH`;
-  const potText = potWei == null ? "—" : `~${eth(potWei)} ETH · ${parseFloat((potBps / 100).toFixed(2))}%`;
   const hashLabel = (h: string) => `${h.slice(0, 6)}…${h.slice(-4)}`;
   const TxLink = ({ h, children }: { h: string; children?: string }) => (
     <a href={evmNowTx(h)} target="_blank" rel="noreferrer">
@@ -313,12 +312,6 @@ export function TradePanel({ market }: { market?: Market }) {
               <span>{result.paidLabel}</span>
               <span>{result.paid}</span>
             </div>
-            {result.potWei != null && (
-              <div className="tp-row">
-                <span>to the pot</span>
-                <span>~{eth(result.potWei)} ETH</span>
-              </div>
-            )}
           </div>
         </div>
       ) : (
@@ -364,12 +357,6 @@ export function TradePanel({ market }: { market?: Market }) {
 
       {!result && (
         <div className="tp-rows">
-          {hasAmount && potBps > 0 && (
-            <div className="tp-row">
-              <span>to the pot</span>
-              <span>{quoting ? "—" : potText}</span>
-            </div>
-          )}
           {hasAmount && (
             <div className="tp-row">
               <span>minimum received</span>
