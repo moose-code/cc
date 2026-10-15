@@ -1,0 +1,55 @@
+{
+  "chainId": 1,
+  "deployedAt": "2026-10-15",
+  "launcherRepo": "ripe0x/new-material-coin-launcher",
+  "launcherCommit": "677f0997b83657142a7d65db88c487ba4af9bb6d",
+  "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "factoryState": "deprecated, owner only until the first coin ran a fee cycle",
+  "escrow": "0x17d9d652E2FD969cDfdb4eC7a71137BDd9aada95",
+  "allowlist": "0x5C1e3B42d490c108cDca1c404a7A13F9879469a0",
+  "hook": "0xbca3ad7b771DE1af8Ce369f6eb1de15Ac7F068CC",
+  "locker": "0xf268088a5b9f52445eb0C7C19ad78a0793Ca8943",
+  "mevModule": "0x568F9FaCFB8a10dAEeF0928B33a856Db03E217DB",
+  "factory": "0xAbFd91B16D77a1F62Fe00Dea5aE6478bCc9c7615",
+  "tokenDeployer": "0x5a21e9d52715BfeEa4d1d4BC153b687E444aF6f5",
+  "burnRouter": "0xB87d6C46D704bF6B4Fc749428BA180fBF6325251",
+  "feeController": "0x26591f5969681FA4a18E6769dc2295B0F403E1F4",
+  "devBuyExtension": "0x58D22Dfe19E8D0807561D15bF67F2C95293D2547",
+  "airdropExtension": "0x350f8D07582861d2Fc1a38DbD2D73b3b65e2801e",
+  "deployBlocks": {
+    "escrow": 26158001,
+    "allowlist": 26158002,
+    "hook": 26158003,
+    "locker": 26158004,
+    "mevModule": 26158005,
+    "factory": 26158006,
+    "tokenDeployer": 26158007,
+    "burnRouter": 26158009,
+    "feeController": 26158010,
+    "devBuyExtension": 26158011,
+    "airdropExtension": 26158012
+  },
+  "hookCreate2": {
+    "deployer": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+    "salt": "0x0000000000000000000000000000000000000000000000000000000000008f1b"
+  },
+  "codeHashes": {
+    "escrow": "0xeb557e5be7ab0b29b0c77f8dc18aada8e1d17910ae9e3b92909a9126872b9975",
+    "allowlist": "0x7a98bacb16f0ec968f5d450c37e6a5a4ef213a8d48c61c666b2cea3e0f6318c4",
+    "hook": "0x6cfb959356643f406a30966014eba167006f1917bb694a7f5935cb5da7b13d0f",
+    "locker": "0x191e433101a918cc441bf7c143de216757b9a40ed2402131434a8747861c386a",
+    "mevModule": "0x785bd0435b633b9bd6508ba2ddc78d16cc29360fd859c20094775445f9a9703d",
+    "factory": "0x5e5f2b42f418cf43635a9e2757aea91486b506c8c688128e99ae596f7b02d557",
+    "tokenDeployer": "0x1e152410cbd3b63d6616e7bd5b5784502af63393a8f200bcb76dd741d06376fc",
+    "burnRouter": "0x446c38e7f907b120416c06e90f92f966a20cca49df8ea19711c6b12c4a40edd9",
+    "feeController": "0x0afd34bdb0af42b35d72d5835119aa05531616fb46d67410f92ea77c0c1599d4",
+    "devBuyExtension": "0x69f404a4689f0f332257def92ba5ce3bf81335d0ef61f3b21bdb046ccf844d7f",
+    "airdropExtension": "0x526855b04579501bf132da0f1a25693b0b849e95c0792c4cbe22ce7ab3b56d35"
+  },
+  "source": {
+    "repo": "ripe0x/new-material-coin-launcher",
+    "commit": "677f0997b83657142a7d65db88c487ba4af9bb6d",
+    "forkBlock": 26158000,
+    "note": "fork deployment, not mainnet. deployed by script/v2/deploy.sh local against an anvil mainnet fork at block 26158000, chain id 1, owner anvil account 0 (its 7702 delegation cleared on the fork). the stack has no keeper and adds the devBuy and airdrop extensions. rebuild per docs/RUNBOOK.md section 7."
+  }
+}
