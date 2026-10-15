@@ -5,16 +5,13 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useEns } from "@/lib/ens";
-import { shortAddr } from "@/lib/format";
+import { commas, shortAddr } from "@/lib/format";
+import { useNextCredit } from "./EngineFeed";
 
 const NAV = [
   { href: "/", label: "engine" },
   { href: "/credits", label: "credits" },
   { href: "/statements", label: "statements" },
-  { href: "/sell", label: "sell" },
-  { href: "/compose", label: "compose" },
-  { href: "/balance", label: "balance" },
-  { href: "/keeper", label: "keeper" },
 ];
 
 export function Header() {
@@ -61,6 +58,7 @@ export function Header() {
         </nav>
       </div>
 
+      {path !== "/" && <NextCredit />}
       <WalletButton />
     </header>
   );
@@ -101,4 +99,21 @@ function WalletButton() {
 // ENS name from the cached reverse lookup in lib/ens.ts, else the short address
 function AccountName({ address }: { address: string }) {
   return <>{useEns(address) ?? shortAddr(address)}</>;
+}
+
+// Next credit progress beside the wallet; the home page shows it in the rail.
+// TODO: acquire button (handoff 2026-10-15 part 3) waits on the owner naming the transaction it sends.
+function NextCredit() {
+  const { ratio, segs } = useNextCredit();
+  return (
+    <div className="hdr-next">
+      <span className="hdr-next-label">next credit</span>
+      <div className="hdr-next-segs" aria-hidden>
+        {Array.from({ length: 8 }, (_, i) => (
+          <i key={i} className={i < segs ? "on" : undefined} />
+        ))}
+      </div>
+      <b>{ratio == null ? "—" : `${commas(ratio)}%`}</b>
+    </div>
+  );
 }

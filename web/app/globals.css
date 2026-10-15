@@ -174,6 +174,46 @@ a:hover {
   gap: 12px;
   margin-left: auto;
 }
+/* header next credit: label, 8 segment bar, percent; sits left of the wallet */
+.hdr-next {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 32px;
+  margin-left: auto;
+  padding-right: 16px;
+  border-right: 1px solid var(--divider);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.hdr-next + .wallet {
+  margin-left: 16px;
+}
+.hdr-next-label {
+  color: var(--muted);
+}
+.hdr-next-segs {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  width: 72px;
+  height: 8px;
+}
+.hdr-next-segs i {
+  background: var(--hairline);
+}
+.hdr-next-segs i.on {
+  background: var(--m);
+}
+.hdr-next b {
+  font-weight: 600;
+}
+/* the mobile header holds the logo, connect and the menu toggle */
+@media (max-width: 860px) {
+  .hdr-next {
+    display: none;
+  }
+}
 .wallet.pending {
   visibility: hidden;
 }
