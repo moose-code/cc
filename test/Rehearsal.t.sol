@@ -25,7 +25,7 @@ interface IPermit2R {
 
 /// @notice the launch rehearsal. forks mainnet at the LATEST block (read from the rpc, not the pinned one), runs the
 /// preflight, the real deploy path as the factory owner, the postflight, and a short smoke: a buy and a sell through the
-/// universal router, a book of the fees at the Core, the payee claim and a real credit sold into the bid. it skips cleanly unless the env var
+/// universal router, a book of the fees at the Core that pushes the payee share once the owner raises `payeePpm` (the `FeesAdded` amount) and a real credit sold into the bid. it skips cleanly unless the env var
 /// REHEARSAL is set, so the default suite stays pinned and fast. it reads the config file named by LAUNCH_CONFIG, like the
 /// scripts do, and defaults to script/config/rehearsal.json, whose `image` and `description` hold the placeholder marker:
 /// the preflight row `rule: image and description are filled and are not placeholders` is expected to fail before and

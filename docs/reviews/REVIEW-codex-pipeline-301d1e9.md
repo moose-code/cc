@@ -103,3 +103,25 @@ The new launcher contracts have no future mainnet bytecode to compare. The exist
 6. **Web runtime:** source review and the live router rehearsal cover contract calls, but the web self-check/build was not executed in this archived copy because its `node_modules` are absent. Confirm its UI transaction and quote paths on the final launch record.
 
 **Verdict: not fit to freeze and launch.** Six targeted tests fail, the runbook's signoff table conflicts with the owner's final parameters, the tracked metadata is intentionally incomplete, and the future launcher stack and balance module cannot yet be verified as deployed dependencies. The current contract paths exercised by the fork, live rehearsal, and local E2E showed no newly confirmed exploit.
+
+## Correction: the launcher stack names
+
+The launcher repository `new-material-coin-launcher` has `master` as its default branch. The commit `ba24a6aa` read by this audit sits on a stale local `main`. `origin/master` is at `46cec5be` and carries a new v2 stack that is not deployed: 36 files under `src/v2` and `src/Constants.sol` changed since `d4aa46b`, the source of the live stack. The latest mainnet broadcast record, timestamp 1791577429, is still the live deployment.
+
+- The engine integrates with, and this audit and every fork run, the rehearsal and the local end to end exercised, the LIVE stack: source `d4aa46b`, addresses in `script/config/v2-mainnet.json`.
+- The `master` stack (`46cec5be`) is a future dependency. After its mainnet deployment it needs an integration packet and a rerun of preflight, postflight, the rehearsal and the local end to end. Unconfirmed item 1 and the "Info, future integration" row apply to that stack.
+
+## Fixes
+
+| Finding | Disposition | Where |
+|---|---|---|
+| Six failing tests (`Flow` 2, `OnePile` 1, `RatingReference` 3) | Fixtures raise the controller `markupBps` to its bound before setting `saleFloorBps` up to 40,000; `refScore` values sit in 800,000 to 8,000,000; `RatingReference` gains `test_refScore_boundsAreEnforced`. The cross-field and score guards are unchanged. | commit "tests: the six fixtures that asked for settings decision 124 and the refScore bound now refuse" |
+| Signoff table drift (`docs/RUNBOOK.md:43,46`) | `balanceBidMarginBps` 1,000, `decayHours` 12, fast/knee/slow removed. Every other signoff row was compared to `script/config/mainnet.json` value by value. | docs commit |
+| Decisions 119 and 121 stale fields | Dated amendment lines; the rows keep their text. | docs commit, `docs/DECISIONS.md` |
+| `refScore` from 1 in SPEC and interface comments | 800,000 to 8,000,000 in `docs/SPEC.md` sections 3 and 4 and `src/interfaces/Interfaces.sol` (comment only). | docs commit |
+| Runbook and rehearsal wording (`grossPriceOf`, `claimRoyalty`, `claimPayee`) | `priceOf` and the pushed `FeesAdded`, `StatementSoldTo`, `CreditSold` amounts in `docs/RUNBOOK.md` and the `test/Rehearsal.t.sol` header. | docs commit |
+| Failed hook bounty push booked whole to the pot | Accepted: decision 125, `docs/SPEC.md` section 5 and section 14 item 20. | docs commit |
+| `buyback()` without a minimum output; CreditStrategy upgrade power | The buyback minimum is accepted risk 6 in SPEC section 14. The CreditStrategy implementation slot and a real quote are checked immediately before launch. | none |
+| Empty `image` and `description` in `script/config/mainnet.json` | Owner input before the freeze. | open |
+| Future launcher stack (`master`, `46cec5be`) | Open item in `docs/STATUS.md` section 3. | open |
+| Production balance module, launch-day economics, web self-check | Outside this candidate. | open |

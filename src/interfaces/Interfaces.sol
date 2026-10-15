@@ -198,7 +198,8 @@ struct Settings {
     /// 200_000
     uint24 payeePpm;
     /// the per-credit score the eth bid divides by: every eth door pays `rate * score / refScore` per credit and the
-    /// controller reads it for the point rate and the statement reference. ten-thousandths of a point, 1 to 8_000_000
+    /// controller reads it for the point rate and the statement reference. ten-thousandths of a point,
+    /// 800_000 to 8_000_000
     uint32 refScore;
     // slot 3
     /// coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, 0 to 1e24
