@@ -64,6 +64,13 @@ export const controllerAbi = parseAbi([
   "function nextPage() view returns (bool ready, uint256[80] ids, uint8 format)",
   "function pointRate() view returns (uint256)",
   "function valueOf(uint256 points) view returns (uint256)",
+  "function markupBps() view returns (uint16)",
+  "function startCapBps() view returns (uint32)",
+  "function decayHours() view returns (uint16)",
+  "function anchorBps() view returns (uint32)",
+  "function startBps() view returns (uint256)",
+  "function creditFloorBps() view returns (uint16)",
+  "function creditStartBps() view returns (uint32)",
   // actions
   "function buy(uint256 sid) payable",
   "function buyCredit(uint256 id) payable",
@@ -73,8 +80,15 @@ export const controllerAbi = parseAbi([
 // Credits: the holdings read and the Core approval.
 export const creditsAbi = parseAbi([
   "function tokensOf(address owner) view returns (uint256[])",
+  "function ownerOf(uint256 id) view returns (address)",
   "function isApprovedForAll(address owner, address operator) view returns (bool)",
   "function setApprovalForAll(address operator, bool approved)",
+]);
+
+// Statements: the mint counter and the owner of a statement.
+export const statementsAbi = parseAbi([
+  "function supply() view returns (uint256)",
+  "function ownerOf(uint256 id) view returns (address)",
 ]);
 
 export const erc20Abi = parseAbi([

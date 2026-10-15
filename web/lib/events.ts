@@ -55,7 +55,7 @@ export type CreditEvt =
       block: bigint;
       tx: string;
     }
-  | { t: "sold"; buyer: string; price: bigint; block: bigint; tx: string }
+  | { t: "sold"; buyer: string; price: bigint; toArtist: bigint; toOperator: bigint; block: bigint; tx: string } // price split: toArtist and toOperator off the top, the rest stays with the engine
   | { t: "composed"; sid: number; block: bigint; tx: string }
   | { t: "swapped"; dir: "in" | "out"; other: number; caller: string; fee: bigint; block: bigint; tx: string };
 
@@ -74,7 +74,7 @@ export interface StatementRecord {
   };
   restyled: { format: number; caller: string; block: bigint; tx: string }[];
   anchor: { saleBps: bigint; anchorBps: number; block: bigint; tx: string }[];
-  sold?: { buyer: string; price: bigint; toBuyback?: bigint; block: bigint; tx: string };
+  sold?: { buyer: string; price: bigint; toBuyback?: bigint; toArtist?: bigint; toOperator?: bigint; block: bigint; tx: string };
   redeemed?: { received: bigint; block: bigint; tx: string };
 }
 
@@ -233,7 +233,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
       }
       case "StatementSoldTo": {
         const sid = Number(a.sid);
-        st(sid).sold = { buyer: a.buyer, price: a.price, toBuyback: a.toBuyback, block, tx };
+        st(sid).sold = { buyer: a.buyer, price: a.price, toBuyback: a.toBuyback, toArtist: a.toArtist, toOperator: a.toOperator, block, tx };
         stats.sold++;
         stats.artistReceived += Number(formatUnits(a.toArtist, 18));
         stats.payeeReceived += Number(formatUnits(a.toOperator, 18));
@@ -263,7 +263,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
       }
       case "CreditSold": {
         const id = Number(a.id);
-        cr(id).push({ t: "sold", buyer: a.buyer, price: a.price, block, tx });
+        cr(id).push({ t: "sold", buyer: a.buyer, price: a.price, toArtist: a.toArtist, toOperator: a.toOperator, block, tx });
         stats.creditsSold++;
         stats.artistReceived += Number(formatUnits(a.toArtist, 18));
         stats.payeeReceived += Number(formatUnits(a.toOperator, 18));

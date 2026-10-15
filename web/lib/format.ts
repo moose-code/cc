@@ -113,3 +113,12 @@ export function agoLabel(s: number): string {
 export function relTime(ts: number, now: number): string {
   return agoLabel(now - ts);
 }
+
+// On-chain credit score (ten-thousandths of a point) as the displayed rating: score / 10,000.
+// 4,330,000 -> "433", 1,324,012 -> "132.4", 800,000 -> "80". One decimal under 1,000 points, none above;
+// trailing ".0" dropped; thousands separated.
+export function rating(score: bigint | number): string {
+  const v = Number(score) / 10_000;
+  const s = v >= 1000 ? Math.round(v).toString() : v.toFixed(1).replace(/\.0$/, "");
+  return s.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}

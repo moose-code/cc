@@ -8,8 +8,8 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
 import { numberToHex, parseAbi, zeroAddress, type Address } from "viem";
-import { core, credits, engineDeployed } from "./config";
-import { controllerAbi, coreAbi } from "./abis";
+import { core, credits, engineDeployed, statements } from "./config";
+import { controllerAbi, coreAbi, creditsAbi, statementsAbi } from "./abis";
 import { replayEth, replayBalance } from "./sell";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
@@ -148,7 +148,7 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
   const balanceAvailable = availableRes.status === "success" && unitRes.status === "success" ? (availableRes.result as bigint) : undefined;
   const balanceUnit = availableRes.status === "success" && unitRes.status === "success" ? (unitRes.result as bigint) : undefined;
   const k = { address: controller, abi: controllerAbi } as const;
-  const [creditSaleOn, creditWindow, pointRate, page] = await client.multicall({
+  const [creditSaleOn, creditWindow, pointRate, page, markupBps, startCapBps, decayHours, anchorBps, startBps, creditFloorBps, creditStartBps, statementSupply] = await client.multicall({
     ...mc,
     blockNumber,
     allowFailure: false,
@@ -157,6 +157,14 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
       { ...k, functionName: "creditWindow" },
       { ...k, functionName: "pointRate" },
       { ...k, functionName: "nextPage" },
+      { ...k, functionName: "markupBps" },
+      { ...k, functionName: "startCapBps" },
+      { ...k, functionName: "decayHours" },
+      { ...k, functionName: "anchorBps" },
+      { ...k, functionName: "startBps" },
+      { ...k, functionName: "creditFloorBps" },
+      { ...k, functionName: "creditStartBps" },
+      { address: statements, abi: statementsAbi, functionName: "supply" },
     ] as const,
   });
   return {
@@ -171,6 +179,7 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
     balanceRate,
     balanceUnit,
     payee,
+    payeeOn,
     artist,
     pileSize,
     held: held.map(Number),
@@ -189,6 +198,21 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
     creditWindow: Number(creditWindow),
     pointRate,
     page: { ready: page[0], ids: page[1].map(Number), format: page[2] },
+    // Statement price curve (ControllerV1._ask). The asking price is reference * bps / 10000. bps falls in a straight
+    // line from `statementStartBps` at age 0 to settings.saleFloorBps at `statementDecayHours` hours, then rests.
+    // `statementStartBps` = anchorBps * markupBps / 10000, at most statementStartCapBps; it moves with sales.
+    statementStartBps: Number(startBps),
+    statementDecayHours: decayHours,
+    statementMarkupBps: markupBps,
+    statementStartCapBps: startCapBps,
+    anchorBps, // running sale level in bps of the reference (10000 = no premium)
+    // Credit price curve (ControllerV1.creditPrice). floor = max(cost, valueOf(score)) * creditFloorBps / 10000;
+    // start = floor * creditStartBps / 10000. The price falls linearly from start at acquisition to floor at
+    // creditWindow seconds, then rests at the floor.
+    creditFloorBps,
+    creditStartBps,
+    // Id the next compose mints: Statements.supply() + 1 (Core.compose asserts the new id equals supply()).
+    nextStatementId: Number(statementSupply) + 1,
   };
 }
 
@@ -272,6 +296,25 @@ export function useCredit(id: number) {
   });
 }
 
+// Current owner of a credit (undefined once burned) and of a statement. Read once per id per snapshot
+// change; ownership moves with the engine's own txs, which change the snapshot (pileSize, held, nextStatementId).
+function useOwnerOf(kind: "credit" | "statement", id: number) {
+  const client = usePublicClient();
+  const { data: s } = useSnapshot();
+  return useQuery<Address | undefined>({
+    queryKey: ["owner-of", kind, id, s?.pileSize.toString(), s?.nextStatementId],
+    enabled: Boolean(client) && engineDeployed && Boolean(s),
+    queryFn: async () => {
+      const address = kind === "credit" ? credits : statements;
+      return client!
+        .readContract({ address, abi: kind === "credit" ? creditsAbi : statementsAbi, functionName: "ownerOf", args: [BigInt(id)] })
+        .catch(() => undefined);
+    },
+  });
+}
+export const useCreditOwner = (id: number) => useOwnerOf("credit", id);
+export const useStatementOwner = (id: number) => useOwnerOf("statement", id);
+
 // ---- statements -----------------------------------------------------------------
 
 export interface HeldStatement {
@@ -349,7 +392,10 @@ export function useStatements() {
 // lastFillRate, minuteStartRate, minuteBucket (uint64) + peakTime, peakRate.
 const ANCHOR_SLOT = 27n;
 const CREDIT_SCORE = "0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7" as const;
-const scoreAbi = parseAbi(["function scoreOf(bytes21 seed, uint64 paidAt) view returns (uint256)"]);
+const scoreAbi = parseAbi([
+  "function scoreOf(bytes21 seed, uint64 paidAt) view returns (uint256)",
+  "function traitsOf(bytes21 seed, uint64 paidAt) view returns (uint256 mask, uint256 active, uint256 occupied, uint256 eights, uint256 band)",
+]);
 const multicallAbi = parseAbi(["function getEthBalance(address a) view returns (uint256)"]);
 const moduleAbi = parseAbi(["function unitPerPoint() view returns (uint256)", "function available() view returns (uint256)"]);
 const seedAbi = parseAbi(["function seedOf(uint256 id) view returns (bytes21)", "function timestampOf(uint256 id) view returns (uint64)"]);
@@ -472,6 +518,70 @@ export function useScores(ids: bigint[]) {
       const scores = await creditScores(client!, ids);
       const m: Record<string, bigint> = {};
       ids.forEach((id, i) => (m[id.toString()] = scores[i]));
+      return m;
+    },
+  });
+}
+
+// Credit price floor input: controller valueOf(score) per id, id to wei. Credit floor price =
+// max(cost, value) * snap.creditFloorBps / 10000 and start = floor * snap.creditStartBps / 10000 (see Snapshot).
+// Scores are cached (useScores); values refresh when the snapshot's floor rate changes. Not polled.
+export function useCreditValues(ids: bigint[]) {
+  const client = usePublicClient();
+  const { data: s } = useSnapshot();
+  const { data: scores } = useScores(ids);
+  const key = ids.map(String).join(",");
+  return useQuery<Record<string, bigint>>({
+    queryKey: ["credit-values", key, s?.controller, s?.floorRate.toString(), s?.balanceUnit?.toString()],
+    enabled: Boolean(client && s && scores),
+    queryFn: async () => {
+      const vals = await client!.multicall({
+        ...mc,
+        allowFailure: true,
+        contracts: ids.map((id) => ({ address: s!.controller, abi: controllerAbi, functionName: "valueOf", args: [scores![id.toString()]] }) as const),
+      });
+      const m: Record<string, bigint> = {};
+      ids.forEach((id, i) => (m[id.toString()] = val(vals[i], 0n)));
+      return m;
+    },
+  });
+}
+
+export interface CreditTraits {
+  mask: number; // active plate bitmask, 1 to 15 (CreditScore.traitsOf). Bit to C/M/Y/K mapping is not documented in the repo.
+  active: number; // inked bits across the active plates
+  occupied: number; // distinct inked raster cells after plate misregistration
+  eights: number; // ASCII '8' count in the seed
+  band: number; // registration band: 0 Registered, 1 Nudge, 2 Slip, 3 Skew, 4 Drift, 5 Loose
+}
+
+// CreditScore.traitsOf(seedOf, timestampOf) per id. Fixed once minted, so cached and not polled.
+export function useCreditTraits(ids: bigint[]) {
+  const client = usePublicClient();
+  const key = ids.map(String).join(",");
+  return useQuery<Record<string, CreditTraits>>({
+    queryKey: ["traits-of", key],
+    enabled: engineDeployed && Boolean(client) && ids.length > 0,
+    staleTime: Infinity,
+    queryFn: async () => {
+      const seeds = await client!.multicall({
+        ...mc,
+        allowFailure: false,
+        contracts: ids.flatMap((id) => [
+          { address: credits, abi: seedAbi, functionName: "seedOf", args: [id] },
+          { address: credits, abi: seedAbi, functionName: "timestampOf", args: [id] },
+        ] as const),
+      });
+      const t = await client!.multicall({
+        ...mc,
+        allowFailure: false,
+        contracts: ids.map((_, i) => ({ address: CREDIT_SCORE, abi: scoreAbi, functionName: "traitsOf", args: [seeds[2 * i] as `0x${string}`, seeds[2 * i + 1] as bigint] }) as const),
+      });
+      const m: Record<string, CreditTraits> = {};
+      ids.forEach((id, i) => {
+        const r = t[i];
+        m[id.toString()] = { mask: Number(r[0]), active: Number(r[1]), occupied: Number(r[2]), eights: Number(r[3]), band: Number(r[4]) };
+      });
       return m;
     },
   });
