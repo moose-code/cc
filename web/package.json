@@ -11,8 +11,10 @@
     "dev:local": "node scripts/local-env.mjs \"${RECORD:-../deployments/31337.json}\" && next dev"
   },
   "dependencies": {
+    "@ponder/client": "0.17.8",
     "@rainbow-me/rainbowkit": "^2.2.0",
     "@tanstack/react-query": "^5.59.0",
+    "drizzle-orm": "0.41.0",
     "next": "^14.2.33",
     "react": "18.3.1",
     "react-dom": "18.3.1",

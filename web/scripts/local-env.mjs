@@ -42,6 +42,7 @@ const env = {
   NEXT_PUBLIC_POOL_FEE: String(rec.poolFee),
   NEXT_PUBLIC_POOL_TICK_SPACING: String(rec.tickSpacing),
   NEXT_PUBLIC_LOCAL_ACCOUNTS: JSON.stringify(accounts),
+  NEXT_PUBLIC_INDEXER_URL: process.env.NEXT_PUBLIC_INDEXER_URL ?? "http://localhost:42169",
 };
 
 const out = fileURLToPath(new URL("../.env.local", import.meta.url));
