@@ -37,7 +37,12 @@ assert.equal(replayEth(ref(2), { ...a, rateCap: 800n }), 1000n + 800n);
 // per point: a credit of score 2 * refScore pays twice the rate and drops it twice as far (1 percent)
 assert.equal(replayEth([2000n], a), 2000n);
 assert.equal(replayEth([2000n, 1000n], a), 2000n + 990n);
-// balance: score * unit less the margin, per credit
-assert.equal(replayBalance([3n, 5n], 1000n, 100n), 2970n + 4950n);
+// balance: score * unit * rate / 10000 per credit, the rate dropped per credit by dropPerCreditBps * score / refScore
+// in one rounding, never below the floor
+const b = { rate: 10000n, unit: 100n, refScore: 10n, dropPerCreditBps: 50n, dropFloorBps: 5000n, floorBps: 9000n };
+// at par: 300, then the rate is 10000 * (100000 - 150) / 100000 = 9985 and the second credit pays 5 * 100 * 9985 / 10000
+assert.equal(replayBalance([3n, 5n], b), 300n + 499n);
+// at the floor the drop cannot lower the rate: 270 then 450
+assert.equal(replayBalance([3n, 5n], { ...b, rate: 9000n }), 270n + 450n);
 
 console.log("selfcheck ok");
