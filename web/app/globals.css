@@ -1231,6 +1231,10 @@ button.tp-row:disabled {
 
 /* ---- responsive ----------------------------------------------------------- */
 
+.home-tabs {
+  display: none;
+}
+
 @media (max-width: 1100px) {
   .home {
     --rail: 0px;
@@ -1250,6 +1254,31 @@ button.tp-row:disabled {
 }
 
 @media (max-width: 860px) {
+  .home-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--structure);
+  }
+  .home-tabs button {
+    flex: 1;
+    height: 52px;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .home-tabs button[aria-selected="true"] {
+    border-bottom-color: var(--ink);
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .home[data-tab="ledger"] :is(.fw, .stats, .rail),
+  .home[data-tab="trade"] :is(.fw, .stats, .ledger),
+  .home[data-tab="process"] :is(.rail, .ledger) {
+    display: none;
+  }
   .fw {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1365,14 +1394,31 @@ button.tp-row:disabled {
   .stat-cell.ink-pot {
     grid-column: 1 / -1;
   }
+  .rail {
+    display: flex;
+    flex-direction: column;
+  }
   .rail .trade {
     padding: 24px 16px;
   }
+  .tp-seg {
+    width: 100%;
+    height: 44px;
+  }
+  .tp-price .tp-big:not(.sm) {
+    font-size: 30px;
+  }
   .progress {
+    order: 2;
     padding: 20px 16px;
+    border-top: 1px solid var(--structure);
   }
   .ledger-head {
+    flex-wrap: wrap;
     padding: 24px 16px 16px;
+  }
+  .ledger-head h2 {
+    white-space: nowrap;
   }
   .ledger-table {
     margin: 0 16px;
@@ -1741,6 +1787,9 @@ button.tp-row:disabled {
     gap: 8px;
   }
   .wallet .wallet-addr {
+    display: none;
+  }
+  .brand-sub {
     display: none;
   }
   .btn-fill,
