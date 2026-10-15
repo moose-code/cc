@@ -47,6 +47,7 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 - the local seed gives a1 no CC and under a page of credits, so the restyle and the composes are driven by the scenario stages, not the UI; a seed change (one coin and 80 credits to a1) would close that.
 - the flywheel presentation: a design brief for three directions was written on 2026-10-13; the current bar is the first draft.
 - the balance module: written when the redeem contract is final (decision 101).
+- artcoins master stack (46cec5be): integration packet after its mainnet deployment; the engine is pinned to the live stack until then.
 - time-weighted price for the credit sale floor: the controller's `valueOf` pool term reads the pool spot price (`getSlot0`), so the credit sale floor `max(cost, valueOf(score)) * creditFloorBps` moves with the spot. the same block credit sale guard (`SameBlockReturn`) removes the atomic round trip against the engine's own balance bid; a multi block round trip remains priceable off a pushed pool (security review U1). a pool oracle hook or TWAP for the floor is the long-term fix.
 - unmerged branches for the owner to keep or delete: claude/v1-ui-nextjs-web3-1d1637 (a Next.js frontend that read the deleted lens; it needs the multicall list of INTEGRATION section 2), feat/ui-anvil-local, feat/local-e2e, claude/repair-project-director-1366be, codex/independent-security-audit, codex/issue-3-spec.
 
