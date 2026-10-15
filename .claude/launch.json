@@ -12,6 +12,24 @@
       ],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "indexer",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "--prefix",
+        "indexer",
+        "ponder",
+        "dev",
+        "--root",
+        "indexer",
+        "--port",
+        "42169"
+      ],
+      "env": {
+        "DEPLOYMENT_RECORD": "deployments/31337.json"
+      },
+      "port": 42169
     }
   ]
 }
