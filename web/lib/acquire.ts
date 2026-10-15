@@ -7,7 +7,8 @@ export interface Listing {
   id: bigint;
   price: bigint; // wei the Core pays the venue (Core.buyListing `value`)
   source: AcquireSource;
-  params: `0x${string}`; // adapter params; "0x" for the strategy adapter
+  params: `0x${string}`; // adapter params; "0x" for the strategy adapter, and for an OpenSea listing until its fulfillment is fetched
+  orderHash?: string; // OpenSea order whose fulfillment data gives `params`
 }
 
 export interface Priced extends Listing {
@@ -41,8 +42,10 @@ export function cheapestPerId(list: Listing[]): Listing[] {
 }
 
 /**
- * Candidates worth a live read, from the listings and a bid estimate per id (ethRate * score / refScore, the bid
- * formula of Core.bidOf at the snapshot rate). Ranked by estimated margin, the first `n` kept.
+ * Candidates worth a live read, from all listings and a bid estimate per id. The estimate is Core.bidOf
+ * (src/Core.sol:465-470): ethRate() * score / refScore with floor division, where ethRate() is
+ * `price.min(ethPot + pending)` (Core.sol:458-461), held by the snapshot as `ethRate`. Ranked by estimated margin
+ * (estimated bid minus price), the first `n` kept.
  */
 export function shortlist(list: Listing[], ethRate: bigint, refScore: bigint, scores: Map<bigint, bigint>, n: number): Listing[] {
   if (refScore === 0n) return [];

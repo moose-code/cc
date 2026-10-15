@@ -69,3 +69,7 @@ assert.deepEqual(cheapestPerId([L(1, 90n), L(1, 80n, "opensea"), L(2, 5n)]).map(
 const scores = new Map([[1n, 2000n], [2n, 1000n], [3n, 1000n]]);
 assert.deepEqual(shortlist([L(1, 150n), L(2, 90n), L(3, 120n), L(4, 1n)], 100n, 1000n, scores, 2).map((l) => Number(l.id)), [1, 2]);
 assert.equal(shortlist([L(1, 1n)], 100n, 0n, scores, 5).length, 0);
+// a pricier high-rated listing beats cheap low-rated ones: rate 100, refScore 1000, id 9 scores 8000 (bid 800, price 500, margin 300), ids 1..8 score 1000 (bid 100)
+const many = new Map<bigint, bigint>([[9n, 8000n], ...[1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n].map((i): [bigint, bigint] => [i, 1000n])]);
+const cheapLow = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => L(i, BigInt(10 * i)));
+assert.deepEqual(shortlist([...cheapLow, L(9, 500n, "opensea")], 100n, 1000n, many, 1).map((l) => Number(l.id)), [9]);

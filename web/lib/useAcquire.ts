@@ -11,13 +11,14 @@ import { type Address } from "viem";
 import { core, credits, engineDeployed, seaportAdapter, strategy, strategyAdapter, strategyStartBlock } from "./config";
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
 import { creditScores, MULTICALL3, useHead, type Snapshot } from "./live";
-import { fetchStrategyListings, getIxMode, useIxMode } from "./indexer";
+import { fetchScoresIx, fetchStrategyListings, getIxMode, useIxMode } from "./indexer";
 import { clearing, shortlist, type Listing, type Priced } from "./acquire";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 const mc = { multicallAddress: MULTICALL3, batchSize: 16_384 } as const;
 const SHORTLIST = 6;
-const MAX_SCORE_READS = 200;
+const MAX_SCORE_READS = 600;
+const FULFILL_TRIES = 3; // OpenSea fulfillments fetched per query, best estimated margin first
 const CHUNK = 10_000n; // blocks per getLogs call
 const RESCAN = 12n; // blocks re-read behind the last scanned block (reorg window)
 
@@ -56,7 +57,7 @@ async function scoresOf(client: Client, ids: bigint[], known: Map<bigint, bigint
     } else missing.push(id);
   }
   if (missing.length) {
-    // ponytail: only the cheapest MAX_SCORE_READS unknown scores are read; an indexer that holds every credit never reaches this
+    // ponytail: at most MAX_SCORE_READS unknown scores are read in chain mode; an indexer that holds every credit never reaches this
     missing.splice(MAX_SCORE_READS);
     const read = await creditScores(client, missing);
     missing.forEach((id, i) => {
@@ -74,6 +75,7 @@ export interface Diag {
   source: string;
   price: string;
   bid: string;
+  est: string; // estimate from the snapshot rate and the score, the shortlist key
   clears: boolean;
 }
 
@@ -112,16 +114,26 @@ export function useAcquireCandidate() {
       for (const r of strat) listings.push({ id: r.id, price: r.price, source: "strategy", params: "0x" });
       try {
         const r = await fetch("/api/listings");
-        const body = (await r.json()) as { listings: { id: string; price: string; params: `0x${string}` }[] };
-        for (const l of body.listings ?? []) listings.push({ id: BigInt(l.id), price: BigInt(l.price), source: "opensea", params: l.params });
+        const body = (await r.json()) as { listings: { id: string; price: string; orderHash: string; expiry: number }[] };
+        const now = Math.floor(Date.now() / 1000);
+        for (const l of body.listings ?? []) if (l.expiry > now) listings.push({ id: BigInt(l.id), price: BigInt(l.price), source: "opensea", params: "0x", orderHash: l.orderHash });
       } catch {
         /* the strategy listings stand alone */
       }
 
-      // 2. shortlist by estimated bid
-      const byPrice = [...listings].sort((a, b) => (a.price < b.price ? -1 : a.price > b.price ? 1 : 0));
-      const scores = await scoresOf(c, [...new Set(byPrice.map((l) => l.id))], known);
-      const picked = shortlist(listings, snap.ethRate, BigInt(snap.settings.refScore), scores, SHORTLIST);
+      // 2. shortlist by estimated margin over every listing
+      const ids = [...new Set(listings.map((l) => l.id))];
+      if (getIxMode() === "ix") {
+        try {
+          for (const [id, s] of await fetchScoresIx(ids.filter((id) => !known.has(id)))) known.set(id, s);
+        } catch {
+          /* scores are read from the chain below */
+        }
+      }
+      const scores = await scoresOf(c, ids, known);
+      const refScore = BigInt(snap.settings.refScore);
+      const est = (id: bigint) => (snap.ethRate * (scores.get(id) ?? 0n)) / refScore;
+      const picked = shortlist(listings, snap.ethRate, refScore, scores, SHORTLIST);
       if (!picked.length) return { cleared: [], top: [] };
 
       // 3. live read of the shortlist
@@ -157,10 +169,30 @@ export function useAcquireCandidate() {
           priced.push({ ...l, price: live, bid });
         } else if (owner.toLowerCase() !== core!.toLowerCase()) priced.push({ ...l, bid });
       });
-      const cleared = clearing(priced, pot, retired);
+      // 4. fulfillment data for the best OpenSea candidates that clear; the price is re-checked against it
+      const first = clearing(priced, pot, retired);
+      let tries = 0;
+      const cleared: Priced[] = [];
+      for (const l of first) {
+        if (l.source !== "opensea") {
+          cleared.push(l);
+          continue;
+        }
+        if (tries++ >= FULFILL_TRIES) continue;
+        try {
+          const f = (await (await fetch(`/api/listings?fulfill=${l.orderHash}`)).json()) as { price?: string; params?: `0x${string}` };
+          if (!f.params || !f.price) continue;
+          const p = { ...l, price: BigInt(f.price), params: f.params };
+          if (clearing([p], pot, retired).length) {
+            cleared.push(p);
+          }
+        } catch {
+          /* this order is skipped */
+        }
+      }
       const top = [...priced]
         .sort((a, b) => Number(b.bid - b.price - (a.bid - a.price)))
-        .map((l) => ({ id: l.id.toString(), source: l.source, price: l.price.toString(), bid: l.bid.toString(), clears: cleared.includes(l) }));
+        .map((l) => ({ id: l.id.toString(), source: l.source, price: l.price.toString(), bid: l.bid.toString(), est: est(l.id).toString(), clears: first.includes(l) }));
       // eslint-disable-next-line no-console
       console.debug("[acquire] shortlist " + JSON.stringify({ pot: pot.toString(), retired, cleared: cleared.length, top }));
       return { cleared, top };
