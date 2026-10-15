@@ -15,8 +15,10 @@ ENV="${1:-}"
 fail() { echo "deploy.sh: $*" >&2; exit 1; }
 
 RPC_OVERRIDE="${RPC_URL:-}"
+CHAIN_OVERRIDE="${CHAIN_ID:-}"
 set -a; . "script/env/$ENV.env"; set +a
 [ -n "$RPC_OVERRIDE" ] && RPC_URL="$RPC_OVERRIDE"
+[ -n "$CHAIN_OVERRIDE" ] && CHAIN_ID="$CHAIN_OVERRIDE"
 
 # STACK=master repoints the launch at the master stack fork record (script/config/v2-master.json) and STACK is exported
 # so the forge scripts overlay the same record. the node stays chain id 31337 and the signer stays local.env's dev

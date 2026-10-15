@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # activity speed run against the already running local chain: rounds of realistic trading, sweeping, selling, composing
 # and buying through the real doors, with node time warps between rounds so the bid climbs and the sale prices decay.
-# it reads the deployment record, never deploys, seeds or resets, and refuses a node that is not chain id 31337.
+# it reads the deployment record, never deploys, seeds or resets, and refuses a node that is not local or whose chain id differs from the record's (31337, or 1 on a chain id 1 fork).
 #
 #   script/dev/activity.sh eth [rounds]       default 5 rounds
 #   script/dev/activity.sh balance [rounds]   eth rounds plus the balance side (needs the post phase module)
@@ -33,8 +33,10 @@ case "$ROUNDS" in '' | *[!0-9]*) echo "rounds must be a number" >&2; exit 2 ;; e
 REC="${RECORD:-deployments/31337.json}"
 [ -f "$REC" ] || { echo "no deployment record at $REC, run script/dev/local.sh first" >&2; exit 1; }
 RPC="${RPC_URL:-$(jq -r .rpcUrl "$REC")}"
-[ "$(cast chain-id --rpc-url "$RPC" 2>/dev/null)" = 31337 ] || { echo "no chain id 31337 node on $RPC" >&2; exit 1; }
-CHAIN=31337
+CHAIN="$(jq -r .chainId "$REC")"
+case "$CHAIN" in 1 | 31337) ;; *) echo "the record is chain id $CHAIN, expected 31337 or 1 (a local fork)" >&2; exit 1 ;; esac
+[ "$(cast chain-id --rpc-url "$RPC" 2>/dev/null)" = "$CHAIN" ] || { echo "no chain id $CHAIN node on $RPC" >&2; exit 1; }
+case "$RPC" in http://127.0.0.1:* | http://localhost:*) ;; *) echo "the node must be local, got $RPC" >&2; exit 1 ;; esac
 CORE="$(jq -r .core "$REC")"
 CTL="$(jq -r .controller "$REC")"
 COIN="$(jq -r .coin "$REC")"
