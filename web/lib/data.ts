@@ -45,7 +45,13 @@ export function useStats(): { data?: Stats } {
       mode === "ix"
         ? ixq.data
         : mode === "chain"
-          ? { ccBurned: s.ccBurned, artistReceived: s.artistReceived, payeeReceived: s.payeeReceived, composed: s.composed }
+          ? {
+              ccBurned: s.ccBurned,
+              artistReceived: s.artistReceived,
+              payeeReceived: s.payeeReceived,
+              composed: s.composed,
+              creditsAcquired: s.creditsEth + s.creditsBalance + s.creditsListing + s.creditsAdopted,
+            }
           : undefined,
   };
 }

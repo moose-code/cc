@@ -10,7 +10,7 @@ import { Tween } from "./EngineFeed";
 
 const LAUNCH_SUPPLY_CC = 1e9; // the coin's launch supply, 1e27 wei
 
-// Home stats row: credits and statements held by the engine, the balance token
+// Home stats row: credits and statements held by the engine over all ever taken in, the balance token
 // held by the engine, $CC burned and the pot. Cell edges: m, y, c, k; the pot is an ink fill.
 export function StatsBar() {
   const { data: s } = useStats();
@@ -26,9 +26,11 @@ export function StatsBar() {
     <div className="stats">
       <Cell ink="m" label="credits held">
         {on ? commas(Number(snap.pileSize)) : "—"}
+        {on && s && <small>/ {commas(s.creditsAcquired)}</small>}
       </Cell>
       <Cell ink="y" label="statements held">
         {on ? commas(snap.held.length) : "—"}
+        {on && s && <small>/ {commas(s.composed)}</small>}
       </Cell>
       <Cell ink="c" label={BALANCE_SYMBOL}>
         {on ? balance : "—"}

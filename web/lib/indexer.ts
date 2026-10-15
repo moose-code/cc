@@ -88,6 +88,7 @@ export interface Stats {
   artistReceived: number; // eth
   payeeReceived: number; // eth, the operator cut of sales plus the pushed fee share
   composed: number;
+  creditsAcquired: number; // every credit the engine took in: eth bid, balance bid, listing, adopted
 }
 
 export function useStatsIx() {
@@ -99,6 +100,7 @@ export function useStatsIx() {
       artistReceived: eth18(r?.toArtist),
       payeeReceived: eth18((r?.toOperator ?? 0n) + (r?.toPayee ?? 0n)),
       composed: Number(r?.composed ?? 0n),
+      creditsAcquired: Number(r?.creditsBought ?? 0n),
     };
   });
 }
@@ -141,6 +143,13 @@ export async function fetchStrategyListings() {
     .where(eq(strategyListing.active, true))
     .orderBy(asc(strategyListing.listPrice));
   return rows.map((r) => ({ id: r.id, price: r.price, score: r.score }));
+}
+
+/** Scores of credits by id from the credit table; ids the table lacks are absent. */
+export async function fetchScoresIx(ids: bigint[]): Promise<Map<bigint, bigint>> {
+  if (!ids.length) return new Map();
+  const rows = await ix!.db.select({ id: credit.id, score: credit.score }).from(credit).where(inArray(credit.id, ids));
+  return new Map(rows.map((r) => [r.id, r.score]));
 }
 
 // ---- credits ---------------------------------------------------------------------------------------------------
