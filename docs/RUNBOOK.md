@@ -164,3 +164,31 @@ The dump is tracked so CI can load it (`.github/workflows/ci.yml` and `candidate
    `cast rpc anvil_dumpState --rpc-url http://127.0.0.1:8601 | python3 -c 'import sys,json;sys.stdout.write(json.load(sys.stdin))' > script/config/stack-master-26158000.hex`
 
 The dump is anvil_dumpState gzip hex, loadable through the `anvil_loadState` rpc, not `anvil --load-state`. `STACK=master script/dev/anvil.sh` forks at chain id 31337 and loads the state after startup; the engine's forge scripts re-enter chain id 1 with `--chain-id 1` and the test suite runs with `--chain-id 1`.
+
+### activity speed run against the running local chain
+
+`script/dev/activity.sh` acts on the deployment in `deployments/31337.json` (its `rpcUrl` is the node) in rounds. It reads the record and sends transactions; it deploys, seeds and resets nothing, and exits on a node that is not chain id 31337.
+
+```
+script/dev/activity.sh eth [rounds]       default 5 rounds
+script/dev/activity.sh balance [rounds]   eth rounds plus the balance side (needs the post phase module)
+script/dev/activity.sh both [rounds]      eth rounds, then balance rounds
+SEED=<n>  PAUSE=1  QUIET=1  PEOPLE=<holders>  PEOPLE_CREDITS=<credits per holder>  BOT_MARGIN=<wei>  WARP_MIN/WARP_MAX=<seconds>
+```
+
+Each round warps the node 2 to 4 hours, then runs one `forge script` (`script/dev/Activity.s.sol`, `round(bool)`) that sends every action as an impersonated account through the real doors and quotes (`bidOf`, `priceOf`, `creditPrice`, `balanceBidOf`), after a dry run of each call in the simulation. A round prints its actions, then the pot, the bid, the pile, the held statements, the statements sold, the CC burned, the action counts of the run and the last transaction of each kind as an `evm.now` link. During the run the node produces one second per block (`anvil_setBlockTimestampInterval`) so the quotes read by the simulation stay current; the script restores the interval on exit.
+
+| step | what it does |
+|---|---|
+| trading | 6 to 12 universal router swaps from 20 derived addresses: buys of 0.05 to 2 eth, sells of 10 to 60 percent of the CC an address holds; `book` after |
+| bots | `buyListing` through the CreditStrategy adapter for every watched listing priced under `bidOf(id)` minus `BOT_MARGIN`, best gap first, until none qualifies. The watched listings are the first 200 ids of `test/utils/CreditIds.sol` that break even at a rate under 1.5 times the rate cap (the strategy has no enumeration, only `nftForSale(id)`); prices are read live. Seaport listings are swept the same way from the signed listings file |
+| people | 2 to 5 real Credits holders at the fork block (EOAs found by sampling ids with `ownerOf`) sell 1 to 3 credits through `sellForEth` at the quote; two more name an ask above the bid and print `held out` |
+| compose | `compose(format)` with a random format from a derived address when `nextPage()` is ready (80 credits past their window) |
+| buyers | 1 to 3 statement purchases at `priceOf`, 1 to 4 credit purchases at `creditPrice`, from derived addresses that can pay; `buyback` from the bot when eligible |
+| balance (balance rounds) | the node warps until a held statement `atFloor`, then 1 to 2 `redeemStatement`, 1 to 3 real holders `sellForBalance` at `balanceBidOf`, 1 to 2 holders `sellForEth` for contrast; the summary shows the balance rate in percent of par and the module's `available()` |
+
+Real on the fork: the CreditStrategy listings and prices, the Credits holders and their credits and scores, the Uniswap v4 pool, the OpenSea listings. Simulated: the 20 trader, bot and composer addresses (funded with `anvil_setBalance`), the sizes and timing of their actions, the mock balance token and its module. Pile growth is slow at the default of 3 credits per holder (compose needs 80); `PEOPLE_CREDITS=30` reaches it in a few rounds.
+
+Caches under `script/dev/.cache/` (gitignored): `activity-<core>.json` (watched strategy listings and sampled holders, built on the first run), `opensea-<core>-<catchup>.json` (the OpenSea fetch, reused for an hour, `REFRESH=1` refetches). A second invocation on the same chain starts at the round.
+
+Seaport listings: `OPENSEA_API_KEY` in the shell environment (never written to a file) makes `script/dev/opensea-listings.mjs` fetch the best listing of each Credits token (`listings/collection/credits/best`), keep the ones a basic order can fill (one Credits offer, native consideration, open order type, recipients the offerer or allowlisted, held by the offerer at the fork block, started within the run's warps), rank them by price over score and fetch the signature of the 40 cheapest from `listings/fulfillment_data`. The round dry-runs each fill on the fork (`fulfillable on the fork now`) and sweeps those under the bid. The fork is pinned at block 26158000 and the API reflects the live chain, so listings created later have not started on the fork and most others have moved: `SEAPORT_CATCHUP=1` warps the node past the start of the fetched orders once at the start of the run. `SEAPORT_ORDERS=<file>` replaces the fetch with a file of the format `{"count": N, "orders": [{"id": "<credit id>", "price": "<wei>", "params": <BasicOrderParameters, decimal strings, additionalRecipients as {amount, recipient}>}]}`, which `script/dev/opensea-listings.mjs` also writes.
