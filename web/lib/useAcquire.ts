@@ -5,13 +5,16 @@
 // are shortlisted by an estimated bid, read live (price, owner, Core.bidOf, pot) and filtered by lib/acquire.ts.
 // One query per chain head; the route caches OpenSea for 20 s on the server.
 
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { usePublicClient } from "wagmi";
+import { useAccount, usePublicClient } from "wagmi";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { type Address } from "viem";
 import { core, credits, engineDeployed, seaportAdapter, strategy, strategyAdapter, strategyStartBlock } from "./config";
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
 import { creditScores, MULTICALL3, useHead, type Snapshot } from "./live";
 import { fetchScoresIx, fetchStrategyListings, getIxMode, useIxMode } from "./indexer";
+import { useTx } from "./tx";
 import { clearing, shortlist, type Listing, type Priced } from "./acquire";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
@@ -68,6 +71,55 @@ async function scoresOf(client: Client, ids: bigint[], known: Map<bigint, bigint
   return out;
 }
 
+// ---- candidate gathering, shared with the /listings page --------------------------------------------------------
+
+/** OpenSea route entries: id, total price, order hash, expiry; `max` is the route's bound on the list. */
+export async function fetchOpenSea(): Promise<{ listings: { id: string; price: string; orderHash: string; expiry: number }[]; max: number }> {
+  try {
+    const body = await (await fetch("/api/listings")).json();
+    return { listings: body.listings ?? [], max: body.max ?? 0 };
+  } catch {
+    return { listings: [], max: 0 };
+  }
+}
+
+/**
+ * Every listing of both venues and the scores the indexer already holds. Strategy listings come from the indexer
+ * (decision 129: the chain scan when it is unconfigured or failing); OpenSea from the server route, unexpired only.
+ */
+export async function gatherListings(c: Client, head: bigint): Promise<{ listings: Listing[]; known: Map<bigint, bigint>; osMax: number }> {
+  const listings: Listing[] = [];
+  const known = new Map<bigint, bigint>();
+  let strat: { id: bigint; price: bigint }[] | undefined;
+  if (getIxMode() === "ix") {
+    try {
+      const rows = await fetchStrategyListings();
+      strat = rows;
+      rows.forEach((r) => r.score != null && known.set(r.id, r.score));
+    } catch {
+      /* the indexer failed: scan the chain below */
+    }
+  }
+  strat ??= [...(await scanStrategy(c, head)).entries()].map(([id, price]) => ({ id, price }));
+  for (const r of strat) listings.push({ id: r.id, price: r.price, source: "strategy", params: "0x" });
+  const os = await fetchOpenSea();
+  const now = Math.floor(Date.now() / 1000);
+  for (const l of os.listings) if (l.expiry > now) listings.push({ id: BigInt(l.id), price: BigInt(l.price), source: "opensea", params: "0x", orderHash: l.orderHash });
+  return { listings, known, osMax: os.max };
+}
+
+/** Scores for `ids`: the indexer's credit table first, the chain for the rest. */
+export async function scoresFor(c: Client, ids: bigint[], known: Map<bigint, bigint>): Promise<Map<bigint, bigint>> {
+  if (getIxMode() === "ix") {
+    try {
+      for (const [id, s] of await fetchScoresIx(ids.filter((id) => !known.has(id)))) known.set(id, s);
+    } catch {
+      /* scores are read from the chain below */
+    }
+  }
+  return scoresOf(c, ids, known);
+}
+
 // ---- the hook -------------------------------------------------------------------------------------------------
 
 export interface Diag {
@@ -98,39 +150,11 @@ export function useAcquireCandidate() {
       const c = client!;
 
       // 1. listings and known scores
-      const listings: Listing[] = [];
-      const known = new Map<bigint, bigint>();
-      let strat: { id: bigint; price: bigint }[] | undefined;
-      if (getIxMode() === "ix") {
-        try {
-          const rows = await fetchStrategyListings();
-          strat = rows;
-          rows.forEach((r) => r.score != null && known.set(r.id, r.score));
-        } catch {
-          /* the indexer failed: scan the chain below */
-        }
-      }
-      strat ??= [...(await scanStrategy(c, head!.n)).entries()].map(([id, price]) => ({ id, price }));
-      for (const r of strat) listings.push({ id: r.id, price: r.price, source: "strategy", params: "0x" });
-      try {
-        const r = await fetch("/api/listings");
-        const body = (await r.json()) as { listings: { id: string; price: string; orderHash: string; expiry: number }[] };
-        const now = Math.floor(Date.now() / 1000);
-        for (const l of body.listings ?? []) if (l.expiry > now) listings.push({ id: BigInt(l.id), price: BigInt(l.price), source: "opensea", params: "0x", orderHash: l.orderHash });
-      } catch {
-        /* the strategy listings stand alone */
-      }
+      const { listings, known } = await gatherListings(c, head!.n);
 
       // 2. shortlist by estimated margin over every listing
       const ids = [...new Set(listings.map((l) => l.id))];
-      if (getIxMode() === "ix") {
-        try {
-          for (const [id, s] of await fetchScoresIx(ids.filter((id) => !known.has(id)))) known.set(id, s);
-        } catch {
-          /* scores are read from the chain below */
-        }
-      }
-      const scores = await scoresOf(c, ids, known);
+      const scores = await scoresFor(c, ids, known);
       const refScore = BigInt(snap.settings.refScore);
       const est = (id: bigint) => (snap.ethRate * (scores.get(id) ?? 0n)) / refScore;
       const picked = shortlist(listings, snap.ethRate, refScore, scores, SHORTLIST);
@@ -208,3 +232,65 @@ export function useAcquireCandidate() {
 
 /** `params` and adapter of a candidate for Core.buyListing. */
 export const adapterOf = (l: Listing): Address => (l.source === "strategy" ? strategyAdapter! : seaportAdapter!);
+
+const keyOf = (l: { source: string; id: bigint; price: bigint }) => `${l.source}:${l.id}:${l.price}`;
+
+/**
+ * Core.buyListing for the first of `candidates` that simulates. A candidate that reverts is dropped for the block.
+ * An OpenSea candidate without fulfillment data (`params` "0x") has it fetched from the route first. Shared by the
+ * header button and the /listings rows.
+ */
+export function useAcquireTx(block: bigint | undefined) {
+  const { address } = useAccount();
+  const client = usePublicClient();
+  const { openConnectModal } = useConnectModal();
+  const { run, pending, err } = useTx();
+  const [dropped, setDropped] = useState<{ block?: bigint; keys: string[] }>({ keys: [] });
+  const [done, setDone] = useState<{ id: bigint; hash: `0x${string}` }>();
+
+  const live = dropped.block === block ? dropped.keys : [];
+  const available = <T extends Listing>(list: T[]) => list.filter((l) => !live.includes(keyOf(l)));
+
+  // the confirmation stays 20 s
+  useEffect(() => {
+    if (!done) return;
+    const t = setTimeout(() => setDone(undefined), 20_000);
+    return () => clearTimeout(t);
+  }, [done]);
+
+  const buy = (candidates: Priced[]) => {
+    if (!address) return openConnectModal?.();
+    setDone(undefined);
+    run(async (write) => {
+      const bad: string[] = [];
+      try {
+        for (let l of available(candidates)) {
+          if (l.source === "opensea" && l.params === "0x") {
+            try {
+              const f = (await (await fetch(`/api/listings?fulfill=${l.orderHash}`)).json()) as { price?: string; params?: `0x${string}` };
+              if (!f.params || !f.price) throw new Error("no fulfillment");
+              l = { ...l, price: BigInt(f.price), params: f.params };
+            } catch {
+              bad.push(keyOf(l));
+              continue;
+            }
+          }
+          const req = { address: core!, abi: coreAbi, functionName: "buyListing", args: [adapterOf(l), l.id, l.params] } as const;
+          try {
+            await client!.simulateContract({ ...req, account: address });
+          } catch {
+            bad.push(keyOf(l));
+            continue;
+          }
+          const hash = await write(req);
+          setDone({ id: l.id, hash });
+          return;
+        }
+        throw new Error("no listing available");
+      } finally {
+        if (bad.length) setDropped((d) => ({ block, keys: [...(d.block === block ? d.keys : []), ...bad] }));
+      }
+    }, [{ label: "acquire" }]);
+  };
+  return { buy, available, pending, err, done };
+}

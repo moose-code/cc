@@ -3,14 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useAccount, usePublicClient } from "wagmi";
-import { ConnectButton, useConnectModal } from "@rainbow-me/rainbowkit";
-import { adapterOf, useAcquireCandidate } from "@/lib/useAcquire";
-import { coreAbi } from "@/lib/abis";
-import { core } from "@/lib/config";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { useAcquireCandidate, useAcquireTx } from "@/lib/useAcquire";
 import { useEns } from "@/lib/ens";
 import { commas, eth, evmNowTx, shortAddr } from "@/lib/format";
-import { useTx } from "@/lib/tx";
 import { useNextCredit } from "./EngineFeed";
 
 const NAV = [
@@ -125,6 +121,9 @@ function NextCredit() {
       </div>
       <b>{ratio == null ? "—" : `${commas(ratio)}%`}</b>
       {bid != null && <span className="hdr-next-bid">· bid {eth(bid)} ETH</span>}
+      <Link href="/listings" className="hdr-next-bid">
+        listings →
+      </Link>
       <Acquire />
     </div>
   );
@@ -151,49 +150,8 @@ function Acquire() {
 // simulated right before sending; a revert drops that listing for the block and the next one is tried.
 function AcquireButton() {
   const { cleared, block } = useAcquireCandidate();
-  const { address } = useAccount();
-  const client = usePublicClient();
-  const { openConnectModal } = useConnectModal();
-  const { run, pending, err } = useTx();
-  const [dropped, setDropped] = useState<{ block?: bigint; keys: string[] }>({ keys: [] });
-  const [done, setDone] = useState<{ id: bigint; hash: `0x${string}` }>();
-
-  const key = (l: { source: string; id: bigint; price: bigint }) => `${l.source}:${l.id}:${l.price}`;
-  const live = dropped.block === block ? dropped.keys : [];
-  const left = cleared.filter((l) => !live.includes(key(l)));
-  const next = left[0];
-
-  // the confirmation stays 20 s
-  useEffect(() => {
-    if (!done) return;
-    const t = setTimeout(() => setDone(undefined), 20_000);
-    return () => clearTimeout(t);
-  }, [done]);
-
-  const click = () => {
-    if (!address) return openConnectModal?.();
-    setDone(undefined);
-    run(async (write) => {
-      const bad: string[] = [];
-      try {
-        for (const l of left) {
-          const req = { address: core!, abi: coreAbi, functionName: "buyListing", args: [adapterOf(l), l.id, l.params] } as const;
-          try {
-            await client!.simulateContract({ ...req, account: address });
-          } catch {
-            bad.push(key(l));
-            continue;
-          }
-          const hash = await write(req);
-          setDone({ id: l.id, hash });
-          return;
-        }
-        throw new Error("no listing available");
-      } finally {
-        if (bad.length) setDropped((d) => ({ block, keys: [...(d.block === block ? d.keys : []), ...bad] }));
-      }
-    }, [{ label: "acquire" }]);
-  };
+  const { buy, available, pending, err, done } = useAcquireTx(block);
+  const next = available(cleared)[0];
 
   if (done)
     return (
@@ -207,7 +165,7 @@ function AcquireButton() {
       {err && <span className="hdr-acq-err">{err}</span>}
       <button
         className="hdr-acq"
-        onClick={click}
+        onClick={() => buy(cleared)}
         disabled={pending}
         title={`credit #${next.id} bids ${eth(next.bid)} ETH (${next.source})`}
       >
