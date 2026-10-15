@@ -23,6 +23,9 @@ const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as numbe
 // Swap panel: eth for a market's token and back through the v4 Universal
 // Router; `market` defaults to the coin. A sell first grants the token
 // allowance to Permit2 and the Permit2 allowance to the router when they are short.
+// pot share in credits at the reference bid; a share under one credit reads as a percent of one
+const potCredits = (n: number) => (n >= 1 ? `enough for about ${n.toFixed(1)} credits` : `about ${Math.max(1, Math.round(n * 100))}% of one credit`);
+
 export function TradePanel({ market }: { market?: Market }) {
   const cc = useCcMarket();
   const m = market ?? cc;
@@ -260,7 +263,7 @@ export function TradePanel({ market }: { market?: Market }) {
 
   const notice =
     result && result.potWei != null && snap && snap.ethRate > 0n
-      ? { tone: "m", title: "your trade fed the engine", body: `${eth(result.potWei)} ETH is now in the pot, enough for about ${(Number(result.potWei) / Number(snap.ethRate)).toFixed(1)} credits at the current bid.` }
+      ? { tone: "m", title: "your trade fed the engine", body: `${eth(result.potWei)} ETH is now in the pot, ${potCredits(Number(result.potWei) / Number(snap.ethRate))} at the current bid.` }
       : failed
         ? { tone: "m", title: err as string, body: failedHash ? "the transaction reverted on chain, gas was spent." : "the transaction was not sent." }
         : inWallet
