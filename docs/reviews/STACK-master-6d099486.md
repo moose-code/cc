@@ -2,7 +2,7 @@
 
 the engine retargeted to the artcoins v2 stack at launcher commit `6d099486` (`script/config/v2-master.json`).
 every run is against the master stack fork fixture: `STACK=master`, an anvil loaded from
-`script/dev/.cache/stack-master-26158000.hex` on chain id 31337, the forge scripts and the suite re-entering chain id
+`script/config/stack-master-26158000.hex` on chain id 31337, the forge scripts and the suite re-entering chain id
 1 with `--chain-id 1`, `FORK_BLOCK` unset. the fixture owner is the dev wallet
 `0xCB43078C32423F5348Cab5885911C3B5faE217F9`, so one key owns the factory and the engine.
 

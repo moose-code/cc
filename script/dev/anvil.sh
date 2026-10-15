@@ -8,7 +8,7 @@
 #   script/dev/anvil.sh --dump-state    dump state to the gitignored path on exit
 #   script/dev/anvil.sh --load-state    load state from the gitignored path at start
 #   STACK=master script/dev/anvil.sh    fork, then load the master stack dump
-#                                       (script/dev/.cache/stack-master-26158000.hex) via anvil_loadState
+#                                       (script/config/stack-master-26158000.hex) via anvil_loadState
 set -euo pipefail
 
 STACK="${STACK:-live}"
@@ -16,7 +16,7 @@ FORK_URL="${FORK_URL:-https://gateway.tenderly.co/public/mainnet}"
 FORK_BLOCK="${FORK_BLOCK:-26158000}"
 PORT="${PORT:-8545}"
 STATE_FILE="${STATE_FILE:-script/dev/.anvil-state.json}"
-MASTER_DUMP="${MASTER_DUMP:-script/dev/.cache/stack-master-26158000.hex}"
+MASTER_DUMP="${MASTER_DUMP:-script/config/stack-master-26158000.hex}"
 
 # the local node is chain id 31337 for both stacks. the master dump is state, not a chain id (it was built on a chain
 # id 1 fork, which the forge scripts re-enter with --chain-id 1 against this 31337 node). the owner's wallet and the
