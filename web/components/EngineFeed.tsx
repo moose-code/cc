@@ -17,10 +17,10 @@ import { CreditTile, StatementTile } from "./Tiles";
 import { Addr } from "./Addr";
 
 const CHIP_COLOR: Record<FeedKind, string> = {
-  credit: "var(--credit)",
-  composed: "var(--composed)",
-  sold: "var(--sold)",
-  redeemed: "var(--redeemed)",
+  credit: "var(--m)",
+  composed: "var(--y)",
+  sold: "var(--divider)",
+  redeemed: "var(--c)",
 };
 
 const PAGE = 100; // rows per page of the feed
@@ -28,11 +28,9 @@ const PAGE = 100; // rows per page of the feed
 const TWEEN_MS = 1200;
 
 // An eth amount that counts up (or down) to a new value over TWEEN_MS with an
-// ease-out and flashes its colour once (the `pulse` class, keyed so it restarts).
-// The first value is shown as is. Only a changed wei value animates.
+// ease-out. The first value is shown as is. Only a changed wei value animates.
 function Tween({ wei }: { wei: bigint | undefined }) {
   const [shown, setShown] = useState(wei ?? 0n);
-  const [pulse, setPulse] = useState(0);
   const cur = useRef(Number(formatUnits(wei ?? 0n, 18)));
   const seen = useRef(wei);
   useEffect(() => {
@@ -45,7 +43,6 @@ function Tween({ wei }: { wei: bigint | undefined }) {
     }
     if (wei === seen.current) return;
     seen.current = wei;
-    setPulse((n) => n + 1);
     const from = cur.current;
     const to = Number(formatUnits(wei, 18));
     const t0 = performance.now();
@@ -57,11 +54,7 @@ function Tween({ wei }: { wei: bigint | undefined }) {
     });
     return () => cancelAnimationFrame(id);
   }, [wei]);
-  return (
-    <span key={pulse} className={pulse ? "pulse" : undefined}>
-      {eth(shown)}
-    </span>
-  );
+  return <span>{eth(shown)}</span>;
 }
 
 export function EngineFeed() {
