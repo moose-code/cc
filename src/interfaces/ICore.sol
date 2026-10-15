@@ -13,9 +13,6 @@ interface ICore {
         uint32 window;
         uint16 floorBps;
         uint32 startBps;
-        uint32 refScore;
-        uint16 royaltyBps;
-        address royaltyRecipient;
     }
 
     error AboveBid();
@@ -67,10 +64,11 @@ interface ICore {
     error RedeemOff();
     error Reentrancy();
     error Retired();
+    error SameBlockReturn(uint256 id);
+    error ScoreTooLow(uint256 inId, uint256 outId);
     error SliceTooSmall();
     error Slippage();
     error TooSoon();
-    error Underpaid();
     error UseFund();
     error ZeroAddress();
     error ZeroAmount();
@@ -78,10 +76,11 @@ interface ICore {
 
     event AdapterSet(address indexed adapter, bool allowed);
     event AdaptersLocked();
-    event BalanceBooked(uint256 amount);
+    event ArtistSet(address indexed artist);
     event BalanceModuleLocked();
     event BalanceModuleSet(address balanceModule, address balanceToken, uint256 unitPerPoint);
-    event BalanceTokenMigrationSkipped(address indexed successor, uint256 amount);
+    event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
+    event BalanceRateSet(uint256 rateBps);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     event ChosenComposeOnSet(bool on);
     event CoinRescued(address indexed to, uint256 amount);
@@ -93,29 +92,36 @@ interface ICore {
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event CreditCostToPotBpsSet(uint16 bps);
-    event CreditSold(uint256 indexed id, address indexed buyer, uint256 price);
+    event CreditSold(uint256 indexed id, address indexed buyer, uint256 price, uint256 toArtist, uint256 toOperator);
+    event CreditSwapped(uint256 indexed inId, uint256 indexed outId, address indexed caller, uint256 fee);
     event EngineRetired(address indexed successor);
     event EscrowCollected(uint256 amount);
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
-    event FeesAdded(uint256 amount);
+    event FeesAdded(uint256 amount, uint256 toPayee);
     event Funded(address indexed from, uint256 amount);
     event HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller);
     event ListingBought(
         uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate
     );
-    event Migrated(address indexed successor, uint256 eth, uint256 balanceTokens, uint256 credits);
+    event Migrated(address indexed successor, uint256 eth, uint256 credits);
     event MinCcToChooseSet(uint96 min);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
     event OwnershipTransferred(address indexed from, address indexed to);
     event PausedSet(bool paused);
-    event PayeeClaimed(address indexed payee, uint256 amount);
     event PayeeSet(address indexed payee);
     event RateSet(uint256 rate);
     event RedeemBurnReleased(uint256 amount);
     event SettingsSet(Settings settings);
     event StatementRedeemed(uint256 indexed sid, uint256 received);
-    event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback);
+    event StatementSoldTo(
+        uint256 indexed sid,
+        address indexed buyer,
+        uint256 price,
+        uint256 toBuyback,
+        uint256 toArtist,
+        uint256 toOperator
+    );
     event SuccessorLocked();
     event SuccessorSet(address successor);
 
@@ -136,17 +142,18 @@ interface ICore {
     function addAdapter(address a) external;
     function adopt(uint256[] memory) external;
     function allowedAdapter(address adapter) external view returns (bool);
+    function artist() external view returns (address);
+    function balanceBidOf(uint256 id) external view returns (uint256);
     function balanceModule() external view returns (address);
     function balanceModuleLocked() external view returns (bool);
-    function balancePot() external view returns (uint256);
+    function balanceRate() external view returns (uint256);
     function balanceToken() external view returns (address);
+    function bidOf(uint256 id) external view returns (uint256);
     function book() external;
-    function bookBalance() external;
     function buyListing(address adapter, uint256 id, bytes memory params) external;
     function buyback() external;
     function checkpointTime() external view returns (uint64);
     function chosenComposeOn() external view returns (bool);
-    function claimPayee() external;
     function collectEscrow() external;
     function compose() external;
     function compose(uint8 format) external;
@@ -179,7 +186,6 @@ interface ICore {
     function pausedTotal() external view returns (uint40);
     function payee() external view returns (address);
     function payeeOn() external view returns (bool);
-    function payeeOwed() external view returns (uint256);
     function pendingOwner() external view returns (address);
     function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids);
     function pileSize() external view returns (uint256);
@@ -197,6 +203,7 @@ interface ICore {
     function sellForEth(uint256[] memory ids, uint256 minOut) external;
     function sellForEth(uint256[] memory ids) external;
     function sellTo(uint256 sid, address buyer) external payable;
+    function setArtist(address to) external;
     function setBalanceModule(address module) external;
     function setChosenComposeOn(bool v) external;
     function setController(address c) external;
@@ -213,6 +220,7 @@ interface ICore {
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     function successor() external view returns (address);
     function successorLocked() external view returns (bool);
+    function swapCredit(uint256 inId, uint256 outId) external;
     function transferOwnership(address to) external;
     function unlockCallback(bytes memory data) external returns (bytes memory);
 }

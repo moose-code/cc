@@ -63,8 +63,8 @@ abstract contract LaunchChecks is PostflightChecks {
     string internal constant PLACEHOLDER_MARKER = "PLACEHOLDER";
     // the pinned launch rules (docs/RUNBOOK.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
-    uint24 internal constant PIN_BASELINE_SKIM = 690;
-    uint16 internal constant PIN_BOUNTY_BPS = 9638;
+    uint24 internal constant PIN_BASELINE_SKIM = 1000;
+    uint16 internal constant PIN_BOUNTY_BPS = 9000;
     uint16 internal constant PIN_PROTOCOL_BPS = 2000;
     /// @dev the most the launch pays the factory. a fee above it is a factory state change the signed config never saw
     uint256 internal constant PIN_DEPLOY_FEE_MAX = 0.1 ether;
@@ -72,13 +72,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0xf7c7254185ffb99aa870264a7ca9cd06a038a19d0d852e46dfac658c735fd359;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0xcebd4aa823f09bdc0c857d3169a998a0edf404a2fa3714197ee1ec9bb35592b5;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0xf33c9cf9707fd3ad9699cc91553722ab5a77067c2c2a7b06db5214e71f482f66;
+    bytes32 internal constant BUILD_HASH_CORE = 0x4ba7d10ad602bb52a549cba666ab1d754b9998995d3013fe133b2c89922a4796;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x73e6f201bf915a59c9c2cb9b18769063d1c692774d27356a2ddae6898ebb20b0;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x7a16b1d9f41dc3fd9793cf3062cb36c74ef62e4fc1aa4174deb2921f9f97f101;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0xa994b7f476442a95fe2ac0824047ccd8800a56c1b0e59a5c45bec5f506df2877;
+        0x5597179963cd3b65d2973f0df9358e1ad24a22a15617ae4f74538ba9b973ecc2;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -110,7 +110,6 @@ abstract contract LaunchChecks is PostflightChecks {
         _preLibrary();
         _preStack(c);
         _preFactory(c, deployer);
-        _prePayee(c);
         _preOwner(c);
         _prePredictions(c, deployer);
         _preSeaportRecipients(c, deployer);
@@ -168,13 +167,13 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "sale settings inside the bounds",
             badSale == 0,
-            badSale == 0 ? "markupBps startCapBps kneeBps fastDecayBpsPerHour slowDecayBpsPerHour anchorHalfLife anchorMinCost" : string(abi.encodePacked("out of bounds: ", badSale))
+            badSale == 0 ? "markupBps startCapBps decayHours anchorHalfLife anchorMinCost" : string(abi.encodePacked("out of bounds: ", badSale))
         );
         bytes32 badCredit = creditViolation(c);
         _check(
             "credit settings inside the bounds",
             badCredit == 0,
-            badCredit == 0 ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps refScore royaltyBps royaltyRecipient" : string(abi.encodePacked("out of bounds: ", badCredit))
+            badCredit == 0 ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps" : string(abi.encodePacked("out of bounds: ", badCredit))
         );
         _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);
     }
@@ -197,9 +196,9 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat("restricted ", c.restricted ? "yes" : "no", " extra entries ", vm.toString(c.allowed.length))
         );
         _eq("rule: protocol bps is 2000", uint256(c.protocolBps), PIN_PROTOCOL_BPS);
-        bool payeeOk = c.settings.payeePpm != 0 && c.settings.payeePpm <= PAYEE_MAX_PPM;
+        bool payeeOk = c.settings.payeePpm <= PAYEE_MAX_PPM;
         _check(
-            "rule: payee share is set and inside its bound",
+            "rule: payee share is inside its bound",
             payeeOk,
             string.concat("payee ppm ", vm.toString(c.settings.payeePpm))
         );
@@ -231,10 +230,10 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     function _ruleEconomics(LaunchConfig memory c) private {
-        _eq("rule: baseline skim bps is 690", uint256(c.baselineSkimBps), PIN_BASELINE_SKIM);
+        _eq("rule: baseline skim bps is 1000", uint256(c.baselineSkimBps), PIN_BASELINE_SKIM);
         bool bountyOk = c.bountyBps == PIN_BOUNTY_BPS || (c.allowBounty && c.bountyBps <= 9999);
         _check(
-            "rule: bounty bps is 9638",
+            "rule: bounty bps is 9000",
             bountyOk,
             string.concat("bounty ", vm.toString(c.bountyBps), c.allowBounty ? " (override on)" : "")
         );
@@ -344,20 +343,6 @@ abstract contract LaunchChecks is PostflightChecks {
             if (b[i] != p[i]) return false;
         }
         return true;
-    }
-
-    /// @dev `claimPayee` pays the payee with a plain call. a payee that reverts or needs more gas cannot claim its
-    /// share. the call runs on a snapshot, 0.001 eth with 100,000 gas
-    function _prePayee(LaunchConfig memory c) private {
-        address payee = c.payee;
-        if (payee == address(0)) return; // the placeholder row reports it
-        address probe = address(uint160(uint256(keccak256("credits.preflight.payee.probe"))));
-        uint256 snap = vm.snapshotState();
-        vm.deal(probe, 0.001 ether);
-        vm.prank(probe);
-        (bool ok,) = payee.call{value: 0.001 ether, gas: 100_000}("");
-        vm.revertToState(snap);
-        _check("payee: accepts eth with a 100000 gas call (simulated)", ok, vm.toString(payee));
     }
 
     /// @dev the owner account is an EIP 7702 delegation. the delegation code, the delegate code hash and an empty key
@@ -572,7 +557,7 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     /// @dev the fee knobs of the factory against the config: the deploy fee and the deployer balance, the protocol skim
-    /// share floor against the bounty (`setMinProtocolSkimShareBps(362)` is the owner command that opens bountyBps 9_638)
+    /// share floor against the bounty (`setMinProtocolSkimShareBps(1000)` is the owner command that opens bountyBps 9_000)
     function _preFees(LaunchConfig memory c, address deployer) private {
         address fa = c.stack.factory;
         (bool ok, uint256 fee) = _word(fa, abi.encodeCall(IArtCoinsFactoryV2.deployFee, ()));
@@ -768,7 +753,9 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat(
                 "rateStart ",
                 vm.toString(c.rateStart),
-                " wei per credit (launch day rule: the market price of a credit)"
+                " wei for a credit of score refScore ",
+                vm.toString(c.settings.refScore),
+                " (launch day rule: the market price of a credit of the reference score)"
             )
         );
         _info(
@@ -790,7 +777,7 @@ abstract contract LaunchChecks is PostflightChecks {
         );
         _info(
             "signoff: protocol leg",
-            "the protocol leg (362 of 10_000 of the baseline skim, 0.24978 points of volume) and the protocol locker slot belong to the launcher protocol, a separate business from this engine and its owner"
+            "the protocol leg (1000 of 10_000 of the baseline skim, 1.0 points of volume) and the protocol locker slot belong to the launcher protocol, a separate business from this engine and its owner"
         );
         _preSettingsRows(c);
         _info(
@@ -835,6 +822,10 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat("saleFloorBps ", vm.toString(c.settings.saleFloorBps))
         );
         _info(
+            "signoff: credit swap",
+            string.concat("swapFeeCc ", vm.toString(c.settings.swapFeeCc), " coin burned per swapCredit")
+        );
+        _info(
             "signoff: balance side",
             string.concat(
                 "redeemOn ",
@@ -872,13 +863,9 @@ abstract contract LaunchChecks is PostflightChecks {
                 vm.toString(c.sale.markupBps),
                 " start cap ",
                 vm.toString(c.sale.startCapBps),
-                " fast decay ",
-                vm.toString(c.sale.fastDecayBpsPerHour),
-                " bps/h to knee ",
-                vm.toString(c.sale.kneeBps),
-                " then slow decay ",
-                vm.toString(c.sale.slowDecayBpsPerHour),
-                " bps/h to saleFloorBps ",
+                " falling in a straight line over ",
+                vm.toString(c.sale.decayHours),
+                " hours to saleFloorBps ",
                 vm.toString(c.settings.saleFloorBps),
                 " anchor half life ",
                 vm.toString(c.sale.anchorHalfLife),
@@ -901,17 +888,19 @@ abstract contract LaunchChecks is PostflightChecks {
                 " bps, cost to pot ",
                 vm.toString(c.credit.costToPotBps),
                 " bps, refScore ",
-                vm.toString(c.credit.refScore)
+                vm.toString(c.settings.refScore)
             )
         );
         _info(
-            "signoff: royalty",
+            "signoff: nft sale cuts",
             string.concat(
-                "royaltyBps ",
-                vm.toString(c.credit.royaltyBps),
-                " royaltyRecipient ",
-                vm.toString(c.credit.royaltyRecipient),
-                " (the config creator address until the owner names the artist address)"
+                "saleToArtistBps ",
+                vm.toString(c.settings.saleToArtistBps),
+                " to artist ",
+                vm.toString(c.artist),
+                ", saleToOperatorBps ",
+                vm.toString(c.settings.saleToOperatorBps),
+                " to the payee"
             )
         );
         _info(

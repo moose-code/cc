@@ -51,8 +51,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("lpFeePips 5000", Class.Pre);
             m.c.lpFeePips = 5000;
         } else if (i == 4) {
-            m = _m("baselineSkimBps 1000 (the v1 value)", Class.Pre);
-            m.c.baselineSkimBps = 1_000;
+            m = _m("baselineSkimBps 690 (the earlier value)", Class.Pre);
+            m.c.baselineSkimBps = 690;
         } else if (i == 5) {
             m = _m("bountyBps 0", Class.Pre);
             m.c.bountyBps = 0;
@@ -60,8 +60,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("protocolBps 0 (no protocol locker slot)", Class.Pre);
             m.c.protocolBps = 0;
         } else if (i == 7) {
-            m = _m("sniperStartBps 690 equal to the baseline", Class.Pre);
-            m.c.sniperStartBps = 690;
+            m = _m("sniperStartBps 1000 equal to the baseline", Class.Pre);
+            m.c.sniperStartBps = 1000;
         } else if (i == 8) {
             m = _m("sniperSeconds 300", Class.Pre);
             m.c.sniperSeconds = 300;
@@ -84,8 +84,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("sale: markupBps 40001", Class.Pre);
             m.c.sale.markupBps = 40_001;
         } else if (i == 15) {
-            m = _m("credit: royaltyBps 1001", Class.Pre);
-            m.c.credit.royaltyBps = 1_001;
+            m = _m("settings: saleToArtistBps 1001", Class.Pre);
+            m.c.settings.saleToArtistBps = 1_001;
         } else {
             m = _m("settings.dropPerCreditBps 100 (valid, wrong)", Class.Hash);
             m.c.settings.dropPerCreditBps = 100;
@@ -170,8 +170,8 @@ contract ReviewMatrixStateTest is ReviewHarness {
             (l, w) = ("the linked library plus one trailing byte", Class.Post);
             (lateEtchAt, lateEtchCode, lateEtchAppend) = (_linked(), hex"00", true);
         } else if (i == 6) {
-            (l, w) = ("factory min protocol skim share 1000 (the owner command setMinProtocolSkimShareBps(362) not run)", Class.Pre);
-            FACTORY.setMinProtocolSkimShareBps(1000);
+            (l, w) = ("factory min protocol skim share 1001 (the owner command setMinProtocolSkimShareBps(1000) not run)", Class.Pre);
+            FACTORY.setMinProtocolSkimShareBps(1001);
         } else if (i == 7) {
             (l, w) = ("the fee escrow has no code", Class.Pre);
             vm.etch(v2.escrow, "");

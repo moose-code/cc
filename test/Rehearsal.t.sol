@@ -9,7 +9,7 @@ import {IV4Router} from "v4-periphery/src/interfaces/IV4Router.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {ICredits, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {ICredits, ICreditScore, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {SystemDeployer, Deployed} from "../script/SystemDeployer.sol";
 import {V2Stack} from "./utils/V2Stack.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
@@ -129,7 +129,7 @@ contract RehearsalTest is Test, ProdDeployer {
         // before the factory owner sets the minimum protocol skim share to 362 the preflight names exactly that
         IArtCoinsFactoryV2 f = IArtCoinsFactoryV2(c.stack.factory);
         preflight(c, deployer);
-        _print("preflight before the owner command setMinProtocolSkimShareBps(362)");
+        _print("preflight before the owner command setMinProtocolSkimShareBps(1000)");
         string memory before_ = _failedNames();
         if (f.minProtocolSkimShareBps() > 10_000 - c.bountyBps) {
             assertEq(
@@ -311,6 +311,7 @@ contract RehearsalTest is Test, ProdDeployer {
         assertEq(d.core.balance - bal, want, "the bounty share of the baseline skim reached the Core");
         assertEq(core.ethPot(), pot, "nothing reaches the pot before the book");
         address keeper = _user("keeper");
+        uint256 payeeAtStart = c.payee.balance;
         vm.prank(keeper);
         core.book();
         assertEq(keeper.balance, 0, "the caller of book is paid nothing");
@@ -320,14 +321,14 @@ contract RehearsalTest is Test, ProdDeployer {
             assertEq(core.ethPot() - pot, want - reserve, "the rest of the income reached the pot");
             assertEq(core.ethRedeemBurn(), reserve, "the redeem burn share reached the reserve");
             assertEq(
-                core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed(),
+                core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
                 address(core).balance,
                 "the tracked eth equals the balance"
             );
         }
         // the payee share starts with the first book after the window
         assertTrue(core.payeeOn(), "the first book after the window starts the payee share");
-        assertEq(core.payeeOwed(), 0, "that book shared nothing");
+        assertEq(c.payee.balance, payeeAtStart, "that book pushed the payee nothing");
 
         uint256 deadBefore = coin.balanceOf(Mainnet.DEAD);
         uint256 sellIn = bought / 2;
@@ -344,9 +345,10 @@ contract RehearsalTest is Test, ProdDeployer {
         assertGt(core.ethPot(), pot, "the sell skim reached the pot too");
         assertEq(coin.balanceOf(Mainnet.DEAD), deadBefore, "no tax and no burn on canonical swaps");
 
-        // from the book after that the payee is credited its parts per million of the fee income
+        // payeePpm is 0 at launch (decision 120); the owner raises it, as it would later, to prove the push path
+        _raisePayeePpm(core, c.owner, 90_909);
+        // from the book after that the payee is pushed its parts per million of the fee income
         uint256 payee0 = c.payee.balance;
-        uint256 owed0 = core.payeeOwed();
         bal = d.core.balance;
         vm.deal(trader, 2 ether);
         vm.prank(trader);
@@ -354,15 +356,20 @@ contract RehearsalTest is Test, ProdDeployer {
         uint256 gross = d.core.balance - bal;
         vm.prank(keeper);
         core.book();
-        assertEq(core.payeeOwed() - owed0, gross * c.settings.payeePpm / 1e6, "exactly its share of the inflow");
-        core.claimPayee();
-        assertGt(c.payee.balance, payee0, "the payee claims its share");
-        assertEq(core.payeeOwed(), 0, "the claim clears the share");
+        assertEq(c.payee.balance - payee0, gross * 90_909 / 1e6, "exactly its share pushed to the payee");
 
         _sellRealCredit(core);
     }
 
     /// finds a real credit held by an account without code and sells it into the bid
+    /// the owner raises `payeePpm` to `v` (it is 0 at launch), in its own frame to keep `_rehearsal`'s stack shallow
+    function _raisePayeePpm(ICore core_, address owner_, uint24 v) internal {
+        Settings memory sp = core_.settings();
+        sp.payeePpm = v;
+        vm.prank(owner_);
+        core_.setSettings(sp);
+    }
+
     function _sellRealCredit(ICore core) internal {
         assertGt(core.ethPot(), 0, "the pot holds the fees");
         // the price state starts at the config rate. the read is clamped by a thin pot
@@ -377,7 +384,9 @@ contract RehearsalTest is Test, ProdDeployer {
                 continue;
             }
             if (who.code.length != 0 || core.ethRate() > cap) continue;
-            uint256 price = core.ethRate();
+            // the per-point payout: the rate scaled by the credit's score over refScore (Core.bidOf, by hand)
+            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(credits.seedOf(id), credits.timestampOf(id));
+            uint256 pay = (core.ethRate() * score) / core.settings().refScore;
             uint256 pot = core.ethPot();
             uint256 before = who.balance;
             vm.startPrank(who);
@@ -387,10 +396,10 @@ contract RehearsalTest is Test, ProdDeployer {
             core.sellForEth(ids);
             vm.stopPrank();
             assertEq(credits.ownerOf(id), address(core), "the core holds the credit");
-            assertEq(who.balance - before, price, "the seller was paid the ceiling");
-            assertEq(pot - core.ethPot(), price, "the pot paid it");
+            assertEq(who.balance - before, pay, "the seller was paid the rate scaled by score over refScore");
+            assertEq(pot - core.ethPot(), pay, "the pot paid it");
             assertEq(core.pileSize(), 1);
-            console.log("sold credit", id, "for wei", price);
+            console.log("sold credit", id, "for wei", pay);
             return;
         }
         revert("no sellable real credit found");

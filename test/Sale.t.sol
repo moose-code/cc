@@ -31,18 +31,10 @@ abstract contract SaleBase is Fixture {
     }
 
     /// sets the six sale numbers in one call. the floor is the core `saleFloorBps`
-    function _saleSettings(
-        uint16 markup,
-        uint32 cap,
-        uint16 fast,
-        uint32 knee,
-        uint16 slow,
-        uint16 floor_
-    ) internal {
+    function _saleSettings(uint16 markup, uint32 cap, uint16 decayH, uint16 floor_) internal {
         _floorBps(floor_);
         Sale memory s = _sale();
-        (s.markupBps, s.startCapBps, s.fastDecayBpsPerHour, s.kneeBps, s.slowDecayBpsPerHour) =
-            (markup, cap, fast, knee, slow);
+        (s.markupBps, s.startCapBps, s.decayHours) = (markup, cap, decayH);
         vm.prank(owner);
         ctl.setSale(s);
     }
@@ -52,29 +44,26 @@ abstract contract SaleBase is Fixture {
         ctl.setAnchorBps(bps);
     }
 
-    /// the asking price in wei at `age` seconds: `start` falls `fast` bps an hour to `knee`, then `slow` bps an hour to
-    /// `floor_`. all bps of `cost`. the price is counted in 1/3600 bps, the second of the rate
-    function _curve(uint256 cost, uint256 start, uint256 knee, uint256 fast, uint256 slow, uint256 floor_, uint256 age)
+    /// the asking price in wei at `age` seconds: `start` bps of `cost` falls in a straight line to `floor_` bps over
+    /// `decayH` hours, then rests. mirrors `ControllerV1._ask`
+    function _curve(uint256 cost, uint256 start, uint256 floor_, uint256 decayH, uint256 age)
         internal
         pure
         returns (uint256)
     {
-        uint256 units;
-        uint256 fastSpan = start > knee ? (start - knee) * 3600 : 0;
-        if (age * fast <= fastSpan) {
-            units = start * 3600 - age * fast;
+        uint256 span = decayH * 3600;
+        uint256 n;
+        if (start <= floor_ || age >= span) {
+            n = floor_;
         } else {
-            uint256 base = (start < knee ? start : knee) * 3600;
-            uint256 drop = (slow * (age * fast - fastSpan) + fast - 1) / fast;
-            units = base > drop ? base - drop : 0;
+            n = start - (start - floor_) * age / span;
         }
-        if (units < floor_ * 3600) units = floor_ * 3600;
-        return cost * units / (3600 * 10_000);
+        return cost * n / 10_000;
     }
 
-    /// the launch curve: 150 percent falling 1 percent an hour to 100, then 0.25 percent an hour to 75 at hour 150
-    function _launch(uint256 cost, uint256 age) internal pure returns (uint256) {
-        return _curve(cost, 15_000, 10_000, 100, 25, 7_500, age);
+    /// the launch curve: 150 percent of the reference falling in a straight line to the floor over `decayHours`
+    function _launch(uint256 cost, uint256 age) internal view returns (uint256) {
+        return _curve(cost, ctl.startBps(), core.settings().saleFloorBps, ctl.decayHours(), age);
     }
 
     function _floorBps(uint16 bps) internal {
@@ -98,19 +87,21 @@ abstract contract SaleBase is Fixture {
         sid = STATEMENTS.supply();
     }
 
-    /// the royalty on an engine price at the controller's current `royaltyBps`
-    function _royaltyOn(uint256 price) internal view returns (uint256) {
-        return price * ctl.royaltyBps() / 10_000;
+    /// the artist and operator cuts of a sale payment and the rest after them
+    function _saleCuts(uint256 pay) internal view returns (uint256 toArtist, uint256 toOperator, uint256 rest) {
+        toArtist = pay * core.settings().saleToArtistBps / 10_000;
+        toOperator = pay * core.settings().saleToOperatorBps / 10_000;
+        rest = pay - toArtist - toOperator;
     }
 
-    /// `who` pays the engine price `price` plus the royalty on it
+    /// `who` pays the asking price `price`
     function _pay(address who, uint256 sid, uint256 price) internal {
         _payExtra(who, sid, price, 0);
     }
 
-    /// `who` pays the engine price, the royalty and `extra` on top
+    /// `who` pays the asking price and `extra` on top
     function _payExtra(address who, uint256 sid, uint256 price, uint256 extra) internal {
-        uint256 value = price + _royaltyOn(price) + extra;
+        uint256 value = price + extra;
         vm.deal(who, who.balance + value);
         vm.prank(who);
         ctl.buy{value: value}(sid);
@@ -139,10 +130,9 @@ abstract contract SaleBase is Fixture {
     }
 }
 
-/// the two stage curve tests. the launch sale holds floor and knee at 100 percent of cost (decision 85), so the
-/// price falls from its start to cost and stays there. these tests exercise the shape of a two stage curve, so setUp
-/// sets `saleFloorBps` to 7_500 through the owner setter. the launch curve itself is
-/// `SaleLaunchCurveTest`
+/// the linear curve tests. the launch sale holds the floor at 100 percent of cost, so the price falls
+/// from its start to cost and stays there. these tests exercise the slope of the line, so setUp sets `saleFloorBps` to
+/// 7_500 through the owner setter. the launch curve itself is `SaleLaunchCurveTest`
 abstract contract SaleShapeBase is SaleBase {
     function setUp() public virtual override {
         super.setUp();
@@ -151,33 +141,35 @@ abstract contract SaleShapeBase is SaleBase {
     }
 }
 
-/// the curve at the launch values: floor and knee at 100 percent of cost
+/// the curve at the launch values: the floor at 100 percent of cost
 contract SaleLaunchCurveTest is SaleBase {
     function setUp() public override {
         super.setUp();
         _pinReferenceToCost();
     }
 
-    // promise: SPEC 1 launch curve falls from the start price to the statement reference and rests there (decision 85)
+    // promise: SPEC 1 launch curve falls from the start price to the statement reference and rests there
     function test_launchCurve_startsAtStartFallsToCostAndStaysAtCost() public {
-        assertEq(ctl.kneeBps(), 10_000, "knee at launch");
+        assertEq(ctl.decayHours(), 12, "decay hours at launch");
         assertEq(core.settings().saleFloorBps, 10_000, "floor at launch");
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        uint256[11] memory t =
-            [uint256(0), 1, 25 * H, 49 * H, 50 * H - 1, 50 * H, 50 * H + 1, 100 * H, 150 * H, 1000 * H, 100_000 * H];
+        uint256 start = cost * 15_000 / 10_000;
+        uint256[8] memory t = [uint256(0), 1, 6 * H, 12 * H - 1, 12 * H, 12 * H + 1, 100 * H, 100_000 * H];
         for (uint256 i; i < t.length; ++i) {
             _age(sid, t[i]);
             uint256 ask = ctl.priceOf(sid);
-            assertEq(ask, _curve(cost, 15_000, 10_000, 100, 25, 10_000, t[i]), "closed form at launch values");
-            assertGe(ask, cost, "never below cost");
-            assertLe(ask, cost * 15_000 / 10_000, "never above the start");
+            assertEq(ask, _curve(cost, 15_000, 10_000, 12, t[i]), "closed form at launch values");
+            assertGe(ask, cost, "never below the floor (cost)");
+            assertLe(ask, start, "never above the start");
         }
         _age(sid, 0);
-        assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000, "starts at 150 percent");
-        _age(sid, 50 * H);
-        assertEq(ctl.priceOf(sid), cost, "reaches cost at hour 50");
-        _age(sid, 50 * H - 1);
+        assertEq(ctl.priceOf(sid), start, "starts at 150 percent");
+        _age(sid, 6 * H);
+        assertEq(ctl.priceOf(sid), cost * 12_500 / 10_000, "halfway through the window it is 125 percent");
+        _age(sid, 12 * H);
+        assertEq(ctl.priceOf(sid), cost, "reaches cost (the floor) at hour 12");
+        _age(sid, 12 * H - 1);
         assertGt(ctl.priceOf(sid), cost, "one second before it is above cost");
         _age(sid, 5000 * H);
         assertEq(ctl.priceOf(sid), cost, "stays at cost");
@@ -191,12 +183,12 @@ contract SaleCurveTest is SaleShapeBase {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
         uint16[3] memory hard = [uint16(1_000), 7_500, 12_000];
-        uint256[5] memory t = [uint256(0), 1, 52 * H, 150 * H, 5000 * H];
+        uint256[5] memory t = [uint256(0), 1, 6 * H, 12 * H, 5000 * H];
         for (uint256 i; i < hard.length; ++i) {
             _floorBps(hard[i]);
             for (uint256 j; j < t.length; ++j) {
                 _age(sid, t[j]);
-                uint256 ask = _curve(cost, 15_000, 10_000, 100, 25, hard[i], t[j]);
+                uint256 ask = _curve(cost, 15_000, hard[i], 12, t[j]);
                 uint256 floor = cost * hard[i] / 10_000;
                 assertEq(ctl.priceOf(sid), ask, "the curve with the floor from the setting");
                 assertGe(ctl.priceOf(sid), floor);
@@ -253,21 +245,23 @@ contract SaleBuyTest is SaleShapeBase {
         for (uint256 i; i < 4; ++i) {
             uint256 snap = vm.snapshotState();
             _buybackBps(shares[i]);
-            (uint256 sid, uint256 price) = _buyAt(90 * H);
-            assertEq(price, _cost(sid) * 9_000 / 10_000, "90 hours down the curve: 90 percent");
+            (uint256 sid, uint256 price) = _buyAt(10 * H);
+            assertEq(price, _cost(sid) * 8_750 / 10_000, "10 hours down the 12 hour line (150 to 75 percent): 87.5 percent");
             (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
             uint256 n = core.heldStatements().length;
+            (uint256 toArtist, uint256 toOperator, uint256 rest) = _saleCuts(price);
+            uint256 toBuyback = rest * shares[i] / 10_000;
             vm.expectEmit(address(core));
-            emit ICore.StatementSoldTo(sid, buyer, price, price * shares[i] / 10_000);
+            emit ICore.StatementSoldTo(sid, buyer, price, toBuyback, toArtist, toOperator);
             vm.expectEmit(address(ctl));
             emit IControllerV1.Bought(sid, buyer, price);
             _pay(buyer, sid, price);
             assertEq(buyer.balance, 0, "exact payment, nothing back");
             assertEq(STATEMENTS.ownerOf(sid), buyer);
-            assertEq(address(core).balance - bal0, price);
-            assertEq(core.ethToBuyback() - bb0, price * shares[i] / 10_000);
-            assertEq(core.ethPot() - pot0, price - price * shares[i] / 10_000);
-            assertEq(address(ctl).balance, ctl.royaltyOwed(), "the controller holds the royalty owed");
+            assertEq(address(core).balance - bal0, rest, "the rest stays after the cuts");
+            assertEq(core.ethToBuyback() - bb0, toBuyback);
+            assertEq(core.ethPot() - pot0, rest - toBuyback);
+            assertEq(address(ctl).balance, 0, "the controller holds no eth");
             (bool held,,) = core.statementInfo(sid);
             assertFalse(held, "the core record is cleared");
             assertEq(core.heldStatements().length, n - 1);
@@ -282,21 +276,17 @@ contract SaleBuyTest is SaleShapeBase {
         (uint256 sid, uint256 price) = _buyAt(0);
         _payExtra(buyer, sid, price, 3 ether);
         assertEq(buyer.balance, 3 ether, "the excess came back");
-        assertEq(address(ctl).balance, ctl.royaltyOwed());
+        assertEq(address(ctl).balance, 0, "the controller holds no eth");
     }
 
     // promise: INTEGRATION Underpaid
     function test_buy_underpayRevertsAndChangesNothing() public {
         (uint256 sid, uint256 price) = _buyAt(0);
         (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
-        uint256 gross = ctl.grossPriceOf(sid);
-        vm.deal(buyer, gross);
+        vm.deal(buyer, price);
         vm.prank(buyer);
         vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buy{value: gross - 1}(sid);
-        vm.prank(buyer);
-        vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buy{value: price}(sid);
+        ctl.buy{value: price - 1}(sid);
         vm.prank(buyer);
         vm.expectRevert(IControllerV1.Underpaid.selector);
         ctl.buy(sid);
@@ -355,19 +345,21 @@ contract SaleSellToTest is SaleBase {
         assertEq(STATEMENTS.ownerOf(sid), address(core));
         (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
         uint256 scBal = address(sc).balance;
+        (uint256 toArtist, uint256 toOperator, uint256 rest) = _saleCuts(floor);
+        uint256 toBuyback = rest * core.settings().saleToBuybackBps / 10_000;
         vm.expectEmit(address(core));
-        emit ICore.StatementSoldTo(sid, buyer, floor, floor * 5_000 / 10_000);
+        emit ICore.StatementSoldTo(sid, buyer, floor, toBuyback, toArtist, toOperator);
         sc.sell{value: floor}(sid, buyer);
         assertEq(STATEMENTS.ownerOf(sid), buyer);
-        assertEq(address(core).balance - bal0, floor);
-        assertEq(core.ethToBuyback() - bb0, floor * 5_000 / 10_000);
-        assertEq(core.ethPot() - pot0, floor - floor * 5_000 / 10_000);
+        assertEq(address(core).balance - bal0, rest, "the rest stays after the cuts");
+        assertEq(core.ethToBuyback() - bb0, toBuyback);
+        assertEq(core.ethPot() - pot0, rest - toBuyback);
         assertEq(address(sc).balance, scBal, "the controller keeps nothing");
         _solvent();
     }
 
-    // promise: SPEC 4 sellTo books the whole payment (inv 5, inv 18)
-    /// the whole payment is booked, an overpayment included: the core has no refund logic
+    // promise: SPEC 4 sellTo books the payment less the cuts (inv 5, inv 18)
+    /// the payment less the artist and operator cuts is booked, an overpayment included: the core has no refund logic
     function test_sellTo_booksEverythingItIsPaid() public {
         uint256 sid = _composeOnce().sid;
         _install();
@@ -375,8 +367,9 @@ contract SaleSellToTest is SaleBase {
         _buybackBps(2_500);
         (uint256 pot0, uint256 bb0,) = _recordedBook();
         sc.sell{value: pay}(sid, buyer);
-        assertEq(core.ethToBuyback() - bb0, pay * 2_500 / 10_000);
-        assertEq(core.ethPot() - pot0, pay - pay * 2_500 / 10_000);
+        (,, uint256 rest) = _saleCuts(pay);
+        assertEq(core.ethToBuyback() - bb0, rest * 2_500 / 10_000);
+        assertEq(core.ethPot() - pot0, rest - rest * 2_500 / 10_000);
     }
 
     // promise: INTEGRATION NotForSale
@@ -401,11 +394,10 @@ contract SaleSellToTest is SaleBase {
         ReentrantBuyer rb = new ReentrantBuyer(ctl, core);
         rb.setOther(b);
         uint256 price = ctl.priceOf(a);
-        uint256 gross = ctl.grossPriceOf(a);
         (uint256 pot0, uint256 bb0,) = _recordedBook();
-        vm.deal(address(this), gross + 2 ether);
+        vm.deal(address(this), price + 2 ether);
         uint256 pre = address(rb).balance;
-        rb.buy{value: gross + 2 ether}(a);
+        rb.buy{value: price + 2 ether}(a);
         assertEq(STATEMENTS.ownerOf(a), address(rb), "the buy went through");
         assertEq(address(rb).balance - pre, 2 ether, "and the refund landed");
         assertEq(rb.reentries(), 1);
@@ -414,7 +406,8 @@ contract SaleSellToTest is SaleBase {
         assertTrue(rb.sellBlocked(), "sellTo is the controller's alone");
         assertTrue(rb.redeemBlocked());
         assertEq(STATEMENTS.ownerOf(b), address(core), "the other statement is untouched");
-        assertEq(core.ethPot() - pot0 + core.ethToBuyback() - bb0, price, "booked exactly once");
+        (,, uint256 rest) = _saleCuts(price);
+        assertEq(core.ethPot() - pot0 + core.ethToBuyback() - bb0, rest, "the rest after the cuts booked exactly once");
         _solvent();
     }
 
@@ -422,7 +415,7 @@ contract SaleSellToTest is SaleBase {
     function test_reenter_aBuyerThatRefusesTheRefundCanOnlyPayExactly() public {
         uint256 sid = _composeOnce().sid;
         RefundRefuser rr = new RefundRefuser(ctl);
-        uint256 gross = ctl.grossPriceOf(sid);
+        uint256 gross = ctl.priceOf(sid);
         vm.deal(address(rr), gross + 1 ether);
         (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
         vm.expectRevert();
@@ -442,9 +435,7 @@ contract SaleSettingsTest is SaleBase {
         return Sale({
             markupBps: lc.sale.markupBps,
             startCapBps: lc.sale.startCapBps,
-            fastDecayBpsPerHour: lc.sale.fastDecayBpsPerHour,
-            kneeBps: lc.sale.kneeBps,
-            slowDecayBpsPerHour: lc.sale.slowDecayBpsPerHour,
+            decayHours: lc.sale.decayHours,
             anchorHalfLife: lc.sale.anchorHalfLife,
             anchorMinCost: lc.sale.anchorMinCost
         });
@@ -458,21 +449,17 @@ contract SaleSettingsTest is SaleBase {
     function test_settings_launchValues() public view {
         assertEq(lc.sale.markupBps, 15_000);
         assertEq(lc.sale.startCapBps, 100_000);
-        assertEq(lc.sale.fastDecayBpsPerHour, 100);
-        assertEq(lc.sale.kneeBps, 10_000);
-        assertEq(lc.sale.slowDecayBpsPerHour, 25);
+        assertEq(lc.sale.decayHours, 12);
         assertEq(lc.sale.anchorHalfLife, 7 days);
         assertEq(lc.sale.anchorMinCost, 0.1 ether);
         assertEq(abi.encode(Mainnet.defaultSale()), abi.encode(lc.sale), "the launch sale");
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.startCapBps(), 100_000);
-        assertEq(ctl.fastDecayBpsPerHour(), 100);
-        assertEq(ctl.kneeBps(), 10_000);
-        assertEq(ctl.slowDecayBpsPerHour(), 25);
+        assertEq(ctl.decayHours(), 12);
         assertEq(core.settings().saleFloorBps, 10_000);
-        assertEq(ctl.royaltyBps(), 250);
-        assertEq(ctl.royaltyRecipient(), creator);
-        assertEq(ctl.royaltyOwed(), 0);
+        assertEq(core.settings().saleToArtistBps, 250);
+        assertEq(core.settings().saleToOperatorBps, 50);
+        assertEq(core.artist(), creator);
         assertEq(ctl.anchorHalfLife(), 7 days);
         assertEq(ctl.anchorMinCost(), 0.1 ether);
         assertEq(ctl.anchorBps(), 10_000, "the anchor starts at the cost");
@@ -483,11 +470,11 @@ contract SaleSettingsTest is SaleBase {
 
     /// every upper edge of the sale settings, and every lower edge
     function _hi() internal pure returns (Sale memory) {
-        return Sale(40_000, 200_000, 10_000, 200_000, 10_000, 90 days, 10 ether);
+        return Sale(40_000, 200_000, 720, 90 days, 10 ether);
     }
 
     function _lo() internal pure returns (Sale memory) {
-        return Sale(10_000, 10_000, 1, 1_000, 1, 1 days, 0);
+        return Sale(10_000, 10_000, 1, 1 days, 0);
     }
 
     function _saleBad(Sale memory s, bytes32 field) internal {
@@ -515,30 +502,15 @@ contract SaleSettingsTest is SaleBase {
         _saleBad(s, "startCapBps");
         s.startCapBps = 200_001;
         _saleBad(s, "startCapBps");
-        s = _hi();
-        s.kneeBps = 200_001;
-        _saleBad(s, "kneeBps");
-        s = _hi();
-        s.startCapBps = 100_000;
-        _saleBad(s, "kneeBps");
         s = _lo();
         s.markupBps = 9_999;
         _saleBad(s, "markupBps");
-        s = _lo();
-        s.kneeBps = 999;
-        _saleBad(s, "kneeBps");
         s = _hi();
-        s.fastDecayBpsPerHour = 10_001;
-        _saleBad(s, "fastDecayBpsPerHour");
+        s.decayHours = 721;
+        _saleBad(s, "decayHours");
         s = _lo();
-        s.fastDecayBpsPerHour = 0;
-        _saleBad(s, "fastDecayBpsPerHour");
-        s = _hi();
-        s.slowDecayBpsPerHour = 10_001;
-        _saleBad(s, "slowDecayBpsPerHour");
-        s = _lo();
-        s.slowDecayBpsPerHour = 0;
-        _saleBad(s, "slowDecayBpsPerHour");
+        s.decayHours = 0;
+        _saleBad(s, "decayHours");
         s = _lo();
         s.anchorHalfLife = 1 days - 1;
         _saleBad(s, "anchorHalfLife");
@@ -550,17 +522,6 @@ contract SaleSettingsTest is SaleBase {
         _saleBad(s, "anchorMinCost");
         s.anchorMinCost = type(uint128).max;
         _saleBad(s, "anchorMinCost");
-        // royalty: 0 to 1_000, recipient never zero
-        CreditSale memory c = _creditSale();
-        c.royaltyBps = 0;
-        ctl.setCredit(c);
-        c.royaltyBps = 1_000;
-        ctl.setCredit(c);
-        c.royaltyBps = 1_001;
-        _creditBad(c, "royaltyBps");
-        c.royaltyBps = 1_000;
-        c.royaltyRecipient = address(0);
-        _creditBad(c, "royaltyRecipient");
         // anchorBps 10_000 to the cap
         ctl.setSale(_hi());
         vm.expectRevert(_bad("anchorBps"));
@@ -574,20 +535,15 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.anchorHalfLife(), 90 days);
         assertEq(ctl.markupBps(), 40_000);
         assertEq(ctl.startCapBps(), 200_000);
-        assertEq(ctl.fastDecayBpsPerHour(), 10_000);
-        assertEq(ctl.slowDecayBpsPerHour(), 10_000);
-        assertEq(ctl.kneeBps(), 200_000);
-        assertEq(ctl.royaltyBps(), 1_000);
+        assertEq(ctl.decayHours(), 720);
         assertEq(ctl.anchorBps(), 200_000);
         assertEq(ctl.startBps(), 200_000, "800_000 is held at the cap");
     }
 
     // promise: SPEC 1 every economic number is an owner setting, effective at once
     function test_settings_eventsAndValues() public {
-        Sale memory s = Sale(12_000, 150_000, 200, 12_000, 50, 3 days, 0.25 ether);
+        Sale memory s = Sale(12_000, 150_000, 24, 3 days, 0.25 ether);
         CreditSale memory c = _creditSale();
-        c.royaltyBps = 300;
-        c.royaltyRecipient = address(0xA27);
         vm.startPrank(owner);
         vm.expectEmit(address(ctl));
         emit IControllerV1.SaleSet(s);
@@ -601,11 +557,7 @@ contract SaleSettingsTest is SaleBase {
         vm.stopPrank();
         assertEq(ctl.markupBps(), 12_000);
         assertEq(ctl.startCapBps(), 150_000);
-        assertEq(ctl.fastDecayBpsPerHour(), 200);
-        assertEq(ctl.slowDecayBpsPerHour(), 50);
-        assertEq(ctl.kneeBps(), 12_000);
-        assertEq(ctl.royaltyBps(), 300);
-        assertEq(ctl.royaltyRecipient(), address(0xA27));
+        assertEq(ctl.decayHours(), 24);
         assertEq(ctl.anchorBps(), 11_000);
         assertEq(ctl.anchorHalfLife(), 3 days);
         assertEq(ctl.anchorMinCost(), 0.25 ether);
@@ -618,7 +570,6 @@ contract SaleSettingsTest is SaleBase {
         Sale memory s = _sale();
         s.markupBps = 12_000;
         CreditSale memory c = _creditSale();
-        c.royaltyBps = 300;
         address[4] memory who = [deployer, keeper, address(ctl), address(0x5757)];
         for (uint256 i; i < who.length; ++i) {
             vm.startPrank(who[i]);
@@ -656,28 +607,12 @@ contract SaleSettingsTest is SaleBase {
         vm.expectRevert(_bad("startCapBps"));
         Prod.newController(address(core), s);
         s = _fresh();
-        s.fastDecayBpsPerHour = 0;
-        vm.expectRevert(_bad("fastDecayBpsPerHour"));
+        s.decayHours = 0;
+        vm.expectRevert(_bad("decayHours"));
         Prod.newController(address(core), s);
         s = _fresh();
-        s.fastDecayBpsPerHour = 10_001;
-        vm.expectRevert(_bad("fastDecayBpsPerHour"));
-        Prod.newController(address(core), s);
-        s = _fresh();
-        s.slowDecayBpsPerHour = 0;
-        vm.expectRevert(_bad("slowDecayBpsPerHour"));
-        Prod.newController(address(core), s);
-        s = _fresh();
-        s.slowDecayBpsPerHour = 10_001;
-        vm.expectRevert(_bad("slowDecayBpsPerHour"));
-        Prod.newController(address(core), s);
-        s = _fresh();
-        s.kneeBps = 999;
-        vm.expectRevert(_bad("kneeBps"));
-        Prod.newController(address(core), s);
-        s = _fresh();
-        s.kneeBps = s.startCapBps + 1;
-        vm.expectRevert(_bad("kneeBps"));
+        s.decayHours = 721;
+        vm.expectRevert(_bad("decayHours"));
         Prod.newController(address(core), s);
         s = _fresh();
         s.anchorHalfLife = 1 days - 1;
@@ -753,6 +688,8 @@ contract SaleAnchorTest is SaleShapeBase {
                 vm.deal(attacker, attacker.balance + 1);
                 vm.prank(attacker);
                 core.fund{value: 1}();
+                // refScore set to this credit's score, so a 1 wei pot reads a 1 wei bid for it (score / refScore is 1)
+                _refScoreToCredit(ids[i]);
                 uint256[] memory one = new uint256[](1);
                 one[0] = ids[i];
                 vm.prank(attacker);
@@ -851,7 +788,7 @@ contract SaleAnchorTest is SaleShapeBase {
     /// a sale above the cap (a hard floor above it) cannot take the anchor past the cap
     function test_anchor_neverPassesTheCap() public {
         uint256 sid = _composeN(1)[0];
-        _saleSettings(12_000, 12_000, 100, 10_000, 25, 7_500);
+        _saleSettings(12_000, 12_000, 12, 7_500);
         _floorBps(30_000);
         _age(sid, 0);
         uint256 price = ctl.priceOf(sid);
@@ -872,7 +809,7 @@ contract SaleAnchorTest is SaleShapeBase {
         emit IControllerV1.AnchorMoved(sid, 15_000, 12_500);
         _payExtra(buyer, sid, price, 7 ether);
         assertEq(buyer.balance, 7 ether, "the excess came back");
-        assertEq(address(ctl).balance, ctl.royaltyOwed());
+        assertEq(address(ctl).balance, 0, "the controller holds no eth");
         assertEq(ctl.anchorBps(), 12_500, "recorded at the asking price");
     }
 
@@ -895,7 +832,7 @@ contract SaleAnchorTest is SaleShapeBase {
     }
 }
 
-/// the two stage fall of the asking price: exact points, a start below the knee, live settings on held statements, the
+/// the linear fall of the asking price: exact points, live settings on held statements, the
 /// order of the setters, and the shape of the price in the age
 contract SaleDecayTest is SaleShapeBase {
     // promise: SPEC 1 every economic number is an owner setting, effective at once
@@ -903,53 +840,43 @@ contract SaleDecayTest is SaleShapeBase {
     function test_decay_settingsMoveAnOpenListingAtOnce() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        _age(sid, 60 * H);
-        assertEq(ctl.priceOf(sid), cost * 9_750 / 10_000, "launch rule: 10 hours past the knee at 25 bps an hour");
+        // this suite holds saleFloorBps at 7_500, so the launch line runs 150 percent to 75 percent over 12 hours
+        _age(sid, 6 * H);
+        assertEq(ctl.priceOf(sid), cost * 11_250 / 10_000, "launch rule: halfway through the 12 hour window at hour 6");
         vm.startPrank(owner);
         Sale memory s = _sale();
-        s.slowDecayBpsPerHour = 50;
+        s.decayHours = 24;
         ctl.setSale(s);
-        assertEq(ctl.priceOf(sid), cost * 9_500 / 10_000, "slow 50: 10 hours at 50");
-        s.fastDecayBpsPerHour = 200;
-        ctl.setSale(s);
-        assertEq(ctl.priceOf(sid), cost * 8_250 / 10_000, "fast 200: the knee is at hour 25, 35 hours at 50");
-        s.kneeBps = 12_000;
-        ctl.setSale(s);
-        assertEq(ctl.priceOf(sid), cost * 9_750 / 10_000, "knee 12_000: reached at hour 15, 45 hours at 50");
         vm.stopPrank();
-        _floorBps(9_900);
-        assertEq(ctl.priceOf(sid), cost * 9_900 / 10_000, "floor 9_900 lifts it");
+        assertEq(ctl.priceOf(sid), cost * 13_125 / 10_000, "decay 24 hours: hour 6 is a quarter of the way down");
+        _floorBps(20_000);
+        assertEq(ctl.priceOf(sid), cost * 20_000 / 10_000, "a floor above the curve lifts it");
         _floorBps(7_500);
-        s.kneeBps = 10_000;
-        s.fastDecayBpsPerHour = 100;
-        s.slowDecayBpsPerHour = 25;
+        s.decayHours = 12;
         vm.prank(owner);
         ctl.setSale(s);
-        assertEq(ctl.priceOf(sid), cost * 9_750 / 10_000, "back to the launch rule");
+        assertEq(ctl.priceOf(sid), cost * 11_250 / 10_000, "back to the launch rule");
     }
 
     // promise: SPEC 2 sale settings reachable inside their bounds
-    /// one `setSale` call reaches any valid combination: the knee over the old cap, the cap under the old knee, and the
-    /// knee at the cap
+    /// one `setSale` call reaches any valid combination: the cap and the markup rise together, then fall together to
+    /// their floors, and `decayHours` moves across its whole range
     function test_decay_oneCallReachesAnyValidCombination() public {
         Sale memory s = _sale();
         vm.startPrank(owner);
-        // up: the knee and the cap rise together
-        s.startCapBps = 150_000;
-        s.kneeBps = 150_000;
+        s.markupBps = 40_000;
+        s.startCapBps = 200_000;
+        s.decayHours = 720;
         ctl.setSale(s);
-        assertEq(ctl.kneeBps(), 150_000);
-        // down: the cap and the knee fall together, the knee to its floor
-        s.startCapBps = 15_000;
-        s.kneeBps = 1_000;
-        ctl.setSale(s);
-        assertEq(ctl.kneeBps(), 1_000);
-        assertEq(ctl.startCapBps(), 15_000);
-        // the knee at the cap
-        s.kneeBps = 15_000;
+        assertEq(ctl.startCapBps(), 200_000);
+        assertEq(ctl.decayHours(), 720);
+        s.markupBps = 10_000;
+        s.startCapBps = 10_000;
+        s.decayHours = 1;
         ctl.setSale(s);
         vm.stopPrank();
-        assertEq(ctl.kneeBps(), 15_000);
+        assertEq(ctl.startCapBps(), 10_000);
+        assertEq(ctl.decayHours(), 1);
     }
 
     /// answers the controller's reads of the Core for the price fuzz: the cost and the compose time of any statement
@@ -968,9 +895,7 @@ contract SaleDecayTest is SaleShapeBase {
         stub.setSaleFloorBps(fuzzFloor);
         k.markupBps = uint16(bound(x[0], 10_000, 40_000));
         k.startCapBps = uint32(bound(x[1], k.markupBps, 200_000));
-        k.kneeBps = uint32(bound(x[3], 1_000, k.startCapBps));
-        k.fastDecayBpsPerHour = uint16(bound(x[4], 1, 10_000));
-        k.slowDecayBpsPerHour = uint16(bound(x[5], 1, 10_000));
+        k.decayHours = uint16(bound(x[3], 1, 720));
         k.anchorHalfLife = 7 days;
         c = Prod.newController(address(stub), k);
         anchor = bound(x[6], 10_000, k.startCapBps);
@@ -985,9 +910,7 @@ contract SaleDecayTest is SaleShapeBase {
     }
 
     function _closedForm(IControllerV1 c, Sale memory k, uint256 cost, uint256 age) internal view returns (uint256) {
-        return _curve(
-            cost, c.startBps(), k.kneeBps, k.fastDecayBpsPerHour, k.slowDecayBpsPerHour, fuzzFloor, age
-        );
+        return _curve(cost, c.startBps(), fuzzFloor, k.decayHours, age);
     }
 
     // promise: SPEC 1 the asking price never rises with age
@@ -1016,92 +939,122 @@ contract RejectsEth {
     }
 }
 
-/// the royalty (decision 112): every sale of the controller adds `royaltyBps` of the engine price on top. the engine
-/// receives the engine price, the controller holds the royalty until `claimRoyalty` pays the recipient
-contract SaleRoyaltyTest is SaleBase {
+/// the artist and operator cuts of nft sales: a fixed share of each statement and credit sale payment,
+/// `saleToArtistBps` and `saleToOperatorBps`, is taken off the top and pushed to the artist and the payee, the rest is
+/// split by the existing rules. the pushes are forced, so a recipient that cannot receive never blocks the sale
+contract SaleCutsTest is SaleBase {
     address internal buyer = address(0xB0B);
 
-    // promise: SPEC 1 royalty on every engine sale (decision 112)
-    /// the engine books the engine price, the controller holds the royalty, the refund is the rest
-    function test_royalty_buySplitsTheGrossPrice() public {
+    // promise: SPEC 1 the statement sale splits sum to the payment
+    function test_cuts_statementSaleSplitsSumToThePayment() public {
         uint256 sid = _composeOnce().sid;
-        uint256 p = ctl.priceOf(sid);
-        uint256 r = p * 250 / 10_000;
-        (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
-        _payExtra(buyer, sid, p, 2 ether);
-        assertEq(buyer.balance, 2 ether, "the excess came back");
-        assertEq(address(core).balance - bal0, p, "the engine took the engine price");
-        assertEq((core.ethPot() - pot0) + (core.ethToBuyback() - bb0), p);
-        assertEq(address(ctl).balance, r, "the controller holds the royalty");
-        assertEq(ctl.royaltyOwed(), r);
+        uint256 price = ctl.priceOf(sid);
+        (uint256 toArtist, uint256 toOperator, uint256 rest) = _saleCuts(price);
+        uint256 artist0 = core.artist().balance;
+        uint256 payee0 = core.payee().balance;
+        (uint256 pot0, uint256 bb0,) = _recordedBook();
+        _pay(buyer, sid, price);
+        assertEq(core.artist().balance - artist0, toArtist, "the artist cut was pushed");
+        assertEq(core.payee().balance - payee0, toOperator, "the operator cut was pushed to the payee");
+        uint256 dPot = core.ethPot() - pot0;
+        uint256 dBb = core.ethToBuyback() - bb0;
+        assertEq(dPot + dBb, rest, "the pot and the buyback together take the rest");
+        assertEq(toArtist + toOperator + dPot + dBb, price, "the cuts and the rest sum to the payment");
         _solvent();
     }
 
-    // promise: INTEGRATION Underpaid at the gross price
-    function test_royalty_theEnginePriceAloneIsUnderpaid() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 p = ctl.priceOf(sid);
-        vm.deal(buyer, 10 ether);
+    // promise: SPEC 1 the credit sale splits sum to the payment
+    function test_cuts_creditSaleSplitsSumToThePayment() public {
+        uint256[] memory ids = _fillEthPile(1);
+        _setCreditSaleOn(true);
+        uint256 id = ids[0];
+        uint256 price = ctl.creditPrice(id);
+        (uint256 toArtist, uint256 toOperator, uint256 rest) = _saleCuts(price);
+        uint256 artist0 = core.artist().balance;
+        uint256 payee0 = core.payee().balance;
+        (uint256 pot0, uint256 bb0,) = _recordedBook();
+        vm.deal(buyer, price);
         vm.prank(buyer);
-        vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buy{value: p}(sid);
-        uint256 gross = ctl.grossPriceOf(sid);
-        vm.prank(buyer);
-        vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buy{value: gross - 1}(sid);
-        assertEq(ctl.royaltyOwed(), 0);
+        ctl.buyCredit{value: price}(id);
+        assertEq(core.artist().balance - artist0, toArtist, "the artist cut was pushed");
+        assertEq(core.payee().balance - payee0, toOperator, "the operator cut was pushed to the payee");
+        assertEq((core.ethPot() - pot0) + (core.ethToBuyback() - bb0), rest, "the rest is booked");
+        assertEq(toArtist + toOperator + rest, price, "the splits sum to the payment");
+        _solvent();
     }
 
-    // promise: SPEC 1 royalty pull claim (decision 112)
-    function test_royalty_claimPaysTheRecipientAndZeroes() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 p = ctl.priceOf(sid);
-        _pay(buyer, sid, p);
-        uint256 owed = ctl.royaltyOwed();
-        assertGt(owed, 0);
-        address recipient = ctl.royaltyRecipient();
-        uint256 before_ = recipient.balance;
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.RoyaltyClaimed(recipient, owed);
-        vm.prank(address(0xC1A1));
-        ctl.claimRoyalty();
-        assertEq(recipient.balance - before_, owed, "the recipient was paid");
-        assertEq(ctl.royaltyOwed(), 0);
-        assertEq(address(ctl).balance, 0);
-        vm.expectRevert(IControllerV1.ZeroAmount.selector);
-        ctl.claimRoyalty();
-    }
-
-    // promise: SPEC 1 a reverting royalty recipient blocks no sale
-    /// a recipient that reverts blocks no sale. its claim reverts and keeps the royalty, and the owner names another
-    function test_royalty_aRecipientThatRevertsBlocksNothing() public {
+    // promise: SPEC 1 the forced push reaches an artist that reverts and the sale settles
+    function test_cuts_pushReachesAnArtistThatReverts() public {
         RejectsEth bad = new RejectsEth();
-        _setRoyaltyRecipient(address(bad));
-        uint256 a = _composeOnce().sid;
-        uint256 b = _another();
-        _pay(buyer, a, ctl.priceOf(a));
-        _pay(buyer, b, ctl.priceOf(b));
-        assertEq(STATEMENTS.ownerOf(a), buyer);
-        assertEq(STATEMENTS.ownerOf(b), buyer);
-        uint256 owed = ctl.royaltyOwed();
-        assertGt(owed, 0);
-        vm.expectRevert();
-        ctl.claimRoyalty();
-        assertEq(ctl.royaltyOwed(), owed, "the royalty is kept");
-        address good = address(0x600D);
-        _setRoyaltyRecipient(good);
-        ctl.claimRoyalty();
-        assertEq(good.balance, owed, "the new recipient got what was owed");
-        assertEq(ctl.royaltyOwed(), 0);
-    }
-
-    // promise: INTEGRATION ZeroAmount on claimRoyalty
-    function test_royalty_zeroShareCollectsNothing() public {
-        _setRoyaltyBps(0);
+        vm.prank(owner);
+        core.setArtist(address(bad));
         uint256 sid = _composeOnce().sid;
-        _pay(buyer, sid, ctl.priceOf(sid));
-        assertEq(ctl.royaltyOwed(), 0);
-        assertEq(address(ctl).balance, 0);
+        uint256 price = ctl.priceOf(sid);
+        (uint256 toArtist,,) = _saleCuts(price);
+        uint256 before = address(bad).balance;
+        _pay(buyer, sid, price);
+        assertEq(STATEMENTS.ownerOf(sid), buyer, "the sale went through");
+        assertEq(address(bad).balance - before, toArtist, "the forced push reached the reverting artist");
     }
 
+    // promise: SPEC 1 a zero cut skips its push
+    function test_cuts_zeroBpsSkipsThePush() public {
+        Settings memory s = core.settings();
+        s.saleToArtistBps = 0;
+        _setSettings(s);
+        uint256 sid = _composeOnce().sid;
+        uint256 price = ctl.priceOf(sid);
+        (uint256 toArtist, uint256 toOperator,) = _saleCuts(price);
+        assertEq(toArtist, 0, "the artist cut is zero");
+        uint256 artist0 = core.artist().balance;
+        uint256 payee0 = core.payee().balance;
+        _pay(buyer, sid, price);
+        assertEq(core.artist().balance, artist0, "the artist receives nothing at a zero cut");
+        assertEq(core.payee().balance - payee0, toOperator, "the operator cut still pushes");
+    }
+
+    // promise: SPEC 1 setArtist refuses the zero address while the cut is on, accepts it at a zero cut
+    function test_cuts_setArtistZeroRefusedWhileTheCutIsOn() public {
+        assertGt(core.settings().saleToArtistBps, 0, "the cut is on at launch");
+        vm.prank(owner);
+        vm.expectRevert(ICore.ZeroAddress.selector);
+        core.setArtist(address(0));
+        Settings memory s = core.settings();
+        s.saleToArtistBps = 0;
+        _setSettings(s);
+        vm.prank(owner);
+        core.setArtist(address(0));
+        assertEq(core.artist(), address(0), "the artist is cleared when the cut is off");
+    }
+
+    // promise: SPEC 1 setSettings refuses a nonzero artist cut while the artist is the zero address, so the pair is
+    // checked on both setters and the cut can never be pushed to address(0)
+    function test_cuts_setSettingsRefusesCutWhileArtistZero() public {
+        // clear the cut, then the artist, so the artist is the zero address with a zero cut
+        Settings memory s = core.settings();
+        s.saleToArtistBps = 0;
+        _setSettings(s);
+        vm.prank(owner);
+        core.setArtist(address(0));
+        assertEq(core.artist(), address(0), "the artist is cleared");
+        // raising the cut while the artist is zero reverts
+        s.saleToArtistBps = 250;
+        vm.prank(owner);
+        vm.expectRevert(ICore.ZeroAddress.selector);
+        core.setSettings(s);
+    }
+
+    // promise: SPEC 1 setArtist refuses a forbidden target
+    function test_cuts_setArtistRefusesAForbiddenTarget() public {
+        vm.prank(owner);
+        vm.expectRevert(ICore.ForbiddenTarget.selector);
+        core.setArtist(address(core));
+    }
+
+    // promise: INTEGRATION OnlyOwner on setArtist
+    function test_cuts_setArtistOnlyTheOwner() public {
+        vm.prank(address(0x5757));
+        vm.expectRevert(ICore.OnlyOwner.selector);
+        core.setArtist(address(0xA11CE));
+    }
 }

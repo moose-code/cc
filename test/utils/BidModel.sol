@@ -33,17 +33,45 @@ library BidModel {
         return fillState < minuteStart * s.dropFloorBps / 10_000 ? fillState : minuteStart;
     }
 
-    /// @dev the rate after one credit bought with the price state `fillState`, where `minuteStart` is the price state at
-    /// the first fill of the same minute bucket
-    function dropOnce(Settings memory s, uint256 fillState, uint256 minuteStart) internal pure returns (uint256) {
+    /// @dev the rate after one credit of score `score` bought with the price state `fillState`, where `minuteStart` is
+    /// the price state at the first fill of the same minute bucket. the fall is `dropPerCreditBps * score / refScore`,
+    /// bounded at 10_000, the same as `CoreLib.drop`
+    function dropOnce(Settings memory s, uint256 fillState, uint256 minuteStart, uint256 score, uint256 refScore)
+        internal
+        pure
+        returns (uint256)
+    {
+        return dropOnce(s, fillState, minuteStart, score, refScore, 0);
+    }
+
+    /// @dev the drop with an added lower bound `absFloor` (eth: 0; balance: 10_000 - balanceBidMarginBps), the same
+    /// shared rule `CoreLib._drop` applies to both instances
+    function dropOnce(
+        Settings memory s,
+        uint256 fillState,
+        uint256 minuteStart,
+        uint256 score,
+        uint256 refScore,
+        uint256 absFloor
+    ) internal pure returns (uint256) {
         minuteStart = startAfter(s, fillState, minuteStart);
-        return
-            FixedPointMathLib.max(fillState * (10_000 - s.dropPerCreditBps) / 10_000, minuteStart * s.dropFloorBps / 10_000);
+        // one rounding, fall rounded up: rate = fillState * (10_000 * refScore - dropPerCreditBps * score) /
+        // (10_000 * refScore), mirroring CoreLib._drop
+        uint256 fallNum = uint256(s.dropPerCreditBps) * score;
+        uint256 denom = 10_000 * refScore;
+        uint256 dropped = fallNum >= denom ? 0 : FixedPointMathLib.mulDiv(fillState, denom - fallNum, denom);
+        uint256 lo = FixedPointMathLib.max(dropped, minuteStart * s.dropFloorBps / 10_000);
+        return FixedPointMathLib.max(lo, absFloor);
     }
 
     /// @dev the clamp: the price of one credit that a pot affords, at most `rateCap`
     function clamp(Settings memory s, uint256 pot) internal pure returns (uint256) {
-        return FixedPointMathLib.min(pot, s.rateCap);
+        return clamp(s, pot, s.rateCap);
+    }
+
+    /// @dev the clamp with an explicit cap (eth: `rateCap`; balance: 10_000)
+    function clamp(Settings memory, uint256 pot, uint256 cap) internal pure returns (uint256) {
+        return FixedPointMathLib.min(pot, cap);
     }
 
     /// @dev the remembered peak now: `peakRate` halved over the time since `peakTime`
@@ -66,12 +94,17 @@ library BidModel {
     /// `climbPerMinBps`, up to the clamp (a price state above the clamp holds). reproduces `CoreLib._climb` so the read
     /// matches exactly
     function priceNow(Settings memory s, Bid memory b) internal pure returns (uint256) {
+        return priceNow(s, b, s.rateCap);
+    }
+
+    /// @dev priceNow with an explicit cap (eth: `rateCap`; balance: 10_000). reproduces `CoreLib._climb`
+    function priceNow(Settings memory s, Bid memory b, uint256 cap) internal pure returns (uint256) {
         uint256 anchor = b.lastFillRate.max(peakNow(s, b.peakRate, b.peakTime, b.nowTs));
         uint256 idle = b.nowTs > b.lastFillTime ? b.nowTs - b.lastFillTime : 0;
-        uint256 cap = ceiling(s, anchor, idle).min(s.rateCap);
-        if (b.r >= cap) return cap;
+        uint256 capV = ceiling(s, anchor, idle).min(cap);
+        if (b.r >= capV) return capV;
         if (b.nowTs <= b.checkpointTime || b.r == 0) return b.r;
-        uint256 target = cap.min(b.pot);
+        uint256 target = capV.min(b.pot);
         if (b.r >= target) return b.r;
         return _recover(s, b, target);
     }
@@ -105,6 +138,11 @@ library BidModel {
 
     /// @dev the read for the price state `p`: lowered to the clamp
     function read(Settings memory s, uint256 pot, uint256 p) internal pure returns (uint256) {
-        return FixedPointMathLib.min(p, clamp(s, pot));
+        return read(s, pot, p, s.rateCap);
+    }
+
+    /// @dev the read with an explicit cap (eth: `rateCap`; balance: 10_000)
+    function read(Settings memory s, uint256 pot, uint256 p, uint256 cap) internal pure returns (uint256) {
+        return FixedPointMathLib.min(p, clamp(s, pot, cap));
     }
 }

@@ -17,11 +17,11 @@ import { controllerAbi, coreAbi, erc20Abi } from "@/lib/abis";
 import { type HeldStatement, type Snapshot, useNow, useSnapshot, useStatements } from "@/lib/live";
 import { agoLabel, commas, eth, signedPct } from "@/lib/format";
 
-const BUFFER_BPS = 100n; // value above the gross price; the controller refunds the excess
+const BUFFER_BPS = 100n; // value above the price; the controller refunds the excess
 const FORMATS = [0, 1, 2, 3, 4, 5, 6, 7];
 
 // Statement detail. A statement the Core holds reads from the multicall
-// (useStatements): the gross price, its engine price and royalty, the reference
+// (useStatements): the asking price, the reference
 // and the floor state, with buy, restyle and redeem. History comes from the
 // Core and controller logs: Composed (credits, format, who, default or chosen),
 // HeldFormatSet, StatementSoldTo, AnchorMoved and StatementRedeemed.
@@ -100,7 +100,7 @@ export function LiveStatement({ id }: { id: number }) {
                     {s && (
                       <HistRow
                         label="for sale"
-                        value={`${eth(s.gross)} eth now`}
+                        value={`${eth(s.price)} eth now`}
                         note={cost ? `${signedPct(overCost(s.price, cost))} engine price over cost` : undefined}
                       />
                     )}
@@ -151,11 +151,10 @@ export function LiveStatement({ id }: { id: number }) {
 const overCost = (price: bigint, cost: bigint) => (Number(price) / Number(cost) - 1) * 100;
 const pct = (bps: bigint | number) => `${(Number(bps) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
 
-// buy at the gross price, restyle, and redeem of a statement the Core holds
+// buy at the asking price, restyle, and redeem of a statement the Core holds
 function StatementActions({ s, snap }: { s: HeldStatement; snap: Snapshot }) {
   const { address } = useAccount();
   const [format, setFormat] = useState(0);
-  const royalty = s.gross - s.price;
   const { data: ccBal } = useReadContract({
     address: snap.coin,
     abi: erc20Abi,
@@ -170,12 +169,9 @@ function StatementActions({ s, snap }: { s: HeldStatement; snap: Snapshot }) {
     <div className="buybox">
       <div className="buybox-price">
         <span className="muted">price</span>
-        <span className="big">{eth(s.gross)} eth</span>
+        <span className="big">{eth(s.price)} eth</span>
       </div>
       <div className="price-ends muted">
-        <span>
-          engine {eth(s.price)} + royalty {eth(royalty)}
-        </span>
         <span>{s.atFloor ? "at floor" : "falling"}</span>
       </div>
       <div className="price-ends muted">
@@ -190,7 +186,7 @@ function StatementActions({ s, snap }: { s: HeldStatement; snap: Snapshot }) {
             abi: controllerAbi,
             functionName: "buy",
             args: [BigInt(s.sid)],
-            value: s.gross + (s.gross * BUFFER_BPS) / 10000n,
+            value: s.price + (s.price * BUFFER_BPS) / 10000n,
           }))
         }
       />

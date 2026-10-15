@@ -62,11 +62,11 @@ abstract contract HandlerOwner is HandlerBase {
         s.rateCap = uint64(_f(_r(seed, 26), RATE_START_MIN_WEI, RATE_START_MAX_WEI, c.rateCap));
         s.feeToRedeemBurnBps = uint16(_f(_r(seed, 27), 0, 10_000, c.feeToRedeemBurnBps));
         s.payeePpm = uint24(_f(_r(seed, 40), 0, 200_000, c.payeePpm));
+        s.refScore = uint32(_f(_r(seed, 41), 800_000, 8_000_000, c.refScore));
+        s.swapFeeCc = uint96(_f(_r(seed, 42), 0, 1e24, c.swapFeeCc));
         s.callerFee = uint64(_f(_r(seed, 10), 0, 0.005 ether, c.callerFee));
         s.callerMaxBaseFee = uint48(_f(_r(seed, 11), 0, 100 gwei, c.callerMaxBaseFee));
         _corner(s, corner);
-        // the balance side cycle cannot lose more than its margin: slippage stays at or below the bid margin
-        if (s.redeemSlippageBps > s.balanceBidMarginBps) s.redeemSlippageBps = s.balanceBidMarginBps;
         // recoveryClimbPerMinBps is at least the final climbPerMinBps, set after the corners so it stays valid
         s.recoveryClimbPerMinBps = uint16(_f(_r(seed, 31), s.climbPerMinBps, 1_000, c.recoveryClimbPerMinBps));
         s.peakHalfLife = uint32(_f(_r(seed, 32), 600, 604_800, c.peakHalfLife));
@@ -157,7 +157,6 @@ abstract contract HandlerOwner is HandlerBase {
         uint256 reserve;
         uint256 rate;
         uint256 price;
-        uint256 balancePot;
         uint256 xBal;
     }
 
@@ -168,18 +167,16 @@ abstract contract HandlerOwner is HandlerBase {
         p.reserve = core.ethRedeemBurn();
         p.rate = core.ethRate();
         p.price = _priceNow(core.settings());
-        p.balancePot = core.balancePot();
         p.xBal = _xBal(address(core));
     }
 
-    /// what no owner call may touch: the core's eth, its pots and its balance token
+    /// what no owner call may touch: the core's eth and its pots. the core holds no balance token (the module does)
     function _opost(OPre memory p, string memory what) internal {
         _eth(p.bal, 0, 0, what);
         _x(p.xBal, 0, 0, what);
         if (
             core.ethPot() != p.pot || core.ethToBuyback() != p.toBuyback || core.ethRedeemBurn() != p.reserve
         ) _flag(V_OWNER, "an owner call moved a pot");
-        if (core.balancePot() != p.balancePot) _flag(V_OWNER, "an owner call moved the balance pot");
         gOwnerCalls++;
     }
 
@@ -256,9 +253,10 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.callerMaxBaseFee > 100 gwei) return "callerMaxBaseFee";
         if (s.redeemSlippageBps > 1_000) return "redeemSlippageBps";
         if (s.balanceBidMarginBps > 9_000) return "balanceBidMarginBps";
-        if (s.redeemSlippageBps > s.balanceBidMarginBps) return "redeemSlippageBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         if (s.payeePpm > 200_000) return "payeePpm";
+        if (s.refScore < 800_000 || s.refScore > 8_000_000) return "refScore";
+        if (s.swapFeeCc > 1e24) return "swapFeeCc";
         return bytes32(0);
     }
 
@@ -269,7 +267,7 @@ abstract contract HandlerOwner is HandlerBase {
     /// breaks exactly one field of valid settings, `which` picks it. returns the name the library must report
     function _break(Settings memory s, uint256 which) internal pure returns (bytes32 name) {
         // forge-lint: disable-start(unsafe-typecast)
-        which = which % 46;
+        which = which % 49;
         if (which == 0) {
             (s.dropPerCreditBps, name) = (1_001, "dropPerCreditBps");
         } else if (which == 1) {
@@ -361,8 +359,14 @@ abstract contract HandlerOwner is HandlerBase {
             (s.recoveryClimbPerMinBps, name) = (0, "recoveryClimbPerMinBps");
         } else if (which == 44) {
             (s.payeePpm, name) = (200_001, "payeePpm");
-        } else {
+        } else if (which == 45) {
             (s.recoveryGapBps, name) = (5_001, "recoveryGapBps");
+        } else if (which == 46) {
+            (s.refScore, name) = (0, "refScore");
+        } else if (which == 47) {
+            (s.refScore, name) = (8_000_001, "refScore");
+        } else {
+            (s.swapFeeCc, name) = (1e24 + 1, "swapFeeCc");
         }
         // forge-lint: disable-end(unsafe-typecast)
     }
@@ -611,7 +615,6 @@ abstract contract HandlerOwner is HandlerBase {
         uint256 pot = core.ethPot();
         uint256 tb = core.ethToBuyback();
         uint256 bal = address(core).balance;
-        uint256 xp = core.balancePot();
         uint256 rate = core.ethRate();
         _att(a);
         vm.prank(stranger ? _actor(seed >> 8) : owner);
@@ -620,7 +623,7 @@ abstract contract HandlerOwner is HandlerBase {
             if (move == 0) _flag(V_OWNER, "a zero release was accepted");
             if (core.ethRedeemBurn() != reserve - move) _flag(V_OWNER, "the reserve did not fall by the move");
             if (core.ethToBuyback() != tb + move) _flag(V_OWNER, "the released reserve did not reach the coin buyback");
-            if (core.ethPot() != pot || core.balancePot() != xp) _flag(V_OWNER, "a release moved the pot or the balance pot");
+            if (core.ethPot() != pot) _flag(V_OWNER, "a release moved the pot");
             if (address(core).balance != bal) _flag(V_ETH_OUT, "a release moved eth out of the core");
             _ok(a);
         } catch (bytes memory why) {
@@ -748,7 +751,6 @@ abstract contract HandlerOwner is HandlerBase {
     struct MigPre {
         uint256 eth;
         uint256 balance;
-        uint256 x;
         uint256 xBalance;
         uint256 sinkEth;
         uint256 sinkX;
@@ -762,7 +764,7 @@ abstract contract HandlerOwner is HandlerBase {
 
     /// the owner's successor doors and `migrate`. by mode: set the successor (refused after the lock), a stranger on the
     /// three doors (refused), the lock (only with a successor set, rarely), and mostly `migrate` with random batch sizes.
-    /// a migration is modelled from the ghosts: `ethPot` and `balancePot` go to the sink whole, `ethToBuyback` and `xToBuyback` stay, the first
+    /// a migration is modelled from the ghosts: `ethPot` goes to the sink whole, `ethToBuyback` stays, the balance token is held by the module and does not move, the first
     /// `maxCredits` of each pile go to the sink, and the held statements stay as they are. eth, balance token, credits,
     /// the held list, trackers and the event are compared with that model
     function migrate(uint256 seed, uint256 mode) external checked {
@@ -868,7 +870,6 @@ abstract contract HandlerOwner is HandlerBase {
         q.reserve = core.ethRedeemBurn();
         q.wasRetired = gRetired;
         q.balance = address(core).balance;
-        q.x = core.balancePot();
         q.xBalance = _xBal(address(core));
         q.sinkEth = to.balance;
         q.sinkX = _xBal(to);
@@ -881,13 +882,12 @@ abstract contract HandlerOwner is HandlerBase {
     function _migPost(MigPre memory q, address to) internal {
         gRetired = true;
         if (!core.retired()) _flag(V_RETIRED, "migrate did not set retired");
-        // eth and balance token: the trackers went to the successor whole
-        // the pot goes to the successor, the buyback pot stays
+        // the eth pot goes to the successor, the buyback pot stays; the balance token is held by the module, not moved
         _eth(q.balance, q.eth, 0, "migrate");
-        _x(q.xBalance, q.x, 0, "migrate");
+        _x(q.xBalance, 0, 0, "migrate");
         if (to.balance != q.sinkEth + q.eth) _flag(V_OWNER, "the successor did not get the eth pots");
-        if (_xBal(to) != q.sinkX + q.x) _flag(V_OWNER, "the successor did not get balancePot");
-        if (core.ethPot() != 0 || core.balancePot() != 0) _flag(V_OWNER, "a tracker is not zero after a migration");
+        if (_xBal(to) != q.sinkX) _flag(V_OWNER, "the successor got balance token from migrate");
+        if (core.ethPot() != 0) _flag(V_OWNER, "the eth pot is not zero after a migration");
         if (core.ethToBuyback() != q.buyback) _flag(V_OWNER, "migrate moved the eth buyback pot");
         if (core.ethRedeemBurn() != q.reserve) _flag(V_OWNER, "migrate moved the redeem burn reserve");
         // credits: the first of the pile
@@ -923,8 +923,8 @@ abstract contract HandlerOwner is HandlerBase {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.Migrated.selector) continue;
             seen = true;
             if (address(uint160(uint256(logs[i].topics[1]))) != to) _flag(V_OWNER, "Migrated names another successor");
-            (uint256 eth, uint256 x, uint256 credits) = abi.decode(logs[i].data, (uint256, uint256, uint256));
-            if (eth != q.eth || x != q.x || credits != q.credits.length) _flag(V_OWNER, "Migrated differs from the model");
+            (uint256 eth, uint256 credits) = abi.decode(logs[i].data, (uint256, uint256));
+            if (eth != q.eth || credits != q.credits.length) _flag(V_OWNER, "Migrated differs from the model");
         }
         if (!seen) _flag(V_OWNER, "migrate emitted no Migrated");
         if (retiredLogs != (q.wasRetired ? 0 : 1)) _flag(V_RETIRED, "EngineRetired is not logged exactly by the first migrate");
@@ -937,9 +937,10 @@ abstract contract HandlerOwner is HandlerBase {
     /// the owner sets one of the eight credit settings (three on the core, five on the controller) to a value inside or
     /// outside its bounds, or a stranger tries. inside: it goes through and reads back. outside a bounded numeric field:
     /// BadSetting. a stranger: OnlyOwner. no asset or pot moves
+    // refScore left the controller credit settings for the Core settings; the settings fuzz mutates it
     function creditSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_CREDIT_SETTINGS;
-        uint256 which = mode % 8;
+        uint256 which = mode % 7;
         bool stranger = (mode >> 8) % 6 == 0;
         bool bad = (mode >> 12) % 4 == 0;
         (address target, bytes memory data, bool valid, uint256 want, uint256 cur) = _creditCase(which, seed, bad);
@@ -1027,15 +1028,6 @@ abstract contract HandlerOwner is HandlerBase {
             data = abi.encodeCall(IControllerV1.setCredit, (cs));
             valid = v >= 10_000 && v <= 200_000;
             want = v;
-        } else {
-            target = v1;
-            cur = c.refScore();
-            uint256 v = bad ? (seed % 2 == 0 ? 0 : 8_000_001) : _f(seed, 1, 8_000_000, cur);
-            CreditSale memory cs = _creditSaleOf(c);
-            cs.refScore = uint32(v);
-            data = abi.encodeCall(IControllerV1.setCredit, (cs));
-            valid = v >= 1 && v <= 8_000_000;
-            want = v;
         }
     }
 
@@ -1045,10 +1037,7 @@ abstract contract HandlerOwner is HandlerBase {
             saleOn: c.creditSaleOn(),
             window: c.creditWindow(),
             floorBps: c.creditFloorBps(),
-            startBps: c.creditStartBps(),
-            refScore: c.refScore(),
-            royaltyBps: c.royaltyBps(),
-            royaltyRecipient: c.royaltyRecipient()
+            startBps: c.creditStartBps()
         });
     }
 
@@ -1061,7 +1050,6 @@ abstract contract HandlerOwner is HandlerBase {
         if (which == 3) return c.creditSaleOn() ? 1 : 0;
         if (which == 4) return c.creditWindow();
         if (which == 5) return c.creditFloorBps();
-        if (which == 6) return c.creditStartBps();
-        return c.refScore();
+        return c.creditStartBps();
     }
 }

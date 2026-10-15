@@ -92,11 +92,12 @@ contract RedeemTimingTest is RedeemBase {
         _makeEligible(sid);
         assertTrue(ctl.atFloor(sid), "the price has fallen to cost");
         uint256 owed = core.ratingOf(sid) * UNIT;
+        uint256 held0 = _moduleHolding();
         core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
         (bool held,,) = core.statementInfo(sid);
         assertFalse(held);
-        assertEq(core.balancePot(), owed);
+        assertEq(_moduleHolding() - held0, owed, "the owed amount is minted into the module");
         _solvent();
     }
 
@@ -198,13 +199,13 @@ contract RedeemTimingTest is RedeemBase {
         _makeEligible(sid);
         hm.setPayBps(10_000 - core.settings().redeemSlippageBps - 1);
         uint256 pot = core.ethPot();
-        uint256 balancePotPre = core.balancePot();
+        uint256 heldPre = xt.balanceOf(address(hm));
         uint256 bal = keeper.balance;
         vm.prank(keeper);
-        vm.expectRevert(ICore.Underpaid.selector);
+        vm.expectRevert(ICore.BadModule.selector);
         core.redeemStatement(sid);
         assertEq(core.ethPot(), pot);
-        assertEq(core.balancePot(), balancePotPre);
+        assertEq(xt.balanceOf(address(hm)), heldPre, "the module holding did not change");
         assertEq(keeper.balance, bal);
         assertEq(STATEMENTS.ownerOf(sid), address(core), "the statement never left");
         assertTrue(_isHeld(sid));

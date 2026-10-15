@@ -32,17 +32,17 @@ contract LaunchTest is Fixture {
         assertEq(address(core.controller()), address(ctl));
 
         IArtCoinsHookV2.SkimConfig memory k = HOOK.skimConfig(poolId);
-        assertEq(k.baselineSkimBps, 690);
-        assertEq(k.bountyBps, 9_638);
+        assertEq(k.baselineSkimBps, 1000);
+        assertEq(k.bountyBps, 9_000);
         assertEq(k.bountyRecipient, address(core), "the bounty goes to the Core");
         IArtCoinsMevSkimV2 mev = IArtCoinsMevSkimV2(lc.mevModule);
         IArtCoinsMevSkimV2.SkimSchedule memory sched = mev.schedule(poolId);
         assertEq(sched.startingSkimBps, 9_000);
-        assertEq(sched.endSkimBps, 690, "the baseline is the end value");
+        assertEq(sched.endSkimBps, 1000, "the baseline is the end value");
         assertEq(sched.windowSeconds, 1800);
         _skipSniperWindow();
         (uint24 now_, bool active) = mev.currentSkimBps(poolId);
-        assertEq(now_, 690);
+        assertEq(now_, 1000);
         assertFalse(active);
     }
 

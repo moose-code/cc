@@ -94,7 +94,7 @@ contract PostflightSlotsTest is Fixture {
         address lib = findLibrary(address(core).code);
         assertTrue(lib != address(0));
         uint256[] memory sites = _librarySites(address(core).code, lib);
-        assertEq(sites.length, 6, "the Core calls CoreLib at six sites");
+        assertEq(sites.length, 8, "the Core calls CoreLib at eight sites");
         address evil = _foreignLibrary();
         for (uint256 s; s < sites.length; ++s) {
             bytes memory c = address(core).code;
@@ -130,7 +130,7 @@ contract PostflightSlotsTest is Fixture {
 
     function test_oneDivergentControllerSiteFailsPostflight() public {
         uint256[] memory sites = _immutableSites("ControllerV1", 0);
-        assertEq(sites.length, 17);
+        assertEq(sites.length, 18);
         for (uint256 s; s < sites.length; ++s) {
             bytes memory k = address(ctl).code;
             k[sites[s] + 31] = bytes1(uint8(k[sites[s] + 31]) ^ 1);

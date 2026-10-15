@@ -5,7 +5,7 @@ import {console} from "forge-std/console.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
-import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, Settings, ICreditScore} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {BidModel} from "./utils/BidModel.sol";
@@ -55,6 +55,8 @@ abstract contract SeaportBase is Fixture {
     /// hands the next usable credit to the maker and approves Seaport itself as operator, no conduit.
     function _list() internal returns (uint256 id) {
         id = _credits(maker, 1)[0];
+        // refScore set to the listed credit's score, so its bid is the full rate and the ethRate based order prices hold
+        _refScoreToCredit(id);
         vm.prank(maker);
         CREDITS.setApprovalForAll(address(SEAPORT), true);
         assertEq(CREDITS.ownerOf(id), maker);
@@ -168,9 +170,10 @@ abstract contract SeaportBase is Fixture {
     /// calls the door as the keeper and checks everything a successful buy must leave behind.
     /// `cost` is the exact eth the adapter prices: the sum of every payout of the order.
     function _buy(uint256 id, bytes memory params, uint256 cost) internal returns (uint256 paid) {
-        uint256 ceiling = core.ethRate();
+        uint256 ceiling = core.bidOf(id);
         Snap memory before = _snap();
         uint256 rate = core.ethRate();
+        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
 
         vm.prank(keeper);
         core.buyListing(seaportAdapter, id, params);
@@ -186,7 +189,11 @@ abstract contract SeaportBase is Fixture {
         assertEq(core.ethPot(), before.pot - cost - paid, "pot down by exactly cost and the payment");
         assertEq(address(core).balance, before.balance - cost - paid, "balance down by exactly cost and the payment");
         assertEq(core.ethToBuyback(), before.toBuyback);
-        assertEq(core.rateAtCheckpoint(), BidModel.dropOnce(core.settings(), rate, rate), "rate drop");
+        assertEq(
+            core.rateAtCheckpoint(),
+            BidModel.dropOnce(core.settings(), rate, rate, score, core.settings().refScore),
+            "rate drop"
+        );
         assertEq(core.lastFillTime(), block.timestamp);
         assertLe(cost + paid, ceiling, "never above the ceiling");
         _solvent();
@@ -236,6 +243,33 @@ contract SeaportTest is SeaportBase {
     /*//////////////////////////////////////////////////////////////
                     1. the basic order through the adapter
     //////////////////////////////////////////////////////////////*/
+
+    // promise: SPEC 6 buyListing caps value and the keeper payment at the credit's scaled bid, at score != refScore
+    function test_basic_capAndPaymentAtScoreNotRefScore() public {
+        // a fresh listing without forcing refScore to the credit's score, so score / refScore is not 1
+        uint256 id = _credits(maker, 1)[0];
+        vm.prank(maker);
+        CREDITS.setApprovalForAll(address(SEAPORT), true);
+        uint256 ref = core.settings().refScore;
+        uint256 s = _scoreOf(id);
+        assertTrue(s != ref, "the credit's score is not refScore");
+        _fundPot(10 ether);
+        // the per-credit bid by the hand formula, not bidOf
+        uint256 handBid = (core.ethRate() * s) / ref;
+        uint256 gap = 1000; // below the keeper fee, so the payment is capped at the gap
+        uint256 value = handBid - gap;
+        OrderComponents memory c = _open(id, value, 0);
+        bytes memory order = _basicData(c);
+        vm.fee(1 gwei);
+        vm.txGasPrice(1 gwei);
+        uint256 kb = keeper.balance;
+        vm.prank(keeper);
+        core.buyListing(seaportAdapter, id, order);
+        assertEq(keeper.balance - kb, gap, "the keeper payment is capped at the scaled bid less value");
+        (, uint256 basis,) = core.creditInfo(id);
+        assertEq(basis, handBid, "the cost basis is the scaled bid: value plus the capped payment");
+        assertEq(CREDITS.ownerOf(id), address(core), "the engine owns the credit");
+    }
 
     // promise: SPEC 1 buyListing buys an adapter priced Seaport basic order (decision 100)
     function test_basic_singleConsiderationToSeller() public {
@@ -371,7 +405,7 @@ contract SeaportTest is SeaportBase {
 contract SeaportColdTest is SeaportBase {
 }
 
-/// the caller economics of `buyListing` at the launch settings (keeperFee 0.0005 ether, keeperMaxBaseFee 10 gwei) with
+/// the caller economics of `buyListing` at the launch settings (keeperFee 0.0003 ether, keeperMaxBaseFee 5 gwei) with
 /// the gas of the call measured cold, through a basic Seaport order. the caller pays gas at the base fee and no
 /// priority fee. profit is the payment less the transaction gas (21,000, the call, the calldata) at the base fee
 contract SeaportCallerPayTest is SeaportBase {

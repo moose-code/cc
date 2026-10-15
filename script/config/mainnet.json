@@ -24,53 +24,52 @@
     "ceilBps": 11000,
     "idleLoosenBps": 200,
     "saleFloorBps": 10000,
-    "saleToBuybackBps": 5000,
+    "saleToBuybackBps": 2500,
+    "saleToArtistBps": 250,
+    "saleToOperatorBps": 50,
     "recoveryClimbPerMinBps": 200,
     "recoveryGapBps": 1000,
     "peakHalfLife": 21600,
     "buybackDelay": 25,
-    "redeemOn": false,
+    "redeemOn": true,
     "balanceBidOn": false,
     "redeemSlippageBps": 200,
-    "balanceBidMarginBps": 2000,
+    "balanceBidMarginBps": 1000,
     "redeemBurnBps": 2000,
     "buybackSlice": 500000000000000000,
-    "keeperFee": 500000000000000,
-    "keeperMaxBaseFee": 10000000000,
+    "keeperFee": 300000000000000,
+    "keeperMaxBaseFee": 5000000000,
     "rateCap": 26700000000000000,
     "callerFee": 0,
     "callerMaxBaseFee": 0,
     "feeToRedeemBurnBps": 1000,
-    "payeePpm": 75185
+    "payeePpm": 0,
+    "refScore": 4330000,
+    "swapFeeCc": 10000000000000000000000
   },
   "sale": {
     "markupBps": 15000,
     "startCapBps": 100000,
-    "fastDecayBpsPerHour": 100,
-    "kneeBps": 10000,
-    "slowDecayBpsPerHour": 25,
+    "decayHours": 12,
     "anchorHalfLife": 604800,
     "anchorMinCost": 100000000000000000
   },
   "credit": {
-    "costToPotBps": 10000,
+    "costToPotBps": 8000,
     "chosenComposeOn": false,
     "minCcToChoose": "1000000000000000000",
-    "saleOn": false,
+    "saleOn": true,
     "window": 14400,
     "floorBps": 11000,
-    "startBps": 30000,
-    "refScore": 4330000,
-    "royaltyBps": 250,
-    "royaltyRecipient": "0xCB43078C32423F5348Cab5885911C3B5faE217F9"
+    "startBps": 30000
   },
   "launch": {
     "supply": "1000000000000000000000000000",
     "startTick": -175000,
     "positionLower": -175000,
     "positionUpper": 887200,
-    "baselineSkimBps": 690,
-    "bountyBps": 9638,
+    "baselineSkimBps": 1000,
+    "bountyBps": 9000,
     "maxReferralBps": 0,
     "lpFeePips": 0,
     "sniperStartBps": 9000,
@@ -86,6 +85,7 @@
   "adapters": {
     "seaportRecipients": ["0x0000a26b00c1F0DF003000390027140000fAa719"]
   },
+  "artist": "0xc8f8e2f59dd95ff67c3d39109eca2e2a017d4c8a",
   "payee": {
     "address": "0xCB43078C32423F5348Cab5885911C3B5faE217F9"
   }

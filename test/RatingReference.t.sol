@@ -123,8 +123,7 @@ contract RatingReferenceTest is Fixture {
     /// about the square of its score ratio because its recorded cost already scaled with score
     function test_sameRatingSameReference_acrossLineages() public {
         _enterPhase2();
-        xt.mint(address(core), 1e27);
-        core.bookBalance();
+        xt.mint(address(mod), 1e27);
         _fundPot(5 ether);
         _initPool(HIGH_SQRT); // the cheap balance token records the score-scaled backstop as the redemption lineage cost
 

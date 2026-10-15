@@ -11,10 +11,10 @@ import { countdown, useNow, usePile, useSnapshot } from "@/lib/live";
 import { useScan, type CreditEvt } from "@/lib/engine";
 import { agoLabel, eth } from "@/lib/format";
 
-const BUFFER_BPS = 200n; // value above the summed gross prices; the controller refunds the excess
+const BUFFER_BPS = 200n; // value above the summed prices; the controller refunds the excess
 
 // The engine's pile of credits. While the credit sale is on, each pile credit
-// has a falling price (controller.creditPrice, plus the royalty) and can be bought.
+// has a falling price (controller.creditPrice) and can be bought.
 export default function CreditsPage() {
   const { data: pile } = usePile();
   const { data: snap } = useSnapshot();
@@ -26,7 +26,6 @@ export default function CreditsPage() {
   const window = snap?.creditWindow ?? 0;
   const selected = pile.filter((c) => sel.has(c.id));
   const price = selected.reduce((a, c) => a + c.price, 0n);
-  const gross = selected.reduce((a, c) => a + c.gross, 0n);
 
   const toggle = (id: number) =>
     setSel((p) => {
@@ -77,7 +76,7 @@ export default function CreditsPage() {
                 </span>
                 <span className="rl-meta">{eth(c.cost)} eth</span>
                 <span className="rl-meta muted">{gotBy(scan.credits[c.id])}</span>
-                {saleOn && <span className="rl-price">{eth(c.gross)} eth</span>}
+                {saleOn && <span className="rl-price">{eth(c.price)} eth</span>}
                 {saleOn && <span className="rl-price muted">{left > 0 ? countdown(left) : "past window"}</span>}
                 <span className="rl-time muted">{agoLabel(now - c.acquiredAt)}</span>
               </Link>
@@ -89,13 +88,13 @@ export default function CreditsPage() {
       {saleOn && (
         <div className="buybar">
           <span className="muted">
-            {selected.length} selected · {eth(gross)} eth ({eth(price)} engine price + {eth(gross - price)} royalty)
+            {selected.length} selected · {eth(price)} eth
           </span>
           <Act
             label={`buy ${selected.length || ""} credit${selected.length === 1 ? "" : "s"}`}
             disabled={selected.length === 0 || !snap}
             steps={async (write) => {
-              const value = gross + (gross * BUFFER_BPS) / 10000n;
+              const value = price + (price * BUFFER_BPS) / 10000n;
               const ids = selected.map((c) => BigInt(c.id));
               await write(
                 ids.length === 1

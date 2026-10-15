@@ -12,7 +12,7 @@ import { lsGet, lsSet } from "@/lib/cache";
 import { useNow } from "@/lib/live";
 import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
 
-const HOOK_FEE_BPS = 690; // fallback when the hook reads fail
+const HOOK_FEE_BPS = 1000; // fallback when the hook reads fail
 const SLIPPAGE_PRESETS = [50, 100, 200, 500]; // bps
 const SLIPPAGE_KEY = "cc:slippage-bps";
 const IMPACT_WARN = 0.02;

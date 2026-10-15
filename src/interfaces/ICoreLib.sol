@@ -25,22 +25,26 @@ interface ICoreLib {
     error OnlyOwner();
     error PotTooSmall();
     error Retired();
+    error SameBlockReturn(uint256 id);
     error Slippage();
     error ZeroAddress();
     error ZeroAmount();
     error ZeroId();
 
-    event BalanceTokenMigrationSkipped(address indexed successor, uint256 amount);
+    event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
+    event BalanceRateSet(uint256 rateBps);
     event CoinRescued(address indexed to, uint256 amount);
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event EngineRetired(address indexed successor);
-    event Migrated(address indexed successor, uint256 eth, uint256 balanceTokens, uint256 credits);
+    event Migrated(address indexed successor, uint256 eth, uint256 credits);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
     event SettingsSet(Settings settings);
     event SuccessorLocked();
     event SuccessorSet(address successor);
 
+    function balanceBidOf(uint256 id) external view returns (uint256);
+    function balanceRate() external view returns (uint256 rate);
     function climb(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
         external
         view

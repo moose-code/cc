@@ -23,13 +23,17 @@ contract GasBurningPayee {
     }
 }
 
-/// the payee share of the fee income: `payeePpm` of the income booked by `_book`, credited to `payeeOwed` and paid by
-/// `claimPayee`. it starts with the first book that has income at or after `launchedAt + SNIPER_SECONDS`, and that book
-/// shares nothing. every number comes from real swaps through the live pool and the live skim hook
+/// the payee share of the fee income: `payeePpm` of the income booked by `_book`, pushed to the payee by that book
+/// (decision 123). it starts with the first book that has income at or after `launchedAt + SNIPER_SECONDS`, and that
+/// book shares nothing. every number comes from real swaps through the live pool and the live skim hook
 contract PayeeShareTest is FeeBase {
     // promise: SPEC 1 the payee share starts after the anti sniper window (decision 109)
     /// the share starts after the window, read from the factory record of the coin
     function test_theShareStartsAfterTheWindowFromTheFactoryRecord() public {
+        // payeePpm is 0 at launch (decision 120); the owner raises it to observe the share crediting
+        Settings memory sp = core.settings();
+        sp.payeePpm = 90_909;
+        _setSettings(sp);
         (, uint256 launchedAt) = _launchRecord();
         assertEq(launchedAt, launchTime, "the launch time of the factory record");
         assertEq(core.SNIPER_SECONDS(), 1800);
@@ -38,7 +42,6 @@ contract PayeeShareTest is FeeBase {
         // a book inside the window shares nothing and does not turn the share on
         _flow(Kind.BuyExactIn, 1 ether, "");
         assertFalse(core.payeeOn(), "inside the window");
-        assertEq(core.payeeOwed(), 0);
 
         // one second before the end of the window
         vm.warp(launchedAt + core.SNIPER_SECONDS() - 1);
@@ -50,12 +53,11 @@ contract PayeeShareTest is FeeBase {
         Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
         assertTrue(core.payeeOn(), "the first book at the end of the window");
         assertEq(f.toPayee, 0, "that book shares nothing");
-        assertEq(core.payeeOwed(), 0);
 
         // the next book shares
         f = _flow(Kind.BuyExactIn, 1 ether, "");
         assertGt(f.toPayee, 0);
-        assertEq(f.toPayee, f.bountyRise * 75_185 / 1_000_000, "75,185 ppm of the income");
+        assertEq(f.toPayee, f.bountyRise * 90_909 / 1_000_000, "90,909 ppm of the income");
     }
 
     // promise: SPEC 1 the payee share starts with the first income after the window
@@ -68,40 +70,32 @@ contract PayeeShareTest is FeeBase {
         _buyCoin(trader, 20 ether);
         uint256 held = address(core).balance - _tracked();
         assertGt(held, 0);
+        uint256 payeeBefore = core.payee().balance;
         core.book();
         assertTrue(core.payeeOn());
-        assertEq(core.payeeOwed(), 0, "the window eth and the first income after it are not shared");
+        assertEq(core.payee().balance, payeeBefore, "the window eth and the first income after it are not shared");
     }
 
-    // promise: SPEC 1 the payee share is a pull claim (claimPayee)
-    function test_bookCreditsThePayeeAndClaimPaysIt() public {
+    // promise: SPEC 1 the book pushes the payee its share (decision 123)
+    function test_bookPushesThePayeeItsShare() public {
         _stock();
         assertEq(core.payee(), lc.payee);
-        assertEq(core.settings().payeePpm, 75_185);
+        assertEq(core.settings().payeePpm, 0, "payeePpm 0 at launch");
+        Settings memory sp = core.settings();
+        sp.payeePpm = 90_909;
+        _setSettings(sp);
         address a = lc.payee;
         uint256 a0 = a.balance;
-        uint256 owed0 = core.payeeOwed();
         Flow memory f = _flow(Kind.BuyExactIn, 10 ether, "");
-        assertEq(a.balance, a0, "the book pays nothing out");
-        assertEq(core.payeeOwed() - owed0, f.bountyRise * 75_185 / 1_000_000);
-        assertApproxEqRel(core.payeeOwed() - owed0, 0.05 ether, 0.01e18);
-        uint256 owed = core.payeeOwed();
-        address anyone = _user("claimer");
-        vm.expectEmit(true, false, false, true, address(core));
-        emit ICore.PayeeClaimed(a, owed);
-        vm.prank(anyone);
-        core.claimPayee();
-        assertEq(a.balance - a0, owed, "the payee receives what is owed");
-        assertEq(anyone.balance, 0, "the caller receives nothing");
-        assertEq(core.payeeOwed(), 0);
-        vm.expectRevert(ICore.ZeroAmount.selector);
-        core.claimPayee();
+        assertEq(f.toPayee, f.bountyRise * 90_909 / 1_000_000);
+        assertApproxEqRel(f.toPayee, 0.082 ether, 0.01e18);
+        assertEq(a.balance - a0, f.toPayee, "the payee received the pushed share");
         _solvent();
     }
 
     // promise: SPEC 1 payee and payeePpm are owner settings, effective at once
-    /// the owner replaces the payee with `setPayee` and the share with `setSettings`: later books credit the new share,
-    /// the eth already owed is claimed by the new payee
+    /// the owner replaces the payee with `setPayee` and the share with `setSettings`: later books push the new share to
+    /// the new payee
     function test_ownerReplacesThePayeeAndTheShare() public {
         _stock();
         address a = lc.payee;
@@ -114,13 +108,12 @@ contract PayeeShareTest is FeeBase {
         Settings memory s = core.settings();
         s.payeePpm = 150_000;
         _setSettings(s);
-        uint256 owed0 = core.payeeOwed();
+        uint256 b0 = b.balance;
         Flow memory f = _flow(Kind.BuyExactIn, 10 ether, "");
         assertEq(f.toPayee, f.bountyRise * 150_000 / 1_000_000);
         assertEq(f.potRise, _toPot(f.bountyRise - f.toPayee));
-        core.claimPayee();
-        assertEq(b.balance, owed0 + f.toPayee, "the new payee claims all of it");
-        assertEq(a.balance, 0);
+        assertEq(b.balance - b0, f.toPayee, "the new payee received the push");
+        assertEq(a.balance, 0, "the old payee got nothing");
         vm.prank(owner);
         vm.expectRevert(ICore.ZeroAddress.selector);
         core.setPayee(address(0));
@@ -135,11 +128,11 @@ contract PayeeShareTest is FeeBase {
         _stock();
         Settings memory s = core.settings();
         uint256 oldPpm = s.payeePpm;
-        uint256 owed0 = core.payeeOwed();
+        uint256 payee0 = core.payee().balance;
         vm.deal(address(core), address(core).balance + 1 ether);
         s.payeePpm = 200_000;
         _setSettings(s);
-        assertEq(core.payeeOwed() - owed0, 1 ether * oldPpm / 1_000_000, "the unbooked income took the old share");
+        assertEq(core.payee().balance - payee0, 1 ether * oldPpm / 1_000_000, "the unbooked income took the old share");
         _solvent();
     }
 
@@ -162,21 +155,20 @@ contract PayeeShareTest is FeeBase {
         assertEq(f.potRise, _toPot(f.bountyRise));
     }
 
-    // promise: SPEC 1 a failing payee blocks only its own claim
-    /// a payee that reverts, or that burns its gas, blocks only its own claim: every door and every swap works and the
-    /// share stays owed. the owner replaces the payee and the claim goes through
-    function test_aPayeeThatRevertsOrBurnsGasBlocksOnlyItsOwnClaim() public {
+    // promise: SPEC 1 a failing payee never blocks the book, the forced push still delivers (decision 123)
+    /// a payee whose receive reverts, or that burns its gas, still receives its share through the forced push: the book
+    /// does not revert and every door and every swap works
+    function test_aFailingPayeeStillReceivesThroughTheForcedPush() public {
         _stock();
+        { Settings memory sp = core.settings(); sp.payeePpm = 90_909; _setSettings(sp); }
         address[2] memory bad = [address(new RevertingPayee()), address(new GasBurningPayee())];
         for (uint256 i; i < 2; ++i) {
             vm.prank(owner);
             core.setPayee(bad[i]);
-            _flow(Kind.BuyExactIn, 10 ether, "");
-            uint256 owed = core.payeeOwed();
-            assertGt(owed, 0);
-            vm.expectRevert(ICore.CallFailed.selector);
-            core.claimPayee{gas: 3_000_000}();
-            assertEq(core.payeeOwed(), owed, "the share stays owed");
+            uint256 before = bad[i].balance;
+            Flow memory f = _flow(Kind.BuyExactIn, 10 ether, "");
+            assertGt(f.toPayee, 0, "a nonzero share");
+            assertEq(bad[i].balance - before, f.toPayee, "the forced push reached the failing payee");
         }
         // doors and swaps are unaffected
         _fillEthPile(5);
@@ -184,26 +176,25 @@ contract PayeeShareTest is FeeBase {
         address good = makeAddr("goodPayee");
         vm.prank(owner);
         core.setPayee(good);
-        uint256 owedNow = core.payeeOwed();
-        core.claimPayee();
-        assertEq(good.balance, owedNow, "the new payee is paid all that is owed");
-        assertEq(core.payeeOwed(), 0);
+        uint256 goodBefore = good.balance;
+        Flow memory g = _flow(Kind.BuyExactIn, 10 ether, "");
+        assertEq(good.balance - goodBefore, g.toPayee, "the new payee is pushed its share");
         _solvent();
     }
 
-    // promise: INTEGRATION Reentrancy on claimPayee
-    /// the payee cannot reenter the Core during its claim
-    function test_claimIsGuardedAgainstReentry() public {
+    // promise: INTEGRATION the forced payee push gives the payee no reentry (decision 123)
+    /// the payee cannot reenter the Core during the forced push of its share, and the push still lands
+    function test_thePushGivesThePayeeNoReentry() public {
         _stock();
+        { Settings memory sp = core.settings(); sp.payeePpm = 90_909; _setSettings(sp); }
         ReenteringPayee p = new ReenteringPayee(core);
         vm.prank(owner);
         core.setPayee(address(p));
-        _flow(Kind.BuyExactIn, 10 ether, "");
-        uint256 owed = core.payeeOwed();
-        core.claimPayee();
-        assertEq(address(p).balance, owed);
+        uint256 before = address(p).balance;
+        Flow memory f = _flow(Kind.BuyExactIn, 10 ether, "");
+        assertEq(address(p).balance - before, f.toPayee, "the push reached the reentering payee");
         assertTrue(p.triedToReenter());
-        assertFalse(p.reentered(), "the guard stopped the nested calls");
+        assertFalse(p.reentered(), "the stipend and the guard stopped the nested calls");
     }
 
     function _launchRecord() internal view returns (bool ok, uint256 launchedAt) {
@@ -228,10 +219,9 @@ contract ReenteringPayee {
 
     receive() external payable {
         triedToReenter = true;
-        (bool a,) = address(CORE).call(abi.encodeCall(ICore.claimPayee, ()));
         (bool b,) = address(CORE).call(abi.encodeCall(ICore.book, ()));
         (bool c,) = address(CORE).call{value: 1}(abi.encodeCall(ICore.fund, ()));
-        reentered = a || b || c;
+        reentered = b || c;
     }
 }
 
@@ -284,17 +274,17 @@ contract FeeShareTest is FeeBase {
         for (uint256 i; i < 3; ++i) {
             _share(bps[i]);
             Books memory b = _swap(Kind.BuyExactIn, 1 ether);
-            assertEq(b.bounty, 0.0665022 ether, "6.65022 points of one eth reach the core");
+            assertEq(b.bounty, 0.09 ether, "9.0 points of one eth reach the core");
             uint256 want = b.inflow * bps[i] / BASIS;
             assertEq(b.dRb, want, "exact redeem burn share");
             assertEq(b.dPot, b.inflow - want, "exact pot share");
-            assertApproxEqAbs(b.inflow, 0.0615022 ether, 0.00001 ether, "6.15 points of the buy reach the engine (core 6.65022 less the payee 0.5)");
+            assertApproxEqAbs(b.inflow, 0.090 ether, 0.00001 ether, "9.0 points of the buy reach the engine (core 9.9 less the payee 0.9)");
             _check(b, bps[i]);
             _solvent();
         }
     }
 
-    // ------------------------------------------------------------------ book and bookBalance
+    // ------------------------------------------------------------------ book
 
     // promise: SPEC 4 eth above the tracked pots is booked as fee income
     /// eth forced into the core is fee income at the next book: split by the settings like the hook's push

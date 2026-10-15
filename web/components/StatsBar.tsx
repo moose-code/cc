@@ -30,7 +30,7 @@ export function StatsBar() {
       <Stat label="eth into credits" value={on ? s.ethIntoCredits.toLocaleString("en-US", { maximumFractionDigits: 3 }) : "—"} />
       <Stat label="buybacks" value={on ? commas(s.buybacks) : "—"} />
       <Stat label="cc burned" value={on ? commas(s.ccBurned) : "—"} />
-      <Stat label="redeem burn reserve" value={on && snap ? `${ethShort(snap.ethRedeemBurn, 4)} eth` : "—"} />
+      <Stat label="redeem burn pot" value={on && snap ? `${ethShort(snap.ethRedeemBurn, 4)} eth` : "—"} />
     </div>
   );
 }

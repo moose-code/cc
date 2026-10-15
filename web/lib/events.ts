@@ -35,6 +35,8 @@ export interface Stats {
   ethIntoCredits: number; // sum of EthRateFill.spent
   ccBurned: number;
   feesBooked: number; // sum of FeesAdded, eth
+  artistReceived: number; // sum of the artist cut (StatementSoldTo and CreditSold toArtist), eth
+  payeeReceived: number; // the operator cut of sales plus the pushed fee share, eth
 }
 
 export type CreditHow = "eth bid" | `${typeof BALANCE_SYMBOL} bid` | "listing" | "adopted";
@@ -54,7 +56,8 @@ export type CreditEvt =
       tx: string;
     }
   | { t: "sold"; buyer: string; price: bigint; block: bigint; tx: string }
-  | { t: "composed"; sid: number; block: bigint; tx: string };
+  | { t: "composed"; sid: number; block: bigint; tx: string }
+  | { t: "swapped"; dir: "in" | "out"; other: number; caller: string; fee: bigint; block: bigint; tx: string };
 
 export type ComposeMode = "default" | "chosen";
 
@@ -120,6 +123,8 @@ export function emptyStats(): Stats {
     ethIntoCredits: 0,
     ccBurned: 0,
     feesBooked: 0,
+    artistReceived: 0,
+    payeeReceived: 0,
   };
 }
 
@@ -187,6 +192,21 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         creditRow(id, eth(a.cost));
         break;
       }
+      case "CreditSwapped": {
+        const inId = Number(a.inId);
+        const outId = Number(a.outId);
+        cr(inId).push({ t: "swapped", dir: "in", other: outId, caller: a.caller, fee: a.fee, block, tx });
+        cr(outId).push({ t: "swapped", dir: "out", other: inId, caller: a.caller, fee: a.fee, block, tx });
+        row({
+          kind: "credit",
+          label: "credit swapped",
+          detail: `credit #${inId} in for #${outId} · fee ${eth(a.fee)} CC · by`,
+          addr: a.caller,
+          link: { text: `credit #${inId}`, href: `/credits/${inId}` },
+          tile: { kind: "credit", id: inId },
+        });
+        break;
+      }
 
       // ---- statements ------------------------------------------------------
       case "Composed": {
@@ -215,6 +235,8 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const sid = Number(a.sid);
         st(sid).sold = { buyer: a.buyer, price: a.price, toBuyback: a.toBuyback, block, tx };
         stats.sold++;
+        stats.artistReceived += Number(formatUnits(a.toArtist, 18));
+        stats.payeeReceived += Number(formatUnits(a.toOperator, 18));
         row({
           kind: "sold",
           label: "statement sold",
@@ -243,6 +265,8 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const id = Number(a.id);
         cr(id).push({ t: "sold", buyer: a.buyer, price: a.price, block, tx });
         stats.creditsSold++;
+        stats.artistReceived += Number(formatUnits(a.toArtist, 18));
+        stats.payeeReceived += Number(formatUnits(a.toOperator, 18));
         row({ kind: "sold", label: "credit sold", detail: `credit #${id} bought from the credit sale by`, eth: eth(a.price), addr: a.buyer, tile: { kind: "credit", id } });
         break;
       }
@@ -260,6 +284,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         break;
       case "FeesAdded":
         stats.feesBooked += Number(formatUnits(a.amount, 18));
+        stats.payeeReceived += Number(formatUnits(a.toPayee, 18));
         break;
     }
   }

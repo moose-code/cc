@@ -123,18 +123,17 @@ a:hover {
 .flywheel {
   order: -1;
   border-bottom: 1px solid var(--line);
-  overflow-x: auto;
-}
-.fw-inner {
-  min-width: 960px;
 }
 .fw-row {
   display: flex;
   align-items: stretch;
   padding: 0.9rem 1.5rem 0;
 }
-.fw-box {
+.fw-row > .fw-box {
   flex: 1;
+  min-width: 0;
+}
+.fw-box {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -169,6 +168,13 @@ a.fw-box:hover {
   font-weight: 600;
   font-size: 0.82rem;
 }
+.fw-later {
+  opacity: 0.55;
+}
+.fw-later .fw-num {
+  font-weight: 400;
+  color: var(--muted);
+}
 .fw-arrow {
   flex: none;
   width: 28px;
@@ -177,11 +183,63 @@ a.fw-box:hover {
   stroke: var(--muted2);
   stroke-width: 1;
 }
-/* loop arrow from box 5 back to box 1 (box centers at 10% and 90%) */
+/* fourth column: one box, two halves (list, redeem) side by side on a vertical rule with an "or" marker */
+.fw-row > .fw-split {
+  flex: 1.5;
+  position: relative;
+  flex-direction: row;
+  padding: 0;
+  gap: 0;
+}
+.fw-half {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.6rem 0.8rem;
+  color: var(--fg);
+}
+.fw-half + .fw-or + .fw-half {
+  border-left: 1px solid var(--line);
+}
+a.fw-half:hover {
+  background: var(--rowhover);
+  text-decoration: none;
+}
+.fw-half .fw-line {
+  font-size: 0.72rem;
+}
+.fw-half .fw-num {
+  font-size: 0.72rem;
+}
+.fw-or {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0.15rem 0;
+  background: var(--bg);
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.72rem;
+  pointer-events: none;
+}
+/* in the row the regular boxes set the height; the split box takes it and does not contribute */
+@media (min-width: 861px) {
+  .fw-row > .fw-split {
+    contain: size;
+  }
+  .fw-half {
+    overflow: hidden;
+  }
+}
+/* loop arrow from burn back to trade (box centers at half a box width from each end;
+   the row is 5.5 box widths less the four 28px connectors, the split box counting 1.5) */
 .fw-loop {
   position: relative;
   height: 14px;
-  margin: 0 calc(1.5rem + 9.5%) 0.9rem;
+  margin: 0 calc(1.5rem + (100% - 3rem - 112px) / 11) 0.9rem;
   border: 1px solid var(--muted2);
   border-top: 0;
 }
@@ -193,6 +251,36 @@ a.fw-box:hover {
   border: 4.5px solid transparent;
   border-bottom: 7px solid var(--muted2);
   border-top: 0;
+}
+.fw-back {
+  display: none;
+}
+@media (max-width: 860px) {
+  .fw-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .fw-arrow {
+    align-self: center;
+    height: 8px;
+    margin: 12px 0;
+    transform: rotate(90deg);
+  }
+  .fw-loop {
+    display: none;
+  }
+  .fw-back {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 1.5rem 0.9rem;
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+  .fw-back .fw-arrow {
+    margin: 0;
+    transform: rotate(-90deg);
+  }
 }
 
 /* ---- body split ----------------------------------------------------------- */

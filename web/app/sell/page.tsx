@@ -8,7 +8,7 @@ import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
 import { core, credits, engineDeployed } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
-import { balanceQuote, sellQuote, useNow, useSellQuote, useSnapshot } from "@/lib/live";
+import { balanceQuote, sellQuote, useBidsOf, useNow, useScores, useSellQuote, useSnapshot } from "@/lib/live";
 import { BALANCE_SYMBOL } from "@/lib/events";
 import { commas, eth } from "@/lib/format";
 import type { Write } from "@/lib/tx";
@@ -30,8 +30,8 @@ export default function SellPage() {
   const buyableNow = bid > 0n ? Number(pot / bid) : 0;
   const balanceBid = Boolean(snap?.balanceOn && snap.settings.balanceBidOn);
   const now = useNow(5000);
-  const quote = useSellQuote(selected.size, now);
-  const total = quote.data ?? bid * BigInt(selected.size);
+  const selectedIds = [...selected].map((id) => BigInt(id));
+  const quote = useSellQuote(selectedIds, now);
 
   const { data: held } = useReadContract({
     address: credits,
@@ -41,6 +41,17 @@ export default function SellPage() {
     query: { enabled: Boolean(address && engineDeployed) },
   });
   const mine: number[] = (held ?? []).map(Number);
+  // each credit's own eth bid, ethRate() * score / refScore (one multicall of Core.bidOf)
+  const { data: bids } = useBidsOf(mine.map((id) => BigInt(id)), now);
+  const bidForId = (id: number): bigint => bids?.[id.toString()] ?? 0n;
+  const total = quote.data ?? mine.filter((id) => selected.has(id)).reduce((t, id) => t + bidForId(id), 0n);
+  // the per-credit balance payout, score * unitPerPoint * balanceRate / 10_000, derived from the cached scores and the
+  // snapshot rate and unit (no extra poll). the batch total replays the per-credit drop (balanceQuote)
+  const { data: scores } = useScores(balanceBid ? mine.map((id) => BigInt(id)) : []);
+  const balanceForId = (id: number): bigint =>
+    balanceBid && scores ? ((scores[id.toString()] ?? 0n) * (snap?.balanceUnit ?? 0n) * (snap?.balanceRate ?? 0n)) / 10000n : 0n;
+  const balanceTotal =
+    balanceBid && scores && snap ? balanceQuote(snap, selectedIds.map((id) => scores[id.toString()] ?? 0n)) : 0n;
 
   const toggle = (id: number) =>
     setSelected((prev) => {
@@ -68,19 +79,19 @@ export default function SellPage() {
         <h1>sell to the engine</h1>
       </div>
       <p className="muted sell-intro">
-        the engine buys credits at the bid using its eth pot, then composes 80 into a statement. sell yours into the bid below.
+        the engine buys each credit at its own bid (the rate scaled by the credit&apos;s score) using its eth pot, then composes 80 into a statement. sell yours into the bid below.
       </p>
 
       <div className="sell-grid">
         <div>
           <div className="bidcard">
             <div className="buybox-price">
-              <span className="muted">current bid</span>
+              <span className="muted">bid, reference credit</span>
               <span className="big">{eth(bid)} eth</span>
             </div>
             <div className="quote">
               <div className="r">
-                <span>per credit</span>
+                <span>reference credit</span>
                 <span>{eth(bid)} eth</span>
               </div>
               <div className="r">
@@ -93,8 +104,8 @@ export default function SellPage() {
               </div>
               {snap?.balanceOn && (
                 <div className="r">
-                  <span>balance pot</span>
-                  <span>{eth(snap.balancePot)}</span>
+                  <span>balance in the module</span>
+                  <span>{eth(snap.balanceAvailable)}</span>
                 </div>
               )}
             </div>
@@ -125,7 +136,7 @@ export default function SellPage() {
                     <button key={id} className={`sell-item${on ? " on" : ""}`} onClick={() => toggle(id)} aria-pressed={on}>
                       <CreditTile id={id} />
                       <span className="rl-id">credit #{id}</span>
-                      <span className="muted">{eth(bid)} eth</span>
+                      <span className="muted">{bids ? `${eth(bidForId(id))} eth` : "…"}{balanceBid && scores ? ` \u00b7 ${eth(balanceForId(id))} ${BALANCE_SYMBOL}` : ""}</span>
                       <span className="sell-check">{on ? "✓" : ""}</span>
                     </button>
                   );
@@ -141,6 +152,12 @@ export default function SellPage() {
                   <span className="muted">you receive</span>
                   <span className="big-sm">about {eth(total)} eth</span>
                 </div>
+                {balanceBid && (
+                  <div className="r">
+                    <span className="muted">or for {BALANCE_SYMBOL}</span>
+                    <span className="big-sm">about {eth(balanceTotal)} {BALANCE_SYMBOL} ({(Number(snap?.balanceRate ?? 0n) / 100).toFixed(1)}% of par)</span>
+                  </div>
+                )}
               </div>
 
               <Act
@@ -148,9 +165,9 @@ export default function SellPage() {
                 disabled={n === 0 || !snap}
                 steps={async (write) => {
                   await approve(write);
-                  // the bid drops with each credit sold in one call: minOut is a share of the whole batch's total,
-                  // replayed from the contract's rate loop
-                  const expected = await sellQuote(client!, n, now);
+                  // each credit pays its own bid (ethRate * score / refScore) and the bid drops per credit sold in one
+                  // call: minOut is a share of the whole batch's total, replayed from the contract's rate loop
+                  const expected = await sellQuote(client!, ids(), now);
                   await write({ address: core, abi: coreAbi, functionName: "sellForEth", args: [ids(), (expected * MIN_OUT_BPS) / 10000n] });
                   setSelected(new Set());
                 }}
@@ -163,7 +180,9 @@ export default function SellPage() {
                     disabled={n === 0}
                     steps={async (write) => {
                       await approve(write);
-                      const expected = await balanceQuote(client!, ids(), snap!.balanceModule, snap!.settings.balanceBidMarginBps);
+                      // minOut replays the per-credit drop from the snapshot, like the eth quote, so an ordinary batch
+                      // does not trip Slippage
+                      const expected = balanceQuote(snap!, ids().map((id) => scores?.[id.toString()] ?? 0n));
                       await write({ address: core, abi: coreAbi, functionName: "sellForBalance", args: [ids(), (expected * MIN_OUT_BPS) / 10000n] });
                       setSelected(new Set());
                     }}
@@ -171,9 +190,9 @@ export default function SellPage() {
                 </>
               )}
               <p className="muted small">
-                the first sale approves the collection to the engine. the eth bid drops with each credit sold in one call; the amount shown is the
-                batch total at the current rates and the sale reverts if it pays under 99.5% of it.
-                {balanceBid && ` the ${BALANCE_SYMBOL} bid pays by credit score.`}
+                the first sale approves the collection to the engine. each credit is paid the rate times its score over the reference score, and the rate
+                drops with each credit sold in one call; the amount shown is the batch total at the current rates and the sale reverts if it pays under 99.5% of it.
+                {balanceBid && ` the ${BALANCE_SYMBOL} bid pays by credit score at the rate shown (bps of par), and drops with each credit sold.`}
               </p>
             </>
           )}

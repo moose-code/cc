@@ -102,8 +102,8 @@ abstract contract PostflightChecks is PostflightPool {
     }
 
     /// @notice the constructor arguments of the Core, as the creation transaction carries them and as etherscan wants
-    /// them for verification: `(owner, cfg, launcher, coin, payee, stack, rateStart, settings, credit)`. built from the
-    /// signed launch config and the deployer only, never from live storage, which the owner can change after launch
+    /// them for verification: `(owner, cfg, launcher, coin, payee, stack, rateStart, settings, credit, artist)`. built
+    /// from the signed launch config and the deployer only, never from live storage, which the owner can change after launch
     function coreConstructorArgs(LaunchConfig memory c, address launcher) internal pure returns (bytes memory) {
         return abi.encode(
             c.owner,
@@ -114,7 +114,8 @@ abstract contract PostflightChecks is PostflightPool {
             c.stack,
             c.rateStart,
             c.settings,
-            c.credit
+            c.credit,
+            c.artist
         );
     }
 
@@ -245,7 +246,7 @@ abstract contract PostflightChecks is PostflightPool {
         _postSale(c, ctl);
         _check(
             "core: pots covered by balance",
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed() <= address(core).balance,
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() <= address(core).balance,
             string.concat("balance ", vm.toString(address(core).balance))
         );
         // the stored price state moves once the pot is funded or a credit is bought, and the owner may reset it with
@@ -266,8 +267,7 @@ abstract contract PostflightChecks is PostflightPool {
         if (ctl.code.length == 0) return;
         IControllerV1 k = IControllerV1(ctl);
         bool same = k.markupBps() == c.sale.markupBps
-            && k.startCapBps() == c.sale.startCapBps && k.fastDecayBpsPerHour() == c.sale.fastDecayBpsPerHour
-            && k.kneeBps() == c.sale.kneeBps && k.slowDecayBpsPerHour() == c.sale.slowDecayBpsPerHour
+            && k.startCapBps() == c.sale.startCapBps && k.decayHours() == c.sale.decayHours
             && k.anchorHalfLife() == c.sale.anchorHalfLife
             && k.anchorMinCost() == c.sale.anchorMinCost;
         if (_settingsChanged()) {
@@ -275,7 +275,7 @@ abstract contract PostflightChecks is PostflightPool {
                 "warn: sale settings equal the config", same, "SETTINGS_CHANGED=1, the owner changed them since launch"
             );
         } else {
-            _check("controller: sale settings equal the config", same, "markupBps startCapBps fastDecayBpsPerHour kneeBps slowDecayBpsPerHour anchorHalfLife anchorMinCost");
+            _check("controller: sale settings equal the config", same, "markupBps startCapBps decayHours anchorHalfLife anchorMinCost");
         }
         // a fresh launch has no sales and no owner change, so the running level of sale prices is at its lower bound
         bool anchored = k.anchorBps() == 10_000;
@@ -285,9 +285,7 @@ abstract contract PostflightChecks is PostflightPool {
             _check("controller: anchor is 10_000", anchored, vm.toString(k.anchorBps()));
         }
         bool creditSame = k.creditSaleOn() == c.credit.saleOn && k.creditWindow() == c.credit.window
-            && k.creditFloorBps() == c.credit.floorBps && k.creditStartBps() == c.credit.startBps
-            && k.refScore() == c.credit.refScore && k.royaltyBps() == c.credit.royaltyBps
-            && k.royaltyRecipient() == c.credit.royaltyRecipient;
+            && k.creditFloorBps() == c.credit.floorBps && k.creditStartBps() == c.credit.startBps;
         if (_settingsChanged()) {
             _warn(
                 "warn: credit sale settings equal the config",
@@ -298,7 +296,7 @@ abstract contract PostflightChecks is PostflightPool {
             _check(
                 "controller: credit sale settings equal the config",
                 creditSame,
-                "creditSaleOn creditWindow creditFloorBps creditStartBps refScore royaltyBps royaltyRecipient"
+                "creditSaleOn creditWindow creditFloorBps creditStartBps"
             );
         }
     }
@@ -425,7 +423,19 @@ abstract contract PostflightChecks is PostflightPool {
             "SETTINGS_CHANGED=1"
         );
         _warn("warn: payee share is not on yet", !core.payeeOn(), "payeeOn: the first book after the window turned it on");
-        _warn("warn: payee owes nothing", core.payeeOwed() == 0, string.concat("payeeOwed ", vm.toString(core.payeeOwed())));
+        // the artist cut recipient must be set when the cut is on, and must equal the config
+        _check(
+            "core: artist set while the artist cut is on",
+            core.artist() != address(0) || core.settings().saleToArtistBps == 0,
+            "saleToArtistBps is nonzero but the artist is the zero address"
+        );
+        _soft(
+            _settingsChanged(),
+            "core: artist equals the config",
+            core.artist() == c.artist,
+            vm.toString(core.artist()),
+            "SETTINGS_CHANGED=1"
+        );
         _eq("core: SNIPER_SECONDS equals the config", core.SNIPER_SECONDS(), uint256(c.sniperSeconds));
     }
 }

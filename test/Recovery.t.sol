@@ -31,14 +31,15 @@ contract RecoveryTest is Fixture {
         _fundPot(1 ether);
     }
 
-    /// @dev sells `n` credits in chunks within the current block (one minute bucket), so the minute floor binds
+    /// @dev sells `n` credits within the current block (one minute bucket), so the minute floor binds. each credit has
+    /// `refScore` set to its score, so the eth bid pays the full rate and the fill drops the rate by the full
+    /// dropPerCreditBps (score / refScore is 1); the per-point scaling is covered by the invariant suite
     function _dump(uint256 n) internal {
-        while (n != 0) {
-            uint256 k = n > 60 ? 60 : n;
-            uint256[] memory ids = _credits(seller_, k);
+        uint256[] memory ids = _credits(seller_, n);
+        for (uint256 i; i < n; ++i) {
+            _refScoreToCredit(ids[i]);
             vm.prank(seller_);
-            core.sellForEth(ids);
-            n -= k;
+            core.sellForEth(_one(ids[i]));
         }
     }
 

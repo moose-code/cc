@@ -177,8 +177,13 @@ abstract contract InvariantFixture is Fixture {
         assertEq(address(core).balance, _tracked());
     }
 
+    /// how many of actor 0's credits are carved out for the dedicated swapper
+    uint256 internal constant SWAPPER_CREDITS = 6;
+
     /// four actors with credits, eth and coin, all approved for the core and the router. every approval and every
-    /// swap is real
+    /// swap is real. a dedicated swapper for the swapCredit action takes `SWAPPER_CREDITS` of actor 0's allocation, so no
+    /// other action ever spends them and the swap always has an incoming credit; it holds coin for the fuzzed fee. the
+    /// carve out keeps `creditCursor` where it was, clear of the listing candidates
     function _actors() internal {
         for (uint256 i; i < 4; ++i) {
             address a = _user(string.concat("inv.actor", vm.toString(i)));
@@ -186,8 +191,32 @@ abstract contract InvariantFixture is Fixture {
             vm.prank(a);
             coin.approve(address(router), type(uint256).max);
             _buyCoin(a, 2 ether);
+            uint256[] memory ids = _credits(a, ACTOR_CREDITS);
             handler.addActor(a);
-            handler.giveCredits(a, _credits(a, ACTOR_CREDITS));
+            if (i != 0) {
+                handler.giveCredits(a, ids);
+                continue;
+            }
+            address sw = _user("inv.swapper");
+            vm.deal(sw, 100 ether);
+            vm.prank(sw);
+            coin.approve(address(router), type(uint256).max);
+            _buyCoin(sw, 20 ether);
+            uint256[] memory swIds = new uint256[](SWAPPER_CREDITS);
+            uint256[] memory keep = new uint256[](ACTOR_CREDITS - SWAPPER_CREDITS);
+            for (uint256 j; j < ACTOR_CREDITS; ++j) {
+                if (j < SWAPPER_CREDITS) {
+                    vm.prank(a);
+                    CREDITS.transferFrom(a, sw, ids[j]);
+                    swIds[j] = ids[j];
+                } else {
+                    keep[j - SWAPPER_CREDITS] = ids[j];
+                }
+            }
+            vm.prank(sw);
+            CREDITS.setApprovalForAll(address(core), true);
+            handler.giveCredits(a, keep);
+            handler.setSwapper(sw, swIds);
         }
     }
 
@@ -231,26 +260,16 @@ abstract contract InvariantFixture is Fixture {
             (sold2, price2) = _saleOf(firstStatement + 1);
         }
         if (phase2) {
-            // the balance token bid is funded the way the module would: balance token arrives and bookBalance books it
-            xt.mint(address(core), 1e20);
-            core.bookBalance();
+            // the balance token bid is funded the way the launch would: the launch allocation mints to the module
+            xt.mint(address(mod), 1e20);
             uint256[] memory balanceIds = new uint256[](80);
             for (uint256 i; i < 80; ++i) {
                 balanceIds[i] = ids[ethN + i];
             }
-            // the balance bid reads `refScore` from the core's controller, so the real one is put in force (the hostile
-            // suite set the fuzz controller). the credits enter the single pile with an eth cost basis
-            address current = core.controller();
-            if (current != address(ctl)) {
-                vm.prank(owner);
-                core.setController(address(ctl));
-            }
+            // the balance bid reads `refScore` from the core setting, so it does not depend on the controller in force.
+            // the credits enter the single pile with an eth cost basis
             vm.prank(filler);
             core.sellForBalance(balanceIds);
-            if (current != address(ctl)) {
-                vm.prank(owner);
-                core.setController(current);
-            }
             assertEq(core.pileSize(), LEFT_IN_PILE + 80);
         }
     }
@@ -354,16 +373,16 @@ abstract contract InvariantFixture is Fixture {
         s[n++] = HandlerSale.buyCredit.selector;
         s[n++] = HandlerSale.buyCredits.selector;
         s[n++] = HandlerBase.buyback.selector;
-        s[n++] = HandlerBase.bookBalance.selector;
         s[n++] = HandlerBase.donate.selector;
         s[n++] = HandlerBase.adopt.selector;
         s[n++] = HandlerBase.controllerSeed.selector;
         s[n++] = HandlerBase.controllerSwap.selector;
         s[n++] = HandlerBase.probeController.selector;
-        // the book of the fee income by anyone, and the payee claim with the owner replacing the payee
+        // the book of the fee income by anyone, which forces the payee share out, now and then after the owner
+        // replaces the payee
         s[n++] = HandlerBase.book.selector;
         s[n++] = HandlerBase.book.selector;
-        s[n++] = HandlerBase.claimPayee.selector;
+        s[n++] = HandlerBase.book.selector;
         // the balance module is set in the balance side suites before the run starts, so the redemption actions are listed only there
         if (phase2) {
             s[n++] = HandlerBase.sellForBalance.selector;

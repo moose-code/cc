@@ -9,7 +9,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {ICredits, IStatements, IBalanceModule, Mainnet, Settings, Stack, Sale, CreditSale, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
+import {ICredits, IStatements, IBalanceModule, ICreditScore, Mainnet, Settings, Stack, Sale, CreditSale, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2, IArtCoinsFeeEscrowV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {V2Stack} from "./V2Stack.sol";
 import {Deployed} from "../../script/SystemDeployer.sol";
@@ -198,7 +198,7 @@ abstract contract Fixture is Test, ProdDeployer {
         FACTORY = IArtCoinsFactoryV2(v2.factory);
         ESCROW = IArtCoinsFeeEscrowV2(v2.escrow);
         vm.startPrank(owner);
-        FACTORY.setMinProtocolSkimShareBps(362);
+        FACTORY.setMinProtocolSkimShareBps(1000);
         vm.stopPrank();
         vm.deal(owner, 1 ether);
 
@@ -208,7 +208,10 @@ abstract contract Fixture is Test, ProdDeployer {
         lc.settings = _settings();
         lc.owner = owner;
         lc.creator = creator;
-        lc.credit.royaltyRecipient = creator;
+        lc.artist = creator;
+        // the core tests compose right after the fill, so they start with the credit sale window off. the launch value is
+        // on (test/Config.t.sol pins it) and the sale tests switch it on
+        lc.credit.saleOn = false;
         lc.payee = _user("payee");
         lc.name = "Fixture Coin";
         lc.symbol = "FIXT";
@@ -377,10 +380,11 @@ abstract contract Fixture is Test, ProdDeployer {
 
     /// @notice warps an hour at a time until the ceiling of credit `id` reaches `price`. the real listings cost more
     /// than the launch `rateCap` allows the bid to reach, so the owner lifts the cap to its bound first
+    /// warps until the eth bid for credit `id` (`bidOf`, the rate scaled by its score over refScore) covers `price`
     function _warpUntilCeiling(uint256 id, uint256 price) internal {
         _liftRateCap();
         for (uint256 i; i < 400; ++i) {
-            if (core.ethRate() >= price) return;
+            if (core.bidOf(id) >= price) return;
             vm.warp(block.timestamp + 1 hours);
         }
         revert("ceiling never cleared");
@@ -392,8 +396,10 @@ abstract contract Fixture is Test, ProdDeployer {
         return core.rateAtCheckpoint();
     }
 
-    /// @notice sells `n` fresh credits into the eth bid, which puts them in the eth pile in the order returned.
-    /// funds the pot first when it cannot carry the sale
+    /// @notice fills the eth pile with `n` fresh credits in the order returned, funding the pot first when needed. each
+    /// credit is sold with `refScore` set to its own score, so score / refScore is 1 and it is recorded at the full
+    /// rate; `refScore` is restored after. this gives the compose and sale tests a flat per-credit cost basis. the tests
+    /// of the per-point payout and the scaled drop are test/PerPoint.t.sol, test/PerPointExact.t.sol and the invariants
     function _fillEthPile(uint256 n) internal returns (uint256[] memory ids) {
         ids = _credits(seller, n);
         // a price state that idle time loosened above the opening rate is restated to the opening rate
@@ -406,8 +412,13 @@ abstract contract Fixture is Test, ProdDeployer {
         if (core.ethPot() < room) _fundPot(room);
         uint256 total = core.ethRate() * n;
         if (core.ethPot() < total * 6) _fundPot(total * 6);
-        vm.prank(seller);
-        core.sellForEth(ids);
+        uint32 savedRef = core.settings().refScore;
+        for (uint256 i; i < n; ++i) {
+            _refScoreToCredit(ids[i]);
+            vm.prank(seller);
+            core.sellForEth(_one(ids[i]));
+        }
+        if (core.settings().refScore != savedRef) _setRefScore(savedRef);
     }
 
     /// @notice composes the eth pile through the real controller, once per state lineage. fills the pile to 80
@@ -453,10 +464,9 @@ abstract contract Fixture is Test, ProdDeployer {
     /// for it. returns the price paid
     function _buy(address who, uint256 sid) internal returns (uint256 price) {
         price = ctl.priceOf(sid);
-        uint256 gross = ctl.grossPriceOf(sid);
-        vm.deal(who, who.balance + gross);
+        vm.deal(who, who.balance + price);
         vm.prank(who);
-        ctl.buy{value: gross}(sid);
+        ctl.buy{value: price}(sid);
     }
 
     /// @notice the owner lifts `rateCap` to its upper bound, for suites that climb past the launch cap
@@ -469,7 +479,7 @@ abstract contract Fixture is Test, ProdDeployer {
     }
 
     /// first slot of `State.anchor` in the Core (four words)
-    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(27));
 
     /// @notice the bid anchor state of the Core, read from its storage: the rate of the last fill, the rate of the first fill
     /// in the current minute bucket and that bucket
@@ -511,33 +521,45 @@ abstract contract Fixture is Test, ProdDeployer {
         s = Sale({
             markupBps: ctl.markupBps(),
             startCapBps: ctl.startCapBps(),
-            fastDecayBpsPerHour: ctl.fastDecayBpsPerHour(),
-            kneeBps: ctl.kneeBps(),
-            slowDecayBpsPerHour: ctl.slowDecayBpsPerHour(),
+            decayHours: ctl.decayHours(),
             anchorHalfLife: ctl.anchorHalfLife(),
             anchorMinCost: ctl.anchorMinCost()
         });
     }
 
-    /// @notice the credit sale, rating reference and royalty settings of the controller as a struct
+    /// @notice the credit sale and rating reference settings of the controller as a struct
     function _creditSale() internal view returns (CreditSale memory c) {
         c = CreditSale({
             saleOn: ctl.creditSaleOn(),
             window: ctl.creditWindow(),
             floorBps: ctl.creditFloorBps(),
-            startBps: ctl.creditStartBps(),
-            refScore: ctl.refScore(),
-            royaltyBps: ctl.royaltyBps(),
-            royaltyRecipient: ctl.royaltyRecipient()
+            startBps: ctl.creditStartBps()
         });
     }
 
-    /// @notice the owner sets `refScore` through `setCredit`, the other credit settings unchanged
+    /// @notice the owner sets the Core setting `refScore` through `setSettings`, the other settings unchanged
     function _setRefScore(uint32 v) internal {
-        CreditSale memory c = _creditSale();
-        c.refScore = v;
-        vm.prank(owner);
-        ctl.setCredit(c);
+        Settings memory s = core.settings();
+        s.refScore = v;
+        _setSettings(s);
+    }
+
+    /// @notice the owner sets the Core setting `swapFeeCc` through `setSettings`, the other settings unchanged
+    function _setSwapFeeCc(uint96 v) internal {
+        Settings memory s = core.settings();
+        s.swapFeeCc = v;
+        _setSettings(s);
+    }
+
+    /// @notice the score of credit `id` from the CreditScore contract, the per-credit source every eth door reads
+    function _scoreOf(uint256 id) internal view returns (uint256) {
+        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
+    }
+
+    /// @notice sets `refScore` to credit `id`'s score, so the eth bid pays the full rate for it (score / refScore is 1).
+    /// isolates the rate mechanics from the per-point scaling, which the invariants and the dedicated per-point tests cover
+    function _refScoreToCredit(uint256 id) internal {
+        _setRefScore(uint32(_scoreOf(id)));
     }
 
     /// @notice the owner turns the credit sale window on or off through `setCredit`, the other credit settings unchanged
@@ -548,20 +570,10 @@ abstract contract Fixture is Test, ProdDeployer {
         ctl.setCredit(c);
     }
 
-    /// @notice the owner sets the royalty recipient through `setCredit`, the other credit settings unchanged
-    function _setRoyaltyRecipient(address v) internal {
-        CreditSale memory c = _creditSale();
-        c.royaltyRecipient = v;
+    /// @notice the owner sets the artist cut recipient through `Core.setArtist`
+    function _setArtist(address v) internal {
         vm.prank(owner);
-        ctl.setCredit(c);
-    }
-
-    /// @notice the owner sets `royaltyBps` through `setCredit`, the other credit settings unchanged
-    function _setRoyaltyBps(uint16 v) internal {
-        CreditSale memory c = _creditSale();
-        c.royaltyBps = v;
-        vm.prank(owner);
-        ctl.setCredit(c);
+        core.setArtist(v);
     }
 
     /// @notice the owner sets `anchorMinCost` through `setSale`, the other sale settings unchanged
@@ -625,12 +637,19 @@ abstract contract Fixture is Test, ProdDeployer {
     // ------------------------------------------------------------------ the balance side
 
     /// @notice sets the stand in balance module and balance token and turns both balance side switches on, so redemptions and the
-    /// balance token bid both run. the balance token the core receives from a redemption goes to `balancePot`
+    /// balance token bid both run. the module holds the balance token (the Core holds none): it is funded a launch
+    /// allocation, and redemptions mint their proceeds into it
     function _enterPhase2() internal {
         xt = new MockBalanceToken("Balance Token", "XT");
         mod = new MockBalanceModule(address(xt), UNIT);
+        xt.mint(address(mod), 1e24);
         _setBalanceModule(address(mod));
         _setSwitches(true, true);
+    }
+
+    /// @notice the balance token the module holds, the pot of the balance bid (`available()` of the stand in)
+    function _moduleHolding() internal view returns (uint256) {
+        return xt.balanceOf(address(mod));
     }
 
     /// @notice initializes a native eth / balance token uniswap v4 pool and points the controller at it, so the balance bid
@@ -670,14 +689,14 @@ abstract contract Fixture is Test, ProdDeployer {
         }
     }
 
-    /// @notice composes the eth pile, makes the statement eligible and redeems it, which books the balance token into
-    /// `balancePot`. needs the balance side. returns the balance token the core received
+    /// @notice composes the eth pile, makes the statement eligible and redeems it, which mints the balance token into
+    /// the module. needs the balance side. returns the balance token the module received
     function _fillBalanceBuyback() internal returns (uint256 received) {
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
-        uint256 before = xt.balanceOf(address(core));
+        uint256 before = _moduleHolding();
         core.redeemStatement(c.sid);
-        received = xt.balanceOf(address(core)) - before;
+        received = _moduleHolding() - before;
     }
 
     // ------------------------------------------------------------------ checks and small helpers
@@ -688,22 +707,19 @@ abstract contract Fixture is Test, ProdDeployer {
         core.fund{value: amount}();
     }
 
-    /// @notice the eth the core tracks: the pots, the redeem burn reserve and the payee claim
+    /// @notice the eth the core tracks: the pots and the redeem burn reserve (the payee share is pushed, not held)
     function _tracked() internal view returns (uint256) {
-        return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed();
+        return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
     }
 
-    /// @notice invariant 5 of the spec: the pots never exceed what the core holds
+    /// @notice invariant 5 of the spec: the eth pots never exceed what the core holds. the balance token is held by the
+    /// module, not the core, so there is no balance pot to check
     function _solvent() internal view {
         assertLe(
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed(),
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
             address(core).balance,
             "eth pots exceed balance"
         );
-        address t = core.balanceToken();
-        if (t != address(0)) {
-            assertLe(core.balancePot(), MockBalanceToken(t).balanceOf(address(core)), "balance pot exceeds");
-        }
     }
 
     function _one(uint256 id) internal pure returns (uint256[] memory ids) {

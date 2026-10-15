@@ -15,7 +15,6 @@ import {ListingTarget} from "./attackers/ListingTarget.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
-import {BidModel} from "./utils/BidModel.sol";
 
 /// shared helpers of the core unit suites. everything runs on the real stack of the Fixture: the live coin, hook,
 /// pool, Credits, Statements, CreditStrategy and Seaport. a test that needs an exact pot donates
@@ -37,11 +36,6 @@ abstract contract CoreBase is Fixture {
         vm.deal(funder, funder.balance + amount);
         vm.prank(funder);
         core.fund{value: amount}();
-    }
-
-    /// @dev the rate after one credit bought at `r`, the first fill of its minute, at the drop of the settings now
-    function _dropped(uint256 r) internal view returns (uint256) {
-        return BidModel.dropOnce(core.settings(), r, r);
     }
 
     function _listing(uint256 id) internal pure returns (bytes memory) {
@@ -167,7 +161,7 @@ contract CoreUnitTest is CoreBase {
         _setSettings(s0);
         _buyCoin(funder, 1 ether);
         uint256 pot = core.ethPot();
-        assertEq(pot, 0.0665022 ether, "6.65022 points of a 1 eth buy");
+        assertEq(pot, 0.09 ether, "9 points of a 1 eth buy (decision 120: bounty 9000 of the 10 point skim)");
         assertEq(address(core).balance, pot);
 
         vm.deal(alice, 3 ether);
@@ -197,7 +191,9 @@ contract CoreUnitTest is CoreBase {
     function test_sellForEth_minOut() public {
         _fund(10 ether);
         uint256 id = _credits(alice, 1)[0];
-        uint256 price = core.ethRate();
+        // the payout by the hand formula, not bidOf
+        uint256 price = (core.ethRate() * _scoreOf(id)) / core.settings().refScore;
+        assertTrue(_scoreOf(id) != core.settings().refScore, "the fork credit's score is not refScore");
 
         vm.prank(alice);
         vm.expectRevert(ICore.Slippage.selector);
@@ -214,6 +210,8 @@ contract CoreUnitTest is CoreBase {
     /// reads 1 wei: a sale pays it and a purchase of 2 wei reverts `PotTooSmall`
     function test_tinyPotSellsItsWeiAndBuysNothing() public {
         uint256[] memory ids = _credits(alice, 2);
+        // refScore set to the sold credit's score, so a 1 wei pot reads a 1 wei bid for it (score / refScore is 1)
+        _refScoreToCredit(ids[0]);
         bytes memory data = abi.encodeCall(ICreditStrategy.sellTargetNFT, (LISTED_A));
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);
@@ -289,7 +287,8 @@ contract CoreUnitTest is CoreBase {
     function test_buyListing_aboveCeilingReverts() public {
         _fund(10 ether);
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
-        assertGt(price, core.ethRate(), "start rate is far below the listing");
+        // above the credit's bid (the rate scaled by its score over refScore), so the buy reverts AboveBid
+        assertGt(price, (core.ethRate() * _scoreOf(LISTED_A)) / core.settings().refScore, "listing is above the credit's bid");
         vm.prank(keeper);
         vm.expectRevert(ICore.AboveBid.selector);
         _buyRaw(price, _listing(LISTED_A), LISTED_A, STRATEGY);
@@ -317,7 +316,8 @@ contract CoreUnitTest is CoreBase {
     {
         vm.fee(bf);
         vm.txGasPrice(gp);
-        uint256 ceiling = core.ethRate();
+        // the per-credit bid: the rate scaled by the credit's score over refScore (the hand formula, not bidOf)
+        uint256 ceiling = (core.ethRate() * _scoreOf(id)) / core.settings().refScore;
         r.gap = ceiling - cost;
         uint256 pot = core.ethPot();
         uint256 before = keeper.balance;
@@ -334,18 +334,35 @@ contract CoreUnitTest is CoreBase {
         _solvent();
     }
 
+    // promise: SPEC 6 buyListing caps value at the credit's scaled bid and the payment at that bid less value, at score != refScore
+    function test_buyListing_capAndPaymentAtScoreNotRefScore() public {
+        uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
+        assertTrue(_scoreOf(LISTED_A) != core.settings().refScore, "the listed credit's score is not refScore");
+        _fundAndClimb(LISTED_A, price);
+        _warp(30 hours);
+        // the credit's bid by the hand formula, not bidOf
+        uint256 handBid = (core.ethRate() * _scoreOf(LISTED_A)) / core.settings().refScore;
+        PayRun memory r = _payRun(strategyAdapter, "", LISTED_A, price, 1 gwei, 1 gwei);
+        assertEq(r.gap, handBid - price, "the gap is the scaled bid less the listing price");
+        (, uint256 basis,) = core.creditInfo(LISTED_A);
+        assertLe(basis, handBid, "the cost basis is at most the scaled bid");
+        assertEq(basis, price + r.paid, "and is the listing plus the keeper payment");
+    }
+
     // promise: SPEC 1 keeper doors pay counted gas plus keeperFee
     /// the payment is the gas counted at the base fee plus the whole keeper fee, on the real strategy path. the counted
     /// gas covers the gas used and the transaction base cost, and scales with the base fee
     function test_buyListing_paysCountedGasAtTheBaseFeePlusTheFee() public {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         assertEq(price, 0.036 ether);
+        // refScore set to the listed credit's score, so its bid is the full rate with room for the keeper payment
+        _refScoreToCredit(LISTED_A);
         _fundAndClimb(LISTED_A, price);
         _warp(30 hours);
         uint256 snap = vm.snapshotState();
         PayRun memory a = _payRun(strategyAdapter, "", LISTED_A, price, 1 gwei, 1 gwei);
         uint256 fee = core.settings().keeperFee;
-        assertEq(fee, 0.0005 ether);
+        assertEq(fee, 0.0003 ether);
         assertGt(a.gap, a.paid, "the gap does not bind");
         assertEq((a.paid - fee) % 1 gwei, 0, "whole gas units");
         uint256 counted = (a.paid - fee) / 1 gwei;
@@ -362,10 +379,12 @@ contract CoreUnitTest is CoreBase {
     /// a gap smaller than the payment is the payment, so cost plus payment equals the bid. a zero gap pays nothing
     function test_buyListing_paymentIsCappedAtTheGap() public {
         _fund(10 ether);
-        uint256 ceiling = core.ethRate();
         uint256[4] memory gaps = [uint256(0), 1, 1000, 0.0004 ether];
         for (uint256 i; i < gaps.length; ++i) {
             uint256 id = CreditIds.at(545 + i);
+            // refScore set to this credit's score, so its bid is the full rate and the gap and fee math is the flat case
+            _refScoreToCredit(id);
+            uint256 ceiling = core.bidOf(id);
             ListingTarget t = _listingTarget(id);
             uint256 snap = vm.snapshotState();
             PayRun memory r =
@@ -501,7 +520,7 @@ contract CoreUnitTest is CoreBase {
         uint256 id = CreditIds.at(630);
         ProbeTarget p = _probe(id, 5);
         _fund(10 ether);
-        uint256 value = core.ethRate() * 3 / 4;
+        uint256 value = core.bidOf(id) * 3 / 4;
         uint256 pot = core.ethPot();
         uint256 bal = address(core).balance;
         vm.prank(keeper);
@@ -740,7 +759,6 @@ contract CoreUnitTest is CoreBase {
         // redeemStatement reverts NoBalanceModule whatever the switch while no module is set
         vm.expectRevert(ICore.NoBalanceModule.selector);
         core.redeemStatement(1);
-        core.bookBalance();
     }
 
     // promise: INTEGRATION NothingToBuy, TooSoon, SliceTooSmall
@@ -871,17 +889,17 @@ contract CoreComposedTest is CoreBase {
         core.redeemStatement(c.sid);
     }
 
-    // promise: SPEC 9 a redemption books its eth into the pots
-    /// an eth lane redemption books the whole received amount into the bid pot
-    function test_redeem_ethLaneAllToTheBidPot() public {
+    // promise: SPEC 9 a redemption keeps its balance token in the module, not the core
+    /// an eth lane redemption mints the whole owed amount into the module; the core holds no balance token
+    function test_redeem_ethLaneStaysInTheModule() public {
         Composed memory c = _composeOnce();
         _makeEligible(c.sid);
         uint256 out = core.ratingOf(c.sid) * UNIT;
-        uint256 pot = core.balancePot();
+        uint256 held = _moduleHolding();
         core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "the module keeps the statement");
-        assertEq(xt.balanceOf(address(core)), out);
-        assertEq(core.balancePot() - pot, out, "all received to the bid pot");
+        assertEq(_moduleHolding() - held, out, "all received stays in the module");
+        assertEq(xt.balanceOf(address(core)), 0, "the core holds no balance token");
         assertEq(_held().length, 0);
         assertFalse(_isHeld(c.sid));
     }
@@ -903,44 +921,40 @@ contract CoreComposedTest is CoreBase {
         // is short, the full payout of the live unit passes
         mod.setUnitPerPoint(3 * UNIT);
         mod.setPayBps(5_000);
-        vm.expectRevert(ICore.Underpaid.selector);
+        vm.expectRevert(ICore.BadModule.selector);
         core.redeemStatement(c.sid);
         mod.setPayBps(10_000);
         uint256 out = core.ratingOf(c.sid) * 3 * UNIT;
+        uint256 held = _moduleHolding();
         core.redeemStatement(c.sid);
-        assertEq(xt.balanceOf(address(core)), out);
+        assertEq(_moduleHolding() - held, out, "the owed amount is minted into the module");
     }
 
     /*//////////////////////////////////////////////////////////////
                               balance token bid
     //////////////////////////////////////////////////////////////*/
 
-    // promise: SPEC 1 the balance token bid pays score times unit less the margin
-    /// the per point bid pays each credit its score times the unit less the margin
+    // promise: SPEC 1 the balance token bid pays score times unit times the balance rate
+    /// the per point bid pays a credit its score times the unit times the current balance rate, bps of par, and
+    /// balanceBidOf reports that figure
     function test_xBid_paysScoreTimesUnit() public {
         _fillBalanceBuyback();
         _setBalancePool();
-        xt.mint(address(core), 1e22);
-        core.bookBalance();
-        uint256[] memory ids = _credits(alice, 2);
-        uint256 net = 10_000 - core.settings().balanceBidMarginBps;
-        uint256 expect;
-        for (uint256 i; i < 2; ++i) {
-            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(ids[i]), CREDITS.timestampOf(ids[i]));
-            expect += score * UNIT * net / 10_000;
-        }
+        uint256[] memory ids = _credits(alice, 1);
+        uint256 rate = core.balanceRate();
+        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(ids[0]), CREDITS.timestampOf(ids[0]));
+        uint256 expect = score * UNIT * rate / 10_000;
+        assertEq(core.balanceBidOf(ids[0]), expect, "balanceBidOf is score times unit times the rate");
         uint256 before = xt.balanceOf(alice);
         vm.prank(alice);
         core.sellForBalance(ids);
-        assertEq(xt.balanceOf(alice) - before, expect, "paid score times the unit less the margin");
+        assertEq(xt.balanceOf(alice) - before, expect, "paid score times the unit times the rate");
         _solvent();
     }
 
     // promise: INTEGRATION BadModule, BadQuote, Empty on sellForBalance
     function test_xBid_guards() public {
         _fillBalanceBuyback();
-        xt.mint(address(core), 1e22);
-        core.bookBalance();
         uint256[] memory ids = _credits(alice, 1);
         uint256[] memory none = new uint256[](0);
         vm.prank(alice);
@@ -952,24 +966,21 @@ contract CoreComposedTest is CoreBase {
         vm.prank(keeper);
         vm.expectRevert(ICore.NotOwner.selector);
         core.sellForBalance(ids);
-        stdstore.target(address(core)).sig("balancePot()").checked_write(uint256(1));
+        // the module commits only 1 wei: the clamp as bps of par is below the floor, so the bid closes (PotTooSmall)
+        mod.setAvailable(1);
         vm.prank(alice);
         vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForBalance(ids);
     }
 
-    // promise: SPEC 9 bookBalance books balance token into balancePot (inv 5)
-    /// balance token that arrives outside a redemption is booked only by `bookBalance`, into the bid pot
-    function test_xFees_bookBalanceBooksPlainTransfers() public {
+    // promise: SPEC 9 the module holds the balance token: a plain transfer to the module raises its available holding
+    /// balance token that arrives at the module is part of its holding at once; the core holds none and has no book step
+    function test_xFees_moduleHoldsTheBalanceToken() public {
         _fillBalanceBuyback();
-        uint256 pot = core.balancePot();
-        core.bookBalance();
-        assertEq(core.balancePot(), pot, "nothing above the pot");
-        xt.mint(address(core), 3e18);
-        assertEq(core.balancePot(), pot);
-        core.bookBalance();
-        assertEq(core.balancePot(), pot + 3e18);
-        _solvent();
+        uint256 held = _moduleHolding();
+        xt.mint(address(mod), 3e18);
+        assertEq(_moduleHolding(), held + 3e18, "the module holding rose by the transfer");
+        assertEq(xt.balanceOf(address(core)), 0, "the core holds no balance token");
     }
 
 }

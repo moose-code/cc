@@ -18,9 +18,9 @@ the launch, the owner commands after it, and what to do when something stops hal
 
 | step | action | command or note |
 |---|---|---|
-| 1 | local config | `cp script/config/mainnet.json script/config/local.json` (gitignored). fill `image` (at most 2048 bytes, with a scheme) and `description` (at most 4096 bytes). set `rateStart` to the market price of one credit on launch day in wei and `rateCap` to 3 times it (preflight checks the ratio). set `credit.royaltyRecipient` to the artist's address (the tracked file holds the owner as a placeholder). review every value against docs/SPEC.md section 3 |
+| 1 | local config | `cp script/config/mainnet.json script/config/local.json` (gitignored). fill `image` (at most 2048 bytes, with a scheme) and `description` (at most 4096 bytes). set `rateStart` to the market price on launch day of a credit of score `settings.refScore` (4,330,000, the launch average) in wei and `rateCap` to 3 times it (preflight checks the ratio). set `artist` to the artist's address (the tracked file holds the decided launch address). review every value against docs/SPEC.md section 3 |
 | 2 | rehearse | `REHEARSAL=1 LAUNCH_CONFIG=script/config/local.json forge test --match-path test/Rehearsal.t.sol -vv`: a fork of the latest block, the owner command, the whole deploy, postflight and a trading smoke. it prints the gas of each transaction and the eth the owner needs at 1, 5 and 20 gwei. the addresses it prints are the CREATE2 addresses the launch will use |
-| 3 | owner command on the factory | the factory's minimum protocol skim share is 1,000 and the launch needs at most 362: `cast send $FACTORY "setMinProtocolSkimShareBps(uint16)" 362 --rpc-url $MAINNET_RPC_URL --ledger`, confirm with `cast call $FACTORY "minProtocolSkimShareBps()(uint16)"`. after step 6, set it back to 1,000 in its own transaction |
+| 3 | owner command on the factory | the factory's minimum protocol skim share is 1,000 and the launch needs at most 1000: `cast send $FACTORY "setMinProtocolSkimShareBps(uint16)" 1000 --rpc-url $MAINNET_RPC_URL --ledger`, confirm with `cast call $FACTORY "minProtocolSkimShareBps()(uint16)"`. after step 6, set it back to 1,000 in its own transaction |
 | 4 | preflight and sign off | `DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json forge script script/Preflight.s.sol --rpc-url $MAINNET_RPC_URL \| grep -E '^ +(WARN\|FAIL\|[0-9]+ of\|CONFIG_HASH\|signoff)'`. 116 rows, every one ok (WARN rows never fail). read the `signoff:` rows. `export CONFIG_HASH=0x...` from the printed value |
 | 5 | dry run | `DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Deploy.s.sol --rpc-url $MAINNET_RPC_URL --sender $DEPLOYER`. simulates every transaction, runs preflight first and postflight on the result; nothing is sent. the balance row of the dry run reads high; the funding check is step 4's row and a direct `cast balance $DEPLOYER` |
 | 6 | broadcast | `git checkout foundry.lock; git submodule update -- lib/solady`, then `script/tools/check-freeze.sh` from the candidate commit (every row of the freeze table ok, exit 0), then `DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Deploy.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger`. note the printed addresses: `export CORE=... COIN=... CONTROLLER=...`. then the set back of step 3 |
@@ -39,14 +39,15 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 
 | block | rows |
 |---|---|
-| the bid | `rateStart` (market price of a credit, wei), `rateCap` (3 times it), the nine bid settings |
-| the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 5,000, the `Sale` struct (markup 15,000, cap 100,000, fast 100, knee 10,000, slow 25, anchor half life 604,800, anchor min cost 0.1 eth) |
-| the credit side | `creditCostToPotBps` 10,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` false, `window` 14,400, `floorBps` 11,000, `startBps` 30,000, `refScore` 4,330,000, `royaltyBps` 250, `royaltyRecipient` |
-| the balance side | `redeemOn` false, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 2,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
-| the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0005 eth, `keeperMaxBaseFee` 10 gwei, `callerFee` 0, `callerMaxBaseFee` 0 |
-| the payee | `payee` the owner, `payeePpm` 75,185 (0.5 points of volume) |
+| the bid | `rateStart` (market price on launch day of a credit of score `refScore`, wei), `rateCap` (3 times it), `refScore` 4,330,000 (the launch average credit score), the nine bid settings |
+| the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 2,500, the `Sale` struct (markup 15,000, cap 100,000, fast 100, knee 10,000, slow 25, anchor half life 604,800, anchor min cost 0.1 eth) |
+| the credit side | `creditCostToPotBps` 8,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `floorBps` 11,000, `startBps` 30,000 (`refScore` is a bid setting above) |
+| the credit swap | `swapFeeCc` 10,000e18 (ten thousand coins burned per `swapCredit`) |
+| the balance side | `redeemOn` true, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 9,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
+| the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0003 eth, `keeperMaxBaseFee` 5 gwei, `callerFee` 0, `callerMaxBaseFee` 0 |
+| the payee and the artist | `payee` the owner, `payeePpm` 0 at launch (the owner raises it later); `artist` the launch artist address; the nft sale cuts `saleToArtistBps` 250, `saleToOperatorBps` 50 |
 | the adapters | the Seaport recipient allowlist (the OpenSea fee collector 0x0000a26b00c1F0DF003000390027140000fAa719) |
-| the coin | name CC, symbol CC, supply 1e27, start tick -175000, position -175000 to 887200, skim 690 bps, bounty 9,638, lp fee 0, sniper 9,000 bps over 1,800 s, protocol 2,000 bps, restricted, allowlist empty, image, description |
+| the coin | name CC, symbol CC, supply 1e27, start tick -175000, position -175000 to 887200, skim 1,000 bps, bounty 9,000, lp fee 0, sniper 9,000 bps over 1,800 s, protocol 2,000 bps, restricted, allowlist empty, image, description |
 | the build | the masked runtime code hashes of the five contracts and the library creation hash |
 
 ## 3. verify on etherscan
@@ -63,11 +64,12 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 |---|---|
 | a Core setting | `script/SetSettings.s.sol`: `SET_<field>=<value>` for each changed field, `SET_RATE=<wei>` for `setRate`; with `CONTROLLER=$CONTROLLER` it drives `setSale` and `setCredit`. one call sets the whole struct, so set every field you mean |
 | pause and resume | `cast send $CORE "setPaused(bool)" true` and `false` |
-| the payee | `cast send $CORE "setPayee(address)" <to>`; anyone can `claimPayee()` |
+| the payee | `cast send $CORE "setPayee(address)" <to>`; the payee fee share and the operator cut are pushed by the book and the sales, not claimed |
+| the artist | `cast send $CORE "setArtist(address)" <to>`; the artist cut of nft sales is pushed to it (the zero address is refused while `saleToArtistBps` is nonzero) |
 | the adapters | `addAdapter(address)`, `removeAdapter(address)`, `lockAdapters()`; on the Seaport adapter `setAllowedRecipient(address,bool)`. in the first days watch `buyListing` reverts for `RecipientNotAllowed` and add the recipient that Credits listings carry |
-| the credit sale window | `setCredit` with `saleOn` true; read `creditPrice(id)` back |
+| the credit sale window | on at launch; `setCredit` with `saleOn` false closes it and true reopens it; read `creditPrice(id)` back |
 | chosen composition | `setChosenComposeOn(bool)`, `setMinCcToChoose(uint96)` (also the gate of `setHeldFormat`) |
-| the balance side | once the balance module is written and verified: `setBalanceModule(address)` (replaceable until `lockBalanceModule()`), then `setSettings` with `redeemOn` and `balanceBidOn`, then on the controller `setBalancePoolKey((address,address,uint24,int24,address))` with native eth as currency0 and the balance token as currency1 once its pool is live. when the balance token's auction is announced: `setPaused(true)`, reprice with the live settings, `setPaused(false)` |
+| the balance side | once the balance module is written and verified: `setBalanceModule(address)` (replaceable until `lockBalanceModule()`), then `setSettings` with `balanceBidOn` (`redeemOn` is true at launch), then on the controller `setBalancePoolKey((address,address,uint24,int24,address))` with native eth as currency0 and the balance token as currency1 once its pool is live. when the balance token's auction is announced: `setPaused(true)`, reprice with the live settings, `setPaused(false)` |
 | the reserve | `releaseRedeemBurn(uint256)` moves reserve eth into the buyback pot |
 | composing | `compose()`, `compose(uint8)` or `composeChosen` when nobody else does; switch the payment on with `callerFee` and `callerMaxBaseFee` if pages sit |
 | the coin | `coin.lockRecipients()` (script/Lock.s.sol: postflight, then the lock) seals the bounty recipient and ends fee stream migration; take it together with `lockSuccessor`. `lockAllowlist()`, `unrestrict()`, `renounceAdmin()`, `setMetadataRenderer`, `updateImage`, `updateDescription` are the coin admin's |
@@ -86,17 +88,17 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 
 1. deploy and verify the successor (a Core built with the live coin address, which takes `fund()`), set its controller and adapters.
 2. as coin admin, point the pool's bounty recipient at the successor (`setBountyRecipient` on the hook), so fees flow there from the next swap.
-3. `setSuccessor(successor)` on the old Core, then dry run `migrate` on a fork (`cast call $CORE "migrate(uint256)" 150 --from $OWNER`), then `migrate(150)` repeatedly until `ethPot`, `balancePot` and the pile are 0 (about 44,800 gas per credit; 370 is the largest batch under the cap). the first call retires the old engine.
-4. on the successor: `adopt` the credits it received, `bookBalance()` once its module is set. the old engine keeps selling and redeeming its statements and burning its buyback pot.
+3. `setSuccessor(successor)` on the old Core, then dry run `migrate` on a fork (`cast call $CORE "migrate(uint256)" 150 --from $OWNER`), then `migrate(150)` repeatedly until `ethPot` and the pile are 0 (about 44,800 gas per credit; 370 is the largest batch under the cap). the balance token is held by the module, not the Core, so migrate has no balance leg. the first call retires the old engine.
+4. on the successor: `adopt` the credits it received, and set its balance module (which holds the token; there is no `bookBalance`). the old engine keeps selling and redeeming its statements and burning its buyback pot.
 
 ### keeper duties
 
 | duty | call | paid |
 |---|---|---|
-| sweep a listing below the bid | `buyListing(adapter, id, params)` | gas at the base fee up to 10 gwei plus 0.0005 eth, at most the gap |
+| sweep a listing below the bid | `buyListing(adapter, id, params)` | gas at the base fee up to 5 gwei plus 0.0003 eth, at most the gap |
 | burn | `buyback()` every 25 blocks while the buyback pot holds at least twice the largest payment | gas plus the scaled fee |
 | compose | `compose()` when `nextPage()` is ready | 0 until the owner switches the payment on |
-| redeem | `redeemStatement(sid)` when `atFloor(sid)` and `redeemOn` | 0 until switched on |
+| redeem | `redeemStatement(sid)` when `atFloor(sid)` and `redeemOn` | 0; reverts `NoBalanceModule` until the module is set |
 | book | `book()` at the window's end, `collectEscrow()` if the escrow holds a credit for the Core | nothing |
 
 ### a dump that walks the bid down, and statements above the floor
@@ -109,7 +111,7 @@ the 0.5 eth slice is unprofitable to sandwich down to about a quarter of the lau
 
 ## 5. what cannot change after the launch
 
-the skim (6.9 points), the bounty split (9,638 of 10,000), the protocol recipient, the ticks and the supply are fixed in the pool and the coin. the Core's stack, coin, `RATE_START` and `SNIPER_SECONDS` are immutables; a new stack or a new coin is a new Core. everything in docs/SPEC.md section 3 is adjustable.
+the skim (10 points), the bounty split (9,000 of 10,000), the protocol recipient, the ticks and the supply are fixed in the pool and the coin. the Core's stack, coin, `RATE_START` and `SNIPER_SECONDS` are immutables; a new stack or a new coin is a new Core. everything in docs/SPEC.md section 3 is adjustable.
 
 ## 6. when a transaction fails half way
 
@@ -135,8 +137,8 @@ an anvil fork of block 26158000 (chain id 31337) with the system deployed by the
 |---|---|
 | start the chain | `script/dev/local.sh` leaves anvil running on port 8545 (`PORT=` changes it). the first run builds the state with `script/dev/e2e.sh` (about 5 minutes, most of it the seed's credit transfers) and saves it under `script/dev/.cache/`; a later run with unchanged src, script, test/standins and test/utils loads the saved state in seconds. `FRESH=1` rebuilds, `script/dev/local.sh stop` stops anvil |
 | the run itself | `script/dev/e2e.sh` starts its own anvil, runs everything and stops it. `KEEP=1` leaves anvil running, `STOP_AFTER=<stage>` stops after a stage, `NO_ANVIL=1` and `E2E_RPC_URL` reuse a node. `FORK_URL` is the archive rpc, the Tenderly public gateway by default |
-| deploy | `script/deploy.sh local` funds the factory owner, lowers `minProtocolSkimShareBps` to 362 and restores it, then runs Preflight, Deploy (`--unlocked --broadcast --slow`) and Postflight. the scripts require chain id 1, so forge runs with `--chain-id 1` |
-| phase `pre` | the credits move to three accounts (`script/dev/Seed.s.sol`); the balance side, the credit sale and chosen composition start off |
+| deploy | `script/deploy.sh local` funds the factory owner, lowers `minProtocolSkimShareBps` to 1000 and restores it, then runs Preflight, Deploy (`--unlocked --broadcast --slow`) and Postflight. the scripts require chain id 1, so forge runs with `--chain-id 1` |
+| phase `pre` | the credits move to three accounts (`script/dev/Seed.s.sol`); the balance bid and chosen composition start off; the credit sale and `redeemOn` follow the config |
 | phase `post` (default) | the seed also deploys `MockBalanceToken` and `MockBalanceModule` (which mints `rating * unit` on redeem), mints the token to the Core, creates an eth / balance pool at the config's `dev.balancePoolSqrtPriceX96` with full range liquidity from the trader, then as owner sets the module, books the balance, switches `redeemOn`, `balanceBidOn`, the credit sale and chosen composition on, and sets the controller's pool key |
 | stages | `script/dev/Scenario.s.sol`, one `STAGE` per forge run: `a` (coin trades, `book`, payee latch), `dev-wallet` (the dev wallet buys coin), `fill-a` (`sellForEth` both forms), `adopt`, `compose-a` (`compose()`, `buy` at `grossPriceOf`), `claims` (`claimRoyalty`, `claimPayee`), `d-open`, `d-buy` (`buyCredit`, `buyCredits`), `fill-b`, `compose-b` (`composeChosen`), `format` (`setHeldFormat`), `settings` (`setSale`, `setCredit`, `setRate`, `setSettings`, `fund`), `pause`, `buyback`; in `post` also `fill-d`, `compose-d` (`compose(uint8)`), `redeem` (`redeemStatement`, `releaseRedeemBurn`), `balance-bid` (`sellForBalance` both forms); then `fresh-fill`, `fresh-compose`, `report`. node time warps run between the stages |
 | the record | `chainId`, `rpcUrl`, `deployBlock`, the five contracts and the library, the live Credits, Statements, pool manager and hook, `poolFee`, `tickSpacing`, `owner`, `accounts` (a1, a2, a3, keeper, trader), `phase`, and in `post` `balanceToken`, `balanceModule` and `balancePool` (`null` in `pre`) |

@@ -11,10 +11,13 @@ import {IArtCoinsFactoryV2} from "../../src/interfaces/ArtCoinsV2.sol";
 /// (that would pull them onto the via_ir compiler profile), so `new Core(...)` becomes `Prod.newCore(...)`. a revert
 /// of the constructor reaches the caller with its own revert data, so `vm.expectRevert` works as with `new`
 library Prod {
-    /// the royalty recipient of a controller built from `Mainnet.defaultCredit()`, which leaves it unset
-    address internal constant ROYALTY_RECIPIENT = address(0x0000000000000000000000000000000000a27157);
+    /// test harness for building a Core and controller directly (not through the deploy path)
 
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    /// @dev the artist the direct-construction helpers pass: a nonzero, non-forbidden address, so the default
+    /// `saleToArtistBps` is accepted. tests that need a specific artist set it with `setArtist` after
+    address internal constant DEFAULT_ARTIST = address(0xA12157);
 
     /// @dev a Core with the default credit settings and no approved adapter. `cfg` is the factory launch config the
     /// Core computes its coin from (the bounty recipient is set by the Core), `launcher` the sender of the launch
@@ -42,8 +45,9 @@ library Prod {
         uint256 rateStart,
         Settings memory settings
     ) internal returns (ICore) {
-        bytes memory args =
-            abi.encode(owner, cfg, address(0), coin, payee, stack, rateStart, settings, Mainnet.defaultCredit());
+        bytes memory args = abi.encode(
+            owner, cfg, address(0), coin, payee, stack, rateStart, settings, Mainnet.defaultCredit(), DEFAULT_ARTIST
+        );
         return _wire(ICore(payable(vm.deployCode("Core.sol:Core", args))), owner, controller, new address[](0));
     }
 
@@ -74,7 +78,8 @@ library Prod {
         Credit memory credit,
         address[] memory adapters
     ) internal returns (ICore) {
-        bytes memory args = abi.encode(owner, cfg, launcher, address(0), payee, stack, rateStart, settings, credit);
+        bytes memory args =
+            abi.encode(owner, cfg, launcher, address(0), payee, stack, rateStart, settings, credit, DEFAULT_ARTIST);
         return _wire(ICore(payable(vm.deployCode("Core.sol:Core", args))), owner, controller, adapters);
     }
 
@@ -97,7 +102,6 @@ library Prod {
     }
 
     function newController(address core, Sale memory sale, Credit memory credit) internal returns (IControllerV1) {
-        if (credit.royaltyRecipient == address(0)) credit.royaltyRecipient = ROYALTY_RECIPIENT;
         return IControllerV1(vm.deployCode("ControllerV1.sol:ControllerV1", abi.encode(core, sale, credit)));
     }
 

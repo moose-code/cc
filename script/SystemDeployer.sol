@@ -79,7 +79,7 @@ abstract contract SystemDeployer is LaunchChecks {
         d.core = _ensureCore(c, owner);
         d.controller = _ensureController(d.core, c);
         (d.seaportAdapter, d.strategyAdapter) = _ensureAdapters(d.core, c);
-        _wire(d);
+        _wire(c, d);
         d.coin = ICore(payable(d.core)).COIN();
         if (d.coin.code.length == 0) _launch(c, d.coin, d.core);
         d.launchKey = poolKeyOf(d.coin, c.stack);
@@ -126,7 +126,7 @@ abstract contract SystemDeployer is LaunchChecks {
 
     /// @dev the owner calls of the deploy: `setController`, then `addAdapter` for each adapter. a call whose effect is on
     /// chain is skipped
-    function _wire(Deployed memory d) private {
+    function _wire(LaunchConfig memory c, Deployed memory d) private {
         ICore core = ICore(payable(d.core));
         if (core.controller() != d.controller) {
             uint256 g = gasleft();

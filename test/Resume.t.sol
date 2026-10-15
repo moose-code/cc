@@ -29,12 +29,12 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         creator = makeAddr("resume.creator");
         FACTORY = IArtCoinsFactoryV2(v2.factory);
         vm.prank(deployer);
-        FACTORY.setMinProtocolSkimShareBps(362);
+        FACTORY.setMinProtocolSkimShareBps(1000);
         vm.deal(deployer, 5 ether);
         base = defaultConfig();
         base.owner = deployer;
         base.creator = creator;
-        base.credit.royaltyRecipient = creator;
+        base.artist = creator;
         base.payee = makeAddr("resume.payee");
         base.name = "Resume Coin";
         base.symbol = "RSM";

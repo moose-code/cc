@@ -18,6 +18,11 @@ contract MockBalanceModule is IBalanceModule {
     uint256 public burnUnitGas;
     /// payout as bps of the owed amount. 10_000 pays exactly the owed amount
     uint256 public payBps = 10_000;
+    /// `pay` sends this bps of the amount asked. below 10_000 underpays, so the core reverts BadModule
+    uint256 public payOutBps = 10_000;
+    /// when true, `available()` returns `availableOverride` instead of the module's token holding
+    bool public overrideAvailable;
+    uint256 public availableOverride;
     /// gas to burn inside `redeem`, and a call to make to some address while the core is inside the redemption. a test or a
     /// handler sets them to see that a gas burning or calling module cannot move more than the rules allow
     uint256 public burnGas;
@@ -68,6 +73,27 @@ contract MockBalanceModule is IBalanceModule {
         payBps = bps;
     }
 
+    /// sets the bps of the amount `pay` sends. below 10_000 the seller receives less than asked (BadModule in the core).
+    function setPayOutBps(uint256 bps) external {
+        payOutBps = bps;
+    }
+
+    /// makes `available()` report `v` instead of the real holding.
+    function setAvailable(uint256 v) external {
+        overrideAvailable = true;
+        availableOverride = v;
+    }
+
+    /// the balance token the module will pay out for the bid: its holding, or the override when set.
+    function available() external view returns (uint256) {
+        return overrideAvailable ? availableOverride : MockBalanceToken(balanceToken).balanceOf(address(this));
+    }
+
+    /// moves `amount` of the token to `to`, sending `payOutBps` of it. the core only; here any caller, for tests.
+    function pay(address to, uint256 amount) external {
+        MockBalanceToken(balanceToken).transfer(to, (amount * payOutBps) / 10_000);
+    }
+
     function setBurn(uint256 gas_) external {
         burnGas = gas_;
     }
@@ -82,12 +108,12 @@ contract MockBalanceModule is IBalanceModule {
         _unit = unit;
     }
 
-    /// reads the statement rating, mints `payBps` of the owed amount (rating times the unit) to the caller and keeps
-    /// the statement.
+    /// reads the statement rating, mints `payBps` of the owed amount (rating times the unit) into the module and keeps
+    /// the statement. the proceeds stay here; the core checks the module's holding rose.
     function redeem(uint256 statementId) external returns (uint256 out) {
         uint256 rating = IStatements(Mainnet.STATEMENTS).creditScoreOf(statementId);
         out = rating * _unit * payBps / 10_000;
-        MockBalanceToken(balanceToken).mint(msg.sender, out);
+        MockBalanceToken(balanceToken).mint(address(this), out);
         if (callTarget != address(0)) {
             called = true;
             (bool ok,) = callTarget.call(callData);

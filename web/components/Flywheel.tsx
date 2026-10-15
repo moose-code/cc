@@ -1,12 +1,13 @@
 "use client";
 
-import { Fragment } from "react";
 import Link from "next/link";
 import { useStats } from "@/lib/engine";
 import { useSnapshot } from "@/lib/live";
 import { engineDeployed } from "@/lib/config";
 import { BALANCE_SYMBOL } from "@/lib/events";
 import { commas, evmNowAddress } from "@/lib/format";
+
+const SHOW_LIVE = false; // live numbers under each step, off while the copy settles
 
 const LAUNCH_SUPPLY_CC = 1e9; // the coin's launch supply, 1e27 wei
 
@@ -34,95 +35,120 @@ const Arrow = () => (
   </svg>
 );
 
-// The five steps of the engine, each with a live number, under the header of the home page.
+type Step = {
+  icon: string;
+  label: string;
+  line: string;
+  num?: string;
+  href?: string;
+  later?: boolean;
+};
+
+function Box({ t, half }: { t: Step; half?: boolean }) {
+  const body = (
+    <>
+      {!half && (
+        <svg viewBox="0 0 24 24" aria-hidden>
+          {ICONS[t.icon]}
+        </svg>
+      )}
+      <span className="fw-label">{t.label}</span>
+      <span className="fw-line">{t.line}</span>
+      {SHOW_LIVE && <span className="fw-num">{t.num ?? "later"}</span>}
+    </>
+  );
+  const cls = `${half ? "fw-half" : "fw-box"}${t.later ? " fw-later" : ""}`;
+  if (!t.href) return <div className={cls}>{body}</div>;
+  if (t.href.startsWith("/"))
+    return (
+      <Link href={t.href} className={cls}>
+        {body}
+      </Link>
+    );
+  return (
+    <a href={t.href} target="_blank" rel="noreferrer" className={cls}>
+      {body}
+    </a>
+  );
+}
+
+// The steps of the engine, each with a live number, under the header of the home page.
+// After compose a statement is either listed or redeemed (one box, two halves joined by "or"); both feed the buyback that burns cc.
 export function Flywheel() {
   const { data: s } = useStats();
   const { data: snap } = useSnapshot();
   const on = engineDeployed;
   const n = (v: number, max = 0) => (on ? commas(v, max) : "—");
   const burnedPct = (s.ccBurned / LAUNCH_SUPPLY_CC) * 100;
-  const steps = [
-    {
-      icon: "swap",
-      label: "trade cc",
-      line: "every trade pays 6.9% into the engine",
-      num: `${n(s.feesBooked, 3)} eth booked`,
-      href: snap ? evmNowAddress(snap.coin) : undefined,
-    },
-    {
-      icon: "tile",
-      label: "buy credits",
-      line: "a standing bid for any credit, no listing",
-      num: `${n(s.creditsEth + s.creditsBalance + s.creditsListing)} credits bought`,
-      href: "/sell",
-    },
-    {
-      icon: "grid",
-      label: "compose",
-      line: "80 credits become one statement",
-      num: `${n(s.composed)} statements composed`,
-      href: "/compose",
-    },
-    {
-      icon: "tag",
-      label: "sell",
-      line: "from 1.5x down to the floor, half of it buys more credits",
-      extra:
-        snap &&
-        (snap.balanceOn
-          ? `or redeem into ${BALANCE_SYMBOL} at the floor`
-          : `redeem into ${BALANCE_SYMBOL}, soon`),
-      num: `${n(s.sold)} statements sold`,
-      href: "/statements",
-    },
-    {
-      icon: "flame",
-      label: "burn cc",
-      line: "the other half burns the coin",
-      num: `${n(s.ccBurned)} cc burned${on ? ` · ${commas(burnedPct, 2)}%` : ""}`,
-      href: "/statements",
-    },
-  ];
+  const balanceOn = !!snap?.balanceOn;
+  const trade: Step = {
+    icon: "swap",
+    label: "trade cc",
+    line: "every trade skims 10%, 9 points of it into the engine",
+    num: `${n(s.feesBooked, 3)} eth booked`,
+    href: snap ? evmNowAddress(snap.coin) : undefined,
+  };
+  const buy: Step = {
+    icon: "tile",
+    label: "buy credits",
+    line: "a standing bid for any credit, no listing",
+    num: `${n(s.creditsEth + s.creditsBalance + s.creditsListing)} credits bought`,
+    href: "/sell",
+  };
+  const compose: Step = {
+    icon: "grid",
+    label: "compose",
+    line: "80 credits become one statement",
+    num: `${n(s.composed)} statements composed`,
+    href: "/compose",
+  };
+  const list: Step = {
+    icon: "tag",
+    label: "list",
+    line: "listed for eth, 1.5x down to the floor",
+    num: `${n(s.sold)} statements sold`,
+    href: "/statements",
+  };
+  const redeem: Step = {
+    icon: "swap",
+    label: "redeem",
+    line: `redeemed for ${BALANCE_SYMBOL} at the floor`,
+    num: balanceOn ? `${n(s.redeemed)} statements redeemed` : undefined,
+    href: "/statements",
+    later: !balanceOn,
+  };
+  const burn: Step = {
+    icon: "flame",
+    label: "burn cc",
+    line: "a quarter of each sale and the redeem burn pot burn cc",
+    num: `${n(s.ccBurned)} cc burned${on ? ` · ${commas(burnedPct, 2)}%` : ""}`,
+    href: "/statements",
+  };
   return (
     <section className="flywheel" aria-label="how the engine works">
       <div className="fw-inner">
         <div className="fw-row">
-          {steps.map((t, i) => {
-            const body = (
-              <>
-                <svg viewBox="0 0 24 24" aria-hidden>
-                  {ICONS[t.icon]}
-                </svg>
-                <span className="fw-label">{t.label}</span>
-                <span className="fw-line">{t.line}</span>
-                {t.extra && <span className="fw-line">{t.extra}</span>}
-                <span className="fw-num">{t.num}</span>
-              </>
-            );
-            return (
-              <Fragment key={t.label}>
-                {i > 0 && <Arrow />}
-                {!t.href ? (
-                  <div className="fw-box">{body}</div>
-                ) : t.href.startsWith("/") ? (
-                  <Link href={t.href} className="fw-box">
-                    {body}
-                  </Link>
-                ) : (
-                  <a
-                    href={t.href}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="fw-box"
-                  >
-                    {body}
-                  </a>
-                )}
-              </Fragment>
-            );
-          })}
+          <Box t={trade} />
+          <Arrow />
+          <Box t={buy} />
+          <Arrow />
+          <Box t={compose} />
+          <Arrow />
+          <div className="fw-box fw-split" role="group" aria-label="list or redeem">
+            <Box t={list} half />
+            <span className="fw-or" aria-hidden>
+              or
+            </span>
+            <Box t={redeem} half />
+          </div>
+          <Arrow />
+          <Box t={burn} />
         </div>
         <div className="fw-loop" aria-hidden />
+        <div className="fw-back" aria-hidden>
+          <Arrow />
+          back to trade cc
+        </div>
       </div>
     </section>
   );

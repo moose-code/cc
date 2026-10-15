@@ -3,7 +3,7 @@
 # stage by stage with node time warps between them, and write the record deployments/31337.json. a failed stage stops
 # the run. every signer is an impersonated account (anvil --auto-impersonate, forge --unlocked).
 #
-#   PHASE=pre    the engine before the balance token: the module unset, redeemOn and balanceBidOn false.
+#   PHASE=pre    the engine before the balance token: the module unset, balanceBidOn false, redeemOn as the config sets it (a redemption reverts NoBalanceModule).
 #   PHASE=post   (default) Seed deploys the balance token, the best guess redeem module and an eth/balance pool and
 #                switches the balance side on; the stages add a redemption and a balance bid.
 #

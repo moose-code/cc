@@ -17,7 +17,7 @@ import {SettingsFields} from "../script/SettingsFields.sol";
 contract FlowTest is Fixture {
     using FixedPointMathLib for uint256;
 
-    uint256 internal constant N = 24;
+    uint256 internal constant N = 28;
 
     // ------------------------------------------------------------------ helpers
 
@@ -38,7 +38,7 @@ contract FlowTest is Fixture {
         return keccak256(abi.encode(s));
     }
 
-    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 24 fields in declaration order
+    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 28 fields in declaration order
     function _get(Settings memory s, uint256 i) internal pure returns (uint256) {
         return SettingsFields.get(s, i);
     }
@@ -47,22 +47,22 @@ contract FlowTest is Fixture {
         SettingsFields.set(s, i, v);
     }
 
-    function _lo() internal pure returns (uint256[24] memory) {
+    function _lo() internal pure returns (uint256[28] memory) {
         return SettingsFields.lo();
     }
 
-    function _hi() internal pure returns (uint256[24] memory) {
+    function _hi() internal pure returns (uint256[28] memory) {
         return SettingsFields.hi();
     }
 
-    function _names() internal pure returns (bytes32[24] memory) {
+    function _names() internal pure returns (bytes32[28] memory) {
         return SettingsFields.names();
     }
 
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
-        uint256[24] memory lo = _lo();
-        uint256[24] memory hi = _hi();
+        uint256[28] memory lo = _lo();
+        uint256[28] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
@@ -74,8 +74,6 @@ contract FlowTest is Fixture {
         // the slice is at least twice the largest buyback payment (field 16 is `buybackSlice`)
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
         if (s.buybackSlice < minSlice) _set(s, 16, minSlice);
-        // redeemSlippageBps (field 13) is bounded above by balanceBidMarginBps (field 14), set later in the loop
-        if (s.redeemSlippageBps > s.balanceBidMarginBps) _set(s, 13, s.balanceBidMarginBps);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -90,15 +88,15 @@ contract FlowTest is Fixture {
         assertEq(s.ceilBps, 11_000);
         assertEq(s.idleLoosenBps, 200);
         assertEq(s.saleFloorBps, 10_000);
-        assertEq(s.saleToBuybackBps, 5_000);
+        assertEq(s.saleToBuybackBps, 2_500);
         assertEq(s.buybackSlice, 0.5 ether);
         assertEq(s.buybackDelay, 25);
-        assertEq(s.keeperFee, 0.0005 ether);
-        assertEq(s.keeperMaxBaseFee, 10 gwei);
-        assertFalse(s.redeemOn);
+        assertEq(s.keeperFee, 0.0003 ether);
+        assertEq(s.keeperMaxBaseFee, 5 gwei);
+        assertTrue(s.redeemOn);
         assertFalse(s.balanceBidOn);
         assertEq(s.redeemSlippageBps, 200);
-        assertEq(s.balanceBidMarginBps, 2_000);
+        assertEq(s.balanceBidMarginBps, 1_000);
         assertEq(s.redeemBurnBps, 2_000);
         assertEq(s.rateCap, 26_700_000_000_000_000);
         assertEq(s.feeToRedeemBurnBps, 1_000);
@@ -116,10 +114,18 @@ contract FlowTest is Fixture {
         assertEq(_hash(core.settings()), _hash(s), "round trip");
     }
 
+    // promise: SPEC 3 the field list covers every Settings field, so the settings script round-trips all of them
+    function test_settings_fieldListLengthEqualsTheStructFieldCount() public {
+        // Settings is all value-type fields, each abi-encoded to one 32 byte word, so the encoding length over 32 is
+        // the field count; it must equal the field list length
+        Settings memory s = Mainnet.defaultSettings();
+        assertEq(abi.encode(s).length, SettingsFields.N * 32, "SettingsFields.N equals the Settings field count");
+    }
+
     // promise: INTEGRATION BadSetting: bounds are inclusive
     function test_settings_everyBoundEdgeIsAccepted() public {
-        uint256[24] memory lo = _lo();
-        uint256[24] memory hi = _hi();
+        uint256[28] memory lo = _lo();
+        uint256[28] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             for (uint256 k; k < 2; ++k) {
                 Settings memory s = Mainnet.defaultSettings();
@@ -131,8 +137,6 @@ contract FlowTest is Fixture {
                 if (i == 2 && k == 1) s.recoveryClimbPerMinBps = 1_000;
                 // the smallest slice needs the cheapest buyback payment: 2 * (600,000 gas * 1 gwei + 0) is 0.0012 ether
                 if (i == 16 && k == 0) (s.keeperFee, s.keeperMaxBaseFee) = (0, 1 gwei);
-                // balanceBidMarginBps at its bottom (0) needs redeemSlippageBps lowered to it, which it bounds
-                if (i == 14 && k == 0) s.redeemSlippageBps = 0;
                 _set(s, i, v);
                 _owner(s);
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -142,9 +146,9 @@ contract FlowTest is Fixture {
 
     // promise: INTEGRATION BadSetting
     function test_settings_everyBoundViolationReverts() public {
-        uint256[24] memory lo = _lo();
-        uint256[24] memory hi = _hi();
-        bytes32[24] memory names = _names();
+        uint256[28] memory lo = _lo();
+        uint256[28] memory hi = _hi();
+        bytes32[28] memory names = _names();
         for (uint256 i; i < N; ++i) {
             // the two switches take 0 or 1, nothing is out of bounds
             if (i == 11 || i == 12) continue;
@@ -169,14 +173,15 @@ contract FlowTest is Fixture {
     function test_settings_buybackSliceCoversTwiceTheLargestPayment() public {
         Settings memory s = Mainnet.defaultSettings();
         bytes memory bad = abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("buybackSlice"));
-        // the launch payment is 600,000 gas at 10 gwei plus 0.0005 ether: twice that is 0.013 ether
-        s.buybackSlice = 0.013 ether - 1;
+        // the launch payment is 600,000 gas at 5 gwei plus 0.0003 ether: twice that is 0.0066 ether, under the 0.01 ether
+        // lower bound of the slice, so the lower bound governs
+        s.buybackSlice = 0.01 ether - 1;
         vm.prank(owner);
         vm.expectRevert(bad);
         core.setSettings(s);
-        s.buybackSlice = 0.013 ether;
+        s.buybackSlice = 0.01 ether;
         _owner(s);
-        assertEq(core.settings().buybackSlice, 0.013 ether);
+        assertEq(core.settings().buybackSlice, 0.01 ether);
         // a dearer payment raises the line, and a cheaper one lowers it
         s.keeperFee = 0.005 ether;
         s.keeperMaxBaseFee = 100 gwei;
@@ -292,14 +297,21 @@ contract FlowTest is Fixture {
         uint256 balance = address(core).balance;
         uint256 pot = core.ethPot();
         uint256 buyback = core.ethToBuyback();
-        uint256 toBuyback = price * bps / 10_000;
+        uint256 artistBefore = core.artist().balance;
+        uint256 payeeBefore = core.payee().balance;
+        uint256 toArtist = price * s.saleToArtistBps / 10_000;
+        uint256 toOperator = price * s.saleToOperatorBps / 10_000;
+        uint256 rest = price - toArtist - toOperator;
+        uint256 toBuyback = rest * bps / 10_000;
         vm.expectEmit(address(core));
-        emit ICore.StatementSoldTo(sid, alice, price, toBuyback);
+        emit ICore.StatementSoldTo(sid, alice, price, toBuyback, toArtist, toOperator);
         assertEq(_buy(alice, sid), price);
         assertEq(STATEMENTS.ownerOf(sid), alice);
-        assertEq(address(core).balance, balance + price, "the payment is in the core");
+        assertEq(address(core).balance, balance + rest, "the rest stays in the core after the cuts");
         assertEq(core.ethToBuyback(), buyback + toBuyback, "buyback share");
-        assertEq(core.ethPot(), pot + price - toBuyback, "pot share");
+        assertEq(core.ethPot(), pot + rest - toBuyback, "pot share");
+        assertEq(core.artist().balance, artistBefore + toArtist, "artist cut pushed");
+        assertEq(core.payee().balance, payeeBefore + toOperator, "operator cut pushed");
         assertEq(core.heldStatements().length, 0);
         _solvent();
     }

@@ -64,7 +64,7 @@ struct LaunchConfig {
     int24 startTick;
     int24 positionLower;
     int24 positionUpper;
-    /// the baseline skim in bps of volume (690 is 6.9 percent)
+    /// the baseline skim in bps of volume (1000 is 10 percent)
     uint24 baselineSkimBps;
     /// the engine's share of the baseline skim, bps. the protocol keeps the rest
     uint16 bountyBps;
@@ -82,13 +82,14 @@ struct LaunchConfig {
     address[] allowed;
     /// the recipients of additional payouts that `SeaportBasicAdapter` accepts at launch. the OpenSea fee collector
     address[] seaportRecipients;
-    /// the address `Core.claimPayee` pays at launch. the owner replaces it with `Core.setPayee`. its share is
-    /// `settings.payeePpm`: the Core receives bountyBps / 10_000 of the baseline skim, 9_638 / 10_000 of 690 bps is
-    /// 665.022 bps of volume (6.65022 points). 75_185 ppm of that is 0.5 points of volume:
-    /// 0.5 / 6.65022 * 1e6 = 75_185.2, rounded down
+    /// the address the payee fee share (`settings.payeePpm`, 0 at launch) and the operator cut of nft sales
+    /// (`settings.saleToOperatorBps`) are pushed to. the Core receives bountyBps / 10_000 of the baseline skim, 9_000 /
+    /// 10_000 of 1000 bps is 900 bps of volume (9.0 points). the owner can raise the fee share with `Core.setPayee`
     address payee;
+    /// the address the artist cut of nft sales (`settings.saleToArtistBps`) is pushed to, set by `Core.setArtist`
+    address artist;
     // explicit overrides of pinned preflight rules. all false by default. each one is part of the config hash
-    /// allow a bountyBps other than 9638
+    /// allow a bountyBps other than 9000
     bool allowBounty;
     /// allow launching while the factory is not deprecated (a future public factory)
     bool allowOpenFactory;
@@ -117,8 +118,8 @@ abstract contract ConfigReader is CommonBase {
         c.startTick = -175_000;
         c.positionLower = -175_000;
         c.positionUpper = 887_200;
-        c.baselineSkimBps = 690;
-        c.bountyBps = 9638;
+        c.baselineSkimBps = 1000;
+        c.bountyBps = 9000;
         c.maxReferralBps = 0;
         c.lpFeePips = 0;
         c.sniperStartBps = 9_000;
@@ -173,6 +174,8 @@ abstract contract ConfigReader is CommonBase {
         s.idleLoosenBps = _u16(j, ".settings.idleLoosenBps");
         s.saleFloorBps = _u16(j, ".settings.saleFloorBps");
         s.saleToBuybackBps = _u16(j, ".settings.saleToBuybackBps");
+        s.saleToArtistBps = _u16(j, ".settings.saleToArtistBps");
+        s.saleToOperatorBps = _u16(j, ".settings.saleToOperatorBps");
         s.recoveryClimbPerMinBps = _u16(j, ".settings.recoveryClimbPerMinBps");
         s.recoveryGapBps = _u16(j, ".settings.recoveryGapBps");
         s.peakHalfLife = _u32(j, ".settings.peakHalfLife");
@@ -192,15 +195,16 @@ abstract contract ConfigReader is CommonBase {
         // forge-lint: disable-end(unsafe-typecast)
         s.feeToRedeemBurnBps = _u16(j, ".settings.feeToRedeemBurnBps");
         s.payeePpm = _u24(j, ".settings.payeePpm");
+        s.refScore = _u32(j, ".settings.refScore");
+        // forge-lint: disable-next-line(unsafe-typecast)
+        s.swapFeeCc = uint96(_uint(j, ".settings.swapFeeCc", type(uint96).max));
     }
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {
         c.sale = Sale({
             markupBps: _u16(j, ".sale.markupBps"),
             startCapBps: _u32(j, ".sale.startCapBps"),
-            fastDecayBpsPerHour: _u16(j, ".sale.fastDecayBpsPerHour"),
-            kneeBps: _u32(j, ".sale.kneeBps"),
-            slowDecayBpsPerHour: _u16(j, ".sale.slowDecayBpsPerHour"),
+            decayHours: _u16(j, ".sale.decayHours"),
             anchorHalfLife: _u32(j, ".sale.anchorHalfLife"),
             anchorMinCost: _u128(j, ".sale.anchorMinCost")
         });
@@ -214,10 +218,7 @@ abstract contract ConfigReader is CommonBase {
             saleOn: vm.parseJsonBool(j, ".credit.saleOn"),
             window: _u32(j, ".credit.window"),
             floorBps: _u16(j, ".credit.floorBps"),
-            startBps: _u32(j, ".credit.startBps"),
-            refScore: _u32(j, ".credit.refScore"),
-            royaltyBps: _u16(j, ".credit.royaltyBps"),
-            royaltyRecipient: vm.parseJsonAddress(j, ".credit.royaltyRecipient")
+            startBps: _u32(j, ".credit.startBps")
         });
     }
 
@@ -238,6 +239,7 @@ abstract contract ConfigReader is CommonBase {
         c.allowed = vm.parseJsonAddressArray(j, ".launch.allowed");
         c.seaportRecipients = vm.parseJsonAddressArray(j, ".adapters.seaportRecipients");
         c.payee = vm.parseJsonAddress(j, ".payee.address");
+        c.artist = vm.parseJsonAddress(j, ".artist");
     }
 
     // every narrowing below follows a bounds check, so the casts cannot truncate
@@ -288,7 +290,7 @@ abstract contract ConfigReader is CommonBase {
         uint256 n;
         if (c.owner == address(0)) tmp[n++] = "owner";
         if (c.creator == address(0)) tmp[n++] = "creator";
-        if (c.credit.royaltyRecipient == address(0)) tmp[n++] = "credit.royaltyRecipient";
+        if (c.artist == address(0) && c.settings.saleToArtistBps != 0) tmp[n++] = "artist";
         if (bytes(c.name).length == 0) tmp[n++] = "name";
         if (bytes(c.symbol).length == 0) tmp[n++] = "symbol";
         if (c.salt == bytes32(0)) tmp[n++] = "salt";
@@ -314,9 +316,7 @@ abstract contract ConfigReader is CommonBase {
         Sale memory k = c.sale;
         if (k.markupBps < 10_000 || k.markupBps > 40_000) return "markupBps";
         if (k.startCapBps < k.markupBps || k.startCapBps > 200_000) return "startCapBps";
-        if (k.kneeBps < 1_000 || k.kneeBps > k.startCapBps) return "kneeBps";
-        if (k.fastDecayBpsPerHour < 1 || k.fastDecayBpsPerHour > 10_000) return "fastDecayBpsPerHour";
-        if (k.slowDecayBpsPerHour < 1 || k.slowDecayBpsPerHour > 10_000) return "slowDecayBpsPerHour";
+        if (k.decayHours < 1 || k.decayHours > 720) return "decayHours";
         if (k.anchorHalfLife < 1 days || k.anchorHalfLife > 90 days) return "anchorHalfLife";
         if (k.anchorMinCost > 10 ether) return "anchorMinCost";
         return bytes32(0);

@@ -12,12 +12,12 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {LowballCreditController, ReentrantCreditBuyer} from "./attackers/CreditSaleAttackers.sol";
 
 /// credit sale window. pile credits are for sale from acquisition at a price that falls linearly from a start to a
-/// floor over `creditWindow` and rests at the floor. the floor is the largest of the credit's cost, `floorRate` and
+/// floor over `creditWindow` and rests at the floor. the floor is the larger of the credit's cost and
 /// `valueOf(score)`, times `creditFloorBps`; the start is the floor times `creditStartBps`. `valueOf` is the larger of the rate term
 /// `floorRate * score / refScore` and the balance token pool term, which reads the live pool and the live unit: a
 /// missing or failed pool read leaves the pool term at 0 and the sale never reverts for it. the core keeps a hard floor
-/// at the credit's cost. a buy pays the price plus the royalty. while the sale is on compose takes only credits past
-/// their window
+/// at the credit's cost. a buy pays the price, with the artist and operator cuts taken off it (decision 123). while
+/// the sale is on compose takes only credits past their window
 contract CreditSaleTest is Fixture {
     uint256 internal constant BPS = 10_000;
 
@@ -43,12 +43,11 @@ contract CreditSaleTest is Fixture {
         _setCreditSaleOn(true);
     }
 
-    /// `who` buys credit `id` at the price `price` plus the royalty on it
+    /// `who` buys credit `id` at its price (the artist and operator cuts come off it inside the core)
     function _buyAt(address who, uint256 id, uint256 price) internal {
-        uint256 pay = price + price * ctl.royaltyBps() / BPS;
-        vm.deal(who, who.balance + pay);
+        vm.deal(who, who.balance + price);
         vm.prank(who);
-        ctl.buyCredit{value: pay}(id);
+        ctl.buyCredit{value: price}(id);
     }
 
     function _max(uint256 a, uint256 b) internal pure returns (uint256) {
@@ -60,7 +59,7 @@ contract CreditSaleTest is Fixture {
     // promise: INTEGRATION CreditSaleOff
     function test_toggle_offBlocksBuyCredit() public {
         uint256[] memory ids = _fillEthPile(1);
-        assertFalse(ctl.creditSaleOn(), "off at launch");
+        assertFalse(ctl.creditSaleOn(), "the fixture starts with the sale off");
         vm.deal(buyer, 10 ether);
         vm.prank(buyer);
         vm.expectRevert(IControllerV1.CreditSaleOff.selector);
@@ -102,18 +101,9 @@ contract CreditSaleTest is Fixture {
         c.startBps = 9_999;
         _creditBad(c, "creditStartBps");
         c.startBps = 200_000;
-
-        // refScore 1 to 8_000_000
-        c.refScore = 1;
-        ctl.setCredit(c);
-        c.refScore = 8_000_000;
-        ctl.setCredit(c);
-        c.refScore = 0;
-        _creditBad(c, "refScore");
-        c.refScore = 8_000_001;
-        _creditBad(c, "refScore");
         vm.stopPrank();
-        assertEq(ctl.refScore(), 8_000_000);
+
+        // refScore is a Core setting now, its bound is covered by test/SetSettings.t.sol
 
         // owner only
         c.saleOn = false;
@@ -186,7 +176,7 @@ contract CreditSaleTest is Fixture {
         _warp(ctl.creditWindow());
         uint256 price = ctl.creditPrice(id);
 
-        uint256 gross = ctl.grossCreditPrice(id);
+        uint256 gross = ctl.creditPrice(id);
         vm.deal(buyer, gross);
         vm.prank(buyer);
         ctl.buyCredit{value: gross}(id);
@@ -197,6 +187,7 @@ contract CreditSaleTest is Fixture {
         uint256[] memory back = new uint256[](1);
         back[0] = id;
         uint256 ethBefore = buyer.balance;
+        vm.roll(block.number + 1); // a credit sold through the credit sale returns through a door in a later block
         vm.prank(buyer);
         core.sellForEth(back);
         assertLt(buyer.balance - ethBefore, price, "the sell back pays less than the purchase cost");
@@ -204,15 +195,16 @@ contract CreditSaleTest is Fixture {
     }
 
     // promise: an outsider gains nothing at the engine's cost: a credit bought at its sale price and sold straight
-    // back into the eth bid returns less than it cost, for the credit with the lowest sale price
-    function test_floorRate_buyThenSellBackNeverBeatsTheBid() public {
+    // back into the eth bid returns less than it cost, for the credit with the lowest sale price. the floor is
+    // `valueOf(score) * creditFloorBps >= floorRate * score / refScore * creditFloorBps >= bidOf`, so the round trip loses
+    function test_noProfit_buyThenSellBackNeverBeatsTheBid() public {
         uint256[] memory ids = _fillEthPile(40);
         _on();
         _warp(ctl.creditWindow());
         uint256 id = ids[0];
-        uint256 pay = ctl.grossCreditPrice(id);
+        uint256 pay = ctl.creditPrice(id);
         for (uint256 i = 1; i < ids.length; ++i) {
-            uint256 g = ctl.grossCreditPrice(ids[i]);
+            uint256 g = ctl.creditPrice(ids[i]);
             if (g < pay) {
                 pay = g;
                 id = ids[i];
@@ -225,9 +217,36 @@ contract CreditSaleTest is Fixture {
         CREDITS.setApprovalForAll(address(core), true);
         uint256[] memory one = new uint256[](1);
         one[0] = id;
+        vm.roll(block.number + 1); // the same block return is refused; the profit test is about price, not timing
         core.sellForEth(one);
         vm.stopPrank();
         assertLe(arb.balance, pay, "the round trip returned more eth than the credit cost");
+    }
+
+    // promise: SPEC 8 the credit sale floor is max(cost, valueOf(score)) * creditFloorBps, the flat floorRate term dropped
+    /// a credit scoring well below refScore floors at its per-point value, not the average-credit floor rate. the
+    /// dropped term (decision 115a, redundant under the per-point bid of decision 116) would have priced it at floorRate * creditFloorBps, far above
+    function test_floor_usesValueOfNotTheFlatFloorRate() public {
+        uint256 id = _fillEthPile(1)[0];
+        _on();
+        // raise the rate well above the credit's recorded cost, so the flat floorRate sits above both the cost and the
+        // per-point value term; a high refScore puts the credit's score well below it, so valueOf(score) is a fraction of floorRate
+        _liftRateCap();
+        vm.prank(owner);
+        core.setRate(1e17);
+        _setRefScore(8_000_000);
+        uint256 s = _scoreOf(id);
+        assertLt(s, 8_000_000, "the credit scores below refScore");
+        (, uint256 cost,) = core.creditInfo(id);
+        uint256 fr = core.floorRate();
+        uint256 value = ctl.valueOf(s);
+        assertEq(value, FullMath.mulDiv(fr, s, 8_000_000), "valueOf is the rate term, no pool");
+        uint256 hi = _max(cost, value);
+        assertLt(hi, fr, "the governing term is below the flat floor rate that was dropped");
+        uint256 fb = ctl.creditFloorBps();
+        _warp(ctl.creditWindow());
+        assertEq(ctl.creditPrice(id), hi * fb / BPS, "the floor is max(cost, valueOf(score)) * creditFloorBps");
+        assertLt(ctl.creditPrice(id), fr * fb / BPS, "and below floorRate * creditFloorBps, the dropped flat term");
     }
 
     // promise: SPEC 1 buyCredits prices each credit after the previous sale
@@ -236,8 +255,8 @@ contract CreditSaleTest is Fixture {
     function test_h1_buyCreditsPricesEachAfterThePreviousSale() public {
         uint256[] memory ids = _armCostGoverns(2);
         _warp(ctl.creditWindow());
-        uint256 q0 = ctl.grossCreditPrice(ids[0]);
-        uint256 q1 = ctl.grossCreditPrice(ids[1]);
+        uint256 q0 = ctl.creditPrice(ids[0]);
+        uint256 q1 = ctl.creditPrice(ids[1]);
         uint256 pay = q0 + q1 + 1 ether;
         vm.deal(buyer, pay);
         vm.prank(buyer);
@@ -252,11 +271,10 @@ contract CreditSaleTest is Fixture {
     function test_buy_underpayReverts() public {
         uint256[] memory ids = _armCostGoverns(1);
         uint256 price = ctl.creditPrice(ids[0]);
-        uint256 gross = ctl.grossCreditPrice(ids[0]);
-        vm.deal(buyer, gross);
+        vm.deal(buyer, price);
         vm.prank(buyer);
         vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buyCredit{value: gross - 1}(ids[0]);
+        ctl.buyCredit{value: price - 1}(ids[0]);
     }
 
     // promise: SPEC 1 creditCostToPotBps of the cost to ethPot, the rest to the buyback pot
@@ -267,10 +285,16 @@ contract CreditSaleTest is Fixture {
         uint256 price = ctl.creditPrice(id);
         uint256 potBefore = core.ethPot();
         uint256 buybackBefore = core.ethToBuyback();
-        assertEq(core.creditCostToPotBps(), 10_000, "default");
+        assertEq(core.creditCostToPotBps(), 8_000, "default");
+        // the artist and operator cuts come off the top, then the credit cost basis share of the rest goes to the pot
+        uint256 toArtist = price * core.settings().saleToArtistBps / 10_000;
+        uint256 toOperator = price * core.settings().saleToOperatorBps / 10_000;
+        uint256 rest = price - toArtist - toOperator;
+        uint256 toPot = cost * 8_000 / 10_000;
+        if (toPot > rest) toPot = rest;
         _buyAt(buyer, id, price);
-        assertEq(core.ethPot() - potBefore, cost, "the whole cost goes to the pot at the default");
-        assertEq(core.ethToBuyback() - buybackBefore, price - cost, "the markup over cost goes to the buyback");
+        assertEq(core.ethPot() - potBefore, toPot, "the credit cost basis share of the rest goes to the pot");
+        assertEq(core.ethToBuyback() - buybackBefore, rest - toPot, "the remainder of the rest goes to the buyback");
     }
 
     // promise: INTEGRATION BelowFloor on sellCreditTo
@@ -296,7 +320,7 @@ contract CreditSaleTest is Fixture {
         uint256[] memory ids = _armCostGoverns(1);
         vm.prank(owner);
         core.setPaused(true);
-        uint256 price = ctl.grossCreditPrice(ids[0]);
+        uint256 price = ctl.creditPrice(ids[0]);
         vm.deal(buyer, price);
         vm.prank(buyer);
         vm.expectRevert(ICore.Paused.selector);
@@ -334,8 +358,7 @@ contract CreditSaleTest is Fixture {
     function test_buy_balanceTokenCreditSellsAtItsRecordedCost() public {
         _enterPhase2();
         _fundPot(3 ether);
-        xt.mint(address(core), 1e24);
-        core.bookBalance();
+        xt.mint(address(mod), 1e24);
         _setBalancePool();
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];
@@ -351,7 +374,7 @@ contract CreditSaleTest is Fixture {
         uint256 potBefore = core.ethPot();
         _buyAt(buyer, id, price);
         assertEq(CREDITS.ownerOf(id), buyer, "the balance token credit is sold");
-        assertEq(core.ethPot() - potBefore, cost, "the pot books the recorded cost at the default split");
+        assertEq(core.ethPot() - potBefore, cost * 8_000 / 10_000, "the pot books 80 percent of the recorded cost at the default split");
     }
 
     // ------------------------------------------------------------------ reentrancy

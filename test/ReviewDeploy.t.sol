@@ -170,11 +170,11 @@ contract ReviewDeployTest is ReviewHarness {
         vm.expectRevert(abi.encodeWithSelector(ConfigReader.ConfigOutOfRange.selector, ".stack.tickSpacing"));
         this.load("test/data/ReviewTruncated.json");
         string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
-        assertEq(this.parse(j).bountyBps, 9638, "the untouched file parses");
+        assertEq(this.parse(j).bountyBps, 9000, "the untouched file parses");
         string[11] memory from = [
-            '"bountyBps": 9638',
-            '"payeePpm": 75185',
-            '"baselineSkimBps": 690',
+            '"bountyBps": 9000',
+            '"payeePpm": 0',
+            '"baselineSkimBps": 1000',
             '"sniperSeconds": 1800',
             '"startTick": -175000',
             '"positionUpper": 887200',
@@ -235,7 +235,7 @@ contract ReviewDeployTest is ReviewHarness {
     }
 
     /// the default config plus the launch inputs of script/config/mainnet.json (the live v2 stack, owner, creator, payee,
-    /// name, salt)
+    /// artist, name, salt)
     function _shipped() internal view returns (LaunchConfig memory s) {
         s = defaultConfig();
         s.stack.hook = v2.hook;
@@ -245,7 +245,7 @@ contract ReviewDeployTest is ReviewHarness {
         s.mevModule = v2.mev;
         s.owner = v2.owner;
         s.creator = v2.owner;
-        s.credit.royaltyRecipient = v2.owner;
+        s.artist = 0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a;
         s.payee = v2.owner;
         s.name = "CC";
         s.salt = keccak256("CC");

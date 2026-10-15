@@ -30,9 +30,6 @@ abstract contract HandlerSale is HandlerOwner {
     bool public gLockedT;
     /// sales through `sellTo`
     uint256 public gSoldTo;
-    /// the first controller's royalty owed and balance before the action under check
-    uint256 internal _owed0;
-    uint256 internal _ctlBal0;
 
     /// the fixture hands over what only it can build (from artifacts, so the contract stays small)
     function setSaleParts(address selling_, address[] calldata heirs_) external {
@@ -50,11 +47,6 @@ abstract contract HandlerSale is HandlerOwner {
 
     function moduleEverCount() external view returns (uint256) {
         return modulesEver.length;
-    }
-
-    /// the royalty on an engine price `price` at the first controller's current `royaltyBps`
-    function _royaltyOn(uint256 price) internal view returns (uint256) {
-        return price * IControllerV1(v1).royaltyBps() / 10_000;
     }
 
     function _bps() internal view returns (uint256) {
@@ -78,6 +70,10 @@ abstract contract HandlerSale is HandlerOwner {
         uint256 payerBal;
         uint256 held;
         uint256 bps;
+        uint256 artistBps;
+        uint256 operatorBps;
+        uint256 artist0;
+        uint256 payee0;
         uint256 floor;
         uint256 price;
         uint256 value;
@@ -105,23 +101,33 @@ abstract contract HandlerSale is HandlerOwner {
         p.payerBal = payer.balance;
         p.held = core.heldStatements().length;
         p.bps = _bps();
+        p.artistBps = core.settings().saleToArtistBps;
+        p.operatorBps = core.settings().saleToOperatorBps;
+        p.artist0 = core.artist().balance;
+        p.payee0 = core.payee().balance;
         p.floor = _hardFloor(sid);
         p.value = value;
         p.buyer = buyer;
         p.payer = payer;
     }
 
-    /// a sale went through: the whole payment is booked, split by saleToBuybackBps, the statement is with the buyer and
-    /// the record is gone. the payment is at least the hard floor
+    /// a sale went through: the artist and operator cuts come off the top and are pushed, the rest is split by
+    /// saleToBuybackBps between the buyback and the pot, the statement is with the buyer and the record is gone. the
+    /// payment is at least the hard floor
     function _saleDone(uint256 sid, SalePre memory p, uint256 paid) internal {
         SG storage g = _sg[sid];
         if (p.want != 0) _flag(V_SALE_PATH, "a sale the model refuses went through");
         if (paid < p.floor) _flag(V_SALE_PATH, "a statement was sold below the hard floor");
-        _eth(p.bal, 0, paid, "sellTo");
-        uint256 toBb = paid * p.bps / 10_000;
-        if (core.ethToBuyback() != p.tb + toBb || core.ethPot() != p.pot + paid - toBb) {
-            _flag(V_SALE_PATH, "the sale payment was not booked exactly, split by saleToBuybackBps");
+        uint256 toArtist = paid * p.artistBps / 10_000;
+        uint256 toOperator = paid * p.operatorBps / 10_000;
+        uint256 rest = paid - toArtist - toOperator;
+        uint256 toBb = rest * p.bps / 10_000;
+        _eth(p.bal, toArtist + toOperator, paid, "sellTo");
+        if (core.ethToBuyback() != p.tb + toBb || core.ethPot() != p.pot + rest - toBb) {
+            _flag(V_SALE_PATH, "the sale rest was not booked exactly, split by saleToBuybackBps");
         }
+        if (core.artist().balance != p.artist0 + toArtist) _flag(V_SALE_PATH, "the artist cut was not pushed");
+        if (core.payee().balance != p.payee0 + toOperator) _flag(V_SALE_PATH, "the operator cut was not pushed to the payee");
         _booked(paid);
         if (_ownerOf(sid) != p.buyer) _flag(V_SALE_PATH, "the buyer does not hold the statement");
         (bool held,,) = core.statementInfo(sid);
@@ -177,42 +183,9 @@ abstract contract HandlerSale is HandlerOwner {
         if (next > cap) next = cap;
     }
 
-    /// reads the royalty owed and the balance of the first controller before a sale
-    function _royaltyPre() internal {
-        _owed0 = IControllerV1(v1).royaltyOwed();
-        _ctlBal0 = address(v1).balance;
-    }
-
-    /// after a sale that collected `royalty`, the first controller owes `royalty` more and holds `royalty` more eth
-    function _royaltyCheck(uint256 royalty) internal {
-        if (IControllerV1(v1).royaltyOwed() != _owed0 + royalty) {
-            _flag(V_SALE_PATH, "royaltyOwed differs from the royalty of the sale");
-        }
-        if (address(v1).balance != _ctlBal0 + royalty) _flag(V_SALE_PATH, "the controller holds other than the royalty owed");
-    }
-
-    /// anyone claims the royalty: the recipient receives exactly what is owed and nothing stays in the controller
-    function _claimChecked() internal {
-        IControllerV1 c = IControllerV1(v1);
-        address to = c.royaltyRecipient();
-        uint256 owed = c.royaltyOwed();
-        if (owed == 0) return;
-        uint256 before_ = to.balance;
-        _ctlBal0 = address(c).balance;
-        (bool ok,) = address(c).call(abi.encodeCall(IControllerV1.claimRoyalty, ()));
-        if (!ok) {
-            _flag(V_SALE_PATH, "claimRoyalty reverted with a royalty owed");
-            return;
-        }
-        if (to.balance - before_ != owed) _flag(V_SALE_PATH, "the recipient did not receive the royalty owed");
-        if (c.royaltyOwed() != 0 || address(c).balance != _ctlBal0 - owed) {
-            _flag(V_SALE_PATH, "the controller kept eth after the royalty claim");
-        }
-    }
-
-    /// a buyer pays the asking price of the first controller plus the royalty, with an excess now and then and a short
-    /// payment now and then. with another controller in force, on a sold, redeemed or balance side statement it must
-    /// refuse with the model's selector. a sale pays the ask and the royalty exactly, the excess comes back
+    /// a buyer pays the asking price of the first controller, with an excess now and then and a short payment now and
+    /// then. with another controller in force, on a sold, redeemed or balance side statement it must refuse with the
+    /// model's selector. a sale pays the ask exactly, the excess comes back, and the artist and operator cuts are pushed
     function buy(uint256 sIdx, uint256 aSeed, uint256 xSeed, uint256 mode) external checked {
         uint8 a = A_BUY;
         (uint256 sid, bool found) = _pickBy(sIdx, mode % 4 == 0 ? K_ANY : K_HELD);
@@ -234,14 +207,9 @@ abstract contract HandlerSale is HandlerOwner {
         if (priced && price != _modelAsk(sid)) {
             _flag(V_SALE_PATH, "the asking price differs from the curve at the age outside every pause");
         }
-        uint256 gross = price + _royaltyOn(price);
-        if (priced && IControllerV1(v1).grossPriceOf(sid) != gross) {
-            _flag(V_SALE_PATH, "the gross price is not the asking price plus the royalty");
-        }
         bool short_ = priced && price != 0 && xSeed % 7 == 0;
-        uint256 value = !priced ? 1 ether : (short_ ? gross - 1 : gross + (xSeed % 3 == 0 ? 0 : _logBound(xSeed, 1, 1 ether)));
+        uint256 value = !priced ? 1 ether : (short_ ? price - 1 : price + (xSeed % 3 == 0 ? 0 : _logBound(xSeed, 1, 1 ether)));
         SalePre memory p = _salePre(sid, who, who, value);
-        _royaltyPre();
         p.price = price;
         p.want = _buyRefusal(sid, p, short_);
         vm.deal(who, who.balance + value);
@@ -267,12 +235,10 @@ abstract contract HandlerSale is HandlerOwner {
             ) {
                 _flag(V_SALE_PATH, "a buy at or below the anchor, or of a statement under the minimum cost, stored the anchor");
             }
-            if (p.payerBal - who.balance != gross) {
-                _flag(V_SALE_PATH, "the buyer did not pay exactly the ask plus the royalty, or the excess was not refunded");
+            if (p.payerBal - who.balance != price) {
+                _flag(V_SALE_PATH, "the buyer did not pay exactly the ask, or the excess was not refunded");
             }
-            _royaltyCheck(gross - price);
             _saleDone(sid, p, price);
-            if (mode % 5 == 2) _claimChecked();
         } catch (bytes memory why) {
             _saleRefused(sid, p, why, a);
         }
@@ -321,7 +287,7 @@ abstract contract HandlerSale is HandlerOwner {
     /// expects when the call must revert
     struct CQ {
         uint256 price;
-        uint256 royalty;
+        uint256[] prices;
         uint256 value;
         bytes4 want;
     }
@@ -343,9 +309,10 @@ abstract contract HandlerSale is HandlerOwner {
         } catch (bytes memory reason) {
             priceErr = reason.length >= 4 ? bytes4(reason) : bytes4(0);
         }
-        q.royalty = _royaltyOn(q.price);
+        q.prices = new uint256[](1);
+        q.prices[0] = q.price;
         bool short_ = priced && q.price != 0 && xSeed % 7 == 0;
-        q.value = _creditValue(priced, q.price + q.royalty, short_, xSeed);
+        q.value = _creditValue(priced, q.price, short_, xSeed);
         q.want = _buyCreditRefusal(c.creditSaleOn(), core.paused(), priceErr, short_, core.controller() == v1);
     }
 
@@ -353,10 +320,11 @@ abstract contract HandlerSale is HandlerOwner {
         IControllerV1 c = IControllerV1(v1);
         bool priced = true;
         bytes4 priceErr;
+        q.prices = new uint256[](ids.length);
         for (uint256 i; i < ids.length; ++i) {
             try c.creditPrice(ids[i]) returns (uint256 pr) {
                 q.price += pr;
-                q.royalty += _royaltyOn(pr);
+                q.prices[i] = pr;
             } catch (bytes memory reason) {
                 priced = false;
                 // the batch loop prices ids in order and reverts at the first credit whose price reverts, so the first
@@ -365,7 +333,7 @@ abstract contract HandlerSale is HandlerOwner {
             }
         }
         bool short_ = priced && q.price != 0 && xSeed % 6 == 0;
-        q.value = _creditValue(priced, q.price + q.royalty, short_, xSeed);
+        q.value = _creditValue(priced, q.price, short_, xSeed);
         q.want = _buyCreditsRefusal(c.creditSaleOn(), core.paused(), priceErr, short_, core.controller() == v1);
     }
 
@@ -402,14 +370,13 @@ abstract contract HandlerSale is HandlerOwner {
         CreditPre memory p = _creditPre(q.value);
         vm.deal(who, who.balance + q.value);
         p.payerBal = who.balance;
-        _royaltyPre();
         RS memory rs = _rs();
         _att(a);
         vm.prank(who);
         try IControllerV1(v1).buyCredit{value: q.value}(id) {
             _ok(a);
             if (q.want != 0) _flag(V_SALE_PATH, "a credit sale the model refuses went through");
-            _afterCreditBuyOne(id, cost, q.price, q.royalty, p, who);
+            _afterCreditBuyOne(id, cost, q.price, p, who);
         } catch (bytes memory why) {
             _creditRefused(p, why, a, q.want);
         }
@@ -429,14 +396,13 @@ abstract contract HandlerSale is HandlerOwner {
         CreditPre memory p = _creditPre(q.value);
         vm.deal(who, who.balance + q.value);
         p.payerBal = who.balance;
-        _royaltyPre();
         RS memory rs = _rs();
         _att(a);
         vm.prank(who);
         try IControllerV1(v1).buyCredits{value: q.value}(ids) {
             _ok(a);
             if (q.want != 0) _flag(V_SALE_PATH, "a credit batch the model refuses went through");
-            _afterCreditBuy(ids, costs, q.price, q.royalty, p, who);
+            _afterCreditBuy(ids, costs, q.prices, p, who);
         } catch (bytes memory why) {
             _creditRefused(p, why, a, q.want);
         }
@@ -480,6 +446,8 @@ abstract contract HandlerSale is HandlerOwner {
         uint256 rate;
         uint256 payerBal;
         uint256 value;
+        uint256 artist0;
+        uint256 payee0;
     }
 
     function _creditPre(uint256 value) internal view returns (CreditPre memory p) {
@@ -488,50 +456,78 @@ abstract contract HandlerSale is HandlerOwner {
         p.tb = core.ethToBuyback();
         p.rate = core.ethRate();
         p.value = value;
+        p.artist0 = core.artist().balance;
+        p.payee0 = core.payee().balance;
     }
 
-    function _afterCreditBuyOne(uint256 id, uint256 cost, uint256 price, uint256 royalty, CreditPre memory p, address who)
-        internal
-    {
+    function _afterCreditBuyOne(uint256 id, uint256 cost, uint256 price, CreditPre memory p, address who) internal {
         uint256[] memory ids = new uint256[](1);
         uint256[] memory costs = new uint256[](1);
+        uint256[] memory prices = new uint256[](1);
         ids[0] = id;
         costs[0] = cost;
-        _afterCreditBuy(ids, costs, price, royalty, p, who);
+        prices[0] = price;
+        _afterCreditBuy(ids, costs, prices, p, who);
     }
 
-    /// a credit sale went through: the buyer paid the price and the royalty exactly and got the excess back, the credits left the pile
-    /// to the buyer, the cost share went to the pot and the markup to the buyback, and no credit left for less than its
-    /// recorded cost
+    /// a credit sale went through: the buyer paid the sum of the prices exactly and got the excess back, the credits
+    /// left the pile to the buyer, the artist and operator cuts came off each payment and were pushed, the credit cost
+    /// basis share of the rest went to the pot and the remainder to the buyback, and no credit left below its cost
+    struct CAcc {
+        uint256 priceSum;
+        uint256 costSum;
+        uint256 toPotSum;
+        uint256 toBuybackSum;
+        uint256 artistSum;
+        uint256 operatorSum;
+    }
+
     function _afterCreditBuy(
         uint256[] memory ids,
         uint256[] memory costs,
-        uint256 price,
-        uint256 royalty,
+        uint256[] memory prices,
         CreditPre memory p,
         address who
     ) internal {
-        if (p.payerBal - who.balance != price + royalty) {
-            _flag(V_SALE_PATH, "the credit buyer did not pay exactly the price plus the royalty");
-        }
-        uint256 toPotSum;
-        uint256 costSum;
+        CAcc memory acc;
         for (uint256 i; i < ids.length; ++i) {
             if (CREDITS.ownerOf(ids[i]) != who) _flag(V_SALE_PATH, "the credit buyer does not hold the credit");
             (bool inPile,,) = core.creditInfo(ids[i]);
             if (inPile) _flag(V_SALE_PATH, "a sold credit still has a pile record");
             cg[ids[i]].inPile = false;
-            toPotSum += costs[i] * core.creditCostToPotBps() / 10_000;
-            costSum += costs[i];
+            _accCredit(acc, prices[i], costs[i]);
         }
-        // no credit leaves the pot for less than it was bought for: the price is at least the sum of the costs
-        if (price < costSum) _flag(V_SALE_PATH, "a credit was sold below its recorded cost");
-        if (core.ethPot() != p.pot + toPotSum || core.ethToBuyback() != p.tb + price - toPotSum) {
-            _flag(V_SALE_PATH, "the credit sale payment was not booked by creditCostToPotBps");
+        if (p.payerBal - who.balance != acc.priceSum) {
+            _flag(V_SALE_PATH, "the credit buyer did not pay exactly the sum of the prices");
         }
-        _eth(p.bal, 0, price, "credit buy");
-        _booked(price);
-        _royaltyCheck(royalty);
+        // the gross payment is at least the sum of the costs, the Core's hard floor before the artist and operator cuts
+        // come off; the engine books the rest after the cuts (checked below)
+        if (acc.priceSum < acc.costSum) _flag(V_SALE_PATH, "a credit was sold below its recorded cost");
+        if (core.ethPot() != p.pot + acc.toPotSum || core.ethToBuyback() != p.tb + acc.toBuybackSum) {
+            _flag(V_SALE_PATH, "the credit sale rest was not booked by creditCostToPotBps");
+        }
+        if (core.artist().balance != p.artist0 + acc.artistSum) _flag(V_SALE_PATH, "the artist cut was not pushed");
+        if (core.payee().balance != p.payee0 + acc.operatorSum) {
+            _flag(V_SALE_PATH, "the operator cut was not pushed to the payee");
+        }
+        _eth(p.bal, acc.artistSum + acc.operatorSum, acc.priceSum, "credit buy");
+        _booked(acc.priceSum);
+    }
+
+    /// one credit's split folded into `acc`: the artist and operator cuts off its price, the credit cost basis share of
+    /// the rest to the pot (bounded by the rest), the remainder to the buyback
+    function _accCredit(CAcc memory acc, uint256 price, uint256 cost) internal view {
+        uint256 ta = price * core.settings().saleToArtistBps / 10_000;
+        uint256 to = price * core.settings().saleToOperatorBps / 10_000;
+        uint256 rest = price - ta - to;
+        uint256 tp = cost * core.creditCostToPotBps() / 10_000;
+        if (tp > rest) tp = rest;
+        acc.priceSum += price;
+        acc.costSum += cost;
+        acc.toPotSum += tp;
+        acc.toBuybackSum += rest - tp;
+        acc.artistSum += ta;
+        acc.operatorSum += to;
     }
 
     function _creditRefused(CreditPre memory p, bytes memory why, uint8 a, bytes4 want) internal {
@@ -582,14 +578,14 @@ abstract contract HandlerSale is HandlerOwner {
         }
     }
 
-    /// the asking price of statement `sid` written out again from docs/SPEC.md section 7: the price in units of
-    /// 1/3600 bps falls `fastDecayBpsPerHour` a second to the knee and `slowDecayBpsPerHour` after it (rounded up), at
-    /// the age outside every pause, at least `saleFloorBps` of the reference
+    /// the asking price of statement `sid` written out again from docs/SPEC.md section 8: the bps falls in a straight
+    /// line from `startBps()` to `saleFloorBps` over `decayHours`, then rests, at the age outside every pause, at least
+    /// `saleFloorBps` of the reference
     function _modelAsk(uint256 sid) internal returns (uint256) {
         (, uint256 cost, uint64 at) = core.statementInfo(sid);
         uint256 ref = _modelRef(sid, cost);
         uint256 n = _modelUnits(_modelAge(at));
-        uint256 ask = ref * n / (3600 * 10_000);
+        uint256 ask = ref * n / 10_000;
         uint256 hard = cost * core.settings().saleFloorBps / 10_000;
         return ask < hard ? hard : ask;
     }
@@ -607,19 +603,14 @@ abstract contract HandlerSale is HandlerOwner {
 
     function _modelUnits(uint256 age) internal view returns (uint256 n) {
         IControllerV1 c = IControllerV1(v1);
-        uint256 start = c.startBps() * 3600;
-        uint256 knee = uint256(c.kneeBps()) * 3600;
-        uint256 fast = c.fastDecayBpsPerHour();
-        uint256 span = start > knee ? start - knee : 0;
-        if (age * fast <= span) {
-            n = start - age * fast;
+        uint256 start = c.startBps();
+        uint256 floor = core.settings().saleFloorBps;
+        uint256 span = uint256(c.decayHours()) * 1 hours;
+        if (start <= floor || age >= span) {
+            n = floor;
         } else {
-            uint256 drop = (c.slowDecayBpsPerHour() * (age * fast - span) + fast - 1) / fast;
-            uint256 base = start < knee ? start : knee;
-            n = base > drop ? base - drop : 0;
+            n = start - (start - floor) * age / span;
         }
-        uint256 low = uint256(core.settings().saleFloorBps) * 3600;
-        if (n < low) n = low;
     }
 
     /// the owner pauses or resumes sales on the Core, or a stranger tries. a repeat of the current state is
@@ -700,38 +691,23 @@ abstract contract HandlerSale is HandlerOwner {
         returns (uint256 v, bool valid, uint256 cur)
     {
         uint256 cap = c.startCapBps();
-        uint256 knee = c.kneeBps();
         if (which == 0) {
             cur = c.markupBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : 40_001) : _f(seed, 10_000, 40_000, cur);
             valid = v >= 10_000 && v <= 40_000 && v <= cap;
         } else if (which == 1) {
             cur = cap;
-            v = bad
-                ? (seed % 3 == 0 ? c.markupBps() - 1 : (seed % 3 == 1 ? 200_001 : knee - 1))
-                : _f(seed, _max(c.markupBps(), knee), 200_000, cur);
-            valid = v >= c.markupBps() && v >= knee && v <= 200_000;
+            v = bad ? (seed % 2 == 0 ? c.markupBps() - 1 : 200_001) : _f(seed, c.markupBps(), 200_000, cur);
+            valid = v >= c.markupBps() && v <= 200_000;
         } else if (which == 2) {
-            cur = c.fastDecayBpsPerHour();
-            v = bad ? (seed % 2 == 0 ? 0 : 10_001) : _f(seed, 1, 10_000, cur);
-            valid = v >= 1 && v <= 10_000;
+            cur = c.decayHours();
+            v = bad ? (seed % 2 == 0 ? 0 : 721) : _f(seed, 1, 720, cur);
+            valid = v >= 1 && v <= 720;
         } else if (which == 3) {
-            cur = c.slowDecayBpsPerHour();
-            v = bad ? (seed % 2 == 0 ? 0 : 10_001) : _f(seed, 1, 10_000, cur);
-            valid = v >= 1 && v <= 10_000;
-        } else if (which == 4) {
-            cur = knee;
-            v = bad ? (seed % 2 == 0 ? 999 : cap + 1) : _f(seed, 1_000, cap, cur);
-            valid = v >= 1_000 && v <= cap;
-        } else if (which == 5) {
-            cur = c.royaltyBps();
-            v = bad ? 1_001 + seed % 60_000 : _f(seed, 0, 1_000, cur);
-            valid = v <= 1_000;
-        } else if (which == 6) {
             cur = c.anchorBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : cap + 1) : _f(seed, 10_000, cap, cur);
             valid = v >= 10_000 && v <= cap;
-        } else if (which == 7) {
+        } else if (which == 4) {
             cur = c.anchorHalfLife();
             v = bad ? (seed % 2 == 0 ? 1 days - 1 : 90 days + 1) : _f(seed, 1 days, 90 days, cur);
             valid = v >= 1 days && v <= 90 days;
@@ -742,34 +718,21 @@ abstract contract HandlerSale is HandlerOwner {
         }
     }
 
-    function _max(uint256 x, uint256 y) private pure returns (uint256) {
-        return x > y ? x : y;
-    }
-
-    /// @dev the call that sets sale number `which` to `v`: `setSale` with every other field as it is, `setCredit` for the
-    /// royalty, `setAnchorBps` for the anchor
+    /// @dev the call that sets sale number `which` to `v`: `setAnchorBps` for the anchor, `setSale` with every other
+    /// field as it is for the rest
     function _saleCall(IControllerV1 c, uint256 which, uint256 v) internal view returns (bytes memory) {
-        if (which == 6) return abi.encodeCall(IControllerV1.setAnchorBps, (uint32(v)));
-        if (which == 5) {
-            CreditSale memory cs = _creditSaleOf(c);
-            cs.royaltyBps = uint16(v);
-            return abi.encodeCall(IControllerV1.setCredit, (cs));
-        }
+        if (which == 3) return abi.encodeCall(IControllerV1.setAnchorBps, (uint32(v)));
         Sale memory s = Sale({
             markupBps: c.markupBps(),
             startCapBps: c.startCapBps(),
-            fastDecayBpsPerHour: c.fastDecayBpsPerHour(),
-            kneeBps: c.kneeBps(),
-            slowDecayBpsPerHour: c.slowDecayBpsPerHour(),
+            decayHours: c.decayHours(),
             anchorHalfLife: c.anchorHalfLife(),
             anchorMinCost: c.anchorMinCost()
         });
         if (which == 0) s.markupBps = uint16(v);
         else if (which == 1) s.startCapBps = uint32(v);
-        else if (which == 2) s.fastDecayBpsPerHour = uint16(v);
-        else if (which == 3) s.slowDecayBpsPerHour = uint16(v);
-        else if (which == 4) s.kneeBps = uint32(v);
-        else if (which == 7) s.anchorHalfLife = uint32(v);
+        else if (which == 2) s.decayHours = uint16(v);
+        else if (which == 4) s.anchorHalfLife = uint32(v);
         else s.anchorMinCost = uint128(v);
         return abi.encodeCall(IControllerV1.setSale, (s));
     }
@@ -777,22 +740,19 @@ abstract contract HandlerSale is HandlerOwner {
     function _saleGot(IControllerV1 c, uint256 which) internal view returns (uint256) {
         if (which == 0) return c.markupBps();
         if (which == 1) return c.startCapBps();
-        if (which == 2) return c.fastDecayBpsPerHour();
-        if (which == 3) return c.slowDecayBpsPerHour();
-        if (which == 4) return c.kneeBps();
-        if (which == 5) return c.royaltyBps();
-        if (which == 6) return c.anchorBps();
-        if (which == 7) return c.anchorHalfLife();
+        if (which == 2) return c.decayHours();
+        if (which == 3) return c.anchorBps();
+        if (which == 4) return c.anchorHalfLife();
         return c.anchorMinCost();
     }
 
-    /// the owner sets one of the nine sale numbers (the royalty included) of the first controller to a value inside or outside the bounds of
-    /// docs/DECISIONS.md 9.3 (written out again here), or a stranger tries. inside: it goes through and reads back. outside:
+    /// the owner sets one of the six sale numbers of the first controller to a value inside or outside the bounds,
+    /// written out again here, or a stranger tries. inside: it goes through and reads back. outside:
     /// BadSetting with the field. a stranger: OnlyOwner. no asset or pot moves
     function saleSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_SALE_SETTINGS;
         IControllerV1 c = IControllerV1(v1);
-        uint256 which = mode % 9;
+        uint256 which = mode % 6;
         bool stranger = (mode >> 8) % 6 == 0;
         uint256 anchor0 = c.anchorBps();
         bool bad = (mode >> 12) % 4 == 0;
@@ -807,7 +767,7 @@ abstract contract HandlerSale is HandlerOwner {
         if (ok) {
             if (want != 0) _flag(V_OWNER, "a sale setting the model refuses was accepted");
             if (_saleGot(c, which) != v) _flag(V_OWNER, "a sale setting did not read back");
-            if (which == 7 && c.anchorBps() != anchor0) _flag(V_OWNER, "a half life change moved the anchor");
+            if (which == 4 && c.anchorBps() != anchor0) _flag(V_OWNER, "a half life change moved the anchor");
             gOwnerCalls++;
         } else {
             if (want == 0 || bytes4(out) != want) _unexpected(a, out);
@@ -1023,8 +983,8 @@ abstract contract HandlerSale is HandlerOwner {
         (ok,) = address(core).call(abi.encodeCall(ICore.removeAdapter, (target)));
         if (ok) _flag(V_LOCK, "the old owner kept a power after the handover");
         // the argument is read before the prank: a call in the argument list would use it up
-        bytes memory same = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).fastDecayBpsPerHour());
-        bytes memory changed = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).fastDecayBpsPerHour() == 200 ? 201 : 200);
+        bytes memory same = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).decayHours());
+        bytes memory changed = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).decayHours() == 24 ? 25 : 24);
         vm.prank(old);
         (ok,) = address(v1).call(changed);
         if (ok) _flag(V_LOCK, "the old owner kept the sale settings");

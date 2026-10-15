@@ -16,7 +16,7 @@ abstract contract NewProd is SystemDeployer {
     function _newCore(LaunchConfig memory c, address launcher) internal virtual override returns (address) {
         return address(
             new Core{salt: CORE_SALT}(
-                c.owner, buildConfig(c, c.owner, address(0)), launcher, address(0), c.payee, c.stack, c.rateStart, c.settings, c.credit
+                c.owner, buildConfig(c, c.owner, address(0)), launcher, address(0), c.payee, c.stack, c.rateStart, c.settings, c.credit, c.artist
             )
         );
     }

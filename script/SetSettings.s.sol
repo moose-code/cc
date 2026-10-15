@@ -26,8 +26,8 @@ interface ICoreOwner {
 /// * `SETTINGS_PATCH`, a json object as text or the path of a json file, for example `{"saleFloorBps":8000}`
 /// `SET_RATE=<wei per credit>` also prepares `setRate`.
 /// with `CONTROLLER=0x...` the same `SET_<field>` variables also change the controller: the fields of `Sale` (`markupBps`,
-/// `startCapBps`, `fastDecayBpsPerHour`, `kneeBps`, `slowDecayBpsPerHour`, `anchorHalfLife`, `anchorMinCost`) go to `setSale`
-/// and the fields of `CreditSale` (`saleOn`, `window`, `floorBps`, `startBps`, `refScore`, `royaltyBps`, `royaltyRecipient`)
+/// `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`) go to `setSale`
+/// and the fields of `CreditSale` (`saleOn`, `window`, `floorBps`, `startBps`)
 /// to `setCredit`. each struct is read live, patched and checked by a simulated call as the owner, which reverts with
 /// the first field out of bounds.
 /// the controller prices held statements live from the settings, so a setting change reaches every held statement at once.
@@ -45,7 +45,7 @@ contract SetSettings is Script {
     error NotOwner(address owner, address signer);
 
     string internal constant TUPLE =
-        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24)";
+        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16)";
 
     function run() external {
         ICoreOwner core = ICoreOwner(_core());
@@ -107,9 +107,7 @@ contract SetSettings is Script {
         ns = Sale({
             markupBps: uint16(_field("markupBps", c.markupBps(), type(uint16).max)),
             startCapBps: uint32(_field("startCapBps", c.startCapBps(), type(uint32).max)),
-            fastDecayBpsPerHour: uint16(_field("fastDecayBpsPerHour", c.fastDecayBpsPerHour(), type(uint16).max)),
-            kneeBps: uint32(_field("kneeBps", c.kneeBps(), type(uint32).max)),
-            slowDecayBpsPerHour: uint16(_field("slowDecayBpsPerHour", c.slowDecayBpsPerHour(), type(uint16).max)),
+            decayHours: uint16(_field("decayHours", c.decayHours(), type(uint16).max)),
             anchorHalfLife: uint32(_field("anchorHalfLife", c.anchorHalfLife(), type(uint32).max)),
             anchorMinCost: uint128(_field("anchorMinCost", c.anchorMinCost(), type(uint128).max))
         });
@@ -117,10 +115,7 @@ contract SetSettings is Script {
             saleOn: _field("saleOn", c.creditSaleOn() ? 1 : 0, 1) == 1,
             window: uint32(_field("window", c.creditWindow(), type(uint32).max)),
             floorBps: uint16(_field("floorBps", c.creditFloorBps(), type(uint16).max)),
-            startBps: uint32(_field("startBps", c.creditStartBps(), type(uint32).max)),
-            refScore: uint32(_field("refScore", c.refScore(), type(uint32).max)),
-            royaltyBps: uint16(_field("royaltyBps", c.royaltyBps(), type(uint16).max)),
-            royaltyRecipient: vm.envOr("SET_royaltyRecipient", c.royaltyRecipient())
+            startBps: uint32(_field("startBps", c.creditStartBps(), type(uint32).max))
         });
         saleChanged = keccak256(abi.encode(ns))
             != keccak256(
@@ -128,9 +123,7 @@ contract SetSettings is Script {
                     Sale(
                         c.markupBps(),
                         c.startCapBps(),
-                        c.fastDecayBpsPerHour(),
-                        c.kneeBps(),
-                        c.slowDecayBpsPerHour(),
+                        c.decayHours(),
                         c.anchorHalfLife(),
                         c.anchorMinCost()
                     )
@@ -143,10 +136,7 @@ contract SetSettings is Script {
                         c.creditSaleOn(),
                         c.creditWindow(),
                         c.creditFloorBps(),
-                        c.creditStartBps(),
-                        c.refScore(),
-                        c.royaltyBps(),
-                        c.royaltyRecipient()
+                        c.creditStartBps()
                     )
                 )
             );
@@ -241,7 +231,7 @@ contract SetSettings is Script {
                 _set(s, keys[k], vm.parseJsonUint(json, string.concat(".", keys[k])));
             }
         }
-        bytes32[24] memory names = SettingsFields.names();
+        bytes32[28] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             string memory name = _name(names[i]);
             (bool has, uint256 v) = _single(name);
@@ -250,7 +240,7 @@ contract SetSettings is Script {
     }
 
     function _set(Settings memory s, string memory name, uint256 v) internal pure {
-        bytes32[24] memory names = SettingsFields.names();
+        bytes32[28] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             if (keccak256(bytes(_name(names[i]))) != keccak256(bytes(name))) continue;
             SettingsFields.set(s, i, v);
@@ -274,9 +264,9 @@ contract SetSettings is Script {
     /// @dev one line per field: name, live value, new value, a mark when it changes, the bounds
     function _table(Settings memory a, Settings memory b) internal pure {
         console.log("settings: field | live | new | bounds (a * marks a change; recoveryClimbPerMinBps >= climbPerMinBps, redeemSlippageBps <= balanceBidMarginBps, the two switches are 0 or 1)");
-        uint256[24] memory lo = SettingsFields.lo();
-        uint256[24] memory hi = SettingsFields.hi();
-        bytes32[24] memory names = SettingsFields.names();
+        uint256[28] memory lo = SettingsFields.lo();
+        uint256[28] memory hi = SettingsFields.hi();
+        bytes32[28] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             uint256 x = SettingsFields.get(a, i);
             uint256 y = SettingsFields.get(b, i);

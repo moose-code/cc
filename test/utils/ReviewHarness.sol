@@ -32,13 +32,13 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         creator = makeAddr("review.creator");
         FACTORY = IArtCoinsFactoryV2(v2.factory);
         vm.startPrank(owner);
-        FACTORY.setMinProtocolSkimShareBps(362);
+        FACTORY.setMinProtocolSkimShareBps(1000);
         vm.stopPrank();
         vm.deal(deployer, 5 ether);
         base = defaultConfig();
         base.owner = owner;
         base.creator = creator;
-        base.credit.royaltyRecipient = creator;
+        base.artist = creator;
         base.payee = makeAddr("review.payee");
         base.name = "Review Coin";
         base.symbol = "REV";

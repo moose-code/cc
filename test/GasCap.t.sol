@@ -4,7 +4,8 @@ pragma solidity ^0.8.28;
 import {console} from "forge-std/console.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {ICreditStrategy, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {ICreditStrategy, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
@@ -214,11 +215,20 @@ contract GasCapTest is SeaportBase {
         assertGt(g40, g10);
     }
 
-    // promise: SPEC 1 a batch of 115 credits fits the transaction cap
+    // promise: SPEC 1 a batch of about 91 credits fits the transaction cap (per point: each credit reads its score)
     function test_gas_sellForEth_batch_launchSettings() public {
         _fundPot(30 ether);
         _warp(1 hours + 1);
         _searchBatch("sellForEth (launch)", false);
+    }
+
+    // promise: SPEC 1 the balance bid batch fits the transaction cap; the module holds the token and pays the seller
+    function test_gas_sellForBalance_batch() public {
+        _enterPhase2();
+        _fundPot(30 ether);
+        _warp(1 hours + 1);
+        xt.mint(address(mod), 1e30); // the module commits enough to the bid for the largest batch the search walks to
+        _searchBatch("sellForBalance (launch)", true);
     }
 
     // ------------------------------------------------------------------ buyListing, sales proceeds, buybacks
@@ -278,10 +288,93 @@ contract GasCapTest is SeaportBase {
         _row("buyback (swaps, burns), cold", g, abi.encodeCall(core.buyback, ()));
     }
 
+    // promise: SPEC 1 swapCredit gas, a pile credit swapped for one of higher score with the fee burned, cold
+    function test_gas_swapCredit() public {
+        uint256[] memory two = _credits(taker, 2);
+        (uint256 outId, uint256 inId) =
+            _scoreOf(two[0]) <= _scoreOf(two[1]) ? (two[0], two[1]) : (two[1], two[0]);
+        // the outgoing credit goes into the pile through a full rate sell
+        _liftRateCap();
+        _fundPot(5 ether);
+        _warp(1 hours + 1);
+        _refScoreToCredit(outId);
+        vm.prank(taker);
+        core.sellForEth(_one(outId));
+        // a representative nonzero fee the caller burns, and the coin and approval for it
+        _setSwapFeeCc(1e18);
+        _buyCoin(taker, 1 ether);
+        vm.prank(taker);
+        coin.approve(address(core), 1e18);
+
+        bytes memory data = abi.encodeCall(core.swapCredit, (inId, outId));
+        _cool(address(core));
+        vm.prank(taker);
+        uint256 g = gasleft();
+        core.swapCredit(inId, outId);
+        g -= gasleft();
+        assertEq(CREDITS.ownerOf(inId), address(core), "the incoming credit is in the pile");
+        _row("swapCredit, one pile credit for one of higher score, fee burned, cold", g, data);
+    }
+
     // ------------------------------------------------------------------ statements: sellTo
 
     function _cost(uint256 sid) internal view returns (uint256 c) {
         (, c,) = core.statementInfo(sid);
+    }
+
+    // promise: inv 18 the statement sale pushes the artist and operator cuts and books the rest
+    /// @dev the door cost of `buy`, which forwards the price to `sellTo`: the core takes the artist and operator cuts off
+    /// the top and forces them to the artist and the payee
+    function test_gas_buy_statementSalePushesTheCuts() public {
+        uint256 sid = _composeOnce().sid;
+        uint256 price = ctl.priceOf(sid);
+        address who = makeAddr("gascap statement buyer");
+        vm.deal(who, price);
+        _cool(address(core));
+        _cool(address(ctl));
+        bytes memory data = abi.encodeCall(IControllerV1.buy, (sid));
+        vm.prank(who);
+        uint256 g = gasleft();
+        ctl.buy{value: price}(sid);
+        g -= gasleft();
+        _row("buy a statement (sellTo forces the artist and operator cuts), cold", g, data);
+    }
+
+    // promise: inv 18 the credit sale pushes the artist and operator cuts and books the rest
+    /// @dev the door cost of `buyCredit`, which forwards the price to `sellCreditTo`
+    function test_gas_buyCredit_creditSalePushesTheCuts() public {
+        uint256[] memory ids = _fillEthPile(1);
+        _setCreditSaleOn(true);
+        uint256 id = ids[0];
+        uint256 price = ctl.creditPrice(id);
+        address who = makeAddr("gascap credit buyer");
+        vm.deal(who, price);
+        _cool(address(core));
+        _cool(address(ctl));
+        bytes memory data = abi.encodeCall(IControllerV1.buyCredit, (id));
+        vm.prank(who);
+        uint256 g = gasleft();
+        ctl.buyCredit{value: price}(id);
+        g -= gasleft();
+        _row("buyCredit (sellCreditTo forces the artist and operator cuts), cold", g, data);
+    }
+
+    // promise: inv 18 the booking door forces the payee share out
+    /// @dev the door cost of `book` when the payee share is on and nonzero: the book forces the share to the payee
+    function test_gas_book_forcesThePayeeShare() public {
+        Settings memory s = core.settings();
+        s.payeePpm = 90_909;
+        _setSettings(s);
+        vm.warp(block.timestamp + core.SNIPER_SECONDS() + 1);
+        vm.deal(address(core), address(core).balance + 1 ether);
+        core.book(); // the latch book past the window shares nothing
+        vm.deal(address(core), address(core).balance + 1 ether);
+        _cool(address(core));
+        bytes memory data = abi.encodeCall(ICore.book, ());
+        uint256 g = gasleft();
+        core.book();
+        g -= gasleft();
+        _row("book with a nonzero payee share (forced push), cold", g, data);
     }
 
     // ------------------------------------------------------------------ owner doors

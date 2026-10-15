@@ -43,7 +43,7 @@ contract ConfigTest is Fixture {
     }
 
     /// the json file is the default config plus the launch inputs the owner supplied (owner, creator, name, the creator
-    /// payee) and the salt, keccak256 of "CC", and the live v2 stack of script/config/v2-mainnet.json
+    /// payee, the artist) and the salt, keccak256 of "CC", and the live v2 stack of script/config/v2-mainnet.json
     function test_jsonEqualsDefaultConfig() public view {
         LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
         LaunchConfig memory d = defaultConfig();
@@ -55,7 +55,7 @@ contract ConfigTest is Fixture {
         d.mevModule = live.mev;
         d.owner = v2.owner;
         d.creator = v2.owner;
-        d.credit.royaltyRecipient = v2.owner;
+        d.artist = f.artist;
         d.payee = v2.owner;
         d.name = "CC";
         d.salt = keccak256("CC");
@@ -68,22 +68,31 @@ contract ConfigTest is Fixture {
         assertTrue(_same(f, d), "script/config/mainnet.json drifted from the default config");
         assertEq(f.owner, v2.owner);
         assertEq(f.creator, v2.owner);
+        assertEq(f.artist, 0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a, "the launch artist address (decision 123)");
         assertEq(f.name, "CC");
         assertEq(f.symbol, "CC");
         assertEq(f.salt, keccak256("CC"));
         assertEq(f.rateStart, 8.9e15);
         assertEq(f.supply, 1_000_000_000e18);
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()), "settings block is the launch values");
-        // the launch values of docs/DECISIONS.md 10.1 and 10.6
-        assertEq(f.baselineSkimBps, 690);
-        assertEq(f.bountyBps, 9_638);
+        // the launch values of docs/DECISIONS.md 10.1 and 10.6, the fee split of decision 120
+        assertEq(f.baselineSkimBps, 1000);
+        assertEq(f.bountyBps, 9_000);
         assertEq(f.lpFeePips, 0);
         assertEq(f.maxReferralBps, 0);
         assertEq(f.sniperStartBps, 9_000);
         assertEq(f.sniperSeconds, 1800);
         assertTrue(f.restricted);
         assertEq(f.allowed.length, 0);
-        assertEq(f.settings.payeePpm, 75_185);
+        assertEq(f.settings.payeePpm, 0);
+        // the owner's launch values of decision 119
+        assertTrue(f.credit.saleOn);
+        assertEq(f.settings.saleToBuybackBps, 2_500);
+        assertEq(f.settings.swapFeeCc, 10_000e18);
+        assertEq(f.settings.keeperFee, 0.0003 ether);
+        assertEq(f.settings.keeperMaxBaseFee, 5 gwei);
+        assertTrue(f.settings.redeemOn);
+        assertEq(f.settings.balanceBidMarginBps, 1_000);
         assertEq(f.payee, v2.owner);
         // the stack addresses of the shipped file are the record of the live stack, the factory owner is the config owner
         assertEq(unsetFields(f).length, 0, "the shipped file leaves nothing unset");
@@ -96,38 +105,27 @@ contract ConfigTest is Fixture {
     }
 
     /// the launch fee split derived from the v2 hook math (`ArtCoinsHookV2._split`), per 1 ether of volume. all rates in bps
-    /// of volume. baseline skim 690 bps (6.9 points), skim = V * 690 / 10_000 = 0.069 ether.
+    /// of volume (decision 120). baseline skim 1000 bps (10 points), skim = V * 1000 / 10_000 = 0.1 ether.
     /// bounty leg = skim * bountyBps / 10_000, protocol leg = skim - bounty leg (steady state, no referral).
-    /// protocol target 0.25 points = 25 bps = 0.0025 ether. the protocol share of the skim is (10_000 - bountyBps) / 10_000:
-    /// 9_638 gives 690 * 362 / 10_000 = 24.978 bps (0.24978 points, 0.00022 below the target), 9_637 gives 690 * 363 /
-    /// 10_000 = 25.047 bps (0.00047 above it). 9_638 is the nearest, and the factory needs minProtocolSkimShareBps at most
-    /// 10_000 - 9_638 = 362 (`BPS - bountyBps - minProtocolSkimShareBps >= 0` in `_validateFee`).
-    /// Core inflow = bounty leg = 0.069 * 9_638 / 10_000 = 0.0665022 ether (665.022 bps). payee target 0.5 points =
-    /// 50 bps = 0.005 ether, payeePpm = 50 / 665.022 * 1e6 = 75_185.2, rounded down to 75_185.
-    /// the engine keeps the rest of the Core inflow
+    /// the protocol keeps 10 percent of the skim: bountyBps 9_000 gives 1000 * 1000 / 10_000 = 100 bps (1.0 point), and the
+    /// factory needs minProtocolSkimShareBps at most 10_000 - 9_000 = 1000 (`BPS - bountyBps - minProtocolSkimShareBps >= 0`
+    /// in `_validateFee`). Core inflow = bounty leg = 0.1 * 9_000 / 10_000 = 0.09 ether (900 bps, 9.0 points). payeePpm is 0
+    /// at launch, so the engine keeps the whole Core inflow
     function test_feeSplitDerivation() public pure {
         LaunchConfig memory d = defaultConfig();
         uint256 v = 1 ether;
         uint256 skim = v * d.baselineSkimBps / 10_000;
-        assertEq(skim, 0.069 ether);
+        assertEq(skim, 0.1 ether);
         uint256 inflow = skim * d.bountyBps / 10_000;
         uint256 protocol = skim - inflow;
-        assertEq(inflow, 66_502_200_000_000_000, "Core inflow 6.65022 points");
-        assertEq(protocol, 2_497_800_000_000_000, "protocol leg 0.24978 points");
-        assertEq(10_000 - uint256(d.bountyBps), 362, "the factory minProtocolSkimShareBps the bounty needs");
-        // the neighbouring bounty values are further from the 0.25 point target (0.0025 ether)
-        uint256 target = 0.0025 ether;
-        uint256 protocolAt9637 = skim - skim * 9_637 / 10_000; // 2.5047e15, above the target
-        assertLt(target - protocol, protocolAt9637 - target, "9_638 is the nearest to 0.25 points");
-        // payee: the largest ppm whose share of the Core inflow does not exceed 0.5 points (0.005 ether)
-        uint256 payeeTarget = 0.005 ether;
+        assertEq(inflow, 90_000_000_000_000_000, "Core inflow 9.0 points");
+        assertEq(protocol, 10_000_000_000_000_000, "protocol leg 1.0 point");
+        assertEq(10_000 - uint256(d.bountyBps), 1000, "the factory minProtocolSkimShareBps the bounty needs");
+        // the payee share is 0 at launch, so the engine keeps the whole Core inflow
+        assertEq(d.settings.payeePpm, 0, "payeePpm 0 at launch");
         uint256 payee = inflow * d.settings.payeePpm / 1e6;
-        assertLe(payee, payeeTarget);
-        assertGt(
-            inflow * (uint256(d.settings.payeePpm) + 1) / 1e6, payeeTarget, "75_185 is the largest ppm under 0.5 points"
-        );
-        assertEq(payee, 4_999_967_907_000_000, "payee 0.4999968 points");
-        assertEq(inflow - payee, 61_502_232_093_000_000, "engine 6.15 points");
+        assertEq(payee, 0, "no payee share at launch");
+        assertEq(inflow - payee, 90_000_000_000_000_000, "engine 9.0 points");
     }
 
     /// the deploy refuses to run while any placeholder is unset or the rate is out of bounds
@@ -139,9 +137,9 @@ contract ConfigTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "creator"));
         this.requireExt(c);
         c.creator = creator;
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "credit.royaltyRecipient"));
+        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "artist"));
         this.requireExt(c);
-        c.credit.royaltyRecipient = creator;
+        c.artist = creator;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "name"));
         this.requireExt(c);
         c.name = "Name";
@@ -261,30 +259,9 @@ contract ConfigTest is Fixture {
         c = lc;
         c.payee = c.stack.escrow;
         _pre(c, d2);
-        assertEq(
-            _failedNames(),
-            "rule: owner, creator and payee are not dead or stack addresses, payee: accepts eth with a 100000 gas call (simulated)"
-        );
-    }
-
-    /// the launch payee takes 0.001 eth with a 100,000 gas call: a payee that reverts, or one that burns more gas, fails
-    function test_preflightPayeeAcceptsEth() public {
-        address d2 = _funded();
-        string memory row = "payee: accepts eth with a 100000 gas call (simulated)";
-        _pre(lc, d2);
-        assertTrue(_warnClean(row), "the launch payee accepts eth");
-        LaunchConfig memory c = lc;
-        c.payee = makeAddr("reverting payee");
-        vm.etch(c.payee, hex"60006000fd");
-        _pre(c, d2);
-        assertEq(_failedNames(), row, "a reverting payee fails");
-        c.payee = makeAddr("gas burning payee");
-        vm.etch(c.payee, hex"5b600056");
-        _pre(c, d2);
-        assertEq(_failedNames(), row, "a payee that burns the gas fails");
-        c.payee = makeAddr("plain account payee");
-        _pre(c, d2);
-        assertEq(_failedNames(), "", "an account without code accepts eth");
+        // the payee share and the operator cut are forced pushes (decision 123), so the preflight no longer probes the
+        // payee for an eth call; only the dead-or-stack-address rule fails for a stack payee
+        assertEq(_failedNames(), "rule: owner, creator and payee are not dead or stack addresses");
     }
 
     function test_preflightSeaportRecipients() public {
@@ -339,18 +316,18 @@ contract ConfigTest is Fixture {
         );
         assertEq(
             _rowDetail("factory: min protocol skim share leaves room for the bounty"),
-            "factory minProtocolSkimShareBps is 1500, above the 362 the bounty 9638 leaves. the factory owner runs setMinProtocolSkimShareBps(362) first"
+            "factory minProtocolSkimShareBps is 1500, above the 1000 the bounty 9000 leaves. the factory owner runs setMinProtocolSkimShareBps(1000) first"
         );
-        // the floor of the launch bounty 9638 is 362
+        // the floor of the launch bounty 9000 is 1000
         vm.prank(owner);
-        FACTORY.setMinProtocolSkimShareBps(363);
+        FACTORY.setMinProtocolSkimShareBps(1001);
         _pre(lc, d2);
         assertEq(
             _failedNames(),
             "factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
         );
         vm.prank(owner);
-        FACTORY.setMinProtocolSkimShareBps(362);
+        FACTORY.setMinProtocolSkimShareBps(1000);
         _pre(lc, d2);
         assertEq(_failedNames(), "");
     }
@@ -656,9 +633,9 @@ contract ConfigTest is Fixture {
 
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[24] memory lo = SettingsFields.lo();
-        uint256[24] memory hi = SettingsFields.hi();
-        bytes32[24] memory names = SettingsFields.names();
+        uint256[28] memory lo = SettingsFields.lo();
+        uint256[28] memory hi = SettingsFields.hi();
+        bytes32[28] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // the top itself (the fields bound by another field start from a free partner)
@@ -698,7 +675,7 @@ contract ConfigTest is Fixture {
         this.requireExt(c);
         // the sale settings of the controller have their own row and guard
         c = lc;
-        c.sale.kneeBps = 999;
+        c.sale.decayHours = 0;
         _pre(c, d2);
         assertEq(_failedNames(), "sale settings inside the bounds");
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "sale"));
