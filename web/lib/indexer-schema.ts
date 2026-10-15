@@ -3,7 +3,7 @@
 // columns the web reads are declared here. The guard at the end fails tsc when a column's type differs from the
 // indexer schema or the column no longer exists there.
 
-import { customType, integer, jsonb, pgTable, text } from "drizzle-orm/pg-core";
+import { boolean, customType, integer, jsonb, pgTable, text } from "drizzle-orm/pg-core";
 import type * as ix from "../../indexer/ponder.schema";
 
 // numeric(78) read as bigint, like ponder's t.bigint(); sent as a decimal string.
@@ -142,6 +142,12 @@ export const log = pgTable("log", {
   args: jsonb("args").notNull(),
 });
 
+export const strategyListing = pgTable("strategy_listing", {
+  id: big("id").primaryKey(),
+  listPrice: big("list_price").notNull(),
+  active: boolean("active").notNull(),
+});
+
 const counters = {
   creditsBought: big("credits_bought").notNull(),
   creditsAdopted: big("credits_adopted").notNull(),
@@ -170,5 +176,6 @@ const schemaMatchesIndexer: [
   Same<Row<typeof log>, Row<typeof ix.log>>,
   Same<Row<typeof stats>, Row<typeof ix.stats>>,
   Same<Row<typeof statsHourly>, Row<typeof ix.statsHourly>>,
-] = [true, true, true, true, true, true, true, true, true, true];
+  Same<Row<typeof strategyListing>, Row<typeof ix.strategyListing>>,
+] = [true, true, true, true, true, true, true, true, true, true, true];
 void schemaMatchesIndexer;

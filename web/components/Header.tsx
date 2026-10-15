@@ -3,9 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { useAccount, usePublicClient } from "wagmi";
+import { ConnectButton, useConnectModal } from "@rainbow-me/rainbowkit";
+import { adapterOf, useAcquireCandidate } from "@/lib/useAcquire";
+import { coreAbi } from "@/lib/abis";
+import { core } from "@/lib/config";
 import { useEns } from "@/lib/ens";
-import { commas, shortAddr } from "@/lib/format";
+import { commas, eth, evmNowTx, shortAddr } from "@/lib/format";
+import { useTx } from "@/lib/tx";
 import { useNextCredit } from "./EngineFeed";
 
 const NAV = [
@@ -100,10 +105,9 @@ function AccountName({ address }: { address: string }) {
   return <>{useEns(address) ?? shortAddr(address)}</>;
 }
 
-// Next credit progress beside the wallet; the home page shows it in the rail.
-// TODO: acquire button (handoff 2026-10-15 part 3) waits on the owner naming the transaction it sends.
+// Next credit progress and the bid at refScore beside the wallet; the home page shows the progress in the rail.
 function NextCredit() {
-  const { ratio, segs } = useNextCredit();
+  const { ratio, segs, bid } = useNextCredit();
   return (
     <div className="hdr-next">
       <span className="hdr-next-label">next credit</span>
@@ -113,6 +117,96 @@ function NextCredit() {
         ))}
       </div>
       <b>{ratio == null ? "—" : `${commas(ratio)}%`}</b>
+      {bid != null && <span className="hdr-next-bid">· bid {eth(bid)} ETH</span>}
+      <Acquire />
     </div>
+  );
+}
+
+// True from the desktop breakpoint of the header (the indicator is hidden below it); keeps the acquire queries off on phones.
+function useWide() {
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    const m = window.matchMedia("(min-width: 861px)");
+    const f = () => setWide(m.matches);
+    f();
+    m.addEventListener("change", f);
+    return () => m.removeEventListener("change", f);
+  }, []);
+  return wide;
+}
+
+function Acquire() {
+  return useWide() ? <AcquireButton /> : null;
+}
+
+// Buys the listing that clears (price at or below its bid and the pot) through Core.buyListing. The call is
+// simulated right before sending; a revert drops that listing for the block and the next one is tried.
+function AcquireButton() {
+  const { cleared, block } = useAcquireCandidate();
+  const { address } = useAccount();
+  const client = usePublicClient();
+  const { openConnectModal } = useConnectModal();
+  const { run, pending, err } = useTx();
+  const [dropped, setDropped] = useState<{ block?: bigint; keys: string[] }>({ keys: [] });
+  const [done, setDone] = useState<{ id: bigint; hash: `0x${string}` }>();
+
+  const key = (l: { source: string; id: bigint; price: bigint }) => `${l.source}:${l.id}:${l.price}`;
+  const live = dropped.block === block ? dropped.keys : [];
+  const left = cleared.filter((l) => !live.includes(key(l)));
+  const next = left[0];
+
+  // the confirmation stays 20 s
+  useEffect(() => {
+    if (!done) return;
+    const t = setTimeout(() => setDone(undefined), 20_000);
+    return () => clearTimeout(t);
+  }, [done]);
+
+  const click = () => {
+    if (!address) return openConnectModal?.();
+    setDone(undefined);
+    run(async (write) => {
+      const bad: string[] = [];
+      try {
+        for (const l of left) {
+          const req = { address: core!, abi: coreAbi, functionName: "buyListing", args: [adapterOf(l), l.id, l.params] } as const;
+          try {
+            await client!.simulateContract({ ...req, account: address });
+          } catch {
+            bad.push(key(l));
+            continue;
+          }
+          const hash = await write(req);
+          setDone({ id: l.id, hash });
+          return;
+        }
+        throw new Error("no listing available");
+      } finally {
+        if (bad.length) setDropped((d) => ({ block, keys: [...(d.block === block ? d.keys : []), ...bad] }));
+      }
+    }, [{ label: "acquire" }]);
+  };
+
+  if (done)
+    return (
+      <a className="hdr-acq-done" href={evmNowTx(done.hash)} target="_blank" rel="noreferrer">
+        acquired #{done.id.toString()} ↗
+      </a>
+    );
+  if (!next) return err ? <span className="hdr-acq-err">{err}</span> : null;
+  return (
+    <>
+      {err && <span className="hdr-acq-err">{err}</span>}
+      <button
+        className="hdr-acq"
+        onClick={click}
+        disabled={pending}
+        title={`credit #${next.id} bids ${eth(next.bid)} ETH (${next.source})`}
+      >
+        <i aria-hidden />
+        {pending ? "acquiring…" : `acquire · ${eth(next.price)} ETH`}
+      </button>
+    </>
   );
 }

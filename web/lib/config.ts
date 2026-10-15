@@ -36,6 +36,14 @@ export const core = addr(process.env.NEXT_PUBLIC_CORE);
 export const credits: Address = "0x97630aA70AB14ed9883B41dAfccBc11349723043";
 export const statements: Address = "0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b";
 
+// Listing venues (docs/INDEXER.md section 9.1, owner decision 128): the CreditStrategy proxy, and the two adapters the
+// Core allows for Core.buyListing (deployment record keys strategyAdapter, seaportAdapter).
+export const strategy: Address = "0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6";
+export const strategyAdapter = addr(process.env.NEXT_PUBLIC_STRATEGY_ADAPTER);
+export const seaportAdapter = addr(process.env.NEXT_PUBLIC_SEAPORT_ADAPTER);
+// First block of the browser scan of CreditStrategy events (chain mode); the proxy deploy block.
+export const strategyStartBlock = BigInt(process.env.NEXT_PUBLIC_STRATEGY_START_BLOCK || 26037623);
+
 // The coin/eth v4 pool: the live skim hook, the dynamic-fee flag and the tick
 // spacing. The defaults are the mainnet launch params; the local record
 // overrides them (scripts/local-env.mjs). Native ETH is currency0.

@@ -213,6 +213,40 @@ a:hover {
 .hdr-next b {
   font-weight: 600;
 }
+.hdr-next-bid {
+  color: var(--muted);
+}
+.hdr-acq {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--on-ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.hdr-acq i {
+  width: 6px;
+  height: 6px;
+  background: var(--m);
+}
+.hdr-acq:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.hdr-acq-err {
+  color: var(--muted);
+}
+.hdr-acq-done {
+  color: var(--ink);
+  font-weight: 600;
+}
 /* the mobile header holds the logo, connect and the menu toggle */
 @media (max-width: 860px) {
   .hdr-next {

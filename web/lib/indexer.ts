@@ -20,7 +20,7 @@ import type { CreditEvt, FeedEvent, StatementRecord } from "./events";
 import * as schema from "./indexer-schema";
 import type { AcquiredHow } from "./indexer-schema";
 
-const { activity, anchorMove, credit, engine, log, statement, statementCredit, statementFormat, stats, statsHourly } = schema;
+const { activity, anchorMove, credit, engine, log, statement, statementCredit, statementFormat, stats, statsHourly, strategyListing } = schema;
 
 export const ix = indexerUrl ? createClient(`${indexerUrl}/sql`, { schema }) : undefined;
 type Db = NonNullable<typeof ix>["db"];
@@ -130,6 +130,17 @@ export function useBuyRateIx(headTs: number | undefined) {
         ? 0
         : d.count / (Math.min(headTs - (hour! - 23) * 3600, Math.max(3600, headTs - d.first)) / 3600);
   return { perHour };
+}
+
+/** Credits the CreditStrategy lists, cheapest first, with the credit score when the credit table holds the id. */
+export async function fetchStrategyListings() {
+  const rows = await ix!.db
+    .select({ id: strategyListing.id, price: strategyListing.listPrice, score: credit.score })
+    .from(strategyListing)
+    .leftJoin(credit, eq(credit.id, strategyListing.id))
+    .where(eq(strategyListing.active, true))
+    .orderBy(asc(strategyListing.listPrice));
+  return rows.map((r) => ({ id: r.id, price: r.price, score: r.score }));
 }
 
 // ---- credits ---------------------------------------------------------------------------------------------------

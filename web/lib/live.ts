@@ -562,7 +562,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
 }
 
 // the score of each credit id, read the way the Core reads it (CreditScore.scoreOf(seedOf, timestampOf))
-async function creditScores(client: Client, ids: bigint[], blockNumber?: bigint): Promise<bigint[]> {
+export async function creditScores(client: Client, ids: bigint[], blockNumber?: bigint): Promise<bigint[]> {
   if (ids.length === 0) return [];
   const seeds = await client.multicall({
     ...mc,
