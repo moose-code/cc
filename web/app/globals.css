@@ -120,6 +120,11 @@ a:hover {
   font-size: 13px;
   color: var(--quiet);
 }
+/* the home page marks "engine" the way the nav marks its active item */
+.brand-sub.on {
+  color: var(--ink);
+  font-weight: 600;
+}
 
 /* three 16px plates, each offset 4px right and down; overlaps print as mixed inks */
 .logo {

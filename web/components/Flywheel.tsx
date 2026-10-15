@@ -48,7 +48,7 @@ export function Flywheel() {
       line: tradeLine,
       glyph: (
         <svg className="fw-bars" viewBox="0 0 36 36" aria-hidden>
-          {[14, 22, 10, 30, 18].map((h, i) => (
+          {[14, 22, 10, 26, 34].map((h, i) => (
             <g key={i}>
               <rect x={i * 8} y={36 - h} width="4" height={h} className="body" />
               <rect x={i * 8} y={36 - h} width="4" height="3" className="cap" />

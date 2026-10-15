@@ -9,7 +9,6 @@ import { commas, shortAddr } from "@/lib/format";
 import { useNextCredit } from "./EngineFeed";
 
 const NAV = [
-  { href: "/", label: "engine" },
   { href: "/credits", label: "credits" },
   { href: "/statements", label: "statements" },
 ];
@@ -31,7 +30,7 @@ export function Header() {
           <i />
         </span>
         <b>CC</b>
-        <span className="brand-sub">engine</span>
+        <span className={path === "/" ? "brand-sub on" : "brand-sub"}>engine</span>
       </Link>
 
       <button
