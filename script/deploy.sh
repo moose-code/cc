@@ -15,8 +15,10 @@ ENV="${1:-}"
 fail() { echo "deploy.sh: $*" >&2; exit 1; }
 
 RPC_OVERRIDE="${RPC_URL:-}"
+CHAIN_OVERRIDE="${CHAIN_ID:-}"
 set -a; . "script/env/$ENV.env"; set +a
 [ -n "$RPC_OVERRIDE" ] && RPC_URL="$RPC_OVERRIDE"
+[ -n "$CHAIN_OVERRIDE" ] && CHAIN_ID="$CHAIN_OVERRIDE"
 
 # STACK=master repoints the launch at the master stack fork record (script/config/v2-master.json) and STACK is exported
 # so the forge scripts overlay the same record. the node stays chain id 31337 and the signer stays local.env's dev
@@ -59,8 +61,8 @@ DEP="$(CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CO
   || { echo "$DEP" | tail -60; fail "deploy failed"; }
 pick() { printf '%s\n' "$1" | grep -oE "^[[:space:]]*$2 0x[0-9a-fA-F]{40}" | tail -1 | grep -oE '0x[0-9a-fA-F]{40}'; }
 CORE="$(pick "$DEP" core)"; COIN="$(pick "$DEP" coin)"; CONTROLLER="$(pick "$DEP" controller)"
-SEAPORT="$(pick "$DEP" 'seaport adapter')"; STRATEGY="$(pick "$DEP" 'strategy adapter')"
-[ -n "$CORE" ] && [ -n "$COIN" ] && [ -n "$CONTROLLER" ] && [ -n "$SEAPORT" ] && [ -n "$STRATEGY" ] \
+SEAPORT="$(pick "$DEP" 'seaport adapter')"; STRATEGY="$(pick "$DEP" 'strategy adapter')"; RENDERER="$(pick "$DEP" renderer)"
+[ -n "$CORE" ] && [ -n "$COIN" ] && [ -n "$CONTROLLER" ] && [ -n "$SEAPORT" ] && [ -n "$STRATEGY" ] && [ -n "$RENDERER" ] \
   || { echo "$DEP" | tail -60; fail "could not read the deployed addresses"; }
 
 echo "deploy.sh: postflight"
@@ -79,10 +81,10 @@ done
 mkdir -p deployments
 jq -n --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RPC_URL" --argjson deployBlock "$lo" \
   --arg core "$CORE" --arg controller "$CONTROLLER" --arg coin "$COIN" --arg seaport "$SEAPORT" \
-  --arg strategy "$STRATEGY" --arg lib "$LIB" --arg hook "$HOOK" --arg owner "$DEPLOYER" \
+  --arg strategy "$STRATEGY" --arg renderer "$RENDERER" --arg lib "$LIB" --arg hook "$HOOK" --arg owner "$DEPLOYER" \
   --argjson poolFee "$(jq .stack.poolFee "$LAUNCH_CONFIG")" --argjson tickSpacing "$(jq .stack.tickSpacing "$LAUNCH_CONFIG")" '{
   chainId: $chainId, rpcUrl: $rpcUrl, deployBlock: $deployBlock,
-  core: $core, controller: $controller, coin: $coin, seaportAdapter: $seaport, strategyAdapter: $strategy, library: $lib,
+  core: $core, controller: $controller, coin: $coin, seaportAdapter: $seaport, strategyAdapter: $strategy, renderer: $renderer, library: $lib,
   credits: "0x97630aA70AB14ed9883B41dAfccBc11349723043", statements: "0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b",
   poolManager: "0x000000000004444c5dc75cB358380D2e3dE08A90", hook: $hook, poolFee: $poolFee, tickSpacing: $tickSpacing,
   balanceToken: null, balanceModule: null, balancePool: null, owner: $owner

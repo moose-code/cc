@@ -11,6 +11,23 @@ import {LaunchConfig, ConfigReader} from "./LaunchConfig.sol";
 /// @notice builds the v2 factory config and the coin address prediction of a launch from a `LaunchConfig`
 /// (docs/DECISIONS.md 10.4). shared by the deploy, the preflight, the postflight and the tests
 abstract contract SystemBuilder is ConfigReader {
+    /// @dev the CREATE2 salt prefix of `CoinRenderer`; the deterministic deployer is `PostflightChecks.CREATE2_DEPLOYER`
+    bytes32 internal constant RENDERER_SALT = keccak256("credits.coinRenderer.v1");
+
+    /// @notice the CREATE2 salt of the renderer of `l`: `RENDERER_SALT` and the config `salt`
+    function rendererSalt(LaunchConfig memory l) internal pure returns (bytes32) {
+        return keccak256(abi.encode(RENDERER_SALT, l.salt));
+    }
+
+    /// @notice the address of the `CoinRenderer` of `l`: CREATE2 through the deterministic deployer with `rendererSalt`
+    /// and the creation code with the config owner as constructor argument. the Core is not an input, so the token
+    /// config names the renderer before the Core exists. a renderer is bound to one Core, so a launch with a different
+    /// Core under the same owner and `salt` needs another `salt`
+    function rendererAddress(LaunchConfig memory l) internal view returns (address) {
+        bytes memory init = abi.encodePacked(vm.getCode("CoinRenderer.sol:CoinRenderer"), abi.encode(l.owner));
+        return vm.computeCreate2Address(rendererSalt(l), keccak256(init), 0x4e59b44847b379578588920cA78FbF26c0B4956C);
+    }
+
     /// @notice the pool key of a coin: native eth against the coin, dynamic fee flag, spacing 200, the v2 hook
     function poolKeyOf(address coin, Stack memory s) internal pure returns (PoolKey memory) {
         return PoolKey({
@@ -26,10 +43,11 @@ abstract contract SystemBuilder is ConfigReader {
     /// (the Core; the Core constructor sets it itself, so it takes the config with the zero address). the referral rate
     /// is 0: the engine names no referrer. the pool holds one full range position. the coin is restricted and its
     /// allowlist is `l.allowed` plus the entries the factory seeds. the Core is not listed: the buyback take reaches it
-    /// through the transfer allowance the hook grants for the swap (docs/DECISIONS.md decision 29)
+    /// through the transfer allowance the hook grants for the swap (docs/DECISIONS.md decision 29). the coin's metadata
+    /// renderer is the `CoinRenderer` of the config (decision 127)
     function buildConfig(LaunchConfig memory l, address tokenAdmin, address recipient)
         internal
-        pure
+        view
         returns (IArtCoinsFactoryV2.DeploymentConfigV2 memory c)
     {
         c.token = IArtCoinsFactoryV2.TokenConfigV2({
@@ -40,7 +58,7 @@ abstract contract SystemBuilder is ConfigReader {
             image: l.image,
             description: l.description,
             totalSupply: l.supply,
-            renderer: address(0)
+            renderer: rendererAddress(l)
         });
         c.pool = IArtCoinsFactoryV2.PoolConfigV2({
             hook: l.stack.hook,

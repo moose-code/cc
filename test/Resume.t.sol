@@ -7,6 +7,8 @@ import {Test} from "forge-std/Test.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {SystemResumer} from "../script/SystemResumer.sol";
+import {ICoinRenderer} from "../src/interfaces/ICoinRenderer.sol";
+import {Deployed} from "../script/SystemDeployer.sol";
 import {LaunchConfig} from "../script/LaunchConfig.sol";
 
 /// @notice `script/SystemResumer.sol` on the pinned fork with the live v2 stack. the deployer is the factory owner and
@@ -55,11 +57,12 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     }
 
     function resume(address who, LaunchConfig memory c, address core) external {
-        // as in the script: the checks run outside the broadcast
+        // as in the script: the checks run outside the broadcast, the postflight after it
         resumeChecks(who, c, core);
         vm.startPrank(who);
-        resumeSend(who, c);
+        Deployed memory d = resumeSend(who, c);
         vm.stopPrank();
+        resumePostflight(who, c, d);
     }
 
     function _assertLaunched(address core) internal {
@@ -91,13 +94,32 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         _newController(core, base);
         _newSeaportAdapter(core, base.seaportRecipients);
         _newStrategyAdapter();
+        ICoinRenderer(_newRenderer(base)).setCore(ICore(payable(core)));
         ICore(payable(core)).setController(controllerAddress(core, base));
         ICore(payable(core)).addAdapter(seaportAdapterAddress(core, base.seaportRecipients));
         ICore(payable(core)).addAdapter(strategyAdapterAddress());
         vm.stopPrank();
         this.resume(deployer, base, core);
-        assertEq(stepGas[0] + stepGas[1] + stepGas[2] + stepGas[3] + stepGas[4] + stepGas[5] + stepGas[6], 0);
-        assertGt(stepGas[7], 0, "the launch is sent");
+        for (uint256 i; i < 9; ++i) {
+            assertEq(stepGas[i], 0, "a step on chain is skipped");
+        }
+        assertGt(stepGas[9], 0, "the launch is sent");
+        _assertLaunched(core);
+    }
+
+    // a deploy that stopped after the renderer was created sends setCore, then the rest
+    // promise: a deploy that stopped after the renderer was created sends setCore, then the rest
+    function test_resumeBindsTheCoreOfACreatedRenderer() public {
+        _sendLibrary();
+        vm.startPrank(deployer);
+        address core = _newCore(base, deployer);
+        address r = _newRenderer(base);
+        vm.stopPrank();
+        assertEq(address(ICoinRenderer(r).core()), address(0), "unbound");
+        this.resume(deployer, base, core);
+        assertEq(stepGas[4], 0, "the renderer is on chain");
+        assertGt(stepGas[5], 0, "setCore is sent");
+        assertEq(address(ICoinRenderer(r).core()), core);
         _assertLaunched(core);
     }
 

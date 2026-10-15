@@ -28,7 +28,8 @@ case "$PHASE" in pre|post) ;; *) echo "PHASE must be pre or post, got $PHASE" >&
 STACK="${STACK:-live}"
 export STACK
 OWNER=0xCB43078C32423F5348Cab5885911C3B5faE217F9
-CHAIN=31337
+CHAIN="${CHAIN:-31337}"   # 1 on a chain id 1 node (script/dev/anvil.sh with CHAIN_ID=1)
+export CHAIN_ID="$CHAIN"
 A1=0x1111111111111111111111111111111111111111
 A2=0x2222222222222222222222222222222222222222
 A3=0x3333333333333333333333333333333333333333
@@ -96,6 +97,7 @@ stage() {
   local name="$1" out; out="$(mktemp)"
   say "stage $name"
   rm -f "broadcast/Scenario.s.sol/$CHAIN/run-latest.json"
+  rpc evm_mine   # the stage simulation reads the node clock from the latest block
   if ! STAGE="$name" CORE="$CORE" OWNER="$OWNER" A1="$A1" A2="$A2" A3="$A3" KEEPER="$KEEPER" TRADER="$TRADER" DEV_WALLET="$DEV_WALLET" \
     forge script script/dev/Scenario.s.sol --rpc-url "$E2E_RPC_URL" --broadcast --slow --unlocked --sender "$OWNER" > "$out" 2>&1; then
     echo "stage $name FAILED:"; tail -40 "$out"; exit 1

@@ -7,8 +7,8 @@ the launch, the owner commands after it, and what to do when something stops hal
 | item | note |
 |---|---|
 | the live v2 stack | the five stack addresses are in the tracked script/config/mainnet.json (factory 0x9b17bf6f97F5429368E11028BC637479b4667f7b); the recorded stack with its code hashes is script/config/v2-mainnet.json, pinned by preflight |
-| the signer | one key does every transaction: the v2 factory owner 0xCB43078C32423F5348Cab5885911C3B5faE217F9, also the config `owner` and `creator`, the Core owner and the payee. `deployTokenAsOwner` is owner only. sign with `--ledger` or `--account <name>`; `--private-key $PRIVATE_KEY` only on a throwaway fork |
-| eth | the deploy fee (0.069 eth at the pin, read live) plus gas for nine transactions, 16,120,826 gas measured at block 26186912: 0.085 eth at 1 gwei, 0.150 at 5 gwei, 0.391 at 20 gwei, fee included. fund about 20 percent over the figure for the expected base fee |
+| the signer | one key does every transaction: the v2 factory owner 0xCB43078C32423F5348Cab5885911C3B5faE217F9, also the config `owner` and `creator`, the Core owner and the payee. `deployToken` is owner only on the deprecated factory. sign with `--ledger` or `--account <name>`; `--private-key $PRIVATE_KEY` only on a throwaway fork |
+| eth | the deploy fee (0.069 eth at the pin, read live) plus gas for eleven transactions, 19,069,638 gas measured on the master stack fixture: 0.088 eth at 1 gwei, 0.164 at 5 gwei, 0.450 at 20 gwei, fee included. fund about 20 percent over the figure for the expected base fee |
 | read rpc | an archive capable mainnet rpc in `MAINNET_RPC_URL`, for every command that does not send |
 | private rpc | `PRIVATE_RPC`, a relay that does not publish to the public mempool and serves `eth_getCode`, `eth_getStorageAt` and `eth_call` (https://rpc.mevblocker.io did when tested) |
 | etherscan key | `ETHERSCAN_API_KEY` for verification |
@@ -18,18 +18,18 @@ the launch, the owner commands after it, and what to do when something stops hal
 
 | step | action | command or note |
 |---|---|---|
-| 1 | local config | `cp script/config/mainnet.json script/config/local.json` (gitignored). fill `image` (at most 2048 bytes, with a scheme) and `description` (at most 4096 bytes). set `rateStart` to the market price on launch day of a credit of score `settings.refScore` (4,330,000, the launch average) in wei and `rateCap` to 3 times it (preflight checks the ratio). set `artist` to the artist's address (the tracked file holds the decided launch address). review every value against docs/SPEC.md section 3 |
+| 1 | local config | `cp script/config/mainnet.json script/config/local.json` (gitignored). `image` (at most 2048 bytes, with a scheme) and `description` (at most 4096 bytes) may stay empty: the coin renderer draws the image and reads the description from the coin, so `description` is the coin's description text. a renderer is bound to one Core: after a launch attempt that created the renderer, a config change that moves the Core address needs a new `salt`, and preflight fails `predicted renderer is empty` until then. set `rateStart` to the market price on launch day of a credit of score `settings.refScore` (4,330,000, the launch average) in wei and `rateCap` to 3 times it (preflight checks the ratio). set `artist` to the artist's address (the tracked file holds the decided launch address). review every value against docs/SPEC.md section 3 |
 | 2 | rehearse | `REHEARSAL=1 LAUNCH_CONFIG=script/config/local.json forge test --match-path test/Rehearsal.t.sol -vv`: a fork of the latest block, the owner command, the whole deploy, postflight and a trading smoke. it prints the gas of each transaction and the eth the owner needs at 1, 5 and 20 gwei. the addresses it prints are the CREATE2 addresses the launch will use |
 | 3 | owner command on the factory | the factory's minimum protocol skim share is 1,000 and the launch needs at most 1000: `cast send $FACTORY "setMinProtocolSkimShareBps(uint16)" 1000 --rpc-url $MAINNET_RPC_URL --ledger`, confirm with `cast call $FACTORY "minProtocolSkimShareBps()(uint16)"`. after step 6, set it back to 1,000 in its own transaction |
-| 4 | preflight and sign off | `DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json forge script script/Preflight.s.sol --rpc-url $MAINNET_RPC_URL \| grep -E '^ +(WARN\|FAIL\|[0-9]+ of\|CONFIG_HASH\|signoff)'`. 116 rows, every one ok (WARN rows never fail). read the `signoff:` rows. `export CONFIG_HASH=0x...` from the printed value |
+| 4 | preflight and sign off | `DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json forge script script/Preflight.s.sol --rpc-url $MAINNET_RPC_URL \| grep -E '^ +(WARN\|FAIL\|[0-9]+ of\|CONFIG_HASH\|signoff)'`. 118 rows, every one ok (WARN rows never fail). read the `signoff:` rows. `export CONFIG_HASH=0x...` from the printed value |
 | 5 | dry run | `DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Deploy.s.sol --rpc-url $MAINNET_RPC_URL --sender $DEPLOYER`. simulates every transaction, runs preflight first and postflight on the result; nothing is sent. the balance row of the dry run reads high; the funding check is step 4's row and a direct `cast balance $DEPLOYER` |
-| 6 | broadcast | `git checkout foundry.lock; git submodule update -- lib/solady`, then `script/tools/check-freeze.sh` from the candidate commit (every row of the freeze table ok, exit 0), then `DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Deploy.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger`. note the printed addresses: `export CORE=... COIN=... CONTROLLER=...`. then the set back of step 3 |
+| 6 | broadcast | `git checkout foundry.lock; git submodule update -- lib/solady`, then `script/tools/check-freeze.sh` from the candidate commit (every row of the freeze table ok, exit 0), then `DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Deploy.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger`. note the printed addresses: `export CORE=... COIN=... CONTROLLER=... RENDERER=...`. then the set back of step 3 |
 | 7 | verify | section 3 |
-| 8 | postflight | `CORE=$CORE DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Postflight.s.sol --rpc-url $MAINNET_RPC_URL`. 70 rows, every one ok; the locked recipients row is a WARN until `lockRecipients`. record the start tick it prints and the date as the launch price |
+| 8 | postflight | `CORE=$CORE DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Postflight.s.sol --rpc-url $MAINNET_RPC_URL`. 73 rows, every one ok; the locked recipients row is a WARN until `lockRecipients`. record the start tick it prints and the date as the launch price |
 | 9 | the window's end | 30 minutes after the launch block: `cast send $CORE "book()" --rpc-url $MAINNET_RPC_URL --ledger` (anyone may send it). it latches the payee share; fees that arrive between the window's end and this call are not shared |
 | 10 | later owner decisions | `lockRecipients` (with `lockSuccessor`), `lockAllowlist`, the balance side, the credit sale, chosen composition: section 4 |
 
-the nine transactions of step 6, in order: the library `CoreLib`, the Core, the controller, the Seaport adapter, the CreditStrategy adapter, `setController`, `addAdapter` twice, `deployTokenAsOwner` with the fee. all but the launch go through the deterministic deployer (CREATE2) at addresses that depend on the config and the salts; a contract with code at its address is skipped, so a stopped run continues from the chain (section 6).
+the eleven transactions of step 6, in order: the library `CoreLib`, the Core, the controller, the Seaport adapter, the CreditStrategy adapter, the coin renderer `CoinRenderer` (constructed with the config owner), `setCore` on the renderer (binds the Core, once), `setController`, `addAdapter` twice, `deployToken` with the fee, which names the renderer in the token config. the creations go through the deterministic deployer (CREATE2) at addresses that depend on the config and the salts; a contract with code at its address is skipped and a call whose effect is on chain is skipped, so a stopped run continues from the chain (section 6).
 
 what the scripts refuse: `Deploy` and `Resume` refuse an unset placeholder, a value out of bounds, a `CONFIG_HASH` that is not the hash of the loaded config, a signer that is not the factory owner, and the flags `SETTINGS_CHANGED` or `COIN_CHANGED` in the environment (each turns failed postflight rows into warnings after an owner change; only `Postflight` honors them).
 
@@ -52,7 +52,7 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 
 ## 3. verify on etherscan
 
-after step 6, for each of the Core, the controller, the two adapters and the library: `forge verify-contract <address> <path>:<name> --chain 1 --etherscan-api-key $ETHERSCAN_API_KEY --constructor-args <args> --libraries src/lib/CoreLib.sol:CoreLib:$LIB` where postflight prints the constructor args of the Core and the controller and `LIB` is the library address from `broadcast/Deploy.s.sol/1/run-latest.json`. the compiler settings are foundry.toml's (solc 0.8.30, via_ir, optimizer 200).
+after step 6, for each of the Core, the controller, the two adapters, the coin renderer and the library: `forge verify-contract <address> <path>:<name> --chain 1 --etherscan-api-key $ETHERSCAN_API_KEY --constructor-args <args> --libraries src/lib/CoreLib.sol:CoreLib:$LIB` where postflight prints the constructor args of the Core and the controller, the renderer's constructor arg is the config owner, and `LIB` is the library address from `broadcast/Deploy.s.sol/1/run-latest.json`. the compiler settings are foundry.toml's (solc 0.8.30, via_ir, optimizer 200).
 
 ## 4. after the launch
 
@@ -73,6 +73,7 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 | the reserve | `releaseRedeemBurn(uint256)` moves reserve eth into the buyback pot |
 | composing | `compose()`, `compose(uint8)` or `composeChosen` when nobody else does; switch the payment on with `callerFee` and `callerMaxBaseFee` if pages sit |
 | the coin | `coin.lockRecipients()` (script/Lock.s.sol: postflight, then the lock) seals the bounty recipient and ends fee stream migration; take it together with `lockSuccessor`. `lockAllowlist()`, `unrestrict()`, `renounceAdmin()`, `setMetadataRenderer`, `updateImage`, `updateDescription` are the coin admin's |
+| the coin's metadata renderer | named in the token config by the launch (`CoinRenderer`, transactions 6 and 7 create and bind it). to replace it: deploy the new renderer, then `cast send $COIN "setMetadataRenderer(address)" $RENDERER --rpc-url $MAINNET_RPC_URL --ledger` (the coin refuses an address without code); `setMetadataRenderer(address(0))` returns to the built in json; `renounceAdmin()` freezes the choice. read back `cast call $COIN "metadataRenderer()(address)"` and `cast call $COIN "tokenURI()(string)" \| head -c 200`; `CORE=$CORE COIN=$COIN script/tools/coin-metadata.sh` decodes the live metadata into files and a viewer. after a replacement run postflight with `COIN_CHANGED=1` |
 
 ### the lock table
 
@@ -115,7 +116,7 @@ the skim (10 points), the bounty split (9,000 of 10,000), the protocol recipient
 
 ## 6. when a transaction fails half way
 
-every state between the nine transactions is safe: the library is stateless, the controller and the adapters are inert until the Core points at them, and a Core without a controller holds nothing and refuses its controller doors. nobody else can launch the predicted coin, because `deployTokenAsOwner` is owner only.
+every state between the eleven transactions is safe: the library is stateless, the controller and the adapters are inert until the Core points at them, and a Core without a controller holds nothing and refuses its controller doors. nobody else can launch the predicted coin, because `deployToken` is owner only on the deprecated factory.
 
 ```sh
 cast code $CORE --rpc-url $MAINNET_RPC_URL | head -c 12     # 0x... means the Core exists
@@ -126,7 +127,7 @@ cast code $COIN --rpc-url $MAINNET_RPC_URL | head -c 12     # 0x means the launc
 | state | recovery |
 |---|---|
 | nothing or only the library sent | rerun `Deploy`; what has code is skipped |
-| the Core sent, the launch not | `CORE=$CORE DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Resume.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger`: creates what has no code, sends the owner calls and the launch that are missing, runs postflight. it refuses a `CORE` that is not this config's address (`CoreMismatch`), no Core (`NotStarted`), a launched coin (`AlreadyLaunched`) |
+| the Core sent, the launch not | `CORE=$CORE DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Resume.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger`: creates what has no code, sends the renderer, `setCore`, the owner calls and the launch that are missing, runs postflight. it refuses a `CORE` that is not this config's address (`CoreMismatch`), no Core (`NotStarted`), a launched coin (`AlreadyLaunched`) |
 | launched | `Postflight`, then step 9 |
 
 ## 7. local end to end
@@ -164,3 +165,40 @@ The dump is tracked so CI can load it (`.github/workflows/ci.yml` and `candidate
    `cast rpc anvil_dumpState --rpc-url http://127.0.0.1:8601 | python3 -c 'import sys,json;sys.stdout.write(json.load(sys.stdin))' > script/config/stack-master-26158000.hex`
 
 The dump is anvil_dumpState gzip hex, loadable through the `anvil_loadState` rpc, not `anvil --load-state`. `STACK=master script/dev/anvil.sh` forks at chain id 31337 and loads the state after startup; the engine's forge scripts re-enter chain id 1 with `--chain-id 1` and the test suite runs with `--chain-id 1`.
+
+### activity speed run against the running local chain
+
+`script/dev/activity.sh` acts on the deployment in `deployments/31337.json` (its `rpcUrl` is the node) in rounds. It reads the record and sends transactions; it deploys, seeds and resets nothing, and exits on a node that is not chain id 31337.
+
+```
+script/dev/activity.sh eth [rounds]       default 5 rounds
+script/dev/activity.sh balance [rounds]   eth rounds plus the balance side (needs the post phase module)
+script/dev/activity.sh both [rounds]      eth rounds, then balance rounds
+SEED=<n>  PAUSE=1  QUIET=1  PEOPLE=<holders>  PEOPLE_CREDITS=<credits per holder>  BOT_MARGIN=<wei>  WARP_MIN/WARP_MAX=<seconds>
+```
+
+Each round warps the node 2 to 4 hours, then runs one `forge script` (`script/dev/Activity.s.sol`, `round(bool)`) that sends every action as an impersonated account through the real doors and quotes (`bidOf`, `priceOf`, `creditPrice`, `balanceBidOf`), after a dry run of each call in the simulation. A round prints its actions, then the pot, the bid, the pile, the held statements, the statements sold, the CC burned, the action counts of the run and the last transaction of each kind as an `evm.now` link. During the run the node produces one second per block (`anvil_setBlockTimestampInterval`) so the quotes read by the simulation stay current; the script restores the interval on exit.
+
+| step | what it does |
+|---|---|
+| trading | 6 to 12 universal router swaps from 20 derived addresses: buys of 0.05 to 2 eth, sells of 10 to 60 percent of the CC an address holds; `book` after |
+| bots | `buyListing` through the CreditStrategy adapter for every watched listing priced under `bidOf(id)` minus `BOT_MARGIN`, best gap first, until none qualifies. The watched listings are the first 200 ids of `test/utils/CreditIds.sol` that break even at a rate under 1.5 times the rate cap (the strategy has no enumeration, only `nftForSale(id)`); prices are read live. Seaport listings are swept the same way from the signed listings file |
+| people | 2 to 5 real Credits holders at the fork block (EOAs found by sampling ids with `ownerOf`) sell 1 to 3 credits through `sellForEth` at the quote; two more name an ask above the bid and print `held out` |
+| compose | `compose(format)` with a random format from a derived address when `nextPage()` is ready (80 credits past their window) |
+| buyers | 1 to 3 statement purchases at `priceOf`, 1 to 4 credit purchases at `creditPrice`, from derived addresses that can pay; `buyback` from the bot when eligible |
+| balance (balance rounds) | the node warps until a held statement `atFloor`, then 1 to 2 `redeemStatement`, 1 to 3 real holders `sellForBalance` at `balanceBidOf`, 1 to 2 holders `sellForEth` for contrast; the summary shows the balance rate in percent of par and the module's `available()` |
+
+Real on the fork: the CreditStrategy listings and prices, the Credits holders and their credits and scores, the Uniswap v4 pool, the OpenSea listings. Simulated: the 20 trader, bot and composer addresses (funded with `anvil_setBalance`), the sizes and timing of their actions, the mock balance token and its module. `activity.sh balance` and `both` leave 2 held statements to the buyers (`HOLD_BACK`) so the redemptions have input. Pile growth is slow at the default of 3 credits per holder (compose needs 80); `PEOPLE_CREDITS=30` reaches it in a few rounds.
+
+Caches under `script/dev/.cache/` (gitignored): `activity-<core>.json` (watched strategy listings and sampled holders, built on the first run), `opensea-<core>-<catchup>.json` (the OpenSea fetch, reused for an hour, `REFRESH=1` refetches). A second invocation on the same chain starts at the round.
+
+Seaport listings: `OPENSEA_API_KEY` in the shell environment (never written to a file) makes `script/dev/opensea-listings.mjs` fetch the best listing of each Credits token (`listings/collection/credits/best`), keep the ones a basic order can fill (one Credits offer, native consideration, open order type, recipients the offerer or allowlisted, held by the offerer at the fork block, started within the run's warps), rank them by price over score and fetch the signature of the 40 cheapest from `listings/fulfillment_data`. The round dry-runs each fill on the fork (`fulfillable on the fork now`) and sweeps those under the bid. Seaport derives its EIP-712 domain separator from `block.chainid` and the OpenSea signatures cover chain id 1, so on a chain id 31337 node every fill reverts `InvalidSigner()`. The OpenSea sweep runs on a chain id 1 fork of a block near the head (the listings have started and their offerers still hold the credits):
+
+```
+N=$(cast block-number --rpc-url https://gateway.tenderly.co/public/mainnet)
+CHAIN_ID=1 FORK_BLOCK=$((N-100)) STACK=master PORT=8609 script/dev/anvil.sh        # loads the master stack dump
+CHAIN=1 NO_ANVIL=1 E2E_RPC_URL=http://127.0.0.1:8609 PHASE=post STACK=master script/dev/e2e.sh   # deploys, seeds, writes deployments/1.json
+OPENSEA_API_KEY=... REFRESH=1 RECORD=deployments/1.json script/dev/activity.sh eth 5
+```
+
+The record carries chain id 1, so the evm.now links of this node point at chain id 1 and resolve only on the local node. The sweep needs the bid above a listing's price plus `BOT_MARGIN`; the bid climbs 0.5 percent a minute toward the rate cap, so the first sweeps come in the second or third round. On the pinned 26158000 fork the orders are newer than the fork, and `SEAPORT_CATCHUP=1` warps the node past their start once at the start of the run (the fills still need chain id 1). `SEAPORT_ORDERS=<file>` replaces the fetch with a file of the format `{"count": N, "orders": [{"id": "<credit id>", "price": "<wei>", "params": <BasicOrderParameters, decimal strings, additionalRecipients as {amount, recipient}>}]}`, which `script/dev/opensea-listings.mjs` also writes.

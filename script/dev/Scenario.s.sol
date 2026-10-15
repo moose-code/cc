@@ -117,9 +117,9 @@ contract Scenario is Script {
         vm.broadcast(TRADER);
         IERC20R(coin).approve(Mainnet.PERMIT2, type(uint256).max);
         vm.broadcast(TRADER);
-        IPermit2R(Mainnet.PERMIT2).approve(coin, Mainnet.UNIVERSAL_ROUTER, uint160(sellIn), uint48(block.timestamp + 1 hours));
+        IPermit2R(Mainnet.PERMIT2).approve(coin, Mainnet.UNIVERSAL_ROUTER, uint160(sellIn), uint48(_deadline()));
         vm.broadcast(TRADER);
-        IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute(hex"10", _v4Swap(false, sellIn), block.timestamp + 1 hours);
+        IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute(hex"10", _v4Swap(false, sellIn), _deadline());
         vm.broadcast(KEEPER);
         core.book();
 
@@ -137,7 +137,7 @@ contract Scenario is Script {
         string memory cfg = vm.readFile(vm.envOr("LAUNCH_CONFIG", string("script/config/anvil.json")));
         uint256 eth = vm.parseJsonUint(cfg, ".dev.walletCoinEth");
         vm.broadcast(wallet);
-        IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: eth}(hex"10", _v4Swap(true, eth), block.timestamp + 1 hours);
+        IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: eth}(hex"10", _v4Swap(true, eth), _deadline());
         require(IERC20R(coin).balanceOf(wallet) > 0, "dev-wallet: no coin bought");
         console.log("dev-wallet: coin", IERC20R(coin).balanceOf(wallet));
     }
@@ -145,7 +145,7 @@ contract Scenario is Script {
     function _buyCoin() internal {
         vm.broadcast(TRADER);
         IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: 3 ether}(
-            hex"10", _v4Swap(true, 3 ether), block.timestamp + 1 hours
+            hex"10", _v4Swap(true, 3 ether), _deadline()
         );
     }
 
@@ -577,6 +577,12 @@ contract Scenario is Script {
         for (uint256 i; i < n; ++i) {
             out[i] = all[i];
         }
+    }
+
+    /// @dev swap deadline: 20 minutes after the simulation's block timestamp. `script/dev/e2e.sh` mines a block before each
+    /// stage so that timestamp is the node clock, not the time of an older block
+    function _deadline() internal view returns (uint256) {
+        return block.timestamp + 20 minutes;
     }
 
     /// @dev one v4 swap input: exact in single, settle, take. `zeroForOne` true buys the coin with eth

@@ -26,4 +26,9 @@ abstract contract ProdDeployer is SystemDeployer {
     function _newStrategyAdapter() internal virtual override returns (address) {
         return Prod.newStrategyAdapter(STRATEGY_ADAPTER_SALT, CREATE2_DEPLOYER);
     }
+
+    function _newRenderer(LaunchConfig memory c) internal virtual override returns (address) {
+        bytes memory init = abi.encodePacked(vm.getCode("CoinRenderer.sol:CoinRenderer"), abi.encode(c.owner));
+        return Prod.create2(init, rendererSalt(c), CREATE2_DEPLOYER);
+    }
 }
