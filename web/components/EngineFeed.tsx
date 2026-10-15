@@ -10,7 +10,7 @@ import {
 } from "@/lib/engine";
 import { engineDeployed } from "@/lib/config";
 import { useNow, useScores, useCreditTraits, useSnapshot } from "@/lib/live";
-import { useTokenMeta } from "@/lib/art";
+import { useStatementRating } from "./Cards";
 import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
 import Link from "next/link";
@@ -226,7 +226,6 @@ function Row({ e, now, score, mask }: { e: FeedEvent; now: number; score?: bigin
   );
 }
 
-// Statement rating: the Credit Rating attribute of its tokenURI.
 function StatementRating({ sid }: { sid: number }) {
-  return <>{useTokenMeta("statement", sid).data?.attrs["Credit Rating"] ?? ""}</>;
+  return <>{useStatementRating(sid)}</>;
 }

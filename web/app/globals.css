@@ -2847,3 +2847,105 @@ button.slot:disabled {
     padding: 0 16px;
   }
 }
+
+/* ---- statements index ------------------------------------------------------ */
+
+.sect + .sect {
+  margin-top: 32px;
+}
+.sect-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--structure);
+  font-size: 13px;
+}
+.scard-head,
+.scard-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+.scard-head {
+  font-size: 13px;
+  font-weight: 600;
+}
+.scard-head small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.scard-foot {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.state-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.state-mark.dim {
+  color: var(--muted);
+}
+.stable-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 72px 120px 88px 72px 112px 64px;
+  align-items: center;
+  column-gap: 12px;
+  min-height: 57px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+}
+.stable-head {
+  min-height: 32px;
+  border-bottom: 1px solid var(--structure);
+}
+.stable-row .num {
+  text-align: right;
+  white-space: nowrap;
+}
+.stable-row > a {
+  font-weight: 600;
+}
+.stable-price {
+  font-weight: 600;
+}
+.stable-art {
+  display: block;
+  background: var(--art);
+  outline: 1px solid var(--hairline);
+  line-height: 0;
+}
+.stable-art .tile-statement {
+  width: 100%;
+  height: auto;
+}
+/* statement images are 4:5; the frame is square and the image is contained on white */
+.art-frame > .tile-statement,
+.stable-art .tile-statement {
+  aspect-ratio: 1;
+  object-fit: contain;
+}
+@media (max-width: 1100px) {
+  .stable-row {
+    grid-template-columns: 40px minmax(0, 1fr) 64px 88px 112px;
+  }
+  .stable-row .hide-sm {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .stable-row {
+    grid-template-columns: 40px minmax(0, 1fr) 72px 88px;
+    column-gap: 8px;
+  }
+  .stable-row .hide-xs {
+    display: none;
+  }
+}
