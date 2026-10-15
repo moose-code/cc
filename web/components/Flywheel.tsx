@@ -2,10 +2,11 @@
 
 import { statementSaleSplit } from "@/lib/sale-split";
 import { Fragment } from "react";
-import { useFeed, STATEMENT_SIZE } from "@/lib/engine";
+import { STATEMENT_SIZE } from "@/lib/config";
+import { useFeed } from "@/lib/data";
 import { useSnapshot } from "@/lib/live";
 import { useCcMarket, useHookFeeBps } from "@/lib/market";
-import { BALANCE_SYMBOL } from "@/lib/events";
+import { BALANCE_SYMBOL } from "@/lib/format";
 import { CreditTile } from "./Tiles";
 import { Tween } from "./EngineFeed";
 
@@ -27,11 +28,11 @@ const Arrow = ({ n }: { n: number }) => (
 // TODO: "full mechanics" link; the app has no mechanics page to point at.
 export function Flywheel() {
   const { data: snap } = useSnapshot();
-  const { data: feed } = useFeed();
+  const { events: latest } = useFeed("credits", 1);
   const { data: fee } = useHookFeeBps(useCcMarket());
   const balanceOn = !!snap?.balanceOn;
 
-  const creditId = feed.find((e) => e.tile?.kind === "credit")?.tile?.id;
+  const creditId = latest.find((e) => e.tile?.kind === "credit")?.tile?.id;
   const filled = snap ? Number(snap.pileSize % BigInt(STATEMENT_SIZE)) : 0;
   const split = snap ? statementSaleSplit(snap.settings) : undefined;
 

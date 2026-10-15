@@ -8,8 +8,7 @@ import { CreditTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
 import { PageHead } from "@/components/Shell";
-import { STATEMENT_SIZE } from "@/lib/engine";
-import { core, engineDeployed } from "@/lib/config";
+import { core, engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { coreAbi, erc20Abi } from "@/lib/abis";
 import { usePile, useSnapshot } from "@/lib/live";
 

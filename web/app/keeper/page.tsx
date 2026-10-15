@@ -7,9 +7,9 @@ import { PageHead } from "@/components/Shell";
 import { coreAbi } from "@/lib/abis";
 import { core, engineDeployed } from "@/lib/config";
 import { useHead, useSnapshot } from "@/lib/live";
-import { useStats } from "@/lib/engine";
-import { BALANCE_SYMBOL } from "@/lib/events";
-import { commas, eth, shortAddr } from "@/lib/format";
+import { useStats } from "@/lib/data";
+import { useEngine, useIxMode } from "@/lib/indexer";
+import { BALANCE_SYMBOL, commas, eth, shortAddr } from "@/lib/format";
 
 // The permissionless engine actions: the pots, the book and the next buyback (anyone may call them), and the push
 // payouts. The artist and the payee are paid by push on every sale and book, so there is no claim here.
@@ -17,12 +17,16 @@ export default function KeeperPage() {
   const { data: s } = useSnapshot();
   const { data: stats } = useStats();
   const head = useHead().data?.n;
-  const { data: last } = useReadContract({
+  // lastBuybackBlock from the indexer; the Core view in chain mode
+  const mode = useIxMode();
+  const engineQ = useEngine();
+  const { data: lastLive } = useReadContract({
     address: core,
     abi: coreAbi,
     functionName: "lastBuybackBlock",
-    query: { enabled: engineDeployed, refetchInterval: 15000 },
+    query: { enabled: engineDeployed && mode === "chain", refetchInterval: 15000 },
   });
+  const last = mode === "chain" ? lastLive : engineQ.data?.lastBuybackBlock ?? undefined;
   if (!engineDeployed) return <NotDeployed />;
   if (!s) return <main className="page detail" />;
 
@@ -86,9 +90,9 @@ export default function KeeperPage() {
             <p className="panel-note">the artist and the payee are paid by push on every sale and book, so there is no claim.</p>
             <div className="quote">
               {row("artist", shortAddr(s.artist))}
-              {row("artist received", `${(stats?.artistReceived ?? 0).toFixed(4)} eth`)}
+              {row("artist received", stats ? `${stats.artistReceived.toFixed(4)} eth` : "—")}
               {row("payee", shortAddr(s.payee))}
-              {row("payee received", `${(stats?.payeeReceived ?? 0).toFixed(4)} eth`)}
+              {row("payee received", stats ? `${stats.payeeReceived.toFixed(4)} eth` : "—")}
             </div>
           </section>
         </div>

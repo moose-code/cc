@@ -52,6 +52,12 @@ export const deployBlock = process.env.NEXT_PUBLIC_DEPLOY_BLOCK
   ? BigInt(process.env.NEXT_PUBLIC_DEPLOY_BLOCK)
   : undefined;
 
+// The indexer (docs/INDEXER.md): history, lists and slow-moving state. Unset, the pages render live state only.
+export const indexerUrl = (process.env.NEXT_PUBLIC_INDEXER_URL || "").replace(/\/+$/, "") || undefined;
+
+// Credits composed into one statement (the length of Composed.ids).
+export const STATEMENT_SIZE = 80;
+
 // Every engine read and page needs the Core; without it the pages render "engine not deployed".
 export const engineDeployed = Boolean(core);
 

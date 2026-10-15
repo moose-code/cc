@@ -12,13 +12,14 @@ import { Fact, HeroArt, HistLine, type Ink } from "./Detail";
 import { NotDeployed } from "./NotDeployed";
 import { useStatementRating } from "./Cards";
 import { core, engineDeployed, statements } from "@/lib/config";
-import { useBlockTs, useScan, type StatementRecord } from "@/lib/engine";
-import { BALANCE_SYMBOL, formatBalance } from "@/lib/events";
+import { useHistoryDown, useStatementIndex, useStatementView } from "@/lib/data";
+import type { StatementRecord } from "@/lib/events";
+import { useBlockTs } from "@/lib/engine";
 import { useTokenMeta } from "@/lib/art";
 import { controllerAbi, coreAbi, erc20Abi } from "@/lib/abis";
-import { countdown, useNow, useSnapshot, useStatementOwner, useStatements, type HeldStatement, type Snapshot } from "@/lib/live";
+import { countdown, useBalanceToken, useNow, useSnapshot, useStatements, type HeldStatement, type Snapshot } from "@/lib/live";
 import { etaLabel } from "@/lib/compose-eta";
-import { agoLabel, commas, eth, signedPct, tokens } from "@/lib/format";
+import { BALANCE_SYMBOL, agoLabel, commas, eth, formatBalance, signedPct, tokens } from "@/lib/format";
 
 const BUFFER_BPS = 100n; // value above the price; the controller refunds the excess
 // TODO(design README open item "Statement format names"): the picker shows format numbers; names come from the
@@ -26,33 +27,33 @@ const BUFFER_BPS = 100n; // value above the price; the controller refunds the ex
 const FORMATS = [0, 1, 2, 3, 4, 5, 6, 7];
 
 // Statement detail. A statement the Core holds reads from the multicall (useStatements): the asking price, the
-// reference and the floor state, with buy, restyle and redeem. History comes from the Core and controller logs:
-// Composed (credits, format, who, default or chosen), HeldFormatSet, StatementSoldTo, AnchorMoved and
-// StatementRedeemed.
+// reference and the floor state, with buy, restyle and redeem. Facts and history come from the indexer
+// (useStatementRecord): credits, format, composer, compose mode, restyles, anchor moves, sale, redemption and owner.
 export function LiveStatement({ id }: { id: number }) {
   const { data: snap } = useSnapshot();
   const { data: held, dataUpdatedAt } = useStatements();
-  const { data: scan } = useScan();
+  const { rec, owner, isPending } = useStatementView(id);
+  const { data: index } = useStatementIndex();
   const { data: meta } = useTokenMeta("statement", id);
-  const { data: owner } = useStatementOwner(id);
   const now = useNow();
   const s = held.find((x) => x.sid === id);
-  const rec = scan.statements[id];
   const composed = rec?.composed;
   const sale = rec?.sold;
   const redeemed = rec?.redeemed;
-  const { data: composedTs } = useBlockTs(composed?.block);
-  const ratingText = useStatementRating(id, s?.rating);
+  const { data: chainComposedTs } = useBlockTs(composed?.ts == null ? composed?.block : undefined);
+  const composedTs = composed?.ts ?? chainComposedTs;
+  const ratingText = useStatementRating(id, s?.rating ?? rec?.rating);
   if (!engineDeployed) return <NotDeployed />;
 
   const cost = s?.cost ?? composed?.cost;
   const known = Boolean(s || rec);
-  const formatName = meta?.attrs.Format;
-  const format = rec?.restyled.at(-1)?.format ?? composed?.format;
+  const historyDown = useHistoryDown();
+  const formatName = rec?.formatName ?? meta?.attrs.Format;
+  const format = rec?.format ?? composed?.format;
   const creditCount = composed?.ids.length ?? (meta?.attrs.Credits != null ? Number(meta.attrs.Credits) : undefined);
 
   // prev and next among the known statements, newest first
-  const ids = [...new Set([...held.map((x) => x.sid), ...Object.keys(scan.statements).map(Number)])].sort((a, b) => b - a);
+  const ids = [...new Set([...held.map((x) => x.sid), ...index.map((r) => r.id)])].sort((a, b) => b - a);
   const at = ids.indexOf(id);
   const prevHref = at > 0 ? `/statements/${ids[at - 1]}` : undefined;
   const nextHref = at >= 0 && at < ids.length - 1 ? `/statements/${ids[at + 1]}` : undefined;
@@ -85,7 +86,7 @@ export function LiveStatement({ id }: { id: number }) {
               <div className="label">statement</div>
               <h1 className="detail-id">{id}</h1>
 
-              {!known && <p className="side-copy">no record of this statement on the engine.</p>}
+              {!known && !historyDown && !isPending && <p className="side-copy">no record of this statement on the engine.</p>}
               {known && (
                 <dl className="dfacts">
                   <Fact k="credit rating" v={ratingText || "—"} />
@@ -114,6 +115,7 @@ export function LiveStatement({ id }: { id: number }) {
               )}
 
               {known && <History s={s} rec={rec} />}
+              {historyDown && <p className="muted ix-down">history unavailable</p>}
             </div>
           </div>
 
@@ -167,7 +169,7 @@ function History({ s, rec }: { s?: HeldStatement; rec?: StatementRecord }) {
           <HistLine
             key={m.tx}
             mark="hollow"
-            block={m.block}
+            ts={m.ts} block={m.block}
             text={`sale at ${pct(m.saleBps)} of reference, anchor now ${pct(m.anchorBps)}`}
             value="—"
           />
@@ -175,7 +177,7 @@ function History({ s, rec }: { s?: HeldStatement; rec?: StatementRecord }) {
         {rec?.sold && (
           <HistLine
             mark="hollow"
-            block={rec.sold.block}
+            ts={rec.sold.ts} block={rec.sold.block}
             text={
               <>
                 sold to <Addr address={rec.sold.buyer} />
@@ -188,7 +190,7 @@ function History({ s, rec }: { s?: HeldStatement; rec?: StatementRecord }) {
           <HistLine
             key={r.tx}
             mark="k"
-            block={r.block}
+            ts={r.ts} block={r.block}
             text={
               <>
                 restyled to format {r.format} by <Addr address={r.caller} />
@@ -198,7 +200,7 @@ function History({ s, rec }: { s?: HeldStatement; rec?: StatementRecord }) {
           />
         ))}
         {composed && (
-          <HistLine mark="y" block={composed.block} text={`composed from ${composed.ids.length} credits`} value={`${eth(composed.cost)} ETH`} />
+          <HistLine mark="y" ts={composed.ts} block={composed.block} text={`composed from ${composed.ids.length} credits`} value={`${eth(composed.cost)} ETH`} />
         )}
       </div>
     </section>
@@ -206,8 +208,8 @@ function History({ s, rec }: { s?: HeldStatement; rec?: StatementRecord }) {
 }
 
 function RedeemedLine({ r }: { r: NonNullable<StatementRecord["redeemed"]> }) {
-  const { data: scan } = useScan();
-  return <HistLine mark="c" block={r.block} text={`redeemed for ${formatBalance(r.received, scan.balanceToken)}`} value="—" />;
+  const balance = useBalanceToken();
+  return <HistLine mark="c" ts={r.ts} block={r.block} text={`redeemed for ${formatBalance(r.received, balance)}`} value="—" />;
 }
 
 const pct = (bps: bigint | number) => `${(Number(bps) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
@@ -383,14 +385,14 @@ function RedeemSection({ s, snap, updatedAt }: { s: HeldStatement; snap: Snapsho
 
 // Rail of a statement the engine no longer holds: state, and the sale split from the StatementSoldTo event.
 function ExitSection({ rec, known, cost }: { rec?: StatementRecord; known: boolean; cost?: bigint }) {
-  const { data: scan } = useScan();
+  const balance = useBalanceToken();
   const sale = rec?.sold;
   const redeemed = rec?.redeemed;
   const title = sale ? "sold" : redeemed ? "redeemed" : known ? "not held by engine" : "unknown";
   const mark = redeemed ? "c" : "divider";
   const artist = sale?.toArtist ?? 0n;
   const operator = sale?.toOperator ?? 0n;
-  const pot = sale && sale.toBuyback != null ? sale.price - artist - operator - sale.toBuyback : undefined;
+  const pot = sale?.toPot ?? (sale?.toBuyback != null ? sale.price - artist - operator - sale.toBuyback : undefined);
   return (
     <>
       <section className="side-sec">
@@ -404,7 +406,7 @@ function ExitSection({ rec, known, cost }: { rec?: StatementRecord; known: boole
             bought by <Addr address={sale.buyer} />.
           </p>
         )}
-        {redeemed && <p className="side-copy">redeemed for {formatBalance(redeemed.received, scan.balanceToken)}.</p>}
+        {redeemed && <p className="side-copy">redeemed for {formatBalance(redeemed.received, balance)}.</p>}
         {!sale && !redeemed && known && <p className="side-copy">no sale or redemption is logged for this statement.</p>}
       </section>
       {sale && (

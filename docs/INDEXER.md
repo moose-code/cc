@@ -18,7 +18,7 @@ This document is the data contract between the chain, the indexer and the web ap
 - **Keep every log.** A `log` table stores every decoded event from every indexed address with its full arguments. Typed tables are projections of it. A feature that needs an event nobody projected yet starts from `log` and promotes it to a typed column later.
 - **Events for history, calls for state without events.** State that changes without an event (pots, bid rate, balances, pool price) is read by `eth_call` at chosen blocks and stored as snapshots. Section 5 lists each one.
 - **The RPC cache is the backfill budget.** Ponder stores every RPC response in its database. A schema change reindexes from the cache with near zero RPC traffic. The cache survives redeploys because it lives in Postgres.
-- **One source per value.** The web reads each value from exactly one place (section 9). The browser log scan in `web/lib/engine.ts` is removed once the indexer serves history, so the derivation logic lives in one codebase.
+- **One source per value at a time.** The web reads each value from one place (section 9) chosen by one app-wide mode (section 11): the indexer while it is healthy, the browser's on-chain read path otherwise. The browser keeps the on-chain read paths (`web/lib/engine.ts` log scan, `creditInfo`, `tokensOf`, `ownerOf`, `tokenURI` reads) as an automatic fallback for every indexer read (owner decision 127, 2026-10-15). They run only in fallback mode.
 - **Reconcile continuously.** A job compares indexed projections with on-chain views every N blocks and exposes the result (section 8.4).
 - **Data contract in the repo.** This file is the contract. `AGENTS.md` gains a rule: a change that adds web data names its source in section 9.
 
@@ -249,40 +249,40 @@ Every 300 blocks a block handler compares projections with views at the same blo
 
 ## 9. frontend data contract
 
-Source key: **I** indexer table.column, **L** live browser read, **D** derived in the browser from the named inputs. A value marked L today that moves to I is listed with its new source.
+Source key: **I** indexer table.column, **L** live browser read, **D** derived in the browser from the named inputs. A value marked L today that moves to I is listed with its new source. Every I row has an on-chain fallback that runs in chain mode (section 11, owner decision 127); the tables name the indexer source. Wired in phase 2: the rows below as written.
 
 ### 9.1 shared
 
 | value | source |
 |---|---|
 | block number in footer | L `getBlockNumber` (existing head poll) |
-| contract addresses | I `engine` |
-| settings, controller params | I `engine.settings`, `controller` |
+| contract addresses | L snapshot (Core reads, one multicall) |
+| settings, controller params | L snapshot; also I `engine.settings`, `controller` (not read by the web yet) |
 | pot (live, with unbooked income) | L snapshot; D `potWithPending` |
 | ETH/USD | L Chainlink |
-| rating display | D `score / 10000` from I `credit.score` |
+| rating display | D `score / 10000` from I `credit.score` (chain mode: `CreditScore.scoreOf`) |
 
 ### 9.2 home
 
 | value | source |
 |---|---|
-| credits held, statements held | I count `credit.state = held`, `statement.state = held` |
+| credits held, statements held | L snapshot `pileSize`, `heldStatements` |
 | $BALANCE held by engine | L module `available()` (also I `engine.balanceAvailable`, minute scale) |
-| $CC burned and % | I `stats.ccBurned`; D % over coin `totalSupply` at launch (read once into I `engine`) |
+| $CC burned and % | I `stats.ccBurned` (chain mode: Core buyback burns scanned, swap-fee burns not included); D % over the launch supply constant |
 | explainer fee wording | L hook skim and bounty (`useHookFeeBps`); D engine share |
 | statement sale split | D from I `engine.settings` |
-| ledger rows | I `activity` joined to `credit` (thumbnail art, score, mask) and `statement`; paged by cursor |
+| ledger rows | I `activity` joined to `statement`, `statement_format` and `log`; score and plates by id from I `credit` (`useScores`, `useCreditTraits`); art from I `credit.tokenUri`, `statement.tokenUri`; paged by row limit |
 | next credit progress | D pot over bid from L snapshot |
-| next statement progress | I count held mod 80 |
+| next statement progress | L snapshot `pileSize` mod 80 |
 
 ### 9.3 credits index
 
 | value | source |
 |---|---|
-| held credits, newest first, paged | I `credit` where `held`, order `pileOrder` desc (removes the 200 cap) |
-| price per credit | L `creditPrice(id)` for the visible page; D curve from I params as a fallback |
+| held credits, newest first, paged | I `credit` where `held`, order `pileOrder` (no 200 cap; chain mode keeps the `pilePage` cap) |
+| price per credit | L `creditPrice(id)` for every held credit (the pile is bounded by compose) |
 | paid, got by, bought time, rating | I `credit` |
-| buy rate per hour | I `stats_hourly` last 24 h |
+| buy rate per hour | I `stats_hourly` last 24 hourly buckets |
 | compose estimate | D from I pile position, pile size, `controller.window`, `saleOn`, buy rate |
 | header meta: bid at rating | L `ethRate` |
 
@@ -290,20 +290,20 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 
 | value | source |
 |---|---|
-| facts, holder, history | I `credit`, `activity` where `creditId` |
+| facts, holder, history | I `credit` (cost, time, how, tx, owner), `activity` where `creditId` or `otherCreditId`, `statement` for the composed step |
 | plates | I `credit.mask` |
 | prev / next | I neighbours by `pileOrder` |
 | price curve | D from I `costBasis`, `acquiredAt`, `controller` params; L `valueOf(score)` for the floor (live pool term) |
-| sold split | I `credit.toPot`, `toBuyback`, `costToPotBps` (replaces the archive read in `useCreditCostToPotAt`) |
+| sold split | I `credit.salePrice`, `toArtist`, `toOperator`, `toPot`, `toBuyback` (chain mode: archive read in `useCreditCostToPotAt`) |
 | composes into statement N | I next statement id (`stats.composed + 1` cross-checked with Statements supply) |
-| swap panel: wallet credits with rating | I `credit` where `owner = wallet` (replaces `tokensOf`); L approvals |
+| swap panel: wallet credits with rating | I `credit` where `owner = wallet` (chain mode: `tokensOf`); L approvals |
 
 ### 9.5 statements index and detail
 
 | value | source |
 |---|---|
-| lists by state, counts, next compose | I `statement`, `stats`; D estimate |
-| rating, format, cost, composer, mode, credits | I `statement`, `statement_credit` |
+| lists by state, counts, next compose | I `statement`, `stats.composed`; D estimate |
+| rating, format, format name, cost, composer, mode, credits | I `statement`, `statement_credit` |
 | price, at floor, reference | L controller `priceOf`, `referenceOf`, `atFloor` for held statements (time and pool dependent) |
 | price curve | D from L reference and I `controller` params, statement age (I `composedAt` and pause history from `setting_change`) |
 | sold and redeemed details | I `statement` |
@@ -318,7 +318,7 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | sell | wallet credits with scores (I `credit` by owner) | bids and quotes (`bidOf`, anchor slots), approvals |
 | compose | pile with order and window state (I) | `nextPage` readiness, CC balance |
 | balance | $BALANCE price history (phase 2) | pool, quotes, module available |
-| keeper | `lastBuybackBlock`, buyback history (I) | pots, head |
+| keeper | `engine.lastBuybackBlock` (I; chain mode: Core view), `stats` payouts | pots, artist, payee, head |
 
 ### 9.7 swap panel
 
@@ -338,11 +338,18 @@ Prerequisites before mainnet: `deployments/1.json` with the mainnet Core, deploy
 
 ## 11. web changes
 
-1. `NEXT_PUBLIC_INDEXER_URL` and a typed client from `@ponder/client` using the indexer's schema types.
-2. Replace `useScan`, `useBlockTs`, `modeOf`, `useCreditCostToPotAt`, `useScores` for listed credits, `useTokenMeta`, the `tokensOf` reads and `usePile` list reads with indexer queries. Remove `web/lib/engine.ts` scanning and its localStorage cache.
-3. Keep the snapshot multicall, minus the fields the indexer now serves, and the market hooks.
-4. Give the browser transport a fallback list (`fallback([...])` with Tenderly public, publicnode, llamarpc), which it lacks today (`web/lib/wagmi.ts`).
-5. When the indexer is unreachable, pages show live state and mark history as unavailable.
+The browser keeps the on-chain read paths as an automatic fallback for every indexer read (owner decision 127, 2026-10-15). Nothing may break while the indexer is down.
+
+1. `NEXT_PUBLIC_INDEXER_URL` (`web/scripts/local-env.mjs` writes `http://localhost:42169` locally) and a typed client from `@ponder/client`. The indexer schema imports the `ponder` runtime, which does not bundle for the browser, so `web/lib/indexer-schema.ts` declares the columns the web reads as drizzle tables, and a compile-time guard fails `tsc` when a column type differs from `indexer/ponder.schema.ts`.
+2. One app-wide mode (`useIxMode`, set by `web/components/IndexerSync.tsx`):
+   - `ix` when the indexer answers `getStatus`, is at most 5 blocks behind the chain head (`useHead`) and its count of held credits equals `Core.pileSize`; `chain` when it is unconfigured, unreachable, behind, inconsistent, or one of its queries failed in the last 5 blocks; `checking` until the first health result (no source runs).
+   - Each data hook reads the indexer in `ix` mode and its on-chain path in `chain` mode, with the other path's react-query `enabled` off. A healthy indexer therefore causes no `eth_getLogs`, no per-row `getBlock` and no `tokensOf`, `ownerOf` or `tokenURI` reads. Components call one hook and never branch.
+   - Hooks: `useStats`, `useFeed`, `useBuyRate`, `useCreditDetail`, `useStatementIndex`, `useStatementView` (`web/lib/data.ts`); `usePile`, `useCredit`, `useWalletCredits`, `useScores`, `useCreditTraits`, owners, `useCreditCostToPotAt` (`web/lib/live.ts`); `useTokenMeta` (`web/lib/art.ts`).
+3. Live reads stay in both modes: the snapshot multicall, `creditPrice`, `priceOf`, `referenceOf`, `atFloor`, `bidOf`, `valueOf`, market hooks, balances, allowances, approvals, receipts.
+4. The browser transport is `fallback([primary, Tenderly public, publicnode, llamarpc])` on mainnet (`web/lib/wagmi.ts`); local anvil is one transport.
+5. Freshness: one `@ponder/client` live query (server-sent events) on `engine.snapshotBlock` invalidates the indexer queries; while the stream is down a new chain head does.
+6. "history unavailable" shows only when both sources fail (indexer mode off and the browser scan failed).
+7. Chain mode keeps today's limits: the pile list is the first 200 credits of `pilePage`. Values with no on-chain equivalent degrade: the credit sale split of a sold credit uses the current `creditCostToPotBps` (marked "~") when the sale block's state is unreadable; the buy rate comes from the scanned buy events; formatName comes from the `tokenURI` Format attribute.
 
 ## 12. phases
 

@@ -18,26 +18,29 @@ export function Fact({ k, v }: { k: string; v: ReactNode }) {
   );
 }
 
-// History line: ink mark, text, value. The time is `when`, else the age of `block`.
+// History line: ink mark, text, value. The time is `when`, else the age of `ts` (unix seconds, indexer rows) or of `block` (chain scan rows).
 export function HistLine({
   mark,
   text,
   value,
   when,
+  ts,
   block,
 }: {
   mark: Ink | "hollow";
   text: ReactNode;
   value: ReactNode;
   when?: string;
+  ts?: number;
   block?: bigint;
 }) {
   const now = useNow();
-  const { data: ts } = useBlockTs(block);
+  const { data: blockTs } = useBlockTs(ts == null ? block : undefined);
+  const at = ts ?? blockTs;
   return (
     <div className="hist-row">
       <span className="t" suppressHydrationWarning>
-        {when ?? (ts != null ? agoLabel(now - ts) : "")}
+        {when ?? (at != null ? agoLabel(now - at) : "")}
       </span>
       <span className="what">
         <span className={`mark ${mark}`} />

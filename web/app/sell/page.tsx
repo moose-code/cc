@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAccount, usePublicClient, useReadContract } from "wagmi";
+import { useAccount, usePublicClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CreditTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
@@ -9,9 +9,8 @@ import { NotDeployed } from "@/components/NotDeployed";
 import { PageHead } from "@/components/Shell";
 import { core, credits, engineDeployed } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
-import { balanceQuote, sellQuote, useBidsOf, useNow, useScores, useSellQuote, useSnapshot } from "@/lib/live";
-import { BALANCE_SYMBOL } from "@/lib/events";
-import { commas, eth } from "@/lib/format";
+import { balanceQuote, sellQuote, useBidsOf, useNow, useSellQuote, useSnapshot, useWalletCredits } from "@/lib/live";
+import { BALANCE_SYMBOL, commas, eth } from "@/lib/format";
 import type { Write } from "@/lib/tx";
 
 const MIN_OUT_BPS = 9950n; // 0.5% under the batch total quoted at click time
@@ -35,21 +34,14 @@ export default function SellPage() {
   const selectedIds = [...selected].map((id) => BigInt(id));
   const quote = useSellQuote(selectedIds, now);
 
-  const { data: held } = useReadContract({
-    address: credits,
-    abi: creditsAbi,
-    functionName: "tokensOf",
-    args: address ? [address] : undefined,
-    query: { enabled: Boolean(address && engineDeployed) },
-  });
-  const mine: number[] = (held ?? []).map(Number);
+  const { data: wallet, scores } = useWalletCredits(address);
+  const mine: number[] = wallet.map((c) => c.id);
   // each credit's own eth bid, ethRate() * score / refScore (one multicall of Core.bidOf)
   const { data: bids } = useBidsOf(mine.map((id) => BigInt(id)), now);
   const bidForId = (id: number): bigint => bids?.[id.toString()] ?? 0n;
   const total = quote.data?.amount ?? mine.filter((id) => selected.has(id)).reduce((t, id) => t + bidForId(id), 0n);
-  // the per-credit balance payout, score * unitPerPoint * balanceRate / 10_000, derived from the cached scores and the
+  // the per-credit balance payout, score * unitPerPoint * balanceRate / 10_000, derived from the indexed scores and the
   // snapshot rate and unit (no extra poll). the batch total replays the per-credit drop (balanceQuote)
-  const { data: scores } = useScores(balanceBid ? mine.map((id) => BigInt(id)) : []);
   const balanceForId = (id: number): bigint =>
     balanceBid && scores ? ((scores[id.toString()] ?? 0n) * (snap?.balanceUnit ?? 0n) * (snap?.balanceRate ?? 0n)) / 10000n : 0n;
   const balanceTotal =

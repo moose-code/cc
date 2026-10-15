@@ -4,14 +4,17 @@
 // docs/INTEGRATION.md section 2. Hooks read nothing and return empty data while
 // no engine is configured.
 
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { usePublicClient } from "wagmi";
+import { useEffect, useMemo, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useReadContract, usePublicClient } from "wagmi";
 import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, numberToHex, parseAbi, zeroAddress, type Address } from "viem";
 import { core, credits, engineDeployed, statements } from "./config";
-import { controllerAbi, coreAbi, creditsAbi, statementsAbi } from "./abis";
+import { controllerAbi, coreAbi, creditsAbi, erc20Abi, statementsAbi } from "./abis";
 import { SCOPE, lsGet, lsSet } from "./cache";
 import { replayEth, replayBalance } from "./sell";
+import { useCreditRow, useCreditTraitsIx, useHeldCredits, useIxMode, useStatementDetailIx, useWalletCreditsIx } from "./indexer";
+import type { AcquiredHow } from "./indexer-schema";
+import type { BalanceTokenInfo } from "./format";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
@@ -263,6 +266,9 @@ export interface PileCredit {
   acquiredAt: number; // unix seconds
   price: bigint; // sale price now, 0 while the sale is off; what buyCredit takes
   past: boolean; // past its sale window: compose takes only these
+  score?: bigint; // indexer mode only
+  mask?: number; // printed plates, bit0 C, bit1 M, bit2 Y, bit3 K (indexer mode only)
+  how?: AcquiredHow | null; // how the engine got it (indexer mode only)
 }
 
 const val = <T,>(r: { status: string; result?: unknown }, d: T): T => (r.status === "success" ? (r.result as T) : d);
@@ -294,42 +300,82 @@ async function readCredits(client: Client, s: Snapshot, ids: bigint[]): Promise<
   }));
 }
 
+// The credits the engine holds, oldest first (the compose order). Indexer mode: the list, costs, acquisition times and
+// scores come from the indexer (no 200 credit cap), the price is read live (creditPrice falls every second) and `past`
+// follows chain time. Chain mode: the first PILE_PAGE credits of Core.pilePage, read with creditInfo, pastWindow and
+// creditPrice.
 export function usePile() {
   const client = usePublicClient();
   const { data: s } = useSnapshot();
-  const q = useQuery<PileCredit[]>({
+  const mode = useIxMode();
+  const now = useNow(15000);
+  const held = useHeldCredits();
+  const chain = useQuery<PileCredit[]>({
     queryKey: ["pile", s?.pileSize.toString(), s?.creditSaleOn, s?.controller],
-    enabled: Boolean(s),
+    enabled: Boolean(s) && mode === "chain",
     refetchInterval: 15000,
     queryFn: async () => {
       const ids = await client!.readContract({ address: core!, abi: coreAbi, functionName: "pilePage", args: [0n, PILE_PAGE] });
       return readCredits(client!, s!, [...ids]);
     },
   });
-  return { ...q, data: q.data ?? [] };
+  const base = held.data;
+  const saleOn = s?.creditSaleOn ?? false;
+  const key = base?.map((c) => c.id).join(",");
+  const prices = useQuery<Map<number, bigint>>({
+    queryKey: ["pile-prices", key, s?.controller],
+    enabled: Boolean(s && client && base && saleOn && base.length > 0) && mode === "ix",
+    refetchInterval: 15000,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const res = await client!.multicall({
+        ...mc,
+        allowFailure: true,
+        contracts: base!.map((c) => ({ address: s!.controller, abi: controllerAbi, functionName: "creditPrice", args: [BigInt(c.id)] }) as const),
+      });
+      return new Map(base!.map((c, i) => [c.id, val(res[i], 0n)] as const));
+    },
+  });
+  const ixData: PileCredit[] = useMemo(() => {
+    if (mode !== "ix" || !s || !base || (saleOn && base.length > 0 && !prices.data)) return [];
+    return base.map((c) => ({
+      ...c,
+      inPile: true,
+      price: saleOn ? prices.data?.get(c.id) ?? 0n : 0n,
+      past: !saleOn || c.acquiredAt + s.creditWindow <= now,
+    }));
+  }, [mode, s, base, saleOn, prices.data, now]);
+  return { data: mode === "ix" ? ixData : chain.data ?? [] };
 }
 
-// One credit, in the pile or not. undefined until loaded.
+// One credit, in the pile or not (chain mode) or only in the pile (indexer mode). undefined until loaded.
 export function useCredit(id: number) {
   const client = usePublicClient();
   const { data: s } = useSnapshot();
-  return useQuery<PileCredit | undefined>({
+  const mode = useIxMode();
+  const { data: pile } = usePile();
+  const q = useQuery<PileCredit | undefined>({
     queryKey: ["credit", id, s?.controller, s?.creditSaleOn],
-    enabled: Boolean(s),
+    enabled: Boolean(s) && mode === "chain",
     refetchInterval: 15000,
     queryFn: async () => (await readCredits(client!, s!, [BigInt(id)]))[0],
   });
+  return { data: mode === "ix" ? pile.find((c) => c.id === id) : q.data };
 }
 
 // Current owner of a credit (undefined once burned) and of a statement. Re-read when the snapshot's pile size, held
 // statement ids or next statement id change: every engine tx that moves a token changes one of them. Only the
 // ownerOf revert of a nonexistent or burned token maps to undefined; other errors reject so react-query retries.
+// Indexer mode reads the owner column of the credit or statement row instead.
 function useOwnerOf(kind: "credit" | "statement", id: number) {
   const client = usePublicClient();
   const { data: s } = useSnapshot();
-  return useQuery<Address | undefined>({
+  const mode = useIxMode();
+  const creditRow = useCreditRow(id, kind === "credit");
+  const stmtRow = useStatementDetailIx(id, kind === "statement");
+  const chain = useQuery<Address | undefined>({
     queryKey: ["owner-of", kind, id, s?.pileSize.toString(), s?.held.join(","), s?.nextStatementId],
-    enabled: Boolean(client) && engineDeployed && Boolean(s),
+    enabled: Boolean(client) && engineDeployed && Boolean(s) && mode === "chain",
     queryFn: async () => {
       const address = kind === "credit" ? credits : statements;
       try {
@@ -340,6 +386,8 @@ function useOwnerOf(kind: "credit" | "statement", id: number) {
       }
     },
   });
+  const ixOwner = (kind === "credit" ? creditRow.data?.owner : stmtRow.data?.owner) as Address | null | undefined;
+  return { data: mode === "ix" ? ixOwner ?? undefined : chain.data };
 }
 export const useCreditOwner = (id: number) => useOwnerOf("credit", id);
 export const useStatementOwner = (id: number) => useOwnerOf("statement", id);
@@ -348,9 +396,10 @@ export const useStatementOwner = (id: number) => useOwnerOf("statement", id);
 // so it is cached for good in memory and localStorage. undefined when the node cannot serve that block.
 export function useCreditCostToPotAt(block: bigint | undefined) {
   const client = usePublicClient();
+  const chainMode = useIxMode() === "chain"; // indexer mode: credit.costToPotBps
   return useQuery<number | undefined>({
     queryKey: ["cost-to-pot-at", block?.toString()],
-    enabled: Boolean(client && block !== undefined && engineDeployed),
+    enabled: Boolean(client && block !== undefined && engineDeployed) && chainMode,
     staleTime: Infinity,
     retry: false,
     queryFn: async () => {
@@ -561,13 +610,15 @@ export function useBidsOf(ids: bigint[], now: number) {
 }
 
 // the credit score (CreditScore.scoreOf(seedOf, timestampOf)) for each id, id to score. the score does not change, so
-// it is cached and not polled. used by the credit swap, where score(inId) must be at or above score(outId)
+// it is cached and not polled. used by the credit swap, where score(inId) must be at or above score(outId).
+// Indexer mode reads credit.score.
 export function useScores(ids: bigint[]) {
   const client = usePublicClient();
+  const mode = useIxMode();
   const key = ids.map(String).join(",");
-  return useQuery<Record<string, bigint>>({
+  const chain = useQuery<Record<string, bigint>>({
     queryKey: ["scores-of", key],
-    enabled: engineDeployed && Boolean(client) && ids.length > 0,
+    enabled: engineDeployed && Boolean(client) && ids.length > 0 && mode === "chain",
     staleTime: Infinity,
     queryFn: async () => {
       const scores = await creditScores(client!, ids);
@@ -576,6 +627,9 @@ export function useScores(ids: bigint[]) {
       return m;
     },
   });
+  const ixq = useCreditTraitsIx(mode === "ix" ? ids.map(Number) : []);
+  const ixScores = useMemo(() => (ixq.data ? Object.fromEntries(Object.entries(ixq.data).map(([id, r]) => [id, r.score])) : undefined), [ixq.data]);
+  return { data: mode === "ix" ? ixScores : chain.data };
 }
 
 // Credit price floor input: controller valueOf(score) per id, id to wei. Credit floor price =
@@ -616,10 +670,11 @@ export interface CreditTraits {
 // CreditScore.traitsOf(seedOf, timestampOf) per id. Fixed once minted, so cached and not polled.
 export function useCreditTraits(ids: bigint[]) {
   const client = usePublicClient();
+  const mode = useIxMode();
   const key = ids.map(String).join(",");
-  return useQuery<Record<string, CreditTraits>>({
+  const chain = useQuery<Record<string, CreditTraits>>({
     queryKey: ["traits-of", key],
-    enabled: engineDeployed && Boolean(client) && ids.length > 0,
+    enabled: engineDeployed && Boolean(client) && ids.length > 0 && mode === "chain",
     staleTime: Infinity,
     queryFn: async () => {
       const seeds = await client!.multicall({
@@ -643,6 +698,40 @@ export function useCreditTraits(ids: bigint[]) {
       return m;
     },
   });
+  const ixq = useCreditTraitsIx(mode === "ix" ? ids.map(Number) : []);
+  const ixTraits = useMemo(
+    () => (ixq.data ? (Object.fromEntries(Object.entries(ixq.data).map(([id, r]) => [id, { mask: r.mask, active: r.active, occupied: r.occupied, eights: r.eights, band: r.band }])) as Record<string, CreditTraits>) : undefined),
+    [ixq.data]
+  );
+  return { data: mode === "ix" ? ixTraits : chain.data };
+}
+
+// Credits owned by a wallet with their scores, lowest id first. Indexer mode: the credit table's owner column. Chain
+// mode: Credits.tokensOf and the scores read from the chain.
+export function useWalletCredits(address?: Address) {
+  const client = usePublicClient();
+  const mode = useIxMode();
+  const ixq = useWalletCreditsIx(address);
+  const chain = useQuery<{ id: number; score: bigint; mask?: number }[]>({
+    queryKey: ["wallet-credits-live", address],
+    enabled: Boolean(address && client && engineDeployed) && mode === "chain",
+    queryFn: async () => {
+      const ids = await client!.readContract({ address: credits, abi: creditsAbi, functionName: "tokensOf", args: [address!] });
+      const scores = await creditScores(client!, [...ids]);
+      return ids.map((id, i) => ({ id: Number(id), score: scores[i] }));
+    },
+  });
+  const data = mode === "ix" ? ixq.data : chain.data;
+  const scores = useMemo(() => Object.fromEntries((data ?? []).map((c) => [c.id.toString(), c.score])) as Record<string, bigint>, [data]);
+  return { data: data ?? [], scores, ready: data !== undefined };
+}
+
+// The balance token and its decimals, undefined while the Core has no module.
+export function useBalanceToken(): BalanceTokenInfo | undefined {
+  const { data: s } = useSnapshot();
+  const token = s?.balanceToken && s.balanceToken !== zeroAddress ? s.balanceToken : undefined;
+  const { data: decimals } = useReadContract({ address: token, abi: erc20Abi, functionName: "decimals", query: { enabled: Boolean(token), staleTime: Infinity } });
+  return token && decimals != null ? { address: token, decimals } : undefined;
 }
 
 // sellQuote for the selected credit ids, refreshed with the chain clock's minute.

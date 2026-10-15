@@ -1,15 +1,10 @@
 "use client";
 
-import {
-  useFeed,
-  useScan,
-  useBlockTs,
-  STATEMENT_SIZE,
-  type FeedEvent,
-  type FeedKind,
-} from "@/lib/engine";
-import { engineDeployed } from "@/lib/config";
-import { useNow, useScores, useCreditTraits, useSnapshot } from "@/lib/live";
+import { useFeed, useHistoryDown, type FeedFilter } from "@/lib/data";
+import { useBlockTs, useScan } from "@/lib/engine";
+import type { FeedEvent, FeedKind } from "@/lib/events";
+import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
+import { useCreditTraits, useNow, useScores, useSnapshot } from "@/lib/live";
 import { useStatementRating } from "./Cards";
 import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
@@ -29,10 +24,7 @@ const PLATES = ["C", "M", "Y", "K"]; // bit 0 to 3 of CreditTraits.mask; a set b
 
 const PAGE = 100; // rows per page of the feed
 
-type Filter = "all" | "credits" | "statements";
-const FILTERS: Filter[] = ["all", "credits", "statements"];
-const inFilter = (e: FeedEvent, f: Filter) =>
-  f === "all" || (f === "credits" ? e.tile?.kind === "credit" : e.tile?.kind === "statement");
+const FILTERS: FeedFilter[] = ["all", "credits", "statements"];
 
 const TWEEN_MS = 1200;
 
@@ -115,13 +107,11 @@ export function EngineProgress() {
 }
 
 export function EngineFeed() {
-  const { data: feed } = useFeed();
   const now = useNow();
   const [limit, setLimit] = useState(PAGE);
-  const [filter, setFilter] = useState<Filter>("all");
-
-  const rows = feed.filter((e) => inFilter(e, filter));
-  const shown = rows.slice(0, limit);
+  const [filter, setFilter] = useState<FeedFilter>("all");
+  const { events: shown, total } = useFeed(filter, limit);
+  const historyDown = useHistoryDown();
   // one batched read for the credits on screen
   const ids = [...new Set(shown.flatMap((e) => (e.tile?.kind === "credit" ? [BigInt(e.tile.id)] : [])))];
   const { data: scores } = useScores(ids);
@@ -164,9 +154,10 @@ export function EngineFeed() {
           <Row key={e.key} e={e} now={now} score={e.tile?.kind === "credit" ? scores?.[String(e.tile.id)] : undefined} mask={e.tile?.kind === "credit" ? traits?.[String(e.tile.id)]?.mask : undefined} />
         ))}
       </div>
-      {rows.length > limit && (
+      {historyDown && <p className="muted ix-down">history unavailable</p>}
+      {total > limit && (
         <button className="action more" onClick={() => setLimit(limit + PAGE)}>
-          {`show more (${rows.length - limit} older)`}
+          {`show more (${total - limit} older)`}
         </button>
       )}
     </section>
@@ -174,10 +165,12 @@ export function EngineFeed() {
 }
 
 function Row({ e, now, score, mask }: { e: FeedEvent; now: number; score?: bigint; mask?: number }) {
-  const { data: ts } = useBlockTs(e.block);
+  const { data: blockTs } = useBlockTs(e.ts == null ? e.block : undefined);
   const { data: scan } = useScan();
+  const ts = e.ts ?? blockTs;
   const sid = e.tile?.kind === "statement" ? e.tile.id : undefined;
-  const composed = sid != null && e.kind === "composed" ? scan.statements[sid]?.composed : undefined;
+  const rec = sid != null && e.kind === "composed" && e.label !== "statement restyled" ? scan.statements[sid]?.composed : undefined;
+  const composed = e.composed ?? (rec ? { format: rec.format, credits: rec.ids.length, cost: rec.cost } : undefined);
   const stmt = composed != null && e.label !== "statement restyled";
   const when = ts != null ? relTime(ts, now) : "—";
   return (
@@ -202,7 +195,7 @@ function Row({ e, now, score, mask }: { e: FeedEvent; now: number; score?: bigin
           {e.link && <Link href={e.link.href}>{e.link.text}</Link>}
           {stmt ? (
             <span className="caption">
-              {`format ${composed.format} · ${composed.ids.length} credits · cost ${eth(composed.cost)} ETH`}
+              {`format ${composed.format} · ${composed.credits} credits · cost ${eth(composed.cost)} ETH`}
             </span>
           ) : (
             (e.detail || e.addr) && (
@@ -227,12 +220,12 @@ function Row({ e, now, score, mask }: { e: FeedEvent; now: number; score?: bigin
             </b>
           ))}
       </span>
-      <span className="num rate">{score != null ? rating(score) : stmt && sid != null ? <StatementRating sid={sid} /> : ""}</span>
+      <span className="num rate">{score != null ? rating(score) : stmt && sid != null ? <StatementRating sid={sid} raw={e.rating} /> : ""}</span>
       <span className="num">{e.eth ?? ""}</span>
     </div>
   );
 }
 
-function StatementRating({ sid }: { sid: number }) {
-  return <>{useStatementRating(sid)}</>;
+function StatementRating({ sid, raw }: { sid: number; raw?: bigint }) {
+  return <>{useStatementRating(sid, raw)}</>;
 }

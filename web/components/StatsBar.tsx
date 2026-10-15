@@ -2,11 +2,10 @@
 
 import type { ReactNode } from "react";
 import { formatUnits } from "viem";
-import { useStats, useScan } from "@/lib/engine";
-import { useSnapshot } from "@/lib/live";
+import { useStats } from "@/lib/data";
+import { useBalanceToken, useSnapshot } from "@/lib/live";
 import { engineDeployed } from "@/lib/config";
-import { BALANCE_SYMBOL } from "@/lib/events";
-import { commas } from "@/lib/format";
+import { BALANCE_SYMBOL, commas } from "@/lib/format";
 import { Tween } from "./EngineFeed";
 
 const LAUNCH_SUPPLY_CC = 1e9; // the coin's launch supply, 1e27 wei
@@ -16,14 +15,13 @@ const LAUNCH_SUPPLY_CC = 1e9; // the coin's launch supply, 1e27 wei
 export function StatsBar() {
   const { data: s } = useStats();
   const { data: snap } = useSnapshot();
-  const { data: scan } = useScan();
   const on = engineDeployed && !!snap;
-  const dec = scan.balanceToken?.decimals;
+  const dec = useBalanceToken()?.decimals;
   const balance =
     snap?.balanceOn && snap.balanceAvailable != null && dec != null
       ? commas(Number(formatUnits(snap.balanceAvailable, dec)))
       : "—";
-  const burnedPct = (s.ccBurned / LAUNCH_SUPPLY_CC) * 100;
+  const burnedPct = s ? (s.ccBurned / LAUNCH_SUPPLY_CC) * 100 : 0;
   return (
     <div className="stats">
       <Cell ink="m" label="credits held">
@@ -36,8 +34,8 @@ export function StatsBar() {
         {on ? balance : "—"}
       </Cell>
       <Cell ink="k" label="$CC burned">
-        {engineDeployed ? commas(s.ccBurned) : "—"}
-        {engineDeployed && <small>{commas(burnedPct, 2)}%</small>}
+        {engineDeployed && s ? commas(s.ccBurned) : "—"}
+        {engineDeployed && s && <small>{commas(burnedPct, 2)}%</small>}
       </Cell>
       <Cell ink="pot" label="pot">
         {on ? <Tween wei={snap.potWithPending} /> : "—"}

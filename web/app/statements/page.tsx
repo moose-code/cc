@@ -8,9 +8,10 @@ import { PageHead } from "@/components/Shell";
 import { NotDeployed } from "@/components/NotDeployed";
 import { useComposeEta } from "@/components/ComposeEta";
 import { engineDeployed } from "@/lib/config";
-import { useBlockTs, useScan, type StatementRecord } from "@/lib/engine";
-import { useNow, usePile, useSnapshot, useStatements } from "@/lib/live";
+import { useHistoryDown, useStatementIndex, useStats } from "@/lib/data";
+import { useBlockTs } from "@/lib/engine";
 import { useTokenMeta } from "@/lib/art";
+import { useNow, usePile, useSnapshot, useStatements } from "@/lib/live";
 import { etaLabel } from "@/lib/compose-eta";
 import { agoLabel, eth, signedPct } from "@/lib/format";
 
@@ -25,16 +26,19 @@ interface Item {
   cost?: bigint;
   raw?: bigint; // on-chain rating while held
   composedAt?: number;
-  block?: bigint; // compose block, for the time when the statement is no longer held
+  block?: bigint; // compose block (chain mode), for the time when the statement is no longer held
   format?: number;
+  formatName?: string | null;
 }
 
 // Every statement the Core composed. Held: asking price from the controller (priceOf), "for sale" until the price
-// reaches its floor. Sold: StatementSoldTo logs. Redeemed: StatementRedeemed logs. Not held: composed, with neither log.
+// reaches its floor. Sold, redeemed and not held: the indexer's statement rows.
 export default function StatementsPage() {
   const { data: snap } = useSnapshot();
   const { data: held } = useStatements();
-  const { data: scan } = useScan();
+  const { data: index } = useStatementIndex();
+  const historyDown = useHistoryDown();
+  const { data: stats } = useStats();
   const { data: pile } = usePile();
   const eta = useComposeEta(pile, 15000);
   const [view, setView] = useState<View>("grid");
@@ -43,23 +47,23 @@ export default function StatementsPage() {
 
   const items = useMemo(() => {
     const heldBy = new Map(held.map((s) => [s.sid, s]));
-    const ids = [...new Set([...heldBy.keys(), ...Object.keys(scan.statements).map(Number)])];
+    const rows = new Map(index.map((r) => [r.id, r]));
+    const ids = [...new Set([...heldBy.keys(), ...rows.keys()])];
     const out: Item[] = ids.map((id) => {
       const h = heldBy.get(id);
-      const r: StatementRecord | undefined = scan.statements[id];
-      const base = { id, format: r?.restyled.at(-1)?.format ?? r?.composed?.format, block: r?.composed?.block };
-      if (h) return { ...base, state: h.atFloor ? "at floor" : "for sale", price: h.price, cost: h.cost, raw: h.rating, composedAt: h.composedAt };
-      const cost = r?.composed?.cost;
-      if (r?.sold) return { ...base, state: "sold", price: r.sold.price, cost };
-      if (r?.redeemed) return { ...base, state: "redeemed", cost };
-      return { ...base, state: "not held", cost };
+      const r = rows.get(id);
+      const base = { id, format: r?.format, formatName: r?.formatName, composedAt: h?.composedAt ?? r?.composedAt, block: r?.block };
+      if (h) return { ...base, state: h.atFloor ? "at floor" : "for sale", price: h.price, cost: h.cost, raw: h.rating };
+      if (r?.soldPrice != null) return { ...base, state: "sold", price: r.soldPrice, cost: r.cost, raw: r.rating };
+      if (r?.redeemed) return { ...base, state: "redeemed", cost: r.cost, raw: r.rating };
+      return { ...base, state: "not held", cost: r?.cost, raw: r?.rating };
     });
     out.sort((a, b) => {
       if (sort === "price") return Number((a.price ?? 2n ** 255n) - (b.price ?? 2n ** 255n)) || b.id - a.id;
       return b.id - a.id;
     });
     return out;
-  }, [held, scan.statements, sort]);
+  }, [held, index, sort]);
 
   if (!engineDeployed) return <NotDeployed />;
 
@@ -72,7 +76,8 @@ export default function StatementsPage() {
     `${count("sold")} sold`,
     (snap?.balanceOn || count("redeemed") > 0) && `${count("redeemed")} redeemed`,
     count("not held") > 0 && `${count("not held")} not held`,
-    `${scan.stats.composed} composed`,
+    stats && `${stats.composed} composed`,
+    historyDown && "history unavailable",
     next && `next composes in ${etaLabel(next)}`,
   ].filter(Boolean);
 
@@ -164,7 +169,8 @@ export default function StatementsPage() {
 
 function Row({ i }: { i: Item }) {
   const r = useStatementRating(i.id, i.raw);
-  const name = useTokenMeta("statement", i.id).data?.attrs.Format;
+  const metaName = useTokenMeta("statement", i.id, i.formatName == null).data?.attrs.Format;
+  const name = i.formatName ?? metaName;
   const { data: ts } = useBlockTs(i.composedAt == null ? i.block : undefined);
   const now = useNow(15000);
   const at = i.composedAt ?? ts;
@@ -175,7 +181,7 @@ function Row({ i }: { i: Item }) {
       </span>
       <Link href={`/statements/${i.id}`}>statement {i.id}</Link>
       <span className="num muted hide-xs">{r}</span>
-      {/* TODO(design README open item "Statement format names"): names come from the tokenURI Format attribute. */}
+      {/* format names come from statement.formatName, the Format attribute of the indexed tokenURI */}
       <span className="muted hide-sm">{i.format != null ? `${i.format} · ${name ? String(name).toLowerCase() : ""}` : ""}</span>
       <span className="num stable-price">{i.price != null ? eth(i.price) : "—"}</span>
       <span className="num muted hide-sm">

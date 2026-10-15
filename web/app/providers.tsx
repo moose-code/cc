@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider } from "wagmi";
 import { useEffect, useState } from "react";
 import { wagmiConfig } from "@/lib/wagmi";
+import { IndexerSync } from "@/components/IndexerSync";
 import "@rainbow-me/rainbowkit/styles.css";
 
 // Resolves the app theme: data-theme when set, else prefers-color-scheme.
@@ -45,6 +46,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <RainbowKitProvider
           theme={dark ? darkTheme(opts) : lightTheme(opts)}
         >
+          <IndexerSync />
           {children}
         </RainbowKitProvider>
       </QueryClientProvider>

@@ -1,8 +1,9 @@
 "use client";
 
-// Token art from the contracts: tokenURI(id) of the Credits and Statements
-// collections, decoded to its name, image and attributes. Reads of one render
-// pass go out as one multicall per collection. Cached per token id in memory and,
+// Token art: tokenURI(id) of the Credits and Statements collections, decoded to
+// its name, image and attributes. In indexer mode (lib/indexer.ts) the indexer's
+// stored tokenURI is used; a token it lacks, and chain mode, read the contract.
+// Reads of one render pass go out as one query or multicall per collection. Cached per token id in memory and,
 // for entries under 32 KB (credits; a statement is ~160 KB), in localStorage.
 
 import { useQuery } from "@tanstack/react-query";
@@ -11,6 +12,7 @@ import type { Address } from "viem";
 import { credits, engineDeployed, statements } from "./config";
 import { tokenUriAbi } from "./abis";
 import { MULTICALL3 } from "./live";
+import { fetchTokenUris, getIxMode, useIxMode } from "./indexer";
 import { SCOPE, lsGet, lsSet, verifyScope } from "./cache";
 
 export type TokenKind = "credit" | "statement";
@@ -70,13 +72,23 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 
 async function run(jobs: Job[]) {
   try {
-    const res = await jobs[0].client.multicall({
+    const uris = getIxMode() === "ix" ? await fetchTokenUris(jobs[0].kind, jobs.map((j) => j.id)).catch(() => new Map<number, string>()) : new Map<number, string>();
+    const rest: Job[] = [];
+    await Promise.all(
+      jobs.map(async (j) => {
+        const uri = uris.get(j.id);
+        if (uri) j.resolve(await resolveUri(uri));
+        else rest.push(j);
+      })
+    );
+    if (rest.length === 0) return;
+    const res = await rest[0].client.multicall({
       allowFailure: true,
       multicallAddress: MULTICALL3,
-      contracts: jobs.map((j) => ({ address: j.address, abi: tokenUriAbi, functionName: "tokenURI", args: [BigInt(j.id)] }) as const),
+      contracts: rest.map((j) => ({ address: j.address, abi: tokenUriAbi, functionName: "tokenURI", args: [BigInt(j.id)] }) as const),
     });
     await Promise.all(
-      jobs.map(async (j, i) => {
+      rest.map(async (j, i) => {
         const r = res[i];
         j.resolve(r.status === "success" ? await resolveUri(r.result as string) : null); // a reverting tokenURI is null
       })
@@ -124,12 +136,13 @@ async function loadMeta(kind: TokenKind, address: Address, id: number, client: C
 }
 
 // null: tokenURI reverted or could not be decoded. undefined: still loading.
-export function useTokenMeta(kind: TokenKind, id: number) {
+export function useTokenMeta(kind: TokenKind, id: number, enabled = true) {
   const client = usePublicClient();
   const address = kind === "credit" ? credits : statements;
+  const mode = useIxMode(); // the source (indexer or chain) is known after the first health check
   return useQuery<TokenMeta | null>({
     queryKey: ["token-meta", kind, address, id],
-    enabled: engineDeployed && Boolean(client),
+    enabled: enabled && engineDeployed && Boolean(client) && mode !== "checking",
     staleTime: Infinity,
     gcTime: 30 * 60 * 1000,
     queryFn: () => loadMeta(kind, address, id, client!),

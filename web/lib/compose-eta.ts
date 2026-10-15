@@ -1,16 +1,13 @@
 // Compose estimate for a held credit. Credits compose first in, first out in
 // pages of `size`. Pure functions over values the app already reads.
 
-// TODO(design README open item "Buy-rate window"): 24h is the suggested value, to confirm.
-export const BUY_RATE_WINDOW_S = 24 * 3600;
-
 export interface EtaInput {
   index: number; // queue position of the credit, 0 = oldest held
   held: number; // credits the engine holds (Core.pileSize)
   size: number; // credits per statement
   windowS: number; // credit sale window in seconds; 0 while the credit sale is off (ControllerV1.pastWindow)
   now: number; // chain time, unix seconds
-  perHour: number | undefined; // buys per hour over BUY_RATE_WINDOW_S
+  perHour: number | undefined; // buys per hour over the last 24 hourly buckets (stats_hourly)
   acquiredAt: (index: number) => number | undefined; // acquisition time of the credit at a queue position
 }
 

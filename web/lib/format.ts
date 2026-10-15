@@ -1,6 +1,19 @@
 import { formatUnits } from "viem";
 import { chain } from "./config";
 
+export const BALANCE_SYMBOL = "$BALANCE";
+
+export interface BalanceTokenInfo {
+  address: `0x${string}`;
+  decimals: number;
+}
+
+// A balance token amount with its symbol; raw units until the token is read.
+export function formatBalance(v: bigint, info?: BalanceTokenInfo): string {
+  const n = info ? Number(formatUnits(v, info.decimals)).toLocaleString("en-US", { maximumFractionDigits: 6 }) : undefined;
+  return n != null ? `${n} ${BALANCE_SYMBOL}` : `${v} ${BALANCE_SYMBOL} units`;
+}
+
 // "+58%" / "-12%" for a percentage number.
 export function signedPct(n: number): string {
   const r = Math.round(n);

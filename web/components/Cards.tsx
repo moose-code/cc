@@ -8,12 +8,14 @@ import { useTokenMeta } from "@/lib/art";
 
 export type StatementState = "for sale" | "at floor" | "sold" | "redeemed" | "not held";
 
-// Statement rating in points. A held statement passes its on-chain rating (ten-thousandths of a point, same unit as a
-// credit score) and is shown with rating(). Other statements use the "Credit Rating" attribute of the tokenURI, which
-// is that rating already in whole points. Both read "27,221" for the same statement.
+// Statement rating in points. `raw` is the on-chain rating (ten-thousandths of a point, same unit as a credit score:
+// Core.ratingOf for a held statement, statement.rating from the indexer) and is shown with rating(). Without it the
+// "Credit Rating" attribute of the tokenURI is used, which is that rating already in whole points. Both read "27,221"
+// for the same statement.
 export function useStatementRating(sid: number, raw?: bigint): string {
-  const attr = useTokenMeta("statement", sid).data?.attrs["Credit Rating"];
-  if (raw != null && raw > 0n) return rating(raw);
+  const known = raw != null && raw > 0n;
+  const attr = useTokenMeta("statement", sid, !known).data?.attrs["Credit Rating"];
+  if (known) return rating(raw);
   return attr != null && attr !== "" ? commas(Number(attr)) : "";
 }
 

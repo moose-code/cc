@@ -7,8 +7,11 @@ import { Act } from "@/components/Act";
 import { ArtFrame, PageHead } from "@/components/Shell";
 import { NotDeployed } from "@/components/NotDeployed";
 import { useComposeEta } from "@/components/ComposeEta";
-import { engineDeployed } from "@/lib/config";
-import { STATEMENT_SIZE, useScan, type CreditEvt } from "@/lib/engine";
+import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
+import { howLabel } from "@/lib/indexer";
+import { useHistoryDown } from "@/lib/data";
+import { useScan } from "@/lib/engine";
+import type { CreditEvt } from "@/lib/events";
 import { usePile, useScores, useSnapshot, type PileCredit } from "@/lib/live";
 import { buyCredits } from "@/lib/buy";
 import { etaLabel, rateLabel, windowLabel } from "@/lib/compose-eta";
@@ -22,6 +25,7 @@ type Sort = "newest" | "price" | "rating";
 // (controller.creditPrice) and can be bought. Selection feeds the buy box in the rail.
 export default function CreditsPage() {
   const { data: pile } = usePile();
+  const historyDown = useHistoryDown();
   const { data: snap } = useSnapshot();
   const { data: scan } = useScan();
   const { data: scores } = useScores(pile.map((c) => BigInt(c.id)));
@@ -37,7 +41,7 @@ export default function CreditsPage() {
   const rows = useMemo(() => {
     const r = pile.map((c, index) => ({ c, index })).reverse();
     if (sort === "price") r.sort((a, b) => Number(a.c.price - b.c.price));
-    if (sort === "rating") r.sort((a, b) => Number((scores?.[b.c.id.toString()] ?? 0n) - (scores?.[a.c.id.toString()] ?? 0n)));
+    if (sort === "rating") r.sort((a, b) => Number((score(b.c.id) ?? 0n) - (score(a.c.id) ?? 0n)));
     return r;
   }, [pile, sort, scores]);
   const visible = rows.slice(0, shown);
@@ -57,10 +61,10 @@ export default function CreditsPage() {
     `${pile.length} held by engine`,
     snap && `bid ${eth(snap.ethRate)} ETH at rating ${rating(snap.settings.refScore)}`,
     eta.perHour != null && eta.perHour > 0 && `${rateLabel(eta.perHour)} bought an hour`,
+    historyDown && "history unavailable",
   ].filter(Boolean);
 
   const card = (c: PileCredit, index: number) => {
-    const s = score(c.id);
     const on = sel.has(c.id);
     return (
       <div key={c.id} className={`ccard${on ? " on" : ""}`}>
@@ -84,7 +88,7 @@ export default function CreditsPage() {
           </div>
           <div className="ccard-row muted">
             <Link href={`/credits/${c.id}`}>#{c.id}</Link>
-            <span>{s != null ? `rating ${rating(s)}` : ""}</span>
+            <span>{score(c.id) != null ? `rating ${rating(score(c.id)!)}` : ""}</span>
           </div>
           <div className="ccard-row ccard-eta">
             <span className="caption">composes</span>
@@ -133,7 +137,6 @@ export default function CreditsPage() {
                 <span className="num">composes</span>
               </div>
               {visible.map(({ c, index }) => {
-                const s = score(c.id);
                 const on = sel.has(c.id);
                 return (
                   <div key={c.id} className={`ctable-row${on ? " on" : ""}`}>
@@ -152,10 +155,10 @@ export default function CreditsPage() {
                       <CreditTile id={c.id} />
                     </span>
                     <Link href={`/credits/${c.id}`}>credit #{c.id}</Link>
-                    <span className="num muted">{s != null ? rating(s) : ""}</span>
+                    <span className="num muted">{score(c.id) != null ? rating(score(c.id)!) : ""}</span>
                     <span className="num ctable-price">{saleOn ? eth(c.price) : ""}</span>
                     <span className="num muted">{eth(c.cost)}</span>
-                    <span className="muted hide-sm">{gotBy(scan.credits[c.id])}</span>
+                    <span className="muted hide-sm">{c.how ? howLabel(c.how) : gotBy(scan.credits[c.id])}</span>
                     <span className="num muted hide-sm">{agoLabel(eta.now - c.acquiredAt)}</span>
                     <span className="num">{etaLabel(eta.at(index))}</span>
                   </div>
@@ -240,7 +243,7 @@ export default function CreditsPage() {
   );
 }
 
-// How the engine got a credit: the latest bought step in its history.
+// How the engine got a credit in chain mode: the latest bought step in its history.
 function gotBy(evts?: CreditEvt[]): string {
   const b = [...(evts ?? [])].reverse().find((e) => e.t === "bought");
   return b && b.t === "bought" ? b.how : "—";

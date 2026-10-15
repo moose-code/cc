@@ -1,16 +1,20 @@
 // Turns the decoded Core and ControllerV1 logs into feed rows and per credit /
 // per statement histories. Pure functions over decoded logs.
 
-import { formatUnits, type Address } from "viem";
-import { eth } from "./format";
+import { formatUnits } from "viem";
+import { BALANCE_SYMBOL, eth, formatBalance, type BalanceTokenInfo } from "./format";
 
-export const BALANCE_SYMBOL = "$BALANCE";
+export { BALANCE_SYMBOL, formatBalance };
+export type { BalanceTokenInfo };
+
+// Rows from the chain scan carry `block` (its timestamp is read per shown row); rows from the indexer carry `ts`.
 
 export type FeedKind = "credit" | "composed" | "sold" | "redeemed";
 
 export interface FeedEvent {
   key: string;
-  block: bigint; // its timestamp is read per shown row
+  block?: bigint;
+  ts?: number; // unix seconds, with indexer rows
   kind: FeedKind;
   label: string; // short human name of the event
   detail: string;
@@ -20,6 +24,8 @@ export interface FeedEvent {
   tile?: { kind: "credit"; id: number } | { kind: "statement"; id: number };
   addr?: string; // an address closing the detail (buyer), ENS-ified
   link?: { text: string; href: string }; // names the credit or statement, leads the detail cell
+  rating?: bigint; // statement rows from the indexer
+  composed?: { format: number; credits: number; cost: bigint }; // composed rows from the indexer
 }
 
 export interface Stats {
@@ -52,12 +58,13 @@ export type CreditEvt =
       adapter?: string; // listing: the adapter that priced it
       rate?: bigint; // eth bid and listing: rate state after the fill
       pot?: bigint; // eth bid: pot after the fill
-      block: bigint;
+      block?: bigint;
+      ts?: number;
       tx: string;
     }
-  | { t: "sold"; buyer: string; price: bigint; toArtist: bigint; toOperator: bigint; block: bigint; tx: string } // price split: toArtist and toOperator off the top, the rest stays with the engine
-  | { t: "composed"; sid: number; block: bigint; tx: string }
-  | { t: "swapped"; dir: "in" | "out"; other: number; caller: string; fee: bigint; block: bigint; tx: string };
+  | { t: "sold"; buyer: string; price: bigint; toArtist: bigint; toOperator: bigint; block?: bigint; ts?: number; tx: string } // price split: toArtist and toOperator off the top, the rest stays with the engine
+  | { t: "composed"; sid: number; block?: bigint; ts?: number; tx: string }
+  | { t: "swapped"; dir: "in" | "out"; other: number; caller: string; fee: bigint; block?: bigint; ts?: number; tx: string };
 
 export type ComposeMode = "default" | "chosen";
 
@@ -69,13 +76,14 @@ export interface StatementRecord {
     cost: bigint;
     caller: string;
     mode?: ComposeMode; // set when the transaction called Core.compose or Core.composeChosen directly
-    block: bigint;
+    block?: bigint;
+    ts?: number;
     tx: string;
   };
-  restyled: { format: number; caller: string; block: bigint; tx: string }[];
-  anchor: { saleBps: bigint; anchorBps: number; block: bigint; tx: string }[];
-  sold?: { buyer: string; price: bigint; toBuyback?: bigint; toArtist?: bigint; toOperator?: bigint; block: bigint; tx: string };
-  redeemed?: { received: bigint; block: bigint; tx: string };
+  restyled: { format: number; caller: string; block?: bigint; ts?: number; tx: string }[];
+  anchor: { saleBps: bigint; anchorBps: number; block?: bigint; ts?: number; tx: string }[];
+  sold?: { buyer: string; price: bigint; toBuyback?: bigint; toArtist?: bigint; toOperator?: bigint; toPot?: bigint; block?: bigint; ts?: number; tx: string };
+  redeemed?: { received: bigint; block?: bigint; ts?: number; tx: string };
 }
 
 export interface Scan {
@@ -86,11 +94,6 @@ export interface Scan {
   balanceToken?: BalanceTokenInfo; // undefined while the Core has no module
 }
 
-export interface BalanceTokenInfo {
-  address: Address;
-  decimals: number;
-}
-
 export interface ScanInput {
   logs: any[]; // decoded logs of the Core and the controllers, sorted by block and log index
   head: bigint;
@@ -98,15 +101,6 @@ export interface ScanInput {
   modes: Map<string, ComposeMode>; // Composed tx hash -> compose / composeChosen
   balanceToken?: BalanceTokenInfo;
   balancePaid: Map<string, bigint>; // `${tx}:${seller}` -> balance token sent by the core to the seller in that tx
-}
-
-function num(n: string | number): string {
-  return Number(n).toLocaleString("en-US", { maximumFractionDigits: 6 });
-}
-
-// A balance token amount with its symbol; raw units until the token is read.
-export function formatBalance(v: bigint, info?: BalanceTokenInfo): string {
-  return info ? `${num(formatUnits(v, info.decimals))} ${BALANCE_SYMBOL}` : `${v} ${BALANCE_SYMBOL} units`;
 }
 
 export function emptyStats(): Stats {

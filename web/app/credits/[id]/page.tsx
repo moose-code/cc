@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { useAccount, usePublicClient, useReadContract } from "wagmi";
+import { useAccount, usePublicClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CreditTile, StatementTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
@@ -12,21 +12,18 @@ import { Breadcrumb } from "@/components/Shell";
 import { Fact, HeroArt, HistLine, type Ink } from "@/components/Detail";
 import { NotDeployed } from "@/components/NotDeployed";
 import { useComposeEta } from "@/components/ComposeEta";
-import { core, credits, engineDeployed } from "@/lib/config";
+import { core, credits, engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { coreAbi, creditsAbi, erc20Abi } from "@/lib/abis";
-import { STATEMENT_SIZE, useBlockTs, useScan, type CreditEvt } from "@/lib/engine";
+import { useCreditDetail, useHistoryDown, useStatementView, type CreditSale } from "@/lib/data";
+import type { CreditEvt } from "@/lib/events";
 import {
   countdown,
-  useCredit,
-  useCreditOwner,
-  useCreditTraits,
   useCreditValues,
-  useCreditCostToPotAt,
   useNow,
   usePile,
-  useScores,
   useSnapshot,
   useStatements,
+  useWalletCredits,
   type PileCredit,
   type Snapshot,
 } from "@/lib/live";
@@ -43,38 +40,24 @@ const PLATES: { letter: string; bit: number }[] = [
   { letter: "K", bit: 8 },
 ];
 
-// A credit the engine bought. State comes from the multicall reads (creditInfo,
-// the controller's credit prices and pastWindow) and the logs: CreditBought,
-// ListingBought, CreditAdopted (how the engine got it), CreditSold (sold
-// through the credit sale) and Composed (composed into a statement).
+// A credit the engine bought. Facts (cost, time, score, plates, owner, sale split) are the indexer's credit row; the
+// price now comes from the live pile read. The history is the indexer's activity rows: how the engine got it,
+// swaps, the credit sale and the statement it composed into.
 export default function CreditDetail({ params }: { params: { id: string } }) {
   const id = Number(params.id);
   if (!Number.isInteger(id) || id < 0) notFound();
-  const { data: scan } = useScan();
   const { data: snap } = useSnapshot();
   const { data: pile } = usePile();
   const now = useNow();
-  const { data: c } = useCredit(id);
-  const inPile = c?.inPile ?? false;
-  const { data: scores } = useScores([BigInt(id)]);
-  const { data: traits } = useCreditTraits([BigInt(id)]);
-  const { data: owner } = useCreditOwner(id);
+  const d = useCreditDetail(id);
   const { data: meta } = useTokenMeta("credit", id);
-
-  const evts = scan.credits[id] ?? [];
-  const last = evts[evts.length - 1];
-  const lastBought = [...evts].reverse().find((e): e is Extract<CreditEvt, { t: "bought" }> => e.t === "bought");
-  const { data: boughtTs } = useBlockTs(inPile ? undefined : lastBought?.block);
+  const historyDown = useHistoryDown();
   if (!engineDeployed) return <NotDeployed />;
 
-  const cost = inPile ? c?.cost : lastBought?.cost;
-  const acquiredAt = inPile ? c?.acquiredAt : boughtTs;
+  const { c, evts, last, inPile, known, cost, acquiredAt, how, score, mask, owner } = d;
   const window = snap?.creditWindow ?? 0;
   const left = acquiredAt != null ? acquiredAt + window - now : 0;
-  const known = inPile || evts.length > 0;
   const saleOn = snap?.creditSaleOn ?? false;
-  const score = scores?.[id.toString()];
-  const mask = traits?.[id.toString()]?.mask;
 
   // prev and next among the credits the engine holds, newest first
   const held = [...pile].reverse();
@@ -88,11 +71,9 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
       : left > 0
         ? "sale"
         : "floor"
-    : last?.t === "composed"
-      ? "composed"
-      : last?.t === "sold"
-        ? "sold"
-        : "other";
+    : d.state === "held"
+      ? "held"
+      : d.state;
   const ink: Ink = { sale: "m", floor: "k", held: "k", composed: "y", sold: "c", other: "k" }[state] as Ink;
 
   const holder: ReactNode = inPile ? (
@@ -142,14 +123,14 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
                 )}
                 <Fact k="holder" v={holder} />
                 <Fact k="paid by engine" v={cost != null ? `${eth(cost)} ETH` : "—"} />
-                <Fact k="got by" v={lastBought ? lastBought.how : "—"} />
+                <Fact k="got by" v={how ?? "—"} />
                 <Fact k="acquired" v={acquiredAt != null ? utc(acquiredAt) : "—"} />
                 <Fact
                   k="transaction id"
                   v={
-                    lastBought ? (
-                      <a href={evmNowTx(lastBought.tx)} target="_blank" rel="noreferrer">
-                        {lastBought.tx}
+                    d.tx ? (
+                      <a href={evmNowTx(d.tx)} target="_blank" rel="noreferrer">
+                        {d.tx}
                       </a>
                     ) : (
                       "—"
@@ -159,6 +140,7 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
               </dl>
             )}
 
+            {historyDown && <p className="muted ix-down">history unavailable</p>}
             {(evts.length > 0 || state === "sale" || state === "floor") && (
               <section className="dhist">
                 <div className="label">history</div>
@@ -188,8 +170,8 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
             <PriceBox id={id} c={c} snap={snap} left={left} now={now} acquiredAt={c.acquiredAt} />
           )}
           {state === "composed" && last?.t === "composed" && <StatementCard sid={last.sid} />}
-          {state === "sold" && last?.t === "sold" && <SoldSplit e={last} paid={lastBought?.cost} currentPotBps={snap?.creditCostToPotBps} />}
-          {inPile && snap && <SwapPanel outId={id} snap={snap} />}
+          {state === "sold" && d.sale && <SoldSplit sale={d.sale} />}
+          {inPile && snap && <SwapPanel outId={id} outScore={score} snap={snap} />}
         </aside>
       </div>
     </div>
@@ -350,9 +332,8 @@ function PriceBox({
 
 function StatementCard({ sid }: { sid: number }) {
   const { data: held } = useStatements();
-  const { data: scan } = useScan();
+  const { rec: r } = useStatementView(sid);
   const h = held.find((s) => s.sid === sid);
-  const r = scan.statements[sid];
   const line = h
     ? `${h.atFloor ? "at floor" : "for sale"} · ${eth(h.price)} ETH`
     : r?.sold
@@ -376,52 +357,27 @@ function StatementCard({ sid }: { sid: number }) {
   );
 }
 
-// Sale split from the CreditSold event (Core.sellCreditTo): the artist and operator cuts come off the price, then
-// min(engine cost * creditCostToPotBps / 10000, rest) goes to the pot and the remainder to the buyback. The split
-// uses creditCostToPotBps at the sale block; when that read fails it uses the current value and the split is marked "~".
-function SoldSplit({ e, paid, currentPotBps }: { e: Extract<CreditEvt, { t: "sold" }>; paid?: bigint; currentPotBps?: number }) {
-  const { data: thenBps, isLoading } = useCreditCostToPotAt(e.block);
-  const potBps = thenBps ?? (isLoading ? undefined : currentPotBps);
-  const approx = thenBps == null && potBps != null ? "~" : "";
-  const rest = e.price - e.toArtist - e.toOperator;
-  const toPot = paid != null && potBps != null ? (paid * BigInt(potBps)) / 10000n : undefined;
-  const toBuyback = toPot != null ? rest - (toPot < rest ? toPot : rest) : undefined;
+// Sale split of a credit bought out of the credit sale (Core.sellCreditTo): the artist and operator cuts come off the
+// price, then min(engine cost * creditCostToPotBps / 10000, rest) goes to the pot and the remainder to the buyback.
+// Indexer mode shows the split stored with the sale; chain mode computes it with creditCostToPotBps at the sale block
+// ("~" when that block cannot be read and the current value is used).
+function SoldSplit({ sale }: { sale: CreditSale }) {
+  const approx = sale.approx ? "~" : "";
+  const line = (k: string, v: bigint | undefined, always = false, mark = "") =>
+    v != null && (always || v > 0n) ? (
+      <div className="kv">
+        <span className="muted">{k}</span>
+        <span>{mark}{eth(v)} ETH</span>
+      </div>
+    ) : null;
   return (
     <section className="side-sec">
-      <div className="kv">
-        <span className="muted">sold for</span>
-        <span>{eth(e.price)} ETH</span>
-      </div>
-      {paid != null && (
-        <div className="kv">
-          <span className="muted">engine paid</span>
-          <span>{eth(paid)} ETH</span>
-        </div>
-      )}
-      {e.toArtist > 0n && (
-        <div className="kv">
-          <span className="muted">to artist</span>
-          <span>{eth(e.toArtist)} ETH</span>
-        </div>
-      )}
-      {e.toOperator > 0n && (
-        <div className="kv">
-          <span className="muted">to operator</span>
-          <span>{eth(e.toOperator)} ETH</span>
-        </div>
-      )}
-      {toBuyback != null && (
-        <div className="kv">
-          <span className="muted">to buyback</span>
-          <span>{approx}{eth(toBuyback)} ETH</span>
-        </div>
-      )}
-      {toBuyback != null && (
-        <div className="kv">
-          <span className="muted">to pot</span>
-          <span>{approx}{eth(rest - toBuyback)} ETH</span>
-        </div>
-      )}
+      {line("sold for", sale.price, true)}
+      {line("engine paid", sale.paid, true)}
+      {line("to artist", sale.toArtist)}
+      {line("to operator", sale.toOperator)}
+      {line("to buyback", sale.toBuyback, true, approx)}
+      {line("to pot", sale.toPot, true, approx)}
     </section>
   );
 }
@@ -431,6 +387,7 @@ function Step({ e }: { e: CreditEvt }) {
     return (
       <HistLine
         mark="y"
+        ts={e.ts}
         block={e.block}
         text={
           <>
@@ -444,6 +401,7 @@ function Step({ e }: { e: CreditEvt }) {
     return (
       <HistLine
         mark="c"
+        ts={e.ts}
         block={e.block}
         text={
           <>
@@ -457,6 +415,7 @@ function Step({ e }: { e: CreditEvt }) {
     return (
       <HistLine
         mark="hollow"
+        ts={e.ts}
         block={e.block}
         text={
           <>
@@ -472,6 +431,7 @@ function Step({ e }: { e: CreditEvt }) {
   return (
     <HistLine
       mark="hollow"
+      ts={e.ts}
       block={e.block}
       text={
         e.how === "adopted" ? (
@@ -491,24 +451,15 @@ function Step({ e }: { e: CreditEvt }) {
 // rating, for the swapFeeCc coin fee (Core.swapCredit). The wallet credits are
 // filtered to those rated at least the pile credit; the caller approves the
 // coin for the fee and the Credits collection for the Core once, then one tx.
-function SwapPanel({ outId, snap }: { outId: number; snap: Snapshot }) {
+function SwapPanel({ outId, outScore, snap }: { outId: number; outScore?: bigint; snap: Snapshot }) {
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const client = usePublicClient();
   const [inId, setInId] = useState<number | null>(null);
   const fee = snap.settings.swapFeeCc;
 
-  const { data: held } = useReadContract({
-    address: credits,
-    abi: creditsAbi,
-    functionName: "tokensOf",
-    args: address ? [address] : undefined,
-    query: { enabled: Boolean(address && engineDeployed) },
-  });
-  const mine: number[] = (held ?? []).map(Number);
-  const { data: scores } = useScores([BigInt(outId), ...mine.map(BigInt)]);
-  const outScore = scores?.[outId.toString()];
-  const eligible = mine.filter((id) => scores && outScore != null && scores[id.toString()] >= outScore);
+  const { data: wallet, scores, ready } = useWalletCredits(address);
+  const eligible = wallet.filter((w) => outScore != null && w.score >= outScore).map((w) => w.id);
 
   async function swap(write: Write) {
     if (!address || !client || inId == null) return;
@@ -534,7 +485,7 @@ function SwapPanel({ outId, snap }: { outId: number; snap: Snapshot }) {
           connect to swap
         </button>
       ) : eligible.length === 0 ? (
-        <p className="side-copy">{scores == null ? "reading ratings…" : "none of your credits rates at or above this one."}</p>
+        <p className="side-copy">{!ready || outScore == null ? "reading ratings…" : "none of your credits rates at or above this one."}</p>
       ) : (
         <>
           <div className="swap-list">
