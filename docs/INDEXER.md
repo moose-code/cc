@@ -79,6 +79,7 @@ All addresses and start blocks come from `deployments/<chainId>.json`. The confi
 | $BALANCE paid | balance token from `BalanceModuleSet` | `Transfer` with `from = core` | first `BalanceModuleSet` | cross-check for `BalanceRateFill.spent` |
 | Credits | `0x97630aA70AB14ed9883B41dAfccBc11349723043` | `Transfer` | collection deploy block (to be read) | owners for every credit, engine ins and outs, migrate moves |
 | Statements | `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b` | `Transfer` | collection deploy block (to be read) | statement owners after sale |
+| CreditStrategy | `0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6` (proxy) | `NFTBoughtByProtocol`, `NFTSoldByProtocol` | env `STRATEGY_START_BLOCK`; chain 1 requires it (`26037623`, the first block with code); local fork: 60000 blocks before the Core deploy block | strategy listings (6.11) |
 | CC pool swaps (phase 2) | PoolManager `0x000000000004444c5dc75cB358380D2e3dE08A90` | `Swap` with topic `id = ccPoolId` | record `deployBlock` | price history, volume, 24 h change; replaces the archive `getSlot0` read |
 | $BALANCE pool swaps (phase 2) | PoolManager | `Swap` with topic `id = balancePoolId` | first `BalancePoolKeySet` | price history for `valueOf` inputs |
 
@@ -166,6 +167,10 @@ One row per user-visible event, newest first by (`blockNumber`, `logIndex`): `ki
 ### 6.10 `account`
 
 `address`, credits sold to the engine, statements bought, credits bought, CC burned through swaps, first and last seen. Supports a future "your activity" view.
+
+### 6.11 `strategy_listing`
+
+One row per Credits id the CreditStrategy has listed: `id`, `listPrice` (wei, from `NFTBoughtByProtocol`), `active`, `boughtBlock`, `boughtAt`, `soldBlock`, `soldAt`, `buyer`. `NFTBoughtByProtocol` sets `active` and clears the sold fields; `NFTSoldByProtocol` and any Credits `Transfer` out of the strategy end the listing. A price change emits no event, so consumers read `nftForSale(id)` for the rows they use. Index on (`active`, `listPrice`).
 
 ## 7. RPC plan
 
@@ -261,6 +266,9 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | pot (live, with unbooked income) | L snapshot; D `potWithPending` |
 | ETH/USD | L Chainlink |
 | rating display | D `score / 10000` from I `credit.score` (chain mode: `CreditScore.scoreOf`) |
+| header bid at refScore | L snapshot `ethRate` |
+| header acquire button: strategy listings | I `strategy_listing` where `active`, with `credit.score`; chain mode: browser `getLogs` of the two strategy events from `NEXT_PUBLIC_STRATEGY_START_BLOCK`, replayed in log order; both re-read live at each head: `nftForSale`, Credits `ownerOf`, Core `bidOf`, `ethPot`, `retired`, `allowedAdapter` |
+| header acquire button: OpenSea listings | server route `web/app/api/listings` (OpenSea API v2 best listings and fulfillment data of the `credits` collection, `OPENSEA_API_KEY` server only, 20 s cache), filtered by the adapter's `allowedRecipient` |
 
 ### 9.2 home
 

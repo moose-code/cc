@@ -27,7 +27,7 @@ RECORD="deployments/${CHAIN_ID}.json"
 rec() { jq -r --arg k "$1" '.[$k] // empty' "$RECORD"; }
 CORE=$(rec core); COIN=$(rec coin); CREDITS=$(rec credits); STATEMENTS=$(rec statements); DEPLOY_BLOCK=$(rec deployBlock)
 for k in CORE COIN CREDITS STATEMENTS DEPLOY_BLOCK; do [[ -n "${!k}" ]] || { echo "refusing: $RECORD has no value for $k" >&2; exit 1; }; done
-if [[ "$CHAIN_ID" == "1" ]]; then need CREDITS_START_BLOCK; need STATEMENTS_START_BLOCK; fi
+if [[ "$CHAIN_ID" == "1" ]]; then need CREDITS_START_BLOCK; need STATEMENTS_START_BLOCK; need STRATEGY_START_BLOCK; fi
 
 LEDGER="indexer/deployments.json"
 PRIOR=""
@@ -45,11 +45,12 @@ echo "core:      $CORE"
 echo "from:      $DEPLOY_BLOCK"
 echo "credits:   $CREDITS (start ${CREDITS_START_BLOCK:-core deploy block})"
 echo "statements:$STATEMENTS (start ${STATEMENTS_START_BLOCK:-core deploy block})"
+echo "strategy:  start ${STRATEGY_START_BLOCK:-local default}"
 
 # Release values passed to the app; the key names are the ones ponder.config.ts reads.
 VARS=(CHAIN_ID=$CHAIN_ID CORE_ADDRESS=$CORE COIN_ADDRESS=$COIN CREDITS_ADDRESS=$CREDITS STATEMENTS_ADDRESS=$STATEMENTS
   DEPLOY_BLOCK=$DEPLOY_BLOCK DATABASE_SCHEMA=$DATABASE_SCHEMA)
-for k in VIEWS_SCHEMA CREDITS_START_BLOCK STATEMENTS_START_BLOCK RPC_RPS PONDER_POLL_INTERVAL_MS PONDER_ETH_GETLOGS_BLOCK_RANGE SNAPSHOT_INTERVAL_BLOCKS; do
+for k in VIEWS_SCHEMA CREDITS_START_BLOCK STATEMENTS_START_BLOCK STRATEGY_START_BLOCK RPC_RPS PONDER_POLL_INTERVAL_MS PONDER_ETH_GETLOGS_BLOCK_RANGE SNAPSHOT_INTERVAL_BLOCKS; do
   [[ -n "${!k:-}" ]] && VARS+=("$k=${!k}")
 done
 

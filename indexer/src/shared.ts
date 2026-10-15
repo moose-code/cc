@@ -32,7 +32,7 @@ export const posOf = (e: At) => ({
 export async function record(
   ctx: Ctx,
   e: At & { args?: unknown; log: { logIndex: number; address: Hex } },
-  contract: "core" | "controller" | "coin" | "balance_token" | "credits" | "statements",
+  contract: "core" | "controller" | "coin" | "balance_token" | "credits" | "statements" | "strategy",
   event: string,
 ) {
   await ctx.db

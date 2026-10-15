@@ -11,6 +11,13 @@ export const creditsAbi = parseAbi([
   "function tokenURI(uint256 id) view returns (string)",
 ]);
 
+/** CreditStrategy proxy `0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6`. Listings are `nftForSale(id)`; no event ends one. */
+export const strategyAbi = parseAbi([
+  "event NFTBoughtByProtocol(uint256 indexed tokenId, uint256 purchasePrice, uint256 listPrice)",
+  "event NFTSoldByProtocol(uint256 indexed tokenId, uint256 price, address buyer)",
+  "function nftForSale(uint256 id) view returns (uint256)",
+]);
+
 /** Statements ERC721 `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b`. */
 export const statementsAbi = parseAbi([
   "event Transfer(address indexed from, address indexed to, uint256 indexed id)",

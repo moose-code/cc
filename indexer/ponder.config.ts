@@ -5,7 +5,7 @@ import { getAbiItem, zeroAddress } from "viem";
 
 import { controllerAbi } from "./abis/ControllerV1";
 import { coreAbi } from "./abis/Core";
-import { creditsAbi, erc20Abi, statementsAbi } from "./abis/external";
+import { creditsAbi, erc20Abi, statementsAbi, strategyAbi } from "./abis/external";
 import { fallbackTransport, guardedHttp, type Endpoint } from "./src/lib/rpc";
 
 // Every address and start block comes from the deployment record (deployments/<chainId>.json) with an
@@ -47,6 +47,18 @@ function collectionStart(env: string): number {
 const CREDITS_START = collectionStart("CREDITS_START_BLOCK");
 const STATEMENTS_START = collectionStart("STATEMENTS_START_BLOCK");
 
+// CreditStrategy listings. The proxy was deployed at block 26037623 and has emitted about 100k events since, so a local
+// fork reads a window of LOCAL_STRATEGY_WINDOW blocks before the Core deploy block (a fork proxies each historical
+// getLogs to its upstream at about one request per second). Chain 1 requires the start block.
+const LOCAL_STRATEGY_WINDOW = 60_000;
+const STRATEGY = (process.env.STRATEGY_ADDRESS || "0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6").toLowerCase() as `0x${string}`;
+function strategyStart(): number {
+  if (process.env.STRATEGY_START_BLOCK) return Number(process.env.STRATEGY_START_BLOCK);
+  if (CHAIN_ID === 1) throw new Error("STRATEGY_START_BLOCK is required on chain 1 (the CreditStrategy deploy block). Refusing to start.");
+  return Math.max(0, DEPLOY_BLOCK - LOCAL_STRATEGY_WINDOW);
+}
+const STRATEGY_START = strategyStart();
+
 // ---- RPC ---------------------------------------------------------------------------------------------------
 
 // Archive capable endpoints first (docs/INDEXER.md section 7.1). Caps are requests per second, overridable with
@@ -76,6 +88,7 @@ const database = process.env.DATABASE_URL
 
 export const CORE_ADDRESS = CORE;
 export const CORE_DEPLOY_BLOCK = BigInt(DEPLOY_BLOCK);
+export const STRATEGY_ADDRESS = STRATEGY;
 export const COLLECTIONS = { credits: CREDITS, statements: STATEMENTS } as const;
 
 export default createConfig({
@@ -109,6 +122,7 @@ export default createConfig({
     },
     Credits: { abi: creditsAbi, chain: "chain", address: CREDITS, startBlock: CREDITS_START },
     Statements: { abi: statementsAbi, chain: "chain", address: STATEMENTS, startBlock: STATEMENTS_START },
+    Strategy: { abi: strategyAbi, chain: "chain", address: STRATEGY, startBlock: STRATEGY_START },
   },
   blocks: {
     Tick: { chain: "chain", startBlock: DEPLOY_BLOCK, interval: Number(process.env.SNAPSHOT_INTERVAL_BLOCKS ?? 300) },

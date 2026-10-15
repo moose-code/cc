@@ -326,3 +326,23 @@ export const parity = onchainTable("parity", (t) => ({
   ethPotOk: t.boolean().notNull(),
   detail: t.json().notNull(), // chain and indexed values compared
 }));
+
+/**
+ * One row per Credits id the CreditStrategy has listed. active follows NFTBoughtByProtocol (true, listPrice set),
+ * NFTSoldByProtocol and a Credits Transfer out of the strategy (false). A price change emits no event; consumers
+ * re-read nftForSale(id) for the rows they use.
+ */
+export const strategyListing = onchainTable(
+  "strategy_listing",
+  (t) => ({
+    id: t.bigint().primaryKey(), // credit id
+    listPrice: t.bigint().notNull(), // wei, from the latest NFTBoughtByProtocol
+    active: t.boolean().notNull(),
+    boughtBlock: t.bigint().notNull(),
+    boughtAt: t.bigint().notNull(),
+    soldBlock: t.bigint(),
+    soldAt: t.bigint(),
+    buyer: t.hex(), // NFTSoldByProtocol.buyer; the recipient of the Transfer when that event is absent
+  }),
+  (table) => ({ byActive: index().on(table.active, table.listPrice) }),
+);

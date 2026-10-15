@@ -1,6 +1,6 @@
 # credits engine indexer
 
-Ponder 0.17.8 indexer for the Core, its controllers, the coin burns, the balance token and the Credits and Statements collections. Spec and web data contract: `docs/INDEXER.md`.
+Ponder 0.17.8 indexer for the Core, its controllers, the coin burns, the balance token and the Credits and Statements collections and the CreditStrategy listings. Spec and web data contract: `docs/INDEXER.md`.
 
 ## run locally
 
@@ -25,7 +25,7 @@ Endpoints: `/graphql`, `/sql` (`@ponder/client`), `/health/parity` (503 when a r
 
 ## configuration
 
-`ponder.config.ts` reads addresses and the Core deploy block from `deployments/<chainId>.json` (`DEPLOYMENT_RECORD`) and refuses to start on a missing value. `.env.example` lists the variables. Chain 1 requires `DATABASE_URL`, `CREDITS_START_BLOCK` and `STATEMENTS_START_BLOCK` (set in `env/mainnet.env`).
+`ponder.config.ts` reads addresses and the Core deploy block from `deployments/<chainId>.json` (`DEPLOYMENT_RECORD`) and refuses to start on a missing value. `.env.example` lists the variables. Chain 1 requires `DATABASE_URL`, `CREDITS_START_BLOCK`, `STATEMENTS_START_BLOCK` and `STRATEGY_START_BLOCK` (set in `env/mainnet.env`). A local fork reads the CreditStrategy events from 60000 blocks before the Core deploy block.
 
 ## external ABIs (`abis/external.ts`)
 

@@ -1,7 +1,7 @@
 import { ponder } from "ponder:registry";
 import { zeroAddress, type Hex } from "viem";
 
-import { CORE_ADDRESS } from "../ponder.config";
+import { CORE_ADDRESS, STRATEGY_ADDRESS } from "../ponder.config";
 import {
   activity,
   anchorMove,
@@ -12,6 +12,7 @@ import {
   statement,
   statementCredit,
   statementFormat,
+  strategyListing,
 } from "../ponder.schema";
 import { ensureCredit, ensureCredits, ensureEngine, ensureStatement, readController, refreshStatementArt, settingsColumns, snapshot } from "./chain";
 import { composeModeOf } from "./lib/mode";
@@ -496,6 +497,30 @@ ponder.on("Credits:Transfer", async ({ event, context }) => {
     }
   }
   await context.db.update(credit, { id }).set(patch);
+  // a Credits Transfer out of the strategy ends its listing
+  if (lc(from) === STRATEGY_ADDRESS) await endListing(context, event, id, lc(to));
+});
+
+// ---- CreditStrategy listings -------------------------------------------------------------------------------------
+
+async function endListing(ctx: Ctx, e: At, id: bigint, buyer: Hex) {
+  const row = await ctx.db.find(strategyListing, { id });
+  if (!row?.active) return;
+  await ctx.db.update(strategyListing, { id }).set({ active: false, soldBlock: e.block.number, soldAt: e.block.timestamp, buyer });
+}
+
+ponder.on("Strategy:NFTBoughtByProtocol", async ({ event, context }) => {
+  await record(context, event, "strategy", "NFTBoughtByProtocol");
+  const row = { listPrice: event.args.listPrice, active: true, boughtBlock: event.block.number, boughtAt: event.block.timestamp, soldBlock: null, soldAt: null, buyer: null };
+  await context.db.insert(strategyListing).values({ id: event.args.tokenId, ...row }).onConflictDoUpdate(row);
+});
+
+ponder.on("Strategy:NFTSoldByProtocol", async ({ event, context }) => {
+  await record(context, event, "strategy", "NFTSoldByProtocol");
+  const { tokenId, buyer } = event.args;
+  const row = await context.db.find(strategyListing, { id: tokenId });
+  if (!row) return;
+  await context.db.update(strategyListing, { id: tokenId }).set({ active: false, soldBlock: event.block.number, soldAt: event.block.timestamp, buyer: lc(buyer) });
 });
 
 ponder.on("Statements:Transfer", async ({ event, context }) => {
