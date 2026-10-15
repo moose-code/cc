@@ -63,3 +63,32 @@ the retarget's launch, fee, lock and refund paths all pass against the master st
 `V2PortSkimTest` (`lowerBaselineSkim` lowers the engine fee per swap, `lock()` freezes it, the protocol leg lands at the
 fee controller at 1,000 bps of the baseline), `V2PortMigrationTest`, `V2PortRestrictionTest`, `ConfigTest`, `LockTest`,
 `BuildIdentityTest` (the build pins and sizes), `FeesTest`, `ReviewMatrix*` and `ReviewDeploy*`.
+
+## the second candidate run at eab58c7 (every gate green)
+
+the two failures above are fixed at the root (not papered over) and the whole suite reruns green on the master stack
+fixture. the fix of the pause-clock fuzz counterexample is a wrong expectation in the test: the price check compared the
+controller quote against the statement cost, but `priceOf` prices on the reference `max(valueOf(rating), cost)`, which
+the bid floor rate lifts above cost at low total elapsed time; the age clock itself was correct. the balance-sale
+`PotTooSmall` is the invariant handler's model, not the Core: `_pickBalanceIds` now mirrors the `CoreLib._fillBalance`
+floor rule (review ac8da10 M1), offering no batch whose available-clamped rate would fall below the floor. the engine
+`src/` is byte for byte unchanged from the first run; only `test/Pause.t.sol`, `test/invariant/HandlerBase.sol` and
+`test/BalanceFloor.t.sol` changed, each with a hand-derived unit test for the exact state (`test_ageAtSeed17050`,
+`test_sellForBalanceRefusesWithTinyAvailable`).
+
+`CANDIDATE_RUN=1 INVARIANT_DEEP=1 FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=200 STACK=master
+MAINNET_RPC_URL=http://127.0.0.1:8602 forge test -j 8 --chain-id 1`
+
+- 88 test suites, 536 tests: 534 passed, 0 failed, 2 skipped. 886 s wall (5892 s cpu).
+- the deep invariant env ran every invariant suite and its `*Deep` mirror at 64 runs x 200 depth; all pass, including
+  `InvariantsSalePhase2Deep::invariant_11_noUnexpectedReverts`.
+- the 2 skips are `test/Rehearsal.t.sol` (runs under `REHEARSAL=1`, below) and
+  `ConfigTest.test_preflightPinsTheOwnerDelegation` (the mainnet owner's 7702 pins do not apply to the fork owner).
+- the test count is 536 (was 534): the two root-cause unit tests are the two new tests.
+
+rehearsal: `REHEARSAL=1 STACK=master MAINNET_RPC_URL=http://127.0.0.1:8602 forge test --chain-id 1 --match-path
+test/Rehearsal.t.sol` — 1 passed, 0 failed. 3 s. preflight, the owner deploy path, postflight and the trading smoke
+through the master factory.
+
+simulator parity: `node sim/engine.test.mjs` — 1,804 checks passed (the port follows decisions 116 to 126 and reads the
+launch config from `script/config/mainnet.json`), at or above the 1,765 of the prior freeze.

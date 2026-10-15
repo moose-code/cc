@@ -68,15 +68,16 @@ the security review row is the independent Opus review; its two highs are fixed 
 
 ### the master stack exercise
 
-the engine retargeted to the artcoins v2 stack at launcher commit `6d099486` (decision 126; `script/config/v2-master.json`), which re-opens the freeze against the new stack. the candidate exercise ran against the master stack fork fixture (`STACK=master`, the dump on chain id 31337, the scripts and suite re-entering chain id 1, the dev wallet the factory and engine owner) and is recorded in one file:
+the engine retargeted to the artcoins v2 stack at launcher commit `6d099486` (decision 126; `script/config/v2-master.json`), which re-opens the freeze against the new stack. the candidate exercise ran against the master stack fork fixture (`STACK=master`, the dump on chain id 31337, the scripts and suite re-entering chain id 1, the dev wallet the factory and engine owner) and is recorded in one file. the second candidate run at `eab58c7` is green on every gate:
 
 | gate | result |
 |---|---|
-| full suite and the seven deep invariant suites | docs/reviews/STACK-master-6d099486.md (88 suites, 534 tests, 530 passed, 2 failed, 2 skipped) |
-| rehearsal | docs/reviews/STACK-master-6d099486.md (1 passed) |
+| full suite and the seven deep invariant suites | docs/reviews/STACK-master-6d099486.md, second run at eab58c7 (88 suites, 536 tests, 534 passed, 0 failed, 2 skipped, 886 s) |
+| rehearsal | docs/reviews/STACK-master-6d099486.md, second run (1 passed, 3 s) |
+| simulator parity | docs/reviews/STACK-master-6d099486.md, `node sim/engine.test.mjs` 1,804 checks |
 | local end to end (PHASE=post) | docs/reviews/STACK-master-6d099486.md (passed, dev wallet the Core owner) |
 
-the two failures are pre-existing engine edges in code the retarget does not touch (a controller pause-clock fuzz counterexample at age 17050, and a balance-bid `PotTooSmall` deep invariant), surfaced by this run's fuzz and invariant seeds; `git diff fa060ae HEAD -- src/` is only `ArtCoinsV2.sol` and `CoreLib.sol`. the engine team triages them; they do not block the artcoins retarget. `v2-mainnet.json` stays only as the record of the superseded live stack, whose old ABI the engine no longer targets.
+the first run's two failures were fixed at the root at eab58c7 (`9fb6c65`): the pause-clock fuzz counterexample at age 17050 was a wrong expectation in the test (the price check used the statement cost, not the controller reference `max(valueOf(rating), cost)`; the age clock was correct), and the balance-bid `PotTooSmall` deep invariant was the handler's payable model, which now mirrors the `CoreLib._fillBalance` floor rule. the engine `src/` is byte for byte unchanged; only the three test files changed, each with a unit test for the exact state. `v2-mainnet.json` stays only as the record of the superseded live stack, whose old ABI the engine no longer targets.
 
 ## 5. how to work in this repo
 
