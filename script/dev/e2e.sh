@@ -96,6 +96,7 @@ stage() {
   local name="$1" out; out="$(mktemp)"
   say "stage $name"
   rm -f "broadcast/Scenario.s.sol/$CHAIN/run-latest.json"
+  rpc evm_mine   # the stage simulation reads the node clock from the latest block
   if ! STAGE="$name" CORE="$CORE" OWNER="$OWNER" A1="$A1" A2="$A2" A3="$A3" KEEPER="$KEEPER" TRADER="$TRADER" DEV_WALLET="$DEV_WALLET" \
     forge script script/dev/Scenario.s.sol --rpc-url "$E2E_RPC_URL" --broadcast --slow --unlocked --sender "$OWNER" > "$out" 2>&1; then
     echo "stage $name FAILED:"; tail -40 "$out"; exit 1

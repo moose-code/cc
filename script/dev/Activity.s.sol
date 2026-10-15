@@ -45,7 +45,7 @@ interface ISupplyR {
 /// a round runs trading, bots, people, balance (balance rounds only), compose, buyers and buyback in that order.
 /// `script/dev/activity.sh` warps the node between rounds.
 ///
-/// env: SEED, ROUND, RECORD, CACHE_FILE (json written by activity.sh from `discover`: strategy listings and holders),
+/// env: HOLD_BACK (held statements the buyers leave), SEED, ROUND, RECORD, CACHE_FILE (json written by activity.sh from `discover`: strategy listings and holders),
 /// SEAPORT_FILE (listings of script/dev/opensea-listings.mjs), DISCOVER (comma list of listings, holders), BOT_MARGIN (wei, default 0.001 ether),
 /// PEOPLE (most holders per stage, default 5), PEOPLE_CREDITS (most credits one holder sells, default 3).
 ///
@@ -66,9 +66,12 @@ contract Activity is Scenario {
     address internal bot;
     address internal composer;
     uint256 internal refScore;
+    /// @dev held statements the buyers leave in place, so a balance round has statements to redeem
+    uint256 internal holdBack;
 
     function round(bool withBalance) external {
         _init("round");
+        holdBack = vm.envOr("HOLD_BACK", withBalance ? uint256(2) : uint256(0));
         doTrading();
         doBots();
         doPeople();
@@ -128,14 +131,14 @@ contract Activity is Scenario {
                 uint256 amt = held * (10 + _rnd(51)) / 100;
                 _approveSell(who, amt);
                 vm.broadcast(who);
-                IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute(hex"10", _v4Swap(false, amt), block.timestamp + 1 hours);
+                IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute(hex"10", _v4Swap(false, amt), _deadline());
                 console.log("swap sell cc", amt, who);
                 ++sells;
             } else {
                 uint256 eth = 0.05 ether + _rnd(1.95 ether);
                 vm.broadcast(who);
                 IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: eth}(
-                    hex"10", _v4Swap(true, eth), block.timestamp + 1 hours
+                    hex"10", _v4Swap(true, eth), _deadline()
                 );
                 console.log("swap buy eth", eth, who);
                 ++buys;
@@ -539,7 +542,7 @@ contract Activity is Scenario {
         uint256 bought;
         for (uint256 i; i < statements; ++i) {
             uint256[] memory held = core.heldStatements();
-            if (held.length == 0) break;
+            if (held.length <= holdBack) break;
             uint256 sid = held[_rnd(held.length)];
             address who = _actor("trader", _rnd(TRADERS));
             _topUp(who, 10 ether, 60 ether);

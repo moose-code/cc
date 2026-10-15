@@ -56,6 +56,7 @@ trap cleanup EXIT
 TALLY="$RUNDIR/tally.json"
 echo '{"count":{},"last":{}}' > "$TALLY"
 export SEED RECORD="$REC"
+[ "$MODE" = eth ] || export HOLD_BACK=2   # statements the buyers leave for the redemptions
 
 call() { cast call "$@" --rpc-url "$RPC"; }
 num() { call "$@" | awk '{print $1}'; }
@@ -170,9 +171,11 @@ PY
 }
 
 warp_for_balance() { # warps until a held statement reaches its floor, at most 12 times
-  local sid
+  local sid held
   for _ in $(seq 1 12); do
-    for sid in $(call "$CORE" 'heldStatements()(uint256[])' | tr -d '[]' | tr ',' ' '); do
+    held="$(call "$CORE" 'heldStatements()(uint256[])' | tr -d '[]' | tr ',' ' ')"
+    [ -n "${held// /}" ] || { echo "no statement is held, nothing to redeem this round"; return 0; }
+    for sid in $held; do
       [ "$(call "$CTL" 'atFloor(uint256)(bool)' "$sid")" = true ] && return 0
     done
     warp 21600
