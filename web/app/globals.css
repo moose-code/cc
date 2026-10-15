@@ -1,12 +1,27 @@
+/* ---- tokens ---------------------------------------------------------------
+   Every colour is a token with a light and a dark value (web/design/README.md).
+   data-theme="light" or "dark" on <html> forces a theme; without it the
+   theme follows prefers-color-scheme. */
+
 :root {
-  --bg: #ffffff;
-  --fg: #111111;
-  --muted: #9b9b9b;
-  --muted2: #c2c2c2;
-  --line: #ececec;
-  --line2: #f5f5f5;
-  --rowhover: #fafafa;
-  --rowalt: #f7f7f7;
+  color-scheme: light;
+  --paper: #f6f5f0;
+  --surface: #ffffff;
+  --ink: #1a1a1a;
+  --on-ink: #f6f5f0;
+  --structure: #1a1a1a;
+  --divider: #d9d7cf;
+  --hairline: #e3e1d9;
+  --muted: #6e6c64;
+  --quiet: #8a877e;
+  --faint: #a8a69e;
+  --disabled: #c4c1b7;
+  --c: #00a3e0;
+  --m: #e5007e;
+  --y: #ffd400;
+  --k: #1a1a1a;
+  /* credit and statement art prints on white in both themes */
+  --art: #ffffff;
 
   --credit: #ff0080;
   --composed: #e8b200;
@@ -17,6 +32,40 @@
     "Roboto Mono", monospace;
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #121211;
+  --surface: #1a1a18;
+  --ink: #ecebe6;
+  --on-ink: #121211;
+  --structure: #55534e;
+  --divider: #2e2d2a;
+  --hairline: #232220;
+  --muted: #9a988f;
+  --quiet: #7d7b73;
+  --faint: #6a6861;
+  --disabled: #4a4944;
+  --k: #ecebe6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #121211;
+    --surface: #1a1a18;
+    --ink: #ecebe6;
+    --on-ink: #121211;
+    --structure: #55534e;
+    --divider: #2e2d2a;
+    --hairline: #232220;
+    --muted: #9a988f;
+    --quiet: #7d7b73;
+    --faint: #6a6861;
+    --disabled: #4a4944;
+    --k: #ecebe6;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -25,8 +74,8 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--paper);
+  color: var(--ink);
   font-family: var(--mono);
   font-size: 14px;
   line-height: 1.4;
@@ -56,7 +105,7 @@ a:hover {
   gap: 2.5rem;
   padding: 0 1.5rem;
   height: 64px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--hairline);
 }
 
 .brand {
@@ -96,8 +145,8 @@ a:hover {
   align-items: center;
   gap: 2rem;
   padding: 0.5rem 1.5rem;
-  border-bottom: 1px solid var(--line);
-  background: var(--line2);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--hairline);
   font-size: 0.78rem;
   overflow-x: auto;
   white-space: nowrap;
@@ -122,7 +171,7 @@ a:hover {
 }
 .flywheel {
   order: -1;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--hairline);
 }
 .fw-row {
   display: flex;
@@ -139,12 +188,12 @@ a:hover {
   flex-direction: column;
   gap: 0.3rem;
   padding: 0.7rem 0.8rem;
-  border: 1px solid var(--line);
-  color: var(--fg);
+  border: 1px solid var(--hairline);
+  color: var(--ink);
 }
 a.fw-box:hover {
-  border-color: var(--muted2);
-  background: var(--rowhover);
+  border-color: var(--disabled);
+  background: var(--surface);
   text-decoration: none;
 }
 .fw-box svg {
@@ -180,7 +229,7 @@ a.fw-box:hover {
   width: 28px;
   align-self: center;
   fill: none;
-  stroke: var(--muted2);
+  stroke: var(--disabled);
   stroke-width: 1;
 }
 /* fourth column: one box, two halves (list, redeem) side by side on a vertical rule with an "or" marker */
@@ -198,13 +247,13 @@ a.fw-box:hover {
   flex-direction: column;
   gap: 0.3rem;
   padding: 0.6rem 0.8rem;
-  color: var(--fg);
+  color: var(--ink);
 }
 .fw-half + .fw-or + .fw-half {
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--hairline);
 }
 a.fw-half:hover {
-  background: var(--rowhover);
+  background: var(--surface);
   text-decoration: none;
 }
 .fw-half .fw-line {
@@ -219,7 +268,7 @@ a.fw-half:hover {
   top: 50%;
   transform: translate(-50%, -50%);
   padding: 0.15rem 0;
-  background: var(--bg);
+  background: var(--paper);
   color: var(--muted);
   font-weight: 700;
   font-size: 0.72rem;
@@ -240,7 +289,7 @@ a.fw-half:hover {
   position: relative;
   height: 14px;
   margin: 0 calc(1.5rem + (100% - 3rem - 112px) / 11) 0.9rem;
-  border: 1px solid var(--muted2);
+  border: 1px solid var(--disabled);
   border-top: 0;
 }
 .fw-loop::before {
@@ -249,7 +298,7 @@ a.fw-half:hover {
   left: -5px;
   top: -2px;
   border: 4.5px solid transparent;
-  border-bottom: 7px solid var(--muted2);
+  border-bottom: 7px solid var(--disabled);
   border-top: 0;
 }
 .fw-back {
@@ -301,7 +350,7 @@ a.fw-half:hover {
 .trade {
   width: 380px;
   flex: none;
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--hairline);
   padding: 2rem 1.75rem;
 }
 
@@ -313,7 +362,7 @@ a.fw-half:hover {
   gap: 1rem;
   flex-wrap: wrap;
   padding: 0.85rem 1.5rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--hairline);
 }
 .feed-title {
   font-weight: 600;
@@ -346,13 +395,13 @@ a.fw-half:hover {
 .nextstatement {
   padding-left: 1.25rem;
   margin-left: 1.25rem;
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--hairline);
 }
 .nextcredit .track,
 .nextstatement .track {
   width: 120px;
   height: 8px;
-  background: var(--line);
+  background: var(--hairline);
   position: relative;
 }
 .nextcredit .track i {
@@ -376,13 +425,13 @@ a.fw-half:hover {
 }
 .nextcredit .amt,
 .nextstatement .amt {
-  color: var(--fg);
+  color: var(--ink);
 }
 .nextcredit .bid {
   color: var(--muted);
 }
 .nextcredit .bid b {
-  color: var(--fg);
+  color: var(--ink);
   font-weight: 600;
 }
 
@@ -398,10 +447,10 @@ a.fw-half:hover {
   font-weight: 400;
   font-size: 0.8rem;
   padding: 0.55rem 0.75rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--hairline);
   position: sticky;
   top: 0;
-  background: var(--bg);
+  background: var(--paper);
 }
 .feed-table th.col-eth,
 .feed-table td.col-eth {
@@ -417,17 +466,17 @@ a.fw-half:hover {
 }
 .feed-table tbody td {
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--hairline);
   vertical-align: middle;
 }
 .feed-table tbody tr:hover {
-  background: var(--rowhover);
+  background: var(--surface);
 }
 .feed-table tr.hl td {
-  background: var(--rowalt);
+  background: var(--surface);
 }
 .feed-table tr.hl:hover td {
-  background: #f1f1f1;
+  background: var(--hairline);
 }
 
 .col-time {
@@ -443,7 +492,7 @@ a.fw-half:hover {
   color: var(--muted);
 }
 .col-time a:hover {
-  color: var(--fg);
+  color: var(--ink);
 }
 .col-event {
   width: 210px;
@@ -478,13 +527,13 @@ a.fw-half:hover {
 .tile-credit,
 .tile-statement {
   display: block;
-  background: #fff;
+  background: var(--art);
 }
 .tile-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   color: var(--muted);
   font-size: 0.6rem;
   line-height: 1;
@@ -525,7 +574,7 @@ a.fw-half:hover {
   color: var(--muted);
 }
 .tp-head a:hover {
-  color: var(--fg);
+  color: var(--ink);
   text-decoration: none;
 }
 .tp-stats {
@@ -536,7 +585,7 @@ a.fw-half:hover {
 }
 .tp-stats > div + div {
   padding-left: 1.25rem;
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--hairline);
 }
 .tp-stats dt {
   color: var(--muted);
@@ -565,21 +614,21 @@ a.fw-half:hover {
 .tp-tabs {
   display: flex;
   margin-bottom: 1.25rem;
-  border: 1px solid var(--fg);
+  border: 1px solid var(--ink);
 }
 .tp-tabs button {
   flex: 1;
   padding: 0.65rem;
-  background: var(--bg);
+  background: var(--paper);
   border: 0;
   font-family: var(--mono);
   font-size: 0.95rem;
-  color: var(--fg);
+  color: var(--ink);
   cursor: pointer;
 }
 .tp-tabs button.active {
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--ink);
+  color: var(--paper);
 }
 .tp-tabs button:disabled {
   cursor: not-allowed;
@@ -587,11 +636,11 @@ a.fw-half:hover {
 .tp-card {
   margin-bottom: 0.75rem;
   padding: 1rem 1.1rem 1.15rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   transition: border-color 150ms;
 }
 .tp-card:focus-within {
-  border-color: var(--fg);
+  border-color: var(--ink);
 }
 .tp-card.err {
   border-color: var(--credit);
@@ -610,7 +659,7 @@ a.fw-half:hover {
   padding: 0;
   background: none;
   border: 0;
-  color: var(--fg);
+  color: var(--ink);
   font-family: var(--mono);
   font-size: inherit;
   cursor: pointer;
@@ -633,7 +682,7 @@ a.fw-half:hover {
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--fg);
+  color: var(--ink);
   font-family: var(--mono);
   font-size: 1.9rem;
   line-height: 1.2;
@@ -644,7 +693,7 @@ a.fw-half:hover {
 }
 .tp-main input::placeholder,
 .tp-main .num.zero {
-  color: var(--muted2);
+  color: var(--disabled);
 }
 .tp-card.err .tp-main input {
   color: var(--credit);
@@ -696,8 +745,8 @@ button.tp-row:disabled {
 .tp-opts button,
 .tp-opts input {
   padding: 0.2rem 0.5rem;
-  background: var(--bg);
-  border: 1px solid var(--line);
+  background: var(--paper);
+  border: 1px solid var(--hairline);
   color: var(--muted);
   font-family: var(--mono);
   font-size: 0.78rem;
@@ -706,8 +755,8 @@ button.tp-row:disabled {
 }
 .tp-opts button.on,
 .tp-opts input.on {
-  color: var(--fg);
-  border-color: var(--fg);
+  color: var(--ink);
+  border-color: var(--ink);
 }
 .tp-opts input {
   width: 4.75rem;
@@ -741,7 +790,7 @@ button.tp-row:disabled {
   font-size: 0.78rem;
 }
 .tp-fee.tp-launch {
-  color: var(--fg);
+  color: var(--ink);
 }
 .tp-launch p {
   margin: 0.2rem 0 0;
@@ -774,7 +823,7 @@ button.tp-row:disabled {
   justify-content: space-between;
 }
 .quote .r b {
-  color: var(--fg);
+  color: var(--ink);
   font-weight: 600;
 }
 
@@ -786,8 +835,8 @@ button.tp-row:disabled {
   width: 100%;
   min-height: 3.1rem;
   padding: 0 0.95rem;
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--ink);
+  color: var(--paper);
   border: 0;
   font-family: var(--mono);
   font-size: 1rem;
@@ -796,18 +845,18 @@ button.tp-row:disabled {
   transition: background-color 150ms, color 150ms;
 }
 .action:disabled {
-  background: var(--line);
-  color: #6b6b6b;
+  background: var(--hairline);
+  color: var(--faint);
   cursor: not-allowed;
 }
 .action.busy:disabled {
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--ink);
+  color: var(--paper);
   cursor: progress;
 }
 .action.ok:disabled {
   background: var(--sold);
-  color: #fff;
+  color: var(--on-ink);
   cursor: default;
 }
 .action.fail {
@@ -856,7 +905,7 @@ button.tp-row:disabled {
   gap: 1rem;
   flex-wrap: wrap;
   padding: 0.9rem 1.5rem;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--hairline);
   color: var(--muted);
   font-size: 0.8rem;
 }
@@ -874,7 +923,29 @@ button.tp-row:disabled {
   color: var(--muted);
 }
 .footer a:hover {
-  color: var(--fg);
+  color: var(--ink);
+}
+
+/* segmented toggle: 1px ink box, the active segment inverted */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--ink);
+}
+.seg button {
+  padding: 5px 12px;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: inherit;
+  cursor: pointer;
+}
+.seg button + button {
+  border-left: 1px solid var(--ink);
+}
+.seg button.on {
+  background: var(--ink);
+  color: var(--on-ink);
 }
 
 /* ---- responsive ----------------------------------------------------------- */
@@ -895,7 +966,7 @@ button.tp-row:disabled {
   .trade {
     width: 100%;
     border-left: 0;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--hairline);
   }
   .nextcredit .track,
   .nextstatement .track {
@@ -930,13 +1001,13 @@ button.tp-row:disabled {
     column-gap: 0.75rem;
     row-gap: 0.45rem;
     padding: 0.85rem 1rem;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--hairline);
   }
   .feed-table tr.hl {
-    background: var(--rowalt);
+    background: var(--surface);
   }
   .feed-table tr.hl:hover {
-    background: #f1f1f1;
+    background: var(--hairline);
   }
   .feed-table td,
   .feed-table td:first-child,
@@ -981,7 +1052,7 @@ button.tp-row:disabled {
 /* ---- nav ------------------------------------------------------------------ */
 
 .brand {
-  color: var(--fg);
+  color: var(--ink);
 }
 .nav {
   display: flex;
@@ -991,10 +1062,10 @@ button.tp-row:disabled {
   color: var(--muted);
 }
 .nav a:hover {
-  color: var(--fg);
+  color: var(--ink);
 }
 .nav a.on {
-  color: var(--fg);
+  color: var(--ink);
   font-weight: 600;
 }
 .nav-toggle {
@@ -1002,7 +1073,7 @@ button.tp-row:disabled {
   padding: 0.25rem;
   background: none;
   border: 0;
-  color: var(--fg);
+  color: var(--ink);
   font-family: var(--mono);
   font-size: 1.2rem;
   line-height: 1;
@@ -1054,13 +1125,13 @@ button.tp-row:disabled {
   gap: 0.85rem;
   align-items: flex-start;
   padding: 0.85rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   text-decoration: none;
-  color: var(--fg);
+  color: var(--ink);
 }
 .card:hover {
-  border-color: var(--muted2);
-  background: var(--rowhover);
+  border-color: var(--disabled);
+  background: var(--surface);
 }
 /* statement card: big image on top, details below */
 .card-statement {
@@ -1071,7 +1142,7 @@ button.tp-row:disabled {
 .card-statement .tile-statement {
   width: 100%;
   height: auto;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--hairline);
 }
 .card-statement .card-body {
   width: 100%;
@@ -1133,12 +1204,12 @@ button.tp-row:disabled {
 .badge {
   font-size: 0.72rem;
   padding: 0.1rem 0.4rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   color: var(--muted);
 }
 .badge-listed {
-  color: var(--fg);
-  border-color: var(--fg);
+  color: var(--ink);
+  border-color: var(--ink);
 }
 .badge-sold {
   color: var(--sold);
@@ -1174,7 +1245,7 @@ button.tp-row:disabled {
   color: var(--muted);
 }
 .back:hover {
-  color: var(--fg);
+  color: var(--ink);
 }
 .detail-grid {
   display: grid;
@@ -1183,7 +1254,7 @@ button.tp-row:disabled {
   align-items: start;
 }
 .detail-art {
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   padding: 1rem;
   display: flex;
   justify-content: center;
@@ -1212,7 +1283,7 @@ button.tp-row:disabled {
   gap: 0.85rem;
   padding: 1.25rem;
   margin-top: 1rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
 }
 .buybox-price {
   display: flex;
@@ -1225,7 +1296,7 @@ button.tp-row:disabled {
 }
 .price-bar {
   height: 8px;
-  background: var(--line);
+  background: var(--hairline);
   position: relative;
 }
 .price-bar i {
@@ -1245,7 +1316,7 @@ button.tp-row:disabled {
   gap: 0.75rem 1.5rem;
   margin-top: 1.5rem;
   padding-top: 1.25rem;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--hairline);
 }
 .fact {
   display: flex;
@@ -1259,7 +1330,7 @@ button.tp-row:disabled {
 .xlink {
   display: inline-block;
   margin-top: 1.25rem;
-  color: var(--fg);
+  color: var(--ink);
 }
 
 .section {
@@ -1301,7 +1372,7 @@ button.tp-row:disabled {
 .rowlist {
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--hairline);
 }
 .rowlist-head {
   display: flex;
@@ -1310,19 +1381,19 @@ button.tp-row:disabled {
   padding: 0.6rem 0;
   color: var(--muted);
   font-size: 0.8rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--hairline);
 }
 .rowlink {
   display: flex;
   align-items: center;
   gap: 1rem;
   padding: 0.6rem 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--hairline);
   text-decoration: none;
-  color: var(--fg);
+  color: var(--ink);
 }
 .rowlink:hover {
-  background: var(--rowhover);
+  background: var(--surface);
 }
 .rl-credit {
   display: flex;
@@ -1369,7 +1440,7 @@ button.tp-row:disabled {
   align-items: baseline;
   gap: 0.75rem;
   padding: 0.5rem 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--hairline);
 }
 .hlabel {
   width: 120px;
@@ -1387,7 +1458,7 @@ button.tp-row:disabled {
 /* ---- credit status panel ------------------------------------------------- */
 
 .statuspanel {
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   padding: 1rem 1.25rem;
   margin-top: 1rem;
 }
@@ -1395,7 +1466,7 @@ button.tp-row:disabled {
   margin: 0;
 }
 .xlink-inline {
-  color: var(--fg);
+  color: var(--ink);
 }
 
 /* ---- sell page ------------------------------------------------------------ */
@@ -1414,13 +1485,13 @@ button.tp-row:disabled {
   display: grid;
   gap: 1rem;
   padding: 1.25rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
 }
 .sell-connect {
   display: grid;
   gap: 1rem;
   padding: 1.5rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
 }
 .sell-head {
   display: flex;
@@ -1437,14 +1508,14 @@ button.tp-row:disabled {
   cursor: pointer;
 }
 .link-btn:hover {
-  color: var(--fg);
+  color: var(--ink);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .sell-list {
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--hairline);
   margin-bottom: 1rem;
 }
 .sell-item {
@@ -1454,19 +1525,19 @@ button.tp-row:disabled {
   width: 100%;
   padding: 0.6rem 0.25rem;
   border: 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--hairline);
   background: none;
   font-family: var(--mono);
   font-size: 14px;
-  color: var(--fg);
+  color: var(--ink);
   text-align: left;
   cursor: pointer;
 }
 .sell-item:hover {
-  background: var(--rowhover);
+  background: var(--surface);
 }
 .sell-item.on {
-  background: var(--rowalt);
+  background: var(--surface);
 }
 .sell-item .rl-id {
   flex: 1;
@@ -1480,7 +1551,7 @@ button.tp-row:disabled {
   display: grid;
   gap: 0.4rem;
   padding: 1rem 0;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--hairline);
   margin-bottom: 1rem;
 }
 .sell-summary .r {
@@ -1517,7 +1588,7 @@ button.tp-row:disabled {
 
 .compose-bar {
   height: 10px;
-  background: var(--line);
+  background: var(--hairline);
   position: relative;
   margin-bottom: 1.5rem;
 }
@@ -1538,14 +1609,14 @@ button.tp-row:disabled {
   align-items: center;
   justify-content: center;
   aspect-ratio: 1;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
 }
 .slot.filled {
   text-decoration: none;
 }
 .slot.filled:hover {
-  border-color: var(--muted2);
-  background: var(--rowhover);
+  border-color: var(--disabled);
+  background: var(--surface);
 }
 .slot.filled .tile-credit {
   width: 82%;
@@ -1553,7 +1624,7 @@ button.tp-row:disabled {
 }
 .slot.empty {
   border-style: dashed;
-  background: var(--line2);
+  background: var(--hairline);
 }
 .compose-action {
   display: grid;
@@ -1586,7 +1657,7 @@ button.tp-row:disabled {
     gap: 1rem;
     padding-top: 0.85rem;
     margin-top: 0.25rem;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--hairline);
   }
   .menu.open {
     display: flex;
@@ -1632,8 +1703,8 @@ button.slot:disabled {
   cursor: not-allowed;
 }
 .slot.on {
-  border-color: var(--fg);
-  box-shadow: inset 0 0 0 1px var(--fg);
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
 }
 .chosen {
   margin-top: 2.5rem;
@@ -1665,7 +1736,7 @@ button.slot:disabled {
 .restyle {
   margin-top: 1.25rem;
   padding-top: 1rem;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--hairline);
   display: grid;
   gap: 0.5rem;
 }
@@ -1674,9 +1745,9 @@ button.slot:disabled {
   font-family: var(--mono);
   font-size: 0.85rem;
   padding: 0.3rem 0.4rem;
-  border: 1px solid var(--fg);
-  background: var(--bg);
-  color: var(--fg);
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
 }
 
 .keeper {

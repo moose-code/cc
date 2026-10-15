@@ -11,13 +11,21 @@ export const metadata: Metadata = {
     "an erc20 whose swap fees buy credits, compose them into statements, and sell each at a falling price. independent dashboard.",
 };
 
+// Applies the stored theme choice before first paint. "auto" leaves data-theme
+// unset so the CSS follows prefers-color-scheme. Same key and JSON format as
+// ThemeControl in Footer.tsx.
+const THEME_SCRIPT = `try{var t=JSON.parse(localStorage.getItem("cc:theme"));if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}`;
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body>
         <Providers>
           <div className="app">
