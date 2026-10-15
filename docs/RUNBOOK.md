@@ -146,3 +146,21 @@ an anvil fork of block 26158000 (chain id 31337) with the system deployed by the
 The dev wallet `dev.wallet` of `script/config/anvil.json` (the owner's browser wallet, recorded as `accounts.owner`) is funded by the seed with `dev.walletEth` eth, `dev.walletCredits` credits, coin bought with `dev.walletCoinEth` eth (stage `dev-wallet`, the coin is restricted to pool trades) and, in `post`, `dev.walletBalance` of the balance token; change the address there and rerun `script/dev/local.sh` (the web app lists the injected wallet next to the mock accounts and signs `owner` with it).
 
 `buyListing` is outside the scenario: the CreditStrategy lists at about four times the rate cap and the Seaport adapter prices an order that needs an external signature.
+
+### the master stack fork fixture (STACK=master)
+
+`script/config/v2-master.json` records an artcoins v2 stack at launcher commit `6d099486` deployed onto a mainnet fork at block 26158000. The fork is built on chain id 1 (the launcher's `DeployV2Stack` requires it), then the state loads onto the chain id 31337 local node, so the owner's wallet and the web local mode keep their 31337 network entry. The owner is the dev wallet `0xCB43078C32423F5348Cab5885911C3B5faE217F9`, so one key owns the factory and the engine as on mainnet. It is a fork deployment, not a mainnet stack. `STACK=master` points the fixture, the scripts and the local end to end at this record and loads the deployed state from `script/config/stack-master-26158000.hex` (tracked). The default stays the live stack of `script/config/v2-mainnet.json`.
+
+The dump is tracked so CI can load it (`.github/workflows/ci.yml` and `candidate.yml` start an anvil from it). Rebuild it:
+
+1. Fork mainnet at the pin block on a free port, chain id 1:
+   `anvil --fork-url <archive rpc> --fork-block-number 26158000 --chain-id 1 --port 8601 --auto-impersonate --retries 10 --timeout 60000`
+2. Clear the dev wallet's 7702 delegation on the fork (it carries a mainnet delegation at this block):
+   `cast rpc anvil_setCode 0xCB43078C32423F5348Cab5885911C3B5faE217F9 0x --rpc-url http://127.0.0.1:8601`
+3. From a worktree of the launcher at `6d099486` with `OWNER` and `TREASURY` set to the dev wallet in `script/v2/env/local.env`, deploy the stack onto the fork:
+   `RPC_URL=http://127.0.0.1:8601 DRY_RUN=0 script/v2/deploy.sh local`
+   (`script/v2/env/local.env` sets chain id 1, profile ci, treasury bps 8000, deploy fee 0. The verify step's chain check reports one wiring drift because master lists the hook and the fee controller as escrow depositors, not the locker; the deploy and the readback pass.)
+4. Dump the fork state:
+   `cast rpc anvil_dumpState --rpc-url http://127.0.0.1:8601 | python3 -c 'import sys,json;sys.stdout.write(json.load(sys.stdin))' > script/config/stack-master-26158000.hex`
+
+The dump is anvil_dumpState gzip hex, loadable through the `anvil_loadState` rpc, not `anvil --load-state`. `STACK=master script/dev/anvil.sh` forks at chain id 31337 and loads the state after startup; the engine's forge scripts re-enter chain id 1 with `--chain-id 1` and the test suite runs with `--chain-id 1`.

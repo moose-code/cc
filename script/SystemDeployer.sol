@@ -20,7 +20,7 @@ struct Deployed {
 
 /// @notice the deploy routine, shared by the script and by tests. call it from a broadcast or from a prank of
 /// `owner`, who must be the v2 factory owner and the config owner (a deprecated v2 factory takes only its owner, through
-/// `deployTokenAsOwner`). every contract of ours is created through the deterministic deployer (CREATE2) at an address
+/// `deployToken`). every contract of ours is created through the deterministic deployer (CREATE2) at an address
 /// that is a function of the salts, the creation code and the config, so the addresses are known before the first
 /// transaction. order: the library `CoreLib` (linked and sent by `forge script` before `run`), the Core, the controller
 /// (constructed with the Core address), the two listing adapters, `setController`, `addAdapter` for each adapter,
@@ -163,7 +163,7 @@ abstract contract SystemDeployer is LaunchChecks {
         IArtCoinsFactoryV2 factory = IArtCoinsFactoryV2(c.stack.factory);
         uint256 fee = factory.deployFee();
         uint256 g = gasleft();
-        coin = factory.deployTokenAsOwner{value: fee}(buildConfig(c, c.owner, core), c.protocolBps);
+        coin = factory.deployToken{value: fee}(buildConfig(c, c.owner, core));
         _step(7, g);
         if (coin != coinAt) revert AddressMismatch("coin");
     }

@@ -96,7 +96,7 @@ export const stateViewAbi = parseAbi([
 ]);
 // The hook's per-pool skim config and pool info, and the MEV module's current skim (decays after launch).
 export const hookAbi = parseAbi([
-  "function skimConfig(bytes32 poolId) view returns ((uint24 baselineSkimBps, uint16 bountyBps, uint24 maxReferralBpsOfVolume, uint24 lpFeePips, address bountyRecipient, address protocolRecipient))",
+  "function skimConfig(bytes32 poolId) view returns ((uint24 baselineSkimBps, uint16 bountyBps, address bountyRecipient, address protocolRecipient, uint24 referralBps))",
   "function poolInfo(bytes32 poolId) view returns ((uint16 version, bool restricted, uint40 createdAt, address launcher, address token, address locker, address mevModule, address extension))",
 ]);
 export const mevAbi = parseAbi(["function currentSkimBps(bytes32 poolId) view returns (uint24 skimBps, bool active)"]);

@@ -93,24 +93,13 @@ abstract contract PostflightPool is PostflightV2 {
         );
         _check(
             "hook: skim config equals the config",
-            k.baselineSkimBps == c.baselineSkimBps && k.bountyBps == c.bountyBps
-                && k.maxReferralBpsOfVolume == c.maxReferralBps && k.lpFeePips == c.lpFeePips,
+            k.baselineSkimBps == c.baselineSkimBps && k.bountyBps == c.bountyBps,
             string.concat(
                 "baseline ",
                 vm.toString(k.baselineSkimBps),
                 " bounty ",
-                vm.toString(k.bountyBps),
-                " referral cap ",
-                vm.toString(k.maxReferralBpsOfVolume),
-                " lp fee ",
-                vm.toString(k.lpFeePips)
+                vm.toString(k.bountyBps)
             )
-        );
-        (bool okf, uint256 floor) = _word(c.stack.hook, abi.encodeCall(IArtCoinsHookV2.minProtocolShareBps, (poolId)));
-        _check(
-            "hook: the pool protocol floor leaves room for the bounty",
-            okf && floor + uint256(c.bountyBps) <= 10_000,
-            string.concat("minProtocolShareBps ", vm.toString(floor), " bounty ", vm.toString(c.bountyBps))
         );
         address fa = c.stack.factory;
         (bool ok, address live) = _addr(fa, abi.encodeCall(IArtCoinsFactoryV2.protocolRecipient, ()));
@@ -138,32 +127,26 @@ abstract contract PostflightPool is PostflightV2 {
         );
     }
 
-    /// @dev the locker rewards: one project slot to the creator, the protocol slot at the end, summing to 10_000
+    /// @dev the locker's locked liquidity record: one position for the coin on the launch pool. the pool charges no
+    /// lp fee, so the positions accrue nothing and the locker has no reward recipients
     function _postLocker(LaunchConfig memory c, address coin_, PoolKey memory key) private {
-        IArtCoinsLpLockerV2.TokenRewardInfoV2 memory r = _rewards(c.stack.locker, coin_);
-        uint256 slots = c.protocolBps == 0 ? 1 : 2;
-        bool ok = r.token == coin_ && r.numPositions == 1 && r.rewardRecipients.length == slots
-            && r.rewardBps.length == slots;
-        if (ok) {
-            ok = r.rewardRecipients[0] == c.creator && r.rewardBps[0] == 10_000 - c.protocolBps;
-            if (slots == 2) ok = ok && r.rewardBps[1] == c.protocolBps;
-        }
+        IArtCoinsLpLockerV2.LockedLiquidity memory r = _locked(c.stack.locker, coin_);
         _check(
-            "locker: one position, project reward slot is the creator, the protocol slot follows",
-            ok,
-            string.concat("slots ", vm.toString(r.rewardRecipients.length), " positions ", vm.toString(r.numPositions))
+            "locker: one locked position for the coin",
+            r.token == coin_ && r.numPositions == 1,
+            string.concat("token ", vm.toString(r.token), " positions ", vm.toString(r.numPositions))
         );
         _check("locker: pool key equals the launch key", keccak256(abi.encode(r.poolKey)) == keccak256(abi.encode(key)), "poolKey");
         _postPosition(c, r);
     }
 
-    function _rewards(address locker, address coin_) private view returns (IArtCoinsLpLockerV2.TokenRewardInfoV2 memory r) {
-        (bool ok, bytes memory out) = locker.staticcall(abi.encodeCall(IArtCoinsLpLockerV2.tokenRewards, (coin_)));
-        if (ok && out.length >= 416) r = abi.decode(out, (IArtCoinsLpLockerV2.TokenRewardInfoV2));
+    function _locked(address locker, address coin_) private view returns (IArtCoinsLpLockerV2.LockedLiquidity memory r) {
+        (bool ok, bytes memory out) = locker.staticcall(abi.encodeCall(IArtCoinsLpLockerV2.lockedLiquidity, (coin_)));
+        if (ok && out.length >= 256) r = abi.decode(out, (IArtCoinsLpLockerV2.LockedLiquidity));
     }
 
     /// @dev the launch position read from the position manager: the ticks of the config, held by the locker, liquidity in it
-    function _postPosition(LaunchConfig memory c, IArtCoinsLpLockerV2.TokenRewardInfoV2 memory r) private {
+    function _postPosition(LaunchConfig memory c, IArtCoinsLpLockerV2.LockedLiquidity memory r) private {
         IPositionManager pm = IPositionManager(Mainnet.POSITION_MANAGER);
         (bool ok, PositionInfo info) = _positionInfo(pm, r.positionId);
         _check(

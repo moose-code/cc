@@ -70,11 +70,8 @@
     "positionUpper": 887200,
     "baselineSkimBps": 1000,
     "bountyBps": 9000,
-    "maxReferralBps": 0,
-    "lpFeePips": 0,
     "sniperStartBps": 9000,
     "sniperSeconds": 1800,
-    "protocolBps": 2000,
     "restricted": true,
     "allowed": []
   },
@@ -83,7 +80,9 @@
     "openFactory": false
   },
   "adapters": {
-    "seaportRecipients": ["0x0000a26b00c1F0DF003000390027140000fAa719"]
+    "seaportRecipients": [
+      "0x0000a26b00c1F0DF003000390027140000fAa719"
+    ]
   },
   "artist": "0xc8f8e2f59dd95ff67c3d39109eca2e2a017d4c8a",
   "payee": {

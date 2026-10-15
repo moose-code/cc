@@ -65,7 +65,6 @@ abstract contract LaunchChecks is PostflightChecks {
     // the config file open exactly the rules that say so, and are part of the config hash
     uint24 internal constant PIN_BASELINE_SKIM = 1000;
     uint16 internal constant PIN_BOUNTY_BPS = 9000;
-    uint16 internal constant PIN_PROTOCOL_BPS = 2000;
     /// @dev the most the launch pays the factory. a fee above it is a factory state change the signed config never saw
     uint256 internal constant PIN_DEPLOY_FEE_MAX = 0.1 ether;
     /// @dev the pinned build: the keccak256 of the runtime code of each production artifact in `out/`, the immutable slots
@@ -73,12 +72,12 @@ abstract contract LaunchChecks is PostflightChecks {
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0x16662fbd9dfb2557e8965a0fde90b7a34e8cda6f0e974bde9624731a2105fb93;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x31344288d308c93c1f887492bed4c8cae636cdfba11dff21f30d78aebb150aaf;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x94a493523e70c379c0a1ecadcc48a9b4b3689299f7b1d11a4d27221a099829cb;
     bytes32 internal constant BUILD_HASH_CONTROLLER = 0x2566b1f385ad14b96a2ec0c2616f7edc593c1ddb191cca08ea0ccc1237f2058a;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x9f524b4406fbedd4d0fdd27723e15faae8786c4db5eb52f3156b7d330c6fda11;
+        0x38f5cfb78601649724382d996862e336c7fc056ce34279adcd52bdabe92d0d39;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -99,6 +98,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev supplies at block 26158000. both only grow
     uint256 internal constant CREDITS_SUPPLY_MIN = 122_154;
     uint256 internal constant STATEMENTS_SUPPLY_MIN = 176;
+
+    /// @dev STACK=master runs the preflight and postflight against the master stack fork, whose owner is an anvil
+    /// account with no production 7702 delegation. the owner delegation rows are mainnet security pins, so they drop
+    /// to info rows on the fork
+    function _master() internal view returns (bool) {
+        return keccak256(bytes(vm.envOr("STACK", string("")))) == keccak256("master");
+    }
 
     /// @notice runs every preflight check and records it in the report
     function preflight(LaunchConfig memory c, address deployer) internal {
@@ -188,14 +194,13 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     /// @dev the coin and payee values that are pinned or bounded (docs/DECISIONS.md 10.6): restricted with the Core as the only
-    /// listed account, the factory default protocol slot, the payee share bound
+    /// listed account, the payee share bound
     function _ruleLaunch(LaunchConfig memory c) private {
         _check(
             "rule: coin is restricted with no extra allowlist entry",
             c.restricted && c.allowed.length == 0,
             string.concat("restricted ", c.restricted ? "yes" : "no", " extra entries ", vm.toString(c.allowed.length))
         );
-        _eq("rule: protocol bps is 2000", uint256(c.protocolBps), PIN_PROTOCOL_BPS);
         bool payeeOk = c.settings.payeePpm <= PAYEE_MAX_PPM;
         _check(
             "rule: payee share is inside its bound",
@@ -236,11 +241,6 @@ abstract contract LaunchChecks is PostflightChecks {
             "rule: bounty bps is 9000",
             bountyOk,
             string.concat("bounty ", vm.toString(c.bountyBps), c.allowBounty ? " (override on)" : "")
-        );
-        _check(
-            "rule: referral cap and lp fee are zero",
-            c.maxReferralBps == 0 && c.lpFeePips == 0,
-            string.concat("referral ", vm.toString(c.maxReferralBps), " lp fee ", vm.toString(c.lpFeePips))
         );
     }
 
@@ -348,6 +348,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the owner account is an EIP 7702 delegation. the delegation code, the delegate code hash and an empty key
     /// registry are pinned, so only the owner key acts as the owner. a redelegation after this run is not covered
     function _preOwner(LaunchConfig memory c) private {
+        if (_master()) {
+            _info(
+                "owner: master stack fork, the owner is an anvil account with no production delegation",
+                string.concat(vm.toString(c.owner), " code ", vm.toString(c.owner.code))
+            );
+            return;
+        }
         _check(
             "owner: code is the pinned EIP 7702 delegation",
             keccak256(c.owner.code) == keccak256(OWNER_DELEGATION_CODE),
@@ -460,16 +467,16 @@ abstract contract LaunchChecks is PostflightChecks {
         bool b;
         (ok, b) = _bool(s.hook, abi.encodeCall(IArtCoinsHookV2.isLauncher, (s.factory)));
         _check("hook: the factory is a launcher", ok && b, "isLauncher(factory)");
-        (ok, a) = _addr(s.locker, abi.encodeCall(IArtCoinsLpLockerV2.feeEscrow, ()));
-        _check("locker: reports the fee escrow", ok && a == s.escrow, vm.toString(a));
         (ok, b) = _bool(s.locker, abi.encodeCall(IArtCoinsLpLockerV2.isLauncher, (s.factory)));
         _check("locker: the factory is a launcher", ok && b, "isLauncher(factory)");
         (ok, a) = _addr(c.mevModule, abi.encodeCall(IArtCoinsMevSkimV2.hook, ()));
         _check("mev: module is bound to the hook", ok && a == s.hook, vm.toString(a));
         (ok, b) = _bool(s.escrow, abi.encodeCall(IArtCoinsFeeEscrowV2.isCoreDepositor, (s.hook)));
         _check("escrow: the hook is a core depositor", ok && b, "isCoreDepositor(hook)");
-        (ok, b) = _bool(s.escrow, abi.encodeCall(IArtCoinsFeeEscrowV2.isDepositor, (s.locker)));
-        _check("escrow: the locker is a depositor", ok && b, "isDepositor(locker)");
+        address controller_;
+        (, controller_) = _addr(s.factory, abi.encodeCall(IArtCoinsFactoryV2.protocolRecipient, ()));
+        (ok, b) = _bool(s.escrow, abi.encodeCall(IArtCoinsFeeEscrowV2.isDepositor, (controller_)));
+        _check("escrow: the protocol fee controller is a depositor", ok && b, "isDepositor(controller)");
         _preStackVersion(c);
         _preStackCode(c);
     }
@@ -556,8 +563,8 @@ abstract contract LaunchChecks is PostflightChecks {
         _check("factory: mev module enabled", ok && b, "enabledMevModules(module)");
     }
 
-    /// @dev the fee knobs of the factory against the config: the deploy fee and the deployer balance, the protocol skim
-    /// share floor against the bounty (`setMinProtocolSkimShareBps(1000)` is the owner command that opens bountyBps 9_000)
+    /// @dev the fee knobs of the factory against the config: the deploy fee and the deployer balance. the protocol
+    /// share on master is `10_000 - bountyBps` of the baseline skim, no factory floor sets it
     function _preFees(LaunchConfig memory c, address deployer) private {
         address fa = c.stack.factory;
         (bool ok, uint256 fee) = _word(fa, abi.encodeCall(IArtCoinsFactoryV2.deployFee, ()));
@@ -570,39 +577,9 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "rule: the factory deploy fee is at most 0.1 ether",
             ok && fee <= PIN_DEPLOY_FEE_MAX,
-            string.concat("fee ", vm.toString(fee), " (the v2 launch fee is 0.069 ether)")
-        );
-        uint256 minShare;
-        (ok, minShare) = _word(fa, abi.encodeCall(IArtCoinsFactoryV2.minProtocolSkimShareBps, ()));
-        bool shareOk = ok && uint256(c.bountyBps) + minShare <= 10_000 && c.bountyBps <= 9999;
-        _check(
-            "factory: min protocol skim share leaves room for the bounty",
-            shareOk,
-            _shareDetail(shareOk, c.bountyBps, minShare)
-        );
-        uint256 room = uint256(c.bountyBps) + minShare <= 10_000 ? 10_000 - uint256(c.bountyBps) - minShare : 0;
-        _check(
-            "factory: referral cap fits above the protocol floor",
-            ok && uint256(c.maxReferralBps) * 10_000 <= uint256(c.baselineSkimBps) * room,
-            string.concat("referral cap ", vm.toString(c.maxReferralBps))
+            string.concat("fee ", vm.toString(fee), " (the master launch fee is 0)")
         );
         _preRecipients(c);
-    }
-
-    function _shareDetail(bool shareOk, uint16 bounty, uint256 minShare) private view returns (string memory) {
-        if (shareOk) return string.concat("bounty ", vm.toString(bounty), " min share ", vm.toString(minShare));
-        string memory room = vm.toString(bounty <= 10_000 ? 10_000 - uint256(bounty) : 0);
-        return string.concat(
-            "factory minProtocolSkimShareBps is ",
-            vm.toString(minShare),
-            ", above the ",
-            room,
-            " the bounty ",
-            vm.toString(bounty),
-            " leaves. the factory owner runs setMinProtocolSkimShareBps(",
-            room,
-            ") first"
-        );
     }
 
     function _preRecipients(LaunchConfig memory c) private {
@@ -620,19 +597,6 @@ abstract contract LaunchChecks is PostflightChecks {
         } else {
             _info("factory: the deploy fee is zero, no team fee recipient check", vm.toString(p));
         }
-        (bool okp, uint256 fb) = _word(fa, abi.encodeCall(IArtCoinsFactoryV2.defaultProtocolFeeBps, ()));
-        _warn(
-            "warn: protocol bps differs from the factory default",
-            okp && fb == c.protocolBps,
-            string.concat("config ", vm.toString(c.protocolBps), " factory default ", vm.toString(fb))
-        );
-        (bool oka, bytes memory out) = fa.staticcall(abi.encodeCall(IArtCoinsFactoryV2.defaultAllowed, ()));
-        uint256 n = oka && out.length >= 64 ? abi.decode(out, (address[])).length : type(uint256).max;
-        _check(
-            "factory: default allowlist is empty",
-            n == 0,
-            "the coin allowlist then holds the stack seeds only (owner: setDefaultAllowed([]))"
-        );
     }
 
     /// @dev runs the launch as the factory owner on a snapshot and reverts the state again: the owner path works, the
@@ -643,7 +607,7 @@ abstract contract LaunchChecks is PostflightChecks {
         IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(c, c.owner, coreAt);
         (bool ok, address coin, uint256 gas, bytes memory why) = _simulateLaunch(c, deployer, cfg);
         _check(
-            "factory: deployTokenAsOwner accepts the config (simulated)",
+            "factory: deployToken accepts the config (simulated)",
             ok,
             ok
                 ? string.concat("coin ", vm.toString(coin), " launch gas ", vm.toString(gas))
@@ -653,9 +617,9 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     /// @dev the deprecated state of the factory admits the owner and refuses every other caller. the owner half is the
-    /// simulation above (`deployTokenAsOwner` is `onlyOwner` and reaches `_launch`). the refusal half is a launch by an
-    /// account that is not the owner through `deployToken`, which reverts with `Deprecated()` at the first statement of
-    /// `_launch`, before any config validation
+    /// simulation above (`deployToken` by the owner reaches `_launch` while deprecated). the refusal half is a launch by
+    /// an account that is not the owner through `deployToken`, which reverts with `Deprecated()` at the first statement
+    /// of `_launch`, before any config validation
     function _preDeprecatedGate(LaunchConfig memory c, IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg) private {
         address fa = c.stack.factory;
         (bool ok, bool dep) = _bool(fa, abi.encodeCall(IArtCoinsFactoryV2.deprecated, ()));
@@ -680,7 +644,7 @@ abstract contract LaunchChecks is PostflightChecks {
             "factory: deprecated, the owner launches and any other caller reverts Deprecated()",
             refused,
             refused
-                ? "deployToken by a stranger reverts Deprecated(). deployTokenAsOwner is the owner path (simulated above)"
+                ? "deployToken by a stranger reverts Deprecated(). deployToken by the owner is the owner path (simulated above)"
                 : string.concat("deployToken by a stranger ", ok ? "succeeded" : "reverted with ", vm.toString(out))
         );
     }
@@ -706,7 +670,7 @@ abstract contract LaunchChecks is PostflightChecks {
         private
         returns (bool ok, bytes memory out, uint256 gas)
     {
-        bytes memory data = abi.encodeCall(IArtCoinsFactoryV2.deployTokenAsOwner, (cfg, c.protocolBps));
+        bytes memory data = abi.encodeCall(IArtCoinsFactoryV2.deployToken, (cfg));
         uint256 g = gasleft();
         (ok, out) = c.stack.factory.call{value: fee, gas: TX_GAS_CAP - 21_000}(data);
         gas = g - gasleft();
@@ -724,7 +688,7 @@ abstract contract LaunchChecks is PostflightChecks {
     function _preSignoff(LaunchConfig memory c, address deployer) private {
         address coreAt = coreAddress(c, deployer);
         _info("signoff: owner (core owner, token admin, factory owner)", vm.toString(c.owner));
-        _info("signoff: creator (the one project locker reward slot, 80 percent of the lp rewards, none at lp fee 0)", vm.toString(c.creator));
+        _info("signoff: creator (named for the launch record, not a pool recipient; the pool charges no lp fee)", vm.toString(c.creator));
         _info("signoff: deployer (sends the transactions, must be the factory owner)", vm.toString(deployer));
         _info("signoff: core address (the bounty recipient of the pool)", vm.toString(coreAt));
         _info(
@@ -771,13 +735,12 @@ abstract contract LaunchChecks is PostflightChecks {
                 vm.toString(c.baselineSkimBps),
                 " over ",
                 vm.toString(c.sniperSeconds),
-                "s lp fee ",
-                vm.toString(c.lpFeePips)
+                "s lp fee 0"
             )
         );
         _info(
             "signoff: protocol leg",
-            "the protocol leg (1000 of 10_000 of the baseline skim, 1.0 points of volume) and the protocol locker slot belong to the launcher protocol, a separate business from this engine and its owner"
+            "the protocol leg (10_000 minus bountyBps of the baseline skim, 1.0 points of volume at bounty 9000) lands at the launcher protocol fee controller, a separate business from this engine and its owner"
         );
         _preSettingsRows(c);
         _info(

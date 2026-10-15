@@ -48,8 +48,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("supply 1e27 + 1", Class.Pre);
             m.c.supply = 1_000_000_000e18 + 1;
         } else if (i == 3) {
-            m = _m("lpFeePips 5000", Class.Pre);
-            m.c.lpFeePips = 5000;
+            m = _m("payeePpm 300000 (above the bound)", Class.Pre);
+            m.c.settings.payeePpm = 300_000;
         } else if (i == 4) {
             m = _m("baselineSkimBps 690 (the earlier value)", Class.Pre);
             m.c.baselineSkimBps = 690;
@@ -57,8 +57,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("bountyBps 0", Class.Pre);
             m.c.bountyBps = 0;
         } else if (i == 6) {
-            m = _m("protocolBps 0 (no protocol locker slot)", Class.Pre);
-            m.c.protocolBps = 0;
+            m = _m("positionUpper 887000 (not the highest usable tick)", Class.Pre);
+            m.c.positionUpper = 887_000;
         } else if (i == 7) {
             m = _m("sniperStartBps 1000 equal to the baseline", Class.Pre);
             m.c.sniperStartBps = 1000;
@@ -158,8 +158,8 @@ contract ReviewMatrixStateTest is ReviewHarness {
             (l, w) = ("factory not deprecated (open)", Class.Pre);
             FACTORY.setDeprecated(false);
         } else if (i == 1) {
-            (l, w) = ("deployer balance 0.05 eth (below the 0.069 fee)", Class.Pre);
-            vm.deal(deployer, 0.05 ether);
+            (l, w) = ("factory hook not enabled", Class.Pre);
+            FACTORY.setHook(v2.hook, false);
         } else if (i == 2) {
             (l, w) = ("the predicted core address has code", Class.Pre);
             vm.etch(_coreAt(), hex"00");
@@ -173,8 +173,8 @@ contract ReviewMatrixStateTest is ReviewHarness {
             (l, w) = ("the linked library plus one trailing byte", Class.Post);
             (lateEtchAt, lateEtchCode, lateEtchAppend) = (_linked(), hex"00", true);
         } else if (i == 6) {
-            (l, w) = ("factory min protocol skim share 1001 (the owner command setMinProtocolSkimShareBps(1000) not run)", Class.Pre);
-            FACTORY.setMinProtocolSkimShareBps(1001);
+            (l, w) = ("factory deploy fee 0.2 ether (above the 0.1 ether rule)", Class.Pre);
+            FACTORY.setDeployFee(0.2 ether);
         } else if (i == 7) {
             (l, w) = ("the fee escrow has no code", Class.Pre);
             vm.etch(v2.escrow, "");

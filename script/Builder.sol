@@ -23,11 +23,10 @@ abstract contract SystemBuilder is ConfigReader {
     }
 
     /// @notice the v2 factory config of the launch. the token admin is the owner. the bounty recipient is `recipient`
-    /// (the Core; the Core constructor sets it itself, so it takes the config with the zero address) and the one
-    /// project locker slot is the creator (the lp fee is 0, so it earns nothing today). the protocol
-    /// slot is appended by the factory, so the project slot is `10_000 - protocolBps`. the coin is restricted and its
-    /// allowlist is `l.allowed` plus the entries the factory seeds. the Core is not listed: the buyback take reaches it through the
-    /// transfer allowance the hook grants for the swap (docs/DECISIONS.md decision 29)
+    /// (the Core; the Core constructor sets it itself, so it takes the config with the zero address). the referral rate
+    /// is 0: the engine names no referrer. the pool holds one full range position. the coin is restricted and its
+    /// allowlist is `l.allowed` plus the entries the factory seeds. the Core is not listed: the buyback take reaches it
+    /// through the transfer allowance the hook grants for the swap (docs/DECISIONS.md decision 29)
     function buildConfig(LaunchConfig memory l, address tokenAdmin, address recipient)
         internal
         pure
@@ -51,16 +50,11 @@ abstract contract SystemBuilder is ConfigReader {
             extensionData: ""
         });
         c.fee = IArtCoinsFactoryV2.FeeConfigV2({
-            lpFeePips: l.lpFeePips,
             baselineSkimBps: l.baselineSkimBps,
             bountyBps: l.bountyBps,
-            maxReferralBpsOfVolume: l.maxReferralBps,
-            bountyRecipient: payable(recipient)
+            bountyRecipient: payable(recipient),
+            referralBps: 0
         });
-        address[] memory recipients = new address[](1);
-        recipients[0] = l.creator;
-        uint16[] memory rewardBps = new uint16[](1);
-        rewardBps[0] = 10_000 - l.protocolBps;
         int24[] memory lower = new int24[](1);
         lower[0] = l.positionLower;
         int24[] memory upper = new int24[](1);
@@ -69,8 +63,6 @@ abstract contract SystemBuilder is ConfigReader {
         positionBps[0] = 10_000;
         c.locker = IArtCoinsFactoryV2.LockerConfigV2({
             locker: l.stack.locker,
-            rewardRecipients: recipients,
-            rewardBps: rewardBps,
             tickLower: lower,
             tickUpper: upper,
             positionBps: positionBps

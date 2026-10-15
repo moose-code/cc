@@ -70,11 +70,8 @@
     "positionUpper": 887200,
     "baselineSkimBps": 1000,
     "bountyBps": 9000,
-    "maxReferralBps": 0,
-    "lpFeePips": 0,
     "sniperStartBps": 9000,
     "sniperSeconds": 1800,
-    "protocolBps": 2000,
     "restricted": true,
     "allowed": []
   },

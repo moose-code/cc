@@ -230,13 +230,31 @@ contract PauseClockTest is SaleShapeBase {
             uint256 at = _composedAt(sids[j]);
             uint256 age = block.timestamp - at - _overlap(ws, we, nw, at, block.timestamp);
             assertEq(core.statementAge(sids[j]), age, "the age is wall time minus the paused seconds");
-            assertEq(ctl.priceOf(sids[j]), _launch(_cost(sids[j]), age), "the price is the curve at that age");
+            // the curve prices on the statement reference, max(valueOf(rating), cost); valueOf tracks the bid floor
+            // rate and can exceed the cost basis
+            uint256 ref = ctl.referenceOf(sids[j]);
+            assertEq(
+                ctl.priceOf(sids[j]),
+                _curve(ref, ctl.startBps(), core.settings().saleFloorBps, ctl.decayHours(), age),
+                "the price is the curve at that age"
+            );
         }
     }
 
     // promise: SPEC 1 statementAge is wall time minus paused time
     /// forge-config: default.fuzz.runs = 48
     function testFuzz_ageIsWallTimeMinusPausedTime(uint256 seed) public {
+        _ageRun(seed);
+    }
+
+    // promise: SPEC 1 statementAge is wall time minus paused time
+    /// the fuzz counterexample from the 6d099486 candidate run: age clock correct, the price check uses the statement
+    /// reference, not its cost
+    function test_ageAtSeed17050() public {
+        _ageRun(17050);
+    }
+
+    function _ageRun(uint256 seed) internal {
         uint256[] memory sids = new uint256[](3);
         uint256[] memory ws = new uint256[](16);
         uint256[] memory we = new uint256[](16);

@@ -21,10 +21,10 @@ import {CreditIds} from "./CreditIds.sol";
 import {TestSwapRouter} from "./TestSwapRouter.sol";
 import {Prod} from "./Prod.sol";
 
-/// @notice the full system on a mainnet fork, built only from real contracts. the artcoins v2 stack is the live one
-/// (`V2Stack`, script/config/v2-mainnet.json), the factory owner (`owner`, who is also the engine owner) sets the
-/// factory minimum protocol skim share to 362 as the launch needs, then Core and ControllerV1 are
-/// deployed through `SystemDeployer.deploySystem` and the coin is launched with `deployTokenAsOwner`. the pool lives in
+/// @notice the full system on a mainnet fork, built only from real contracts. the artcoins v2 stack is the one of the
+/// record (`V2Stack`; STACK=master selects the master stack fork, script/config/v2-master.json). the factory owner
+/// (`owner`, who is also the engine owner) deploys Core and ControllerV1 through `SystemDeployer.deploySystem` and the
+/// coin is launched with `deployToken`. the pool lives in
 /// the live pool manager under the v2 hook. the hook pushes the fees straight to the Core: `_buyCoin` and `_sellCoin`
 /// book them right after the swap (set `autoBook` false to leave the eth unbooked), `_book` does it on demand.
 /// the only stand ins are the balance module and balance token, which appear only after `_enterPhase2`.
@@ -183,8 +183,11 @@ abstract contract Fixture is Test, ProdDeployer {
     receive() external payable {}
 
     function setUp() public virtual {
-        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envUint("FORK_BLOCK"));
-        // the live v2 stack. its factory owner is the owner of the engine in every test
+        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
+        else vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
+        // the v2 stack of the record (STACK=master selects the master stack fork). its factory owner is the owner of
+        // the engine in every test
         v2 = V2Stack.attach();
         owner = v2.owner;
         deployer = _user("deployer");
@@ -194,12 +197,8 @@ abstract contract Fixture is Test, ProdDeployer {
         funder = _user("funder");
         router = new TestSwapRouter();
 
-        // the launch bounty needs the factory minimum protocol skim share at 362: the owner command of docs/RUNBOOK.md step 3
         FACTORY = IArtCoinsFactoryV2(v2.factory);
         ESCROW = IArtCoinsFeeEscrowV2(v2.escrow);
-        vm.startPrank(owner);
-        FACTORY.setMinProtocolSkimShareBps(1000);
-        vm.stopPrank();
         vm.deal(owner, 1 ether);
 
         lc = defaultConfig();

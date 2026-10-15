@@ -95,15 +95,15 @@ export function useQuote(market: Market | undefined, side: "buy" | "sell", amoun
   });
 }
 
-// Swap fee of a hooked market, in bps: the pool's current skim plus the hook's
-// LP fee (pips / 100). While the MEV module reports an active window, the skim
-// is its decaying value (not below the baseline), `endsAt` is the window end in
-// unix seconds and `perMin` the decay in bps per minute, both from the module's
-// schedule(poolId) (startingSkimBps, endSkimBps, windowSeconds, startTime; undefined
-// when the read fails). `baseBps` is the fee after the window: the higher of the
-// schedule's end skim and the baseline skim, plus the LP fee. Refetched every
-// 12 s (the head poll) while the window is active, every 60 s otherwise. null
-// when a read fails.
+// Swap fee of a hooked market, in bps: the pool's current skim. The pool charges
+// no LP fee (the dynamic fee flag stays at 0), so the skim is the whole trading
+// fee. While the MEV module reports an active window, the skim is its decaying
+// value (not below the baseline), `endsAt` is the window end in unix seconds and
+// `perMin` the decay in bps per minute, both from the module's schedule(poolId)
+// (startingSkimBps, endSkimBps, windowSeconds, startTime; undefined when the read
+// fails). `baseBps` is the fee after the window: the higher of the schedule's end
+// skim and the baseline skim. Refetched every 12 s (the head poll) while the
+// window is active, every 60 s otherwise. null when a read fails.
 export type HookFee = { bps: number; baseBps: number; active: boolean; endsAt?: number; perMin?: number };
 
 const scheduleAbi = parseAbi([
@@ -127,7 +127,6 @@ export function useHookFeeBps(market?: Market) {
           client!.readContract({ address: hook!, abi: hookAbi, functionName: "poolInfo", args: [id] }),
         ]);
         const baseline = Number(cfg.baselineSkimBps);
-        const lp = Number(cfg.lpFeePips) / 100;
         let skim = baseline;
         let active = false;
         let endsAt: number | undefined;
@@ -146,7 +145,7 @@ export function useHookFeeBps(market?: Market) {
             }
           }
         }
-        return { bps: skim + lp, baseBps: end + lp, active, endsAt, perMin };
+        return { bps: skim, baseBps: end, active, endsAt, perMin };
       } catch {
         return null;
       }

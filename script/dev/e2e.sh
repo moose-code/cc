@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # local end to end on an anvil mainnet fork: start anvil, deploy through script/deploy.sh, seed, run script/dev/Scenario.s.sol
-# stage by stage with node time warps between them, and write the record deployments/31337.json. a failed stage stops
+# stage by stage with node time warps between them, and write the record deployments/<chainId>.json. a failed stage stops
 # the run. every signer is an impersonated account (anvil --auto-impersonate, forge --unlocked).
 #
 #   PHASE=pre    the engine before the balance token: the module unset, balanceBidOn false, redeemOn as the config sets it (a redemption reverts NoBalanceModule).
@@ -23,14 +23,19 @@ PHASE="${PHASE:-post}"
 KEEP="${KEEP:-0}"
 case "$PHASE" in pre|post) ;; *) echo "PHASE must be pre or post, got $PHASE" >&2; exit 2 ;; esac
 
+# the node is chain id 31337 for both stacks; the dev wallet owns the factory and the engine. STACK=master is exported
+# so script/deploy.sh and the forge scripts overlay the master stack record (the dev wallet is its fork owner too).
+STACK="${STACK:-live}"
+export STACK
 OWNER=0xCB43078C32423F5348Cab5885911C3B5faE217F9
+CHAIN=31337
 A1=0x1111111111111111111111111111111111111111
 A2=0x2222222222222222222222222222222222222222
 A3=0x3333333333333333333333333333333333333333
 KEEPER=0x4444444444444444444444444444444444444444
 TRADER=0x5555555555555555555555555555555555555555
 FUND=0x152d02c7e14af6800000   # 100000 ether
-REC=deployments/31337.json
+REC="deployments/$CHAIN.json"
 CFG=script/config/anvil.json
 DEV_WALLET="$(jq -r '.dev.wallet // empty' $CFG)"   # the owner's browser wallet, funded below and by the seed
 
@@ -48,7 +53,7 @@ if [ "${NO_ANVIL:-0}" != "1" ]; then
   ANVIL_PID=$!
   for _ in $(seq 1 60); do cast chain-id --rpc-url "$E2E_RPC_URL" >/dev/null 2>&1 && break; sleep 1; done
 fi
-[ "$(cast chain-id --rpc-url "$E2E_RPC_URL" 2>/dev/null)" = "31337" ] || { echo "no chain 31337 node on $E2E_RPC_URL" >&2; exit 1; }
+[ "$(cast chain-id --rpc-url "$E2E_RPC_URL" 2>/dev/null)" = "$CHAIN" ] || { echo "no chain $CHAIN node on $E2E_RPC_URL" >&2; exit 1; }
 
 say "deploy (script/deploy.sh local)"
 RPC_URL="$E2E_RPC_URL" script/deploy.sh local
@@ -90,13 +95,13 @@ finish() {
 stage() {
   local name="$1" out; out="$(mktemp)"
   say "stage $name"
-  rm -f broadcast/Scenario.s.sol/31337/run-latest.json
+  rm -f "broadcast/Scenario.s.sol/$CHAIN/run-latest.json"
   if ! STAGE="$name" CORE="$CORE" OWNER="$OWNER" A1="$A1" A2="$A2" A3="$A3" KEEPER="$KEEPER" TRADER="$TRADER" DEV_WALLET="$DEV_WALLET" \
     forge script script/dev/Scenario.s.sol --rpc-url "$E2E_RPC_URL" --broadcast --slow --unlocked --sender "$OWNER" > "$out" 2>&1; then
     echo "stage $name FAILED:"; tail -40 "$out"; exit 1
   fi
   awk '/^== Logs ==/{f=1;next} /^(Script ran|=====|##)/{f=0} f' "$out"
-  GAS[$name]="$(python3 -c "import json; print(sum(int(r['gasUsed'], 16) for r in json.load(open('broadcast/Scenario.s.sol/31337/run-latest.json'))['receipts']))" 2>/dev/null || echo n/a)"
+  GAS[$name]="$(python3 -c "import json; print(sum(int(r['gasUsed'], 16) for r in json.load(open('broadcast/Scenario.s.sol/$CHAIN/run-latest.json'))['receipts']))" 2>/dev/null || echo n/a)"
   if [ "${STOP_AFTER:-}" = "$name" ]; then echo "stopped after $name"; finish; fi
 }
 

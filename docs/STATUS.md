@@ -66,6 +66,19 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 
 the security review row is the independent Opus review; its two highs are fixed in 43c9f94 (decision 115), and the director review is docs/reviews/REVIEW-security-b88940c.md. the src/ of the candidate is 43c9f94 (the two fixes on top of b88940c and the comment edits of 086a946). the review and the acceptance examined the logic before the fixes; the fixes are the two lines they asked for, each with its regression test.
 
+### the master stack exercise
+
+the engine retargeted to the artcoins v2 stack at launcher commit `6d099486` (decision 126; `script/config/v2-master.json`), which re-opens the freeze against the new stack. the candidate exercise ran against the master stack fork fixture (`STACK=master`, the dump on chain id 31337, the scripts and suite re-entering chain id 1, the dev wallet the factory and engine owner) and is recorded in one file. the second candidate run at `eab58c7` is green on every gate:
+
+| gate | result |
+|---|---|
+| full suite and the seven deep invariant suites | docs/reviews/STACK-master-6d099486.md, second run at eab58c7 (88 suites, 536 tests, 534 passed, 0 failed, 2 skipped, 886 s) |
+| rehearsal | docs/reviews/STACK-master-6d099486.md, second run (1 passed, 3 s) |
+| simulator parity | docs/reviews/STACK-master-6d099486.md, `node sim/engine.test.mjs` 1,804 checks |
+| local end to end (PHASE=post) | docs/reviews/STACK-master-6d099486.md (passed, dev wallet the Core owner) |
+
+the first run's two failures were fixed at the root at eab58c7 (`9fb6c65`): the pause-clock fuzz counterexample at age 17050 was a wrong expectation in the test (the price check used the statement cost, not the controller reference `max(valueOf(rating), cost)`; the age clock was correct), and the balance-bid `PotTooSmall` deep invariant was the handler's payable model, which now mirrors the `CoreLib._fillBalance` floor rule. the engine `src/` is byte for byte unchanged; only the three test files changed, each with a unit test for the exact state. `v2-mainnet.json` stays only as the record of the superseded live stack, whose old ABI the engine no longer targets.
+
 ## 5. how to work in this repo
 
 | topic | rule |
@@ -85,6 +98,6 @@ the security review row is the independent Opus review; its two highs are fixed 
 | item | detail |
 |---|---|
 | balance module gas | `redeemStatement` forwards gas to a contract that does not exist yet; measure it against `REDEEM_GAS` when it does |
-| v2 audit | pending. preflight pins the code hash of the live v2 contracts at block 26158000; a changed stack means new addresses and pins |
+| v2 audit | the engine targets the master v2 stack `6d099486` (decision 126). preflight pins its code hashes and constantsHash (`script/LaunchConfig.sol`, `script/config/v2-master.json`); the stack is not yet on mainnet, so the fixture is a fork deployment and a mainnet stack means new addresses and pins |
 | owner key | a stolen owner key moves everything at once (docs/SPEC.md section 11). a multisig owner and watching `SuccessorSet` and `Migrated` are the mitigations |
 | rehearsal gas estimate | `DEPLOY_GAS_ESTIMATE` 18,600,000 was measured at block 26186912 with nine transactions; the freeze re-measures it |

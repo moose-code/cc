@@ -66,7 +66,7 @@ contract LockTest is Fixture {
     function test_dryRunSendsNothing() public {
         probe.configure(lc, address(core), owner, false);
         probe.run();
-        assertFalse(coin.recipientsLocked());
+        assertFalse(coin.locked());
     }
 
     /// the coin admin sends it and the recipients are frozen
@@ -74,9 +74,9 @@ contract LockTest is Fixture {
     function test_theCoinAdminLocksTheRecipients() public {
         probe.configure(lc, address(core), owner, true);
         probe.run();
-        assertTrue(coin.recipientsLocked());
+        assertTrue(coin.locked());
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSignature("RecipientsLocked()"));
+        vm.expectRevert(abi.encodeWithSignature("CoinLocked()"));
         IArtCoinsHookV2(lc.stack.hook).setBountyRecipient(poolId, payable(address(core)));
     }
 
@@ -86,7 +86,7 @@ contract LockTest is Fixture {
         probe.configure(lc, address(core), creator, true);
         vm.expectRevert(abi.encodeWithSelector(Lock.NotCoinAdmin.selector, owner, creator));
         probe.run();
-        assertFalse(coin.recipientsLocked());
+        assertFalse(coin.locked());
     }
 
     /// COIN_CHANGED=1 relaxes the postflight row, and the lock still refuses a pool that pays another address
@@ -99,7 +99,7 @@ contract LockTest is Fixture {
         probe.configure(lc, address(core), owner, true);
         vm.expectRevert(abi.encodeWithSelector(Lock.BountyRecipientNotCore.selector, elsewhere, address(core)));
         probe.run();
-        assertFalse(coin.recipientsLocked());
+        assertFalse(coin.locked());
     }
 
     /// a second run finds the recipients locked and sends nothing
@@ -108,7 +108,7 @@ contract LockTest is Fixture {
         probe.configure(lc, address(core), owner, true);
         probe.run();
         probe.run();
-        assertTrue(coin.recipientsLocked());
+        assertTrue(coin.locked());
     }
 
     /// the run stops before it sends when the postflight has a failed row
@@ -119,7 +119,7 @@ contract LockTest is Fixture {
         probe.configure(c, address(core), owner, true);
         vm.expectRevert();
         probe.run();
-        assertFalse(coin.recipientsLocked());
+        assertFalse(coin.locked());
     }
 
     /// postflight prints the state of the recipients as an info row and passes before and after the lock
@@ -130,7 +130,7 @@ contract LockTest is Fixture {
         assertEq(n, 0, failed);
 
         vm.prank(owner);
-        coin.lockRecipients();
+        coin.lock();
         postflightAs(lc, address(core), owner);
         (failed, n) = _failed();
         assertEq(n, 0, failed);

@@ -37,7 +37,7 @@ block="${FORK_BLOCK:-26158000}"
 deployer="${DEPLOYER:-$(jq -r .owner "$cfg")}"
 imgrow="rule: image and description are filled and are not placeholders"
 balrow="deployer: balance covers the deploy fee and the gas"
-owner_rows="factory: min protocol skim share leaves room for the bounty, factory: deployTokenAsOwner accepts the config (simulated)"
+owner_rows="factory: deployToken accepts the config (simulated)"
 if jq -e '[.image, .description] | any(contains("PLACEHOLDER") or . == "")' "$cfg" >/dev/null; then owner_rows="$imgrow, $owner_rows"; fi
 expect="${EXPECT_FAIL-$owner_rows}"
 out="$(LAUNCH_CONFIG="$cfg" DEPLOYER="$deployer" forge script script/Preflight.s.sol --rpc-url "$rpc" --fork-block-number "$block" --sender "$deployer" 2>&1 || true)"

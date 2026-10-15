@@ -1164,7 +1164,7 @@ abstract contract HandlerBase is Test {
     /// the core, a stranger's `rescueCoin` reverts with OnlyOwner, the owner's `rescueCoin` returns exactly `amt` to
     /// `who` and leaves no coin in the core, and `who` is taken off the list again
     function _allowRescue(address who, uint256 amt) internal {
-        bool mayList = owner == coin.admin() && !coin.allowlistLocked();
+        bool mayList = owner == coin.admin() && !coin.locked();
         vm.prank(owner);
         try coin.setAllowed(who, true) {
             if (!mayList) _flag(V_OWNER, "the allowlist changed for a caller that is not the token admin");
@@ -2528,6 +2528,10 @@ abstract contract HandlerBase is Test {
         Settings memory st = core.settings();
         uint256 availBps = _availBps(unit);
         uint256 rate = BidModel.read(st, availBps, BidModel.priceNow(st, _balanceBidState(availBps), 10_000), 10_000);
+        // the floor rule of CoreLib._fillBalance (review ac8da10 M1): a clamped rate below the floor
+        // `10_000 - balanceBidMarginBps` closes the bid with PotTooSmall. an available too short to pay the floor
+        // makes no batch payable, so offer none
+        if (rate < 10_000 - st.balanceBidMarginBps) return (ids, 0);
         for (uint256 k; k < len && k < want * 3 + 4 && n < want; ++k) {
             uint256 id = inventory[who][(pick % len + k) % len];
             uint256 price = _scoreOf(id) * unit * rate / 10_000;

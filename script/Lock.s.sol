@@ -7,12 +7,14 @@ import {IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {LaunchChecks} from "./Checks.sol";
 
-/// @notice sends `coin.lockRecipients()` for the launched system at `CORE`: the hook bounty recipient (the Core) and the
-/// locker reward recipients are frozen. the pool then pays the Core from then on, and a later engine takes the fee
-/// stream only by `Core.migrate`. one way. an owner command for later: the deploy leaves the recipients unlocked. runs
-/// the postflight first and stops on any failed row, requires the hook bounty recipient to be the Core whatever
-/// COIN_CHANGED says, sends nothing unless SEND=1 and the run has `--broadcast` and a signer that is the coin admin. the lock read back at the end is read in forge's
-/// simulation, the confirmation is the `coin: fee recipients` row of Postflight against the chain.
+/// @notice sends `coin.lock()` for the launched system at `CORE`: the allowlist, the restriction switch and the hook's
+/// coin admin settings freeze. the hook bounty recipient (the Core), the pool extension and the baseline skim are
+/// frozen, so `lowerBaselineSkim` can no longer lower the engine's fee per swap. the pool pays the Core from then on,
+/// and a later engine takes the fee stream only by `Core.migrate`. one way. an owner command for later: the deploy
+/// leaves the coin unlocked. runs the postflight first and stops on any failed row, requires the hook bounty recipient
+/// to be the Core whatever COIN_CHANGED says, sends nothing unless SEND=1 and the run has `--broadcast` and a signer
+/// that is the coin admin. the lock read back at the end is read in forge's simulation, the confirmation is the
+/// `coin: lock` row of Postflight against the chain.
 /// `CORE=0x... forge script script/Lock.s.sol --rpc-url $MAINNET_RPC_URL` (add `SEND=1 --broadcast --ledger` or
 /// `--account <name>` to send). docs/RUNBOOK.md section 4
 contract Lock is Script, LaunchChecks {
@@ -30,28 +32,28 @@ contract Lock is Script, LaunchChecks {
         _print("postflight before the lock");
         _require();
         IArtCoinsTokenV2 t = IArtCoinsTokenV2(ICore(payable(core)).COIN());
-        if (t.recipientsLocked()) {
-            console.log("the fee recipients are locked already, nothing to send");
+        if (t.locked()) {
+            console.log("the coin is locked already, nothing to send");
             return;
         }
         address recipient = address(_hookSkim(c.stack.hook, t.canonicalPoolId()).bountyRecipient);
         if (recipient != core) revert BountyRecipientNotCore(recipient, core);
         console.log("coin", address(t));
         console.log("coin admin", t.admin());
-        console.log("lockRecipients calldata");
-        console.logBytes(abi.encodeCall(IArtCoinsTokenV2.lockRecipients, ()));
-        console.log(string.concat("cast send ", vm.toString(address(t)), " \"lockRecipients()\""));
+        console.log("lock calldata");
+        console.logBytes(abi.encodeCall(IArtCoinsTokenV2.lock, ()));
+        console.log(string.concat("cast send ", vm.toString(address(t)), " \"lock()\""));
         if (!_send()) {
             console.log("nothing sent. add SEND=1 and --broadcast with the coin admin as signer to send");
             return;
         }
         address signer = _startBroadcast();
         if (signer != t.admin()) revert NotCoinAdmin(t.admin(), signer);
-        t.lockRecipients();
+        t.lock();
         vm.stopBroadcast();
-        if (!t.recipientsLocked()) revert NotLocked();
-        console.log("simulated: the fee recipients read as locked after the transaction");
-        console.log("confirm on chain once it is mined: the coin: fee recipients row of Postflight");
+        if (!t.locked()) revert NotLocked();
+        console.log("simulated: the coin reads as locked after the transaction");
+        console.log("confirm on chain once it is mined: the coin: lock row of Postflight");
     }
 
     /// @dev the launch config (LAUNCH_CONFIG or the shipped file), the Core (CORE), the broadcast flag (SEND=1) and the

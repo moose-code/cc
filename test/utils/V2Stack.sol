@@ -11,7 +11,6 @@ import {
     IArtCoinsLpLockerV2,
     IArtCoinsFeeEscrowV2,
     IArtCoinsMevSkimV2,
-    IArtCoinsKeeperV2,
     IOwnable2StepV2
 } from "../../src/interfaces/ArtCoinsV2.sol";
 
@@ -28,30 +27,28 @@ interface IV2Reads {
     function coin() external view returns (address);
 }
 
-/// @notice the live artcoins v2 stack on the pinned fork. addresses come from script/config/v2-mainnet.json, the record
-/// the scripts read as well. the factory owner of the record is the owner of the whole stack. the factory is
-/// deprecated: the owner launches, through `deployTokenAsOwner`
+/// @notice the artcoins v2 stack on the pinned fork. STACK=master reads the master stack fork record
+/// (script/config/v2-master.json); the default reads the superseded live record (script/config/v2-mainnet.json). the
+/// factory owner of the record owns the whole stack. the factory is deprecated: the owner launches, through
+/// `deployToken`. the master stack has no keeper; the fee controller is the escrow's non core depositor, not the locker.
 library V2Stack {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     string internal constant RECORD = "script/config/v2-mainnet.json";
+    string internal constant MASTER_RECORD = "script/config/v2-master.json";
     uint160 internal constant HOOK_LOW_BITS = 0x28CC;
     uint256 internal constant EIP170 = 24_576;
 
-    /// values of the live stack (script/v2/env/mainnet.env of the launcher)
-    address internal constant MAINNET_TREASURY = 0x41c3BD8A36f8fE9Bb77900ca02400b32BB35A6A4;
-    uint16 internal constant MAINNET_TREASURY_BPS = 8667;
-    uint256 internal constant MAINNET_DEPLOY_FEE = 0.069 ether;
-    uint16 internal constant MAINNET_PROTOCOL_BPS = 2000;
-    uint16 internal constant MAINNET_MIN_PROTOCOL_SKIM_SHARE_BPS = 1000;
+    /// values of the master stack fork (script/v2/env/local.env of the launcher): treasury is the owner, 80 percent of
+    /// the protocol leg is burned, the launch deploy fee is zero
+    uint16 internal constant MASTER_TREASURY_BPS = 8000;
+    uint256 internal constant MASTER_DEPLOY_FEE = 0;
 
     struct Params {
         address owner;
         address treasury;
         uint16 treasuryBps;
         uint256 deployFee;
-        uint16 protocolBps;
-        uint16 minProtocolSkimShareBps;
     }
 
     struct Stack {
@@ -65,22 +62,28 @@ library V2Stack {
         address tokenDeployer;
         address burnRouter;
         address controller;
-        address keeper;
     }
 
-    /// @notice the mainnet.env values with `owner` as the factory, escrow, hook and locker owner
-    function mainnetParams(address owner) internal pure returns (Params memory p) {
+    function _master() internal view returns (bool) {
+        return keccak256(bytes(vm.envOr("STACK", string("")))) == keccak256("master");
+    }
+
+    function _record() internal view returns (string memory) {
+        return _master() ? MASTER_RECORD : RECORD;
+    }
+
+    /// @notice the params with `owner` as the factory, escrow, hook and locker owner. the treasury is the owner (the
+    /// local.env setting) and the deploy fee is zero
+    function masterParams(address owner) internal pure returns (Params memory p) {
         p.owner = owner;
-        p.treasury = MAINNET_TREASURY;
-        p.treasuryBps = MAINNET_TREASURY_BPS;
-        p.deployFee = MAINNET_DEPLOY_FEE;
-        p.protocolBps = MAINNET_PROTOCOL_BPS;
-        p.minProtocolSkimShareBps = MAINNET_MIN_PROTOCOL_SKIM_SHARE_BPS;
+        p.treasury = owner;
+        p.treasuryBps = MASTER_TREASURY_BPS;
+        p.deployFee = MASTER_DEPLOY_FEE;
     }
 
-    /// @notice the stack of the record, read from script/config/v2-mainnet.json
+    /// @notice the stack of the record
     function live() internal view returns (Stack memory s) {
-        string memory j = vm.readFile(RECORD);
+        string memory j = vm.readFile(_record());
         s.owner = vm.parseJsonAddress(j, ".owner");
         s.escrow = vm.parseJsonAddress(j, ".escrow");
         s.allowlist = vm.parseJsonAddress(j, ".allowlist");
@@ -91,18 +94,16 @@ library V2Stack {
         s.tokenDeployer = vm.parseJsonAddress(j, ".tokenDeployer");
         s.burnRouter = vm.parseJsonAddress(j, ".burnRouter");
         s.controller = vm.parseJsonAddress(j, ".feeController");
-        s.keeper = vm.parseJsonAddress(j, ".keeper");
     }
 
-    /// @notice the live stack after `check` against the values of the record. run before any owner command changes a
-    /// factory knob (`setMinProtocolSkimShareBps` moves the minimum share off the value `check` expects)
+    /// @notice the stack after `check` against the record params
     function attach() internal view returns (Stack memory s) {
         s = live();
-        check(s, mainnetParams(s.owner));
+        check(s, masterParams(s.owner));
     }
 
-    /// @notice the post deploy requires of DeployV2Lib.check against the live stack. constantsHash is compared across
-    /// the stack and to the hook (the engine does not carry v2's Constants library). owners are checked as direct (no
+    /// @notice the post deploy requires of DeployV2Lib.check against the stack. constantsHash is compared across the
+    /// stack and to the hook (the engine does not carry v2's Constants library). owners are checked as direct (no
     /// handover)
     function check(Stack memory s, Params memory p) internal view {
         bytes32 ch = IV2Reads(s.hook).constantsHash();
@@ -129,23 +130,19 @@ library V2Stack {
 
         IArtCoinsFeeEscrowV2 e = IArtCoinsFeeEscrowV2(s.escrow);
         require(e.isDepositor(s.hook) && e.isCoreDepositor(s.hook), "v2: hook dep");
-        require(e.isDepositor(s.locker) && e.isCoreDepositor(s.locker), "v2: locker dep");
         require(e.isDepositor(s.controller) && !e.isCoreDepositor(s.controller), "v2: controller dep");
+        require(!e.isDepositor(s.locker), "v2: locker is not a depositor");
 
         IArtCoinsLpLockerV2 l = IArtCoinsLpLockerV2(s.locker);
-        require(l.feeEscrow() == s.escrow, "v2: locker escrow");
         require(l.isLauncher(s.factory), "v2: locker launcher");
-        require(l.keeperRewardBps() == 0, "v2: locker keeper reward");
         _checkFactory(s, p);
 
         require(IArtCoinsMevSkimV2(s.mev).hook() == s.hook, "v2: mev hook");
-        require(IArtCoinsKeeperV2(s.keeper).factory() == s.factory, "v2: keeper factory");
         IV2Reads c = IV2Reads(s.controller);
         require(c.feeEscrow() == s.escrow && c.treasury() == p.treasury, "v2: controller escrow or treasury");
         require(c.burnRouter() == s.burnRouter && c.treasuryBps() == p.treasuryBps, "v2: controller router or split");
-        require(IV2Reads(s.burnRouter).feeEscrow() == s.escrow, "v2: router escrow");
         require(IV2Reads(s.burnRouter).poolManager() == Mainnet.POOL_MANAGER, "v2: router PoolManager");
-        require(IV2Reads(s.burnRouter).coin() == address(0), "v2: router initialized early");
+        require(IV2Reads(s.burnRouter).coin() != address(0), "v2: router coin bound");
 
         address[4] memory owned = [s.escrow, s.hook, s.locker, s.factory];
         for (uint256 i; i < 4; ++i) {
@@ -158,11 +155,10 @@ library V2Stack {
         require(IOwnable2StepV2(s.burnRouter).owner() == p.owner, "v2: router owner");
         require(IOwnable2StepV2(s.controller).owner() == p.owner, "v2: controller owner");
 
-        address[10] memory all = [
-            s.escrow, s.allowlist, s.hook, s.locker, s.mev, s.factory, s.tokenDeployer, s.burnRouter, s.controller,
-            s.keeper
+        address[9] memory all = [
+            s.escrow, s.allowlist, s.hook, s.locker, s.mev, s.factory, s.tokenDeployer, s.burnRouter, s.controller
         ];
-        for (uint256 i; i < 10; ++i) {
+        for (uint256 i; i < 9; ++i) {
             require(all[i].code.length != 0 && all[i].code.length <= EIP170, "v2: runtime size");
         }
     }
@@ -176,9 +172,7 @@ library V2Stack {
         require(f.enabledMevModules(s.mev), "v2: factory mev");
         require(f.protocolRecipient() == s.controller, "v2: protocol recipient");
         require(f.teamFeeRecipient() == p.owner, "v2: team fee recipient");
-        require(f.deployFee() == p.deployFee && f.defaultProtocolFeeBps() == p.protocolBps, "v2: fees");
-        require(f.minProtocolSkimShareBps() == p.minProtocolSkimShareBps, "v2: min skim share");
-        require(f.defaultAllowed().length == 0, "v2: default allowed must ship empty");
+        require(f.deployFee() == p.deployFee, "v2: deploy fee");
         require(f.deprecated(), "v2: factory must ship deprecated");
         require(f.STACK_VERSION() == 2, "v2: stack version");
     }

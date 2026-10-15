@@ -255,7 +255,7 @@ abstract contract PostflightV2 is SystemBuilder, Report {
 
     function _hookSkim(address hook, bytes32 poolId) internal view returns (IArtCoinsHookV2.SkimConfig memory k) {
         (bool ok, bytes memory out) = hook.staticcall(abi.encodeCall(IArtCoinsHookV2.skimConfig, (poolId)));
-        if (ok && out.length == 192) k = abi.decode(out, (IArtCoinsHookV2.SkimConfig));
+        if (ok && out.length == 160) k = abi.decode(out, (IArtCoinsHookV2.SkimConfig));
     }
 
     function _deployment(address factory, address coin)
@@ -325,31 +325,26 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         _soft(ch, "coin: description equals the config", _same(t.description(), c.description), t.description(), "COIN_CHANGED=1");
         _soft(ch, "coin: no metadata renderer", t.metadataRenderer() == address(0), vm.toString(t.metadataRenderer()), "COIN_CHANGED=1");
         _postAllowlist(c, core, t, ch);
-        _warn("warn: coin allowlist is not locked", !t.allowlistLocked(), "allowlistLocked(): the admin can no longer change the allowlist");
-        _postRecipientsLock(t);
+        _postLock(t);
         _warn("warn: core holds no coin", t.balanceOf(core) == 0, "coin sent by an allowlisted holder, the owner can call rescueCoin");
     }
 
-    /// @dev `coin.lockRecipients()` freezes the hook bounty recipient and the locker reward recipients. it is a later
-    /// owner command (script/Lock.s.sol), so the row reports the state
-    function _postRecipientsLock(IArtCoinsTokenV2 t) private {
-        _info("coin: fee recipients", t.recipientsLocked() ? "locked" : "unlocked, script/Lock.s.sol locks them");
+    /// @dev `coin.lock()` freezes the allowlist, `unrestrict` and the hook's coin admin settings (bounty recipient,
+    /// pool extension, baseline skim including `lowerBaselineSkim`). it is a later owner decision (script/Lock.s.sol),
+    /// so the row reports the state and the deploy leaves the coin unlocked
+    function _postLock(IArtCoinsTokenV2 t) private {
+        _info("coin: lock", t.locked() ? "locked" : "unlocked, script/Lock.s.sol locks it as an owner decision");
     }
 
-    /// @dev the allowlist cannot be listed on chain. what is checked: the locker and the escrow are on it (pinned), every
-    /// extra entry of the config is, and no account of the system is: the Core is off it, the buyback take passes the
-    /// restriction through the transfer allowance the hook grants
+    /// @dev the allowlist cannot be listed on chain. what is checked: the locker is on it (the factory seeds the
+    /// launch's locker and extensions), every extra entry of the config is, and no account of the system is: the Core
+    /// is off it, the buyback take passes the restriction through the transfer allowance the hook grants
     function _postAllowlist(LaunchConfig memory c, address core, IArtCoinsTokenV2 t, bool ch) private {
-        bool listed = t.isAllowed(c.stack.locker) && t.isAllowed(c.stack.escrow);
+        bool listed = t.isAllowed(c.stack.locker);
         for (uint256 i; i < c.allowed.length; ++i) {
             listed = listed && t.isAllowed(c.allowed[i]);
         }
-        _soft(ch, "coin: allowlist holds the locker, the escrow and the config entries", listed, "isAllowed", "COIN_CHANGED=1");
-        _check(
-            "coin: the locker and the escrow are pinned",
-            t.isPinned(c.stack.locker) && t.isPinned(c.stack.escrow),
-            "isPinned(locker), isPinned(escrow)"
-        );
+        _soft(ch, "coin: allowlist holds the locker and the config entries", listed, "isAllowed", "COIN_CHANGED=1");
         address[9] memory off = [
             core,
             c.owner,
