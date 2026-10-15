@@ -95,6 +95,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the door `what` ("controller", "balanceModule" or "adapters") was locked by the owner
     error Locked(bytes32 what);
     error OnlyController();
+    error BadController();
     error OnlyPendingOwner();
     /// a sale paid less than the hard floor of the statement
     error BelowFloor();
@@ -558,7 +559,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// `false` reads as not eligible
     function _atFloor(uint256 sid) private view returns (bool) {
         (bool ok, bytes memory out) = _ask(s.controller, abi.encodeCall(IController.atFloor, (sid)), AT_FLOOR_GAS, 32);
-        return ok && abi.decode(out, (bool));
+        return ok && _asBool(out);
+    }
+
+    /// decodes a 32 byte controller answer as a bool: 1 is true, 0 and any other value false, so a word outside {0, 1}
+    /// reads as not ready instead of reverting the `abi.decode(bool)` on a dirty word
+    function _asBool(bytes memory out) private pure returns (bool) {
+        return abi.decode(out, (uint256)) == 1;
     }
 
     /// bounded read of the controller's asking price for a statement. a revert or a short answer reads as 0
@@ -572,7 +579,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function _pastWindow(uint64 acquiredAt) private view returns (bool) {
         (bool ok, bytes memory out) =
             _ask(s.controller, abi.encodeCall(IController.pastWindow, (acquiredAt)), READ_GAS, 32);
-        return ok && abi.decode(out, (bool));
+        return ok && _asBool(out);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1049,10 +1056,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         delete s.pendingOwner;
     }
 
-    /// sets the controller at once. never zero. reverts after `lockController`
+    /// sets the controller at once. the address must have code and answer the `nextPage` probe within `PAGE_GAS`, so an
+    /// EOA or a contract without the controller interface is refused. reverts after `lockController`
     function setController(address c) external onlyOwner {
         if (s.controllerLocked) revert Locked("controller");
         if (c == address(0)) revert ZeroAddress();
+        if (c.code.length == 0) revert NoCode(c);
+        (bool ok,) = _ask(c, abi.encodeCall(IController.nextPage, ()), PAGE_GAS, (PAGE + 2) * 32);
+        if (!ok) revert BadController();
         s.controller = c;
         emit ControllerSet(c);
     }
@@ -1113,8 +1124,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit AdapterSet(a, true);
     }
 
-    /// the one way locks. each is irreversible. the settings and the controller's own sale settings stay open
+    /// the one way locks. each is irreversible. the settings and the controller's own sale settings stay open. reverts
+    /// while no controller is set, so the controller side cannot be locked out by accident
     function lockController() external onlyOwner {
+        if (s.controller == address(0)) revert BadController();
         s.controllerLocked = true;
         emit ControllerLocked();
     }
@@ -1348,7 +1361,26 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         s.balanceModule = module;
         s.balanceToken = token;
         if (s.allowedAdapter[module]) delete s.allowedAdapter[module];
+        // the instance does not climb while no usable module is set, so a module set while the bid is on opens the
+        // instance at the floor with a fresh clock, not at a rate carried from before
+        if (s.settings.balanceBidOn) _resetBalanceToFloor();
         emit BalanceModuleSet(module, token, unit);
+    }
+
+    /// resets the balance bid instance to the floor `10_000 - balanceBidMarginBps` with a fresh clock. mirrors the
+    /// library reset used by `setSettings`, for the module set path which runs in the Core
+    function _resetBalanceToFloor() private {
+        uint256 floor = BPS - s.settings.balanceBidMarginBps;
+        CoreLib.Rate storage bal = s.balance;
+        bal.rateAtCheckpoint = floor;
+        bal.checkpointTime = uint64(block.timestamp);
+        bal.lastFillTime = uint64(block.timestamp);
+        bal.anchor.lastFillRate = floor;
+        bal.anchor.minuteStartRate = floor;
+        bal.anchor.minuteBucket = uint64(block.timestamp / 1 minutes);
+        bal.anchor.peakRate = floor;
+        bal.anchor.peakTime = uint64(block.timestamp);
+        emit BalanceRateSet(floor);
     }
 
     /*//////////////////////////////////////////////////////////////

@@ -18,6 +18,7 @@ interface ICore {
     error AboveBid();
     error AdapterNotAllowed();
     error AlreadyOwned();
+    error BadController();
     error BadCost();
     error BadFormat();
     error BadModule();

@@ -21,6 +21,7 @@ import {Report} from "../script/Report.sol";
 /// matrix is in test/ReviewMatrix.t.sol. forks mainnet at FORK_BLOCK
 contract ReviewDeployTest is ReviewHarness {
     // the library row: absent and compiled copies pass, other code at the library address fails
+    // promise: the library row: absent and compiled copies pass, other code at the library address fails
     function test_preflightLibraryRow() public {
         // the test runner predeploys the linked CoreLib at libraryAddress(); mainnet has no code there
         address lib = libraryAddress();
@@ -39,6 +40,7 @@ contract ReviewDeployTest is ReviewHarness {
     }
 
     // a Core without a controller refuses every door that reads or answers to the controller
+    // promise: a Core without a controller refuses every door that reads or answers to the controller
     function test_aCoreWithoutAControllerRefusesItsControllerDoors() public {
         _etchLibrary();
         vm.prank(deployer);
@@ -63,6 +65,7 @@ contract ReviewDeployTest is ReviewHarness {
 
     /// the postflight reads the position back from the position manager, so a launch whose position is not the
     /// config's fails even when every config rule was bypassed
+    // promise: postflight reads the position back
     function test_postflightReadsThePositionBack() public {
         vm.startPrank(deployer);
         Deployed memory d = deploySystem(deployer, base);
@@ -89,6 +92,7 @@ contract ReviewDeployTest is ReviewHarness {
     }
 
     /// the sniper parameters are read back from the mev module schedule: start, end (the baseline), window, start time
+    // promise: the sniper parameters are read back from the mev module schedule: start, end (the baseline), window, start time
     function test_postflightReadsTheSniperParamsBack() public {
         vm.startPrank(deployer);
         Deployed memory d = deploySystem(deployer, base);
@@ -120,41 +124,43 @@ contract ReviewDeployTest is ReviewHarness {
 
     /// the constructor refuses a stack member without code, the coin is exempt (it does not exist yet). the auction
     /// factory is one of them: without code, and as a contract that is not a factory
+    // promise: the constructor refuses a stack member without code, the coin is exempt (it does not exist yet)
     function test_coreRejectsAStackWithoutCode() public {
         Settings memory s = Mainnet.defaultSettings();
         Stack memory st = base.stack;
         IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(base, owner, address(0));
-        Prod.newCore(owner, cfg, owner, makeAddr("ctl"), base.payee, st, 4e13, s);
+        Prod.newCore(owner, cfg, owner, address(0), base.payee, st, 4e13, s);
         Stack memory bad = st;
         bad.hook = makeAddr("hook");
         vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, bad.hook));
-        Prod.newCore(owner, cfg, owner, makeAddr("ctl"), base.payee, bad, 4e13, s);
+        Prod.newCore(owner, cfg, owner, address(0), base.payee, bad, 4e13, s);
         bad = st;
         bad.escrow = makeAddr("escrow");
         vm.expectRevert(abi.encodeWithSelector(ICore.NoCode.selector, bad.escrow));
-        Prod.newCore(owner, cfg, owner, makeAddr("ctl"), base.payee, bad, 4e13, s);
+        Prod.newCore(owner, cfg, owner, address(0), base.payee, bad, 4e13, s);
         // a zero payee is refused
         vm.expectRevert(ICore.ZeroAddress.selector);
-        Prod.newCore(owner, cfg, owner, makeAddr("ctl"), address(0), st, 4e13, s);
+        Prod.newCore(owner, cfg, owner, address(0), address(0), st, 4e13, s);
         // a hook in the launch config other than the stack hook is refused
         IArtCoinsFactoryV2.DeploymentConfigV2 memory other = cfg;
         other.pool.hook = makeAddr("other hook");
         vm.expectRevert(ICore.BadStack.selector);
-        Prod.newCore(owner, other, owner, makeAddr("ctl"), base.payee, st, 4e13, s);
+        Prod.newCore(owner, other, owner, address(0), base.payee, st, 4e13, s);
     }
 
     /// the constructor computes the coin from the factory prediction with the Core as bounty recipient, and a successor
     /// Core takes a recorded coin as it is
+    // promise: core coin is predicted or recorded
     function test_coreCoinIsPredictedOrRecorded() public {
         Settings memory s = Mainnet.defaultSettings();
         IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(base, owner, address(0));
-        ICore c = Prod.newCore(owner, cfg, owner, makeAddr("ctl"), base.payee, base.stack, 4e13, s);
+        ICore c = Prod.newCore(owner, cfg, owner, address(0), base.payee, base.stack, 4e13, s);
         assertEq(c.COIN(), predictCoin(base, owner, address(c)), "the coin is the prediction for the Core as recipient");
         assertEq(c.SNIPER_SECONDS(), base.sniperSeconds);
         assertEq(c.payee(), base.payee);
         // a coin the factory did not record is refused for a successor
         vm.expectRevert(ICore.BadStack.selector);
-        Prod.newCoreOf(makeAddr("unrecorded coin"), owner, cfg, makeAddr("ctl"), base.payee, base.stack, 4e13, s);
+        Prod.newCoreOf(makeAddr("unrecorded coin"), owner, cfg, address(0), base.payee, base.stack, 4e13, s);
     }
 
     function parse(string memory j) external view returns (LaunchConfig memory) {
@@ -166,6 +172,7 @@ contract ReviewDeployTest is ReviewHarness {
     }
 
     /// a json number that does not fit its field is rejected, never cut
+    // promise: a json number that does not fit its field is rejected, never cut
     function test_jsonNumbersAreRejected() public {
         vm.expectRevert(abi.encodeWithSelector(ConfigReader.ConfigOutOfRange.selector, ".stack.tickSpacing"));
         this.load("test/data/ReviewTruncated.json");
@@ -264,6 +271,7 @@ contract ReviewDeployTest is ReviewHarness {
 
     /// the one value the operator signs. preflight and postflight print the same hash, Deploy needs it and every change
     /// of the config changes it
+    // promise: the one value the operator signs
     function test_configHashIsTheSignOffValue() public {
         bytes32 h = configHash(base);
         this.runPre(base, deployer);
@@ -329,6 +337,7 @@ contract ReviewFundedTest is Fixture {
     }
 
     /// forge-config: default.fuzz.runs = 400
+    // promise: fuzz funded rule and clamp
     function testFuzz_fundedRuleAndClamp(uint256 rateSeed, uint256[10] memory ops) public {
         uint256 rate = bound(rateSeed, 1e13, 1e18);
         ICore c = _newCore(rate);
@@ -370,6 +379,7 @@ contract ReviewFundedTest is Fixture {
     }
 
     /// the bounds of rateStart, at and beside both edges
+    // promise: the bounds of rateStart, at and beside both edges
     function test_rateStartBounds() public {
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
         Stack memory st = lc.stack;

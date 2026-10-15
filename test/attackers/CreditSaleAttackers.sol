@@ -23,6 +23,9 @@ contract LowballCreditController {
         CORE.sellCreditTo{value: msg.value}(id, buyer);
     }
 
+    /// answers the core's controller probe. the pile is never composed through this stand in, so no page is ready
+    function nextPage() external pure returns (bool ready, uint256[80] memory ids, uint8 format) {}
+
     receive() external payable {}
 }
 
