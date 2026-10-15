@@ -8,9 +8,9 @@
 # usage: script/tools/check-preflight.sh [config.json]
 #        the config defaults to script/config/mainnet.json, the file the launch uses. the rehearsal passes
 #        script/config/rehearsal.json explicitly.
-# the row `rule: image and description are filled and are not placeholders` is expected to fail only when the config
-# holds the text PLACEHOLDER in `image` or `description` (the rehearsal file, by design). an empty value is not expected:
-# the launch config fails this script until the owner fills both.
+# the row `rule: image and description are empty or real values, not placeholders` is expected to fail only when the
+# config holds the text PLACEHOLDER in `image` or `description` (the rehearsal file, by design). an empty value passes:
+# the coin renderer draws the image and reads the description from the coin.
 # env:   MAINNET_RPC_URL (default: the Tenderly public gateway, archive state), FORK_BLOCK (default 26158000),
 #        DEPLOYER (default: the config owner), EXPECT_FAIL (comma separated failed rows; default: the two factory rows of
 #        DEPLOY step 3, and the metadata row for a config holding PLACEHOLDER). the balance row
@@ -35,10 +35,10 @@ fi
 rpc="${MAINNET_RPC_URL:-https://mainnet.gateway.tenderly.co}"
 block="${FORK_BLOCK:-26158000}"
 deployer="${DEPLOYER:-$(jq -r .owner "$cfg")}"
-imgrow="rule: image and description are filled and are not placeholders"
+imgrow="rule: image and description are empty or real values, not placeholders"
 balrow="deployer: balance covers the deploy fee and the gas"
 owner_rows="factory: deployToken accepts the config (simulated)"
-if jq -e '[.image, .description] | any(contains("PLACEHOLDER") or . == "")' "$cfg" >/dev/null; then owner_rows="$imgrow, $owner_rows"; fi
+if jq -e '[.image, .description] | any(contains("PLACEHOLDER"))' "$cfg" >/dev/null; then owner_rows="$imgrow, $owner_rows"; fi
 expect="${EXPECT_FAIL-$owner_rows}"
 out="$(LAUNCH_CONFIG="$cfg" DEPLOYER="$deployer" forge script script/Preflight.s.sol --rpc-url "$rpc" --fork-block-number "$block" --sender "$deployer" 2>&1 || true)"
 summary="$(grep -E '^ +[0-9]+ of [0-9]+ checks passed' <<<"$out" || true)"

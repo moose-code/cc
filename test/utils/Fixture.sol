@@ -92,6 +92,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @dev the launch adapters `deploySystem` created and the Core approves
     address internal seaportAdapter;
     address internal strategyAdapter;
+    address internal renderer;
     /// @dev the test adapter that prices any call (`_buyRaw`), approved by the owner in `setUp`
     address internal rawAdapter;
     PoolKey internal launchKey;
@@ -231,6 +232,7 @@ abstract contract Fixture is Test, ProdDeployer {
         ctl = IControllerV1(d.controller);
         seaportAdapter = d.seaportAdapter;
         strategyAdapter = d.strategyAdapter;
+        renderer = d.renderer;
         // placed with `etch` at a fixed address, so the creation nonces of the test contract stay as the suites expect
         rawAdapter = _user("rawAdapter");
         vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));

@@ -104,7 +104,7 @@ abstract contract PostflightChecks is PostflightPool {
     /// @notice the constructor arguments of the Core, as the creation transaction carries them and as etherscan wants
     /// them for verification: `(owner, cfg, launcher, coin, payee, stack, rateStart, settings, credit, artist)`. built
     /// from the signed launch config and the deployer only, never from live storage, which the owner can change after launch
-    function coreConstructorArgs(LaunchConfig memory c, address launcher) internal pure returns (bytes memory) {
+    function coreConstructorArgs(LaunchConfig memory c, address launcher) internal view returns (bytes memory) {
         return abi.encode(
             c.owner,
             buildConfig(c, c.owner, address(0)),

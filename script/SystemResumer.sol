@@ -28,11 +28,15 @@ abstract contract SystemResumer is SystemDeployer {
         _require();
     }
 
-    /// @notice sends the steps the chain is still missing (after `resumeChecks`), then runs postflight and reverts on any
-    /// failed row. the caller must be the deployer of the original run, because the Core address and the coin address
-    /// depend on it
+    /// @notice sends the steps the chain is still missing (after `resumeChecks`). the caller must be the deployer of the
+    /// original run, because the Core address and the coin address depend on it. the postflight runs after it, outside
+    /// the broadcast (`resumePostflight`)
     function resumeSend(address deployer, LaunchConfig memory c) internal returns (Deployed memory d) {
         d = deploySystem(deployer, c);
+    }
+
+    /// @notice the postflight of a resumed deploy, reverting on any failed row
+    function resumePostflight(address deployer, LaunchConfig memory c, Deployed memory d) internal {
         postflightAs(c, d.core, deployer);
         _require();
     }
