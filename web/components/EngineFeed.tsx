@@ -2,34 +2,43 @@
 
 import {
   useFeed,
+  useScan,
+  useBlockTs,
   STATEMENT_SIZE,
   type FeedEvent,
   type FeedKind,
 } from "@/lib/engine";
 import { engineDeployed } from "@/lib/config";
-import { useNow, useSnapshot } from "@/lib/live";
-import { useBlockTs } from "@/lib/engine";
+import { useNow, useScores, useCreditTraits, useSnapshot } from "@/lib/live";
+import { useTokenMeta } from "@/lib/art";
 import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
 import Link from "next/link";
-import { relTime, eth, evmNowTx } from "@/lib/format";
+import { relTime, eth, evmNowTx, rating, commas } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
 import { Addr } from "./Addr";
 
-const CHIP_COLOR: Record<FeedKind, string> = {
-  credit: "var(--m)",
-  composed: "var(--y)",
-  sold: "var(--divider)",
-  redeemed: "var(--c)",
+const MARK: Record<FeedKind, string> = {
+  credit: "m",
+  composed: "y",
+  sold: "divider",
+  redeemed: "c",
 };
 
+const PLATES = ["C", "M", "Y", "K"]; // bit 0 to 3 of CreditTraits.mask; a set bit is a printed plate
+
 const PAGE = 100; // rows per page of the feed
+
+type Filter = "all" | "credits" | "statements";
+const FILTERS: Filter[] = ["all", "credits", "statements"];
+const inFilter = (e: FeedEvent, f: Filter) =>
+  f === "all" || (f === "credits" ? e.tile?.kind === "credit" : e.tile?.kind === "statement");
 
 const TWEEN_MS = 1200;
 
 // An eth amount that counts up (or down) to a new value over TWEEN_MS with an
 // ease-out. The first value is shown as is. Only a changed wei value animates.
-function Tween({ wei }: { wei: bigint | undefined }) {
+export function Tween({ wei }: { wei: bigint | undefined }) {
   const [shown, setShown] = useState(wei ?? 0n);
   const cur = useRef(Number(formatUnits(wei ?? 0n, 18)));
   const seen = useRef(wei);
@@ -57,109 +66,116 @@ function Tween({ wei }: { wei: bigint | undefined }) {
   return <span>{eth(shown)}</span>;
 }
 
+
+// Next-credit and next-statement progress at the top of the rail.
+// Next credit: pot as a share of the reference bid, drawn in 8 segments.
+// Next statement: credits held toward the next STATEMENT_SIZE, one cell each.
+export function EngineProgress() {
+  const { data: snap } = useSnapshot();
+  const ready = snap ? Number(snap.pileSize % BigInt(STATEMENT_SIZE)) : 0;
+  const pot = snap?.potWithPending;
+  const bid = snap?.ethRate;
+  const ratio = pot != null && bid ? Number((pot * 10000n) / bid) / 100 : undefined;
+  const segs = ratio == null ? 0 : Math.min(8, Math.floor(ratio / 12.5));
+  return (
+    <div className="progress">
+      <div className="progress-row">
+        <div className="progress-head">
+          <span>next credit</span>
+          <b>{ratio == null ? "—" : `${commas(ratio)}%`}</b>
+        </div>
+        <div className="progress-segs">
+          {Array.from({ length: 8 }, (_, i) => (
+            <i key={i} className={i < segs ? "on" : undefined} />
+          ))}
+        </div>
+      </div>
+      <div className="progress-row">
+        <div className="progress-head">
+          <span>next statement</span>
+          <b>
+            {ready} / {STATEMENT_SIZE} credits
+          </b>
+        </div>
+        <div className="progress-cells">
+          {Array.from({ length: STATEMENT_SIZE }, (_, i) => (
+            <i key={i} className={i < ready ? "on" : undefined} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function EngineFeed() {
   const { data: feed } = useFeed();
-  const { data: snap } = useSnapshot();
   const now = useNow();
   const [limit, setLimit] = useState(PAGE);
+  const [filter, setFilter] = useState<Filter>("all");
 
-  const ready = Number((snap?.pileSize ?? 0n) % BigInt(STATEMENT_SIZE)); // credits in the pile toward the next statement
-  const stmtPct = (ready / STATEMENT_SIZE) * 100;
+  const rows = feed.filter((e) => inFilter(e, filter));
+  const shown = rows.slice(0, limit);
+  // one batched read for the credits on screen
+  const ids = [...new Set(shown.flatMap((e) => (e.tile?.kind === "credit" ? [BigInt(e.tile.id)] : [])))];
+  const { data: scores } = useScores(ids);
+  const { data: traits } = useCreditTraits(ids);
 
   if (!engineDeployed)
     return (
-      <section className="feed">
+      <section className="ledger">
         <p className="muted">engine not deployed.</p>
       </section>
     );
 
   return (
-    <section className="feed">
-      <div className="feed-head">
-        <span className="feed-title">engine feed</span>
+    <section className="ledger">
+      <div className="ledger-head">
+        <h2>engine ledger</h2>
         <span className="live">
-          <span className="dot" />
+          <i className="mark c" />
           live
         </span>
-
-        <div className="nextcredit">
-          <span>pot</span>
-          <span className="amt">
-            <Tween wei={snap?.potWithPending} /> eth
-          </span>
-          <span className="bid" title="the bid for a reference credit (score refScore); each credit's own bid scales with its score">
-            avg bid{" "}
-            <b>
-              <Tween wei={snap?.ethRate} /> eth
-            </b>
-          </span>
-        </div>
-
-        <div className="nextstatement">
-          <span>next statement</span>
-          <span className="track">
-            <i style={{ width: `${stmtPct}%` }} />
-          </span>
-          <span className="amt">
-            {ready} / {STATEMENT_SIZE} credits
-          </span>
+        <div className="seg" role="group" aria-label="filter the ledger">
+          {FILTERS.map((f) => (
+            <button key={f} className={f === filter ? "on" : undefined} onClick={() => setFilter(f)}>
+              {f}
+            </button>
+          ))}
         </div>
       </div>
 
-      <table className="feed-table">
-        <thead>
-          <tr>
-            <th className="col-event">event</th>
-            <th className="col-detail">detail</th>
-            <th className="col-eth">eth</th>
-            <th className="col-time">time</th>
-          </tr>
-        </thead>
-        <tbody>
-          {feed.slice(0, limit).map((e) => (
-            <Row key={e.key} e={e} now={now} />
-          ))}
-        </tbody>
-      </table>
-      {feed.length > limit && (
+      <div className="ledger-table">
+        <div className="ledger-cols ledger-th">
+          <span>time</span>
+          <span>entry</span>
+          <span>ref</span>
+          <span className="plates">plates</span>
+          <span className="num rate">rating</span>
+          <span className="num">ETH</span>
+        </div>
+        {shown.map((e) => (
+          <Row key={e.key} e={e} now={now} score={e.tile?.kind === "credit" ? scores?.[String(e.tile.id)] : undefined} mask={e.tile?.kind === "credit" ? traits?.[String(e.tile.id)]?.mask : undefined} />
+        ))}
+      </div>
+      {rows.length > limit && (
         <button className="action more" onClick={() => setLimit(limit + PAGE)}>
-          {`show more (${feed.length - limit} older)`}
+          {`show more (${rows.length - limit} older)`}
         </button>
       )}
     </section>
   );
 }
 
-function Row({ e, now }: { e: FeedEvent; now: number }) {
+function Row({ e, now, score, mask }: { e: FeedEvent; now: number; score?: bigint; mask?: number }) {
   const { data: ts } = useBlockTs(e.block);
+  const { data: scan } = useScan();
+  const sid = e.tile?.kind === "statement" ? e.tile.id : undefined;
+  const composed = sid != null && e.kind === "composed" ? scan.statements[sid]?.composed : undefined;
+  const stmt = composed != null && e.label !== "statement restyled";
   const when = ts != null ? relTime(ts, now) : "—";
   return (
-    <tr className={e.kind === "credit" ? undefined : "hl"}>
-      <td className="col-event">
-        <span className="event">
-          <span className="chip" style={{ background: CHIP_COLOR[e.kind] }} />
-          <span className="name">{e.label}</span>
-        </span>
-      </td>
-      <td className="col-detail">
-        <div className="detail-cell">
-          {e.tile?.kind === "credit" && <CreditTile id={e.tile.id} />}
-          {e.tile?.kind === "statement" && <StatementTile id={e.tile.id} />}
-          <span className="label">
-            {e.link && <Link href={e.link.href}>{e.link.text}</Link>}
-            {e.link && e.detail && " "}
-            {e.detail}
-            {e.addr && (
-              <>
-                {" "}
-                <Addr address={e.addr} />
-              </>
-            )}
-          </span>
-        </div>
-      </td>
-      <td className="col-eth">{e.eth ?? ""}</td>
-      <td className="col-time" suppressHydrationWarning>
+    <div className={`ledger-cols ledger-row${stmt ? " stmt" : ""}`}>
+      <span className="when" suppressHydrationWarning>
         {e.txHash ? (
           <a href={evmNowTx(e.txHash)} target="_blank" rel="noreferrer">
             {when}
@@ -167,7 +183,50 @@ function Row({ e, now }: { e: FeedEvent; now: number }) {
         ) : (
           when
         )}
-      </td>
-    </tr>
+      </span>
+      <span className="entry">
+        <i className={`mark ${MARK[e.kind]}`} />
+        {e.label}
+      </span>
+      <span className="ref">
+        {e.tile?.kind === "credit" && <CreditTile id={e.tile.id} />}
+        {e.tile?.kind === "statement" && <StatementTile id={e.tile.id} />}
+        <span className="ref-text">
+          {e.link && <Link href={e.link.href}>{e.link.text}</Link>}
+          {stmt ? (
+            <span className="caption">
+              {`format ${composed.format} · ${composed.ids.length} credits · cost ${eth(composed.cost)} ETH`}
+            </span>
+          ) : (
+            (e.detail || e.addr) && (
+              <span className="detail">
+                {e.detail}
+                {e.addr && (
+                  <>
+                    {" "}
+                    <Addr address={e.addr} />
+                  </>
+                )}
+              </span>
+            )
+          )}
+        </span>
+      </span>
+      <span className="plates">
+        {mask != null &&
+          PLATES.map((l, i) => (
+            <b key={l} className={mask & (1 << i) ? "on" : undefined}>
+              {l}
+            </b>
+          ))}
+      </span>
+      <span className="num rate">{score != null ? rating(score) : stmt && sid != null ? <StatementRating sid={sid} /> : ""}</span>
+      <span className="num">{e.eth ?? ""}</span>
+    </div>
   );
+}
+
+// Statement rating: the Credit Rating attribute of its tokenURI.
+function StatementRating({ sid }: { sid: number }) {
+  return <>{useTokenMeta("statement", sid).data?.attrs["Credit Rating"] ?? ""}</>;
 }

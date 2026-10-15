@@ -548,7 +548,7 @@ export function useCreditValues(ids: bigint[]) {
 }
 
 export interface CreditTraits {
-  mask: number; // active plate bitmask, 1 to 15 (CreditScore.traitsOf). Bit to C/M/Y/K mapping is not documented in the repo.
+  mask: number; // active plate bitmask, 1 to 15 (CreditScore.traitsOf). Bit 0 (1) = C, bit 1 (2) = M, bit 2 (4) = Y, bit 3 (8) = K; a set bit is a printed plate (matches the tokenURI "Colors" trait).
   active: number; // inked bits across the active plates
   occupied: number; // distinct inked raster cells after plate misregistration
   eights: number; // ASCII '8' count in the seed
