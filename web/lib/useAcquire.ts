@@ -1,6 +1,6 @@
 "use client";
 
-// The listing the header acquire button buys (owner decision 128). Candidates come from the CreditStrategy
+// The listing the header acquire button buys (owner decision 130). Candidates come from the CreditStrategy
 // (indexer table strategy_listing; in chain mode a browser scan of its two events) and from the OpenSea route. They
 // are shortlisted by an estimated bid, read live (price, owner, Core.bidOf, pot) and filtered by lib/acquire.ts.
 // One query per chain head; the route caches OpenSea for 20 s on the server.

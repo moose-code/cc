@@ -1,6 +1,6 @@
 # credits engine indexer: spec
 
-status: draft for owner review, 2026-10-15. nothing here is built yet.
+status: approved (decision 128). phases 1 and 2 and the listing sources (decision 130) are built, 2026-10-15. phase 3 waits for a page that uses it; phase 4 waits for `deployments/1.json`.
 
 This document is the data contract between the chain, the indexer and the web app. Every value the web shows has one row in section 9 that names its source. A change that adds a value to the web adds its row here in the same change.
 
@@ -18,7 +18,7 @@ This document is the data contract between the chain, the indexer and the web ap
 - **Keep every log.** A `log` table stores every decoded event from every indexed address with its full arguments. Typed tables are projections of it. A feature that needs an event nobody projected yet starts from `log` and promotes it to a typed column later.
 - **Events for history, calls for state without events.** State that changes without an event (pots, bid rate, balances, pool price) is read by `eth_call` at chosen blocks and stored as snapshots. Section 5 lists each one.
 - **The RPC cache is the backfill budget.** Ponder stores every RPC response in its database. A schema change reindexes from the cache with near zero RPC traffic. The cache survives redeploys because it lives in Postgres.
-- **One source per value at a time.** The web reads each value from one place (section 9) chosen by one app-wide mode (section 11): the indexer while it is healthy, the browser's on-chain read path otherwise. The browser keeps the on-chain read paths (`web/lib/engine.ts` log scan, `creditInfo`, `tokensOf`, `ownerOf`, `tokenURI` reads) as an automatic fallback for every indexer read (owner decision 127, 2026-10-15). They run only in fallback mode.
+- **One source per value at a time.** The web reads each value from one place (section 9) chosen by one app-wide mode (section 11): the indexer while it is healthy, the browser's on-chain read path otherwise. The browser keeps the on-chain read paths (`web/lib/engine.ts` log scan, `creditInfo`, `tokensOf`, `ownerOf`, `tokenURI` reads) as an automatic fallback for every indexer read (owner decision 129, 2026-10-15). They run only in fallback mode.
 - **Reconcile continuously.** A job compares indexed projections with on-chain views every N blocks and exposes the result (section 8.4).
 - **Data contract in the repo.** This file is the contract. `AGENTS.md` gains a rule: a change that adds web data names its source in section 9.
 
@@ -254,7 +254,7 @@ Every 300 blocks a block handler compares projections with views at the same blo
 
 ## 9. frontend data contract
 
-Source key: **I** indexer table.column, **L** live browser read, **D** derived in the browser from the named inputs. A value marked L today that moves to I is listed with its new source. Every I row has an on-chain fallback that runs in chain mode (section 11, owner decision 127); the tables name the indexer source. Wired in phase 2: the rows below as written.
+Source key: **I** indexer table.column, **L** live browser read, **D** derived in the browser from the named inputs. A value marked L today that moves to I is listed with its new source. Every I row has an on-chain fallback that runs in chain mode (section 11, owner decision 129); the tables name the indexer source. Wired in phase 2: the rows below as written.
 
 ### 9.1 shared
 
@@ -346,7 +346,7 @@ Prerequisites before mainnet: `deployments/1.json` with the mainnet Core, deploy
 
 ## 11. web changes
 
-The browser keeps the on-chain read paths as an automatic fallback for every indexer read (owner decision 127, 2026-10-15). Nothing may break while the indexer is down.
+The browser keeps the on-chain read paths as an automatic fallback for every indexer read (owner decision 129, 2026-10-15). Nothing may break while the indexer is down.
 
 1. `NEXT_PUBLIC_INDEXER_URL` (`web/scripts/local-env.mjs` writes `http://localhost:42169` locally) and a typed client from `@ponder/client`. The indexer schema imports the `ponder` runtime, which does not bundle for the browser, so `web/lib/indexer-schema.ts` declares the columns the web reads as drizzle tables, and a compile-time guard fails `tsc` when a column type differs from `indexer/ponder.schema.ts`.
 2. One app-wide mode (`useIxMode`, set by `web/components/IndexerSync.tsx`):
