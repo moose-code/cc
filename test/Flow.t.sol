@@ -7,7 +7,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Settings, Mainnet, Stack, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
+import {Settings, Sale, Mainnet, Stack, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
@@ -32,6 +32,15 @@ contract FlowTest is Fixture {
     function _owner(Settings memory s) internal {
         vm.prank(owner);
         core.setSettings(s);
+    }
+
+    /// @dev raises the controller's `markupBps` to its 40,000 bound, so `saleFloorBps` can take any value of its own
+    /// 1,000 to 40,000 range (a floor above the markup is refused)
+    function _markupToTheBound() internal {
+        Sale memory sale = _sale();
+        sale.markupBps = 40_000;
+        vm.prank(owner);
+        ctl.setSale(sale);
     }
 
     function _hash(Settings memory s) internal pure returns (bytes32) {
@@ -107,6 +116,7 @@ contract FlowTest is Fixture {
     // promise: SPEC 2 every setting reads back as written
     /// @dev write then read of random valid settings
     function testFuzz_settings_roundTrip(uint256 seed) public {
+        _markupToTheBound();
         Settings memory s = _valid(seed);
         vm.expectEmit(address(core));
         emit ICore.SettingsSet(s);
@@ -126,6 +136,7 @@ contract FlowTest is Fixture {
     function test_settings_everyBoundEdgeIsAccepted() public {
         uint256[28] memory lo = _lo();
         uint256[28] memory hi = _hi();
+        _markupToTheBound();
         for (uint256 i; i < N; ++i) {
             for (uint256 k; k < 2; ++k) {
                 Settings memory s = Mainnet.defaultSettings();

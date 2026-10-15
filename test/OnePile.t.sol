@@ -72,8 +72,9 @@ contract OnePileTest is Fixture {
         assertFalse(ctl.balancePoolKeySet(), "no pool key");
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];
+        // a quarter of the score, at the 800,000 lower bound of `refScore` when that is higher
         uint32 rs = uint32(_score(id) / 4);
-        if (rs == 0) rs = 1;
+        if (rs < 800_000) rs = 800_000;
         _setRefScore(rs);
         uint256 want = _backstop(id);
         vm.prank(seller);
