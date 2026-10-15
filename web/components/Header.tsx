@@ -62,7 +62,13 @@ export function Header() {
         </nav>
       </div>
 
-      {path !== "/" && <NextCredit />}
+      {path === "/" ? (
+        <div className="hdr-next">
+          <Acquire />
+        </div>
+      ) : (
+        <NextCredit />
+      )}
       <WalletButton />
     </header>
   );
@@ -105,7 +111,8 @@ function AccountName({ address }: { address: string }) {
   return <>{useEns(address) ?? shortAddr(address)}</>;
 }
 
-// Next credit progress and the bid at refScore beside the wallet; the home page shows the progress in the rail.
+// Next credit progress, the bid at refScore and the acquire button beside the wallet. The home page shows the
+// progress in the rail, so its header holds the acquire button alone.
 function NextCredit() {
   const { ratio, segs, bid } = useNextCredit();
   return (

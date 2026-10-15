@@ -194,6 +194,13 @@ a:hover {
 .hdr-next + .wallet {
   margin-left: 16px;
 }
+/* the home header holds only the acquire button, which renders nothing while no listing clears */
+.hdr-next:empty {
+  display: none;
+}
+.hdr-next:empty + .wallet {
+  margin-left: auto;
+}
 .hdr-next-label {
   color: var(--muted);
 }
