@@ -50,7 +50,7 @@ async function readToken(kind: "credit" | "statement", id: number, withArt: bool
           ...base,
           rating: kind === "credit" ? rating(r.score) : r.rating != null ? rating(r.rating) : undefined,
           state: r.state,
-          format: r.formatName ?? undefined,
+          format: r.formatName?.toLowerCase() ?? undefined,
           art: withArt ? artOf(r.tokenUri) : undefined,
         };
       }
