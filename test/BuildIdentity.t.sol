@@ -20,9 +20,9 @@ import {ICore} from "../src/interfaces/ICore.sol";
 /// the generated interfaces are not part of the proof: `script/tools/gen-interfaces.sh --check` covers them, and the
 /// two library functions the abi does not list are pinned to the artifact selectors below.
 contract BuildIdentityTest is Fixture {
-    uint256 internal constant CORE_RUNTIME = 23_797;
-    uint256 internal constant CONTROLLER_RUNTIME = 11_667;
-    uint256 internal constant LIB_RUNTIME = 17_475;
+    uint256 internal constant CORE_RUNTIME = 24_203;
+    uint256 internal constant CONTROLLER_RUNTIME = 11_737;
+    uint256 internal constant LIB_RUNTIME = 17_708;
     uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_558;
     uint256 internal constant STRATEGY_ADAPTER_RUNTIME = 508;
 
@@ -105,6 +105,7 @@ contract BuildIdentityTest is Fixture {
 
     /// @dev the build pins preflight checks (script/Checks.sol) are the artifacts of this tree, by two independent
     /// computations of the masked hash
+    // promise: the build pins preflight checks (script/Checks.sol) are the artifacts of this tree, by two independent computations of the masked hash
     function test_pinnedBuildHashesEqualTheArtifacts() public {
         string[5] memory names =
             ["Core", "CoreLib", "ControllerV1", "SeaportBasicAdapter", "CreditStrategyAdapter"];
@@ -122,6 +123,7 @@ contract BuildIdentityTest is Fixture {
         assertEq(keccak256(vm.getCode("CoreLib.sol:CoreLib")), BUILD_CREATION_HASH_CORELIB, "CoreLib creation code");
     }
 
+    // promise: the fixture deploys the via ir artifacts
     function test_theFixtureDeploysTheViaIrArtifacts() public view {
         _identical(address(core), "Core", CORE_RUNTIME);
         _identical(address(ctl), "ControllerV1", CONTROLLER_RUNTIME);
@@ -133,6 +135,7 @@ contract BuildIdentityTest is Fixture {
     }
 
     /// @dev the comparison is not vacuous: one flipped byte in code that is not an immutable or a link slot fails it
+    // promise: the comparison is not vacuous: one flipped byte in code that is not an immutable or a link slot fails it
     function test_aSingleChangedByteIsDetected() public {
         bytes memory c = address(core).code;
         c[c.length - 1] = bytes1(uint8(c[c.length - 1]) ^ 1);
@@ -147,6 +150,7 @@ contract BuildIdentityTest is Fixture {
     }
 
     /// @dev this contract is a test: it must NOT be on the via_ir profile, or the speed split is not in effect
+    // promise: this contract is a test: it must NOT be on the via_ir profile, or the speed split is not in effect
     function test_testsCompileWithoutViaIr() public view {
         string memory j = vm.readFile("out/BuildIdentity.t.sol/BuildIdentityTest.json");
         assertFalse(vm.keyExistsJson(j, ".metadata.settings.viaIR") && vm.parseJsonBool(j, ".metadata.settings.viaIR"));
@@ -155,6 +159,7 @@ contract BuildIdentityTest is Fixture {
     /// @dev the one library function the library abi leaves out (state changing) is in `ICoreLib` by hand, and its
     /// selector is the artifact one. `setSettings` is not in the interface: a library names a struct argument by its
     /// name in the selector (`setSettings(Settings)`), an interface by its tuple, so the interface selector would differ
+    // promise: the one library function the library abi leaves out (state changing) is in `ICoreLib` by hand, and its selector is the artifact one
     function test_libraryInterfaceSelectorsMatchTheArtifact() public view {
         string memory j = _json("CoreLib");
         assertEq(_id(j, "swapIn(address,address,uint24,int24,address,uint256)"), ICoreLib.swapIn.selector, "swapIn");

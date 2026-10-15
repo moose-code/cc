@@ -336,9 +336,9 @@ library Mainnet {
         });
     }
 
-    /// the launch sale: start at 1.5 times the anchor (at most 1_000 percent of cost), falling 1 percent of cost
-    /// an hour to 100 percent of cost, where it stays (the knee and the floor are both 100 percent), the anchor halving
-    /// its excess over 10_000 every 7 days, and moving only on statements that cost at least 0.1 eth
+    /// the launch sale: the ask starts at 150 percent of the reference (at most 1_000 percent, the start cap) and falls
+    /// in a straight line to 100 percent over 12 hours, where it rests. the anchor excess over 100 percent halves every
+    /// 7 days, and the anchor moves only on a statement that costs at least 0.1 eth
     function defaultSale() internal pure returns (Sale memory) {
         return Sale({
             markupBps: 15_000,

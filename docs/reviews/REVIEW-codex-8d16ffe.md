@@ -77,3 +77,20 @@
 ## Run summary and limits
 
 `forge build` succeeded on the archived target with the pinned `forge-std`, `solady`, and `v4-periphery` revisions. The first sandboxed fork attempt failed DNS before `setUp()`; the read-only network exception then passed `test/BalanceFloor.t.sol` (**2/2**). Additional focused results: `test/PerPointExact.t.sol` (**7/7**), `test/SameBlockReturn.t.sol` (**5/5**), `test/BalanceBid.t.sol` (**6/6**), `test/CoreLayout.t.sol` (**3/3**), `test/PostflightSlots.t.sol` (**5/5**), `test/Sale.t.sol` (**36/36**), `test/Config.t.sol` (**26/26**), and `test/CreditSwap.t.sol` (**13/13**). No result from a failed setup is counted as a passing test.
+
+## Fixes
+
+| Finding | Commit | Proving test |
+|---|---|---|
+| Security M1 (no-module balance climb) | security | `test/AuditDaylight.t.sol::test_balanceBidDoesNotClimbWithoutModule`, `::test_balanceBidResetsToFloorAfterUnitFailureRecovers` |
+| Security M2 (setController probe, lockController guard) | security | `test/AuditDaylight.t.sol::test_setControllerRejectsEoa`, `::test_setControllerRejectsContractWithoutProbe`, `::test_lockControllerRevertsWithoutController` |
+| Security L1 (dirty controller bool read) | security | `test/AuditDaylight.t.sol::test_dirtyBoolControllerReadsFalse` |
+| Logic (sale floor versus start, decision 124) | logic | `test/SaleFloorStart.t.sol::test_setSettingsRefusesFloorAboveStart`, `::test_setSaleRefusesStartBelowFloor` |
+| Logic (decision 120 text: raise `payeePpm` with `setSettings`) | logic | `docs/DECISIONS.md` (doc) |
+| Logic (STATUS open items, artist confirmed in decision 123) | logic | `docs/STATUS.md`, `docs/DECISIONS.md` (doc) |
+| Legibility (`defaultSale` comment) | legibility | `src/interfaces/Interfaces.sol` (comment) |
+| Legibility (`refScore()` bounds 800,000 to 8,000,000) | legibility | `src/ControllerV1.sol` (comment) |
+| Legibility (CoreLib `climb` ceiling/clamp comment) | legibility | `src/lib/CoreLib.sol` (comment) |
+| Legibility (`// promise:` markers, 91 added) | legibility | all `test*`/`invariant*` functions carry a `// promise:` line |
+
+Note on the promise markers: the 91 lines were derived from each test's existing descriptive comment or, where none existed, from the function name. Every one names the rule the test checks; none required deleting a test.

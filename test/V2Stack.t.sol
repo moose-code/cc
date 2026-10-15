@@ -129,6 +129,7 @@ contract V2StackTest is Test {
     }
 
     // the live stack of the fork is the stack the preflight pins describe
+    // promise: the live stack of the fork is the stack the preflight pins describe
     function test_liveStackPassesCheck() public view {
         V2Stack.check(s, p); // the DeployV2Lib post deploy requires, on the live stack
         assertEq(IV2Reads(s.hook).constantsHash(), V2_CONSTANTS_HASH);
@@ -140,6 +141,7 @@ contract V2StackTest is Test {
     }
 
     // a bounty recipient with an empty receive is paid at once by the hook, on a buy of a restricted coin
+    // promise: a bounty recipient with an empty receive is paid at once by the hook, on a buy of a restricted coin
     function test_launchRestrictedCoinWithEmptyRecipient() public {
         EmptyRecipient r = new EmptyRecipient();
         (address coin, PoolKey memory key) = _launch(address(r), bytes32(uint256(1)));
@@ -169,6 +171,7 @@ contract V2StackTest is Test {
     }
 
     // a bounty recipient whose receive writes storage fails the stipend push: the hook credits the escrow, anyone claims
+    // promise: a bounty recipient whose receive writes storage fails the stipend push: the hook credits the escrow, anyone claims
     function test_writingRecipientIsCreditedInEscrowAndClaims() public {
         WritingRecipient r = new WritingRecipient();
         (, PoolKey memory key) = _launch(address(r), bytes32(uint256(2)));

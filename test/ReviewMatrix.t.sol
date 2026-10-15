@@ -123,14 +123,17 @@ contract ReviewMatrixConfigTest is ReviewHarness {
         revert("see runOne");
     }
 
+    // promise: matrix stack
     function test_matrix_stack() public {
         _matrix(0, 0, N_STACK);
     }
 
+    // promise: matrix launch
     function test_matrix_launch() public {
         _matrix(1, 0, N_LAUNCH);
     }
 
+    // promise: matrix rate people
     function test_matrix_ratePeople() public {
         bytes32 signed = configHash(base);
         uint256[5] memory counts;
@@ -188,6 +191,7 @@ contract ReviewMatrixStateTest is ReviewHarness {
         vm.stopPrank();
     }
 
+    // promise: matrix chain state
     function test_matrix_chainState() public {
         _matrix(4, 0, N_STATE);
         // the baseline launches clean: the signed config deploys with every check passing and the signed hash

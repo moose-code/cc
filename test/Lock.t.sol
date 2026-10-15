@@ -62,6 +62,7 @@ contract LockTest is Fixture {
     }
 
     /// a dry run prints the calldata and sends nothing
+    // promise: a dry run prints the calldata and sends nothing
     function test_dryRunSendsNothing() public {
         probe.configure(lc, address(core), owner, false);
         probe.run();
@@ -69,6 +70,7 @@ contract LockTest is Fixture {
     }
 
     /// the coin admin sends it and the recipients are frozen
+    // promise: the coin admin sends it and the recipients are frozen
     function test_theCoinAdminLocksTheRecipients() public {
         probe.configure(lc, address(core), owner, true);
         probe.run();
@@ -79,6 +81,7 @@ contract LockTest is Fixture {
     }
 
     /// a signer that is not the coin admin is refused and nothing is locked
+    // promise: a signer that is not the coin admin is refused and nothing is locked
     function test_aSignerThatIsNotTheCoinAdminIsRefused() public {
         probe.configure(lc, address(core), creator, true);
         vm.expectRevert(abi.encodeWithSelector(Lock.NotCoinAdmin.selector, owner, creator));
@@ -87,6 +90,7 @@ contract LockTest is Fixture {
     }
 
     /// COIN_CHANGED=1 relaxes the postflight row, and the lock still refuses a pool that pays another address
+    // promise: COIN_CHANGED=1 relaxes the postflight row, and the lock still refuses a pool that pays another address
     function test_aRepointedBountyRecipientRefusesTheLockWhateverCoinChangedSays() public {
         address elsewhere = makeAddr("elsewhere");
         vm.prank(owner);
@@ -99,6 +103,7 @@ contract LockTest is Fixture {
     }
 
     /// a second run finds the recipients locked and sends nothing
+    // promise: a second run finds the recipients locked and sends nothing
     function test_aSecondRunIsANoOp() public {
         probe.configure(lc, address(core), owner, true);
         probe.run();
@@ -107,6 +112,7 @@ contract LockTest is Fixture {
     }
 
     /// the run stops before it sends when the postflight has a failed row
+    // promise: the run stops before it sends when the postflight has a failed row
     function test_aFailedPostflightStopsTheLock() public {
         LaunchConfig memory c = lc;
         c.owner = creator;
@@ -117,6 +123,7 @@ contract LockTest is Fixture {
     }
 
     /// postflight prints the state of the recipients as an info row and passes before and after the lock
+    // promise: postflight prints the state of the recipients as an info row and passes before and after the lock
     function test_thePostflightPassesBeforeAndAfterTheLock() public {
         postflightAs(lc, address(core), owner);
         (string memory failed, uint256 n) = _failed();
@@ -130,6 +137,7 @@ contract LockTest is Fixture {
     }
 
     /// the bounty recipient row fails when the coin admin repointed it, and is a warning with COIN_CHANGED=1
+    // promise: the bounty recipient row fails when the coin admin repointed it, and is a warning with COIN_CHANGED=1
     function test_theBountyRecipientRowIsSoft() public {
         vm.prank(owner);
         IArtCoinsHookV2(lc.stack.hook).setBountyRecipient(poolId, payable(makeAddr("elsewhere")));
