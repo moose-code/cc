@@ -102,11 +102,13 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(19, 18, 5), 777, "pausedTotal");
         assertEq(_field(19, 18, 5), core.pausedTotal(), "pausedTotal getter");
         assertEq(_field(19, 12, 1), core.paused() ? 1 : 0, "paused getter");
-        // composerOf is a mapping and takes slot 20. payee (20 bytes) starts slot 21, payeeOwed is slot 22, payeeOn slot 23
+        // composerOf is a mapping and takes slot 20. payee (20 bytes) starts slot 21, artist (20 bytes) slot 22 with
+        // payeeOn (1 byte) packed at offset 20 of slot 22
         assertEq(_field(21, 0, 20), uint256(uint160(core.payee())), "payee");
         assertEq(core.payee(), lc.payee, "payee value");
-        assertEq(_field(22, 0, 32), core.payeeOwed(), "payeeOwed");
-        assertEq(_field(23, 0, 1), core.payeeOn() ? 1 : 0, "payeeOn");
+        assertEq(_field(22, 0, 20), uint256(uint160(core.artist())), "artist");
+        assertEq(core.artist(), lc.artist, "artist value");
+        assertEq(_field(22, 20, 1), core.payeeOn() ? 1 : 0, "payeeOn");
         // the first migrate sets retired. the call moves the pots, so it comes after the pot words are compared
         assertEq(_field(18, 21, 1), 0, "retired is false before a migrate");
         assertFalse(core.retired(), "retired value before");
@@ -117,16 +119,16 @@ contract CoreLayoutTest is Fixture {
     }
 
     // promise: SPEC 1 the balance bid instance is appended after the eth anchor
-    /// `State.balance` (the balance bid Rate) follows `anchor` (slots 28 to 31): rateAtCheckpoint at 32,
-    /// checkpointTime and lastFillTime packed at 33, its anchor (lastFillRate, minuteStartRate, minuteBucket and
-    /// peakTime, peakRate) at 34 to 37. at launch the instance is reset to the floor 10_000 - balanceBidMarginBps, which
+    /// `State.balance` (the balance bid Rate) follows `anchor` (slots 27 to 30): rateAtCheckpoint at 31,
+    /// checkpointTime and lastFillTime packed at 32, its anchor (lastFillRate, minuteStartRate, minuteBucket and
+    /// peakTime, peakRate) at 33 to 36. at launch the instance is reset to the floor 10_000 - balanceBidMarginBps, which
     /// the stored rate keeps until a balance fill or a margin change
     function test_OK_balanceInstanceSitsAfterTheAnchor() public view {
         uint256 floor = 10_000 - core.settings().balanceBidMarginBps;
-        assertEq(_field(32, 0, 32), floor, "balance.rateAtCheckpoint is the floor at launch");
-        assertEq(_field(34, 0, 32), floor, "balance.anchor.lastFillRate is the floor");
-        assertEq(_field(35, 0, 32), floor, "balance.anchor.minuteStartRate is the floor");
-        assertEq(_field(37, 0, 32), floor, "balance.anchor.peakRate is the floor");
+        assertEq(_field(31, 0, 32), floor, "balance.rateAtCheckpoint is the floor at launch");
+        assertEq(_field(33, 0, 32), floor, "balance.anchor.lastFillRate is the floor");
+        assertEq(_field(34, 0, 32), floor, "balance.anchor.minuteStartRate is the floor");
+        assertEq(_field(36, 0, 32), floor, "balance.anchor.peakRate is the floor");
     }
 
     // promise: SPEC 1 the Core state is one State struct at slot 0

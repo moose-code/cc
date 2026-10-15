@@ -32,7 +32,7 @@ abstract contract FeeBase is Fixture {
 
     /// @dev what one swap did. `bountyRise` is the bounty leg the hook pushed to the core, `potRise` what the core booked
     /// to the pot at the book after the swap (the payee share, the buyback share and the redeem burn share taken off),
-    /// `toPayee` what the book credited to the payee
+    /// `toPayee` what the book pushed to the payee
     struct Flow {
         uint256 gross;
         uint256 potRise;
@@ -95,9 +95,9 @@ abstract contract FeeBase is Fixture {
         vm.stopPrank();
         _readSkim(f, vm.getRecordedLogs());
         f.bountyRise = address(core).balance - bal;
-        uint256 owed = core.payeeOwed();
+        uint256 payeeBefore = core.payee().balance;
         _book();
-        f.toPayee = core.payeeOwed() - owed;
+        f.toPayee = core.payee().balance - payeeBefore;
         f.potRise = core.ethPot() - pot;
     }
 
@@ -236,12 +236,12 @@ contract FeeFlowTest is FeeBase {
         // the payout by the hand formula, not bidOf: ethRate (the booked pot's rate) times the credit's score over refScore
         uint256 quote = (core.ethRate() * _scoreOf(ids[0])) / core.settings().refScore;
         assertTrue(_scoreOf(ids[0]) != core.settings().refScore, "the fork credit's score is not refScore");
-        uint256 owed = core.payeeOwed();
+        uint256 payeeBefore = core.payee().balance;
         uint256 before = seller.balance;
         vm.prank(seller);
         core.sellForEth(ids);
         assertEq(seller.balance - before, quote, "the door paid the quote");
-        assertGt(core.payeeOwed(), owed, "the door booked the fees first");
+        assertGt(core.payee().balance, payeeBefore, "the door pushed the payee share first");
         assertEq(
             address(core).balance,
             _tracked(),
@@ -421,6 +421,7 @@ contract ReceiveSettingsTest is FeeBase {
         uint256[3] memory amounts = [uint256(a), uint256(b), uint256(a) + b];
         uint256[3] memory gaps = [uint256(gap1), gap2, uint256(gap1) + gap2];
         uint256 booked;
+        uint256 payeeStart = core.payee().balance;
         for (uint256 i; i < 3; ++i) {
             _setSettings(_randomSettings(uint256(keccak256(abi.encode(seed, i)))));
             if (i == 1) {
@@ -433,7 +434,8 @@ contract ReceiveSettingsTest is FeeBase {
             assertTrue(_hookSend(amounts[i]), "receive does not revert");
             _book();
             booked += amounts[i];
-            assertEq(_tracked(), booked, "every push booked");
+            // the payee share is pushed out of the core, the rest stays in the pots (decision 123)
+            assertEq(_tracked() + (core.payee().balance - payeeStart), booked, "every push booked or pushed to the payee");
             if (amounts[i] != 0) {
                 assertEq(core.checkpointTime(), block.timestamp, "checkpointed at the book");
                 assertGe(core.rateAtCheckpoint(), rate, "the price state was locked in first, the read is at most that");

@@ -111,9 +111,7 @@ contract Seed is Script {
                 saleOn: true,
                 window: ctl.creditWindow(),
                 floorBps: ctl.creditFloorBps(),
-                startBps: ctl.creditStartBps(),
-                royaltyBps: ctl.royaltyBps(),
-                royaltyRecipient: ctl.royaltyRecipient()
+                startBps: ctl.creditStartBps()
             })
         );
         core.setChosenComposeOn(true);

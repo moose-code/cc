@@ -16,6 +16,8 @@ library SettingsBounds {
         if (s.idleLoosenBps < 1 || s.idleLoosenBps > 2_000) return "idleLoosenBps";
         if (s.saleFloorBps < 1_000 || s.saleFloorBps > 40_000) return "saleFloorBps";
         if (s.saleToBuybackBps > 10_000) return "saleToBuybackBps";
+        if (s.saleToArtistBps > 1_000) return "saleToArtistBps";
+        if (s.saleToOperatorBps > 1_000) return "saleToOperatorBps";
         if (s.peakHalfLife < 600 || s.peakHalfLife > 604_800) return "peakHalfLife";
         if (s.recoveryClimbPerMinBps < s.climbPerMinBps || s.recoveryClimbPerMinBps > 1_000) {
             return "recoveryClimbPerMinBps";

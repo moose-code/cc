@@ -13,8 +13,6 @@ interface ICore {
         uint32 window;
         uint16 floorBps;
         uint32 startBps;
-        uint16 royaltyBps;
-        address royaltyRecipient;
     }
 
     error AboveBid();
@@ -77,6 +75,7 @@ interface ICore {
 
     event AdapterSet(address indexed adapter, bool allowed);
     event AdaptersLocked();
+    event ArtistSet(address indexed artist);
     event BalanceModuleLocked();
     event BalanceModuleSet(address balanceModule, address balanceToken, uint256 unitPerPoint);
     event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
@@ -91,12 +90,12 @@ interface ICore {
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event CreditCostToPotBpsSet(uint16 bps);
-    event CreditSold(uint256 indexed id, address indexed buyer, uint256 price);
+    event CreditSold(uint256 indexed id, address indexed buyer, uint256 price, uint256 toArtist, uint256 toOperator);
     event CreditSwapped(uint256 indexed inId, uint256 indexed outId, address indexed caller, uint256 fee);
     event EngineRetired(address indexed successor);
     event EscrowCollected(uint256 amount);
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
-    event FeesAdded(uint256 amount);
+    event FeesAdded(uint256 amount, uint256 toPayee);
     event Funded(address indexed from, uint256 amount);
     event HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller);
     event ListingBought(
@@ -108,13 +107,19 @@ interface ICore {
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
     event OwnershipTransferred(address indexed from, address indexed to);
     event PausedSet(bool paused);
-    event PayeeClaimed(address indexed payee, uint256 amount);
     event PayeeSet(address indexed payee);
     event RateSet(uint256 rate);
     event RedeemBurnReleased(uint256 amount);
     event SettingsSet(Settings settings);
     event StatementRedeemed(uint256 indexed sid, uint256 received);
-    event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback);
+    event StatementSoldTo(
+        uint256 indexed sid,
+        address indexed buyer,
+        uint256 price,
+        uint256 toBuyback,
+        uint256 toArtist,
+        uint256 toOperator
+    );
     event SuccessorLocked();
     event SuccessorSet(address successor);
 
@@ -135,6 +140,7 @@ interface ICore {
     function addAdapter(address a) external;
     function adopt(uint256[] memory) external;
     function allowedAdapter(address adapter) external view returns (bool);
+    function artist() external view returns (address);
     function balanceBidOf(uint256 id) external view returns (uint256);
     function balanceModule() external view returns (address);
     function balanceModuleLocked() external view returns (bool);
@@ -146,7 +152,6 @@ interface ICore {
     function buyback() external;
     function checkpointTime() external view returns (uint64);
     function chosenComposeOn() external view returns (bool);
-    function claimPayee() external;
     function collectEscrow() external;
     function compose() external;
     function compose(uint8 format) external;
@@ -179,7 +184,6 @@ interface ICore {
     function pausedTotal() external view returns (uint40);
     function payee() external view returns (address);
     function payeeOn() external view returns (bool);
-    function payeeOwed() external view returns (uint256);
     function pendingOwner() external view returns (address);
     function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids);
     function pileSize() external view returns (uint256);
@@ -197,6 +201,7 @@ interface ICore {
     function sellForEth(uint256[] memory ids, uint256 minOut) external;
     function sellForEth(uint256[] memory ids) external;
     function sellTo(uint256 sid, address buyer) external payable;
+    function setArtist(address to) external;
     function setBalanceModule(address module) external;
     function setChosenComposeOn(bool v) external;
     function setController(address c) external;

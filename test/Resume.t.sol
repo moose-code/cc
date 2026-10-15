@@ -34,7 +34,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         base = defaultConfig();
         base.owner = deployer;
         base.creator = creator;
-        base.credit.royaltyRecipient = creator;
+        base.artist = creator;
         base.payee = makeAddr("resume.payee");
         base.name = "Resume Coin";
         base.symbol = "RSM";

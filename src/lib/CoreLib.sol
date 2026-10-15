@@ -69,10 +69,10 @@ struct State {
     uint40 pausedTotal;
     /// the caller of the `compose` or `composeChosen` that made each statement, kept after the statement is sold
     mapping(uint256 => address) composerOf;
-    /// the address `claimPayee` pays
+    /// the address the payee fee share and the operator cut of nft sales are pushed to
     address payee;
-    /// eth credited to the payee by `_book` and not yet claimed
-    uint256 payeeOwed;
+    /// the address the artist cut of nft sales is pushed to, set by `setArtist`
+    address artist;
     /// true once the payee share runs. set by the first `_book` with income at or after `launchedAt + SNIPER_SECONDS`,
     /// which shares nothing. one way
     bool payeeOn;

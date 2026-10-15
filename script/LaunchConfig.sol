@@ -82,10 +82,12 @@ struct LaunchConfig {
     address[] allowed;
     /// the recipients of additional payouts that `SeaportBasicAdapter` accepts at launch. the OpenSea fee collector
     address[] seaportRecipients;
-    /// the address `Core.claimPayee` pays. its share is `settings.payeePpm`, 0 at launch: the Core receives bountyBps /
-    /// 10_000 of the baseline skim, 9_000 / 10_000 of 1000 bps is 900 bps of volume (9.0 points), and the owner keeps all
-    /// of it. the setting and the push stay for later use, and the owner can raise it with `Core.setPayee`
+    /// the address the payee fee share (`settings.payeePpm`, 0 at launch) and the operator cut of nft sales
+    /// (`settings.saleToOperatorBps`) are pushed to. the Core receives bountyBps / 10_000 of the baseline skim, 9_000 /
+    /// 10_000 of 1000 bps is 900 bps of volume (9.0 points). the owner can raise the fee share with `Core.setPayee`
     address payee;
+    /// the address the artist cut of nft sales (`settings.saleToArtistBps`) is pushed to, set by `Core.setArtist`
+    address artist;
     // explicit overrides of pinned preflight rules. all false by default. each one is part of the config hash
     /// allow a bountyBps other than 9000
     bool allowBounty;
@@ -172,6 +174,8 @@ abstract contract ConfigReader is CommonBase {
         s.idleLoosenBps = _u16(j, ".settings.idleLoosenBps");
         s.saleFloorBps = _u16(j, ".settings.saleFloorBps");
         s.saleToBuybackBps = _u16(j, ".settings.saleToBuybackBps");
+        s.saleToArtistBps = _u16(j, ".settings.saleToArtistBps");
+        s.saleToOperatorBps = _u16(j, ".settings.saleToOperatorBps");
         s.recoveryClimbPerMinBps = _u16(j, ".settings.recoveryClimbPerMinBps");
         s.recoveryGapBps = _u16(j, ".settings.recoveryGapBps");
         s.peakHalfLife = _u32(j, ".settings.peakHalfLife");
@@ -214,9 +218,7 @@ abstract contract ConfigReader is CommonBase {
             saleOn: vm.parseJsonBool(j, ".credit.saleOn"),
             window: _u32(j, ".credit.window"),
             floorBps: _u16(j, ".credit.floorBps"),
-            startBps: _u32(j, ".credit.startBps"),
-            royaltyBps: _u16(j, ".credit.royaltyBps"),
-            royaltyRecipient: vm.parseJsonAddress(j, ".credit.royaltyRecipient")
+            startBps: _u32(j, ".credit.startBps")
         });
     }
 
@@ -237,6 +239,7 @@ abstract contract ConfigReader is CommonBase {
         c.allowed = vm.parseJsonAddressArray(j, ".launch.allowed");
         c.seaportRecipients = vm.parseJsonAddressArray(j, ".adapters.seaportRecipients");
         c.payee = vm.parseJsonAddress(j, ".payee.address");
+        c.artist = vm.parseJsonAddress(j, ".artist");
     }
 
     // every narrowing below follows a bounds check, so the casts cannot truncate
@@ -287,7 +290,7 @@ abstract contract ConfigReader is CommonBase {
         uint256 n;
         if (c.owner == address(0)) tmp[n++] = "owner";
         if (c.creator == address(0)) tmp[n++] = "creator";
-        if (c.credit.royaltyRecipient == address(0)) tmp[n++] = "credit.royaltyRecipient";
+        if (c.artist == address(0) && c.settings.saleToArtistBps != 0) tmp[n++] = "artist";
         if (bytes(c.name).length == 0) tmp[n++] = "name";
         if (bytes(c.symbol).length == 0) tmp[n++] = "symbol";
         if (c.salt == bytes32(0)) tmp[n++] = "salt";

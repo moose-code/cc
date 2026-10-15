@@ -333,7 +333,7 @@ contract AdoptTest is Fixture {
         uint256 pot = core.ethPot();
         uint256[] memory ids = _gift(1);
         vm.expectEmit(false, false, false, false, address(core));
-        emit ICore.FeesAdded(0);
+        emit ICore.FeesAdded(0, 0);
         _adopt(ids);
         assertEq(address(core).balance, _tracked(), "the fees were booked");
         assertGt(core.ethPot(), pot, "the fees are in the pot");

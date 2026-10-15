@@ -185,12 +185,12 @@ contract PerPointExactTest is Fixture {
         core.setRate(1e16); // a rate far above the recorded cost, so the floor rests on the rate term
         _setCreditSaleOn(true);
         _warp(ctl.creditWindow()); // the price rests at the floor
-        uint256 gross = ctl.grossCreditPrice(id);
+        uint256 price = ctl.creditPrice(id);
         address arb = _user("arb rounding");
-        vm.deal(arb, gross);
+        vm.deal(arb, price);
         uint256 start = arb.balance;
         vm.startPrank(arb);
-        ctl.buyCredit{value: gross}(id);
+        ctl.buyCredit{value: price}(id);
         CREDITS.setApprovalForAll(address(core), true);
         core.sellForEth(_one(id));
         vm.stopPrank();

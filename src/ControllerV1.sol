@@ -36,9 +36,6 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// a pile credit sells at `max(cost, core.floorRate(), valueOf(score)) * creditFloorBps / 10_000` at the end of its
 /// window, from `creditStartBps` of that at its acquisition. the floor rate term keeps the price at or above
 /// `creditFloorBps` of the eth bid, which is at most `core.floorRate()`.
-/// every sale adds `royaltyBps` of the engine price on top. `buy`, `buyCredit` and `buyCredits` take the engine price
-/// plus the royalty, forward the engine price to the core and add the royalty to `royaltyOwed`, which `claimRoyalty`
-/// pays to `royaltyRecipient`. the controller holds `royaltyOwed` between calls and has no `receive`.
 /// the owner of the core can pause sales (`core.setPaused`). while paused the core reverts `Paused` in `sellTo` and
 /// `sellCreditTo`, so `buy` and `buyCredit` revert, and `priceOf` answers. the age of a statement is
 /// `core.statementAge`, which excludes every paused second, so the age of a held statement stops advancing for the
@@ -71,7 +68,6 @@ contract ControllerV1 is IController {
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
-    event RoyaltyClaimed(address indexed to, uint256 amount);
 
     ICoreViews public immutable CORE;
 
@@ -108,12 +104,6 @@ contract ControllerV1 is IController {
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
     uint32 public creditStartBps;
 
-    /// the share of every sale price added on top of it, bps. 0 to 1_000
-    uint16 public royaltyBps;
-    /// the address `claimRoyalty` pays. never zero
-    address public royaltyRecipient;
-    /// the royalty collected and not yet claimed, wei. the controller holds this much eth
-    uint256 public royaltyOwed;
 
     constructor(address core, Sale memory sale, Credit memory credit) {
         CORE = ICoreViews(core);
@@ -122,14 +112,7 @@ contract ControllerV1 is IController {
         // forge-lint: disable-next-line(unsafe-typecast)
         anchorTime = uint40(block.timestamp);
         _setCredit(
-            CreditSale({
-                saleOn: credit.saleOn,
-                window: credit.window,
-                floorBps: credit.floorBps,
-                startBps: credit.startBps,
-                royaltyBps: credit.royaltyBps,
-                royaltyRecipient: credit.royaltyRecipient
-            })
+            CreditSale({saleOn: credit.saleOn, window: credit.window, floorBps: credit.floorBps, startBps: credit.startBps})
         );
     }
 
@@ -189,10 +172,9 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ credit sale settings, owner, at once
 
-    /// sets the credit sale and the royalty at once. `saleOn` turns the credit sale window on or
-    /// off: while on, pile credits are for sale through `buyCredit` and compose takes only credits past their window.
-    /// `window` 1 minute to 30 days, `floorBps` 10_000 to 40_000, `startBps` 10_000 to 200_000, `royaltyBps` 0 to 1_000
-    /// (applies to the next sale), `royaltyRecipient` never zero (it is paid the royalty already owed)
+    /// sets the credit sale settings at once. `saleOn` turns the credit sale window on or off: while on, pile credits
+    /// are for sale through `buyCredit` and compose takes only credits past their window. `window` 1 minute to 30 days,
+    /// `floorBps` 10_000 to 40_000, `startBps` 10_000 to 200_000
     function setCredit(CreditSale calldata v) external onlyOwner {
         _setCredit(v);
         emit CreditSaleSet(v);
@@ -202,25 +184,10 @@ contract ControllerV1 is IController {
         if (!CreditBounds.windowOk(v.window)) revert BadSetting("creditWindow");
         if (!CreditBounds.floorBpsOk(v.floorBps)) revert BadSetting("creditFloorBps");
         if (!CreditBounds.startBpsOk(v.startBps)) revert BadSetting("creditStartBps");
-        if (!CreditBounds.royaltyBpsOk(v.royaltyBps)) revert BadSetting("royaltyBps");
-        if (!CreditBounds.royaltyRecipientOk(v.royaltyRecipient)) revert BadSetting("royaltyRecipient");
         creditSaleOn = v.saleOn;
         creditWindow = v.window;
         creditFloorBps = v.floorBps;
         creditStartBps = v.startBps;
-        royaltyBps = v.royaltyBps;
-        royaltyRecipient = v.royaltyRecipient;
-    }
-
-    /// sends `royaltyOwed` to `royaltyRecipient`. anyone may call. reverts `ZeroAmount` when nothing is owed. a failed
-    /// transfer reverts the call and leaves `royaltyOwed` unchanged
-    function claimRoyalty() external {
-        uint256 amount = royaltyOwed;
-        if (amount == 0) revert ZeroAmount();
-        royaltyOwed = 0;
-        address to = royaltyRecipient;
-        SafeTransferLib.safeTransferETH(to, amount);
-        emit RoyaltyClaimed(to, amount);
     }
 
     // ------------------------------------------------------------------ pricing and sale
@@ -279,11 +246,6 @@ contract ControllerV1 is IController {
         (price,,) = _quote(sid);
     }
 
-    /// `priceOf(sid)` plus the royalty, the amount `buy` takes
-    function grossPriceOf(uint256 sid) external view returns (uint256) {
-        return _gross(priceOf(sid));
-    }
-
     /// true when the curve price of statement `sid` has reached the floor, `saleFloorBps` of the reference. the curve age
     /// excludes paused seconds, so eligibility holds its value while sales are paused. the core reads it to gate a
     /// balance side redemption
@@ -295,30 +257,18 @@ contract ControllerV1 is IController {
         return _ask(ref, CORE.statementAge(sid), floor) <= ref * floor / BPS;
     }
 
-    /// pays the asking price plus the royalty, gets the statement at once, and moves the anchor halfway to the sale price
-    /// in bps of the reference when the cost is at least `anchorMinCost`. the excess of `msg.value` is refunded to the
-    /// caller last
+    /// pays the asking price, gets the statement at once, and moves the anchor halfway to the sale price in bps of the
+    /// reference when the cost is at least `anchorMinCost`. the excess of `msg.value` is refunded to the caller last
     function buy(uint256 sid) external payable {
         if (_busy) revert Reentrant();
         _busy = true;
         (uint256 price, uint256 cost, uint256 ref) = _quote(sid);
-        uint256 royalty = _royalty(price);
-        uint256 gross = price + royalty;
-        if (msg.value < gross) revert Underpaid();
+        if (msg.value < price) revert Underpaid();
         _moveAnchor(sid, price, cost, ref);
         ICoreSale(address(CORE)).sellTo{value: price}(sid, msg.sender);
-        royaltyOwed += royalty;
         emit Bought(sid, msg.sender, price);
-        if (msg.value > gross) SafeTransferLib.safeTransferETH(msg.sender, msg.value - gross);
+        if (msg.value > price) SafeTransferLib.safeTransferETH(msg.sender, msg.value - price);
         _busy = false;
-    }
-
-    function _royalty(uint256 price) private view returns (uint256) {
-        return price * royaltyBps / BPS;
-    }
-
-    function _gross(uint256 price) private view returns (uint256) {
-        return price + _royalty(price);
     }
 
     // ------------------------------------------------------------------ credit sale window
@@ -339,11 +289,6 @@ contract ControllerV1 is IController {
         price = start - (start - floor) * age / creditWindow;
     }
 
-    /// `creditPrice(id)` plus the royalty, the amount `buyCredit` takes
-    function grossCreditPrice(uint256 id) external view returns (uint256) {
-        return _gross(creditPrice(id));
-    }
-
     /// the credit score of `id` from the credit score contract, the same `scoreOf(seed, paidAt)` source the balance token
     /// bid reads in `sellForBalance`. `scoreOf` is pure on a fixed verified contract, so the call is direct.
     /// `creditPrice` calls this only for a credit the core holds in the pile, so the reads cannot revert
@@ -360,42 +305,35 @@ contract ControllerV1 is IController {
         return uint256(acquiredAt) + creditWindow <= block.timestamp;
     }
 
-    /// pays the sale price of credit `id` plus the royalty, gets the credit at once, and refunds the excess of
-    /// `msg.value` last. reverts `CreditSaleOff` while the sale is off and, through the core, `Paused` while sales are paused
+    /// pays the sale price of credit `id`, gets the credit at once, and refunds the excess of `msg.value` last. reverts
+    /// `CreditSaleOff` while the sale is off and, through the core, `Paused` while sales are paused
     function buyCredit(uint256 id) external payable {
         if (!creditSaleOn) revert CreditSaleOff();
         if (_busy) revert Reentrant();
         _busy = true;
         uint256 price = creditPrice(id);
-        uint256 royalty = _royalty(price);
-        uint256 gross = price + royalty;
-        if (msg.value < gross) revert Underpaid();
+        if (msg.value < price) revert Underpaid();
         ICoreSale(address(CORE)).sellCreditTo{value: price}(id, msg.sender);
-        royaltyOwed += royalty;
-        if (msg.value > gross) SafeTransferLib.safeTransferETH(msg.sender, msg.value - gross);
+        if (msg.value > price) SafeTransferLib.safeTransferETH(msg.sender, msg.value - price);
         _busy = false;
     }
 
-    /// pays the sale prices of `ids` in order plus the royalty of each, gets the credits, and refunds the excess last.
-    /// each credit is priced at the state left by the previous sale. the floor rate is unchanged by a credit sale for the
-    /// rest of the block, so within one batch a credit's price moves only through its own cost, score and age. reverts
-    /// `CreditSaleOff` while the sale is off and, through the core, `Paused` while sales are paused
+    /// pays the sale prices of `ids` in order, gets the credits, and refunds the excess last. each credit is priced at
+    /// the state left by the previous sale. the floor rate is unchanged by a credit sale for the rest of the block, so
+    /// within one batch a credit's price moves only through its own cost, score and age. reverts `CreditSaleOff` while
+    /// the sale is off and, through the core, `Paused` while sales are paused
     function buyCredits(uint256[] calldata ids) external payable {
         if (!creditSaleOn) revert CreditSaleOff();
         if (_busy) revert Reentrant();
         _busy = true;
         uint256 n = ids.length;
         uint256 spent;
-        uint256 royalty;
         for (uint256 i; i < n; ++i) {
             uint256 price = creditPrice(ids[i]);
-            uint256 r = _royalty(price);
-            spent += price + r;
-            royalty += r;
+            spent += price;
             if (msg.value < spent) revert Underpaid();
             ICoreSale(address(CORE)).sellCreditTo{value: price}(ids[i], msg.sender);
         }
-        royaltyOwed += royalty;
         if (msg.value > spent) SafeTransferLib.safeTransferETH(msg.sender, msg.value - spent);
         _busy = false;
     }

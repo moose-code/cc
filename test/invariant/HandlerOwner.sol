@@ -1040,9 +1040,7 @@ abstract contract HandlerOwner is HandlerBase {
             saleOn: c.creditSaleOn(),
             window: c.creditWindow(),
             floorBps: c.creditFloorBps(),
-            startBps: c.creditStartBps(),
-            royaltyBps: c.royaltyBps(),
-            royaltyRecipient: c.royaltyRecipient()
+            startBps: c.creditStartBps()
         });
     }
 

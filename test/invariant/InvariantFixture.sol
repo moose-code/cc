@@ -378,10 +378,11 @@ abstract contract InvariantFixture is Fixture {
         s[n++] = HandlerBase.controllerSeed.selector;
         s[n++] = HandlerBase.controllerSwap.selector;
         s[n++] = HandlerBase.probeController.selector;
-        // the book of the fee income by anyone, and the payee claim with the owner replacing the payee
+        // the book of the fee income by anyone, which forces the payee share out, now and then after the owner
+        // replaces the payee
         s[n++] = HandlerBase.book.selector;
         s[n++] = HandlerBase.book.selector;
-        s[n++] = HandlerBase.claimPayee.selector;
+        s[n++] = HandlerBase.book.selector;
         // the balance module is set in the balance side suites before the run starts, so the redemption actions are listed only there
         if (phase2) {
             s[n++] = HandlerBase.sellForBalance.selector;

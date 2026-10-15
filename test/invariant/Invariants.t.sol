@@ -52,7 +52,7 @@ abstract contract InvariantsBase is InvariantFixture {
     uint256[] internal g11 = [7, 8, 26];
     /// locks and handovers
     uint256[] internal g12 = [27, 29];
-    /// the payee share: the share, the latch and the claim follow the model of the book
+    /// the payee share: the forced push, the latch and the payee follow the model of the book
     uint256[] internal g13 = [28];
 
     function _zero(uint256[] storage codes) internal view {
@@ -128,13 +128,13 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(inRecord, core.heldStatements().length, "held count differs from the core's list");
     }
 
-    /// 5. ethPot + ethToBuyback + ethRedeemBurn + payeeOwed never exceeds the core's eth balance, and the same for the
-    /// balance token pots. a sale books its payment at once, split by saleToBuybackBps, so nothing is owed outside the
-    /// pots and the payee claim.
+    /// 5. ethPot + ethToBuyback + ethRedeemBurn never exceeds the core's eth balance, and the same for the balance
+    /// token pots. a sale books its payment at once, the artist and operator cuts pushed off the top and the rest split
+    /// by saleToBuybackBps, and the payee share is pushed by the book, so no eth is owed outside the pots.
     function invariant_05_potsNeverExceedBalances() public view {
         _zero(g5);
         assertLe(
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed(),
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
             address(core).balance,
             "eth pots above balance"
         );
@@ -168,8 +168,7 @@ abstract contract InvariantsBase is InvariantFixture {
         for (uint256 i; i < n; ++i) {
             address c = handler.watched(i);
             (uint256 eth, uint256 coin_, uint256 credits_, uint256 statements_, uint256 xt_) = handler.baseOf(c);
-            // the first controller holds the royalty it owes between claims, paid by buyers
-            assertLe(c.balance, eth + (c == handler.v1() ? IControllerV1(c).royaltyOwed() : 0), "owner or controller gained eth");
+            assertLe(c.balance, eth, "owner or controller gained eth");
             assertLe(coin.balanceOf(c), coin_, "owner or controller gained coin");
             assertLe(CREDITS.balanceOf(c), credits_, "owner or controller gained credits");
             assertLe(_statementsBalance(c), statements_, "owner or controller gained statements");
@@ -440,9 +439,10 @@ abstract contract InvariantsBase is InvariantFixture {
     /// the run plus every amount booked into them (fee income less the payee share, sale proceeds, sale payments,
     /// `fund`) equal the pots now plus every amount that left them (credit purchases, tips, redemption repayments, buyback
     /// spends, migrations). the handler adds each amount to its ledger where the action measures it at the recipient.
-    /// unbooked eth, forced eth included, is outside the sum until `book` counts it. the payee claim follows the model of
-    /// the book: the share is `payeePpm` of the income once the share is on, the first book with income at or after
-    /// `launchedAt + SNIPER_SECONDS` turns it on and shares nothing, and `claimPayee` pays exactly the eth owed.
+    /// unbooked eth, forced eth included, is outside the sum until `book` counts it. the payee share is pushed by the
+    /// book, not held: the share is `payeePpm` of the income once the share is on, the first book with income at or after
+    /// `launchedAt + SNIPER_SECONDS` turns it on and shares nothing, and the share is forced out to the payee. the ledger
+    /// counts the whole income in and the pushed share out.
     function invariant_18_ethConservation() public view {
         _zero(g13);
         assertEq(
@@ -450,7 +450,6 @@ abstract contract InvariantsBase is InvariantFixture {
             handler.gEthStart() + handler.gEthIn(),
             "the eth books do not balance: start + booked != pots + paid out"
         );
-        assertEq(core.payeeOwed(), handler.gPayeeOwed(), "the payee claim differs from the model");
         assertEq(core.payeeOn(), handler.gPayeeOn(), "the payee latch differs from the model");
         assertEq(core.payee(), handler.gPayee(), "the payee differs from the one the owner set last");
     }
@@ -474,7 +473,7 @@ abstract contract InvariantsBase is InvariantFixture {
         uint256 cap = ceiling < st.rateCap ? ceiling : st.rateCap;
         assertLe(price, cap, "the price state is above the rate cap and the ceiling");
         uint256 pot = core.ethPot();
-        uint256 pending = address(core).balance - pot - core.ethToBuyback() - core.ethRedeemBurn() - core.payeeOwed();
+        uint256 pending = address(core).balance - pot - core.ethToBuyback() - core.ethRedeemBurn();
         assertLe(rate, pot + pending, "the read is above the pot and the pending income");
         if (pending == 0) {
             assertEq(rate, price < pot ? price : pot, "the read is not the price state lowered to the pot");
@@ -573,7 +572,7 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 27) handler.lockDoor(w, x);
         else if (a == 28) handler.handover(w, x);
         else if (a == 29) handler.book(w, x);
-        else if (a == 30) handler.claimPayee(w, x);
+        else if (a == 30) handler.book(w, x);
         else if (a == 31) handler.rescueNft(w, x);
         else if (a == 32) handler.migrate(w, x);
         else if (a == 33) handler.adopt(w, x, y);
@@ -652,6 +651,8 @@ abstract contract InvariantsBase is InvariantFixture {
         // pause and composeChosen are exercised by their own tests, not by test_everyActionSucceeds (a chosen compose
         // needs a fresh page of 80 pile credits, which its own test builds)
         if (a == 34 || a == 39) return false;
+        // slot 30 is reserved: the former standalone payee claim, folded into the book under the push model (decision 123)
+        if (a == 30) return false;
         // changeUnit moves the module's unit, so it only lands in the balance side
         if (a == 35) return handler.phase2();
         // the sale and owner door actions run only in the suites that list them
@@ -780,18 +781,14 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// the book and the payee actions: books with and without pushed eth, then the owner points the payee at every kind
-    /// of target (a fresh account, a payee that reverts, one that burns its gas, the zero address), claims against each,
-    /// swaps keep working with a payee that refuses, and the payee goes back to a working account
+    /// the book and the payee push: books with and without pushed eth, then the owner points the payee at a fresh
+    /// account, one whose receive reverts and one that burns its gas, and a book forces the share out to each
     function _payeeSmoke() internal {
         assertTrue(_try(29, 20), "no book");
-        for (uint256 m; m < 6; ++m) {
+        for (uint256 m = 1; m <= 3; ++m) {
             handler.buyCoin(m, 1, 0);
-            handler.claimPayee(m + 6 * 7, m);
-            handler.book(m, 0);
+            handler.book(m, m);
         }
-        assertTrue(_try(30, 20), "no claim");
-        handler.claimPayee(1, 1);
         assertEq(core.payee(), handler.gPayee(), "the payee is the one the owner set last");
         handler.book(1, 0);
     }

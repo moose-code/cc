@@ -15,8 +15,6 @@ interface IControllerV1 {
         uint32 window;
         uint16 floorBps;
         uint32 startBps;
-        uint16 royaltyBps;
-        address royaltyRecipient;
     }
 
     struct PoolKey {
@@ -40,7 +38,6 @@ interface IControllerV1 {
     event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event CreditSaleSet(CreditSale credit);
-    event RoyaltyClaimed(address indexed to, uint256 amount);
     event SaleSet(Sale sale);
 
     function CORE() external view returns (address);
@@ -57,15 +54,12 @@ interface IControllerV1 {
     function buy(uint256 sid) external payable;
     function buyCredit(uint256 id) external payable;
     function buyCredits(uint256[] memory ids) external payable;
-    function claimRoyalty() external;
     function creditFloorBps() external view returns (uint16);
     function creditPrice(uint256 id) external view returns (uint256 price);
     function creditSaleOn() external view returns (bool);
     function creditStartBps() external view returns (uint32);
     function creditWindow() external view returns (uint32);
     function decayHours() external view returns (uint16);
-    function grossCreditPrice(uint256 id) external view returns (uint256);
-    function grossPriceOf(uint256 sid) external view returns (uint256);
     function markupBps() external view returns (uint16);
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
     function pastWindow(uint64 acquiredAt) external view returns (bool);
@@ -73,9 +67,6 @@ interface IControllerV1 {
     function priceOf(uint256 sid) external view returns (uint256 price);
     function refScore() external view returns (uint32);
     function referenceOf(uint256 sid) external view returns (uint256);
-    function royaltyBps() external view returns (uint16);
-    function royaltyOwed() external view returns (uint256);
-    function royaltyRecipient() external view returns (address);
     function setAnchorBps(uint32 v) external;
     function setBalancePoolKey(PoolKey memory key) external;
     function setCredit(CreditSale memory v) external;

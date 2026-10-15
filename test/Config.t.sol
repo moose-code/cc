@@ -43,7 +43,7 @@ contract ConfigTest is Fixture {
     }
 
     /// the json file is the default config plus the launch inputs the owner supplied (owner, creator, name, the creator
-    /// payee) and the salt, keccak256 of "CC", and the live v2 stack of script/config/v2-mainnet.json
+    /// payee, the artist) and the salt, keccak256 of "CC", and the live v2 stack of script/config/v2-mainnet.json
     function test_jsonEqualsDefaultConfig() public view {
         LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
         LaunchConfig memory d = defaultConfig();
@@ -55,7 +55,7 @@ contract ConfigTest is Fixture {
         d.mevModule = live.mev;
         d.owner = v2.owner;
         d.creator = v2.owner;
-        d.credit.royaltyRecipient = v2.owner;
+        d.artist = f.artist;
         d.payee = v2.owner;
         d.name = "CC";
         d.salt = keccak256("CC");
@@ -68,6 +68,7 @@ contract ConfigTest is Fixture {
         assertTrue(_same(f, d), "script/config/mainnet.json drifted from the default config");
         assertEq(f.owner, v2.owner);
         assertEq(f.creator, v2.owner);
+        assertEq(f.artist, 0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a, "the launch artist address (decision 123)");
         assertEq(f.name, "CC");
         assertEq(f.symbol, "CC");
         assertEq(f.salt, keccak256("CC"));
@@ -137,9 +138,9 @@ contract ConfigTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "creator"));
         this.requireExt(c);
         c.creator = creator;
-        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "credit.royaltyRecipient"));
+        vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "artist"));
         this.requireExt(c);
-        c.credit.royaltyRecipient = creator;
+        c.artist = creator;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "name"));
         this.requireExt(c);
         c.name = "Name";
@@ -259,30 +260,9 @@ contract ConfigTest is Fixture {
         c = lc;
         c.payee = c.stack.escrow;
         _pre(c, d2);
-        assertEq(
-            _failedNames(),
-            "rule: owner, creator and payee are not dead or stack addresses, payee: accepts eth with a 100000 gas call (simulated)"
-        );
-    }
-
-    /// the launch payee takes 0.001 eth with a 100,000 gas call: a payee that reverts, or one that burns more gas, fails
-    function test_preflightPayeeAcceptsEth() public {
-        address d2 = _funded();
-        string memory row = "payee: accepts eth with a 100000 gas call (simulated)";
-        _pre(lc, d2);
-        assertTrue(_warnClean(row), "the launch payee accepts eth");
-        LaunchConfig memory c = lc;
-        c.payee = makeAddr("reverting payee");
-        vm.etch(c.payee, hex"60006000fd");
-        _pre(c, d2);
-        assertEq(_failedNames(), row, "a reverting payee fails");
-        c.payee = makeAddr("gas burning payee");
-        vm.etch(c.payee, hex"5b600056");
-        _pre(c, d2);
-        assertEq(_failedNames(), row, "a payee that burns the gas fails");
-        c.payee = makeAddr("plain account payee");
-        _pre(c, d2);
-        assertEq(_failedNames(), "", "an account without code accepts eth");
+        // the payee share and the operator cut are forced pushes (decision 123), so the preflight no longer probes the
+        // payee for an eth call; only the dead-or-stack-address rule fails for a stack payee
+        assertEq(_failedNames(), "rule: owner, creator and payee are not dead or stack addresses");
     }
 
     function test_preflightSeaportRecipients() public {

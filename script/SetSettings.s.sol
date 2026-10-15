@@ -27,7 +27,7 @@ interface ICoreOwner {
 /// `SET_RATE=<wei per credit>` also prepares `setRate`.
 /// with `CONTROLLER=0x...` the same `SET_<field>` variables also change the controller: the fields of `Sale` (`markupBps`,
 /// `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`) go to `setSale`
-/// and the fields of `CreditSale` (`saleOn`, `window`, `floorBps`, `startBps`, `refScore`, `royaltyBps`, `royaltyRecipient`)
+/// and the fields of `CreditSale` (`saleOn`, `window`, `floorBps`, `startBps`)
 /// to `setCredit`. each struct is read live, patched and checked by a simulated call as the owner, which reverts with
 /// the first field out of bounds.
 /// the controller prices held statements live from the settings, so a setting change reaches every held statement at once.
@@ -115,9 +115,7 @@ contract SetSettings is Script {
             saleOn: _field("saleOn", c.creditSaleOn() ? 1 : 0, 1) == 1,
             window: uint32(_field("window", c.creditWindow(), type(uint32).max)),
             floorBps: uint16(_field("floorBps", c.creditFloorBps(), type(uint16).max)),
-            startBps: uint32(_field("startBps", c.creditStartBps(), type(uint32).max)),
-            royaltyBps: uint16(_field("royaltyBps", c.royaltyBps(), type(uint16).max)),
-            royaltyRecipient: vm.envOr("SET_royaltyRecipient", c.royaltyRecipient())
+            startBps: uint32(_field("startBps", c.creditStartBps(), type(uint32).max))
         });
         saleChanged = keccak256(abi.encode(ns))
             != keccak256(
@@ -138,9 +136,7 @@ contract SetSettings is Script {
                         c.creditSaleOn(),
                         c.creditWindow(),
                         c.creditFloorBps(),
-                        c.creditStartBps(),
-                        c.royaltyBps(),
-                        c.royaltyRecipient()
+                        c.creditStartBps()
                     )
                 )
             );

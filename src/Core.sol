@@ -39,7 +39,7 @@ import {CreditBounds} from "./lib/CreditBounds.sol";
 /// credits and statements sent to the core outside its doors are not tracked and stay in the core.
 /// the Core is the bounty recipient of the pool. `receive()` accepts eth from the hook and the fee escrow only, and every
 /// door starts with `_book()`, which splits the eth above the tracked pots into the payee claim, the coin buyback, the
-/// redeem burn reserve and the pot.
+/// redeem burn pot and the pot.
 contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     using FixedPointMathLib for uint256;
 
@@ -134,13 +134,15 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                 EVENTS
     //////////////////////////////////////////////////////////////*/
 
-    event FeesAdded(uint256 amount);
+    /// `_book` booked `amount` of fee income (pot plus redeem-burn shares) and pushed `toPayee` to the payee
+    event FeesAdded(uint256 amount, uint256 toPayee);
     /// `fund` added `amount` to the pot
     event Funded(address indexed from, uint256 amount);
     /// `collectEscrow` claimed `amount` from the fee escrow into the pot
     event EscrowCollected(uint256 amount);
     event PayeeSet(address indexed payee);
-    event PayeeClaimed(address indexed payee, uint256 amount);
+    /// `setArtist` set the address the artist cut of nft sales is pushed to
+    event ArtistSet(address indexed artist);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event ListingBought(
         uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate
@@ -158,11 +160,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event RateSet(uint256 rate);
     event StatementRedeemed(uint256 indexed sid, uint256 received);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
-    /// the controller sold a statement: the buyer, the price paid and the part of it booked to the coin buyback (the
-    /// rest went to the pot)
-    event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback);
-    /// the controller sold a pile credit through the credit sale window: the buyer and the price paid
-    event CreditSold(uint256 indexed id, address indexed buyer, uint256 price);
+    /// the controller sold a statement: the buyer, the price paid, the part of the rest booked to the coin buyback (the
+    /// rest went to the pot), and the artist and operator cuts pushed off the top
+    event StatementSoldTo(
+        uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback, uint256 toArtist, uint256 toOperator
+    );
+    /// the controller sold a pile credit through the credit sale window: the buyer, the price paid, and the artist
+    /// and operator cuts pushed off the top
+    event CreditSold(uint256 indexed id, address indexed buyer, uint256 price, uint256 toArtist, uint256 toOperator);
     event OwnershipTransferStarted(address indexed owner, address indexed pending);
     event OwnershipTransferred(address indexed from, address indexed to);
     event ControllerLocked();
@@ -170,7 +175,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event AdaptersLocked();
     event ControllerSet(address controller);
     event BalanceModuleSet(address balanceModule, address balanceToken, uint256 unitPerPoint);
-    /// `releaseRedeemBurn` moved `amount` of the redeem burn reserve into the coin buyback
+    /// `releaseRedeemBurn` moved `amount` of the redeem burn pot into the coin buyback
     event RedeemBurnReleased(uint256 amount);
     event AdapterSet(address indexed adapter, bool allowed);
     event CoinRescued(address indexed to, uint256 amount);
@@ -202,6 +207,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant PAGE = 80;
     uint256 private constant MAX_FORMAT = 7;
     uint256 private constant READ_GAS = 200_000;
+    /// gas stipend of the forced pushes of the payee fee share and the artist and operator cuts of nft sales
+    uint256 private constant PUSH_GAS = 50_000;
     /// gas the controller's `atFloor` may use: its reads of the settings, `floorRate`, the module's `unitPerPoint` and the
     /// pool `getSlot0`
     uint256 private constant AT_FLOOR_GAS = 400_000;
@@ -377,24 +384,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit EscrowCollected(amount);
     }
 
-    /// sends the booked payee share to `payee`. a payee that reverts blocks only its own claim
-    function claimPayee() external nonReentrant {
-        uint256 amount = s.payeeOwed;
-        if (amount == 0) revert ZeroAmount();
-        s.payeeOwed = 0;
-        address to = s.payee;
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert CallFailed();
-        emit PayeeClaimed(to, amount);
-    }
-
-
-    /// the eth held above `ethPot`, `ethToBuyback`, `ethRedeemBurn` and `payeeOwed`, without `value` of the current call
+    /// the eth held above `ethPot`, `ethToBuyback` and `ethRedeemBurn`, without `value` of the current call
     function _income(uint256 value) private view returns (uint256) {
-        return (address(this).balance - value).zeroFloorSub(s.ethPot + s.ethToBuyback + s.ethRedeemBurn + s.payeeOwed);
+        return (address(this).balance - value).zeroFloorSub(s.ethPot + s.ethToBuyback + s.ethRedeemBurn);
     }
 
-    /// the parts of `income` that go to the payee and the redeem burn reserve. the rest goes to the pot. the payee share
+    /// the parts of `income` that go to the payee and the redeem burn pot. the rest goes to the pot. the payee share
     /// is `payeePpm` of the income while `payeeOn`, and the reserve share is `feeToRedeemBurnBps` of the income after it
     function _split(uint256 income) private view returns (uint256 toPayee, uint256 toRedeemBurn) {
         Settings storage cfg = s.settings;
@@ -420,15 +415,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (income == 0) return;
         _checkpoint();
         (uint256 toPayee, uint256 toRedeemBurn) = _split(income);
-        if (s.payeeOn) {
-            if (toPayee != 0) s.payeeOwed += toPayee;
-        } else if (_sniperOver()) {
-            s.payeeOn = true;
-        }
+        if (!s.payeeOn && _sniperOver()) s.payeeOn = true;
         if (toRedeemBurn != 0) s.ethRedeemBurn += toRedeemBurn;
         income -= toPayee;
         s.ethPot += income - toRedeemBurn;
-        emit FeesAdded(income);
+        // the payee share is pushed, not claimed: a reverting payee cannot block the book (solady forces the transfer)
+        if (toPayee != 0) SafeTransferLib.forceSafeTransferETH(s.payee, toPayee, PUSH_GAS);
+        emit FeesAdded(income, toPayee);
     }
 
     /// whether the launch time recorded by the factory plus `SNIPER_SECONDS` has passed. a launch that is not recorded
@@ -893,11 +886,17 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (msg.value < st.cost * s.settings.saleFloorBps / BPS) revert BelowFloor();
         _unhold(sid);
         STATEMENTS.transferFrom(address(this), buyer, sid);
-        uint256 toBuyback = msg.value * s.settings.saleToBuybackBps / BPS;
+        // the artist and operator cuts come off the top; the existing buyback split is on the rest
+        Settings storage cfg = s.settings;
+        uint256 toArtist = msg.value * cfg.saleToArtistBps / BPS;
+        uint256 toOperator = msg.value * cfg.saleToOperatorBps / BPS;
+        uint256 rest = msg.value - toArtist - toOperator;
+        uint256 toBuyback = rest * cfg.saleToBuybackBps / BPS;
         s.ethToBuyback += toBuyback;
         _checkpoint();
-        s.ethPot += msg.value - toBuyback;
-        emit StatementSoldTo(sid, buyer, msg.value, toBuyback);
+        s.ethPot += rest - toBuyback;
+        _pushSaleCuts(toArtist, toOperator);
+        emit StatementSoldTo(sid, buyer, msg.value, toBuyback, toArtist, toOperator);
     }
 
     /// the controller sells pile credit `id` to `buyer` for `msg.value`. the payment is at least the credit's cost: no
@@ -914,13 +913,19 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (msg.value < cost) revert BelowFloor();
         _pull(id);
         CREDITS.transferFrom(address(this), buyer, id);
-        uint256 toPot = cost * s.creditCostToPotBps / BPS;
-        s.ethToBuyback += msg.value - toPot;
+        // the artist and operator cuts come off the top; the credit cost basis share of the rest goes to the pot, the
+        // remainder to the buyback. the cut cannot push the pot share negative (bounded by the rest)
+        uint256 toArtist = msg.value * s.settings.saleToArtistBps / BPS;
+        uint256 toOperator = msg.value * s.settings.saleToOperatorBps / BPS;
+        uint256 rest = msg.value - toArtist - toOperator;
+        uint256 toPot = (cost * s.creditCostToPotBps / BPS).min(rest);
+        s.ethToBuyback += rest - toPot;
         // checkpoint the climbed rate before the pot grows, so a credit sale cannot raise the eth bid read within its
         // own block
         _checkpoint();
         s.ethPot += toPot;
-        emit CreditSold(id, buyer, msg.value);
+        _pushSaleCuts(toArtist, toOperator);
+        emit CreditSold(id, buyer, msg.value, toArtist, toOperator);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -932,7 +937,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// floor. the module's balance token holding must rise by at least
     /// `rating * unitPerPoint * (10_000 - redeemSlippageBps) / 10_000`, with `unitPerPoint` read from the module in the
     /// call. a module whose read fails, is zero or exceeds uint128, or whose holding rises by less than that, reverts
-    /// `BadModule`. every redemption moves `redeemBurnBps` of the redeem burn reserve into the coin buyback
+    /// `BadModule`. every redemption moves `redeemBurnBps` of the redeem burn pot into the coin buyback
     function redeemStatement(uint256 sid) external nonReentrant {
         uint256 gasStart = gasleft();
         _book();
@@ -1038,11 +1043,30 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit ControllerSet(c);
     }
 
-    /// sets the address `claimPayee` pays. never zero. effective at once, applies to the eth already owed
+    /// sets the address the payee fee share and the operator cut of nft sales are pushed to. never zero, effective at once
     function setPayee(address to) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
         s.payee = to;
         emit PayeeSet(to);
+    }
+
+    /// sets the address the artist cut of nft sales is pushed to. the zero address is refused while `saleToArtistBps`
+    /// is nonzero, and a forbidden target is always refused. owner only
+    function setArtist(address to) external onlyOwner {
+        if (to == address(0)) {
+            if (s.settings.saleToArtistBps != 0) revert ZeroAddress();
+        } else if (_forbidden(to)) {
+            revert ForbiddenTarget();
+        }
+        s.artist = to;
+        emit ArtistSet(to);
+    }
+
+    /// pushes the artist cut to `artist` and the operator cut to the payee, both forced (solady), so a recipient that
+    /// cannot receive never blocks the sale
+    function _pushSaleCuts(uint256 toArtist, uint256 toOperator) private {
+        if (toArtist != 0) SafeTransferLib.forceSafeTransferETH(s.artist, toArtist, PUSH_GAS);
+        if (toOperator != 0) SafeTransferLib.forceSafeTransferETH(s.payee, toOperator, PUSH_GAS);
     }
 
     /// sets or replaces the balance module at once (any number of times until `lockBalanceModule`)
@@ -1051,7 +1075,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _setBalanceModule(module);
     }
 
-    /// moves `amount` of the redeem burn reserve into the coin buyback, capped at the reserve. the eth stays inside the
+    /// moves `amount` of the redeem burn pot into the coin buyback, capped at the reserve. the eth stays inside the
     /// core for a coin buy and burn: `ethRedeemBurn` falls and `ethToBuyback` rises by the same amount, so the tracked
     /// total and solvency hold. callable after `migrate`. reverts `ZeroAmount` when the reserve is empty or `amount` is 0
     function releaseRedeemBurn(uint256 amount) external onlyOwner nonReentrant {
@@ -1342,7 +1366,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function pausedTotal() external view returns (uint40) { return s.pausedTotal; }
     function composerOf(uint256 sid) external view returns (address) { return s.composerOf[sid]; }
     function payee() external view returns (address) { return s.payee; }
-    function payeeOwed() external view returns (uint256) { return s.payeeOwed; }
+    function artist() external view returns (address) { return s.artist; }
     function payeeOn() external view returns (bool) { return s.payeeOn; }
 
     /// number of credits in the pile.

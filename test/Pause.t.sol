@@ -81,7 +81,7 @@ contract PauseTest is SaleShapeBase {
     function test_buy_revertsWhilePausedAndWorksAfterResume() public {
         uint256 sid = _composeOnce().sid;
         _setPaused(true);
-        uint256 price = ctl.grossPriceOf(sid);
+        uint256 price = ctl.priceOf(sid);
         assertGt(price, 0, "priceOf answers while paused");
         vm.deal(buyer, 10 ether);
         vm.prank(buyer);

@@ -57,7 +57,6 @@ contract V2PortFeeTest is FeeBase {
         assertEq(address(core).balance, 0.3 ether, "paid to the Core");
         assertEq(core.ethPot(), 0.3 ether, "the whole claim is in the pot");
         assertEq(core.ethRedeemBurn(), 0, "none to the reserve, whatever the share");
-        assertEq(core.payeeOwed(), 0);
         _solvent();
     }
 
@@ -133,10 +132,11 @@ contract V2PortMigrationTest is FeeBase {
         assertEq(core.ethPot(), pot1, "the old Core books nothing more");
         assertEq(address(core).balance, bal1, "and received nothing");
 
-        // the second book shares
+        // the second book pushes the payee share (payeePpm is 0 at launch, so the push is zero)
+        uint256 payeeBefore = core2.payee().balance;
         _buyCoin(trader, 1 ether);
         core2.book();
-        assertEq(core2.payeeOwed(), uint256(0.09 ether) * s.payeePpm / 1_000_000);
+        assertEq(core2.payee().balance - payeeBefore, uint256(0.09 ether) * s.payeePpm / 1_000_000);
 
         // the old Core still composes and sells with what it holds
         vm.fee(composeBasefee);
@@ -146,7 +146,7 @@ contract V2PortMigrationTest is FeeBase {
         _buy(trader, sid);
         _solvent();
         assertEq(address(core).balance, _tracked(), "the old Core's books are exact");
-        assertEq(address(core2).balance, core2.ethPot() + core2.ethToBuyback() + core2.ethRedeemBurn() + core2.payeeOwed());
+        assertEq(address(core2).balance, core2.ethPot() + core2.ethToBuyback() + core2.ethRedeemBurn());
     }
 
     // promise: SPEC 1 the Core buys back without being on the coin allowlist
@@ -180,9 +180,7 @@ contract V2PortMigrationTest is FeeBase {
         assertLt(core2.ethToBuyback(), bb0);
         assertEq(coin.balanceOf(address(core2)), 0);
         assertEq(coin.transferAllowance(), 0, "the take consumed the whole allowance");
-        assertLe(
-            core2.ethPot() + core2.ethToBuyback() + core2.ethRedeemBurn() + core2.payeeOwed(), address(core2).balance
-        );
+        assertLe(core2.ethPot() + core2.ethToBuyback() + core2.ethRedeemBurn(), address(core2).balance);
     }
 
     // promise: inv 10 a refusing bounty recipient never blocks swaps

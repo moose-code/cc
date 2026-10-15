@@ -72,13 +72,13 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x19e1c24020c2aebb4c6c74d5ae4b82191ca5bec1b51cb1dc9f0958b36ca1bc60;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x4594d5586014b5a15c760fec555d3c5085c20ee6e7183460678914df39ded647;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x0fb0a4b8efa93e8ba7971a8f5aea33a315945172cbcd2710eee079448329a0c5;
+    bytes32 internal constant BUILD_HASH_CORE = 0xc298c91617b008fbb9dc6c6a594914c60df20643f02761cff7863ccbf3b52aed;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xcaca9d1b72b68ac1c06ed00ae398b7e21a8fc45973079ac627852bf10ca6ca67;
+    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x7a16b1d9f41dc3fd9793cf3062cb36c74ef62e4fc1aa4174deb2921f9f97f101;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x468facc8952a74292d03995d9609466aa4f0eec7d485b2d60bfafeb603331459;
+        0x144ee84426fc7f1c5b09547174fb23ababe96566c599781af480cd3a8da25f28;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 200_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -110,7 +110,6 @@ abstract contract LaunchChecks is PostflightChecks {
         _preLibrary();
         _preStack(c);
         _preFactory(c, deployer);
-        _prePayee(c);
         _preOwner(c);
         _prePredictions(c, deployer);
         _preSeaportRecipients(c, deployer);
@@ -174,7 +173,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "credit settings inside the bounds",
             badCredit == 0,
-            badCredit == 0 ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps royaltyBps royaltyRecipient" : string(abi.encodePacked("out of bounds: ", badCredit))
+            badCredit == 0 ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps" : string(abi.encodePacked("out of bounds: ", badCredit))
         );
         _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);
     }
@@ -344,20 +343,6 @@ abstract contract LaunchChecks is PostflightChecks {
             if (b[i] != p[i]) return false;
         }
         return true;
-    }
-
-    /// @dev `claimPayee` pays the payee with a plain call. a payee that reverts or needs more gas cannot claim its
-    /// share. the call runs on a snapshot, 0.001 eth with 100,000 gas
-    function _prePayee(LaunchConfig memory c) private {
-        address payee = c.payee;
-        if (payee == address(0)) return; // the placeholder row reports it
-        address probe = address(uint160(uint256(keccak256("credits.preflight.payee.probe"))));
-        uint256 snap = vm.snapshotState();
-        vm.deal(probe, 0.001 ether);
-        vm.prank(probe);
-        (bool ok,) = payee.call{value: 0.001 ether, gas: 100_000}("");
-        vm.revertToState(snap);
-        _check("payee: accepts eth with a 100000 gas call (simulated)", ok, vm.toString(payee));
     }
 
     /// @dev the owner account is an EIP 7702 delegation. the delegation code, the delegate code hash and an empty key
@@ -907,13 +892,15 @@ abstract contract LaunchChecks is PostflightChecks {
             )
         );
         _info(
-            "signoff: royalty",
+            "signoff: nft sale cuts",
             string.concat(
-                "royaltyBps ",
-                vm.toString(c.credit.royaltyBps),
-                " royaltyRecipient ",
-                vm.toString(c.credit.royaltyRecipient),
-                " (the config creator address until the owner names the artist address)"
+                "saleToArtistBps ",
+                vm.toString(c.settings.saleToArtistBps),
+                " to artist ",
+                vm.toString(c.artist),
+                ", saleToOperatorBps ",
+                vm.toString(c.settings.saleToOperatorBps),
+                " to the payee"
             )
         );
         _info(

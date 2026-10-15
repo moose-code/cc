@@ -87,19 +87,21 @@ abstract contract SaleBase is Fixture {
         sid = STATEMENTS.supply();
     }
 
-    /// the royalty on an engine price at the controller's current `royaltyBps`
-    function _royaltyOn(uint256 price) internal view returns (uint256) {
-        return price * ctl.royaltyBps() / 10_000;
+    /// the artist and operator cuts of a sale payment and the rest after them (decision 123)
+    function _saleCuts(uint256 pay) internal view returns (uint256 toArtist, uint256 toOperator, uint256 rest) {
+        toArtist = pay * core.settings().saleToArtistBps / 10_000;
+        toOperator = pay * core.settings().saleToOperatorBps / 10_000;
+        rest = pay - toArtist - toOperator;
     }
 
-    /// `who` pays the engine price `price` plus the royalty on it
+    /// `who` pays the asking price `price`
     function _pay(address who, uint256 sid, uint256 price) internal {
         _payExtra(who, sid, price, 0);
     }
 
-    /// `who` pays the engine price, the royalty and `extra` on top
+    /// `who` pays the asking price and `extra` on top
     function _payExtra(address who, uint256 sid, uint256 price, uint256 extra) internal {
-        uint256 value = price + _royaltyOn(price) + extra;
+        uint256 value = price + extra;
         vm.deal(who, who.balance + value);
         vm.prank(who);
         ctl.buy{value: value}(sid);
@@ -247,17 +249,19 @@ contract SaleBuyTest is SaleShapeBase {
             assertEq(price, _cost(sid) * 8_750 / 10_000, "10 hours down the 12 hour line (150 to 75 percent): 87.5 percent");
             (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
             uint256 n = core.heldStatements().length;
+            (uint256 toArtist, uint256 toOperator, uint256 rest) = _saleCuts(price);
+            uint256 toBuyback = rest * shares[i] / 10_000;
             vm.expectEmit(address(core));
-            emit ICore.StatementSoldTo(sid, buyer, price, price * shares[i] / 10_000);
+            emit ICore.StatementSoldTo(sid, buyer, price, toBuyback, toArtist, toOperator);
             vm.expectEmit(address(ctl));
             emit IControllerV1.Bought(sid, buyer, price);
             _pay(buyer, sid, price);
             assertEq(buyer.balance, 0, "exact payment, nothing back");
             assertEq(STATEMENTS.ownerOf(sid), buyer);
-            assertEq(address(core).balance - bal0, price);
-            assertEq(core.ethToBuyback() - bb0, price * shares[i] / 10_000);
-            assertEq(core.ethPot() - pot0, price - price * shares[i] / 10_000);
-            assertEq(address(ctl).balance, ctl.royaltyOwed(), "the controller holds the royalty owed");
+            assertEq(address(core).balance - bal0, rest, "the rest stays after the cuts");
+            assertEq(core.ethToBuyback() - bb0, toBuyback);
+            assertEq(core.ethPot() - pot0, rest - toBuyback);
+            assertEq(address(ctl).balance, 0, "the controller holds no eth");
             (bool held,,) = core.statementInfo(sid);
             assertFalse(held, "the core record is cleared");
             assertEq(core.heldStatements().length, n - 1);
@@ -272,21 +276,17 @@ contract SaleBuyTest is SaleShapeBase {
         (uint256 sid, uint256 price) = _buyAt(0);
         _payExtra(buyer, sid, price, 3 ether);
         assertEq(buyer.balance, 3 ether, "the excess came back");
-        assertEq(address(ctl).balance, ctl.royaltyOwed());
+        assertEq(address(ctl).balance, 0, "the controller holds no eth");
     }
 
     // promise: INTEGRATION Underpaid
     function test_buy_underpayRevertsAndChangesNothing() public {
         (uint256 sid, uint256 price) = _buyAt(0);
         (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
-        uint256 gross = ctl.grossPriceOf(sid);
-        vm.deal(buyer, gross);
+        vm.deal(buyer, price);
         vm.prank(buyer);
         vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buy{value: gross - 1}(sid);
-        vm.prank(buyer);
-        vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buy{value: price}(sid);
+        ctl.buy{value: price - 1}(sid);
         vm.prank(buyer);
         vm.expectRevert(IControllerV1.Underpaid.selector);
         ctl.buy(sid);
@@ -345,19 +345,21 @@ contract SaleSellToTest is SaleBase {
         assertEq(STATEMENTS.ownerOf(sid), address(core));
         (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
         uint256 scBal = address(sc).balance;
+        (uint256 toArtist, uint256 toOperator, uint256 rest) = _saleCuts(floor);
+        uint256 toBuyback = rest * core.settings().saleToBuybackBps / 10_000;
         vm.expectEmit(address(core));
-        emit ICore.StatementSoldTo(sid, buyer, floor, floor * core.settings().saleToBuybackBps / 10_000);
+        emit ICore.StatementSoldTo(sid, buyer, floor, toBuyback, toArtist, toOperator);
         sc.sell{value: floor}(sid, buyer);
         assertEq(STATEMENTS.ownerOf(sid), buyer);
-        assertEq(address(core).balance - bal0, floor);
-        assertEq(core.ethToBuyback() - bb0, floor * core.settings().saleToBuybackBps / 10_000);
-        assertEq(core.ethPot() - pot0, floor - floor * core.settings().saleToBuybackBps / 10_000);
+        assertEq(address(core).balance - bal0, rest, "the rest stays after the cuts");
+        assertEq(core.ethToBuyback() - bb0, toBuyback);
+        assertEq(core.ethPot() - pot0, rest - toBuyback);
         assertEq(address(sc).balance, scBal, "the controller keeps nothing");
         _solvent();
     }
 
-    // promise: SPEC 4 sellTo books the whole payment (inv 5, inv 18)
-    /// the whole payment is booked, an overpayment included: the core has no refund logic
+    // promise: SPEC 4 sellTo books the payment less the cuts (inv 5, inv 18)
+    /// the payment less the artist and operator cuts is booked, an overpayment included: the core has no refund logic
     function test_sellTo_booksEverythingItIsPaid() public {
         uint256 sid = _composeOnce().sid;
         _install();
@@ -365,8 +367,9 @@ contract SaleSellToTest is SaleBase {
         _buybackBps(2_500);
         (uint256 pot0, uint256 bb0,) = _recordedBook();
         sc.sell{value: pay}(sid, buyer);
-        assertEq(core.ethToBuyback() - bb0, pay * 2_500 / 10_000);
-        assertEq(core.ethPot() - pot0, pay - pay * 2_500 / 10_000);
+        (,, uint256 rest) = _saleCuts(pay);
+        assertEq(core.ethToBuyback() - bb0, rest * 2_500 / 10_000);
+        assertEq(core.ethPot() - pot0, rest - rest * 2_500 / 10_000);
     }
 
     // promise: INTEGRATION NotForSale
@@ -391,11 +394,10 @@ contract SaleSellToTest is SaleBase {
         ReentrantBuyer rb = new ReentrantBuyer(ctl, core);
         rb.setOther(b);
         uint256 price = ctl.priceOf(a);
-        uint256 gross = ctl.grossPriceOf(a);
         (uint256 pot0, uint256 bb0,) = _recordedBook();
-        vm.deal(address(this), gross + 2 ether);
+        vm.deal(address(this), price + 2 ether);
         uint256 pre = address(rb).balance;
-        rb.buy{value: gross + 2 ether}(a);
+        rb.buy{value: price + 2 ether}(a);
         assertEq(STATEMENTS.ownerOf(a), address(rb), "the buy went through");
         assertEq(address(rb).balance - pre, 2 ether, "and the refund landed");
         assertEq(rb.reentries(), 1);
@@ -404,7 +406,8 @@ contract SaleSellToTest is SaleBase {
         assertTrue(rb.sellBlocked(), "sellTo is the controller's alone");
         assertTrue(rb.redeemBlocked());
         assertEq(STATEMENTS.ownerOf(b), address(core), "the other statement is untouched");
-        assertEq(core.ethPot() - pot0 + core.ethToBuyback() - bb0, price, "booked exactly once");
+        (,, uint256 rest) = _saleCuts(price);
+        assertEq(core.ethPot() - pot0 + core.ethToBuyback() - bb0, rest, "the rest after the cuts booked exactly once");
         _solvent();
     }
 
@@ -412,7 +415,7 @@ contract SaleSellToTest is SaleBase {
     function test_reenter_aBuyerThatRefusesTheRefundCanOnlyPayExactly() public {
         uint256 sid = _composeOnce().sid;
         RefundRefuser rr = new RefundRefuser(ctl);
-        uint256 gross = ctl.grossPriceOf(sid);
+        uint256 gross = ctl.priceOf(sid);
         vm.deal(address(rr), gross + 1 ether);
         (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
         vm.expectRevert();
@@ -454,9 +457,9 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.startCapBps(), 100_000);
         assertEq(ctl.decayHours(), 12);
         assertEq(core.settings().saleFloorBps, 10_000);
-        assertEq(ctl.royaltyBps(), 250);
-        assertEq(ctl.royaltyRecipient(), creator);
-        assertEq(ctl.royaltyOwed(), 0);
+        assertEq(core.settings().saleToArtistBps, 250);
+        assertEq(core.settings().saleToOperatorBps, 50);
+        assertEq(core.artist(), creator);
         assertEq(ctl.anchorHalfLife(), 7 days);
         assertEq(ctl.anchorMinCost(), 0.1 ether);
         assertEq(ctl.anchorBps(), 10_000, "the anchor starts at the cost");
@@ -519,17 +522,6 @@ contract SaleSettingsTest is SaleBase {
         _saleBad(s, "anchorMinCost");
         s.anchorMinCost = type(uint128).max;
         _saleBad(s, "anchorMinCost");
-        // royalty: 0 to 1_000, recipient never zero
-        CreditSale memory c = _creditSale();
-        c.royaltyBps = 0;
-        ctl.setCredit(c);
-        c.royaltyBps = 1_000;
-        ctl.setCredit(c);
-        c.royaltyBps = 1_001;
-        _creditBad(c, "royaltyBps");
-        c.royaltyBps = 1_000;
-        c.royaltyRecipient = address(0);
-        _creditBad(c, "royaltyRecipient");
         // anchorBps 10_000 to the cap
         ctl.setSale(_hi());
         vm.expectRevert(_bad("anchorBps"));
@@ -544,7 +536,6 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.markupBps(), 40_000);
         assertEq(ctl.startCapBps(), 200_000);
         assertEq(ctl.decayHours(), 720);
-        assertEq(ctl.royaltyBps(), 1_000);
         assertEq(ctl.anchorBps(), 200_000);
         assertEq(ctl.startBps(), 200_000, "800_000 is held at the cap");
     }
@@ -553,8 +544,6 @@ contract SaleSettingsTest is SaleBase {
     function test_settings_eventsAndValues() public {
         Sale memory s = Sale(12_000, 150_000, 24, 3 days, 0.25 ether);
         CreditSale memory c = _creditSale();
-        c.royaltyBps = 300;
-        c.royaltyRecipient = address(0xA27);
         vm.startPrank(owner);
         vm.expectEmit(address(ctl));
         emit IControllerV1.SaleSet(s);
@@ -569,8 +558,6 @@ contract SaleSettingsTest is SaleBase {
         assertEq(ctl.markupBps(), 12_000);
         assertEq(ctl.startCapBps(), 150_000);
         assertEq(ctl.decayHours(), 24);
-        assertEq(ctl.royaltyBps(), 300);
-        assertEq(ctl.royaltyRecipient(), address(0xA27));
         assertEq(ctl.anchorBps(), 11_000);
         assertEq(ctl.anchorHalfLife(), 3 days);
         assertEq(ctl.anchorMinCost(), 0.25 ether);
@@ -583,7 +570,6 @@ contract SaleSettingsTest is SaleBase {
         Sale memory s = _sale();
         s.markupBps = 12_000;
         CreditSale memory c = _creditSale();
-        c.royaltyBps = 300;
         address[4] memory who = [deployer, keeper, address(ctl), address(0x5757)];
         for (uint256 i; i < who.length; ++i) {
             vm.startPrank(who[i]);
@@ -823,7 +809,7 @@ contract SaleAnchorTest is SaleShapeBase {
         emit IControllerV1.AnchorMoved(sid, 15_000, 12_500);
         _payExtra(buyer, sid, price, 7 ether);
         assertEq(buyer.balance, 7 ether, "the excess came back");
-        assertEq(address(ctl).balance, ctl.royaltyOwed());
+        assertEq(address(ctl).balance, 0, "the controller holds no eth");
         assertEq(ctl.anchorBps(), 12_500, "recorded at the asking price");
     }
 
@@ -953,92 +939,105 @@ contract RejectsEth {
     }
 }
 
-/// the royalty (decision 112): every sale of the controller adds `royaltyBps` of the engine price on top. the engine
-/// receives the engine price, the controller holds the royalty until `claimRoyalty` pays the recipient
-contract SaleRoyaltyTest is SaleBase {
+/// the artist and operator cuts of nft sales (decision 123): a fixed share of each statement and credit sale payment,
+/// `saleToArtistBps` and `saleToOperatorBps`, is taken off the top and pushed to the artist and the payee, the rest is
+/// split by the existing rules. the pushes are forced, so a recipient that cannot receive never blocks the sale
+contract SaleCutsTest is SaleBase {
     address internal buyer = address(0xB0B);
 
-    // promise: SPEC 1 royalty on every engine sale (decision 112)
-    /// the engine books the engine price, the controller holds the royalty, the refund is the rest
-    function test_royalty_buySplitsTheGrossPrice() public {
+    // promise: SPEC 1 the statement sale splits sum to the payment (decision 123)
+    function test_cuts_statementSaleSplitsSumToThePayment() public {
         uint256 sid = _composeOnce().sid;
-        uint256 p = ctl.priceOf(sid);
-        uint256 r = p * 250 / 10_000;
-        (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
-        _payExtra(buyer, sid, p, 2 ether);
-        assertEq(buyer.balance, 2 ether, "the excess came back");
-        assertEq(address(core).balance - bal0, p, "the engine took the engine price");
-        assertEq((core.ethPot() - pot0) + (core.ethToBuyback() - bb0), p);
-        assertEq(address(ctl).balance, r, "the controller holds the royalty");
-        assertEq(ctl.royaltyOwed(), r);
+        uint256 price = ctl.priceOf(sid);
+        (uint256 toArtist, uint256 toOperator, uint256 rest) = _saleCuts(price);
+        uint256 artist0 = core.artist().balance;
+        uint256 payee0 = core.payee().balance;
+        (uint256 pot0, uint256 bb0,) = _recordedBook();
+        _pay(buyer, sid, price);
+        assertEq(core.artist().balance - artist0, toArtist, "the artist cut was pushed");
+        assertEq(core.payee().balance - payee0, toOperator, "the operator cut was pushed to the payee");
+        uint256 dPot = core.ethPot() - pot0;
+        uint256 dBb = core.ethToBuyback() - bb0;
+        assertEq(dPot + dBb, rest, "the pot and the buyback together take the rest");
+        assertEq(toArtist + toOperator + dPot + dBb, price, "the cuts and the rest sum to the payment");
         _solvent();
     }
 
-    // promise: INTEGRATION Underpaid at the gross price
-    function test_royalty_theEnginePriceAloneIsUnderpaid() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 p = ctl.priceOf(sid);
-        vm.deal(buyer, 10 ether);
+    // promise: SPEC 1 the credit sale splits sum to the payment (decision 123)
+    function test_cuts_creditSaleSplitsSumToThePayment() public {
+        uint256[] memory ids = _fillEthPile(1);
+        _setCreditSaleOn(true);
+        uint256 id = ids[0];
+        uint256 price = ctl.creditPrice(id);
+        (uint256 toArtist, uint256 toOperator, uint256 rest) = _saleCuts(price);
+        uint256 artist0 = core.artist().balance;
+        uint256 payee0 = core.payee().balance;
+        (uint256 pot0, uint256 bb0,) = _recordedBook();
+        vm.deal(buyer, price);
         vm.prank(buyer);
-        vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buy{value: p}(sid);
-        uint256 gross = ctl.grossPriceOf(sid);
-        vm.prank(buyer);
-        vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buy{value: gross - 1}(sid);
-        assertEq(ctl.royaltyOwed(), 0);
+        ctl.buyCredit{value: price}(id);
+        assertEq(core.artist().balance - artist0, toArtist, "the artist cut was pushed");
+        assertEq(core.payee().balance - payee0, toOperator, "the operator cut was pushed to the payee");
+        assertEq((core.ethPot() - pot0) + (core.ethToBuyback() - bb0), rest, "the rest is booked");
+        assertEq(toArtist + toOperator + rest, price, "the splits sum to the payment");
+        _solvent();
     }
 
-    // promise: SPEC 1 royalty pull claim (decision 112)
-    function test_royalty_claimPaysTheRecipientAndZeroes() public {
-        uint256 sid = _composeOnce().sid;
-        uint256 p = ctl.priceOf(sid);
-        _pay(buyer, sid, p);
-        uint256 owed = ctl.royaltyOwed();
-        assertGt(owed, 0);
-        address recipient = ctl.royaltyRecipient();
-        uint256 before_ = recipient.balance;
-        vm.expectEmit(address(ctl));
-        emit IControllerV1.RoyaltyClaimed(recipient, owed);
-        vm.prank(address(0xC1A1));
-        ctl.claimRoyalty();
-        assertEq(recipient.balance - before_, owed, "the recipient was paid");
-        assertEq(ctl.royaltyOwed(), 0);
-        assertEq(address(ctl).balance, 0);
-        vm.expectRevert(IControllerV1.ZeroAmount.selector);
-        ctl.claimRoyalty();
-    }
-
-    // promise: SPEC 1 a reverting royalty recipient blocks no sale
-    /// a recipient that reverts blocks no sale. its claim reverts and keeps the royalty, and the owner names another
-    function test_royalty_aRecipientThatRevertsBlocksNothing() public {
+    // promise: SPEC 1 the forced push reaches an artist that reverts and the sale settles (decision 123)
+    function test_cuts_pushReachesAnArtistThatReverts() public {
         RejectsEth bad = new RejectsEth();
-        _setRoyaltyRecipient(address(bad));
-        uint256 a = _composeOnce().sid;
-        uint256 b = _another();
-        _pay(buyer, a, ctl.priceOf(a));
-        _pay(buyer, b, ctl.priceOf(b));
-        assertEq(STATEMENTS.ownerOf(a), buyer);
-        assertEq(STATEMENTS.ownerOf(b), buyer);
-        uint256 owed = ctl.royaltyOwed();
-        assertGt(owed, 0);
-        vm.expectRevert();
-        ctl.claimRoyalty();
-        assertEq(ctl.royaltyOwed(), owed, "the royalty is kept");
-        address good = address(0x600D);
-        _setRoyaltyRecipient(good);
-        ctl.claimRoyalty();
-        assertEq(good.balance, owed, "the new recipient got what was owed");
-        assertEq(ctl.royaltyOwed(), 0);
-    }
-
-    // promise: INTEGRATION ZeroAmount on claimRoyalty
-    function test_royalty_zeroShareCollectsNothing() public {
-        _setRoyaltyBps(0);
+        vm.prank(owner);
+        core.setArtist(address(bad));
         uint256 sid = _composeOnce().sid;
-        _pay(buyer, sid, ctl.priceOf(sid));
-        assertEq(ctl.royaltyOwed(), 0);
-        assertEq(address(ctl).balance, 0);
+        uint256 price = ctl.priceOf(sid);
+        (uint256 toArtist,,) = _saleCuts(price);
+        uint256 before = address(bad).balance;
+        _pay(buyer, sid, price);
+        assertEq(STATEMENTS.ownerOf(sid), buyer, "the sale went through");
+        assertEq(address(bad).balance - before, toArtist, "the forced push reached the reverting artist");
     }
 
+    // promise: SPEC 1 a zero cut skips its push (decision 123)
+    function test_cuts_zeroBpsSkipsThePush() public {
+        Settings memory s = core.settings();
+        s.saleToArtistBps = 0;
+        _setSettings(s);
+        uint256 sid = _composeOnce().sid;
+        uint256 price = ctl.priceOf(sid);
+        (uint256 toArtist, uint256 toOperator,) = _saleCuts(price);
+        assertEq(toArtist, 0, "the artist cut is zero");
+        uint256 artist0 = core.artist().balance;
+        uint256 payee0 = core.payee().balance;
+        _pay(buyer, sid, price);
+        assertEq(core.artist().balance, artist0, "the artist receives nothing at a zero cut");
+        assertEq(core.payee().balance - payee0, toOperator, "the operator cut still pushes");
+    }
+
+    // promise: SPEC 1 setArtist refuses the zero address while the cut is on, accepts it at a zero cut (decision 123)
+    function test_cuts_setArtistZeroRefusedWhileTheCutIsOn() public {
+        assertGt(core.settings().saleToArtistBps, 0, "the cut is on at launch");
+        vm.prank(owner);
+        vm.expectRevert(ICore.ZeroAddress.selector);
+        core.setArtist(address(0));
+        Settings memory s = core.settings();
+        s.saleToArtistBps = 0;
+        _setSettings(s);
+        vm.prank(owner);
+        core.setArtist(address(0));
+        assertEq(core.artist(), address(0), "the artist is cleared when the cut is off");
+    }
+
+    // promise: SPEC 1 setArtist refuses a forbidden target (decision 123)
+    function test_cuts_setArtistRefusesAForbiddenTarget() public {
+        vm.prank(owner);
+        vm.expectRevert(ICore.ForbiddenTarget.selector);
+        core.setArtist(address(core));
+    }
+
+    // promise: INTEGRATION OnlyOwner on setArtist
+    function test_cuts_setArtistOnlyTheOwner() public {
+        vm.prank(address(0x5757));
+        vm.expectRevert(ICore.OnlyOwner.selector);
+        core.setArtist(address(0xA11CE));
+    }
 }

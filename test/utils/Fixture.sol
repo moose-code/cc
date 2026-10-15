@@ -208,7 +208,7 @@ abstract contract Fixture is Test, ProdDeployer {
         lc.settings = _settings();
         lc.owner = owner;
         lc.creator = creator;
-        lc.credit.royaltyRecipient = creator;
+        lc.artist = creator;
         // the core tests compose right after the fill, so they start with the credit sale window off. the launch value is
         // on (test/Config.t.sol pins it) and the sale tests switch it on
         lc.credit.saleOn = false;
@@ -464,10 +464,9 @@ abstract contract Fixture is Test, ProdDeployer {
     /// for it. returns the price paid
     function _buy(address who, uint256 sid) internal returns (uint256 price) {
         price = ctl.priceOf(sid);
-        uint256 gross = ctl.grossPriceOf(sid);
-        vm.deal(who, who.balance + gross);
+        vm.deal(who, who.balance + price);
         vm.prank(who);
-        ctl.buy{value: gross}(sid);
+        ctl.buy{value: price}(sid);
     }
 
     /// @notice the owner lifts `rateCap` to its upper bound, for suites that climb past the launch cap
@@ -480,7 +479,7 @@ abstract contract Fixture is Test, ProdDeployer {
     }
 
     /// first slot of `State.anchor` in the Core (four words)
-    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(27));
 
     /// @notice the bid anchor state of the Core, read from its storage: the rate of the last fill, the rate of the first fill
     /// in the current minute bucket and that bucket
@@ -528,15 +527,13 @@ abstract contract Fixture is Test, ProdDeployer {
         });
     }
 
-    /// @notice the credit sale, rating reference and royalty settings of the controller as a struct
+    /// @notice the credit sale and rating reference settings of the controller as a struct
     function _creditSale() internal view returns (CreditSale memory c) {
         c = CreditSale({
             saleOn: ctl.creditSaleOn(),
             window: ctl.creditWindow(),
             floorBps: ctl.creditFloorBps(),
-            startBps: ctl.creditStartBps(),
-            royaltyBps: ctl.royaltyBps(),
-            royaltyRecipient: ctl.royaltyRecipient()
+            startBps: ctl.creditStartBps()
         });
     }
 
@@ -573,20 +570,10 @@ abstract contract Fixture is Test, ProdDeployer {
         ctl.setCredit(c);
     }
 
-    /// @notice the owner sets the royalty recipient through `setCredit`, the other credit settings unchanged
-    function _setRoyaltyRecipient(address v) internal {
-        CreditSale memory c = _creditSale();
-        c.royaltyRecipient = v;
+    /// @notice the owner sets the artist cut recipient through `Core.setArtist`
+    function _setArtist(address v) internal {
         vm.prank(owner);
-        ctl.setCredit(c);
-    }
-
-    /// @notice the owner sets `royaltyBps` through `setCredit`, the other credit settings unchanged
-    function _setRoyaltyBps(uint16 v) internal {
-        CreditSale memory c = _creditSale();
-        c.royaltyBps = v;
-        vm.prank(owner);
-        ctl.setCredit(c);
+        core.setArtist(v);
     }
 
     /// @notice the owner sets `anchorMinCost` through `setSale`, the other sale settings unchanged
@@ -720,16 +707,16 @@ abstract contract Fixture is Test, ProdDeployer {
         core.fund{value: amount}();
     }
 
-    /// @notice the eth the core tracks: the pots, the redeem burn reserve and the payee claim
+    /// @notice the eth the core tracks: the pots and the redeem burn reserve (the payee share is pushed, not held)
     function _tracked() internal view returns (uint256) {
-        return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed();
+        return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
     }
 
     /// @notice invariant 5 of the spec: the eth pots never exceed what the core holds. the balance token is held by the
     /// module, not the core, so there is no balance pot to check
     function _solvent() internal view {
         assertLe(
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed(),
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
             address(core).balance,
             "eth pots exceed balance"
         );

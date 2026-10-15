@@ -84,8 +84,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("sale: markupBps 40001", Class.Pre);
             m.c.sale.markupBps = 40_001;
         } else if (i == 15) {
-            m = _m("credit: royaltyBps 1001", Class.Pre);
-            m.c.credit.royaltyBps = 1_001;
+            m = _m("settings: saleToArtistBps 1001", Class.Pre);
+            m.c.settings.saleToArtistBps = 1_001;
         } else {
             m = _m("settings.dropPerCreditBps 100 (valid, wrong)", Class.Hash);
             m.c.settings.dropPerCreditBps = 100;

@@ -293,14 +293,21 @@ contract FlowTest is Fixture {
         uint256 balance = address(core).balance;
         uint256 pot = core.ethPot();
         uint256 buyback = core.ethToBuyback();
-        uint256 toBuyback = price * bps / 10_000;
+        uint256 artistBefore = core.artist().balance;
+        uint256 payeeBefore = core.payee().balance;
+        uint256 toArtist = price * s.saleToArtistBps / 10_000;
+        uint256 toOperator = price * s.saleToOperatorBps / 10_000;
+        uint256 rest = price - toArtist - toOperator;
+        uint256 toBuyback = rest * bps / 10_000;
         vm.expectEmit(address(core));
-        emit ICore.StatementSoldTo(sid, alice, price, toBuyback);
+        emit ICore.StatementSoldTo(sid, alice, price, toBuyback, toArtist, toOperator);
         assertEq(_buy(alice, sid), price);
         assertEq(STATEMENTS.ownerOf(sid), alice);
-        assertEq(address(core).balance, balance + price, "the payment is in the core");
+        assertEq(address(core).balance, balance + rest, "the rest stays in the core after the cuts");
         assertEq(core.ethToBuyback(), buyback + toBuyback, "buyback share");
-        assertEq(core.ethPot(), pot + price - toBuyback, "pot share");
+        assertEq(core.ethPot(), pot + rest - toBuyback, "pot share");
+        assertEq(core.artist().balance, artistBefore + toArtist, "artist cut pushed");
+        assertEq(core.payee().balance, payeeBefore + toOperator, "operator cut pushed");
         assertEq(core.heldStatements().length, 0);
         _solvent();
     }

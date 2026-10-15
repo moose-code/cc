@@ -217,8 +217,8 @@ contract Scenario is Script {
 
     // ------------------------------------------------------------------ compose-a: system compose, buy the statement
 
-    /// `compose()` takes the 80 oldest pile credits. a buyer takes the statement at `grossPriceOf`, the price plus the
-    /// royalty, which is the first statement sale and the first buyback funding
+    /// `compose()` takes the 80 oldest pile credits. a buyer takes the statement at `priceOf`, the first statement sale
+    /// and the first buyback funding. the artist and operator cuts are pushed off the price (decision 123)
     function _composeA() internal {
         require(core.pileSize() >= 80, "compose-a: fewer than 80 credits in the pile");
         vm.broadcast(KEEPER);
@@ -229,51 +229,40 @@ contract Scenario is Script {
         uint256 sid = held[held.length - 1];
         require(core.composerOf(sid) == KEEPER, "compose-a: the composer is not recorded");
         uint256 price = ctl.priceOf(sid);
-        uint256 gross = ctl.grossPriceOf(sid);
         require(price >= ctl.referenceOf(sid), "compose-a: the start price is below the reference");
-        require(gross > price, "compose-a: the gross price carries no royalty");
-
-        uint256 owedBefore = ctl.royaltyOwed();
+        Settings memory st = core.settings();
+        uint256 artistBefore = core.artist().balance;
         vm.broadcast(A2);
-        ctl.buy{value: gross}(sid);
+        ctl.buy{value: price}(sid);
         (bool stillHeld,,) = core.statementInfo(sid);
         require(!stillHeld, "compose-a: the statement is still held after the buy");
         require(IStatements(Mainnet.STATEMENTS).ownerOf(sid) == A2, "compose-a: the buyer does not own the statement");
-        require(ctl.royaltyOwed() == owedBefore + (gross - price), "compose-a: the royalty was not booked");
+        require(
+            core.artist().balance == artistBefore + price * st.saleToArtistBps / 10_000,
+            "compose-a: the artist cut was not pushed"
+        );
         console.log("compose-a: statement id", sid);
         console.log("compose-a: price", price);
-        console.log("compose-a: gross paid", gross);
         console.log("compose-a: ethToBuyback after", core.ethToBuyback());
     }
 
-    // ------------------------------------------------------------------ claims: royalty and payee
+    // ------------------------------------------------------------------ claims: the pushed payee fee share
 
     function _claims() internal {
-        uint256 royalty = ctl.royaltyOwed();
-        require(royalty > 0, "claims: no royalty owed");
-        uint256 before = ctl.royaltyRecipient().balance;
-        vm.broadcast(KEEPER);
-        ctl.claimRoyalty();
-        require(ctl.royaltyOwed() == 0, "claims: the royalty is still owed");
-        require(ctl.royaltyRecipient().balance == before + royalty, "claims: the recipient was not paid");
-
-        // payeePpm is 0 at launch (decision 120); the owner raises it and a booked buy accrues the share, so the claim runs
+        // the payee fee share is pushed by `_book`, not claimed (decision 123). payeePpm is 0 at launch (decision 120);
+        // the owner raises it, then a booked buy pushes the share to the payee
         if (core.settings().payeePpm == 0) {
             Settings memory sp = core.settings();
             sp.payeePpm = 90_909;
             vm.broadcast(OWNER);
             core.setSettings(sp);
-            _buyCoin();
-            vm.broadcast(KEEPER);
-            core.book();
         }
-        uint256 owed = core.payeeOwed();
-        require(owed > 0, "claims: nothing owed to the payee");
+        _buyCoin();
+        uint256 before = core.payee().balance;
         vm.broadcast(KEEPER);
-        core.claimPayee();
-        require(core.payeeOwed() == 0, "claims: the payee claim is still owed");
-        console.log("claims: royalty paid", royalty);
-        console.log("claims: payee paid", owed);
+        core.book();
+        require(core.payee().balance > before, "claims: the payee share was not pushed");
+        console.log("claims: payee share pushed", core.payee().balance - before);
     }
 
     // ------------------------------------------------------------------ d-open: the credit sale window
@@ -300,13 +289,12 @@ contract Scenario is Script {
 
     // ------------------------------------------------------------------ d-buy: buy credits out of the pile
 
-    /// `buyCredit` at `grossCreditPrice` and `buyCredits` at the sum of the gross prices
+    /// `buyCredit` at `creditPrice` and `buyCredits` at the sum of the prices
     function _dBuy() internal {
         uint256[] memory pile = core.pilePage(0, 3);
         uint256 pileBefore = core.pileSize();
 
-        uint256 g0 = ctl.grossCreditPrice(pile[0]);
-        require(g0 > ctl.creditPrice(pile[0]), "d-buy: the gross credit price carries no royalty");
+        uint256 g0 = ctl.creditPrice(pile[0]);
         vm.broadcast(A3);
         ctl.buyCredit{value: g0}(pile[0]);
         require(ICredits(Mainnet.CREDITS).ownerOf(pile[0]) == A3, "d-buy: buyCredit did not transfer the credit");
@@ -314,13 +302,13 @@ contract Scenario is Script {
         uint256[] memory two = new uint256[](2);
         two[0] = pile[1];
         two[1] = pile[2];
-        uint256 sum = ctl.grossCreditPrice(two[0]) + ctl.grossCreditPrice(two[1]);
+        uint256 sum = ctl.creditPrice(two[0]) + ctl.creditPrice(two[1]);
         vm.broadcast(A3);
         ctl.buyCredits{value: sum}(two);
 
         require(core.pileSize() == pileBefore - 3, "d-buy: three credits did not leave the pile");
-        console.log("d-buy: buyCredit gross", g0);
-        console.log("d-buy: buyCredits gross", sum);
+        console.log("d-buy: buyCredit price", g0);
+        console.log("d-buy: buyCredits total", sum);
         console.log("d-buy: pileSize after", core.pileSize());
     }
 
@@ -419,10 +407,10 @@ contract Scenario is Script {
         require(core.paused(), "pause: the Core is not paused");
 
         (bool okBuy, bytes memory buyErr) =
-            address(ctl).call{value: ctl.grossPriceOf(sid)}(abi.encodeCall(IControllerV1.buy, (sid)));
+            address(ctl).call{value: ctl.priceOf(sid)}(abi.encodeCall(IControllerV1.buy, (sid)));
         require(!okBuy && bytes4(buyErr) == ICore.Paused.selector, "pause: buy did not revert Paused while paused");
         (bool okCredit, bytes memory creditErr) =
-            address(ctl).call{value: ctl.grossCreditPrice(creditId)}(abi.encodeCall(IControllerV1.buyCredit, (creditId)));
+            address(ctl).call{value: ctl.creditPrice(creditId)}(abi.encodeCall(IControllerV1.buyCredit, (creditId)));
         require(!okCredit && bytes4(creditErr) == ICore.Paused.selector, "pause: buyCredit did not revert Paused while paused");
 
         vm.broadcast(OWNER);
@@ -577,9 +565,7 @@ contract Scenario is Script {
             saleOn: ctl.creditSaleOn(),
             window: ctl.creditWindow(),
             floorBps: ctl.creditFloorBps(),
-            startBps: ctl.creditStartBps(),
-            royaltyBps: ctl.royaltyBps(),
-            royaltyRecipient: ctl.royaltyRecipient()
+            startBps: ctl.creditStartBps()
         });
     }
 

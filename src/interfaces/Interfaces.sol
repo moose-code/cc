@@ -134,7 +134,7 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into four storage slots
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
 /// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields, fee
-/// split and `refScore`, slot 3 `swapFeeCc`. docs/SPEC.md section 3 has the meaning of every field
+/// split and `refScore`, slot 3 `swapFeeCc` and the two sale cuts. docs/SPEC.md section 3 has the meaning of every field
 struct Settings {
     // slot 0
     /// fall of the eth rate per credit bought, bps of the rate before that credit
@@ -203,6 +203,12 @@ struct Settings {
     // slot 3
     /// coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, 0 to 1e24
     uint96 swapFeeCc;
+    /// share of a statement or credit sale's proceeds pushed to `artist`, taken off the payment before the other
+    /// splits, bps. 0 to 1,000
+    uint16 saleToArtistBps;
+    /// share of a statement or credit sale's proceeds pushed to the payee as the operator cut, taken off the payment
+    /// before the other splits, bps. 0 to 1,000
+    uint16 saleToOperatorBps;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -221,7 +227,7 @@ struct Sale {
     uint128 anchorMinCost;
 }
 
-/// the credit sale settings of the controller and the rating reference and royalty it applies to every sale. set at once by
+/// the credit sale settings of the controller and the rating reference it applies to every sale. set at once by
 /// `setCredit`. the fields are the controller half of `Credit`
 struct CreditSale {
     /// whether pile credits are for sale from acquisition and compose waits for a credit's window to pass
@@ -233,10 +239,6 @@ struct CreditSale {
     uint16 floorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
     uint32 startBps;
-    /// the share of every sale price added on top and claimable by `royaltyRecipient`, bps. 0 to 1_000
-    uint16 royaltyBps;
-    /// the address `claimRoyalty` pays. never zero
-    address royaltyRecipient;
 }
 
 /// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
@@ -262,10 +264,6 @@ struct Credit {
     uint16 floorBps;
     /// the credit sale start price over the floor, bps. 10_000 to 200_000
     uint32 startBps;
-    /// the share of every sale price added on top and claimable by `royaltyRecipient`, bps. 0 to 1_000
-    uint16 royaltyBps;
-    /// the address `claimRoyalty` pays
-    address royaltyRecipient;
 }
 
 /// the artcoins stack a launch runs on. a deploy input of the Core, so a new artcoins version needs no code change.
@@ -332,7 +330,9 @@ library Mainnet {
             feeToRedeemBurnBps: 1_000,
             payeePpm: 0,
             refScore: 4_330_000,
-            swapFeeCc: 10_000e18
+            swapFeeCc: 10_000e18,
+            saleToArtistBps: 250,
+            saleToOperatorBps: 50
         });
     }
 
@@ -360,9 +360,7 @@ library Mainnet {
             saleOn: true,
             window: 4 hours,
             floorBps: 11_000,
-            startBps: 30_000,
-            royaltyBps: 250,
-            royaltyRecipient: address(0)
+            startBps: 30_000
         });
     }
 

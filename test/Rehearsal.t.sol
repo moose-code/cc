@@ -311,6 +311,7 @@ contract RehearsalTest is Test, ProdDeployer {
         assertEq(d.core.balance - bal, want, "the bounty share of the baseline skim reached the Core");
         assertEq(core.ethPot(), pot, "nothing reaches the pot before the book");
         address keeper = _user("keeper");
+        uint256 payeeAtStart = c.payee.balance;
         vm.prank(keeper);
         core.book();
         assertEq(keeper.balance, 0, "the caller of book is paid nothing");
@@ -320,14 +321,14 @@ contract RehearsalTest is Test, ProdDeployer {
             assertEq(core.ethPot() - pot, want - reserve, "the rest of the income reached the pot");
             assertEq(core.ethRedeemBurn(), reserve, "the redeem burn share reached the reserve");
             assertEq(
-                core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed(),
+                core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
                 address(core).balance,
                 "the tracked eth equals the balance"
             );
         }
         // the payee share starts with the first book after the window
         assertTrue(core.payeeOn(), "the first book after the window starts the payee share");
-        assertEq(core.payeeOwed(), 0, "that book shared nothing");
+        assertEq(c.payee.balance, payeeAtStart, "that book pushed the payee nothing");
 
         uint256 deadBefore = coin.balanceOf(Mainnet.DEAD);
         uint256 sellIn = bought / 2;
@@ -344,11 +345,10 @@ contract RehearsalTest is Test, ProdDeployer {
         assertGt(core.ethPot(), pot, "the sell skim reached the pot too");
         assertEq(coin.balanceOf(Mainnet.DEAD), deadBefore, "no tax and no burn on canonical swaps");
 
-        // payeePpm is 0 at launch (decision 120); the owner raises it, as it would later, to prove the claim path
+        // payeePpm is 0 at launch (decision 120); the owner raises it, as it would later, to prove the push path
         _raisePayeePpm(core, c.owner, 90_909);
-        // from the book after that the payee is credited its parts per million of the fee income
+        // from the book after that the payee is pushed its parts per million of the fee income
         uint256 payee0 = c.payee.balance;
-        uint256 owed0 = core.payeeOwed();
         bal = d.core.balance;
         vm.deal(trader, 2 ether);
         vm.prank(trader);
@@ -356,10 +356,7 @@ contract RehearsalTest is Test, ProdDeployer {
         uint256 gross = d.core.balance - bal;
         vm.prank(keeper);
         core.book();
-        assertEq(core.payeeOwed() - owed0, gross * 90_909 / 1e6, "exactly its share of the inflow");
-        core.claimPayee();
-        assertGt(c.payee.balance, payee0, "the payee claims its share");
-        assertEq(core.payeeOwed(), 0, "the claim clears the share");
+        assertEq(c.payee.balance - payee0, gross * 90_909 / 1e6, "exactly its share pushed to the payee");
 
         _sellRealCredit(core);
     }

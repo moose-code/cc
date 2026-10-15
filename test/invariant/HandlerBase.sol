@@ -96,8 +96,9 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_HOSTILE_OWNER = 26;
     uint8 internal constant A_LOCK = 27;
     uint8 internal constant A_HANDOVER = 28;
-    // anyone books the fee income, and the payee claim with the owner replacing the payee
+    // anyone books the fee income and forces the payee share out, now and then after the owner replaces the payee
     uint8 internal constant A_BOOK = 29;
+    // reserved: the former standalone payee claim, folded into the book under the push model (decision 123)
     uint8 internal constant A_CLAIM_PAYEE = 30;
     // the owner takes a stray NFT out of the core
     uint8 internal constant A_RESCUE_NFT = 31;
@@ -149,7 +150,7 @@ abstract contract HandlerBase is Test {
     uint256 internal constant V_OWNER = 25; // an owner action moved assets or the books it must not touch
     uint256 internal constant V_SALE_PATH = 26; // a sellTo or buy sale outside the rules: price, booking, holder or record
     uint256 internal constant V_LOCK = 27; // a one way lock came undone, or a handover left a power behind
-    uint256 internal constant V_PAYEE = 28; // the payee share, its latch or its claim broke the rule
+    uint256 internal constant V_PAYEE = 28; // the payee share, its latch or its forced push broke the rule
     uint256 internal constant V_RETIRED = 29; // a retired core took a call at one of the six doors, or the retired flag disagrees with the ghost
     uint256 internal constant N_VIOL = 30;
 
@@ -173,10 +174,9 @@ abstract contract HandlerBase is Test {
     /// the v2 hook and the mev module of the launch. the hook pushes its bounty to the core
     address internal HOOK;
     address internal mev;
-    /// the payee share ghosts: whether the share is on, the eth owed to the payee, the payee the owner last set and
-    /// the launch time of the factory record
+    /// the payee share ghosts: whether the share is on, the payee the owner last set and the launch time of the
+    /// factory record. the share is pushed to the payee by `_book`, not held, so there is no owed ghost
     bool public gPayeeOn;
-    uint256 public gPayeeOwed;
     address public gPayee;
     uint256 public gLaunchedAt;
     address public owner;
@@ -293,7 +293,6 @@ abstract contract HandlerBase is Test {
         HOOK = w.hook;
         mev = w.mev;
         gPayeeOn = core.payeeOn();
-        gPayeeOwed = core.payeeOwed();
         gPayee = core.payee();
         gLaunchedAt = _launchedAt(core.FACTORY(), address(w.coin));
         owner = w.owner;
@@ -337,7 +336,7 @@ abstract contract HandlerBase is Test {
             "lockDoor",
             "handover",
             "book",
-            "claimPayee",
+            "reserved",
             "rescueNft",
             "migrate",
             "adopt",
@@ -430,7 +429,6 @@ abstract contract HandlerBase is Test {
     function seedEthBooks() external {
         gEthStart = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
         gPayeeOn = core.payeeOn();
-        gPayeeOwed = core.payeeOwed();
     }
 
     function everHeldCount() external view returns (uint256) {
@@ -694,14 +692,14 @@ abstract contract HandlerBase is Test {
     /// the share of the unbooked fee income that the next `_book` adds to the pot: the eth above the tracked pots, less
     /// the payee share (while `payeeOn`) and the redeem burn reserve share of the rest
     function _pendingPot(Settings memory st) internal view returns (uint256) {
-        uint256 tracked = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed();
+        uint256 tracked = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
         uint256 income = address(core).balance > tracked ? address(core).balance - tracked : 0;
         if (core.payeeOn()) income -= income * st.payeePpm / 1_000_000;
         return income - income * st.feeToRedeemBurnBps / 10_000;
     }
 
     /// first slot of `State.anchor` in the Core (four words)
-    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(27));
 
     /// the bid anchor state of the core, read from its storage: the rate of the last fill, the rate of the first fill in
     /// the current minute bucket, and that bucket
@@ -906,9 +904,9 @@ abstract contract HandlerBase is Test {
         }
     }
 
-    /// the eth the core tracks: the three pots and the payee claim
+    /// the eth the core tracks: the three pots (the payee share is pushed by the book, not held)
     function _tracked() internal view returns (uint256) {
-        return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + core.payeeOwed();
+        return core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
     }
 
     /// the eth held above the tracked eth: what the next book counts as fee income
@@ -920,12 +918,11 @@ abstract contract HandlerBase is Test {
 
     /// the model of one book on the income `inc`, written out again here: nothing for no income, the payee share of
     /// `payeePpm` once it is on, the first book with income at or after `launchedAt + SNIPER_SECONDS` turns it on and
-    /// shares nothing. updates the payee ghosts. returns the share and the part that goes to the three pots
+    /// shares nothing. updates the latch ghost. returns the share pushed to the payee and the part that goes to the pots
     function _bookModel(uint256 inc) internal returns (uint256 share, uint256 toPots) {
         if (inc == 0) return (0, 0);
         if (gPayeeOn) share = inc * core.settings().payeePpm / 1_000_000;
         else if (block.timestamp >= gLaunchedAt + core.SNIPER_SECONDS()) gPayeeOn = true;
-        gPayeeOwed += share;
         toPots = inc - share;
     }
 
@@ -933,33 +930,40 @@ abstract contract HandlerBase is Test {
         uint256 pot;
         uint256 tb;
         uint256 rb;
-        uint256 owed;
     }
 
     function _pots() internal view returns (Pots memory p) {
         p.pot = core.ethPot();
         p.tb = core.ethToBuyback();
         p.rb = core.ethRedeemBurn();
-        p.owed = core.payeeOwed();
     }
 
-    /// the three pots and the payee claim after a book of `toPots` and `share`, against the state `p` before it: the
-    /// redeem burn share of the settings comes off `toPots`, the rest goes to the pot
-    function _potsAfterBook(Pots memory p, uint256 share, uint256 toPots, string memory what) internal {
+    /// the three pots after a book of `toPots`, against the state `p` before it: the redeem burn share of the settings
+    /// comes off `toPots`, the rest goes to the pot. the payee share left the core, so the pots carry only `toPots`
+    function _potsAfterBook(Pots memory p, uint256, uint256 toPots, string memory what) internal {
         Settings memory st = core.settings();
         uint256 rb = toPots * st.feeToRedeemBurnBps / 10_000;
         if (core.ethPot() != p.pot + toPots - rb || core.ethToBuyback() != p.tb || core.ethRedeemBurn() != p.rb + rb) {
             _flag(V_POT, string.concat("fee income not booked by the split: ", what));
         }
-        if (core.payeeOwed() != p.owed + share) _flag(V_PAYEE, string.concat("payee share differs from the model: ", what));
         if (core.payeeOn() != gPayeeOn) _flag(V_PAYEE, string.concat("payee latch differs from the model: ", what));
     }
 
-    /// books the fee income with `core.book()` as `who` and checks it against the model: the pots, the payee claim and
-    /// the latch. returns the income counted and the part booked into the pots (the ledger takes it)
+    /// the forced push of the payee share lands: the payee holds `share` more than before the book, even a payee whose
+    /// receive reverts (solady forces the transfer). the payee is never the owner or a controller, so invariant 8 holds
+    function _pushedToPayee(uint256 payeeBefore, uint256 share, string memory what) internal {
+        if (gPayee.balance != payeeBefore + share) {
+            _flag(V_PAYEE, string.concat("the book did not push the payee share: ", what));
+        }
+    }
+
+    /// books the fee income with `core.book()` as `who` and checks it against the model: the pots, the forced payee push
+    /// and the latch. the whole income enters the ledger and the pushed share leaves it. returns the income counted and
+    /// the part booked into the pots
     function _bookNow(address who, string memory what) internal returns (uint256 inc, uint256 toPots) {
         inc = _unbooked();
         Pots memory p = _pots();
+        uint256 payeeBefore = gPayee.balance;
         vm.prank(who);
         try core.book() {} catch {
             _flag(V_POT, string.concat("book reverted: ", what));
@@ -968,7 +972,9 @@ abstract contract HandlerBase is Test {
         uint256 share;
         (share, toPots) = _bookModel(inc);
         _potsAfterBook(p, share, toPots, what);
-        _booked(toPots);
+        _pushedToPayee(payeeBefore, share, what);
+        gEthIn += inc;
+        gEthOut += share;
     }
 
     /// books the income left unbooked by the previous action before an action reads the books
@@ -1055,8 +1061,8 @@ abstract contract HandlerBase is Test {
         if (core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() + gEthOut != gEthStart + gEthIn) {
             _flag(V_PAYEE, string.concat("the ledger is off after ", names[lastAct]));
         }
-        if (core.payeeOwed() != gPayeeOwed || core.payeeOn() != gPayeeOn) {
-            _flag(V_PAYEE, "the payee claim or latch differs from the model after an action");
+        if (core.payeeOn() != gPayeeOn) {
+            _flag(V_PAYEE, "the payee latch differs from the model after an action");
         }
     }
 
@@ -1228,9 +1234,10 @@ abstract contract HandlerBase is Test {
         // the hook pushed the bounty leg to the core, which books nothing inside the swap. the book that follows counts it
         if (core.ethPot() != p.pot || core.ethToBuyback() != p.tb) _flag(V_POT, "the core booked inside the swap");
         if (address(core).balance != p.bal + bounty) _flag(V_POT, "the core received other than the hook bounty leg");
-        (uint256 held,) = _bookNow(keeper, what);
+        (uint256 held, uint256 toPots) = _bookNow(keeper, what);
         if (held != bounty) _flag(V_POT, "the book counted other than the hook bounty leg");
-        _eth(p.bal, 0, held, what);
+        // the book keeps `toPots` in the core and pushed the payee share out, so the balance rose by `toPots`
+        _eth(p.bal, 0, toPots, what);
         if (volume != 0) {
             (uint256 eb, uint256 ep) = _expectSkim(bounty + protocol, p.bps);
             if (bounty != eb) _flag(V_POT, "skim bounty differs from the hook rules at the live rate");
@@ -1946,8 +1953,9 @@ abstract contract HandlerBase is Test {
         }
         (uint256 held, uint256 toPots) = _bookNow(keeper, "buyback");
         if (held != bounty) _flag(V_BUYBACK, "the book counted other than the hook bounty leg");
-        // eth leaves as the swap input plus the payment. the skim of the swap comes back as an inflow
-        _eth(p.bal, spent + tip, held, "buyback");
+        // eth leaves as the swap input plus the payment; the skim comes back and the book keeps toPots, having pushed
+        // the payee share out
+        _eth(p.bal, spent + tip, toPots, "buyback");
         uint256 rb = toPots * core.settings().feeToRedeemBurnBps / 10_000;
         if (core.ethToBuyback() != p.pool - spent - tip) {
             _flag(V_BUYBACK, "buyback pot is not the pot less what was spent and paid");
@@ -2279,11 +2287,24 @@ abstract contract HandlerBase is Test {
     }
 
     /// anyone books the fee income, now and then after the hook or the escrow pushed some eth. the book counts
-    /// everything above the tracked eth, splits it by the model and leaves nothing unbooked
+    /// everything above the tracked eth, splits it by the model, pushes the payee share and leaves nothing unbooked. now
+    /// and then the owner first points the payee at a fresh, reverting or burning account: the forced push reaches each
     function book(uint256 aSeed, uint256 amtSeed) external checked {
         uint8 a = A_BOOK;
         address who = _actor(aSeed);
         _att(a);
+        uint256 m = amtSeed % 6;
+        if ((m == 1 || m == 2 || m == 3) && owner == core.owner()) {
+            address next = m == 1
+                ? address(uint160(uint256(keccak256(abi.encode("payee", aSeed))) | 0x10000))
+                : (m == 2 ? _badPayee(false) : _badPayee(true));
+            vm.prank(owner);
+            try core.setPayee(next) {
+                gPayee = next;
+            } catch (bytes memory why) {
+                _unexpected(a, why);
+            }
+        }
         if (amtSeed % 3 == 0) {
             uint256 amt = _logBound(amtSeed >> 4, 1, 3 ether);
             address sender = amtSeed % 2 == 0 ? HOOK : core.ESCROW();
@@ -2294,8 +2315,9 @@ abstract contract HandlerBase is Test {
         }
         uint256 b0 = address(core).balance;
         RS memory rs = _rs();
-        (uint256 inc,) = _bookNow(who, "book");
-        _eth(b0, 0, 0, "book");
+        (uint256 inc, uint256 toPots) = _bookNow(who, "book");
+        // the book keeps the pots in the core and pushes the payee share out, so the balance falls by the share
+        if (address(core).balance != b0 - (inc - toPots)) _flag(V_PAYEE, "a book moved other than the pushed share");
         if (_unbooked() != 0) _flag(V_POT, "a book left eth unbooked");
         if (inc != 0) {
             // the book checkpointed the rate before the pot grew
@@ -2305,61 +2327,6 @@ abstract contract HandlerBase is Test {
         // the book moved the pot: the model of the rate follows from the state it left, which `_rs` read before
         // the income was counted; the read before the book already included the share the book added
         if (core.ethRate() != rs.rate) _flag(V_RATE_BOUND, "the quote before the book differs from the read after it");
-    }
-
-    /// anyone claims the payee share. by mode the owner first points the payee at a fresh account, at a payee that reverts
-    /// or at one that burns its gas, or at the zero address (refused). a claim of nothing reverts `ZeroAmount`, a claim
-    /// to a payee that cannot take it reverts `CallFailed` and leaves the share owed, a good claim pays exactly the
-    /// share to the payee and nothing else moves
-    function claimPayee(uint256 aSeed, uint256 mode) external checked {
-        uint8 a = A_CLAIM_PAYEE;
-        address who = _actor(aSeed);
-        uint256 m = mode % 6;
-        _att(a);
-        if (m != 0 && m != 5) {
-            address next = m == 1
-                ? address(uint160(uint256(keccak256(abi.encode("payee", aSeed))) | 0x10000))
-                : (m == 2 ? _badPayee(false) : (m == 3 ? _badPayee(true) : address(0)));
-            bool mayOwn = owner == core.owner();
-            vm.prank(owner);
-            try core.setPayee(next) {
-                if (!mayOwn) _flag(V_OWNER, "setPayee worked for a caller that is not the owner");
-                else if (next == address(0)) _flag(V_PAYEE, "setPayee took the zero address");
-                else gPayee = next;
-            } catch (bytes memory why) {
-                bytes4 want = mayOwn ? ICore.ZeroAddress.selector : ICore.OnlyOwner.selector;
-                if (bytes4(why) != want || (mayOwn && next != address(0))) _unexpected(a, why);
-            }
-        }
-        if (core.payee() != gPayee) _flag(V_PAYEE, "the payee differs from the one the owner set last");
-        uint256 owed = core.payeeOwed();
-        uint256 b0 = address(core).balance;
-        uint256 pot0 = core.ethPot();
-        uint256 rate0 = core.ethRate();
-        address payee_ = core.payee();
-        uint256 p0 = payee_.balance;
-        RS memory rs = _rs();
-        vm.prank(who);
-        try core.claimPayee{gas: 3_000_000}() {
-            if (owed == 0) _flag(V_PAYEE, "a claim of nothing went through");
-            if (payee_.balance - p0 != owed && !_isBurner(payee_)) _flag(V_PAYEE, "the claim paid other than the share owed");
-            gPayeeOwed = 0;
-            _eth(b0, owed, 0, "claimPayee");
-            // the ledger holds the pots only: the payee share left it when it was booked
-            gEthOut -= owed;
-            if (core.payeeOwed() != 0) _flag(V_PAYEE, "a claim left eth owed");
-        } catch (bytes memory why) {
-            _failed(b0, pot0, rate0, "claimPayee");
-            if (owed == 0) {
-                if (bytes4(why) != ICore.ZeroAmount.selector) _unexpected(a, why);
-            } else if (bytes4(why) != ICore.CallFailed.selector || !_refuses(payee_)) {
-                _unexpected(a, why);
-            }
-            if (core.payeeOwed() != owed) _flag(V_PAYEE, "a refused claim moved the share");
-        }
-        if (core.ethPot() != pot0) _flag(V_PAYEE, "a claim moved the pot");
-        _ok(a);
-        _rsCheck(rs, 0);
     }
 
     /// a payee that reverts, or one that burns all its gas, created once each
@@ -2374,14 +2341,6 @@ abstract contract HandlerBase is Test {
         return burn ? burningPayee : revertingPayee;
     }
 
-    function _refuses(address who) internal view returns (bool) {
-        return who == revertingPayee || who == burningPayee;
-    }
-
-    function _isBurner(address who) internal view returns (bool) {
-        return who == burningPayee;
-    }
-
     /// one door call with the book inside it. `*0` is the state before the book (what a reverted door leaves), the rest is
     /// what the book does to the state: the income, the part booked into the pots and the share credited to the payee
     struct Pull {
@@ -2393,6 +2352,7 @@ abstract contract HandlerBase is Test {
         uint256 income;
         uint256 toPots;
         uint256 share;
+        uint256 payee0;
     }
 
     /// the eth pot doors (`sellForEth`, `buyListing`, `compose`, `composeChosen`, `adopt`) start with the core's book of the
@@ -2405,13 +2365,15 @@ abstract contract HandlerBase is Test {
         q.rate0 = core.ethRate();
         q.rs0 = _rs();
         q.income = _unbooked();
+        q.payee0 = gPayee.balance;
         Pots memory p = _pots();
         q.snap = vm.snapshotState();
+        uint256 payeeBefore = gPayee.balance;
         if (q.income != 0) {
             try core.book() {} catch {}
         }
         q.toPots = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() - p.pot - p.tb - p.rb;
-        q.share = core.payeeOwed() - p.owed;
+        q.share = gPayee.balance - payeeBefore;
     }
 
     function _endPull(Pull memory q) internal {
@@ -2424,20 +2386,25 @@ abstract contract HandlerBase is Test {
     function _pullChecks(Pull memory q, Vm.Log[] memory logs) internal {
         uint256 events;
         uint256 seen;
+        uint256 seenPayee;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.FeesAdded.selector) continue;
             events++;
-            seen = abi.decode(logs[i].data, (uint256));
+            (seen, seenPayee) = abi.decode(logs[i].data, (uint256, uint256));
         }
         (uint256 share, uint256 toPots) = _bookModel(q.income);
         if (events != (q.income != 0 ? 1 : 0)) _flag(V_PAYEE, "the door booked other than the book rule gives");
-        if (q.income != 0 && seen != toPots) _flag(V_PAYEE, "the door logged other than the income less the share");
+        if (q.income != 0 && (seen != toPots || seenPayee != share)) {
+            _flag(V_PAYEE, "the door logged other than the income less the share and the pushed share");
+        }
         if (share != q.share || toPots != q.toPots + q.share - share) {
             _flag(V_PAYEE, "the door book differs from the model of the book");
         }
-        _booked(toPots);
-        if (core.payeeOwed() != gPayeeOwed || core.payeeOn() != gPayeeOn) {
-            _flag(V_PAYEE, "the payee share after the door differs from the model");
+        _pushedToPayee(q.payee0, share, "door book");
+        gEthIn += q.income;
+        gEthOut += share;
+        if (core.payeeOn() != gPayeeOn) {
+            _flag(V_PAYEE, "the payee latch after the door differs from the model");
         }
     }
 
@@ -2500,9 +2467,9 @@ abstract contract HandlerBase is Test {
 
     /// @dev slots of `State.balance` (the balance bid Rate instance): rateAtCheckpoint at 32, checkpointTime|lastFillTime
     /// at 33, its Anchor (lastFillRate, minuteStartRate, minuteBucket|peakTime, peakRate) at 34 to 37
-    bytes32 internal constant BAL_RATE_SLOT = bytes32(uint256(32));
-    bytes32 internal constant BAL_CP_SLOT = bytes32(uint256(33));
-    bytes32 internal constant BAL_ANCHOR_SLOT = bytes32(uint256(34));
+    bytes32 internal constant BAL_RATE_SLOT = bytes32(uint256(31));
+    bytes32 internal constant BAL_CP_SLOT = bytes32(uint256(32));
+    bytes32 internal constant BAL_ANCHOR_SLOT = bytes32(uint256(33));
 
     /// @dev the balance bid clamp now, available as bps of par for a refScore credit, read from the module
     function _availBps(uint256 unit) internal view returns (uint256) {

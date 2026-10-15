@@ -235,7 +235,7 @@ contract ReviewDeployTest is ReviewHarness {
     }
 
     /// the default config plus the launch inputs of script/config/mainnet.json (the live v2 stack, owner, creator, payee,
-    /// name, salt)
+    /// artist, name, salt)
     function _shipped() internal view returns (LaunchConfig memory s) {
         s = defaultConfig();
         s.stack.hook = v2.hook;
@@ -245,7 +245,7 @@ contract ReviewDeployTest is ReviewHarness {
         s.mevModule = v2.mev;
         s.owner = v2.owner;
         s.creator = v2.owner;
-        s.credit.royaltyRecipient = v2.owner;
+        s.artist = 0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a;
         s.payee = v2.owner;
         s.name = "CC";
         s.salt = keccak256("CC");
