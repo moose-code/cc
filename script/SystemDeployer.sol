@@ -23,7 +23,7 @@ struct Deployed {
 /// `deployTokenAsOwner`). every contract of ours is created through the deterministic deployer (CREATE2) at an address
 /// that is a function of the salts, the creation code and the config, so the addresses are known before the first
 /// transaction. order: the library `CoreLib` (linked and sent by `forge script` before `run`), the Core, the controller
-/// (constructed with the Core address), the two listing adapters, `setController`, `setArtist`, `addAdapter` for each adapter,
+/// (constructed with the Core address), the two listing adapters, `setController`, `addAdapter` for each adapter,
 /// then the launch. a contract that has code at its address is skipped and a state step whose effect is on chain is
 /// skipped, so a run that stopped half way continues from the chain state. the recipients of the coin are not locked
 /// here, the owner closes them as a separate step (`Lock`)
@@ -133,8 +133,6 @@ abstract contract SystemDeployer is LaunchChecks {
             core.setController(d.controller);
             _step(4, g);
         }
-        // the artist cut recipient is set post deploy (owner only); skipped when already on chain
-        if (core.artist() != c.artist) core.setArtist(c.artist);
         if (!core.allowedAdapter(d.seaportAdapter)) {
             uint256 g = gasleft();
             core.addAdapter(d.seaportAdapter);

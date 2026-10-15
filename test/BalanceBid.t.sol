@@ -29,12 +29,13 @@ contract BalanceBidTest is Fixture {
     // promise: SPEC 4 a margin change that raises the floor resets the instance to that floor, which is its opening
     // value, and the bid pays that floor rate in the same block
     function test_resetToFloorAndPaysFloor() public {
+        // the launch floor is 9_000; margin 0 raises it to 10_000 (par), above the stored rate, so the instance resets
         Settings memory s = core.settings();
-        s.balanceBidMarginBps = 8_000; // floor 2_000
+        s.balanceBidMarginBps = 0; // floor 10_000
         _setSettings(s);
-        assertEq(core.balanceRate(), 2_000, "reset to the new floor");
+        assertEq(core.balanceRate(), 10_000, "reset to the new floor");
         uint256[] memory ids = _credits(user, 1);
-        uint256 expect = _score(ids[0]) * UNIT * 2_000 / 10_000;
+        uint256 expect = _score(ids[0]) * UNIT * 10_000 / 10_000;
         assertEq(core.balanceBidOf(ids[0]), expect, "bid at the floor rate");
         uint256 before = xt.balanceOf(user);
         vm.prank(user);
@@ -44,13 +45,11 @@ contract BalanceBidTest is Fixture {
 
     // promise: SPEC 4 a margin change that lowers the floor leaves the climbed rate unchanged
     function test_marginLowerDoesNotReset() public {
-        Settings memory s = core.settings();
-        s.balanceBidMarginBps = 8_000; // floor 2_000, resets the instance there
-        _setSettings(s);
-        _warp(1 days); // climb above 2_000
+        _warp(2 days); // climb above the launch floor 9_000
         uint256 r = core.balanceRate();
-        assertGt(r, 2_000, "climbed above the raised floor");
-        s.balanceBidMarginBps = 9_000; // floor 1_000, below the climbed rate: no reset
+        assertGt(r, 9_000, "climbed above the launch floor");
+        Settings memory s = core.settings();
+        s.balanceBidMarginBps = 2_000; // floor 8_000, below the climbed rate: no reset
         _setSettings(s);
         assertEq(core.balanceRate(), r, "the climbed rate is unchanged by a lower floor");
     }

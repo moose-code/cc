@@ -214,6 +214,9 @@ library CoreLib {
         bytes32 bad = SettingsBounds.firstViolation(ns);
         if (bad != 0) revert BadSetting(bad);
         State storage c = state();
+        // the artist cut is never nonzero while the artist is the zero address, so a sale never pushes it to address(0).
+        // the constructor sets the artist before its own call here, so the launch config must carry a real artist
+        if (ns.saleToArtistBps != 0 && c.artist == address(0)) revert ZeroAddress();
         bool wasOn = c.settings.balanceBidOn;
         // credit the elapsed climb of the balance instance under the old settings and clamp before the new ones apply,
         // so a settings change compares against the climbed value, not a stale checkpoint. while the bid is off the

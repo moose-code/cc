@@ -3,16 +3,15 @@ pragma solidity ^0.8.28;
 
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
 
-/// @notice the 26 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
-/// docs/DECISIONS.md section 2, for the settings script and the config and deploy tests. the fields bounded by another
-/// field (recoveryClimbPerMinBps by climbPerMinBps, redeemSlippageBps by balanceBidMarginBps) have those bounds in the
-/// callers' hands. the two switches are 0 or 1
+/// @notice the 28 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
+/// docs/DECISIONS.md section 2, for the settings script and the config and deploy tests. recoveryClimbPerMinBps is
+/// bounded below by climbPerMinBps, handled by the callers. the two switches are 0 or 1
 library SettingsFields {
-    uint256 internal constant N = 26;
+    uint256 internal constant N = 28;
 
     /// @dev field i of the settings struct, in declaration order
     function get(Settings memory s, uint256 i) internal pure returns (uint256) {
-        uint256[26] memory f = [
+        uint256[28] memory f = [
             uint256(s.dropPerCreditBps),
             s.dropFloorBps,
             s.climbPerMinBps,
@@ -38,7 +37,9 @@ library SettingsFields {
             s.feeToRedeemBurnBps,
             s.payeePpm,
             s.refScore,
-            s.swapFeeCc
+            s.swapFeeCc,
+            s.saleToArtistBps,
+            s.saleToOperatorBps
         ];
         return f[i];
     }
@@ -71,13 +72,15 @@ library SettingsFields {
         else if (i == 22) s.feeToRedeemBurnBps = uint16(v);
         else if (i == 23) s.payeePpm = uint24(v);
         else if (i == 24) s.refScore = uint32(v);
-        else s.swapFeeCc = uint96(v);
+        else if (i == 25) s.swapFeeCc = uint96(v);
+        else if (i == 26) s.saleToArtistBps = uint16(v);
+        else s.saleToOperatorBps = uint16(v);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
     /// @dev the documented lower bound of every field. recoveryClimbPerMinBps is bounded below by climbPerMinBps,
     /// handled by the callers
-    function lo() internal pure returns (uint256[26] memory) {
+    function lo() internal pure returns (uint256[28] memory) {
         return [
             uint256(1),
             5_000,
@@ -104,11 +107,13 @@ library SettingsFields {
             0,
             0,
             800_000,
+            0,
+            0,
             0
         ];
     }
 
-    function hi() internal pure returns (uint256[26] memory) {
+    function hi() internal pure returns (uint256[28] memory) {
         return [
             uint256(1_000),
             10_000,
@@ -135,11 +140,13 @@ library SettingsFields {
             10_000,
             200_000,
             8_000_000,
-            1e24
+            1e24,
+            1_000,
+            1_000
         ];
     }
 
-    function names() internal pure returns (bytes32[26] memory) {
+    function names() internal pure returns (bytes32[28] memory) {
         return [
             bytes32("dropPerCreditBps"),
             "dropFloorBps",
@@ -166,7 +173,9 @@ library SettingsFields {
             "feeToRedeemBurnBps",
             "payeePpm",
             "refScore",
-            "swapFeeCc"
+            "swapFeeCc",
+            "saleToArtistBps",
+            "saleToOperatorBps"
         ];
     }
 }

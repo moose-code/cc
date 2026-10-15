@@ -319,7 +319,7 @@ library Mainnet {
             redeemOn: true,
             balanceBidOn: false,
             redeemSlippageBps: 200,
-            balanceBidMarginBps: 9_000,
+            balanceBidMarginBps: 1_000,
             redeemBurnBps: 2_000,
             buybackSlice: 0.5 ether,
             keeperFee: 0.0003 ether,

@@ -17,7 +17,7 @@ import {SettingsFields} from "../script/SettingsFields.sol";
 contract FlowTest is Fixture {
     using FixedPointMathLib for uint256;
 
-    uint256 internal constant N = 26;
+    uint256 internal constant N = 28;
 
     // ------------------------------------------------------------------ helpers
 
@@ -38,7 +38,7 @@ contract FlowTest is Fixture {
         return keccak256(abi.encode(s));
     }
 
-    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 26 fields in declaration order
+    /// @dev the field tables are the ones of the scripts (`SettingsFields`), 28 fields in declaration order
     function _get(Settings memory s, uint256 i) internal pure returns (uint256) {
         return SettingsFields.get(s, i);
     }
@@ -47,22 +47,22 @@ contract FlowTest is Fixture {
         SettingsFields.set(s, i, v);
     }
 
-    function _lo() internal pure returns (uint256[26] memory) {
+    function _lo() internal pure returns (uint256[28] memory) {
         return SettingsFields.lo();
     }
 
-    function _hi() internal pure returns (uint256[26] memory) {
+    function _hi() internal pure returns (uint256[28] memory) {
         return SettingsFields.hi();
     }
 
-    function _names() internal pure returns (bytes32[26] memory) {
+    function _names() internal pure returns (bytes32[28] memory) {
         return SettingsFields.names();
     }
 
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
-        uint256[26] memory lo = _lo();
-        uint256[26] memory hi = _hi();
+        uint256[28] memory lo = _lo();
+        uint256[28] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
@@ -96,7 +96,7 @@ contract FlowTest is Fixture {
         assertTrue(s.redeemOn);
         assertFalse(s.balanceBidOn);
         assertEq(s.redeemSlippageBps, 200);
-        assertEq(s.balanceBidMarginBps, 9_000);
+        assertEq(s.balanceBidMarginBps, 1_000);
         assertEq(s.redeemBurnBps, 2_000);
         assertEq(s.rateCap, 26_700_000_000_000_000);
         assertEq(s.feeToRedeemBurnBps, 1_000);
@@ -114,10 +114,18 @@ contract FlowTest is Fixture {
         assertEq(_hash(core.settings()), _hash(s), "round trip");
     }
 
+    // promise: SPEC 3 the field list covers every Settings field, so the settings script round-trips all of them
+    function test_settings_fieldListLengthEqualsTheStructFieldCount() public {
+        // Settings is all value-type fields, each abi-encoded to one 32 byte word, so the encoding length over 32 is
+        // the field count; it must equal the field list length
+        Settings memory s = Mainnet.defaultSettings();
+        assertEq(abi.encode(s).length, SettingsFields.N * 32, "SettingsFields.N equals the Settings field count");
+    }
+
     // promise: INTEGRATION BadSetting: bounds are inclusive
     function test_settings_everyBoundEdgeIsAccepted() public {
-        uint256[26] memory lo = _lo();
-        uint256[26] memory hi = _hi();
+        uint256[28] memory lo = _lo();
+        uint256[28] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             for (uint256 k; k < 2; ++k) {
                 Settings memory s = Mainnet.defaultSettings();
@@ -138,9 +146,9 @@ contract FlowTest is Fixture {
 
     // promise: INTEGRATION BadSetting
     function test_settings_everyBoundViolationReverts() public {
-        uint256[26] memory lo = _lo();
-        uint256[26] memory hi = _hi();
-        bytes32[26] memory names = _names();
+        uint256[28] memory lo = _lo();
+        uint256[28] memory hi = _hi();
+        bytes32[28] memory names = _names();
         for (uint256 i; i < N; ++i) {
             // the two switches take 0 or 1, nothing is out of bounds
             if (i == 11 || i == 12) continue;

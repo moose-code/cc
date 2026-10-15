@@ -292,7 +292,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         Stack memory stack_,
         uint256 rateStart_,
         Settings memory settings_,
-        Credit memory credit_
+        Credit memory credit_,
+        address artist_
     ) {
         if (owner_ == address(0) || payee_ == address(0)) revert ZeroAddress();
         if (
@@ -318,6 +319,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
         s.owner = owner_;
         s.payee = payee_;
+        // the artist receives the artist cut of nft sales. a forbidden target is refused; a zero artist with a nonzero
+        // saleToArtistBps is refused by CoreLib.setSettings below, so the launch config carries a real artist
+        if (artist_ != address(0) && _forbidden(artist_)) revert ForbiddenTarget();
+        s.artist = artist_;
         COIN = coin;
         SNIPER_SECONDS = cfg_.mev.windowSeconds;
         RATE_START = rateStart_;
@@ -670,10 +675,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
         if (address(this).balance + value < ethBefore) revert BadCost();
 
-        // `value` is at most the bid for this credit, which is at most `ethPot`
+        // the per credit bid can exceed `ethPot` for a score above `refScore`; the keeper payment is capped so
+        // `value + paid` is at most the bid and at most `ethPot`
         Settings storage cfg = s.settings;
         uint256 paid = _payment(gasStart, BUYLISTING_OVERHEAD_GAS, BUYLISTING_GAS, cfg.keeperMaxBaseFee, cfg.keeperFee)
-            .min(bid - value);
+            .min(bid - value).min(s.ethPot - value);
         _spend(value + paid, score, refScore);
         _push(id, value + paid);
         emit ListingBought(id, adapter, msg.sender, value, paid, s.rateAtCheckpoint);

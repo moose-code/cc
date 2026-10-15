@@ -92,7 +92,7 @@ contract ConfigTest is Fixture {
         assertEq(f.settings.keeperFee, 0.0003 ether);
         assertEq(f.settings.keeperMaxBaseFee, 5 gwei);
         assertTrue(f.settings.redeemOn);
-        assertEq(f.settings.balanceBidMarginBps, 9_000);
+        assertEq(f.settings.balanceBidMarginBps, 1_000);
         assertEq(f.payee, v2.owner);
         // the stack addresses of the shipped file are the record of the live stack, the factory owner is the config owner
         assertEq(unsetFields(f).length, 0, "the shipped file leaves nothing unset");
@@ -633,9 +633,9 @@ contract ConfigTest is Fixture {
 
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[26] memory lo = SettingsFields.lo();
-        uint256[26] memory hi = SettingsFields.hi();
-        bytes32[26] memory names = SettingsFields.names();
+        uint256[28] memory lo = SettingsFields.lo();
+        uint256[28] memory hi = SettingsFields.hi();
+        bytes32[28] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // the top itself (the fields bound by another field start from a free partner)

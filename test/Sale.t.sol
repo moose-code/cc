@@ -1027,6 +1027,23 @@ contract SaleCutsTest is SaleBase {
         assertEq(core.artist(), address(0), "the artist is cleared when the cut is off");
     }
 
+    // promise: SPEC 1 setSettings refuses a nonzero artist cut while the artist is the zero address, so the pair is
+    // checked on both setters and the cut can never be pushed to address(0)
+    function test_cuts_setSettingsRefusesCutWhileArtistZero() public {
+        // clear the cut, then the artist, so the artist is the zero address with a zero cut
+        Settings memory s = core.settings();
+        s.saleToArtistBps = 0;
+        _setSettings(s);
+        vm.prank(owner);
+        core.setArtist(address(0));
+        assertEq(core.artist(), address(0), "the artist is cleared");
+        // raising the cut while the artist is zero reverts
+        s.saleToArtistBps = 250;
+        vm.prank(owner);
+        vm.expectRevert(ICore.ZeroAddress.selector);
+        core.setSettings(s);
+    }
+
     // promise: SPEC 1 setArtist refuses a forbidden target (decision 123)
     function test_cuts_setArtistRefusesAForbiddenTarget() public {
         vm.prank(owner);

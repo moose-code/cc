@@ -34,7 +34,7 @@
     "redeemOn": true,
     "balanceBidOn": false,
     "redeemSlippageBps": 200,
-    "balanceBidMarginBps": 9000,
+    "balanceBidMarginBps": 1000,
     "redeemBurnBps": 2000,
     "buybackSlice": 500000000000000000,
     "keeperFee": 300000000000000,
