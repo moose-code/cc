@@ -8,6 +8,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IV4Router} from "v4-periphery/src/interfaces/IV4Router.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
+import {ICoinRenderer} from "../src/interfaces/ICoinRenderer.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {ICredits, ICreditScore, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {SystemDeployer, Deployed} from "../script/SystemDeployer.sol";
@@ -28,14 +29,13 @@ interface IPermit2R {
 /// universal router, a book of the fees at the Core that pushes the payee share once the owner raises `payeePpm` (the `FeesAdded` amount) and a real credit sold into the bid. it skips cleanly unless the env var
 /// REHEARSAL is set, so the default suite stays pinned and fast. it reads the config file named by LAUNCH_CONFIG, like the
 /// scripts do, and defaults to script/config/rehearsal.json, whose `image` and `description` hold the placeholder marker:
-/// the preflight row `rule: image and description are filled and are not placeholders` is expected to fail before and
+/// the preflight metadata row (`METADATA_ROW`) is expected to fail before and
 /// after the owner command. a file with real values is rehearsed as it is and every row must pass. the launch goes through the live v2
 /// factory (the config owner is its owner, impersonated on the fork). it measures the gas of every transaction of the deploy and asserts each
 /// one fits under the per transaction gas cap
 /// `set -a; . ./.env; set +a; REHEARSAL=1 forge test --match-path test/Rehearsal.t.sol -vv`
 contract RehearsalTest is Test, ProdDeployer {
     string internal constant REHEARSAL_CONFIG_FILE = "script/config/rehearsal.json";
-    string internal constant METADATA_ROW = "rule: image and description are filled and are not placeholders";
 
     LaunchConfig internal c;
     Deployed internal d;
@@ -129,21 +129,22 @@ contract RehearsalTest is Test, ProdDeployer {
         require(ok, "create2 failed");
     }
 
-    /// @dev gas of the five creations (the library, the core, the controller and the two adapters) with the
-    /// calldata and the intrinsic gas of their transactions, each from a clean frame
-    function _creationGas(Deployed memory first) internal returns (uint256[5] memory tx_) {
-        bytes32[5] memory salts =
-            [bytes32(uint256(1)), CORE_SALT, CONTROLLER_SALT, SEAPORT_ADAPTER_SALT, STRATEGY_ADAPTER_SALT];
-        bytes[5] memory inits = [
+    /// @dev gas of the six creations (the library, the core, the controller, the two adapters and the renderer) with
+    /// the calldata and the intrinsic gas of their transactions, each from a clean frame
+    function _creationGas(Deployed memory first) internal returns (uint256[6] memory tx_) {
+        bytes32[6] memory salts =
+            [bytes32(uint256(1)), CORE_SALT, CONTROLLER_SALT, SEAPORT_ADAPTER_SALT, STRATEGY_ADAPTER_SALT, rendererSalt(c)];
+        bytes[6] memory inits = [
             vm.getCode("CoreLib.sol:CoreLib"),
             coreInitCode(c, deployer),
             abi.encodePacked(vm.getCode("ControllerV1.sol:ControllerV1"), abi.encode(first.core, c.sale, c.credit)),
             abi.encodePacked(
                 vm.getCode("SeaportBasicAdapter.sol:SeaportBasicAdapter"), abi.encode(first.core, c.seaportRecipients)
             ),
-            vm.getCode("CreditStrategyAdapter.sol:CreditStrategyAdapter")
+            vm.getCode("CreditStrategyAdapter.sol:CreditStrategyAdapter"),
+            abi.encodePacked(vm.getCode("CoinRenderer.sol:CoinRenderer"), abi.encode(c.owner))
         ];
-        for (uint256 i; i < 5; ++i) {
+        for (uint256 i; i < 6; ++i) {
             // 21000 intrinsic and the calldata (4 gas per zero byte, 16 per other byte)
             tx_[i] = this.createGas(inits[i], salts[i]) + 21_000 + _calldataGas(abi.encodePacked(salts[i], inits[i]));
         }
@@ -157,15 +158,15 @@ contract RehearsalTest is Test, ProdDeployer {
         vm.startPrank(deployer);
         d = deploySystem(deployer, c);
         vm.stopPrank();
-        uint256[8] memory used = stepGas;
+        uint256[10] memory used = stepGas;
         Deployed memory first = d;
         // the creations are measured again from a clean frame on the state before the deploy; the deploy then continues
         // from there (the contracts that exist are skipped)
         vm.revertToState(snap);
-        uint256[9] memory txGas;
+        uint256[11] memory txGas;
         {
-            uint256[5] memory cg = _creationGas(first);
-            for (uint256 i; i < 5; ++i) {
+            uint256[6] memory cg = _creationGas(first);
+            for (uint256 i; i < 6; ++i) {
                 txGas[i] = cg[i];
             }
         }
@@ -175,26 +176,29 @@ contract RehearsalTest is Test, ProdDeployer {
         assertEq(d.core, first.core);
         assertEq(d.coin, first.coin);
         ICore core = ICore(payable(d.core));
-        txGas[5] = used[4] + 21_000 + _calldataGas(abi.encodeCall(core.setController, (d.controller)));
-        txGas[6] = used[5] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.seaportAdapter)));
-        txGas[7] = used[6] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.strategyAdapter)));
-        txGas[8] = used[7] + 21_000
+        txGas[6] = used[5] + 21_000 + _calldataGas(abi.encodeCall(ICoinRenderer.setCore, (core)));
+        txGas[7] = used[6] + 21_000 + _calldataGas(abi.encodeCall(core.setController, (d.controller)));
+        txGas[8] = used[7] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.seaportAdapter)));
+        txGas[9] = used[8] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.strategyAdapter)));
+        txGas[10] = used[9] + 21_000
             + _calldataGas(
                 abi.encodeCall(IArtCoinsFactoryV2.deployToken, (buildConfig(c, c.owner, d.core)))
             );
-        string[9] memory names = [
+        string[11] memory names = [
             "1 library CoreLib (create2 deployer)",
             "2 core (create2 deployer)",
             "3 controller (create2 deployer)",
             "4 seaport adapter (create2 deployer)",
             "5 strategy adapter (create2 deployer)",
-            "6 setController",
-            "7 addAdapter seaport adapter",
-            "8 addAdapter strategy adapter",
-            "9 launch through the factory (deployToken)"
+            "6 coin renderer (create2 deployer)",
+            "7 setCore on the renderer",
+            "8 setController",
+            "9 addAdapter seaport adapter",
+            "10 addAdapter strategy adapter",
+            "11 launch through the factory (deployToken)"
         ];
         uint256 total;
-        for (uint256 i; i < 9; ++i) {
+        for (uint256 i; i < 11; ++i) {
             total += txGas[i];
             console.log(string.concat("deploy gas, tx ", names[i]), txGas[i]);
             assertLt(txGas[i], TX_GAS_CAP, string.concat("over the per transaction gas cap: ", names[i]));
@@ -204,9 +208,9 @@ contract RehearsalTest is Test, ProdDeployer {
         assertLe(total, DEPLOY_GAS_ESTIMATE, "the measured deploy gas is above DEPLOY_GAS_ESTIMATE");
         console.log("DEPLOY_GAS_ESTIMATE", DEPLOY_GAS_ESTIMATE);
         console.log("library at", lib);
-        console.log("total deploy gas, nine transactions", total);
+        console.log("total deploy gas, eleven transactions", total);
         console.log("per transaction gas cap", TX_GAS_CAP);
-        console.log("factory deploy fee (wei, sent as value of tx 9)", fee);
+        console.log("factory deploy fee (wei, sent as value of tx 11)", fee);
         uint256[3] memory gwei_ = [uint256(1), 5, 20];
         for (uint256 i; i < 3; ++i) {
             uint256 cost = total * gwei_[i] * 1 gwei;
@@ -218,6 +222,7 @@ contract RehearsalTest is Test, ProdDeployer {
         console.log("deployer paid wei (the fee only, the test gas price is 0)", balBefore - deployer.balance);
         console.log("core", d.core);
         console.log("coin", d.coin);
+        console.log("renderer", d.renderer);
     }
 
     /// @dev wei as a decimal eth string with five places

@@ -2,13 +2,18 @@
 pragma solidity ^0.8.28;
 
 import {IArtCoinsFactoryV2, IArtCoinsHookV2, IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
+import {ICoinRenderer} from "../src/interfaces/ICoinRenderer.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemBuilder} from "./Builder.sol";
 import {Report} from "./Report.sol";
 
+
 /// @notice the safe readers and the coin side of the postflight (docs/DECISIONS.md 10.4): every read is a staticcall that
 /// reports a failure instead of reverting, so a wrong address turns into a failed row and never aborts the table
 abstract contract PostflightV2 is SystemBuilder, Report {
+    /// @dev the gas bound of the coin's `tokenURI()` read in the postflight. the page of 80 cells costs about 25,000,000
+    uint256 internal constant URI_READ_GAS = 60_000_000;
+
     // ------------------------------------------------------------------ runtime code identity
 
     /// @dev json objects decode in key order: length, then start
@@ -144,7 +149,15 @@ abstract contract PostflightV2 is SystemBuilder, Report {
     }
 
     function _idEnsure(string memory name) private {
-        if (!vm.envExists(_idKey(name, "HASH"))) _idLoad(name);
+        if (!vm.envExists(_idKey(name, "HASH"))) this.loadArtifact(name);
+    }
+
+    /// @notice reads the artifact `name` from `out/` and keeps its masked runtime hash, length and slots in the process
+    /// environment. an external call into this contract: the json and the copies each cheatcode call makes of it are
+    /// freed when the frame returns, so a run that loads six artifacts stays under a block's gas. never run inside a
+    /// broadcast, where the call would be recorded as a transaction
+    function loadArtifact(string calldata name) external {
+        _idLoad(name);
     }
 
     function _idSlots(string memory name) private returns (uint256[] memory imm, uint256[] memory lnk) {
@@ -323,7 +336,7 @@ abstract contract PostflightV2 is SystemBuilder, Report {
         _soft(ch, "coin: restricted as in the config", t.restricted() == c.restricted, "restricted()", "COIN_CHANGED=1");
         _soft(ch, "coin: image equals the config", _same(t.imageUrl(), c.image), t.imageUrl(), "COIN_CHANGED=1");
         _soft(ch, "coin: description equals the config", _same(t.description(), c.description), t.description(), "COIN_CHANGED=1");
-        _soft(ch, "coin: no metadata renderer", t.metadataRenderer() == address(0), vm.toString(t.metadataRenderer()), "COIN_CHANGED=1");
+        _postRenderer(c, core, t, ch);
         _postAllowlist(c, core, t, ch);
         _postLock(t);
         _warn("warn: core holds no coin", t.balanceOf(core) == 0, "coin sent by an allowlisted holder, the owner can call rescueCoin");
@@ -334,6 +347,49 @@ abstract contract PostflightV2 is SystemBuilder, Report {
     /// so the row reports the state and the deploy leaves the coin unlocked
     function _postLock(IArtCoinsTokenV2 t) private {
         _info("coin: lock", t.locked() ? "locked" : "unlocked, script/Lock.s.sol locks it as an owner decision");
+    }
+
+    /// @dev the coin's metadata renderer is the `CoinRenderer` of the config, at its CREATE2 address, bound to the
+    /// Core, and the coin's `tokenURI()` returns a json data uri. the admin may replace the renderer (`COIN_CHANGED=1`)
+    function _postRenderer(LaunchConfig memory c, address core, IArtCoinsTokenV2 t, bool ch) private {
+        address at = rendererAddress(c);
+        if (at.code.length != 0) {
+            _check(
+                "renderer: runtime code is the compiled CoinRenderer",
+                runtimeMatchesArtifact(at, "CoinRenderer"),
+                vm.toString(at)
+            );
+            (bool ok, address bound) = _addr(at, abi.encodeCall(ICoinRenderer.core, ()));
+            _check("renderer: core is the Core", ok && bound == core, vm.toString(bound));
+        }
+        _soft(ch, "coin: metadata renderer is the CoinRenderer of the config", t.metadataRenderer() == at, vm.toString(t.metadataRenderer()), "COIN_CHANGED=1");
+        (bool okUri, string memory uri) = _tokenUri(address(t));
+        _soft(
+            ch,
+            "coin: tokenURI returns a json data uri",
+            okUri && _hasPrefix(uri, "data:application/json;base64,"),
+            string.concat(vm.toString(bytes(uri).length), " bytes"),
+            "COIN_CHANGED=1"
+        );
+    }
+
+    /// @dev the coin's `tokenURI()` through a staticcall bounded by `URI_READ_GAS`. `ok` is false when the call fails, runs
+    /// out of gas or returns less than an encoded string. the coin encodes the return value
+    function _tokenUri(address coin) internal view returns (bool ok, string memory uri) {
+        bytes memory out;
+        (ok, out) = coin.staticcall{gas: URI_READ_GAS}(abi.encodeCall(IArtCoinsTokenV2.tokenURI, ()));
+        if (ok && out.length >= 64) uri = abi.decode(out, (string));
+        else ok = false;
+    }
+
+    function _hasPrefix(string memory s, string memory p) private pure returns (bool) {
+        bytes memory a = bytes(s);
+        bytes memory b = bytes(p);
+        if (a.length < b.length) return false;
+        for (uint256 i; i < b.length; ++i) {
+            if (a[i] != b[i]) return false;
+        }
+        return true;
     }
 
     /// @dev the allowlist cannot be listed on chain. what is checked: the locker is on it (the factory seeds the

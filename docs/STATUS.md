@@ -31,7 +31,7 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 | 5 | pointRate and valueOf, unit live, one floor, two switches, feeToBuybackBps out, the royalty, the composer (decisions 104 to 107, 111, 112), with the review fixes 5b | done |
 | 6a | statement formats (decision 113), with the review fixes | done |
 | 6b | one State struct, CoreLens deleted, setSale and setCredit (decision 114) | done |
-| 7 | CREATE2 deploy, preflight and postflight trimmed (116 and 70 rows), env vars trimmed, the script tests cut | done |
+| 7 | CREATE2 deploy, preflight and postflight trimmed (118 and 73 rows), env vars trimmed, the script tests cut | done |
 | 8 | the test cut: 983 to 452 tests, every survivor names its promise | done |
 | 9 | the simulator follows | done |
 | 10 | SPEC, RUNBOOK, INTEGRATION, README, AGENTS rewritten; comment references fixed; the simplification review archived | done |
@@ -100,4 +100,4 @@ the first run's two failures were fixed at the root at eab58c7 (`9fb6c65`): the 
 | balance module gas | `redeemStatement` forwards gas to a contract that does not exist yet; measure it against `REDEEM_GAS` when it does |
 | v2 audit | the engine targets the master v2 stack `6d099486` (decision 126). preflight pins its code hashes and constantsHash (`script/LaunchConfig.sol`, `script/config/v2-master.json`); the stack is not yet on mainnet, so the fixture is a fork deployment and a mainnet stack means new addresses and pins |
 | owner key | a stolen owner key moves everything at once (docs/SPEC.md section 11). a multisig owner and watching `SuccessorSet` and `Migrated` are the mitigations |
-| rehearsal gas estimate | `DEPLOY_GAS_ESTIMATE` 18,600,000 was measured at block 26186912 with nine transactions; the freeze re-measures it |
+| rehearsal gas estimate | `DEPLOY_GAS_ESTIMATE` 22,000,000 covers 19,069,638 gas measured on the master stack fixture with eleven transactions (the coin renderer and `setCore` added, decision 127); the freeze re-measures it |
