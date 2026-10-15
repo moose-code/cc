@@ -36,11 +36,8 @@ export function Flywheel() {
   // split of a statement sale after the artist and operator cuts, in bps
   const split = snap ? { buyback: snap.settings.saleToBuybackBps, pot: 10000 - snap.settings.saleToBuybackBps } : undefined;
 
-  let tradeLine = "a share of every trade goes to the engine";
-  if (fee) {
-    tradeLine = `${pct(fee.engineBps)}% of every trade goes to the engine`;
-    if (fee.active) tradeLine += `, ${pct(fee.engineBaseBps)}% once the opening window ends`;
-  }
+  // the standing engine share; the launch fee window is left out of the explainer
+  const tradeLine = fee ? `${pct(fee.engineBaseBps)}% of every trade goes to the engine` : "a share of every trade goes to the engine";
 
   const steps = [
     {
