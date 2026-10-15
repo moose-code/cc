@@ -3,12 +3,15 @@ import { IBM_Plex_Mono } from "next/font/google";
 import { Providers } from "./providers";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
+import { siteDescription, siteName, siteUrl } from "@/lib/site";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "credits engine",
-  description:
-    "an erc20 whose swap fees buy credits, compose them into statements, and sell each at a falling price. independent dashboard.",
+  metadataBase: new URL(siteUrl),
+  title: { default: siteName, template: `%s · ${siteName}` },
+  description: siteDescription,
+  openGraph: { siteName, type: "website", locale: "en_US", title: siteName, description: siteDescription },
+  twitter: { card: "summary_large_image", title: siteName, description: siteDescription },
 };
 
 const plex = IBM_Plex_Mono({

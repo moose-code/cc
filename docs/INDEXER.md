@@ -343,6 +343,16 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 
 Live only: slot0, quoter, hook fee, balances, allowances, receipts. Phase 2 adds I `price_hourly` for a 24 h change and a chart, replacing the archive `getSlot0` read.
 
+### 9.8 page metadata and share images
+
+Server side (`web/lib/meta.ts`), cached 60 s, each source under a 2.5 s timeout. The indexer is read first; the chain second.
+
+| field | source |
+|---|---|
+| credit and statement title, rating, state, format name | I `credit`, `statement` row (`score`, `rating`, `state`, `formatName`) |
+| token art of the share image | I `tokenUri`; L `tokenURI` when the row is absent |
+| held and composed counts on the index share images | I count of `credit` rows in `held`, count of `statement` rows |
+
 ## 10. deploy
 
 One path, as in shapes PR #59 and the owner's deploy rule:
