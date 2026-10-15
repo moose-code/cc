@@ -1,6 +1,5 @@
 "use client";
 
-import { statementSaleSplit } from "@/lib/sale-split";
 import { Fragment } from "react";
 import { STATEMENT_SIZE } from "@/lib/config";
 import { useFeed } from "@/lib/data";
@@ -34,7 +33,8 @@ export function Flywheel() {
 
   const creditId = latest.find((e) => e.tile?.kind === "credit")?.tile?.id;
   const filled = snap ? Number(snap.pileSize % BigInt(STATEMENT_SIZE)) : 0;
-  const split = snap ? statementSaleSplit(snap.settings) : undefined;
+  // split of a statement sale after the artist and operator cuts, in bps
+  const split = snap ? { buyback: snap.settings.saleToBuybackBps, pot: 10000 - snap.settings.saleToBuybackBps } : undefined;
 
   let tradeLine = "a share of every trade goes to the engine";
   if (fee) {
@@ -140,11 +140,11 @@ export function Flywheel() {
             <div className="fw-ret-end" aria-hidden />
             <div className="fw-split">
               <span>
-                <b>{pct(split.pot * 100)}%</b> of statement sales back to the pot
+                <b>{pct(split.pot)}%</b> of statement sales back to the pot
               </span>
               <i aria-hidden>·</i>
               <span>
-                <b>{pct(split.buyback * 100)}%</b> buys and burns $CC
+                <b>{pct(split.buyback)}%</b> buys and burns $CC
               </span>
             </div>
           </>
