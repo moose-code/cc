@@ -21,7 +21,7 @@ MASTER_DUMP="${MASTER_DUMP:-script/config/stack-master-26158000.hex}"
 # the local node is chain id 31337 for both stacks. the master dump is state, not a chain id (it was built on a chain
 # id 1 fork, which the forge scripts re-enter with --chain-id 1 against this 31337 node). the owner's wallet and the
 # web local mode key on 31337, so a chain id 1 node would make the wallet send to real mainnet.
-CHAIN_ID=31337
+CHAIN_ID="${CHAIN_ID:-31337}"   # 1 lets Seaport accept the signatures of live OpenSea orders
 
 args=(
   --fork-url "$FORK_URL"
