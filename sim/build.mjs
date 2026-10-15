@@ -2,7 +2,13 @@
 import fs from 'node:fs';
 const here = new URL('./', import.meta.url).pathname;
 const rd = (f) => fs.readFileSync(here + f, 'utf8');
-const engine = rd('engine.js').replace(/^export /gm, '');
+// the browser build cannot read the filesystem: strip the node-only import and inline script/config/mainnet.json as
+// LAUNCH_RAW, the same source engine.js reads under node, so neither path hand copies a launch value
+const cfgText = rd('../script/config/mainnet.json').trim();
+const engine = rd('engine.js')
+  .replace(/^import .*\/\/ build-strip$/gm, '')
+  .replace(/^export const LAUNCH_RAW = .*\/\/ build-inline$/m, `const LAUNCH_RAW = ${cfgText};`)
+  .replace(/^export /gm, '');
 const ui = ['page.ui1.js', 'page.ui2.js', 'page.ui3.js', 'page.ui4.js'].map(rd).join('\n');
 const html = [
   '<title>Credits Engine Simulator</title>',

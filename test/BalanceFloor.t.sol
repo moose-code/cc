@@ -53,6 +53,18 @@ contract BalanceFloorTest is Fixture {
         assertEq(xt.balanceOf(user) - before, floorPay, "ran at the floor rate at the floor par");
     }
 
+    // promise: SPEC 1 an available far below the floor par refuses the batch with PotTooSmall, never a panic
+    /// the state the InvariantsSalePhase2Deep counterexample reached: available a few wei (8_000_001), orders of
+    /// magnitude below a credit's floor par, with the bid on and a multi credit batch. the rate clamp collapses to
+    /// zero, below the floor, so `sellForBalance` refuses the whole batch
+    function test_sellForBalanceRefusesWithTinyAvailable() public {
+        mod.setAvailable(8_000_001);
+        uint256[] memory ids = _credits(user, 3);
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSignature("PotTooSmall()"));
+        core.sellForBalance(ids);
+    }
+
     /// one credit owned by `who` whose score is at most `cap`, with the core approved
     function _creditAtMostRefScore(address who, uint256 cap) internal returns (uint256[] memory ids) {
         for (uint256 i; i < 64; ++i) {
