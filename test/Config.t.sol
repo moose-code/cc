@@ -44,6 +44,7 @@ contract ConfigTest is Fixture {
 
     /// the json file is the default config plus the launch inputs the owner supplied (owner, creator, name, the creator
     /// payee, the artist) and the salt, keccak256 of "CC", and the live v2 stack of script/config/v2-mainnet.json
+    // promise: json equals default config
     function test_jsonEqualsDefaultConfig() public view {
         LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
         LaunchConfig memory d = defaultConfig();
@@ -111,6 +112,7 @@ contract ConfigTest is Fixture {
     /// factory needs minProtocolSkimShareBps at most 10_000 - 9_000 = 1000 (`BPS - bountyBps - minProtocolSkimShareBps >= 0`
     /// in `_validateFee`). Core inflow = bounty leg = 0.1 * 9_000 / 10_000 = 0.09 ether (900 bps, 9.0 points). payeePpm is 0
     /// at launch, so the engine keeps the whole Core inflow
+    // promise: the launch fee split derived from the v2 hook math (`ArtCoinsHookV2._split`), per 1 ether of volume
     function test_feeSplitDerivation() public pure {
         LaunchConfig memory d = defaultConfig();
         uint256 v = 1 ether;
@@ -129,6 +131,7 @@ contract ConfigTest is Fixture {
     }
 
     /// the deploy refuses to run while any placeholder is unset or the rate is out of bounds
+    // promise: the deploy refuses to run while any placeholder is unset or the rate is out of bounds
     function test_deployRefusesPlaceholders() public {
         LaunchConfig memory c = defaultConfig();
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "owner"));
@@ -198,6 +201,7 @@ contract ConfigTest is Fixture {
         revert("row missing");
     }
 
+    // promise: preflight passes
     function test_preflightPasses() public {
         address d2 = _funded();
         _pre(lc, d2);
@@ -205,6 +209,7 @@ contract ConfigTest is Fixture {
     }
 
     /// each pinned code hash has a row. appending one byte of code to a contract fails exactly its row
+    // promise: each pinned code hash has a row
     function test_preflightPinsTheLiveCodeHashes() public {
         address d2 = _funded();
         address[9] memory at = [
@@ -231,6 +236,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "", "unchanged code passes");
     }
 
+    // promise: preflight simulates the launch and leaves no trace
     function test_preflightSimulatesTheLaunchAndLeavesNoTrace() public {
         address d2 = _funded();
         uint256 nonce = vm.getNonce(d2);
@@ -242,6 +248,7 @@ contract ConfigTest is Fixture {
     }
 
     /// owner and creator may be one address, a warning and never a failure. a stack address as owner or creator fails
+    // promise: owner and creator may be one address, a warning and never a failure
     function test_warnOwnerIsTheCreator() public {
         address d2 = _funded();
         string memory w = "warn: owner differs from creator";
@@ -264,6 +271,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "rule: owner, creator and payee are not dead or stack addresses");
     }
 
+    // promise: preflight seaport recipients
     function test_preflightSeaportRecipients() public {
         address d2 = _funded();
         LaunchConfig memory c = lc;
@@ -305,6 +313,7 @@ contract ConfigTest is Fixture {
 
     // ------------------------------------------------------------------ the owner commands the launch needs on v2
 
+    // promise: preflight protocol skim floor against the bounty
     function test_preflightProtocolSkimFloorAgainstTheBounty() public {
         address d2 = _funded();
         vm.prank(owner);
@@ -332,6 +341,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "");
     }
 
+    // promise: preflight the factory must be deprecated and owned by the deployer
     function test_preflightTheFactoryMustBeDeprecatedAndOwnedByTheDeployer() public {
         address d2 = _funded();
         vm.prank(owner);
@@ -351,6 +361,7 @@ contract ConfigTest is Fixture {
         assertEq(list, "factory: owner is the deployer, factory: deployTokenAsOwner accepts the config (simulated)");
     }
 
+    // promise: preflight enabled stack
     function test_preflightEnabledStack() public {
         address d2 = _funded();
         vm.startPrank(owner);
@@ -372,6 +383,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "factory: mev module enabled, factory: deployTokenAsOwner accepts the config (simulated)");
     }
 
+    // promise: postflight checks the adapters
     function test_postflightChecksTheAdapters() public {
         assertEq(seaportAdapter, seaportAdapterAddress(address(core), lc.seaportRecipients), "CREATE2 address");
         assertEq(strategyAdapter, strategyAdapterAddress(), "CREATE2 address");
@@ -415,6 +427,7 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), "core: no locks, no balance module");
     }
 
+    // promise: postflight passes on the fixture
     function test_postflightPassesOnTheFixture() public {
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "");
@@ -427,6 +440,7 @@ contract ConfigTest is Fixture {
 
     /// V2R-5: the postflight compares the runtime code of the Core and of the controller with the compiled artifacts
     /// (immutables and the library address masked). one changed byte in either fails exactly its row
+    // promise: postflight compares the core and controller runtime
     function test_FIXED_postflightComparesTheCoreAndControllerRuntime() public {
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "");
@@ -451,6 +465,7 @@ contract ConfigTest is Fixture {
 
     /// the coin's image and description are read back and compared with the config. the admin changing them fails the
     /// rows until the operator names the change (COIN_CHANGED=1), then they are warnings
+    // promise: the coin's image and description are read back and compared with the config
     function test_FIXED_postflightReadsTheCoinImageAndDescription() public {
         string memory imageRow = "coin: image equals the config";
         string memory descRow = "coin: description equals the config";
@@ -487,6 +502,7 @@ contract ConfigTest is Fixture {
     // preflight: image and description inside the coin caps (2048 and 4096 bytes), filled, free of `placeholder` in any
     // letter case, not `todo` or `tbd` as the whole value, and the image carries a scheme (a failure on chain id 1, a
     // warning elsewhere). the rule is `metadataRowPasses`, shared with the rehearsal
+    // promise: preflight image and description
     function test_preflightImageAndDescription() public {
         address d2 = _funded();
         string memory cap = "rule: image at most 2048 bytes, description at most 4096 bytes";
@@ -573,6 +589,7 @@ contract ConfigTest is Fixture {
     }
 
     /// the config parser reads `image` and `description` as strings
+    // promise: the config parser reads `image` and `description` as strings
     function test_jsonParsesImageAndDescription() public view {
         string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
         j = vm.replace(j, '"image": ""', '"image": "ipfs://cid/cc.png"');
@@ -583,6 +600,7 @@ contract ConfigTest is Fixture {
     }
 
     // the readbacks name the row of the field a config changes, and the Core address row catches any change of the config
+    // promise: the readbacks name the row of the field a config changes, and the Core address row catches any change of the config
     function test_postflightCatchesEveryMismatch() public {
         string memory id = "core: address is the CREATE2 address of the config and the deployer";
         LaunchConfig memory c = lc;
@@ -610,6 +628,7 @@ contract ConfigTest is Fixture {
     }
 
     /// the two json files collapsed into one: the settings block is inside the hash, and so is the stack
+    // promise: the two json files collapsed into one: the settings block is inside the hash, and so is the stack
     function test_hashCoversSettingsAndStack() public view {
         bytes32 h = configHash(lc);
         for (uint256 i; i < SettingsFields.N; ++i) {
@@ -632,6 +651,7 @@ contract ConfigTest is Fixture {
     // ------------------------------------------------------------------ settings
 
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
+    // promise: the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
         uint256[28] memory lo = SettingsFields.lo();
         uint256[28] memory hi = SettingsFields.hi();
@@ -657,6 +677,7 @@ contract ConfigTest is Fixture {
     }
 
     /// preflight names the failing settings row, the deploy guard refuses, postflight reads each field back
+    // promise: preflight names the failing settings row, the deploy guard refuses, postflight reads each field back
     function test_settingsRowsAndGuard() public {
         address d2 = _funded();
         LaunchConfig memory c = lc;
@@ -682,6 +703,7 @@ contract ConfigTest is Fixture {
         this.requireExt(c);
     }
 
+    // promise: postflight reads back every setting
     function test_postflightReadsBackEverySetting() public {
         for (uint256 i; i < SettingsFields.N; ++i) {
             LaunchConfig memory c = lc;
@@ -693,6 +715,7 @@ contract ConfigTest is Fixture {
     }
 
     /// after the owner changed the settings, postflight fails until the operator says so with SETTINGS_CHANGED=1
+    // promise: after the owner changed the settings, postflight fails until the operator says so with SETTINGS_CHANGED=1
     function test_postflightAfterTheOwnerChangedTheSettings() public {
         Settings memory s = core.settings();
         s.saleFloorBps = 8_000;
@@ -706,6 +729,7 @@ contract ConfigTest is Fixture {
 
     /// NEXT 26: the owner account is an EIP 7702 delegation to Calibur with an empty key registry. each of the three
     /// rows fails alone for its own change of state
+    // promise: NEXT 26: the owner account is an EIP 7702 delegation to Calibur with an empty key registry
     function test_preflightPinsTheOwnerDelegation() public {
         address d2 = _funded();
         string memory codeRow = "owner: code is the pinned EIP 7702 delegation";
@@ -741,6 +765,7 @@ contract ConfigTest is Fixture {
 
     /// FLOW decisions 46 and 69: preflight fails unless `settings.rateCap` is 3 times `rateStart`. the Core and the deploy guard
     /// accept other ratios, so only this row stops a `rateStart` edit that leaves the old cap
+    // promise: FLOW decisions 46 and 69: preflight fails unless `settings.rateCap` is 3 times `rateStart`
     function test_preflightRateCapIsThreeTimesRateStart() public {
         string memory row = "rateCap is 3 times rateStart";
         address d2 = _funded();
@@ -774,6 +799,7 @@ contract ConfigTest is Fixture {
     /// the rate bounds rows fail on their own: a 3 times pair keeps the ratio row passing while rateStart or rateCap is
     /// out of its bounds. rateStart bounds are 1e13 to 1e18 and the settings accept the same range for rateCap, so a
     /// 3 times pair has a rateStart inside its bounds only up to 3.33e17
+    // promise: the rate bounds rows fail on their own: a 3 times pair keeps the ratio row passing while rateStart or rateCap is out of its bounds
     function test_preflightRateBoundsFailWithoutTheRatioRow() public {
         address d2 = _funded();
         LaunchConfig memory c = lc;

@@ -216,11 +216,20 @@ library CoreLib {
         // the artist cut is never nonzero while the artist is the zero address, so a sale never pushes it to address(0).
         // the constructor sets the artist before its own call here, so the launch config must carry a real artist
         if (ns.saleToArtistBps != 0 && c.artist == address(0)) revert ZeroAddress();
+        // the sale floor can never be above the start: with a controller set, bound `saleFloorBps` at or below its
+        // `markupBps`. a controller that does not answer in range is skipped; the controller's own setter guards the
+        // other direction
+        address ctrl = c.controller;
+        if (ctrl != address(0)) {
+            uint256 markup = _markupView(ctrl);
+            if (markup != 0 && ns.saleFloorBps > markup) revert BadSetting("saleFloorBps");
+        }
         bool wasOn = c.settings.balanceBidOn;
         // credit the elapsed climb of the balance instance under the old settings and clamp before the new ones apply,
-        // so a settings change compares against the climbed value, not a stale checkpoint. while the bid is off the
-        // instance does not climb (the read reports the floor), so the checkpoint is skipped
-        if (wasOn) _balanceCheckpointNow(c);
+        // so a settings change compares against the climbed value, not a stale checkpoint. with the bid off or no usable
+        // module the instance does not climb, so the checkpoint is skipped and `usable` stays false
+        bool usable;
+        if (wasOn) usable = _balanceCheckpointNow(c);
         uint256 oldHalf = c.settings.peakHalfLife;
         if (oldHalf != 0 && ns.peakHalfLife != oldHalf) {
             _restatePeak(c.anchor, oldHalf);
@@ -228,10 +237,9 @@ library CoreLib {
         }
         c.settings = ns;
         uint256 floor = BPS - ns.balanceBidMarginBps;
-        // turning the bid on opens it at the floor: a full reset of the instance and its clock. otherwise a floor
-        // raised above the stored rate (and the first set, where the stored rate is zero) resets to the floor, and a
-        // lowered floor leaves the climbed rate
-        if (!wasOn && ns.balanceBidOn) _resetBalanceToFloor(c, floor);
+        // the bid turning on, and the bid on with no usable module, open the instance at the floor with a fresh clock.
+        // otherwise a floor at or above the stored rate resets to the floor, and a lower floor leaves the climbed rate
+        if (ns.balanceBidOn && (!wasOn || !usable)) _resetBalanceToFloor(c, floor);
         else _resetBalanceToFloorIfBelow(c, floor);
         emit SettingsSet(ns);
     }
@@ -244,16 +252,19 @@ library CoreLib {
         a.peakTime = uint64(block.timestamp);
     }
 
-    /// climbs the balance instance to now with the live clamp (available as bps of par) and stores the price state. a
-    /// missing or failing module leaves the clamp at the 10_000 cap
-    function _balanceCheckpointNow(State storage c) private {
-        uint256 clampTo = BPS;
+    /// climbs the balance instance to now with the live clamp (available as bps of par) and stores the price state.
+    /// returns true when a usable module climbed it. with no usable module the clamp is zero, the instance does not
+    /// climb, and this returns false so the caller pins the instance to the floor
+    function _balanceCheckpointNow(State storage c) private returns (bool) {
         address module = c.balanceModule;
         if (module != address(0)) {
             (uint256 unit, bool ok) = _unitView(module);
-            if (ok) clampTo = _toBps(_availableView(module), uint256(c.settings.refScore) * unit);
+            if (ok) {
+                _balanceCheckpoint(c.balance, _toBps(_availableView(module), uint256(c.settings.refScore) * unit));
+                return true;
+            }
         }
-        _balanceCheckpoint(c.balance, clampTo);
+        return false;
     }
 
     /// resets the balance bid instance to `floor` when its stored rate is below `floor`
@@ -280,8 +291,9 @@ library CoreLib {
     }
 
     /// @notice the price state and the read of the eth rate (wei per credit) at `nowTs`, from the stored rate `r` of
-    /// checkpoint time `t`. The price state climbs toward min(`rateCap`, ceiling, pot) and holds a value above that
-    /// bound. Below the recovery level `peak * (10_000 - recoveryGapBps) / 10_000` it compounds
+    /// checkpoint time `t`. The price state climbs toward min(`rateCap`, ceiling, pot). A stored rate at or above the
+    /// ceiling is read at the ceiling; a rate above the availability clamp does not climb. Below the recovery level
+    /// `peak * (10_000 - recoveryGapBps) / 10_000` it compounds
     /// `recoveryClimbPerMinBps` per minute, at or above the level `climbPerMinBps`. The ceiling is `ceilBps` of
     /// `max(last fill rate, peak now)` grown by `idleLoosenBps` per full
     /// 10 minutes since `anchorTime`, where `peak now` is `peakRate` halved over the time since `peakTime`. The clamp is
@@ -774,23 +786,41 @@ library CoreLib {
         return scoreOf(id) * unit * rate / BPS;
     }
 
-    /// the balance bid rate (bps of par) and the live unit. while the bid is off the instance does not climb and the
-    /// rate is the floor `10_000 - balanceBidMarginBps`. while on it is the balance instance price state climbed with
-    /// cap 10_000, clamped to available as bps of par. with no module or a failed unit read there is no available clamp
-    /// and the unit is zero
+    /// the balance bid rate (bps of par) and the live unit. with the bid off or no usable module the instance does not
+    /// climb and the rate is the floor `10_000 - balanceBidMarginBps`. with the bid on and a usable module it is the
+    /// balance instance price state climbed with cap 10_000, clamped to available as bps of par. with no module or a
+    /// failed unit read the unit is zero
     function _balanceRead() private view returns (uint256 rate, uint256 unit) {
         State storage c = state();
-        uint256 clampTo = BPS;
+        uint256 clampTo;
+        bool usable;
         address module = c.balanceModule;
         if (module != address(0)) {
             bool ok;
             (unit, ok) = _unitView(module);
-            if (ok) clampTo = _toBps(_availableView(module), uint256(c.settings.refScore) * unit);
+            if (ok) {
+                clampTo = _toBps(_availableView(module), uint256(c.settings.refScore) * unit);
+                usable = true;
+            }
         }
-        if (!c.settings.balanceBidOn) return (BPS - c.settings.balanceBidMarginBps, unit);
+        if (!c.settings.balanceBidOn || !usable) return (BPS - c.settings.balanceBidMarginBps, unit);
         Rate storage bal = c.balance;
         (, rate,) =
             _climb(bal.anchor, bal.rateAtCheckpoint, clampTo, BPS, bal.lastFillTime, bal.checkpointTime, block.timestamp);
+    }
+
+    /// a non reverting bounded read of the controller's `markupBps()`: the start multiplier in bps, or 0 when the
+    /// answer is short or outside the 10_000 to 40_000 range. used to bound `saleFloorBps` at or below the start
+    function _markupView(address ctrl) private view returns (uint256 markup) {
+        bytes4 sel = bytes4(keccak256("markupBps()"));
+        bool ok;
+        assembly ("memory-safe") {
+            mstore(0, sel)
+            ok := staticcall(READ_GAS, ctrl, 0, 4, 0, 32)
+            ok := and(ok, iszero(lt(returndatasize(), 32)))
+            markup := mload(0)
+        }
+        if (!ok || markup < 10_000 || markup > 40_000) markup = 0;
     }
 
     /// a non reverting read of `unitPerPoint()`: (unit, true) on a 32 byte answer in [1, uint128 max], else (0, false)

@@ -47,6 +47,7 @@ contract RehearsalTest is Test, ProdDeployer {
         assertEq(a.code.length, 0, "account has code on the fork");
     }
 
+    // promise: rehearsal
     function test_rehearsal() public {
         if (bytes(vm.envOr("REHEARSAL", string(""))).length == 0) vm.skip(true);
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));

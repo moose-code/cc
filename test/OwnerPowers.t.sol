@@ -130,7 +130,7 @@ contract OwnerFormerQueueTest is OwnerBase {
         vm.prank(stranger);
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setController(address(0x1234));
-        _setController(address(0x1234));
+        _setController(address(_scripted()));
         _setController(address(ctl));
         assertEq(core.controller(), address(ctl));
     }

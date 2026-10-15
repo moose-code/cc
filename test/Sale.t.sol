@@ -72,6 +72,18 @@ abstract contract SaleBase is Fixture {
         _setSettings(s);
     }
 
+    /// decision 124 keeps the floor at or below the start. drops the floor to its minimum, moves the start
+    /// (`markupBps`), then sets the floor, so every intermediate state holds floor at or below the start
+    function _markupThenFloor(uint16 markup, uint16 floor) internal {
+        _floorBps(1_000);
+        Sale memory sale = _sale();
+        sale.markupBps = markup;
+        if (sale.startCapBps < markup) sale.startCapBps = markup;
+        vm.prank(owner);
+        ctl.setSale(sale);
+        _floorBps(floor);
+    }
+
     function _buybackBps(uint16 bps) internal {
         Settings memory s = core.settings();
         s.saleToBuybackBps = bps;
@@ -207,18 +219,18 @@ contract SaleCurveTest is SaleShapeBase {
 }
 
 contract SaleFloorTest is SaleBase {
-    // promise: SPEC 1 a raise of saleFloorBps reaches every held statement at once
-    /// the floor is read live: a raised floor lifts the ask of a held statement at once, a lowered floor gives way
-    /// to the curve again, and the buy pays the lifted price
+    // promise: SPEC 1 a raise of saleFloorBps reaches every held statement at once (decision 124 raises the start with it)
+    /// the floor is read live: a floor raised to the start lifts the ask of a held statement at once, a lowered floor
+    /// gives way to the curve again, and the buy pays the lifted price
     function test_floor_followsTheSettingAtOnce() public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
         assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000);
-        _floorBps(20_000);
+        _markupThenFloor(20_000, 20_000);
         assertEq(ctl.priceOf(sid), cost * 20_000 / 10_000, "a raised floor reaches the held statement");
-        _floorBps(1_000);
+        _markupThenFloor(15_000, 1_000);
         assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000, "a lowered floor gives way to the curve");
-        _floorBps(20_000);
+        _markupThenFloor(20_000, 20_000);
         address buyer = address(0xB0B);
         vm.deal(buyer, 100 ether);
         vm.prank(buyer);
@@ -785,18 +797,20 @@ contract SaleAnchorTest is SaleShapeBase {
     }
 
     // promise: SPEC 1 the start cap bounds the anchor
-    /// a sale above the cap (a hard floor above it) cannot take the anchor past the cap
+    /// a cap lowered below the anchor resets the anchor to the cap
     function test_anchor_neverPassesTheCap() public {
-        uint256 sid = _composeN(1)[0];
-        _saleSettings(12_000, 12_000, 12, 7_500);
-        _floorBps(30_000);
-        _age(sid, 0);
-        uint256 price = ctl.priceOf(sid);
-        assertEq(price, _cost(sid) * 30_000 / 10_000, "the hard floor is above the cap");
+        _saleSettings(40_000, 40_000, 12, 10_000);
+        vm.prank(owner);
+        ctl.setAnchorBps(40_000);
+        assertEq(ctl.anchorBps(), 40_000, "the anchor is at the cap");
+        Sale memory s = _sale();
+        s.markupBps = 12_000;
+        s.startCapBps = 12_000;
         vm.expectEmit(address(ctl));
-        emit IControllerV1.AnchorMoved(sid, 30_000, 12_000);
-        _pay(buyer, sid, price);
-        assertEq(ctl.anchorBps(), 12_000);
+        emit IControllerV1.AnchorBpsSet(12_000);
+        vm.prank(owner);
+        ctl.setSale(s);
+        assertEq(ctl.anchorBps(), 12_000, "the start cap bounds the anchor");
     }
 
     // promise: SPEC 1 the sale is recorded at the asking price
@@ -849,9 +863,10 @@ contract SaleDecayTest is SaleShapeBase {
         ctl.setSale(s);
         vm.stopPrank();
         assertEq(ctl.priceOf(sid), cost * 13_125 / 10_000, "decay 24 hours: hour 6 is a quarter of the way down");
-        _floorBps(20_000);
-        assertEq(ctl.priceOf(sid), cost * 20_000 / 10_000, "a floor above the curve lifts it");
-        _floorBps(7_500);
+        _markupThenFloor(20_000, 20_000);
+        assertEq(ctl.priceOf(sid), cost * 20_000 / 10_000, "a floor at the start lifts the ask");
+        _markupThenFloor(15_000, 7_500);
+        s = _sale();
         s.decayHours = 12;
         vm.prank(owner);
         ctl.setSale(s);

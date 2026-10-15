@@ -57,7 +57,22 @@ export function useNow(ms = 1000): number {
 
 // ---- engine snapshot ------------------------------------------------------------
 
+// Runs `read` with the latest block number so every RPC of one quote sees the same state. A node that refuses the
+// pinned read (pruned or not yet synced at that block) gets one unpinned retry, reported as pinned: false.
+async function atBlock<T>(client: Client, read: (blockNumber?: bigint) => Promise<T>): Promise<{ value: T; pinned: boolean }> {
+  try {
+    return { value: await read(await client.getBlockNumber()), pinned: true };
+  } catch {
+    return { value: await read(), pinned: false };
+  }
+}
+
 export async function readSnapshot(client: Client, coreAddr: Address) {
+  const { value, pinned } = await atBlock(client, (blockNumber) => snapshotAt(client, coreAddr, blockNumber));
+  return { ...value, pinned };
+}
+
+async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigint) {
   const c = { address: coreAddr, abi: coreAbi } as const;
   const [
     ethRate,
@@ -84,6 +99,7 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     artist,
   ] = await client.multicall({
     ...mc,
+    blockNumber,
     allowFailure: false,
     contracts: [
       { ...c, functionName: "ethRate" },
@@ -116,19 +132,25 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
   const toRedeemBurn = ((income - toPayee) * BigInt(settings.feeToRedeemBurnBps)) / 10000n;
   const potWithPending = ethPot + income - toPayee - toRedeemBurn;
   // the balance token is held by the module, not the Core: the pot of the bid is the module's available() holding
-  const [balanceAvailable, balanceUnit] = balanceModule !== zeroAddress
+  // A failing module read leaves both undefined and the rest of the snapshot intact; consumers show the balance side
+  // as unavailable (the Core treats a failing module as a closed balance bid).
+  const [availableRes, unitRes] = balanceModule !== zeroAddress
     ? await client.multicall({
         ...mc,
-        allowFailure: false,
+        blockNumber,
+        allowFailure: true,
         contracts: [
           { address: balanceModule, abi: moduleAbi, functionName: "available" },
           { address: balanceModule, abi: moduleAbi, functionName: "unitPerPoint" },
         ] as const,
       })
-    : [0n, 0n];
+    : [{ status: "success", result: 0n }, { status: "success", result: 0n }];
+  const balanceAvailable = availableRes.status === "success" && unitRes.status === "success" ? (availableRes.result as bigint) : undefined;
+  const balanceUnit = availableRes.status === "success" && unitRes.status === "success" ? (unitRes.result as bigint) : undefined;
   const k = { address: controller, abi: controllerAbi } as const;
   const [creditSaleOn, creditWindow, pointRate, page] = await client.multicall({
     ...mc,
+    blockNumber,
     allowFailure: false,
     contracts: [
       { ...k, functionName: "creditSaleOn" },
@@ -335,13 +357,25 @@ const seedAbi = parseAbi(["function seedOf(uint256 id) view returns (bytes21)", 
 // Eth Core.sellForEth pays for n credits sold in one call at chain time `now`
 // (CoreLib.drop and CoreLib.climb replayed in sell.ts). Reads ethPrice,
 // floorRate, the pot with the unbooked fee share the first book adds (Core._book,
-// _split), the settings and the minute anchor.
-export async function sellQuote(client: Client, ids: bigint[], now: number): Promise<bigint> {
+// _split), the settings and the minute anchor. Every read is pinned to one block (atBlock); `pinned` is false when
+// the node refused the pinned reads and the quote came from unpinned ones.
+export interface SellQuote {
+  amount: bigint;
+  pinned: boolean;
+}
+
+export async function sellQuote(client: Client, ids: bigint[], now: number): Promise<SellQuote> {
+  const { value, pinned } = await atBlock(client, (blockNumber) => sellQuoteAt(client, ids, now, blockNumber));
+  return { amount: value, pinned };
+}
+
+async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumber?: bigint): Promise<bigint> {
   const c = { address: core!, abi: coreAbi } as const;
-  const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ANCHOR_SLOT + i, { size: 32 }) });
+  const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ANCHOR_SLOT + i, { size: 32 }), blockNumber });
   const [[price, peak, ethPot, toBuyback, redeemBurn, payeeOn, st, held], startWord, bucketWord, scores] = await Promise.all([
     client.multicall({
       ...mc,
+      blockNumber,
       allowFailure: false,
       contracts: [
         { ...c, functionName: "ethPrice" },
@@ -356,7 +390,7 @@ export async function sellQuote(client: Client, ids: bigint[], now: number): Pro
     }),
     word(1n),
     word(2n),
-    creditScores(client, ids),
+    creditScores(client, ids, blockNumber),
   ]);
   const booked = ethPot + toBuyback + redeemBurn;
   const income = held > booked ? held - booked : 0n;
@@ -378,10 +412,11 @@ export async function sellQuote(client: Client, ids: bigint[], now: number): Pro
 }
 
 // the score of each credit id, read the way the Core reads it (CreditScore.scoreOf(seedOf, timestampOf))
-async function creditScores(client: Client, ids: bigint[]): Promise<bigint[]> {
+async function creditScores(client: Client, ids: bigint[], blockNumber?: bigint): Promise<bigint[]> {
   if (ids.length === 0) return [];
   const seeds = await client.multicall({
     ...mc,
+    blockNumber,
     allowFailure: false,
     contracts: ids.flatMap((id) => [
       { address: credits, abi: seedAbi, functionName: "seedOf", args: [id] },
@@ -390,6 +425,7 @@ async function creditScores(client: Client, ids: bigint[]): Promise<bigint[]> {
   });
   return client.multicall({
     ...mc,
+    blockNumber,
     allowFailure: false,
     contracts: ids.map((_, i) => ({ address: CREDIT_SCORE, abi: scoreAbi, functionName: "scoreOf", args: [seeds[2 * i] as `0x${string}`, seeds[2 * i + 1] as bigint] }) as const),
   });
@@ -446,7 +482,7 @@ export function useSellQuote(ids: bigint[], now: number) {
   const client = usePublicClient();
   const minute = Math.floor(now / 60);
   const key = ids.map(String).join(",");
-  return useQuery<bigint | undefined>({
+  return useQuery<SellQuote | undefined>({
     queryKey: ["sell-quote", key, minute],
     enabled: engineDeployed && Boolean(client) && ids.length > 0,
     refetchInterval: 15000,
@@ -457,7 +493,7 @@ export function useSellQuote(ids: bigint[], now: number) {
 // the balance token total sellForBalance pays for `scores` (in order), replaying the per-credit drop from the snapshot
 // rate and settings the way sellQuote replays the eth bid. the sell sets minOut to a share of this
 export function balanceQuote(snap: Snapshot, scores: bigint[]): bigint {
-  if (scores.length === 0) return 0n;
+  if (scores.length === 0 || snap.balanceUnit === undefined) return 0n;
   return replayBalance(scores, {
     rate: snap.balanceRate,
     unit: snap.balanceUnit,

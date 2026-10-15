@@ -72,6 +72,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     }
 
     // a deploy that stopped after the Core is finished: the controller, the adapters, the owner calls, the launch
+    // promise: a deploy that stopped after the Core is finished: the controller, the adapters, the owner calls, the launch
     function test_resumeFinishesADeployStoppedAfterTheCore() public {
         _sendLibrary();
         vm.prank(deployer);
@@ -82,6 +83,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     }
 
     // a deploy that stopped before the launch sends only the launch
+    // promise: a deploy that stopped before the launch sends only the launch
     function test_resumeSendsOnlyTheLaunchWhenTheRestIsOnChain() public {
         _sendLibrary();
         vm.startPrank(deployer);
@@ -100,6 +102,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     }
 
     // a resume needs a Core of this config and deployer that exists and has no coin yet
+    // promise: a resume needs a Core of this config and deployer that exists and has no coin yet
     function test_resumeRefusesWhatItCannotFinish() public {
         _sendLibrary();
         vm.expectRevert(abi.encodeWithSelector(NotStarted.selector));
@@ -126,6 +129,7 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     }
 
     // the signer is the deployer the operator named, the factory owner and the config owner
+    // promise: the signer is the deployer the operator named, the factory owner and the config owner
     function test_signerGuards() public {
         this.requireDeployerExt(deployer, deployer);
         vm.expectRevert(abi.encodeWithSelector(DeployerMismatch.selector, deployer, creator));

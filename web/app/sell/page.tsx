@@ -28,7 +28,8 @@ export default function SellPage() {
   const bid = snap?.ethRate ?? 0n;
   const pot = snap?.ethPot ?? 0n;
   const buyableNow = bid > 0n ? Number(pot / bid) : 0;
-  const balanceBid = Boolean(snap?.balanceOn && snap.settings.balanceBidOn);
+  // the module reads can fail; the balance side is then unavailable and the eth side renders alone
+  const balanceBid = Boolean(snap?.balanceOn && snap.settings.balanceBidOn && snap.balanceUnit !== undefined);
   const now = useNow(5000);
   const selectedIds = [...selected].map((id) => BigInt(id));
   const quote = useSellQuote(selectedIds, now);
@@ -44,7 +45,7 @@ export default function SellPage() {
   // each credit's own eth bid, ethRate() * score / refScore (one multicall of Core.bidOf)
   const { data: bids } = useBidsOf(mine.map((id) => BigInt(id)), now);
   const bidForId = (id: number): bigint => bids?.[id.toString()] ?? 0n;
-  const total = quote.data ?? mine.filter((id) => selected.has(id)).reduce((t, id) => t + bidForId(id), 0n);
+  const total = quote.data?.amount ?? mine.filter((id) => selected.has(id)).reduce((t, id) => t + bidForId(id), 0n);
   // the per-credit balance payout, score * unitPerPoint * balanceRate / 10_000, derived from the cached scores and the
   // snapshot rate and unit (no extra poll). the batch total replays the per-credit drop (balanceQuote)
   const { data: scores } = useScores(balanceBid ? mine.map((id) => BigInt(id)) : []);
@@ -105,7 +106,7 @@ export default function SellPage() {
               {snap?.balanceOn && (
                 <div className="r">
                   <span>balance in the module</span>
-                  <span>{eth(snap.balanceAvailable)}</span>
+                  <span>{snap.balanceAvailable === undefined ? "unavailable" : eth(snap.balanceAvailable)}</span>
                 </div>
               )}
             </div>
@@ -167,7 +168,7 @@ export default function SellPage() {
                   await approve(write);
                   // each credit pays its own bid (ethRate * score / refScore) and the bid drops per credit sold in one
                   // call: minOut is a share of the whole batch's total, replayed from the contract's rate loop
-                  const expected = await sellQuote(client!, ids(), now);
+                  const expected = (await sellQuote(client!, ids(), now)).amount;
                   await write({ address: core, abi: coreAbi, functionName: "sellForEth", args: [ids(), (expected * MIN_OUT_BPS) / 10000n] });
                   setSelected(new Set());
                 }}

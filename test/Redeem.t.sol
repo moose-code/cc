@@ -176,14 +176,13 @@ contract RedeemTimingTest is RedeemBase {
         assertEq(STATEMENTS.ownerOf(sid), address(mod));
     }
 
-    // promise: INTEGRATION NotEligible when the controller does not answer
-    /// every redemption needs the controller's eligibility answer: a controller that cannot answer makes statements
-    /// ineligible
+    // promise: INTEGRATION NotEligible when the controller reports not at floor
+    /// every redemption needs the controller's eligibility answer: a controller that answers not at floor makes
+    /// statements ineligible
     function test_timing_redemptionNeedsTheController() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        ScriptedController sc = new ScriptedController();
-        sc.setRevertPage(true); // atFloorFlag defaults false, so atFloor returns false
+        ScriptedController sc = new ScriptedController(); // atFloorFlag defaults false, so atFloor returns false
         _setController(address(sc));
         vm.prank(owner);
         core.lockController();

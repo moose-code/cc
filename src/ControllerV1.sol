@@ -122,8 +122,8 @@ contract ControllerV1 is IController {
     // ------------------------------------------------------------------ sale settings, owner, at once
 
     /// sets the five sale settings at once. every field is checked against the bounds of the others in the call:
-    /// `markupBps` 10_000 to 40_000 and at most `startCapBps`; `startCapBps` at least `markupBps`, at most
-    /// 200_000; `decayHours` 1 to 720; `anchorHalfLife` 1 day to 90 days;
+    /// `markupBps` 10_000 to 40_000, at least the core's `saleFloorBps` and at most `startCapBps`; `startCapBps` at
+    /// least `markupBps`, at most 200_000; `decayHours` 1 to 720; `anchorHalfLife` 1 day to 90 days;
     /// `anchorMinCost` 0 to 10 ether. an `anchorBps()` above the new `startCapBps` is lowered to it. a change of
     /// `anchorHalfLife` stores the anchor at the call first, so the new half life applies from now on
     function setSale(Sale calldata v) external onlyOwner {
@@ -135,6 +135,9 @@ contract ControllerV1 is IController {
 
     function _setSale(Sale memory v) private {
         if (v.markupBps < BPS || v.markupBps > 40_000) revert BadSetting("markupBps");
+        // the sale floor can never be above the start: refuse a start below the core's current `saleFloorBps`. the read
+        // is skipped while the core has no code yet, the constructor deployed before its core (the address is predicted)
+        if (address(CORE).code.length != 0 && v.markupBps < _saleFloorBps()) revert BadSetting("markupBps");
         if (v.startCapBps < v.markupBps || v.startCapBps > 200_000) revert BadSetting("startCapBps");
         if (v.decayHours < 1 || v.decayHours > 720) revert BadSetting("decayHours");
         if (v.anchorHalfLife < 1 days || v.anchorHalfLife > 90 days) revert BadSetting("anchorHalfLife");
@@ -205,7 +208,7 @@ contract ControllerV1 is IController {
     }
 
     /// the per-credit score the point rate and the statement reference divide by, in ten-thousandths of a point. the
-    /// Core setting `refScore`, read live so the eth doors and the controller share one source. 1 to 8_000_000
+    /// Core setting `refScore`, read live so the eth doors and the controller share one source. 800_000 to 8_000_000
     function refScore() public view returns (uint32) {
         return ICoreSale(address(CORE)).settings().refScore;
     }

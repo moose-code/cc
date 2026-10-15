@@ -41,7 +41,7 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 
 ## 3. open items
 
-- the launch `artist` address is 0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a in the tracked config; confirm it is the address that should receive the artist cut before launch.
+- the launch config's `image` and `description` are empty owner inputs; the preflight metadata row fails until they are filled with the final content.
 - `coin.lockRecipients()` and `lockSuccessor()`: later owner decisions (RUNBOOK section 4, the lock table). `coin.lockAllowlist()`: the owner's.
 - the owner keeper: post launch, a bounty bot (decision 100).
 - the local seed gives a1 no CC and under a page of credits, so the restyle and the composes are driven by the scenario stages, not the UI; a seed change (one coin and 80 credits to a1) would close that.

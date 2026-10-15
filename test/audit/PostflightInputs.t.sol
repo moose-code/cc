@@ -11,6 +11,7 @@ import {ScriptedController} from "../attackers/ScriptedController.sol";
 contract PostflightInputsTest is Fixture {
     // the Core is the CREATE2 address of the config and the deployer, and stays so after the owner changed the settings,
     // the controller and the owner role
+    // promise: verify inputs do not change after settings or controller change
     function test_FIXED_A02_verifyInputsDoNotChangeAfterSettingsOrControllerChange() public {
         bytes memory args = coreConstructorArgs(lc, owner);
         assertEq(coreAddress(lc, owner), address(core));

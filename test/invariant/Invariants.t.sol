@@ -70,12 +70,14 @@ abstract contract InvariantsBase is InvariantFixture {
     /// `sellTo` payments, `fund` and eth forced in. a plain send from anyone but the hook and the escrow reverts. any other
     /// movement is a violation. balance token flows too: it leaves the core only as a bid payment in
     /// sellForBalance.
+    // promise: 01 eth only leaves by allowed paths
     function invariant_01_ethOnlyLeavesByAllowedPaths() public view {
         _zero(g1);
     }
 
     /// 2. no credit is bought above its bid, `bidOf(id)` = the read times the credit's score over refScore, taken just
     /// before the action. the sum paid by a batch is at most the sum of the per-credit bids.
+    // promise: 02 no credit above the read
     function invariant_02_noCreditAboveTheRead() public view {
         _zero(g2);
     }
@@ -84,6 +86,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// settings in force at the sale) or by a redemption that returned at least credits * unitPerPoint. `sellTo` is paid the
     /// decaying ask, at least the hard floor. here the first part: every sold statement was paid at least the hard
     /// floor in force at its sale.
+    // promise: 03 no statement sold below the hard floor
     function invariant_03_noStatementSoldBelowTheHardFloor() public view {
         _zero(g3);
         uint256 n = handler.everHeldCount();
@@ -98,6 +101,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// 4. every statement ever composed is, at all times, exactly one of: held by the core, sold or redeemed. the ghost
     /// status is checked against the statements token and the core's own records, and the held count against the core's
     /// list.
+    // promise: 04 every statement is in exactly one place
     function invariant_04_everyStatementIsInExactlyOnePlace() public view {
         _zero(g4);
         uint256 n = handler.everHeldCount();
@@ -131,6 +135,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// 5. ethPot + ethToBuyback + ethRedeemBurn never exceeds the core's eth balance, and the same for the balance
     /// token pots. a sale books its payment at once, the artist and operator cuts pushed off the top and the rest split
     /// by saleToBuybackBps, and the payee share is pushed by the book, so no eth is owed outside the pots.
+    // promise: 05 pots never exceed balances
     function invariant_05_potsNeverExceedBalances() public view {
         _zero(g5);
         assertLe(
@@ -144,6 +149,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// 6. the stored price state and the read follow the model around every action and every warp, against the
     /// settings in force over the interval. the only calls that make the stored rate jump are the owner's `setRate`,
     /// which lands on the rate asked for: a settings call keeps the rate exactly.
+    // promise: 06 rate follows the model
     function invariant_06_rateFollowsTheModel() public view {
         _zero(g6);
     }
@@ -153,6 +159,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// every action is at most the pot, so the next fill cannot pay more than the pot. a sale refused above the pot
     /// ends in `PotTooSmall`, an arithmetic panic fails the invariant. the books themselves are checked by invariants 5
     /// and 6 and the pot bookkeeping of invariant 1.
+    // promise: 07 no spend above the pot
     function invariant_07_noSpendAboveThePot() public view {
         _zero(g7);
     }
@@ -161,6 +168,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// coin, credits, statements or balance token from the core, whatever settings the owner chooses. their balances are
     /// compared with what they held at the start (the owner pays gas only). the controllers' attack calls all failed,
     /// their reentry attempts through the test adapter failed, and nobody but the owner changed a setting.
+    // promise: 08 owner and controllers never gain
     function invariant_08_ownerAndControllersNeverGain() public view {
         _zero(g8);
         uint256 n = handler.watchedCount();
@@ -185,6 +193,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// coin the swapCredit fee burned. coin taxed to the burn address is a transfer, not a burn: 0xdEaD holds it and the
     /// supply does not move. the handler keeps a ghost of the expected supply and the burn total from the token's own
     /// transfer events.
+    // promise: 09 coin supply only falls by burns
     function invariant_09_coinSupplyOnlyFallsByBurns() public view {
         _zero(g9);
         uint256 launchSupply = 1_000_000_000e18;
@@ -205,6 +214,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// every send from the hook's address and the escrow's address was accepted, every send from an account was
     /// refused with `UseFund`, and no real swap died of the hook's BidForwardFailed, which is how a reverting
     /// receive() would show up. swaps that failed for other reasons are counted by selector in the call summary.
+    // promise: 10 receive never reverts
     function invariant_10_receiveNeverReverts() public view {
         _zero(g10);
         assertEq(handler.receiveFails(), 0, "receive() reverted");
@@ -218,6 +228,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// revert did so with the selector it expected. a core that started refusing calls it used to accept, or refusing
     /// for another reason, would show up here and nowhere else. after a migrate the model expects the six doors to
     /// revert `Retired`; any other outcome there is counted.
+    // promise: 11 no unexpected reverts
     function invariant_11_noUnexpectedReverts() public view {
         uint256 n = handler.actionCount();
         for (uint256 a; a < n; ++a) {
@@ -238,6 +249,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// one of the ghost statuses Held, Sold or Redeemed, a sale through `sellTo` paid at least the hard floor (cost *
     /// saleFloorBps of the settings in force at the sale), and the handler's departure and sale path violation codes
     /// (codes 7, 8 and 26: price, booking by saleToBuybackBps, holder and record of each sale) stay at zero.
+    // promise: 12 a statement only leaves by asale or aredemption
     function invariant_12_aStatementOnlyLeavesByASaleOrARedemption() public view {
         _zero(g11);
         uint256 n = handler.everHeldCount();
@@ -258,6 +270,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// former owner has no power over the core or over the controller's sale settings, and the core's owner is the one
     /// the handler last saw accept. the handler checks each of these again on every call to `lockCheck` and
     /// `formerOwnersCheck`.
+    // promise: 13 locks and handovers never come undone
     function invariant_13_locksAndHandoversNeverComeUndone() public {
         handler.lockCheck();
         handler.formerOwnersCheck();
@@ -274,6 +287,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// module's callouts are compose, book, buyback, releaseRedeemBurn, redeemStatement, adopt, sellForEth,
     /// buyListing, sellTo and sellForBalance, and the selling controller's sell. every one of them
     /// reverts while the core is inside `redeemStatement`, whatever the module does with its gas
+    // promise: 14 no call from inside aredemption ever worked
     function invariant_14_noCallFromInsideARedemptionEverWorked() public view {
         uint256 n = handler.moduleEverCount();
         for (uint256 i; i < n; ++i) {
@@ -285,6 +299,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// pot covers it, a one credit `sellForEth` by its holder succeeds. the check runs after every action
     /// under a snapshot that is reverted, so the state is unchanged. it starts with the book of the fee income that
     /// every `sellForEth` makes first, so the price is the one the sale itself reads.
+    // promise: 16 the bid never closes
     function invariant_16_theBidNeverCloses() public {
         if (core.retired()) return;
         uint256 snap = vm.snapshotState();
@@ -301,8 +316,9 @@ abstract contract InvariantsBase is InvariantFixture {
         (bool ok, bytes memory why) = address(core).call(abi.encodeWithSignature("sellForEth(uint256[])", ids));
         vm.stopPrank();
         vm.revertToState(snap);
+        // a credit the engine sold this block is refused by the same block return guard, not a closed bid
         assertTrue(
-            ok,
+            ok || bytes4(why) == ICore.SameBlockReturn.selector,
             string.concat(
                 "sellForEth refused a credit whose price the pot covers, selector ",
                 vm.toString(bytes4(why))
@@ -335,6 +351,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// its head, is recorded as in the pile, is owned by the core and appears once. the pile holds as many credits as
     /// its size says and its walk ends. a credit the core owns outside the pile has no record and `adopt` puts it into
     /// the pile. a credit the ghost ever piled that the core does not own has no record.
+    // promise: 17 every credit in exactly one place
     function invariant_17_everyCreditInExactlyOnePlace() public {
         uint256[] memory piled = _walkPile();
         uint256[] memory table = _emptySet(piled.length);
@@ -443,6 +460,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// book, not held: the share is `payeePpm` of the income once the share is on, the first book with income at or after
     /// `launchedAt + SNIPER_SECONDS` turns it on and shares nothing, and the share is forced out to the payee. the ledger
     /// counts the whole income in and the pushed share out.
+    // promise: 18 eth conservation
     function invariant_18_ethConservation() public view {
         _zero(g13);
         assertEq(
@@ -458,6 +476,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// climb. the read never exceeds the price state. the price state never exceeds `rateCap` and the ceiling, which is
     /// `ceilBps` of `max(last fill rate, peak now)` grown by `idleLoosenBps` per full 10 minutes since the last fill,
     /// where the peak is `peakRate` halved over the time since `peakTime`. the read is the price state lowered to the pot.
+    // promise: 19 bid bounds
     function invariant_19_bidBounds() public view {
         Settings memory st = core.settings();
         uint256 rate = core.ethRate();
@@ -483,6 +502,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// logs how often each action ran, succeeded and was skipped in this run, and over all runs so far.
+    // promise: logs how often each action ran, succeeded and was skipped in this run, and over all runs so far.
     function invariant_callSummary() public view {
         _summary();
     }

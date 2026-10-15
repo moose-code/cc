@@ -14,6 +14,7 @@ contract LaunchTest is Fixture {
     }
 
     // the Core computed the coin address the factory deployed, from the sender and the whole config
+    // promise: the Core computed the coin address the factory deployed, from the sender and the whole config
     function test_predictedCoinEqualsDeployed() public view {
         assertEq(core.COIN(), address(coin));
         assertEq(predictCoin(owner, "Fixture Coin", "FIXT", FIXTURE_SALT), address(coin));
@@ -23,6 +24,7 @@ contract LaunchTest is Fixture {
 
     // the launch read straight from the v2 contracts: the whole supply is the one pool position, the skim config pays the
     // Core, and the anti sniper schedule ends at the baseline
+    // promise: launch read back
     function test_launchReadBack() public {
         uint256 dust = coin.balanceOf(lc.stack.locker);
         assertLt(dust, 1e6, "rounding dust only");
@@ -47,6 +49,7 @@ contract LaunchTest is Fixture {
     }
 
     // with the referral cap at zero a swap that names a referrer succeeds
+    // promise: with the referral cap at zero a swap that names a referrer succeeds
     function test_referralWithTheCapAtZeroDoesNotRevert() public {
         _skipSniperWindow();
         address buyer = _user("buyer");
@@ -57,6 +60,7 @@ contract LaunchTest is Fixture {
     }
 
     // the anti sniper skim pays the Core far above the baseline in the first block and the baseline after the window
+    // promise: the anti sniper skim pays the Core far above the baseline in the first block and the baseline after the window
     function test_theAntiSniperSkimStartsHighAndFallsToTheBaseline() public {
         IArtCoinsHookV2.SkimConfig memory k = HOOK.skimConfig(poolId);
         autoBook = false; // leave the skim unbooked so it can be read

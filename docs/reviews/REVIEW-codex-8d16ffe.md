@@ -1,0 +1,96 @@
+# Daylight audit: `ripe0x/cc` at `8d16ffe68e9f4eca4db26836539594f837b01f9b`
+
+2026-10-14. All `file:line` references below are to the immutable target tree, not the checkout containing this report. Scope: `src/`, `test/`, `script/`, `web/`, the current SPEC and decisions 116–123. I read both `ac8da10` reviews and their fixes table first. A clean `forge build` of the archived tree succeeded with the target's pinned submodule revisions. Focused fork runs used `FORK_BLOCK=26158000` and the public archive RPC. No full suite, deep invariant run, transaction, or project source change was made.
+
+## 1. Security
+
+| Severity | Target file:line | Scenario | Fix |
+|---|---|---|---|
+| Medium | `src/lib/CoreLib.sol:249-256`, `:781-794`; `src/Core.sol:1089-1092` | The owner can turn `balanceBidOn` on before setting a module. With no module, both balance rate reads and subsequent settings checkpoints use a full `10_000` clamp. The bid therefore climbs while no balance token is committed, and a module installed later opens at the climbed rate, potentially par instead of the intended 90% launch floor. A transiently failing `unitPerPoint()` has the same checkpoint effect. No caller can collect above par, but an avoidable ordering error can spend the module's token faster than the owner expected. | With no valid module unit and `available()` read, use a zero climb clamp; checkpoint or reset to the floor when a module becomes usable. Add a fork test for enable-before-module and failed-unit-then-recovery. |
+| Medium | `src/Core.sol:1053-1057`, `:1117-1120`, `:892-900` | `setController` accepts an EOA, and `lockController` succeeds while the controller is zero. A mistaken EOA setting gives that key direct access to `sellTo` at the gross cost floor; locking zero or an unusable address permanently closes normal statement/credit sales, composition and redemption eligibility. The balance-module lock has an unset-module guard (`:1123-1126`); the controller lock does not. | Require deployed code and a minimally valid interface at `setController`, and refuse `lockController` until a working controller is set. Test lock-before-set and EOA-then-lock. |
+| Low | `src/Core.sol:548-575` | Bounded controller reads cap gas and copied bytes, but a successful 32-byte response encoding boolean `2` makes `abi.decode(bool)` revert in `_atFloor` or `_pastWindow`. An accidentally installed incompatible controller turns the documented false/not-ready fallback into an unexpected revert. | Decode the word as `uint256`, accept only 0 or 1, and return false for other values. |
+
+**Unconfirmed.** The extra balance-token expenditure of the first finding needs a fork probe with the final module, a funded `available()`, and a 30-minute enable-before-set interval; no final module exists in this tree. The realized sandwich loss on `buyback` and the previously disclosed multi-block pool-spot credit round trip need live liquidity and routing assumptions; neither is a new finding here. An external audit of the fixed Credits, Statements, Seaport, CreditStrategy, and v2 stack code is outside this tree audit.
+
+**Verified holds.** `test/BalanceFloor.t.sol::test_sellForBalanceRefusesBelowFloor` and `::test_atRefScoreFloorParRunsAtFloor` passed: the prior sub-floor balance payout fix holds. `test/SameBlockReturn.t.sol` passed all five doors/next-block cases. `test/PerPointExact.t.sol` passed all seven hand-arithmetic and rounding cases. `test/BalanceBid.t.sol` passed all six floor, climb, drop, and par-cap cases. `test/CoreLayout.t.sol` and `test/PostflightSlots.t.sol` passed their slot and runtime checks. `test/Sale.t.sol` passed all 36 sale cases, and `test/CreditSwap.t.sol` passed all 13 swap cases. Source tracing also confirms the one-call `module.pay` plus seller-balance check (`src/lib/CoreLib.sol:690-695`), sale and book forced pushes (`src/Core.sol:431-433`, `:1081-1086`), the score check on swap (`src/Core.sol:1214-1241`), and the SPEC 11 outflow bounds: credit buys (`src/Core.sol:634-642`, `:664-686`; `src/lib/CoreLib.sol:736-749`), caller rewards (`src/Core.sol:850-870`), sale floors (`src/Core.sol:892-942`), redemption (`src/Core.sol:955-981`), buyback slice (`src/Core.sol:995-1020`), migration (`src/lib/CoreLib.sol:544-594`), and credit rescue refusal (`src/lib/CoreLib.sol:465-478`). `transferFrom` has no ERC-721 receiver callback, and every value-moving door uses the Core's reentrancy guard or the matching delegatecall guard (`src/lib/CoreLib.sol:603-616`). A reverting seller or keeper only reverts its own call; a reverting artist or payee receives the forced push. Module failure can close the optional balance doors; adapter failure closes that listing call.
+
+**Verdict:** no new public-caller extraction above the stated caps was established; two owner-ordering failures can materially impair the optional balance bid or permanently disable the controller.
+
+## 2. Logic against owner intent
+
+| Decision | Owner intent in one line | Target code and result |
+|---|---|---|
+| 116 | Eth pays and drops per `score / refScore`, with `refScore` in Core storage. | `src/Core.sol:464-473`, `:625-642`, `:652-686`; `src/lib/CoreLib.sol:384-412`, `:490-504`; `src/ControllerV1.sol:209-225`: matches, with payout and cost basis rounded down and the drop rounded down once so the fall rounds up. The bid of a high-score credit can exceed the available pot and be unfillable. |
+| 117 | The module holds balance token; redemption stays there; sellers receive one `pay` bounded by `available()`. | `src/Core.sol:955-981`, `:1338-1351`; `src/lib/CoreLib.sol:675-696`: matches. The Core checks the seller's token increase and the module's redemption balance increase. |
+| 118 | Swap an owned credit of at least the pile credit's score, burn `swapFeeCc`, inherit its node. | `src/Core.sol:1210-1241`: matches; the fee is burned before node mutation, and the incoming token is pulled before the outgoing one is sent. |
+| 119 | Launch credit sale and redemption on, balance bid and chosen compose off; use the specified buyback, fee, margin, and swap values. | `script/config/mainnet.json:20-65`; `src/interfaces/Interfaces.sol:306-365`: matches the final amendment, including a **1,000 bps** balance bid margin and **10,000e18** swap fee. |
+| 120 | Skim 10 points of volume: 1.0 point to artcoins, 9.0 to the engine, payee fee share zero initially. | `script/config/mainnet.json:71-76`, `:89-90`; `script/Checks.sol:560-586`: matches. The factory's required minimum protocol skim share is **1,000 bps**. `protocolBps=2,000` at JSON line 77 is a separate factory launch parameter, not this skim share. |
+| 121 | One straight-line statement sale from start to floor over **12 hours**. | `src/ControllerV1.sol:450-463`: matches at the launch settings. If the owner later raises `saleFloorBps` above `startBps()`, the curve is at floor immediately; that interaction was not stated. |
+| 122 | Run the shared price-state climb/drop for a balance bid from its floor toward par, clamped to module availability. | `src/lib/CoreLib.sol:315-412`, `:675-749`, `:761-794`: shared math, cap **10,000**, floor **10,000 - margin**, and batch `available()` check match. The no-module climb and the unfillable floor quote are implementation choices discussed below. |
+| 123 | Take **250 bps** artist and **50 bps** operator cuts off each NFT sale, push both, remove royalty and payee claims. | `src/Core.sol:892-942`, `:1081-1086`; `src/ControllerV1.sol:260-337`: matches. Both cuts round down separately; the remaining wei goes into the ordinary pot/buyback split. |
+
+| Severity | Target file:line | Scenario | Fix |
+|---|---|---|---|
+| Low | `src/ControllerV1.sol:453-462`, `:250-255`; `src/lib/SettingsBounds.sol:17` | `saleFloorBps` may be **40,000** while the configured start is **15,000**. A settings change can make `atFloor` true at age zero, so permissionless redemption may start immediately instead of after the 12-hour descent. This is an unstated interaction of the two owner settings, not a launch-config mismatch. | Constrain floor to the current start across both setters, or record immediate-floor behavior as an explicit owner choice and surface it before a settings transaction. |
+| Info | `script/config/mainnet.json:16-17`; `script/Checks.sol:272-307` | The tracked launch file leaves `image` and `description` empty. The preflight metadata row correctly fails; the file is a template rather than a deployable launch configuration. | Fill the two fields with approved final content before preflight and freeze a new candidate. |
+| Info | `docs/DECISIONS.md:332`; `src/Core.sol:1062-1067`, `:1297-1313` | Decision 120 says the owner may raise the payee share "with `setPayee`." That call changes the address; `payeePpm` changes through `setSettings`. A reader following the decision text alone would make the wrong call. | Rewrite that clause as "raise `payeePpm` with `setSettings`; change the recipient with `setPayee`." |
+
+**Unstated choices made by the implementation.** Decision 116 leaves the per-credit pot clamp as `min(rate, pot) * score / refScore`, so `bidOf` can be above the pot; it also leaves exact rounding to the code (`src/Core.sol:465-467`, `:634-635`). Decision 117 uses a single availability snapshot for a batch and reverts the whole batch once its running total exceeds it (`src/lib/CoreLib.sol:684-695`, `:740-741`); it validates `available()` when setting the module (`src/Core.sol:1345-1347`). Decision 118 lets the swap fee be zero, preserves acquisition time and cost basis, and applies the same-block return guard to `inId` (`src/Core.sol:1214-1241`). Decision 121 quantizes the curve to integer bps and has the immediate-floor case above. Decision 122 reports the floor payout from `balanceBidOf` even when `available()` is too short for a sale, reads `available()` as bps for one `refScore` credit, and permits a climb before any module is installed (`src/lib/CoreLib.sol:755-794`). Decision 123 rounds each cut down separately, gives the rounding remainder to the sale split, and caps each forced push at **50,000 gas** (`src/Core.sol:903-910`, `:932-942`, `:1083-1086`). None of these choices should be inferred from a green test alone.
+
+**Launch values, value by value.** All values below match the final decisions 119–120 and the SPEC section 3 settings table unless the note says otherwise. JSON lines are shown so a config change can be checked against the exact tree.
+
+| JSON lines | Values | Authority / result |
+|---|---|---|
+| `19`, `42`, `47` | `rateStart=8.9e15`, `rateCap=2.67e16` (3×), `refScore=4,330,000` | SPEC 3, decision 116: match. |
+| `21-25` | drop **50**, minute floor **5,000**, climb **50**, ceiling **11,000**, idle loosen **200** bps | SPEC 3: match. |
+| `26-32` | sale floor **10,000**, buyback share **2,500**, artist **250**, operator **50**, recovery climb **200**, gap **1,000** bps, peak half life **21,600 s** | Decisions 119/123 and SPEC 3: match. |
+| `33-38` | delay **25** blocks, redeem **true**, balance bid **false**, redeem slippage **200**, bid margin **1,000**, redeem burn **2,000** bps | Decision 119 final amendment and SPEC 3: match. |
+| `39-46`, `48` | slice **0.5 ETH**, keeper **0.0003 ETH** at **5 gwei**, caller fee/basefee **0/0**, fee-to-redeem **1,000 bps**, payee **0 ppm**, swap **10,000e18** | Decisions 119–120 and SPEC 3: match. |
+| `50-55` | markup **15,000**, cap **100,000**, decay **12 h**, anchor half life **604,800 s**, anchor minimum cost **0.1 ETH** | Decision 121 and SPEC 3: match. |
+| `57-64` | cost-to-pot **8,000**, chosen compose **false**, minimum CC **1e18**, credit sale **true**, window **14,400 s**, floor **11,000**, start **30,000** | Decision 119 and SPEC 3: match. |
+| `71-76` | baseline skim **1,000**, bounty **9,000**, referral **0**, LP fee **0**, sniper **9,000** over **1,800 s** | Decision 120 and SPEC 3: match. |
+| `16-17`, `77`, `88-90` | empty image/description; `protocolBps=2,000`; artist `0xc8f8…4c8a`; payee is owner `0xCB43…17F9` | Metadata is unfilled. The factory parameter is separate from skim. Artist/payee match decision 123; the artist address needs owner confirmation before launch (`docs/STATUS.md:44`). |
+
+**Unconfirmed.** The owner has not confirmed that the tracked artist address is the intended recipient, and the final balance module and its token are absent. Those facts limit any claim about live balance-redemption economics. The launch JSON's stack addresses, factory code hashes, and fee split are checked by source and focused tests, not by a fresh end-to-end rehearsal.
+
+**Verified holds.** `test/Config.t.sol` passed **26/26** cases; `::test_jsonEqualsDefaultConfig` and `::test_feeSplitDerivation` compare the JSON with default settings and derive the **9.0/1.0 point** split. `test/PerPointExact.t.sol::test_batchOfThree_eachPayoutAndRateAfterInCallOrder` and `::test_rounding_payoutAndCostBasisRoundDown` use hand arithmetic. `test/BalanceBid.t.sol::test_payoutNeverAbovePar` proves the par cap; `test/SameBlockReturn.t.sol` proves the same-block guard.
+
+**Verdict:** decisions 116–123 and the specified launch numbers are implemented, with one material unstated settings interaction and one tracked metadata prerequisite.
+
+## 3. Best practices and legibility
+
+| Severity | Target file:line | Scenario | Fix / one-line rewrite |
+|---|---|---|---|
+| Low | `src/interfaces/Interfaces.sol:339-348` | `defaultSale` says the price falls "1 percent of cost an hour" and has a "knee," but decision 121 removed the knee and the configured 15,000-to-10,000 bps fall lasts 12 hours. | "The ask falls linearly from 150% to 100% of the reference over 12 hours; the anchor excess halves every 7 days." |
+| Low | `src/ControllerV1.sol:207-210` | `refScore()` comments say **1 to 8,000,000**, while `SettingsBounds` enforces **800,000 to 8,000,000** (`src/lib/SettingsBounds.sol:40`). | "`refScore` is the Core setting, bounded to 800,000–8,000,000." |
+| Low | `test/Config.t.sol:45-47`; `test/Lock.t.sol:65-72` | A static scan found **91 of 459** `test*`/`invariant*` functions without a preceding `// promise:` line. Many have descriptive names or prose, but the target `AGENTS.md` requires the explicit promise marker for every kept test. | Add a short `// promise:` stating the externally visible rule each test checks; remove tests that cannot name one. |
+| Low | `web/lib/live.ts:339-360` | The eth sell quote mixes a multicall, two raw storage reads, and score reads without one pinned block. If a fill, settings change, or new block lands between those RPCs, its replay can combine states that never coexisted and set an unusable `minOut`. | Pin every read to one block number, or expose a Core batch quote. |
+| Low | `web/lib/live.ts:119-128` | The page snapshot uses `allowFailure: false` for the optional module's `available()` and `unitPerPoint()` although the Core treats a failing read as a closed balance bid. A failing module can hide unrelated eth and statement data from the UI. | Read these two calls with `allowFailure: true` and display balance availability as unavailable while preserving the rest of the snapshot. |
+| Info | `src/lib/CoreLib.sol:282-288`, `:329-336` | The comment says a price state above the bound "holds its value," but `_climb` sets `price = cap` when `r >= cap`. The test model copies the code (`test/utils/BidModel.sol:100-109`), so it cannot catch this prose mismatch. | "A stored rate at or above the ceiling is read at the ceiling; a rate above the availability clamp does not climb." |
+
+**Unconfirmed.** No browser transaction was executed to quantify the cross-block quote error. The new module's gas use, recipient behavior, and token transfer semantics need its final source and fork deployment. A test-by-test semantic review would be needed to classify each of the 91 missing promise markers as useful or redundant; the count is a formatting inventory, not an assertion that 91 tests are ineffective.
+
+**Verified holds.** `test/CoreLayout.t.sol` confirms the Core `State` fields and the eth anchor at slot **27**, which matches `web/lib/live.ts:326-341`; `test/PostflightSlots.t.sol` checks linked library and immutable runtime slots. The Solidity 0.8 checked arithmetic plus `src/lib/SettingsBounds.sol:11-41` bounds the reviewed products; `src/ControllerV1.sol:379-416` checks its unchecked pool-value multiplication with a quotient/overflow test. Casts of score sum to `uint32` are preceded by a bound (`src/Core.sol:829-841`); time casts rely on the timestamp's practical `uint40`/`uint64` horizon. The previously reported CEI ordering, omitted event split fields, ratio-one fixture, and mirror oracle in `BidModel` remain identifiable in this tree; they are prior-review residuals, not rediscovered findings. No newly orphaned economic setting or second deployment path was found.
+
+**Verdict:** the main new legibility defects are stale sale and bound descriptions and unpinned UI reads; the prior review's deferred test and event debt remains open.
+
+## Run summary and limits
+
+`forge build` succeeded on the archived target with the pinned `forge-std`, `solady`, and `v4-periphery` revisions. The first sandboxed fork attempt failed DNS before `setUp()`; the read-only network exception then passed `test/BalanceFloor.t.sol` (**2/2**). Additional focused results: `test/PerPointExact.t.sol` (**7/7**), `test/SameBlockReturn.t.sol` (**5/5**), `test/BalanceBid.t.sol` (**6/6**), `test/CoreLayout.t.sol` (**3/3**), `test/PostflightSlots.t.sol` (**5/5**), `test/Sale.t.sol` (**36/36**), `test/Config.t.sol` (**26/26**), and `test/CreditSwap.t.sol` (**13/13**). No result from a failed setup is counted as a passing test.
+
+## Fixes
+
+| Finding | Commit | Proving test |
+|---|---|---|
+| Security M1 (no-module balance climb) | security | `test/AuditDaylight.t.sol::test_balanceBidDoesNotClimbWithoutModule`, `::test_balanceBidResetsToFloorAfterUnitFailureRecovers` |
+| Security M2 (setController probe, lockController guard) | security | `test/AuditDaylight.t.sol::test_setControllerRejectsEoa`, `::test_setControllerRejectsContractWithoutProbe`, `::test_lockControllerRevertsWithoutController` |
+| Security L1 (dirty controller bool read) | security | `test/AuditDaylight.t.sol::test_dirtyBoolControllerReadsFalse` |
+| Logic (sale floor versus start, decision 124) | logic | `test/SaleFloorStart.t.sol::test_setSettingsRefusesFloorAboveStart`, `::test_setSaleRefusesStartBelowFloor` |
+| Logic (decision 120 text: raise `payeePpm` with `setSettings`) | logic | `docs/DECISIONS.md` (doc) |
+| Logic (STATUS open items, artist confirmed in decision 123) | logic | `docs/STATUS.md`, `docs/DECISIONS.md` (doc) |
+| Legibility (`defaultSale` comment) | legibility | `src/interfaces/Interfaces.sol` (comment) |
+| Legibility (`refScore()` bounds 800,000 to 8,000,000) | legibility | `src/ControllerV1.sol` (comment) |
+| Legibility (CoreLib `climb` ceiling/clamp comment) | legibility | `src/lib/CoreLib.sol` (comment) |
+| Legibility (`// promise:` markers, 91 added) | legibility | all `test*`/`invariant*` functions carry a `// promise:` line |
+
+Note on the promise markers: the 91 lines were derived from each test's existing descriptive comment or, where none existed, from the function name. Every one names the rule the test checks; none required deleting a test.

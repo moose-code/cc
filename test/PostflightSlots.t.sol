@@ -90,6 +90,7 @@ contract PostflightSlotsTest is Fixture {
     /// @dev the reviewer's probe: one of the six `CoreLib` call sites of the Core points at a copy with one flipped
     /// byte. the identity hash masks the slot and `findLibrary` finds the compiled library through the other sites, so
     /// only the slot row sees it. a library runs by DELEGATECALL in the Core storage
+    // promise: the reviewer's probe: one of the six `CoreLib` call sites of the Core points at a copy with one flipped byte
     function test_oneForeignLibrarySiteFailsPostflight() public {
         address lib = findLibrary(address(core).code);
         assertTrue(lib != address(0));
@@ -110,6 +111,7 @@ contract PostflightSlotsTest is Fixture {
 
     /// @dev one site of an immutable holds another value than the other sites and the getter. every one of the 10
     /// immutables of the Core and its last site
+    // promise: one site of an immutable holds another value than the other sites and the getter
     function test_oneDivergentImmutableSiteFailsPostflight() public {
         for (uint256 g; g < 10; ++g) {
             uint256[] memory sites = _immutableSites("Core", g);
@@ -128,6 +130,7 @@ contract PostflightSlotsTest is Fixture {
         assertEq(_failedList(), "", "restored");
     }
 
+    // promise: one divergent controller site fails postflight
     function test_oneDivergentControllerSiteFailsPostflight() public {
         uint256[] memory sites = _immutableSites("ControllerV1", 0);
         assertEq(sites.length, 18);
@@ -151,6 +154,7 @@ contract PostflightSlotsTest is Fixture {
     }
 
     // Deploy and Resume send transactions that assume the launch state: they refuse a named owner change
+    // promise: Deploy and Resume send transactions that assume the launch state: they refuse a named owner change
     function test_deployAndResumeRefuseEveryChangeFlag() public {
         this.requireNoFlags();
         string[2] memory names = ["SETTINGS_CHANGED", "COIN_CHANGED"];
@@ -166,6 +170,7 @@ contract PostflightSlotsTest is Fixture {
 
     /// @dev the scripts are not importable from a test (they pull the production sources onto the via_ir profile), so
     /// the call sites are read from the source
+    // promise: the scripts call the guards
     function test_theScriptsCallTheGuards() public view {
         string memory d = vm.readFile("script/Deploy.s.sol");
         string memory r = vm.readFile("script/Resume.s.sol");

@@ -7,6 +7,7 @@ import {VmSafe} from "forge-std/Vm.sol";
 /// @notice `forge script` reverts the whole run when a script contract uses `address(this)`; a test contract using the
 /// same checks does not. this scans the scripts, and `script/tools/check-preflight.sh` runs the real script on a fork
 contract ScriptLintTest is Test {
+    // promise: scripts do not use address this
     function test_scriptsDoNotUseAddressThis() public view {
         VmSafe.DirEntry[] memory files = vm.readDir("script");
         uint256 scanned;

@@ -53,8 +53,8 @@ export default function KeeperPage() {
             {row("pot", `${eth(s.ethPot)} eth`)}
             {row("to buyback", `${eth(s.ethToBuyback)} eth`)}
             {row("redeem burn pot", `${eth(s.ethRedeemBurn)} eth`)}
-            {s.balanceOn && row(`${BALANCE_SYMBOL} in the module`, eth(s.balanceAvailable))}
-            {s.balanceOn && row(`${BALANCE_SYMBOL} bid, % of par`, `${(Number(s.balanceRate) / 100).toFixed(1)}%`)}
+            {s.balanceOn && row(`${BALANCE_SYMBOL} in the module`, s.balanceAvailable === undefined ? "unavailable" : eth(s.balanceAvailable))}
+            {s.balanceOn && row(`${BALANCE_SYMBOL} bid, % of par`, s.balanceAvailable === undefined ? "unavailable" : `${(Number(s.balanceRate) / 100).toFixed(1)}%`)}
           </div>
         </section>
 
