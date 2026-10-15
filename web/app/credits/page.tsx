@@ -237,6 +237,11 @@ export default function CreditsPage() {
           <Link href="/sell" className="ulink">
             sell your credits to the engine →
           </Link>
+          <div>
+            <Link href="/listings" className="ulink">
+              credits listed for sale elsewhere →
+            </Link>
+          </div>
         </section>
       </aside>
     </div>
