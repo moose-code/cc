@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { IBM_Plex_Mono } from "next/font/google";
 import { Providers } from "./providers";
 import { Header } from "@/components/Header";
 import { StatsBar } from "@/components/StatsBar";
@@ -11,6 +12,13 @@ export const metadata: Metadata = {
     "an erc20 whose swap fees buy credits, compose them into statements, and sell each at a falling price. independent dashboard.",
 };
 
+const plex = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-plex",
+  display: "swap",
+});
+
 // Applies the stored theme choice before first paint. "auto" leaves data-theme
 // unset so the CSS follows prefers-color-scheme. Same key and JSON format as
 // ThemeControl in Footer.tsx.
@@ -22,7 +30,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={plex.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>

@@ -5,10 +5,8 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 
-const LOGO_BARS = ["#0a9b41", "#16b6d8", "#f5c400", "#ff0080"];
-
-// feed lives on the logo; keeper sits at the end of the row.
 const NAV = [
+  { href: "/", label: "engine" },
   { href: "/credits", label: "credits" },
   { href: "/statements", label: "statements" },
   { href: "/sell", label: "sell" },
@@ -20,7 +18,7 @@ const NAV = [
 export function Header() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
-  const active = (href: string) => path.startsWith(href);
+  const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
 
   // close the mobile menu on navigation
   useEffect(() => setOpen(false), [path]);
@@ -28,12 +26,13 @@ export function Header() {
   return (
     <header className="header">
       <Link href="/" className="brand">
-        <span className="bars" aria-hidden>
-          {LOGO_BARS.map((c, i) => (
-            <i key={i} style={{ background: c, height: `${10 + i * 3}px` }} />
-          ))}
+        <span className="logo" aria-hidden>
+          <i />
+          <i />
+          <i />
         </span>
-        CC
+        <b>CC</b>
+        <span className="brand-sub">engine</span>
       </Link>
 
       <button
@@ -42,7 +41,7 @@ export function Header() {
         aria-label="menu"
         aria-expanded={open}
       >
-        {open ? "✕" : "☰"}
+        {open ? "✕" : "≡"}
       </button>
 
       {/* nav + connect collapse into the hamburger menu on mobile */}
@@ -58,10 +57,44 @@ export function Header() {
             </Link>
           ))}
         </nav>
-        <div className="connect">
-          <ConnectButton showBalance={false} accountStatus="address" chainStatus="none" />
-        </div>
       </div>
+
+      <WalletButton />
     </header>
+  );
+}
+
+// Disconnected: filled "connect wallet". Connected: short address plus an
+// outlined status button that opens the account modal.
+function WalletButton() {
+  return (
+    <ConnectButton.Custom>
+      {({ account, chain, mounted, openAccountModal, openChainModal, openConnectModal }) => {
+        const ready = mounted;
+        const connected = ready && account && chain;
+        return (
+          <div className={ready ? "wallet" : "wallet pending"} aria-hidden={!ready}>
+            {!connected ? (
+              <button className="btn-fill" onClick={openConnectModal}>
+                <span className="wide">connect wallet</span>
+                <span className="narrow">connect</span>
+              </button>
+            ) : chain.unsupported ? (
+              <button className="btn-fill btn-warn" onClick={openChainModal}>
+                wrong network
+              </button>
+            ) : (
+              <>
+                <span className="wallet-addr">{account.displayName}</span>
+                <button className="btn-outline" onClick={openAccountModal}>
+                  <i className="sq" />
+                  connected
+                </button>
+              </>
+            )}
+          </div>
+        );
+      }}
+    </ConnectButton.Custom>
   );
 }
