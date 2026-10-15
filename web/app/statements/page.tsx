@@ -114,7 +114,7 @@ export default function StatementsPage() {
             <section className="sect">
               <div className="sect-head">
                 <b>for sale</b>
-                {snap && <span className="caption">price falls over {snap.statementDecayHours}h to its floor</span>}
+                {snap?.statementDecayHours != null && <span className="caption">price falls over {snap.statementDecayHours}h to its floor</span>}
               </div>
               <div className="cgrid">
                 {forSale.map((i) => (

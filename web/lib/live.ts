@@ -7,9 +7,10 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
-import { numberToHex, parseAbi, zeroAddress, type Address } from "viem";
+import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, numberToHex, parseAbi, zeroAddress, type Address } from "viem";
 import { core, credits, engineDeployed, statements } from "./config";
 import { controllerAbi, coreAbi, creditsAbi, statementsAbi } from "./abis";
+import { SCOPE, lsGet, lsSet } from "./cache";
 import { replayEth, replayBalance } from "./sell";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
@@ -150,7 +151,7 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
   const balanceAvailable = availableRes.status === "success" && unitRes.status === "success" ? (availableRes.result as bigint) : undefined;
   const balanceUnit = availableRes.status === "success" && unitRes.status === "success" ? (unitRes.result as bigint) : undefined;
   const k = { address: controller, abi: controllerAbi } as const;
-  const [creditSaleOn, creditWindow, pointRate, page, markupBps, startCapBps, decayHours, anchorBps, startBps, creditFloorBps, creditStartBps, statementSupply] = await client.multicall({
+  const [creditSaleOn, creditWindow, pointRate, page] = await client.multicall({
     ...mc,
     blockNumber,
     allowFailure: false,
@@ -159,6 +160,15 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
       { ...k, functionName: "creditWindow" },
       { ...k, functionName: "pointRate" },
       { ...k, functionName: "nextPage" },
+    ] as const,
+  });
+  // Price curve parameters and the statement supply. A failing read leaves the field undefined and the rest of the
+  // snapshot intact; consumers hide the figure that needs it.
+  const [markupRes, startCapRes, decayRes, anchorRes, startRes, floorRes, creditStartRes, supplyRes] = await client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: true,
+    contracts: [
       { ...k, functionName: "markupBps" },
       { ...k, functionName: "startCapBps" },
       { ...k, functionName: "decayHours" },
@@ -169,6 +179,16 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
       { address: statements, abi: statementsAbi, functionName: "supply" },
     ] as const,
   });
+  const ok = <T,>(r: { status: string; result?: unknown }): T | undefined => (r.status === "success" ? (r.result as T) : undefined);
+  const num = (r: { status: string; result?: unknown }) => {
+    const v = ok<bigint | number>(r);
+    return v === undefined ? undefined : Number(v);
+  };
+  const startBps = num(startRes);
+  const decayHours = num(decayRes);
+  const creditFloorBps = num(floorRes);
+  const creditStartBps = num(creditStartRes);
+  const statementSupply = ok<bigint>(supplyRes);
   return {
     ethRate,
     ethPrice,
@@ -206,18 +226,18 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
     // Statement price curve (ControllerV1._ask). The asking price is reference * bps / 10000. bps falls in a straight
     // line from `statementStartBps` at age 0 to settings.saleFloorBps at `statementDecayHours` hours, then rests.
     // `statementStartBps` = anchorBps * markupBps / 10000, at most statementStartCapBps; it moves with sales.
-    statementStartBps: Number(startBps),
+    statementStartBps: startBps,
     statementDecayHours: decayHours,
-    statementMarkupBps: markupBps,
-    statementStartCapBps: startCapBps,
-    anchorBps, // running sale level in bps of the reference (10000 = no premium)
+    statementMarkupBps: num(markupRes),
+    statementStartCapBps: num(startCapRes),
+    anchorBps: num(anchorRes), // running sale level in bps of the reference (10000 = no premium)
     // Credit price curve (ControllerV1.creditPrice). floor = max(cost, valueOf(score)) * creditFloorBps / 10000;
     // start = floor * creditStartBps / 10000. The price falls linearly from start at acquisition to floor at
     // creditWindow seconds, then rests at the floor.
     creditFloorBps,
     creditStartBps,
     // Id the next compose mints: Statements.supply() + 1 (Core.compose asserts the new id equals supply()).
-    nextStatementId: Number(statementSupply) + 1,
+    nextStatementId: statementSupply === undefined ? undefined : Number(statementSupply) + 1,
   };
 }
 
@@ -301,24 +321,52 @@ export function useCredit(id: number) {
   });
 }
 
-// Current owner of a credit (undefined once burned) and of a statement. Read once per id per snapshot
-// change; ownership moves with the engine's own txs, which change the snapshot (pileSize, held, nextStatementId).
+// Current owner of a credit (undefined once burned) and of a statement. Re-read when the snapshot's pile size, held
+// statement ids or next statement id change: every engine tx that moves a token changes one of them. Only the
+// ownerOf revert of a nonexistent or burned token maps to undefined; other errors reject so react-query retries.
 function useOwnerOf(kind: "credit" | "statement", id: number) {
   const client = usePublicClient();
   const { data: s } = useSnapshot();
   return useQuery<Address | undefined>({
-    queryKey: ["owner-of", kind, id, s?.pileSize.toString(), s?.nextStatementId],
+    queryKey: ["owner-of", kind, id, s?.pileSize.toString(), s?.held.join(","), s?.nextStatementId],
     enabled: Boolean(client) && engineDeployed && Boolean(s),
     queryFn: async () => {
       const address = kind === "credit" ? credits : statements;
-      return client!
-        .readContract({ address, abi: kind === "credit" ? creditsAbi : statementsAbi, functionName: "ownerOf", args: [BigInt(id)] })
-        .catch(() => undefined);
+      try {
+        return await client!.readContract({ address, abi: kind === "credit" ? creditsAbi : statementsAbi, functionName: "ownerOf", args: [BigInt(id)] });
+      } catch (e) {
+        if (e instanceof BaseError && e.walk((x) => x instanceof ContractFunctionRevertedError || x instanceof ContractFunctionZeroDataError)) return undefined;
+        throw e;
+      }
     },
   });
 }
 export const useCreditOwner = (id: number) => useOwnerOf("credit", id);
 export const useStatementOwner = (id: number) => useOwnerOf("statement", id);
+
+// creditCostToPotBps in force at `block` (the block of a CreditSold event). The value of a past block never changes,
+// so it is cached for good in memory and localStorage. undefined when the node cannot serve that block.
+export function useCreditCostToPotAt(block: bigint | undefined) {
+  const client = usePublicClient();
+  return useQuery<number | undefined>({
+    queryKey: ["cost-to-pot-at", block?.toString()],
+    enabled: Boolean(client && block !== undefined && engineDeployed),
+    staleTime: Infinity,
+    retry: false,
+    queryFn: async () => {
+      const key = `${SCOPE}:costToPot:${block}`;
+      const hit = lsGet<number>(key);
+      if (hit != null) return hit;
+      try {
+        const v = Number(await client!.readContract({ address: core!, abi: coreAbi, functionName: "creditCostToPotBps", blockNumber: block }));
+        lsSet(key, v);
+        return v;
+      } catch {
+        return undefined; // pruned state
+      }
+    },
+  });
+}
 
 // ---- statements -----------------------------------------------------------------
 
@@ -397,6 +445,8 @@ export function useStatements() {
 // lastFillRate, minuteStartRate, minuteBucket (uint64) + peakTime, peakRate.
 const ANCHOR_SLOT = 27n;
 const CREDIT_SCORE = "0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7" as const;
+// scoreAbi signatures and the traitsOf mask bit mapping (bit 0 C, 1 M, 2 Y, 3 K) were checked against the local fork:
+// the decoded traitsOf masks match the Credits tokenURI "Colors" trait for ids 1 to 8.
 const scoreAbi = parseAbi([
   "function scoreOf(bytes21 seed, uint64 paidAt) view returns (uint256)",
   "function traitsOf(bytes21 seed, uint64 paidAt) view returns (uint256 mask, uint256 active, uint256 occupied, uint256 eights, uint256 band)",
@@ -530,14 +580,15 @@ export function useScores(ids: bigint[]) {
 
 // Credit price floor input: controller valueOf(score) per id, id to wei. Credit floor price =
 // max(cost, value) * snap.creditFloorBps / 10000 and start = floor * snap.creditStartBps / 10000 (see Snapshot).
-// Scores are cached (useScores); values refresh when the snapshot's floor rate changes. Not polled.
+// Scores are cached (useScores). valueOf includes a pool value that moves, so the query is keyed on the snapshot's
+// last update and refreshes with the snapshot's 15 s cadence. A failed read leaves the id out of the map.
 export function useCreditValues(ids: bigint[]) {
   const client = usePublicClient();
-  const { data: s } = useSnapshot();
+  const { data: s, dataUpdatedAt } = useSnapshot();
   const { data: scores } = useScores(ids);
   const key = ids.map(String).join(",");
   return useQuery<Record<string, bigint>>({
-    queryKey: ["credit-values", key, s?.controller, s?.floorRate.toString(), s?.balanceUnit?.toString()],
+    queryKey: ["credit-values", key, s?.controller, dataUpdatedAt],
     enabled: Boolean(client && s && scores),
     queryFn: async () => {
       const vals = await client!.multicall({
@@ -546,7 +597,9 @@ export function useCreditValues(ids: bigint[]) {
         contracts: ids.map((id) => ({ address: s!.controller, abi: controllerAbi, functionName: "valueOf", args: [scores![id.toString()]] }) as const),
       });
       const m: Record<string, bigint> = {};
-      ids.forEach((id, i) => (m[id.toString()] = val(vals[i], 0n)));
+      ids.forEach((id, i) => {
+        if (vals[i].status === "success") m[id.toString()] = vals[i].result as bigint;
+      });
       return m;
     },
   });

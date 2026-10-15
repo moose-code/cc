@@ -8,7 +8,7 @@ export interface EtaInput {
   index: number; // queue position of the credit, 0 = oldest held
   held: number; // credits the engine holds (Core.pileSize)
   size: number; // credits per statement
-  windowS: number; // credit sale window, seconds
+  windowS: number; // credit sale window in seconds; 0 while the credit sale is off (ControllerV1.pastWindow)
   now: number; // chain time, unix seconds
   perHour: number | undefined; // buys per hour over BUY_RATE_WINDOW_S
   acquiredAt: (index: number) => number | undefined; // acquisition time of the credit at a queue position

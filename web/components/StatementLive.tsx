@@ -1,5 +1,6 @@
 "use client";
 
+import { statementSaleSplit } from "@/lib/sale-split";
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useAccount, useReadContract } from "wagmi";
@@ -218,23 +219,23 @@ const liveAge = (s: HeldStatement, snap: Snapshot, updatedAt: number) =>
 // Status, price now, the falling curve and the buy button. Curve (see Snapshot): ask = reference * bps / 10000, with
 // bps falling linearly from statementStartBps at age 0 to settings.saleFloorBps at statementDecayHours, then flat.
 function PriceSection({ s, snap, updatedAt }: { s: HeldStatement; snap: Snapshot; updatedAt: number }) {
+  if (snap.statementDecayHours === undefined || snap.statementStartBps === undefined) return null;
   const T = snap.statementDecayHours * 3600;
   const age = liveAge(s, snap, updatedAt);
   const left = s.atFloor ? 0 : Math.max(0, T - age);
-  const start = (s.reference * BigInt(snap.statementStartBps)) / 10000n;
+  // _ask clamps the start to the floor
+  const startBps = Math.max(snap.statementStartBps, snap.settings.saleFloorBps);
+  const start = (s.reference * BigInt(startBps)) / 10000n;
   const floor = (s.reference * BigInt(snap.settings.saleFloorBps)) / 10000n;
   const W = 352;
   const xEnd = 240;
   const marker = left > 0 ? Math.min(1, age / T) * xEnd : 320;
   const y0 = start > floor ? 12 : 80;
   const yAt = (x: number) => (left > 0 ? y0 + ((80 - y0) * x) / xEnd : 80);
-  const startX = snap.statementStartBps / 10000;
+  const startX = startBps / 10000;
 
   // Share of the price by destination (Core.sellTo): artist and operator cuts first, then saleToBuybackBps of the rest.
-  const restBps = 10000 - snap.settings.saleToArtistBps - snap.settings.saleToOperatorBps;
-  const buyback = (restBps * snap.settings.saleToBuybackBps) / 1e6;
-  const pot = restBps / 100 - buyback;
-  const cuts = (snap.settings.saleToArtistBps + snap.settings.saleToOperatorBps) / 100;
+  const { pot, buyback, cuts } = statementSaleSplit(snap.settings);
 
   return (
     <>
@@ -354,8 +355,8 @@ function RestyleSection({ s, snap, current }: { s: HeldStatement; snap: Snapshot
 
 // Redeem a held statement for the balance token (Core.redeemStatement), once it is at its floor and redeemOn is set.
 function RedeemSection({ s, snap, updatedAt }: { s: HeldStatement; snap: Snapshot; updatedAt: number }) {
-  const T = snap.statementDecayHours * 3600;
-  const left = s.atFloor ? 0 : Math.max(0, T - liveAge(s, snap, updatedAt));
+  const T = (snap.statementDecayHours ?? 0) * 3600;
+  const left = s.atFloor || T === 0 ? 0 : Math.max(0, T - liveAge(s, snap, updatedAt));
   const on = snap.settings.redeemOn;
   const ready = on && s.atFloor;
   return (

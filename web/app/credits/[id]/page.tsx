@@ -21,6 +21,7 @@ import {
   useCreditOwner,
   useCreditTraits,
   useCreditValues,
+  useCreditCostToPotAt,
   useNow,
   usePile,
   useScores,
@@ -187,7 +188,7 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
             <PriceBox id={id} c={c} snap={snap} left={left} now={now} acquiredAt={c.acquiredAt} />
           )}
           {state === "composed" && last?.t === "composed" && <StatementCard sid={last.sid} />}
-          {state === "sold" && last?.t === "sold" && <SoldSplit e={last} paid={lastBought?.cost} potBps={snap?.creditCostToPotBps} />}
+          {state === "sold" && last?.t === "sold" && <SoldSplit e={last} paid={lastBought?.cost} currentPotBps={snap?.creditCostToPotBps} />}
           {inPile && snap && <SwapPanel outId={id} snap={snap} />}
         </aside>
       </div>
@@ -266,7 +267,7 @@ function ComposeBox({ id, pile, snap }: { id: number; pile: PileCredit[]; snap: 
     <section className="side-sec">
       <div className="compose-box">
         <div>
-          <div className="caption">composes into statement {snap.nextStatementId + k} in</div>
+          <div className="caption">composes into statement {snap.nextStatementId != null ? snap.nextStatementId + k : "next"} in</div>
           <div className="compose-eta">{e ? (e.estimated ? etaLabel(e) : e.seconds > 0 ? countdown(e.seconds) : "now") : "—"}</div>
           <div className="caption">
             position {(index % STATEMENT_SIZE) + 1} of {STATEMENT_SIZE}
@@ -302,8 +303,8 @@ function PriceBox({
 }) {
   const { data: values } = useCreditValues([BigInt(id)]);
   const value = values?.[id.toString()];
-  const floor = value != null ? ((c.cost > value ? c.cost : value) * BigInt(snap.creditFloorBps)) / 10000n : undefined;
-  const start = floor != null ? (floor * BigInt(snap.creditStartBps)) / 10000n : undefined;
+  const floor = value != null && snap.creditFloorBps != null ? ((c.cost > value ? c.cost : value) * BigInt(snap.creditFloorBps)) / 10000n : undefined;
+  const start = floor != null && snap.creditStartBps != null ? (floor * BigInt(snap.creditStartBps)) / 10000n : undefined;
   const W = 352;
   const xEnd = 240;
   const el = now - acquiredAt;
@@ -376,9 +377,12 @@ function StatementCard({ sid }: { sid: number }) {
 }
 
 // Sale split from the CreditSold event (Core.sellCreditTo): the artist and operator cuts come off the price, then
-// min(engine cost * creditCostToPotBps / 10000, rest) goes to the pot and the remainder to the buyback. The split uses
-// the current creditCostToPotBps.
-function SoldSplit({ e, paid, potBps }: { e: Extract<CreditEvt, { t: "sold" }>; paid?: bigint; potBps?: number }) {
+// min(engine cost * creditCostToPotBps / 10000, rest) goes to the pot and the remainder to the buyback. The split
+// uses creditCostToPotBps at the sale block; when that read fails it uses the current value and the split is marked "~".
+function SoldSplit({ e, paid, currentPotBps }: { e: Extract<CreditEvt, { t: "sold" }>; paid?: bigint; currentPotBps?: number }) {
+  const { data: thenBps, isLoading } = useCreditCostToPotAt(e.block);
+  const potBps = thenBps ?? (isLoading ? undefined : currentPotBps);
+  const approx = thenBps == null && potBps != null ? "~" : "";
   const rest = e.price - e.toArtist - e.toOperator;
   const toPot = paid != null && potBps != null ? (paid * BigInt(potBps)) / 10000n : undefined;
   const toBuyback = toPot != null ? rest - (toPot < rest ? toPot : rest) : undefined;
@@ -409,13 +413,13 @@ function SoldSplit({ e, paid, potBps }: { e: Extract<CreditEvt, { t: "sold" }>; 
       {toBuyback != null && (
         <div className="kv">
           <span className="muted">to buyback</span>
-          <span>{eth(toBuyback)} ETH</span>
+          <span>{approx}{eth(toBuyback)} ETH</span>
         </div>
       )}
       {toBuyback != null && (
         <div className="kv">
           <span className="muted">to pot</span>
-          <span>{eth(rest - toBuyback)} ETH</span>
+          <span>{approx}{eth(rest - toBuyback)} ETH</span>
         </div>
       )}
     </section>
