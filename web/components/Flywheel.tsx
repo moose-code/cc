@@ -113,10 +113,10 @@ export function Flywheel() {
   return (
     <section className="fw" aria-label="how the engine works">
       <div className="fw-intro">
-        <h2>a machine that collects Credits, funded by $CC trading</h2>
+        <h2>Credit Cycle</h2>
         <p>
-          trading fees fill a pot. the pot buys Credits, every {STATEMENT_SIZE} become a statement, and statement
-          sales pay the pot back.
+          $CC trading funds the engine. the engine buys Credits, composes them into statements, and sells them to
+          fund the next round.
         </p>
       </div>
       <div className="fw-steps">
