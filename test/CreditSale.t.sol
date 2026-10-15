@@ -187,6 +187,7 @@ contract CreditSaleTest is Fixture {
         uint256[] memory back = new uint256[](1);
         back[0] = id;
         uint256 ethBefore = buyer.balance;
+        vm.roll(block.number + 1); // a credit sold through the credit sale returns through a door in a later block
         vm.prank(buyer);
         core.sellForEth(back);
         assertLt(buyer.balance - ethBefore, price, "the sell back pays less than the purchase cost");
@@ -216,6 +217,7 @@ contract CreditSaleTest is Fixture {
         CREDITS.setApprovalForAll(address(core), true);
         uint256[] memory one = new uint256[](1);
         one[0] = id;
+        vm.roll(block.number + 1); // the same block return is refused; the profit test is about price, not timing
         core.sellForEth(one);
         vm.stopPrank();
         assertLe(arb.balance, pay, "the round trip returned more eth than the credit cost");
