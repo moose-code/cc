@@ -20,15 +20,15 @@ one multicall over these views answers everything a seller, a buyer or a keeper 
 | `core.ethRate()` | the bid for a credit of score `refScore` now, with the unbooked fees counted into the pot |
 | `core.bidOf(id)` | the bid for credit `id` now: `ethRate()` times its score over `refScore`, the number a seller or keeper uses |
 | `core.ethPrice()`, `core.floorRate()` | the price state before the pot clamp; the rate under every price floor |
-| `core.ethPot()`, `core.ethToBuyback()`, `core.ethRedeemBurn()`, `core.payeeOwed()` | the eth pots |
+| `core.ethPot()`, `core.ethToBuyback()`, `core.ethRedeemBurn()` | the eth pots |
 | `IBalanceModule(core.balanceModule()).available()` | the balance token the module commits to the bid (the Core holds none) |
 | `core.balanceRate()` | the balance token bid now, bps of par (par is a credit's `score * unitPerPoint`): the rising balance bid lowered to `available()` as bps of par, at most 10,000 |
 | `core.balanceBidOf(id)` | the balance token payout for credit `id` now: `score * unitPerPoint * balanceRate() / 10,000` |
 | `core.pileSize()`, `core.pilePage(startAfter, n)`, `core.creditInfo(id)` | the pile, oldest first, with cost and acquisition time |
 | `core.heldStatements()`, `core.statementInfo(sid)`, `core.statementAge(sid)`, `core.ratingOf(sid)`, `core.composerOf(sid)` | the held statements |
 | `controller.nextPage()` | whether a page is ready for `compose` |
-| `controller.priceOf(sid)`, `controller.grossPriceOf(sid)`, `controller.referenceOf(sid)`, `controller.atFloor(sid)` | the asking price, what `buy` takes, the reference, redemption eligibility |
-| `controller.creditPrice(id)`, `controller.grossCreditPrice(id)`, `controller.pastWindow(acquiredAt)`, `controller.creditSaleOn()` | the credit sale window |
+| `controller.priceOf(sid)`, `controller.referenceOf(sid)`, `controller.atFloor(sid)` | the asking price `buy` takes, the reference, redemption eligibility |
+| `controller.creditPrice(id)`, `controller.pastWindow(acquiredAt)`, `controller.creditSaleOn()` | the credit sale window |
 | `controller.pointRate()`, `controller.valueOf(points)`, `controller.anchorBps()`, `controller.startBps()` | the pricing inputs |
 | `core.settings()`, `core.paused()`, `core.retired()`, the lock flags, `core.chosenComposeOn()`, `core.minCcToChoose()` | the switches |
 
@@ -61,13 +61,13 @@ reverts: `NotReady`, `BadFormat`, `NotInPile(id)`, `NotHeld`, `BadStatement`, `C
 
 ## 6. buying statements and credits
 
-- a statement: read `controller.grossPriceOf(sid)` and send at least that to `controller.buy(sid)`. the controller forwards the engine price to the Core, keeps the royalty (`royaltyBps`, 250 at launch) for `royaltyRecipient`, and refunds the excess. reverts `NotForSale`, `Underpaid`, `Reentrant`, and through the Core `Paused`, `BelowFloor`. events `Bought(sid, buyer, price)`, `AnchorMoved(sid, saleBps, anchorBps)`, `StatementSoldTo(sid, buyer, price, toBuyback)`.
-- a pile credit, while `creditSaleOn`: `controller.grossCreditPrice(id)` to `controller.buyCredit(id)`, or `buyCredits(ids)` with the sum. reverts `CreditSaleOff`, `NotForSale`, `Underpaid`, `Reentrant`, `Paused`, `BelowFloor`. event `CreditSold(id, buyer, price)`.
-- `controller.claimRoyalty()` sends `royaltyOwed` to the recipient; anyone may call. event `RoyaltyClaimed(to, amount)`.
+- a statement: read `controller.priceOf(sid)` and send at least that to `controller.buy(sid)`. the controller forwards the price to the Core, which takes the artist cut (`saleToArtistBps`, 250 at launch) and the operator cut (`saleToOperatorBps`, 50 at launch) off the payment and pushes them to the artist and the payee; the controller refunds the excess. reverts `NotForSale`, `Underpaid`, `Reentrant`, and through the Core `Paused`, `BelowFloor`. events `Bought(sid, buyer, price)`, `AnchorMoved(sid, saleBps, anchorBps)`, `StatementSoldTo(sid, buyer, price, toBuyback, toArtist, toOperator)`.
+- a pile credit, while `creditSaleOn`: `controller.creditPrice(id)` to `controller.buyCredit(id)`, or `buyCredits(ids)` with the sum. the Core takes the two cuts off each payment. reverts `CreditSaleOff`, `NotForSale`, `Underpaid`, `Reentrant`, `Paused`, `BelowFloor`. event `CreditSold(id, buyer, price, toArtist, toOperator)`.
+- the artist and operator cuts are pushed during the sale, there is no claim. the owner sets the artist with `core.setArtist(to)` (event `ArtistSet`, the zero address refused while `saleToArtistBps` is nonzero) and the cut bps with `setSettings`.
 
 ## 7. fees, booking and funding
 
-fees reach the Core from the pool's hook on every swap and are booked at the next door. `core.book()` books them now (a keeper calls it at the end of the anti sniper window, launch plus 30 minutes). `core.fund()` payable adds eth to the pot whole. `core.collectEscrow()` claims the Core's fee escrow credit into the pot. `core.claimPayee()` pays the payee claim. the balance token is held by the module, not the Core, so there is no balance booking door. a plain send to the Core reverts `UseFund`. events `FeesAdded(amount)`, `Funded(from, amount)`, `EscrowCollected(amount)`, `PayeeClaimed(payee, amount)`.
+fees reach the Core from the pool's hook on every swap and are booked at the next door. `core.book()` books them now (a keeper calls it at the end of the anti sniper window, launch plus 30 minutes). `core.fund()` payable adds eth to the pot whole. `core.collectEscrow()` claims the Core's fee escrow credit into the pot. the payee share is pushed by the book, not claimed. the balance token is held by the module, not the Core, so there is no balance booking door. a plain send to the Core reverts `UseFund`. events `FeesAdded(amount, toPayee)`, `Funded(from, amount)`, `EscrowCollected(amount)`.
 
 ## 8. the buyback
 
@@ -85,7 +85,7 @@ the module holds the balance token; the Core holds none. its interface adds `ava
 
 ## 11. owner events to watch
 
-`SettingsSet(settings)`, `RateSet(rate)`, `ControllerSet`, `BalanceModuleSet`, `AdapterSet(adapter, allowed)`, `SuccessorSet`, `PayeeSet`, `PausedSet`, `CreditCostToPotBpsSet`, `ChosenComposeOnSet`, `MinCcToChooseSet`, `RedeemBurnReleased`, the locks `ControllerLocked`, `BalanceModuleLocked`, `AdaptersLocked`, `SuccessorLocked`, the handover `OwnershipTransferStarted`, `OwnershipTransferred`; on the controller `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`; on the Seaport adapter `RecipientSet`.
+`SettingsSet(settings)`, `RateSet(rate)`, `ControllerSet`, `BalanceModuleSet`, `AdapterSet(adapter, allowed)`, `SuccessorSet`, `PayeeSet`, `ArtistSet`, `PausedSet`, `CreditCostToPotBpsSet`, `ChosenComposeOnSet`, `MinCcToChooseSet`, `RedeemBurnReleased`, the locks `ControllerLocked`, `BalanceModuleLocked`, `AdaptersLocked`, `SuccessorLocked`, the handover `OwnershipTransferStarted`, `OwnershipTransferred`; on the controller `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`; on the Seaport adapter `RecipientSet`.
 
 ## 12. gas
 

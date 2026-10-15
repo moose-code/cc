@@ -6,8 +6,8 @@ import { useSnapshot, useStatements } from "@/lib/live";
 import { useScan } from "@/lib/engine";
 import { engineDeployed } from "@/lib/config";
 
-// Every statement the Core composed. For sale: held by the Core, with the gross
-// price the controller asks (grossPriceOf). Sold: StatementSoldTo logs.
+// Every statement the Core composed. For sale: held by the Core, at the price
+// the controller asks (priceOf). Sold: StatementSoldTo logs.
 // Redeemed: StatementRedeemed logs. Not held: composed, with no sale or redemption log.
 export default function StatementsPage() {
   const { data: snap } = useSnapshot();
@@ -22,7 +22,7 @@ export default function StatementsPage() {
     .map((id) => {
       const h = heldBy.get(id);
       const r = scan.statements[id];
-      if (h) return { id, status: "listed" as const, price: h.gross, priceTag: undefined };
+      if (h) return { id, status: "listed" as const, price: h.price, priceTag: undefined };
       if (r?.sold) return { id, status: "sold" as const, price: r.sold.price, priceTag: "sold" };
       if (r?.redeemed) return { id, status: "redeemed" as const, price: r.composed?.cost, priceTag: "cost" };
       return { id, status: "not held" as const, price: r?.composed?.cost, priceTag: "cost" };

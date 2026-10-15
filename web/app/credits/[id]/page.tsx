@@ -66,8 +66,8 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
                 {!snap ? null : !snap.creditSaleOn
                   ? "the credit sale is off."
                   : left > 0
-                    ? `in its sale window, ${countdown(left)} left, for sale at ${eth(c!.gross)} eth and falling (${eth(c!.price)} engine price plus royalty).`
-                    : `past its sale window, for sale at ${eth(c!.gross)} eth (${eth(c!.price)} engine price plus royalty)${c!.past ? ", eligible for compose" : ""}.`}
+                    ? `in its sale window, ${countdown(left)} left, for sale at ${eth(c!.price)} eth and falling.`
+                    : `past its sale window, for sale at ${eth(c!.price)} eth${c!.past ? ", eligible for compose" : ""}.`}
               </p>
             ) : last?.t === "composed" ? (
               <p>
@@ -103,7 +103,7 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
               <Fact k="got by" v={lastBought ? lastBought.how : "—"} />
               <Fact k="acquired" v={acquiredAt != null ? agoLabel(now - acquiredAt) : "—"} />
               {inPile && snap?.creditSaleOn && <Fact k="sale window" v={left > 0 ? `${countdown(left)} left` : "past window"} />}
-              {inPile && snap?.creditSaleOn && <Fact k="sale price" v={`${eth(c!.gross)} eth`} />}
+              {inPile && snap?.creditSaleOn && <Fact k="sale price" v={`${eth(c!.price)} eth`} />}
             </div>
           )}
 

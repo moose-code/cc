@@ -66,7 +66,7 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     ethPot,
     ethToBuyback,
     ethRedeemBurn,
-    payeeOwed,
+    payee,
     pileSize,
     held,
     settings,
@@ -81,6 +81,7 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     payeeOn,
     coreEth,
     balanceRate,
+    artist,
   ] = await client.multicall({
     ...mc,
     allowFailure: false,
@@ -91,7 +92,7 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
       { ...c, functionName: "ethPot" },
       { ...c, functionName: "ethToBuyback" },
       { ...c, functionName: "ethRedeemBurn" },
-      { ...c, functionName: "payeeOwed" },
+      { ...c, functionName: "payee" },
       { ...c, functionName: "pileSize" },
       { ...c, functionName: "heldStatements" },
       { ...c, functionName: "settings" },
@@ -106,10 +107,11 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
       { ...c, functionName: "payeeOn" },
       { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [coreAddr] },
       { ...c, functionName: "balanceRate" },
+      { ...c, functionName: "artist" },
     ] as const,
   });
   // ethPot plus the share of the unbooked fee income that the next Core._book adds (Core._income, _split)
-  const income = coreEth > ethPot + ethToBuyback + ethRedeemBurn + payeeOwed ? coreEth - (ethPot + ethToBuyback + ethRedeemBurn + payeeOwed) : 0n;
+  const income = coreEth > ethPot + ethToBuyback + ethRedeemBurn ? coreEth - (ethPot + ethToBuyback + ethRedeemBurn) : 0n;
   const toPayee = payeeOn ? (income * BigInt(settings.payeePpm)) / 1_000_000n : 0n;
   const toRedeemBurn = ((income - toPayee) * BigInt(settings.feeToRedeemBurnBps)) / 10000n;
   const potWithPending = ethPot + income - toPayee - toRedeemBurn;
@@ -125,14 +127,13 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
       })
     : [0n, 0n];
   const k = { address: controller, abi: controllerAbi } as const;
-  const [creditSaleOn, creditWindow, pointRate, royaltyOwed, page] = await client.multicall({
+  const [creditSaleOn, creditWindow, pointRate, page] = await client.multicall({
     ...mc,
     allowFailure: false,
     contracts: [
       { ...k, functionName: "creditSaleOn" },
       { ...k, functionName: "creditWindow" },
       { ...k, functionName: "pointRate" },
-      { ...k, functionName: "royaltyOwed" },
       { ...k, functionName: "nextPage" },
     ] as const,
   });
@@ -147,7 +148,8 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     balancePot,
     balanceRate,
     balanceUnit,
-    payeeOwed,
+    payee,
+    artist,
     pileSize,
     held: held.map(Number),
     settings,
@@ -164,7 +166,6 @@ export async function readSnapshot(client: Client, coreAddr: Address) {
     creditSaleOn,
     creditWindow: Number(creditWindow),
     pointRate,
-    royaltyOwed,
     page: { ready: page[0], ids: page[1].map(Number), format: page[2] },
   };
 }
@@ -189,8 +190,7 @@ export interface PileCredit {
   inPile: boolean;
   cost: bigint; // wei the engine paid
   acquiredAt: number; // unix seconds
-  price: bigint; // engine price now, 0 while the sale is off
-  gross: bigint; // what buyCredit takes: the price plus the royalty
+  price: bigint; // sale price now, 0 while the sale is off; what buyCredit takes
   past: boolean; // past its sale window: compose takes only these
 }
 
@@ -204,18 +204,13 @@ async function readCredits(client: Client, s: Snapshot, ids: bigint[]): Promise<
     contracts: ids.map((id) => ({ address: core!, abi: coreAbi, functionName: "creditInfo", args: [id] }) as const),
   });
   const k = { address: s.controller, abi: controllerAbi } as const;
-  const per = s.creditSaleOn ? 3 : 1;
+  const per = s.creditSaleOn ? 2 : 1;
   const res = await client.multicall({
     ...mc,
     allowFailure: true,
     contracts: ids.flatMap((id, i) => [
       { ...k, functionName: "pastWindow", args: [info[i][2]] } as const,
-      ...(s.creditSaleOn
-        ? ([
-            { ...k, functionName: "creditPrice", args: [id] },
-            { ...k, functionName: "grossCreditPrice", args: [id] },
-          ] as const)
-        : []),
+      ...(s.creditSaleOn ? ([{ ...k, functionName: "creditPrice", args: [id] }] as const) : []),
     ]),
   });
   return ids.map((id, i) => ({
@@ -225,7 +220,6 @@ async function readCredits(client: Client, s: Snapshot, ids: bigint[]): Promise<
     acquiredAt: Number(info[i][2]),
     past: val(res[i * per], true),
     price: s.creditSaleOn ? val(res[i * per + 1], 0n) : 0n,
-    gross: s.creditSaleOn ? val(res[i * per + 2], 0n) : 0n,
   }));
 }
 
@@ -265,8 +259,7 @@ export interface HeldStatement {
   age: number; // seconds, paused time excluded
   rating: bigint;
   composer: Address;
-  price: bigint; // engine price now
-  gross: bigint; // what buy takes: the price plus the royalty
+  price: bigint; // asking price now; what buy takes
   reference: bigint;
   atFloor: boolean;
   value: bigint; // controller valueOf(rating); read only once the balance side exists
@@ -294,13 +287,12 @@ export function useStatements() {
             { ...c, functionName: "ratingOf", args: a },
             { ...c, functionName: "composerOf", args: a },
             { ...k, functionName: "priceOf", args: a },
-            { ...k, functionName: "grossPriceOf", args: a },
             { ...k, functionName: "referenceOf", args: a },
             { ...k, functionName: "atFloor", args: a },
           ] as const;
         }),
       });
-      const rating = (i: number) => val<bigint>(res[i * 8 + 2], 0n);
+      const rating = (i: number) => val<bigint>(res[i * 7 + 2], 0n);
       const values = s!.balanceOn
         ? await client!.multicall({
             ...mc,
@@ -309,7 +301,7 @@ export function useStatements() {
           })
         : [];
       return s!.held.map((sid, i) => {
-        const r = (j: number) => res[i * 8 + j];
+        const r = (j: number) => res[i * 7 + j];
         const info = val<readonly [boolean, bigint, bigint]>(r(0), [false, 0n, 0n]);
         return {
           sid,
@@ -319,9 +311,8 @@ export function useStatements() {
           rating: rating(i),
           composer: val<Address>(r(3), zeroAddress),
           price: val(r(4), 0n),
-          gross: val(r(5), 0n),
-          reference: val(r(6), 0n),
-          atFloor: val(r(7), false),
+          reference: val(r(5), 0n),
+          atFloor: val(r(6), false),
           value: values[i] ? val(values[i], 0n) : 0n,
         };
       });
@@ -334,7 +325,7 @@ export function useStatements() {
 
 // State.anchor starts at slot 28 (test/CoreLayout.t.sol, src/lib/CoreLib.sol):
 // lastFillRate, minuteStartRate, minuteBucket (uint64) + peakTime, peakRate.
-const ANCHOR_SLOT = 28n;
+const ANCHOR_SLOT = 27n;
 const CREDIT_SCORE = "0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7" as const;
 const scoreAbi = parseAbi(["function scoreOf(bytes21 seed, uint64 paidAt) view returns (uint256)"]);
 const multicallAbi = parseAbi(["function getEthBalance(address a) view returns (uint256)"]);
@@ -348,7 +339,7 @@ const seedAbi = parseAbi(["function seedOf(uint256 id) view returns (bytes21)", 
 export async function sellQuote(client: Client, ids: bigint[], now: number): Promise<bigint> {
   const c = { address: core!, abi: coreAbi } as const;
   const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ANCHOR_SLOT + i, { size: 32 }) });
-  const [[price, peak, ethPot, toBuyback, redeemBurn, owed, payeeOn, st, held], startWord, bucketWord, scores] = await Promise.all([
+  const [[price, peak, ethPot, toBuyback, redeemBurn, payeeOn, st, held], startWord, bucketWord, scores] = await Promise.all([
     client.multicall({
       ...mc,
       allowFailure: false,
@@ -358,7 +349,6 @@ export async function sellQuote(client: Client, ids: bigint[], now: number): Pro
         { ...c, functionName: "ethPot" },
         { ...c, functionName: "ethToBuyback" },
         { ...c, functionName: "ethRedeemBurn" },
-        { ...c, functionName: "payeeOwed" },
         { ...c, functionName: "payeeOn" },
         { ...c, functionName: "settings" },
         { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [core!] },
@@ -368,7 +358,7 @@ export async function sellQuote(client: Client, ids: bigint[], now: number): Pro
     word(2n),
     creditScores(client, ids),
   ]);
-  const booked = ethPot + toBuyback + redeemBurn + owed;
+  const booked = ethPot + toBuyback + redeemBurn;
   const income = held > booked ? held - booked : 0n;
   const toPayee = payeeOn ? (income * BigInt(st.payeePpm)) / 1_000_000n : 0n;
   const toRedeemBurn = ((income - toPayee) * BigInt(st.feeToRedeemBurnBps)) / 10000n;

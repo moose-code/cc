@@ -3,16 +3,18 @@
 import { useReadContract } from "wagmi";
 import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
-import { controllerAbi, coreAbi } from "@/lib/abis";
+import { coreAbi } from "@/lib/abis";
 import { core, engineDeployed } from "@/lib/config";
 import { useHead, useSnapshot } from "@/lib/live";
+import { useStats } from "@/lib/engine";
 import { BALANCE_SYMBOL } from "@/lib/events";
-import { commas, eth } from "@/lib/format";
+import { commas, eth, shortAddr } from "@/lib/format";
 
-// The permissionless engine actions: the pots, the next buyback and the claims.
-// Anyone may call all four.
+// The permissionless engine actions: the pots, the book and the next buyback (anyone may call them), and the push
+// payouts. The artist and the payee are paid by push on every sale and book, so there is no claim here.
 export default function KeeperPage() {
   const { data: s } = useSnapshot();
+  const { data: stats } = useStats();
   const head = useHead().data?.n;
   const { data: last } = useReadContract({
     address: core,
@@ -50,9 +52,7 @@ export default function KeeperPage() {
             {row("bid, average credit", `${eth(s.ethRate)} eth`)}
             {row("pot", `${eth(s.ethPot)} eth`)}
             {row("to buyback", `${eth(s.ethToBuyback)} eth`)}
-            {row("redeem burn reserve", `${eth(s.ethRedeemBurn)} eth`)}
-            {row("payee owed", `${eth(s.payeeOwed)} eth`)}
-            {row("royalty owed", `${eth(s.royaltyOwed)} eth`)}
+            {row("redeem burn pot", `${eth(s.ethRedeemBurn)} eth`)}
             {s.balanceOn && row(`${BALANCE_SYMBOL} in the module`, eth(s.balancePot))}
             {s.balanceOn && row(`${BALANCE_SYMBOL} bid, % of par`, `${(Number(s.balanceRate) / 100).toFixed(1)}%`)}
           </div>
@@ -84,19 +84,13 @@ export default function KeeperPage() {
         </section>
 
         <section>
-          <h2>claims</h2>
-          <p className="panel-note">each claim pays its recipient.</p>
-          <div className="actions">
-            <Act
-              label="claim payee"
-              disabled={s.payeeOwed === 0n}
-              steps={async (w) => void (await w({ address: core, abi: coreAbi, functionName: "claimPayee" }))}
-            />
-            <Act
-              label="claim royalty"
-              disabled={s.royaltyOwed === 0n}
-              steps={async (w) => void (await w({ address: s.controller, abi: controllerAbi, functionName: "claimRoyalty" }))}
-            />
+          <h2>payouts</h2>
+          <p className="panel-note">the artist and the payee are paid by push on every sale and book, so there is no claim.</p>
+          <div className="quote">
+            {row("artist", shortAddr(s.artist))}
+            {row("artist received", `${(stats?.artistReceived ?? 0).toFixed(4)} eth`)}
+            {row("payee", shortAddr(s.payee))}
+            {row("payee received", `${(stats?.payeeReceived ?? 0).toFixed(4)} eth`)}
           </div>
         </section>
       </div>

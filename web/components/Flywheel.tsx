@@ -120,7 +120,7 @@ export function Flywheel() {
   const burn: Step = {
     icon: "flame",
     label: "burn cc",
-    line: "a quarter of each sale and the redeem reserve burn cc",
+    line: "a quarter of each sale and the redeem burn pot burn cc",
     num: `${n(s.ccBurned)} cc burned${on ? ` · ${commas(burnedPct, 2)}%` : ""}`,
     href: "/statements",
   };

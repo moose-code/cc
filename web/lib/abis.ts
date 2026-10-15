@@ -19,7 +19,8 @@ export const coreAbi = parseAbi([
   "function ethPot() view returns (uint256)",
   "function ethToBuyback() view returns (uint256)",
   "function ethRedeemBurn() view returns (uint256)",
-  "function payeeOwed() view returns (uint256)",
+  "function payee() view returns (address)",
+  "function artist() view returns (address)",
   "function payeeOn() view returns (bool)",
   "function pileSize() view returns (uint256)",
   "function pilePage(uint256 startAfter, uint256 n) view returns (uint256[] ids)",
@@ -29,7 +30,7 @@ export const coreAbi = parseAbi([
   "function statementAge(uint256 sid) view returns (uint256)",
   "function ratingOf(uint256 sid) view returns (uint256)",
   "function composerOf(uint256 sid) view returns (address)",
-  "function settings() view returns ((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 refScore, uint96 swapFeeCc))",
+  "function settings() view returns ((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 refScore, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps))",
   "function paused() view returns (bool)",
   "function retired() view returns (bool)",
   "function chosenComposeOn() view returns (bool)",
@@ -45,18 +46,16 @@ export const coreAbi = parseAbi([
   "function redeemStatement(uint256 sid)",
   "function buyback()",
   "function book()",
-  "function claimPayee()",
+  "function setArtist(address to)",
   "function lastBuybackBlock() view returns (uint256)",
 ]);
 
 export const controllerAbi = parseAbi([
   // views
   "function priceOf(uint256 sid) view returns (uint256 price)",
-  "function grossPriceOf(uint256 sid) view returns (uint256)",
   "function referenceOf(uint256 sid) view returns (uint256)",
   "function atFloor(uint256 sid) view returns (bool)",
   "function creditPrice(uint256 id) view returns (uint256 price)",
-  "function grossCreditPrice(uint256 id) view returns (uint256)",
   "function creditSaleOn() view returns (bool)",
   "function balancePoolKeySet() view returns (bool)",
   "function balancePoolKey() view returns (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)",
@@ -65,12 +64,10 @@ export const controllerAbi = parseAbi([
   "function nextPage() view returns (bool ready, uint256[80] ids, uint8 format)",
   "function pointRate() view returns (uint256)",
   "function valueOf(uint256 points) view returns (uint256)",
-  "function royaltyOwed() view returns (uint256)",
   // actions
   "function buy(uint256 sid) payable",
   "function buyCredit(uint256 id) payable",
   "function buyCredits(uint256[] ids) payable",
-  "function claimRoyalty()",
 ]);
 
 // Credits: the holdings read and the Core approval.
@@ -125,20 +122,21 @@ export const engineEventsAbi = parseAbi([
   "event CreditSwapped(uint256 indexed inId, uint256 indexed outId, address indexed caller, uint256 fee)",
   "event Composed(uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, uint256 price, address indexed caller)",
   "event HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller)",
-  "event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback)",
-  "event CreditSold(uint256 indexed id, address indexed buyer, uint256 price)",
+  "event StatementSoldTo(uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback, uint256 toArtist, uint256 toOperator)",
+  "event CreditSold(uint256 indexed id, address indexed buyer, uint256 price, uint256 toArtist, uint256 toOperator)",
   "event StatementRedeemed(uint256 indexed sid, uint256 received)",
   "event Buyback(address indexed caller, uint256 amountIn, uint256 paid)",
-  "event FeesAdded(uint256 amount)",
+  "event FeesAdded(uint256 amount, uint256 toPayee)",
   "event Funded(address indexed from, uint256 amount)",
-  "event SettingsSet((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 refScore, uint96 swapFeeCc) settings)",
+  "event SettingsSet((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 refScore, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps) settings)",
   "event PausedSet(bool paused)",
+  "event PayeeSet(address indexed payee)",
+  "event ArtistSet(address indexed artist)",
   "event ControllerSet(address controller)",
   "event BalanceModuleSet(address balanceModule, address balanceToken, uint256 unitPerPoint)",
   // ControllerV1
   "event Bought(uint256 indexed sid, address indexed buyer, uint256 price)",
   "event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps)",
-  "event RoyaltyClaimed(address indexed to, uint256 amount)",
 ]);
 
 // The coin burn is Transfer(core, address(0), amount); the balance token paid to a seller is Transfer(core, seller, amount).

@@ -35,6 +35,8 @@ export interface Stats {
   ethIntoCredits: number; // sum of EthRateFill.spent
   ccBurned: number;
   feesBooked: number; // sum of FeesAdded, eth
+  artistReceived: number; // sum of the artist cut (StatementSoldTo and CreditSold toArtist), eth
+  payeeReceived: number; // the operator cut of sales plus the pushed fee share, eth
 }
 
 export type CreditHow = "eth bid" | `${typeof BALANCE_SYMBOL} bid` | "listing" | "adopted";
@@ -121,6 +123,8 @@ export function emptyStats(): Stats {
     ethIntoCredits: 0,
     ccBurned: 0,
     feesBooked: 0,
+    artistReceived: 0,
+    payeeReceived: 0,
   };
 }
 
@@ -231,6 +235,8 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const sid = Number(a.sid);
         st(sid).sold = { buyer: a.buyer, price: a.price, toBuyback: a.toBuyback, block, tx };
         stats.sold++;
+        stats.artistReceived += Number(formatUnits(a.toArtist, 18));
+        stats.payeeReceived += Number(formatUnits(a.toOperator, 18));
         row({
           kind: "sold",
           label: "statement sold",
@@ -259,6 +265,8 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const id = Number(a.id);
         cr(id).push({ t: "sold", buyer: a.buyer, price: a.price, block, tx });
         stats.creditsSold++;
+        stats.artistReceived += Number(formatUnits(a.toArtist, 18));
+        stats.payeeReceived += Number(formatUnits(a.toOperator, 18));
         row({ kind: "sold", label: "credit sold", detail: `credit #${id} bought from the credit sale by`, eth: eth(a.price), addr: a.buyer, tile: { kind: "credit", id } });
         break;
       }
@@ -276,6 +284,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         break;
       case "FeesAdded":
         stats.feesBooked += Number(formatUnits(a.amount, 18));
+        stats.payeeReceived += Number(formatUnits(a.toPayee, 18));
         break;
     }
   }
