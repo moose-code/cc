@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { useEns } from "@/lib/ens";
+import { shortAddr } from "@/lib/format";
 
 const NAV = [
   { href: "/", label: "engine" },
@@ -64,8 +66,8 @@ export function Header() {
   );
 }
 
-// Disconnected: filled "connect wallet". Connected: short address plus an
-// outlined status button that opens the account modal.
+// Disconnected: filled "connect wallet". Connected: outlined button with the
+// account's ENS name or short address; opens the account modal.
 function WalletButton() {
   return (
     <ConnectButton.Custom>
@@ -84,17 +86,19 @@ function WalletButton() {
                 wrong network
               </button>
             ) : (
-              <>
-                <span className="wallet-addr">{account.displayName}</span>
-                <button className="btn-outline" onClick={openAccountModal}>
-                  <i className="sq" />
-                  connected
-                </button>
-              </>
+              <button className="btn-outline" onClick={openAccountModal}>
+                <i className="sq" />
+                <AccountName address={account.address} />
+              </button>
             )}
           </div>
         );
       }}
     </ConnectButton.Custom>
   );
+}
+
+// ENS name from the cached reverse lookup in lib/ens.ts, else the short address
+function AccountName({ address }: { address: string }) {
+  return <>{useEns(address) ?? shortAddr(address)}</>;
 }

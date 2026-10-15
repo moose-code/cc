@@ -104,27 +104,30 @@ a:hover {
   border-bottom: 1px solid var(--structure);
 }
 
+/* wordmark and "engine" share a baseline; the logo centres on the row */
 .brand {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: baseline;
   color: var(--ink);
 }
 .brand b {
+  margin-left: 16px;
   font-size: 15px;
   font-weight: 600;
 }
 .brand-sub {
-  font-size: 11px;
+  margin-left: 10px;
+  font-size: 13px;
   color: var(--quiet);
 }
 
-/* three 16px plates offset 3px; overlaps print as mixed inks */
+/* three 16px plates, each offset 4px right and down; overlaps print as mixed inks */
 .logo {
   position: relative;
   display: block;
-  width: 22px;
-  height: 16px;
+  align-self: center;
+  width: 24px;
+  height: 24px;
   isolation: isolate;
 }
 .logo i {
@@ -139,11 +142,13 @@ a:hover {
   background: var(--c);
 }
 .logo i:nth-child(2) {
-  left: 3px;
+  top: 4px;
+  left: 4px;
   background: var(--m);
 }
 .logo i:nth-child(3) {
-  left: 6px;
+  top: 8px;
+  left: 8px;
   background: var(--y);
 }
 :root[data-theme="dark"] .logo i {
@@ -171,10 +176,6 @@ a:hover {
 }
 .wallet.pending {
   visibility: hidden;
-}
-.wallet-addr {
-  font-size: 12px;
-  color: var(--muted);
 }
 .btn-fill,
 .btn-outline {
@@ -1785,9 +1786,6 @@ button.tp-row:disabled {
     order: 2;
     margin-left: auto;
     gap: 8px;
-  }
-  .wallet .wallet-addr {
-    display: none;
   }
   .brand-sub {
     display: none;
