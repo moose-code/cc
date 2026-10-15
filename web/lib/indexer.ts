@@ -146,9 +146,18 @@ export async function fetchStrategyListings() {
 }
 
 /** Scores of credits by id from the credit table; ids the table lacks are absent. */
+// The SQL client sends each query in a GET url; a long id list exceeds the server's header limit (431, reported by the
+// browser as a CORS failure), so id lists are queried in chunks of ID_CHUNK.
+const ID_CHUNK = 200;
+async function chunked<I, R>(ids: I[], q: (part: I[]) => Promise<R[]>): Promise<R[]> {
+  const parts: I[][] = [];
+  for (let i = 0; i < ids.length; i += ID_CHUNK) parts.push(ids.slice(i, i + ID_CHUNK));
+  return (await Promise.all(parts.map(q))).flat();
+}
+
 export async function fetchScoresIx(ids: bigint[]): Promise<Map<bigint, bigint>> {
   if (!ids.length) return new Map();
-  const rows = await ix!.db.select({ id: credit.id, score: credit.score }).from(credit).where(inArray(credit.id, ids));
+  const rows = await chunked(ids, (part) => ix!.db.select({ id: credit.id, score: credit.score }).from(credit).where(inArray(credit.id, part)));
   return new Map(rows.map((r) => [r.id, r.score]));
 }
 
@@ -509,7 +518,7 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
 export async function fetchTokenUris(kind: "credit" | "statement", ids: number[]): Promise<Map<number, string>> {
   if (!ix) return new Map();
   const t = kind === "credit" ? credit : statement;
-  const rows = await ix.db.select({ id: t.id, uri: t.tokenUri }).from(t).where(inArray(t.id, ids.map(BigInt)));
+  const rows = await chunked(ids.map(BigInt), (part) => ix!.db.select({ id: t.id, uri: t.tokenUri }).from(t).where(inArray(t.id, part)));
   return new Map(rows.flatMap((r) => (r.uri ? [[Number(r.id), r.uri] as [number, string]] : [])));
 }
 
@@ -520,10 +529,12 @@ export function useCreditTraitsIx(ids: number[]) {
   return useIx(
     ["credit-traits", ids.join(",")],
     async (db) => {
-      const rows = await db
-        .select({ id: credit.id, score: credit.score, mask: credit.mask, active: credit.active, occupied: credit.occupied, eights: credit.eights, band: credit.band })
-        .from(credit)
-        .where(inArray(credit.id, ids.map(BigInt)));
+      const rows = await chunked(ids.map(BigInt), (part) =>
+        db
+          .select({ id: credit.id, score: credit.score, mask: credit.mask, active: credit.active, occupied: credit.occupied, eights: credit.eights, band: credit.band })
+          .from(credit)
+          .where(inArray(credit.id, part)),
+      );
       return Object.fromEntries(rows.map((r) => [r.id.toString(), r]));
     },
     { enabled: ids.length > 0 },
