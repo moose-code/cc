@@ -7,7 +7,7 @@ import { engineDeployed, chain } from "@/lib/config";
 import { useCcMarket, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
-import { changePct, commas, evmNowAddress, evmNowTx, leftLabel, shortHash, tokens, usdCompact, usdPrice } from "@/lib/format";
+import { changePct, commas, evmNowAddress, evmNowTx, leftLabel, shortHash, tokens, usd, usdCompact, usdPrice } from "@/lib/format";
 import { lsGet, lsSet } from "@/lib/cache";
 import { useNow } from "@/lib/live";
 import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
@@ -15,7 +15,6 @@ import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
 const HOOK_FEE_BPS = 1000; // fallback when the hook reads fail
 const SLIPPAGE_PRESETS = [50, 100, 200, 500]; // bps
 const SLIPPAGE_KEY = "cc:slippage-bps";
-const IMPACT_WARN = 0.02;
 const GAS_RESERVE = parseEther("0.01"); // left by "max" for gas
 const PERMIT2_MAX = (1n << 160n) - 1n;
 const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as number
@@ -39,7 +38,7 @@ export function TradePanel({ market }: { market?: Market }) {
   const now = useNow();
   const feeBps = hooked ? hookFee?.bps ?? HOOK_FEE_BPS : (m?.key.fee ?? 0) / 100; // LP fee is in hundredths of a bip
 
-  const { priceUsd: tokenUsd, marketCap, change } = useMarketStats(m);
+  const { priceUsd: tokenUsd, ethUsd, marketCap, change } = useMarketStats(m);
 
   // slippage tolerance in bps, kept in localStorage; a custom percent is applied once it is within 0.1 to 50
   const [slipBps, setSlipBps] = useState(100);
@@ -80,9 +79,10 @@ export function TradePanel({ market }: { market?: Market }) {
   // quoted when the pool answers, else spot math
   const spot = perEth ? (side === "buy" ? amount * perEth : amount / perEth) : 0;
   const receive = quoteOut != null ? Number(formatUnits(quoteOut, outDec)) : spot;
-  const f = feeBps / 10000;
-  // quote against the spot proceeds after the fee
-  const impact = quoteOut != null && spot > 0 ? Math.max(0, 1 - receive / (spot * (1 - f))) : undefined;
+  // usd value of each side: eth x the feed, the token x its usd price
+  const inUsd = side === "buy" ? (ethUsd != null ? amount * ethUsd : undefined) : tokenUsd != null ? amount * tokenUsd : undefined;
+  const outUsd = side === "buy" ? (tokenUsd != null ? receive * tokenUsd : undefined) : ethUsd != null ? receive * ethUsd : undefined;
+  const usdText = (v: number | undefined) => (v == null ? null : amountIn === 0n ? "$0" : usd(v));
 
   const { data: tokBal } = useReadContract({
     address: m?.token,
@@ -265,6 +265,7 @@ export function TradePanel({ market }: { market?: Market }) {
           />
           <span className="unit">{inUnit}</span>
         </div>
+        {usdText(inUsd) != null && <div className="tp-usd">{usdText(inUsd)}</div>}
       </div>
 
       <div className="tp-card">
@@ -275,13 +276,10 @@ export function TradePanel({ market }: { market?: Market }) {
           <span className={`num${amountIn === 0n ? " zero" : ""}`}>{outText}</span>
           <span className="unit">{outUnit}</span>
         </div>
+        {usdText(outUsd) != null && <div className="tp-usd">{usdText(outUsd)}</div>}
       </div>
 
       <div className="tp-rows">
-        <div className={`tp-row${impact != null && impact > IMPACT_WARN ? " warn" : ""}`}>
-          <span>price impact</span>
-          <span>{impact != null ? `${impact > 0 ? "−" : ""}${(impact * 100).toFixed(2)}%` : "—"}</span>
-        </div>
         <button className="tp-row" disabled={pending} aria-expanded={slipOpen} onClick={() => setSlipOpen(!slipOpen)}>
           <span>slippage</span>
           <span>

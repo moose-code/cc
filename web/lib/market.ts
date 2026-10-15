@@ -209,5 +209,5 @@ export function useMarketStats(market?: Market) {
   const priceUsd = ethUsd != null && perEth ? ethUsd / perEth : undefined;
   const marketCap = priceUsd != null && supply != null && market ? priceUsd * Number(formatUnits(supply, market.decimals)) : undefined;
   const change = perEth && perEthThen != null ? (perEthThen / perEth - 1) * 100 : undefined;
-  return { priceUsd, marketCap, change };
+  return { priceUsd, ethUsd, marketCap, change };
 }
