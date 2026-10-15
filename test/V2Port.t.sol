@@ -2,12 +2,15 @@
 pragma solidity ^0.8.28;
 
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {FeeBase} from "./Fees.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {IArtCoinsHookV2} from "../src/interfaces/ArtCoinsV2.sol";
+import {IArtCoinsHookV2, IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {Prod} from "./utils/Prod.sol";
 import {LeftoverSpender} from "./attackers/V2Port.sol";
 
@@ -67,6 +70,41 @@ contract V2PortFeeTest is FeeBase {
         core.collectEscrow();
         assertEq(core.ethPot(), 0);
         assertEq(address(core).balance, 0);
+    }
+
+    /// @dev a tick below the current price, so an exact input eth to coin swap stops at the limit and fills partially
+    function _limitBelow() internal view returns (uint160) {
+        (uint160 sp,,,) = StateLibrary.getSlot0(IPoolManager(Mainnet.POOL_MANAGER), PoolId.wrap(poolId));
+        return sp - sp / 100;
+    }
+
+    // promise: D126 a partial fill of an exact input swap refunds the over charged skim to the hookData refund address
+    /// the shape of the Core's own buyback: an exact input eth to coin swap with a tight price limit fills partially,
+    /// and the skim charged on the unfilled eth is credited to the refund address `hookData` carries, the way the Core's
+    /// buyback names itself. the same SwapData struct encoding the buyback sends, with the Core as the refund address
+    function test_partialFillRefundsToTheHookDataAddress() public {
+        _skipSniperWindow();
+        address refundTo = _user("refund.to");
+        bytes memory hookData =
+            abi.encode(PoolSwapData({mevModuleSwapData: abi.encode(refundTo), poolExtensionSwapData: ""}));
+        uint256 ethIn = 200 ether;
+        vm.deal(trader, ethIn);
+        vm.prank(trader);
+        router.swapWithLimit{value: ethIn}(launchKey, true, -int256(ethIn), _limitBelow(), trader, hookData);
+        assertGt(ESCROW.balances(refundTo, address(0)), 0, "the over charged skim is credited to the refund address");
+    }
+
+    // promise: D126 a partial fill with no refund address reverts, which is why the buyback carries one
+    /// without a refund address in `hookData` the same partial fill reverts: the engine's buyback carries the Core as
+    /// the refund address so this never fires on its own swap
+    function test_partialFillWithoutRefundAddressReverts() public {
+        _skipSniperWindow();
+        uint256 ethIn = 200 ether;
+        uint160 limit = _limitBelow();
+        vm.deal(trader, ethIn);
+        vm.prank(trader);
+        vm.expectRevert();
+        router.swapWithLimit{value: ethIn}(launchKey, true, -int256(ethIn), limit, trader, "");
     }
 
 }
@@ -206,6 +244,57 @@ contract V2PortMigrationTest is FeeBase {
         _solvent();
     }
 
+}
+
+/// master coin admin controls over the pool skim, and where the protocol leg lands. real coin, real pool, real hook
+contract V2PortSkimTest is FeeBase {
+    function setUp() public override {
+        super.setUp();
+        _skipSniperWindow();
+    }
+
+    // promise: D126 the coin admin lowers the baseline skim, which lowers the engine's fee per swap
+    /// `lowerBaselineSkim` by the coin admin halves the baseline, so the Core's bounty leg per swap halves
+    function test_lowerBaselineSkimLowersTheEngineFee() public {
+        autoBook = false;
+        uint256 b0 = address(core).balance;
+        _buyCoin(trader, 1 ether);
+        uint256 full = address(core).balance - b0;
+        vm.prank(owner);
+        IArtCoinsHookV2(lc.stack.hook).lowerBaselineSkim(poolId, 500);
+        assertEq(IArtCoinsHookV2(lc.stack.hook).skimConfig(poolId).baselineSkimBps, 500, "baseline lowered");
+        uint256 b1 = address(core).balance;
+        _buyCoin(trader, 1 ether);
+        uint256 half = address(core).balance - b1;
+        assertLt(half, full, "the engine fee per swap dropped");
+        assertApproxEqRel(half * 2, full, 0.05e18, "about half the bounty at half the baseline");
+    }
+
+    // promise: D126 the coin lock freezes lowerBaselineSkim
+    /// once the coin admin locks the coin, `lowerBaselineSkim` reverts, so the engine's fee can no longer be lowered
+    function test_lockFreezesLowerBaselineSkim() public {
+        vm.prank(owner);
+        coin.lock();
+        assertTrue(coin.locked());
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSignature("CoinLocked()"));
+        IArtCoinsHookV2(lc.stack.hook).lowerBaselineSkim(poolId, 500);
+    }
+
+    // promise: D126 the protocol leg lands at the protocol fee controller at 1000 bps of the baseline skim
+    /// the protocol recipient of the pool is the ProtocolFeeControllerV2, and a 1 eth buy lands 0.01 eth there (the
+    /// 1000 bps the baseline skim keeps after the 9000 bounty share), pushed or credited to it in the escrow
+    function test_protocolLegLandsAtTheController() public {
+        address controller = v2.controller;
+        assertEq(IArtCoinsFactoryV2(lc.stack.factory).protocolRecipient(), payable(controller), "factory recipient");
+        assertEq(address(IArtCoinsHookV2(lc.stack.hook).skimConfig(poolId).protocolRecipient), controller, "pool recipient");
+        autoBook = false;
+        uint256 bal0 = controller.balance;
+        uint256 esc0 = ESCROW.balances(controller, address(0));
+        _buyCoin(trader, 1 ether);
+        uint256 landed = (controller.balance - bal0) + (ESCROW.balances(controller, address(0)) - esc0);
+        assertApproxEqRel(landed, 0.01 ether, 0.02e18, "protocol leg 1.0 point of volume at the controller");
+    }
 }
 
 /// the restricted v2 coin as the engine meets it: the Core, the router and every holder are off the allowlist (FLOW 29).

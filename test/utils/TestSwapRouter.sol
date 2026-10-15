@@ -39,6 +39,28 @@ contract TestSwapRouter is PoolActor {
         return _swap(key, zeroForOne, amountSpecified, receiver, hookData);
     }
 
+    /// @notice a swap with an explicit price limit and hook data. a quote specified (exact output) swap stopped by a
+    /// tight limit fills partially, which is how the skim hook reaches its refund path
+    function swapWithLimit(
+        PoolKey memory key,
+        bool zeroForOne,
+        int256 amountSpecified,
+        uint160 sqrtPriceLimitX96,
+        address receiver,
+        bytes memory hookData
+    ) external payable returns (BalanceDelta delta) {
+        SwapParams memory params =
+            SwapParams({zeroForOne: zeroForOne, amountSpecified: amountSpecified, sqrtPriceLimitX96: sqrtPriceLimitX96});
+        uint256 balanceBefore = address(this).balance - msg.value;
+        delta = abi.decode(
+            PM.unlock(
+                abi.encode(Job({payer: msg.sender, receiver: receiver, key: key, params: params, hookData: hookData}))
+            ),
+            (BalanceDelta)
+        );
+        _refund(msg.sender, balanceBefore);
+    }
+
     function _swap(PoolKey memory key, bool zeroForOne, int256 amountSpecified, address receiver, bytes memory hookData)
         private
         returns (BalanceDelta delta)
