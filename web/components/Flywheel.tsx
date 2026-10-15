@@ -115,9 +115,9 @@ export function Flywheel() {
       <div className="fw-intro">
         <h2>Credit Cycle</h2>
         <p>
-          $CC trading funds the engine. the engine buys Credits from holders and from listings on OpenSea and
-          CreditStrategy, composes them into statements, and {balanceOn ? "sells or redeems" : "sells"} them to fund
-          the next round.
+          $CC trading funds the engine. it buys Credits at prices set by their credit rating, including listings on
+          CreditStrategy and OpenSea, composes them into statements, and {balanceOn ? "sells or redeems" : "sells"}{" "}
+          them to fund the next round.
         </p>
       </div>
       <div className="fw-steps">
