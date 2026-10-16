@@ -627,7 +627,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// sell credits into the eth bid. each credit is paid `ethRate() * score / refScore`. caller must have approved the
-    /// core. A credit above the bucket budget reverts the whole batch. reverts `Retired` after `migrate`
+    /// core. The first purchase of a bucket always passes; a later credit above the bucket budget reverts the whole batch.
+    /// reverts `Retired` after `migrate`
     function sellForEth(uint256[] calldata ids) external nonReentrant {
         _sellForEth(ids, 0);
     }

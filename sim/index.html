@@ -500,7 +500,8 @@ class SpendBucket {
   charge(amount, pot, now, seconds, cap) {
     const id = Math.floor(now / seconds), fresh = id !== this.id;
     const snapshot = fresh ? pot : this.pot, spent = (fresh ? 0n : this.spent) + amount;
-    if (cap !== BPS && spent > snapshot * BigInt(cap) / BigInt(BPS)) return false;
+    // CoreLib.spend: the first purchase of a bucket (spent still 0) passes whatever its cost
+    if (cap !== BPS && spent > amount && spent > snapshot * BigInt(cap) / BigInt(BPS)) return false;
     this.id = id; this.pot = snapshot; this.spent = spent;
     return true;
   }

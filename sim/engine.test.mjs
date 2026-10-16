@@ -1108,8 +1108,13 @@ const R0 = 6.668e15;
   assert.equal(b.charge(E, 50n * E, 60, 60, 5000), true);
   assert.equal(b.pot, 50n * E); assert.equal(b.spent, E);
   const empty = new SpendBucket();
-  assert.equal(empty.charge(1n, 99n, 0, 60, 100), false); assert.equal(empty.id, null);
-  n += 8;
+  assert.equal(empty.charge(1n, 99n, 0, 60, 100), true); assert.equal(empty.id, 0); assert.equal(empty.spent, 1n); // the first purchase of a bucket passes a zero-rounded budget
+  const kept = { ...empty };
+  assert.equal(empty.charge(1n, 99n, 1, 60, 100), false); assert.deepEqual({ ...empty }, kept); // the second purchase needs spent + cost <= budget
+  const small = new SpendBucket(); // a budget of 5 wei under a 10 wei credit: one purchase per bucket
+  assert.equal(small.charge(10n, 100n, 0, 60, 500), true); assert.equal(small.charge(1n, 100n, 1, 60, 500), false);
+  assert.equal(small.charge(10n, 100n, 60, 60, 500), true); assert.equal(small.spent, 10n);
+  n += 15;
 }
 // promise: bypass purchases count, a cap edit retains the original snapshot, and duration edits retain active spending.
 {
@@ -1142,9 +1147,11 @@ const R0 = 6.668e15;
   const initial = { ...b, spendBucket: { ...b.spendBucket }, fillBuckets: structuredClone(b.fillBuckets) };
   assert.equal(b.sellForEthBatch([433, 433], 0), 0);
   assert.deepEqual({ ...b, spendBucket: { ...b.spendBucket } }, initial); n += 2;
-  const listing = fresh({ spendCapBps: 1 }, 1), state = { ...listing };
+  const listing = fresh({ spendCapBps: 1 }, 1);
+  ok(listing.buyListing(0.001, 30) !== null, 'the first purchase of a bucket passes a budget under its cost');
+  const state = { ...listing, spendBucket: { ...listing.spendBucket } };
   assert.equal(listing.buyListing(0.001, 30), null);
-  assert.equal(listing.checkpointTime, state.checkpointTime); assert.equal(listing.spendBucket.id, null); n += 3;
+  assert.equal(listing.checkpointTime, state.checkpointTime); assert.equal(listing.spendBucket.spent, state.spendBucket.spent); n += 3;
 }
 // promise: balance conversion preserves both adjustable caps beyond the former 320-denominator saturation.
 {

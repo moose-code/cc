@@ -292,7 +292,8 @@ library CoreLib {
     }
 
     /// books an ETH credit purchase of `cost` after the Core checkpoints: charges the bucket budget, drops the rate and
-    /// debits the pot. `sellForEth` and `buyListing` call it per credit. reverts `SpendCapReached` above the budget
+    /// debits the pot. `sellForEth` and `buyListing` call it per credit. the first purchase of a bucket always passes,
+    /// a later purchase reverts `SpendCapReached` when the spent total would exceed the budget
     function spend(uint256 cost, uint256 score, uint256 refScore) external {
         State storage c = state();
         uint256 pot = c.ethPot;
@@ -309,7 +310,7 @@ library CoreLib {
             b.spentInBucket = 0;
         }
         uint256 total = uint256(b.spentInBucket) + cost;
-        if (cfg.spendCapBps != BPS && total > b.spendBudget) {
+        if (cfg.spendCapBps != BPS && b.spentInBucket != 0 && total > b.spendBudget) {
             revert SpendCapReached(b.spentInBucket, cost, b.spendBudget);
         }
         b.spentInBucket = SafeCastLib.toUint128(total);

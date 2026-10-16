@@ -22,6 +22,8 @@ Run command: `node sim/market.mjs --spendcap`. It prints these assumptions and e
 
 ## Modeled results
 
+Superseded numbers: the table and prose below were produced before the first purchase of a bucket always passed the cap. `EXPOSURE-129-spendcap.json` holds the current twelve runs and decision 129 summarizes them.
+
 No reference bid crosses below 0.005 ETH in any of the twelve runs during the selling window. Therefore spend and count *until crossing* are censored at seller stop, shown below; market recovery is N/A for all twelve runs. The 50 and 100 bps cases do not exhaust the inventory within six hours.
 
 | Scenario | Start offset (s) | Cap (bps) | Credits at stop | Whole points bought | ETH spent at stop | Stop (s) | Reference bid at stop (ETH) | Remaining |

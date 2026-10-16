@@ -855,10 +855,11 @@ abstract contract HandlerBase is Test {
             gSpendBudget = FullMath.mulDiv(potBefore, cfg.spendCapBps, 10_000);
             gSpent = 0;
         }
+        bool firstOfBucket = gSpent == 0;
         gSpent += x;
         if (cfg.spendCapBps != 10_000) {
             ++gCappedFills;
-            if (gSpent > gSpendBudget) ++gCapViolations;
+            if (!firstOfBucket && gSpent > gSpendBudget) ++gCapViolations;
         }
         if (x > potBefore) _flag(V_SPEND, "a spend above the pot at that moment");
         left = potBefore > x ? potBefore - x : 0;
@@ -1424,7 +1425,7 @@ abstract contract HandlerBase is Test {
             uint256 cost = FullMath.mulDiv(BidModel.read(st, p.pot, p.price), score, st.refScore);
             if (cost == 0) return true;
             if (cost > p.pot) return false;
-            if (st.spendCapBps != 10_000 && (spent > budget || cost > budget - spent)) return false;
+            if (st.spendCapBps != 10_000 && spent != 0 && (spent > budget || cost > budget - spent)) return false;
             spent += cost;
             p.pot -= cost;
             p.minuteStart = BidModel.startAfter(st, p.price, p.minuteStart);

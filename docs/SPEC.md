@@ -14,7 +14,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 |---|---|---|
 | behavior | Publish the committed issue 23 implementation branch and open a pull request against main for review; release acceptance remains separate | 131 |
 | behavior | ETH purchases share a 1% opening-pot budget per 60-second bucket; 10,000 bps bypasses enforcement. Settings changes preserve successful outflow and the active pot snapshot; cap edits reprice that snapshot. Implement issue 23 across contracts, consumers and simulation | 129, 130 |
-| guarantee | while the engine has not migrated and the market price is at or below `rateCap`, a credit whose positive bid (`ethRate() * score / refScore`) the pot and remaining purchase budget cover can be sold to it, subject to the same-block return guard | 42, 48, 116 |
+| guarantee | while the engine has not migrated and the market price is at or below `rateCap`, a credit whose positive bid (`ethRate() * score / refScore`) the pot covers, and which is the first purchase of its bucket or fits the remaining purchase budget, can be sold to it, subject to the same-block return guard | 42, 48, 116 |
 | guarantee | eth and credits leave the Core only through its doors at their rules or through `migrate` to the successor; the balance token is held by the module, not the Core, and the Core moves it only at a seller's call bounded by `score * unit * balanceBidCapBps / 10,000` and the module's `available()`; coin leaves through `rescueCoin`, untracked NFTs other than Credits through `rescueNft`; no function sends them to the owner | 8, 28, 32, 33, 117 |
 | guarantee | a statement leaves the Core by a `sellTo` sale at or above `saleFloorBps` of its cost, read at the sale, or by a redemption that returns at least its rating times the module's unit less `redeemSlippageBps` | 56, 68, 84, 105 |
 | guarantee | the four locks (controller, balance module, adapters, successor) are one way | 9.6, 10.2 |
@@ -127,13 +127,13 @@ the same price state machine runs as two instances, sharing every climb and drop
 
 ### ETH purchase budget
 
-Both `sellForEth` overloads and every adapter listing share one ledger. At the first successful purchase in `floor(timestamp / bucketSeconds)`, snapshot the booked buying pot and set `spendBudget = floor(snapshotPot * spendCapBps / 10,000)`. Fee booking happens first; buyback and redeem reserves are excluded. Count the complete ETH outflow, including listing keeper payment. Check each credit; exceeding the budget raises `SpendCapReached`, and the entire batch or failed venue purchase rolls back. Equality succeeds. A zero-rounded budget permits no positive purchase. Balance-token purchases are excluded.
+Both `sellForEth` overloads and every adapter listing share one ledger. At the first successful purchase in `floor(timestamp / bucketSeconds)`, snapshot the booked buying pot and set `spendBudget = floor(snapshotPot * spendCapBps / 10,000)`. Fee booking happens first; buyback and redeem reserves are excluded. Count the complete ETH outflow, including listing keeper payment. The first purchase of a bucket always passes whatever its cost; the budget is still snapshotted and the spend recorded. Each later credit raises `SpendCapReached` when spent plus cost exceeds the budget, and the entire batch or failed venue purchase rolls back. Equality succeeds. A budget below one credit's price, or rounded to zero, therefore permits one purchase per bucket. Balance-token purchases are excluded.
 
 Same-bucket deposits and fee income cannot enlarge this snapshot. `setRate` and unrelated settings preserve it and the used amount. Changing the cap immediately reprices the original snapshot, preserving spent. At 10,000 bps enforcement is bypassed, including against later deposits, but outflow still counts if enforcement is restored. A duration edit first expires the ledger under its old duration; an active ledger is translated to the new bucket with its snapshot and used amount retained. Both bid instances' active drop-floor anchors translate likewise; expired anchors clear. An ordinary new bucket resets lazily on its first successful purchase.
 
 `spendState()` returns `(bucket, budget, spent)` for the current bucket: the stored values while the bucket is open, otherwise zero spent and the budget `ethPot * spendCapBps / 10,000` of the booked pot that the next purchase would snapshot.
 
-`ethRate()` and `bidOf()` remain price quotes. A quoted purchase can revert because the remaining aggregate budget is insufficient. A bucket cap is not a rolling-window cap: adjacent buckets can both spend around their boundary. The counters and stored budget are checked uint128 values; theoretical outflow or budgets above uint128.max revert instead of truncating.
+`ethRate()` and `bidOf()` remain price quotes. A quoted purchase after the first of its bucket can revert because the remaining aggregate budget is insufficient. A bucket cap is not a rolling-window cap: adjacent buckets can both spend around their boundary. The counters and stored budget are checked uint128 values; theoretical outflow or budgets above uint128.max revert instead of truncating.
 
 The bounded synthetic market study in `docs/reviews/REVIEW-129-spendcap.md` found no reference bid crossing below the assumed 0.005 ETH market in twelve runs. With the 100 bps default, 157 of 500 credits remained after six hours in its flat scenario. Limiting fills can let the idle bid rise and prevent convergence; the cap limits exposure without guaranteeing market tracking.
 
@@ -240,13 +240,13 @@ the invariants, in test/invariant/Invariants.t.sol, run against the real system 
 | 12 | a statement leaves only by a sale or a redemption |
 | 13 | locks, retirement and handovers never come undone |
 | 14 | no call from inside a redemption into a door ever worked |
-| 16 | the bid remains open when the pot and remaining bucket budget cover it, except same-block returns |
+| 16 | the bid remains open when the pot covers it and it is the first purchase of the bucket or the remaining bucket budget covers it, except same-block returns |
 | 17 | every credit is in exactly one place |
 | 18 | eth conservation across the pots |
 | 19 | the read is within its bounds |
-| 20 | aggregate ETH purchase outflow respects the active budget unless bypassed |
+| 20 | aggregate ETH purchase outflow respects the active budget after the first purchase of the bucket, unless bypassed |
 
-invariant 15 (the fee router) is retired. Invariant 20 now checks aggregate ETH purchase budget compliance with an independent ghost ledger.
+invariant 15 (the fee router) is retired. Invariant 20 now checks aggregate ETH purchase budget compliance with an independent ghost ledger that exempts the first purchase of each bucket.
 
 ## 14. accepted properties and risks
 

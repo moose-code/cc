@@ -311,7 +311,8 @@ abstract contract InvariantsBase is InvariantFixture {
         bool active = handler.gSpendActive() && handler.gSpendBucket() == block.timestamp / handler.gSpendSeconds();
         uint256 budget =
             active ? handler.gSpendSnapshot() * cfg.spendCapBps / 10_000 : core.ethPot() * cfg.spendCapBps / 10_000;
-        bool capRefusal = cfg.spendCapBps != 10_000 && (active ? handler.gSpent() : 0) + core.bidOf(id) > budget;
+        uint256 spent = active ? handler.gSpent() : 0;
+        bool capRefusal = cfg.spendCapBps != 10_000 && spent != 0 && spent + core.bidOf(id) > budget;
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         vm.startPrank(holder);
@@ -521,9 +522,9 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// 20. every successful ETH purchase fits the opening-pot budget of its bucket, tracked by the handler apart from the
-    /// Core's bucket state. a cap of 10,000 bypasses the budget.
-    // promise: 20 the purchase budget is respected
+    /// 20. every successful ETH purchase after the first of its bucket fits the opening-pot budget of that bucket, tracked
+    /// by the handler apart from the Core's bucket state. a cap of 10,000 bypasses the budget.
+    // promise: 20 the purchase budget is respected after the first purchase of the bucket
     function invariant_20_purchaseBudgetIsRespected() public view {
         assertEq(handler.gCapViolations(), 0, "successful purchase exceeded the independently tracked bucket budget");
     }

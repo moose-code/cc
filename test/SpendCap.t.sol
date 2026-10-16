@@ -82,6 +82,41 @@ contract SpendCapTest is Fixture {
         assertEq(_snapshot(), 99 ether);
     }
 
+    // promise: the first purchase of a bucket passes a budget under one credit; the second reverts and the next bucket buys again
+    function test_firstPurchaseOfABucketPassesASubCreditBudget() public {
+        uint256[] memory ids = _credits(seller, 3);
+        _flat(ids[0], 1 ether, 100);
+        _fund(10 ether);
+        _sell(ids[0]);
+        assertEq(_budget(), 0.1 ether, "the budget is under one credit");
+        assertEq(_spent(), 1 ether, "the full cost is recorded");
+        assertEq(CREDITS.ownerOf(ids[0]), address(core));
+        uint256 cost = core.bidOf(ids[1]);
+        vm.expectRevert(abi.encodeWithSelector(ICore.SpendCapReached.selector, 1 ether, cost, 0.1 ether));
+        _sell(ids[1]);
+        vm.warp((block.timestamp / 60 + 1) * 60);
+        _flat(ids[1], 0.5 ether, 100);
+        _sell(ids[1]);
+        assertEq(CREDITS.ownerOf(ids[1]), address(core));
+        assertEq(_spent(), 0.5 ether);
+    }
+
+    // promise: a batch whose first credit alone exceeds the budget fills that credit and reverts at the second
+    function test_batchFirstCreditPassesSecondReverts() public {
+        uint256[] memory ids = _credits(seller, 2);
+        _flat(ids[0], 1 ether, 100);
+        _fund(10 ether);
+        uint256[] memory both = new uint256[](2);
+        both[0] = ids[0];
+        both[1] = ids[1];
+        vm.expectPartialRevert(ICore.SpendCapReached.selector);
+        vm.prank(seller);
+        core.sellForEth(both);
+        vm.prank(seller);
+        core.sellForEth(_one(ids[0]));
+        assertEq(CREDITS.ownerOf(ids[0]), address(core));
+    }
+
     // promise: spendState reads the live bucket, and the next bucket reads zero spent with the projected budget
     function test_spendStateReadsTheLiveBucket() public {
         uint256[] memory ids = _credits(seller, 2);
@@ -212,19 +247,18 @@ contract SpendCapTest is Fixture {
         assertEq(_snapshot(), 99.9 ether);
     }
 
-    // promise: bucket zero initializes normally and budget rounding does not permit a free or partial purchase
+    // promise: bucket zero initializes normally; a zero-rounded budget admits the first purchase and refuses the second
     function test_zeroBucketAndZeroRoundedBudget() public {
-        uint256[] memory ids = _credits(seller, 1);
+        uint256[] memory ids = _credits(seller, 2);
         vm.warp(1);
         _flat(ids[0], 1, 1);
         _fund(9_999);
-        vm.expectRevert(abi.encodeWithSelector(ICore.SpendCapReached.selector, 0, 1, 0));
-        _sell(ids[0]);
-        assertEq(_spent(), 0);
-        _fund(1);
         _sell(ids[0]);
         assertEq(_spent(), 1);
-        assertEq(_budget(), 1);
+        assertEq(_budget(), 0);
+        vm.expectRevert(abi.encodeWithSelector(ICore.SpendCapReached.selector, 1, core.bidOf(ids[1]), 0));
+        _sell(ids[1]);
+        assertEq(_spent(), 1);
     }
 
     // promise: a keeper fill includes its caller payment and shares the direct seller's budget
