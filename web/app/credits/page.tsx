@@ -14,8 +14,8 @@ import { useScan } from "@/lib/engine";
 import type { CreditEvt } from "@/lib/events";
 import { usePile, useScores, useSnapshot, type PileCredit } from "@/lib/live";
 import { buyCredits } from "@/lib/buy";
-import { etaLabel, rateLabel, windowLabel } from "@/lib/compose-eta";
-import { agoLabel, eth, rating } from "@/lib/format";
+import { etaLabel, floorIn, rateLabel, windowLabel } from "@/lib/compose-eta";
+import { agoLabel, eth, leftLabel, rating } from "@/lib/format";
 
 const PAGE = 24;
 type View = "grid" | "table";
@@ -36,6 +36,11 @@ export default function CreditsPage() {
   const [shown, setShown] = useState(PAGE);
 
   const saleOn = snap?.creditSaleOn ?? false;
+  // per credit: time until its sale window ends. at zero its price rests at the floor and compose can take it
+  const floorLabel = (c: PileCredit) => {
+    const s = floorIn(c.acquiredAt, saleOn ? snap!.creditWindow : 0, eta.now);
+    return s > 0 ? leftLabel(s) : "now";
+  };
   const score = (id: number) => scores?.[id.toString()];
   // queue position (oldest = 0) is the index in the pile, which the list order keeps
   const rows = useMemo(() => {
@@ -59,8 +64,9 @@ export default function CreditsPage() {
 
   const meta = [
     `${pile.length} held by engine`,
-    snap && `bid ${eth(snap.ethRate)} ETH at rating ${rating(1_000_000n)}`,
-    eta.perHour != null && eta.perHour > 0 && `${rateLabel(eta.perHour)} bought an hour`,
+    snap && `bid ${eth(snap.ethRate, 5)} ETH / 100 pts`,
+    eta.perHour != null && eta.perHour > 0 && `${rateLabel(eta.perHour)} bought an hour${eta.recent ? ", recent pace" : ""}`,
+    eta.at(0) && `next statement composes in ${etaLabel(eta.at(0))}`,
     historyDown && "history unavailable",
   ].filter(Boolean);
 
@@ -91,8 +97,8 @@ export default function CreditsPage() {
             <span>{score(c.id) != null ? `rating ${rating(score(c.id)!)}` : ""}</span>
           </div>
           <div className="ccard-row ccard-eta">
-            <span className="caption">composes</span>
-            <span>{etaLabel(eta.at(index))}</span>
+            <span className="caption">floor in</span>
+            <span>{floorLabel(c)}</span>
           </div>
         </div>
       </div>
@@ -134,7 +140,7 @@ export default function CreditsPage() {
                 <span className="num">paid ETH</span>
                 <span className="hide-sm">got by</span>
                 <span className="num hide-sm">bought</span>
-                <span className="num">composes</span>
+                <span className="num">floor in</span>
               </div>
               {visible.map(({ c, index }) => {
                 const on = sel.has(c.id);
@@ -160,7 +166,7 @@ export default function CreditsPage() {
                     <span className="num muted">{eth(c.cost)}</span>
                     <span className="muted hide-sm">{c.how ? howLabel(c.how) : gotBy(scan.credits[c.id])}</span>
                     <span className="num muted hide-sm">{agoLabel(eta.now - c.acquiredAt)}</span>
-                    <span className="num">{etaLabel(eta.at(index))}</span>
+                    <span className="num">{floorLabel(c)}</span>
                   </div>
                 );
               })}

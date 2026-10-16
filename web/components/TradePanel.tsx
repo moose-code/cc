@@ -10,7 +10,7 @@ import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/li
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
 import { commas, eth, evmNowAddress, evmNowTx, leftLabel, tokens, usd, usdCompact, usdPrice } from "@/lib/format";
 import { lsGet, lsSet } from "@/lib/cache";
-import { useNow, useSnapshot } from "@/lib/live";
+import { potPoints, useNow, useSnapshot } from "@/lib/live";
 import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
 
 const HOOK_FEE_BPS = 1000; // fallback when the hook reads fail
@@ -23,8 +23,6 @@ const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as numbe
 // Swap panel: eth for a market's token and back through the v4 Universal
 // Router; `market` defaults to the coin. A sell first grants the token
 // allowance to Permit2 and the Permit2 allowance to the router when they are short.
-// pot share in credits at the reference bid; a share under one credit reads as a percent of one
-const potCredits = (n: number) => (n >= 1 ? `enough for about ${n.toFixed(1)} credits` : `about ${Math.max(1, Math.round(n * 100))}% of one credit`);
 
 export function TradePanel({ market }: { market?: Market }) {
   const cc = useCcMarket();
@@ -262,7 +260,7 @@ export function TradePanel({ market }: { market?: Market }) {
 
   const notice =
     result && result.potWei != null && snap && snap.ethRate > 0n
-      ? { tone: "m", title: "your trade fed the engine", body: `${eth(result.potWei)} ETH is now in the pot, ${potCredits(Number(result.potWei) / Number(snap.ethRate))} at the current bid.` }
+      ? { tone: "m", title: "your trade fed the engine", body: `${eth(result.potWei)} ETH is now in the pot, enough for about ${commas(potPoints(result.potWei, snap.ethRate))} points at the current bid.` }
       : failed
         ? { tone: "m", title: err as string, body: failedHash ? "the transaction reverted on chain, gas was spent." : "the transaction was not sent." }
         : inWallet

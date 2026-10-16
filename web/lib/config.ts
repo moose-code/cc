@@ -64,6 +64,9 @@ export const indexerUrl = (process.env.NEXT_PUBLIC_INDEXER_URL || "").replace(/\
 
 // Credits composed into one statement (the length of Composed.ids).
 export const STATEMENT_SIZE = 80;
+// Score units in 100 points: a credit score is in ten-thousandths of a point, so the bid of a credit is
+// ethRate * score / SCORE_PER_100_POINTS (Core.bidForScore).
+export const SCORE_PER_100_POINTS = 1_000_000n;
 
 // Every engine read and page needs the Core; without it the pages render "engine not deployed".
 export const engineDeployed = Boolean(core);

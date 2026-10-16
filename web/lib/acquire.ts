@@ -43,16 +43,16 @@ export function cheapestPerId(list: Listing[]): Listing[] {
 
 /**
  * Candidates worth a live read, from all listings and a bid estimate per id. The estimate is Core.bidOf
- * (src/Core.sol:465-470): ethRate() * score / refScore with floor division, where ethRate() is
+ * (src/Core.sol:465-470): ethRate() * score / scorePer100Points with floor division, where ethRate() is
  * `price.min(ethPot + pending)` (Core.sol:458-461), held by the snapshot as `ethRate`. Ranked by estimated margin
  * (estimated bid minus price), the first `n` kept.
  */
-export function shortlist(list: Listing[], ethRate: bigint, refScore: bigint, scores: Map<bigint, bigint>, n: number): Listing[] {
-  if (refScore === 0n) return [];
+export function shortlist(list: Listing[], ethRate: bigint, scorePer100Points: bigint, scores: Map<bigint, bigint>, n: number): Listing[] {
+  if (scorePer100Points === 0n) return [];
   return cheapestPerId(list)
     .flatMap((l) => {
       const s = scores.get(l.id);
-      return s == null ? [] : [{ l, margin: (ethRate * s) / refScore - l.price }];
+      return s == null ? [] : [{ l, margin: (ethRate * s) / scorePer100Points - l.price }];
     })
     .sort((a, b) => (a.margin === b.margin ? 0 : a.margin > b.margin ? -1 : 1))
     .slice(0, n)

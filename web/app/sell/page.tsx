@@ -9,9 +9,10 @@ import { NotDeployed } from "@/components/NotDeployed";
 import { PageHead } from "@/components/Shell";
 import { core, credits, engineDeployed } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
-import { balanceQuote, sellQuote, useBalanceToken, useBidsOf, useNow, useSellQuote, useSnapshot, useWalletCredits } from "@/lib/live";
+import { balanceQuote, potPoints, sellQuote, useBalanceToken, useBidsOf, useNow, useSellQuote, useSnapshot, useWalletCredits } from "@/lib/live";
 import { BALANCE_SYMBOL, commas, eth, formatBalance } from "@/lib/format";
 import type { Write } from "@/lib/tx";
+import { useBalanceInEth } from "@/lib/market";
 
 const MIN_OUT_BPS = 9950n; // 0.5% under the batch total quoted at click time
 
@@ -24,16 +25,18 @@ export default function SellPage() {
   const client = usePublicClient();
   const { data: snap } = useSnapshot();
   const bal = useBalanceToken();
+  const balanceEth = useBalanceInEth();
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  const bid = snap?.ethRate ?? 0n;
+  const bid = snap?.ethRate ?? 0n; // wei per 100 points
   const pot = snap?.ethPot ?? 0n;
-  const buyableNow = bid > 0n ? pot / bid : 0n;
-  // the pot scaled multiplier (10_000 is 1x) that scales the ceiling's idle loosening, and the pages the pot covers at
-  // the current bid, the same figure as "pot covers" (a page is 80 credits). the bid is flat at the rate cap
+  const potPts = potPoints(pot, bid);
+  // the pot scaled multiplier (10_000 is 1x) that scales the ceiling's idle loosening, and the pages of
+  // settings.pointsPerPage points the pot covers at the current bid. the bid is flat at the rate cap
   const climbX = Number(snap?.climbMultiplier ?? 10000n) / 10000;
-  const potPages = `${buyableNow / 80n}.${(buyableNow % 80n) * 10n / 80n}`;
+  const potPages = snap ? (Number(potPts) / snap.settings.pointsPerPage).toFixed(1) : "0.0";
   const atCap = snap ? bid >= snap.settings.rateCap : false;
+  const per100 = eth(bid, 5); // ethRate is wei per 100 points
   // the module reads can fail; the balance side is then unavailable and the eth side renders alone
   const balanceBid = Boolean(snap?.balanceOn && snap.settings.balanceBidOn && snap.balanceUnit !== undefined);
   const now = useNow(5000);
@@ -42,7 +45,7 @@ export default function SellPage() {
 
   const { data: wallet, scores } = useWalletCredits(address);
   const mine: number[] = wallet.map((c) => c.id);
-  // each credit's own eth bid, ethRate() * score / refScore (one multicall of Core.bidOf)
+  // each credit's own eth bid, ethRate() * score / 1,000,000 (one multicall of Core.bidOf)
   const { data: bids } = useBidsOf(mine.map((id) => BigInt(id)), now);
   const bidForId = (id: number): bigint => bids?.[id.toString()] ?? 0n;
   const total = quote.data?.amount ?? mine.filter((id) => selected.has(id)).reduce((t, id) => t + bidForId(id), 0n);
@@ -85,8 +88,8 @@ export default function SellPage() {
           <div>
             <div className="bidcard">
               <div className="buybox-price">
-                <span className="muted">bid, reference credit</span>
-                <span className="big">{eth(bid)} eth</span>
+                <span className="muted">bid / 100 pts</span>
+                <span className="big">{per100} eth</span>
                 {atCap ? (
                   <span className="muted">bid at cap</span>
                 ) : climbX > 1 ? (
@@ -95,12 +98,12 @@ export default function SellPage() {
               </div>
               <div className="quote">
                 <div className="r">
-                  <span>reference credit</span>
-                  <span>{eth(bid)} eth</span>
+                  <span>bid / 100 pts</span>
+                  <span>{per100} eth</span>
                 </div>
                 <div className="r">
                   <span>pot covers, before eth cap</span>
-                  <span>~{commas(buyableNow)} credits</span>
+                  <span>~{commas(potPts)} pts</span>
                 </div>
                 <div className="r">
                   <span>pot</span>
@@ -159,7 +162,10 @@ export default function SellPage() {
                   {balanceBid && (
                     <div className="r">
                       <span className="muted">or for {BALANCE_SYMBOL}</span>
-                      <span className="big-sm">about {formatBalance(balanceTotal, bal)} ({(Number(snap?.balanceRate ?? 0n) / 100).toFixed(1)}% of par)</span>
+                      <span className="big-sm">
+                        about {formatBalance(balanceTotal, bal)} ({(Number(snap?.balanceRate ?? 0n) / 100).toFixed(1)}% of par)
+                        {balanceEth(balanceTotal) != null && <small className="muted"> ~{eth(balanceEth(balanceTotal)!)} eth</small>}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -174,7 +180,7 @@ export default function SellPage() {
                   disabled={n === 0 || !snap}
                   steps={async (write) => {
                     await approve(write);
-                    // each credit pays its own bid (ethRate * score / refScore) and the bid drops per credit sold in one
+                    // each credit pays its own bid (ethRate * score / 1,000,000) and the bid drops per credit sold in one
                     // call: minOut is a share of the whole batch's total, replayed from the contract's rate loop
                     const expected = (await sellQuote(client!, ids(), now)).amount;
                     await write({ address: core, abi: coreAbi, functionName: "sellForEth", args: [ids(), (expected * MIN_OUT_BPS) / 10000n] });
@@ -199,7 +205,7 @@ export default function SellPage() {
                   </>
                 )}
                 <p className="muted small">
-                  the first sale approves the collection to the engine. each credit is paid the rate times its score over the reference score, and the rate
+                  the first sale approves the collection to the engine. each credit is paid the rate (quoted per 100 points) times its score, and the rate
                   drops with each credit sold in one call; the amount shown is the batch total at the current rates and the sale reverts if it pays under 99.5% of it.
                   {snap && snap.settings.spendCapBps < 10000 && " the eth quote does not reserve purchase budget. an eth sale can be blocked until the next budget bucket, even when the pot has funds."}
                   {balanceBid && ` the ${BALANCE_SYMBOL} bid pays by credit score at the rate shown (bps of par), and drops with each credit sold.`}
