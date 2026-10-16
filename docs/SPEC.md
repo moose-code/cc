@@ -57,7 +57,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 storage: the Core declares one variable, `State internal s`, at slot 0, and the library reads the same struct type at slot 0. test/CoreLayout.t.sol compares every field with raw storage words. a new state variable is appended at the end of `State`.
 
-live and external, used as deployed: the artcoins v2 stack (factory 0x9b17bf6f97F5429368E11028BC637479b4667f7b, skim hook, locker, fee escrow, mev module), the uniswap v4 pool manager, Credits, Statements, CreditScore, CreditStrategy, Seaport 1.6. the stack addresses are config inputs (script/config/mainnet.json); nothing in src/ hardcodes one except the mainnet constants of Credits, Statements, CreditScore, CreditStrategy, Seaport, Permit2, the position manager and the universal router.
+live and external, used as deployed: the artcoins v2 stack (factory 0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c, skim hook, locker, fee escrow, mev module), the uniswap v4 pool manager, Credits, Statements, CreditScore, CreditStrategy, Seaport 1.6. the stack addresses are config inputs (script/config/mainnet.json); nothing in src/ hardcodes one except the mainnet constants of Credits, Statements, CreditScore, CreditStrategy, Seaport, Permit2, the position manager and the universal router.
 
 ## 3. settings
 

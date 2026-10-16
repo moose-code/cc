@@ -110,3 +110,17 @@ no on chain value changed between the two blocks. the `v2: controller escrow or 
 above. the fix is `V2Stack.recordParams()`, which reads the treasury from `script/config/v2-mainnet.json` (`treasury`),
 replacing the `DEPLOYED_TREASURY` Solidity constant. the controller has `setTreasury`, so preflight also compares the
 controller treasury to that record (row `protocol fee controller: treasury is the recorded treasury`).
+
+## address reconciliation (2026-10-16)
+
+the member addresses of `script/config/mainnet.json`, `script/config/v2-mainnet.json`, the `V2_CODEHASH_*` pins and this
+file equal the `V2` block of `abi/deployments.generated.ts` at artcoins master `0b2601bd` (hook, locker, escrow,
+allowlist, mev module, token deployer, burn router, fee controller, factory). preflight reads each member from the chain
+at a head-100 fork and all 113 rows pass, including the code hash rows. the owner reports that the fee controller emitted
+only its four constructor events (block 26202478) and no owner transaction followed.
+
+stale references found and repointed to the deployed stack: `docs/SPEC.md` (factory of the 2026-10-09 stack
+`0x9b17bf6f...`) and the stack block of the launch config copy in `sim/index.html` (hook, locker, escrow and mev module of
+the 2026-10-09 stack). an Oct 15 dry run predicted escrow `0x28c87336...` and controller `0x183751c6...`; the deployer nonce
+moved by one before the broadcast and every CREATE address shifted (controller `0xbD5A853f...`, burn router
+`0x183751c6...`). no file of this repository carries the dry run predictions.
