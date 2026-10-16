@@ -101,6 +101,10 @@ jobs:
             forge test --match-path "$f" -vv --chain-id 1
             echo "::endgroup::"
           done
+      # the local deploy path (preflight, deploy, postflight) on the fixture anvil: the test runner does not enforce the
+      # script-only guards of forge script, so a broken deploy path fails here
+      - name: local deploy
+        run: STACK=master RPC_URL=http://127.0.0.1:8545 script/deploy.sh local
 
   ci-ok:
     if: always()
