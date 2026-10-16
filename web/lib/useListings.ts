@@ -4,7 +4,7 @@
 // button, lib/useAcquire.ts), its bid estimated from the snapshot rate and the score, the best LIVE rows re-read
 // (Core.bidOf, owner, strategy price), and the time the bid reaches the price (lib/climb.ts).
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { numberToHex, type Address } from "viem";
 import { usePublicClient } from "wagmi";
 import { core, credits, engineDeployed, seaportAdapter, strategy, strategyAdapter } from "./config";
@@ -52,6 +52,8 @@ export function useListings() {
     enabled: engineDeployed && Boolean(client) && Boolean(strategyAdapter) && head != null && mode !== "checking",
     staleTime: 10_000,
     retry: 0,
+    // the key moves with the head block; the rows of the last block stay on screen while the new ones load
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const c = client!;
       // the snapshot query is mounted by other pages; load it here when this page is opened first

@@ -6,7 +6,7 @@
 // One query per chain head; the route caches OpenSea for 20 s on the server.
 
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { type Address } from "viem";
@@ -174,6 +174,7 @@ export function useAcquireCandidate() {
     enabled: on,
     staleTime: 10_000,
     retry: 0,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       try {
       const c = client!;
