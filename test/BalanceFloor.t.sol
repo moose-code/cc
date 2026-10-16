@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 
@@ -23,7 +24,7 @@ contract BalanceFloorTest is Fixture {
     // promise: SPEC 1 the balance bid refuses a fill whose available-clamped rate is below the floor
     function test_sellForBalanceRefusesBelowFloor() public {
         uint256 floorBps = 10_000 - core.settings().balanceBidMarginBps;
-        uint256 refScore = core.settings().refScore;
+        uint256 refScore = RATE_SCORE;
         // available at half the floor par of a refScore credit: the rate clamp is floorBps / 2, under the floor
         mod.setAvailable(refScore * UNIT * floorBps / 10_000 / 2);
 
@@ -41,7 +42,7 @@ contract BalanceFloorTest is Fixture {
     // runs at the floor rate
     function test_atRefScoreFloorParRunsAtFloor() public {
         uint256 floorBps = 10_000 - core.settings().balanceBidMarginBps;
-        uint256 refScore = core.settings().refScore;
+        uint256 refScore = RATE_SCORE;
         mod.setAvailable(refScore * UNIT * floorBps / 10_000); // clamp is exactly the floor
 
         // a credit of score at or below refScore so the running total fits available at the floor rate

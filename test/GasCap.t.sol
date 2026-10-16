@@ -293,7 +293,7 @@ contract GasCapTest is SeaportBase {
         _liftRateCap();
         _fundPot(5 ether);
         _warp(1 hours + 1);
-        _refScoreToCredit(outId);
+        _unitScore(outId);
         vm.prank(taker);
         core.sellForEth(_one(outId));
         // a representative nonzero fee the caller burns, and the coin and approval for it

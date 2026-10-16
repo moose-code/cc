@@ -45,7 +45,5 @@ contract StatementInfoStub {
 
     function settings() external view returns (Settings memory s) {
         s.saleFloorBps = saleFloorBps;
-        // the controller reads refScore from the core setting (the stub stands in for the core); the launch value
-        s.refScore = 4_330_000;
     }
 }

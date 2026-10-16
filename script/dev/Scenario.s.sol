@@ -78,9 +78,8 @@ contract Scenario is Script {
         TRADER = vm.envAddress("TRADER");
 
         bytes32 stage = keccak256(bytes(vm.envString("STAGE")));
-        bool sellsEth = stage == keccak256("fill-a") || stage == keccak256("fill-b")
-            || stage == keccak256("fill-d") || stage == keccak256("fresh-fill")
-            || stage == keccak256("d-open") || stage == keccak256("fresh-compose");
+        bool sellsEth = stage == keccak256("fill-a") || stage == keccak256("fill-b") || stage == keccak256("fill-d")
+            || stage == keccak256("fresh-fill") || stage == keccak256("d-open") || stage == keccak256("fresh-compose");
         sellBucketSeconds = sellsEth ? core.settings().bucketSeconds : 0;
         if (sellsEth) vm.rpc("anvil_removeBlockTimestampInterval", "[]"); // fails outside Anvil
         if (stage == keccak256("a")) _a();
@@ -149,11 +148,10 @@ contract Scenario is Script {
     }
 
     function _buyCoin() internal {
-        bytes memory data = abi.encodeCall(
-            IUniversalRouterR.execute, (hex"10", _v4Swap(true, 3 ether), _deadline())
-        );
-        if (sellBucketSeconds != 0) _send(TRADER, Mainnet.UNIVERSAL_ROUTER, data, 3 ether);
-        else {
+        bytes memory data = abi.encodeCall(IUniversalRouterR.execute, (hex"10", _v4Swap(true, 3 ether), _deadline()));
+        if (sellBucketSeconds != 0) {
+            _send(TRADER, Mainnet.UNIVERSAL_ROUTER, data, 3 ether);
+        } else {
             vm.broadcast(TRADER);
             IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: 3 ether}(
                 hex"10", _v4Swap(true, 3 ether), _deadline()
@@ -166,10 +164,10 @@ contract Scenario is Script {
     /// @dev a long idle loosens the bid toward its cap, so an `n` credit fill could cost more than the pot holds. the
     /// owner restates the bid at the launch rate, then coin buys and `book` top the pot to a target sized for `n`
     /// credits at that rate. the pot is the bid's clamp and feeds the climb multiplier, so the target scales with
-    /// `rateStart` rather than a flat value: `rateStart * n` is one credit of score refScore per credit, times 1.4 for
-    /// headroom over scores above refScore and the climb between the rate reset and the fill.
+    /// `rateStart` rather than a flat value: `rateStart * n` is one 100 point credit per credit, times 1.4 for
+    /// headroom over scores above 100 points and the climb between the rate reset and the fill.
     function _primeBid(uint256 n) internal {
-        uint256 launchRate = core.RATE_START();   // rateStart, the opening eth bid from the launch config
+        uint256 launchRate = core.RATE_START(); // rateStart, the opening eth bid from the launch config
         _send(OWNER, address(core), abi.encodeCall(ICore.setRate, (launchRate)), 0);
         uint256 target = launchRate * n * 14 / 10;
         for (uint256 i; i < 120 && core.ethPot() < target; ++i) {
@@ -182,7 +180,7 @@ contract Scenario is Script {
 
     /// 80 separate sells and one with `minOut`, exercising both overloads of `sellForEth`
     function _fillA() internal {
-        _primeBid(81);   // 80 separate sells, then 1 more with minOut
+        _primeBid(81); // 80 separate sells, then 1 more with minOut
         _send(A1, Mainnet.CREDITS, abi.encodeCall(ICredits.setApprovalForAll, (address(core), true)), 0);
 
         uint256 pileBefore = core.pileSize();
@@ -587,17 +585,25 @@ contract Scenario is Script {
     /// @dev Forge re-simulates all broadcasts at one timestamp, so Anvil must mine these dev transactions directly.
     function _send(address who, address to, bytes memory data, uint256 value) internal {
         vm.rpc("evm_increaseTime", string.concat("[", vm.toString(sellBucketSeconds), "]"));
-        bytes32 txHash = abi.decode(vm.rpc(
-            "eth_sendTransaction",
-            string.concat(
-                '[{"from":"', vm.toString(who), '","to":"', vm.toString(to), '","data":"',
-                vm.toString(data), '","value":"', _quantity(value), '","gas":"0x17d7840"}]'
-            )
-        ), (bytes32));
-        vm.rpc("evm_mine", "[]");
-        string memory receipt = vm.rpcJson(
-            "eth_getTransactionReceipt", string.concat('["', vm.toString(txHash), '"]')
+        bytes32 txHash = abi.decode(
+            vm.rpc(
+                "eth_sendTransaction",
+                string.concat(
+                    '[{"from":"',
+                    vm.toString(who),
+                    '","to":"',
+                    vm.toString(to),
+                    '","data":"',
+                    vm.toString(data),
+                    '","value":"',
+                    _quantity(value),
+                    '","gas":"0x17d7840"}]'
+                )
+            ),
+            (bytes32)
         );
+        vm.rpc("evm_mine", "[]");
+        string memory receipt = vm.rpcJson("eth_getTransactionReceipt", string.concat('["', vm.toString(txHash), '"]'));
         require(vm.parseJsonUint(receipt, ".status") == 1, "Anvil dev transaction reverted");
         vm.createSelectFork(vm.envString("E2E_RPC_URL"), vm.parseJsonUint(receipt, ".blockNumber"));
     }
@@ -607,11 +613,17 @@ contract Scenario is Script {
         bytes16 digits = "0123456789abcdef";
         uint256 n = value;
         uint256 length;
-        while (n != 0) { ++length; n >>= 4; }
+        while (n != 0) {
+            ++length;
+            n >>= 4;
+        }
         bytes memory out = new bytes(length + 2);
         out[0] = "0";
         out[1] = "x";
-        while (value != 0) { out[--length + 2] = digits[value & 15]; value >>= 4; }
+        while (value != 0) {
+            out[--length + 2] = digits[value & 15];
+            value >>= 4;
+        }
         return string(out);
     }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {BidModel} from "./utils/BidModel.sol";
 import {Fixture} from "./utils/Fixture.sol";
@@ -34,11 +35,11 @@ contract BidRuleTest is Fixture {
     }
 
     /// sells one credit with `refScore` set to its score, so the eth bid pays the full rate (score / refScore is 1) and
-    /// the drop is exactly `dropPerCreditBps`. the scaled bid and scaled drop at ratios other than 1 are in
+    /// the drop is exactly `dropPer100PointsBps`. the scaled bid and scaled drop at ratios other than 1 are in
     /// test/PerPointExact.t.sol
     function _sellOne() internal returns (uint256 price) {
         uint256 id = _credits(seller, 1)[0];
-        _refScoreToCredit(id);
+        _unitScore(id);
         price = core.ethRate();
         vm.prank(seller);
         core.sellForEth(_one(id));
@@ -46,14 +47,15 @@ contract BidRuleTest is Fixture {
 
     // ------------------------------------------------------------------ drop
 
-    // promise: SPEC 1 the bid rule: a fill drops the price state by dropPerCreditBps
-    function test_oneFillDropsFivePercent() public {
+    // promise: SPEC 1 the bid rule: a fill drops the price state by dropPer100PointsBps
+    function test_oneFillDropsTheLaunchDrop() public {
         _potTo(10 ether);
         uint256 r0 = core.ethRate();
         assertEq(r0, START);
         uint256 price = _sellOne();
         assertEq(price, r0, "the rate before the fill");
-        assertEq(core.rateAtCheckpoint(), r0 * 9_500 / 10_000, "5 percent below the rate paid");
+        // a 100 point credit drops the rate by dropPer100PointsBps (115 bps at launch): 9_885 / 10_000 of the rate
+        assertEq(core.rateAtCheckpoint(), r0 * 9_885 / 10_000, "the launch drop below the rate paid");
         (uint256 anchor, uint256 start, uint256 bucket) = _anchor();
         assertEq(anchor, r0, "the rate paid is the anchor");
         assertEq(start, r0, "and the start of the minute");
@@ -61,16 +63,21 @@ contract BidRuleTest is Fixture {
         assertEq(core.lastFillTime(), block.timestamp);
     }
 
-    // promise: SPEC 1 the bid rule at launch: dropFloorBps 5_000 bounds the drop inside a minute
-    /// at the launch drop of 5 percent the floor of 50 percent is reached on the 14th fill in one minute (0.95^13 is
-    /// above 0.5, 0.95^14 is below it, so the 14th fill clamps to the floor)
-    function test_launchDropReachesTheFloorOnTheFourteenthFill() public {
+    // promise: SPEC 1 the minute floor dropFloorBps bounds the drop inside a minute
+    /// with a 5 percent drop and a 50 percent floor the floor is reached on the 14th fill in one minute (0.95^13 is
+    /// above 0.5, 0.95^14 is below it, so the 14th fill clamps to the floor). set here, since launch runs no practical
+    /// minute floor (dropFloorBps 1, decision 146)
+    function test_dropReachesTheMinuteFloor() public {
+        Settings memory cfg = core.settings();
+        cfg.dropPer100PointsBps = 500;
+        cfg.dropFloorBps = 5_000;
+        _setSettings(cfg);
         _potTo(40 ether);
         uint256 r0 = core.ethRate();
         uint256[] memory ids = _credits(seller, 14);
         for (uint256 i; i < ids.length; ++i) {
-            // each credit drops the rate by the full dropPerCreditBps: refScore set to its score (score / refScore is 1)
-            _refScoreToCredit(ids[i]);
+            // a 100 point credit drops the rate by the full dropPer100PointsBps (5 percent here)
+            _unitScore(ids[i]);
             vm.prank(seller);
             core.sellForEth(_one(ids[i]));
             if (i == 12) assertGt(core.rateAtCheckpoint(), r0 * 5_000 / 10_000, "13 fills are above the floor");
@@ -123,7 +130,7 @@ contract BidRuleTest is Fixture {
         assertEq(
             core.ethRate(), r0 * (10_000 + 17_352) * 11_000 / 1e8, "4,338 intervals times 4 after 30 days and 3 hours"
         );
-        assertEq(core.rateAtCheckpoint(), r0 * 9_500 / 10_000, "stored until the next checkpoint");
+        assertEq(core.rateAtCheckpoint(), r0 * 9_885 / 10_000, "stored until the next checkpoint");
     }
 
     function _minLoosening(Settings memory s) internal pure {
@@ -216,11 +223,11 @@ contract BidRuleTest is Fixture {
     // promise: INTEGRATION BadSetting on the bid rule settings
     function test_boundsRevertOnEveryOutOfRangeValue() public {
         Settings memory s = Mainnet.defaultSettings();
-        s.dropPerCreditBps = 0;
-        _expectBad(s, "dropPerCreditBps");
+        s.dropPer100PointsBps = 0;
+        _expectBad(s, "dropPer100PointsBps");
         s = Mainnet.defaultSettings();
-        s.dropPerCreditBps = 10_001;
-        _expectBad(s, "dropPerCreditBps");
+        s.dropPer100PointsBps = 10_001;
+        _expectBad(s, "dropPer100PointsBps");
         s = Mainnet.defaultSettings();
         s.dropFloorBps = 10_001;
         _expectBad(s, "dropFloorBps");
@@ -280,8 +287,8 @@ contract BidRuleTest is Fixture {
     function _forListing() internal returns (uint256 price) {
         _with(_openCeiling);
         _potTo(30 ether);
-        // refScore set to the listed credit's score, so its bid is the full rate and the fill drops the rate by dropPerCreditBps
-        _refScoreToCredit(LISTED_A);
+        // refScore set to the listed credit's score, so its bid is the full rate and the fill drops the rate by dropPer100PointsBps
+        _unitScore(LISTED_A);
         price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         _liftRateCap();
         _warpUntilCeiling(LISTED_A, price);
@@ -298,7 +305,7 @@ contract BidRuleTest is Fixture {
         assertEq(anchor, rate, "the anchor is the bid rate");
         assertEq(start, rate);
         assertTrue(anchor != price, "not derived from the cost");
-        assertEq(core.rateAtCheckpoint(), rate * 9_500 / 10_000, "one drop of 5 percent");
+        assertEq(core.rateAtCheckpoint(), rate * 9_885 / 10_000, "one launch drop below the bid rate");
         assertEq(core.lastFillTime(), block.timestamp);
     }
 
@@ -358,7 +365,7 @@ contract BidRuleTest is Fixture {
         s.ceilBps = 30_000;
     }
 
-    /// @dev one minute of idle climb at a pot sized to `pages` pages (one page is 80 refScore credits at the stored
+    /// @dev one minute of idle climb at a pot sized to `pages` pages (one page is `pointsPerPage` points at the stored
     /// rate). returns the realized per minute growth in bps over the stored rate, 10_000 being 1x. the pot override
     /// sets the multiplier to `clamp(pages, 1, 4)` exactly; a high ceiling keeps the one minute climb off the ceiling
     function _climbFactorBps(uint256 pages) internal returns (uint256) {
@@ -366,8 +373,8 @@ contract BidRuleTest is Fixture {
         _sellOne();
         (uint256 anchor,,) = _anchor();
         uint256 stored = core.rateAtCheckpoint();
-        // the multiplier reads the last fill rate (the anchor), so pages of 80 at the anchor sets it to `pages` exactly
-        uint256 pot = pages * 80 * anchor;
+        // the multiplier reads the last fill rate (the anchor); a pot of `pages` pages at the anchor sets it to `pages` exactly
+        uint256 pot = pages * anchor * core.settings().pointsPerPage / 100;
         stdstore.target(address(core)).sig("ethPot()").checked_write(pot);
         vm.deal(address(core), pot);
         _warp(60);
@@ -393,8 +400,8 @@ contract BidRuleTest is Fixture {
         _potTo(1 ether);
         _sellOne();
         (uint256 anchor,,) = _anchor();
-        // pages of 80 at the last fill rate (the anchor the multiplier reads) sets the multiplier to `pages` exactly
-        uint256 pot = pages * 80 * anchor;
+        // a pot of `pages` pages at the last fill rate (the anchor the multiplier reads) sets the multiplier to `pages` exactly
+        uint256 pot = pages * anchor * core.settings().pointsPerPage / 100;
         stdstore.target(address(core)).sig("ethPot()").checked_write(pot);
         vm.deal(address(core), pot);
         _warp(10 minutes);
@@ -450,7 +457,9 @@ contract BidRuleTest is Fixture {
     function _pumpMarginal(bool useFund, uint256 pumpEth) internal returns (uint256 gain, uint256 feePaid) {
         pumpAttacker = _user("pump.attacker");
         uint256[] memory ids = _credits(pumpAttacker, 20);
-        _potTo(0.1 ether);
+        // under one page (about 2 eth at the opening rate) so the unpumped climb is 1x, and above the 20 credits' bids
+        // so no sale clamps on the pot (a credit above 100 points bids more than the per-100-point rate)
+        _potTo(0.7 ether);
         uint256 snap = vm.snapshotState();
         _warp(40 minutes);
         uint256 noPump = _sellAll(ids);
@@ -503,10 +512,10 @@ contract BidRuleTest is Fixture {
     // promise: an expired bucket's cleared anchor starts a fresh drop floor on its first fill
     function test_modelRestartsClearedDropAnchor() public pure {
         Settings memory s = Mainnet.defaultSettings();
-        s.dropPerCreditBps = 10_000;
+        s.dropPer100PointsBps = 10_000;
         s.dropFloorBps = 5_000;
         uint256 start = BidModel.startAfter(s, 1_000, 0);
         assertEq(start, 1_000);
-        assertEq(BidModel.dropOnce(s, 1_000, start, s.refScore, s.refScore), 500);
+        assertEq(BidModel.dropOnce(s, 1_000, start, RATE_SCORE), 500);
     }
 }

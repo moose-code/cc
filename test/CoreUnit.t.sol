@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Prod} from "./utils/Prod.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
@@ -191,8 +192,8 @@ contract CoreUnitTest is CoreBase {
         _fund(10 ether);
         uint256 id = _credits(alice, 1)[0];
         // the payout by the hand formula, not bidOf
-        uint256 price = (core.ethRate() * _scoreOf(id)) / core.settings().refScore;
-        assertTrue(_scoreOf(id) != core.settings().refScore, "the fork credit's score is not refScore");
+        uint256 price = (core.ethRate() * _scoreOf(id)) / RATE_SCORE;
+        assertTrue(_scoreOf(id) != RATE_SCORE, "the fork credit's score is not refScore");
 
         vm.prank(alice);
         vm.expectRevert(ICore.Slippage.selector);
@@ -210,7 +211,7 @@ contract CoreUnitTest is CoreBase {
     function test_tinyPotSellsItsWeiAndBuysNothing() public {
         uint256[] memory ids = _credits(alice, 2);
         // refScore set to the sold credit's score, so a 1 wei pot reads a 1 wei bid for it (score / refScore is 1)
-        _refScoreToCredit(ids[0]);
+        _unitScore(ids[0]);
         bytes memory data = abi.encodeCall(ICreditStrategy.sellTargetNFT, (LISTED_A));
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);
@@ -289,9 +290,7 @@ contract CoreUnitTest is CoreBase {
         _fund(10 ether);
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         // above the credit's bid (the rate scaled by its score over refScore), so the buy reverts AboveBid
-        assertGt(
-            price, (core.ethRate() * _scoreOf(LISTED_A)) / core.settings().refScore, "listing is above the credit's bid"
-        );
+        assertGt(price, (core.ethRate() * _scoreOf(LISTED_A)) / RATE_SCORE, "listing is above the credit's bid");
         vm.prank(keeper);
         vm.expectRevert(ICore.AboveBid.selector);
         _buyRaw(price, _listing(LISTED_A), LISTED_A, STRATEGY);
@@ -320,7 +319,7 @@ contract CoreUnitTest is CoreBase {
         vm.fee(bf);
         vm.txGasPrice(gp);
         // the per-credit bid: the rate scaled by the credit's score over refScore (the hand formula, not bidOf)
-        uint256 ceiling = (core.ethRate() * _scoreOf(id)) / core.settings().refScore;
+        uint256 ceiling = (core.ethRate() * _scoreOf(id)) / RATE_SCORE;
         r.gap = ceiling - cost;
         uint256 pot = core.ethPot();
         uint256 before = keeper.balance;
@@ -340,11 +339,11 @@ contract CoreUnitTest is CoreBase {
     // promise: SPEC 6 buyListing caps value at the credit's scaled bid and the payment at that bid less value, at score != refScore
     function test_buyListing_capAndPaymentAtScoreNotRefScore() public {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
-        assertTrue(_scoreOf(LISTED_A) != core.settings().refScore, "the listed credit's score is not refScore");
+        assertTrue(_scoreOf(LISTED_A) != RATE_SCORE, "the listed credit's score is not refScore");
         _fundAndClimb(LISTED_A, price);
         _warp(30 hours);
         // the credit's bid by the hand formula, not bidOf
-        uint256 handBid = (core.ethRate() * _scoreOf(LISTED_A)) / core.settings().refScore;
+        uint256 handBid = (core.ethRate() * _scoreOf(LISTED_A)) / RATE_SCORE;
         PayRun memory r = _payRun(strategyAdapter, "", LISTED_A, price, 1 gwei, 1 gwei);
         assertEq(r.gap, handBid - price, "the gap is the scaled bid less the listing price");
         (, uint256 basis,) = core.creditInfo(LISTED_A);
@@ -371,7 +370,7 @@ contract CoreUnitTest is CoreBase {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         assertEq(price, 0.036 ether);
         // refScore set to the listed credit's score, so its bid is the full rate with room for the keeper payment
-        _refScoreToCredit(LISTED_A);
+        _unitScore(LISTED_A);
         _fundAndClimb(LISTED_A, price);
         _warp(30 hours);
         uint256 snap = vm.snapshotState();
@@ -398,7 +397,7 @@ contract CoreUnitTest is CoreBase {
         for (uint256 i; i < gaps.length; ++i) {
             uint256 id = _heldCredit(1 + i);
             // refScore set to this credit's score, so its bid is the full rate and the gap and fee math is the flat case
-            _refScoreToCredit(id);
+            _unitScore(id);
             uint256 ceiling = core.bidOf(id);
             ListingTarget t = _listingTarget(id);
             uint256 snap = vm.snapshotState();
@@ -563,7 +562,7 @@ contract CoreUnitTest is CoreBase {
             uint256 id = _heldCredit(m);
             ProbeTarget p = _probe(id, m);
             // the credit's bid is the full rate, so the half rate payment of an honest mode is under it
-            _refScoreToCredit(id);
+            _unitScore(id);
             vm.deal(address(p), 1 ether);
             uint256 value = (core.ethRate() / 2).min(core.ethPot() / 20);
             vm.prank(keeper);

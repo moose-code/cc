@@ -129,8 +129,8 @@ contract SetSettingsTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(SetSettings.UnknownField.selector, "saleFloorBpz"));
         probe.applyTo(live);
         probe.configure(address(core), "");
-        probe.single("dropPerCreditBps", 65_536);
-        vm.expectRevert(abi.encodeWithSelector(SetSettings.ValueTooWide.selector, "dropPerCreditBps"));
+        probe.single("dropPer100PointsBps", 65_536);
+        vm.expectRevert(abi.encodeWithSelector(SetSettings.ValueTooWide.selector, "dropPer100PointsBps"));
         probe.applyTo(live);
     }
 

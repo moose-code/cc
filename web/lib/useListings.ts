@@ -61,7 +61,7 @@ export function useListings() {
       const { listings, known, osMax } = await gatherListings(c, head!.n);
       const best = cheapestPerId(listings);
       const scores = await scoresFor(c, best.map((l) => l.id), known);
-      const refScore = BigInt(snap.settings.refScore);
+      const refScore = 1_000_000n;
       const bidFor = (rate: bigint, s: bigint) => (rate * s) / refScore;
       let rows = best.flatMap((l) => {
         const score = scores.get(l.id);

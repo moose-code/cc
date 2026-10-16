@@ -12,7 +12,7 @@ import { useListings, type ListingRow, type ListingsData } from "@/lib/useListin
 import { useBalanceInEth } from "@/lib/market";
 import { nextRise } from "@/lib/climb";
 import { etaLabel } from "@/lib/compose-eta";
-import { BALANCE_SYMBOL, bidPer100, eth, evmNowTx, formatBalance, rating } from "@/lib/format";
+import { BALANCE_SYMBOL, eth, evmNowTx, formatBalance, rating } from "@/lib/format";
 import { useFillsTodayIx } from "@/lib/indexer";
 
 const PAGE = 50;
@@ -47,7 +47,7 @@ function RiseLine({ data }: { data: ListingsData }) {
   const e = nextRise(data.climb, now);
   const first = data.rows[0];
   const after = first && first.score > 0n ? ` · #${first.id} bid ${eth((w(e.rate) * first.score) / data.refScore)} ETH after` : "";
-  const per100 = `${bidPer100(w(e.rate), data.refScore)} ETH / 100 pts`;
+  const per100 = `${eth(w(e.rate), 5)} ETH / 100 pts`;
   const text =
     e.kind === "climb"
       ? `bid rises to ${per100} in ${countdown(e.seconds)}${after}`
@@ -203,7 +203,7 @@ export default function ListingsPage() {
           gap is price over bid. bids marked ~ are estimated from the current rate and the rating; the closest 100 rows are
           read from the chain. clears in assumes no sales into the bid and a constant pot.
           {data && data.osMax > 0 && osCount > 0 && ` showing the cheapest ${data.osMax} OpenSea listings.`}
-          {snap && ` bid ${bidPer100(snap.ethRate, snap.settings.refScore)} ETH / 100 pts.`}
+          {snap && ` bid ${eth(snap.ethRate, 5)} ETH / 100 pts.`}
         </p>
       </div>
     </div>

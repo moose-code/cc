@@ -9,9 +9,9 @@ import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../
 library SettingsBounds {
     /// @notice the name of the first field out of bounds, or zero when every field is inside its bounds
     function firstViolation(Settings memory s) internal pure returns (bytes32) {
-        // The climb raises the rate from its current value, so a rate driven to zero stays at zero. dropPerCreditBps at
-        // most 9,999 and dropFloorBps at least 1 keep the post-fill rate above zero (decision 143).
-        if (s.dropPerCreditBps < 1 || s.dropPerCreditBps > 9_999) return "dropPerCreditBps";
+        // The climb raises the rate from its current value, so a rate driven to zero stays at zero. dropPer100PointsBps
+        // at most 9,999 and dropFloorBps at least 1 keep the post-fill rate above zero (decision 143).
+        if (s.dropPer100PointsBps < 1 || s.dropPer100PointsBps > 9_999) return "dropPer100PointsBps";
         if (s.dropFloorBps < 1 || s.dropFloorBps > 10_000) return "dropFloorBps";
         if (s.climbPerMinBps < 1) return "climbPerMinBps";
         if (s.ceilBps < 10_000) return "ceilBps";
@@ -33,7 +33,7 @@ library SettingsBounds {
         if (s.balanceBidMarginBps > 9_999) return "balanceBidMarginBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         if (s.payeePpm > 1_000_000) return "payeePpm";
-        if (s.refScore < 1) return "refScore";
+        if (s.pointsPerPage < 1) return "pointsPerPage";
         if (s.climbMultiplierCapBps < 10_000) return "climbMultiplierCapBps";
         if (s.spendCapBps < 1 || s.spendCapBps > 10_000) return "spendCapBps";
         if (s.bucketSeconds < 1) return "bucketSeconds";
@@ -42,7 +42,7 @@ library SettingsBounds {
         return bytes32(0);
     }
 
-    /// @notice the bounds of the eth rate, wei per credit. `setRate` and the constructor argument `rateStart`
+    /// @notice the bounds of the eth rate, wei per 100 points. `setRate` and the constructor argument `rateStart`
     function rateInBounds(uint256 r) internal pure returns (bool) {
         return r >= RATE_START_MIN_WEI && r <= RATE_START_MAX_WEI;
     }

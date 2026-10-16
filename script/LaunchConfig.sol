@@ -115,7 +115,7 @@ abstract contract ConfigReader is CommonBase {
     function defaultConfig() internal pure returns (LaunchConfig memory c) {
         c.stack = Mainnet.defaultStack();
         c.symbol = "CC";
-        c.rateStart = 25_000_000_000_000_000;
+        c.rateStart = 5_770_000_000_000_000;
         c.settings = Mainnet.defaultSettings();
         c.sale = Mainnet.defaultSale();
         c.credit = Mainnet.defaultCredit();
@@ -188,7 +188,7 @@ abstract contract ConfigReader is CommonBase {
 
     function _loadSettings(LaunchConfig memory c, string memory j) private pure {
         Settings memory s = c.settings;
-        s.dropPerCreditBps = _u16(j, ".settings.dropPerCreditBps");
+        s.dropPer100PointsBps = _u16(j, ".settings.dropPer100PointsBps");
         s.dropFloorBps = _u16(j, ".settings.dropFloorBps");
         s.climbPerMinBps = _u16(j, ".settings.climbPerMinBps");
         s.ceilBps = _u16(j, ".settings.ceilBps");
@@ -216,7 +216,7 @@ abstract contract ConfigReader is CommonBase {
         // forge-lint: disable-end(unsafe-typecast)
         s.feeToRedeemBurnBps = _u16(j, ".settings.feeToRedeemBurnBps");
         s.payeePpm = _u24(j, ".settings.payeePpm");
-        s.refScore = _u32(j, ".settings.refScore");
+        s.pointsPerPage = _u32(j, ".settings.pointsPerPage");
         // forge-lint: disable-next-line(unsafe-typecast)
         s.swapFeeCc = uint96(_uint(j, ".settings.swapFeeCc", type(uint96).max));
         s.climbMultiplierCapBps = _u16(j, ".settings.climbMultiplierCapBps");

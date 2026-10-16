@@ -193,9 +193,9 @@ contract ReviewDeployTest is ReviewHarness {
             '"startTick": -175000',
             '"positionUpper": 887200',
             '"poolFee": 8388608',
-            '"dropPerCreditBps": 50',
+            '"dropPer100PointsBps": 115',
             '"peakHalfLife": 21600',
-            '"dropFloorBps": 5000',
+            '"dropFloorBps": 1',
             '"buybackSlice": 500000000000000000'
         ];
         string[11] memory to = [
@@ -206,7 +206,7 @@ contract ReviewDeployTest is ReviewHarness {
             '"startTick": -8388609',
             '"positionUpper": 8388608',
             '"poolFee": 16777216',
-            '"dropPerCreditBps": 65536',
+            '"dropPer100PointsBps": 65536',
             '"peakHalfLife": 4294967296',
             '"dropFloorBps": 65536',
             '"buybackSlice": 340282366920938463463374607431768211456'
@@ -219,7 +219,7 @@ contract ReviewDeployTest is ReviewHarness {
             ".launch.startTick",
             ".launch.positionUpper",
             ".stack.poolFee",
-            ".settings.dropPerCreditBps",
+            ".settings.dropPer100PointsBps",
             ".settings.peakHalfLife",
             ".settings.dropFloorBps",
             ".settings.buybackSlice"
@@ -304,7 +304,6 @@ contract ReviewDeployTest is ReviewHarness {
 /// @notice the funded rule and the climb clamp, fuzzed on standalone cores with any rateStart in bounds, plus the
 /// sign off table rows that need a live pool to check
 contract ReviewFundedTest is Fixture {
-
     function _newCore(uint256 rate) internal returns (ICore c) {
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
         IControllerV1 ctl2 = Prod.newController(predicted, Mainnet.defaultSale());

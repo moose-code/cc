@@ -9,7 +9,7 @@ import { useStatementRating } from "./Cards";
 import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
 import Link from "next/link";
-import { relTime, eth, evmNowTx, rating, commas, bidPer100 } from "@/lib/format";
+import { relTime, eth, evmNowTx, rating, commas } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
 import { Addr } from "./Addr";
 
@@ -62,7 +62,7 @@ export function Tween({ wei }: { wei: bigint | undefined }) {
 // Next-credit and next-statement progress at the top of the rail.
 // Next credit: pot as a share of the reference bid, drawn in 8 segments.
 // Next statement: credits held toward the next STATEMENT_SIZE, one cell each.
-// Pot over the bid at refScore, in percent, capped at 100 (a pot above one bid is a full bar), and the filled count
+// Pot over the rate (the bid for 100 points), in percent, capped at 100 (a pot above one bid is a full bar), and the filled count
 // of an 8 segment bar.
 export function useNextCredit() {
   const { data: snap } = useSnapshot();
@@ -70,7 +70,7 @@ export function useNextCredit() {
   const bid = snap?.ethRate;
   const ratio = pot != null && bid ? Math.min(100, Number((pot * 10000n) / bid) / 100) : undefined;
   const segs = ratio == null ? 0 : Math.min(8, Math.floor(ratio / 12.5));
-  const per100 = bid && snap ? bidPer100(bid, snap.settings.refScore) : undefined;
+  const per100 = bid ? eth(bid, 5) : undefined; // ethRate is wei per 100 points
   return { ratio, segs, per100 };
 }
 

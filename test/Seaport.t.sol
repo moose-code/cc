@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {console} from "forge-std/console.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
@@ -8,7 +9,17 @@ import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
 import {Mainnet, Settings, ICreditScore} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {BidModel} from "./utils/BidModel.sol";
-import {ISeaport, ItemType, OrderType, BasicOrderType, OfferItem, ConsiderationItem, OrderComponents, AdditionalRecipient, BasicOrderParameters} from "./utils/SeaportTypes.sol";
+import {
+    ISeaport,
+    ItemType,
+    OrderType,
+    BasicOrderType,
+    OfferItem,
+    ConsiderationItem,
+    OrderComponents,
+    AdditionalRecipient,
+    BasicOrderParameters
+} from "./utils/SeaportTypes.sol";
 
 /// shared plumbing: genuine Seaport 1.6 orders for credits, signed by a maker key. the maker holds a real credit,
 /// approves Seaport directly on Credits (no conduit), and signs the eip 712 digest of the order hash that Seaport
@@ -55,7 +66,7 @@ abstract contract SeaportBase is Fixture {
     function _list() internal returns (uint256 id) {
         id = _credits(maker, 1)[0];
         // refScore set to the listed credit's score, so its bid is the full rate and the ethRate based order prices hold
-        _refScoreToCredit(id);
+        _unitScore(id);
         vm.prank(maker);
         CREDITS.setApprovalForAll(address(SEAPORT), true);
         assertEq(CREDITS.ownerOf(id), maker);
@@ -189,16 +200,12 @@ abstract contract SeaportBase is Fixture {
         assertEq(address(core).balance, before.balance - cost - paid, "balance down by exactly cost and the payment");
         assertEq(core.ethToBuyback(), before.toBuyback);
         assertEq(
-            core.rateAtCheckpoint(),
-            BidModel.dropOnce(core.settings(), rate, rate, score, core.settings().refScore),
-            "rate drop"
+            core.rateAtCheckpoint(), BidModel.dropOnce(core.settings(), rate, rate, score, RATE_SCORE), "rate drop"
         );
         assertEq(core.lastFillTime(), block.timestamp);
         assertLe(cost + paid, ceiling, "never above the ceiling");
         _solvent();
-        assertEq(
-            address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(), 0, "no surplus"
-        );
+        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(), 0, "no surplus");
     }
 
     function _expectFail(uint256 id, bytes memory params, bytes4 err) internal {
@@ -236,7 +243,11 @@ contract SeaportTest is SeaportBase {
         }
         assertGe(core.ethRate(), TARGET_RATE, "rate cleared");
         // real fees split between the pot and the redeem burn reserve (feeToRedeemBurnBps), nothing else held
-        assertEq(address(core).balance, core.ethPot() + core.ethRedeemBurn(), "the pot and reserve are what real fees brought");
+        assertEq(
+            address(core).balance,
+            core.ethPot() + core.ethRedeemBurn(),
+            "the pot and reserve are what real fees brought"
+        );
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -249,7 +260,7 @@ contract SeaportTest is SeaportBase {
         uint256 id = _credits(maker, 1)[0];
         vm.prank(maker);
         CREDITS.setApprovalForAll(address(SEAPORT), true);
-        uint256 ref = core.settings().refScore;
+        uint256 ref = RATE_SCORE;
         uint256 s = _scoreOf(id);
         assertTrue(s != ref, "the credit's score is not refScore");
         _fundPot(10 ether);
@@ -396,13 +407,11 @@ contract SeaportTest is SeaportBase {
     /*//////////////////////////////////////////////////////////////
                   10. settings reach the door at once
     //////////////////////////////////////////////////////////////*/
-
 }
 
 /// the pot bound refusal, on a core whose pot real swaps have not filled, or filled only a little. the launch
 /// settings
-contract SeaportColdTest is SeaportBase {
-}
+contract SeaportColdTest is SeaportBase {}
 
 /// the caller economics of `buyListing` at the launch settings (keeperFee 0.0003 ether, keeperMaxBaseFee 5 gwei) with
 /// the gas of the call measured cold, through a basic Seaport order. the caller pays gas at the base fee and no

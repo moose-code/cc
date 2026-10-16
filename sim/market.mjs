@@ -3,7 +3,7 @@
 // the Core, the drop, the climb, the multiplier and the hourly bound, the compose and the sale come from engine.js; this file
 // is a fresh minute-step loop because the board is the real listings (sim/data), not engine.js's synthetic book.
 import fs from 'node:fs';
-import { Core, W, BPS, DEFAULTS, mulberry32, normal, poisson, interp, WTP_Q, stmtArrivalsPerDay } from './engine.js';
+import { Core, W, BPS, RATE_SCORE, DEFAULTS, mulberry32, normal, poisson, interp, WTP_Q, stmtArrivalsPerDay } from './engine.js';
 
 const DATA = new URL('./data/', import.meta.url).pathname;
 const OUT = new URL('./out/', import.meta.url).pathname;
@@ -26,9 +26,9 @@ const POT0 = 6.556, RATE0 = 0.0169 * W, PILE0 = 9;
 const PE = 0.0089; // the current flat market price of a credit, eth (notes.md, last 24h median). score does not price the market
 
 // one fresh board for a run: OpenSea listings and CreditStrategy listings, each {ask eth, pts, need eth}. need = ask / scoreRatio,
-// the eth the bid must reach for a refScore credit to clear this listing. junk asks (over 100 eth) stay in the board and never clear
+// the eth per 100 points the rate must reach for this listing to clear. junk asks (over 100 eth) stay in the board and never clear
 function buildBoard(rng) {
-  const sr = (pts) => (pts * 1e4) / REFSCORE;
+  const sr = (pts) => (pts * 1e4) / RATE_SCORE; // score over 100 points: the rate is wei per 100 points
   const book = [], strat = [];
   for (const l of BOARD_RAW) {
     const pts = scoreOf.get(String(l.id)) || censusScore(rng);
@@ -64,13 +64,14 @@ function dayVolume(path, d, scenario) {
 }
 const FEE_TO_CORE = 0.09; // skim 10 percent, 9 points to the engine (bountyBps 9000 of the 1000 bps skim). _book then splits it
 
-const sr = (pts) => (pts * 1e4) / REFSCORE;
+const sr = (pts) => (pts * 1e4) / RATE_SCORE; // score over 100 points: the rate is wei per 100 points
 
 // ---- one run
 export function runMarket(o) {
   const rng = mulberry32(o.seed);
   const p = Object.assign({}, DEFAULTS, {
-    rateStart: RATE0, rateCap: 3 * RATE0, days: 30, stepSec: 60,
+    // RATE0 is the live rate per reference credit; the rate is wei per 100 points
+    rateStart: (RATE0 * RATE_SCORE) / REFSCORE, rateCap: (3 * RATE0 * RATE_SCORE) / REFSCORE, days: 30, stepSec: 60,
     climbPerMin: o.climbPerMin, recoveryClimbPerMin: o.recoveryClimbPerMin ?? DEFAULTS.recoveryClimbPerMin, idleLoosenPct: o.idleLoosenPct,
     multiplierCap: o.multiplierCap, hourlyBound: o.hourlyBound,
   });

@@ -15,7 +15,7 @@ import type { CreditEvt } from "@/lib/events";
 import { usePile, useScores, useSnapshot, type PileCredit } from "@/lib/live";
 import { buyCredits } from "@/lib/buy";
 import { etaLabel, floorIn, rateLabel, windowLabel } from "@/lib/compose-eta";
-import { agoLabel, bidPer100, eth, leftLabel, rating } from "@/lib/format";
+import { agoLabel, eth, leftLabel, rating } from "@/lib/format";
 
 const PAGE = 24;
 type View = "grid" | "table";
@@ -64,7 +64,7 @@ export default function CreditsPage() {
 
   const meta = [
     `${pile.length} held by engine`,
-    snap && `bid ${bidPer100(snap.ethRate, snap.settings.refScore)} ETH / 100 pts`,
+    snap && `bid ${eth(snap.ethRate, 5)} ETH / 100 pts`,
     eta.perHour != null && eta.perHour > 0 && `${rateLabel(eta.perHour)} bought an hour${eta.recent ? ", recent pace" : ""}`,
     eta.at(0) && `next statement composes in ${etaLabel(eta.at(0))}`,
     historyDown && "history unavailable",

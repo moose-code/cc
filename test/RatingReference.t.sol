@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
@@ -13,33 +14,34 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// the price reference of the sale controller on the live fork. `referenceOf(sid)` is the larger of a statement's cost
 /// and `valueOf(rating)`, computed at each call. `valueOf` is the larger of the rate term, the floor rate times the
-/// rating over `refScore`, and the balance token pool term. the floor rate is the larger of the climbed price state and
-/// the decayed peak. the sale curve, its floor `saleFloorBps`, the anchor and `atFloor` all price in bps of the
-/// reference. the rate term prices the rating at the engine's average credit price, so two statements of the same
-/// rating reference the same amount once it binds, whatever each credit cost. real Core, ControllerV1, Statements
+/// rating over 100 points (`RATE_SCORE` score units), and the balance token pool term. the floor rate is the larger of
+/// the climbed price state and the decayed peak. the sale curve, its floor `saleFloorBps`, the anchor and `atFloor` all
+/// price in bps of the reference. the rate term prices the rating at the engine's per point price, so two statements of
+/// the same rating reference the same amount once it binds, whatever each credit cost. real Core, ControllerV1, Statements
 contract RatingReferenceTest is Fixture {
     uint256 internal constant BPS = 10_000;
-    /// refScore values the tests set to put the rate term above or below cost; the bounds are 1 and uint32.max
-    uint32 internal constant LOW_REF_SCORE = 800_000;
-    uint32 internal constant HIGH_REF_SCORE = 8_000_000;
     /// a small sqrt price makes the balance token expensive in eth, so the pool term is large
     uint160 internal constant LOW_SQRT = uint160(FixedPoint96.Q96 / 1000);
     /// a large sqrt price makes the balance token cheap in eth, so a balance token bought credit records its score-scaled
     /// backstop as its eth cost, a moderate figure above the eth lineage cost
     uint160 internal constant HIGH_SQRT = uint160((uint256(1) << 96) * 1000);
 
-    /// lowers `refScore` so statement `sid` references about four times its cost (the rate term binds), and returns the
-    /// reference and the cost
+    /// sets the floor rate so the rate term of `sid` (`floorRate * rating / RATE_SCORE`) is `mulBps` bps of its cost
+    function _rateTermToCost(uint256 sid, uint256 mulBps) internal {
+        (, uint256 cost,) = core.statementInfo(sid);
+        uint256 rating = core.ratingOf(sid);
+        // the floor rate at which the rate term equals cost, then `mulBps` of it
+        uint256 cross = FullMath.mulDiv(cost, RATE_SCORE, rating);
+        _liftRateCap();
+        vm.prank(owner);
+        core.setRate(cross * mulBps / BPS);
+    }
+
+    /// lifts the floor rate so statement `sid` references about four times its cost (the rate term binds), and returns
+    /// the reference and the cost
     function _makeRich(uint256 sid) internal returns (uint256 ref, uint256 cost) {
         (, cost,) = core.statementInfo(sid);
-        uint256 rating = core.ratingOf(sid);
-        uint256 p = core.floorRate();
-        // the refScore at which the rate term equals the cost, then a quarter of it so the rate term is about four
-        // times the cost
-        uint256 cross = FullMath.mulDiv(p, rating, cost);
-        uint32 rs = uint32(cross / 4);
-        if (rs < LOW_REF_SCORE) rs = LOW_REF_SCORE;
-        _setRefScore(rs);
+        _rateTermToCost(sid, 40_000);
         ref = ctl.referenceOf(sid);
         assertGt(ref, cost, "the test statement is rich");
     }
@@ -88,49 +90,52 @@ contract RatingReferenceTest is Fixture {
     // ------------------------------------------------------------------ reference
 
     // promise: SPEC 1 one pricing rule: pointRate and valueOf (decision 104)
-    /// `pointRate` is the floor rate over `refScore` and `valueOf` is its product with the points at full precision
+    /// `pointRate` is the floor rate over 100 points and `valueOf` is its product with the points at full precision
     function test_pointRateAndValueOf() public {
         uint256 p = core.floorRate();
-        assertEq(ctl.pointRate(), p / ctl.refScore(), "the point rate is the floor rate over refScore");
+        assertEq(ctl.pointRate(), p / RATE_SCORE, "the point rate is the floor rate over 100 points");
         assertEq(ctl.valueOf(0), 0, "no points, no value");
-        assertEq(ctl.valueOf(1_000_000), FullMath.mulDiv(p, 1_000_000, ctl.refScore()), "one division on the product");
-        assertGe(ctl.valueOf(ctl.refScore()), ctl.pointRate() * ctl.refScore(), "the product keeps the remainder");
-        assertEq(ctl.valueOf(ctl.refScore()), p, "refScore points are worth the floor rate");
+        assertEq(ctl.valueOf(1_000_000), FullMath.mulDiv(p, 1_000_000, RATE_SCORE), "one division on the product");
+        assertGe(ctl.valueOf(RATE_SCORE), ctl.pointRate() * RATE_SCORE, "the product keeps the remainder");
+        assertEq(ctl.valueOf(RATE_SCORE), p, "100 points are worth the floor rate");
     }
 
-    // promise: SPEC 1 refScore is bounded 1 to uint32.max
+    // promise: SPEC 1 pointsPerPage is bounded 1 to uint32.max
     /// zero is refused, and 1 and uint32.max are accepted
-    function test_refScore_boundsAreEnforced() public {
+    function test_pointsPerPage_boundsAreEnforced() public {
         Settings memory s = core.settings();
-        s.refScore = 0;
+        s.pointsPerPage = 0;
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("refScore")));
+        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("pointsPerPage")));
         core.setSettings(s);
-        _setRefScore(1);
-        assertEq(core.settings().refScore, 1, "the lower bound is accepted");
-        _setRefScore(type(uint32).max);
-        assertEq(core.settings().refScore, type(uint32).max, "the upper bound is accepted");
+        s.pointsPerPage = 1;
+        _setSettings(s);
+        assertEq(core.settings().pointsPerPage, 1, "the lower bound is accepted");
+        s.pointsPerPage = type(uint32).max;
+        _setSettings(s);
+        assertEq(core.settings().pointsPerPage, type(uint32).max, "the upper bound is accepted");
     }
 
     // promise: SPEC 1 the statement reference is max(cost, valueOf(rating))
-    /// the reference is the larger of cost and the rate term `floorRate * rating / refScore`. a high refScore shrinks
-    /// the rate term below cost so cost binds, a low refScore lifts it above cost so it binds, and when it binds the
+    /// the reference is the larger of cost and the rate term `floorRate * rating / RATE_SCORE`. a low floor rate shrinks
+    /// the rate term below cost so cost binds, a high floor rate lifts it above cost so it binds, and when it binds the
     /// reference equals it exactly
     function test_reference_isMaxOfCostAndRateTerm() public {
         uint256 sid = _composeOnce().sid;
         (, uint256 cost,) = core.statementInfo(sid);
         uint256 rating = core.ratingOf(sid);
-        uint256 p = core.floorRate();
-        assertGt(p, 0, "the floor rate is nonzero");
 
-        _setRefScore(HIGH_REF_SCORE);
-        uint256 rateHi = FullMath.mulDiv(p, rating, HIGH_REF_SCORE);
-        assertEq(ctl.referenceOf(sid), rateHi > cost ? rateHi : cost, "the reference is the max of cost and the rate term");
+        _rateTermToCost(sid, 2_500); // a low floor rate: the rate term is below cost
+        uint256 pLo = core.floorRate();
+        uint256 termLo = FullMath.mulDiv(pLo, rating, RATE_SCORE);
+        assertLt(termLo, cost, "the rate term is below cost");
+        assertEq(ctl.referenceOf(sid), cost, "cost binds when the rate term is below it");
 
-        _setRefScore(LOW_REF_SCORE);
-        uint256 rateLo = FullMath.mulDiv(p, rating, LOW_REF_SCORE);
-        assertGt(rateLo, cost, "the rate term at the lowest refScore exceeds cost");
-        assertEq(ctl.referenceOf(sid), rateLo, "the reference is the rate term exactly when it binds");
+        _rateTermToCost(sid, 40_000); // a high floor rate: the rate term exceeds cost
+        uint256 pHi = core.floorRate();
+        uint256 termHi = FullMath.mulDiv(pHi, rating, RATE_SCORE);
+        assertGt(termHi, cost, "the rate term exceeds cost");
+        assertEq(ctl.referenceOf(sid), termHi, "the rate term binds when above cost");
     }
 
     // promise: SPEC 1 one pile: equal ratings reference equally (decision 95)
@@ -152,15 +157,24 @@ contract RatingReferenceTest is Fixture {
         // bases, where decision 90 scaled each statement by its own cost
         assertTrue(costX != costE, "the two lineages record different cost bases");
 
-        _setRefScore(LOW_REF_SCORE); // a low refScore, so the rate term binds for both lineages
+        // a high floor rate, so the rate term binds above cost for both lineages
+        _liftRateCap();
+        vm.prank(owner);
+        core.setRate(1e17);
 
         uint256 p = core.floorRate();
         uint256 re = core.ratingOf(ethSid);
         uint256 rx = core.ratingOf(balanceSid);
 
         // the reference is the rate term for both, cost absent
-        assertEq(ctl.referenceOf(ethSid), FullMath.mulDiv(p, re, LOW_REF_SCORE), "the eth lineage references the rate term");
-        assertEq(ctl.referenceOf(balanceSid), FullMath.mulDiv(p, rx, LOW_REF_SCORE), "the redemption lineage references the rate term");
+        assertEq(
+            ctl.referenceOf(ethSid), FullMath.mulDiv(p, re, RATE_SCORE), "the eth lineage references the rate term"
+        );
+        assertEq(
+            ctl.referenceOf(balanceSid),
+            FullMath.mulDiv(p, rx, RATE_SCORE),
+            "the redemption lineage references the rate term"
+        );
         assertGt(ctl.referenceOf(ethSid), costE, "the rate term binds above the eth lineage cost");
         assertGt(ctl.referenceOf(balanceSid), costX, "the rate term binds above the redemption lineage cost");
 
@@ -178,11 +192,15 @@ contract RatingReferenceTest is Fixture {
     /// price in step, and `atFloor` stays an age decision through the move
     function test_referenceMovesWithTheFloorRate() public {
         uint256 sid = _composeOnce().sid;
-        _setRefScore(LOW_REF_SCORE); // the rate term binds
+        _rateTermToCost(sid, 40_000); // the rate term binds
         uint256 rating = core.ratingOf(sid);
 
         uint256 p1 = core.floorRate();
-        assertEq(ctl.referenceOf(sid), FullMath.mulDiv(p1, rating, LOW_REF_SCORE), "the reference is the rate term at the current floor rate");
+        assertEq(
+            ctl.referenceOf(sid),
+            FullMath.mulDiv(p1, rating, RATE_SCORE),
+            "the reference is the rate term at the current floor rate"
+        );
         uint256 price1 = ctl.priceOf(sid);
         bool floor1 = ctl.atFloor(sid);
 
@@ -192,14 +210,14 @@ contract RatingReferenceTest is Fixture {
         uint256 p2 = core.floorRate();
         assertGt(p2, p1, "the floor rate moved up");
 
-        assertEq(ctl.referenceOf(sid), FullMath.mulDiv(p2, rating, LOW_REF_SCORE), "the reference followed the floor rate at the call");
+        assertEq(
+            ctl.referenceOf(sid),
+            FullMath.mulDiv(p2, rating, RATE_SCORE),
+            "the reference followed the floor rate at the call"
+        );
         assertEq(ctl.priceOf(sid), price1 * p2 / p1, "the curve price followed the reference");
         assertEq(ctl.atFloor(sid), floor1, "atFloor is an age decision, unchanged by the floor rate move");
     }
-
-    // ------------------------------------------------------------------ curve, floor and eligibility
-
-    // ------------------------------------------------------------------ anchor
 
     // ------------------------------------------------------------------ core hard floor and value floor
 
