@@ -12,6 +12,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
+| behavior | value referenced pricing is validated and planned, not built (docs/reviews/DESIGN-value-pricing-f1101cb.md); the BALANCE price reference is the controller's own rate limited record from the pool key, approved and not built; the launch bid settings and the credit sale split stay as built; every row of sections 3 to 9 below stays as built until the owner decides | 147, 148, 149 |
 | behavior | the production balance module is ownerless, retains statement proceeds, pays on Core requests, advertises zero before upstream retirement and the opening block, and after Core retirement lets anyone migrate its reserve to a same-token module bound to the successor; no deployment or activation is authorized | 117, 144 |
 | behavior | an explicit owner setBalanceModule may replace the balance token until lockBalanceModule; each module keeps its own token custody, a pool key contributes value while its currency1 is the current balance token, and sellers may pin the payment token | 142 |
 | behavior | The Anvil dev scenario sells its seeded Credits at the launch 100 bps spend cap by mining separate 60-second buckets; local lifecycle and activity runs exercise the resulting chain without changing launch settings | 140 |
