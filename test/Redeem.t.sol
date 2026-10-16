@@ -224,16 +224,32 @@ contract RedeemRepayTest is RedeemBase {
         _makeEligible(sid);
     }
 
-    // promise: SPEC 1 compose and redeem are unpaid at launch
-    /// at the launch settings a redemption pays nothing and moves no eth, at any base fee
-    function test_pay_launchSettingsPayZero() public {
+    // promise: SPEC 1 redeem pays its caller at launch, gas up to 3 gwei plus 0.0003 eth (decision 130)
+    /// at the launch settings and a base fee above 3 gwei, a module that burns past the count is paid exactly
+    /// REDEEM_GAS * 3 gwei + 0.0003 eth, from the pot
+    function test_pay_launchSettingsPayCappedGasPlusFee() public {
         uint256 sid = _ethStatementReady();
+        hm.setBurn(4_000_000);
+        (uint256 repaid, uint256 potLost) = _redeem(sid, HIGH);
+        assertEq(repaid, REDEEM_GAS * 3 gwei + 0.0003 ether, "the count at its cap, the base fee at the 3 gwei ceiling");
+        assertEq(potLost, repaid, "from the pot");
+        assertEq(STATEMENTS.ownerOf(sid), address(hm), "the redemption went through");
+    }
+
+    // promise: SPEC 1 both caller settings at zero pay nothing
+    /// with both caller settings at zero a redemption pays nothing and moves no eth, at any base fee
+    function test_pay_zeroSettingsPayZero() public {
+        uint256 sid = _ethStatementReady();
+        Settings memory s = core.settings();
+        s.callerFee = 0;
+        s.callerMaxBaseFee = 0;
+        _setSettings(s);
         hm.setBurn(4_000_000);
         uint256 bal = address(core).balance;
         (uint256 repaid, uint256 potLost) = _redeem(sid, HIGH);
         assertEq(repaid, 0);
         assertEq(potLost, 0);
-        assertEq(address(core).balance, bal - 0, "no eth moved");
+        assertEq(address(core).balance, bal, "no eth moved");
         assertEq(STATEMENTS.ownerOf(sid), address(hm), "the redemption went through");
     }
 

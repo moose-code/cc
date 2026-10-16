@@ -35,7 +35,7 @@ export const SETTINGS = {
   keeperFee: _cs.keeperFee / W, // eth. the buyback caller is paid BUYBACK_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the slice (docs/DECISIONS.md 61), the buyListing caller BUYLISTING_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the pot (docs/DECISIONS.md 71)
   keeperMaxBaseFee: _cs.keeperMaxBaseFee / 1e9, // gwei, the cap on the base fee the refunds use
   rateCap: _cs.rateCap, // wei per credit: the eth rate never passes it (climb clamp, setRate)
-  callerFee: _cs.callerFee / W, // eth. paid to the caller of compose, composeChosen and redeemStatement from the pot, with the gas refund below. launch 0: the simulator does not model these payments
+  callerFee: _cs.callerFee / W, // eth. paid to the caller of compose, composeChosen and redeemStatement from the pot, with the gas refund below. launch 0.0003 (decision 130): the simulator does not model these payments
   callerMaxBaseFee: _cs.callerMaxBaseFee / 1e9, // gwei, the cap on the base fee the refund of those three doors uses. 0 refunds no gas
   feeToRedeemBurnBps: _cs.feeToRedeemBurnBps, // share of the fee income booked by _book() after the payee share that fills the redeem burn reserve, the rest goes to the pot (decision 106)
   payeePpm: _cs.payeePpm, // the payee's share of the fee income booked by _book() once the payee share is on, ppm (decision 120). 0 at launch

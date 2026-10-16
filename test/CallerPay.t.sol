@@ -74,13 +74,30 @@ contract CallerPayTest is Fixture {
         return (r.paid - FEE) / basefee;
     }
 
-    // ------------------------------------------------------------------ off at launch
+    // ------------------------------------------------------------------ launch values and off
 
-    // promise: SPEC 1 compose is unpaid at launch
-    function test_launchSettingsPayZero() public {
+    // promise: SPEC 1 compose pays its caller at launch, gas up to 3 gwei plus 0.0003 eth (decision 130)
+    function test_launchSettingsPayCappedGasPlusFee() public {
         Settings memory s = core.settings();
-        assertEq(s.callerFee, 0);
-        assertEq(s.callerMaxBaseFee, 0);
+        assertEq(s.callerFee, 0.0003 ether);
+        assertEq(s.callerMaxBaseFee, 3 gwei);
+        _readyEth();
+        Run memory r = _run(300 gwei, 300 gwei);
+        assertGt(r.paid, 0.0003 ether, "the fee and the gas");
+        assertEq((r.paid - 0.0003 ether) % 3 gwei, 0, "the gas is paid at the 3 gwei ceiling");
+        uint256 counted = (r.paid - 0.0003 ether) / 3 gwei;
+        assertGe(counted, r.gross, "covers the gross gas of the transaction");
+        assertLt(counted, COMPOSE_GAS, "under the bound");
+        assertEq(r.potDrop, r.paid, "debited from the pot");
+        assertEq(r.balDrop, r.paid, "and nothing else left the core");
+    }
+
+    // promise: SPEC 1 both caller settings at zero pay nothing
+    function test_zeroSettingsPayNothing() public {
+        Settings memory s = core.settings();
+        s.callerFee = 0;
+        s.callerMaxBaseFee = 0;
+        _setSettings(s);
         _readyEth();
         Run memory r = _run(300 gwei, 300 gwei);
         assertEq(r.paid, 0, "compose pays nothing");
