@@ -45,6 +45,7 @@ function state(over: Partial<State> = {}): State {
     ethPot: parseEther("10"),
     potWithPending: parseEther("10"),
     pendingIncome: 0n,
+    lastBookAt: 0n,
     ethToBuyback: 0n,
     payeeOn: true,
     paused: false,
@@ -63,7 +64,7 @@ function state(over: Partial<State> = {}): State {
 function policy(over: Partial<{ [d in Door]: { maxBaseFee: bigint; tip: bigint } }> = {}, delay = 120): Policy {
   const doors = {} as Policy["doors"];
   for (const d of DOORS) doors[d] = { maxBaseFee: d === "buyListing" || d === "buyback" ? parseGwei("5") : parseGwei("3"), tip: parseGwei(d === "compose" ? "0.02" : "0.05") };
-  return { doors: { ...doors, ...over }, doorsOn: new Set(DOORS), margin: parseEther("0.00005"), listingDelaySec: delay };
+  return { doors: { ...doors, ...over }, doorsOn: new Set(DOORS), margin: parseEther("0.00005"), listingDelaySec: delay, bookMinWei: parseEther("0.01"), bookMinSec: 600 };
 }
 
 const gas = (g: string) => ({ baseFee: parseGwei(g) });
@@ -298,9 +299,16 @@ test("paused: every door waits while the Core is paused", () => {
 // so every listing is PotTooSmall and the bid cannot rise), and `decide` books only while `!payeeOn`. so the keeper
 // sends nothing and the bid stays stalled. the audit asks the decision layer to book here; it does not today.
 // KEEPER FINDING: bookLatches returns "already latched" once payeeOn, so the latched/pot-0/pending state never books.
-test("book: payee latched, pot 0, income pending — the decision layer still books", { todo: "decide() books only while !payeeOn (bookLatches returns 'already latched'), so a latched Core with an empty pot and pending income never books and the bid cannot be lifted by the keeper. keeper finding, reported." }, () => {
+test("book: payee latched, pot 0, income pending — the decision layer still books", () => {
   const s = state({ payeeOn: true, ethPot: 0n, potWithPending: 0n, pendingIncome: parseEther("0.2"), launchedAt: 1_000n, sniperSeconds: 1_800n, timestamp: 3_000n });
   assert.deepEqual(doorsOf(decide(s, [], gas("1"), policy(), new Map())), ["book"]);
+});
+
+test("book: latched, the keeper books above BOOK_MIN_ETH once the last book is older than BOOK_MIN_SEC", () => {
+  const at = (over: Partial<State>) => doorsOf(decide(state({ payeeOn: true, timestamp: 10_000n, ...over }), [], gas("1"), policy(), new Map()));
+  assert.deepEqual(at({ pendingIncome: parseEther("0.0101"), lastBookAt: 9_399n }), ["book"]);
+  assert.deepEqual(at({ pendingIncome: parseEther("0.01") }), [], "income at the minimum does not book");
+  assert.deepEqual(at({ pendingIncome: parseEther("0.2"), lastBookAt: 9_400n }), [], "a book 600 seconds old does not repeat");
 });
 
 // the keeper's listing bid is `core.bidOf(id)` read on chain (src/listings.ts), which the Core derives as
