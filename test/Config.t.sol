@@ -74,7 +74,7 @@ contract ConfigTest is Fixture {
         assertEq(f.name, "CC");
         assertEq(f.symbol, "CC");
         assertEq(f.salt, keccak256("CC"));
-        assertEq(f.rateStart, 8.9e15);
+        assertEq(f.rateStart, 25e15);
         assertEq(f.supply, 1_000_000_000e18);
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()), "settings block is the launch values");
         // the launch values of docs/DECISIONS.md 10.1 and 10.6, the fee split of decision 120
@@ -701,9 +701,9 @@ contract ConfigTest is Fixture {
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     // promise: the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[28] memory lo = SettingsFields.lo();
-        uint256[28] memory hi = SettingsFields.hi();
-        bytes32[28] memory names = SettingsFields.names();
+        uint256[29] memory lo = SettingsFields.lo();
+        uint256[29] memory hi = SettingsFields.hi();
+        bytes32[29] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             Settings memory s = Mainnet.defaultSettings();
             // the top itself (the fields bound by another field start from a free partner)
@@ -822,7 +822,7 @@ contract ConfigTest is Fixture {
         address d2 = _funded();
         LaunchConfig memory shipped = _shipped();
         assertEq(shipped.settings.rateCap, 3 * shipped.rateStart, "the shipped file holds the ratio");
-        assertEq(shipped.settings.rateCap, 2.67e16, "decision 69 opening cap");
+        assertEq(shipped.settings.rateCap, 75e15, "decision 69 opening cap");
         // the fixture opens at 1.732e15 under the launch cap: the row passes once the start is a third of the cap
         LaunchConfig memory c = lc;
         c.salt = keccak256("preflight");

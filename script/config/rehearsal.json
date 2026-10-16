@@ -16,13 +16,13 @@
   "image": "ipfs://PLACEHOLDER-cc-image",
   "description": "PLACEHOLDER cc description for the rehearsal",
   "salt": "0x56d96069d0c85d21b8d789da2cd39ba97ceec51143707e32ecb8343eb4258a9c",
-  "rateStart": 8900000000000000,
+  "rateStart": 25000000000000000,
   "settings": {
     "dropPerCreditBps": 50,
     "dropFloorBps": 5000,
     "climbPerMinBps": 50,
     "ceilBps": 11000,
-    "idleLoosenBps": 200,
+    "idleLoosenBps": 600,
     "saleFloorBps": 10000,
     "saleToBuybackBps": 2500,
     "saleToArtistBps": 250,
@@ -39,13 +39,14 @@
     "buybackSlice": 500000000000000000,
     "keeperFee": 300000000000000,
     "keeperMaxBaseFee": 5000000000,
-    "rateCap": 26700000000000000,
+    "rateCap": 75000000000000000,
     "callerFee": 300000000000000,
     "callerMaxBaseFee": 3000000000,
     "feeToRedeemBurnBps": 1000,
     "payeePpm": 0,
     "refScore": 4330000,
-    "swapFeeCc": 10000000000000000000000
+    "swapFeeCc": 10000000000000000000000,
+    "climbMultiplierCapBps": 40000
   },
   "sale": {
     "markupBps": 15000,

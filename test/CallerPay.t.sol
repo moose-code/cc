@@ -76,7 +76,7 @@ contract CallerPayTest is Fixture {
 
     // ------------------------------------------------------------------ launch values and off
 
-    // promise: SPEC 1 compose pays its caller at launch, gas up to 3 gwei plus 0.0003 eth (decision 130)
+    // promise: SPEC 1 compose pays its caller at launch, gas up to 3 gwei plus 0.0003 eth (decision 134)
     function test_launchSettingsPayCappedGasPlusFee() public {
         Settings memory s = core.settings();
         assertEq(s.callerFee, 0.0003 ether);

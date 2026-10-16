@@ -277,9 +277,11 @@ contract CoreUnitTest is CoreBase {
                            buyListing: real strategy
     //////////////////////////////////////////////////////////////*/
 
-    /// funds the pot and warps hour by hour until the ceiling clears the listing price of id.
+    /// funds the pot and warps hour by hour until the ceiling clears the listing price of id. the pot is large enough
+    /// that it covers four pages at the rate cap, so the pot multiplier stays at its cap across the climb and the idle
+    /// loosening does not slow as the rate rises (decision 128 variant d: pages counted at the current rate)
     function _fundAndClimb(uint256 id, uint256 price) internal {
-        _fund(10 ether);
+        _fund(50 ether);
         _warpUntilCeiling(id, price);
     }
 
@@ -477,7 +479,9 @@ contract CoreUnitTest is CoreBase {
     function test_buyListing_potCheck() public {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         _fund(price * 4);
-        _warpUntilCeiling(LISTED_A, price);
+        // the pot holds four pages, so the pot multiplier stays near 1x and the idle loosening is slow; warp until the
+        // bid is comfortably above the listing so the checkpoint read (pages counted at the climbed rate) still clears it
+        _warpUntilCeiling(LISTED_A, price * 3 / 2);
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);
         _buyRaw(price * 4 + 1, _listing(LISTED_A), LISTED_A, STRATEGY);

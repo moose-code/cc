@@ -89,8 +89,8 @@ test("config: a live chain needs a private relay and two public fallbacks; imper
   const local = loadConfig({ RECORD: "x", RPC_URLS: "http://127.0.0.1:8545", IMPERSONATE: "0x0000000000000000000000000000000000000001" }, () => rec(31337));
   assert.equal(local.signer.kind, "impersonate");
   assert.deepEqual(local.relayUrls, []);
-  assert.equal(local.listingDelaySec, 120, "decision 129");
-  assert.equal(local.doors.compose.maxBaseFee, 3_000_000_000n, "decision 130");
+  assert.equal(local.listingDelaySec, 120, "decision 133");
+  assert.equal(local.doors.compose.maxBaseFee, 3_000_000_000n, "decision 134");
   assert.equal(local.doors.buyListing.maxBaseFee, 5_000_000_000n, "keeperMaxBaseFee");
   assert.throws(() => loadConfig({ RECORD: "x", RPC_URLS: "http://127.0.0.1:8545" }, () => rec(31337)), /KEYSTORE/);
 });

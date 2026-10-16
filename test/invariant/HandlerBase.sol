@@ -725,6 +725,7 @@ abstract contract HandlerBase is Test {
         return BidModel.Bid({
             r: core.rateAtCheckpoint(),
             pot: core.ethPot(),
+            pagesPot: core.ethPot() + _pendingPot(st),
             lastFillRate: anchor,
             peakRate: peakRate,
             peakTime: peakTime,
@@ -760,6 +761,7 @@ abstract contract HandlerBase is Test {
             BidModel.Bid({
                 r: s.stored,
                 pot: s.pot,
+                pagesPot: s.pot + s.pend,
                 lastFillRate: s.anchor,
                 peakRate: s.peakRate,
                 peakTime: s.peakTime,
@@ -773,10 +775,28 @@ abstract contract HandlerBase is Test {
                 _flag(V_RATE_BOUND, "the rate after a warp differs from the model");
             }
         } else {
-            if (core.rateAtCheckpoint() > s.stored.max(p)) {
+            // the contract checkpoints `m` and the clamp from the pot at checkpoint time, which an action that moves
+            // the balance before it books (a skim then a book, or a book then a spend) shifts off the start pot. the
+            // checkpoint pot lies between the start and end pots and priceNow rises with the pot, so the stored rate is
+            // bounded by the larger of the two model prices
+            Settings memory end = core.settings();
+            uint256 pEnd = BidModel.priceNow(
+                end,
+                BidModel.Bid({
+                    r: s.stored,
+                    pot: core.ethPot(),
+                    pagesPot: core.ethPot() + _pendingPot(end),
+                    lastFillRate: s.anchor,
+                    peakRate: s.peakRate,
+                    peakTime: s.peakTime,
+                    lastFillTime: s.lastFill,
+                    checkpointTime: s.cp,
+                    nowTs: block.timestamp
+                })
+            );
+            if (core.rateAtCheckpoint() > s.stored.max(p).max(pEnd)) {
                 _flag(V_RATE_BOUND, "the stored rate rose with no time passing");
             }
-            Settings memory end = core.settings();
             if (rate1 != BidModel.read(end, core.ethPot() + _pendingPot(end), _priceNow(end))) {
                 _flag(V_RATE_BOUND, "the read differs from the price state lowered to the clamp of the end pot");
             }
@@ -2324,9 +2344,10 @@ abstract contract HandlerBase is Test {
             if (core.checkpointTime() != block.timestamp) _flag(V_RATE_BOUND, "a book with income did not checkpoint");
         }
         _ok(a);
-        // the book moved the pot: the model of the rate follows from the state it left, which `_rs` read before
-        // the income was counted; the read before the book already included the share the book added
-        if (core.ethRate() != rs.rate) _flag(V_RATE_BOUND, "the quote before the book differs from the read after it");
+        // the book checkpointed the rate: with the pages multiplier read at the current rate (decision 128 variant d),
+        // the checkpoint can move the read, so the read follows the model from the state the book left rather than
+        // matching the pre book quote exactly
+        _rsCheck(rs, 0);
     }
 
     /// a payee that reverts, or one that burns all its gas, created once each
@@ -2478,12 +2499,20 @@ abstract contract HandlerBase is Test {
         return (denom == 0 || avail >= denom) ? 10_000 : avail * 10_000 / denom;
     }
 
-    /// @dev the balance instance price state as a BidModel.Bid, the clamp set to `availBps` and the cap 10_000
-    function _balanceBidState(uint256 availBps) internal view returns (BidModel.Bid memory b) {
+    /// @dev available as bps of par for a refScore credit, uncapped: the pages pot of the balance instance
+    function _availBpsRaw(uint256 unit) internal view returns (uint256) {
+        uint256 denom = uint256(core.settings().refScore) * unit;
+        return denom == 0 ? 0 : module.available() * 10_000 / denom;
+    }
+
+    /// @dev the balance instance price state as a BidModel.Bid, the clamp set to `availBps`, the pages pot to the
+    /// uncapped available as bps of par, and the cap 10_000
+    function _balanceBidState(uint256 availBps, uint256 unit) internal view returns (BidModel.Bid memory b) {
         uint256 cp = uint256(vm.load(address(core), BAL_CP_SLOT));
         b = BidModel.Bid({
             r: uint256(vm.load(address(core), BAL_RATE_SLOT)),
             pot: availBps,
+            pagesPot: _availBpsRaw(unit),
             lastFillRate: uint256(vm.load(address(core), BAL_ANCHOR_SLOT)),
             peakRate: uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 3))),
             peakTime: uint64(uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 2))) >> 64),
@@ -2499,7 +2528,7 @@ abstract contract HandlerBase is Test {
     function _balanceExpected(uint256[] memory ids, uint256 n, uint256 unit) internal view returns (uint256 total) {
         Settings memory st = core.settings();
         uint256 availBps = _availBps(unit);
-        uint256 price = BidModel.priceNow(st, _balanceBidState(availBps), 10_000);
+        uint256 price = BidModel.priceNow(st, _balanceBidState(availBps, unit), 10_000);
         uint256 floorBps = 10_000 - st.balanceBidMarginBps;
         uint256 bucket = uint64(uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 2))));
         uint256 minuteStart = bucket == block.timestamp / 60
@@ -2527,7 +2556,7 @@ abstract contract HandlerBase is Test {
         uint256 used;
         Settings memory st = core.settings();
         uint256 availBps = _availBps(unit);
-        uint256 rate = BidModel.read(st, availBps, BidModel.priceNow(st, _balanceBidState(availBps), 10_000), 10_000);
+        uint256 rate = BidModel.read(st, availBps, BidModel.priceNow(st, _balanceBidState(availBps, unit), 10_000), 10_000);
         // the floor rule of CoreLib._fillBalance (review ac8da10 M1): a clamped rate below the floor
         // `10_000 - balanceBidMarginBps` closes the bid with PotTooSmall. an available too short to pay the floor
         // makes no batch payable, so offer none
