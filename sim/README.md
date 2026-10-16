@@ -29,7 +29,10 @@ Not modeled:
 node sim/engine.test.mjs     # prints "ok, N checks passed"
 node sim/run.mjs q1          # writes sim/results/q1.json, about two minutes
 node sim/build.mjs           # rebuilds sim/index.html from engine.js and the page files
+node sim/market.mjs          # the real board, six scenarios, the knob grid; writes sim/out/market.{json,md}, about 16 seconds
 ```
+
+**decision 128, the pot scaled climb.** two Core options drive it, both off at their defaults so the launch headline is unchanged. `multiplierCap` scales the eth bid's climb and idle loosening by `m = clamp(ethPot / (rate * 80), 1, multiplierCap)`, evaluated at each checkpoint; `multiplierCap` 1 holds `m` at 1 (today's rule), 4 is decision 128. `hourlyBound` holds the read `ethRate()` at or below `hourlyBound / 10000` of the highest fill rate of the past hour, or of the last fill when the hour has none; 0 is no bound, 15000 is decision 128's 150 percent. `sim/market.mjs` runs the engine against the real OpenSea and CreditStrategy board (`sim/data`) over 30 days under the six scenarios and the knob grid (climb 50/100/200 bps, idle loosen 200/600/1000 bps, multiplier cap 1/4 with the hourly bound tied to it) and writes the one-page finding to `sim/out/market.md`. the finding: the engine against this board is fee limited, the multiplier is low risk, and the hourly bound as specified strands the pot after a sharp bid drop (a whale dump or a pot pump cascades the bid down, fills stop, and the read is pinned at 150 percent of the collapsed fill so the bid cannot re-climb to clear the board). `node sim/market.mjs` reproduces the grid and the bound isolation.
 
 `simulate(params)` in `sim/engine.js` returns `{ S, T, stats, at, core }`: `S` the hourly series, `T` the totals, `stats` the run statistics and accounting checks, `at(day)` one day's snapshot, and `core` the final Core state. `params` takes any key of `DEFAULTS`: every Core setting, the controller and credit settings, and the market inputs. `schedule: [{ day, patch }]` changes settings mid run through `setSettings`, with the same bounds. `stepSec` must divide 3600. The stepped rule depends on the step: an hourly step gives 16,782 credits in 30 days against 23,384 at 5 minutes (seed 1, the test's `LEGACY` config), so use 60 or 300 seconds.
 
@@ -74,7 +77,7 @@ The full run, with the daily series of seed 1, is in `sim/results/q1.json`.
 ## files
 
 - `engine.js`: the model. `engine.test.mjs`: the checks.
-- `run.mjs`: the headline run. `build.mjs`: builds `index.html`.
+- `run.mjs`: the headline run. `build.mjs`: builds `index.html`. `market.mjs`: the real board run (decision 128), writes `out/market.{json,md}`.
 - `page.*`: the page source (`page.body.html`, `page.css`, `page.ui1.js` to `page.ui4.js`). `index.html`: the built page.
 - `data/`: the calibration pulls. `notes.md` describes them.
 - `results/`: written by `run.mjs`, ignored by git through `sim/.gitignore`.

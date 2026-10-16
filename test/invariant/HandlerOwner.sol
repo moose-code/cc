@@ -64,6 +64,7 @@ abstract contract HandlerOwner is HandlerBase {
         s.payeePpm = uint24(_f(_r(seed, 40), 0, 200_000, c.payeePpm));
         s.refScore = uint32(_f(_r(seed, 41), 800_000, 8_000_000, c.refScore));
         s.swapFeeCc = uint96(_f(_r(seed, 42), 0, 1e24, c.swapFeeCc));
+        s.climbMultiplierCapBps = uint16(_f(_r(seed, 43), 10_000, 40_000, c.climbMultiplierCapBps));
         s.callerFee = uint64(_f(_r(seed, 10), 0, 0.005 ether, c.callerFee));
         s.callerMaxBaseFee = uint48(_f(_r(seed, 11), 0, 100 gwei, c.callerMaxBaseFee));
         _corner(s, corner);

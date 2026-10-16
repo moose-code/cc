@@ -102,7 +102,7 @@ contract BidRuleTest is Fixture {
 
     // promise: SPEC 1 the bid rule at launch: ceilBps 11_000
     /// the rate stops at 110 percent of the anchor grown by the loosening (the minimum setting, 1 basis point per 10
-    /// idle minutes): the anchor is the rate paid at the last fill
+    /// idle minutes, scaled 4x by the 20 eth pot): the anchor is the rate paid at the last fill
     function test_ceilingHoldsAt110PercentOfTheAnchor() public {
         _with(_minLoosening);
         _potTo(20 ether);
@@ -113,9 +113,10 @@ contract BidRuleTest is Fixture {
         (uint256 anchor,,) = _anchor();
         assertEq(anchor, r0);
         _warp(3 hours);
-        assertEq(core.ethRate(), r0 * (10_000 + 18) * 11_000 / 1e8, "110 percent of the rate paid, 18 intervals of 1 bp");
+        // the 20 eth pot buys more than four pages, so the loosening runs at the 4x cap: 18 intervals of 1 bp times 4
+        assertEq(core.ethRate(), r0 * (10_000 + 72) * 11_000 / 1e8, "110 percent of the rate paid, 18 intervals of 4 bp");
         _warp(30 days);
-        assertEq(core.ethRate(), r0 * (10_000 + 4_338) * 11_000 / 1e8, "4,338 intervals after 30 days and 3 hours");
+        assertEq(core.ethRate(), r0 * (10_000 + 17_352) * 11_000 / 1e8, "4,338 intervals times 4 after 30 days and 3 hours");
         assertEq(core.rateAtCheckpoint(), r0 * 9_950 / 10_000, "stored until the next checkpoint");
     }
 
@@ -128,21 +129,22 @@ contract BidRuleTest is Fixture {
         s.idleLoosenBps = 200;
     }
 
-    // promise: SPEC 1 the bid rule at launch: idleLoosenBps 200
-    /// the launch setting: the anchor grows 2 percent per full 10 idle minutes (FLOW decision 69)
-    function test_anchorLoosensTwoPercentPerTenIdleMinutesAtLaunch() public {
-        assertEq(core.settings().idleLoosenBps, 200);
+    // promise: SPEC 1 the bid rule at launch: idleLoosenBps 600
+    /// the launch setting at a 1x pot: the anchor grows 6 percent per full 10 idle minutes (decision 128)
+    function test_anchorLoosensSixPercentPerTenIdleMinutesAtLaunch() public {
+        assertEq(core.settings().idleLoosenBps, 600);
         _with(_fastClimbOnly);
-        _potTo(20 ether);
+        // a pot under one page keeps the multiplier at 1x, so the loosening is the base 6 percent per 10 minutes
+        _potTo(0.1 ether);
         _sellOne();
         (uint256 anchor,,) = _anchor();
         _warp(9 minutes + 59);
         assertEq(core.settings().ceilBps, 11_000);
         assertEq(core.ethRate(), anchor * 11_000 / 10_000, "no loosening before 10 idle minutes");
         _warp(1);
-        assertEq(core.ethRate(), anchor * 10_200 * 11_000 / 1e8, "2 percent after 10 minutes");
+        assertEq(core.ethRate(), anchor * 10_600 * 11_000 / 1e8, "6 percent after 10 minutes");
         _warp(10 minutes);
-        assertEq(core.ethRate(), anchor * 10_400 * 11_000 / 1e8, "4 percent after 20 minutes");
+        assertEq(core.ethRate(), anchor * 11_200 * 11_000 / 1e8, "12 percent after 20 minutes");
     }
 
     function _fastClimbOnly(Settings memory s) internal pure {
@@ -163,7 +165,8 @@ contract BidRuleTest is Fixture {
         _warp(40 minutes);
         uint256 r = core.ethRate();
         (uint256 anchorBefore,,) = _anchor();
-        assertEq(r, anchorBefore * 10_800 * 11_000 / 1e8, "loosened 8 percent");
+        // idleLoosen 200 scaled 4x by the 20 eth pot: 8 percent per 10 minutes, 32 percent over 40 minutes
+        assertEq(r, anchorBefore * 13_200 * 11_000 / 1e8, "loosened 32 percent");
         _sellOne();
         (uint256 anchor,,) = _anchor();
         assertEq(anchor, r, "the rate paid is the new anchor");
@@ -261,7 +264,7 @@ contract BidRuleTest is Fixture {
         assertEq(core.rateAtCheckpoint(), price, "the checkpoint at the refill stores the price from before");
         assertEq(core.ethRate(), price, "the read after the refill is that price");
         _warp(10 minutes);
-        // 1.005^10 = 1.0511401320407896
+        // the climb is unscaled (climbPerMinBps 50): 1.005 per minute, 1.005^10 = 1.0511401320407896
         assertApproxEqRel(core.ethRate(), price * 1_051_140_132_040_790_000 / 1e18, 1e9, "and it climbs from there");
     }
 
@@ -310,7 +313,8 @@ contract BidRuleTest is Fixture {
     /// the minute start stay
     function test_setRateRestatesTheRateAndTheAnchorAndKeepsTheFillClock() public {
         _with(_twoPercentLoosening);
-        _potTo(20 ether);
+        // a pot under one page keeps the multiplier at 1x, so the ceiling loosens at the base 2 percent per 10 minutes
+        _potTo(0.1 ether);
         _sellOne();
         uint64 fillTime = core.lastFillTime();
         (, uint256 start0, uint256 bucket0) = _anchor();
@@ -345,13 +349,159 @@ contract BidRuleTest is Fixture {
     }
 
     // promise: SPEC 1 risk: a market above the bid waits for the climb or setRate
-    /// every seller asks the full new price, 200 percent of the old one: at the launch loosening the ceiling clears
-    /// 200 percent at the 41st interval (110 percent * (1 + 2 percent * 41)), 410 minutes, a little under 7 hours. the
-    /// climb alone would reach it at minute 139 (0.995 * 1.005^m >= 2)
+    /// every seller asks the full new price, 200 percent of the old one. the 20 eth pot loosens the ceiling at the 4x
+    /// cap, so the ceiling clears 200 percent within minutes, but the per minute climb is unscaled (decision 128 variant
+    /// d, climbPerMinBps 50): the bid reaches 200 percent only when the 0.5 percent a minute climb gets there, minute 140
     function test_gapUp100Percent_everyAskAtTheNewPriceWaitsForTheClimb() public {
         (uint256 m,) = _minutesToFirstFill(20_000);
         emit log_named_uint("minutes to the first fill, no cheap ask", m);
-        assertEq(m, 410);
+        assertEq(m, 140);
+    }
+
+    // ------------------------------------------------------------------ decision 128: pot scaled climb
+
+    function _highCeiling(Settings memory s) internal pure {
+        s.ceilBps = 30_000;
+    }
+
+    /// @dev one minute of idle climb at a pot sized to `pages` pages (one page is 80 refScore credits at the stored
+    /// rate). returns the realized per minute growth in bps over the stored rate, 10_000 being 1x. the pot override
+    /// sets the multiplier to `clamp(pages, 1, 4)` exactly; a high ceiling keeps the one minute climb off the ceiling
+    function _climbFactorBps(uint256 pages) internal returns (uint256) {
+        _potTo(1 ether);
+        _sellOne();
+        (uint256 anchor,,) = _anchor();
+        uint256 stored = core.rateAtCheckpoint();
+        // the multiplier reads the last fill rate (the anchor), so pages of 80 at the anchor sets it to `pages` exactly
+        uint256 pot = pages * 80 * anchor;
+        stdstore.target(address(core)).sig("ethPot()").checked_write(pot);
+        vm.deal(address(core), pot);
+        _warp(60);
+        return core.ethPrice() * 10_000 / stored;
+    }
+
+    // promise: SPEC 4 decision 128 variant d: the per minute climb does not scale with the pot, only the loosening does
+    /// the climb is the launch rate (climbPerMinBps 50, 0.5 percent a minute) at one, three and ten pages alike
+    function test_climbUnscaledByPotPages() public {
+        _with(_highCeiling);
+        assertApproxEqAbs(_climbFactorBps(1), 10_050, 2, "one page climbs at 1x");
+        assertApproxEqAbs(_climbFactorBps(3), 10_050, 2, "three pages climb at the same 1x");
+        assertApproxEqAbs(_climbFactorBps(10), 10_050, 2, "ten pages climb at the same 1x");
+    }
+
+    /// @dev the loosened ceiling after 10 idle minutes at a pot sized to `pages` pages, in bps of the anchor (10_000
+    /// being the base). a fast climb pins the read to the ceiling; the pot override sets the multiplier exactly
+    function _loosenBps(uint256 pages) internal returns (uint256) {
+        Settings memory s = core.settings();
+        s.climbPerMinBps = 1_000;
+        s.recoveryClimbPerMinBps = 1_000;
+        _setSettings(s);
+        _potTo(1 ether);
+        _sellOne();
+        (uint256 anchor,,) = _anchor();
+        // pages of 80 at the last fill rate (the anchor the multiplier reads) sets the multiplier to `pages` exactly
+        uint256 pot = pages * 80 * anchor;
+        stdstore.target(address(core)).sig("ethPot()").checked_write(pot);
+        vm.deal(address(core), pot);
+        _warp(10 minutes);
+        return core.ethRate() * 1e8 / (anchor * core.settings().ceilBps);
+    }
+
+    // promise: SPEC 4 decision 128 variant d: the ceiling's idle loosening scales with the pages the pot covers, clamped to [1x, the cap]
+    /// the launch loosening is 6 percent per 10 minutes (idleLoosenBps 600); at three pages it is 18 percent, at ten
+    /// pages the 4x cap, 24 percent
+    function test_ceilingLooseningScalesWithPotPages() public {
+        assertEq(core.settings().idleLoosenBps, 600);
+        assertApproxEqAbs(_loosenBps(1), 10_600, 2, "one page loosens 6 percent per 10 minutes");
+        assertApproxEqAbs(_loosenBps(3), 11_800, 2, "three pages loosen 18 percent");
+        assertApproxEqAbs(_loosenBps(10), 12_400, 2, "ten pages loosen at the 4x cap, 24 percent");
+    }
+
+    // promise: SPEC 4 decision 128: a full pot runs the idle loosening at the 4x cap
+    /// a fill then four hours idle at a full pot (the 4x cap): the ceiling grows per the pot scaled loosening, 24 idle
+    /// intervals of 600 * 4 bps, with no hourly cap (the hourly bound was rejected, decision 128)
+    function test_fullPotLoosensAtTheCapOverFourHours() public {
+        // a fast climb so the read pins to the loosened ceiling (the launch 50 climb stays below it); the loosening is
+        // what the 4x pot multiplier scales
+        Settings memory s = core.settings();
+        s.climbPerMinBps = 1_000;
+        s.recoveryClimbPerMinBps = 1_000;
+        _setSettings(s);
+        _potTo(20 ether);
+        _sellOne();
+        (uint256 anchor,,) = _anchor();
+        _warp(4 hours);
+        assertEq(core.ethRate(), anchor * (10_000 + 600 * 4 * 24) * 11_000 / 1e8, "the ceiling grows per the 4x loosening");
+    }
+
+    address internal pumpAttacker;
+
+    /// @dev sells all of `ids` into the eth bid for the pump attacker, returns the eth received
+    function _sellAll(uint256[] memory ids) internal returns (uint256) {
+        vm.startPrank(pumpAttacker);
+        CREDITS.setApprovalForAll(address(core), true);
+        uint256 before = pumpAttacker.balance;
+        core.sellForEth(ids);
+        uint256 got = pumpAttacker.balance - before;
+        vm.stopPrank();
+        return got;
+    }
+
+    /// @dev the marginal gain of pumping the pot: the attacker holds 20 credits over a pot under one page (so without a
+    /// pump the climb runs at 1x), waits 40 minutes (far under the ~4.5 hours a 1x climb needs to reach rateCap, so the
+    /// multiplier is what moves the bid), and sells. returns the extra eth the sale earns with the pump over the same
+    /// sale without it, and the fee the attacker paid (the engine's capture of a swap skim, or the whole `fund` donation)
+    function _pumpMarginal(bool useFund, uint256 pumpEth) internal returns (uint256 gain, uint256 feePaid) {
+        pumpAttacker = _user("pump.attacker");
+        uint256[] memory ids = _credits(pumpAttacker, 20);
+        _potTo(0.1 ether);
+        uint256 snap = vm.snapshotState();
+        _warp(40 minutes);
+        uint256 noPump = _sellAll(ids);
+        vm.revertToState(snap);
+        uint256 engineBefore = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
+        if (useFund) {
+            vm.deal(pumpAttacker, pumpEth);
+            vm.prank(pumpAttacker);
+            core.fund{value: pumpEth}();
+            feePaid = pumpEth; // a `fund` donation books whole to the pot and is not recoverable
+        } else {
+            _buyCoin(pumpAttacker, pumpEth);
+            feePaid = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() - engineBefore;
+        }
+        _warp(40 minutes);
+        uint256 withPump = _sellAll(ids);
+        gain = withPump > noPump ? withPump - noPump : 0;
+    }
+
+    // promise: SPEC 4 decision 128: pumping the pot to inflate the bid through the multiplier is unprofitable
+    /// a swap of 50 eth fills the pot through the skim and raises the multiplier from 1x to 4x; the extra the attacker
+    /// earns selling 20 credits at the faster bid, over the same sale without the pump, is below the skim the attacker fed
+    function test_pumpViaSwapIsUnprofitable() public {
+        _skipSniperWindow();
+        (uint256 gain, uint256 feePaid) = _pumpMarginal(false, 50 ether);
+        emit log_named_uint("swap pump: marginal gain over no pump (wei)", gain);
+        emit log_named_uint("swap pump: fee fed to the engine (wei)", feePaid);
+        assertLt(gain, feePaid, "the swap pump marginal gain is below the fee paid");
+    }
+
+    // promise: SPEC 4 decision 128: a fund() pump is unprofitable
+    /// a `fund` donation raises the multiplier but is not recoverable; the marginal gain is below the donation
+    function test_pumpViaFundIsUnprofitable() public {
+        _skipSniperWindow();
+        (uint256 gain, uint256 feePaid) = _pumpMarginal(true, 1 ether);
+        emit log_named_uint("fund pump: marginal gain over no pump (wei)", gain);
+        emit log_named_uint("fund pump: donation (wei)", feePaid);
+        assertLt(gain, feePaid, "the fund pump marginal gain is below the donation");
+    }
+
+    // promise: SPEC 4 decision 128: a pump during the sniper window is unprofitable
+    /// the anti sniper skim makes a swap in the window cost more, so the marginal gain stays below the fee
+    function test_pumpInSniperWindowIsUnprofitable() public {
+        (uint256 gain, uint256 feePaid) = _pumpMarginal(false, 50 ether);
+        emit log_named_uint("sniper pump: marginal gain over no pump (wei)", gain);
+        emit log_named_uint("sniper pump: fee fed to the engine (wei)", feePaid);
+        assertLt(gain, feePaid, "the sniper-window pump marginal gain is below the fee paid");
     }
 
 }

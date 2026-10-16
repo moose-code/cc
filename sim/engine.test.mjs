@@ -32,7 +32,7 @@ const R0 = 6.668e15;
 {
   const cfg = JSON.parse(fs.readFileSync(new URL('../script/config/mainnet.json', import.meta.url), 'utf8'));
   // the stepped bid fields of the Core, config name to model name (percent and hours in the model)
-  const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 5000, climbPerMinBps: 50, ceilBps: 11000, idleLoosenBps: 200, peakHalfLife: 21600, recoveryClimbPerMinBps: 200, recoveryGapBps: 1000 };
+  const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 5000, climbPerMinBps: 100, ceilBps: 11000, idleLoosenBps: 600, peakHalfLife: 21600, recoveryClimbPerMinBps: 200, recoveryGapBps: 1000 };
   const STEPPED_SIM = { dropPerCreditPct: 'dropPerCreditBps', dropToPct: 'dropFloorBps', climbPerMin: 'climbPerMinBps', ceilPct: 'ceilBps', idleLoosenPct: 'idleLoosenBps', recoveryClimbPerMin: 'recoveryClimbPerMinBps', recoveryGapPct: 'recoveryGapBps', peakHalfLifeHours: 'peakHalfLife' };
   for (const [k, v] of Object.entries(STEPPED)) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
   // the sim defaults are the launch bid rule, field for field with the config (bps to percent). the model has one bid rule
@@ -130,6 +130,31 @@ const R0 = 6.668e15;
   const c = fresh({ rateCap: 1e21, climbPerMin: 50, recoveryClimbPerMin: 50, ceilPct: 110, idleLoosenPct: 1 }); // 50 percent a minute reaches the ceiling within the first minute
   near(c.ethRate(5 * 60), R0 * 1.1, 1e-12, 'before the first full 10 idle minutes the ceiling is ceilPct of the opening rate');
   near(c.ethRate(H), R0 * 1.1 * 1.06, 1e-12, 'after 60 idle minutes (6 full intervals) the anchor is loosened by 6 percent');
+}
+// decision 128: the climb multiplier m = clamp(ethPot / (rate * PAGE), 1, multiplierCap), evaluated at each checkpoint. one, three and ten pages
+{
+  const mult = (cap, pages) => {
+    const c = fresh({ multiplierCap: cap });
+    c.ethPot = (pages * c.rateAtCheckpoint * c.p.PAGE) / W; // eth that buys exactly `pages` pages of 80 credits at the rate
+    c.checkpoint(0);
+    return c.checkpointMult;
+  };
+  near(mult(4, 1), 1, 1e-9, 'one page of pot gives a multiplier of 1');
+  near(mult(4, 3), 3, 1e-9, 'three pages of pot gives a multiplier of 3');
+  near(mult(4, 10), 4, 1e-9, 'ten pages of pot caps the multiplier at multiplierCap 4');
+  near(mult(1, 10), 1, 1e-9, 'multiplierCap 1 holds the multiplier at 1, the rule in force today');
+}
+// decision 128: the read is held at or below hourlyBound / 10000 of the highest fill rate of the past hour (the last fill when the hour has none)
+{
+  const open = { multiplierCap: 1, rateCap: 1e21, ceilPct: 1e6, climbPerMin: 50, recoveryClimbPerMin: 50 }; // the climb is free to run far above the fills
+  const c = fresh(Object.assign({ hourlyBound: 15000 }, open), 1000);
+  c.rateAtCheckpoint = 1e13; c.checkpointTime = 0; c.lastPaidRate = 1e13;
+  ok(c.spend(1e-6, 0), 'a fill at rate 1e13'); // records the fill rate 1e13 in minute bucket 0
+  const t = 30 * 60; // still inside the hour, so the fill of minute 0 is the reference
+  const u = fresh(Object.assign({ hourlyBound: 0 }, open), 1000); // the same state with no bound
+  u.rateAtCheckpoint = 1e13; u.checkpointTime = 0; u.lastPaidRate = 1e13; u.spend(1e-6, 0);
+  ok(u.ethRate(t) > 2e13, 'with no bound the read climbs far above the fill');
+  near(c.ethRate(t), 1.5e13, 1e-9, 'the bound holds the read at 150 percent of the fill rate');
 }
 // a fill drops the bid by dropPerCreditPct, then the price state climbs from the dropped rate
 {
@@ -1071,7 +1096,7 @@ const R0 = 6.668e15;
   const r = simulate({ days: 6, seed: 3 });
   ok(r.params.stepSec === 60, 'the default run is the launch rule at minute steps');
   ok(Math.abs(r.stats.potCheck) < 1e-6 && Math.abs(r.stats.saleCheck) < 1e-6, 'accounting closes on the default run');
-  ok(r.stats.rateMaxBidRatio < 1.6, 'the default bid stays under 1.6x the market (rate cap and ceiling): ' + r.stats.rateMaxBidRatio);
+  ok(r.stats.rateMaxBidRatio < 2.0, 'the default bid stays under 2x the market at the launch climb of 100 bps a minute (rate cap and ceiling): ' + r.stats.rateMaxBidRatio);
   ok(summary(r, 6).credits > 5000, 'the default run buys credits in week one');
 }
 // the swap door (Core.swapCredit, decision 116): swaps a pile credit for one of equal or higher score, the caller burning swapFeeCc coins.
