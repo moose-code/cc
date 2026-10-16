@@ -149,9 +149,8 @@ abstract contract PostflightChecks is PostflightPool {
     /// @dev both adapters have the compiled code, the Seaport adapter points at the Core and holds the config allowlist,
     /// and the Core approves both and no stack contract
     function _postAdapters(LaunchConfig memory c, ICore core) private {
-        (address seaportAt, address strategyAt) = (
-            seaportAdapterAddress(address(core), c.seaportRecipients), strategyAdapterAddress()
-        );
+        (address seaportAt, address strategyAt) =
+            (seaportAdapterAddress(address(core), c.seaportRecipients), strategyAdapterAddress());
         _code("code: seaport adapter", seaportAt);
         _code("code: strategy adapter", strategyAt);
         _check(
@@ -208,9 +207,9 @@ abstract contract PostflightChecks is PostflightPool {
         Stack memory st = c.stack;
         _check(
             "core: stack equals the config",
-            address(core.MANAGER()) == st.poolManager && core.HOOK() == st.hook
-                && core.TICK_SPACING() == st.tickSpacing && core.POOL_FEE() == st.poolFee
-                && core.FACTORY() == st.factory && core.LOCKER() == st.locker && core.ESCROW() == st.escrow,
+            address(core.MANAGER()) == st.poolManager && core.HOOK() == st.hook && core.TICK_SPACING() == st.tickSpacing
+                && core.POOL_FEE() == st.poolFee && core.FACTORY() == st.factory && core.LOCKER() == st.locker
+                && core.ESCROW() == st.escrow,
             "pool manager, hook, tick spacing, pool fee, factory, locker, escrow"
         );
         _postSettings(c, core);
@@ -266,21 +265,28 @@ abstract contract PostflightChecks is PostflightPool {
     function _postSale(LaunchConfig memory c, address ctl) private {
         if (ctl.code.length == 0) return;
         IControllerV1 k = IControllerV1(ctl);
-        bool same = k.markupBps() == c.sale.markupBps
-            && k.startCapBps() == c.sale.startCapBps && k.decayHours() == c.sale.decayHours
-            && k.anchorHalfLife() == c.sale.anchorHalfLife
+        bool same = k.markupBps() == c.sale.markupBps && k.startCapBps() == c.sale.startCapBps
+            && k.decayHours() == c.sale.decayHours && k.anchorHalfLife() == c.sale.anchorHalfLife
             && k.anchorMinCost() == c.sale.anchorMinCost;
         if (_settingsChanged()) {
             _warn(
                 "warn: sale settings equal the config", same, "SETTINGS_CHANGED=1, the owner changed them since launch"
             );
         } else {
-            _check("controller: sale settings equal the config", same, "markupBps startCapBps decayHours anchorHalfLife anchorMinCost");
+            _check(
+                "controller: sale settings equal the config",
+                same,
+                "markupBps startCapBps decayHours anchorHalfLife anchorMinCost"
+            );
         }
         // a fresh launch has no sales and no owner change, so the running level of sale prices is at its lower bound
         bool anchored = k.anchorBps() == 10_000;
         if (_settingsChanged()) {
-            _warn("warn: controller anchor is 10_000", anchored, "SETTINGS_CHANGED=1, sales or the owner moved it since launch");
+            _warn(
+                "warn: controller anchor is 10_000",
+                anchored,
+                "SETTINGS_CHANGED=1, sales or the owner moved it since launch"
+            );
         } else {
             _check("controller: anchor is 10_000", anchored, vm.toString(k.anchorBps()));
         }
@@ -333,9 +339,7 @@ abstract contract PostflightChecks is PostflightPool {
             );
         } else {
             _check(
-                "core: credit settings equal the config",
-                creditSame,
-                "creditCostToPotBps chosenComposeOn minCcToChoose"
+                "core: credit settings equal the config", creditSame, "creditCostToPotBps chosenComposeOn minCcToChoose"
             );
         }
         // sales are open until the owner pauses them
@@ -358,7 +362,7 @@ abstract contract PostflightChecks is PostflightPool {
             found != address(0),
             string.concat("library at ", vm.toString(found))
         );
-        uint256[] memory want = new uint256[](10);
+        uint256[] memory want = new uint256[](9);
         want[0] = uint256(uint160(core.COIN()));
         want[1] = core.RATE_START();
         want[2] = uint256(uint160(address(core.MANAGER())));
@@ -368,11 +372,10 @@ abstract contract PostflightChecks is PostflightPool {
         want[6] = uint256(uint160(core.FACTORY()));
         want[7] = uint256(uint160(core.LOCKER()));
         want[8] = uint256(uint160(core.ESCROW()));
-        want[9] = core.SNIPER_SECONDS();
         _check(
             "core: every library call site and every immutable slot holds the library or the getter value",
             found != address(0) && runtimeSlotsMatch(address(core), "Core", found, want),
-            "the 8 CoreLib call sites and the 27 immutable sites of the Core runtime code"
+            "all compiled CoreLib and immutable reference sites"
         );
     }
 
@@ -390,7 +393,9 @@ abstract contract PostflightChecks is PostflightPool {
             }
             if (!push20) continue;
             // the size is read without copying the code: only a candidate of the right size is copied and hashed
-            if (cand.code.length == expected.length && expected.length >= 39 && _tailHash(cand.code) == want) return cand;
+            if (cand.code.length == expected.length && expected.length >= 39 && _tailHash(cand.code) == want) {
+                return cand;
+            }
         }
     }
 
@@ -422,7 +427,9 @@ abstract contract PostflightChecks is PostflightPool {
             vm.toString(core.payee()),
             "SETTINGS_CHANGED=1"
         );
-        _warn("warn: payee share is not on yet", !core.payeeOn(), "payeeOn: the first book after the window turned it on");
+        _warn(
+            "warn: payee share is not on yet", !core.payeeOn(), "payeeOn: the first book after the window turned it on"
+        );
         // the artist cut recipient must be set when the cut is on, and must equal the config
         _check(
             "core: artist set while the artist cut is on",
@@ -436,6 +443,5 @@ abstract contract PostflightChecks is PostflightPool {
             vm.toString(core.artist()),
             "SETTINGS_CHANGED=1"
         );
-        _eq("core: SNIPER_SECONDS equals the config", core.SNIPER_SECONDS(), uint256(c.sniperSeconds));
     }
 }

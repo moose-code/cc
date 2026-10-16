@@ -53,6 +53,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error ZeroAddress();
     error ZeroId();
     error ZeroAmount();
+    error SpendCapReached(uint256 spent, uint256 cost, uint256 budget);
     error Empty();
     error NotOwner();
     error NotHeld();
@@ -168,7 +169,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the controller sold a statement: the buyer, the price paid, the part of the rest booked to the coin buyback (the
     /// rest went to the pot), and the artist and operator cuts pushed off the top
     event StatementSoldTo(
-        uint256 indexed sid, address indexed buyer, uint256 price, uint256 toBuyback, uint256 toArtist, uint256 toOperator
+        uint256 indexed sid,
+        address indexed buyer,
+        uint256 price,
+        uint256 toBuyback,
+        uint256 toArtist,
+        uint256 toOperator
     );
     /// the controller sold a pile credit through the credit sale window: the buyer, the price paid, and the artist
     /// and operator cuts pushed off the top
@@ -233,7 +239,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant BUYBACK_OVERHEAD_GAS = 60_000;
     /// gas of the work after the count in `buyListing` (the spend, the pile record, the event and the payment, about
     /// 200,000), the transaction base cost and typical calldata
-    uint256 private constant BUYLISTING_OVERHEAD_GAS = 250_000;
+    uint256 private constant BUYLISTING_OVERHEAD_GAS = 350_000;
     /// gas the quote of a listing adapter may use
     uint256 private constant QUOTE_GAS = 300_000;
     /// bytes of the answer of a listing adapter the Core accepts
@@ -241,7 +247,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// gas the controller's `priceOf` may use: its reads of the Core, the settings, `floorRate`, the module's
     /// `unitPerPoint` and the pool `getSlot0`
     uint256 private constant PRICE_GAS = 400_000;
-    /// gas the controller's `nextPage` may use. a full page of ControllerV1 costs under 250,000 gas on a
+    /// gas the controller's `nextPage` may use. a full page of ControllerV1 costs under 350,000 gas on a
     /// cold read
     uint256 private constant PAGE_GAS = 500_000;
     address private constant DEAD = Mainnet.DEAD;
@@ -261,7 +267,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     address public immutable LOCKER;
     address public immutable ESCROW;
     /// seconds from the launch to the start of the payee share, the window of the anti sniper skim
-    uint256 public immutable SNIPER_SECONDS;
 
     /*//////////////////////////////////////////////////////////////
                                 STATE
@@ -282,7 +287,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// `cfg_` is the launch config of the v2 factory. a zero `coin_` is a launch: the bounty recipient of `cfg_` is set
     /// to this contract and `COIN` is the address the factory predicts for `launcher_` and that config, so the coin and
     /// the Core refer to each other. a nonzero `coin_` is a successor of a Core of a coin that is launched already: it
-    /// must be a coin the factory recorded, and `cfg_` supplies the anti sniper window. `controller` starts at the zero
+    /// must be a coin the factory recorded, and `settings_` supplies the Core payee window. `controller` starts at the zero
     /// address and the adapter list starts empty: the owner sets them with `setController` and `addAdapter`
     constructor(
         address owner_,
@@ -325,7 +330,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (artist_ != address(0) && _forbidden(artist_)) revert ForbiddenTarget();
         s.artist = artist_;
         COIN = coin;
-        SNIPER_SECONDS = cfg_.mev.windowSeconds;
         RATE_START = rateStart_;
         MANAGER = IPoolManager(stack_.poolManager);
         HOOK = stack_.hook;
@@ -419,7 +423,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// books the fee income. the first action of every door that reads or moves a pot, with `msg.value` of the door
     /// excluded. the rate is checkpointed before the pot grows. the payee share starts with the first book at or after
-    /// `launchedAt + SNIPER_SECONDS` that has income, and that book shares nothing
+    /// `launchedAt + s.settings.sniperSeconds` that has income, and that book shares nothing
     function _book() private {
         uint256 income = _income(msg.value);
         if (income == 0) return;
@@ -434,7 +438,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit FeesAdded(income, toPayee);
     }
 
-    /// whether the launch time recorded by the factory plus `SNIPER_SECONDS` has passed. a launch that is not recorded
+    /// whether the launch time recorded by the factory plus `settings.sniperSeconds` has passed. a launch that is not recorded
     /// or a factory that does not answer reads as not passed
     function _sniperOver() private view returns (bool) {
         (bool ok, bytes memory out) =
@@ -444,7 +448,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         assembly ("memory-safe") {
             launchedAt := mload(add(out, add(0x20, mul(LAUNCHED_AT_WORD, 0x20))))
         }
-        return launchedAt != 0 && block.timestamp >= launchedAt + SNIPER_SECONDS;
+        return launchedAt != 0 && block.timestamp >= launchedAt + s.settings.sniperSeconds;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -525,14 +529,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// `score / refScore`, fill time.
     function _spend(uint256 x, uint256 score, uint256 refScore) private {
         _checkpoint();
-        uint256 p = s.ethPot;
-        if (x == 0) revert ZeroAmount();
-        if (x > p) revert PotTooSmall();
-        uint256 r = CoreLib.drop(s.rateAtCheckpoint, block.timestamp, score, refScore);
-        s.rateAtCheckpoint = r;
-        s.lastFillTime = uint64(block.timestamp);
-        s.ethPot = p - x;
-        emit EthRateFill(x, r, p - x);
+        CoreLib.spend(x, score, refScore);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -625,12 +622,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// sell credits into the eth bid. each credit is paid `ethRate() * score / refScore`. caller must have approved the
-    /// core. reverts `Retired` after `migrate`
+    /// core. A purchase exceeding the shared bucket budget reverts the whole batch, including every rate and ownership change.
+    /// reverts `Retired` after `migrate`
     function sellForEth(uint256[] calldata ids) external nonReentrant {
         _sellForEth(ids, 0);
     }
 
-    /// same as sellForEth with a floor on the total paid, for protection against a rate drop in the same block.
+    /// Same atomic batch as sellForEth, with a minimum total payout. Any budget or minimum failure rolls back every fill.
     function sellForEth(uint256[] calldata ids, uint256 minOut) external nonReentrant {
         _sellForEth(ids, minOut);
     }
@@ -692,7 +690,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         // `value + paid` is at most the bid and at most `ethPot`
         Settings storage cfg = s.settings;
         uint256 paid = _payment(gasStart, BUYLISTING_OVERHEAD_GAS, BUYLISTING_GAS, cfg.keeperMaxBaseFee, cfg.keeperFee)
-            .min(bid - value).min(s.ethPot - value);
+            .min(bid - value)
+            .min(s.ethPot - value);
         _spend(value + paid, score, refScore);
         _push(id, value + paid);
         emit ListingBought(id, adapter, msg.sender, value, paid, s.rateAtCheckpoint);
@@ -751,9 +750,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// every forbidden target except the balanceModule and the balanceToken, which a later set may name again
     function _forbiddenBase(address t) private view returns (bool) {
         return t == address(CREDITS) || t == address(STATEMENTS) || t == address(this) || t == COIN || t == HOOK
-            || t == address(MANAGER) || t == FACTORY || t == LOCKER || t == ESCROW
-            || t == Mainnet.PERMIT2 || t == Mainnet.POSITION_MANAGER
-            || t == Mainnet.UNIVERSAL_ROUTER;
+            || t == address(MANAGER) || t == FACTORY || t == LOCKER || t == ESCROW || t == Mainnet.PERMIT2
+            || t == Mainnet.POSITION_MANAGER || t == Mainnet.UNIVERSAL_ROUTER;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1026,7 +1024,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         ICoin(COIN).burn(bought);
         // spent is at most budget, which is at most setSlice - maxPay, so the scaled fee is at most the fee
         uint256 paid = _payment(
-            gasStart, BUYBACK_OVERHEAD_GAS, BUYBACK_GAS, cfg.keeperMaxBaseFee, fee.min(fee * spent / (setSlice - maxPay))
+            gasStart,
+            BUYBACK_OVERHEAD_GAS,
+            BUYBACK_GAS,
+            cfg.keeperMaxBaseFee,
+            fee.min(fee * spent / (setSlice - maxPay))
         );
         s.ethToBuyback += slice - spent - paid;
         emit Buyback(msg.sender, spent, paid);
@@ -1376,52 +1378,128 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// resets the balance bid instance to the floor `10_000 - balanceBidMarginBps` with a fresh clock. mirrors the
     /// library reset used by `setSettings`, for the module set path which runs in the Core
     function _resetBalanceToFloor() private {
-        uint256 floor = BPS - s.settings.balanceBidMarginBps;
-        CoreLib.Rate storage bal = s.balance;
-        bal.rateAtCheckpoint = floor;
-        bal.checkpointTime = uint64(block.timestamp);
-        bal.lastFillTime = uint64(block.timestamp);
-        bal.anchor.lastFillRate = floor;
-        bal.anchor.minuteStartRate = floor;
-        bal.anchor.minuteBucket = uint64(block.timestamp / 1 minutes);
-        bal.anchor.peakRate = floor;
-        bal.anchor.peakTime = uint64(block.timestamp);
-        emit BalanceRateSet(floor);
+        CoreLib.resetBalanceToFloor();
     }
 
     /*//////////////////////////////////////////////////////////////
                                 VIEWS
     //////////////////////////////////////////////////////////////*/
 
-    function controller() external view returns (address) { return s.controller; }
-    function controllerLocked() external view returns (bool) { return s.controllerLocked; }
-    function balanceModuleLocked() external view returns (bool) { return s.balanceModuleLocked; }
-    function adaptersLocked() external view returns (bool) { return s.adaptersLocked; }
-    function balanceModule() external view returns (address) { return s.balanceModule; }
-    function balanceToken() external view returns (address) { return s.balanceToken; }
-    function allowedAdapter(address adapter) external view returns (bool) { return s.allowedAdapter[adapter]; }
-    function owner() external view returns (address) { return s.owner; }
-    function pendingOwner() external view returns (address) { return s.pendingOwner; }
-    function ethPot() external view returns (uint256) { return s.ethPot; }
-    function ethToBuyback() external view returns (uint256) { return s.ethToBuyback; }
-    function ethRedeemBurn() external view returns (uint256) { return s.ethRedeemBurn; }
-    function rateAtCheckpoint() external view returns (uint256) { return s.rateAtCheckpoint; }
-    function checkpointTime() external view returns (uint64) { return s.checkpointTime; }
-    function lastFillTime() external view returns (uint64) { return s.lastFillTime; }
-    function lastBuybackBlock() external view returns (uint256) { return s.lastBuybackBlock; }
-    function successor() external view returns (address) { return s.successor; }
-    function successorLocked() external view returns (bool) { return s.successorLocked; }
-    function retired() external view returns (bool) { return s.retired; }
-    function creditCostToPotBps() external view returns (uint16) { return s.creditCostToPotBps; }
-    function chosenComposeOn() external view returns (bool) { return s.chosenComposeOn; }
-    function minCcToChoose() external view returns (uint96) { return s.minCcToChoose; }
-    function paused() external view returns (bool) { return s.paused; }
-    function pausedSince() external view returns (uint40) { return s.pausedSince; }
-    function pausedTotal() external view returns (uint40) { return s.pausedTotal; }
-    function composerOf(uint256 sid) external view returns (address) { return s.composerOf[sid]; }
-    function payee() external view returns (address) { return s.payee; }
-    function artist() external view returns (address) { return s.artist; }
-    function payeeOn() external view returns (bool) { return s.payeeOn; }
+    function controller() external view returns (address) {
+        return s.controller;
+    }
+
+    function controllerLocked() external view returns (bool) {
+        return s.controllerLocked;
+    }
+
+    function balanceModuleLocked() external view returns (bool) {
+        return s.balanceModuleLocked;
+    }
+
+    function adaptersLocked() external view returns (bool) {
+        return s.adaptersLocked;
+    }
+
+    function balanceModule() external view returns (address) {
+        return s.balanceModule;
+    }
+
+    function balanceToken() external view returns (address) {
+        return s.balanceToken;
+    }
+
+    function allowedAdapter(address adapter) external view returns (bool) {
+        return s.allowedAdapter[adapter];
+    }
+
+    function owner() external view returns (address) {
+        return s.owner;
+    }
+
+    function pendingOwner() external view returns (address) {
+        return s.pendingOwner;
+    }
+
+    function ethPot() external view returns (uint256) {
+        return s.ethPot;
+    }
+
+    function ethToBuyback() external view returns (uint256) {
+        return s.ethToBuyback;
+    }
+
+    function ethRedeemBurn() external view returns (uint256) {
+        return s.ethRedeemBurn;
+    }
+
+    function rateAtCheckpoint() external view returns (uint256) {
+        return s.rateAtCheckpoint;
+    }
+
+    function checkpointTime() external view returns (uint64) {
+        return s.checkpointTime;
+    }
+
+    function lastFillTime() external view returns (uint64) {
+        return s.lastFillTime;
+    }
+
+    function lastBuybackBlock() external view returns (uint256) {
+        return s.lastBuybackBlock;
+    }
+
+    function successor() external view returns (address) {
+        return s.successor;
+    }
+
+    function successorLocked() external view returns (bool) {
+        return s.successorLocked;
+    }
+
+    function retired() external view returns (bool) {
+        return s.retired;
+    }
+
+    function creditCostToPotBps() external view returns (uint16) {
+        return s.creditCostToPotBps;
+    }
+
+    function chosenComposeOn() external view returns (bool) {
+        return s.chosenComposeOn;
+    }
+
+    function minCcToChoose() external view returns (uint96) {
+        return s.minCcToChoose;
+    }
+
+    function paused() external view returns (bool) {
+        return s.paused;
+    }
+
+    function pausedSince() external view returns (uint40) {
+        return s.pausedSince;
+    }
+
+    function pausedTotal() external view returns (uint40) {
+        return s.pausedTotal;
+    }
+
+    function composerOf(uint256 sid) external view returns (address) {
+        return s.composerOf[sid];
+    }
+
+    function payee() external view returns (address) {
+        return s.payee;
+    }
+
+    function artist() external view returns (address) {
+        return s.artist;
+    }
+
+    function payeeOn() external view returns (bool) {
+        return s.payeeOn;
+    }
 
     /// number of credits in the pile.
     function pileSize() external view returns (uint256) {

@@ -70,6 +70,11 @@ abstract contract InvariantsBase is InvariantFixture {
     /// `sellTo` payments, `fund` and eth forced in. a plain send from anyone but the hook and the escrow reverts. any other
     /// movement is a violation. balance token flows too: it leaves the core only as a bid payment in
     /// sellForBalance.
+    // promise: every successful ETH purchase fits the independent opening-pot budget unless the cap is bypassed
+    function invariant_20_purchaseBudgetIsRespected() public view {
+        assertEq(handler.gCapViolations(), 0, "successful purchase exceeded the independently tracked bucket budget");
+    }
+
     // promise: 01 eth only leaves by allowed paths
     function invariant_01_ethOnlyLeavesByAllowedPaths() public view {
         _zero(g1);
@@ -139,9 +144,7 @@ abstract contract InvariantsBase is InvariantFixture {
     function invariant_05_potsNeverExceedBalances() public view {
         _zero(g5);
         assertLe(
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
-            address(core).balance,
-            "eth pots above balance"
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance, "eth pots above balance"
         );
         // the balance token is held by the module, not the core, so there is no balance pot to bound
     }
@@ -309,6 +312,11 @@ abstract contract InvariantsBase is InvariantFixture {
             vm.revertToState(snap);
             return;
         }
+        Settings memory cfg = core.settings();
+        bool active = handler.gSpendActive() && handler.gSpendBucket() == block.timestamp / handler.gSpendSeconds();
+        uint256 budget =
+            active ? handler.gSpendSnapshot() * cfg.spendCapBps / 10_000 : core.ethPot() * cfg.spendCapBps / 10_000;
+        bool capRefusal = cfg.spendCapBps != 10_000 && (active ? handler.gSpent() : 0) + core.bidOf(id) > budget;
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         vm.startPrank(holder);
@@ -318,12 +326,38 @@ abstract contract InvariantsBase is InvariantFixture {
         vm.revertToState(snap);
         // a credit the engine sold this block is refused by the same block return guard, not a closed bid
         assertTrue(
-            ok || bytes4(why) == ICore.SameBlockReturn.selector,
-            string.concat(
-                "sellForEth refused a credit whose price the pot covers, selector ",
-                vm.toString(bytes4(why))
-            )
+            ok || bytes4(why) == ICore.SameBlockReturn.selector
+                || (bytes4(why) == ICore.SpendCapReached.selector && capRefusal),
+            string.concat("sellForEth refused a credit whose price the pot covers, selector ", vm.toString(bytes4(why)))
         );
+    }
+
+    // promise: the independent budget ghost observes enforced fills and exhausted-budget refusals
+    function test_purchaseBudgetGhostIsNotVacuous() public {
+        Settings memory cfg = core.settings();
+        vm.warp(block.timestamp + cfg.bucketSeconds);
+        cfg.spendCapBps = 5_000;
+        vm.prank(handler.owner());
+        core.setSettings(cfg);
+        assertTrue(_try(2, 40), "no capped purchase succeeded");
+        assertGt(handler.gCappedFills(), 0);
+        assertGt(handler.gSpent(), 0);
+        cfg.spendCapBps = 1;
+        vm.prank(handler.owner());
+        core.setSettings(cfg);
+        handler.setRate(0, 1); // Raise the quote above the small retained budget in every fixture.
+        for (uint256 a; a < handler.actorCount(); ++a) {
+            handler.sellForEth(a, 1, 0, 1);
+        }
+        assertGt(handler.gCapRejections(), 0, "no exhausted-budget refusal observed");
+        invariant_20_purchaseBudgetIsRespected();
+    }
+
+    // promise: the widened one-wei rate can refuse a batch whose later payouts round to zero
+    function test_lowRateBatchZeroRefusalMatchesModel() public {
+        handler.setRate(15_000, 100_000_000_000_000_000_000);
+        handler.sellForEth(300_000, 3_610_759_366, 21_059, 200);
+        assertEq(handler.unexpectedFails(2), 0);
     }
 
     // promise: inv 16 the bid check reaches its success branch
@@ -458,7 +492,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// spends, migrations). the handler adds each amount to its ledger where the action measures it at the recipient.
     /// unbooked eth, forced eth included, is outside the sum until `book` counts it. the payee share is pushed by the
     /// book, not held: the share is `payeePpm` of the income once the share is on, the first book with income at or after
-    /// `launchedAt + SNIPER_SECONDS` turns it on and shares nothing, and the share is forced out to the payee. the ledger
+    /// `launchedAt + settings.sniperSeconds` turns it on and shares nothing, and the share is forced out to the payee. the ledger
     /// counts the whole income in and the pushed share out.
     // promise: 18 eth conservation
     function invariant_18_ethConservation() public view {
@@ -502,7 +536,8 @@ abstract contract InvariantsBase is InvariantFixture {
         uint256 idle = block.timestamp > core.lastFillTime() ? block.timestamp - core.lastFillTime() : 0;
         // decision 128 variant d: the loosening scales by m, counted at the last fill rate, capped by climbMultiplierCapBps
         uint256 m = _climbMulBps(pagesPot, lastFillRate, st.climbMultiplierCapBps);
-        uint256 ceiling = anchor * (10_000 + uint256(st.idleLoosenBps) * m / 10_000 * (idle / 600)) * st.ceilBps / 1e8;
+        uint256 ceiling =
+            anchor * (10_000 + uint256(st.idleLoosenBps) * m / 10_000 * (idle / st.idleStepSeconds)) * st.ceilBps / 1e8;
         return ceiling < st.rateCap ? ceiling : st.rateCap;
     }
 
@@ -527,6 +562,7 @@ abstract contract InvariantsBase is InvariantFixture {
     /// logs how often each action ran, succeeded and was skipped in this run, and over all runs so far.
     // promise: logs how often each action ran, succeeded and was skipped in this run, and over all runs so far.
     function invariant_callSummary() public view {
+        console.log("capped fills / budget rejections", handler.gCappedFills(), handler.gCapRejections());
         _summary();
     }
 

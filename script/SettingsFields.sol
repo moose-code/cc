@@ -3,15 +3,15 @@ pragma solidity ^0.8.28;
 
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
 
-/// @notice the 29 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
+/// @notice the 34 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
 /// docs/DECISIONS.md section 2, for the settings script and the config and deploy tests. recoveryClimbPerMinBps is
 /// bounded below by climbPerMinBps, handled by the callers. the two switches are 0 or 1
 library SettingsFields {
-    uint256 internal constant N = 29;
+    uint256 internal constant N = 34;
 
     /// @dev field i of the settings struct, in declaration order
     function get(Settings memory s, uint256 i) internal pure returns (uint256) {
-        uint256[29] memory f = [
+        uint256[34] memory f = [
             uint256(s.dropPerCreditBps),
             s.dropFloorBps,
             s.climbPerMinBps,
@@ -40,7 +40,12 @@ library SettingsFields {
             s.swapFeeCc,
             s.saleToArtistBps,
             s.saleToOperatorBps,
-            s.climbMultiplierCapBps
+            s.climbMultiplierCapBps,
+            s.spendCapBps,
+            s.bucketSeconds,
+            s.balanceBidCapBps,
+            s.idleStepSeconds,
+            s.sniperSeconds
         ];
         return f[i];
     }
@@ -76,81 +81,96 @@ library SettingsFields {
         else if (i == 25) s.swapFeeCc = uint96(v);
         else if (i == 26) s.saleToArtistBps = uint16(v);
         else if (i == 27) s.saleToOperatorBps = uint16(v);
-        else s.climbMultiplierCapBps = uint16(v);
+        else if (i == 28) s.climbMultiplierCapBps = uint16(v);
+        else if (i == 29) s.spendCapBps = uint16(v);
+        else if (i == 30) s.bucketSeconds = uint32(v);
+        else if (i == 31) s.balanceBidCapBps = uint32(v);
+        else if (i == 32) s.idleStepSeconds = uint32(v);
+        else s.sniperSeconds = uint32(v);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
     /// @dev the documented lower bound of every field. recoveryClimbPerMinBps is bounded below by climbPerMinBps,
     /// handled by the callers
-    function lo() internal pure returns (uint256[29] memory) {
+    function lo() internal pure returns (uint256[34] memory) {
         return [
             uint256(1),
-            5_000,
+            0,
             1,
             10_000,
             1,
-            1_000,
+            0,
             0,
             1,
             0,
-            600,
+            1,
             1,
             0,
             0,
             0,
             0,
             0,
-            0.01 ether,
+            1,
             0,
-            1 gwei,
+            0,
             RATE_START_MIN_WEI,
             0,
             0,
             0,
             0,
-            800_000,
+            1,
             0,
             0,
             0,
-            10_000
+            10_000,
+            1,
+            1,
+            10_000,
+            1,
+            0
         ];
     }
 
-    function hi() internal pure returns (uint256[29] memory) {
+    function hi() internal pure returns (uint256[34] memory) {
         return [
-            uint256(1_000),
+            uint256(10_000),
             10_000,
-            1_000,
-            30_000,
-            2_000,
-            40_000,
+            type(uint16).max,
+            type(uint16).max,
+            type(uint16).max,
+            type(uint16).max,
             10_000,
-            1_000,
-            5_000,
-            604_800,
-            7_200,
+            type(uint16).max,
+            10_000,
+            type(uint32).max,
+            type(uint16).max,
             1,
             1,
-            1_000,
-            9_000,
             10_000,
-            1 ether,
-            0.005 ether,
-            100 gwei,
+            10_000,
+            10_000,
+            type(uint128).max,
+            type(uint64).max,
+            type(uint48).max,
             RATE_START_MAX_WEI,
-            0.005 ether,
-            100 gwei,
+            type(uint64).max,
+            type(uint48).max,
             10_000,
-            200_000,
-            8_000_000,
-            1e24,
-            1_000,
-            1_000,
-            40_000
+            1_000_000,
+            type(uint32).max,
+            type(uint96).max,
+            9_999,
+            9_999,
+            type(uint16).max,
+            10_000,
+            type(uint32).max,
+            type(uint32).max,
+            type(uint32).max,
+            type(uint32).max
         ];
     }
 
-    function names() internal pure returns (bytes32[29] memory) {
+    function names() internal pure returns (bytes32[34] memory) {
         return [
             bytes32("dropPerCreditBps"),
             "dropFloorBps",
@@ -180,7 +200,12 @@ library SettingsFields {
             "swapFeeCc",
             "saleToArtistBps",
             "saleToOperatorBps",
-            "climbMultiplierCapBps"
+            "climbMultiplierCapBps",
+            "spendCapBps",
+            "bucketSeconds",
+            "balanceBidCapBps",
+            "idleStepSeconds",
+            "sniperSeconds"
         ];
     }
 }

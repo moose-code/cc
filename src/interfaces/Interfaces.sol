@@ -119,8 +119,8 @@ interface ICreditStrategy {
 }
 
 // bounds of the Core constructor argument `rateStart` and of `rateCap`, wei per credit. one definition for the Core and the scripts
-uint256 constant RATE_START_MIN_WEI = 1e13;
-uint256 constant RATE_START_MAX_WEI = 1e18;
+uint256 constant RATE_START_MIN_WEI = 1;
+uint256 constant RATE_START_MAX_WEI = type(uint64).max;
 
 // the most gas of a buyback the caller's refund counts, so a gas burning hook cannot inflate it. a buyback counts
 // about 267,000 gas. read by the Core and by the `buybackSlice` bound
@@ -131,7 +131,7 @@ uint256 constant BUYBACK_GAS = 600_000;
 uint256 constant BUYLISTING_GAS = 1_500_000;
 
 /// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`, bounds
-/// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into four storage slots
+/// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into five storage slots
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
 /// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields, fee
 /// split and `refScore`, slot 3 `swapFeeCc` and the two sale cuts. docs/SPEC.md section 3 has the meaning of every field
@@ -139,13 +139,13 @@ struct Settings {
     // slot 0
     /// fall of a bid rate per credit of score `refScore`, bps of the rate before that credit, scaled by `score / refScore`; shared by the eth and balance bids
     uint16 dropPerCreditBps;
-    /// within one minute the rate falls no lower than this share of the rate at the first fill of that minute, bps
+    /// within one bucket the rate falls no lower than this share of the rate at the first fill of that bucket, bps
     uint16 dropFloorBps;
     /// climb of a bid rate per minute, bps, compounded; shared by both bids
     uint16 climbPerMinBps;
     /// the rate stays at or below this share of the ceiling anchor, bps. the anchor is `max(last fill rate, peak now)`
     uint16 ceilBps;
-    /// growth of the ceiling anchor per full 10 minutes since the last fill, bps of the anchor
+    /// growth of the ceiling anchor per full idleStepSeconds since the last fill, bps of the anchor
     uint16 idleLoosenBps;
     /// the floor of a statement sale, bps of the statement cost in `sellTo` and bps of the controller reference in the
     /// controller's curve. the reference is at least the cost, so the controller's floor is at least the Core's
@@ -195,24 +195,34 @@ struct Settings {
     /// the pot
     uint16 feeToRedeemBurnBps;
     /// share of the fee income booked by `_book` that is pushed to the payee once the payee share is on, ppm. at most
-    /// 200_000
+    /// 1_000_000
     uint24 payeePpm;
     /// the per-credit score the eth bid divides by: every eth door pays `rate * score / refScore` per credit and the
     /// controller reads it for the point rate and the statement reference. ten-thousandths of a point,
-    /// 800_000 to 8_000_000
+    /// nonzero uint32
     uint32 refScore;
     // slot 3
-    /// coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, 0 to 1e24
+    /// coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, uint96
     uint96 swapFeeCc;
     /// share of a statement or credit sale's proceeds pushed to `artist`, taken off the payment before the other
-    /// splits, bps. 0 to 1,000
+    /// splits, bps; artist and operator together are strictly below 10,000
     uint16 saleToArtistBps;
     /// share of a statement or credit sale's proceeds pushed to the payee as the operator cut, taken off the payment
-    /// before the other splits, bps. 0 to 1,000
+    /// before the other splits, bps; artist and operator together are strictly below 10,000
     uint16 saleToOperatorBps;
     /// the cap of the pot scaled climb multiplier, bps (10,000 is 1x). the ceiling's idle loosening scales by
-    /// `clamp(pot / (rate * 80), 1, this / 10,000)`. 10,000 to 40,000, packs into slot 3 beside the sale cut shares
+    /// `clamp(pot / (rate * 80), 1, this / 10,000)`. 10,000 to uint16.max, packed into slot 3 beside the sale cut shares
     uint16 climbMultiplierCapBps;
+    /// share of the opening buying pot available per bucket; 10,000 bypasses enforcement
+    uint16 spendCapBps;
+    /// seconds per shared purchase-budget and bid-drop bucket
+    uint32 bucketSeconds;
+    /// maximum balance bid rate, bps of par, at least 10,000
+    uint32 balanceBidCapBps;
+    /// seconds per full ceiling-loosening step; per-minute climb units remain 60 seconds
+    uint32 idleStepSeconds;
+    /// seconds after token launch before the one-way payee latch may activate
+    uint32 sniperSeconds;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -223,12 +233,14 @@ struct Sale {
     uint16 markupBps;
     /// the most the start price can be, bps of the price reference, `max(cost, valueOf(rating))`
     uint32 startCapBps;
-    /// hours for the asking price to fall in a straight line from the start to the floor, then rest. 1 to 720
+    /// hours for the asking price to fall in a straight line from the start to the floor, then rest. 1 to uint16.max
     uint16 decayHours;
     /// seconds for the part of the anchor above 10_000 to halve
     uint32 anchorHalfLife;
     /// the least statement cost, in wei, whose sale moves the anchor
     uint128 anchorMinCost;
+    /// share of the gap toward a qualifying sale that moves the anchor; 0 leaves its clock unchanged
+    uint16 anchorMoveBps;
 }
 
 /// the credit sale settings of the controller and the rating reference it applies to every sale. set at once by
@@ -237,11 +249,11 @@ struct CreditSale {
     /// whether pile credits are for sale from acquisition and compose waits for a credit's window to pass
     bool saleOn;
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
-    /// take it. 1 minute to 30 days
+    /// take it. 1 to uint32.max seconds
     uint32 window;
-    /// the credit sale floor over the larger of the credit's cost and its `valueOf` score, bps. 10_000 to 40_000
+    /// the credit sale floor over the larger of the credit's cost and its `valueOf` score, bps. 10_000 to uint16.max
     uint16 floorBps;
-    /// the credit sale start price over the floor, bps. 10_000 to 200_000
+    /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 startBps;
 }
 
@@ -262,11 +274,11 @@ struct Credit {
     /// whether pile credits are for sale from acquisition and compose waits for a credit's window to pass
     bool saleOn;
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
-    /// take it. 1 minute to 30 days
+    /// take it. 1 to uint32.max seconds
     uint32 window;
-    /// the credit sale floor over the larger of the credit's cost and its `valueOf` score, bps. 10_000 to 40_000
+    /// the credit sale floor over the larger of the credit's cost and its `valueOf` score, bps. 10_000 to uint16.max
     uint16 floorBps;
-    /// the credit sale start price over the floor, bps. 10_000 to 200_000
+    /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 startBps;
 }
 
@@ -337,7 +349,12 @@ library Mainnet {
             swapFeeCc: 10_000e18,
             saleToArtistBps: 250,
             saleToOperatorBps: 50,
-            climbMultiplierCapBps: 40_000
+            climbMultiplierCapBps: 40_000,
+            spendCapBps: 100,
+            bucketSeconds: 60,
+            balanceBidCapBps: 10_000,
+            idleStepSeconds: 600,
+            sniperSeconds: 1800
         });
     }
 
@@ -350,7 +367,8 @@ library Mainnet {
             startCapBps: 100_000,
             decayHours: 12,
             anchorHalfLife: 7 days,
-            anchorMinCost: 0.1 ether
+            anchorMinCost: 0.1 ether,
+            anchorMoveBps: 5_000
         });
     }
 

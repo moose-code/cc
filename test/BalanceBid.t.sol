@@ -105,7 +105,9 @@ contract BalanceBidTest is Fixture {
         // one page at par is 80 * refScore * UNIT; available sized so availBpsRaw / (80 * floor) is 1 and 4 pages
         uint256 onePage = 80 * uint256(core.settings().refScore) * UNIT * floor / 10_000;
         assertApproxEqAbs(_balanceClimbAfterMinute(onePage), floor * 10_050 / 10_000, 1, "one page climbs at 1x");
-        assertApproxEqAbs(_balanceClimbAfterMinute(onePage * 4), floor * 10_050 / 10_000, 1, "four pages climb at the same 1x");
+        assertApproxEqAbs(
+            _balanceClimbAfterMinute(onePage * 4), floor * 10_050 / 10_000, 1, "four pages climb at the same 1x"
+        );
     }
 
     // promise: SPEC 4 a module answering a huge available() never overflows the pages pot or freezes setSettings
@@ -140,5 +142,65 @@ contract BalanceBidTest is Fixture {
         vm.prank(user);
         core.sellForBalance(ids);
         assertEq(xt.balanceOf(user) - before, par, "paid exactly par, never above");
+    }
+
+    // promise: a raised balance cap is actually payable above par and lowering it clamps immediately
+    function test_configurableCapPaysAbovePar() public {
+        Settings memory s = core.settings();
+        s.balanceBidCapBps = 20_000;
+        _setSettings(s);
+        _warp(2 days);
+        assertEq(core.balanceRate(), 20_000);
+        uint256[] memory ids = _credits(user, 1);
+        uint256 expected = _score(ids[0]) * UNIT * 2;
+        uint256 before_ = xt.balanceOf(user);
+        vm.prank(user);
+        core.sellForBalance(ids);
+        assertEq(xt.balanceOf(user) - before_, expected);
+        s.balanceBidCapBps = 10_000;
+        _setSettings(s);
+        assertLe(core.balanceRate(), 10_000);
+    }
+
+    // promise: the balance pages conversion honors both rate and multiplier caps without truncating huge availability
+    function test_balanceMultiplierAboveParAndHugeAvailable() public {
+        Settings memory s = core.settings();
+        s.balanceBidCapBps = 50_000;
+        _setSettings(s);
+        _warp(2 days);
+        // Balance Rate starts at slot 32; its anchor's last fill rate is slot 34.
+        vm.store(address(core), bytes32(uint256(34)), bytes32(uint256(20_000)));
+        vm.store(address(core), bytes32(uint256(37)), bytes32(uint256(20_000)));
+        uint256 denom = uint256(s.refScore) * UNIT;
+        mod.setAvailable(500 * denom);
+        // At 500 pages-worth of par a 2x fill buys 250 pages, a 3.125x loosening multiplier.
+        vm.store(address(core), bytes32(uint256(32)), bytes32(uint256(50_000)));
+        vm.store(
+            address(core),
+            bytes32(uint256(33)),
+            bytes32(uint256(uint64(block.timestamp)) | (uint256(uint64(block.timestamp - 600)) << 64))
+        );
+        uint256 expectedCeiling = 20_000 * (10_000 + 600 * 31_250 / 10_000) * 11_000 / 1e8;
+        assertEq(expectedCeiling, 26_125);
+        assertEq(core.balanceRate(), expectedCeiling);
+        mod.setAvailable(type(uint256).max);
+        assertEq(core.balanceRate(), 27_280);
+        uint256[] memory ids = _credits(user, 1);
+        assertGt(core.balanceBidOf(ids[0]), 0);
+    }
+
+    // promise: the full margin endpoint remains a zero bid until the owner restores a positive floor
+    function test_zeroFloorDoesNotInventAPositiveBid() public {
+        Settings memory s = core.settings();
+        s.balanceBidMarginBps = 10_000;
+        s.balanceBidOn = false;
+        _setSettings(s);
+        s.balanceBidOn = true;
+        _setSettings(s);
+        _warp(1 days);
+        assertEq(core.balanceRate(), 0);
+        s.balanceBidMarginBps = 9_000;
+        _setSettings(s);
+        assertEq(core.balanceRate(), 1_000);
     }
 }

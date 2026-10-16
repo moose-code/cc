@@ -69,6 +69,7 @@ interface ICore {
     error ScoreTooLow(uint256 inId, uint256 outId);
     error SliceTooSmall();
     error Slippage();
+    error SpendCapReached(uint256 spent, uint256 cost, uint256 budget);
     error TooSoon();
     error UseFund();
     error ZeroAddress();
@@ -136,7 +137,6 @@ interface ICore {
     function MANAGER() external view returns (address);
     function POOL_FEE() external view returns (uint24);
     function RATE_START() external view returns (uint256);
-    function SNIPER_SECONDS() external view returns (uint256);
     function TICK_SPACING() external view returns (int24);
     function acceptOwnership() external;
     function adaptersLocked() external view returns (bool);

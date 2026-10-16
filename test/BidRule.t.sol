@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
+import {BidModel} from "./utils/BidModel.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings, Mainnet, ICreditStrategy} from "../src/interfaces/Interfaces.sol";
@@ -114,9 +115,13 @@ contract BidRuleTest is Fixture {
         assertEq(anchor, r0);
         _warp(3 hours);
         // the 20 eth pot buys more than four pages, so the loosening runs at the 4x cap: 18 intervals of 1 bp times 4
-        assertEq(core.ethRate(), r0 * (10_000 + 72) * 11_000 / 1e8, "110 percent of the rate paid, 18 intervals of 4 bp");
+        assertEq(
+            core.ethRate(), r0 * (10_000 + 72) * 11_000 / 1e8, "110 percent of the rate paid, 18 intervals of 4 bp"
+        );
         _warp(30 days);
-        assertEq(core.ethRate(), r0 * (10_000 + 17_352) * 11_000 / 1e8, "4,338 intervals times 4 after 30 days and 3 hours");
+        assertEq(
+            core.ethRate(), r0 * (10_000 + 17_352) * 11_000 / 1e8, "4,338 intervals times 4 after 30 days and 3 hours"
+        );
         assertEq(core.rateAtCheckpoint(), r0 * 9_950 / 10_000, "stored until the next checkpoint");
     }
 
@@ -213,11 +218,8 @@ contract BidRuleTest is Fixture {
         s.dropPerCreditBps = 0;
         _expectBad(s, "dropPerCreditBps");
         s = Mainnet.defaultSettings();
-        s.dropPerCreditBps = 1_001;
+        s.dropPerCreditBps = 10_001;
         _expectBad(s, "dropPerCreditBps");
-        s = Mainnet.defaultSettings();
-        s.dropFloorBps = 4_999;
-        _expectBad(s, "dropFloorBps");
         s = Mainnet.defaultSettings();
         s.dropFloorBps = 10_001;
         _expectBad(s, "dropFloorBps");
@@ -225,19 +227,10 @@ contract BidRuleTest is Fixture {
         s.climbPerMinBps = 0;
         _expectBad(s, "climbPerMinBps");
         s = Mainnet.defaultSettings();
-        s.climbPerMinBps = 1_001;
-        _expectBad(s, "climbPerMinBps");
-        s = Mainnet.defaultSettings();
         s.ceilBps = 9_999;
         _expectBad(s, "ceilBps");
         s = Mainnet.defaultSettings();
-        s.ceilBps = 30_001;
-        _expectBad(s, "ceilBps");
-        s = Mainnet.defaultSettings();
         s.idleLoosenBps = 0;
-        _expectBad(s, "idleLoosenBps");
-        s = Mainnet.defaultSettings();
-        s.idleLoosenBps = 2_001;
         _expectBad(s, "idleLoosenBps");
     }
 
@@ -431,7 +424,9 @@ contract BidRuleTest is Fixture {
         _sellOne();
         (uint256 anchor,,) = _anchor();
         _warp(4 hours);
-        assertEq(core.ethRate(), anchor * (10_000 + 600 * 4 * 24) * 11_000 / 1e8, "the ceiling grows per the 4x loosening");
+        assertEq(
+            core.ethRate(), anchor * (10_000 + 600 * 4 * 24) * 11_000 / 1e8, "the ceiling grows per the 4x loosening"
+        );
     }
 
     address internal pumpAttacker;
@@ -504,4 +499,13 @@ contract BidRuleTest is Fixture {
         assertLt(gain, feePaid, "the sniper-window pump marginal gain is below the fee paid");
     }
 
+    // promise: an expired bucket's cleared anchor starts a fresh drop floor on its first fill
+    function test_modelRestartsClearedDropAnchor() public pure {
+        Settings memory s = Mainnet.defaultSettings();
+        s.dropPerCreditBps = 10_000;
+        s.dropFloorBps = 5_000;
+        uint256 start = BidModel.startAfter(s, 1_000, 0);
+        assertEq(start, 1_000);
+        assertEq(BidModel.dropOnce(s, 1_000, start, s.refScore, s.refScore), 500);
+    }
 }

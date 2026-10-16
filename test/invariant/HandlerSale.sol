@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Sale, CreditSale} from "../../src/interfaces/Interfaces.sol";
@@ -93,7 +94,11 @@ abstract contract HandlerSale is HandlerOwner {
     }
 
     /// reads the books before a sale
-    function _salePre(uint256 sid, address payer, address buyer, uint256 value) internal view returns (SalePre memory p) {
+    function _salePre(uint256 sid, address payer, address buyer, uint256 value)
+        internal
+        view
+        returns (SalePre memory p)
+    {
         p.bal = address(core).balance;
         p.pot = core.ethPot();
         p.tb = core.ethToBuyback();
@@ -127,7 +132,9 @@ abstract contract HandlerSale is HandlerOwner {
             _flag(V_SALE_PATH, "the sale rest was not booked exactly, split by saleToBuybackBps");
         }
         if (core.artist().balance != p.artist0 + toArtist) _flag(V_SALE_PATH, "the artist cut was not pushed");
-        if (core.payee().balance != p.payee0 + toOperator) _flag(V_SALE_PATH, "the operator cut was not pushed to the payee");
+        if (core.payee().balance != p.payee0 + toOperator) {
+            _flag(V_SALE_PATH, "the operator cut was not pushed to the payee");
+        }
         _booked(paid);
         if (_ownerOf(sid) != p.buyer) _flag(V_SALE_PATH, "the buyer does not hold the statement");
         (bool held,,) = core.statementInfo(sid);
@@ -144,7 +151,9 @@ abstract contract HandlerSale is HandlerOwner {
         _failed(p.bal, p.pot, p.rate, "sale");
         if (core.ethToBuyback() != p.tb) _flag(V_REVERT_CHANGED, "a refused sale moved the buyback pot");
         SG storage g = _sg[sid];
-        if (g.status == S_HELD && _ownerOf(sid) != address(core)) _flag(V_SALE_PATH, "a refused sale moved a statement");
+        if (g.status == S_HELD && _ownerOf(sid) != address(core)) {
+            _flag(V_SALE_PATH, "a refused sale moved a statement");
+        }
         if (p.want == 0 || bytes4(why) != p.want) _unexpected(a, why);
     }
 
@@ -177,8 +186,10 @@ abstract contract HandlerSale is HandlerOwner {
         returns (uint256 next)
     {
         uint256 saleBps = (price * 10_000 + ref - 1) / ref;
-        if (cost < IControllerV1(v1).anchorMinCost() || saleBps <= anchor0) return anchor0;
-        next = (anchor0 + saleBps) / 2;
+        if (IControllerV1(v1).anchorMoveBps() == 0 || cost < IControllerV1(v1).anchorMinCost() || saleBps <= anchor0) {
+            return anchor0;
+        }
+        next = anchor0 + FullMath.mulDiv(saleBps - anchor0, IControllerV1(v1).anchorMoveBps(), 10_000);
         uint256 cap = IControllerV1(v1).startCapBps();
         if (next > cap) next = cap;
     }
@@ -208,7 +219,8 @@ abstract contract HandlerSale is HandlerOwner {
             _flag(V_SALE_PATH, "the asking price differs from the curve at the age outside every pause");
         }
         bool short_ = priced && price != 0 && xSeed % 7 == 0;
-        uint256 value = !priced ? 1 ether : (short_ ? price - 1 : price + (xSeed % 3 == 0 ? 0 : _logBound(xSeed, 1, 1 ether)));
+        uint256 value =
+            !priced ? 1 ether : (short_ ? price - 1 : price + (xSeed % 3 == 0 ? 0 : _logBound(xSeed, 1, 1 ether)));
         SalePre memory p = _salePre(sid, who, who, value);
         p.price = price;
         p.want = _buyRefusal(sid, p, short_);
@@ -231,9 +243,13 @@ abstract contract HandlerSale is HandlerOwner {
             }
             if (
                 ((price * 10_000 + _ref0 - 1) / _ref0 <= _anchor0 || _cost0 < IControllerV1(v1).anchorMinCost())
-                    && (IControllerV1(v1).storedAnchorBps() != _stored0 || IControllerV1(v1).anchorTime() != _anchorTime0)
+                    && (IControllerV1(v1).storedAnchorBps() != _stored0
+                        || IControllerV1(v1).anchorTime() != _anchorTime0)
             ) {
-                _flag(V_SALE_PATH, "a buy at or below the anchor, or of a statement under the minimum cost, stored the anchor");
+                _flag(
+                    V_SALE_PATH,
+                    "a buy at or below the anchor, or of a statement under the minimum cost, stored the anchor"
+                );
             }
             if (p.payerBal - who.balance != price) {
                 _flag(V_SALE_PATH, "the buyer did not pay exactly the ask, or the excess was not refunded");
@@ -639,7 +655,9 @@ abstract contract HandlerSale is HandlerOwner {
                 _pauseEnd[_pauseEnd.length - 1] = block.timestamp;
             }
         }
-        if (core.paused() != (stranger || !ok ? was : want)) _flag(V_SALE_PATH, "the pause state differs from the model");
+        if (core.paused() != (stranger || !ok ? was : want)) {
+            _flag(V_SALE_PATH, "the pause state differs from the model");
+        }
         _checkPauseClock();
         _opost(pre, "pause");
         _ok(a);
@@ -661,11 +679,13 @@ abstract contract HandlerSale is HandlerOwner {
         address buyer = mode % 5 == 0 ? _actor(vSeed) : address(uint160(uint256(keccak256(abi.encode("buyer", vSeed)))));
         uint256 floor = _hardFloor(sid);
         uint256 m = (mode >> 4) % 5;
-        uint256 value = m == 0 ? (floor == 0 ? 0 : floor - 1) : m == 1
-            ? floor
-            : m == 2 ? floor + _logBound(vSeed, 1, 1 ether) : m == 3 ? floor * 2 : 0;
+        uint256 value = m == 0
+            ? (floor == 0 ? 0 : floor - 1)
+            : m == 1 ? floor : m == 2 ? floor + _logBound(vSeed, 1, 1 ether) : m == 3 ? floor * 2 : 0;
         SalePre memory p = _salePre(sid, who, buyer, value);
-        p.want = core.controller() != address(selling) ? ICore.OnlyController.selector : _sellToRefusal(_sg[sid], value, floor);
+        p.want = core.controller() != address(selling)
+            ? ICore.OnlyController.selector
+            : _sellToRefusal(_sg[sid], value, floor);
         vm.deal(who, who.balance + value);
         RS memory rs = _rs();
         _att(a);
@@ -695,15 +715,15 @@ abstract contract HandlerSale is HandlerOwner {
             cur = c.markupBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : 40_001) : _f(seed, 10_000, 40_000, cur);
             // decision 124: the start can never be below the core's current saleFloorBps
-            valid = v >= 10_000 && v <= 40_000 && v <= cap && v >= core.settings().saleFloorBps;
+            valid = v >= 10_000 && v <= type(uint16).max && v <= cap && v >= core.settings().saleFloorBps;
         } else if (which == 1) {
             cur = cap;
             v = bad ? (seed % 2 == 0 ? c.markupBps() - 1 : 200_001) : _f(seed, c.markupBps(), 200_000, cur);
-            valid = v >= c.markupBps() && v <= 200_000;
+            valid = v >= c.markupBps() && v <= type(uint32).max;
         } else if (which == 2) {
             cur = c.decayHours();
             v = bad ? (seed % 2 == 0 ? 0 : 721) : _f(seed, 1, 720, cur);
-            valid = v >= 1 && v <= 720;
+            valid = v >= 1 && v <= type(uint16).max;
         } else if (which == 3) {
             cur = c.anchorBps();
             v = bad ? (seed % 2 == 0 ? 9_999 : cap + 1) : _f(seed, 10_000, cap, cur);
@@ -711,11 +731,15 @@ abstract contract HandlerSale is HandlerOwner {
         } else if (which == 4) {
             cur = c.anchorHalfLife();
             v = bad ? (seed % 2 == 0 ? 1 days - 1 : 90 days + 1) : _f(seed, 1 days, 90 days, cur);
-            valid = v >= 1 days && v <= 90 days;
-        } else {
+            valid = v >= 1 && v <= type(uint32).max;
+        } else if (which == 5) {
             cur = c.anchorMinCost();
-            v = bad ? 10 ether + 1 + seed % 1e18 : _f(seed, 0, 10 ether, cur);
-            valid = v <= 10 ether;
+            v = _f(seed, 0, type(uint128).max, cur);
+            valid = true;
+        } else {
+            cur = c.anchorMoveBps();
+            v = bad ? 10_001 : _f(seed, 0, 10_000, cur);
+            valid = v <= 10_000;
         }
     }
 
@@ -728,13 +752,15 @@ abstract contract HandlerSale is HandlerOwner {
             startCapBps: c.startCapBps(),
             decayHours: c.decayHours(),
             anchorHalfLife: c.anchorHalfLife(),
-            anchorMinCost: c.anchorMinCost()
+            anchorMinCost: c.anchorMinCost(),
+            anchorMoveBps: c.anchorMoveBps()
         });
         if (which == 0) s.markupBps = uint16(v);
         else if (which == 1) s.startCapBps = uint32(v);
         else if (which == 2) s.decayHours = uint16(v);
         else if (which == 4) s.anchorHalfLife = uint32(v);
-        else s.anchorMinCost = uint128(v);
+        else if (which == 5) s.anchorMinCost = uint128(v);
+        else s.anchorMoveBps = uint16(v);
         return abi.encodeCall(IControllerV1.setSale, (s));
     }
 
@@ -744,7 +770,8 @@ abstract contract HandlerSale is HandlerOwner {
         if (which == 2) return c.decayHours();
         if (which == 3) return c.anchorBps();
         if (which == 4) return c.anchorHalfLife();
-        return c.anchorMinCost();
+        if (which == 5) return c.anchorMinCost();
+        return c.anchorMoveBps();
     }
 
     /// the owner sets one of the six sale numbers of the first controller to a value inside or outside the bounds,
@@ -753,7 +780,7 @@ abstract contract HandlerSale is HandlerOwner {
     function saleSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_SALE_SETTINGS;
         IControllerV1 c = IControllerV1(v1);
-        uint256 which = mode % 6;
+        uint256 which = mode % 7;
         bool stranger = (mode >> 8) % 6 == 0;
         uint256 anchor0 = c.anchorBps();
         bool bad = (mode >> 12) % 4 == 0;
@@ -764,7 +791,8 @@ abstract contract HandlerSale is HandlerOwner {
         _att(a);
         vm.prank(caller);
         (bool ok, bytes memory out) = address(c).call(data);
-        bytes4 want = stranger ? IControllerV1.OnlyOwner.selector : (valid ? bytes4(0) : IControllerV1.BadSetting.selector);
+        bytes4 want =
+            stranger ? IControllerV1.OnlyOwner.selector : (valid ? bytes4(0) : IControllerV1.BadSetting.selector);
         if (ok) {
             if (want != 0) _flag(V_OWNER, "a sale setting the model refuses was accepted");
             if (_saleGot(c, which) != v) _flag(V_OWNER, "a sale setting did not read back");
@@ -794,17 +822,29 @@ abstract contract HandlerSale is HandlerOwner {
         uint256 sid = n == 0 ? 1 : everHeld[seed % n];
         uint256[] memory ids = new uint256[](1);
         ids[0] = seed >> 8;
-        if (k == 1) data = ComposeCall.noArgs();
-        else if (k == 2) data = abi.encodeCall(ICore.book, ());
-        else if (k == 3) data = abi.encodeCall(ICore.buyback, ());
-        else if (k == 4) data = abi.encodeCall(ICore.redeemStatement, (sid));
-        else if (k == 6) data = abi.encodeCall(ICore.adopt, (ids));
-        else if (k == 7) data = abi.encodeCall(ICore.releaseRedeemBurn, (1));
-        else if (k == 8) data = abi.encodeWithSignature("sellForEth(uint256[])", ids);
-        else if (k == 9) data = abi.encodeCall(ICore.buyListing, (rawAdapter, seed >> 8, abi.encode(address(next), uint256(1), bytes(""))));
-        else if (k == 10) data = abi.encodeCall(ICore.sellTo, (sid, address(next)));
-        else if (k == 11) data = abi.encodeWithSignature("sellForBalance(uint256[])", ids);
-        else {
+        if (k == 1) {
+            data = ComposeCall.noArgs();
+        } else if (k == 2) {
+            data = abi.encodeCall(ICore.book, ());
+        } else if (k == 3) {
+            data = abi.encodeCall(ICore.buyback, ());
+        } else if (k == 4) {
+            data = abi.encodeCall(ICore.redeemStatement, (sid));
+        } else if (k == 6) {
+            data = abi.encodeCall(ICore.adopt, (ids));
+        } else if (k == 7) {
+            data = abi.encodeCall(ICore.releaseRedeemBurn, (1));
+        } else if (k == 8) {
+            data = abi.encodeWithSignature("sellForEth(uint256[])", ids);
+        } else if (k == 9) {
+            data = abi.encodeCall(
+                ICore.buyListing, (rawAdapter, seed >> 8, abi.encode(address(next), uint256(1), bytes("")))
+            );
+        } else if (k == 10) {
+            data = abi.encodeCall(ICore.sellTo, (sid, address(next)));
+        } else if (k == 11) {
+            data = abi.encodeWithSignature("sellForBalance(uint256[])", ids);
+        } else {
             target = address(selling);
             data = abi.encodeCall(SellingController.sell, (sid, address(next)));
         }
@@ -842,7 +882,9 @@ abstract contract HandlerSale is HandlerOwner {
         if (core.controller() != (okC ? c : oldC)) _flag(V_OWNER, "the controller is not what the owner set at once");
         if (swapMod) {
             if (okM == lockedE) _flag(V_LOCK, "the balance module door and its lock disagree");
-            if (core.balanceModule() != (okM ? address(next) : oldM)) _flag(V_OWNER, "the balance module is not what the owner set");
+            if (core.balanceModule() != (okM ? address(next) : oldM)) {
+                _flag(V_OWNER, "the balance module is not what the owner set");
+            }
             if (okM) {
                 module = next;
                 modulesEver.push(next);
@@ -866,7 +908,9 @@ abstract contract HandlerSale is HandlerOwner {
         OPre memory pre = _opre();
         _att(a);
         bytes memory data = abi.encodeWithSelector(
-            which == 0 ? ICore.lockController.selector : (which == 1 ? ICore.lockBalanceModule.selector : ICore.lockAdapters.selector)
+            which == 0
+                ? ICore.lockController.selector
+                : (which == 1 ? ICore.lockBalanceModule.selector : ICore.lockAdapters.selector)
         );
         vm.prank(stranger);
         (bool ok, bytes memory out) = address(core).call(data);
@@ -875,10 +919,14 @@ abstract contract HandlerSale is HandlerOwner {
         vm.prank(owner);
         (ok, out) = address(core).call(data);
         if (noModule) {
-            if (ok || bytes4(out) != ICore.NoBalanceModule.selector) _flag(V_LOCK, "the module lock worked with no module");
+            if (ok || bytes4(out) != ICore.NoBalanceModule.selector) {
+                _flag(V_LOCK, "the module lock worked with no module");
+            }
         } else {
             if (!ok) _flag(V_LOCK, "the owner could not lock a door");
-            bool nowLocked = which == 0 ? core.controllerLocked() : (which == 1 ? core.balanceModuleLocked() : core.adaptersLocked());
+            bool nowLocked = which == 0
+                ? core.controllerLocked()
+                : (which == 1 ? core.balanceModuleLocked() : core.adaptersLocked());
             if (!nowLocked) _flag(V_LOCK, "a lock did not set its flag");
             if (which == 0) gLockedC = true;
             else if (which == 1) gLockedE = true;
@@ -944,7 +992,9 @@ abstract contract HandlerSale is HandlerOwner {
         vm.prank(old);
         (bool ok0,) = address(core).call(abi.encodeCall(ICore.transferOwnership, (m == 2 ? other : heir)));
         if (!ok0) _flag(V_LOCK, "the owner could not start a handover");
-        if (core.owner() != old || core.pendingOwner() != (m == 2 ? other : heir)) _flag(V_LOCK, "the first step moved the owner");
+        if (core.owner() != old || core.pendingOwner() != (m == 2 ? other : heir)) {
+            _flag(V_LOCK, "the first step moved the owner");
+        }
         // the old owner still holds every power, the pending owner none
         vm.prank(old);
         (bool ok,) = address(core).call(abi.encodeCall(ICore.removeAdapter, (target)));
@@ -975,7 +1025,9 @@ abstract contract HandlerSale is HandlerOwner {
         vm.prank(next);
         (ok,) = address(core).call(abi.encodeCall(ICore.acceptOwnership, ()));
         if (!ok) _flag(V_LOCK, "the pending owner could not accept");
-        if (core.owner() != next || core.pendingOwner() != address(0)) _flag(V_LOCK, "the accept did not complete the handover");
+        if (core.owner() != next || core.pendingOwner() != address(0)) {
+            _flag(V_LOCK, "the accept did not complete the handover");
+        }
         formerOwners.push(old);
         owner = next;
         heirNext += 1;
