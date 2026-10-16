@@ -1,6 +1,7 @@
 // The listings the keeper watches, per venue:
-// - CreditStrategy: the credits the strategy holds (`Credits.tokensOf(strategy)`, or a fixed id list) with
-//   `nftForSale(id)` and the score of each id, refreshed every STRATEGY_REFRESH_SEC. scores never change and are cached.
+// - CreditStrategy: the credits the strategy holds with `nftForSale(id)` and the score of each id, refreshed every
+//   STRATEGY_REFRESH_SEC. The held set and prices are kept by delta (./inventory.ts, from the Credits Transfer logs of
+//   the strategy); a fixed id list (STRATEGY_IDS) is read in full. Scores never change and are cached.
 // - Seaport 1.6 basic orders from the OpenSea API v2 (packages/engine/src/opensea.mjs), or a file of the same shape,
 //   refreshed every OPENSEA_REFRESH_SEC.
 // Each block the candidates whose price is under the bid scaled by score are read in full at that block: `bidOf(id)`,
@@ -8,7 +9,8 @@
 // and, for Seaport, the order status. The simulation stays the final check.
 
 import { readFileSync } from "node:fs";
-import { encodeAbiParameters, getAddress, type Address, type Hex, type PublicClient } from "viem";
+import { join } from "node:path";
+import { encodeAbiParameters, getAbiItem, getAddress, type Address, type Hex, type PublicClient } from "viem";
 import { basicOrderParameters, coreAbi, creditStrategyAbi, creditsAbi, listingAdapterAbi, seaportAbi } from "@cc/engine/abis";
 import { CREDIT_STRATEGY, CREDITS, SEAPORT } from "@cc/engine/addresses";
 import { creditScores, mc } from "@cc/engine/snapshot";
@@ -17,11 +19,10 @@ import type { Config } from "./config.ts";
 import type { Listing } from "./decide.ts";
 import type { Snapshot } from "@cc/engine/snapshot";
 import { log, safeError } from "./log.ts";
+import { indexerSeed, StrategyBook, type BookChain, type Move } from "./inventory.ts";
 
 // the ids read per multicall when indexing the strategy scores
-const SCORE_BATCH = 1500;
-// the ids read per multicall when reading the strategy nftForSale prices
-const PRICE_BATCH = 1500;
+const SCORE_READ = 1500;
 // the most candidates per venue read in full each block, best ratio of bid to price first
 const MAX_CANDIDATES = 40;
 
@@ -51,6 +52,11 @@ export function encodeBasicOrder(p: BasicParams): Hex {
   ]);
 }
 
+// blocks per getLogs call and ids per nftForSale multicall of the strategy inventory
+const LOG_RANGE = 10_000n;
+const PRICE_READ = 1500;
+const transferEvent = getAbiItem({ abi: creditsAbi, name: "Transfer" });
+
 interface Watched {
   venue: Listing["venue"];
   adapter: Address;
@@ -66,6 +72,7 @@ export class Sources {
   private scores = new Map<bigint, bigint>();
   private strategy: Watched[] = [];
   private strategyAt = 0;
+  private book?: StrategyBook;
   private seaport: Watched[] = [];
   private seaportAt = 0;
   // listings whose simulation reverted, skipped until the time stored
@@ -90,31 +97,70 @@ export class Sources {
 
   private async scoresOf(ids: bigint[]) {
     const missing = ids.filter((id) => !this.scores.has(id));
-    for (let i = 0; i < missing.length; i += SCORE_BATCH) {
-      const part = missing.slice(i, i + SCORE_BATCH);
+    for (let i = 0; i < missing.length; i += SCORE_READ) {
+      const part = missing.slice(i, i + SCORE_READ);
       const sc = await creditScores(this.client, part);
       part.forEach((id, j) => this.scores.set(id, sc[j]));
     }
+  }
+
+  // nftForSale per id, undefined for a failed read
+  private async readPrices(ids: bigint[]): Promise<(bigint | undefined)[]> {
+    const out: (bigint | undefined)[] = [];
+    for (let i = 0; i < ids.length; i += PRICE_READ) {
+      const r = await this.client.multicall({
+        ...mc,
+        allowFailure: true,
+        contracts: ids.slice(i, i + PRICE_READ).map((id) => ({ address: CREDIT_STRATEGY, abi: creditStrategyAbi, functionName: "nftForSale", args: [id] }) as const),
+      });
+      out.push(...r.map((x) => (x.status === "success" ? (x.result as bigint) : undefined)));
+    }
+    return out;
+  }
+
+  private strategyBook(): StrategyBook {
+    const client = this.client;
+    const indexer = this.cfg.indexerUrl;
+    const chain: BookChain = {
+      head: () => client.getBlockNumber(),
+      moves: async (from, to) => {
+        const out: Move[] = [];
+        for (let a = from; a <= to; a += LOG_RANGE) {
+          const b = a + LOG_RANGE - 1n < to ? a + LOG_RANGE - 1n : to;
+          const range = { address: CREDITS, event: transferEvent, fromBlock: a, toBlock: b } as const;
+          const [into, outOf] = await Promise.all([
+            client.getLogs({ ...range, args: { to: CREDIT_STRATEGY } }),
+            client.getLogs({ ...range, args: { from: CREDIT_STRATEGY } }),
+          ]);
+          for (const [logs, isIn] of [[into, true], [outOf, false]] as const)
+            for (const l of logs) out.push({ block: l.blockNumber!, index: l.logIndex!, id: l.args.id!, into: isIn });
+        }
+        return out;
+      },
+      held: async () => [...(await client.readContract({ address: CREDITS, abi: creditsAbi, functionName: "tokensOf", args: [CREDIT_STRATEGY] }))],
+      prices: (ids) => this.readPrices(ids),
+      seed: indexer ? () => indexerSeed(indexer) : undefined,
+    };
+    return new StrategyBook(chain, {
+      file: join(this.cfg.stateDir, "strategy-inventory.json"),
+      key: `${this.cfg.record.chainId}:${CREDIT_STRATEGY.toLowerCase()}`,
+      fullRead: this.cfg.strategyFullRead,
+      now: this.now,
+    });
   }
 
   private async refreshStrategy() {
     const s = this.cfg.strategy;
     if (s.mode === "off" || this.now() - this.strategyAt < this.cfg.strategyRefreshSec * 1000) return;
     this.strategyAt = this.now();
-    const ids =
-      s.mode === "ids"
-        ? s.ids
-        : [...(await this.client.readContract({ address: CREDITS, abi: creditsAbi, functionName: "tokensOf", args: [CREDIT_STRATEGY] }))];
-    const prices: bigint[] = [];
-    for (let i = 0; i < ids.length; i += PRICE_BATCH) {
-      const r = await this.client.multicall({
-        ...mc,
-        allowFailure: true,
-        contracts: ids.slice(i, i + PRICE_BATCH).map((id) => ({ address: CREDIT_STRATEGY, abi: creditStrategyAbi, functionName: "nftForSale", args: [id] }) as const),
-      });
-      prices.push(...r.map((x) => (x.status === "success" ? (x.result as bigint) : 0n)));
+    let listed: { id: bigint; price: bigint }[];
+    if (s.mode === "ids") {
+      const prices = await this.readPrices(s.ids);
+      listed = s.ids.flatMap((id, i) => ((prices[i] ?? 0n) > 0n ? [{ id, price: prices[i]! }] : []));
+    } else {
+      this.book ??= this.strategyBook();
+      listed = [...(await this.book.refresh())].map(([id, price]) => ({ id, price }));
     }
-    const listed = ids.flatMap((id, i) => (prices[i] > 0n ? [{ id, price: prices[i] }] : []));
     await this.scoresOf(listed.map((x) => x.id));
     this.strategy = listed.map(({ id, price }) => ({
       venue: "strategy" as const,
@@ -123,7 +169,7 @@ export class Sources {
       price,
       params: "0x" as Hex,
     }));
-    log("info", "strategy listings indexed", { held: ids.length, listed: this.strategy.length });
+    log("info", "strategy listings indexed", { listed: this.strategy.length });
   }
 
   private async refreshSeaport() {

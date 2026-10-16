@@ -22,11 +22,13 @@ const BUCKETS = [
   { label: "over 100%", max: Infinity },
 ];
 
-const gapLabel = (r: ListingRow) => (r.clears ? "clears" : r.gap === Infinity ? "—" : `+${(r.gap * 100).toFixed(r.gap < 0.1 ? 1 : 0)}%`);
+const gapLabel = (r: ListingRow) =>
+  r.clears ? "clears" : r.wait != null ? "at bid" : r.gap === Infinity ? "—" : `+${(r.gap * 100).toFixed(r.gap < 0.1 ? 1 : 0)}%`;
 
 // "~3h 20m", "~4d"; a pot below the price has no time
 function etaText(r: ListingRow): string {
   const e = r.eta;
+  if (r.wait != null) return `next bucket · ${r.wait}s`;
   if (e.kind === "now") return "now";
   if (e.kind === "pot") return "needs a bigger pot";
   if (e.kind === "cap") return "above rate cap";
@@ -55,7 +57,8 @@ export default function ListingsPage() {
   const atBid = rows.filter((r) => r.gap <= 0).length;
   const within = (f: number) => rows.filter((r) => r.gap <= f).length;
   const meta = data
-    ? `${rows.length} listed · ${atBid} at bid · ${within(0.1)} within 10% · ${within(0.25)} within 25%`
+    ? `${rows.length} listed · ${atBid} at bid · ${within(0.1)} within 10% · ${within(0.25)} within 25%` +
+      (data.covers > 0 ? ` · pot covers ${data.covers}${data.capped ? `, this ${data.bucketSeconds === 60 ? "minute" : "bucket"} ${data.fits}` : ""}` : "")
     : isLoading
       ? "reading listings…"
       : "listings unavailable";
