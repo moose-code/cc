@@ -39,11 +39,11 @@ abstract contract InvariantFixture is Fixture {
     uint256 internal constant LEFT_IN_PILE = 78;
     /// statements composed before the run
     uint256 internal constant COMPOSES = 4;
-    /// real listings are read from the end of the strategy pool, clear of the credits that move
+    /// real listings are read from the reserved tail of the recorded ids, which `_credits` never takes from
     uint256 internal constant CANDIDATES = 40;
 
-    /// @dev the credit budget (the pool minus the `CANDIDATES` listing candidates) is kept in the balance side suites, which
-    /// also sell 80 credits into the balance side, by giving the four actors 25 credits each
+    /// @dev the credit budget is kept in the balance side suites, which also sell 80 credits into the balance side, by
+    /// giving the four actors 25 credits each
     uint256 internal constant ACTOR_CREDITS = 25;
 
     FuzzController internal fuzz;
@@ -104,7 +104,6 @@ abstract contract InvariantFixture is Fixture {
         } else {
             assertLt(block.timestamp, launchTime + SNIPER_WINDOW / 2, "the window start state drifted");
         }
-        assertLe(creditCursor + CANDIDATES, _strategyPool().length, "the moved credits reach the listing candidates");
         _targets(phase2);
     }
 
@@ -182,7 +181,7 @@ abstract contract InvariantFixture is Fixture {
     /// four actors with credits, eth and coin, all approved for the core and the router. every approval and every
     /// swap is real. a dedicated swapper for the swapCredit action takes `SWAPPER_CREDITS` of actor 0's allocation, so no
     /// other action ever spends them and the swap always has an incoming credit; it holds coin for the fuzzed fee. the
-    /// carve out keeps `creditCursor` where it was, clear of the listing candidates
+    /// carve out leaves the credits handed out as they were
     function _actors() internal {
         for (uint256 i; i < 4; ++i) {
             address a = _user(string.concat("inv.actor", vm.toString(i)));

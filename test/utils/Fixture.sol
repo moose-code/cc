@@ -118,15 +118,17 @@ abstract contract Fixture is Test, ProdDeployer {
     address internal seller;
     address internal funder;
 
-    uint256 internal creditCursor;
-    uint256[] internal strategyPool;
-    mapping(uint256 => bool) internal inStrategyPool;
-    bool internal strategyPoolBuilt;
-    /// credits in the strategy pool: the suites move at most 600 and read 40 listing candidates from the end
-    uint256 internal constant STRATEGY_POOL_SIZE = 700;
-    /// the scan for strategy credits beyond the recorded ids covers [start, end)
+    /// recorded ids at the end of test/utils/CreditIds.sol kept for `_heldCredit`; `_nextCredit` takes the ids before them
+    uint256 internal constant TAIL_RESERVE = 64;
+    /// when the recorded ids before the reserve run out, `_nextCredit` scans ids from here (up to the end id) for credits
+    /// the strategy holds
     uint256 internal constant POOL_SCAN_START = 60_000;
     uint256 internal constant POOL_SCAN_END = 100_000;
+    uint256 private frontIdx;
+    uint256 private scanNext;
+    uint256 private tailWalked;
+    uint256[] private tailCredits;
+    mapping(uint256 => bool) private isTailReserve;
 
     // ------------------------------------------------------------------ the balance side
 
@@ -265,7 +267,6 @@ abstract contract Fixture is Test, ProdDeployer {
         launchKey = d.launchKey;
         poolId = d.poolId;
         launchTime = block.timestamp;
-        _strategyPool();
     }
 
     // ------------------------------------------------------------------ builders on the fixture config
@@ -386,49 +387,54 @@ abstract contract Fixture is Test, ProdDeployer {
 
     // ------------------------------------------------------------------ credits
 
-    /// @notice the credits the CreditStrategy holds at the fork block, in a fixed order: the ids of test/utils/CreditIds.sol
-    /// the strategy still holds in their recorded order, then, up to `STRATEGY_POOL_SIZE`, held ids found by scanning
-    /// upward from `POOL_SCAN_START`. the three listed credits are left out. built once in `setUp`, so the order and the
-    /// contents are fixed for the test and survive a snapshot revert
-    function _strategyPool() internal returns (uint256[] storage) {
-        if (strategyPoolBuilt) return strategyPool;
-        strategyPoolBuilt = true;
-        uint256 n = CreditIds.count();
-        for (uint256 i; i < n; ++i) _poolAdd(CreditIds.at(i));
-        for (uint256 id = POOL_SCAN_START; strategyPool.length < STRATEGY_POOL_SIZE && id < POOL_SCAN_END; ++id) {
-            _poolAdd(id);
-        }
-        require(strategyPool.length >= STRATEGY_POOL_SIZE, "strategy pool short: widen the scan");
-        return strategyPool;
-    }
-
-    function _poolAdd(uint256 id) private {
-        if (id == LISTED_A || id == LISTED_B || id == LISTED_C || inStrategyPool[id]) return;
+    /// @notice true when the CreditStrategy holds `id` now and it is not one of the three named listings
+    function _heldByStrategy(uint256 id) private view returns (bool) {
+        if (id == LISTED_A || id == LISTED_B || id == LISTED_C) return false;
         try CREDITS.ownerOf(id) returns (address o) {
-            if (o == STRATEGY) {
-                inStrategyPool[id] = true;
-                strategyPool.push(id);
-            }
-        } catch {}
+            return o == STRATEGY;
+        } catch {
+            return false;
+        }
     }
 
-    /// @notice the `k`th strategy credit counted from the end of the pool, for a test that needs a credit apart from the
-    /// ones `_credits` hands out from the front. the same `k` is the same credit for the whole test
-    function _heldCredit(uint256 k) internal returns (uint256 id) {
-        uint256[] storage pool = _strategyPool();
-        require(pool.length > creditCursor + k, "strategy pool too small: refresh test/utils/CreditIds.sol");
-        id = pool[pool.length - 1 - k];
-        assertEq(CREDITS.ownerOf(id), STRATEGY, "pool credit is not held by the strategy");
+    /// @notice the next credit the CreditStrategy holds, in a fixed order for a fork block: the recorded ids of
+    /// test/utils/CreditIds.sol before the last `TAIL_RESERVE`, in their recorded order, then ids found by scanning up
+    /// from `POOL_SCAN_START`. a recorded id that left the strategy since the recording is skipped
+    function _nextCredit() internal returns (uint256 id) {
+        uint256 end = CreditIds.count() - TAIL_RESERVE;
+        while (frontIdx < end) {
+            id = CreditIds.at(frontIdx++);
+            if (_heldByStrategy(id)) return id;
+        }
+        if (scanNext == 0) {
+            scanNext = POOL_SCAN_START;
+            for (uint256 i = end; i < end + TAIL_RESERVE; ++i) isTailReserve[CreditIds.at(i)] = true;
+        }
+        while (scanNext < POOL_SCAN_END) {
+            id = scanNext++;
+            if (!isTailReserve[id] && _heldByStrategy(id)) return id;
+        }
+        revert("strategy credits exhausted: refresh test/utils/CreditIds.sol");
+    }
+
+    /// @notice the `k`th credit the strategy holds among the last `TAIL_RESERVE` recorded ids, counted from the end, for
+    /// a test that needs a credit apart from the ones `_credits` hands out. the same `k` is the same credit for the test
+    function _heldCredit(uint256 k) internal returns (uint256) {
+        uint256 n = CreditIds.count();
+        while (tailCredits.length <= k) {
+            require(tailWalked < TAIL_RESERVE, "strategy tail credits exhausted: refresh test/utils/CreditIds.sol");
+            uint256 id = CreditIds.at(n - 1 - tailWalked++);
+            if (_heldByStrategy(id)) tailCredits.push(id);
+        }
+        return tailCredits[k];
     }
 
     /// @notice moves `n` real credits from the CreditStrategy to `to` and approves the core for them
     /// @return ids the credit ids
     function _credits(address to, uint256 n) internal returns (uint256[] memory ids) {
-        uint256[] storage pool = _strategyPool();
-        require(pool.length >= creditCursor + n, "strategy pool too small: refresh test/utils/CreditIds.sol");
         ids = new uint256[](n);
         for (uint256 i; i < n; ++i) {
-            uint256 id = pool[creditCursor++];
+            uint256 id = _nextCredit();
             vm.prank(STRATEGY);
             CREDITS.transferFrom(STRATEGY, to, id);
             assertEq(CREDITS.ownerOf(id), to, "credit did not reach the recipient");

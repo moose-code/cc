@@ -304,7 +304,6 @@ contract ReviewDeployTest is ReviewHarness {
 /// @notice the funded rule and the climb clamp, fuzzed on standalone cores with any rateStart in bounds, plus the
 /// sign off table rows that need a live pool to check
 contract ReviewFundedTest is Fixture {
-    uint256 internal cursor;
 
     function _newCore(uint256 rate) internal returns (ICore c) {
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
@@ -362,7 +361,7 @@ contract ReviewFundedTest is Fixture {
                 assertGe(r1, r0, "the read fell without a fill");
                 assertLe(r1, r0 > pot ? r0 : pot, "climbed above the clamp");
             } else if (op == 2) {
-                uint256 id = _strategyPool()[cursor++];
+                uint256 id = _nextCredit();
                 vm.prank(Mainnet.CREDIT_STRATEGY);
                 CREDITS.transferFrom(Mainnet.CREDIT_STRATEGY, who, id);
                 vm.startPrank(who);
