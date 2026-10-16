@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Fixture} from "./utils/Fixture.sol";
 import {Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {Halving} from "../src/lib/Halving.sol";
+import {BidModel} from "./utils/BidModel.sol";
 
 /// @notice decision 74: after a large sale walks the bid down, the remembered peak keeps the ceiling high and the price
 /// state climbs back at the recovery rate. these scenarios measure the recovery time at the launch settings and the
@@ -129,6 +130,56 @@ contract RecoveryTest is Fixture {
         );
         assertEq(peakTime, block.timestamp, "the peak time is reset to now");
         assertLt(peakRate, peakBefore, "the restated peak is below the stored peak (it had decayed)");
+    }
+
+    /// the price state now from the core's checkpoint, anchor and peak, read the way HandlerBase builds the model
+    function _modelBid() internal view returns (BidModel.Bid memory) {
+        (uint256 anchor,,) = _anchor();
+        (uint256 peakRate, uint256 peakTime) = _peak();
+        return BidModel.Bid({
+            r: core.rateAtCheckpoint(),
+            pot: core.ethPot(),
+            pagesPot: core.ethPot(),
+            lastFillRate: anchor,
+            peakRate: peakRate,
+            peakTime: peakTime,
+            lastFillTime: core.lastFillTime(),
+            checkpointTime: core.checkpointTime(),
+            nowTs: block.timestamp
+        });
+    }
+
+    // promise: SPEC 1 the recovery climb and the peak halving match the model at the launch drop (115 bps, floor 1)
+    /// RecoveryTest.setUp calibrates with a 5 percent drop and a 50 percent minute floor; this case resets them to the
+    /// shipped launch values and checks the recovery after an 80 credit dump against BidModel at 6, 12 and 24 hours. the
+    /// model folds in the recovery climb and the remembered peak halving at the launch half life, so a match validates
+    /// both at launch
+    function test_recoveryAndPeakHalvingAtLaunchDrop() public {
+        Settings memory s = core.settings();
+        s.dropPer100PointsBps = 115;
+        s.dropFloorBps = 1;
+        _setSettings(s);
+        vm.prank(owner);
+        core.setRate(OPEN_RATE);
+        uint256 pre = core.ethPrice();
+        assertEq(pre, OPEN_RATE, "pre dump price is the opening bid");
+        _dump(80);
+        assertLt(core.ethPrice(), pre, "the 80 credit dump walked the price state down at the launch drop");
+        (uint256 peakRate,) = _peak();
+        assertEq(peakRate, pre, "the remembered peak is the pre dump rate");
+
+        uint256 t0 = block.timestamp;
+        uint256[3] memory ages = [uint256(6 hours), 12 hours, 24 hours];
+        for (uint256 i; i < ages.length; ++i) {
+            vm.warp(t0 + ages[i]);
+            Settings memory sn = core.settings();
+            assertEq(core.ethPrice(), BidModel.priceNow(sn, _modelBid()), "the price state follows the model");
+            assertEq(
+                core.ethRate(),
+                BidModel.read(sn, core.ethPot(), BidModel.priceNow(sn, _modelBid())),
+                "the read follows the model clamped to the pot"
+            );
+        }
     }
 
     // promise: inv 6 the price state follows the model between fills

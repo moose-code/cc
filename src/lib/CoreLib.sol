@@ -340,13 +340,15 @@ library CoreLib {
         emit EthRateFill(cost, rate, pot - cost);
     }
 
-    /// the bucket id, budget and spent wei of the current bucket. the Core forwards its `spendState()`
-    function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent) {
+    /// the bucket id, budget and spent wei of the current bucket. the Core forwards its `spendState()` with `pot`, the
+    /// pages pot (`ethPot` plus the pot share of the unbooked fee income the next `_book` adds), the pot the first
+    /// purchase of a fresh bucket books and snapshots. a bucket a purchase has opened returns its stored budget and spent
+    function spendState(uint256 pot) external view returns (uint64 bucket, uint128 budget, uint128 spent) {
         State storage c = state();
         bucket = SafeCastLib.toUint64(block.timestamp / c.settings.bucketSeconds);
         Spend storage b = c.spend;
         if (b.initialized && b.spendBucket == bucket) return (bucket, b.spendBudget, b.spentInBucket);
-        return (bucket, SafeCastLib.toUint128(c.ethPot.mulDiv(c.settings.spendCapBps, BPS)), 0);
+        return (bucket, SafeCastLib.toUint128(pot.mulDiv(c.settings.spendCapBps, BPS)), 0);
     }
 
     /// restates the remembered peak of `a` at `oldHalf`: decays it to now under the old half life and marks now, so a
