@@ -15,6 +15,7 @@ import {BidModel} from "../utils/BidModel.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
+import {MockNft} from "../standins/MockNft.sol";
 import {MigrationSink} from "../standins/MigrationSink.sol";
 
 /// @notice the owner as an adversarial actor. the owner calls `setSettings` with random valid settings across the
@@ -205,6 +206,12 @@ abstract contract HandlerOwner is HandlerBase {
         vm.prank(owner);
         core.setSettings(ns);
         gSettingsHash = keccak256(abi.encode(core.settings()));
+    }
+
+    /// the owner sets exactly `rate` through `setRate`. not in the fuzz selector list: the smoke tests use it
+    function setRateExact(uint256 rate) external {
+        vm.prank(owner);
+        core.setRate(rate);
     }
 
     function setSettings(uint256 seed, uint256 corner) external checked {
@@ -688,6 +695,8 @@ abstract contract HandlerOwner is HandlerBase {
         _ok(a);
     }
 
+    MockNft internal rescueMock;
+
     struct Rescue {
         bool ok;
         address token;
@@ -735,8 +744,11 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (m == 3) {
             r.token = address(coin);
             if (phase2() && seed % 2 == 0) r.token = core.balanceToken();
-            // a keccak derived address, so a random token never lands on a precompile or the forge console address
-            if (seed % 5 == 0) r.token = address(uint160(uint256(keccak256(abi.encode("rescueToken", seed)))));
+            // a deployed token that does not hold the id, so the call never depends on what lives at a derived address
+            if (seed % 5 == 0) {
+                if (address(rescueMock) == address(0)) rescueMock = new MockNft();
+                r.token = address(rescueMock);
+            }
             r.id = 1 + seed % 1e18;
             r.ok = true;
             r.want = ICore.NotHolder.selector;

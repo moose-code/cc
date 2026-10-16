@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {console} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
-import {Mainnet, Settings, CreditSale} from "../../src/interfaces/Interfaces.sol";
+import {ICreditStrategy, Mainnet, Settings, CreditSale} from "../../src/interfaces/Interfaces.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Halving} from "../../src/lib/Halving.sol";
 import {IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
@@ -831,12 +831,9 @@ abstract contract InvariantsBase is InvariantFixture {
         // fund the pot with fee income so the pot covers a real listing's ask (the per credit bid is paid from the pot,
         // and a credit above 100 points bids more than the per-100-point rate)
         for (uint256 k; k < 20; ++k) _try(0, 30);
-        // the real listings need the ceiling to clear the price, so warp until one passes, funding the pot each round
-        for (uint256 i; i < 40 && !_try(3, 20); ++i) {
-            handler.warp(uint256(keccak256(abi.encode("w", i))) / 10 * 10 + 1);
-            for (uint256 k; k < 3; ++k) _try(0, 20);
-        }
-        assertTrue(handler.successes(3) > 0, "no real listing was bought");
+        // the best real listing needs a bid of at least its ask. when the bid is short the owner lifts the rate to the
+        // one that pays the ask with 2 percent to spare (bid = rate * score / 1_000_000), within the rate cap
+        _clearBestListing();
         // each try draws a controller seed. under the hostile controller a try ends in a compose when the page the
         // controller answers is ready and valid (2 of 14 page modes, 1/7) and the handler gate passes (1/2); the
         // compose then succeeds when the in frame attacks and the statement price answers leave it alone (0.43 of
@@ -920,6 +917,29 @@ abstract contract InvariantsBase is InvariantFixture {
         }
         assertEq(core.payee(), handler.gPayee(), "the payee is the one the owner set last");
         handler.book(1, 0);
+    }
+
+    /// buys the best candidate listing through the handler, with the rate lifted first when its bid is below its ask
+    function _clearBestListing() internal {
+        uint256 id = bestCandidate;
+        uint256 ask = ICreditStrategy(Mainnet.CREDIT_STRATEGY).nftForSale(id);
+        if (ask != 0 && core.bidOf(id) < ask) {
+            uint256 rate = ask * 1_000_000 / _score(id) * 102 / 100;
+            uint256 cap = core.settings().rateCap;
+            handler.setRateExact(rate < cap ? rate : cap);
+        }
+        for (uint256 i; i < 5 && handler.successes(3) == 0; ++i) _try(3, 20);
+        assertTrue(
+            handler.successes(3) > 0,
+            string.concat(
+                "no real listing was bought: best ask ",
+                vm.toString(ask),
+                " bid ",
+                vm.toString(core.bidOf(id)),
+                " rate ",
+                vm.toString(core.ethRate())
+            )
+        );
     }
 
     /// the owner's calls: valid settings across the bounds, refused ones, the rate and the other doors
