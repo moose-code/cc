@@ -235,12 +235,13 @@ export const SIM_DEFAULTS = {
   redeemMinRatio: 0, // a keeper redeems only when rating * unitPerPoint is at least this times the asking price
   keeperBuyback: true,
   basefeeGwei: 1, // the block base fee of the buyback calls, gwei (the refunds use min(basefee, keeperMaxBaseFee))
-  // decision 128, the pot scaled climb. the eth bid's climb and idle loosening scale with m = clamp(ethPot / (rate * PAGE), 1, multiplierCap),
-  // m evaluated at each checkpoint (rate and pot are the checkpoint values). the read ethRate() is held at or below hourlyBound / 10000 of the
-  // highest fill rate of the past hour, or the last fill rate when the past hour has none. today's rule is multiplierCap 1 (m is always 1, no
-  // scaling) and hourlyBound 0 (no read bound); decision 128's launch rule is multiplierCap 4 and hourlyBound 15000 (150 percent)
+  // decision 128, the pot scaled climb. the eth bid's idle climb and the ceiling's idle loosening scale with
+  // m = clamp(ethPot / (rate * PAGE), 1, multiplierCap), m read at each checkpoint from the booked pot and the rate.
+  // the shipped rule (the contract) is multiplierCap 4 and scales both the climb and the loosening; the 150 percent
+  // hourly bound of an earlier draft was rejected (REVIEW-128-potscaled.md) and the contract carries no read bound.
   multiplierCap: 1,
-  hourlyBound: 0,
+  hourlyBound: 0, // model only, for the rejected-bound comparison; the contract has no read bound
+  multiplierScalesClimb: true, // model only: when false, m scales the ceiling loosening but not the per minute climb
 };
 
 export const DEFAULTS = Object.assign({}, CORE_PARAMS, SETTINGS, CONTROLLER, CREDIT, SIM_DEFAULTS);
@@ -309,7 +310,7 @@ export class Core {
     this.ethPot = 0; this.ethToBuyback = 0; this.ethRedeemBurn = 0; this.balancePot = 0; // balancePot is the balance module's holding, the eth value of the token it can pay (available())
     this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0; this.funded = false;
     this.checkpointMult = 1; // decision 128: the climb multiplier m from the last checkpoint. 1 with multiplierCap 1
-    this.fillBuckets = []; // decision 128: [minute, max fill rate] for the past hour, ascending, for the hourly read bound
+    this.fillBuckets = []; // the rejected hourly bound comparison (REVIEW-128-potscaled.md) reads these: [minute, max fill rate] for the past hour, ascending
     this.xpLive = 0; this.moduleSet = false; // the balance module is set by setBalanceModule. xpLive is the unitPerPoint it reports now
     this.lastBuybackTime = -1e12;
     this.lastPaidRate = p.rateStart; this.burstTime = -1; this.burstBase = 0; // CoreLib.drop minute bucket: its first fill price and the bucket time
@@ -349,8 +350,10 @@ export class Core {
     if (r >= cap) return cap;
     const target = Math.min(cap, this.clamp());
     if (r >= target || now <= this.checkpointTime) return r;
-    // decision 128: both climb speeds scale with the checkpoint multiplier m
-    const fast = (this.s.recoveryClimbPerMin / 100) * this.checkpointMult, slow = (this.s.climbPerMin / 100) * this.checkpointMult;
+    // decision 128: both climb speeds scale with the checkpoint multiplier m (the model-only `multiplierScalesClimb`
+    // false leaves the climb at 1x and scales the loosening alone, the "loosening only" variant of the cost table)
+    const cm = this.p.multiplierScalesClimb ? this.checkpointMult : 1;
+    const fast = (this.s.recoveryClimbPerMin / 100) * cm, slow = (this.s.climbPerMin / 100) * cm;
     const lnFast = Math.log(1 + fast), lnSlow = Math.log(1 + slow);
     const elapsed = now - this.checkpointTime;
     const peakT = this.peakRate * Math.pow(0.5, (this.checkpointTime - this.peakTime) / (this.s.peakHalfLifeHours * 3600));
@@ -375,8 +378,9 @@ export class Core {
     if (!(cost > 0)) return cap;
     return Math.min(Math.max((this.ethPot * W) / cost, 1), cap);
   }
-  // decision 128: the read is at most hourlyBound / 10000 of the highest fill rate of the past hour, or of the last fill rate when the hour has none.
-  // hourlyBound 0 means no bound
+  // an earlier 128 draft bounded the read at hourlyBound / 10000 of the highest fill rate of the past hour (or the last
+  // fill rate when the hour has none); it was rejected (REVIEW-128-potscaled.md) and kept here only for that comparison.
+  // hourlyBound 0 is the shipped rule: no read bound
   hourlyCap(now) {
     if (!(this.p.hourlyBound > 0)) return Infinity;
     const minB = Math.floor(now / 60) - 59;
@@ -468,7 +472,7 @@ export class Core {
     const fall = Math.min((this.s.dropPerCreditPct / 100) * ratio, 1);
     const r = Math.max(paid * (1 - fall), (this.burstBase * this.s.dropToPct) / 100);
     this.lastPaidRate = paid;
-    this.recordFill(paid, now); // decision 128: the hourly read bound reads the fill rates
+    this.recordFill(paid, now); // feeds the rejected hourly bound comparison (REVIEW-128-potscaled.md)
     this.peakRate = Math.max(paid, this.peakAt(now)); this.peakTime = now;
     this.rateAtCheckpoint = r;
     this.lastFillTime = now;

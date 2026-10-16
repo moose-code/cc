@@ -500,7 +500,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// the pot scaled climb multiplier now, bps (10_000 is 1x): how many pages of 80 credits of score `refScore` the
-    /// pot covers at the stored rate, clamped to [1, 4]. the idle climb and the ceiling's idle loosening scale by it
+    /// booked pot covers at the last fill rate, clamped to [1, 4]. the idle climb and the ceiling's idle loosening scale by it
     function climbMultiplier() external view returns (uint256) {
         return CoreLib.climbMultiplier();
     }

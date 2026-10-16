@@ -429,34 +429,74 @@ contract BidRuleTest is Fixture {
         assertEq(core.ethRate(), anchor * (10_000 + 600 * 4 * 24) * 11_000 / 1e8, "the ceiling grows per the 4x loosening");
     }
 
-    // promise: SPEC 4 decision 128: pumping the pot to inflate the bid is unprofitable
-    /// an attacker swaps 50 eth through the pool so the skim fills the pot, waits for the pot scaled climb to raise the
-    /// bid to the cap, and sells credits at the risen bid. the gain over the credits' market value is below the fee the
-    /// attacker fed the engine: the engine never pays out more than the pot, and the 3x rateCap bounds the bid
-    function test_pumpThePotAttackIsUnprofitable() public {
-        _skipSniperWindow();
-        address attacker = _user("pump.attacker");
-        uint256[] memory ids = _credits(attacker, 20);
-        // a funded pot so the pre pump bid is the market value, not a thin pot clamp
-        _potTo(1 ether);
-        uint256 market;
-        for (uint256 i; i < ids.length; ++i) market += core.bidOf(ids[i]);
-        // the eth the engine captures from the pump (the pot and reserve shares of the skim), a lower bound on the fee
-        uint256 engineBefore = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
-        _buyCoin(attacker, 50 ether);
-        uint256 feePaid = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() - engineBefore;
-        // the pumped pot runs the climb at the 4x multiplier; the bid rises to the cap
-        _warp(30 days);
-        vm.startPrank(attacker);
+    address internal pumpAttacker;
+
+    /// @dev sells all of `ids` into the eth bid for the pump attacker, returns the eth received
+    function _sellAll(uint256[] memory ids) internal returns (uint256) {
+        vm.startPrank(pumpAttacker);
         CREDITS.setApprovalForAll(address(core), true);
-        uint256 balBefore = attacker.balance;
+        uint256 before = pumpAttacker.balance;
         core.sellForEth(ids);
-        uint256 proceeds = attacker.balance - balBefore;
+        uint256 got = pumpAttacker.balance - before;
         vm.stopPrank();
-        uint256 gain = proceeds > market ? proceeds - market : 0;
-        emit log_named_uint("pump: fee the attacker fed the engine (wei)", feePaid);
-        emit log_named_uint("pump: gain over market at the risen bid (wei)", gain);
-        assertLt(gain, feePaid, "the pump gain is below the fee the attacker paid");
+        return got;
+    }
+
+    /// @dev the marginal gain of pumping the pot: the attacker holds 20 credits over a pot under one page (so without a
+    /// pump the climb runs at 1x), waits 40 minutes (far under the ~4.5 hours a 1x climb needs to reach rateCap, so the
+    /// multiplier is what moves the bid), and sells. returns the extra eth the sale earns with the pump over the same
+    /// sale without it, and the fee the attacker paid (the engine's capture of a swap skim, or the whole `fund` donation)
+    function _pumpMarginal(bool useFund, uint256 pumpEth) internal returns (uint256 gain, uint256 feePaid) {
+        pumpAttacker = _user("pump.attacker");
+        uint256[] memory ids = _credits(pumpAttacker, 20);
+        _potTo(0.1 ether);
+        uint256 snap = vm.snapshotState();
+        _warp(40 minutes);
+        uint256 noPump = _sellAll(ids);
+        vm.revertToState(snap);
+        uint256 engineBefore = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
+        if (useFund) {
+            vm.deal(pumpAttacker, pumpEth);
+            vm.prank(pumpAttacker);
+            core.fund{value: pumpEth}();
+            feePaid = pumpEth; // a `fund` donation books whole to the pot and is not recoverable
+        } else {
+            _buyCoin(pumpAttacker, pumpEth);
+            feePaid = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn() - engineBefore;
+        }
+        _warp(40 minutes);
+        uint256 withPump = _sellAll(ids);
+        gain = withPump > noPump ? withPump - noPump : 0;
+    }
+
+    // promise: SPEC 4 decision 128: pumping the pot to inflate the bid through the multiplier is unprofitable
+    /// a swap of 50 eth fills the pot through the skim and raises the multiplier from 1x to 4x; the extra the attacker
+    /// earns selling 20 credits at the faster bid, over the same sale without the pump, is below the skim the attacker fed
+    function test_pumpViaSwapIsUnprofitable() public {
+        _skipSniperWindow();
+        (uint256 gain, uint256 feePaid) = _pumpMarginal(false, 50 ether);
+        emit log_named_uint("swap pump: marginal gain over no pump (wei)", gain);
+        emit log_named_uint("swap pump: fee fed to the engine (wei)", feePaid);
+        assertLt(gain, feePaid, "the swap pump marginal gain is below the fee paid");
+    }
+
+    // promise: SPEC 4 decision 128: a fund() pump is unprofitable
+    /// a `fund` donation raises the multiplier but is not recoverable; the marginal gain is below the donation
+    function test_pumpViaFundIsUnprofitable() public {
+        _skipSniperWindow();
+        (uint256 gain, uint256 feePaid) = _pumpMarginal(true, 1 ether);
+        emit log_named_uint("fund pump: marginal gain over no pump (wei)", gain);
+        emit log_named_uint("fund pump: donation (wei)", feePaid);
+        assertLt(gain, feePaid, "the fund pump marginal gain is below the donation");
+    }
+
+    // promise: SPEC 4 decision 128: a pump during the sniper window is unprofitable
+    /// the anti sniper skim makes a swap in the window cost more, so the marginal gain stays below the fee
+    function test_pumpInSniperWindowIsUnprofitable() public {
+        (uint256 gain, uint256 feePaid) = _pumpMarginal(false, 50 ether);
+        emit log_named_uint("sniper pump: marginal gain over no pump (wei)", gain);
+        emit log_named_uint("sniper pump: fee fed to the engine (wei)", feePaid);
+        assertLt(gain, feePaid, "the sniper-window pump marginal gain is below the fee paid");
     }
 
 }

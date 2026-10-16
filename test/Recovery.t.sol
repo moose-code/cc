@@ -128,9 +128,8 @@ contract RecoveryTest is Fixture {
     /// longest peak half life (so the ceiling anchor barely decays over the window) and a large pot, neither the ceiling
     /// nor the clamp binds, so the price state is the raw climb and a later read is never below an earlier one, whatever
     /// the dump that preceded it. the per minute climb is set to its minimum so that at the 4x pot multiplier the slow
-    /// climb above the recovery level stays below the peak over the window, keeping the ceiling and the 150 percent
-    /// hourly bound off the read. the clamped price following a decaying cap down is the intended behaviour and is not
-    /// tested here
+    /// climb above the recovery level stays below the peak over the window, keeping the ceiling off the read. the
+    /// clamped price following a decaying cap down is the intended behaviour and is not tested here
     /// forge-config: default.fuzz.runs = 40
     function testFuzz_priceStateMonotoneBetweenFills(uint256 dumpSeed, uint256 recovSeed) public {
         Settings memory s = core.settings();

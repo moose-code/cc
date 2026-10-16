@@ -97,7 +97,6 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
     coreEth,
     balanceRate,
     artist,
-    climbMultiplier,
   ] = await client.multicall({
     ...mc,
     blockNumber,
@@ -125,9 +124,17 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
       { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [coreAddr] },
       { ...c, functionName: "balanceRate" },
       { ...c, functionName: "artist" },
-      { ...c, functionName: "climbMultiplier" },
     ] as const,
   });
+  // the pot scaled climb multiplier (decision 128), a tolerant read so a pre-128 Core without the view does not blank
+  // the whole snapshot. defaults to 1x (10_000 bps) when the Core does not answer
+  const [climbMultiplierRes] = await client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: true,
+    contracts: [{ ...c, functionName: "climbMultiplier" }] as const,
+  });
+  const climbMultiplier = climbMultiplierRes.status === "success" ? (climbMultiplierRes.result as bigint) : 10_000n;
   // ethPot plus the share of the unbooked fee income that the next Core._book adds (Core._income, _split)
   const income = coreEth > ethPot + ethToBuyback + ethRedeemBurn ? coreEth - (ethPot + ethToBuyback + ethRedeemBurn) : 0n;
   const toPayee = payeeOn ? (income * BigInt(settings.payeePpm)) / 1_000_000n : 0n;

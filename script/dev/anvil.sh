@@ -54,6 +54,12 @@ trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 for _ in $(seq 1 60); do cast chain-id --rpc-url "$RPC" >/dev/null 2>&1 && break; sleep 1; done
 printf '{"jsonrpc":"2.0","id":1,"method":"anvil_loadState","params":["%s"]}' "$(cat "$MASTER_DUMP")" |
   curl -s -X POST "$RPC" -H 'content-type: application/json' --data @- >/dev/null
+# the dump carries the dev wallet's nonce from the fixture block; on a fork at a later block a CREATE from the seed (the
+# mock balance token) collides with a contract the mainnet wallet has since made at that nonce address and the seed
+# reverts. pin the nonce to the upstream value at the fork block so the seed's CREATE addresses are free.
+DEV_WALLET=0xCB43078C32423F5348Cab5885911C3B5faE217F9
+UP_NONCE=$(cast nonce "$DEV_WALLET" --block "$FORK_BLOCK" --rpc-url "$FORK_URL")
+cast rpc anvil_setNonce "$DEV_WALLET" "$(cast to-hex "$UP_NONCE")" --rpc-url "$RPC" >/dev/null
 echo "master stack loaded onto chain id $CHAIN_ID at $RPC (factory 0x57bdE85D39AdE61146871029A850FC9E44EdbEd7)"
 trap - EXIT
 wait "$ANVIL_PID"

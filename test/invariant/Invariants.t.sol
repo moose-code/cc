@@ -493,8 +493,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// the eth price state ceiling now: `ceilBps` of the fill anchor grown by `idleLoosenBps` scaled by the pot
-    /// multiplier `m` per 10 idle minutes, capped by the 150 percent hourly bound within an hour of the last fill and by
-    /// `rateCap` (decision 128)
+    /// multiplier `m` per 10 idle minutes, capped by `rateCap` (decision 128)
     function _ethCap(uint256 pagesPot) internal view returns (uint256) {
         Settings memory st = core.settings();
         (uint256 lastFillRate,,) = _anchor();

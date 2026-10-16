@@ -330,8 +330,8 @@ library CoreLib {
         return price.max(peakNow);
     }
 
-    /// @notice the eth instance pages multiplier now, bps (10_000 is 1x): the pages the pot covers at the stored rate,
-    /// clamped to [1, 4]. the Core forwards its `climbMultiplier()`
+    /// @notice the eth instance pages multiplier now, bps (10_000 is 1x): the pages the booked pot covers at the last
+    /// fill rate, clamped to [1, 4]. the Core forwards its `climbMultiplier()`
     function climbMultiplier() external view returns (uint256) {
         State storage c = state();
         return _climbMulBps(c.ethPot, c.anchor.lastFillRate);
@@ -836,10 +836,12 @@ library CoreLib {
         return avail * BPS / denom;
     }
 
-    /// the balance token amount `avail` as bps of par for a refScore credit, uncapped, where `denom` is
-    /// `refScore * unit`. the pages pot of the balance instance, read by the pages multiplier; a zero denom reads as zero
+    /// the balance token amount `avail` as bps of par for a refScore credit, where `denom` is `refScore * unit`. the
+    /// pages pot of the balance instance, read by the pages multiplier; a zero denom reads as zero. `avail` is saturated
+    /// at `320 * denom` before the multiply: `m` reaches its 4x cap at `pagesPot = 320 * fillRate` and `fillRate` is at
+    /// most `BPS`, so the saturation leaves `m` unchanged and the multiply cannot overflow on a huge `available()`
     function _toBpsRaw(uint256 avail, uint256 denom) private pure returns (uint256) {
-        return denom == 0 ? 0 : avail * BPS / denom;
+        return denom == 0 ? 0 : avail.min(320 * denom) * BPS / denom;
     }
 
     /// @notice the balance token bid rate now, bps of par. the Core forwards its `balanceRate()`

@@ -15,8 +15,8 @@ library BidModel {
     using FixedPointMathLib for uint256;
 
     /// @dev the checkpoint state the price state is read from: the stored rate, the pot (the climb clamp), the pages
-    /// pot (the pot the multiplier reads: eth is the pot with the pending fee share, balance is available as bps of par
-    /// uncapped), the last fill rate, the remembered peak and the three times the Core keeps (checkpoint, last fill,
+    /// pot (the pot the multiplier reads: eth is the booked `ethPot`, balance is available as bps of par, saturated at
+    /// the 4x cap), the last fill rate, the remembered peak and the three times the Core keeps (checkpoint, last fill,
     /// peak), and the evaluation time
     struct Bid {
         uint256 r;

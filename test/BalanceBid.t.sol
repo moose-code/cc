@@ -107,6 +107,28 @@ contract BalanceBidTest is Fixture {
         assertApproxEqAbs(_balanceClimbAfterMinute(onePage * 4), floor * 10_400 / 10_000, 1, "four pages climb at the 4x cap");
     }
 
+    // promise: SPEC 4 a module answering a huge available() never overflows the pages pot or freezes setSettings
+    /// `_toBpsRaw` saturates `available()` before the bps multiply, so a module reporting `type(uint256).max` (a common
+    /// "unlimited" answer) keeps the multiplier at its 4x cap and does not panic `balanceRate`, `balanceBidOf`,
+    /// `sellForBalance` or `setSettings` (the `_balanceCheckpointNow` path that is the only way to turn the bid off)
+    function test_hugeAvailableDoesNotOverflowOrFreeze() public {
+        mod.setAvailable(type(uint256).max);
+        uint256 r = core.balanceRate();
+        assertGt(r, 0, "balanceRate answers");
+        assertLe(r, 10_000, "at most par");
+        uint256[] memory ids = _credits(user, 1);
+        assertGt(core.balanceBidOf(ids[0]), 0, "balanceBidOf answers");
+        uint256 before = xt.balanceOf(user);
+        vm.prank(user);
+        core.sellForBalance(ids);
+        assertGt(xt.balanceOf(user) - before, 0, "sellForBalance paid");
+        // setSettings checkpoints the balance instance while the bid is on; it must not revert
+        Settings memory s = core.settings();
+        s.climbPerMinBps = 123;
+        _setSettings(s);
+        assertEq(core.settings().climbPerMinBps, 123, "setSettings landed");
+    }
+
     // promise: SPEC 4 the payout never exceeds par: score * unit at the 10_000 cap
     function test_payoutNeverAbovePar() public {
         _warp(3650 days); // the rate is at the 10_000 cap
