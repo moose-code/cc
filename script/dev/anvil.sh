@@ -11,6 +11,7 @@
 #                                       (script/config/stack-master-26158000.hex) via anvil_loadState
 set -euo pipefail
 
+# STACK=master loads the fixture of launcher commit 6d099486, not the deployed hook
 STACK="${STACK:-live}"
 FORK_URL="${FORK_URL:-https://gateway.tenderly.co/public/mainnet}"
 FORK_BLOCK="${FORK_BLOCK:-26158000}"
