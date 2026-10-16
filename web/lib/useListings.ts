@@ -37,6 +37,8 @@ export interface ListingsData {
   fits: number; // of those, the purchases that fit the current spend bucket in sequence
   capped: boolean;
   bucketSeconds: number;
+  climb: ClimbState; // the eth bid's climb state at the head block, for the next-rise line
+  refScore: bigint;
 }
 
 export function useListings() {
@@ -65,7 +67,7 @@ export function useListings() {
       const gapOf = (price: bigint, bid: bigint) => (bid === 0n ? Infinity : Number((price * 1_000_000n) / bid) / 1_000_000 - 1);
       rows.sort((a, b) => gapOf(a.price, a.bid) - gapOf(b.price, b.bid));
 
-      // live read of the best rows: pot, retired, the two adapters, then bidOf / ownerOf / nftForSale per row
+      // live read of the best rows: pot, retired, the two adapters, the climb state, the multiplier, then bidOf / ownerOf / nftForSale per row
       const top = rows.slice(0, LIVE);
       const cc = { address: core!, abi: coreAbi } as const;
       const word = (i: bigint) => c.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }) });
@@ -82,6 +84,7 @@ export function useListings() {
             { ...cc, functionName: "checkpointTime" },
             { ...cc, functionName: "lastFillTime" },
             { ...cc, functionName: "spendState" },
+            { ...cc, functionName: "climbMultiplier" },
             ...top.flatMap((l) => [
               { ...cc, functionName: "bidOf", args: [l.id] },
               { address: credits, abi: creditsAbi, functionName: "ownerOf", args: [l.id] },
@@ -101,9 +104,9 @@ export function useListings() {
       const live = new Map<bigint, { bid: bigint; price: bigint }>();
       const stale = new Set<bigint>();
       top.forEach((l, i) => {
-        const bid = val<bigint>(8 + 3 * i);
-        const owner = val<Address>(9 + 3 * i);
-        const listed = val<bigint>(10 + 3 * i);
+        const bid = val<bigint>(9 + 3 * i);
+        const owner = val<Address>(10 + 3 * i);
+        const listed = val<bigint>(11 + 3 * i);
         if (bid == null || owner == null) return;
         if (l.source === "strategy") {
           if (!listed || owner.toLowerCase() !== strategy.toLowerCase()) {
@@ -131,6 +134,8 @@ export function useListings() {
         peakTime: Number((w >> 64n) & ((1n << 64n) - 1n)),
         ceilBps: s.ceilBps,
         idleLoosenBps: s.idleLoosenBps,
+        idleStepSeconds: s.idleStepSeconds,
+        climbMultiplierBps: Number(val<bigint>(8) ?? snap.climbMultiplier),
         rateCap: BigInt(s.rateCap),
         peakHalfLife: s.peakHalfLife,
         climbPerMinBps: s.climbPerMinBps,
@@ -154,7 +159,7 @@ export function useListings() {
         return { ...r, gap: gapOf(r.price, r.bid), clears, wait, eta };
       });
       out.sort((a, b) => a.gap - b.gap);
-      return { rows: out, osMax, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds };
+      return { rows: out, osMax, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds, climb: state, refScore };
     },
   });
 }
