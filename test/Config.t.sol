@@ -93,6 +93,14 @@ contract ConfigTest is Fixture {
         assertEq(f.settings.keeperMaxBaseFee, 5 gwei);
         assertTrue(f.settings.redeemOn);
         assertEq(f.settings.balanceBidMarginBps, 1_000);
+        assertEq(SettingsFields.N, 34);
+        assertEq(abi.encode(f.settings).length, 34 * 32);
+        assertEq(f.settings.spendCapBps, 100);
+        assertEq(f.settings.bucketSeconds, 60);
+        assertEq(f.settings.balanceBidCapBps, 10_000);
+        assertEq(f.settings.idleStepSeconds, 600);
+        assertEq(f.settings.sniperSeconds, 1800);
+        assertEq(f.sale.anchorMoveBps, 5_000);
         assertEq(f.payee, v2.owner);
         // the stack addresses of the shipped file are the record of the live stack, the factory owner is the config owner
         assertEq(unsetFields(f).length, 0, "the shipped file leaves nothing unset");
@@ -162,10 +170,10 @@ contract ConfigTest is Fixture {
         this.requireExt(c);
         c.mevModule = lc.mevModule;
         this.requireExt(c);
-        c.rateStart = 1e13 - 1;
+        c.rateStart = 0;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "rateStart"));
         this.requireExt(c);
-        c.rateStart = 1e18 + 1;
+        c.rateStart = uint256(type(uint64).max) + 1;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "rateStart"));
         this.requireExt(c);
     }
@@ -212,16 +220,37 @@ contract ConfigTest is Fixture {
     function test_preflightPinsTheLiveCodeHashes() public {
         address d2 = _funded();
         address[9] memory at = [
-            lc.stack.hook, lc.stack.factory, lc.stack.locker, lc.stack.escrow, lc.mevModule, v2.tokenDeployer,
-            v2.allowlist, v2.controller, v2.burnRouter
+            lc.stack.hook,
+            lc.stack.factory,
+            lc.stack.locker,
+            lc.stack.escrow,
+            lc.mevModule,
+            v2.tokenDeployer,
+            v2.allowlist,
+            v2.controller,
+            v2.burnRouter
         ];
         bytes32[9] memory want = [
-            V2_CODEHASH_HOOK, V2_CODEHASH_FACTORY, V2_CODEHASH_LOCKER, V2_CODEHASH_ESCROW, V2_CODEHASH_MEV_MODULE,
-            V2_CODEHASH_TOKEN_DEPLOYER, V2_CODEHASH_ALLOWLIST, V2_CODEHASH_FEE_CONTROLLER, V2_CODEHASH_BURN_ROUTER
+            V2_CODEHASH_HOOK,
+            V2_CODEHASH_FACTORY,
+            V2_CODEHASH_LOCKER,
+            V2_CODEHASH_ESCROW,
+            V2_CODEHASH_MEV_MODULE,
+            V2_CODEHASH_TOKEN_DEPLOYER,
+            V2_CODEHASH_ALLOWLIST,
+            V2_CODEHASH_FEE_CONTROLLER,
+            V2_CODEHASH_BURN_ROUTER
         ];
         string[9] memory name = [
-            "hook", "factory", "locker", "escrow", "mev module", "token deployer", "extension allowlist",
-            "protocol fee controller", "burn router"
+            "hook",
+            "factory",
+            "locker",
+            "escrow",
+            "mev module",
+            "token deployer",
+            "extension allowlist",
+            "protocol fee controller",
+            "burn router"
         ];
         for (uint256 i; i < 9; ++i) {
             assertEq(at[i].codehash, want[i], name[i]);
@@ -297,7 +326,9 @@ contract ConfigTest is Fixture {
             c.seaportRecipients = new address[](1);
             c.seaportRecipients[0] = system[i];
             _pre(c, d2);
-            assertEq(_failedNames(), "seaport recipients: none is the Core, controller, owner, payee or a stack address");
+            assertEq(
+                _failedNames(), "seaport recipients: none is the Core, controller, owner, payee or a stack address"
+            );
         }
         // the Core address depends on the opening rate and the salt `_pre` substitutes
         c.rateStart = c.settings.rateCap / 3;
@@ -583,7 +614,11 @@ contract ConfigTest is Fixture {
             assertFalse(metadataRowPasses(okImage, marked[i]), marked[i]);
         }
         // a cid or a description that holds the letters of a short marker passes
-        assertTrue(metadataRowPasses("ipfs://bafybeitbdtodoabcdefghijklmnopqrstuvwxyz234567abcdefghij", "todo list of the engine: tbd later"));
+        assertTrue(
+            metadataRowPasses(
+                "ipfs://bafybeitbdtodoabcdefghijklmnopqrstuvwxyz234567abcdefghij", "todo list of the engine: tbd later"
+            )
+        );
         // the image must carry a scheme with content past it, matched on the raw bytes that go on chain
         string[8] memory badScheme = [
             "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
@@ -658,7 +693,10 @@ contract ConfigTest is Fixture {
         c = lc;
         c.owner = creator;
         postflightAs(c, address(core), address(0));
-        assertEq(_failedNames(), "core: owner, coin: admin is the config owner, coin: metadata renderer is the CoinRenderer of the config");
+        assertEq(
+            _failedNames(),
+            "core: owner, coin: admin is the config owner, coin: metadata renderer is the CoinRenderer of the config"
+        );
 
         c = lc;
         c.bountyBps = 8000;
@@ -669,7 +707,10 @@ contract ConfigTest is Fixture {
         c.stack.escrow = address(0xE5C);
         postflightAs(c, address(core), address(0));
         // the escrow is not on the coin allowlist on master, so only the Core immutable and the factory record fail
-        assertEq(_failedNames(), "core: stack equals the config, factory: deploymentInfo names the coin, hook, locker, mev module, escrow and pool of the config");
+        assertEq(
+            _failedNames(),
+            "core: stack equals the config, factory: deploymentInfo names the coin, hook, locker, mev module, escrow and pool of the config"
+        );
 
         postflightAs(lc, address(0xBEEF), owner);
         assertEq(_failedNames(), "code: core");
@@ -701,26 +742,35 @@ contract ConfigTest is Fixture {
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     // promise: the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[29] memory lo = SettingsFields.lo();
-        uint256[29] memory hi = SettingsFields.hi();
-        bytes32[29] memory names = SettingsFields.names();
+        uint256[34] memory lo = SettingsFields.lo();
+        uint256[34] memory hi = SettingsFields.hi();
+        bytes32[34] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
-            Settings memory s = Mainnet.defaultSettings();
-            // the top itself (the fields bound by another field start from a free partner)
-            // climbPerMinBps at its top needs recoveryClimbPerMinBps raised to stay at or above it
-            if (i == 2) s.recoveryClimbPerMinBps = 1_000;
-            SettingsFields.set(s, i, hi[i]);
-            assertEq(SettingsBounds.firstViolation(s), bytes32(0), "the top edge is inside");
-            // the two switches take 0 or 1, nothing is out of bounds
+            for (uint256 edge; edge < 2; ++edge) {
+                Settings memory s = Mainnet.defaultSettings();
+                uint256 v = edge == 0 ? lo[i] : hi[i];
+                if (i == 2) s.recoveryClimbPerMinBps = type(uint16).max;
+                if (i == 7 && edge == 0) s.climbPerMinBps = 1;
+                if (i == 16) (s.keeperFee, s.keeperMaxBaseFee) = (0, 0);
+                if (i == 17 || i == 18) s.buybackSlice = type(uint128).max;
+                if (i == 26) s.saleToOperatorBps = 0;
+                if (i == 27) s.saleToArtistBps = 0;
+                SettingsFields.set(s, i, v);
+                assertEq(SettingsBounds.firstViolation(s), bytes32(0), "inclusive bound accepted");
+            }
             if (i == 11 || i == 12) continue;
-            s = Mainnet.defaultSettings();
+            Settings memory s = Mainnet.defaultSettings();
             SettingsFields.set(s, i, hi[i] + 1);
-            assertEq(SettingsBounds.firstViolation(s), names[i], "above the top");
-            // below the bottom, for the fields that have one
+            if (SettingsFields.get(s, i) == hi[i] + 1) {
+                if (i == 26) s.saleToOperatorBps = 0;
+                if (i == 27) s.saleToArtistBps = 0;
+                bytes32 field = i == 26 ? bytes32("saleToOperatorBps") : names[i];
+                assertEq(SettingsBounds.firstViolation(s), field, "above the bound");
+            }
             if (lo[i] == 0) continue;
             s = Mainnet.defaultSettings();
             SettingsFields.set(s, i, lo[i] - 1);
-            assertEq(SettingsBounds.firstViolation(s), names[i], "below the bottom");
+            assertEq(SettingsBounds.firstViolation(s), names[i], "below the bound");
         }
     }
 
@@ -729,7 +779,7 @@ contract ConfigTest is Fixture {
     function test_settingsRowsAndGuard() public {
         address d2 = _funded();
         LaunchConfig memory c = lc;
-        c.settings.saleFloorBps = 999;
+        c.settings.bucketSeconds = 0;
         _pre(c, d2);
         assertEq(_failedNames(), "settings inside the bounds");
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "settings"));
@@ -739,7 +789,7 @@ contract ConfigTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "settings"));
         this.requireExt(c);
         c = lc;
-        c.settings.dropFloorBps = 4_999;
+        c.settings.dropFloorBps = 10_001;
         vm.expectRevert(abi.encodeWithSelector(ConfigUnset.selector, "settings"));
         this.requireExt(c);
         // the sale settings of the controller have their own row and guard
@@ -838,7 +888,11 @@ contract ConfigTest is Fixture {
         assertEq(
             _rowDetail(row),
             string.concat(
-                "rateStart ", vm.toString(c.rateStart), " rateCap ", vm.toString(c.settings.rateCap), " ratio x10000 60000"
+                "rateStart ",
+                vm.toString(c.rateStart),
+                " rateCap ",
+                vm.toString(c.settings.rateCap),
+                " ratio x10000 60000"
             )
         );
         // rateCap changed, rateStart unchanged
@@ -848,27 +902,24 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), row);
     }
 
-    /// the rate bounds rows fail on their own: a 3 times pair keeps the ratio row passing while rateStart or rateCap is
-    /// out of its bounds. rateStart bounds are 1e13 to 1e18 and the settings accept the same range for rateCap, so a
-    /// 3 times pair has a rateStart inside its bounds only up to 3.33e17
-    // promise: the rate bounds rows fail on their own: a 3 times pair keeps the ratio row passing while rateStart or rateCap is out of its bounds
-    function test_preflightRateBoundsFailWithoutTheRatioRow() public {
+    // promise: preflight rejects zero rateStart and accepts the full uint64 rate range
+    function test_preflightRateBoundsRejectZeroAndAcceptTypedExtrema() public {
         address d2 = _funded();
         LaunchConfig memory c = lc;
         c.salt = keccak256("preflight");
-        // rateStart 1e13 - 1 is below the minimum, 3 times it is inside the settings bounds for rateCap
-        c.rateStart = 1e13 - 1;
-        c.settings.rateCap = uint64(3 * c.rateStart);
+        c.rateStart = 0;
+        c.settings.rateCap = 1;
         preflight(c, d2);
-        assertEq(_failedNames(), "rateStart in bounds and at most rateCap");
-        assertTrue(_warnClean("rateCap is 3 times rateStart"), "the ratio row passes");
-        // rateStart 3.4e17 is inside its bounds, 3 times it is 1.02e18, above the settings bound for rateCap
-        c.rateStart = 3.4e17;
-        c.settings.rateCap = uint64(3 * c.rateStart);
-        assertTrue(rateInBounds(c), "rateStart bounds row passes");
-        preflight(c, d2);
-        assertEq(_failedNames(), "settings inside the bounds");
-        assertTrue(_warnClean("rateCap is 3 times rateStart"), "the ratio row passes");
+        assertFalse(_warnClean("rateStart in bounds and at most rateCap"), "zero rateStart fails the rate row");
+        c.rateStart = uint256(type(uint64).max) + 1;
+        c.settings.rateCap = type(uint64).max;
+        assertFalse(rateInBounds(c), "rateStart cannot exceed its storage width");
+        c.rateStart = 1;
+        c.settings.rateCap = 3;
+        assertTrue(rateInBounds(c), "one wei rateStart is valid");
+        c.rateStart = type(uint64).max;
+        c.settings.rateCap = type(uint64).max;
+        assertTrue(rateInBounds(c), "uint64 max rateStart is valid");
     }
 
     /// @dev preflight of a config whose opening bid is the fixture's: the fixture opens at 1.732e15 under the launch cap, a

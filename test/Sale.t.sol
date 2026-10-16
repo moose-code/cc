@@ -239,7 +239,6 @@ contract SaleFloorTest is SaleBase {
         assertEq(_buy(buyer, sid), cost * 20_000 / 10_000);
         assertEq(STATEMENTS.ownerOf(sid), buyer);
     }
-
 }
 
 contract SaleBuyTest is SaleShapeBase {
@@ -258,7 +257,9 @@ contract SaleBuyTest is SaleShapeBase {
             uint256 snap = vm.snapshotState();
             _buybackBps(shares[i]);
             (uint256 sid, uint256 price) = _buyAt(10 * H);
-            assertEq(price, _cost(sid) * 8_750 / 10_000, "10 hours down the 12 hour line (150 to 75 percent): 87.5 percent");
+            assertEq(
+                price, _cost(sid) * 8_750 / 10_000, "10 hours down the 12 hour line (150 to 75 percent): 87.5 percent"
+            );
             (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
             uint256 n = core.heldStatements().length;
             (uint256 toArtist, uint256 toOperator, uint256 rest) = _saleCuts(price);
@@ -308,7 +309,6 @@ contract SaleBuyTest is SaleShapeBase {
         assertEq(bal1, bal0);
         assertEq(STATEMENTS.ownerOf(sid), address(core));
     }
-
 }
 
 contract SaleSellToTest is SaleBase {
@@ -449,7 +449,8 @@ contract SaleSettingsTest is SaleBase {
             startCapBps: lc.sale.startCapBps,
             decayHours: lc.sale.decayHours,
             anchorHalfLife: lc.sale.anchorHalfLife,
-            anchorMinCost: lc.sale.anchorMinCost
+            anchorMinCost: lc.sale.anchorMinCost,
+            anchorMoveBps: lc.sale.anchorMoveBps
         });
     }
 
@@ -464,6 +465,7 @@ contract SaleSettingsTest is SaleBase {
         assertEq(lc.sale.decayHours, 12);
         assertEq(lc.sale.anchorHalfLife, 7 days);
         assertEq(lc.sale.anchorMinCost, 0.1 ether);
+        assertEq(lc.sale.anchorMoveBps, 5_000);
         assertEq(abi.encode(Mainnet.defaultSale()), abi.encode(lc.sale), "the launch sale");
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.startCapBps(), 100_000);
@@ -474,6 +476,7 @@ contract SaleSettingsTest is SaleBase {
         assertEq(core.artist(), creator);
         assertEq(ctl.anchorHalfLife(), 7 days);
         assertEq(ctl.anchorMinCost(), 0.1 ether);
+        assertEq(ctl.anchorMoveBps(), 5_000);
         assertEq(ctl.anchorBps(), 10_000, "the anchor starts at the cost");
         assertEq(ctl.storedAnchorBps(), 10_000);
         assertEq(ctl.anchorTime(), block.timestamp);
@@ -482,11 +485,11 @@ contract SaleSettingsTest is SaleBase {
 
     /// every upper edge of the sale settings, and every lower edge
     function _hi() internal pure returns (Sale memory) {
-        return Sale(40_000, 200_000, 720, 90 days, 10 ether);
+        return Sale(type(uint16).max, type(uint32).max, type(uint16).max, type(uint32).max, type(uint128).max, 10_000);
     }
 
     function _lo() internal pure returns (Sale memory) {
-        return Sale(10_000, 10_000, 1, 1 days, 0);
+        return Sale(10_000, 10_000, 1, 1, 0, 0);
     }
 
     function _saleBad(Sale memory s, bytes32 field) internal {
@@ -499,62 +502,48 @@ contract SaleSettingsTest is SaleBase {
         ctl.setCredit(c);
     }
 
-    // promise: INTEGRATION BadSetting on the controller setters
+    // promise: sale setters accept typed extrema, preserve their ordering and reject zero divisors
     function test_settings_boundsOfEverySetter() public {
+        uint256 sid = _composeOnce().sid;
+        uint256 ref = ctl.referenceOf(sid);
         vm.startPrank(owner);
-        // every upper edge is accepted in one call, then every lower edge
         ctl.setSale(_hi());
+        ctl.setAnchorBps(type(uint32).max);
+        assertEq(ctl.startBps(), type(uint32).max, "the start cap clamps maximum markup times anchor");
+        assertEq(ctl.priceOf(sid), ref * type(uint32).max / 10_000, "max settings still price a real statement");
+        assertEq(ctl.anchorMinCost(), type(uint128).max);
+        assertEq(ctl.anchorHalfLife(), type(uint32).max);
+        assertEq(ctl.markupBps(), type(uint16).max);
+        assertEq(ctl.decayHours(), type(uint16).max);
+        assertEq(ctl.anchorMoveBps(), 10_000);
         ctl.setSale(_lo());
-        // one field past its edge, the others valid
-        Sale memory s = _hi();
-        s.markupBps = 40_001;
-        _saleBad(s, "markupBps");
-        s = _hi();
-        s.startCapBps = 39_999;
-        _saleBad(s, "startCapBps");
-        s.startCapBps = 200_001;
-        _saleBad(s, "startCapBps");
-        s = _lo();
+        assertEq(ctl.anchorBps(), 10_000, "lowering the cap clamps the live anchor");
+        assertEq(ctl.priceOf(sid), ref, "minimum valid settings still price a real statement");
+        Sale memory s = _lo();
         s.markupBps = 9_999;
         _saleBad(s, "markupBps");
-        s = _hi();
-        s.decayHours = 721;
-        _saleBad(s, "decayHours");
+        s = _lo();
+        s.startCapBps = s.markupBps - 1;
+        _saleBad(s, "startCapBps");
         s = _lo();
         s.decayHours = 0;
         _saleBad(s, "decayHours");
         s = _lo();
-        s.anchorHalfLife = 1 days - 1;
+        s.anchorHalfLife = 0;
         _saleBad(s, "anchorHalfLife");
-        s = _hi();
-        s.anchorHalfLife = 90 days + 1;
-        _saleBad(s, "anchorHalfLife");
-        s = _hi();
-        s.anchorMinCost = 10 ether + 1;
-        _saleBad(s, "anchorMinCost");
-        s.anchorMinCost = type(uint128).max;
-        _saleBad(s, "anchorMinCost");
-        // anchorBps 10_000 to the cap
-        ctl.setSale(_hi());
+        s = _lo();
+        s.anchorMoveBps = 10_001;
+        _saleBad(s, "anchorMoveBps");
         vm.expectRevert(_bad("anchorBps"));
         ctl.setAnchorBps(9_999);
-        ctl.setAnchorBps(10_000);
-        ctl.setAnchorBps(200_000);
         vm.expectRevert(_bad("anchorBps"));
-        ctl.setAnchorBps(200_001);
+        ctl.setAnchorBps(10_001);
         vm.stopPrank();
-        assertEq(ctl.anchorMinCost(), 10 ether);
-        assertEq(ctl.anchorHalfLife(), 90 days);
-        assertEq(ctl.markupBps(), 40_000);
-        assertEq(ctl.startCapBps(), 200_000);
-        assertEq(ctl.decayHours(), 720);
-        assertEq(ctl.anchorBps(), 200_000);
-        assertEq(ctl.startBps(), 200_000, "800_000 is held at the cap");
     }
 
     // promise: SPEC 1 every economic number is an owner setting, effective at once
     function test_settings_eventsAndValues() public {
-        Sale memory s = Sale(12_000, 150_000, 24, 3 days, 0.25 ether);
+        Sale memory s = Sale(12_000, 150_000, 24, 3 days, 0.25 ether, 5_000);
         CreditSale memory c = _creditSale();
         vm.startPrank(owner);
         vm.expectEmit(address(ctl));
@@ -595,19 +584,15 @@ contract SaleSettingsTest is SaleBase {
         }
         assertEq(ctl.anchorHalfLife(), 7 days);
         assertEq(ctl.anchorMinCost(), 0.1 ether);
+        assertEq(ctl.anchorMoveBps(), 5_000);
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.anchorBps(), 10_000);
     }
 
-    // promise: SPEC 2 controller constructor bounds
+    // promise: controller construction enforces divisors and ordering, accepting every typed upper edge
     function test_settings_constructorBounds() public {
         Sale memory s = _fresh();
         s.markupBps = 9_999;
-        vm.expectRevert(_bad("markupBps"));
-        Prod.newController(address(core), s);
-        s = _fresh();
-        s.markupBps = 40_001;
-        s.startCapBps = 200_000;
         vm.expectRevert(_bad("markupBps"));
         Prod.newController(address(core), s);
         s = _fresh();
@@ -615,41 +600,30 @@ contract SaleSettingsTest is SaleBase {
         vm.expectRevert(_bad("startCapBps"));
         Prod.newController(address(core), s);
         s = _fresh();
-        s.startCapBps = 200_001;
-        vm.expectRevert(_bad("startCapBps"));
-        Prod.newController(address(core), s);
-        s = _fresh();
         s.decayHours = 0;
         vm.expectRevert(_bad("decayHours"));
         Prod.newController(address(core), s);
         s = _fresh();
-        s.decayHours = 721;
-        vm.expectRevert(_bad("decayHours"));
-        Prod.newController(address(core), s);
-        s = _fresh();
-        s.anchorHalfLife = 1 days - 1;
+        s.anchorHalfLife = 0;
         vm.expectRevert(_bad("anchorHalfLife"));
         Prod.newController(address(core), s);
         s = _fresh();
-        s.anchorHalfLife = 90 days + 1;
-        vm.expectRevert(_bad("anchorHalfLife"));
+        s.anchorMoveBps = 10_001;
+        vm.expectRevert(_bad("anchorMoveBps"));
         Prod.newController(address(core), s);
-        s = _fresh();
-        s.anchorMinCost = 10 ether + 1;
-        vm.expectRevert(_bad("anchorMinCost"));
-        Prod.newController(address(core), s);
-        s = _fresh();
-        s.anchorMinCost = 10 ether;
-        assertEq(Prod.newController(address(core), s).anchorMinCost(), 10 ether);
-        s = _fresh();
-        s.anchorMinCost = 0;
-        assertEq(Prod.newController(address(core), s).anchorMinCost(), 0);
-        s = _fresh();
-        IControllerV1 c = Prod.newController(address(core), s);
+        IControllerV1 c = Prod.newController(address(core), _hi());
         assertEq(c.anchorBps(), 10_000);
-        assertEq(c.anchorHalfLife(), 7 days);
+        assertEq(c.anchorHalfLife(), type(uint32).max);
+        assertEq(c.markupBps(), type(uint16).max);
+        assertEq(c.startCapBps(), type(uint32).max);
+        assertEq(c.decayHours(), type(uint16).max);
+        assertEq(c.anchorMinCost(), type(uint128).max);
+        assertEq(c.anchorMoveBps(), 10_000);
+        c = Prod.newController(address(core), _lo());
+        assertEq(c.anchorHalfLife(), 1);
+        assertEq(c.anchorMinCost(), 0);
+        assertEq(c.anchorMoveBps(), 0);
     }
-
 }
 
 contract SaleAnchorTest is SaleShapeBase {
@@ -796,6 +770,54 @@ contract SaleAnchorTest is SaleShapeBase {
         assertEq(ctl.startBps(), 18_750);
     }
 
+    // promise: disabling anchor movement leaves both its stored value and decay checkpoint unchanged
+    function test_anchor_zeroMoveDoesNotRestartDecay() public {
+        uint256 sid = _composeOnce().sid;
+        Sale memory s = _sale();
+        s.anchorMoveBps = 0;
+        vm.prank(owner);
+        ctl.setSale(s);
+        _anchor(12_000);
+        uint256 checkpoint = ctl.anchorTime();
+        vm.warp(block.timestamp + 1 hours);
+        uint256 current = ctl.anchorBps();
+        uint256 price = ctl.priceOf(sid);
+        assertGt(price * 10_000 / ctl.referenceOf(sid), current, "qualifying upward sale");
+        vm.recordLogs();
+        _pay(buyer, sid, price);
+        assertEq(_moved(vm.getRecordedLogs()), 0);
+        assertEq(ctl.anchorBps(), current);
+        assertEq(ctl.storedAnchorBps(), 12_000);
+        assertEq(ctl.anchorTime(), checkpoint);
+    }
+
+    // promise: anchor movement takes the configured share of an odd upward gap, rounding the movement down
+    function test_anchor_oddGapRoundsMovementDownAndFullMoveReachesSale() public {
+        uint256 sid = _composeOnce().sid;
+        Sale memory s = _sale();
+        s.markupBps = 15_001;
+        s.anchorMoveBps = 5_000;
+        vm.prank(owner);
+        ctl.setSale(s);
+        _age(sid, 0);
+        uint256 price = ctl.priceOf(sid);
+        uint256 ref = ctl.referenceOf(sid);
+        uint256 saleBps = (price * 10_000 + ref - 1) / ref;
+        assertEq(saleBps, 15_001, "sale bps round the ask back up");
+        _pay(buyer, sid, price);
+        assertEq(ctl.anchorBps(), 12_500, "half of the 5,001 gap rounds down");
+        sid = _another();
+        s.anchorMoveBps = 10_000;
+        vm.prank(owner);
+        ctl.setSale(s);
+        _age(sid, 0);
+        price = ctl.priceOf(sid);
+        ref = ctl.referenceOf(sid);
+        saleBps = (price * 10_000 + ref - 1) / ref;
+        _pay(buyer, sid, price);
+        assertEq(ctl.anchorBps(), saleBps, "full movement reaches the observed sale bps");
+    }
+
     // promise: SPEC 1 the start cap bounds the anchor
     /// a cap lowered below the anchor resets the anchor to the cap
     function test_anchor_neverPassesTheCap() public {
@@ -879,12 +901,12 @@ contract SaleDecayTest is SaleShapeBase {
     function test_decay_oneCallReachesAnyValidCombination() public {
         Sale memory s = _sale();
         vm.startPrank(owner);
-        s.markupBps = 40_000;
-        s.startCapBps = 200_000;
-        s.decayHours = 720;
+        s.markupBps = type(uint16).max;
+        s.startCapBps = type(uint32).max;
+        s.decayHours = type(uint16).max;
         ctl.setSale(s);
-        assertEq(ctl.startCapBps(), 200_000);
-        assertEq(ctl.decayHours(), 720);
+        assertEq(ctl.startCapBps(), type(uint32).max);
+        assertEq(ctl.decayHours(), type(uint16).max);
         s.markupBps = 10_000;
         s.startCapBps = 10_000;
         s.decayHours = 1;
@@ -906,11 +928,11 @@ contract SaleDecayTest is SaleShapeBase {
     {
         vm.warp(block.timestamp + warp);
         stub = new StatementInfoStub(owner);
-        fuzzFloor = uint16(bound(x[2], 1_000, 10_000));
+        fuzzFloor = uint16(bound(x[2], 0, type(uint16).max));
         stub.setSaleFloorBps(fuzzFloor);
-        k.markupBps = uint16(bound(x[0], 10_000, 40_000));
-        k.startCapBps = uint32(bound(x[1], k.markupBps, 200_000));
-        k.decayHours = uint16(bound(x[3], 1, 720));
+        k.markupBps = uint16(bound(x[0], fuzzFloor > 10_000 ? fuzzFloor : 10_000, type(uint16).max));
+        k.startCapBps = uint32(bound(x[1], k.markupBps, type(uint32).max));
+        k.decayHours = uint16(bound(x[3], 1, type(uint16).max));
         k.anchorHalfLife = 7 days;
         c = Prod.newController(address(stub), k);
         anchor = bound(x[6], 10_000, k.startCapBps);
@@ -944,7 +966,6 @@ contract SaleDecayTest is SaleShapeBase {
         assertEq(p1, _closedForm(c, k, cost, a1));
         assertEq(p2, _closedForm(c, k, cost, age2));
     }
-
 }
 
 /// a recipient that refuses eth
