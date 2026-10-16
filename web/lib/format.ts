@@ -1,6 +1,19 @@
 import { formatUnits } from "viem";
 import { chain } from "./config";
 
+export const BALANCE_SYMBOL = "$BALANCE";
+
+export interface BalanceTokenInfo {
+  address: `0x${string}`;
+  decimals: number;
+}
+
+// A balance token amount with its symbol; raw units until the token is read.
+export function formatBalance(v: bigint, info?: BalanceTokenInfo): string {
+  const n = info ? Number(formatUnits(v, info.decimals)).toLocaleString("en-US", { maximumFractionDigits: 6 }) : undefined;
+  return n != null ? `${n} ${BALANCE_SYMBOL}` : `${v} ${BALANCE_SYMBOL} units`;
+}
+
 // "+58%" / "-12%" for a percentage number.
 export function signedPct(n: number): string {
   const r = Math.round(n);
@@ -112,4 +125,13 @@ export function agoLabel(s: number): string {
 // relative time from a unix seconds timestamp; `now` is chain time (useNow).
 export function relTime(ts: number, now: number): string {
   return agoLabel(now - ts);
+}
+
+// On-chain credit score (ten-thousandths of a point) as the displayed rating: score / 10,000.
+// 4,330,000 -> "433", 1,324,012 -> "132.4", 800,000 -> "80". One decimal under 1,000 points, none above;
+// trailing ".0" dropped; thousands separated.
+export function rating(score: bigint | number): string {
+  const v = Number(score) / 10_000;
+  const s = v >= 1000 ? Math.round(v).toString() : v.toFixed(1).replace(/\.0$/, "");
+  return s.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }

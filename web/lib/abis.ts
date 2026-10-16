@@ -16,12 +16,16 @@ export const coreAbi = parseAbi([
   "function balanceRate() view returns (uint256)",
   "function balanceBidOf(uint256 id) view returns (uint256)",
   "function floorRate() view returns (uint256)",
+  "function rateAtCheckpoint() view returns (uint256)",
+  "function checkpointTime() view returns (uint64)",
+  "function lastFillTime() view returns (uint64)",
   "function climbMultiplier() view returns (uint256)",
   "function ethPot() view returns (uint256)",
   "function ethToBuyback() view returns (uint256)",
   "function ethRedeemBurn() view returns (uint256)",
   "function payee() view returns (address)",
   "function artist() view returns (address)",
+  "function creditCostToPotBps() view returns (uint16)",
   "function payeeOn() view returns (bool)",
   "function pileSize() view returns (uint256)",
   "function pilePage(uint256 startAfter, uint256 n) view returns (uint256[] ids)",
@@ -32,10 +36,13 @@ export const coreAbi = parseAbi([
   "function ratingOf(uint256 sid) view returns (uint256)",
   "function composerOf(uint256 sid) view returns (address)",
   "function settings() view returns ((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 refScore, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps, uint16 climbMultiplierCapBps, uint16 spendCapBps, uint32 bucketSeconds, uint32 balanceBidCapBps, uint32 idleStepSeconds, uint32 sniperSeconds))",
+  "function allowedAdapter(address adapter) view returns (bool)",
+  "function buyListing(address adapter, uint256 id, bytes params)",
   "function paused() view returns (bool)",
   "function retired() view returns (bool)",
   "function chosenComposeOn() view returns (bool)",
   "function minCcToChoose() view returns (uint96)",
+  "function spendState() view returns (uint64 bucket, uint128 budget, uint128 spent)",
   "error SpendCapReached(uint256 spent, uint256 cost, uint256 budget)",
   // actions
   "function sellForEth(uint256[] ids, uint256 minOut)",
@@ -66,6 +73,13 @@ export const controllerAbi = parseAbi([
   "function nextPage() view returns (bool ready, uint256[80] ids, uint8 format)",
   "function pointRate() view returns (uint256)",
   "function valueOf(uint256 points) view returns (uint256)",
+  "function markupBps() view returns (uint16)",
+  "function startCapBps() view returns (uint32)",
+  "function decayHours() view returns (uint16)",
+  "function anchorBps() view returns (uint32)",
+  "function startBps() view returns (uint256)",
+  "function creditFloorBps() view returns (uint16)",
+  "function creditStartBps() view returns (uint32)",
   // actions
   "function buy(uint256 sid) payable",
   "function buyCredit(uint256 id) payable",
@@ -75,8 +89,15 @@ export const controllerAbi = parseAbi([
 // Credits: the holdings read and the Core approval.
 export const creditsAbi = parseAbi([
   "function tokensOf(address owner) view returns (uint256[])",
+  "function ownerOf(uint256 id) view returns (address)",
   "function isApprovedForAll(address owner, address operator) view returns (bool)",
   "function setApprovalForAll(address operator, bool approved)",
+]);
+
+// Statements: the mint counter and the owner of a statement.
+export const statementsAbi = parseAbi([
+  "function supply() view returns (uint256)",
+  "function ownerOf(uint256 id) view returns (address)",
 ]);
 
 export const erc20Abi = parseAbi([
@@ -143,3 +164,45 @@ export const engineEventsAbi = parseAbi([
 
 // The coin burn is Transfer(core, address(0), amount); the balance token paid to a seller is Transfer(core, seller, amount).
 export const transferEventAbi = parseAbi(["event Transfer(address indexed from, address indexed to, uint256 value)"]);
+
+export const strategyAbi = parseAbi([
+  "event NFTBoughtByProtocol(uint256 indexed tokenId, uint256 purchasePrice, uint256 listPrice)",
+  "event NFTSoldByProtocol(uint256 indexed tokenId, uint256 price, address buyer)",
+  "function nftForSale(uint256 id) view returns (uint256)",
+]);
+
+export const seaportAdapterAbi = parseAbi(["function allowedRecipient(address recipient) view returns (bool)"]);
+
+// Seaport BasicOrderParameters (src/interfaces/ISeaport.sol), the `params` of SeaportBasicAdapter.
+export const basicOrderParameters = [
+  {
+    type: "tuple",
+    components: [
+      { name: "considerationToken", type: "address" },
+      { name: "considerationIdentifier", type: "uint256" },
+      { name: "considerationAmount", type: "uint256" },
+      { name: "offerer", type: "address" },
+      { name: "zone", type: "address" },
+      { name: "offerToken", type: "address" },
+      { name: "offerIdentifier", type: "uint256" },
+      { name: "offerAmount", type: "uint256" },
+      { name: "basicOrderType", type: "uint8" },
+      { name: "startTime", type: "uint256" },
+      { name: "endTime", type: "uint256" },
+      { name: "zoneHash", type: "bytes32" },
+      { name: "salt", type: "uint256" },
+      { name: "offererConduitKey", type: "bytes32" },
+      { name: "fulfillerConduitKey", type: "bytes32" },
+      { name: "totalOriginalAdditionalRecipients", type: "uint256" },
+      {
+        name: "additionalRecipients",
+        type: "tuple[]",
+        components: [
+          { name: "amount", type: "uint256" },
+          { name: "recipient", type: "address" },
+        ],
+      },
+      { name: "signature", type: "bytes" },
+    ],
+  },
+] as const;

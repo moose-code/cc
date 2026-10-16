@@ -1,0 +1,40 @@
+app = "cc-indexer-mainnet"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Chain, schema, record addresses and RPC caps come from env/mainnet.env and the deployment record through
+# `fly deploy -e`. DATABASE_URL and PONDER_RPC_URL_1 are Fly secrets.
+[env]
+  NODE_ENV = "production"
+  PORT = "42069"
+  PONDER_LOG_LEVEL = "info"
+  PONDER_MAX_THREADS = "1"
+
+[http_service]
+  internal_port = 42069
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 30
+    soft_limit = 15
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "10s"
+    grace_period = "60s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

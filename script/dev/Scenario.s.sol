@@ -151,14 +151,17 @@ contract Scenario is Script {
 
     // ------------------------------------------------------------------ fill-a: sell credits into the eth bid
 
-    /// @dev a long idle loosens the bid toward its cap, so an 80 credit fill could cost more than the pot holds. the
-    /// owner restates the bid at the launch rate, then coin buys and `book` top the pot up to the target
-    function _primeBid() internal {
-        uint256 launchRate = core.RATE_START();
+    /// @dev a long idle loosens the bid toward its cap, so an `n` credit fill could cost more than the pot holds. the
+    /// owner restates the bid at the launch rate, then coin buys and `book` top the pot to a target sized for `n`
+    /// credits at that rate. the pot is the bid's clamp and feeds the climb multiplier, so the target scales with
+    /// `rateStart` rather than a flat value: `rateStart * n` is one credit of score refScore per credit, times 1.4 for
+    /// headroom over scores above refScore and the climb between the rate reset and the fill.
+    function _primeBid(uint256 n) internal {
+        uint256 launchRate = core.RATE_START();   // rateStart, the opening eth bid from the launch config
         vm.broadcast(OWNER);
         core.setRate(launchRate);
-        uint256 target = 1 ether;
-        for (uint256 i; i < 25 && core.ethPot() < target; ++i) {
+        uint256 target = launchRate * n * 14 / 10;
+        for (uint256 i; i < 120 && core.ethPot() < target; ++i) {
             _buyCoin();
             vm.broadcast(KEEPER);
             core.book();
@@ -168,7 +171,7 @@ contract Scenario is Script {
 
     /// a batch sell and a single sell with `minOut`, the two overloads of `sellForEth`
     function _fillA() internal {
-        _primeBid();
+        _primeBid(81);   // 80 in the batch, then 1 more with minOut
         vm.broadcast(A1);
         ICredits(Mainnet.CREDITS).setApprovalForAll(address(core), true);
 
@@ -187,7 +190,7 @@ contract Scenario is Script {
 
     /// 80 credits of `who` sold into the eth bid after the bid is primed
     function _fill(address who, uint256 n, string memory name) internal {
-        _primeBid();
+        _primeBid(n);
         uint256[] memory ids = _creditsOf(who, n);
         vm.broadcast(who);
         core.sellForEth(ids);

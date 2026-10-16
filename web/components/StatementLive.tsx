@@ -1,73 +1,107 @@
 "use client";
 
-import { useState } from "react";
+import { statementSaleSplit } from "@/lib/sale-split";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useAccount, useReadContract } from "wagmi";
-import { formatUnits } from "viem";
 import { StatementTile, CreditTile } from "./Tiles";
-import { StatusBadge } from "./Cards";
-import { HistRow } from "./History";
-import { NotDeployed } from "./NotDeployed";
 import { Act } from "./Act";
-import { core, engineDeployed } from "@/lib/config";
-import { STATEMENT_SIZE, useBlockTs, useScan } from "@/lib/engine";
-import { formatBalance } from "@/lib/events";
+import { Addr } from "./Addr";
+import { Breadcrumb } from "./Shell";
+import { Fact, HeroArt, HistLine, type Ink } from "./Detail";
+import { NotDeployed } from "./NotDeployed";
+import { useStatementRating } from "./Cards";
+import { core, engineDeployed, statements } from "@/lib/config";
+import { useHistoryDown, useStatementIndex, useStatementView } from "@/lib/data";
+import type { StatementRecord } from "@/lib/events";
+import { useBlockTs } from "@/lib/engine";
 import { useTokenMeta } from "@/lib/art";
 import { controllerAbi, coreAbi, erc20Abi } from "@/lib/abis";
-import { type HeldStatement, type Snapshot, useNow, useSnapshot, useStatements } from "@/lib/live";
-import { agoLabel, commas, eth, signedPct } from "@/lib/format";
+import { countdown, useBalanceToken, useNow, useSnapshot, useStatements, type HeldStatement, type Snapshot } from "@/lib/live";
+import { etaLabel } from "@/lib/compose-eta";
+import { BALANCE_SYMBOL, agoLabel, commas, eth, formatBalance, signedPct, tokens } from "@/lib/format";
 
 const BUFFER_BPS = 100n; // value above the price; the controller refunds the excess
+// TODO(design README open item "Statement format names"): the picker shows format numbers; names come from the
+// tokenURI Format attribute of the current format only.
 const FORMATS = [0, 1, 2, 3, 4, 5, 6, 7];
 
-// Statement detail. A statement the Core holds reads from the multicall
-// (useStatements): the asking price, the reference
-// and the floor state, with buy, restyle and redeem. History comes from the
-// Core and controller logs: Composed (credits, format, who, default or chosen),
-// HeldFormatSet, StatementSoldTo, AnchorMoved and StatementRedeemed.
+// Statement detail. A statement the Core holds reads from the multicall (useStatements): the asking price, the
+// reference and the floor state, with buy, restyle and redeem. Facts and history come from the indexer
+// (useStatementRecord): credits, format, composer, compose mode, restyles, anchor moves, sale, redemption and owner.
 export function LiveStatement({ id }: { id: number }) {
   const { data: snap } = useSnapshot();
-  const { data: held } = useStatements();
-  const { data: scan } = useScan();
+  const { data: held, dataUpdatedAt } = useStatements();
+  const { rec, owner, isPending } = useStatementView(id);
+  const { data: index } = useStatementIndex();
   const { data: meta } = useTokenMeta("statement", id);
   const now = useNow();
   const s = held.find((x) => x.sid === id);
-  const rec = scan.statements[id];
   const composed = rec?.composed;
   const sale = rec?.sold;
   const redeemed = rec?.redeemed;
-  const { data: composedTs } = useBlockTs(composed?.block);
+  const { data: chainComposedTs } = useBlockTs(composed?.ts == null ? composed?.block : undefined);
+  const composedTs = composed?.ts ?? chainComposedTs;
+  const ratingText = useStatementRating(id, s?.rating ?? rec?.rating);
   if (!engineDeployed) return <NotDeployed />;
+
   const cost = s?.cost ?? composed?.cost;
   const known = Boolean(s || rec);
-  const formatName = meta?.attrs.Format;
-  const score = meta?.attrs["Credit Rating"];
+  const historyDown = useHistoryDown();
+  const formatName = rec?.formatName ?? meta?.attrs.Format;
+  const format = rec?.format ?? composed?.format;
+  const creditCount = composed?.ids.length ?? (meta?.attrs.Credits != null ? Number(meta.attrs.Credits) : undefined);
+
+  // prev and next among the known statements, newest first
+  const ids = [...new Set([...held.map((x) => x.sid), ...index.map((r) => r.id)])].sort((a, b) => b - a);
+  const at = ids.indexOf(id);
+  const prevHref = at > 0 ? `/statements/${ids[at - 1]}` : undefined;
+  const nextHref = at >= 0 && at < ids.length - 1 ? `/statements/${ids[at + 1]}` : undefined;
+
+  const ink: Ink = s ? "y" : redeemed ? "c" : "k";
+  const holder: ReactNode = s ? (
+    "engine"
+  ) : owner ? (
+    owner.toLowerCase() === core?.toLowerCase() ? (
+      "engine"
+    ) : (
+      <Addr address={owner} />
+    )
+  ) : sale ? (
+    <Addr address={sale.buyer} />
+  ) : (
+    "—"
+  );
+
   return (
-    <main className="page detail statement-detail">
-      <Link href="/statements" className="back">
-        {"← statements"}
-      </Link>
-      <div className="detail-grid">
-        <div className="detail-art">
-          <StatementTile id={id} />
-        </div>
-        <div className="detail-main">
-          <div className="detail-title">
-            <h1>statement {id}</h1>
-            {s ? <StatusBadge status="listed" /> : sale ? <StatusBadge status="sold" /> : redeemed ? <StatusBadge status="redeemed" /> : known ? <StatusBadge status="not held" /> : null}
-          </div>
-          {!snap ? (
-            <p className="muted">loading…</p>
-          ) : (
-            <>
-              {s && <StatementActions s={s} snap={snap} />}
-              {!known && <p className="muted">no record of this statement on the engine.</p>}
+    <div className="detail-page">
+      <Breadcrumb parent="statements" parentHref="/statements" id={id} prevHref={prevHref} nextHref={nextHref} />
+
+      <div className="detail-split">
+        <div className="detail-col">
+          <div className="detail-body">
+            <HeroArt tile={<StatementTile id={id} />} image={meta?.image} file={`statement-${id}.svg`} address={statements} />
+
+            <div className="detail-right">
+              <div className="label">statement</div>
+              <h1 className="detail-id">{id}</h1>
+
+              {!known && !historyDown && !isPending && <p className="side-copy">no record of this statement on the engine.</p>}
               {known && (
-                <div className="facts">
-                  {cost != null && <Fact k="cost" v={`${eth(cost)} eth`} />}
-                  <Fact k="credits" v={String(composed?.ids.length ?? STATEMENT_SIZE)} />
-                  {score != null && <Fact k="credit score" v={commas(Number(score))} />}
-                  {composed && <Fact k="format" v={`${formatName ?? "—"} (${rec?.restyled.at(-1)?.format ?? composed.format})`} />}
+                <dl className="dfacts">
+                  <Fact k="credit rating" v={ratingText || "—"} />
+                  <Fact
+                    k="format"
+                    v={
+                      format != null
+                        ? `${format}${formatName ? ` · ${String(formatName).toLowerCase()}` : ""}${
+                            composed && format !== composed.format ? ` · restyled from ${composed.format}` : ""
+                          }`
+                        : (formatName && String(formatName).toLowerCase()) || "—"
+                    }
+                  />
+                  <Fact k="engine cost" v={cost != null ? `${eth(cost)} ETH` : "—"} />
+                  <Fact k="credits" v={creditCount != null ? String(creditCount) : "—"} />
                   {composed && (
                     <Fact
                       k="composed"
@@ -76,85 +110,206 @@ export function LiveStatement({ id }: { id: number }) {
                       }`}
                     />
                   )}
-                  {s && snap.balanceOn && <Fact k="rating value" v={`${eth(s.value)} eth`} />}
-                  {s && snap.balanceOn && <Fact k="redeemable" v={snap.settings.redeemOn && s.atFloor ? "yes" : "no"} />}
-                </div>
+                  <Fact k="holder" v={holder} />
+                </dl>
               )}
-              {known && (
-                <section className="section history-section">
-                  <h2>history</h2>
-                  <div className="history">
-                    {composed && (
-                      <HistRow
-                        label="composed"
-                        value={`${eth(composed.cost)} eth cost`}
-                        note={composed.mode ? `${composed.mode} compose, format ${composed.format}` : `format ${composed.format}`}
-                        block={composed.block}
-                        tx={composed.tx}
-                        addr={composed.caller}
-                      />
-                    )}
-                    {rec?.restyled.map((r) => (
-                      <HistRow key={r.tx} label="restyled" value={`format ${r.format}`} block={r.block} tx={r.tx} addr={r.caller} />
-                    ))}
-                    {s && (
-                      <HistRow
-                        label="for sale"
-                        value={`${eth(s.price)} eth now`}
-                        note={cost ? `${signedPct(overCost(s.price, cost))} engine price over cost` : undefined}
-                      />
-                    )}
-                    {sale && (
-                      <HistRow
-                        label="sold"
-                        value={`${eth(sale.price)} eth`}
-                        note={[cost ? `${signedPct(overCost(sale.price, cost))} over cost` : "", sale.toBuyback != null ? `${eth(sale.toBuyback)} eth to buyback` : ""].filter(Boolean).join(", ")}
-                        block={sale.block}
-                        tx={sale.tx}
-                        addr={sale.buyer}
-                      />
-                    )}
-                    {rec?.anchor.map((m) => (
-                      <HistRow
-                        key={m.tx}
-                        label="anchor moved"
-                        value={`sale at ${pct(m.saleBps)} of reference, anchor now ${pct(m.anchorBps)}`}
-                        block={m.block}
-                        tx={m.tx}
-                      />
-                    ))}
-                    {redeemed && <HistRow label="redeemed" value="by redemption" note={`received ${formatBalance(redeemed.received, scan.balanceToken)}`} block={redeemed.block} tx={redeemed.tx} />}
-                  </div>
-                </section>
-              )}
-              {composed && (
-                <section className="section">
-                  <h2>{composed.ids.length} credits</h2>
-                  <div className="credit-mini-grid">
-                    {composed.ids.map((cid) => (
-                      <Link key={cid} href={`/credits/${cid}`} title={`credit #${cid}`}>
-                        <CreditTile id={cid} />
-                      </Link>
-                    ))}
-                  </div>
-                </section>
-              )}
-            </>
+
+              {known && <History s={s} rec={rec} />}
+              {historyDown && <p className="muted ix-down">history unavailable</p>}
+            </div>
+          </div>
+
+          {composed && (
+            <section className="cband">
+              <div className="cband-head">
+                <span className="label">{composed.ids.length} credits</span>
+                <span className="caption">composed in the order the engine bought them</span>
+              </div>
+              <div className="cband-grid">
+                {composed.ids.map((cid) => (
+                  <Link key={cid} href={`/credits/${cid}`} title={`credit #${cid}`}>
+                    <CreditTile id={cid} />
+                  </Link>
+                ))}
+              </div>
+            </section>
           )}
         </div>
+
+        <aside className={`side ink-${ink}`}>
+          {!snap ? (
+            <section className="side-sec">
+              <p className="side-copy">loading…</p>
+            </section>
+          ) : s ? (
+            <>
+              <PriceSection s={s} snap={snap} updatedAt={dataUpdatedAt} />
+              <RestyleSection s={s} snap={snap} current={format} />
+              {snap.balanceOn && <RedeemSection s={s} snap={snap} updatedAt={dataUpdatedAt} />}
+            </>
+          ) : (
+            <ExitSection rec={rec} known={known} cost={cost} />
+          )}
+        </aside>
       </div>
-    </main>
+    </div>
   );
 }
 
-// price over cost, in percent
-const overCost = (price: bigint, cost: bigint) => (Number(price) / Number(cost) - 1) * 100;
+// History, newest first: for sale now, then the logged steps.
+function History({ s, rec }: { s?: HeldStatement; rec?: StatementRecord }) {
+  const composed = rec?.composed;
+  return (
+    <section className="dhist">
+      <div className="label">history</div>
+      <div className="dhist-rows">
+        {s && <HistLine mark="y" text={s.atFloor ? "at floor" : "for sale, price falling"} value={`${eth(s.price)} ETH`} when="now" />}
+        {rec?.redeemed && <RedeemedLine r={rec.redeemed} />}
+        {rec?.anchor.map((m) => (
+          <HistLine
+            key={m.tx}
+            mark="hollow"
+            ts={m.ts} block={m.block}
+            text={`sale at ${pct(m.saleBps)} of reference, anchor now ${pct(m.anchorBps)}`}
+            value="—"
+          />
+        ))}
+        {rec?.sold && (
+          <HistLine
+            mark="hollow"
+            ts={rec.sold.ts} block={rec.sold.block}
+            text={
+              <>
+                sold to <Addr address={rec.sold.buyer} />
+              </>
+            }
+            value={`${eth(rec.sold.price)} ETH`}
+          />
+        )}
+        {[...(rec?.restyled ?? [])].reverse().map((r) => (
+          <HistLine
+            key={r.tx}
+            mark="k"
+            ts={r.ts} block={r.block}
+            text={
+              <>
+                restyled to format {r.format} by <Addr address={r.caller} />
+              </>
+            }
+            value="—"
+          />
+        ))}
+        {composed && (
+          <HistLine mark="y" ts={composed.ts} block={composed.block} text={`composed from ${composed.ids.length} credits`} value={`${eth(composed.cost)} ETH`} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function RedeemedLine({ r }: { r: NonNullable<StatementRecord["redeemed"]> }) {
+  const balance = useBalanceToken();
+  return <HistLine mark="c" ts={r.ts} block={r.block} text={`redeemed for ${formatBalance(r.received, balance)}`} value="—" />;
+}
+
 const pct = (bps: bigint | number) => `${(Number(bps) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
 
-// buy at the asking price, restyle, and redeem of a statement the Core holds
-function StatementActions({ s, snap }: { s: HeldStatement; snap: Snapshot }) {
+// Age of a held statement now: the age read at the last fetch plus the wall clock since, frozen while sales are paused.
+const liveAge = (s: HeldStatement, snap: Snapshot, updatedAt: number) =>
+  s.age + (snap.paused ? 0 : Math.max(0, (Date.now() - updatedAt) / 1000));
+
+// Status, price now, the falling curve and the buy button. Curve (see Snapshot): ask = reference * bps / 10000, with
+// bps falling linearly from statementStartBps at age 0 to settings.saleFloorBps at statementDecayHours, then flat.
+function PriceSection({ s, snap, updatedAt }: { s: HeldStatement; snap: Snapshot; updatedAt: number }) {
+  if (snap.statementDecayHours === undefined || snap.statementStartBps === undefined) return null;
+  const T = snap.statementDecayHours * 3600;
+  const age = liveAge(s, snap, updatedAt);
+  const left = s.atFloor ? 0 : Math.max(0, T - age);
+  // _ask clamps the start to the floor
+  const startBps = Math.max(snap.statementStartBps, snap.settings.saleFloorBps);
+  const start = (s.reference * BigInt(startBps)) / 10000n;
+  const floor = (s.reference * BigInt(snap.settings.saleFloorBps)) / 10000n;
+  const W = 352;
+  const xEnd = 240;
+  const marker = left > 0 ? Math.min(1, age / T) * xEnd : 320;
+  const y0 = start > floor ? 12 : 80;
+  const yAt = (x: number) => (left > 0 ? y0 + ((80 - y0) * x) / xEnd : 80);
+  const startX = startBps / 10000;
+
+  // Share of the price by destination (Core.sellTo): artist and operator cuts first, then saleToBuybackBps of the rest.
+  const { pot, buyback, cuts } = statementSaleSplit(snap.settings);
+
+  return (
+    <>
+      <section className="side-sec">
+        <div className="label">status</div>
+        <div className="status-line">
+          <span className="mark y" />
+          {s.atFloor ? "at floor" : "for sale"}
+        </div>
+      </section>
+      <section className="side-sec">
+        <div className="price-head">
+          <div>
+            <div className="label">price</div>
+            <div className="big-price">
+              {eth(s.price)} <small>ETH</small>
+            </div>
+          </div>
+          <div className="price-note" suppressHydrationWarning>
+            {left > 0 ? (
+              <>
+                falling
+                <br />
+                floor in {countdown(left)}
+              </>
+            ) : (
+              "at floor"
+            )}
+          </div>
+        </div>
+        <svg className="curve" width="100%" viewBox={`0 0 ${W} 92`} role="img" aria-label="price curve">
+          <line x1="0" y1="80" x2={W} y2="80" className="curve-floor" />
+          <polyline points={`0,${y0} ${xEnd},80 ${W},80`} className="curve-line" />
+          <line x1={marker} y1="0" x2={marker} y2="92" className="curve-now" />
+          <rect x={marker - 4} y={yAt(marker) - 4} width="8" height="8" className="curve-dot" />
+          <line x1={xEnd} y1="76" x2={xEnd} y2="84" className="curve-tick" />
+        </svg>
+        <div className="curve-labels">
+          <span>
+            {commas(startX, 2)}x · {eth(start)}
+          </span>
+          <span>floor {eth(floor)}</span>
+          <span>{snap.statementDecayHours}h</span>
+        </div>
+        <div className="side-act">
+          <Act
+            label={snap.paused ? "sales paused" : "buy statement"}
+            disabled={snap.paused}
+            steps={async (write) =>
+              void (await write({
+                address: snap.controller,
+                abi: controllerAbi,
+                functionName: "buy",
+                args: [BigInt(s.sid)],
+                value: s.price + (s.price * BUFFER_BPS) / 10000n,
+              }))
+            }
+          />
+        </div>
+        <p className="caption">
+          {commas(pot, 2)}% of the sale goes back to the pot · {commas(buyback, 2)}% buys and burns $CC
+          {cuts > 0 && ` · ${commas(cuts, 2)}% to the artist and operator`}
+        </p>
+      </section>
+    </>
+  );
+}
+
+// Restyle a held statement (Core.setHeldFormat). Needs snap.minCcToChoose of $CC in the wallet.
+function RestyleSection({ s, snap, current }: { s: HeldStatement; snap: Snapshot; current?: number }) {
   const { address } = useAccount();
-  const [format, setFormat] = useState(0);
+  const [pick, setPick] = useState<number | undefined>();
   const { data: ccBal } = useReadContract({
     address: snap.coin,
     abi: erc20Abi,
@@ -163,78 +318,114 @@ function StatementActions({ s, snap }: { s: HeldStatement; snap: Snapshot }) {
     query: { enabled: Boolean(address && snap.minCcToChoose > 0n) },
   });
   const ccOk = snap.minCcToChoose === 0n || (ccBal ?? 0n) >= snap.minCcToChoose;
-  const redeemable = snap.balanceOn && snap.settings.redeemOn && s.atFloor;
-
+  const sel = pick ?? current;
+  const changed = pick != null && pick !== current;
   return (
-    <div className="buybox">
-      <div className="buybox-price">
-        <span className="muted">price</span>
-        <span className="big">{eth(s.price)} eth</span>
+    <section className="side-sec">
+      <div className="swap-head">
+        <span className="label">restyle</span>
+        {current != null && <span className="caption">current: {current}</span>}
       </div>
-      <div className="price-ends muted">
-        <span>{s.atFloor ? "at floor" : "falling"}</span>
-      </div>
-      <div className="price-ends muted">
-        <span>reference {eth(s.reference)}</span>
-      </div>
-      <Act
-        label={snap.paused ? "sales paused" : "buy statement"}
-        disabled={snap.paused}
-        steps={async (write) =>
-          void (await write({
-            address: snap.controller,
-            abi: controllerAbi,
-            functionName: "buy",
-            args: [BigInt(s.sid)],
-            value: s.price + (s.price * BUFFER_BPS) / 10000n,
-          }))
-        }
-      />
-      <p className="muted small">
-        the price falls toward its floor and rises if the engine bid peak rises. the excess of your payment is refunded.
+      <p className="side-copy">
+        change the format while the engine holds it.
+        {snap.minCcToChoose > 0n && ` needs at least ${tokens(snap.minCcToChoose)} $CC in your wallet.`}
       </p>
-
-      <div className="restyle">
-        <label className="muted">
-          format{" "}
-          <select value={format} onChange={(e) => setFormat(Number(e.target.value))}>
-            {FORMATS.map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
-          </select>
-        </label>
-        <Act
-          label="restyle"
-          disabled={!ccOk}
-          title={!ccOk ? "coin balance below the minimum" : undefined}
-          steps={async (write) => void (await write({ address: core, abi: coreAbi, functionName: "setHeldFormat", args: [BigInt(s.sid), format] }))}
-        />
-        <p className="muted small">
-          restyle sets the format of this held statement. it needs at least {Number(formatUnits(snap.minCcToChoose, 18)).toLocaleString("en-US")} cc in the
-          account.
-        </p>
+      <div className="seg seg-fill" role="radiogroup" aria-label="format">
+        {FORMATS.map((f) => (
+          <button key={f} role="radio" aria-checked={sel === f} className={sel === f ? "on" : ""} onClick={() => setPick(f)}>
+            {f}
+          </button>
+        ))}
       </div>
-
-      {snap.balanceOn && (
-        <div className="restyle">
-          <Act
-            label="redeem statement"
-            disabled={!redeemable}
-            title={!snap.settings.redeemOn ? "redemption is off" : !s.atFloor ? "the price has not reached its floor" : undefined}
-            steps={async (write) => void (await write({ address: core, abi: coreAbi, functionName: "redeemStatement", args: [BigInt(s.sid)] }))}
-          />
-          <p className="muted small">redeem hands the statement to the balance module for balance token by rating, once the price is at its floor.</p>
-        </div>
-      )}
-    </div>
+      <div className="side-act">
+        <Act
+          secondary
+          label={pick == null ? "pick a format" : `restyle to format ${pick}`}
+          disabled={!changed || !ccOk}
+          title={!ccOk ? "$CC balance below the minimum" : undefined}
+          steps={async (write) => {
+            if (pick == null) return;
+            await write({ address: core, abi: coreAbi, functionName: "setHeldFormat", args: [BigInt(s.sid), pick] });
+            setPick(undefined);
+          }}
+        />
+      </div>
+      {changed && !ccOk && <p className="caption">your $CC balance is below the minimum.</p>}
+    </section>
   );
 }
 
-function Fact({ k, v }: { k: string; v: string }) {
+// Redeem a held statement for the balance token (Core.redeemStatement), once it is at its floor and redeemOn is set.
+function RedeemSection({ s, snap, updatedAt }: { s: HeldStatement; snap: Snapshot; updatedAt: number }) {
+  const T = (snap.statementDecayHours ?? 0) * 3600;
+  const left = s.atFloor || T === 0 ? 0 : Math.max(0, T - liveAge(s, snap, updatedAt));
+  const on = snap.settings.redeemOn;
+  const ready = on && s.atFloor;
   return (
-    <div className="fact">
+    <section className="side-sec">
+      <div className="swap-head">
+        <span className="label">redeem</span>
+        <span className="caption" suppressHydrationWarning>
+          {!on ? "redemption is off" : s.atFloor ? "at floor" : `opens at floor · ${etaLabel({ seconds: left, estimated: true })}`}
+        </span>
+      </div>
+      <p className="side-copy">once the price reaches its floor, the statement can be redeemed for {BALANCE_SYMBOL} by its rating.</p>
+      <div className="side-act">
+        <Act
+          secondary
+          label={`redeem for ${BALANCE_SYMBOL}`}
+          disabled={!ready}
+          title={!on ? "redemption is off" : !s.atFloor ? "the price has not reached its floor" : undefined}
+          steps={async (write) => void (await write({ address: core, abi: coreAbi, functionName: "redeemStatement", args: [BigInt(s.sid)] }))}
+        />
+      </div>
+    </section>
+  );
+}
+
+// Rail of a statement the engine no longer holds: state, and the sale split from the StatementSoldTo event.
+function ExitSection({ rec, known, cost }: { rec?: StatementRecord; known: boolean; cost?: bigint }) {
+  const balance = useBalanceToken();
+  const sale = rec?.sold;
+  const redeemed = rec?.redeemed;
+  const title = sale ? "sold" : redeemed ? "redeemed" : known ? "not held by engine" : "unknown";
+  const mark = redeemed ? "c" : "divider";
+  const artist = sale?.toArtist ?? 0n;
+  const operator = sale?.toOperator ?? 0n;
+  const pot = sale?.toPot ?? (sale?.toBuyback != null ? sale.price - artist - operator - sale.toBuyback : undefined);
+  return (
+    <>
+      <section className="side-sec">
+        <div className="label">status</div>
+        <div className="status-line">
+          <span className={`mark ${mark}`} />
+          {title}
+        </div>
+        {sale && (
+          <p className="side-copy">
+            bought by <Addr address={sale.buyer} />.
+          </p>
+        )}
+        {redeemed && <p className="side-copy">redeemed for {formatBalance(redeemed.received, balance)}.</p>}
+        {!sale && !redeemed && known && <p className="side-copy">no sale or redemption is logged for this statement.</p>}
+      </section>
+      {sale && (
+        <section className="side-sec">
+          <Kv k="sold for" v={`${eth(sale.price)} ETH`} />
+          {cost != null && <Kv k="engine cost" v={`${eth(cost)} ETH · ${signedPct((Number(sale.price) / Number(cost) - 1) * 100)}`} />}
+          {artist > 0n && <Kv k="to artist" v={`${eth(artist)} ETH`} />}
+          {operator > 0n && <Kv k="to operator" v={`${eth(operator)} ETH`} />}
+          {sale.toBuyback != null && <Kv k="to buyback" v={`${eth(sale.toBuyback)} ETH`} />}
+          {pot != null && <Kv k="to pot" v={`${eth(pot)} ETH`} />}
+        </section>
+      )}
+    </>
+  );
+}
+
+function Kv({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="kv">
       <span className="muted">{k}</span>
       <span>{v}</span>
     </div>

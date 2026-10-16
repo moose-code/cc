@@ -1,0 +1,31 @@
+{
+  "name": "credits-engine-indexer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "ponder dev",
+    "start": "ponder start",
+    "codegen": "ponder codegen",
+    "abis": "node scripts/gen-abis.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/lib/*.test.ts",
+    "db": "ponder db"
+  },
+  "dependencies": {
+    "@ponder/client": "0.17.8",
+    "hono": "^4.6.0",
+    "ponder": "0.17.8",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  },
+  "overrides": {
+    "@hono/node-server": "1.19.15",
+    "drizzle-orm": "0.45.2",
+    "kysely": "0.28.17",
+    "vite": "6.4.3",
+    "esbuild": "0.25.12"
+  }
+}

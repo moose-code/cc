@@ -42,6 +42,11 @@ const env = {
   NEXT_PUBLIC_POOL_FEE: String(rec.poolFee),
   NEXT_PUBLIC_POOL_TICK_SPACING: String(rec.tickSpacing),
   NEXT_PUBLIC_LOCAL_ACCOUNTS: JSON.stringify(accounts),
+  ...(isAddr(rec.strategyAdapter) ? { NEXT_PUBLIC_STRATEGY_ADAPTER: rec.strategyAdapter } : {}),
+  ...(isAddr(rec.seaportAdapter) ? { NEXT_PUBLIC_SEAPORT_ADAPTER: rec.seaportAdapter } : {}),
+  // the window of indexer/ponder.config.ts LOCAL_STRATEGY_WINDOW
+  NEXT_PUBLIC_STRATEGY_START_BLOCK: String(Math.max(0, rec.deployBlock - 60000)),
+  NEXT_PUBLIC_INDEXER_URL: process.env.NEXT_PUBLIC_INDEXER_URL ?? "http://localhost:42169",
 };
 
 const out = fileURLToPath(new URL("../.env.local", import.meta.url));
