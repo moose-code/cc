@@ -88,7 +88,7 @@ one `Settings` struct in Core storage, `setSettings(Settings)` owner only and ef
 | `buybackSlice` | 0.5 ether | 1 to uint128.max wei, at least twice the largest buyback payment | eth per buyback |
 | `keeperFee` | 0.0003 ether | 0 to uint64.max wei | fee to the caller of `buyback` and `buyListing` on top of the gas |
 | `keeperMaxBaseFee` | 5 gwei | 0 to uint48.max wei | base fee ceiling of those gas refunds |
-| `rateCap` | 1.731e16 (3 times `rateStart`) | 1 to uint64.max | the most the bid can be, wei per 100 points |
+| `rateCap` | 1.47e16 (3 times `rateStart`) | 1 to uint64.max | the most the bid can be, wei per 100 points |
 | `callerFee` | 0.0003 ether (decision 138) | 0 to uint64.max wei | fee to the caller of `compose`, `composeChosen` and `redeemStatement`, from the pot |
 | `callerMaxBaseFee` | 3 gwei (decision 138) | 0 to uint48.max wei | base fee ceiling of those refunds; 0 pays no gas |
 | `feeToRedeemBurnBps` | 1,000 | 0 to 10,000 | share of fee income to the redeem burn pot, the rest to the pot |
@@ -116,7 +116,7 @@ the rate is wei per 100 points (`RATE_SCORE` = 1,000,000 score units). `ethRate(
 
 | rule | as built |
 |---|---|
-| opening | `rateStart`, the market price on launch day of 100 points in wei (5.77e15 at the pin), in [1, uint64.max] and at most `rateCap` |
+| opening | `rateStart`, the market price on launch day of 100 points in wei (4.9e15 at the pin), in [1, uint64.max] and at most `rateCap` |
 | per credit | a credit of score `s` is paid `ethRate() * s / RATE_SCORE` (`bidForScore(s)`, `bidOf(id)`); `buyListing` caps the quote at it; `adopt` records `ethPrice() * s / RATE_SCORE`, at least 1 wei |
 | price state | the stored rate climbed per minute since its checkpoint: `recoveryClimbPerMinBps` below the recovery level, `climbPerMinBps` at or above it, compounded, continuous at the crossing, up to `min(ceiling, rateCap, pot)`; a price state above that bound holds its value. the climb is not scaled by the pot multiplier |
 | pot multiplier | `m = clamp(pages, 1, climbMultiplierCapBps / 10,000)`, the pages the pot covers at the last fill rate, where one page is `pointsPerPage` points costing `lastFillRate * pointsPerPage / 100`: `pages = pot / (lastFillRate * pointsPerPage / 100)`. the last fill rate is the rate credits last cleared at; it changes only on a fill, so `m` is fixed between fills and a checkpoint never moves the read (the displayed bid matches the paid bid). the pot is `ethPot` plus the pending fee share for the eth instance and the module `available()` as bps of par for the balance instance. `m` scales the ceiling's idle loosening only; the per minute climb is unscaled. `climbMultiplierCapBps` is the owner cap, 10,000 to 65,535, launch 40,000 (4x). `climbMultiplier()` returns `m` for the eth instance |

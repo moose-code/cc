@@ -16,7 +16,7 @@
   "image": "ipfs://local-anvil-fork",
   "description": "credits engine on a local anvil fork",
   "salt": "0x56d96069d0c85d21b8d789da2cd39ba97ceec51143707e32ecb8343eb4258a9c",
-  "rateStart": 5770000000000000,
+  "rateStart": 4900000000000000,
   "settings": {
     "dropPer100PointsBps": 115,
     "dropFloorBps": 1,
@@ -39,7 +39,7 @@
     "buybackSlice": 500000000000000000,
     "keeperFee": 300000000000000,
     "keeperMaxBaseFee": 5000000000,
-    "rateCap": 17310000000000000,
+    "rateCap": 14700000000000000,
     "callerFee": 300000000000000,
     "callerMaxBaseFee": 3000000000,
     "feeToRedeemBurnBps": 1000,
@@ -97,7 +97,7 @@
   },
   "dev": {
     "balanceUnitPerPoint": "100000000000000",
-    "balancePoolSqrtPriceX96": "10430176968832103465211561538277",
+    "balancePoolSqrtPriceX96": "11318308930609191084791992905142",
     "balanceMintToModule": "1000000000000000000000000",
     "wallet": "0xCB43078C32423F5348Cab5885911C3B5faE217F9",
     "walletEth": "100000000000000000000",

@@ -110,7 +110,7 @@ contract FlowTest is Fixture {
         assertEq(s.redeemSlippageBps, 200);
         assertEq(s.balanceBidMarginBps, 1_000);
         assertEq(s.redeemBurnBps, 2_000);
-        assertEq(s.rateCap, 17_310_000_000_000_000);
+        assertEq(s.rateCap, 14_700_000_000_000_000);
         assertEq(s.feeToRedeemBurnBps, 1_000);
         assertEq(s.callerFee, 0.0003 ether);
         assertEq(s.callerMaxBaseFee, 3 gwei);

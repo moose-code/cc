@@ -115,7 +115,7 @@ abstract contract ConfigReader is CommonBase {
     function defaultConfig() internal pure returns (LaunchConfig memory c) {
         c.stack = Mainnet.defaultStack();
         c.symbol = "CC";
-        c.rateStart = 5_770_000_000_000_000;
+        c.rateStart = 4_900_000_000_000_000;
         c.settings = Mainnet.defaultSettings();
         c.sale = Mainnet.defaultSale();
         c.credit = Mainnet.defaultCredit();
