@@ -32,16 +32,21 @@ export interface EthReplay {
 // ceiling, ceilBps of max(fill price, peak) with no idle loosening in the same
 // block, and by rateCap (CoreLib.climb).
 export function replayEth(scores: bigint[], a: EthReplay): bigint {
+  return replayEthFills(scores, a).reduce((t, x) => t + x, 0n);
+}
+
+// What each credit of the batch pays, in sell order; replayEth is their sum.
+export function replayEthFills(scores: bigint[], a: EthReplay): bigint[] {
   let r = a.price;
   let peak = a.peak;
   let left = a.pot;
   let start = a.start;
   let bucket = a.bucket;
-  let total = 0n;
+  const fills: bigint[] = [];
   for (const score of scores) {
     const read = r < left ? r : left;
     const x = (read * score) / a.scorePer100Points;
-    total += x;
+    fills.push(x);
     left -= x;
     if (bucket !== a.nowBucket || r < (start * a.dropFloorBps) / 10000n) {
       bucket = a.nowBucket;
@@ -58,7 +63,7 @@ export function replayEth(scores: bigint[], a: EthReplay): bigint {
     if (cap > a.rateCap) cap = a.rateCap;
     r = next >= cap ? cap : next;
   }
-  return total;
+  return fills;
 }
 
 export interface BalanceReplay {
@@ -76,11 +81,16 @@ export interface BalanceReplay {
 // fills of the minute, so the minute start is the starting rate. The available() clamp is not replayed: with ample
 // available it does not bind, and a module too short to pay the floor reverts PotTooSmall, which no minOut can clear.
 export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
+  return replayBalanceFills(scores, a).reduce((t, x) => t + x, 0n);
+}
+
+// What each credit of the batch pays in the balance token, in sell order; replayBalance is their sum.
+export function replayBalanceFills(scores: bigint[], a: BalanceReplay): bigint[] {
   let r = a.rate;
   const start = a.rate;
-  let total = 0n;
+  const fills: bigint[] = [];
   for (const score of scores) {
-    total += (score * a.unit * r) / 10000n;
+    fills.push((score * a.unit * r) / 10000n);
     const denom = 10000n * a.scorePer100Points;
     const fallNum = a.dropPer100PointsBps * score;
     let dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;
@@ -89,5 +99,5 @@ export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
     if (dropped < a.floorBps) dropped = a.floorBps;
     r = dropped;
   }
-  return total;
+  return fills;
 }

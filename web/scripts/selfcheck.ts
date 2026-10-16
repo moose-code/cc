@@ -1,7 +1,7 @@
 // Runnable check for the sell replays. No chain needed.
 //   npm run check
 import assert from "node:assert/strict";
-import { replayBalance, replayEth, type EthReplay } from "../lib/sell.ts";
+import { replayBalance, replayBalanceFills, replayEth, replayEthFills, type EthReplay } from "../lib/sell.ts";
 
 const a: EthReplay = {
   price: 1000n,
@@ -37,11 +37,15 @@ assert.equal(replayEth(ref(2), { ...a, rateCap: 800n }), 1000n + 800n);
 // per point: a credit of score 2 * scorePer100Points pays twice the rate and drops it twice as far (1 percent)
 assert.equal(replayEth([2000n], a), 2000n);
 assert.equal(replayEth([2000n, 1000n], a), 2000n + 990n);
+// the sell page lists each credit's fill: the fills are in sell order and add up to the total
+assert.deepEqual(replayEthFills([2000n, 1000n], a), [2000n, 990n]);
+assert.deepEqual(replayEthFills(ref(50), { ...a, pot: 2500n }).reduce((t, x) => t + x, 0n), replayEth(ref(50), { ...a, pot: 2500n }));
 // balance: score * unit * rate / 10000 per credit, the rate dropped per credit by dropPer100PointsBps * score / scorePer100Points
 // in one rounding, never below the floor
 const b = { rate: 10000n, unit: 100n, scorePer100Points: 10n, dropPer100PointsBps: 50n, dropFloorBps: 5000n, floorBps: 9000n };
 // at par: 300, then the rate is 10000 * (100000 - 150) / 100000 = 9985 and the second credit pays 5 * 100 * 9985 / 10000
 assert.equal(replayBalance([3n, 5n], b), 300n + 499n);
+assert.deepEqual(replayBalanceFills([3n, 5n], b), [300n, 499n]);
 // at the floor the drop cannot lower the rate: 270 then 450
 assert.equal(replayBalance([3n, 5n], { ...b, rate: 9000n }), 270n + 450n);
 

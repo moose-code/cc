@@ -528,7 +528,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// the ETH purchase budget of the current bucket: the bucket id, its budget and the wei spent in it. a bucket with no
-    /// purchase yet reads zero spent and the budget `ethPot * spendCapBps / 10_000` of the booked pot
+    /// purchase yet reads zero spent and the budget `spendCapBps` of `ethPot` plus the pot share of the unbooked fee
+    /// income the next `_book` adds, the pot the first purchase of the bucket books and snapshots
     function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent) {
         return CoreLib.spendState();
     }

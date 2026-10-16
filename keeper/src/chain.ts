@@ -112,6 +112,7 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     reserve: snap.reserve,
     potRoom: snap.potRoom,
     pendingIncome: snap.pendingIncome,
+    lastBookAt: 0n,
     ethToBuyback: snap.ethToBuyback,
     payeeOn: snap.payeeOn,
     paused: snap.paused,

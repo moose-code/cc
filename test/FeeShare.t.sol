@@ -76,6 +76,36 @@ contract PayeeShareTest is FeeBase {
         assertEq(core.payee().balance, payeeBefore, "the window eth and the first income after it are not shared");
     }
 
+    // promise: SPEC 1 the payee share latches on the first door past the window, not only on book(), and shares nothing
+    /// a cold deploy past the sniper window with fee income left unbooked: the first door is a sell. its own `_book`
+    /// books the pending income, which latches the payee share (window over), the latching book shares nothing even at a
+    /// nonzero ppm, and the seller is paid the quote from the post-book pot
+    function test_payeeLatchesOnADoorAndThatBookSharesNothing() public {
+        // payeePpm is 0 at launch; raise it so a shared book would pay the payee, to show the latching book does not
+        Settings memory sp = core.settings();
+        sp.payeePpm = 90_909;
+        _setSettings(sp);
+        _skipSniperWindow();
+        assertFalse(core.payeeOn(), "the payee share is not latched yet");
+
+        autoBook = false;
+        _buyCoin(trader, 5 ether);
+        assertGt(address(core).balance - _tracked(), 0, "the income waits unbooked, no door has booked");
+        uint256 id = _credits(seller, 1)[0];
+        _unitScore(id);
+
+        uint256 quote = core.bidOf(id);
+        uint256 payeeBefore = core.payee().balance;
+        uint256 before = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(_one(id));
+        assertTrue(core.payeeOn(), "the payee share latched on the sell's book, not on a book() call");
+        assertEq(core.payee().balance, payeeBefore, "the latching book shares nothing");
+        assertEq(seller.balance - before, quote, "the seller was paid the quote from the post-book pot");
+        assertEq(address(core).balance, _tracked(), "every wei is booked");
+        _solvent();
+    }
+
     // promise: SPEC 1 the book pushes the payee its share (decision 123)
     function test_bookPushesThePayeeItsShare() public {
         _stock();
@@ -314,6 +344,34 @@ contract FeeShareTest is FeeBase {
         // a second book counts nothing
         core.book();
         assertEq(core.ethRedeemBurn() - rb, 1.5 ether);
+    }
+
+    // promise: SPEC 1 decision 147: forced eth as the only income climbs the bid, and the first door pays the quote
+    /// a cold fresh deploy whose only eth is forced in (a selfdestruct or raw transfer the Core never booked), pot 0.
+    /// over an idle hour the bid climbs from the opening rate on the pot share of the forced eth, with no door booking.
+    /// the first sell books the forced eth and pays the quote read in the same block. launch feeToRedeemBurnBps
+    function test_forcedEthAsTheOnlyIncomeClimbsTheBidAndASellPaysTheQuote() public {
+        _share(1_000);
+        assertEq(core.ethPot(), 0, "nothing booked at launch");
+        assertEq(address(core).balance, 0, "the fresh engine holds no eth");
+
+        uint256 id = _credits(seller, 1)[0];
+        _unitScore(id);
+        // forced eth: the only income, unbooked
+        vm.deal(address(core), 1 ether);
+        // an idle hour past the sniper window: the bid climbs on the pot share of the forced eth before any book
+        vm.warp(launchTime + 1 hours);
+        uint256 quotedRate = core.ethRate();
+        uint256 quotedBid = core.bidOf(id);
+        assertGt(quotedRate, core.RATE_START(), "the bid climbed on the forced eth, before any book");
+        assertEq(core.ethPot(), 0, "still nothing booked");
+
+        uint256 before = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(_one(id));
+        assertEq(seller.balance - before, quotedBid, "the sell paid the quoted bid, booking the forced eth first");
+        assertEq(address(core).balance, _tracked(), "the sell booked the forced eth");
+        _solvent();
     }
 
     // ------------------------------------------------------------------ a change of the setting

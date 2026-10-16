@@ -325,7 +325,7 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 
 | page | indexer | live |
 |---|---|---|
-| sell | wallet credits with scores (I `credit` by owner) | bids and quotes (`bidOf`, anchor slots), approvals |
+| sell | wallet credits with scores (I `credit` by owner) | bids and quotes (`bidOf`, anchor slots), approvals; per-credit batch fills D from the same quote reads (eth: `replayEthFills`; balance: `replayBalanceFills` over the L snapshot `balanceRate` and `balanceUnit`); USD at the L Chainlink ETH/USD feed, the balance side through the L balance pool spot |
 | compose | pile with order and window state (I) | `nextPage` readiness, CC balance |
 | balance | $BALANCE price history (phase 2) | pool, quotes, module available |
 | keeper | `engine.lastBuybackBlock` (I; chain mode: Core view), `stats` payouts | pots, artist, payee, head |
