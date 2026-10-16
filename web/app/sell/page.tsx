@@ -12,6 +12,7 @@ import { coreAbi, creditsAbi } from "@/lib/abis";
 import { balanceQuote, sellQuote, useBalanceToken, useBidsOf, useNow, useSellQuote, useSnapshot, useWalletCredits } from "@/lib/live";
 import { BALANCE_SYMBOL, bidPer100, commas, eth, formatBalance } from "@/lib/format";
 import type { Write } from "@/lib/tx";
+import { useBalanceInEth } from "@/lib/market";
 
 const MIN_OUT_BPS = 9950n; // 0.5% under the batch total quoted at click time
 
@@ -24,6 +25,7 @@ export default function SellPage() {
   const client = usePublicClient();
   const { data: snap } = useSnapshot();
   const bal = useBalanceToken();
+  const balanceEth = useBalanceInEth();
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
   const bid = snap?.ethRate ?? 0n;
@@ -160,7 +162,10 @@ export default function SellPage() {
                   {balanceBid && (
                     <div className="r">
                       <span className="muted">or for {BALANCE_SYMBOL}</span>
-                      <span className="big-sm">about {formatBalance(balanceTotal, bal)} ({(Number(snap?.balanceRate ?? 0n) / 100).toFixed(1)}% of par)</span>
+                      <span className="big-sm">
+                        about {formatBalance(balanceTotal, bal)} ({(Number(snap?.balanceRate ?? 0n) / 100).toFixed(1)}% of par)
+                        {balanceEth(balanceTotal) != null && <small className="muted"> ~{eth(balanceEth(balanceTotal)!)} eth</small>}
+                      </span>
                     </div>
                   )}
                 </div>

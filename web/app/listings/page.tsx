@@ -9,6 +9,7 @@ import { engineDeployed } from "@/lib/config";
 import { countdown, useBalanceToken, useHead, useNow, useSnapshot } from "@/lib/live";
 import { useAcquireTx } from "@/lib/useAcquire";
 import { useListings, type ListingRow, type ListingsData } from "@/lib/useListings";
+import { useBalanceInEth } from "@/lib/market";
 import { nextRise } from "@/lib/climb";
 import { etaLabel } from "@/lib/compose-eta";
 import { BALANCE_SYMBOL, bidPer100, eth, evmNowTx, formatBalance, rating } from "@/lib/format";
@@ -67,6 +68,7 @@ export default function ListingsPage() {
   const { buy, available, pending, err, done } = useAcquireTx(head?.n);
   const [shown, setShown] = useState(PAGE);
   const bal = useBalanceToken();
+  const balanceEth = useBalanceInEth();
   const { data: fills } = useFillsTodayIx(head?.ts);
 
   const rows = data?.rows ?? [];
@@ -170,6 +172,7 @@ export default function ListingsPage() {
               </span>
               <span className="num muted hide-sm">
                 {r.balanceBid ? `${r.live ? "" : "~"}${formatBalance(r.balanceBid, bal)}` : "—"}
+                {r.balanceBid && balanceEth(r.balanceBid) != null && <span className="sub">~{eth(balanceEth(r.balanceBid)!)} ETH</span>}
               </span>
               <span className={`num${r.clears ? " ctable-price" : ""}`}>{gapLabel(r)}</span>
               <span className="num">{etaText(r)}</span>
