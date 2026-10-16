@@ -26,7 +26,7 @@ the launch, the owner commands after it, and what to do when something stops hal
 | 6 | broadcast | `git checkout foundry.lock; git submodule update -- lib/solady`, then `script/tools/check-freeze.sh` from the candidate commit (every row of the freeze table ok, exit 0), then `DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Deploy.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger`. note the printed addresses: `export CORE=... COIN=... CONTROLLER=... RENDERER=...`. then the set back of step 3 |
 | 7 | verify | section 3 |
 | 8 | postflight | `CORE=$CORE DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Postflight.s.sol --rpc-url $MAINNET_RPC_URL`. 73 rows, every one ok; the locked recipients row is a WARN until `lockRecipients`. record the start tick it prints and the date as the launch price |
-| 9 | the window's end | 30 minutes after the launch block: `cast send $CORE "book()" --rpc-url $MAINNET_RPC_URL --ledger` (anyone may send it). it latches the payee share; fees that arrive between the window's end and this call are not shared |
+| 9 | the window's end | at the factory launch time plus live `settings.sniperSeconds` (1,800 seconds at launch): `cast send $CORE "book()" --rpc-url $MAINNET_RPC_URL --ledger` (anyone may send it). the first book with income latches the payee share and shares none of that income; later books apply `payeePpm` |
 | 10 | later owner decisions | `lockRecipients` (with `lockSuccessor`), `lockAllowlist`, the balance side, the credit sale, chosen composition: section 4 |
 
 the eleven transactions of step 6, in order: the library `CoreLib`, the Core, the controller, the Seaport adapter, the CreditStrategy adapter, the coin renderer `CoinRenderer` (constructed with the config owner), `setCore` on the renderer (binds the Core, once), `setController`, `addAdapter` twice, `deployToken` with the fee, which names the renderer in the token config. the creations go through the deterministic deployer (CREATE2) at addresses that depend on the config and the salts; a contract with code at its address is skipped and a call whose effect is on chain is skipped, so a stopped run continues from the chain (section 6).
@@ -39,13 +39,13 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 
 | block | rows |
 |---|---|
-| the bid | `rateStart` (market price on launch day of a credit of score `refScore`, wei), `rateCap` (3 times it), `refScore` 4,330,000 (the launch average credit score), the nine bid settings |
-| the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 2,500, the `Sale` struct (markup 15,000, cap 100,000, decay hours 12, anchor half life 604,800, anchor min cost 0.1 eth) |
+| the bid | `rateStart` (market price on launch day of a credit of score `refScore`, wei), `rateCap` (3 times it), `refScore` 4,330,000 (the launch average credit score), `climbMultiplierCapBps` 40,000, `spendCapBps` 100, `bucketSeconds` 60, `idleStepSeconds` 600 and the other bid settings |
+| the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 2,500, the `Sale` struct (markup 15,000, cap 100,000, decay hours 12, anchor half life 604,800, anchor min cost 0.1 eth, `anchorMoveBps` 5,000) |
 | the credit side | `creditCostToPotBps` 8,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `floorBps` 11,000, `startBps` 30,000 (`refScore` is a bid setting above) |
 | the credit swap | `swapFeeCc` 10,000e18 (ten thousand coins burned per `swapCredit`) |
-| the balance side | `redeemOn` true, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 1,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
+| the balance side | `redeemOn` true, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 1,000, `balanceBidCapBps` 10,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
 | the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0003 eth, `keeperMaxBaseFee` 5 gwei, `callerFee` 0, `callerMaxBaseFee` 0 |
-| the payee and the artist | `payee` the owner, `payeePpm` 0 at launch (the owner raises it later); `artist` the launch artist address; the nft sale cuts `saleToArtistBps` 250, `saleToOperatorBps` 50 |
+| the payee and the artist | `payee` the owner, `payeePpm` 0 at launch (the owner raises it later), `settings.sniperSeconds` 1,800; `artist` the launch artist address; the nft sale cuts `saleToArtistBps` 250, `saleToOperatorBps` 50 |
 | the adapters | the Seaport recipient allowlist (the OpenSea fee collector 0x0000a26b00c1F0DF003000390027140000fAa719) |
 | the coin | name CC, symbol CC, supply 1e27, start tick -175000, position -175000 to 887200, skim 1,000 bps, bounty 9,000, lp fee 0, sniper 9,000 bps over 1,800 s, protocol 2,000 bps, restricted, allowlist empty, image, description |
 | the build | the masked runtime code hashes of the five contracts and the library creation hash |
@@ -62,7 +62,7 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 
 | what | how |
 |---|---|
-| a Core setting | `script/SetSettings.s.sol`: `SET_<field>=<value>` for each changed field, `SET_RATE=<wei>` for `setRate`; with `CONTROLLER=$CONTROLLER` it drives `setSale` and `setCredit`. one call sets the whole struct, so set every field you mean |
+| a Core setting | `script/SetSettings.s.sol`: `SET_<field>=<value>` for each changed field, `SET_RATE=<wei>` for `setRate`; with `CONTROLLER=$CONTROLLER` it drives `setSale` and `setCredit`. the script preserves unnamed live fields; `SETTINGS_PATCH` accepts an inline JSON object or file of Core settings, then `SET_<field>` overrides it |
 | pause and resume | `cast send $CORE "setPaused(bool)" true` and `false` |
 | the payee | `cast send $CORE "setPayee(address)" <to>`; the payee fee share and the operator cut are pushed by the book and the sales, not claimed |
 | the artist | `cast send $CORE "setArtist(address)" <to>`; the artist cut of nft sales is pushed to it (the zero address is refused while `saleToArtistBps` is nonzero) |
@@ -74,6 +74,35 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 | composing | `compose()`, `compose(uint8)` or `composeChosen` when nobody else does; switch the payment on with `callerFee` and `callerMaxBaseFee` if pages sit |
 | the coin | `coin.lockRecipients()` (script/Lock.s.sol: postflight, then the lock) seals the bounty recipient and ends fee stream migration; take it together with `lockSuccessor`. `lockAllowlist()`, `unrestrict()`, `renounceAdmin()`, `setMetadataRenderer`, `updateImage`, `updateDescription` are the coin admin's |
 | the coin's metadata renderer | named in the token config by the launch (`CoinRenderer`, transactions 6 and 7 create and bind it). to replace it: deploy the new renderer, then `cast send $COIN "setMetadataRenderer(address)" $RENDERER --rpc-url $MAINNET_RPC_URL --ledger` (the coin refuses an address without code); `setMetadataRenderer(address(0))` returns to the built in json; `renounceAdmin()` freezes the choice. read back `cast call $COIN "metadataRenderer()(address)"` and `cast call $COIN "tokenURI()(string)" \| head -c 200`; `CORE=$CORE COIN=$COIN script/tools/coin-metadata.sh` decodes the live metadata into files and a viewer. after a replacement run postflight with `COIN_CHANGED=1` |
+
+### editing economic settings
+
+`Settings` has 34 fields in five storage slots. the original 29 include `climbMultiplierCapBps`; the last five are `spendCapBps` (uint16), `bucketSeconds`, `balanceBidCapBps`, `idleStepSeconds` and `sniperSeconds` (uint32 each). the controller's six-field `Sale` appends `anchorMoveBps` (uint16). update integrations to these tuples before using the new contracts; INTEGRATION section 13 gives the ABI order.
+
+preview a patch without sending:
+
+```sh
+CORE=$CORE CONTROLLER=$CONTROLLER SET_spendCapBps=100 SET_bucketSeconds=60 forge script script/SetSettings.s.sol --rpc-url $MAINNET_RPC_URL
+```
+
+`SetSettings` prepares the complete batch from live structs before executing any setter, and validates the exact setter order as the owner inside a temporary EVM snapshot, then restores every simulated write. it prints the Core before/after table and calldata, plus controller calldata when changed. with `CONTROLLER` set, sale fields use `SET_markupBps`, `SET_startCapBps`, `SET_decayHours`, `SET_anchorHalfLife`, `SET_anchorMinCost`, `SET_anchorMoveBps`; credit fields use `SET_saleOn=0|1`, `SET_window`, `SET_floorBps`, `SET_startBps`. the JSON patch applies to Core fields only. unspecified fields keep their live values, single-field environment values override JSON, unknown fields and values wider than their ABI types are refused.
+
+the setter order is `setSale` first when its new markup satisfies the old Core floor, then changed `setSettings`, optional nonzero `SET_RATE`, a deferred `setSale` when lowering markup requires the new Core floor first, then changed `setCredit`. the final Core floor must fit the final markup. raising the Core floor and markup together therefore raises markup first; lowering both past the old floor lowers the Core floor first. `SET_RATE=0` skips the rate setter. a rate cap below the live bid or price state prints a warning because the bid falls when applied.
+
+after reviewing the preview, the owner can send the same inputs with `SEND=1`, `--broadcast`, `--slow` and the chosen signer. these are separate transactions, so an interruption may leave earlier setters applied; read the live structs and rerun the preview before continuing. preview restores simulated writes and does not grant permission to broadcast.
+
+the ETH purchase cap applies to direct seller payouts and adapter listing price plus actual keeper payment. 100 bps per 60 seconds is the launch default. `SET_spendCapBps=10000` bypasses enforcement and still records outflow; switching it back on retains that spending. a changed cap reprices the original active snapshot, and a changed bucket duration carries active spent, snapshot and both bids' active drop floors forward. changing settings never resets active spent to zero. if spent already exceeds a lowered budget, new purchases wait for the next bucket or a higher budget. ETH bid views omit budget headroom, so simulate the purchase and handle `SpendCapReached(spent,cost,budget)` even with a nonzero bid and a funded pot. balance purchases have no ETH cap.
+
+`settings.sniperSeconds` controls only the one-way payee latch relative to the factory's launch timestamp. changing it cannot undo `payeeOn`, and `setSettings` books income under the old settings before applying the new ones. it does not change `launch.sniperSeconds`, the external pool's launch skim schedule. the two launch defaults are both 1,800 seconds; read the live Core setting for later book timing.
+
+### bounds and coupled checks
+
+bounds use the declared unsigned integer width where no narrower limit follows. uint16 max is 65,535, uint32 max is 4,294,967,295. the defaults stay the launch values; wider bounds make owner choices possible and do not promise sensible economics for every combination.
+
+- `dropPerCreditBps` is 1 to 10,000; `dropFloorBps`, `saleToBuybackBps`, `recoveryGapBps`, `redeemSlippageBps`, `balanceBidMarginBps`, `redeemBurnBps`, `feeToRedeemBurnBps` and `creditCostToPotBps` are 0 to 10,000. artist plus operator sale cuts must total strictly less than 10,000; an artist cut also requires a nonzero artist. `payeePpm` is 0 to 1,000,000.
+- `climbPerMinBps` and `idleLoosenBps` are 1 to uint16 max; `recoveryClimbPerMinBps` is at least `climbPerMinBps` and at most uint16 max. `ceilBps` and `climbMultiplierCapBps` are 10,000 to uint16 max. `saleFloorBps` is 0 to uint16 max and no higher than controller markup. `buybackDelay` is 1 to uint16 max blocks. `peakHalfLife`, `refScore`, `bucketSeconds` and `idleStepSeconds` are 1 to uint32 max; `sniperSeconds` is 0 to uint32 max. `balanceBidCapBps` is 10,000 to uint32 max; raising it leaves the floor at `10,000 - balanceBidMarginBps`. `spendCapBps` is 1 to 10,000, with 10,000 the bypass value.
+- `rateStart`, `rateCap` and `setRate` accept 1 to uint64 max wei; `setRate` must also fit live `rateCap`. `buybackSlice` is 1 to uint128 max wei and at least `2 * (600,000 * keeperMaxBaseFee + keeperFee)`. `keeperFee` and `callerFee` are 0 to uint64 max, their base-fee ceilings 0 to uint48 max, and `swapFeeCc` is 0 to uint96 max base units. caller payments remain capped at the pot; listing keeper payment remains capped at the bid gap and pot left.
+- sale markup is 10,000 to uint16 max, at least the Core floor and at most `startCapBps`; `startCapBps` is markup to uint32 max; `decayHours` is 1 to uint16 max; `anchorHalfLife` is 1 to uint32 max seconds; `anchorMinCost` is 0 to uint128 max; `anchorMoveBps` is 0 to 10,000 (launch 5,000). zero anchor movement leaves the sale anchor clock unchanged. credit window is 1 to uint32 max seconds, credit floor is 10,000 to uint16 max, and credit start is 10,000 to uint32 max.
 
 ### the lock table
 
@@ -96,7 +125,7 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 
 | duty | call | paid |
 |---|---|---|
-| sweep a listing below the bid | `buyListing(adapter, id, params)` | gas at the base fee up to 5 gwei plus 0.0003 eth, at most the gap |
+| sweep a listing below the bid | `buyListing(adapter, id, params)`, simulate for available bucket budget first | gas at the base fee up to 5 gwei plus 0.0003 eth, at most the gap and pot left; gas accounting adds 350,000 overhead and caps counted gas at 1,500,000 |
 | burn | `buyback()` every 25 blocks while the buyback pot holds at least twice the largest payment | gas plus the scaled fee |
 | compose | `compose()` when `nextPage()` is ready | 0 until the owner switches the payment on |
 | redeem | `redeemStatement(sid)` when `atFloor(sid)` and `redeemOn` | 0; reverts `NoBalanceModule` until the module is set |
@@ -104,7 +133,7 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 
 ### a dump that walks the bid down, and statements above the floor
 
-the bid recovers at 2 percent a minute below the remembered peak and 0.5 percent above it; a one minute dump of 140 credits is back in about an hour. `setRate` restates the bid and the peak at once if the owner wants it faster. statements bought above market sit at their reference until the market reaches it or the balance side opens; lower `saleFloorBps` to sell them below cost, which reaches every held statement at once.
+at launch settings the bid recovers at 2 percent a minute below the recovery level and 0.5 percent above it. the ETH purchase budget also limits how much a dump can sell per bucket; time until fills resume depends on that budget and the fixed bucket boundary. `setRate` restates the bid and the peak at once if the owner wants it faster. statements bought above market sit at their reference until the market reaches it or the balance side opens; lower `saleFloorBps` to sell them below cost, which reaches every held statement at once.
 
 ### watching the buyback after a price fall
 
@@ -112,7 +141,7 @@ the 0.5 eth slice is unprofitable to sandwich down to about a quarter of the lau
 
 ## 5. what cannot change after the launch
 
-the skim (10 points), the bounty split (9,000 of 10,000), the protocol recipient, the ticks and the supply are fixed in the pool and the coin. the Core's stack, coin, `RATE_START` and `SNIPER_SECONDS` are immutables; a new stack or a new coin is a new Core. everything in docs/SPEC.md section 3 is adjustable.
+the skim (10 points), the bounty split (9,000 of 10,000), the protocol recipient, the ticks and the supply are fixed in the pool and the coin. the Core's stack, coin and `RATE_START` are immutables; a new stack or a new coin is a new Core. everything in docs/SPEC.md section 3 is adjustable.
 
 ## 6. when a transaction fails half way
 
