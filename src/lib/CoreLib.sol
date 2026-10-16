@@ -90,6 +90,9 @@ struct State {
     mapping(uint256 => uint256) creditSaleBlock;
     /// the ETH purchase budget of the current bucket, charged by every ETH purchase door
     CoreLib.Spend spend;
+    /// every module and token a `setBalanceModule` has ever selected. a replaced module or token stays here, so it
+    /// remains a forbidden target after it stops being the live module or token
+    mapping(address => bool) everBalanceTarget;
 }
 
 /// the one linked library of the Core: the settings write (validation, storage, event), the eth rate (the climb with its
@@ -184,6 +187,8 @@ library CoreLib {
     error Slippage();
     /// `sellForBalance` while `balanceBidOn` is false
     error BalanceBidOff();
+    /// `sellForBalance(ids, minOut, expectedToken)` when `balanceToken()` differs from `expectedToken`
+    error BalanceTokenChanged();
     /// a credit the engine sold through `sellCreditTo` in this block is offered back to an intake door
     error SameBlockReturn(uint256 id);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
@@ -676,8 +681,8 @@ library CoreLib {
             if (next.code.length == 0) revert NoCode(next);
             ICoinOf core = ICoinOf(address(this));
             if (
-                next == address(this) || next == c.balanceModule || next == c.balanceToken || next == core.COIN()
-                    || next == address(CREDITS) || next == address(STATEMENTS)
+                next == address(this) || c.everBalanceTarget[next] || next == core.COIN() || next == address(CREDITS)
+                    || next == address(STATEMENTS)
             ) revert BadSuccessor(next);
         }
         c.successor = next;
@@ -826,6 +831,14 @@ library CoreLib {
 
     /// @notice same as the one argument form with a floor on the total paid
     function sellForBalance(uint256[] calldata ids, uint256 minOut) external {
+        _sellForBalance(ids, minOut);
+    }
+
+    /// @notice same as the two argument form, pinning the payment token. reverts `BalanceTokenChanged` when
+    /// `balanceToken()` differs from `expectedToken` before any credit moves, then applies `minOut` as a floor on the
+    /// total paid in that token's base units
+    function sellForBalance(uint256[] calldata ids, uint256 minOut, address expectedToken) external {
+        if (state().balanceToken != expectedToken) revert BalanceTokenChanged();
         _sellForBalance(ids, minOut);
     }
 

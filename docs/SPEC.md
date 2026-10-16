@@ -12,6 +12,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
+| behavior | an explicit owner setBalanceModule may replace the balance token until lockBalanceModule; each module keeps its own token custody, a pool key contributes value while its currency1 is the current balance token, and sellers may pin the payment token | 142 |
 | behavior | The Anvil dev scenario sells its seeded Credits at the launch 100 bps spend cap by mining separate 60-second buckets; local lifecycle and activity runs exercise the resulting chain without changing launch settings | 140 |
 | behavior | Publish the committed issue 23 implementation branch and open a pull request against main for review; release acceptance remains separate | 131 |
 | behavior | ETH purchases share a 1% opening-pot budget per 60-second bucket; 10,000 bps bypasses enforcement. Settings changes preserve successful outflow and the active pot snapshot; cap edits reprice that snapshot. Implement issue 23 across contracts, consumers and simulation | 129, 130 |
@@ -192,7 +193,7 @@ the balance bid is the second instance of the eth bid's price state (section 4):
 
 `redeemStatement(sid)`: requires a module and `redeemOn`, a held statement, and `atFloor(sid)` from the controller (a bounded read of 400,000 gas; a failure reads as not eligible). the Core forgets the statement, hands it to the module, calls `redeem(sid)`, and requires the module's balance token holding to rise by at least `rating * unit * (10,000 - redeemSlippageBps) / 10,000`, with `unit` the module's `unitPerPoint()` read in the call. a failed, zero or oversized unit read, or a holding that rises by less than that, reverts `BadModule`. the proceeds stay in the module. `redeemBurnBps` of the redeem burn pot moves to the buyback. the caller is paid like a composer.
 
-`setBalanceModule(module)`, owner only, any number of times until `lockBalanceModule`: the module must have code, report a `balanceToken` with code that never changes once set, pass the forbidden list, report a valid unit at the set, and answer `available()`. `lockBalanceModule` reverts while no module is set. `releaseRedeemBurn(amount)` moves reserve eth to the buyback at any time.
+`setBalanceModule(module)`, owner only, any number of times until `lockBalanceModule`: the module must have code, report a balanceToken with code, which may change at an explicit owner module set (decision 142), pass the forbidden list, report a valid unit at the set, and answer `available()`. The module's current holdings stay in that module when it is replaced; a currency change leaves those tokens in their module as stored. Re-select the previous module to resume using its reserve. A pool key prices value while its currency matches the selected token. Set the replacement's complete pool key before resuming sales that rely on its value floor. Leave the module door unlocked while replacements are wanted, and handle any old module reserves before locking the door. `lockBalanceModule` reverts while no module is set. `releaseRedeemBurn(amount)` moves reserve eth to the buyback at any time.
 
 ## 10. buyback
 

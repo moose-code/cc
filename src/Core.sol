@@ -85,6 +85,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error AboveBid();
     error Slippage();
     error NoBalanceModule();
+    /// `sellForBalance(ids, minOut, expectedToken)` when `balanceToken()` differs from `expectedToken`
     error BalanceTokenChanged();
     /// `redeemStatement` while `redeemOn` is false
     error RedeemOff();
@@ -741,6 +742,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _toLib();
     }
 
+    /// reverts `BalanceTokenChanged` when `balanceToken()` differs from `expectedToken`, before any credit moves.
+    /// `minOut` is a floor on the total paid, in the base units of that token
+    function sellForBalance(uint256[] calldata, uint256, address) external nonReentrant {
+        _openDoor();
+        _toLib();
+    }
+
     /// checks that the caller owns credit id, which must not be the zero sentinel.
     function _owned(uint256 id) private view returns (uint256) {
         if (id == 0) revert ZeroId();
@@ -748,11 +756,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return id;
     }
 
+    /// a forbidden target: the base set, or any module or token a `setBalanceModule` has ever selected. a replaced
+    /// module or token stays forbidden for setPayee, setArtist, addAdapter, setSuccessor, buyListing quote targets and
+    /// migrate, so it cannot be fed the fee stream or the assets after it is swapped out
     function _forbidden(address t) private view returns (bool) {
-        return _forbiddenBase(t) || t == s.balanceModule || t == s.balanceToken;
+        return _forbiddenBase(t) || s.everBalanceTarget[t];
     }
 
-    /// every forbidden target except the balanceModule and the balanceToken, which a later set may name again
+    /// every forbidden target except the ever-selected modules and tokens, which `_setBalanceModule` may name again
     function _forbiddenBase(address t) private view returns (bool) {
         return t == address(CREDITS) || t == address(STATEMENTS) || t == address(this) || t == COIN || t == HOOK
             || t == address(MANAGER) || t == FACTORY || t == LOCKER || t == ESCROW || t == Mainnet.PERMIT2
@@ -1108,7 +1119,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (toOperator != 0) SafeTransferLib.forceSafeTransferETH(s.payee, toOperator, PUSH_GAS);
     }
 
-    /// sets or replaces the balance module at once (any number of times until `lockBalanceModule`)
+    /// sets or replaces the balance module at once, any number of times until `lockBalanceModule`. the balance token
+    /// changes with the module to the new module's `balanceToken()`
     function setBalanceModule(address module) external onlyOwner nonReentrant {
         if (s.balanceModuleLocked) revert Locked("balanceModule");
         _setBalanceModule(module);
@@ -1144,7 +1156,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit ControllerLocked();
     }
 
-    /// reverts while no balance module is set, so the balance side cannot be locked out by accident
+    /// freezes the balance module and the balance token. reverts while no balance module is set, so the balance side
+    /// cannot be locked out by accident
     function lockBalanceModule() external onlyOwner {
         if (s.balanceModule == address(0)) revert NoBalanceModule();
         s.balanceModuleLocked = true;
@@ -1358,21 +1371,25 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (unit == 0 || unit > type(uint128).max) revert BadModule();
     }
 
-    /// sets or replaces the balance module. the balance token never changes once set. the module's unit must be valid
-    /// at the set (`_unitOf`). an adapter approval of the new module is cleared when the module is set
+    /// sets or replaces the balance module and token. existing holdings stay with their original module.
+    /// the module's unit must be valid at the set; adapter approvals of both new addresses are cleared
     function _setBalanceModule(address module) private {
-        address old = s.balanceModule;
         if (module.code.length == 0) revert BadModule();
         address token = IBalanceModule(module).balanceToken();
-        if (old != address(0) && token != s.balanceToken) revert BalanceTokenChanged();
-        if (token.code.length == 0 || _forbiddenBase(module) || _forbiddenBase(token)) revert BadModule();
+        if (
+            token.code.length == 0 || _forbiddenBase(module) || _forbiddenBase(token) || module == s.successor
+                || token == s.successor
+        ) revert BadModule();
         uint256 unit = _unitOf(module);
         // the module must answer `available()`, the token it commits to the balance bid, within the bounded read
         (bool hasAvailable,) = _ask(module, abi.encodeCall(IBalanceModule.available, ()), READ_GAS, 32);
         if (!hasAvailable) revert BadModule();
         s.balanceModule = module;
         s.balanceToken = token;
+        s.everBalanceTarget[module] = true;
+        s.everBalanceTarget[token] = true;
         if (s.allowedAdapter[module]) delete s.allowedAdapter[module];
+        if (s.allowedAdapter[token]) delete s.allowedAdapter[token];
         // the instance does not climb while no usable module is set, so a module set while the bid is on opens the
         // instance at the floor with a fresh clock, not at a rate carried from before
         if (s.settings.balanceBidOn) _resetBalanceToFloor();

@@ -46,7 +46,7 @@ artist and operator cuts come off the payment inside the sale. The balance side
 | `/` flywheel, stats bar, engine feed, swap panel | event scan, snapshot, pool slot0 (StateView), v4 Quoter, Chainlink ETH/USD | Universal Router `execute` (eth for coin and back), coin `approve` and Permit2 `approve` before a sell |
 | `/keeper` | snapshot, `lastBuybackBlock`, head block, the feed stats | `core.book()`, `core.buyback()` (the artist and payee are paid by push, no claim) |
 | `/credits`, `/credits/[id]` | `pilePage`, `creditInfo`, `creditPrice`, `pastWindow` | `controller.buyCredit(id)`, `buyCredits(ids)` while `creditSaleOn` |
-| `/sell` | `ethRate`, `ethPot`, `settings`, `Credits.tokensOf` | `Credits.setApprovalForAll(core)`, `core.sellForEth(ids, minOut)`, `core.sellForBalance(ids, minOut)` while `balanceBidOn` |
+| `/sell` | `ethRate`, `ethPot`, `settings`, `Credits.tokensOf` | `Credits.setApprovalForAll(core)`, `core.sellForEth(ids, minOut)`, `core.sellForBalance(ids, minOut, expectedToken)` while `balanceBidOn` |
 | `/compose` | `nextPage`, `pileSize`, `chosenComposeOn`, `minCcToChoose` | `core.compose()`, `core.compose(format)`, `core.composeChosen(ids, format)` while `chosenComposeOn` |
 | `/statements`, `/statements/[id]` | `heldStatements`, `statementInfo`, `statementAge`, `ratingOf`, `composerOf`, `priceOf`, `referenceOf`, `atFloor`, `valueOf` | `controller.buy(sid)` at the asking price, `core.setHeldFormat(sid, format)`, `core.redeemStatement(sid)` when `redeemOn` and `atFloor` |
 
@@ -56,3 +56,5 @@ replayed from the Core's per-credit rules at click time (`lib/sell.ts`, read by
 (`buyListing`) is a keeper action and has no page.
 
 The sell page reads all 34 Core settings. ETH bids and quotes show the current rate; they do not reserve the ETH purchase budget. ETH purchases share the configured bucket cap (100 bps per 60 seconds at launch), and `SpendCapReached` asks the holder to retry in the next bucket. A setting of 10,000 bps bypasses the limiter. Balance purchases do not use this cap.
+
+Balance sales pin the token address from the quote snapshot, so an owner token replacement cannot silently change the payment currency.

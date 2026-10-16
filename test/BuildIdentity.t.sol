@@ -20,9 +20,9 @@ import {ICore} from "../src/interfaces/ICore.sol";
 /// the generated interfaces are not part of the proof: `script/tools/gen-interfaces.sh --check` covers them, and the
 /// two library functions the abi does not list are pinned to the artifact selectors below.
 contract BuildIdentityTest is Fixture {
-    uint256 internal constant CORE_RUNTIME = 24_305;
-    uint256 internal constant CONTROLLER_RUNTIME = 12_037;
-    uint256 internal constant LIB_RUNTIME = 20_835;
+    uint256 internal constant CORE_RUNTIME = 24485;
+    uint256 internal constant CONTROLLER_RUNTIME = 12171;
+    uint256 internal constant LIB_RUNTIME = 21008;
     uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_558;
     uint256 internal constant STRATEGY_ADAPTER_RUNTIME = 508;
     uint256 internal constant RENDERER_RUNTIME = 8_241;

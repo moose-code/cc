@@ -52,8 +52,10 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// length of a pause and continues from the same age at resume. the anchor decays with wall time in both states, so the
 /// start of the curve, and with it the asking price, can still fall in a pause while the anchor is above 10_000.
 /// its settings belong to the live owner of the core (`core.owner()`), there is no second owner.
-/// once the owner sets the balance token pool (`setBalancePoolKey`), `valueOf` includes the pool term. with the pool key
-/// unset, no balance module set, a failed, zero or above `uint128.max` unit read, or a zero pool read the pool term is 0
+/// once the owner sets the balance token pool (`setBalancePoolKey`), `valueOf` includes the pool term. the pool term is
+/// 0 with the pool key unset, with the stored pool key's `currency1` other than the Core's current `balanceToken()`
+/// (a stale key after an owner module replacement), with no balance module set, on a failed, zero or above
+/// `uint128.max` unit read, or on a zero pool read
 contract ControllerV1 is IController {
     using StateLibrary for IPoolManager;
 
@@ -383,8 +385,9 @@ contract ControllerV1 is IController {
 
     /// the balance token pool value of `points` score units in wei: `points * unitPerPoint` base units priced at the pool
     /// sqrt price. `unitPerPoint` is read from the balance module in the call. never reverts: 0 when the pool key is
-    /// unset, no balance module is set, the unit read fails (see `_liveUnit`), the owed amount is zero, the pool sqrt
-    /// price reads zero, or a product of the pricing exceeds 256 bits
+    /// unset, the stored pool key's `currency1` is not the Core's current `balanceToken()`, no balance module is set,
+    /// the unit read fails (see `_liveUnit`), the owed amount is zero, the pool sqrt price reads zero, or a product of
+    /// the pricing exceeds 256 bits
     function _poolValue(uint256 points) private view returns (uint256) {
         if (!balancePoolKeySet) return 0;
         address module = CORE.balanceModule();
@@ -401,10 +404,12 @@ contract ControllerV1 is IController {
     }
 
     /// `baseUnits` of the balance token priced in wei at the balance token pool. `priced` is false when the pool key is
-    /// unset, the pool sqrt price reads zero, or either `mulDiv` of the price exceeds 256 bits. native eth is `currency0`,
-    /// so wei per token base unit is `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
+    /// unset, the stored pool key's `currency1` is not the Core's current `balanceToken()`, the pool sqrt price reads
+    /// zero, or either `mulDiv` of the price exceeds 256 bits. native eth is `currency0`, so wei per token base unit is
+    /// `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
     function _priceBaseUnits(uint256 baseUnits) private view returns (uint256 priceWei, bool priced) {
         if (!balancePoolKeySet) return (0, false);
+        if (Currency.unwrap(balancePoolKey.currency1) != CORE.balanceToken()) return (0, false);
         (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(balancePoolKey.toId());
         if (sqrtPriceX96 == 0) return (0, false);
         uint256 q = FixedPoint96.Q96;

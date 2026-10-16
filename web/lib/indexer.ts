@@ -15,7 +15,7 @@ import { createClient, and, asc, count, desc, eq, gte, inArray, min, ne, or, sql
 import { getTableColumns } from "drizzle-orm";
 import { formatUnits } from "viem";
 import { engineDeployed, indexerUrl, STATEMENT_SIZE } from "./config";
-import { eth, formatBalance, type BalanceTokenInfo } from "./format";
+import { eth, formatHistoricalBalance, type BalanceTokenInfo } from "./format";
 import type { CreditEvt, FeedEvent, StatementRecord } from "./events";
 import * as schema from "./indexer-schema";
 import type { AcquiredHow } from "./indexer-schema";
@@ -56,7 +56,7 @@ export async function fetchIxHealth() {
 function useIx<T>(key: unknown[], fn: (db: Db) => Promise<T>, opts: { enabled?: boolean } = {}) {
   const on = useIxMode() === "ix";
   return useQuery<T>({
-    queryKey: ["ix", ...key],
+    queryKey: ["ix", "token-history-v2", ...key],
     enabled: on && engineDeployed && (opts.enabled ?? true),
     queryFn: () => fn(ix!.db),
     staleTime: 60_000,
@@ -322,7 +322,7 @@ export function useStatementDetailIx(id: number, enabled = true) {
       db.select().from(statementFormat).where(eq(statementFormat.statementId, sid)).orderBy(asc(statementFormat.blockTimestamp), asc(statementFormat.logIndex)),
       db.select().from(anchorMove).where(eq(anchorMove.statementId, sid)).orderBy(asc(anchorMove.blockTimestamp), asc(anchorMove.logIndex)),
       db
-        .select({ kind: activity.kind, ts: activity.blockTimestamp, tx: activity.txHash })
+        .select({ kind: activity.kind, ts: activity.blockTimestamp, tx: activity.txHash, token: activity.balanceToken })
         .from(activity)
         .where(and(eq(activity.statementId, sid), inArray(activity.kind, ["statement_sold", "redeemed"])))
         .orderBy(desc(activity.blockNumber), desc(activity.logIndex)),
@@ -366,7 +366,7 @@ export function useStatementDetailIx(id: number, enabled = true) {
               tx: sold?.tx ?? "0x",
             }
           : undefined,
-      redeemed: r.state === "redeemed" || redeemed ? { received: r.redeemedReceived ?? 0n, ts: Number(redeemed?.ts ?? 0n), tx: redeemed?.tx ?? "0x" } : undefined,
+      redeemed: r.state === "redeemed" || redeemed ? { received: r.redeemedReceived ?? 0n, token: redeemed?.token ?? undefined, ts: Number(redeemed?.ts ?? 0n), tx: redeemed?.tx ?? "0x" } : undefined,
     };
   }, { enabled });
 }
@@ -394,6 +394,7 @@ export function useFeedIx(filter: FeedFilter, limit: number) {
           account: activity.account,
           amount: activity.amount,
           amount2: activity.amount2,
+          balanceToken: activity.balanceToken,
           ts: activity.blockTimestamp,
           tx: activity.txHash,
           rating: statement.rating,
@@ -419,7 +420,7 @@ type FeedRow = NonNullable<ReturnType<typeof useFeedIx>["data"]>["rows"][number]
 const stmtLink = (sid: number) => ({ text: `statement ${sid}`, href: `/statements/${sid}` });
 const creditLink = (id: number) => ({ text: `credit #${id}`, href: `/credits/${id}` });
 
-/** A ledger row as the feed shows it. `balance` formats $BALANCE amounts (undefined: raw units). */
+/** Token metadata formats only rows of that currency; other currencies retain raw units and their address. */
 export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
   const cid = r.creditId == null ? undefined : Number(r.creditId);
   const sid = r.statementId == null ? undefined : Number(r.statementId);
@@ -434,7 +435,7 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
         kind: "credit",
         label: "credit acquired",
         detail: "",
-        eth: r.amount2 && r.amount2 > 0n ? formatBalance(r.amount2, balance) : eth(amount),
+        eth: r.amount2 && r.amount2 > 0n ? formatHistoricalBalance(r.amount2, r.balanceToken ?? undefined, balance) : eth(amount),
         link: creditLink(cid!),
         tile: { kind: "credit", id: cid! },
       };
@@ -505,7 +506,7 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
         kind: "redeemed",
         label: "statement redeemed",
         link: stmtLink(sid!),
-        detail: `· received ${formatBalance(amount, balance)}`,
+        detail: `· received ${formatHistoricalBalance(amount, r.balanceToken ?? undefined, balance)}`,
         tile: { kind: "statement", id: sid! },
         rating: r.rating ?? undefined,
       };

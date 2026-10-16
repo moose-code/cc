@@ -111,12 +111,13 @@ export async function snapshot(ctx: Ctx, block: { number: bigint; timestamp: big
     payeeOn: need<boolean>(8),
     paused: need<boolean>(9),
     balanceAvailable: module && r[10]?.status === "success" ? (r[10].result as bigint) : null,
+    balanceToken: module ? (e.balanceToken as Hex) : null,
   };
   await ctx.db
     .insert(engineSnapshot)
     .values({ blockNumber: block.number, blockTimestamp: block.timestamp, ...row })
     .onConflictDoUpdate(() => ({ blockTimestamp: block.timestamp, ...row }));
-  const { paused: _p, ...latest } = row;
+  const { paused: _p, balanceToken: _bt, ...latest } = row;
   await ctx.db.update(engine, { id: CORE_ADDRESS }).set({ ...latest, snapshotBlock: block.number });
 }
 

@@ -317,3 +317,11 @@ the `/keeper` web page has `book`, `buyback` and the pots for any wallet; `compo
 | unit, every gate at its boundary | `npm test --workspace keeper` |
 | one tick per door against the local stack | `STACK=master script/dev/local.sh`, then `npm run e2e --workspace keeper` |
 | the Seaport sweep on a chain id 1 fork | `CHAIN_ID=1 STACK=master PORT=8609 script/dev/anvil.sh`, `CHAIN_ID=1 STACK=master RPC_URL=http://127.0.0.1:8609 script/deploy.sh local`, then `npm run e2e:seaport --workspace keeper`. it signs its own order with a key made in memory; with `OPENSEA_API_KEY` in the shell it also checks the live fetch against the adapter |
+
+### Replacing the balance token
+
+For a replacement that keeps the current redemption value floor, pause sales and set balanceBidOn off during setup. Verify the replacement module and token and the current upstream launch gates, then call setBalanceModule and read back balanceModule, balanceToken and the module's unit and available(). Each module keeps its own token reserve, so a replaced module's holdings stay in that module; re-select it to spend them.
+
+Call setBalanceModule first and setBalancePoolKey second: the setter requires currency1 to equal balanceToken(), so the key follows the token. Set the replacement's complete pool key before resuming sales that rely on its value floor. Simulate a redemption and a token-pinned sell, then restore the owner-selected switches and sales.
+
+Before lockBalanceModule, read the old module's available(), run the old module's owner migrate or confirm its reserve is spent, then lock. lockBalanceModule freezes the module and the token. This preparation authorizes a mainnet action only on the owner's explicit instruction.

@@ -14,6 +14,13 @@ export function formatBalance(v: bigint, info?: BalanceTokenInfo): string {
   return n != null ? `${n} ${BALANCE_SYMBOL}` : `${v} ${BALANCE_SYMBOL} units`;
 }
 
+// Historical amounts retain their currency even after the owner selects another token.
+export function formatHistoricalBalance(v: bigint, token?: string, info?: BalanceTokenInfo): string {
+  if (!token) return `${v} raw units (token unknown)`;
+  const known = info?.address.toLowerCase() === token.toLowerCase() ? info : undefined;
+  return known ? `${formatBalance(v, known)} (${token})` : `${v} raw units (${token})`;
+}
+
 // "+58%" / "-12%" for a percentage number.
 export function signedPct(n: number): string {
   const r = Math.round(n);

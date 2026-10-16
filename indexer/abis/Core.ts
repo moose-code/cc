@@ -1502,6 +1502,29 @@ export const coreAbi = [
     "name": "sellForBalance",
     "inputs": [
       {
+        "name": "",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sellForBalance",
+    "inputs": [
+      {
         "name": "ids",
         "type": "uint256[]",
         "internalType": "uint256[]"

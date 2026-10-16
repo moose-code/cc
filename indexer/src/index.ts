@@ -17,7 +17,7 @@ import {
 import { ensureCredit, ensureCredits, ensureEngine, ensureStatement, readController, refreshStatementArt, settingsColumns, snapshot } from "./chain";
 import { composeModeOf } from "./lib/mode";
 import { creditSaleSplit, statementPot } from "./lib/split";
-import { act, bump, idOf, lc, posOf, record, toJson, type At, type Ctx } from "./shared";
+import { act, bump, bumpBalancePaid, idOf, lc, posOf, record, toJson, type At, type Ctx } from "./shared";
 
 // ---- per-transaction memory ----------------------------------------------------------------------------------
 // Handlers run in log order, so facts that arrive earlier in a transaction are kept for the later event.
@@ -116,12 +116,20 @@ ponder.on("Core:CreditBought", async ({ event, context }) => {
 ponder.on("Core:BalanceRateFill", async ({ event, context }) => {
   await coreEvent(context, event, "BalanceRateFill");
   const { spent } = event.args;
+  // This column follows earlier BalanceModuleSet logs, never a latest-state RPC read.
+  const { balanceToken } = await ensureEngine(context);
   if (balanceBuy?.tx === event.transaction.hash) {
-    await context.db.update(credit, { id: balanceBuy.id }).set({ balancePaid: spent });
-    await context.db.update(activity, { id: balanceBuy.activityId }).set({ amount2: spent });
+    await context.db.update(credit, { id: balanceBuy.id }).set({ balancePaid: spent, balancePaidToken: balanceToken });
+    await context.db.update(activity, { id: balanceBuy.activityId }).set({ amount2: spent, balanceToken });
   }
   balanceBuy = null;
-  await bump(context, event, { balancePaidTotal: spent });
+  if (balanceToken) {
+    await bumpBalancePaid(context, event, balanceToken, spent);
+  } else {
+    console.error(
+      `BalanceRateFill at ${event.transaction.hash} spent ${spent} while engine.balanceToken is null; the payout is credited to no token`,
+    );
+  }
 });
 
 ponder.on("Core:ListingBought", async ({ event, context }) => {
@@ -249,9 +257,10 @@ ponder.on("Core:CreditSold", async ({ event, context }) => {
 ponder.on("Core:StatementRedeemed", async ({ event, context }) => {
   await coreEvent(context, event, "StatementRedeemed");
   const { sid, received } = event.args;
+  const { balanceToken } = await ensureEngine(context);
   await ensureStatement(context, sid);
   await context.db.update(statement, { id: sid }).set({ state: "redeemed", redeemedReceived: received });
-  await act(context, event, { kind: "redeemed", statementId: sid, amount: received });
+  await act(context, event, { kind: "redeemed", statementId: sid, amount: received, balanceToken });
   await bump(context, event, { redeemed: 1n });
 });
 
