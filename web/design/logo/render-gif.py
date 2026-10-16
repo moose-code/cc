@@ -1,10 +1,14 @@
-# Renders the four-slot CC logo loop (README.md here) as an animated GIF: python3 -I render-gif.py 3000 raw.gif 50, then gifsicle -O3 raw.gif -o cc-logo-loop.gif.
-# Square i sits in slot (i + step) % 4; slots clockwise from top left; squares multiply over the paper.
+# Renders the four-slot CC logo loop (README.md here) as an animated GIF:
+#   python3 -I render-gif.py 3000 raw.gif 50 light   then   gifsicle -O3 raw.gif -o cc-logo-loop.gif
+#   python3 -I render-gif.py 3000 raw.gif 50 dark    then   gifsicle -O3 raw.gif -o cc-logo-loop-dark.gif
+# Square i sits in slot (i + step) % 4; slots clockwise from top left. Light: squares multiply over the paper.
+# Dark: squares screen over the dark paper, as the site does in its dark theme.
 import sys, numpy as np
 from PIL import Image
 
 N = int(sys.argv[1]); out = sys.argv[2]; fps = int(sys.argv[3])
-PAPER = np.array([0xf6, 0xf5, 0xf0]) / 255
+DARK = len(sys.argv) > 4 and sys.argv[4] == "dark"
+PAPER = np.array([0x12, 0x12, 0x11] if DARK else [0xf6, 0xf5, 0xf0]) / 255
 INKS = [np.array(c) / 255 for c in ([0x00, 0xa3, 0xe0], [0xe5, 0x00, 0x7e], [0xff, 0xd4, 0x00])]
 SLOTS = [(6, 6), (36, 6), (36, 36), (6, 36)]
 SQ = 58
@@ -34,7 +38,8 @@ def frame(step, t):
         ax = cover(off + x * k, off + (x + SQ) * k)
         ay = cover(off + y * k, off + (y + SQ) * k)
         a = (ay[:, None] * ax[None, :])[..., None]
-        img = img * (1 - a + a * ink)
+        blended = 1 - (1 - img) * (1 - ink) if DARK else img * ink
+        img = img + a * (blended - img)
     return Image.fromarray(np.round(img * 255).astype(np.uint8))
 
 MOVE, STEP = 0.7, 1.6
