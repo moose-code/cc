@@ -9,6 +9,7 @@ node sim/engine.test.mjs          # focused model checks and integer vectors
 node sim/build.mjs                # regenerate tracked index.html
 node sim/page.ui.test.js          # control mapping, validation and built script
 node sim/market.mjs --spendcap     # 12 bounded exposure scenarios, JSON to stdout
+node sim/grid.mjs out.json         # drop, climb, recovery and pot grid over the dump, collapse, steady and launch-wave cases; markdown table to stdout
 ```
 
 The browser source is `page.ui1.js` through `page.ui4.js`, `page.body.html`, and `page.css`. Open the generated `index.html` to explore the model. Changing a setting updates the inputs; the owner-change controls schedule one mid-run patch. Invalid economic settings are rejected instead of silently clipped to old slider ranges.
