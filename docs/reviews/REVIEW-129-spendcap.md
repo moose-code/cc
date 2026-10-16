@@ -20,7 +20,7 @@ Run command: `node sim/market.mjs --spendcap`. It prints these assumptions and e
 - Crossing: reference-score bid strictly below 0.005 ETH. In the collapse scenario measurement starts after the first 600 seconds. A credit of score `s` remains eligible when `referenceBid * s / 433 >= ask`; this differs from the reference-score crossing.
 - Market recovery: after a downward crossing and after sellers stop, the reference bid returns to at least 0.005 ETH. If no crossing occurs, recovery is N/A. Initial-bid recovery to 0.025 ETH is a separate optional diagnostic in the JSON.
 
-## Measured results
+## Modeled results
 
 No reference bid crosses below 0.005 ETH in any of the twelve runs during the selling window. Therefore spend and count *until crossing* are censored at seller stop, shown below; market recovery is N/A for all twelve runs. The 50 and 100 bps cases do not exhaust the inventory within six hours.
 
@@ -61,4 +61,4 @@ The simulator now translates both ETH and balance drop-floor anchors when `bucke
 
 Listing keeper payment is also clamped to the buying pot remaining after the ask. A listing whose ask consumes the whole pot can succeed with a zero keeper payment when its score-adjusted bid ceiling exceeds the ask.
 
-Verification after both fixes: `node sim/engine.test.mjs` passed 1,942 checks, including active and expired duration edits on both bid instances and the exact-pot listing case. `node sim/market.mjs --spendcap` completed the same twelve bounded scenarios; its JSON output was byte-identical to the prior report run, so the measured results above are unchanged. `node --check sim/engine.js` and `git diff --check` passed. The borrowed launch config remains outside this simulator commit. No Forge, whole-suite, production build, deployment or transaction ran.
+Verification after both fixes: `node sim/engine.test.mjs` passed 1,942 checks, including active and expired duration edits on both bid instances and the exact-pot listing case. `node sim/market.mjs --spendcap` completed the same twelve bounded scenarios; its JSON output was byte-identical to the prior report run, so the modeled results above are unchanged. `node --check sim/engine.js` and `git diff --check` passed. The borrowed launch config remains outside this simulator commit. No Forge, whole-suite, production build, deployment or transaction ran.
