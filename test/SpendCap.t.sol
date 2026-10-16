@@ -10,6 +10,8 @@ contract SpendCapTest is Fixture {
 
     function _settings() internal view override returns (Settings memory s) {
         s = Mainnet.defaultSettings();
+        // the budget suites price wei sized pots; the reserve floor is test/Reserve.t.sol's
+        s.reserveWei = 0;
     }
 
     function _fund(uint256 amount) private {

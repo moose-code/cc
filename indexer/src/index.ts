@@ -453,7 +453,7 @@ ponder.on("Controller:CreditSaleSet", async ({ event, context }) => {
   await controllerSetting(context, event, "CreditSaleSet", {
     saleOn: c.saleOn,
     window: BigInt(c.window),
-    floorBps: Number(c.floorBps),
+    spreadBps: Number(c.spreadBps),
     startBps: BigInt(c.startBps),
   });
 });

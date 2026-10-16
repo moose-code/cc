@@ -20,7 +20,7 @@ export interface ClimbState {
   climbPerMinBps: number;
   recoveryClimbPerMinBps: number;
   recoveryGapBps: number;
-  ethPot: bigint; // booked pot: the climb target clamp
+  ethPot: bigint; // booked pot less the reserve (Core.room): the climb target clamp
   pending: bigint; // unbooked income share the next book adds: widens only the final read clamp
 }
 

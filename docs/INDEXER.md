@@ -124,7 +124,7 @@ One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCos
 
 ### 6.5 `controller`
 
-`address`, `setBlock`, `active`, sale params (`markupBps`, `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`), credit sale params (`saleOn`, `window`, `floorBps`, `startBps`), `anchorBps` (stored value and its block), `balancePoolKey` fields.
+`address`, `setBlock`, `active`, sale params (`markupBps`, `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`), credit sale params (`saleOn`, `window`, `spreadBps`, `startBps`), `anchorBps` (stored value and its block), `balancePoolKey` fields.
 
 ### 6.6 `credit`
 
@@ -264,6 +264,7 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | contract addresses | L snapshot (Core reads, one multicall) |
 | settings, controller params | L snapshot; also I `engine.settings`, `controller` (not read by the web yet) |
 | pot (live, with unbooked income) | L snapshot; D `potWithPending` |
+| reserve and the room the bids read (packet B, decision 154) | L `Core.reserve()` in the snapshot; D `potRoom` = `potWithPending` less the reserve, the clamp of the eth bid and the cap of a listing sweep |
 | ETH/USD | L Chainlink |
 | rating display | D `score / 10000` from I `credit.score` (chain mode: `CreditScore.scoreOf`) |
 | header bid at refScore | L snapshot `ethRate` |
@@ -339,7 +340,8 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | balance bid column and header line | L `Core.balanceBidOf(id)` for the 100 rows nearest the bid, in the same multicall (allowFailure, read only with a module set and `balanceBidOn`); D `score * balanceUnit * balanceRate / 10,000` for the other rows (marked ~); header "balance bid R% of par" from L snapshot `balanceRate` |
 | fills today | I `stats_hourly.creditsEth` and `creditsBalance` summed over the hours since 00:00 UTC; hidden while the indexer is not serving |
 | gap, counts, histogram | D price over bid |
-| clears in | D `web/lib/climb.ts` (mirror of `CoreLib._climb`) from L `rateAtCheckpoint`, `checkpointTime`, `lastFillTime`, anchor storage slots 27, 29, 30, the settings and the pot; assumes no fills and a constant pot |
+| clears in | D `web/lib/climb.ts` (mirror of `CoreLib._climb`) from L `rateAtCheckpoint`, `checkpointTime`, `lastFillTime`, anchor storage slots 27, 29, 30, the settings and the pot less the snapshot reserve; assumes no fills and a constant pot |
+| credit floor multiplier | L controller `floorMultBps()` in the snapshot (`creditFloorBps` of the snapshot): `(10,000 + creditSpreadBps)` of the Core's `balanceBidCapBps` |
 | spend headroom ("pot covers N, this minute M", "next bucket" rows) | L `Core.spendState()` (bucket, budget, spent), the settings `spendCapBps`, `bucketSeconds`, `keeperFee`; D `fitsBucket` and `bucketCount` in `web/lib/acquire.ts`; the same read decides the header button |
 | acquire action | L `Core.buyListing`, simulated before the header button enables and again before sending, shared with the header button (`useAcquireTx`) |
 

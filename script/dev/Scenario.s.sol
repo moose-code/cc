@@ -632,7 +632,7 @@ contract Scenario is Script {
         return CreditSale({
             saleOn: ctl.creditSaleOn(),
             window: ctl.creditWindow(),
-            floorBps: ctl.creditFloorBps(),
+            spreadBps: ctl.creditSpreadBps(),
             startBps: ctl.creditStartBps()
         });
     }

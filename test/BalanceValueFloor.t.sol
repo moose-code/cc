@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Mainnet, ICreditScore} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, ICreditScore, Settings} from "../src/interfaces/Interfaces.sol";
 import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
@@ -128,8 +128,8 @@ contract BalanceValueFloorTest is Fixture {
         assertEq(ctl.pointRate(), core.floorRate() / RATE_SCORE, "the point rate");
     }
 
-    // promise: SPEC 8 the credit sale floor is max(cost, valueOf(score)) times creditFloorBps
-    /// a credit price rests at `max(cost, valueOf(score)) * creditFloorBps`, where `valueOf` carries the pool term, so
+    // promise: SPEC 8 the credit sale floor is max(cost, valueOf(score)) times floorMultBps
+    /// a credit price rests at `max(cost, valueOf(score)) * floorMultBps`, where `valueOf` carries the pool term, so
     /// the pool lifts the credit floor and never lowers it below the cost
     function test_creditFloorCarriesThePoolTerm() public {
         _enterPhase2();
@@ -139,15 +139,38 @@ contract BalanceValueFloorTest is Fixture {
         vm.warp(acquiredAt + ctl.creditWindow());
         uint256 base = ctl.creditPrice(id);
         uint256 gov = _max(cost, _rate(score));
-        assertEq(base, gov * ctl.creditFloorBps() / 10_000, "no pool key: max of the cost and the rate term");
+        assertEq(base, gov * ctl.floorMultBps() / 10_000, "no pool key: max of the cost and the rate term");
         uint160 sp = _lowSqrtPrice();
         _initAndSet(sp, 3000, 60);
         uint256 pool = _pool(score, UNIT, sp);
         assertGt(pool, gov, "the pool term is above the cost and the rate term");
-        assertEq(ctl.creditPrice(id), pool * ctl.creditFloorBps() / 10_000, "the pool term lifts the credit floor");
+        assertEq(ctl.creditPrice(id), pool * ctl.floorMultBps() / 10_000, "the pool term lifts the credit floor");
         mod.setRevertUnit(true);
         assertEq(ctl.creditPrice(id), base, "a failing unit read leaves the floor on the cost and the rate term");
-        assertGe(ctl.creditPrice(id), cost * ctl.creditFloorBps() / 10_000, "never below the cost floor");
+        assertGe(ctl.creditPrice(id), cost * ctl.floorMultBps() / 10_000, "never below the cost floor");
+    }
+
+    // promise: SPEC 8 a buy at the credit floor and a sale back into the balance bid at its hard cap loses the spread
+    /// the most the balance bid pays for a credit is `score * unit * balanceBidCapBps / 10_000` balance token, worth the
+    /// pool value of par times the cap at the spot. the credit floor is that par value times `(10_000 + spreadBps)` of the
+    /// same cap, so at the launch spread of 200 the floor is 1.02 times the most the bid can pay, at every cap
+    function test_spreadOverTheCapClosesTheBalanceRoundTrip() public {
+        _enterPhase2();
+        uint256 id = _fillEthPile(1)[0];
+        (,, uint64 acquiredAt) = core.creditInfo(id);
+        uint256 score = _score(id);
+        vm.warp(acquiredAt + ctl.creditWindow());
+        uint160 sp = _lowSqrtPrice();
+        _initAndSet(sp, 3000, 60);
+        uint256 par = _pool(score, UNIT, sp); // the eth value of `score * unit` balance token at the spot
+        uint32[2] memory caps = [uint32(11_000), 30_000];
+        for (uint256 i; i < 2; ++i) {
+            Settings memory s = core.settings();
+            s.balanceBidCapBps = caps[i];
+            _setSettings(s);
+            uint256 mostPaid = par * caps[i] / 10_000; // the bid at its hard cap, valued at the spot
+            assertGe(ctl.creditPrice(id), mostPaid * (10_000 + ctl.creditSpreadBps()) / 10_000, "the floor clears the bid's ceiling by the spread");
+        }
     }
 
     // promise: INTEGRATION BadSetting on setBalancePoolKey

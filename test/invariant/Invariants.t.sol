@@ -294,7 +294,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 16. the eth bid stays open while the core has not migrated. when a held credit's bid (`bidOf`) is not zero and the
-    /// pot covers it, a one credit `sellForEth` by its holder succeeds. the check runs after every action
+    /// pot less the reserve covers it, a one credit `sellForEth` by its holder succeeds. the check runs after every action
     /// under a snapshot that is reverted, so the state is unchanged. it starts with the book of the fee income that
     /// every `sellForEth` makes first, so the price is the one the sale itself reads.
     // promise: 16 the bid never closes
@@ -302,7 +302,9 @@ abstract contract InvariantsBase is InvariantFixture {
         if (core.retired()) return;
         uint256 snap = vm.snapshotState();
         try core.book() {} catch {}
-        (address holder, uint256 id) = _sellable(core.ethPot());
+        uint256 pot = core.ethPot();
+        uint256 res = core.reserve();
+        (address holder, uint256 id) = _sellable(pot > res ? pot - res : 0);
         if (holder == address(0)) {
             vm.revertToState(snap);
             return;
@@ -320,9 +322,9 @@ abstract contract InvariantsBase is InvariantFixture {
         (bool ok, bytes memory why) = address(core).call(abi.encodeWithSignature("sellForEth(uint256[])", ids));
         vm.stopPrank();
         vm.revertToState(snap);
-        // a credit the engine sold this block is refused by the same block return guard, not a closed bid
+        // a credit the engine sold within the return lock is refused by the lock, not a closed bid
         assertTrue(
-            ok || bytes4(why) == ICore.SameBlockReturn.selector
+            ok || bytes4(why) == ICore.ReturnLocked.selector
                 || (bytes4(why) == ICore.SpendCapReached.selector && capRefusal),
             string.concat("sellForEth refused a credit whose price the pot covers, selector ", vm.toString(bytes4(why)))
         );
@@ -505,20 +507,24 @@ abstract contract InvariantsBase is InvariantFixture {
     /// 19. the price state and the read stay inside the bounds the settings and the state give, with no model of the
     /// climb. the read never exceeds the price state. the price state never exceeds `rateCap` and the ceiling, which is
     /// `ceilBps` of `max(last fill rate, peak now)` grown by `idleLoosenBps` per full 10 minutes since the last fill,
-    /// where the peak is `peakRate` halved over the time since `peakTime`. the read is the price state lowered to the pot.
+    /// where the peak is `peakRate` halved over the time since `peakTime`. the read is the price state lowered to the pot
+    /// less the reserve, so it never exceeds what a purchase may spend.
     // promise: 19 bid bounds
     function invariant_19_bidBounds() public view {
         uint256 rate = core.ethRate();
         uint256 price = core.ethPrice();
         assertLe(rate, price, "the read is above the price state");
         uint256 pot = core.ethPot();
+        uint256 res = core.reserve();
         uint256 pending = address(core).balance - pot - core.ethToBuyback() - core.ethRedeemBurn();
         assertLe(price, _ethCap(pot + pending), "the price state is above the rate cap and the ceiling");
-        assertLe(rate, pot + pending, "the read is above the pot and the pending income");
+        assertLe(rate, pot + pending > res ? pot + pending - res : 0, "the read is above the pot and the pending income less the reserve");
         if (pending == 0) {
-            assertEq(rate, price < pot ? price : pot, "the read is not the price state lowered to the pot");
+            uint256 room = pot > res ? pot - res : 0;
+            assertEq(rate, price < room ? price : room, "the read is not the price state lowered to the pot less the reserve");
         } else {
-            assertGe(rate, price < pot ? price : pot, "the read is below the price state lowered to the booked pot");
+            uint256 bookedRoom = pot > res ? pot - res : 0;
+            assertGe(rate, price < bookedRoom ? price : bookedRoom, "the read is below the price state lowered to the booked pot less the reserve");
         }
     }
 

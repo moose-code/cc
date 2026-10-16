@@ -74,17 +74,17 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x5ec588c33619e644f36988018d624fcaeb0296d47c91a7443f37c67b2ff69324;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x4eb81deea42baa58b4e5d45e5b3bd4cf95488ad22a8fd190ca875caa38f1049b;
+    bytes32 internal constant BUILD_HASH_CORE = 0x3fab4fd4a33b3c93709593eeb05dac66781e945e00f4c2a4130991b132727390;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x9da7b2c069830c9a95b6eb3ae582893e14f2ddc0293af84fc2237ab86ba4b7d3;
     bytes32 internal constant BUILD_HASH_CONTROLLER =
-        0xfc88e789e86afc068aed7b393cb8b05cbb8fafc012debff2ad8381389f9afa4a;
+        0xa927c05af48910a846b81f277e591a58b99ce7946fe7bbe3f49a58086cd144f3;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER =
         0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER =
         0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_HASH_RENDERER = 0x21bc6e3d0b34d0e43e48bdc78e106393a18ba34e6cc9dc81a722844d60b12ce6;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0xe6282bcb727a6f4829e4207480088658bd9519802b25898fa4d4c4c125932ee8;
+        0xe670768a9bf0efaa6747a01887cc35e718b014753aa29c4797a3dc1ed35c49c5;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 1_000_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -189,7 +189,7 @@ abstract contract LaunchChecks is PostflightChecks {
             "credit settings inside the bounds",
             badCredit == 0,
             badCredit == 0
-                ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps"
+                ? "creditCostToPotBps creditWindow creditStartBps (creditSpreadBps takes any value)"
                 : string(abi.encodePacked("out of bounds: ", badCredit))
         );
         _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);
@@ -842,6 +842,15 @@ abstract contract LaunchChecks is PostflightChecks {
         );
         _info("signoff: statement sale", string.concat("saleFloorBps ", vm.toString(c.settings.saleFloorBps)));
         _info(
+            "signoff: reserve and return lock",
+            string.concat(
+                "reserveWei ",
+                vm.toString(c.settings.reserveWei),
+                " (the reserve is the larger of it and 1.5 times the queued compose and redeem payments), returnLockSeconds ",
+                vm.toString(c.settings.returnLockSeconds)
+            )
+        );
+        _info(
             "signoff: credit swap",
             string.concat("swapFeeCc ", vm.toString(c.settings.swapFeeCc), " coin burned per swapCredit")
         );
@@ -901,8 +910,8 @@ abstract contract LaunchChecks is PostflightChecks {
                 c.credit.saleOn ? "on" : "off",
                 " window ",
                 vm.toString(c.credit.window),
-                "s floor ",
-                vm.toString(c.credit.floorBps),
+                "s spread over the bid's hard cap ",
+                vm.toString(c.credit.spreadBps),
                 " start ",
                 vm.toString(c.credit.startBps),
                 " bps, cost to pot ",

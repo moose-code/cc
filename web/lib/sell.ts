@@ -12,7 +12,7 @@ export function ethAnchorWords(start: bigint, bucketWord: bigint, now: bigint, b
 export interface EthReplay {
   price: bigint; // ethPrice(): the price state at the first fill
   peak: bigint; // floorRate(): max(price state, remembered peak now)
-  pot: bigint; // ethPot plus the unbooked share the first book adds
+  pot: bigint; // ethPot plus the unbooked share the first book adds, less the reserve (Core.room)
   start: bigint; // anchor.minuteStartRate
   bucket: bigint; // anchor.minuteBucket
   nowBucket: bigint; // chain time / bucketSeconds

@@ -55,6 +55,8 @@ export const SETTINGS = {
   balanceBidCapBps: _cs.balanceBidCapBps,
   idleStepSeconds: _cs.idleStepSeconds,
   sniperSeconds: _cs.sniperSeconds,
+  reserveWei: _cs.reserveWei / W, // eth: the least the pot keeps for processing; the reserve is the larger of it and 1.5 times the queued compose and redeem payments (CoreLib._reserve)
+  returnLockSeconds: _cs.returnLockSeconds, // seconds every intake door refuses a credit the engine sold, at least the second of the sale (CoreLib.checkReturn)
   swapFeeCc: _cs.swapFeeCc / W, // whole coins burned by the caller of swapCredit per swap (decision 116)
 };
 export const SETTING_KEYS = Object.keys(SETTINGS);
@@ -76,12 +78,12 @@ export const CONTROLLER = {
 };
 export const CONTROLLER_KEYS = Object.keys(CONTROLLER);
 // the credit settings (script/config/mainnet.json credit block, the Credit struct). creditCostToPotBps, chosenComposeOn and minCcToChoose are Core settings
-// (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditFloorBps and creditStartBps are controller
+// (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditSpreadBps and creditStartBps are controller
 // settings (FLOW 88 to 90, 93, 94). refScore is a Core setting the eth doors and the controller share. while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
-// start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, valueOf(score)) * creditFloorBps / 10000 (decisions 104, 115). valueOf is the larger of the rate term
+// start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, valueOf(score)) * floorMultBps / 10000, floorMultBps = max(10000, (10000 + creditSpreadBps) * balanceBidCapBps / 10000) (decisions 104, 115, 150, 153). valueOf is the larger of the rate term
 // floorRate * score / refScore (the floor rate is the larger of the climbed price state and the decayed peak) and the pool term score * unitPerPoint at the balance token pool price, 0 while no module or pool key is set.
 // every sale adds royaltyBps of the engine price on top, paid by the buyer and claimed by the royalty recipient (decision 112).
-// Core.sellCreditTo takes at least the credit's cost; after the artist and operator cuts it books creditCostToPotBps of the cost to the pot and the rest to the buyback pot.
+// Core.sellCreditTo takes at least saleFloorBps of the credit's cost; after the artist and operator cuts it books creditCostToPotBps of the cost to the pot and the rest to the buyback pot.
 // compose waits for a credit's window while the sale is on (ControllerV1.pastWindow). refScore is the per-credit score of the statement price reference, in
 // ten-thousandths of a point (the model's scores are in points). minCcToChoose is a coin balance the model does not track: every composer passes it
 export const CREDIT = {
@@ -90,12 +92,12 @@ export const CREDIT = {
   minCcToChoose: +_cr.minCcToChoose,
   creditSaleOn: _cr.saleOn,
   creditWindow: _cr.window, // seconds
-  creditFloorBps: _cr.floorBps,
+  creditSpreadBps: _cr.spreadBps,
   creditStartBps: _cr.startBps,
 };
 export const CREDIT_KEYS = Object.keys(CREDIT);
 // the config names of the credit block (script/config/mainnet.json credit.*)
-export const CREDIT_CONFIG_KEY = { creditCostToPotBps: 'costToPotBps', chosenComposeOn: 'chosenComposeOn', minCcToChoose: 'minCcToChoose', creditSaleOn: 'saleOn', creditWindow: 'window', creditFloorBps: 'floorBps', creditStartBps: 'startBps' };
+export const CREDIT_CONFIG_KEY = { creditCostToPotBps: 'costToPotBps', chosenComposeOn: 'chosenComposeOn', minCcToChoose: 'minCcToChoose', creditSaleOn: 'saleOn', creditWindow: 'window', creditSpreadBps: 'spreadBps', creditStartBps: 'startBps' };
 // the config credit block also holds royaltyRecipient, an address the model has no use for
 // Integer widths are checked with BigInt before a value can enter the numerical model.
 function uint(value, bits, scale = 1) {
@@ -107,7 +109,7 @@ function uint(value, bits, scale = 1) {
 export function creditViolation(c) {
   if (!uint(c.creditCostToPotBps, 16) || c.creditCostToPotBps > BPS) return 'creditCostToPotBps';
   if (!uint(c.creditWindow, 32) || c.creditWindow < 1) return 'creditWindow';
-  if (!uint(c.creditFloorBps, 16) || c.creditFloorBps < BPS) return 'creditFloorBps';
+  if (!uint(c.creditSpreadBps, 16)) return 'creditSpreadBps';
   if (!uint(c.creditStartBps, 32) || c.creditStartBps < BPS) return 'creditStartBps';
   if (!uint(c.minCcToChoose, 256)) return 'minCcToChoose';
   return null;
@@ -144,6 +146,7 @@ export function firstViolation(s) {
     ['callerFee',64,W], ['callerMaxBaseFee',48,1e9], ['feeToRedeemBurnBps',16,1], ['payeePpm',24,1],
     ['pointsPerPage',32,1], ['swapFeeCc',96,W], ['climbMultiplierCapBps',16,1], ['spendCapBps',16,1],
     ['bucketSeconds',32,1], ['balanceBidCapBps',32,1], ['idleStepSeconds',32,1], ['sniperSeconds',32,1],
+    ['reserveWei',64,W], ['returnLockSeconds',32,1],
   ];
   for (const [k, bits, scale] of fields) if (!uint(s[k], bits, scale)) return k;
   for (const k of ['dropToPct', 'recoveryGapPct']) if (s[k] > 100) return k;
@@ -380,8 +383,22 @@ export class Core {
   }
   // the climb stops where the pot no longer affords one credit at the rate, or at rateCap, whichever is lower
   clamp() {
-    return Math.min(this.ethPot * W, this.s.rateCap);
+    return Math.min(this.room() * W, this.s.rateCap);
   }
+  // the queue the reserve prices: the pile size and the held statements, kept by the run (simulate) or a test
+  setQueue(pile, held) { this.queue = { pile, held }; }
+  // CoreLib._reserve: the larger of reserveWei and 1.5 times the queued caller payments, one compose per full page of the
+  // pile at COMPOSE_QUEUE_GAS and one redemption per held statement at REDEEM_QUEUE_GAS, each at callerMaxBaseFee plus callerFee
+  reserve() {
+    const s = this.s, q = this.queue || { pile: 0, held: 0 }, gwei = s.callerMaxBaseFee * 1e-9;
+    const queued = Math.floor(q.pile / this.p.PAGE) * (9e6 * gwei + s.callerFee) + q.held * (6e5 * gwei + s.callerFee);
+    return Math.max(s.reserveWei, 1.5 * queued);
+  }
+  // CoreLib.room: ethPot less the reserve, the most the bids may spend. the caller payments pay from the whole pot
+  room() { return Math.max(0, this.ethPot - this.reserve()); }
+  // CoreLib.checkReturn: an intake door refuses a credit the engine sold before soldAt + returnLockSeconds, at least the
+  // second of the sale (a lock of 0 keeps the same block rule)
+  returnLocked(cr, now) { return cr.soldAt !== undefined && now < cr.soldAt + Math.max(this.s.returnLockSeconds, 1); }
   // the ceiling in rate terms: ceilPct of the anchor, the anchor loosened while idle. the anchor is max(last rate paid, peak now)
   stepCeil(now) {
     const s = this.s, p = this.p;
@@ -522,7 +539,7 @@ export class Core {
   // dropPerCreditPct * ratio, bounded at 100 percent. false means the Core would revert
   spend(x, now, ratio = 1) {
     const pot = this.ethPot;
-    if (!(x > 0) || x > pot + 1e-18) return false;
+    if (!(x > 0) || x > this.room() + 1e-18) return false;
     if (!this.spendBucket.charge(modelWei(x), modelWei(pot), now, this.s.bucketSeconds, this.s.spendCapBps)) return false;
     this.checkpoint(now);
     const paid = this.rateAtCheckpoint;
@@ -590,8 +607,9 @@ export class Core {
   buyListing(ask, now, pts = RATE_SCORE / 1e4) {
     const ratio = this.scoreRatio(pts);
     const ceil = (this.ethRate(now) / W) * ratio;
-    if (ask > this.ethPot || ask > ceil) return null;
-    const paid = Math.min(this.listingPayMax(), ceil - ask, this.ethPot - ask);
+    const room = this.room();
+    if (ask > room || ask > ceil) return null;
+    const paid = Math.min(this.listingPayMax(), ceil - ask, room - ask);
     if (!this.spend(ask + paid, now, ratio)) return null;
     return { cost: ask, paid };
   }
@@ -692,19 +710,22 @@ export class Core {
   // rate is the larger of the climbed price state and the decayed peak. refScore is in ten-thousandths of a point, so refScore/1e4 is the reference score in points.
   // the cost basis reads the price state and the peak
   balanceCostBasis(pts, now) { return (this.floorRate(now) / W) * (pts / (RATE_SCORE / 1e4)); }
-  // the credit sale floor: the larger of the credit's cost and valueOf(score), times creditFloorBps (decision 115)
-  creditFloor(cr, now) { return (Math.max(cr.cost, this.valueOf(cr.pts, now)) * this.cr.creditFloorBps) / BPS; }
+  // ControllerV1.floorMultBps: (10000 + creditSpreadBps) of the live balanceBidCapBps, at least 10000 (decisions 150, 153)
+  floorMultBps() { return Math.max(BPS, ((BPS + this.cr.creditSpreadBps) * this.s.balanceBidCapBps) / BPS); }
+  // the credit sale floor: the larger of the credit's cost and valueOf(score), times floorMultBps, and at least saleFloorBps
+  // of the cost, the Core's floor of sellCreditTo
+  creditFloor(cr, now) { return Math.max((Math.max(cr.cost, this.valueOf(cr.pts, now)) * this.floorMultBps()) / BPS, (cr.cost * this.s.saleFloorBps) / BPS); }
   // ControllerV1.creditPrice: falls linearly from floor * creditStartBps to the floor over creditWindow from the acquisition time and rests at the floor
   creditPrice(cr, now) {
     const floor = this.creditFloor(cr, now), start = (floor * this.cr.creditStartBps) / BPS, age = Math.max(0, now - cr.t0);
     return age >= this.cr.creditWindow ? floor : start - ((start - floor) * age) / this.cr.creditWindow;
   }
-  // Core.sellCreditTo (decision 123): the payment is at least the credit's cost. the artist and operator cuts come off
-  // the payment first; creditCostToPotBps of the cost, at most the rest, goes to the pot, the remainder to the buyback pot.
-  // returns the booking or null when the Core would revert
+  // Core.sellCreditTo (decision 123): the payment is at least saleFloorBps of the credit's cost. the artist and operator
+  // cuts come off the payment first; creditCostToPotBps of the cost, at most the rest, goes to the pot, the remainder to
+  // the buyback pot. the sale time is stored for the return lock. returns the booking or null when the Core would revert
   sellCreditTo(cr, value, now) {
-    if (cr.sold || value < cr.cost * (1 - 1e-12)) return null;
-    cr.sold = true;
+    if (cr.sold || value < ((cr.cost * this.s.saleFloorBps) / BPS) * (1 - 1e-12)) return null;
+    cr.sold = true; cr.soldAt = now;
     const toArtist = (value * this.s.saleToArtistBps) / BPS, toOperator = (value * this.s.saleToOperatorBps) / BPS;
     const rest = value - toArtist - toOperator;
     const toPot = Math.min((cr.cost * this.cr.creditCostToPotBps) / BPS, rest), toBuyback = rest - toPot;
@@ -838,10 +859,9 @@ export class Core {
     if (!(paid > 0)) return null;
     return { paid, cost: Math.max(this.balanceCostBasis(pts, now), 1e-18) };
   }
-  // ControllerV1.atFloor: the curve price has reached its floor, saleFloorBps of the reference
+  // ControllerV1.atFloor: by age only, the start at or below 10000 or the statement aged decayHours. no price is read
   atFloor(st, now) {
-    const ref = this.reference(st, now);
-    return this.statementPrice(ref, st, now) <= ((ref * this.s.saleFloorBps) / BPS) * (1 + 1e-9);
+    return this.startBps(now) <= BPS || this.statementAge(st, now) >= this.c.decayHours * 3600;
   }
   // Core.redeemStatement preconditions: a module is set, redeemOn is true, and the statement's curve price has reached its floor
   redeemReady(st, now) {
@@ -1014,6 +1034,7 @@ export function simulate(userParams = {}) {
   const p = Object.assign({}, DEFAULTS, userParams);
   const rng = mulberry32(p.seed);
   const core = new Core(p, 0);
+  // the reserve reads the run's own queue: the pile and the held statements at every read
   const rngThr = mulberry32((p.seed + 99991) >>> 0); // the throttler draws from its own stream, the honest sellers' draws are the same with it on or off
   const pool = new Pool(p);
   const H = Math.round(p.days * 24);
@@ -1027,6 +1048,7 @@ export function simulate(userParams = {}) {
   let holdPool = p.holders;
   const pile = []; // the one credit pile, oldest first: {pts, cost, t0}. credits bought with eth and with the balance token enter it alike (FLOW 92)
   let unbid = []; // statements held by the Core for sale or redemption
+  core.queue = { get pile() { return pile.length; }, get held() { return unbid.length; } };
   let lnM = 0, nextSid = 1;
   const T = { // totals
     fees: 0, feesBuyback: 0, saleGross: 0, saleToPot: 0, saleToBuyback: 0, spent: 0, listingPaid: 0,

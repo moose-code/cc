@@ -55,22 +55,22 @@ contract FlowTest is Fixture {
         SettingsFields.set(s, i, v);
     }
 
-    function _lo() internal pure returns (uint256[34] memory) {
+    function _lo() internal pure returns (uint256[36] memory) {
         return SettingsFields.lo();
     }
 
-    function _hi() internal pure returns (uint256[34] memory) {
+    function _hi() internal pure returns (uint256[36] memory) {
         return SettingsFields.hi();
     }
 
-    function _names() internal pure returns (bytes32[34] memory) {
+    function _names() internal pure returns (bytes32[36] memory) {
         return SettingsFields.names();
     }
 
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
-        uint256[34] memory lo = _lo();
-        uint256[34] memory hi = _hi();
+        uint256[36] memory lo = _lo();
+        uint256[36] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
@@ -92,6 +92,7 @@ contract FlowTest is Fixture {
     function test_settings_launchValues() public view {
         Settings memory expected = Mainnet.defaultSettings();
         expected.spendCapBps = 10_000; // The shared fixture bypasses the limiter; ConfigTest checks the launch cap.
+        expected.reserveWei = 0; // the shared fixture sizes pots to the bid; ConfigTest and test/Reserve.t.sol check the launch floor
         assertEq(_hash(core.settings()), _hash(expected), "fixture launch values");
         Settings memory s = core.settings();
         assertEq(s.dropPer100PointsBps, 115);
@@ -114,6 +115,7 @@ contract FlowTest is Fixture {
         assertEq(s.feeToRedeemBurnBps, 1_000);
         assertEq(s.callerFee, 0.0003 ether);
         assertEq(s.callerMaxBaseFee, 3 gwei);
+        assertEq(s.returnLockSeconds, 86_400);
     }
 
     // promise: SPEC 2 every setting reads back as written
@@ -137,8 +139,8 @@ contract FlowTest is Fixture {
 
     // promise: INTEGRATION BadSetting: bounds are inclusive
     function test_settings_everyBoundEdgeIsAccepted() public {
-        uint256[34] memory lo = _lo();
-        uint256[34] memory hi = _hi();
+        uint256[36] memory lo = _lo();
+        uint256[36] memory hi = _hi();
         _markupToTheBound();
         _potTo(100 ether);
         for (uint256 i; i < N; ++i) {
@@ -169,9 +171,9 @@ contract FlowTest is Fixture {
 
     // promise: INTEGRATION BadSetting
     function test_settings_everyBoundViolationReverts() public {
-        uint256[34] memory lo = _lo();
-        uint256[34] memory hi = _hi();
-        bytes32[34] memory names = _names();
+        uint256[36] memory lo = _lo();
+        uint256[36] memory hi = _hi();
+        bytes32[36] memory names = _names();
         for (uint256 i; i < N; ++i) {
             // the two switches take 0 or 1, nothing is out of bounds
             if (i == 11 || i == 12) continue;

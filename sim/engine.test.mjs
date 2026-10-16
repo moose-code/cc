@@ -12,8 +12,8 @@ const near = (a, b, tol, msg) => {
 };
 const ok = (c, msg) => { n++; assert.ok(c, msg); };
 const H = 3600;
-// LEGACY: the checks below that hand compute a single bid (a 0.0067 eth opening rate, one percent a minute climb, feeToRedeemBurnBps 0) run on it, with the 12 hour statement line, the anchor fraction 5000 and the credit start 30000 the curve checks were written for. the launch floor (saleFloorBps 10000) and split (saleToBuybackBps 5000 with no artist or operator cut) are kept so the hand computed curves rest at cost; the launch values have their own checks against mainnet.json
-const LEGACY = { spendCapBps: 10000, multiplierCap: 1, stepSec: 3600, rateStart: 6.668e15, climbPerMin: 1, recoveryClimbPerMin: 1, dropPerCreditPct: 0.5, idleLoosenPct: 0.01, ceilPct: 300, rateCap: 53344000000000000, saleToBuybackBps: 5000, saleToArtistBps: 0, saleToOperatorBps: 0, feeToRedeemBurnBps: 0, decayHours: 12, anchorMoveBps: 5000, creditStartBps: 30000 };
+// LEGACY: the checks below that hand compute a single bid (a 0.0067 eth opening rate, one percent a minute climb, feeToRedeemBurnBps 0) run on it, with the 12 hour statement line, the anchor fraction 5000, the credit start 30000 and no reserve floor the curve checks were written for. the launch floor (saleFloorBps 10000) and split (saleToBuybackBps 5000 with no artist or operator cut) are kept so the hand computed curves rest at cost; the launch values have their own checks against mainnet.json
+const LEGACY = { spendCapBps: 10000, multiplierCap: 1, stepSec: 3600, rateStart: 6.668e15, climbPerMin: 1, recoveryClimbPerMin: 1, dropPerCreditPct: 0.5, idleLoosenPct: 0.01, ceilPct: 300, rateCap: 53344000000000000, saleToBuybackBps: 5000, saleToArtistBps: 0, saleToOperatorBps: 0, feeToRedeemBurnBps: 0, decayHours: 12, anchorMoveBps: 5000, creditStartBps: 30000, reserveWei: 0 };
 // whole market runs price the rate per 100 points: the per credit rates above are per 433 point credit (the calibration credit), and so is the 0.5 percent drop, so simL rescales them by 100 / 433 (the drop to whole basis points)
 const PER_100 = 100 / 433;
 const simL = (o = {}) => simulate(Object.assign({}, LEGACY, { rateStart: LEGACY.rateStart * PER_100, rateCap: LEGACY.rateCap * PER_100, dropPerCreditPct: Math.round(LEGACY.dropPerCreditPct * PER_100 * 100) / 100 }, o));
@@ -53,7 +53,7 @@ const R0 = 6.668e15;
   // every other setting of the config is a SETTINGS field with the same value (eth and gwei in the model, wei in the config)
   for (const [k, v] of Object.entries(cfg.settings)) {
     if (k in STEPPED) continue;
-    near(SETTINGS[k], k === 'buybackSlice' || k === 'keeperFee' || k === 'callerFee' || k === 'swapFeeCc' ? v / 1e18 : k === 'keeperMaxBaseFee' || k === 'callerMaxBaseFee' ? v / 1e9 : v, 1e-12, 'setting ' + k);
+    near(SETTINGS[k], k === 'buybackSlice' || k === 'keeperFee' || k === 'callerFee' || k === 'swapFeeCc' || k === 'reserveWei' ? v / 1e18 : k === 'keeperMaxBaseFee' || k === 'callerMaxBaseFee' ? v / 1e9 : v, 1e-12, 'setting ' + k);
   }
   for (const k of Object.keys(SETTINGS)) ok(cfg.settings[STEPPED_SIM[k] ?? k] !== undefined, 'the config carries ' + k);
   for (const k of Object.keys(cfg.settings)) ok(k in STEPPED || k in SETTINGS, 'the model carries ' + k);
@@ -74,7 +74,7 @@ const R0 = 6.668e15;
   // the credit block (the Credit struct of the launch config) is the model's CREDIT, field for field, and the launch values are the ones of FLOW 88 to 90
   assert.deepEqual(Object.keys(cfg.credit).sort(), Object.values(CREDIT_CONFIG_KEY).sort()); n++; // the config credit block is the model's CREDIT, field for field (decision 123 dropped royaltyRecipient)
   for (const [k, ck] of Object.entries(CREDIT_CONFIG_KEY)) near(+CREDIT[k], +cfg.credit[ck], 1e-12, 'credit ' + k);
-  assert.deepEqual(CREDIT, { creditCostToPotBps: 8000, chosenComposeOn: false, minCcToChoose: 1e18, creditSaleOn: true, creditWindow: 4 * H, creditFloorBps: 11000, creditStartBps: 15000 }); n++;
+  assert.deepEqual(CREDIT, { creditCostToPotBps: 8000, chosenComposeOn: false, minCcToChoose: 1e18, creditSaleOn: true, creditWindow: 4 * H, creditSpreadBps: 200, creditStartBps: 15000 }); n++;
   ok(CREDIT.royaltyBps === undefined && cfg.credit.royaltyBps === undefined, 'the royalty is gone from the model and the config (decision 123)'); n++;
   assert.equal(creditViolation(CREDIT), null); n++;
   assert.equal(firstViolation(SETTINGS), null); n++;
@@ -500,7 +500,7 @@ const R0 = 6.668e15;
   near(e.ethRedeemBurn, 2.5, 1e-12, 'reserve share'); near(e.ethPot, 7.5, 1e-12, 'pot share');
   near(e.ethPot + e.ethToBuyback + e.ethRedeemBurn, 10, 1e-12, 'all of it is booked');
   // the reserve share does not enter the pot, so the funded flag and the clamp follow the pot alone
-  const q = new Core(Object.assign({}, DEFAULTS, { rateCap: 1e18 }), 0); q.addFees(0.1, 0); near(q.clamp(), 0.09 * W, 1e-12, 'the clamp is the pot without the reserve');
+  const q = new Core(Object.assign({}, DEFAULTS, { rateCap: 1e18, reserveWei: 0 }), 0); q.addFees(0.1, 0); near(q.clamp(), 0.09 * W, 1e-12, 'the clamp is the pot without the redeem burn share');
   // sale proceeds: the artist and operator cuts come off first, then saleToBuybackBps of the rest to the buyback (decision 123)
   const s = new Core(Object.assign({}, DEFAULTS), 0); s.sellTo({ cost: 1, t0: 0 }, 2, 0); // cuts 2 * (0.025 + 0.005) = 0.06, rest 1.94, buyback 1.94 * 0.25
   near(s.ethRedeemBurn, 0, 1e-12, 'a sale does not fill the reserve'); near(s.ethToBuyback, 1.94 * 0.25, 1e-12, 'a sale sends saleToBuybackBps of the rest to the buyback'); near(s.artistPaid + s.operatorPaid, 0.06, 1e-12, 'the cuts are pushed out');
@@ -703,12 +703,13 @@ const R0 = 6.668e15;
   const e = fresh(L, 10); near(e.reference({ cost: 0.6, rating: 80 * 100 }, 0), 0.8, 1e-12, 'the rate term binds at the opening rate'); e.setSettings({ rate: 5e15 }, 0); near(e.reference({ cost: 0.6, rating: 80 * 100 }, 0), 0.6, 1e-12, 'a lower rate shrinks the rate term under cost, which is the reference'); n += 2;
   assert.throws(() => e.setSettings({ pointsPerPage: 0 }, 2), /pointsPerPage/); assert.throws(() => e.setSettings({ pointsPerPage: 2 ** 32 }, 2), /pointsPerPage/); n += 2;
 }
-// the credit sale window (ControllerV1.creditPrice, FLOW 88, 92, 93, 94): off at launch. floor = max(cost, floorRate, valueOf(score)) * creditFloorBps / 10000 (decision 115), start = floor *
+// the credit sale window (ControllerV1.creditPrice, FLOW 88, 92, 93, 94): off at launch. floor = max(cost, valueOf(score)) * floorMultBps / 10000 (decisions 115, 150, 153), start = floor *
 // creditStartBps / 10000, a straight line over creditWindow from the acquisition time, resting at the floor. Core.sellCreditTo takes at least the cost, creditCostToPotBps of the cost
 // promise: to the pot and the rest of the payment to the buyback pot. compose waits for the window while the sale is on
 {
   // the rate is flat here (the contract minimum climb), so the floor is the cost; the long run check below climbs
-  const mk = (over = {}, pot = 10) => fresh(Object.assign({ creditSaleOn: true, rateStart: 4e14, rateCap: 1e16, climbPerMin: 0.01, recoveryClimbPerMin: 0.01, idleLoosenPct: 2 }, over), pot);
+  // creditSpreadBps 1000 at the 10000 cap is the 1.1 floor these checks were written for; the launch spread has its own checks below
+  const mk = (over = {}, pot = 10) => fresh(Object.assign({ creditSaleOn: true, rateStart: 4e14, rateCap: 1e16, climbPerMin: 0.01, recoveryClimbPerMin: 0.01, idleLoosenPct: 2, creditSpreadBps: 1000 }, over), pot);
   const cr = { pts: 440, cost: 0.002, t0: 0 }, W4 = 4 * H;
   const c = mk();
   ok(DEFAULTS.creditSaleOn === true && fresh({}, 10).cr.creditSaleOn === true, 'the credit sale is on at launch (decision 119)'); n++;
@@ -732,17 +733,42 @@ const R0 = 6.668e15;
   const s = mk(), pot0 = s.ethPot, sold = { pts: 440, cost: 0.004, t0: 0 }, price = s.creditPrice(sold, W4);
   const res = s.buyCredit(sold, W4); ok(res !== null && sold.sold === true, 'sold at once'); near(res.price, price, 1e-12, 'the price paid'); near(res.toPot, 0.004 * 0.8, 1e-12, 'creditCostToPotBps 8000: 80 percent of the cost to the pot'); near(res.toBuyback, price - 0.004 * 0.8, 1e-12, 'the rest to the buyback pot');
   near(s.ethPot - pot0, 0.004 * 0.8, 1e-12, 'the pot has the cost share'); near(s.ethToBuyback, price - 0.004 * 0.8, 1e-12, 'the buyback pot has the rest'); n += 6;
-  assert.equal(s.sellCreditTo({ pts: 1, cost: 0.004, t0: 0 }, 0.00399, 0), null); ok(s.sellCreditTo({ pts: 1, cost: 0.004, t0: 0 }, 0.004, 0) !== null, 'the cost is the hard floor'); assert.equal(s.buyCredit(sold, W4), null); n += 3; // a credit sells once
+  assert.equal(s.sellCreditTo({ pts: 1, cost: 0.004, t0: 0 }, 0.00399, 0), null); ok(s.sellCreditTo({ pts: 1, cost: 0.004, t0: 0 }, 0.004, 0) !== null, 'saleFloorBps 10000 of the cost is the hard floor'); assert.equal(s.buyCredit(sold, W4), null); n += 3; // a credit sells once
   const half = mk({ creditCostToPotBps: 5000 }); const hs = { pts: 1, cost: 0.004, t0: 0 }, hp = half.ethPot; const hr = half.buyCredit(hs, W4);
   near(hr.toPot, 0.002, 1e-12, 'creditCostToPotBps 5000: half the cost to the pot'); near(half.ethPot - hp, 0.002, 1e-12, 'booked'); near(half.ethToBuyback, hr.price - 0.002, 1e-12, 'the rest to the buyback pot'); n += 3;
   // off: no sale. paused: no sale. the window gates compose only while the sale is on
   assert.equal(fresh({ creditSaleOn: false }, 10).buyCredit({ pts: 1, cost: 0.004, t0: 0 }, 0), null); const pz = mk(); pz.setPaused(true, 0); assert.equal(pz.buyCredit({ pts: 1, cost: 0.004, t0: 0 }, 5), null); n += 2;
   assert.equal(c.pastWindow(0, W4 - 1), false); assert.equal(c.pastWindow(0, W4), true); assert.equal(fresh({ creditSaleOn: false }, 10).pastWindow(0, 0), true); n += 3;
   // bounds of the credit settings (src/lib/CreditBounds.sol) and the setters, at once
-  assert.throws(() => c.setSettings({ creditWindow: 2 ** 32 }, 1), /creditWindow/); assert.throws(() => c.setSettings({ creditFloorBps: 65536 }, 1), /creditFloorBps/); assert.throws(() => c.setSettings({ creditStartBps: 2 ** 32 }, 1), /creditStartBps/);
+  assert.throws(() => c.setSettings({ creditWindow: 2 ** 32 }, 1), /creditWindow/); assert.throws(() => c.setSettings({ creditSpreadBps: 65536 }, 1), /creditSpreadBps/); assert.throws(() => c.setSettings({ creditStartBps: 2 ** 32 }, 1), /creditStartBps/);
   assert.throws(() => c.setSettings({ creditCostToPotBps: 10001 }, 1), /creditCostToPotBps/); n += 4;
-  c.setSettings({ creditSaleOn: false, creditWindow: 7200, creditFloorBps: 12000, creditStartBps: 20000, chosenComposeOn: true, minCcToChoose: 5 }, 1);
+  c.setSettings({ creditSaleOn: false, creditWindow: 7200, creditSpreadBps: 2000, creditStartBps: 20000, chosenComposeOn: true, minCcToChoose: 5 }, 1);
   assert.equal(c.cr.creditSaleOn, false); assert.equal(c.cr.creditWindow, 7200); assert.equal(c.cr.chosenComposeOn, true); n += 3;
+}
+
+// promise: packet B (decision 154): the credit floor multiplier is (10000 + creditSpreadBps) of the live cap, sellCreditTo floors on
+// saleFloorBps, the reserve keeps the queue's payments out of the bids, the return lock refuses a sold credit, eligibility is by age
+{
+  const c = fresh({ creditSaleOn: true }, 10);
+  near(c.floorMultBps(), 10200, 1e-12, 'launch spread 200 at the cap 10000'); c.setSettings({ balanceBidCapBps: 11000 }, 1); near(c.floorMultBps(), 11220, 1e-12, 'at the hard cap 11000 of decision 152');
+  c.setSettings({ creditSpreadBps: 0, balanceBidCapBps: 10000 }, 2); near(c.floorMultBps(), 10000, 1e-12, 'no spread at the 10000 cap is the reference'); n += 3;
+  // sellCreditTo floors on saleFloorBps of the cost
+  const f = fresh({ creditSaleOn: true, saleFloorBps: 5000 }, 10);
+  assert.equal(f.sellCreditTo({ pts: 1, cost: 0.004, t0: 0 }, 0.00199, 0), null); ok(f.sellCreditTo({ pts: 1, cost: 0.004, t0: 0 }, 0.002, 0) !== null, 'half the cost at saleFloorBps 5000'); n++;
+  const hiFloor = fresh({ creditSaleOn: true, saleFloorBps: 12000, rateStart: 1e12 }, 10); near(hiFloor.creditFloor({ pts: 1, cost: 0.004, t0: 0 }, 0), 0.004 * 1.2, 1e-12, 'the credit floor is never under the Core floor'); n++;
+  // the reserve: the floor with no queue, 1.5 times the queued payments above it; the bids read the pot less the reserve, the caller payments the whole pot
+  const r = fresh({ reserveWei: 0.1, rateCap: 1e18 }, 1);
+  near(r.reserve(), 0.1, 1e-12, 'an empty queue keeps reserveWei'); r.setQueue(80 * 3, 2);
+  near(r.reserve(), 1.5 * (3 * (9e6 * r.s.callerMaxBaseFee * 1e-9 + r.s.callerFee) + 2 * (6e5 * r.s.callerMaxBaseFee * 1e-9 + r.s.callerFee)), 1e-12, 'three pages and two statements');
+  near(r.clamp(), (1 - r.reserve()) * W, 1e-9, 'the clamp is the pot less the reserve');
+  r.setQueue(0, 0); r.ethPot = 0.1; assert.equal(r.ethRate(0), 0); assert.equal(r.sellForEth(0, 433), 0); n += 4; // a pot at the reserve bids nothing
+  // the return lock: refused before soldAt + returnLockSeconds, at least in the second of the sale
+  const l = fresh({ creditSaleOn: true }, 10), sold = { pts: 1, cost: 0.004, t0: 0 }; l.sellCreditTo(sold, 0.005, 100);
+  ok(l.returnLocked(sold, 100 + 86399) && !l.returnLocked(sold, 100 + 86400), 'the launch lock of a day'); ok(!l.returnLocked({ pts: 1, cost: 1, t0: 0 }, 5), 'a credit never sold passes');
+  l.setSettings({ returnLockSeconds: 0 }, 101); ok(l.returnLocked(sold, 100) && !l.returnLocked(sold, 101), 'a lock of 0 refuses the second of the sale only'); n += 3;
+  // eligibility by age only: decayHours of age, or a start at or below 10000, whatever the reference
+  const a = fresh({}, 10), st = { cost: 1, t0: 0 }, span = a.c.decayHours * H;
+  ok(!a.atFloor(st, span - 1) && a.atFloor(st, span), 'eligible at decayHours of age'); a.setSettings({ markupBps: 10000 }, 0); ok(a.atFloor(st, 0), 'a start at par is eligible at once'); n += 2;
 }
 
 // buyback slice and the caller payment (docs/DECISIONS.md 61): the caller is paid 270,000 gas at min(basefee, keeperMaxBaseFee) plus keeperFee out of the slice.
@@ -904,7 +930,7 @@ const R0 = 6.668e15;
   assert.deepEqual(simulate(Object.assign({ creditSaleOn: false, creditCostToPotBps: 5000 }, base)).S.credits, off.S.credits); n++; // a setting of the off feature changes nothing
   ok(on.T.creditSold > 50, 'credits sell through the window'); ok(Math.abs(on.stats.creditCheck) < 1e-9, 'the sale proceeds split exactly');
   ok(Math.abs(on.stats.potCheck) < 1e-6 && Math.abs(on.stats.saleCheck) < 1e-9 && Math.abs(on.stats.buybackCheck) < 1e-9 && Math.abs(on.stats.redeemCheck) < 1e-9 && Math.abs(on.stats.cutsCheck) < 1e-9, 'accounting closes with the credit sale');
-  ok(on.T.creditGross >= on.T.creditCost * 1.1 * (1 - 1e-9), 'every credit sells at or above 110 percent of its cost (creditFloorBps 11000)'); near(on.T.creditToPot, on.T.creditCost * 0.8, 1e-9, 'creditCostToPotBps 8000: 80 percent of the cost to the pot');
+  ok(on.T.creditGross >= on.T.creditCost * 1.02 * (1 - 1e-9), 'every credit sells at or above 102 percent of its cost (creditSpreadBps 200 at the 10000 cap)'); near(on.T.creditToPot, on.T.creditCost * 0.8, 1e-9, 'creditCostToPotBps 8000: 80 percent of the cost to the pot');
   near(on.T.creditToBuyback, on.T.creditGross - on.T.creditToArtist - on.T.creditToOperator - on.T.creditToPot, 1e-9, 'the rest of the payment to the buyback pot'); n += 6;
   // the artist and operator cuts (decision 123): saleToArtistBps 250 and saleToOperatorBps 50 of every statement and credit sale, pushed out
   near(on.T.creditToArtist, 0.025 * on.T.creditGross, 1e-9, 'saleToArtistBps 250 of every credit sale'); near(on.T.creditToOperator, 0.005 * on.T.creditGross, 1e-9, 'saleToOperatorBps 50 of every credit sale');
@@ -923,8 +949,9 @@ const R0 = 6.668e15;
   const mid = simulate(Object.assign({ creditSaleOn: false, schedule: [{ day: 10, patch: { creditSaleOn: true } }] }, base)); ok(mid.T.creditSold > 0 && mid.S.creditSold[10 * 24] === 0, 'the owner turns the sale on mid run'); n++;
   // chosen composition: a composer that names the richest ready credits builds richer statements than compose() does from the oldest
   // the ready count stays near one page, so the choice ranks little: the richer-statement claim is checked on three seeds with a 72 hour window and 600 second steps
-  // the run keeps the climb of 200 bps a minute it was written for: at the launch 100 (decision 151) the ready count is one page and the choice ranks nothing
-  const win = { creditSaleOn: true, creditWindow: 72 * H, days: 30, seed: 4, stepSec: 600, stmtPerDay: 2, climbPerMin: 2, recoveryClimbPerMin: 2 };
+  // the run keeps the climb of 200 bps a minute and the credit floor of 1.1 (spread 1000 at the 10000 cap) it was written for: at the launch
+  // climb 100 (decision 151) and spread 200 (decision 153) more credits sell and the ready count is one page, so the choice ranks nothing
+  const win = { creditSaleOn: true, creditWindow: 72 * H, days: 30, seed: 4, stepSec: 600, stmtPerDay: 2, climbPerMin: 2, recoveryClimbPerMin: 2, creditSpreadBps: 1000 };
   const std = simulate(win), pick = simulate(Object.assign({ chosenComposeOn: true, composeChoice: 'richest' }, win));
   ok(pick.T.composedChosen > 0 && std.T.composedChosen === 0, 'composeChosen runs only when the owner opens it');
   for (const seed of [4, 5, 6]) { const w2 = Object.assign({}, win, { seed }), s2 = seed === 4 ? std : simulate(w2), p2 = seed === 4 ? pick : simulate(Object.assign({ chosenComposeOn: true, composeChoice: 'richest' }, w2)); ok(p2.T.stRating / p2.T.composed > s2.T.stRating / s2.T.composed, 'and the statements it builds are richer, seed ' + seed); }

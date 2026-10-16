@@ -77,7 +77,7 @@ export const controllerAbi = [
             "internalType": "uint32"
           },
           {
-            "name": "floorBps",
+            "name": "spreadBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -275,19 +275,6 @@ export const controllerAbi = [
   },
   {
     "type": "function",
-    "name": "creditFloorBps",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "creditPrice",
     "inputs": [
       {
@@ -314,6 +301,19 @@ export const controllerAbi = [
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "creditSpreadBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -353,6 +353,19 @@ export const controllerAbi = [
         "name": "",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "floorMultBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -536,7 +549,7 @@ export const controllerAbi = [
             "internalType": "uint32"
           },
           {
-            "name": "floorBps",
+            "name": "spreadBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -775,7 +788,7 @@ export const controllerAbi = [
             "internalType": "uint32"
           },
           {
-            "name": "floorBps",
+            "name": "spreadBps",
             "type": "uint16",
             "internalType": "uint16"
           },

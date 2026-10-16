@@ -291,7 +291,7 @@ abstract contract PostflightChecks is PostflightPool {
             _check("controller: anchor is 10_000", anchored, vm.toString(k.anchorBps()));
         }
         bool creditSame = k.creditSaleOn() == c.credit.saleOn && k.creditWindow() == c.credit.window
-            && k.creditFloorBps() == c.credit.floorBps && k.creditStartBps() == c.credit.startBps;
+            && k.creditSpreadBps() == c.credit.spreadBps && k.creditStartBps() == c.credit.startBps;
         if (_settingsChanged()) {
             _warn(
                 "warn: credit sale settings equal the config",
@@ -302,7 +302,7 @@ abstract contract PostflightChecks is PostflightPool {
             _check(
                 "controller: credit sale settings equal the config",
                 creditSame,
-                "creditSaleOn creditWindow creditFloorBps creditStartBps"
+                "creditSaleOn creditWindow creditSpreadBps creditStartBps"
             );
         }
     }

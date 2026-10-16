@@ -138,7 +138,7 @@ export const controller = onchainTable("controller", (t) => ({
   anchorMinCost: t.bigint(),
   saleOn: t.boolean(),
   window: t.bigint(),
-  floorBps: t.integer(),
+  spreadBps: t.integer(),
   startBps: t.bigint(),
   anchorBps: t.bigint(), // stored value, decays with anchorHalfLife from anchorBlock
   anchorBlock: t.bigint(),

@@ -144,7 +144,8 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
 /// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields, fee
 /// split and `pointsPerPage`, slot 3 `swapFeeCc`, the two sale cuts, `climbMultiplierCapBps`, `spendCapBps`, `bucketSeconds`,
-/// `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`. docs/SPEC.md section 3 has the meaning of every field
+/// `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`, `reserveWei` and `returnLockSeconds`. docs/SPEC.md section 3
+/// has the meaning of every field
 struct Settings {
     // slot 0
     /// fall of a bid rate on a fill, bps of the rate before the credit, as `dropPer100PointsBps * score / (100 points in score units)`, bounded at 10_000; shared by the eth and balance bids
@@ -232,6 +233,13 @@ struct Settings {
     uint32 idleStepSeconds;
     /// seconds after token launch before the one-way payee latch may activate
     uint32 sniperSeconds;
+    /// the least eth the pot keeps for processing, wei. the reserve is the larger of this and 1.5 times the queued compose
+    /// and redeem caller payments; the bids and `ethRate` read `ethPot` less the reserve, the caller payments, the buyback
+    /// and the pushes pay from the whole pot
+    uint64 reserveWei;
+    /// seconds every intake door refuses a credit the engine sold through `sellCreditTo`, from the sale. 0 refuses it in
+    /// the second of the sale only
+    uint32 returnLockSeconds;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -260,8 +268,9 @@ struct CreditSale {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
     /// take it. 1 to uint32.max seconds
     uint32 window;
-    /// the credit sale floor over the larger of the credit's cost and its `valueOf` score, bps. 10_000 to uint16.max
-    uint16 floorBps;
+    /// the sale spread, bps. the credit sale floor is the larger of the credit's cost and its `valueOf` score times
+    /// `max(10_000, (10_000 + spreadBps) * balanceBidCapBps / 10_000)`, the Core's cap read live. 0 to uint16.max
+    uint16 spreadBps;
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 startBps;
 }
@@ -269,7 +278,7 @@ struct CreditSale {
 /// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
 /// window and chosen composition. owner adjustable afterwards, so the launch rules only check
 /// bounds (`src/lib/CreditBounds.sol`). the Core reads `costToPotBps`, `chosenComposeOn` and `minCcToChoose`; the
-/// controller reads `saleOn`, `window`, `floorBps` and `startBps`. the point rate basis is the fixed 100 points
+/// controller reads `saleOn`, `window`, `spreadBps` and `startBps`. the point rate basis is the fixed 100 points
 struct Credit {
     // core
     /// share of the sold credit's cost booked to the buying pot, bps. the rest of the payment funds the coin buyback.
@@ -285,8 +294,8 @@ struct Credit {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
     /// take it. 1 to uint32.max seconds
     uint32 window;
-    /// the credit sale floor over the larger of the credit's cost and its `valueOf` score, bps. 10_000 to uint16.max
-    uint16 floorBps;
+    /// the sale spread over the bid's hard cap, bps (the controller's `CreditSale.spreadBps`). 0 to uint16.max
+    uint16 spreadBps;
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 startBps;
 }
@@ -363,7 +372,9 @@ library Mainnet {
             bucketSeconds: 60,
             balanceBidCapBps: 10_000,
             idleStepSeconds: 600,
-            sniperSeconds: 1800
+            sniperSeconds: 1800,
+            reserveWei: 0.1 ether,
+            returnLockSeconds: 86_400
         });
     }
 
@@ -381,8 +392,9 @@ library Mainnet {
         });
     }
 
-    /// the launch credit settings: the credit sale is on, its window is 4 hours, the floor is 110 percent and the
-    /// start 150 percent of the floor, 80 percent of a sold credit's cost funds the pot, chosen composition is off, and
+    /// the launch credit settings: the credit sale is on, its window is 4 hours, the spread is 2 percent over the bid's
+    /// hard cap (decision 153; the floor is 102 percent of the reference at a cap of 10_000), the start is 150 percent of
+    /// the floor, 80 percent of a sold credit's cost funds the pot, chosen composition is off, and
     /// the coin balance a caller needs to choose a compose or a held format is 1 coin
     function defaultCredit() internal pure returns (Credit memory) {
         return Credit({
@@ -391,7 +403,7 @@ library Mainnet {
             minCcToChoose: 1e18,
             saleOn: true,
             window: 4 hours,
-            floorBps: 11_000,
+            spreadBps: 200,
             startBps: 15_000
         });
     }

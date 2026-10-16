@@ -239,7 +239,7 @@ export async function refreshStatementArt(ctx: Ctx, id: bigint) {
 /** Reads a controller's parameters at the event block. */
 export async function readController(ctx: Ctx, address: Hex) {
   const k = { address, abi: controllerAbi } as const;
-  const [markupBps, startCapBps, decayHours, anchorHalfLife, anchorMinCost, saleOn, window, floorBps, startBps, anchorBps, poolSet, poolKey] =
+  const [markupBps, startCapBps, decayHours, anchorHalfLife, anchorMinCost, saleOn, window, spreadBps, startBps, anchorBps, poolSet, poolKey] =
     await ctx.client.multicall({
       ...mc,
       allowFailure: false,
@@ -251,7 +251,7 @@ export async function readController(ctx: Ctx, address: Hex) {
         { ...k, functionName: "anchorMinCost" },
         { ...k, functionName: "creditSaleOn" },
         { ...k, functionName: "creditWindow" },
-        { ...k, functionName: "creditFloorBps" },
+        { ...k, functionName: "creditSpreadBps" },
         { ...k, functionName: "creditStartBps" },
         { ...k, functionName: "storedAnchorBps" },
         { ...k, functionName: "balancePoolKeySet" },
@@ -266,7 +266,7 @@ export async function readController(ctx: Ctx, address: Hex) {
     anchorMinCost,
     saleOn,
     window: BigInt(window),
-    floorBps: Number(floorBps),
+    spreadBps: Number(spreadBps),
     startBps: BigInt(startBps),
     anchorBps: BigInt(anchorBps),
     balancePoolSet: poolSet,

@@ -28,7 +28,7 @@ interface ICoreLib {
     error Paused();
     error PotTooSmall();
     error Retired();
-    error SameBlockReturn(uint256 id);
+    error ReturnLocked(uint256 id, uint256 until);
     error ScoreTooLow(uint256 inId, uint256 outId);
     error Slippage();
     error SpendCapReached(uint256 spent, uint256 cost, uint256 budget);
@@ -53,15 +53,12 @@ interface ICoreLib {
     function balanceBidForScore(uint256 score) external view returns (uint256);
     function balanceBidOf(uint256 id) external view returns (uint256);
     function balanceRate() external view returns (uint256 rate);
-    function climb(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
-        external
-        view
-        returns (uint256 price, uint256 read);
     function climbMultiplier() external view returns (uint256);
-    function floorRate(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
-        external
-        view
-        returns (uint256);
+    function ethPrice() external view returns (uint256 price);
+    function ethRate() external view returns (uint256 read);
+    function floorRate() external view returns (uint256);
+    function reserve() external view returns (uint256);
+    function room() external view returns (uint256);
     function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent);
 
     function swapIn(address manager, address coin, uint24 fee, int24 spacing, address hook, uint256 amountIn)

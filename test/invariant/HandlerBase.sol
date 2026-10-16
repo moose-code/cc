@@ -651,8 +651,25 @@ abstract contract HandlerBase is Test {
     }
 
     /// the most eth one batch of sales may spend: the pot
+    /// the eth a non oversized sell may spend: the pot less the reserve at a pile grown by the largest batch (10), so a
+    /// batch that carries the pile across a page and raises the reserve still fits
     function _budget() internal view returns (uint256) {
-        return core.ethPot();
+        return core.ethPot().zeroFloorSub(_reserveAt(core.settings(), core.pileSize() + 10, core.heldStatements().length));
+    }
+
+    /// the most an eth purchase may spend now: `ethPot` less the reserve
+    function _room() internal view returns (uint256) {
+        return core.ethPot().zeroFloorSub(core.reserve());
+    }
+
+    /// the reserve of `CoreLib._reserve` for `pile` pile credits and `held` held statements under `st`: the larger of
+    /// `reserveWei` and 1.5 times one compose per full page at 9,000,000 gas and one redemption per statement at 600,000
+    /// gas, each gas at `callerMaxBaseFee` plus `callerFee`
+    function _reserveAt(Settings memory st, uint256 pile, uint256 held) internal pure returns (uint256) {
+        uint256 base = st.callerMaxBaseFee;
+        uint256 fee = st.callerFee;
+        uint256 queued = pile / 80 * (9_000_000 * base + fee) + held * (600_000 * base + fee);
+        return uint256(st.reserveWei).max(queued * 15 / 10);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -700,12 +717,14 @@ abstract contract HandlerBase is Test {
         uint256 peakRate;
         uint256 peakTime;
         uint256 pend;
+        uint256 res;
     }
 
     function _rs() internal view returns (RS memory s) {
         s.st = core.settings();
         s.rate = core.ethRate();
         s.pot = core.ethPot();
+        s.res = core.reserve();
         s.pend = _pendingPot(s.st);
         s.stored = core.rateAtCheckpoint();
         s.cp = core.checkpointTime();
@@ -749,7 +768,7 @@ abstract contract HandlerBase is Test {
         (uint256 anchor,,) = _anchorState();
         return BidModel.Bid({
             r: core.rateAtCheckpoint(),
-            pot: core.ethPot(),
+            pot: (core.ethPot() + _pendingPot(st)).zeroFloorSub(core.reserve()),
             pagesPot: core.ethPot() + _pendingPot(st),
             lastFillRate: anchor,
             peakRate: peakRate,
@@ -785,7 +804,7 @@ abstract contract HandlerBase is Test {
             s.st,
             BidModel.Bid({
                 r: s.stored,
-                pot: s.pot,
+                pot: (s.pot + s.pend).zeroFloorSub(s.res),
                 pagesPot: s.pot + s.pend,
                 lastFillRate: s.anchor,
                 peakRate: s.peakRate,
@@ -796,7 +815,7 @@ abstract contract HandlerBase is Test {
             })
         );
         if (dt != 0) {
-            if (rate1 != BidModel.read(s.st, s.pot + s.pend, p)) {
+            if (rate1 != BidModel.read(s.st, (s.pot + s.pend).zeroFloorSub(s.res), p)) {
                 _flag(V_RATE_BOUND, "the rate after a warp differs from the model");
             }
         } else {
@@ -809,7 +828,7 @@ abstract contract HandlerBase is Test {
                 end,
                 BidModel.Bid({
                     r: s.stored,
-                    pot: core.ethPot(),
+                    pot: (core.ethPot() + _pendingPot(end)).zeroFloorSub(core.reserve()),
                     pagesPot: core.ethPot() + _pendingPot(end),
                     lastFillRate: s.anchor,
                     peakRate: s.peakRate,
@@ -822,8 +841,11 @@ abstract contract HandlerBase is Test {
             if (core.rateAtCheckpoint() > s.stored.max(p).max(pEnd)) {
                 _flag(V_RATE_BOUND, "the stored rate rose with no time passing");
             }
-            if (rate1 != BidModel.read(end, core.ethPot() + _pendingPot(end), _priceNow(end))) {
+            if (rate1 != BidModel.read(end, (core.ethPot() + _pendingPot(end)).zeroFloorSub(core.reserve()), _priceNow(end))) {
                 _flag(V_RATE_BOUND, "the read differs from the price state lowered to the clamp of the end pot");
+            }
+            if (core.reserve() != _reserveAt(end, core.pileSize(), core.heldStatements().length)) {
+                _flag(V_MODEL, "the reserve differs from its formula");
             }
         }
     }
@@ -881,9 +903,10 @@ abstract contract HandlerBase is Test {
         uint256 pot = p.pot;
         uint256 start = p.minuteStart;
         for (uint256 i; i < costs.length; ++i) {
-            // the exact per-credit payout: the read (the price state lowered to the pot left) times the credit's score
-            // over 100 points, computed from the handler's own rate model, not from `bidOf`
-            uint256 expected = FullMath.mulDiv(BidModel.read(st, pot, stored), scores[i], RATE_SCORE);
+            // the exact per-credit payout: the read (the price state lowered to the pot left less the reserve at the pile
+            // before this credit) times the credit's score over 100 points, from the handler's own rate model
+            uint256 room = pot.zeroFloorSub(_reserveAt(st, p.pile + i, p.held));
+            uint256 expected = FullMath.mulDiv(BidModel.read(st, room, stored), scores[i], RATE_SCORE);
             if (costs[i] != expected) {
                 _flag(V_MODEL, "sellForEth payout differs from read times score over 100 points");
             }
@@ -894,9 +917,9 @@ abstract contract HandlerBase is Test {
         r = _readAfterFill(st, stored, pot);
     }
 
-    /// the read right after a fill: the stored price state, lowered to the clamp of the pot left
-    function _readAfterFill(Settings memory st, uint256 stored, uint256 pot) internal pure returns (uint256) {
-        return BidModel.read(st, pot, stored);
+    /// the read right after a fill: the stored price state, lowered to the clamp of the pot left less the reserve now
+    function _readAfterFill(Settings memory st, uint256 stored, uint256 pot) internal view returns (uint256) {
+        return BidModel.read(st, pot.zeroFloorSub(core.reserve()), stored);
     }
 
     /// the rate after one credit of score `score` bought with the price state `r`, where `start` is the price state at
@@ -1137,8 +1160,8 @@ abstract contract HandlerBase is Test {
     /// the next fill pays the read, so the read at the end of every action is at most the pot and the share of the
     /// unbooked income that the next book adds to it
     function _potCheck() internal {
-        if (core.ethRate() > core.ethPot() + _unbooked()) {
-            _flag(V_SPEND, "the read is above the pot, the next fill would overspend");
+        if (core.ethRate() > (core.ethPot() + _unbooked()).zeroFloorSub(core.reserve())) {
+            _flag(V_SPEND, "the read is above the pot less the reserve, the next fill would spend the reserve");
         }
     }
 
@@ -1342,6 +1365,8 @@ abstract contract HandlerBase is Test {
         uint256 sellerBal;
         uint256[] ceil;
         Pull pull;
+        uint256 pile;
+        uint256 held;
     }
 
     /// @dev the ids `sellForEth` offers: walks the actor inventory from a picked offset, within the budget unless overshoot
@@ -1386,6 +1411,8 @@ abstract contract HandlerBase is Test {
         p.pull = _beginPull();
         p.bal = address(core).balance;
         p.pot = core.ethPot();
+        p.pile = core.pileSize();
+        p.held = core.heldStatements().length;
         p.rate = core.ethRate();
         p.price = _priceNow(core.settings());
         p.minuteStart = _minuteStartNow(p.price);
@@ -1420,9 +1447,10 @@ abstract contract HandlerBase is Test {
         uint256 spent = active ? gSpent : 0;
         for (uint256 i; i < ids.length; ++i) {
             uint256 score = _scoreOf(ids[i]);
-            uint256 cost = FullMath.mulDiv(BidModel.read(st, p.pot, p.price), score, RATE_SCORE);
+            uint256 room = p.pot.zeroFloorSub(_reserveAt(st, p.pile + i, p.held));
+            uint256 cost = FullMath.mulDiv(BidModel.read(st, room, p.price), score, RATE_SCORE);
             if (cost == 0) return true;
-            if (cost > p.pot) return false;
+            if (cost > room) return false;
             if (st.spendCapBps != 10_000 && spent != 0 && (spent > budget || cost > budget - spent)) return false;
             spent += cost;
             p.pot -= cost;
@@ -1552,6 +1580,7 @@ abstract contract HandlerBase is Test {
         uint256 keeperBal;
         uint256 ceiling;
         Pull pull;
+        uint256 res;
     }
 
     /// the shared body of the listing actions, through the test adapter. `refund` is the eth the target sends back to the
@@ -1569,6 +1598,7 @@ abstract contract HandlerBase is Test {
         p.pull = _beginPull();
         p.bal = address(core).balance;
         p.pot = core.ethPot();
+        p.res = core.reserve();
         p.rate = core.ethRate();
         p.price = _priceNow(core.settings());
         p.minuteStart = _minuteStartNow(p.price);
@@ -1602,10 +1632,12 @@ abstract contract HandlerBase is Test {
         uint256 score = _scoreOf(id);
         // the per-credit bid from the handler's own rate model, not from `bidOf`: the read before the action times the
         // credit's score over 100 points. the value and the payment are capped at it
-        uint256 ceiling = FullMath.mulDiv(BidModel.read(st, p.pot, p.price), score, RATE_SCORE);
+        uint256 room = p.pot.zeroFloorSub(p.res);
+        uint256 ceiling = FullMath.mulDiv(BidModel.read(st, room, p.price), score, RATE_SCORE);
         if (value > ceiling) _flag(V_ABOVE_CAP, "listing value above the ceiling");
         if (cost + paid > ceiling) _flag(V_ABOVE_CAP, "listing cost plus payment above the ceiling");
-        _listingPayChecks(paid, (ceiling > cost ? ceiling - cost : 0).min(p.pot > cost ? p.pot - cost : 0), st);
+        if (cost + paid > room) _flag(V_SPEND, "listing cost plus payment above the pot less the reserve");
+        _listingPayChecks(paid, (ceiling > cost ? ceiling - cost : 0).min(room > cost ? room - cost : 0), st);
         uint256 potLeft = _recordSpend(cost + paid, p.pot);
         _eth(p.bal, paid + cost, refund, "buyListing");
         if (core.ethPot() != potLeft) _flag(V_POT, "listing pot not reduced by cost and the payment");
