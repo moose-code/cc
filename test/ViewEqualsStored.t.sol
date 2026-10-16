@@ -8,9 +8,9 @@ import {Settings} from "../src/interfaces/Interfaces.sol";
 /// @notice every value a view quotes equals the value the next call uses, in the same block, after fee income arrives
 /// with no engine call and after idle time. the eth bid (`ethRate`, `bidOf` against the `sellForEth` payout), the
 /// balance bid (`balanceBidOf` against the `sellForBalance` payout), and the purchase budget (`spendState` against the
-/// budget the next purchase enforces). cold cases, hand set state, numbers logged. the eth and balance equalities hold
-/// because every door books the unbooked fee income as its first step and checkpoints with the same pot clamp the view
-/// reads; the purchase budget quote does not add the pending share the next purchase books, so it diverges.
+/// budget the next purchase enforces). cold cases, hand set state, numbers logged. the equalities hold because every
+/// door books the unbooked fee income as its first step and the views read the same pending aware pot: the bid
+/// checkpoints against it, and the purchase budget projects `spendCapBps` of it, the pot the first purchase snapshots.
 contract ViewEqualsStoredTest is Fixture {
     /// forces `amount` wei into the Core with no engine call, the way a selfdestruct or a raw hook transfer lands eth
     /// the Core has not booked
@@ -104,15 +104,12 @@ contract ViewEqualsStoredTest is Fixture {
 
     // ------------------------------------------------------------------ purchase budget
 
-    /// @dev spendState quotes the purchase budget as `ethPot * spendCapBps` of the booked pot, with no share of the
-    /// unbooked fee income. the first purchase of a bucket books that income first, so the budget it snapshots is
-    /// `(ethPot + pendingShare) * spendCapBps`. with income waiting unbooked the quote is below the budget the next
-    /// purchase enforces. this is the pending income inconsistency decision 147 removed from the climb clamp, still
-    /// present in the spendState budget. the strict assertion is skipped so the suite stays green; the numbers are in
-    /// test_spendBudgetDivergenceNumbers. remove the skip once spendState adds the pending pot share
+    /// @dev spendState quotes the purchase budget as `spendCapBps` of the pages pot (`ethPot` plus the pot share of the
+    /// unbooked fee income the next `_book` adds). the first purchase of a fresh bucket books that income first and
+    /// snapshots `(ethPot + pendingShare) * spendCapBps`, so the quote equals the budget the next purchase enforces
+    /// (decision 147: the spend view follows the same pending aware pot the climb clamp does)
     // promise: spendState quotes the purchase budget the next purchase of the bucket enforces
     function test_spendBudgetQuotedEqualsEnforced_withUnbookedIncome() public {
-        vm.skip(true);
         (uint128 quoted, uint128 enforced,) = _spendBudgetQuotedAndEnforced();
         assertEq(quoted, enforced, "the purchase budget quoted differs from the budget the next purchase enforces");
     }

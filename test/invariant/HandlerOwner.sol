@@ -170,6 +170,7 @@ abstract contract HandlerOwner is HandlerBase {
         uint256 rate;
         uint256 price;
         uint256 xBal;
+        address xToken;
     }
 
     function _opre() internal view returns (OPre memory p) {
@@ -180,12 +181,15 @@ abstract contract HandlerOwner is HandlerBase {
         p.rate = core.ethRate();
         p.price = _priceNow(core.settings());
         p.xBal = _xBal(address(core));
+        p.xToken = core.balanceToken();
     }
 
-    /// what no owner call may touch: the core's eth and its pots. the core holds no balance token (the module does)
+    /// what no owner call may touch: the core's eth and its pots. the core holds only balance token donated straight to
+    /// it (dust the module does not hold), so the token holding is unchanged unless the call replaced the token. a
+    /// replacement onto a fresh token is checked against the donated dust in `replaceModule`
     function _opost(OPre memory p, string memory what) internal {
         _eth(p.bal, 0, 0, what);
-        _x(p.xBal, 0, 0, what);
+        if (core.balanceToken() == p.xToken) _x(p.xBal, 0, 0, what);
         if (core.ethPot() != p.pot || core.ethToBuyback() != p.toBuyback || core.ethRedeemBurn() != p.reserve) {
             _flag(V_OWNER, "an owner call moved a pot");
         }
@@ -532,11 +536,14 @@ abstract contract HandlerOwner is HandlerBase {
         try core.setBalanceModule(address(next)) {
             if (want != 0) _flag(V_OWNER, "a refused module set was accepted");
             _afterModuleSet(p, next, token);
-            // a token change leaves the replaced module's reserve where it was and the Core holding none of either token
+            // a token change leaves the replaced module's reserve where it was, the Core holding only the dust donated
+            // straight to it on the replaced token, and none of the fresh token
             if (core.balanceToken() != token) {
                 MockBalanceToken old = MockBalanceToken(token);
                 if (old.balanceOf(oldModule) != oldReserve) _flag(V_OWNER, "a replacement moved the old reserve");
-                if (old.balanceOf(address(core)) != 0) _flag(V_OWNER, "the Core holds the replaced token");
+                if (old.balanceOf(address(core)) != gDonatedX[token]) {
+                    _flag(V_OWNER, "the Core holds the replaced token beyond the donated dust");
+                }
                 if (_xBal(address(core)) != 0) _flag(V_OWNER, "the Core holds the new token");
             }
             module = next;

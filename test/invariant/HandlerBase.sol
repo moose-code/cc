@@ -196,6 +196,10 @@ abstract contract HandlerBase is Test {
     address public rawAdapter;
     MockBalanceModule public module;
     MockBalanceToken public balanceToken;
+    /// balance token sent straight to the Core by the donate action, per token. the Core never moves balance token on
+    /// its own account, so this dust stays with it (decision 143/144: no general sweep). keyed by token because a
+    /// module replacement onto a fresh token changes which token the Core holds
+    mapping(address => uint256) public gDonatedX;
     bool public canSwapController;
     string public tag;
 
@@ -2144,7 +2148,11 @@ abstract contract HandlerBase is Test {
             _ok(a);
             _eth(b0, 0, amt, "forced eth");
         }
-        if (phase2() && amtSeed % 3 == 0) _xt().mint(address(core), amt * 1000);
+        if (phase2() && amtSeed % 3 == 0) {
+            uint256 dust = amt * 1000;
+            _xt().mint(address(core), dust);
+            gDonatedX[address(_xt())] += dust;
+        }
         _rsCheck(rs, 0);
     }
 
