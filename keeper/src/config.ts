@@ -1,8 +1,10 @@
-// The keeper's configuration: every value comes from the environment, parsed once at start. No secret is read here:
-// the keystore and its password file are paths, the OpenSea key and the alert webhook are read from the shell
-// environment only and never logged.
+// The keeper's configuration: every value comes from the environment, parsed once at start. The keystore and its
+// password file are paths, and the OpenSea key and the alert webhook are read from the shell environment and kept out
+// of the logs.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getAddress, parseEther, parseGwei, type Address } from "viem";
 
 export type Door = "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement";
@@ -75,6 +77,27 @@ const num = (env: Env, k: string, d: number) => {
 const gwei = (env: Env, k: string, d: string) => parseGwei(env[k] || d);
 const ether = (env: Env, k: string, d: string) => parseEther(env[k] || d);
 
+// the nearest ancestor of `from` that holds a .git entry (a directory, or the file of a git worktree)
+function repoRoot(from: string): string | undefined {
+  for (let d = resolve(from); ; d = dirname(d)) {
+    if (existsSync(join(d, ".git"))) return d;
+    if (dirname(d) === d) return undefined;
+  }
+}
+
+// whether a path resolves inside the repository working tree of the process directory or of this package
+export function insideRepo(path: string, cwd: string = process.cwd()): boolean {
+  const abs = resolve(cwd, path);
+  let real = abs;
+  try {
+    real = realpathSync(abs);
+  } catch {}
+  return [cwd, dirname(fileURLToPath(import.meta.url))].some((from) => {
+    const root = repoRoot(from);
+    return root !== undefined && (real === root || real.startsWith(root + sep));
+  });
+}
+
 const isLocal = (url: string) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(url);
 
 // the deployment record of docs/RUNBOOK.md section 7 (`deployments/<chainId>.json`)
@@ -137,6 +160,9 @@ export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRe
     signer = { kind: "impersonate", address: getAddress(env.IMPERSONATE) };
   } else if (env.KEYSTORE) {
     if (!env.KEYSTORE_PASSWORD_FILE) throw new Error("config: KEYSTORE needs KEYSTORE_PASSWORD_FILE");
+    for (const [k, v] of [["KEYSTORE", env.KEYSTORE], ["KEYSTORE_PASSWORD_FILE", env.KEYSTORE_PASSWORD_FILE]]) {
+      if (insideRepo(v)) throw new Error(`config: ${k} resolves inside the repository working tree; keep key material outside it`);
+    }
     signer = { kind: "keystore", path: env.KEYSTORE, passwordFile: env.KEYSTORE_PASSWORD_FILE };
   } else if (env.KEEPER_ADDRESS && env.DRY_RUN === "1") {
     // a dry run simulates from the keeper address without a key

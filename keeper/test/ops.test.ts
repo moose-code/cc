@@ -10,10 +10,11 @@ import { concat, decodeAbiParameters, keccak256, parseEther, type Address } from
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { Breaker, Ledger } from "../src/ledger.ts";
 import { decryptKeystore } from "../src/keystore.ts";
-import { loadConfig, OWNER, type Deployment } from "../src/config.ts";
+import { insideRepo, loadConfig, OWNER, type Deployment } from "../src/config.ts";
 import { encodeBasicOrder } from "../src/listings.ts";
 import { startChecks } from "../src/main.ts";
-import { setSink } from "../src/log.ts";
+import { safeError, setSink } from "../src/log.ts";
+import { alert } from "../src/alert.ts";
 
 const rec = (chainId: number): Deployment => ({
   chainId,
@@ -148,4 +149,44 @@ test("seaport: encodeBasicOrder is abi.encode(BasicOrderParameters)", () => {
   assert.equal(d[6], 42n);
   assert.equal(d[16][0][0], 100n);
   assert.equal(d[17], "0xabcd");
+});
+
+test("config: a keystore or password file inside the repository working tree is refused", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ks-"));
+  const base = { RECORD: "x", RPC_URLS: "http://127.0.0.1:8545" };
+  const ok = loadConfig({ ...base, KEYSTORE: join(dir, "k.json"), KEYSTORE_PASSWORD_FILE: join(dir, "pw") }, () => rec(31337));
+  assert.equal(ok.signer.kind, "keystore");
+  const inRepo = join(process.cwd(), "keeper", "k.json");
+  assert.throws(() => loadConfig({ ...base, KEYSTORE: inRepo, KEYSTORE_PASSWORD_FILE: join(dir, "pw") }, () => rec(31337)), /KEYSTORE resolves inside the repository/);
+  assert.throws(() => loadConfig({ ...base, KEYSTORE: join(dir, "k.json"), KEYSTORE_PASSWORD_FILE: "keeper/pw" }, () => rec(31337)), /KEYSTORE_PASSWORD_FILE resolves inside the repository/);
+  assert.equal(insideRepo(inRepo), true);
+  assert.equal(insideRepo(join(dir, "k.json")), false);
+});
+
+test("errors: a URL with a key in an error message reaches neither the log line nor the webhook payload", async () => {
+  const secret = "SECRETKEY123";
+  const e = Object.assign(new Error(`HTTP request failed.\nURL: https://eth-mainnet.g.alchemy.com/v2/${secret}\nDetails: ${secret}`), {
+    shortMessage: `HTTP request failed at https://eth-mainnet.g.alchemy.com/v2/${secret}`,
+    details: secret,
+  });
+  assert.ok(!safeError(e).includes(secret));
+  assert.match(safeError(e), /alchemy\.com/);
+  assert.equal(safeError(Object.assign(new Error(`boom ${secret}`), { name: "TimeoutError" })), "TimeoutError");
+  assert.equal(safeError(new Error("config: RPC_URLS is empty")), "config: RPC_URLS is empty");
+  const lines: string[] = [];
+  setSink((l) => lines.push(l));
+  const bodies: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (_u: unknown, init: { body: string }) => {
+    bodies.push(init.body);
+    throw e;
+  }) as unknown as typeof fetch;
+  try {
+    await alert("https://hooks.example.org/x", "secret-test", "tick failed", { error: safeError(e) });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(bodies.length, 1);
+  assert.ok(!bodies[0].includes(secret), "webhook payload");
+  assert.ok(lines.length >= 2 && lines.every((l) => !l.includes(secret)), "log lines");
 });

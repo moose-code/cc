@@ -151,7 +151,7 @@ export class Executor {
       })) as Hex;
     }
     const account = this.signer.account!;
-    const nonce = await this.client.getTransactionCount({ address: account.address, blockTag: "latest" });
+    const nonce = await this.client.getTransactionCount({ address: account.address, blockTag: "pending" });
     const raw = await account.signTransaction({ type: "eip1559", chainId, nonce, ...tx });
     const relays = this.cfg.relayUrls;
     if (relays.length === 0) return (await this.client.request({ method: "eth_sendRawTransaction", params: [raw] })) as Hex;

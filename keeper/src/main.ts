@@ -14,10 +14,12 @@ import { Breaker, Ledger } from "./ledger.ts";
 import { Sources } from "./listings.ts";
 import { readKeystore } from "./keystore.ts";
 import { alert } from "./alert.ts";
-import { log } from "./log.ts";
+import { log, safeError } from "./log.ts";
 
 // a listing whose simulation reverted waits this long before it is tried again
 const LISTING_COOLDOWN_SEC = 300;
+// the head is polled this often; a tick runs per new block, or per TICK_MS while the head holds
+const HEAD_POLL_MS = 4_000;
 // the same skip reason of a door is logged again after this long
 const SKIP_LOG_SEC = 600;
 
@@ -94,8 +96,7 @@ export class Keeper {
       if ((this.skipLogged.get(k) ?? 0) + SKIP_LOG_SEC * 1000 > now) continue;
       this.skipLogged.set(k, now);
       log("info", "skip", { block: state.blockNumber, ...sk });
-  
-  }
+    }
     const outcomes: TickResult["outcomes"] = [];
     for (const c of d.calls) {
       const listing = c.door === "buyListing" ? listings.find((l) => l.id === c.args[1] && l.adapter === c.args[0]) : undefined;
@@ -155,13 +156,13 @@ async function main() {
       log("error", "tick failed", { error: txError(e), failures });
       if (failures === 5) await alert(cfg.alertWebhook, "tick", "five ticks in a row failed", { error: txError(e) });
     }
-    await new Promise((r) => setTimeout(r, 1_000));
+    await new Promise((r) => setTimeout(r, HEAD_POLL_MS));
   }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((e) => {
-    log("error", "keeper stopped", { error: String((e as Error).message ?? e) });
+    log("error", "keeper stopped", { error: safeError(e) });
     process.exit(1);
   });
 }

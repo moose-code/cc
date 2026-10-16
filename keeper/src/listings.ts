@@ -16,7 +16,7 @@ import { fetchListings, type BasicParams, type SignedOrder } from "@cc/engine/op
 import type { Config } from "./config.ts";
 import type { Listing } from "./decide.ts";
 import type { Snapshot } from "@cc/engine/snapshot";
-import { log } from "./log.ts";
+import { log, safeError } from "./log.ts";
 
 // the ids read per multicall when indexing the strategy
 const CHUNK = 1500;
@@ -112,13 +112,13 @@ export class Sources {
       });
       prices.push(...r.map((x) => (x.status === "success" ? (x.result as bigint) : 0n)));
     }
-    const listed = ids.filter((_, i) => prices[i] > 0n);
-    await this.scoresOf(listed);
-    this.strategy = listed.map((id) => ({
+    const listed = ids.flatMap((id, i) => (prices[i] > 0n ? [{ id, price: prices[i] }] : []));
+    await this.scoresOf(listed.map((x) => x.id));
+    this.strategy = listed.map(({ id, price }) => ({
       venue: "strategy" as const,
       adapter: this.cfg.record.strategyAdapter,
       id,
-      price: prices[ids.indexOf(id)],
+      price,
       params: "0x" as Hex,
     }));
     log("info", "strategy listings indexed", { held: ids.length, listed: this.strategy.length });
@@ -145,7 +145,7 @@ export class Sources {
         log("info", "opensea listings fetched", { fetched: r.fetched, fit: r.fit, signed: r.orders.length, dropped: r.dropped });
       }
     } catch (e) {
-      log("warn", "opensea fetch failed, keeping the cached orders", { error: String((e as Error).message ?? e).slice(0, 200) });
+      log("warn", "opensea fetch failed, keeping the cached orders", { error: safeError(e) });
       return;
     }
     this.seaport = orders.map((x) => ({

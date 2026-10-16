@@ -1,7 +1,7 @@
 // Alerts: a JSON POST to ALERT_WEBHOOK_URL (decision 139), also logged at error level. a failed post is logged and
 // never stops the keeper. one alert per key per ALERT_REPEAT_SEC.
 
-import { log, type Fields } from "./log.ts";
+import { log, safeError, type Fields } from "./log.ts";
 
 const ALERT_REPEAT_SEC = 1800;
 const last = new Map<string, number>();
@@ -17,6 +17,6 @@ export async function alert(webhook: string | undefined, key: string, msg: strin
     const r = await fetch(webhook, { method: "POST", headers: { "content-type": "application/json" }, body, signal: AbortSignal.timeout(10_000) });
     if (!r.ok) log("warn", "alert webhook refused", { status: r.status });
   } catch (e) {
-    log("warn", "alert webhook failed", { error: String((e as Error).message ?? e) });
+    log("warn", "alert webhook failed", { error: safeError(e) });
   }
 }

@@ -283,3 +283,10 @@ test("listing: a bucket whose budget cannot take the price plus the keeper payme
   const off = decide(state({ settings: { ...state().settings, spendCapBps: 10_000 }, spend: { bucket: 166n, budget: 1n, spent: parseEther("5") } }), [l], gas("1"), p, new Map());
   assert.deepEqual(doorsOf(off), ["buyListing"]);
 });
+
+test("paused: every door waits while the Core is paused", () => {
+  const r = decide(state({ paused: true, pageReady: true, ethToBuyback: parseEther("1"), escrowBalance: parseEther("1") }), [listing()], gas("1"), policy({}, 0), new Map());
+  assert.deepEqual(doorsOf(r), []);
+  assert.equal(r.skips.length, DOORS.length);
+  assert.match(reason(r, "compose"), /Paused/);
+});

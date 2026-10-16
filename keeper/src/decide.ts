@@ -91,7 +91,7 @@ export interface Intended {
   // the payment the Core sends at `gas`, at the worst base fee
   payment: bigint;
   cost: bigint;
-  // logged only, never sent (redeemStatement while no balance module is set)
+  // logged only (redeemStatement while no balance module is set)
   dryOnly?: boolean;
   key: string;
   note?: { [k: string]: unknown };
@@ -202,6 +202,11 @@ export function decide(
   const calls: Intended[] = [];
   const skips: Skip[] = [];
   const on = (d: Door) => p.doorsOn.has(d);
+  // an owner pause stops every keeper door
+  if (s.paused) {
+    for (const d of p.doorsOn) skips.push({ door: d, reason: "Paused: the Core is paused" });
+    return { calls, skips, seen: new Map() };
+  }
   const ceiling = (d: Door) => {
     if (gas.baseFee > p.doors[d].maxBaseFee) {
       skips.push({ door: d, reason: `base fee ${gas.baseFee} above the door ceiling ${p.doors[d].maxBaseFee}` });
