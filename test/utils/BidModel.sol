@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {Settings} from "../../src/interfaces/Interfaces.sol";
+import {Settings, RATE_SCORE} from "../../src/interfaces/Interfaces.sol";
 import {Halving} from "../../src/lib/Halving.sol";
 
 /// @notice the credit bid rule restated in the tests, from the settings. the invariant handlers and the fuzz and model
@@ -30,12 +30,16 @@ library BidModel {
         uint256 nowTs;
     }
 
-    /// @dev the pot scaled multiplier, bps in [10_000, capBps]: the pages of 80 refScore credits the pages pot buys at
-    /// the current rate, clamped to [1x, capBps]. one page costs `rate * 80`, so pages in bps is `pagesPot * 125 / rate`.
-    /// only the ceiling's idle loosening scales by it (decision 128, variant d)
-    function climbMul(uint256 pagesPot, uint256 rate, uint256 capBps) internal pure returns (uint256) {
+    /// @dev the pot scaled multiplier, bps in [10_000, capBps]: the pages of `pointsPerPage` points the pages pot buys
+    /// at the current rate, clamped to [1x, capBps]. one page costs `rate * pointsPerPage / 100`, so pages in bps is
+    /// `pagesPot * 1_000_000 / (rate * pointsPerPage)`. only the ceiling's idle loosening scales by it (decision 128, variant d)
+    function climbMul(uint256 pagesPot, uint256 rate, uint256 pointsPerPage, uint256 capBps)
+        internal
+        pure
+        returns (uint256)
+    {
         if (rate == 0) return 10_000;
-        uint256 mBps = pagesPot * 125 / rate;
+        uint256 mBps = pagesPot * 1_000_000 / (rate * pointsPerPage);
         return mBps < 10_000 ? 10_000 : (mBps > capBps ? capBps : mBps);
     }
 
@@ -46,31 +50,28 @@ library BidModel {
     }
 
     /// @dev the rate after one credit of score `score` bought with the price state `fillState`, where `minuteStart` is
-    /// the price state at the first fill of the same minute bucket. the fall is `dropPerCreditBps * score / refScore`,
+    /// the price state at the first fill of the same minute bucket. the fall is `dropPer100PointsBps * score / RATE_SCORE`,
     /// bounded at 10_000, the same as `CoreLib.drop`
-    function dropOnce(Settings memory s, uint256 fillState, uint256 minuteStart, uint256 score, uint256 refScore)
+    function dropOnce(Settings memory s, uint256 fillState, uint256 minuteStart, uint256 score)
         internal
         pure
         returns (uint256)
     {
-        return dropOnce(s, fillState, minuteStart, score, refScore, 0);
+        return dropOnce(s, fillState, minuteStart, score, 0);
     }
 
     /// @dev the drop with an added lower bound `absFloor` (eth: 0; balance: 10_000 - balanceBidMarginBps), the same
     /// shared rule `CoreLib._drop` applies to both instances
-    function dropOnce(
-        Settings memory s,
-        uint256 fillState,
-        uint256 minuteStart,
-        uint256 score,
-        uint256 refScore,
-        uint256 absFloor
-    ) internal pure returns (uint256) {
+    function dropOnce(Settings memory s, uint256 fillState, uint256 minuteStart, uint256 score, uint256 absFloor)
+        internal
+        pure
+        returns (uint256)
+    {
         minuteStart = startAfter(s, fillState, minuteStart);
-        // one rounding, fall rounded up: rate = fillState * (10_000 * refScore - dropPerCreditBps * score) /
-        // (10_000 * refScore), mirroring CoreLib._drop
-        uint256 fallNum = uint256(s.dropPerCreditBps) * score;
-        uint256 denom = 10_000 * refScore;
+        // one rounding, fall rounded up: rate = fillState * (10_000 * RATE_SCORE - dropPer100PointsBps * score) /
+        // (10_000 * RATE_SCORE), mirroring CoreLib._drop
+        uint256 fallNum = uint256(s.dropPer100PointsBps) * score;
+        uint256 denom = 10_000 * RATE_SCORE;
         uint256 dropped = fallNum >= denom ? 0 : FixedPointMathLib.mulDiv(fillState, denom - fallNum, denom);
         uint256 lo = FixedPointMathLib.max(dropped, minuteStart * s.dropFloorBps / 10_000);
         return FixedPointMathLib.max(lo, absFloor);
@@ -114,7 +115,7 @@ library BidModel {
     function priceNow(Settings memory s, Bid memory b, uint256 cap) internal pure returns (uint256) {
         uint256 anchor = b.lastFillRate.max(peakNow(s, b.peakRate, b.peakTime, b.nowTs));
         uint256 idle = b.nowTs > b.lastFillTime ? b.nowTs - b.lastFillTime : 0;
-        uint256 m = climbMul(b.pagesPot, b.lastFillRate, s.climbMultiplierCapBps);
+        uint256 m = climbMul(b.pagesPot, b.lastFillRate, s.pointsPerPage, s.climbMultiplierCapBps);
         uint256 capV = ceiling(s, anchor, idle, m).min(cap);
         if (b.r >= capV) return capV;
         if (b.nowTs <= b.checkpointTime || b.r == 0) return b.r;

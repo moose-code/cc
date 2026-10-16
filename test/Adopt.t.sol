@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {Prod} from "./utils/Prod.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
@@ -18,9 +19,8 @@ contract AdoptingTarget {
     }
 
     function fill(uint256 id) external payable {
-        (bool ok,) = Mainnet.CREDITS.call(
-            abi.encodeWithSignature("transferFrom(address,address,uint256)", address(this), msg.sender, id)
-        );
+        (bool ok,) = Mainnet.CREDITS
+            .call(abi.encodeWithSignature("transferFrom(address,address,uint256)", address(this), msg.sender, id));
         require(ok, "deliver");
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
@@ -46,7 +46,7 @@ contract AdoptTest is Fixture {
 
     /// the cost basis adopt records for `id`: the price state times its score over refScore, at least 1 wei
     function _basis(uint256 id) internal view returns (uint256) {
-        uint256 b = core.ethPrice() * _scoreOf(id) / core.settings().refScore;
+        uint256 b = core.ethPrice() * _scoreOf(id) / RATE_SCORE;
         return b == 0 ? 1 : b;
     }
 
@@ -67,7 +67,11 @@ contract AdoptTest is Fixture {
         assertEq(core.ethPrice(), core.RATE_START(), "the price state is the opening rate");
         uint256 want = _basis(id);
         assertGt(want, 0);
-        assertEq(want, core.RATE_START() * _scoreOf(id) / core.settings().refScore, "the basis is the price state scaled by score / refScore");
+        assertEq(
+            want,
+            core.RATE_START() * _scoreOf(id) / RATE_SCORE,
+            "the basis is the price state scaled by score / refScore"
+        );
 
         vm.expectEmit(true, false, false, true, address(core));
         emit ICore.CreditAdopted(id, want);
@@ -232,7 +236,7 @@ contract AdoptTest is Fixture {
         succ.adopt(ids);
         assertEq(succ.pileSize(), ids.length, "the pile is restored");
         assertEq(succ.pilePage(0, 1)[0], ids[0], "in the order of the call");
-        uint256 refScore = succ.settings().refScore;
+        uint256 refScore = RATE_SCORE;
         for (uint256 i; i < ids.length; ++i) {
             (bool p, uint256 cost,) = succ.creditInfo(ids[i]);
             assertTrue(p);
@@ -352,7 +356,7 @@ contract AdoptTest is Fixture {
         _adopt(ids);
         for (uint256 i; i < count; ++i) {
             (, uint256 cost,) = core.creditInfo(ids[i]);
-            uint256 want = price * _scoreOf(ids[i]) / core.settings().refScore;
+            uint256 want = price * _scoreOf(ids[i]) / RATE_SCORE;
             if (want == 0) want = 1;
             assertEq(cost, want, "basis is the price state scaled by score / refScore");
             assertGt(cost, 0);

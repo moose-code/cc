@@ -144,11 +144,13 @@ interface ICore {
     function adopt(uint256[] memory) external;
     function allowedAdapter(address adapter) external view returns (bool);
     function artist() external view returns (address);
+    function balanceBidForScore(uint256 score) external view returns (uint256);
     function balanceBidOf(uint256 id) external view returns (uint256);
     function balanceModule() external view returns (address);
     function balanceModuleLocked() external view returns (bool);
     function balanceRate() external view returns (uint256);
     function balanceToken() external view returns (address);
+    function bidForScore(uint256 score) external view returns (uint256);
     function bidOf(uint256 id) external view returns (uint256);
     function book() external;
     function buyListing(address adapter, uint256 id, bytes memory params) external;
@@ -165,6 +167,7 @@ interface ICore {
     function controllerLocked() external view returns (bool);
     function creditCostToPotBps() external view returns (uint16);
     function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
+    function ethPerPoint() external view returns (uint256);
     function ethPot() external view returns (uint256);
     function ethPrice() external view returns (uint256 price);
     function ethRate() external view returns (uint256);
@@ -224,7 +227,7 @@ interface ICore {
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     function successor() external view returns (address);
     function successorLocked() external view returns (bool);
-    function swapCredit(uint256 inId, uint256 outId) external;
+    function swapCredit(uint256, uint256) external;
     function transferOwnership(address to) external;
     function unlockCallback(bytes memory data) external returns (bytes memory);
 }

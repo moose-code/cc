@@ -65,7 +65,6 @@ interface IControllerV1 {
     function pastWindow(uint64 acquiredAt) external view returns (bool);
     function pointRate() external view returns (uint256);
     function priceOf(uint256 sid) external view returns (uint256 price);
-    function refScore() external view returns (uint32);
     function referenceOf(uint256 sid) external view returns (uint256);
     function setAnchorBps(uint32 v) external;
     function setBalancePoolKey(PoolKey memory key) external;

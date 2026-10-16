@@ -25,10 +25,11 @@ contract SpendCapTest is Fixture {
     function _flat(uint256 id, uint256 rate, uint16 cap) private {
         Settings memory s = core.settings();
         s.rateCap = 1 ether;
-        s.refScore = _score(id);
         s.dropFloorBps = 10_000;
         s.spendCapBps = cap;
         _setSettings(s);
+        // the credit reads as 100 points, so its bid is the full rate (score over 100 points is 1)
+        _unitScore(id);
         vm.prank(owner);
         core.setRate(rate);
     }

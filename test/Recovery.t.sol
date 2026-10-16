@@ -27,17 +27,23 @@ contract RecoveryTest is Fixture {
     function setUp() public override {
         super.setUp();
         seller_ = seller;
+        // the recovery mechanism is calibrated with a 5 percent drop and a 50 percent minute floor; the launch runs no
+        // practical floor (dropFloorBps 1, decision 146), so set the floor and drop the recovery tests read against
+        Settings memory s = core.settings();
+        s.dropPer100PointsBps = 500;
+        s.dropFloorBps = 5_000;
+        _setSettings(s);
         _skipSniperWindow();
         _fundPot(1 ether);
     }
 
     /// @dev sells `n` credits within the current block (one minute bucket), so the minute floor binds. each credit has
     /// `refScore` set to its score, so the eth bid pays the full rate and the fill drops the rate by the full
-    /// dropPerCreditBps (score / refScore is 1); the per-point scaling is covered by the invariant suite
+    /// dropPer100PointsBps (score / refScore is 1); the per-point scaling is covered by the invariant suite
     function _dump(uint256 n) internal {
         uint256[] memory ids = _credits(seller_, n);
         for (uint256 i; i < n; ++i) {
-            _refScoreToCredit(ids[i]);
+            _unitScore(ids[i]);
             vm.prank(seller_);
             core.sellForEth(_one(ids[i]));
         }
@@ -118,7 +124,9 @@ contract RecoveryTest is Fixture {
         s.peakHalfLife = 604_800; // 7 days
         _setSettings(s);
         (uint256 peakRate, uint256 peakTime) = _peak();
-        assertApproxEqRel(peakRate, expected, 1e-9 ether, "the peak is restated at the old half life, so it is unchanged now");
+        assertApproxEqRel(
+            peakRate, expected, 1e-9 ether, "the peak is restated at the old half life, so it is unchanged now"
+        );
         assertEq(peakTime, block.timestamp, "the peak time is reset to now");
         assertLt(peakRate, peakBefore, "the restated peak is below the stored peak (it had decayed)");
     }

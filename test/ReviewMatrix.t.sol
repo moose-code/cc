@@ -87,8 +87,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("settings: total sale cuts reach 10000", Class.Pre);
             m.c.settings.saleToArtistBps = 9_950;
         } else {
-            m = _m("settings.dropPerCreditBps 100 (valid, wrong)", Class.Hash);
-            m.c.settings.dropPerCreditBps = 100;
+            m = _m("settings.dropPer100PointsBps 100 (valid, wrong)", Class.Hash);
+            m.c.settings.dropPer100PointsBps = 100;
         }
     }
 

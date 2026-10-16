@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditScore, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
@@ -103,7 +104,7 @@ contract BalanceBidTest is Fixture {
     function test_balanceClimbUnscaledByAvailable() public {
         uint256 floor = _floorBps();
         // one page at par is 80 * refScore * UNIT; available sized so availBpsRaw / (80 * floor) is 1 and 4 pages
-        uint256 onePage = 80 * uint256(core.settings().refScore) * UNIT * floor / 10_000;
+        uint256 onePage = 80 * RATE_SCORE * UNIT * floor / 10_000;
         assertApproxEqAbs(_balanceClimbAfterMinute(onePage), floor * 10_200 / 10_000, 1, "one page climbs at 1x");
         assertApproxEqAbs(
             _balanceClimbAfterMinute(onePage * 4), floor * 10_200 / 10_000, 1, "four pages climb at the same 1x"
@@ -171,9 +172,9 @@ contract BalanceBidTest is Fixture {
         // Balance Rate starts at slot 32; its anchor's last fill rate is slot 34.
         vm.store(address(core), bytes32(uint256(34)), bytes32(uint256(20_000)));
         vm.store(address(core), bytes32(uint256(37)), bytes32(uint256(20_000)));
-        uint256 denom = uint256(s.refScore) * UNIT;
-        mod.setAvailable(500 * denom);
-        // At 500 pages-worth of par a 2x fill buys 250 pages, a 3.125x loosening multiplier.
+        uint256 denom = RATE_SCORE * UNIT;
+        // one page is pointsPerPage points; at a 2x last fill rate this available buys 3.125 pages, the loosening multiplier
+        mod.setAvailable(2200 * denom);
         vm.store(address(core), bytes32(uint256(32)), bytes32(uint256(50_000)));
         vm.store(
             address(core),
@@ -192,15 +193,17 @@ contract BalanceBidTest is Fixture {
     // promise: the full margin endpoint remains a zero bid until the owner restores a positive floor
     function test_zeroFloorDoesNotInventAPositiveBid() public {
         Settings memory s = core.settings();
+        // the margin caps at 9,999 (decision 143), so a zero floor cannot be set and the opening value stays at or above 1 bps of par
         s.balanceBidMarginBps = 10_000;
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("balanceBidMarginBps")));
+        core.setSettings(s);
+        s.balanceBidMarginBps = 9_999;
         s.balanceBidOn = false;
         _setSettings(s);
         s.balanceBidOn = true;
         _setSettings(s);
-        _warp(1 days);
-        assertEq(core.balanceRate(), 0);
-        s.balanceBidMarginBps = 9_000;
-        _setSettings(s);
-        assertEq(core.balanceRate(), 1_000);
+        // the bid opens at the floor, 1 bps of par, the least positive opening the 9,999 margin cap allows
+        assertEq(core.balanceRate(), 1);
     }
 }

@@ -13,7 +13,8 @@ import {
     ICreditScore,
     ICredits,
     IBalanceModule,
-    Mainnet
+    Mainnet,
+    RATE_SCORE
 } from "./interfaces/Interfaces.sol";
 import {CreditBounds} from "./lib/CreditBounds.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -24,9 +25,9 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// first policy module. pages the oldest 80 pile credits for the Core, which picks the format.
-/// it prices and sells statements and pile credits. `refScore` (the Core setting, read live, in the per-credit score
-/// unit of one ten-thousandth of a point) sets the point rate, `core.floorRate() / refScore`, and `valueOf(points)` is the larger of
-/// `floorRate * points / refScore` and the balance token pool value of `points * unitPerPoint` base units, with
+/// it prices and sells statements and pile credits. the point rate is `core.floorRate() / RATE_SCORE`, where
+/// `RATE_SCORE` is 100 points in score units (one ten-thousandth of a point each), and `valueOf(points)` is the larger of
+/// `floorRate * points / RATE_SCORE` and the balance token pool value of `points * unitPerPoint` base units, with
 /// `unitPerPoint` read from the balance module at each call. the reference of a statement is the larger of its cost and
 /// `valueOf(rating)`. the asking price is a fraction of the reference in bps that starts at
 /// `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls in a straight line to the core setting
@@ -223,23 +224,18 @@ contract ControllerV1 is IController {
         return start < startCapBps ? start : startCapBps;
     }
 
-    /// the per-credit score the point rate and the statement reference divide by, in ten-thousandths of a point. the
-    /// Core setting `refScore`, read live so the eth doors and the controller share one source. `SettingsBounds` bounds it
-    function refScore() public view returns (uint32) {
-        return ICoreSale(address(CORE)).settings().refScore;
-    }
-
-    /// wei per score unit: `core.floorRate()` over `refScore`, rounded down. `valueOf` divides once on the product
+    /// wei per score unit: `core.floorRate()` over `RATE_SCORE` (100 points in score units), rounded down. `valueOf`
+    /// divides once on the product
     function pointRate() public view returns (uint256) {
-        return CORE.floorRate() / refScore();
+        return CORE.floorRate() / RATE_SCORE;
     }
 
-    /// the value in wei of `points` score units: the larger of `floorRate * points / refScore` and the balance token pool
-    /// value of `points * unitPerPoint` base units. `unitPerPoint` is read from the balance module in the call. the pool
-    /// term is 0 when the pool key is unset, no balance module is set, the unit read fails, is zero or exceeds
+    /// the value in wei of `points` score units: the larger of `floorRate * points / RATE_SCORE` and the balance token
+    /// pool value of `points * unitPerPoint` base units. `unitPerPoint` is read from the balance module in the call. the
+    /// pool term is 0 when the pool key is unset, no balance module is set, the unit read fails, is zero or exceeds
     /// `uint128.max`, the pool reads zero, or the pool pricing exceeds 256 bits
     function valueOf(uint256 points) public view returns (uint256) {
-        uint256 rate = FullMath.mulDiv(CORE.floorRate(), points, refScore());
+        uint256 rate = FullMath.mulDiv(CORE.floorRate(), points, RATE_SCORE);
         uint256 pool = _poolValue(points);
         return pool > rate ? pool : rate;
     }

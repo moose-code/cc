@@ -46,18 +46,21 @@ interface ICoreViews {
     function pileSize() external view returns (uint256);
     function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids); // startAfter 0 starts at head
     function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
-    /// the eth bid for a credit of score `refScore` now, wei, the price state lowered to the pot. a credit of score
-    /// `s` is paid `ethRate() * s / refScore`; `bidOf` applies the scaling for a given credit
+    /// the eth bid rate now, wei per 100 points, the price state lowered to the pot. a credit of score `score` is paid
+    /// `ethRate() * score / (100 points in score units)`; `bidForScore` and `bidOf` apply the scaling
     function ethRate() external view returns (uint256);
-    /// the eth bid for credit `id` now, wei: `ethRate()` times the credit's score over `refScore`
+    /// the eth bid for a score of `score` stored units now, wei: `ethRate() * score / 1_000_000`
+    function bidForScore(uint256 score) external view returns (uint256);
+    /// the eth bid per point now, wei: `ethRate() / 100`
+    function ethPerPoint() external view returns (uint256);
+    /// the eth bid for credit `id` now, wei: `bidForScore(scoreOf(id))`
     function bidOf(uint256 id) external view returns (uint256);
-    /// the eth bid for a credit of score `refScore` of the price state now, before the pot clamp `ethRate` applies. the
-    /// cost basis of an adopted credit is this price times its score over `refScore`. in later blocks the climb heads
-    /// toward the larger pot
+    /// the eth price state now, wei per 100 points, before the pot clamp `ethRate` applies. the cost basis of an
+    /// adopted credit is this price times its score over 100 points. in later blocks the climb heads toward the larger pot
     function ethPrice() external view returns (uint256);
-    /// wei per credit of the floor rate now: the larger of the price state climbed before the pot clamp and the
+    /// the floor rate now, wei per 100 points: the larger of the price state climbed before the pot clamp and the
     /// remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays between
-    /// fills, so the maximum holds against a sale within the block. the eth doors and `bidOf` divide it by `refScore`
+    /// fills, so the maximum holds against a sale within the block. the eth doors and `bidForScore` divide it by 100 points
     function floorRate() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the seconds a held statement has aged outside every pause. reverts `NotForSale` when the core does not hold it
@@ -118,9 +121,15 @@ interface ICreditStrategy {
     function sellTargetNFT(uint256 tokenId) external payable;
 }
 
-// bounds of the Core constructor argument `rateStart` and of `rateCap`, wei per credit. one definition for the Core and the scripts
+// bounds of the Core constructor argument `rateStart` and of `rateCap`, wei per 100 points. one definition for the Core and the scripts
 uint256 constant RATE_START_MIN_WEI = 1;
 uint256 constant RATE_START_MAX_WEI = type(uint64).max;
+
+// stored score units per point. a credit's score (CreditScore.scoreOf) is its point rating times this
+uint256 constant POINT_UNIT = 10_000;
+// the stored score units the eth rate is quoted per: 100 points. bidForScore, the per credit drop and the controller
+// point rate divide by it
+uint256 constant RATE_SCORE = 100 * POINT_UNIT;
 
 // the most gas of a buyback the caller's refund counts, so a gas burning hook cannot inflate it. a buyback counts
 // about 267,000 gas. read by the Core and by the `buybackSlice` bound
@@ -134,12 +143,12 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into five storage slots
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
 /// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields, fee
-/// split and `refScore`, slot 3 `swapFeeCc`, the two sale cuts, `climbMultiplierCapBps`, `spendCapBps`, `bucketSeconds`,
+/// split and `pointsPerPage`, slot 3 `swapFeeCc`, the two sale cuts, `climbMultiplierCapBps`, `spendCapBps`, `bucketSeconds`,
 /// `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`. docs/SPEC.md section 3 has the meaning of every field
 struct Settings {
     // slot 0
-    /// fall of a bid rate per credit of score `refScore`, bps of the rate before that credit, scaled by `score / refScore`; shared by the eth and balance bids
-    uint16 dropPerCreditBps;
+    /// fall of a bid rate on a fill, bps of the rate before the credit, as `dropPer100PointsBps * score / (100 points in score units)`, bounded at 10_000; shared by the eth and balance bids
+    uint16 dropPer100PointsBps;
     /// within one bucket the rate falls no lower than this share of the rate at the first fill of that bucket, bps
     uint16 dropFloorBps;
     /// climb of a bid rate per minute, bps, compounded; shared by both bids
@@ -198,10 +207,9 @@ struct Settings {
     /// share of the fee income booked by `_book` that is pushed to the payee once the payee share is on, ppm. at most
     /// 1_000_000
     uint24 payeePpm;
-    /// the per-credit score the eth bid divides by: every eth door pays `rate * score / refScore` per credit and the
-    /// controller reads it for the point rate and the statement reference. ten-thousandths of a point,
-    /// nonzero uint32
-    uint32 refScore;
+    /// the points in one statement page, plain points. the ceiling idle loosening scales with the pages the pot buys:
+    /// one page costs `rate * pointsPerPage / 100`. nonzero uint32
+    uint32 pointsPerPage;
     // slot 3
     /// coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, uint96
     uint96 swapFeeCc;
@@ -212,7 +220,7 @@ struct Settings {
     /// before the other splits, bps; artist and operator together are strictly below 10,000
     uint16 saleToOperatorBps;
     /// the cap of the pot scaled climb multiplier, bps (10,000 is 1x). the ceiling's idle loosening scales by
-    /// `clamp(pot / (rate * 80), 1, this / 10,000)`. 10,000 to uint16.max, packed into slot 3 beside the sale cut shares
+    /// `clamp(pot / (rate * pointsPerPage / 100), 1, this / 10,000)`. 10,000 to uint16.max, packed into slot 3 beside the sale cut shares
     uint16 climbMultiplierCapBps;
     /// share of the opening buying pot available per bucket; 10,000 bypasses enforcement
     uint16 spendCapBps;
@@ -261,7 +269,7 @@ struct CreditSale {
 /// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
 /// window and chosen composition. owner adjustable afterwards, so the launch rules only check
 /// bounds (`src/lib/CreditBounds.sol`). the Core reads `costToPotBps`, `chosenComposeOn` and `minCcToChoose`; the
-/// controller reads `saleOn`, `window`, `floorBps` and `startBps`. `refScore` is a Core setting, read from the Core
+/// controller reads `saleOn`, `window`, `floorBps` and `startBps`. the point rate basis is the fixed 100 points
 struct Credit {
     // core
     /// share of the sold credit's cost booked to the buying pot, bps. the rest of the payment funds the coin buyback.
@@ -322,8 +330,8 @@ library Mainnet {
     /// the launch values of docs/SPEC.md section 3
     function defaultSettings() internal pure returns (Settings memory) {
         return Settings({
-            dropPerCreditBps: 500,
-            dropFloorBps: 5_000,
+            dropPer100PointsBps: 115,
+            dropFloorBps: 1,
             climbPerMinBps: 200,
             ceilBps: 11_000,
             idleLoosenBps: 600,
@@ -341,17 +349,17 @@ library Mainnet {
             buybackSlice: 0.5 ether,
             keeperFee: 0.0003 ether,
             keeperMaxBaseFee: 5 gwei,
-            rateCap: 75_000_000_000_000_000,
+            rateCap: 17_310_000_000_000_000,
             callerFee: 0.0003 ether,
             callerMaxBaseFee: 3 gwei,
             feeToRedeemBurnBps: 1_000,
             payeePpm: 0,
-            refScore: 4_330_000,
+            pointsPerPage: 35_200,
             swapFeeCc: 10_000e18,
             saleToArtistBps: 250,
             saleToOperatorBps: 50,
             climbMultiplierCapBps: 40_000,
-            spendCapBps: 100,
+            spendCapBps: 10_000,
             bucketSeconds: 60,
             balanceBidCapBps: 10_000,
             idleStepSeconds: 600,

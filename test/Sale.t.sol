@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Prod} from "./utils/Prod.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
@@ -138,13 +139,16 @@ abstract contract SaleBase is Fixture {
     }
 
     /// pins the reference to cost for the curve, anchor and decay suites, which assert the launch "settle at cost"
-    /// guarantee in bps of cost. the reference is `max(cost, valueOf(rating))`, so the largest `refScore` and a
-    /// `rateCap` at the opening rate hold the floor rate at or below the fill rate and keep the rate term far below
-    /// cost, where the reference equals cost
+    /// guarantee in bps of cost. the reference is `max(cost, valueOf(rating))`. the statement cost is recorded at the
+    /// opening rate, then the floor rate is dropped far below it, so the rate term `floorRate * rating / RATE_SCORE`
+    /// stays under cost and the reference equals cost
     function _pinReferenceToCost() internal {
-        _setRefScore(8_000_000);
+        // no drop within a bucket (`dropFloorBps` 10,000) and the rate capped at the opening rate, so a page's credits
+        // all record the same rate: the cost equals the rate term `floorRate * rating / RATE_SCORE` and the reference
+        // ties to cost
         Settings memory s = core.settings();
         s.rateCap = uint64(OPEN_RATE);
+        s.dropFloorBps = 10_000;
         _setSettings(s);
     }
 }
@@ -683,7 +687,7 @@ contract SaleAnchorTest is SaleShapeBase {
                 vm.prank(attacker);
                 core.fund{value: 1}();
                 // refScore set to this credit's score, so a 1 wei pot reads a 1 wei bid for it (score / refScore is 1)
-                _refScoreToCredit(ids[i]);
+                _unitScore(ids[i]);
                 uint256[] memory one = new uint256[](1);
                 one[0] = ids[i];
                 vm.prank(attacker);

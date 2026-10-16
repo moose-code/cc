@@ -19,6 +19,7 @@ import {
     IStatements,
     Mainnet,
     Settings,
+    RATE_SCORE,
     BUYBACK_GAS,
     BUYLISTING_GAS
 } from "../../src/interfaces/Interfaces.sol";
@@ -879,14 +880,15 @@ abstract contract HandlerBase is Test {
         stored = p.price;
         uint256 pot = p.pot;
         uint256 start = p.minuteStart;
-        uint256 refScore = core.settings().refScore;
         for (uint256 i; i < costs.length; ++i) {
             // the exact per-credit payout: the read (the price state lowered to the pot left) times the credit's score
-            // over refScore, computed from the handler's own rate model, not from `bidOf`
-            uint256 expected = FullMath.mulDiv(BidModel.read(st, pot, stored), scores[i], refScore);
-            if (costs[i] != expected) _flag(V_MODEL, "sellForEth payout differs from read times score over refScore");
+            // over 100 points, computed from the handler's own rate model, not from `bidOf`
+            uint256 expected = FullMath.mulDiv(BidModel.read(st, pot, stored), scores[i], RATE_SCORE);
+            if (costs[i] != expected) {
+                _flag(V_MODEL, "sellForEth payout differs from read times score over 100 points");
+            }
             start = BidModel.startAfter(st, stored, start);
-            stored = _dropped(st, stored, start, scores[i], refScore);
+            stored = _dropped(st, stored, start, scores[i]);
             pot = pot > costs[i] ? pot - costs[i] : 0;
         }
         r = _readAfterFill(st, stored, pot);
@@ -898,13 +900,9 @@ abstract contract HandlerBase is Test {
     }
 
     /// the rate after one credit of score `score` bought with the price state `r`, where `start` is the price state at
-    /// the first fill of the minute. the fall scales by `score / refScore`
-    function _dropped(Settings memory st, uint256 r, uint256 start, uint256 score, uint256 refScore)
-        internal
-        pure
-        returns (uint256)
-    {
-        return BidModel.dropOnce(st, r, start, score, refScore);
+    /// the first fill of the minute. the fall scales by `score / 100 points`
+    function _dropped(Settings memory st, uint256 r, uint256 start, uint256 score) internal pure returns (uint256) {
+        return BidModel.dropOnce(st, r, start, score);
     }
 
     /// the score of credit `id` from the CreditScore contract, the per-credit source the Core reads
@@ -1422,14 +1420,14 @@ abstract contract HandlerBase is Test {
         uint256 spent = active ? gSpent : 0;
         for (uint256 i; i < ids.length; ++i) {
             uint256 score = _scoreOf(ids[i]);
-            uint256 cost = FullMath.mulDiv(BidModel.read(st, p.pot, p.price), score, st.refScore);
+            uint256 cost = FullMath.mulDiv(BidModel.read(st, p.pot, p.price), score, RATE_SCORE);
             if (cost == 0) return true;
             if (cost > p.pot) return false;
             if (st.spendCapBps != 10_000 && spent != 0 && (spent > budget || cost > budget - spent)) return false;
             spent += cost;
             p.pot -= cost;
             p.minuteStart = BidModel.startAfter(st, p.price, p.minuteStart);
-            p.price = BidModel.dropOnce(st, p.price, p.minuteStart, score, st.refScore);
+            p.price = BidModel.dropOnce(st, p.price, p.minuteStart, score);
         }
         return false;
     }
@@ -1468,7 +1466,7 @@ abstract contract HandlerBase is Test {
         _eth(p.bal, paid, 0, "sellForEth");
         if (core.ethPot() != potLeft) _flag(V_POT, "sellForEth pot not reduced by the price");
 
-        // the drop on each fill, independently: dropPerCreditBps times score over refScore, no lower than the minute floor
+        // the drop on each fill, independently: dropPer100PointsBps times score over 100 points, no lower than the minute floor
         uint256[] memory scores = new uint256[](ids.length);
         for (uint256 i; i < ids.length; ++i) {
             scores[i] = _scoreOf(ids[i]);
@@ -1477,7 +1475,7 @@ abstract contract HandlerBase is Test {
         }
         (uint256 stored, uint256 r) = _rateAfterSells(st, p, costs, scores);
         if (core.rateAtCheckpoint() != stored || core.ethRate() != r) {
-            _flag(V_RATE_BOUND, "drop on fill differs from the scaled dropPerCreditBps with the minute floor");
+            _flag(V_RATE_BOUND, "drop on fill differs from the scaled dropPer100PointsBps with the minute floor");
         }
         if (core.lastFillTime() != block.timestamp) _flag(V_RATE_BOUND, "fill did not reset the fill clock");
     }
@@ -1602,19 +1600,18 @@ abstract contract HandlerBase is Test {
         uint256 paid = keeper.balance - p.keeperBal;
         uint256 cost = value;
         uint256 score = _scoreOf(id);
-        uint256 refScore = core.settings().refScore;
         // the per-credit bid from the handler's own rate model, not from `bidOf`: the read before the action times the
-        // credit's score over refScore. the value and the payment are capped at it
-        uint256 ceiling = FullMath.mulDiv(BidModel.read(st, p.pot, p.price), score, refScore);
+        // credit's score over 100 points. the value and the payment are capped at it
+        uint256 ceiling = FullMath.mulDiv(BidModel.read(st, p.pot, p.price), score, RATE_SCORE);
         if (value > ceiling) _flag(V_ABOVE_CAP, "listing value above the ceiling");
         if (cost + paid > ceiling) _flag(V_ABOVE_CAP, "listing cost plus payment above the ceiling");
         _listingPayChecks(paid, (ceiling > cost ? ceiling - cost : 0).min(p.pot > cost ? p.pot - cost : 0), st);
         uint256 potLeft = _recordSpend(cost + paid, p.pot);
         _eth(p.bal, paid + cost, refund, "buyListing");
         if (core.ethPot() != potLeft) _flag(V_POT, "listing pot not reduced by cost and the payment");
-        uint256 stored = _dropped(st, p.price, p.minuteStart, score, refScore);
+        uint256 stored = _dropped(st, p.price, p.minuteStart, score);
         if (core.rateAtCheckpoint() != stored || core.ethRate() != _readAfterFill(st, stored, potLeft)) {
-            _flag(V_RATE_BOUND, "drop on fill differs from dropPerCreditBps with the minute floor");
+            _flag(V_RATE_BOUND, "drop on fill differs from dropPer100PointsBps with the minute floor");
         }
         if (CREDITS.ownerOf(id) != address(core)) _flag(V_MODEL, "listing did not deliver the credit");
         gone[id] = true;
@@ -2259,7 +2256,7 @@ abstract contract HandlerBase is Test {
     //////////////////////////////////////////////////////////////*/
 
     /// anyone adopts credits the core holds without a record. by mode: an actor sends 1 to 4 of its credits straight to
-    /// the core and adopts them (each gets the cost basis of the model price state times its score over refScore, at
+    /// the core and adopts them (each gets the cost basis of the model price state times its score over 100 points, at
     /// least 1 wei, and the rate state, the pots and the balance stay as they were), adopts a credit that is in a pile
     /// (`InPile`), adopts a credit an actor holds (`NotHolder`), adopts an empty list (`Empty`) or the zero id
     /// (`ZeroId`). a refused call changes nothing
@@ -2346,10 +2343,9 @@ abstract contract HandlerBase is Test {
         p.tb0 = core.ethToBuyback();
         p.size0 = core.pileSize();
         uint256 price = _priceNow(p.rs.st);
-        uint256 refScore = core.settings().refScore;
         p.costs = new uint256[](ids.length);
         for (uint256 k; k < ids.length; ++k) {
-            p.costs[k] = FullMath.mulDiv(price, _scoreOf(ids[k]), refScore).max(1);
+            p.costs[k] = FullMath.mulDiv(price, _scoreOf(ids[k]), RATE_SCORE).max(1);
         }
         (p.anchor0, p.floor0, p.bucket0) = _anchorState();
     }
@@ -2583,18 +2579,18 @@ abstract contract HandlerBase is Test {
     bytes32 internal constant BAL_CP_SLOT = bytes32(uint256(33));
     bytes32 internal constant BAL_ANCHOR_SLOT = bytes32(uint256(34));
 
-    /// @dev the balance bid clamp now, available as bps of par for a refScore credit, read from the module
+    /// @dev the balance bid clamp now, available as bps of par for a 100 point credit, read from the module
     function _availBps(uint256 unit) internal view returns (uint256) {
-        uint256 denom = uint256(core.settings().refScore) * unit;
+        uint256 denom = RATE_SCORE * unit;
         uint256 avail = module.available();
         uint256 cap = core.settings().balanceBidCapBps;
         if (denom == 0) return cap;
         return FullMath.mulDiv(avail, 10_000, denom).min(cap);
     }
 
-    /// @dev available as bps of par for a refScore credit, uncapped: the pages pot of the balance instance
+    /// @dev available as bps of par for a 100 point credit, uncapped: the pages pot of the balance instance
     function _availBpsRaw(uint256 unit) internal view returns (uint256) {
-        uint256 denom = uint256(core.settings().refScore) * unit;
+        uint256 denom = RATE_SCORE * unit;
         return denom == 0 ? 0 : module.available() * 10_000 / denom;
     }
 
@@ -2627,12 +2623,11 @@ abstract contract HandlerBase is Test {
         uint256 minuteStart = bucket == block.timestamp / core.settings().bucketSeconds
             ? uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 1)))
             : price;
-        uint256 refScore = st.refScore;
         for (uint256 i; i < n; ++i) {
             uint256 score = _scoreOf(ids[i]);
             total += score * unit * BidModel.read(st, availBps, price, st.balanceBidCapBps) / 10_000;
             minuteStart = BidModel.startAfter(st, price, minuteStart);
-            price = BidModel.dropOnce(st, price, minuteStart, score, refScore, floorBps);
+            price = BidModel.dropOnce(st, price, minuteStart, score, floorBps);
         }
     }
 
@@ -2670,7 +2665,7 @@ abstract contract HandlerBase is Test {
     }
 
     /// sells credits into the balance token bid. ids are picked so the prices fit the pot. the recorded eth cost basis is
-    /// the score-scaled floor rate backstop and reads `refScore` from the core setting, so the bid does not call the
+    /// the score-scaled floor rate backstop uses the fixed 100 point basis, so the bid does not call the
     /// controller
     function sellForBalance(uint256 aSeed, uint256 nSeed, uint256 pick) external checked {
         uint8 a = A_SELL_FOR_BALANCE;

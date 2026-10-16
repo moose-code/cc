@@ -11,7 +11,16 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {ICredits, ICreditScore, IBalanceModule, IStatements, Settings, Mainnet} from "../interfaces/Interfaces.sol";
+import {
+    ICredits,
+    ICreditScore,
+    ICoin,
+    IBalanceModule,
+    IStatements,
+    Settings,
+    Mainnet,
+    RATE_SCORE
+} from "../interfaces/Interfaces.sol";
 import {Halving} from "./Halving.sol";
 import {SettingsBounds} from "./SettingsBounds.sol";
 
@@ -192,6 +201,11 @@ library CoreLib {
     /// a credit the engine sold through `sellCreditTo` in this block is offered back to an intake door
     error SameBlockReturn(uint256 id);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
+    /// a pile credit was swapped for one of equal or higher score for a coin fee burned by the caller
+    event CreditSwapped(uint256 indexed inId, uint256 indexed outId, address indexed caller, uint256 fee);
+    error Paused();
+    error NotInPile(uint256 id);
+    error ScoreTooLow(uint256 inId, uint256 outId);
     /// one credit filled into the balance token bid: the balance token paid, the balance rate (bps of par) after this
     /// credit's drop, and the module available left for the rest of the batch. mirrors `Core.EthRateFill`
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
@@ -299,7 +313,7 @@ library CoreLib {
     /// books an ETH credit purchase of `cost` after the Core checkpoints: charges the bucket budget, drops the rate and
     /// debits the pot. `sellForEth` and `buyListing` call it per credit. the first purchase of a bucket always passes,
     /// a later purchase reverts `SpendCapReached` when the spent total would exceed the budget
-    function spend(uint256 cost, uint256 score, uint256 refScore) external {
+    function spend(uint256 cost, uint256 score) external {
         State storage c = state();
         uint256 pot = c.ethPot;
         if (cost == 0) revert ZeroAmount();
@@ -319,7 +333,7 @@ library CoreLib {
             revert SpendCapReached(b.spentInBucket, cost, b.spendBudget);
         }
         b.spentInBucket = SafeCastLib.toUint128(total);
-        uint256 rate = _drop(c.anchor, c.rateAtCheckpoint, block.timestamp, score, refScore, 0);
+        uint256 rate = _drop(c.anchor, c.rateAtCheckpoint, block.timestamp, score, 0);
         c.rateAtCheckpoint = rate;
         c.lastFillTime = SafeCastLib.toUint64(block.timestamp);
         c.ethPot = pot - cost;
@@ -351,7 +365,7 @@ library CoreLib {
         if (module != address(0)) {
             (uint256 unit, bool ok) = _unitView(module);
             if (ok) {
-                uint256 denom = uint256(c.settings.refScore) * unit;
+                uint256 denom = RATE_SCORE * unit;
                 uint256 avail = _availableView(module);
                 _balanceCheckpoint(c.balance, _toBps(avail, denom), _toBpsRaw(avail, denom));
                 return true;
@@ -437,7 +451,9 @@ library CoreLib {
     /// covers at the last fill rate, clamped to [1x, `climbMultiplierCapBps`]. the Core forwards its `climbMultiplier()`
     function climbMultiplier() external view returns (uint256) {
         State storage c = state();
-        return _climbMulBps(_ethPagesPot(c), c.anchor.lastFillRate, c.settings.climbMultiplierCapBps);
+        return _climbMulBps(
+            _ethPagesPot(c), c.anchor.lastFillRate, c.settings.pointsPerPage, c.settings.climbMultiplierCapBps
+        );
     }
 
     /// @notice the price state, read and peak of a bid instance at `nowTs`, from its stored rate `r` of checkpoint
@@ -464,7 +480,7 @@ library CoreLib {
         // fill rate is the denominator and holds between fills, so a checkpoint that climbs the stored rate leaves it
         // unchanged; the pot numerator moves as `fund` and sale booking change `pagesPot`, so the multiplier tracks the
         // pot between fills (decision 128, variant d)
-        uint256 m = _climbMulBps(pagesPot, a.lastFillRate, s.climbMultiplierCapBps);
+        uint256 m = _climbMulBps(pagesPot, a.lastFillRate, s.pointsPerPage, s.climbMultiplierCapBps);
         uint256 loosened = 10_000 + uint256(s.idleLoosenBps) * m / BPS * (idle / s.idleStepSeconds);
         uint256 cap = (anchor * loosened * s.ceilBps / 1e8).min(capMax);
         price = r;
@@ -477,12 +493,17 @@ library CoreLib {
         read = price.min(clampTo);
     }
 
-    /// @notice the pot scaled multiplier, bps in [10_000, `capBps`]. `m` is the pages of 80 credits of score refScore
-    /// the pages pot buys at the rate `rate`: one page costs `rate * 80`, so pages in bps is `pagesPot.fullMulDiv(BPS / 80, rate)`,
-    /// clamped to [1x, `capBps`]. a zero rate reads as 1x. only the ceiling's idle loosening scales by it
-    function _climbMulBps(uint256 pagesPot, uint256 rate, uint256 capBps) private pure returns (uint256) {
+    /// @notice the pot scaled multiplier, bps in [10_000, `capBps`]. `m` is the pages the pages pot buys at the rate
+    /// `rate`: one page is `pointsPerPage` points and costs `rate * pointsPerPage / 100`, so pages in bps is
+    /// `pagesPot.fullMulDiv(BPS * 100, rate * pointsPerPage)`, clamped to [1x, `capBps`]. a zero rate reads as 1x. only
+    /// the ceiling's idle loosening scales by it
+    function _climbMulBps(uint256 pagesPot, uint256 rate, uint256 pointsPerPage, uint256 capBps)
+        private
+        pure
+        returns (uint256)
+    {
         if (rate == 0) return BPS;
-        uint256 mBps = pagesPot.fullMulDiv(BPS / 80, rate);
+        uint256 mBps = pagesPot.fullMulDiv(BPS * 100, rate * pointsPerPage);
         if (mBps < BPS) return BPS;
         if (mBps > capBps) return capBps;
         return mBps;
@@ -529,18 +550,18 @@ library CoreLib {
     }
 
     /// @notice the rate after one credit of score `score` is bought with the price state `price` at the fill, and the
-    /// anchor update of that fill. The fall below `price` is `dropPerCreditBps * score / refScore`, bounded at 10_000,
-    /// so the drop tracks the eth spent on the credit. The rate stays at or above `dropFloorBps` of the price state at
-    /// the first fill of the current bucket (`nowTs / bucketSeconds`). A `price` already below that floor (restated by
-    /// `setRate` or lowered by a bound) starts a new floor at `price`. `price` becomes the last fill rate, and the
-    /// remembered peak becomes `max(price, peak now)` with `peakTime` set to `nowTs`
-    function drop(uint256 price, uint256 nowTs, uint256 score, uint256 refScore) external returns (uint256) {
-        return _drop(state().anchor, price, nowTs, score, refScore, 0);
+    /// anchor update of that fill. The fall below `price` is `dropPer100PointsBps * score / RATE_SCORE`, bounded at
+    /// 10_000, so the drop tracks the eth spent on the credit. The rate stays at or above `dropFloorBps` of the price
+    /// state at the first fill of the current bucket (`nowTs / bucketSeconds`). A `price` already below that floor
+    /// (restated by `setRate` or lowered by a bound) starts a new floor at `price`. `price` becomes the last fill rate,
+    /// and the remembered peak becomes `max(price, peak now)` with `peakTime` set to `nowTs`
+    function drop(uint256 price, uint256 nowTs, uint256 score) external returns (uint256) {
+        return _drop(state().anchor, price, nowTs, score, 0);
     }
 
     /// @notice the rate after one credit of score `score` is bought with the price state `price` of anchor `a`.
     /// `absFloor` is a lower bound on the result: 0 for the eth bid, `10_000 - balanceBidMarginBps` for the balance bid
-    function _drop(Anchor storage a, uint256 price, uint256 nowTs, uint256 score, uint256 refScore, uint256 absFloor)
+    function _drop(Anchor storage a, uint256 price, uint256 nowTs, uint256 score, uint256 absFloor)
         private
         returns (uint256)
     {
@@ -556,11 +577,11 @@ library CoreLib {
         a.peakRate = price.max(peakNow);
         // forge-lint: disable-next-line(unsafe-typecast)
         a.peakTime = uint64(nowTs);
-        // the fall is `dropPerCreditBps * score / refScore` bps of `price`, bounded at 10_000. one rounding: the rate
-        // is `price * (10_000 * refScore - dropPerCreditBps * score) / (10_000 * refScore)` rounded down, so the fall
-        // rounds up and a nonzero `dropPerCreditBps` always drops a nonzero amount
-        uint256 fallNum = uint256(s.dropPerCreditBps) * score;
-        uint256 denom = 10_000 * refScore;
+        // the fall is `dropPer100PointsBps * score / RATE_SCORE` bps of `price`, bounded at 10_000. one rounding: the
+        // rate is `price * (10_000 * RATE_SCORE - dropPer100PointsBps * score) / (10_000 * RATE_SCORE)` rounded down, so
+        // the fall rounds up and a nonzero `dropPer100PointsBps` always drops a nonzero amount
+        uint256 fallNum = uint256(s.dropPer100PointsBps) * score;
+        uint256 denom = 10_000 * RATE_SCORE;
         uint256 dropped = fallNum >= denom ? 0 : price.mulDiv(denom - fallNum, denom);
         return dropped.max(a.minuteStartRate * s.dropFloorBps / 10_000).max(absFloor);
     }
@@ -637,7 +658,7 @@ library CoreLib {
 
     /// @notice puts credits the Core holds without a record into the eth pile, anyone may call. The cost basis of a
     /// credit is the price state at `block.timestamp` (`climb`, before the clamp, no checkpoint is written) times the
-    /// credit's score over `refScore`, at least 1 wei. The price state is what the engine pays with a funded
+    /// credit's score over 100 points, at least 1 wei. The price state is what the engine pays with a funded
     /// pot, so statements built from adopted credits are priced at that level; the clamp of a thin pot would book a
     /// basis of 1 wei. A donor who inflates the basis of a statement gives credits away. The basis is booked and the
     /// eth pile grows: the rate state and the pots keep their values. `acquiredAt` is the current
@@ -657,17 +678,57 @@ library CoreLib {
             c.checkpointTime,
             block.timestamp
         );
-        uint256 refScore = c.settings.refScore;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = ids[i];
             if (id == 0) revert ZeroId();
             if (c.credits[id].inPile) revert InPile();
             if (CREDITS.ownerOf(id) != address(this)) revert NotHolder();
             uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
-            uint256 cost = price.mulDiv(score, refScore).max(1);
+            uint256 cost = price.mulDiv(score, RATE_SCORE).max(1);
             push(c.pile, c.credits, id, cost);
             emit CreditAdopted(id, cost);
         }
+    }
+
+    /// @notice swaps pile credit `outId` for `inId` of equal or higher score, for a `swapFeeCc` coin fee the caller
+    /// burns. `inId` takes `outId`'s pile node: the same order position, cost basis and acquisition time, so the pile
+    /// size and the credit sale window of the slot do not change. `inId` is pulled in before `outId` is sent out. the
+    /// Core forwards its `swapCredit` call here untouched, under its own reentrancy guard. reverts `Retired` after
+    /// `migrate`, `Paused` while paused, and for a bad id, a non pile `outId`, an owned or piled `inId`, a lower
+    /// `inId` score, or a same block return of `inId`
+    function swapCredit(uint256 inId, uint256 outId) external {
+        State storage c = state();
+        if (c.retired) revert Retired();
+        if (c.paused) revert Paused();
+        if (inId == 0) revert ZeroId();
+        if (c.creditSaleBlock[inId] == block.number) revert SameBlockReturn(inId);
+        Credit storage out = c.credits[outId];
+        if (!out.inPile) revert NotInPile(outId);
+        if (c.credits[inId].inPile) revert InPile();
+        if (CREDITS.ownerOf(inId) != msg.sender) revert NotOwner();
+        if (scoreOf(inId) < scoreOf(outId)) revert ScoreTooLow(inId, outId);
+
+        uint256 fee = c.settings.swapFeeCc;
+        if (fee != 0) ICoin(ICoinOf(address(this)).COIN()).burnFrom(msg.sender, fee);
+
+        // `inId` inherits `outId`'s node: same neighbours, cost and acquisition time; the pile size does not change
+        uint256 prev = out.prev;
+        uint256 next = out.next;
+        Credit storage inC = c.credits[inId];
+        inC.cost = out.cost;
+        inC.prev = prev;
+        inC.next = next;
+        inC.acquiredAt = out.acquiredAt;
+        inC.inPile = true;
+        if (prev == 0) c.pile.head = inId;
+        else c.credits[prev].next = inId;
+        if (next == 0) c.pile.tail = inId;
+        else c.credits[next].prev = inId;
+        delete c.credits[outId];
+
+        CREDITS.transferFrom(msg.sender, address(this), inId);
+        CREDITS.transferFrom(address(this), msg.sender, outId);
+        emit CreditSwapped(inId, outId, msg.sender, fee);
     }
 
     /// @notice sets the successor to which `migrate` sends the assets. the zero address means no migration. reverts
@@ -847,12 +908,12 @@ library CoreLib {
     /// instance price state, climbed by the eth bid's climb with cap balanceBidCapBps and floored
     /// at `10_000 - balanceBidMarginBps`, dropped per credit by the eth bid's drop. runs only while `balanceBidOn`. the
     /// balance token is held by the module: the running total must not exceed the module's live `available()`
-    /// (`PotTooSmall`). the rate clamp `availBps` is the full `available()` as bps of par for a refScore credit, read
+    /// (`PotTooSmall`). the rate clamp `availBps` is the full `available()` as bps of par for a 100 point credit, read
     /// once for the batch; a paid rate below the floor `10_000 - balanceBidMarginBps` reverts `PotTooSmall`, so a module
     /// too short to pay the floor closes the bid. the module pays with one `pay(seller, total)`, and the seller's holding
     /// must rise by at least `total` (`BadModule`). the credit enters the single pile with an eth cost basis of
-    /// `floorRate * score / refScore`, at least 1 wei (the Core's eth `floorRate()`). a failing, short or zero live unit
-    /// read reverts the whole bid (`BadModule`). `refScore` is the Core setting, read from storage
+    /// `floorRate * score / RATE_SCORE`, at least 1 wei (the Core's eth `floorRate()`). a failing, short or zero live
+    /// unit read reverts the whole bid (`BadModule`)
     function _sellForBalance(uint256[] calldata ids, uint256 minOut) private {
         State storage c = state();
         if (c.retired) revert Retired();
@@ -863,8 +924,8 @@ library CoreLib {
         if (module == address(0)) revert NoBalanceModule();
         uint256 unit = _liveUnit(module);
         uint256 avail = _liveAvailable(module);
-        // the rate clamp: available expressed as bps of par for a refScore credit, read once from full available
-        uint256 denom = s.refScore * unit;
+        // the rate clamp: available expressed as bps of par for a 100 point credit, read once from full available
+        uint256 denom = RATE_SCORE * unit;
         uint256 availBps = _toBps(avail, denom);
         // checkpoint the balance instance: climb to now with the clamp, store the price state so the per credit drops
         // walk down from it. the cap is 10_000, the par ceiling; the pages pot is available as bps of par, uncapped
@@ -914,7 +975,7 @@ library CoreLib {
     /// pays each named credit `score * unit * rate / 10_000` and drops the balance rate per credit, in order. `rate` is
     /// the stored balance rate clamped to `availBps` (available as bps of par). reverts `ZeroAmount` on a zero payout and
     /// `PotTooSmall` once the running total passes `avail`. the credit enters the pile at eth cost basis
-    /// `floor * score / refScore`, at least 1 wei. returns the balance token total owed to the seller
+    /// `floor * score / RATE_SCORE`, at least 1 wei. returns the balance token total owed to the seller
     function _fillBalance(
         uint256[] calldata ids,
         uint256 unit,
@@ -925,7 +986,6 @@ library CoreLib {
     ) private returns (uint256 total) {
         State storage c = state();
         Rate storage bal = c.balance;
-        uint256 refScore = c.settings.refScore;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = owned(ids[i]);
             if (c.creditSaleBlock[id] == block.number) revert SameBlockReturn(id);
@@ -937,10 +997,10 @@ library CoreLib {
             if (paid == 0) revert ZeroAmount();
             total += paid;
             if (total > avail) revert PotTooSmall();
-            bal.rateAtCheckpoint = _drop(bal.anchor, bal.rateAtCheckpoint, block.timestamp, score, refScore, floorBps);
+            bal.rateAtCheckpoint = _drop(bal.anchor, bal.rateAtCheckpoint, block.timestamp, score, floorBps);
             // forge-lint: disable-next-line(unsafe-typecast)
             bal.lastFillTime = uint64(block.timestamp);
-            uint256 cost = floor.mulDiv(score, refScore).max(1);
+            uint256 cost = floor.mulDiv(score, RATE_SCORE).max(1);
             push(c.pile, c.credits, id, cost);
             CREDITS.transferFrom(msg.sender, address(this), id);
             emit CreditBought(id, msg.sender, cost);
@@ -948,8 +1008,8 @@ library CoreLib {
         }
     }
 
-    /// the balance token amount `avail` as bps of par for a refScore credit, where `denom` is `refScore * unit`. at or
-    /// above `denom` the bps reaches the 10_000 cap, so it reads as no clamp; a zero denom reads as no clamp
+    /// the balance token amount `avail` as bps of par for a 100 point credit, where `denom` is `RATE_SCORE * unit`. at
+    /// or above `denom` the bps reaches the 10_000 cap, so it reads as no clamp; a zero denom reads as no clamp
     function _toBps(uint256 avail, uint256 denom) private view returns (uint256) {
         uint256 cap = state().settings.balanceBidCapBps;
         if (denom == 0) return cap;
@@ -957,13 +1017,14 @@ library CoreLib {
         return avail >= enough ? cap : avail.mulDiv(BPS, denom);
     }
 
-    /// the multiplier pages pot in bps of par. `avail` saturates at ceil(denom * multiplierCap * PAGE * balanceRateCap /
-    /// BPS squared), where every allowed last-fill rate reaches the multiplier cap, so the product cannot overflow
+    /// the multiplier pages pot in bps of par. `avail` saturates at ceil(denom * multiplierCap * balanceRateCap *
+    /// pointsPerPage / (BPS squared * 100)), where every allowed last-fill rate reaches the multiplier cap, so the
+    /// product cannot overflow
     function _toBpsRaw(uint256 avail, uint256 denom) private view returns (uint256) {
         if (denom == 0) return 0;
         Settings storage cfg = state().settings;
-        uint256 maxPages = uint256(cfg.climbMultiplierCapBps) * 80 * cfg.balanceBidCapBps;
-        uint256 enough = denom.mulDivUp(maxPages, BPS * BPS);
+        uint256 maxPages = uint256(cfg.climbMultiplierCapBps) * cfg.balanceBidCapBps * cfg.pointsPerPage;
+        uint256 enough = denom.mulDivUp(maxPages, BPS * BPS * 100);
         return avail.min(enough).mulDiv(BPS, denom);
     }
 
@@ -972,15 +1033,27 @@ library CoreLib {
         (rate,) = _balanceRead();
     }
 
-    /// @notice the balance token payout for credit `id` now: `score * unitPerPoint * rate / 10_000`, the rate held at
-    /// or above the floor `10_000 - balanceBidMarginBps`. a module too short to pay the floor still reports the floor
-    /// payout, which `sellForBalance` refuses with `PotTooSmall`. zero at a zero-rate floor, when no module is set or when the live unit read fails. the Core forwards its `balanceBidOf(id)`
+    /// @notice the balance token payout for a score of `score` stored units now: `score * unitPerPoint * rate / 10_000`,
+    /// the rate held at or above the floor `10_000 - balanceBidMarginBps`. the Core forwards its `balanceBidForScore(score)`
+    function balanceBidForScore(uint256 score) external view returns (uint256) {
+        return _balancePayout(score);
+    }
+
+    /// @notice the balance token payout for credit `id` now: `balanceBidForScore(scoreOf(id))`. a module too short to pay
+    /// the floor still reports the floor payout, which `sellForBalance` refuses with `PotTooSmall`. zero at a zero-rate
+    /// floor, when no module is set or when the live unit read fails. the Core forwards its `balanceBidOf(id)`
     function balanceBidOf(uint256 id) external view returns (uint256) {
+        return _balancePayout(scoreOf(id));
+    }
+
+    /// the balance token payout for a score of `score` stored units: `score * unitPerPoint * rate / 10_000`, the rate
+    /// held at or above the floor `10_000 - balanceBidMarginBps`. zero when no module is set or the live unit read fails
+    function _balancePayout(uint256 score) private view returns (uint256) {
         (uint256 rate, uint256 unit) = _balanceRead();
         if (unit == 0) return 0;
         uint256 floorBps = BPS - state().settings.balanceBidMarginBps;
         if (rate < floorBps) rate = floorBps;
-        return scoreOf(id) * unit * rate / BPS;
+        return score * unit * rate / BPS;
     }
 
     /// the balance bid rate (bps of par) and the live unit. with the bid off or no usable module the instance does not
@@ -997,7 +1070,7 @@ library CoreLib {
             bool ok;
             (unit, ok) = _unitView(module);
             if (ok) {
-                uint256 denom = uint256(c.settings.refScore) * unit;
+                uint256 denom = RATE_SCORE * unit;
                 uint256 avail = _availableView(module);
                 clampTo = _toBps(avail, denom);
                 pagesPot = _toBpsRaw(avail, denom);
