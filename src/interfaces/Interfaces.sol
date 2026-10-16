@@ -332,12 +332,12 @@ library Mainnet {
         return Settings({
             dropPer100PointsBps: 115,
             dropFloorBps: 1,
-            climbPerMinBps: 200,
+            climbPerMinBps: 100,
             ceilBps: 11_000,
             idleLoosenBps: 600,
             saleFloorBps: 10_000,
             saleToBuybackBps: 2_500,
-            recoveryClimbPerMinBps: 200,
+            recoveryClimbPerMinBps: 100,
             recoveryGapBps: 1_000,
             peakHalfLife: 21_600,
             buybackDelay: 25,
@@ -368,21 +368,21 @@ library Mainnet {
     }
 
     /// the launch sale: the ask starts at 150 percent of the reference (at most 1_000 percent, the start cap) and falls
-    /// in a straight line to 100 percent over 12 hours, where it rests. the anchor excess over 100 percent halves every
-    /// 7 days, and the anchor moves only on a statement that costs at least 0.1 eth
+    /// in a straight line to 100 percent over 4 hours, where it rests. `anchorMoveBps` 0 keeps the anchor at 100 percent,
+    /// so no sale moves it; its half life and minimum cost stay set for a later raise
     function defaultSale() internal pure returns (Sale memory) {
         return Sale({
             markupBps: 15_000,
             startCapBps: 100_000,
-            decayHours: 12,
+            decayHours: 4,
             anchorHalfLife: 7 days,
             anchorMinCost: 0.1 ether,
-            anchorMoveBps: 5_000
+            anchorMoveBps: 0
         });
     }
 
     /// the launch credit settings: the credit sale is on, its window is 4 hours, the floor is 110 percent and the
-    /// start 300 percent of the floor, 80 percent of a sold credit's cost funds the pot, chosen composition is off, and
+    /// start 150 percent of the floor, 80 percent of a sold credit's cost funds the pot, chosen composition is off, and
     /// the coin balance a caller needs to choose a compose or a held format is 1 coin
     function defaultCredit() internal pure returns (Credit memory) {
         return Credit({
@@ -392,7 +392,7 @@ library Mainnet {
             saleOn: true,
             window: 4 hours,
             floorBps: 11_000,
-            startBps: 30_000
+            startBps: 15_000
         });
     }
 

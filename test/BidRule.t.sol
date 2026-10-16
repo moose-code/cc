@@ -265,8 +265,8 @@ contract BidRuleTest is Fixture {
         assertEq(core.rateAtCheckpoint(), price, "the checkpoint at the refill stores the price from before");
         assertEq(core.ethRate(), price, "the read after the refill is that price");
         _warp(10 minutes);
-        // the climb is unscaled (climbPerMinBps 200): 1.02 per minute, 1.02^10 = 1.2189944199947573
-        assertApproxEqRel(core.ethRate(), price * 1_218_994_419_994_757_376 / 1e18, 1e9, "and it climbs from there");
+        // the climb is unscaled (climbPerMinBps 100): 1.01 per minute, 1.01^10 = 1.1046221254112045
+        assertApproxEqRel(core.ethRate(), price * 1_104_622_125_411_204_510 / 1e18, 1e9, "and it climbs from there");
     }
 
     // promise: SPEC 1 decision 147: the climb's pot clamp counts the unbooked fee income
@@ -404,11 +404,11 @@ contract BidRuleTest is Fixture {
     // promise: SPEC 1 risk: a market above the bid waits for the climb or setRate
     /// every seller asks the full new price, 200 percent of the old one. the 20 eth pot loosens the ceiling at the 4x
     /// cap, so the ceiling clears 200 percent within minutes, but the per minute climb is unscaled (decision 128 variant
-    /// d, climbPerMinBps 200): the bid reaches 200 percent only when the 2 percent a minute climb gets there, minute 40
+    /// d, climbPerMinBps 100): the bid reaches 200 percent only when the 1 percent a minute climb gets there, minute 71
     function test_gapUp100Percent_everyAskAtTheNewPriceWaitsForTheClimb() public {
         (uint256 m,) = _minutesToFirstFill(20_000);
         emit log_named_uint("minutes to the first fill, no cheap ask", m);
-        assertEq(m, 40);
+        assertEq(m, 71);
     }
 
     // ------------------------------------------------------------------ decision 128: pot scaled climb
@@ -434,12 +434,12 @@ contract BidRuleTest is Fixture {
     }
 
     // promise: SPEC 4 decision 128 variant d: the per minute climb does not scale with the pot, only the loosening does
-    /// the climb is the launch rate (climbPerMinBps 200, 2 percent a minute) at one, three and ten pages alike
+    /// the climb is the launch rate (climbPerMinBps 100, 1 percent a minute) at one, three and ten pages alike
     function test_climbUnscaledByPotPages() public {
         _with(_highCeiling);
-        assertApproxEqAbs(_climbFactorBps(1), 10_200, 2, "one page climbs at 1x");
-        assertApproxEqAbs(_climbFactorBps(3), 10_200, 2, "three pages climb at the same 1x");
-        assertApproxEqAbs(_climbFactorBps(10), 10_200, 2, "ten pages climb at the same 1x");
+        assertApproxEqAbs(_climbFactorBps(1), 10_100, 2, "one page climbs at 1x");
+        assertApproxEqAbs(_climbFactorBps(3), 10_100, 2, "three pages climb at the same 1x");
+        assertApproxEqAbs(_climbFactorBps(10), 10_100, 2, "ten pages climb at the same 1x");
     }
 
     /// @dev the loosened ceiling after 10 idle minutes at a pot sized to `pages` pages, in bps of the anchor (10_000
