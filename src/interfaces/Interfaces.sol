@@ -322,9 +322,9 @@ library Mainnet {
     /// the launch values of docs/SPEC.md section 3
     function defaultSettings() internal pure returns (Settings memory) {
         return Settings({
-            dropPerCreditBps: 50,
+            dropPerCreditBps: 500,
             dropFloorBps: 5_000,
-            climbPerMinBps: 50,
+            climbPerMinBps: 200,
             ceilBps: 11_000,
             idleLoosenBps: 600,
             saleFloorBps: 10_000,

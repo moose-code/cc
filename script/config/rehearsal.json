@@ -18,9 +18,9 @@
   "salt": "0x56d96069d0c85d21b8d789da2cd39ba97ceec51143707e32ecb8343eb4258a9c",
   "rateStart": 25000000000000000,
   "settings": {
-    "dropPerCreditBps": 50,
+    "dropPerCreditBps": 500,
     "dropFloorBps": 5000,
-    "climbPerMinBps": 50,
+    "climbPerMinBps": 200,
     "ceilBps": 11000,
     "idleLoosenBps": 600,
     "saleFloorBps": 10000,

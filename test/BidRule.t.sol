@@ -47,13 +47,13 @@ contract BidRuleTest is Fixture {
     // ------------------------------------------------------------------ drop
 
     // promise: SPEC 1 the bid rule: a fill drops the price state by dropPerCreditBps
-    function test_oneFillDropsHalfAPercent() public {
+    function test_oneFillDropsFivePercent() public {
         _potTo(10 ether);
         uint256 r0 = core.ethRate();
         assertEq(r0, START);
         uint256 price = _sellOne();
         assertEq(price, r0, "the rate before the fill");
-        assertEq(core.rateAtCheckpoint(), r0 * 9_950 / 10_000, "0.5 percent below the rate paid");
+        assertEq(core.rateAtCheckpoint(), r0 * 9_500 / 10_000, "5 percent below the rate paid");
         (uint256 anchor, uint256 start, uint256 bucket) = _anchor();
         assertEq(anchor, r0, "the rate paid is the anchor");
         assertEq(start, r0, "and the start of the minute");
@@ -62,19 +62,20 @@ contract BidRuleTest is Fixture {
     }
 
     // promise: SPEC 1 the bid rule at launch: dropFloorBps 5_000 bounds the drop inside a minute
-    /// at the launch drop of 0.5 percent the floor of 50 percent is reached after 139 fills in one minute
-    function test_launchDropReachesTheFloorAfterHundredThirtyNineFills() public {
+    /// at the launch drop of 5 percent the floor of 50 percent is reached on the 14th fill in one minute (0.95^13 is
+    /// above 0.5, 0.95^14 is below it, so the 14th fill clamps to the floor)
+    function test_launchDropReachesTheFloorOnTheFourteenthFill() public {
         _potTo(40 ether);
         uint256 r0 = core.ethRate();
-        uint256[] memory ids = _credits(seller, 140);
+        uint256[] memory ids = _credits(seller, 14);
         for (uint256 i; i < ids.length; ++i) {
             // each credit drops the rate by the full dropPerCreditBps: refScore set to its score (score / refScore is 1)
             _refScoreToCredit(ids[i]);
             vm.prank(seller);
             core.sellForEth(_one(ids[i]));
-            if (i == 137) assertGt(core.rateAtCheckpoint(), r0 * 5_000 / 10_000, "138 fills are above the floor");
+            if (i == 12) assertGt(core.rateAtCheckpoint(), r0 * 5_000 / 10_000, "13 fills are above the floor");
         }
-        assertEq(core.rateAtCheckpoint(), r0 * 5_000 / 10_000, "140 fills sit on the floor");
+        assertEq(core.rateAtCheckpoint(), r0 * 5_000 / 10_000, "14 fills sit on the floor");
     }
 
     // ------------------------------------------------------------------ climb
@@ -122,7 +123,7 @@ contract BidRuleTest is Fixture {
         assertEq(
             core.ethRate(), r0 * (10_000 + 17_352) * 11_000 / 1e8, "4,338 intervals times 4 after 30 days and 3 hours"
         );
-        assertEq(core.rateAtCheckpoint(), r0 * 9_950 / 10_000, "stored until the next checkpoint");
+        assertEq(core.rateAtCheckpoint(), r0 * 9_500 / 10_000, "stored until the next checkpoint");
     }
 
     function _minLoosening(Settings memory s) internal pure {
@@ -257,8 +258,8 @@ contract BidRuleTest is Fixture {
         assertEq(core.rateAtCheckpoint(), price, "the checkpoint at the refill stores the price from before");
         assertEq(core.ethRate(), price, "the read after the refill is that price");
         _warp(10 minutes);
-        // the climb is unscaled (climbPerMinBps 50): 1.005 per minute, 1.005^10 = 1.0511401320407896
-        assertApproxEqRel(core.ethRate(), price * 1_051_140_132_040_790_000 / 1e18, 1e9, "and it climbs from there");
+        // the climb is unscaled (climbPerMinBps 200): 1.02 per minute, 1.02^10 = 1.2189944199947573
+        assertApproxEqRel(core.ethRate(), price * 1_218_994_419_994_757_376 / 1e18, 1e9, "and it climbs from there");
     }
 
     // promise: SPEC 1 the price state stays at or below rateCap (inv 19)
@@ -297,7 +298,7 @@ contract BidRuleTest is Fixture {
         assertEq(anchor, rate, "the anchor is the bid rate");
         assertEq(start, rate);
         assertTrue(anchor != price, "not derived from the cost");
-        assertEq(core.rateAtCheckpoint(), rate * 9_950 / 10_000, "one drop of 0.5 percent");
+        assertEq(core.rateAtCheckpoint(), rate * 9_500 / 10_000, "one drop of 5 percent");
         assertEq(core.lastFillTime(), block.timestamp);
     }
 
@@ -344,11 +345,11 @@ contract BidRuleTest is Fixture {
     // promise: SPEC 1 risk: a market above the bid waits for the climb or setRate
     /// every seller asks the full new price, 200 percent of the old one. the 20 eth pot loosens the ceiling at the 4x
     /// cap, so the ceiling clears 200 percent within minutes, but the per minute climb is unscaled (decision 128 variant
-    /// d, climbPerMinBps 50): the bid reaches 200 percent only when the 0.5 percent a minute climb gets there, minute 140
+    /// d, climbPerMinBps 200): the bid reaches 200 percent only when the 2 percent a minute climb gets there, minute 40
     function test_gapUp100Percent_everyAskAtTheNewPriceWaitsForTheClimb() public {
         (uint256 m,) = _minutesToFirstFill(20_000);
         emit log_named_uint("minutes to the first fill, no cheap ask", m);
-        assertEq(m, 140);
+        assertEq(m, 40);
     }
 
     // ------------------------------------------------------------------ decision 128: pot scaled climb
@@ -374,12 +375,12 @@ contract BidRuleTest is Fixture {
     }
 
     // promise: SPEC 4 decision 128 variant d: the per minute climb does not scale with the pot, only the loosening does
-    /// the climb is the launch rate (climbPerMinBps 50, 0.5 percent a minute) at one, three and ten pages alike
+    /// the climb is the launch rate (climbPerMinBps 200, 2 percent a minute) at one, three and ten pages alike
     function test_climbUnscaledByPotPages() public {
         _with(_highCeiling);
-        assertApproxEqAbs(_climbFactorBps(1), 10_050, 2, "one page climbs at 1x");
-        assertApproxEqAbs(_climbFactorBps(3), 10_050, 2, "three pages climb at the same 1x");
-        assertApproxEqAbs(_climbFactorBps(10), 10_050, 2, "ten pages climb at the same 1x");
+        assertApproxEqAbs(_climbFactorBps(1), 10_200, 2, "one page climbs at 1x");
+        assertApproxEqAbs(_climbFactorBps(3), 10_200, 2, "three pages climb at the same 1x");
+        assertApproxEqAbs(_climbFactorBps(10), 10_200, 2, "ten pages climb at the same 1x");
     }
 
     /// @dev the loosened ceiling after 10 idle minutes at a pot sized to `pages` pages, in bps of the anchor (10_000
@@ -414,7 +415,7 @@ contract BidRuleTest is Fixture {
     /// a fill then four hours idle at a full pot (the 4x cap): the ceiling grows per the pot scaled loosening, 24 idle
     /// intervals of 600 * 4 bps, with no hourly cap (the hourly bound was rejected, decision 128)
     function test_fullPotLoosensAtTheCapOverFourHours() public {
-        // a fast climb so the read pins to the loosened ceiling (the launch 50 climb stays below it); the loosening is
+        // a fast climb so the read pins to the loosened ceiling (the launch 200 climb stays below it); the loosening is
         // what the 4x pot multiplier scales
         Settings memory s = core.settings();
         s.climbPerMinBps = 1_000;
