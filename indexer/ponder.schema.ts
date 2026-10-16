@@ -272,6 +272,7 @@ export const activity = onchainTable(
     account: t.hex(),
     amount: t.bigint(),
     amount2: t.bigint(),
+    balanceToken: t.hex(), // event-time currency for balance purchases and redemption
     blockNumber: t.bigint().notNull(),
     blockTimestamp: t.bigint().notNull(),
     txHash: t.hex().notNull(),
@@ -306,7 +307,7 @@ const counters = (t: PgColumnsBuilders) => ({
   toOperator: t.bigint().notNull().default(0n),
   ccBurned: t.bigint().notNull().default(0n), // Core buyback burns plus CreditSwapped.fee
   ethToBuybackSpent: t.bigint().notNull().default(0n), // sum of Buyback.amountIn
-  balancePaidTotal: t.bigint().notNull().default(0n), // sum of BalanceRateFill.spent
+  balancePaidByToken: t.json().$type<Record<string, string>>().notNull().default({}), // raw units keyed by token
 });
 
 /** Singleton per Core. */

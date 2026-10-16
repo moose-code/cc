@@ -2,7 +2,7 @@
 // per statement histories. Pure functions over decoded logs.
 
 import { formatUnits } from "viem";
-import { BALANCE_SYMBOL, eth, formatBalance, type BalanceTokenInfo } from "./format";
+import { BALANCE_SYMBOL, eth, formatBalance, formatHistoricalBalance, type BalanceTokenInfo } from "./format";
 
 export { BALANCE_SYMBOL, formatBalance };
 export type { BalanceTokenInfo };
@@ -83,7 +83,7 @@ export interface StatementRecord {
   restyled: { format: number; caller: string; block?: bigint; ts?: number; tx: string }[];
   anchor: { saleBps: bigint; anchorBps: number; block?: bigint; ts?: number; tx: string }[];
   sold?: { buyer: string; price: bigint; toBuyback?: bigint; toArtist?: bigint; toOperator?: bigint; toPot?: bigint; block?: bigint; ts?: number; tx: string };
-  redeemed?: { received: bigint; block?: bigint; ts?: number; tx: string };
+  redeemed?: { received: bigint; token?: string; block?: bigint; ts?: number; tx: string };
 }
 
 export interface Scan {
@@ -100,7 +100,6 @@ export interface ScanInput {
   burned: bigint; // total coin burned by the core
   modes: Map<string, ComposeMode>; // Composed tx hash -> compose / composeChosen
   balanceToken?: BalanceTokenInfo;
-  balancePaid: Map<string, bigint>; // `${tx}:${seller}` -> balance token sent by the core to the seller in that tx
 }
 
 export function emptyStats(): Stats {
@@ -138,6 +137,8 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
 
   // An EthRateFill is emitted just before the CreditBought it pays for.
   let fill: { tx: string; rate: bigint; pot: bigint } | undefined;
+  let token: string | undefined;
+  let balanceBuy: { tx: string; row: FeedEvent } | undefined;
 
   for (const log of logs) {
     const name = log.eventName as string;
@@ -154,6 +155,13 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
     if (fill && (fill.tx !== tx || name !== "CreditBought")) fill = undefined;
 
     switch (name) {
+      case "BalanceModuleSet":
+        token = String(a.balanceToken).toLowerCase();
+        break;
+      case "BalanceRateFill":
+        if (balanceBuy?.tx === tx) balanceBuy.row.eth = formatHistoricalBalance(a.spent, token, inp.balanceToken);
+        balanceBuy = undefined;
+        break;
       // ---- credits into the pile ------------------------------------------
       case "EthRateFill":
         stats.ethIntoCredits += Number(formatUnits(a.spent, 18));
@@ -166,8 +174,8 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         cr(id).push({ t: "bought", how: viaEth ? "eth bid" : `${BALANCE_SYMBOL} bid`, cost: a.cost, from: a.from, rate: f?.rate, pot: f?.pot, block, tx });
         if (viaEth) stats.creditsEth++;
         else stats.creditsBalance++;
-        const paid = inp.balancePaid.get(`${tx}:${String(a.from).toLowerCase()}`);
-        creditRow(id, viaEth ? eth(a.cost) : paid != null ? formatBalance(paid, inp.balanceToken) : undefined);
+        creditRow(id, viaEth ? eth(a.cost) : undefined);
+        if (!viaEth) balanceBuy = { tx, row: rows[rows.length - 1] };
         fill = undefined;
         break;
       }
@@ -266,9 +274,9 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
       }
       case "StatementRedeemed": {
         const sid = Number(a.sid);
-        st(sid).redeemed = { received: a.received, block, tx };
+        st(sid).redeemed = { received: a.received, token, block, tx };
         stats.redeemed++;
-        row({ kind: "redeemed", label: "statement redeemed", link: stmtLink(sid), detail: `· received ${formatBalance(a.received, inp.balanceToken)}`, tile: { kind: "statement", id: sid } });
+        row({ kind: "redeemed", label: "statement redeemed", link: stmtLink(sid), detail: `· received ${formatHistoricalBalance(a.received, token, inp.balanceToken)}`, tile: { kind: "statement", id: sid } });
         break;
       }
 

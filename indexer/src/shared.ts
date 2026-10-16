@@ -4,6 +4,7 @@ import type { Hex } from "viem";
 
 import { CORE_ADDRESS } from "../ponder.config";
 import { activity, log, stats, statsHourly } from "../ponder.schema";
+import { addTokenPayment } from "./lib/balance-history";
 
 export type Ctx = Context;
 
@@ -46,7 +47,7 @@ type ActivityRow = typeof activity.$inferInsert;
 export async function act(
   ctx: Ctx,
   e: At,
-  row: Pick<ActivityRow, "kind"> & Partial<Pick<ActivityRow, "creditId" | "otherCreditId" | "statementId" | "account" | "amount" | "amount2">>,
+  row: Pick<ActivityRow, "kind"> & Partial<Pick<ActivityRow, "creditId" | "otherCreditId" | "statementId" | "account" | "amount" | "amount2" | "balanceToken">>,
 ) {
   await ctx.db
     .insert(activity)
@@ -54,7 +55,7 @@ export async function act(
     .onConflictDoNothing();
 }
 
-export type CounterKey = Exclude<keyof typeof stats.$inferInsert, "id">;
+export type CounterKey = Exclude<keyof typeof stats.$inferInsert, "id" | "balancePaidByToken">;
 
 /** Adds `delta` to the singleton stats row and to the stats row of the event's hour. */
 export async function bump(ctx: Ctx, e: At, delta: Partial<Record<CounterKey, bigint>>) {
@@ -62,4 +63,12 @@ export async function bump(ctx: Ctx, e: At, delta: Partial<Record<CounterKey, bi
     Object.fromEntries(Object.entries(delta).map(([k, v]) => [k, (row[k] as bigint) + (v as bigint)]));
   await ctx.db.insert(stats).values({ id: CORE_ADDRESS, ...delta }).onConflictDoUpdate(add);
   await ctx.db.insert(statsHourly).values({ hour: e.block.timestamp / 3600n, ...delta }).onConflictDoUpdate(add);
+}
+
+/** Token units are comparable only within one currency, including hourly totals. */
+export async function bumpBalancePaid(ctx: Ctx, e: At, token: string, spent: bigint) {
+  const initial = addTokenPayment({}, token, spent);
+  const add = (row: { balancePaidByToken: Record<string, string> }) => ({ balancePaidByToken: addTokenPayment(row.balancePaidByToken, token, spent) });
+  await ctx.db.insert(stats).values({ id: CORE_ADDRESS, balancePaidByToken: initial }).onConflictDoUpdate(add);
+  await ctx.db.insert(statsHourly).values({ hour: e.block.timestamp / 3600n, balancePaidByToken: initial }).onConflictDoUpdate(add);
 }

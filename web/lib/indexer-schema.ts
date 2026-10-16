@@ -131,6 +131,7 @@ export const activity = pgTable("activity", {
   account: hex("account"),
   amount: big("amount"),
   amount2: big("amount2"),
+  balanceToken: hex("balance_token"),
   blockNumber: big("block_number").notNull(),
   blockTimestamp: big("block_timestamp").notNull(),
   txHash: hex("tx_hash").notNull(),

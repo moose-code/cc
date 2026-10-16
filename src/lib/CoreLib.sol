@@ -184,6 +184,7 @@ library CoreLib {
     error Slippage();
     /// `sellForBalance` while `balanceBidOn` is false
     error BalanceBidOff();
+    error BalanceTokenChanged();
     /// a credit the engine sold through `sellCreditTo` in this block is offered back to an intake door
     error SameBlockReturn(uint256 id);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
@@ -825,6 +826,11 @@ library CoreLib {
 
     /// @notice same as the one argument form with a floor on the total paid
     function sellForBalance(uint256[] calldata ids, uint256 minOut) external {
+        _sellForBalance(ids, minOut);
+    }
+
+    function sellForBalance(uint256[] calldata ids, uint256 minOut, address expectedToken) external {
+        if (state().balanceToken != expectedToken) revert BalanceTokenChanged();
         _sellForBalance(ids, minOut);
     }
 

@@ -405,6 +405,7 @@ contract ControllerV1 is IController {
     /// so wei per token base unit is `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
     function _priceBaseUnits(uint256 baseUnits) private view returns (uint256 priceWei, bool priced) {
         if (!balancePoolKeySet) return (0, false);
+        if (Currency.unwrap(balancePoolKey.currency1) != CORE.balanceToken()) return (0, false);
         (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(balancePoolKey.toId());
         if (sqrtPriceX96 == 0) return (0, false);
         uint256 q = FixedPoint96.Q96;

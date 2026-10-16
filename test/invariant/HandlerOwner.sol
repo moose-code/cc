@@ -513,7 +513,7 @@ abstract contract HandlerOwner is HandlerBase {
 
     /// the owner replaces the balance module at once (docs/DECISIONS.md section 8): a new module with the same
     /// balance token and a new unit, the same address again after its unit changed, the same address and unit, and the
-    /// refused ones (another balance token, no unit, a unit above the uint128 bound, no code). a good set keeps the pots,
+    /// refused ones (a forbidden token, no unit, a unit above the uint128 bound, no code). a good set keeps the pots,
     /// the balances and the balance token pot, reads the unit again and switches the handler to the new module. a refused
     /// one changes nothing
     function replaceModule(uint256 seed, uint256 mode) external checked {
@@ -556,8 +556,9 @@ abstract contract HandlerOwner is HandlerBase {
             if (m == 2) module.setUnitPerPoint(_logBound(seed >> 8, 2e6, 5e7));
             next = module;
         } else if (m == 4) {
-            next = new MockBalanceModule(address(new MockBalanceToken("Other", "OTH")), 1e7);
-            want = ICore.BalanceTokenChanged.selector;
+            // Currency transitions are exercised by BalanceTokenReplacement.t.sol.
+            next = new MockBalanceModule(address(CREDITS), 1e7);
+            want = ICore.BadModule.selector;
         } else if (m == 5) {
             next = new MockBalanceModule(token, seed % 2 == 0 ? 0 : uint256(type(uint128).max) + 1);
             want = ICore.BadModule.selector;

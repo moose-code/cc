@@ -175,7 +175,7 @@ contract OwnerFormerQueueTest is OwnerBase {
         core.setBalanceModule(address(spareMod));
     }
 
-    // promise: SPEC 1 a replaceable balance module with a fixed token (decision 101)
+    // promise: decision 142 permits explicit owner token replacement without changing the unit source
     function test_module_replaceKeepsTheTokenAndTheUnitStaysWithTheModule() public {
         _setBalanceModule(address(spareMod));
         MockBalanceModule second = new MockBalanceModule(address(spareToken), 3 * UNIT);
@@ -186,12 +186,12 @@ contract OwnerFormerQueueTest is OwnerBase {
         second.setUnitPerPoint(4 * UNIT);
         _setBalanceModule(address(second));
         assertEq(_moduleUnit(), 4 * UNIT, "the module reports the new unit");
-        // another balance token is refused
+        // another balance token is accepted only by an explicit owner set
         MockBalanceModule other = new MockBalanceModule(address(new MockBalanceToken("Other", "OTH")), UNIT);
         vm.prank(owner);
-        vm.expectRevert(ICore.BalanceTokenChanged.selector);
         core.setBalanceModule(address(other));
-        assertEq(core.balanceModule(), address(second));
+        assertEq(core.balanceModule(), address(other));
+        assertEq(core.balanceToken(), other.balanceToken());
     }
 
     // ------------------------------------------------------------------ addAdapter

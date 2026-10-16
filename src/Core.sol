@@ -741,6 +741,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _toLib();
     }
 
+    /// also pins the payment token across an owner module replacement
+    function sellForBalance(uint256[] calldata, uint256, address) external nonReentrant {
+        _openDoor();
+        _toLib();
+    }
+
     /// checks that the caller owns credit id, which must not be the zero sentinel.
     function _owned(uint256 id) private view returns (uint256) {
         if (id == 0) revert ZeroId();
@@ -1359,14 +1365,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (unit == 0 || unit > type(uint128).max) revert BadModule();
     }
 
-    /// sets or replaces the balance module. the balance token never changes once set. the module's unit must be valid
-    /// at the set (`_unitOf`). an adapter approval of the new module is cleared when the module is set
+    /// sets or replaces the balance module and token. existing holdings stay with their original module.
+    /// the module's unit must be valid at the set; adapter approvals of both new addresses are cleared
     function _setBalanceModule(address module) private {
-        address old = s.balanceModule;
         if (module.code.length == 0) revert BadModule();
         address token = IBalanceModule(module).balanceToken();
-        if (old != address(0) && token != s.balanceToken) revert BalanceTokenChanged();
-        if (token.code.length == 0 || _forbiddenBase(module) || _forbiddenBase(token)) revert BadModule();
+        if (token.code.length == 0 || _forbiddenBase(module) || _forbiddenBase(token)
+            || module == s.successor || token == s.successor) revert BadModule();
         uint256 unit = _unitOf(module);
         // the module must answer `available()`, the token it commits to the balance bid, within the bounded read
         (bool hasAvailable,) = _ask(module, abi.encodeCall(IBalanceModule.available, ()), READ_GAS, 32);
@@ -1374,6 +1379,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         s.balanceModule = module;
         s.balanceToken = token;
         if (s.allowedAdapter[module]) delete s.allowedAdapter[module];
+        if (s.allowedAdapter[token]) delete s.allowedAdapter[token];
         // the instance does not climb while no usable module is set, so a module set while the bid is on opens the
         // instance at the floor with a fresh clock, not at a rate carried from before
         if (s.settings.balanceBidOn) _resetBalanceToFloor();

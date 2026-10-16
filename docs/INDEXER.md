@@ -76,7 +76,7 @@ All addresses and start blocks come from `deployments/<chainId>.json`. The confi
 | Core | record `core` (CoreLib events are emitted under the Core address) | all events | record `deployBlock` | every Core and CoreLib event (inventory B1, about 35) |
 | Controller | factory over Core `ControllerSet(address controller)` | all events | block of each `ControllerSet` | `Bought`, `AnchorMoved`, `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet` |
 | CC burns | record `coin` | `Transfer` with `to = 0x0` | record `deployBlock` | all burns; attribution to the engine via the tx (Buyback tx, `CreditSwapped.fee`) |
-| $BALANCE paid | balance token from `BalanceModuleSet` | `Transfer` with `from = core` | first `BalanceModuleSet` | cross-check for `BalanceRateFill.spent` |
+| $BALANCE paid | Core | `BalanceRateFill.spent`, associated with preceding `CreditBought` and latest prior `BalanceModuleSet` | Core deployment | module custody, per-credit payment in log order |
 | Credits | `0x97630aA70AB14ed9883B41dAfccBc11349723043` | `Transfer` | collection deploy block (to be read) | owners for every credit, engine ins and outs, migrate moves |
 | Statements | `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b` | `Transfer` | collection deploy block (to be read) | statement owners after sale |
 | CreditStrategy | `0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6` (proxy) | `NFTBoughtByProtocol`, `NFTSoldByProtocol` | env `STRATEGY_START_BLOCK`; chain 1 requires it (`26037623`, the first block with code); local fork: 60000 blocks before the Core deploy block | strategy listings (6.11) |
@@ -158,7 +158,7 @@ One row per user-visible event, newest first by (`blockNumber`, `logIndex`): `ki
 
 ### 6.9 aggregates
 
-`stats` (singleton per Core): counts per activity kind, `ethIntoCredits`, `feesBooked`, `toPayee`, `toArtist`, `toOperator`, `ccBurned` (Buyback burns plus swap-fee burns), `ethToBuybackSpent`, `balancePaidTotal`.
+`stats` (singleton per Core): counts per activity kind, `ethIntoCredits`, `feesBooked`, `toPayee`, `toArtist`, `toOperator`, `ccBurned` (Buyback burns plus swap-fee burns), `ethToBuybackSpent`, `balancePaidByToken` (raw-unit decimal strings keyed by lowercase token address, also hourly; currencies are never summed).
 
 `stats_hourly`: the same counters per hour bucket, plus `creditsBought`. The buy rate for compose estimates reads the last 24 rows.
 
@@ -279,7 +279,7 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | $CC burned and % | I `stats.ccBurned` (chain mode: Core buyback burns scanned, swap-fee burns not included); D % over the launch supply constant |
 | explainer fee wording | L hook skim and bounty (`useHookFeeBps`); D engine share |
 | statement sale split | D from I `engine.settings` |
-| ledger rows | I `activity` joined to `statement`, `statement_format` and `log`; score and plates by id from I `credit` (`useScores`, `useCreditTraits`); art from I `credit.tokenUri`, `statement.tokenUri`; paged by row limit |
+| ledger rows | Currency is I `activity.balanceToken` for balance purchases/redemptions (chain mode: prior `BalanceModuleSet` in log order); amount is `BalanceRateFill.spent` per credit or `StatementRedeemed.received`. Historical metadata is used only for the matching token, otherwise show exact raw units and token address. I `activity` joined to `statement`, `statement_format` and `log`; score and plates by id from I `credit` (`useScores`, `useCreditTraits`); art from I `credit.tokenUri`, `statement.tokenUri`; paged by row limit |
 | next credit progress | D pot over bid from L snapshot |
 | next statement progress | L snapshot `pileSize` mod 80 |
 
@@ -314,7 +314,7 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | rating, format, format name, cost, composer, mode, credits | I `statement`, `statement_credit` |
 | price, at floor, reference | L controller `priceOf`, `referenceOf`, `atFloor` for held statements (time and pool dependent) |
 | price curve | D from L reference and I `controller` params, statement age (I `composedAt` and pause history from `setting_change`) |
-| sold and redeemed details | I `statement` |
+| sold and redeemed details | I `statement`; redemption currency from I `activity.balanceToken`, captured from the prior `BalanceModuleSet` in log order; chain mode replays the same setter logs |
 | history: composed, restyled, anchor moved, sold, redeemed | I `activity`, `statement_format`, `anchor_move` |
 | holder | I `statement.owner` |
 | art | I `statement.tokenUri` |
@@ -395,3 +395,5 @@ The browser keeps the on-chain read paths as an automatic fallback for every ind
 4. Confirm `@ponder/client` live queries in the pinned Ponder version.
 5. Decide whether the coin's v2 factory, hook and escrow data come from the artcoins indexer or are indexed here as well.
 6. The mainnet deployment record.
+
+Decision 142 schema update: replay the indexer from the Core deployment to populate `activity.balanceToken` and token-keyed payout totals before serving this web version. There is no reinterpretation of existing raw amounts. Browser scan/query cache keys are versioned to discard pre-replacement history. This change does not deploy or restart an indexer.

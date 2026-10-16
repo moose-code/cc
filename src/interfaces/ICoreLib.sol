@@ -11,6 +11,7 @@ interface ICoreLib {
     error BadSuccessor(address who);
     error BadSwap();
     error BalanceBidOff();
+    error BalanceTokenChanged();
     error CallFailed();
     error Empty();
     error Held();

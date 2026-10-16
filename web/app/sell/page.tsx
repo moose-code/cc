@@ -17,7 +17,7 @@ const MIN_OUT_BPS = 9950n; // 0.5% under the batch total quoted at click time
 
 // Holders sell their credits (the external Credits NFT) into the engine:
 // Credits.setApprovalForAll(Core, true) once, then Core.sellForEth(ids, minOut),
-// or Core.sellForBalance(ids, minOut) while the balance bid is on.
+// or Core.sellForBalance(ids, minOut, expectedToken) while the balance bid is on.
 export default function SellPage() {
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
@@ -191,7 +191,7 @@ export default function SellPage() {
                         // minOut replays the per-credit drop from the snapshot, like the eth quote, so an ordinary batch
                         // does not trip Slippage
                         const expected = balanceQuote(snap!, ids().map((id) => scores?.[id.toString()] ?? 0n));
-                        await write({ address: core, abi: coreAbi, functionName: "sellForBalance", args: [ids(), (expected * MIN_OUT_BPS) / 10000n] });
+                        await write({ address: core, abi: coreAbi, functionName: "sellForBalance", args: [ids(), (expected * MIN_OUT_BPS) / 10000n, snap!.balanceToken] });
                         setSelected(new Set());
                       }}
                     />
