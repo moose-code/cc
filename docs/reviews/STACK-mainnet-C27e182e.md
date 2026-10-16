@@ -90,3 +90,23 @@ stays as the fixture record). `V2_CODEHASH_HOOK`, `V2_CODEHASH_MEV_MODULE`, `V2_
 `V2_CODEHASH_FEE_CONTROLLER` are repinned to the plain `extcodehash` of the deployed contracts (the pin includes
 immutables, so the three members whose immutables differ change too). factory, locker, escrow, allowlist and burn router
 hashes equal the existing pins. the burn router is `0x183751c6D50c3f2B377c0aD9BD8Fab1e187740d4`.
+
+## fee controller treasury and escrow reads
+
+reads of the fee controller `0xbD5A853f556F17EAF692a4925371f5BFe3DD40df` and the factory over
+`https://gateway.tenderly.co/public/mainnet`, at block 26205064 and at head block 26205948:
+
+| getter | block 26205064 | block 26205948 |
+|---|---|---|
+| controller.treasury() | 0x41c3BD8A36f8fE9Bb77900ca02400b32BB35A6A4 | 0x41c3BD8A36f8fE9Bb77900ca02400b32BB35A6A4 |
+| controller.feeEscrow() | 0xB65816a3cE6C4DFd1dfa6D27832eD77781a65192 | 0xB65816a3cE6C4DFd1dfa6D27832eD77781a65192 |
+| controller.owner() | 0xCB43078C32423F5348Cab5885911C3B5faE217F9 | 0xCB43078C32423F5348Cab5885911C3B5faE217F9 |
+| controller.treasuryBps() / burnRouter() | 8000 / 0x183751c6D50c3f2B377c0aD9BD8Fab1e187740d4 | same |
+| factory.protocolRecipient() / teamFeeRecipient() / deployFee() / deprecated() | controller / owner / 0 / true | same |
+
+no on chain value changed between the two blocks. the `v2: controller escrow or treasury` revert of
+`test_liveStackPassesCheck` came from the test, not the chain: `V2StackTest.setUp` built its params with
+`masterParams(owner)` (treasury = owner, the master fixture value) while the live controller reports the deployed treasury
+above. the fix is `V2Stack.recordParams()`, which reads the treasury from `script/config/v2-mainnet.json` (`treasury`),
+replacing the `DEPLOYED_TREASURY` Solidity constant. the controller has `setTreasury`, so preflight also compares the
+controller treasury to that record (row `protocol fee controller: treasury is the recorded treasury`).

@@ -44,9 +44,6 @@ library V2Stack {
     uint16 internal constant MASTER_TREASURY_BPS = 8000;
     uint256 internal constant MASTER_DEPLOY_FEE = 0;
 
-    /// treasury of the fee controller of the deployed mainnet stack (factory 0xC27e182e)
-    address internal constant DEPLOYED_TREASURY = 0x41c3BD8A36f8fE9Bb77900ca02400b32BB35A6A4;
-
     struct Params {
         address owner;
         address treasury;
@@ -84,6 +81,14 @@ library V2Stack {
         p.deployFee = MASTER_DEPLOY_FEE;
     }
 
+    /// @notice the params of the record. the master record treasury is the owner; the deployed record carries the
+    /// `treasury` of its fee controller, which the controller owner can change (`setTreasury`)
+    function recordParams() internal view returns (Params memory p) {
+        Stack memory s = live();
+        p = masterParams(s.owner);
+        if (!_master()) p.treasury = vm.parseJsonAddress(vm.readFile(RECORD), ".treasury");
+    }
+
     /// @notice the stack of the record
     function live() internal view returns (Stack memory s) {
         string memory j = vm.readFile(_record());
@@ -102,9 +107,7 @@ library V2Stack {
     /// @notice the stack after `check` against the record params
     function attach() internal view returns (Stack memory s) {
         s = live();
-        Params memory p = masterParams(s.owner);
-        if (!_master()) p.treasury = DEPLOYED_TREASURY;
-        check(s, p);
+        check(s, recordParams());
     }
 
     /// @notice the post deploy requires of DeployV2Lib.check against the stack. constantsHash is compared across the
