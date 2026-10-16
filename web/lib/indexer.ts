@@ -134,6 +134,22 @@ export function useBuyRateIx(headTs: number | undefined) {
   return { perHour };
 }
 
+/** Eth-bid and balance-bid fills since 00:00 UTC of the chain day, from stats_hourly. Undefined unless the indexer serves. */
+export function useFillsTodayIx(headTs: number | undefined) {
+  const day = headTs == null ? undefined : Math.floor(headTs / 86400);
+  return useIx(
+    ["fills-today", day],
+    async (db) => {
+      const rows = await db
+        .select({ eth: statsHourly.creditsEth, balance: statsHourly.creditsBalance })
+        .from(statsHourly)
+        .where(gte(statsHourly.hour, BigInt(day! * 24)));
+      return { eth: rows.reduce((n, r) => n + Number(r.eth), 0), balance: rows.reduce((n, r) => n + Number(r.balance), 0) };
+    },
+    { enabled: day != null },
+  );
+}
+
 /** Credits the CreditStrategy lists, cheapest first, with the credit score when the credit table holds the id. */
 export async function fetchStrategyListings() {
   const rows = await ix!.db

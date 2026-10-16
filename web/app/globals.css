@@ -2945,7 +2945,7 @@ button.slot:disabled {
 
 .ltable-row {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 112px 56px 88px 88px 72px 136px 96px;
+  grid-template-columns: 28px minmax(0, 1fr) 112px 56px 88px 88px 160px 72px 136px 96px;
   align-items: center;
   column-gap: 12px;
   min-height: 45px;

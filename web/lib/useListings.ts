@@ -24,6 +24,7 @@ export interface ListingRow extends Priced {
   live: boolean; // bid and price are chain reads, else the bid is an estimate
   gap: number; // price / bid - 1, as a fraction; Infinity with no bid
   clears: boolean; // Core.buyListing would accept it now
+  balanceBid?: bigint; // balance token payout (Core.balanceBidOf) when live, else estimated; undefined with the bid off or no usable module
   wait?: number; // seconds until the next spend bucket, set on a row under bid and pot that this bucket's cap blocks
   eta: ClearsIn;
 }
@@ -69,6 +70,7 @@ export function useListings() {
 
       // live read of the best rows: pot, retired, the two adapters, the climb state, the multiplier, then bidOf / ownerOf / nftForSale per row
       const top = rows.slice(0, LIVE);
+      const balanceReads = snap.balanceOn && snap.settings.balanceBidOn; // one balanceBidOf per live row, after the per-row triples
       const cc = { address: core!, abi: coreAbi } as const;
       const word = (i: bigint) => c.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }) });
       const [res, w0, w2, w3] = await Promise.all([
@@ -90,6 +92,7 @@ export function useListings() {
               { address: credits, abi: creditsAbi, functionName: "ownerOf", args: [l.id] },
               { address: strategy, abi: strategyAbi, functionName: "nftForSale", args: [l.id] },
             ] as const),
+            ...(balanceReads ? top.map((l) => ({ ...cc, functionName: "balanceBidOf", args: [l.id] }) as const) : []),
           ] as any, // mixed contracts; results are cast by position below
         }),
         word(0n),
@@ -117,6 +120,17 @@ export function useListings() {
         } else if (owner.toLowerCase() === core!.toLowerCase()) stale.add(l.id);
         else live.set(l.id, { bid, price: l.price });
       });
+      // balance bid per row: the live read for the top rows (0 or a failed read is off), else score * unit * rate / 10_000
+      const balanceLive = new Map<bigint, bigint>();
+      if (balanceReads) top.forEach((l, i) => {
+        const v = val<bigint>(9 + 3 * top.length + i);
+        if (v != null && v > 0n) balanceLive.set(l.id, v);
+      });
+      const balanceOf = (r: { id: bigint; score: bigint }): bigint | undefined => {
+        if (!balanceReads) return undefined;
+        if (top.some((l) => l.id === r.id)) return balanceLive.get(r.id);
+        return snap.balanceUnit != null ? (r.score * snap.balanceUnit * snap.balanceRate) / 10000n : undefined;
+      };
       rows = rows.filter((r) => !stale.has(r.id)).map((r) => {
         const v = live.get(r.id);
         return v ? { ...r, bid: v.bid, price: v.price, live: true } : r;
@@ -156,7 +170,7 @@ export function useListings() {
         // at or under the bid yet not clearing: the venue's adapter is off or the Core is retired, no time applies
         const f = clearsIn(state, r.price, r.score, refScore, now);
         const eta: ClearsIn = clears ? { kind: "now" } : r.price > snap.potWithPending ? { kind: "pot" } : f.kind === "now" ? { kind: "far" } : f;
-        return { ...r, gap: gapOf(r.price, r.bid), clears, wait, eta };
+        return { ...r, gap: gapOf(r.price, r.bid), clears, wait, eta, balanceBid: balanceOf(r) };
       });
       out.sort((a, b) => a.gap - b.gap);
       return { rows: out, osMax, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds, climb: state, refScore };
