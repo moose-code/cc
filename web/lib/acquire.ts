@@ -58,3 +58,33 @@ export function shortlist(list: Listing[], ethRate: bigint, refScore: bigint, sc
     .slice(0, n)
     .map((x) => x.l);
 }
+
+/** `Core.spendState()` of the current bucket; `capped` is false when `spendCapBps` is 10_000 (the Core skips the check). */
+export interface SpendRoom {
+  capped: boolean;
+  budget: bigint;
+  spent: bigint;
+  /** seconds until the bucket ends and `spent` resets */
+  nextIn: number;
+}
+
+/**
+ * Whether a purchase of `cost` (ask plus the keeper payment) passes CoreLib.spend in the current bucket: the first
+ * purchase of a bucket always passes, a later one needs spent + cost <= budget.
+ */
+export function fitsBucket(room: SpendRoom, cost: bigint): boolean {
+  return !room.capped || room.spent === 0n || room.spent + cost <= room.budget;
+}
+
+/** Purchases of `costs` (one per listing) that fit the current bucket in sequence, cheapest first. */
+export function bucketCount(room: SpendRoom, costs: bigint[]): number {
+  if (!room.capped) return costs.length;
+  let spent = room.spent;
+  let n = 0;
+  for (const c of [...costs].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (spent !== 0n && spent + c > room.budget) break;
+    spent += c;
+    n++;
+  }
+  return n;
+}

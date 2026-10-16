@@ -60,6 +60,10 @@ export interface Config {
   lowBalance: bigint;
   strategy: { mode: "tokensOf" } | { mode: "ids"; ids: bigint[] } | { mode: "off" };
   strategyRefreshSec: number;
+  // every strategy refresh reads the whole inventory (first start, or a node that serves no log queries)
+  strategyFullRead: boolean;
+  // GraphQL endpoint of the indexer, used to seed the strategy inventory on the first start
+  indexerUrl?: string;
   opensea: { key?: string; refreshSec: number; pages: number; sign: number; file?: string };
   doorsOn: Set<Door>;
 }
@@ -99,6 +103,13 @@ export function insideRepo(path: string, cwd: string = process.cwd()): boolean {
 }
 
 const isLocal = (url: string) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(url);
+
+// INDEXER_URL: the indexer origin, https unless local; the GraphQL path is appended
+function indexerUrl(v: string | undefined): string | undefined {
+  if (!v) return undefined;
+  if (!/^https:\/\//.test(v) && !isLocal(v)) throw new Error("config: INDEXER_URL must be https or a local address");
+  return `${v.replace(/\/+$/, "")}/graphql`;
+}
 
 // the deployment record of docs/RUNBOOK.md section 7 (`deployments/<chainId>.json`)
 export function readRecord(path: string): Deployment {
@@ -209,6 +220,8 @@ export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRe
     lowBalance: ether(env, "LOW_BALANCE_ETH", "0.05"),
     strategy,
     strategyRefreshSec: num(env, "STRATEGY_REFRESH_SEC", 600),
+    strategyFullRead: env.STRATEGY_FULL_READ === "1",
+    indexerUrl: indexerUrl(env.INDEXER_URL),
     opensea: {
       key: env.OPENSEA_API_KEY || undefined,
       refreshSec: num(env, "OPENSEA_REFRESH_SEC", 300),
@@ -237,6 +250,8 @@ export function describe(c: Config) {
     dailyBudgetEth: Number(c.dailyBudget) / 1e18,
     listingDelaySec: c.listingDelaySec,
     strategy: c.strategy.mode,
+    strategyFullRead: c.strategyFullRead,
+    indexer: Boolean(c.indexerUrl),
     opensea: c.opensea.file ? "file" : c.opensea.key ? "api" : "off",
     alerts: Boolean(c.alertWebhook),
   };
