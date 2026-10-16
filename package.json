@@ -1,0 +1,11 @@
+{
+  "name": "credits-engine",
+  "private": true,
+  "type": "module",
+  "description": "npm workspaces: web/ (the app), keeper/ (the off chain keeper) and packages/engine (the reads both share)",
+  "workspaces": [
+    "packages/engine",
+    "web",
+    "keeper"
+  ]
+}

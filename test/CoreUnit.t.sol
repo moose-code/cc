@@ -862,13 +862,13 @@ contract CoreComposedTest is CoreBase {
         uint256[] memory h = _held();
         assertEq(h.length, 1);
         assertEq(h[0], c.sid);
-        assertEq(core.ethPot(), c.potBefore);
+        assertEq(core.ethPot(), c.potBefore - c.paid, "the pot pays the caller and nothing else");
         _solvent();
     }
 
-    // promise: SPEC 1 compose is unpaid at launch
-    /// at the launch values of `callerFee` and `callerMaxBaseFee` (zero) a compose moves no eth out of the Core: the
-    /// Core balance and `ethPot` are unchanged, at any basefee and with the buyback payment settings at their ceilings
+    // promise: SPEC 1 both caller settings at zero pay nothing
+    /// with `callerFee` and `callerMaxBaseFee` at zero a compose moves no eth out of the Core: the Core balance and
+    /// `ethPot` are unchanged, at any basefee and with the buyback payment settings at their ceilings
     function test_compose_movesNoEthOut() public {
         Composed memory c = _composeOnce();
         uint256 snap = preComposeSnap;
@@ -877,6 +877,8 @@ contract CoreComposedTest is CoreBase {
         Settings memory s = core.settings();
         s.keeperFee = 0.005 ether;
         s.keeperMaxBaseFee = 100 gwei;
+        s.callerFee = 0;
+        s.callerMaxBaseFee = 0;
 
         vm.revertToState(snap);
         _setSettings(s);

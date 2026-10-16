@@ -138,6 +138,8 @@ abstract contract Fixture is Test, ProdDeployer {
         uint64 at;
         /// @dev gas of the whole call as the caller saw it
         uint256 gasUsed;
+        /// @dev the caller payment the compose sent from `ethPot` (decision 138)
+        uint256 paid;
     }
 
     /// @notice the format `compose()` derives for a page whose first credit id is `headId`, at the current prevrandao
@@ -457,10 +459,12 @@ abstract contract Fixture is Test, ProdDeployer {
         vm.expectCall(
             address(STATEMENTS), abi.encodeWithSelector(IStatements.compose.selector, c.ids, defaultFormat(c.ids[0]))
         );
+        uint256 keeperBefore = keeper.balance;
         uint256 gasBefore = gasleft();
         vm.prank(keeper);
         core.compose();
         c.gasUsed = gasBefore - gasleft();
+        c.paid = keeper.balance - keeperBefore;
         c.sid = c.supplyBefore + 1;
         c.at = uint64(block.timestamp);
 

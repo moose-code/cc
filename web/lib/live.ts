@@ -7,7 +7,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useReadContract, usePublicClient } from "wagmi";
-import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, numberToHex, parseAbi, zeroAddress, type Address } from "viem";
+import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, numberToHex, zeroAddress, type Address } from "viem";
+import { atBlock, creditScores, mc, MULTICALL3, pendingIncome, readSnapshot, type Snapshot } from "@cc/engine/snapshot";
+import { CREDIT_SCORE } from "@cc/engine/addresses";
+import { multicallAbi, scoreAbi, seedAbi } from "@cc/engine/abis";
 import { core, credits, engineDeployed, statements } from "./config";
 import { controllerAbi, coreAbi, creditsAbi, erc20Abi, statementsAbi } from "./abis";
 import { SCOPE, lsGet, lsSet } from "./cache";
@@ -18,8 +21,8 @@ import type { BalanceTokenInfo } from "./format";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
-export const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11" as const;
-const mc = { multicallAddress: MULTICALL3, batchSize: 16_384 } as const;
+export { MULTICALL3, creditScores, readSnapshot } from "@cc/engine/snapshot";
+export type { Snapshot } from "@cc/engine/snapshot";
 const PILE_PAGE = 200n; // ponytail: first 200 pile credits only, page with pilePage(startAfter) if the pile grows past it
 
 // Chain time: the latest block's timestamp, run forward by the wall seconds
@@ -60,201 +63,6 @@ export function useNow(ms = 1000): number {
 }
 
 // ---- engine snapshot ------------------------------------------------------------
-
-// Runs `read` with the latest block number so every RPC of one quote sees the same state. A node that refuses the
-// pinned read (pruned or not yet synced at that block) gets one unpinned retry, reported as pinned: false.
-async function atBlock<T>(client: Client, read: (blockNumber?: bigint) => Promise<T>): Promise<{ value: T; pinned: boolean }> {
-  try {
-    return { value: await read(await client.getBlockNumber()), pinned: true };
-  } catch {
-    return { value: await read(), pinned: false };
-  }
-}
-
-export async function readSnapshot(client: Client, coreAddr: Address) {
-  const { value, pinned } = await atBlock(client, (blockNumber) => snapshotAt(client, coreAddr, blockNumber));
-  return { ...value, pinned };
-}
-
-async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigint) {
-  const c = { address: coreAddr, abi: coreAbi } as const;
-  const [
-    ethRate,
-    ethPrice,
-    floorRate,
-    ethPot,
-    ethToBuyback,
-    ethRedeemBurn,
-    payee,
-    pileSize,
-    held,
-    settings,
-    paused,
-    retired,
-    chosenComposeOn,
-    minCcToChoose,
-    controller,
-    coin,
-    balanceModule,
-    balanceToken,
-    payeeOn,
-    coreEth,
-    balanceRate,
-    artist,
-    creditCostToPotBps,
-  ] = await client.multicall({
-    ...mc,
-    blockNumber,
-    allowFailure: false,
-    contracts: [
-      { ...c, functionName: "ethRate" },
-      { ...c, functionName: "ethPrice" },
-      { ...c, functionName: "floorRate" },
-      { ...c, functionName: "ethPot" },
-      { ...c, functionName: "ethToBuyback" },
-      { ...c, functionName: "ethRedeemBurn" },
-      { ...c, functionName: "payee" },
-      { ...c, functionName: "pileSize" },
-      { ...c, functionName: "heldStatements" },
-      { ...c, functionName: "settings" },
-      { ...c, functionName: "paused" },
-      { ...c, functionName: "retired" },
-      { ...c, functionName: "chosenComposeOn" },
-      { ...c, functionName: "minCcToChoose" },
-      { ...c, functionName: "controller" },
-      { ...c, functionName: "COIN" },
-      { ...c, functionName: "balanceModule" },
-      { ...c, functionName: "balanceToken" },
-      { ...c, functionName: "payeeOn" },
-      { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [coreAddr] },
-      { ...c, functionName: "balanceRate" },
-      { ...c, functionName: "artist" },
-      { ...c, functionName: "creditCostToPotBps" },
-    ] as const,
-  });
-  // the pot scaled climb multiplier (decision 128), a tolerant read so a pre-128 Core without the view does not blank
-  // the whole snapshot. defaults to 1x (10_000 bps) when the Core does not answer
-  const [climbMultiplierRes] = await client.multicall({
-    ...mc,
-    blockNumber,
-    allowFailure: true,
-    contracts: [{ ...c, functionName: "climbMultiplier" }] as const,
-  });
-  const climbMultiplier = climbMultiplierRes.status === "success" ? (climbMultiplierRes.result as bigint) : 10_000n;
-  // ethPot plus the share of the unbooked fee income that the next Core._book adds (Core._income, _split)
-  const income = coreEth > ethPot + ethToBuyback + ethRedeemBurn ? coreEth - (ethPot + ethToBuyback + ethRedeemBurn) : 0n;
-  const toPayee = payeeOn ? (income * BigInt(settings.payeePpm)) / 1_000_000n : 0n;
-  const toRedeemBurn = ((income - toPayee) * BigInt(settings.feeToRedeemBurnBps)) / 10000n;
-  const potWithPending = ethPot + income - toPayee - toRedeemBurn;
-  // the balance token is held by the module, not the Core: the pot of the bid is the module's available() holding
-  // A failing module read leaves both undefined and the rest of the snapshot intact; consumers show the balance side
-  // as unavailable (the Core treats a failing module as a closed balance bid).
-  const [availableRes, unitRes] = balanceModule !== zeroAddress
-    ? await client.multicall({
-        ...mc,
-        blockNumber,
-        allowFailure: true,
-        contracts: [
-          { address: balanceModule, abi: moduleAbi, functionName: "available" },
-          { address: balanceModule, abi: moduleAbi, functionName: "unitPerPoint" },
-        ] as const,
-      })
-    : [{ status: "success", result: 0n }, { status: "success", result: 0n }];
-  const balanceAvailable = availableRes.status === "success" && unitRes.status === "success" ? (availableRes.result as bigint) : undefined;
-  const balanceUnit = availableRes.status === "success" && unitRes.status === "success" ? (unitRes.result as bigint) : undefined;
-  const k = { address: controller, abi: controllerAbi } as const;
-  const [creditSaleOn, creditWindow, pointRate, page] = await client.multicall({
-    ...mc,
-    blockNumber,
-    allowFailure: false,
-    contracts: [
-      { ...k, functionName: "creditSaleOn" },
-      { ...k, functionName: "creditWindow" },
-      { ...k, functionName: "pointRate" },
-      { ...k, functionName: "nextPage" },
-    ] as const,
-  });
-  // Price curve parameters and the statement supply. A failing read leaves the field undefined and the rest of the
-  // snapshot intact; consumers hide the figure that needs it.
-  const [markupRes, startCapRes, decayRes, anchorRes, startRes, floorRes, creditStartRes, supplyRes] = await client.multicall({
-    ...mc,
-    blockNumber,
-    allowFailure: true,
-    contracts: [
-      { ...k, functionName: "markupBps" },
-      { ...k, functionName: "startCapBps" },
-      { ...k, functionName: "decayHours" },
-      { ...k, functionName: "anchorBps" },
-      { ...k, functionName: "startBps" },
-      { ...k, functionName: "creditFloorBps" },
-      { ...k, functionName: "creditStartBps" },
-      { address: statements, abi: statementsAbi, functionName: "supply" },
-    ] as const,
-  });
-  const ok = <T,>(r: { status: string; result?: unknown }): T | undefined => (r.status === "success" ? (r.result as T) : undefined);
-  const num = (r: { status: string; result?: unknown }) => {
-    const v = ok<bigint | number>(r);
-    return v === undefined ? undefined : Number(v);
-  };
-  const startBps = num(startRes);
-  const decayHours = num(decayRes);
-  const creditFloorBps = num(floorRes);
-  const creditStartBps = num(creditStartRes);
-  const statementSupply = ok<bigint>(supplyRes);
-  return {
-    ethRate,
-    ethPrice,
-    floorRate,
-    climbMultiplier,
-    ethPot,
-    potWithPending,
-    ethToBuyback,
-    ethRedeemBurn,
-    balanceAvailable,
-    balanceRate,
-    balanceUnit,
-    payee,
-    payeeOn,
-    artist,
-    // Credit sale proceeds (Core.sellCreditTo): after the artist and operator cuts, min(cost * creditCostToPotBps / 10000,
-    // rest) goes to the pot and the remainder to the buyback.
-    creditCostToPotBps,
-    pileSize,
-    held: held.map(Number),
-    settings,
-    paused,
-    retired,
-    chosenComposeOn,
-    minCcToChoose,
-    controller,
-    coin,
-    balanceModule,
-    balanceToken,
-    // the balance side exists once the Core has a module
-    balanceOn: balanceModule !== zeroAddress,
-    creditSaleOn,
-    creditWindow: Number(creditWindow),
-    pointRate,
-    page: { ready: page[0], ids: page[1].map(Number), format: page[2] },
-    // Statement price curve (ControllerV1._ask). The asking price is reference * bps / 10000. bps falls in a straight
-    // line from `statementStartBps` at age 0 to settings.saleFloorBps at `statementDecayHours` hours, then rests.
-    // `statementStartBps` = anchorBps * markupBps / 10000, at most statementStartCapBps; it moves with sales.
-    statementStartBps: startBps,
-    statementDecayHours: decayHours,
-    statementMarkupBps: num(markupRes),
-    statementStartCapBps: num(startCapRes),
-    anchorBps: num(anchorRes), // running sale level in bps of the reference (10000 = no premium)
-    // Credit price curve (ControllerV1.creditPrice). floor = max(cost, valueOf(score)) * creditFloorBps / 10000;
-    // start = floor * creditStartBps / 10000. The price falls linearly from start at acquisition to floor at
-    // creditWindow seconds, then rests at the floor.
-    creditFloorBps,
-    creditStartBps,
-    // Id the next compose mints: Statements.supply() + 1 (Core.compose asserts the new id equals supply()).
-    nextStatementId: statementSupply === undefined ? undefined : Number(statementSupply) + 1,
-  };
-}
-
-export type Snapshot = Awaited<ReturnType<typeof readSnapshot>>;
 
 // undefined until loaded.
 export function useSnapshot() {
@@ -500,16 +308,6 @@ export function useStatements() {
 
 // ---- sell quotes ----------------------------------------------------------------
 
-const CREDIT_SCORE = "0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7" as const;
-// scoreAbi signatures and the traitsOf mask bit mapping (bit 0 C, 1 M, 2 Y, 3 K) were checked against the local fork:
-// the decoded traitsOf masks match the Credits tokenURI "Colors" trait for ids 1 to 8.
-const scoreAbi = parseAbi([
-  "function scoreOf(bytes21 seed, uint64 paidAt) view returns (uint256)",
-  "function traitsOf(bytes21 seed, uint64 paidAt) view returns (uint256 mask, uint256 active, uint256 occupied, uint256 eights, uint256 band)",
-]);
-const multicallAbi = parseAbi(["function getEthBalance(address a) view returns (uint256)"]);
-const moduleAbi = parseAbi(["function unitPerPoint() view returns (uint256)", "function available() view returns (uint256)"]);
-const seedAbi = parseAbi(["function seedOf(uint256 id) view returns (bytes21)", "function timestampOf(uint256 id) view returns (uint64)"]);
 
 // Eth Core.sellForEth pays for n credits sold in one call at chain time `now`
 // (CoreLib.drop and CoreLib.climb replayed in sell.ts). Reads ethPrice,
@@ -549,40 +347,17 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
     word(2n),
     creditScores(client, ids, blockNumber),
   ]);
-  const booked = ethPot + toBuyback + redeemBurn;
-  const income = held > booked ? held - booked : 0n;
-  const toPayee = payeeOn ? (income * BigInt(st.payeePpm)) / 1_000_000n : 0n;
-  const toRedeemBurn = ((income - toPayee) * BigInt(st.feeToRedeemBurnBps)) / 10000n;
+  const { toPot } = pendingIncome(held, ethPot, toBuyback, redeemBurn, payeeOn, st.payeePpm, st.feeToRedeemBurnBps);
   return replayEth(scores, {
     price,
     peak,
-    pot: ethPot + income - toPayee - toRedeemBurn,
+    pot: ethPot + toPot,
     ...ethAnchorWords(BigInt(startWord ?? "0x0"), BigInt(bucketWord ?? "0x0"), BigInt(Math.floor(now)), BigInt(st.bucketSeconds)),
     dropPerCreditBps: BigInt(st.dropPerCreditBps),
     dropFloorBps: BigInt(st.dropFloorBps),
     ceilBps: BigInt(st.ceilBps),
     rateCap: BigInt(st.rateCap),
     refScore: BigInt(st.refScore),
-  });
-}
-
-// the score of each credit id, read the way the Core reads it (CreditScore.scoreOf(seedOf, timestampOf))
-export async function creditScores(client: Client, ids: bigint[], blockNumber?: bigint): Promise<bigint[]> {
-  if (ids.length === 0) return [];
-  const seeds = await client.multicall({
-    ...mc,
-    blockNumber,
-    allowFailure: false,
-    contracts: ids.flatMap((id) => [
-      { address: credits, abi: seedAbi, functionName: "seedOf", args: [id] },
-      { address: credits, abi: seedAbi, functionName: "timestampOf", args: [id] },
-    ] as const),
-  });
-  return client.multicall({
-    ...mc,
-    blockNumber,
-    allowFailure: false,
-    contracts: ids.map((_, i) => ({ address: CREDIT_SCORE, abi: scoreAbi, functionName: "scoreOf", args: [seeds[2 * i] as `0x${string}`, seeds[2 * i + 1] as bigint] }) as const),
   });
 }
 

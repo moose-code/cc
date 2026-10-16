@@ -3,8 +3,7 @@
 import { useState } from "react";
 import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
-import { CANCELLED, txError } from "./tx-error";
-export { CANCELLED, txError } from "./tx-error";
+import { CANCELLED, txError } from "@cc/engine/errors";
 
 // Gas limit = node estimate * 1.25. Prices move with block time, so a call can
 // take a longer path at execution than at estimation; the margin covers it.
@@ -15,6 +14,8 @@ export type Write = (req: any) => Promise<`0x${string}`>;
 export type StepStatus = "todo" | "wallet" | "pending" | "done" | "failed";
 export type Step = { label: string; status: StepStatus; hash?: `0x${string}` };
 export type Plan = { label: string; done?: boolean };
+
+export { CANCELLED, txError } from "@cc/engine/errors";
 
 // run(steps, plan): `steps` receives `write`, which sets `gas` from
 // estimateContractGas times GAS_BUFFER_BPS, sends with the connected account and

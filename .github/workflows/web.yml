@@ -1,4 +1,5 @@
-# web/: typecheck, the selfchecks and a production build. Reusable: called by ci and candidate.
+# the npm workspaces: web/ (typecheck, the selfchecks and a production build), keeper/ (typecheck and the unit
+# tests) and packages/engine, which both import. Reusable: called by ci and candidate.
 name: web
 
 on:
@@ -21,9 +22,11 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: |
-            web/package-lock.json
+            package-lock.json
             indexer/package-lock.json
+      # one lockfile at the root installs every workspace
       - run: npm ci
+        working-directory: .
       # web/lib/indexer-schema.ts type checks against indexer/ponder.schema.ts, which imports the ponder package
       - run: npm ci
         working-directory: indexer
@@ -33,6 +36,10 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: web/.next/cache
-          key: next-${{ hashFiles('web/package-lock.json') }}-${{ hashFiles('web/app/**', 'web/components/**', 'web/lib/**') }}
-          restore-keys: next-${{ hashFiles('web/package-lock.json') }}-
+          key: next-${{ hashFiles('package-lock.json') }}-${{ hashFiles('web/app/**', 'web/components/**', 'web/lib/**', 'packages/engine/**') }}
+          restore-keys: next-${{ hashFiles('package-lock.json') }}-
       - run: npm run build
+      - run: npm run typecheck
+        working-directory: keeper
+      - run: npm test
+        working-directory: keeper

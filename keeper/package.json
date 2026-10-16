@@ -1,0 +1,26 @@
+{
+  "name": "credits-engine-keeper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "dry": "DRY_RUN=1 node src/main.ts",
+    "tick": "node src/main.ts --once",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "e2e": "node --test --test-concurrency=1 test/e2e/doors.e2e.ts",
+    "e2e:seaport": "node --test test/e2e/seaport.e2e.ts"
+  },
+  "dependencies": {
+    "@cc/engine": "0.1.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}

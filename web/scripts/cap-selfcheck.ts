@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { decodeErrorResult, decodeFunctionResult, decodeEventLog, encodeAbiParameters, encodeErrorResult, encodeEventTopics, getAbiItem } from "viem";
 import { coreAbi, engineEventsAbi } from "../lib/abis.ts";
-import { CANCELLED, txError } from "../lib/tx-error.ts";
+import { CANCELLED, txError } from "@cc/engine/errors";
 import { ETH_ANCHOR_SLOT, ethAnchorWords, replayEth, replayBalance, type EthReplay } from "../lib/sell.ts";
 
 // promise: every Settings field decodes in contract order without losing width at the maximum.

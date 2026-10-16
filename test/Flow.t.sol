@@ -112,8 +112,8 @@ contract FlowTest is Fixture {
         assertEq(s.redeemBurnBps, 2_000);
         assertEq(s.rateCap, 75_000_000_000_000_000);
         assertEq(s.feeToRedeemBurnBps, 1_000);
-        assertEq(s.callerFee, 0);
-        assertEq(s.callerMaxBaseFee, 0);
+        assertEq(s.callerFee, 0.0003 ether);
+        assertEq(s.callerMaxBaseFee, 3 gwei);
     }
 
     // promise: SPEC 2 every setting reads back as written

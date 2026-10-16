@@ -1,8 +1,9 @@
+// One line for a failed transaction or simulation, read from the viem error chain.
+
 export const CANCELLED = "cancelled in wallet";
 
-// One line for a failed transaction, from the viem error chain: shortMessage,
-// metaMessages, details and errorName of up to 6 nested causes. Router and
-// quoter reverts missing from the abi arrive as the 4 byte selector.
+// shortMessage, metaMessages, details and errorName of up to 6 nested causes. Router and quoter reverts missing from
+// the abi arrive as the 4 byte selector.
 export function txError(e: unknown): string {
   const parts: string[] = [];
   let cur: any = e;
@@ -22,3 +23,9 @@ export function txError(e: unknown): string {
   return (named ?? parts.find(Boolean) ?? "transaction failed").slice(0, 80);
 }
 
+// the custom error name of a revert in the chain (`errorName` of a decoded ContractFunctionRevertedError), if any
+export function revertName(e: unknown): string | undefined {
+  let cur: any = e;
+  for (let d = 0; cur && d < 6; d++, cur = cur.cause) if (cur.data?.errorName) return cur.data.errorName;
+  return undefined;
+}

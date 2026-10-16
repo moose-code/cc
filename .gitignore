@@ -13,6 +13,10 @@ script/dev/.cache/
 
 # tracked fixture: the master stack dump script/config/stack-master-26158000.hex (script/dev/.cache/ above stays ignored)
 
+# npm workspaces (web/, keeper/, packages/engine) and the keeper ledger
+node_modules/
+keeper/.state/
+
 # editor and OS files
 .DS_Store
 *.swp

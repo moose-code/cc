@@ -1,0 +1,20 @@
+{
+  "name": "@cc/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "engine reads shared by web/ and keeper/: the abis, the snapshot multicall, the viem error walker, the OpenSea listings fetch",
+  "exports": {
+    "./abis": "./src/abis.ts",
+    "./addresses": "./src/addresses.ts",
+    "./snapshot": "./src/snapshot.ts",
+    "./errors": "./src/errors.ts",
+    "./opensea": {
+      "types": "./src/opensea.d.mts",
+      "default": "./src/opensea.mjs"
+    }
+  },
+  "peerDependencies": {
+    "viem": "^2.21.0"
+  }
+}
