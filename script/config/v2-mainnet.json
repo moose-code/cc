@@ -15,5 +15,6 @@
   "tokenDeployer": "0x99EB38d6a757a9f1061dFb1887bffD4637050903",
   "burnRouter": "0x183751c6D50c3f2B377c0aD9BD8Fab1e187740d4",
   "feeController": "0xbD5A853f556F17EAF692a4925371f5BFe3DD40df",
+  "treasury": "0x41c3BD8A36f8fE9Bb77900ca02400b32BB35A6A4",
   "factoryDeployBlock": 26202473
 }

@@ -54,7 +54,7 @@ contract V2StackTest is Test {
         vm.deal(owner, 10 ether);
         vm.deal(buyer, 100 ether);
         swapper = new TestSwapRouter();
-        p = V2Stack.masterParams(owner);
+        p = V2Stack.recordParams();
     }
 
     /// a launch on the v2 factory: bounty 9000 of the baseline skim (the protocol keeps 1000), baseline skim 1000 bps

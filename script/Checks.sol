@@ -39,6 +39,7 @@ interface IKeyRegistry {
 
 interface IFeeControllerV2 {
     function burnRouter() external view returns (address);
+    function treasury() external view returns (address);
 }
 
 /// @notice the read only checks run before a launch (`preflight`) and after it (`postflight`). they only read state,
@@ -532,6 +533,11 @@ abstract contract LaunchChecks is PostflightChecks {
         _pin("token deployer", deployer_, V2_CODEHASH_TOKEN_DEPLOYER);
         _pin("extension allowlist", _hookGlobals(s.hook).extensionAllowlist, V2_CODEHASH_ALLOWLIST);
         _pin("protocol fee controller", controller, V2_CODEHASH_FEE_CONTROLLER);
+        // the treasury is owner settable on the controller; the record holds the value read at the pin
+        (, address treasury) = _addr(controller, abi.encodeCall(IFeeControllerV2.treasury, ()));
+        bool master = keccak256(bytes(vm.envOr("STACK", string("")))) == keccak256("master");
+        address want = master ? c.owner : vm.parseJsonAddress(vm.readFile("script/config/v2-mainnet.json"), ".treasury");
+        _eq("protocol fee controller: treasury is the recorded treasury", treasury, want);
         _pin("burn router", router, V2_CODEHASH_BURN_ROUTER);
     }
 
