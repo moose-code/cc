@@ -21,6 +21,17 @@ contract MockBalanceToken is ERC20 {
         return _symbol;
     }
 
+    uint8 private _decimals = 18;
+
+    function decimals() public view override returns (uint8) {
+        return _decimals;
+    }
+
+    /// sets the reported decimals, for a token that is not 18 decimals
+    function setDecimals(uint8 d) external {
+        _decimals = d;
+    }
+
     /// 0 transfers, 1 reverts, 2 returns false without moving anything
     uint8 public transferMode;
 

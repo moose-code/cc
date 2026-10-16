@@ -9,8 +9,8 @@ import { NotDeployed } from "@/components/NotDeployed";
 import { PageHead } from "@/components/Shell";
 import { core, credits, engineDeployed } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
-import { balanceQuote, sellQuote, useBidsOf, useNow, useSellQuote, useSnapshot, useWalletCredits } from "@/lib/live";
-import { BALANCE_SYMBOL, commas, eth } from "@/lib/format";
+import { balanceQuote, sellQuote, useBalanceToken, useBidsOf, useNow, useSellQuote, useSnapshot, useWalletCredits } from "@/lib/live";
+import { BALANCE_SYMBOL, commas, eth, formatBalance } from "@/lib/format";
 import type { Write } from "@/lib/tx";
 
 const MIN_OUT_BPS = 9950n; // 0.5% under the batch total quoted at click time
@@ -23,6 +23,7 @@ export default function SellPage() {
   const { openConnectModal } = useConnectModal();
   const client = usePublicClient();
   const { data: snap } = useSnapshot();
+  const bal = useBalanceToken();
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
   const bid = snap?.ethRate ?? 0n;
@@ -108,7 +109,7 @@ export default function SellPage() {
                 {snap?.balanceOn && (
                   <div className="r">
                     <span>balance in the module</span>
-                    <span>{snap.balanceAvailable === undefined ? "unavailable" : eth(snap.balanceAvailable)}</span>
+                    <span>{snap.balanceAvailable === undefined ? "unavailable" : formatBalance(snap.balanceAvailable, bal)}</span>
                   </div>
                 )}
               </div>
@@ -139,7 +140,7 @@ export default function SellPage() {
                       <button key={id} className={`sell-item${on ? " on" : ""}`} onClick={() => toggle(id)} aria-pressed={on}>
                         <CreditTile id={id} />
                         <span className="rl-id">credit #{id}</span>
-                        <span className="muted">{bids ? `${eth(bidForId(id))} eth` : "…"}{balanceBid && scores ? ` \u00b7 ${eth(balanceForId(id))} ${BALANCE_SYMBOL}` : ""}</span>
+                        <span className="muted">{bids ? `${eth(bidForId(id))} eth` : "…"}{balanceBid && scores ? ` \u00b7 ${formatBalance(balanceForId(id), bal)}` : ""}</span>
                         <span className="sell-check">{on ? "✓" : ""}</span>
                       </button>
                     );
@@ -158,7 +159,7 @@ export default function SellPage() {
                   {balanceBid && (
                     <div className="r">
                       <span className="muted">or for {BALANCE_SYMBOL}</span>
-                      <span className="big-sm">about {eth(balanceTotal)} {BALANCE_SYMBOL} ({(Number(snap?.balanceRate ?? 0n) / 100).toFixed(1)}% of par)</span>
+                      <span className="big-sm">about {formatBalance(balanceTotal, bal)} ({(Number(snap?.balanceRate ?? 0n) / 100).toFixed(1)}% of par)</span>
                     </div>
                   )}
                 </div>

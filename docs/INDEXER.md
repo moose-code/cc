@@ -396,4 +396,4 @@ The browser keeps the on-chain read paths as an automatic fallback for every ind
 5. Decide whether the coin's v2 factory, hook and escrow data come from the artcoins indexer or are indexed here as well.
 6. The mainnet deployment record.
 
-Decision 142 schema update: replay the indexer from the Core deployment to populate `activity.balanceToken` and token-keyed payout totals before serving this web version. There is no reinterpretation of existing raw amounts. Browser scan/query cache keys are versioned to discard pre-replacement history. This change does not deploy or restart an indexer.
+Balance token replacement schema update: replay the indexer from the Core deployment to populate `activity.balanceToken` and token-keyed payout totals before serving this web version. Existing raw amounts are kept as stored. Browser scan and query cache keys are versioned so pre-replacement history is discarded.

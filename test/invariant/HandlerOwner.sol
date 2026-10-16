@@ -512,25 +512,35 @@ abstract contract HandlerOwner is HandlerBase {
     //////////////////////////////////////////////////////////////*/
 
     /// the owner replaces the balance module at once (docs/DECISIONS.md section 8): a new module with the same
-    /// balance token and a new unit, the same address again after its unit changed, the same address and unit, and the
-    /// refused ones (a forbidden token, no unit, a unit above the uint128 bound, no code). a good set keeps the pots,
-    /// the balances and the balance token pot, reads the unit again and switches the handler to the new module. a refused
-    /// one changes nothing
+    /// balance token and a new unit, the same address again after its unit changed, the same address and unit, a new
+    /// module on a fresh token, and the refused ones (a token equal to a forbidden base address, no unit, a unit above
+    /// the uint128 bound, no code). a good set keeps the pots and the eth balances, reads the unit again, follows the
+    /// module and token with the handler ghosts, and leaves the Core holding no balance token. a refused one changes
+    /// nothing
     function replaceModule(uint256 seed, uint256 mode) external checked {
         uint8 a = A_REPLACE_MODULE;
         if (!phase2()) return _skip(a);
         address token = core.balanceToken();
         address oldModule = core.balanceModule();
-        (MockBalanceModule next, bytes4 want) = _nextModule(seed, mode % 8, token);
+        (MockBalanceModule next, bytes4 want) = _nextModule(seed, mode % 9, token);
         // a locked module door refuses every set, whatever the module
         if (core.balanceModuleLocked()) want = ICore.Locked.selector;
         _att(a);
         OPre memory p = _opre();
+        uint256 oldReserve = _xBal(oldModule);
         vm.prank(owner);
         try core.setBalanceModule(address(next)) {
             if (want != 0) _flag(V_OWNER, "a refused module set was accepted");
             _afterModuleSet(p, next, token);
+            // a token change leaves the replaced module's reserve where it was and the Core holding none of either token
+            if (core.balanceToken() != token) {
+                MockBalanceToken old = MockBalanceToken(token);
+                if (old.balanceOf(oldModule) != oldReserve) _flag(V_OWNER, "a replacement moved the old reserve");
+                if (old.balanceOf(address(core)) != 0) _flag(V_OWNER, "the Core holds the replaced token");
+                if (_xBal(address(core)) != 0) _flag(V_OWNER, "the Core holds the new token");
+            }
             module = next;
+            balanceToken = MockBalanceToken(core.balanceToken());
             _ok(a);
         } catch (bytes memory why) {
             _failed(p.bal, p.pot, p.rate, "replaceModule");
@@ -556,7 +566,7 @@ abstract contract HandlerOwner is HandlerBase {
             if (m == 2) module.setUnitPerPoint(_logBound(seed >> 8, 2e6, 5e7));
             next = module;
         } else if (m == 4) {
-            // Currency transitions are exercised by BalanceTokenReplacement.t.sol.
+            // a module whose token is a forbidden base address is refused with BadModule
             next = new MockBalanceModule(address(CREDITS), 1e7);
             want = ICore.BadModule.selector;
         } else if (m == 5) {
@@ -565,6 +575,10 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (m == 6) {
             // a plain valid set with a large in bounds unit
             next = new MockBalanceModule(token, _logBound(seed >> 8, 1e8, 1e10));
+        } else if (m == 8) {
+            // a valid replacement onto a fresh token: the token changes and the ghosts follow it
+            MockBalanceToken fresh = new MockBalanceToken("inv-replacement", "IRX");
+            next = new MockBalanceModule(address(fresh), _logBound(seed >> 8, 1e8, 1e10));
         } else {
             next = MockBalanceModule(address(uint160(uint256(keccak256(abi.encode("nocode", seed))))));
             want = ICore.BadModule.selector;
@@ -574,7 +588,7 @@ abstract contract HandlerOwner is HandlerBase {
     function _afterModuleSet(OPre memory p, MockBalanceModule next, address token) internal {
         _opost(p, "replaceModule");
         if (core.balanceModule() != address(next)) _flag(V_OWNER, "the module set did not install the module");
-        if (core.balanceToken() != token) _flag(V_OWNER, "a module set changed the balance token");
+        if (core.balanceToken() != next.balanceToken()) _flag(V_OWNER, "the balance token is not the module's token");
         if (core.allowedAdapter(address(next))) {
             _flag(V_OWNER, "a module set left the approved adapter flag of the module");
         }
