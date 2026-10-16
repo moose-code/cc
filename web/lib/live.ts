@@ -10,7 +10,7 @@ import { usePublicClient } from "wagmi";
 import { numberToHex, parseAbi, zeroAddress, type Address } from "viem";
 import { core, credits, engineDeployed } from "./config";
 import { controllerAbi, coreAbi } from "./abis";
-import { replayEth, replayBalance } from "./sell";
+import { ETH_ANCHOR_SLOT, ethAnchorWords, replayEth, replayBalance } from "./sell";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
@@ -355,9 +355,6 @@ export function useStatements() {
 
 // ---- sell quotes ----------------------------------------------------------------
 
-// State.anchor starts at slot 27 (test/CoreLayout.t.sol, src/lib/CoreLib.sol):
-// lastFillRate, minuteStartRate, minuteBucket (uint64) + peakTime, peakRate.
-const ANCHOR_SLOT = 27n;
 const CREDIT_SCORE = "0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7" as const;
 const scoreAbi = parseAbi(["function scoreOf(bytes21 seed, uint64 paidAt) view returns (uint256)"]);
 const multicallAbi = parseAbi(["function getEthBalance(address a) view returns (uint256)"]);
@@ -381,7 +378,7 @@ export async function sellQuote(client: Client, ids: bigint[], now: number): Pro
 
 async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumber?: bigint): Promise<bigint> {
   const c = { address: core!, abi: coreAbi } as const;
-  const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ANCHOR_SLOT + i, { size: 32 }), blockNumber });
+  const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }), blockNumber });
   const [[price, peak, ethPot, toBuyback, redeemBurn, payeeOn, st, held], startWord, bucketWord, scores] = await Promise.all([
     client.multicall({
       ...mc,
@@ -410,9 +407,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
     price,
     peak,
     pot: ethPot + income - toPayee - toRedeemBurn,
-    start: BigInt(startWord ?? "0x0"),
-    bucket: BigInt(bucketWord ?? "0x0") & ((1n << 64n) - 1n),
-    nowBucket: BigInt(Math.floor(now / 60)),
+    ...ethAnchorWords(BigInt(startWord ?? "0x0"), BigInt(bucketWord ?? "0x0"), BigInt(Math.floor(now)), BigInt(st.bucketSeconds)),
     dropPerCreditBps: BigInt(st.dropPerCreditBps),
     dropFloorBps: BigInt(st.dropFloorBps),
     ceilBps: BigInt(st.ceilBps),
@@ -487,7 +482,7 @@ export function useScores(ids: bigint[]) {
   });
 }
 
-// sellQuote for the selected credit ids, refreshed with the chain clock's minute.
+// sellQuote for the selected credit ids, refreshed with the chain clock.
 export function useSellQuote(ids: bigint[], now: number) {
   const client = usePublicClient();
   const minute = Math.floor(now / 60);
