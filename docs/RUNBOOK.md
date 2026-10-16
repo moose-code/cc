@@ -332,7 +332,7 @@ The owner deploys `StatementBalanceModule(core, balanceToken)` and wires it in t
 2. `setBalancePoolKey((address,address,uint24,int24,address))` on the controller, with native eth as currency0, the balance token as currency1 and the confirmed pool parameters. Read back the key.
 3. `setSettings` with `balanceBidOn` once `available()` reads the module's token balance.
 
-`script/deploy.sh` on main (PR 35) ends at the postflight and the record, whose `balanceModule` and `balancePool` fields are null. Its post-launch step for this module is a wrapper change in a separate PR; until it lands the three calls above are the wiring.
+`script/deploy.sh` (PR 35) ends at the postflight and the record, whose `balanceModule` and `balancePool` fields are null. Its post-launch step for this module is a wrapper change in a separate PR; until it lands the three calls above are the wiring.
 
 For successor migration, deploy a module bound to the successor Core and the same token and set it on the successor before retiring the old Core. After `Core.migrate`, anyone calls the old module's `migrateReserve()`; verify old and new holdings and the `ReserveMigrated` event. Repeat for statements redeemed by the old Core afterwards. The transfer succeeds once upstream retirement is complete and the opening block is reached. Resolve old-token reserves before locking the successor to a different currency. Binding getters do not authenticate code: verify the successor and its module before selecting them. This procedure is separate from the ETH and Credits migration.
 
