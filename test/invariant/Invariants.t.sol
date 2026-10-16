@@ -529,6 +529,45 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(handler.gCapViolations(), 0, "successful purchase exceeded the independently tracked bucket budget");
     }
 
+    /// 21. view equals stored for the eth bid: `bidOf(id)` read in a block equals the eth a single-credit `sellForEth`
+    /// pays in that same block. every door books the unbooked fee income as its first step and checkpoints with the pot
+    /// clamp the view reads, so a bid quoted while income waits unbooked, or after idle time, is the bid the fill pays.
+    /// checked under a reverted snapshot after every action, so the preceding time warps and value arrivals are in the
+    /// state. covers the class where a quote and the value the next call uses disagree once value arrives with no call
+    // promise: 21 the eth bid quoted equals the eth the next fill pays
+    function invariant_21_ethBidEqualsNextFill() public {
+        if (core.retired()) return;
+        uint256 snap = vm.snapshotState();
+        (address holder, uint256 id) = _sellable(core.ethPot());
+        if (holder == address(0)) {
+            vm.revertToState(snap);
+            return;
+        }
+        uint256 quoted = core.bidOf(id);
+        uint256 balBefore = holder.balance;
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        vm.startPrank(holder);
+        CREDITS.setApprovalForAll(address(core), true);
+        (bool ok, bytes memory why) = address(core).call(abi.encodeWithSignature("sellForEth(uint256[])", ids));
+        vm.stopPrank();
+        if (ok) {
+            assertEq(
+                holder.balance - balBefore,
+                quoted,
+                string.concat("eth fill paid differs from bidOf quoted in the same block, id ", vm.toString(id))
+            );
+        } else {
+            // a credit the engine sold this block is refused by the same block return guard, a later purchase of a
+            // capped bucket by its exhausted budget; neither is a quote against fill divergence
+            assertTrue(
+                bytes4(why) == ICore.SameBlockReturn.selector || bytes4(why) == ICore.SpendCapReached.selector,
+                string.concat("sellForEth refused a sellable credit, selector ", vm.toString(bytes4(why)))
+            );
+        }
+        vm.revertToState(snap);
+    }
+
     /// the eth price state ceiling now: `ceilBps` of the fill anchor grown by `idleLoosenBps` scaled by the pot
     /// multiplier `m` per 10 idle minutes, capped by `rateCap` (decision 128)
     function _ethCap(uint256 pagesPot) internal view returns (uint256) {
