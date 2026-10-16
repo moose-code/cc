@@ -18,8 +18,10 @@ import type { Listing } from "./decide.ts";
 import type { Snapshot } from "@cc/engine/snapshot";
 import { log, safeError } from "./log.ts";
 
-// the ids read per multicall when indexing the strategy
-const CHUNK = 1500;
+// the ids read per multicall when indexing the strategy scores
+const SCORE_BATCH = 1500;
+// the ids read per multicall when reading the strategy nftForSale prices
+const PRICE_BATCH = 1500;
 // the most candidates per venue read in full each block, best ratio of bid to price first
 const MAX_CANDIDATES = 40;
 
@@ -88,8 +90,8 @@ export class Sources {
 
   private async scoresOf(ids: bigint[]) {
     const missing = ids.filter((id) => !this.scores.has(id));
-    for (let i = 0; i < missing.length; i += CHUNK) {
-      const part = missing.slice(i, i + CHUNK);
+    for (let i = 0; i < missing.length; i += SCORE_BATCH) {
+      const part = missing.slice(i, i + SCORE_BATCH);
       const sc = await creditScores(this.client, part);
       part.forEach((id, j) => this.scores.set(id, sc[j]));
     }
@@ -104,11 +106,11 @@ export class Sources {
         ? s.ids
         : [...(await this.client.readContract({ address: CREDITS, abi: creditsAbi, functionName: "tokensOf", args: [CREDIT_STRATEGY] }))];
     const prices: bigint[] = [];
-    for (let i = 0; i < ids.length; i += CHUNK) {
+    for (let i = 0; i < ids.length; i += PRICE_BATCH) {
       const r = await this.client.multicall({
         ...mc,
         allowFailure: true,
-        contracts: ids.slice(i, i + CHUNK).map((id) => ({ address: CREDIT_STRATEGY, abi: creditStrategyAbi, functionName: "nftForSale", args: [id] }) as const),
+        contracts: ids.slice(i, i + PRICE_BATCH).map((id) => ({ address: CREDIT_STRATEGY, abi: creditStrategyAbi, functionName: "nftForSale", args: [id] }) as const),
       });
       prices.push(...r.map((x) => (x.status === "success" ? (x.result as bigint) : 0n)));
     }

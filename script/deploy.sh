@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # the deploy path for the local anvil fork: fund the factory owner, run Preflight, Deploy and Postflight and write
-# deployments/31337.json. values come from script/env/local.env; RPC_URL in the shell overrides it. STACK=master runs
-# against the master stack fork (script/config/v2-master.json). the launch on mainnet follows docs/RUNBOOK.md.
+# deployments/31337.json. values come from script/env/local.env, which names the launch config (LAUNCH_CONFIG,
+# script/config/anvil.json); RPC_URL in the shell overrides it. the stack addresses come from that config. STACK=master
+# overrides them with the master stack fork (script/config/v2-master.json). the launch on mainnet follows docs/RUNBOOK.md.
 #
 #   script/deploy.sh local
 #
@@ -22,8 +23,8 @@ set -a; . "script/env/$ENV.env"; set +a
 
 # STACK=master repoints the launch at the master stack fork record (script/config/v2-master.json) and STACK is exported
 # so the forge scripts overlay the same record. the node stays chain id 31337 and the signer stays local.env's dev
-# wallet, which is the master stack owner on the fork, so one key owns the factory and the engine as on mainnet. the
-# default is the live stack in the config file.
+# wallet, which is the master stack owner on the fork, so one key owns the factory and the engine as on mainnet. with
+# STACK unset the factory and the rest of the stack come from the config LAUNCH_CONFIG names (script/config/anvil.json).
 STACK="${STACK:-live}"
 export STACK
 if [ "$STACK" = master ]; then

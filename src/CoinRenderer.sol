@@ -13,7 +13,7 @@ import {CreditDrawing} from "./lib/CreditDrawing.sol";
 /// @dev    `contractURI(token)` is the view the artcoins coin calls on its renderer. the launch names this contract in
 ///         the token config. its constructor takes `owner`, the config owner, which keeps the CREATE2 address
 ///         independent of the Core; `setCore` binds the Core once. a pile of at most 80 credits is drawn whole, in pile order. a larger pile is
-///         sampled: 80 of its credits chosen by `block.prevrandao`, so the selection changes each block and holds
+///         read whole, then 80 of its credits are sampled by `block.prevrandao`, so the selection changes each block and holds
 ///         within a block. every cell is the credit's own drawing, `CreditDrawing.body`, the code the live
 ///         CreditArt and StatementArt run. a view contract: every call reads the Core, Credits and the coin. the pile
 ///         walk costs about 2,200 gas per pile credit and the page about 10,000,000 gas at 80 cells; the whole call
@@ -58,7 +58,8 @@ contract CoinRenderer is ICoinRenderer {
     }
 
     /// the pile as a page: every pile credit in pile order when the pile holds at most 80, else 80 pile credits
-    /// sampled by `block.prevrandao`
+    /// sampled by `block.prevrandao`. reads the whole pile through `pilePage(0, pileSize())` before sampling, so a pile
+    /// over 80 pays about 2,200 gas per pile credit to read the pile, then draws 80 cells
     function image() public view returns (string memory) {
         if (address(core) == address(0)) revert ZeroCore();
         uint256[] memory ids = core.pilePage(0, core.pileSize());

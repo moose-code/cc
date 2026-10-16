@@ -21,7 +21,7 @@ bytes32 constant V2_CONSTANTS_HASH = 0x1b7deab81425bd850537efbb78d999939ab5fe16c
 // the runtime code hashes (`extcodehash`, immutables included) of the master v2 stack contracts. preflight requires
 // the hash of each contract the config and the factory point at. script/config/v2-master.json holds the addresses
 // and these hashes
-uint256 constant V2_PIN_BLOCK = 26158000;
+uint256 constant V2_PIN_BLOCK = 26205064;
 bytes32 constant V2_CODEHASH_HOOK = 0x6778602725c0d685c6444cdc70d6616d266939e09d283388a6b79b7bd496ebdc;
 bytes32 constant V2_CODEHASH_FACTORY = 0xc81a73b9453ca0e93afd762d32b98e4a9e2b157cdccd05d28fda9080f98e0c65;
 bytes32 constant V2_CODEHASH_LOCKER = 0x191e433101a918cc441bf7c143de216757b9a40ed2402131434a8747861c386a;
