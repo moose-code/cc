@@ -179,7 +179,6 @@ export default function ListingsPage() {
               <span className="lact">
                 {r.clears && available([r]).length > 0 && (
                   <button className="hdr-acq" onClick={() => buy([r])} disabled={pending}>
-                    <i aria-hidden />
                     {pending ? "…" : "acquire"}
                   </button>
                 )}

@@ -129,26 +129,32 @@ function Acquire() {
   return useWide() ? <AcquireButton /> : null;
 }
 
-// The listing nearest its bid: a thin bar of the engine bid against the listing price (full once it clears) and the
-// price. Reuses the acquire query, so it adds no reads, and runs on wide screens only like the acquire button.
+// The next listing the engine will reach: the cheapest row still above its bid, with its ask and the bid's progress
+// toward it (bid / price) in eight cells. Reuses the acquire query, so it adds no reads, and runs on wide screens only.
+const NL_CELLS = 8;
+
 function NextListing() {
   return useWide() ? <NextListingBar /> : null;
 }
 
 function NextListingBar() {
   const { top } = useAcquireCandidate();
-  const n = top[0];
+  const n = top.find((t) => BigInt(t.bid) < BigInt(t.price)) ?? top[0];
   if (!n) return null;
   const price = BigInt(n.price);
-  const fill = price > 0n ? Math.min(1, Number((BigInt(n.bid) * 1000n) / price) / 1000) : 0;
+  const bid = BigInt(n.bid);
+  const fill = price > 0n ? Math.min(1, Number((bid * 1000n) / price) / 1000) : 0;
+  const on = Math.round(fill * NL_CELLS);
   return (
     <span
       className="hdr-nl"
-      title={`credit #${n.id} · listed ${eth(price)} ETH · engine bids ${eth(BigInt(n.bid))} ETH (${n.source})`}
+      title={`credit #${n.id} · listed ${eth(price)} ETH · engine bids ${eth(bid)} ETH (${n.source})`}
     >
       <span className="hdr-next-label">next credit</span>
       <span className="hdr-nl-bar" aria-hidden>
-        <i style={{ width: `${Math.round(fill * 100)}%` }} />
+        {Array.from({ length: NL_CELLS }, (_, i) => (
+          <i key={i} className={i < on ? "on" : undefined} />
+        ))}
       </span>
       <b>{eth(price)} ETH</b>
     </span>
@@ -187,7 +193,6 @@ function AcquireButton() {
                 : "no listed credit is at or under its bid"
         }
       >
-        <i aria-hidden />
         {pending ? "acquiring…" : next ? `acquire · ${eth(next.price)} ETH` : "acquire"}
       </button>
     </>

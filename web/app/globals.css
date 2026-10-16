@@ -225,23 +225,24 @@ a:hover {
   color: var(--muted);
 }
 .hdr-nl-bar {
-  position: relative;
-  width: 44px;
-  height: 3px;
-  background: var(--hairline);
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  width: 56px;
+  height: 6px;
 }
 .hdr-nl-bar i {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: var(--m);
+  background: var(--hairline);
+}
+.hdr-nl-bar i.on {
+  background: var(--ink);
 }
 .hdr-acq {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   height: 24px;
   padding: 0 8px;
-  border: 1px solid var(--divider);
+  border: 1px solid var(--hairline);
   background: none;
   color: var(--faint);
   font-family: var(--mono);
@@ -249,19 +250,11 @@ a:hover {
   white-space: nowrap;
   cursor: default;
 }
-.hdr-acq i {
-  width: 5px;
-  height: 5px;
-  background: var(--disabled);
-}
-/* a listing clears: the magenta dot marks it live; the frame stays quiet */
+/* a listing clears: the frame stays quiet, a touch darker than the idle state */
 .hdr-acq.on {
   border-color: var(--divider);
   color: var(--muted);
   cursor: pointer;
-}
-.hdr-acq.on i {
-  background: var(--m);
 }
 .hdr-acq.on:disabled {
   opacity: 0.6;
