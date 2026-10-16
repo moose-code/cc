@@ -1234,4 +1234,22 @@ const R0 = 6.668e15;
   assert.deepEqual(result, { cost: 0.01, paid: 0 });
   assert.equal(c.ethPot, 0); assert.equal(c.spendBucket.spent, 10000000000000000n); n += 3;
 }
+// promise: requested integer steps apply from the first hour and preserve calibrated first-hour volume.
+{
+  const quiet = { days: 1 / 24, volScale: 0, offersPerHour: 0, strategyOn: false, stmtPerDay: 0, stmtFloorPerDay: 0, creditBuyersPerDay: 0 };
+  for (const seconds of [1, 60, 75]) {
+    const times = [];
+    simulate({ ...quiet, stepSec: seconds, onStep: (t) => times.push(t) });
+    assert.equal(times.length, 3600 / seconds);
+    assert.equal(times[0], seconds); assert.equal(times.at(-1), 3600);
+    assert.ok(times.every((t, index) => t === (index + 1) * seconds)); n += 4;
+    let volume = 0;
+    for (let t = 0; t < 3600; t += seconds) volume += stepVolume(DEFAULTS, t, seconds);
+    near(volume, stepVolume(DEFAULTS, 0, 3600), 1e-12, 'first-hour volume is independent of execution granularity');
+  }
+  assert.throws(() => simulate({ ...quiet, stepSec: 1.5 }), /integer divisor/); n++;
+  const latch = { ...DEFAULTS, sniperSeconds: 0 };
+  near(skimFraction(latch, 900), skimFraction(DEFAULTS, 900), 1e-12, 'the payee latch does not change the hook skim');
+  near(stepVolume(latch, 0, 120), stepVolume(DEFAULTS, 0, 120), 1e-12, 'the payee latch does not change calibrated fee volume');
+}
 console.log(`ok, ${n} checks passed`);

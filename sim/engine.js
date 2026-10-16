@@ -201,6 +201,7 @@ export const SIM_DEFAULTS = {
   bountyBps: _ln.bountyBps, // of the baseline skim, to the Core (the bounty recipient). the rest, 10000 - bountyBps, is the protocol leg to artcoins (decision 120)
   sniperStartBps: _ln.sniperStartBps,
   sniperEndBps: _ln.baselineSkimBps, // falls to the baseline
+  skimSeconds: _ln.sniperSeconds, // hook ramp duration; independent of the Core payee latch setting
 
   // the Core is the bounty recipient (docs/DECISIONS.md 109): the first book at or after `sniperSeconds` after the launch
   // turns the payee share on and shares nothing, from then on a book credits the payee `payeePpm` of the income. everything
@@ -957,8 +958,8 @@ export function pathPrice(p, tSec) {
 // anti sniper skim as a fraction of notional at time t seconds after launch
 export function skimFraction(p, t) {
   const base = p.baselineSkimBps / 1e4;
-  if (t >= p.sniperSeconds) return base;
-  const f = (p.sniperStartBps - ((p.sniperStartBps - p.sniperEndBps) * t) / p.sniperSeconds) / 1e4;
+  if (t >= p.skimSeconds) return base;
+  const f = (p.sniperStartBps - ((p.sniperStartBps - p.sniperEndBps) * t) / p.skimSeconds) / 1e4;
   return Math.max(base, f);
 }
 // share of a swap's notional the Core receives: 90 percent of the baseline skim plus all of the anti sniper extra
@@ -974,14 +975,19 @@ export function stepVolume(p, t, dt) {
   const h = Math.floor(t / 3600);
   const h1 = dv * p.h1Share;
   if (h === 0) {
-    const k = Math.floor(t / 120);
-    const nS = Math.round(p.sniperSeconds / 120);
-    if (k < nS) {
-      let wsum = 0;
-      for (let i = 0; i < nS; i++) wsum += 1 - skimFraction(p, i * 120 + 60);
-      return (h1 * p.sniperVolShare * (1 - skimFraction(p, k * 120 + 60))) / wsum;
+    const nS = Math.round(p.skimSeconds / 120);
+    let wsum = 0;
+    for (let i = 0; i < nS; i++) wsum += 1 - skimFraction(p, i * 120 + 60);
+    let volume = 0;
+    for (let at = t; at < Math.min(t + dt, 3600);) {
+      const k = Math.floor(at / 120), end = Math.min(t + dt, (k + 1) * 120, 3600);
+      const bucket = k < nS
+        ? (h1 * p.sniperVolShare * (1 - skimFraction(p, k * 120 + 60))) / wsum
+        : (h1 * (1 - p.sniperVolShare)) / (30 - nS);
+      volume += bucket * (end - at) / 120;
+      at = end;
     }
-    return (h1 * (1 - p.sniperVolShare)) / (30 - nS);
+    return volume;
   }
   let wsum = 0;
   for (let i = 1; i < 24; i++) wsum += Math.exp(-(i - 1) / 5);
@@ -1337,10 +1343,10 @@ export function simulate(userParams = {}) {
     }
   }
 
-  // ---- the main loop. hour 0 runs in 120 s sub steps for the anti sniper window, then steps of stepSec (an hour by default)
-  const steps = [];
-  for (let k = 0; k < 30; k++) steps.push([k * 120, (k + 1) * 120]);
-  if (!(p.stepSec >= 1) || 3600 % p.stepSec !== 0) throw new Error('stepSec must divide 3600');
+  // The first-hour calibration uses 120-second volume bins, independently of execution step size.
+  if (!Number.isInteger(p.stepSec) || p.stepSec < 1 || 3600 % p.stepSec !== 0) throw new Error('stepSec must be an integer divisor of 3600');
+  const steps = [], warmupStep = Math.min(120, p.stepSec);
+  for (let t = 0; t < 3600; t += warmupStep) steps.push([t, t + warmupStep]);
   for (let t = 3600; t < H * 3600; t += p.stepSec) steps.push([t, t + p.stepSec]);
   record(0, 0);
   for (const [t0, t1] of steps) {
