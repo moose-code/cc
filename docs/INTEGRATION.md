@@ -20,6 +20,7 @@ one multicall over these views answers everything a seller, a buyer or a keeper 
 | `core.ethRate()` | the bid for a credit of score `refScore` now, with the unbooked fees counted into the pot |
 | `core.bidOf(id)` | the bid for credit `id` now: `ethRate()` times its score over `refScore`, the number a seller or keeper uses |
 | `core.ethPrice()`, `core.floorRate()` | the price state before the pot clamp; the rate under every price floor |
+| `core.climbMultiplier()` | the pot scaled multiplier now, bps (10,000 is 1x, up to `climbMultiplierCapBps`, launch 40,000 is 4x): the pages of 80 credits the pot covers at the current rate, clamped to [1x, the cap]. the ceiling's idle loosening runs this many times as fast (the per minute climb is unscaled). show it when above 1x ("pot covers 3 pages, ceiling loosening 3x") |
 | `core.ethPot()`, `core.ethToBuyback()`, `core.ethRedeemBurn()` | the eth pots |
 | `IBalanceModule(core.balanceModule()).available()` | the balance token the module commits to the bid (the Core holds none) |
 | `core.balanceRate()` | the balance token bid now, bps of par (par is a credit's `score * unitPerPoint`): the rising balance bid lowered to `available()` as bps of par, at most 10,000 |
@@ -55,7 +56,7 @@ a listing whose price is above the bid is not swept; a holder sells it with `sel
 
 ## 5. composing
 
-`controller.nextPage()` ready means 80 credits wait (and, while the credit sale is on, the newest is past its window). `core.compose()` composes them with a random format, `core.compose(format)` with the given one. `core.composeChosen(ids, format)` composes 80 credits the caller names (requires `chosenComposeOn`, a CC balance of at least `minCcToChoose`, every credit past its window). the caller pays the gas, about 8.5 million after refunds; the payment settings are `callerMaxBaseFee` 3 gwei and `callerFee` 0.0003 eth at launch (decision 130), about 0.026 eth per page at or above 3 gwei. `core.setHeldFormat(sid, format)` restyles a held statement for a holder of `minCcToChoose` CC.
+`controller.nextPage()` ready means 80 credits wait (and, while the credit sale is on, the newest is past its window). `core.compose()` composes them with a random format, `core.compose(format)` with the given one. `core.composeChosen(ids, format)` composes 80 credits the caller names (requires `chosenComposeOn`, a CC balance of at least `minCcToChoose`, every credit past its window). the caller pays the gas, about 8.5 million after refunds; the payment settings are `callerMaxBaseFee` 3 gwei and `callerFee` 0.0003 eth at launch (decision 131), about 0.026 eth per page at or above 3 gwei. `core.setHeldFormat(sid, format)` restyles a held statement for a holder of `minCcToChoose` CC.
 
 reverts: `NotReady`, `BadFormat`, `NotInPile(id)`, `NotHeld`, `BadStatement`, `ChosenComposeOff`, `BelowMinCc`, `InWindow(id)`, `NotForSale` (restyle of an unheld statement), `Retired`. events `Composed(sid, ids, format, cost, price, caller)`, `HeldFormatSet(sid, format, caller)`.
 

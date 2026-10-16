@@ -120,7 +120,7 @@ contract GasCapTest is SeaportBase {
         core.compose();
         g -= gasleft();
         assertEq(core.heldStatements().length, held + 1, "composed");
-        // the launch caller settings pay the caller (decision 130), so the measure includes the payment path
+        // the launch caller settings pay the caller (decision 131), so the measure includes the payment path
         assertGt(keeper.balance, kb, "the compose pays the caller");
         _row(name, g, ComposeCall.noArgs());
     }

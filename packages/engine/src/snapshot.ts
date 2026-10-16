@@ -103,6 +103,15 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
       { ...c, functionName: "artist" },
     ] as const,
   });
+  // the pot scaled climb multiplier (decision 128), a tolerant read so a pre-128 Core without the view does not blank
+  // the whole snapshot. defaults to 1x (10_000 bps) when the Core does not answer
+  const [climbMultiplierRes] = await client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: true,
+    contracts: [{ ...c, functionName: "climbMultiplier" }] as const,
+  });
+  const climbMultiplier = climbMultiplierRes.status === "success" ? (climbMultiplierRes.result as bigint) : 10_000n;
   // ethPot plus the share of the unbooked fee income that the next Core._book adds (Core._income, _split)
   const pending = pendingIncome(coreEth, ethPot, ethToBuyback, ethRedeemBurn, payeeOn, settings.payeePpm, settings.feeToRedeemBurnBps);
   const potWithPending = ethPot + pending.toPot;
@@ -138,6 +147,7 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
     ethRate,
     ethPrice,
     floorRate,
+    climbMultiplier,
     ethPot,
     potWithPending,
     // the unbooked fee income the Core holds above its pots, before the payee and redeem burn shares

@@ -499,6 +499,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return CoreLib.floorRate(s.rateAtCheckpoint, s.ethPot, s.lastFillTime, s.checkpointTime, block.timestamp);
     }
 
+    /// the pot scaled multiplier now, bps (10_000 is 1x): how many pages of 80 credits of score `refScore` the booked
+    /// pot covers at the last fill rate, clamped to [1x, `climbMultiplierCapBps`]. the ceiling's idle loosening scales by it
+    function climbMultiplier() external view returns (uint256) {
+        return CoreLib.climbMultiplier();
+    }
+
     /// the balance token bid rate now, bps of par (par is a credit's score times the module unitPerPoint): the balance
     /// price state climbed and clamped to the module available(), at most 10_000. the web and the keeper read it
     function balanceRate() external view returns (uint256) {

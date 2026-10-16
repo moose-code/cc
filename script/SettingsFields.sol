@@ -3,15 +3,15 @@ pragma solidity ^0.8.28;
 
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
 
-/// @notice the 28 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
+/// @notice the 29 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
 /// docs/DECISIONS.md section 2, for the settings script and the config and deploy tests. recoveryClimbPerMinBps is
 /// bounded below by climbPerMinBps, handled by the callers. the two switches are 0 or 1
 library SettingsFields {
-    uint256 internal constant N = 28;
+    uint256 internal constant N = 29;
 
     /// @dev field i of the settings struct, in declaration order
     function get(Settings memory s, uint256 i) internal pure returns (uint256) {
-        uint256[28] memory f = [
+        uint256[29] memory f = [
             uint256(s.dropPerCreditBps),
             s.dropFloorBps,
             s.climbPerMinBps,
@@ -39,7 +39,8 @@ library SettingsFields {
             s.refScore,
             s.swapFeeCc,
             s.saleToArtistBps,
-            s.saleToOperatorBps
+            s.saleToOperatorBps,
+            s.climbMultiplierCapBps
         ];
         return f[i];
     }
@@ -74,13 +75,14 @@ library SettingsFields {
         else if (i == 24) s.refScore = uint32(v);
         else if (i == 25) s.swapFeeCc = uint96(v);
         else if (i == 26) s.saleToArtistBps = uint16(v);
-        else s.saleToOperatorBps = uint16(v);
+        else if (i == 27) s.saleToOperatorBps = uint16(v);
+        else s.climbMultiplierCapBps = uint16(v);
         // forge-lint: disable-end(unsafe-typecast)
     }
 
     /// @dev the documented lower bound of every field. recoveryClimbPerMinBps is bounded below by climbPerMinBps,
     /// handled by the callers
-    function lo() internal pure returns (uint256[28] memory) {
+    function lo() internal pure returns (uint256[29] memory) {
         return [
             uint256(1),
             5_000,
@@ -109,11 +111,12 @@ library SettingsFields {
             800_000,
             0,
             0,
-            0
+            0,
+            10_000
         ];
     }
 
-    function hi() internal pure returns (uint256[28] memory) {
+    function hi() internal pure returns (uint256[29] memory) {
         return [
             uint256(1_000),
             10_000,
@@ -142,11 +145,12 @@ library SettingsFields {
             8_000_000,
             1e24,
             1_000,
-            1_000
+            1_000,
+            40_000
         ];
     }
 
-    function names() internal pure returns (bytes32[28] memory) {
+    function names() internal pure returns (bytes32[29] memory) {
         return [
             bytes32("dropPerCreditBps"),
             "dropFloorBps",
@@ -175,7 +179,8 @@ library SettingsFields {
             "refScore",
             "swapFeeCc",
             "saleToArtistBps",
-            "saleToOperatorBps"
+            "saleToOperatorBps",
+            "climbMultiplierCapBps"
         ];
     }
 }

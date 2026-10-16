@@ -55,7 +55,8 @@ contract RecoveryTest is Fixture {
     // promise: SPEC 1 after a large sale the bid recovers fast (peak anchor)
     /// a one minute dump of 140 credits halves the bid; the recovery climb brings it back to the pre dump price in about
     /// 59 minutes at the launch gap (fast from the 50 percent floor up to the recovery level, then the slow climb over
-    /// the last `recoveryGapBps` to the peak). the exact minute is asserted and logged
+    /// the last `recoveryGapBps` to the peak). the climb is unscaled by the pot (decision 128 variant d scales only the
+    /// ceiling loosening). the exact minute is asserted and logged
     function test_oneMinuteDumpRecovers() public {
         vm.prank(owner);
         core.setRate(OPEN_RATE);
@@ -72,7 +73,7 @@ contract RecoveryTest is Fixture {
 
     // promise: SPEC 1 after a large sale the bid recovers fast (peak anchor)
     /// a three minute dump of about 420 credits walks the bid down by half each minute, to about an eighth of the pre
-    /// dump price; the recovery climb brings it back in 146 minutes at the launch gap
+    /// dump price; the recovery climb brings it back in 146 minutes at the launch gap (the climb is unscaled by the pot)
     function test_threeMinuteDumpRecovers() public {
         vm.prank(owner);
         core.setRate(OPEN_RATE);
@@ -126,8 +127,9 @@ contract RecoveryTest is Fixture {
     /// the lazy climb is monotone in time between fills. the raw climb trajectory never falls: with a high ceiling, the
     /// longest peak half life (so the ceiling anchor barely decays over the window) and a large pot, neither the ceiling
     /// nor the clamp binds, so the price state is the raw climb and a later read is never below an earlier one, whatever
-    /// the dump that preceded it. the clamped price following a decaying peak down is the intended behaviour and is not
-    /// tested here
+    /// the dump that preceded it. the climb is unscaled by the pot multiplier (decision 128 variant d), so the raw climb
+    /// is the launch rate and stays below the high ceiling over the window. the clamped price following a decaying cap
+    /// down is the intended behaviour and is not tested here
     /// forge-config: default.fuzz.runs = 40
     function testFuzz_priceStateMonotoneBetweenFills(uint256 dumpSeed, uint256 recovSeed) public {
         Settings memory s = core.settings();

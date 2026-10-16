@@ -51,7 +51,7 @@ const ownerAbi = parseAbi([
   "function totalOwed(address token) view returns (uint256)",
 ]);
 const settingsAbi = parseAbi([
-  "function setSettings((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 refScore, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps) s)",
+  "function setSettings((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 refScore, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps, uint16 climbMultiplierCapBps) s)",
 ]);
 
 // ------------------------------------------------------------------ anvil helpers
@@ -225,7 +225,7 @@ async function readyPage() {
   assert.equal(ready, true, "nextPage is ready");
 }
 
-test("compose: with a ready page the tick sends compose() and is paid the caller payment (decision 130)", () =>
+test("compose: with a ready page the tick sends compose() and is paid the caller payment (decision 131)", () =>
   isolated(async () => {
     await readyPage();
     const held = (await read<readonly bigint[]>(CORE, coreAbi, "heldStatements")).length;

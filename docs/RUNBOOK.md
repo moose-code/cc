@@ -44,7 +44,7 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 | the credit side | `creditCostToPotBps` 8,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `floorBps` 11,000, `startBps` 30,000 (`refScore` is a bid setting above) |
 | the credit swap | `swapFeeCc` 10,000e18 (ten thousand coins burned per `swapCredit`) |
 | the balance side | `redeemOn` true, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 1,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
-| the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0003 eth, `keeperMaxBaseFee` 5 gwei, `callerFee` 0.0003 eth, `callerMaxBaseFee` 3 gwei (decision 130) |
+| the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0003 eth, `keeperMaxBaseFee` 5 gwei, `callerFee` 0.0003 eth, `callerMaxBaseFee` 3 gwei (decision 131) |
 | the payee and the artist | `payee` the owner, `payeePpm` 0 at launch (the owner raises it later); `artist` the launch artist address; the nft sale cuts `saleToArtistBps` 250, `saleToOperatorBps` 50 |
 | the adapters | the Seaport recipient allowlist (the OpenSea fee collector 0x0000a26b00c1F0DF003000390027140000fAa719) |
 | the coin | name CC, symbol CC, supply 1e27, start tick -175000, position -175000 to 887200, skim 1,000 bps, bounty 9,000, lp fee 0, sniper 9,000 bps over 1,800 s, protocol 2,000 bps, restricted, allowlist empty, image, description |
@@ -98,11 +98,11 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 |---|---|---|
 | sweep a listing below the bid | `buyListing(adapter, id, params)` | gas at the base fee up to 5 gwei plus 0.0003 eth, at most the gap |
 | burn | `buyback()` every 25 blocks while the buyback pot holds at least twice the largest payment | gas plus the scaled fee |
-| compose | `compose()` when `nextPage()` is ready | gas at the base fee up to 3 gwei plus 0.0003 eth (decision 130) |
+| compose | `compose()` when `nextPage()` is ready | gas at the base fee up to 3 gwei plus 0.0003 eth (decision 131) |
 | redeem | `redeemStatement(sid)` when `atFloor(sid)` and `redeemOn` | like compose; reverts `NoBalanceModule` until the module is set |
 | book | `book()` at the window's end, `collectEscrow()` if the escrow holds a credit for the Core | nothing |
 
-the owner keeper (`keeper/`, section 8) runs every duty from launch (decision 128); the table is also the manual fallback on the `/keeper` web page.
+the owner keeper (`keeper/`, section 8) runs every duty from launch (decision 129); the table is also the manual fallback on the `/keeper` web page.
 
 ### a dump that walks the bid down, and statements above the floor
 
@@ -166,7 +166,7 @@ The dump is tracked so CI can load it (`.github/workflows/ci.yml` and `candidate
 4. Dump the fork state:
    `cast rpc anvil_dumpState --rpc-url http://127.0.0.1:8601 | python3 -c 'import sys,json;sys.stdout.write(json.load(sys.stdin))' > script/config/stack-master-26158000.hex`
 
-The dump is anvil_dumpState gzip hex, loadable through the `anvil_loadState` rpc, not `anvil --load-state`. `STACK=master script/dev/anvil.sh` forks at chain id 31337 and loads the state after startup; the engine's forge scripts re-enter chain id 1 with `--chain-id 1` and the test suite runs with `--chain-id 1`.
+The dump is anvil_dumpState gzip hex, loadable through the `anvil_loadState` rpc, not `anvil --load-state`. `STACK=master script/dev/anvil.sh` forks at chain id 31337 and loads the state after startup; the engine's forge scripts re-enter chain id 1 with `--chain-id 1` and the test suite runs with `--chain-id 1`. After `anvil_loadState` the loader pins the dev wallet's nonce to the upstream value at `FORK_BLOCK` (`anvil_setNonce`): the dump carries the nonce from its build block (26158000), so rebuilding the owner's chain on a fork at a later block would otherwise have a seed `CREATE` (the mock balance token) land on the address a contract the mainnet wallet has since made already occupies, and the seed reverts. At the default 26158000 fork this is a no-op.
 
 ### activity speed run against the running local chain
 
@@ -207,13 +207,13 @@ The record carries chain id 1, so the evm.now links of this node point at chain 
 
 ## 8. the keeper
 
-`keeper/` is the owner keeper of decisions 128 to 131: one node process that calls every keeper door from its own hot wallet, never the owner key (decision 57). it reads the state once per block (the shared `readSnapshot` of `packages/engine` plus the keeper's reads, pinned to one block), decides with pure functions (`keeper/src/decide.ts`), simulates each call with `eth_estimateGas` from the keeper, rechecks the profit rule at the measured gas, and sends one transaction at a time through the private relays, waiting for its receipt before the next. a paid door goes only when the Core pays at least its own gas at the worst base fee plus its tip plus `MARGIN_ETH`; every skip is logged with its reason.
+`keeper/` is the owner keeper of decisions 129 to 132: one node process that calls every keeper door from its own hot wallet, never the owner key (decision 57). it reads the state once per block (the shared `readSnapshot` of `packages/engine` plus the keeper's reads, pinned to one block), decides with pure functions (`keeper/src/decide.ts`), simulates each call with `eth_estimateGas` from the keeper, rechecks the profit rule at the measured gas, and sends one transaction at a time through the private relays, waiting for its receipt before the next. a paid door goes only when the Core pays at least its own gas at the worst base fee plus its tip plus `MARGIN_ETH`; every skip is logged with its reason.
 
 | priority | door | when |
 |---|---|---|
-| 1 | `buyListing(adapter, id, params)` | a CreditStrategy or Seaport listing has sat under `bidOf(id)` and under the pot, net of the keeper's cost, for `LISTING_DELAY_SEC` (2 minutes, decision 129), the order is open and its offerer still holds the credit; best gap first |
+| 1 | `buyListing(adapter, id, params)` | a CreditStrategy or Seaport listing has sat under `bidOf(id)` and under the pot, net of the keeper's cost, for `LISTING_DELAY_SEC` (2 minutes, decision 130), the order is open and its offerer still holds the credit; best gap first |
 | 2 | `buyback()` | `ethToBuyback` above 0, `lastBuybackBlock + buybackDelay` reached, the slice at least `2 * maxPay` and the scaled fee covering the tip |
-| 3 | `compose()` | `nextPage()` ready; paid 3 gwei plus 0.0003 eth (decision 130), so it waits above about 3 gwei |
+| 3 | `compose()` | `nextPage()` ready; paid 3 gwei plus 0.0003 eth (decision 131), so it waits above about 3 gwei |
 | 4 | `collectEscrow()` | the fee escrow holds more for the Core than the gas of the claim |
 | 5 | `book()` | `launchedAt + SNIPER_SECONDS` passed, `payeeOn` false, income pending: the book that latches the payee share |
 | 6 | `redeemStatement(sid)` | `atFloor(sid)`; logged only while no balance module is set (it reverts `NoBalanceModule`) |
@@ -226,16 +226,16 @@ every value is an environment variable; nothing secret is written to a file by t
 |---|---|---|
 | `RECORD` | `deployments/<CHAIN_ID>.json` | the deployment record (section 7 shape): `core`, `controller`, `seaportAdapter`, `strategyAdapter`, `chainId` |
 | `RPC_URLS` | | read rpcs, comma separated, first preferred. on mainnet the keeper appends the public fallbacks (Tenderly gateway, drpc, publicnode) and logs `rpc fallback answered` when one is used |
-| `RELAY_URLS` | MEV Blocker, then Flashbots Protect (decision 131) | private relays for `eth_sendRawTransaction`, tried in order. a live chain refuses to start without one |
+| `RELAY_URLS` | MEV Blocker, then Flashbots Protect (decision 132) | private relays for `eth_sendRawTransaction`, tried in order. a live chain refuses to start without one |
 | `KEYSTORE`, `KEYSTORE_PASSWORD_FILE` | | the keeper's v3 keystore (`cast wallet new <dir>`) and a file holding its password, both mounted secrets. decrypted in memory |
 | `DRY_RUN=1` with `KEEPER_ADDRESS` | | simulate and log `dry run: would send` for each call, send nothing; no key needed |
 | `MAX_BASEFEE_GWEI_<DOOR>`, `MAX_PRIORITY_GWEI_<DOOR>` | 5 for `BUY_LISTING` and `BUYBACK`, 3 for the rest; tip 0.05, 0.02 for `COMPOSE` | per door ceiling and tip (`MAX_BASEFEE_GWEI` and `MAX_PRIORITY_GWEI` set all). a transaction's `maxFeePerGas` is the ceiling plus the tip, so it never lands above the ceiling |
 | `MARGIN_ETH` | 0.00005 | what a paid door must clear above its own cost |
 | `DAILY_BUDGET_ETH` | 0.2 | the net eth (gas spent minus Core payments) the wallet may lose per UTC day; a send whose gross cost does not fit waits |
-| `LISTING_DELAY_SEC` | 120 | decision 129 |
+| `LISTING_DELAY_SEC` | 120 | decision 130 |
 | `STRATEGY_IDS` | `Credits.tokensOf(strategy)` | the CreditStrategy ids to watch, or `off`; re-indexed every `STRATEGY_REFRESH_SEC` (600) |
 | `OPENSEA_API_KEY` | | enables the Seaport source (`packages/engine/src/opensea.mjs`), refreshed every `OPENSEA_REFRESH_SEC` (300); `SEAPORT_ORDERS=<file>` reads the same shape from a file instead |
-| `ALERT_WEBHOOK_URL` | | JSON POST `{source, key, text, ...}` for alerts (decision 131) |
+| `ALERT_WEBHOOK_URL` | | JSON POST `{source, key, text, ...}` for alerts (decision 132) |
 | `LOW_BALANCE_ETH` | 0.05 | alert under this wallet balance |
 | `BREAKER_THRESHOLD`, `BREAKER_PAUSE_SEC` | 3, 3600 | consecutive failures of a door (an on chain revert, a send no relay took, a receipt that never came) that pause it, and for how long |
 | `DOORS` | all | a comma list to run only some doors |
@@ -250,7 +250,7 @@ RPC_URLS=$MAINNET_RPC_URL KEYSTORE=... KEYSTORE_PASSWORD_FILE=... ALERT_WEBHOOK_
   OPENSEA_API_KEY=... npm start --workspace keeper
 ```
 
-at start the keeper refuses the owner address 0xCB43078C32423F5348Cab5885911C3B5faE217F9 and the Core's `owner()`, refuses an rpc whose chain is not the record's, warns when the keeper address carries EIP 7702 delegation code (`0xef0100`), and logs its whole configuration with secrets reduced to whether they are set. on Fly.io or Railway (decision 131) the service runs `npm start --workspace keeper` from the repo root with node 22.18 or later; the keystore and the password file are mounted secrets and `STATE_DIR` a volume.
+at start the keeper refuses the owner address 0xCB43078C32423F5348Cab5885911C3B5faE217F9 and the Core's `owner()`, refuses an rpc whose chain is not the record's, warns when the keeper address carries EIP 7702 delegation code (`0xef0100`), and logs its whole configuration with secrets reduced to whether they are set. on Fly.io or Railway (decision 132) the service runs `npm start --workspace keeper` from the repo root with node 22.18 or later; the keystore and the password file are mounted secrets and `STATE_DIR` a volume.
 
 ### dry run
 

@@ -127,7 +127,7 @@ abstract contract Fixture is Test, ProdDeployer {
         uint64 at;
         /// @dev gas of the whole call as the caller saw it
         uint256 gasUsed;
-        /// @dev the caller payment the compose sent from `ethPot` (decision 130)
+        /// @dev the caller payment the compose sent from `ethPot` (decision 131)
         uint256 paid;
     }
 

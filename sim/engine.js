@@ -35,7 +35,7 @@ export const SETTINGS = {
   keeperFee: _cs.keeperFee / W, // eth. the buyback caller is paid BUYBACK_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the slice (docs/DECISIONS.md 61), the buyListing caller BUYLISTING_GAS_USED * min(basefee, keeperMaxBaseFee) + keeperFee out of the pot (docs/DECISIONS.md 71)
   keeperMaxBaseFee: _cs.keeperMaxBaseFee / 1e9, // gwei, the cap on the base fee the refunds use
   rateCap: _cs.rateCap, // wei per credit: the eth rate never passes it (climb clamp, setRate)
-  callerFee: _cs.callerFee / W, // eth. paid to the caller of compose, composeChosen and redeemStatement from the pot, with the gas refund below. launch 0.0003 (decision 130): the simulator does not model these payments
+  callerFee: _cs.callerFee / W, // eth. paid to the caller of compose, composeChosen and redeemStatement from the pot, with the gas refund below. launch 0.0003 (decision 131): the simulator does not model these payments
   callerMaxBaseFee: _cs.callerMaxBaseFee / 1e9, // gwei, the cap on the base fee the refund of those three doors uses. 0 refunds no gas
   feeToRedeemBurnBps: _cs.feeToRedeemBurnBps, // share of the fee income booked by _book() after the payee share that fills the redeem burn reserve, the rest goes to the pot (decision 106)
   payeePpm: _cs.payeePpm, // the payee's share of the fee income booked by _book() once the payee share is on, ppm (decision 120). 0 at launch
@@ -235,6 +235,13 @@ export const SIM_DEFAULTS = {
   redeemMinRatio: 0, // a keeper redeems only when rating * unitPerPoint is at least this times the asking price
   keeperBuyback: true,
   basefeeGwei: 1, // the block base fee of the buyback calls, gwei (the refunds use min(basefee, keeperMaxBaseFee))
+  // decision 128, the pot scaled climb. the eth bid's idle climb and the ceiling's idle loosening scale with
+  // m = clamp(ethPot / (rate * PAGE), 1, multiplierCap), m read at each checkpoint from the booked pot and the rate.
+  // the shipped rule (the contract) is multiplierCap 4 and scales both the climb and the loosening; the 150 percent
+  // hourly bound of an earlier draft was rejected (REVIEW-128-potscaled.md) and the contract carries no read bound.
+  multiplierCap: 1,
+  hourlyBound: 0, // model only, for the rejected-bound comparison; the contract has no read bound
+  multiplierScalesClimb: true, // model only: when false, m scales the ceiling loosening but not the per minute climb
 };
 
 export const DEFAULTS = Object.assign({}, CORE_PARAMS, SETTINGS, CONTROLLER, CREDIT, SIM_DEFAULTS);
@@ -302,6 +309,8 @@ export class Core {
     this.redeemBurnMoved = 0; // cumulative eth moved from the reserve to the buyback pot by redemptions
     this.ethPot = 0; this.ethToBuyback = 0; this.ethRedeemBurn = 0; this.balancePot = 0; // balancePot is the balance module's holding, the eth value of the token it can pay (available())
     this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0; this.funded = false;
+    this.checkpointMult = 1; // decision 128: the climb multiplier m from the last checkpoint. 1 with multiplierCap 1
+    this.fillBuckets = []; // the rejected hourly bound comparison (REVIEW-128-potscaled.md) reads these: [minute, max fill rate] for the past hour, ascending
     this.xpLive = 0; this.moduleSet = false; // the balance module is set by setBalanceModule. xpLive is the unitPerPoint it reports now
     this.lastBuybackTime = -1e12;
     this.lastPaidRate = p.rateStart; this.burstTime = -1; this.burstBase = 0; // CoreLib.drop minute bucket: its first fill price and the bucket time
@@ -326,8 +335,9 @@ export class Core {
   // the ceiling in rate terms: ceilPct of the anchor, the anchor loosened while idle. the anchor is max(last rate paid, peak now)
   stepCeil(now) {
     const s = this.s, p = this.p;
-    // idleLoosenPct: the anchor grows linearly, by that percent of the anchor for every full LOOSEN_MINUTES since the last fill (CoreLib.climb)
-    const loosen = 1 + (s.idleLoosenPct / 100) * Math.floor((now - this.lastFillTime) / (p.LOOSEN_MINUTES * 60));
+    // idleLoosenPct: the anchor grows linearly, by that percent of the anchor for every full LOOSEN_MINUTES since the last fill (CoreLib.climb).
+    // decision 128: the loosening scales with the checkpoint multiplier m
+    const loosen = 1 + ((s.idleLoosenPct / 100) * this.checkpointMult) * Math.floor((now - this.lastFillTime) / (p.LOOSEN_MINUTES * 60));
     const anchor = Math.max(this.lastPaidRate, this.peakAt(now));
     return anchor * loosen * (s.ceilPct / 100);
   }
@@ -340,7 +350,10 @@ export class Core {
     if (r >= cap) return cap;
     const target = Math.min(cap, this.clamp());
     if (r >= target || now <= this.checkpointTime) return r;
-    const fast = this.s.recoveryClimbPerMin / 100, slow = this.s.climbPerMin / 100;
+    // decision 128: both climb speeds scale with the checkpoint multiplier m (the model-only `multiplierScalesClimb`
+    // false leaves the climb at 1x and scales the loosening alone, the "loosening only" variant of the cost table)
+    const cm = this.p.multiplierScalesClimb ? this.checkpointMult : 1;
+    const fast = (this.s.recoveryClimbPerMin / 100) * cm, slow = (this.s.climbPerMin / 100) * cm;
     const lnFast = Math.log(1 + fast), lnSlow = Math.log(1 + slow);
     const elapsed = now - this.checkpointTime;
     const peakT = this.peakRate * Math.pow(0.5, (this.checkpointTime - this.peakTime) / (this.s.peakHalfLifeHours * 3600));
@@ -356,7 +369,38 @@ export class Core {
   }
   // the bid read by a seller: the price state lowered to the clamp (the pot). the clamp bounds what is paid and is never
   // stored: checkpoint, the drop and the anchor all use the price state rate. an empty pot reads 0
-  ethRate(now) { return Math.min(this.priceRate(now), this.clamp()); }
+  ethRate(now) { return Math.min(this.priceRate(now), this.clamp(), this.hourlyCap(now)); }
+  // decision 128: m = clamp(ethPot / (rate * PAGE), 1, multiplierCap) from the checkpoint state (wei throughout). multiplierCap 1 returns 1
+  bidMult() {
+    const cap = this.p.multiplierCap;
+    if (!(cap > 1)) return 1;
+    const cost = this.rateAtCheckpoint * this.p.PAGE;
+    if (!(cost > 0)) return cap;
+    return Math.min(Math.max((this.ethPot * W) / cost, 1), cap);
+  }
+  // an earlier 128 draft bounded the read at hourlyBound / 10000 of the highest fill rate of the past hour (or the last
+  // fill rate when the hour has none); it was rejected (REVIEW-128-potscaled.md) and kept here only for that comparison.
+  // hourlyBound 0 is the shipped rule: no read bound
+  hourlyCap(now) {
+    if (!(this.p.hourlyBound > 0)) return Infinity;
+    const minB = Math.floor(now / 60) - 59;
+    let mx = 0;
+    for (let i = this.fillBuckets.length - 1; i >= 0; i--) {
+      if (this.fillBuckets[i][0] < minB) break;
+      if (this.fillBuckets[i][1] > mx) mx = this.fillBuckets[i][1];
+    }
+    return ((mx > 0 ? mx : this.lastPaidRate) * this.p.hourlyBound) / BPS;
+  }
+  // decision 128: record a fill rate in its minute bucket, dropping buckets older than an hour
+  recordFill(r, now) {
+    const b = Math.floor(now / 60), n = this.fillBuckets.length;
+    if (n && this.fillBuckets[n - 1][0] === b) this.fillBuckets[n - 1][1] = Math.max(this.fillBuckets[n - 1][1], r);
+    else this.fillBuckets.push([b, r]);
+    const minB = b - 59;
+    let drop = 0;
+    while (drop < this.fillBuckets.length && this.fillBuckets[drop][0] < minB) drop++;
+    if (drop) this.fillBuckets.splice(0, drop);
+  }
   // Core.ethPrice(): the price state before the pot clamp (wei per credit). the clamp is the read only lowering that ethRate applies. the cost floor of a credit
   // bought with the balance token and the eth bid term of the credit sale floor read it, so an empty pot does not zero them (FLOW 93)
   ethPrice(now) { return this.priceRate(now); }
@@ -365,7 +409,7 @@ export class Core {
   // decays between fills, so the maximum follows the climb and holds against a sale within the block. the statement
   // reference, the credit floor and the cost of a credit bought with the balance token read it
   floorRate(now) { return Math.max(this.priceRate(now), this.peakAt(now)); }
-  checkpoint(now) { this.rateAtCheckpoint = this.priceRate(now); this.checkpointTime = now; }
+  checkpoint(now) { this.rateAtCheckpoint = this.priceRate(now); this.checkpointTime = now; this.checkpointMult = this.bidMult(); }
   syncFunded() {
     this.funded = this.ethPot * W >= this.rateAtCheckpoint;
   }
@@ -428,6 +472,7 @@ export class Core {
     const fall = Math.min((this.s.dropPerCreditPct / 100) * ratio, 1);
     const r = Math.max(paid * (1 - fall), (this.burstBase * this.s.dropToPct) / 100);
     this.lastPaidRate = paid;
+    this.recordFill(paid, now); // feeds the rejected hourly bound comparison (REVIEW-128-potscaled.md)
     this.peakRate = Math.max(paid, this.peakAt(now)); this.peakTime = now;
     this.rateAtCheckpoint = r;
     this.lastFillTime = now;
