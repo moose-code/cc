@@ -118,9 +118,6 @@ function NextCredit() {
       </div>
       <b>{ratio == null ? "—" : `${commas(ratio)}%`}</b>
       {bid != null && <span className="hdr-next-bid">· bid {eth(bid)} ETH</span>}
-      <Link href="/listings" className="hdr-next-bid">
-        listings →
-      </Link>
       <Acquire />
     </div>
   );
@@ -156,18 +153,18 @@ function AcquireButton() {
         acquired #{done.id.toString()} ↗
       </a>
     );
-  if (!next) return err ? <span className="hdr-acq-err">{err}</span> : null;
+  // always shown; inactive while no listing clears its bid and the pot
   return (
     <>
       {err && <span className="hdr-acq-err">{err}</span>}
       <button
-        className="hdr-acq"
+        className={next ? "hdr-acq on" : "hdr-acq"}
         onClick={() => buy(cleared)}
-        disabled={pending}
-        title={`credit #${next.id} bids ${eth(next.bid)} ETH (${next.source})`}
+        disabled={!next || pending}
+        title={next ? `credit #${next.id} bids ${eth(next.bid)} ETH (${next.source})` : "no listed credit is at or under its bid"}
       >
         <i aria-hidden />
-        {pending ? "acquiring…" : `acquire · ${eth(next.price)} ETH`}
+        {pending ? "acquiring…" : next ? `acquire · ${eth(next.price)} ETH` : "acquire"}
       </button>
     </>
   );

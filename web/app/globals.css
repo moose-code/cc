@@ -220,26 +220,34 @@ a:hover {
 .hdr-acq {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--ink);
-  background: var(--ink);
-  color: var(--on-ink);
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--divider);
+  background: none;
+  color: var(--faint);
   font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 .hdr-acq i {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
+  background: var(--disabled);
+}
+/* a listing clears: the button reads as live, still quieter than the wallet button */
+.hdr-acq.on {
+  border-color: var(--ink);
+  color: var(--ink);
+  cursor: pointer;
+}
+.hdr-acq.on i {
   background: var(--m);
 }
-.hdr-acq:disabled {
+.hdr-acq.on:disabled {
   opacity: 0.6;
-  cursor: default;
+  cursor: progress;
 }
 .hdr-acq-err {
   color: var(--muted);
