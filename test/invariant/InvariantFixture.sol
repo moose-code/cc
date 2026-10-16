@@ -238,6 +238,8 @@ abstract contract InvariantFixture is Fixture {
         for (uint256 i; i < ethN; ++i) {
             ethIds[i] = ids[i];
         }
+        uint256 openingPot = core.ethPot();
+        uint256 spent;
         // in batches of 100: one call of all the credits would not fit the 60M gas of a call
         for (uint256 from; from < ethN; from += 100) {
             uint256 n = ethN - from < 100 ? ethN - from : 100;
@@ -245,9 +247,12 @@ abstract contract InvariantFixture is Fixture {
             for (uint256 j; j < n; ++j) {
                 batch[j] = ethIds[from + j];
             }
+            uint256 beforePot = core.ethPot();
             vm.prank(filler);
             core.sellForEth(batch);
+            spent += beforePot - core.ethPot();
         }
+        handler.seedSpendBooks(openingPot, spent, block.timestamp);
         uint256 firstStatement = STATEMENTS.supply() + 1;
         for (uint256 i; i < COMPOSES; ++i) {
             vm.prank(keeper);

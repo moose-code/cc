@@ -13,10 +13,10 @@ import { MULTICALL3, readSnapshot, useHead, type Snapshot } from "./live";
 import { useIxMode } from "./indexer";
 import { cheapestPerId, type Priced } from "./acquire";
 import { gatherListings, scoresFor } from "./useAcquire";
+import { ETH_ANCHOR_SLOT } from "./sell";
 import { clearsIn, type ClearsIn, type ClimbState } from "./climb";
 
 const LIVE = 100; // rows (smallest estimated gap first) whose bid and listing are re-read from the chain
-const ANCHOR_SLOT = 27n; // State.anchor: lastFillRate, minuteStartRate, minuteBucket + peakTime, peakRate (live.ts)
 const mc = { multicallAddress: MULTICALL3, batchSize: 16_384 } as const;
 
 export interface ListingRow extends Priced {
@@ -63,7 +63,7 @@ export function useListings() {
       // live read of the best rows: pot, retired, the two adapters, then bidOf / ownerOf / nftForSale per row
       const top = rows.slice(0, LIVE);
       const cc = { address: core!, abi: coreAbi } as const;
-      const word = (i: bigint) => c.getStorageAt({ address: core!, slot: numberToHex(ANCHOR_SLOT + i, { size: 32 }) });
+      const word = (i: bigint) => c.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }) });
       const [res, w0, w2, w3] = await Promise.all([
         c.multicall({
           ...mc,

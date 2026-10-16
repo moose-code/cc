@@ -27,6 +27,7 @@ interface ICoreLib {
     error Retired();
     error SameBlockReturn(uint256 id);
     error Slippage();
+    error SpendCapReached(uint256 spent, uint256 cost, uint256 budget);
     error ZeroAddress();
     error ZeroAmount();
     error ZeroId();
@@ -37,6 +38,7 @@ interface ICoreLib {
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
     event EngineRetired(address indexed successor);
+    event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     event Migrated(address indexed successor, uint256 eth, uint256 credits);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
     event SettingsSet(Settings settings);
@@ -49,10 +51,12 @@ interface ICoreLib {
         external
         view
         returns (uint256 price, uint256 read);
+    function climbMultiplier() external view returns (uint256);
     function floorRate(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)
         external
         view
         returns (uint256);
+    function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent);
 
     function swapIn(address manager, address coin, uint24 fee, int24 spacing, address hook, uint256 amountIn)
         external

@@ -421,6 +421,36 @@ export const coreAbi = [
             "name": "saleToOperatorBps",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "climbMultiplierCapBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "spendCapBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "bucketSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "balanceBidCapBps",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "idleStepSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "sniperSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       },
@@ -572,19 +602,6 @@ export const coreAbi = [
   {
     "type": "function",
     "name": "RATE_START",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "SNIPER_SECONDS",
     "inputs": [],
     "outputs": [
       {
@@ -835,6 +852,19 @@ export const coreAbi = [
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "climbMultiplier",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1817,6 +1847,36 @@ export const coreAbi = [
             "name": "saleToOperatorBps",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "climbMultiplierCapBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "spendCapBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "bucketSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "balanceBidCapBps",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "idleStepSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "sniperSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
@@ -1986,8 +2046,61 @@ export const coreAbi = [
             "name": "saleToOperatorBps",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "climbMultiplierCapBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "spendCapBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "bucketSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "balanceBidCapBps",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "idleStepSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "sniperSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "spendState",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "bucket",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "budget",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "spent",
+        "type": "uint128",
+        "internalType": "uint128"
       }
     ],
     "stateMutability": "view"
@@ -2926,6 +3039,36 @@ export const coreAbi = [
             "name": "saleToOperatorBps",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "climbMultiplierCapBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "spendCapBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "bucketSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "balanceBidCapBps",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "idleStepSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "sniperSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
@@ -3335,6 +3478,27 @@ export const coreAbi = [
     "type": "error",
     "name": "Slippage",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SpendCapReached",
+    "inputs": [
+      {
+        "name": "spent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cost",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "budget",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

@@ -38,6 +38,11 @@ export const controllerAbi = [
             "name": "anchorMinCost",
             "type": "uint128",
             "internalType": "uint128"
+          },
+          {
+            "name": "anchorMoveBps",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       },
@@ -134,6 +139,19 @@ export const controllerAbi = [
         "name": "",
         "type": "uint128",
         "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "anchorMoveBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -579,6 +597,11 @@ export const controllerAbi = [
             "name": "anchorMinCost",
             "type": "uint128",
             "internalType": "uint128"
+          },
+          {
+            "name": "anchorMoveBps",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }
@@ -813,6 +836,11 @@ export const controllerAbi = [
             "name": "anchorMinCost",
             "type": "uint128",
             "internalType": "uint128"
+          },
+          {
+            "name": "anchorMoveBps",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }

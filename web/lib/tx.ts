@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
+import { CANCELLED, txError } from "./tx-error";
+export { CANCELLED, txError } from "./tx-error";
 
 // Gas limit = node estimate * 1.25. Prices move with block time, so a call can
 // take a longer path at execution than at estimation; the margin covers it.
@@ -13,29 +15,6 @@ export type Write = (req: any) => Promise<`0x${string}`>;
 export type StepStatus = "todo" | "wallet" | "pending" | "done" | "failed";
 export type Step = { label: string; status: StepStatus; hash?: `0x${string}` };
 export type Plan = { label: string; done?: boolean };
-
-export const CANCELLED = "cancelled in wallet";
-
-// One line for a failed transaction, from the viem error chain: shortMessage,
-// metaMessages, details and errorName of up to 6 nested causes. Router and
-// quoter reverts missing from the abi arrive as the 4 byte selector.
-export function txError(e: unknown): string {
-  const parts: string[] = [];
-  let cur: any = e;
-  for (let d = 0; cur && d < 6; d++, cur = cur.cause) {
-    parts.push(cur.shortMessage, ...(cur.metaMessages ?? []), cur.details, cur.data?.errorName, cur.name);
-    if (!cur.shortMessage && cur.message) parts.push(String(cur.message).split("\n")[0]);
-  }
-  const all = parts.filter(Boolean).join("\n");
-  if (/user rejected|user denied|rejected the request/i.test(all)) return CANCELLED;
-  if (/V4TooLittleReceived|V4TooMuchRequested|slippage|0x8b063d73|0x12bacdd3/i.test(all)) return "price moved, try again";
-  if (/TransactionDeadlinePassed|0x5bf6f916/.test(all)) return "deadline passed, try again";
-  if (/insufficient funds/i.test(all)) return "not enough eth for gas";
-  const sig = all.match(/reverted with the following signature:\s*(0x[0-9a-f]{8})/i)?.[1];
-  if (sig) return `reverted ${sig}`;
-  const named = all.match(/(?:error|reverted with reason):?\s+(\w+)\(/i)?.[1];
-  return (named ?? parts.find(Boolean) ?? "transaction failed").slice(0, 80);
-}
 
 // run(steps, plan): `steps` receives `write`, which sets `gas` from
 // estimateContractGas times GAS_BUFFER_BPS, sends with the connected account and

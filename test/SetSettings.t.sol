@@ -2,7 +2,8 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
-import {Settings} from "../src/interfaces/Interfaces.sol";
+import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
+import {Settings, Sale, CreditSale} from "../src/interfaces/Interfaces.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {SetSettings, ICoreOwner} from "../script/SetSettings.s.sol";
 
@@ -40,6 +41,26 @@ contract SetSettingsProbe is SetSettings {
 
     function warnRateCap(uint256 rateCap) external view returns (bool) {
         return _warnRateCap(ICoreOwner(core_), rateCap);
+    }
+
+    function previewController(IControllerV1 c, address owner_) external {
+        ICoreOwner core = ICoreOwner(core_);
+        Settings memory live = core.settings();
+        ControllerChanges memory changes = _prepareController(c, live, live.saleFloorBps);
+        _previewBatch(core, live, false, 0, c, changes);
+    }
+
+    function applyCombined(IControllerV1 c, Settings memory next) external {
+        ICoreOwner core = ICoreOwner(core_);
+        ControllerChanges memory changes = _prepareController(c, next, core.settings().saleFloorBps);
+        _previewBatch(core, next, true, 0, c, changes);
+        vm.startPrank(core.owner());
+        _applyBatch(core, next, true, 0, c, changes);
+        vm.stopPrank();
+    }
+
+    function controllerChanges(IControllerV1 c) external view returns (bool changed) {
+        (,, changed,) = _controllerChanges(c);
     }
 
     function applyTo(Settings memory s) external view returns (Settings memory) {
@@ -116,8 +137,8 @@ contract SetSettingsTest is Fixture {
     // promise: RUNBOOK the SetSettings owner command refuses a value outside the bounds
     /// run() refuses a value outside the bounds before it prints a calldata
     function test_runRefusesOutOfBounds() public {
-        probe.single("saleFloorBps", 999);
-        vm.expectRevert(abi.encodeWithSelector(SetSettings.OutOfBounds.selector, bytes32("saleFloorBps")));
+        probe.single("spendCapBps", 0);
+        vm.expectRevert(abi.encodeWithSelector(SetSettings.OutOfBounds.selector, bytes32("spendCapBps")));
         probe.run();
     }
 
@@ -133,5 +154,51 @@ contract SetSettingsTest is Fixture {
         (bool ok,) = address(core).call(abi.encodeCall(core.setSettings, (next)));
         assertTrue(ok, "the printed calldata is accepted by the core");
         assertEq(core.settings().saleFloorBps, 8_000);
+    }
+
+    // promise: previewing controller settings never consumes the changes the subsequent broadcast must send
+    function test_controllerPreviewRestoresStateAndKeepsChangePlanned() public {
+        uint256 before_ = ctl.anchorMoveBps();
+        probe.single("anchorMoveBps", 10_000);
+        probe.previewController(ctl, owner);
+        assertEq(ctl.anchorMoveBps(), before_);
+        assertTrue(probe.controllerChanges(ctl));
+    }
+
+    // promise: each new field is independently patchable without changing adjacent ABI values
+    function test_newFieldsAndTypedWidths() public {
+        Settings memory live = core.settings();
+        probe.configure(
+            address(core),
+            '{"spendCapBps":50,"bucketSeconds":100,"balanceBidCapBps":20000,"idleStepSeconds":30,"sniperSeconds":0}'
+        );
+        Settings memory next = probe.applyTo(live);
+        assertEq(next.spendCapBps, 50);
+        assertEq(next.bucketSeconds, 100);
+        assertEq(next.balanceBidCapBps, 20_000);
+        assertEq(next.idleStepSeconds, 30);
+        assertEq(next.sniperSeconds, 0);
+        assertEq(next.climbMultiplierCapBps, live.climbMultiplierCapBps);
+        probe.configure(address(core), "");
+        probe.single("bucketSeconds", uint256(type(uint32).max) + 1);
+        vm.expectRevert(abi.encodeWithSelector(SetSettings.ValueTooWide.selector, "bucketSeconds"));
+        probe.applyTo(live);
+    }
+
+    // promise: coordinated floor/start edits are previewed and applied in a valid order in both directions
+    function test_combinedFloorAndMarkupUpdatesBothDirections() public {
+        probe.single("markupBps", 22_000);
+        Settings memory next = core.settings();
+        next.saleFloorBps = 20_000;
+        probe.applyCombined(ctl, next);
+        assertEq(core.settings().saleFloorBps, 20_000);
+        assertEq(ctl.markupBps(), 22_000);
+        probe = new SetSettingsProbe();
+        probe.configure(address(core), "");
+        probe.single("markupBps", 12_000);
+        next.saleFloorBps = 10_000;
+        probe.applyCombined(ctl, next);
+        assertEq(core.settings().saleFloorBps, 10_000);
+        assertEq(ctl.markupBps(), 12_000);
     }
 }

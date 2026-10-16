@@ -36,7 +36,7 @@ contract PayeeShareTest is FeeBase {
         _setSettings(sp);
         (, uint256 launchedAt) = _launchRecord();
         assertEq(launchedAt, launchTime, "the launch time of the factory record");
-        assertEq(core.SNIPER_SECONDS(), 1800);
+        assertEq(core.settings().sniperSeconds, 1800);
         assertFalse(core.payeeOn());
 
         // a book inside the window shares nothing and does not turn the share on
@@ -44,12 +44,12 @@ contract PayeeShareTest is FeeBase {
         assertFalse(core.payeeOn(), "inside the window");
 
         // one second before the end of the window
-        vm.warp(launchedAt + core.SNIPER_SECONDS() - 1);
+        vm.warp(launchedAt + core.settings().sniperSeconds - 1);
         _flow(Kind.BuyExactIn, 1 ether, "");
         assertFalse(core.payeeOn(), "one second before the end");
 
         // at the end of the window the book with income turns the share on and shares nothing
-        vm.warp(launchedAt + core.SNIPER_SECONDS());
+        vm.warp(launchedAt + core.settings().sniperSeconds);
         Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
         assertTrue(core.payeeOn(), "the first book at the end of the window");
         assertEq(f.toPayee, 0, "that book shares nothing");
@@ -137,17 +137,17 @@ contract PayeeShareTest is FeeBase {
     }
 
     // promise: INTEGRATION BadSetting on payeePpm
-    function test_theShareBoundIsTwoHundredThousandPpm() public {
+    function test_theShareBoundIsOneMillionPpm() public {
         Settings memory s = core.settings();
-        s.payeePpm = 200_001;
+        s.payeePpm = 1_000_001;
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("payeePpm")));
         core.setSettings(s);
-        s.payeePpm = 200_000;
+        s.payeePpm = 1_000_000;
         _setSettings(s);
         _stock();
         Flow memory f = _flow(Kind.BuyExactIn, 10 ether, "");
-        assertEq(f.toPayee, f.bountyRise / 5);
+        assertEq(f.toPayee, f.bountyRise);
         s.payeePpm = 0;
         _setSettings(s);
         f = _flow(Kind.BuyExactIn, 10 ether, "");
@@ -160,7 +160,11 @@ contract PayeeShareTest is FeeBase {
     /// does not revert and every door and every swap works
     function test_aFailingPayeeStillReceivesThroughTheForcedPush() public {
         _stock();
-        { Settings memory sp = core.settings(); sp.payeePpm = 90_909; _setSettings(sp); }
+        {
+            Settings memory sp = core.settings();
+            sp.payeePpm = 90_909;
+            _setSettings(sp);
+        }
         address[2] memory bad = [address(new RevertingPayee()), address(new GasBurningPayee())];
         for (uint256 i; i < 2; ++i) {
             vm.prank(owner);
@@ -186,7 +190,11 @@ contract PayeeShareTest is FeeBase {
     /// the payee cannot reenter the Core during the forced push of its share, and the push still lands
     function test_thePushGivesThePayeeNoReentry() public {
         _stock();
-        { Settings memory sp = core.settings(); sp.payeePpm = 90_909; _setSettings(sp); }
+        {
+            Settings memory sp = core.settings();
+            sp.payeePpm = 90_909;
+            _setSettings(sp);
+        }
         ReenteringPayee p = new ReenteringPayee(core);
         vm.prank(owner);
         core.setPayee(address(p));
@@ -198,7 +206,8 @@ contract PayeeShareTest is FeeBase {
     }
 
     function _launchRecord() internal view returns (bool ok, uint256 launchedAt) {
-        (bool o, bytes memory out) = address(FACTORY).staticcall(abi.encodeWithSignature("deploymentInfo(address)", address(coin)));
+        (bool o, bytes memory out) =
+            address(FACTORY).staticcall(abi.encodeWithSignature("deploymentInfo(address)", address(coin)));
         ok = o;
         // word 0 is the offset, word 9 is launchedAt
         assembly ("memory-safe") {
@@ -278,7 +287,12 @@ contract FeeShareTest is FeeBase {
             uint256 want = b.inflow * bps[i] / BASIS;
             assertEq(b.dRb, want, "exact redeem burn share");
             assertEq(b.dPot, b.inflow - want, "exact pot share");
-            assertApproxEqAbs(b.inflow, 0.090 ether, 0.00001 ether, "9.0 points of the buy reach the engine (core 9.9 less the payee 0.9)");
+            assertApproxEqAbs(
+                b.inflow,
+                0.09 ether,
+                0.00001 ether,
+                "9.0 points of the buy reach the engine (core 9.9 less the payee 0.9)"
+            );
             _check(b, bps[i]);
             _solvent();
         }
@@ -329,7 +343,6 @@ contract FeeShareTest is FeeBase {
         assertEq(b.dPot, b.inflow);
         _solvent();
     }
-
 }
 
 /// the fee that comes back to the core during its own `buyback()` swap is split like any other, and the buyback works
@@ -342,7 +355,9 @@ contract FeeShareBuybackTest is FeeBase {
 
     function _event(Vm.Log[] memory logs) internal pure returns (uint256 spent, uint256 tip) {
         for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] == ICore.Buyback.selector) (spent, tip) = abi.decode(logs[i].data, (uint256, uint256));
+            if (logs[i].topics[0] == ICore.Buyback.selector) {
+                (spent, tip) = abi.decode(logs[i].data, (uint256, uint256));
+            }
         }
     }
 
@@ -389,4 +404,19 @@ contract FeeShareBuybackTest is FeeBase {
         }
     }
 
+    // promise: the payee timer is editable before activation and cannot undo the one-way latch afterwards
+    function test_editableTimerAndOneWayLatch() public {
+        Settings memory s = core.settings();
+        s.payeePpm = 100_000;
+        s.sniperSeconds = 0;
+        _setSettings(s);
+        Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
+        assertTrue(core.payeeOn());
+        assertEq(f.toPayee, 0);
+        s.sniperSeconds = type(uint32).max;
+        _setSettings(s);
+        f = _flow(Kind.BuyExactIn, 1 ether, "");
+        assertTrue(core.payeeOn());
+        assertGt(f.toPayee, 0);
+    }
 }

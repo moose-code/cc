@@ -87,15 +87,15 @@ contract PostflightSlotsTest is Fixture {
         }
     }
 
-    /// @dev the reviewer's probe: one of the nine `CoreLib` call sites of the Core points at a copy with one flipped
+    /// @dev the reviewer's probe: one of the eleven `CoreLib` call sites of the Core points at a copy with one flipped
     /// byte. the identity hash masks the slot and `findLibrary` finds the compiled library through the other sites, so
     /// only the slot row sees it. a library runs by DELEGATECALL in the Core storage
-    // promise: the reviewer's probe: one of the nine `CoreLib` call sites of the Core points at a copy with one flipped byte
+    // promise: the reviewer's probe: one of the eleven `CoreLib` call sites of the Core points at a copy with one flipped byte
     function test_oneForeignLibrarySiteFailsPostflight() public {
         address lib = findLibrary(address(core).code);
         assertTrue(lib != address(0));
         uint256[] memory sites = _librarySites(address(core).code, lib);
-        assertEq(sites.length, 9, "the Core calls CoreLib at nine sites");
+        assertEq(sites.length, 11, "the Core calls CoreLib at eleven sites");
         address evil = _foreignLibrary();
         for (uint256 s; s < sites.length; ++s) {
             bytes memory c = address(core).code;
@@ -109,11 +109,11 @@ contract PostflightSlotsTest is Fixture {
         }
     }
 
-    /// @dev one site of an immutable holds another value than the other sites and the getter. every one of the 10
+    /// @dev one site of an immutable holds another value than the other sites and the getter. every one of the nine
     /// immutables of the Core and its last site
     // promise: one site of an immutable holds another value than the other sites and the getter
     function test_oneDivergentImmutableSiteFailsPostflight() public {
-        for (uint256 g; g < 10; ++g) {
+        for (uint256 g; g < 9; ++g) {
             uint256[] memory sites = _immutableSites("Core", g);
             assertGt(sites.length, 0, "an immutable is read at least once");
             // an immutable read only by its public getter has no second site to diverge from the getter

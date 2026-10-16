@@ -42,7 +42,7 @@ library BidModel {
     /// @dev the price state at the first fill of the minute after a fill at `fillState`: `minuteStart`, or `fillState` when
     /// it is below the floor of `minuteStart`
     function startAfter(Settings memory s, uint256 fillState, uint256 minuteStart) internal pure returns (uint256) {
-        return fillState < minuteStart * s.dropFloorBps / 10_000 ? fillState : minuteStart;
+        return minuteStart == 0 || fillState < minuteStart * s.dropFloorBps / 10_000 ? fillState : minuteStart;
     }
 
     /// @dev the rate after one credit of score `score` bought with the price state `fillState`, where `minuteStart` is
@@ -98,7 +98,7 @@ library BidModel {
     /// @dev the ceiling: `ceilBps` of the anchor grown by `idleLoosenBps * m` per full 10 minutes idle, where `m` is
     /// the pot scaled multiplier in bps. the anchor is `max(last fill rate, peak now)`, which the callers pass in
     function ceiling(Settings memory s, uint256 anchor, uint256 idle, uint256 m) internal pure returns (uint256) {
-        return anchor * (10_000 + uint256(s.idleLoosenBps) * m / 10_000 * (idle / 10 minutes)) * s.ceilBps / 1e8;
+        return anchor * (10_000 + uint256(s.idleLoosenBps) * m / 10_000 * (idle / s.idleStepSeconds)) * s.ceilBps / 1e8;
     }
 
     /// @dev the price state now from the checkpoint state `b`: at most `rateCap` and the ceiling, below the recovery

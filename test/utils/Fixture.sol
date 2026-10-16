@@ -9,7 +9,18 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {ICredits, IStatements, IBalanceModule, ICreditScore, Mainnet, Settings, Stack, Sale, CreditSale, BUYLISTING_GAS} from "../../src/interfaces/Interfaces.sol";
+import {
+    ICredits,
+    IStatements,
+    IBalanceModule,
+    ICreditScore,
+    Mainnet,
+    Settings,
+    Stack,
+    Sale,
+    CreditSale,
+    BUYLISTING_GAS
+} from "../../src/interfaces/Interfaces.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2, IArtCoinsFeeEscrowV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {V2Stack} from "./V2Stack.sol";
 import {Deployed} from "../../script/SystemDeployer.sol";
@@ -144,7 +155,10 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @notice the settings the fixture core is deployed with. the default is the launch values of docs/DECISIONS.md. a
     /// suite that tests another set overrides this
     function _settings() internal view virtual returns (Settings memory) {
-        return Mainnet.defaultSettings();
+        Settings memory cfg = Mainnet.defaultSettings();
+        // General fixtures exercise their own promises; budget tests retain launch enforcement explicitly.
+        cfg.spendCapBps = 10_000;
+        return cfg;
     }
 
     /// @dev the gas of the last external call as a transaction, before the refund, and the refund. forge reports the call
@@ -262,13 +276,11 @@ abstract contract Fixture is Test, ProdDeployer {
         return predictCoin(l, owner, address(core));
     }
 
-    function buildConfig(
-        address tokenAdmin,
-        address creator_,
-        string memory name,
-        string memory symbol,
-        bytes32 salt
-    ) internal view returns (IArtCoinsFactoryV2.DeploymentConfigV2 memory) {
+    function buildConfig(address tokenAdmin, address creator_, string memory name, string memory symbol, bytes32 salt)
+        internal
+        view
+        returns (IArtCoinsFactoryV2.DeploymentConfigV2 memory)
+    {
         LaunchConfig memory l = _cfg(name, symbol, salt);
         l.creator = creator_;
         return buildConfig(l, tokenAdmin, address(core));
@@ -442,7 +454,9 @@ abstract contract Fixture is Test, ProdDeployer {
         vm.fee(composeBasefee);
         preComposeSnap = vm.snapshotState();
 
-        vm.expectCall(address(STATEMENTS), abi.encodeWithSelector(IStatements.compose.selector, c.ids, defaultFormat(c.ids[0])));
+        vm.expectCall(
+            address(STATEMENTS), abi.encodeWithSelector(IStatements.compose.selector, c.ids, defaultFormat(c.ids[0]))
+        );
         uint256 gasBefore = gasleft();
         vm.prank(keeper);
         core.compose();
@@ -480,7 +494,7 @@ abstract contract Fixture is Test, ProdDeployer {
     }
 
     /// first slot of `State.anchor` in the Core (four words)
-    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(27));
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
 
     /// @notice the bid anchor state of the Core, read from its storage: the rate of the last fill, the rate of the first fill
     /// in the current minute bucket and that bucket
@@ -524,7 +538,8 @@ abstract contract Fixture is Test, ProdDeployer {
             startCapBps: ctl.startCapBps(),
             decayHours: ctl.decayHours(),
             anchorHalfLife: ctl.anchorHalfLife(),
-            anchorMinCost: ctl.anchorMinCost()
+            anchorMinCost: ctl.anchorMinCost(),
+            anchorMoveBps: ctl.anchorMoveBps()
         });
     }
 
@@ -717,9 +732,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// module, not the core, so there is no balance pot to check
     function _solvent() internal view {
         assertLe(
-            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(),
-            address(core).balance,
-            "eth pots exceed balance"
+            core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn(), address(core).balance, "eth pots exceed balance"
         );
     }
 

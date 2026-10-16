@@ -20,8 +20,8 @@ export function signedPct(n: number): string {
   return `${r >= 0 ? "+" : ""}${r}%`;
 }
 
-export function commas(n: number, max = 0): string {
-  return n.toLocaleString("en-US", { maximumFractionDigits: max });
+export function commas(n: number | bigint, max = 0): string {
+  return typeof n === "bigint" ? n.toLocaleString("en-US") : n.toLocaleString("en-US", { maximumFractionDigits: max });
 }
 
 // eth amount from wei, trimmed to `dp` and left padded with zeros for the feed

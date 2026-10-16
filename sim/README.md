@@ -1,83 +1,48 @@
-# simulation of the credits engine
+# Credits engine simulator
 
-`sim/engine.js` is a deterministic model of `src/Core.sol`, `src/lib/CoreLib.sol` and `src/ControllerV1.sol`. It reads every launch value from `script/config/mainnet.json` (node reads the file, `build.mjs` inlines it for the browser), so the launch settings cannot drift from the config. The contracts are the authority. `sim/engine.test.mjs` checks the port against hand computed cases and against the config.
+`engine.js` models Core, CoreLib and ControllerV1. Current intent is recorded in `docs/SPEC.md`; contract execution and simulator output are evidence. Node reads launch settings from `script/config/mainnet.json`, and `build.mjs` embeds that same configuration in the browser page. The page derives its initial settings from the model defaults.
 
-## what the model covers
+## Run and verify
 
-The rules follow the contracts. Names are the Core and controller names.
-
-- **eth bid (`CoreLib.climb`, `CoreLib.drop`).** A fill drops the bid by `dropPerCreditBps` of the price state. Within one minute the bid stays at or above `dropFloorBps` of the bid at that minute's first fill. The price state climbs `climbPerMinBps` a minute, or `recoveryClimbPerMinBps` while it sits more than `recoveryGapBps` under the remembered peak. The peak halves every `peakHalfLife` seconds. The ceiling is `ceilBps` of the larger of the last fill rate and the peak, grown by `idleLoosenBps` for each full 10 idle minutes. The read bid is also held to `rateCap` and to the pot: `ethRate` is the price state lowered to `ethPot`.
-- **fee income (`Core._book`).** Each door books fee eth before it reads a rate. The first book with income at or after the anti sniper window takes no payee share and sets `payeeOn`. From then on each book pushes `payeePpm` of its income to the payee (decision 123, a push, tracked in `payeePaid`); `payeePpm` is 0 at launch. `feeToRedeemBurnBps` of the rest fills the redeem burn reserve, and the rest fills the pot. `fund()` adds eth to the pot whole, with no split.
-- **nft sale cuts (decision 123).** A statement or credit sale pays `saleToArtistBps` to the artist and `saleToOperatorBps` to the payee off the top of the payment, pushed out (tracked in `artistPaid`, `operatorPaid`). The rest splits as below.
-- **doors.** `sellForEth` (one credit at the bid). `buyListing` (a listing at its ask, the caller paid from the bid less the ask). `compose` (the 80 oldest credits, past their window while the credit sale is on). `sellTo` (a statement at the controller's price, never below `saleFloorBps` of cost; after the cuts, `saleToBuybackBps` of the rest to the buyback). `sellCreditTo` (after the cuts, `creditCostToPotBps` of cost to the pot, the rest to the buyback). `swapCredit` (swaps a pile credit for one of equal or higher score, the caller burning `swapFeeCc` coins; the incoming credit inherits the node). `buyback` (one slice per `buybackDelay` blocks, the caller paid, the unspent reserve back to the buyback pot). `redeemStatement` (`redeemOn`, at the floor, `redeemSlippageBps`, `redeemBurnBps` of the reserve to the buyback). `sellForBalance` (`balanceBidOn`, the rising balance bid below). `releaseRedeemBurn`, `setPaused` (the pause clock and each statement's `pauseMark`), `setSettings` (checkpoints first, checks `src/lib/SettingsBounds.sol`, and restates the peak when `peakHalfLife` changes), `setRate`.
-- **rising balance bid (decision 122).** A second price state in bps of par (par is `score * unitPerPoint`), with the same climb and drop settings as the eth bid. Its floor is `10000 - balanceBidMarginBps`, its cap 10000 (par, so a payout never exceeds the score value), its clamp the module's `available()` as bps of par. It opens at the floor and resets to it when the bid turns on; `balanceRate` reads the floor while off or with no usable module. `sellForBalance` pays `score * unit * rate / 10000` per credit and refuses the batch with `PotTooSmall` when the available clamp falls below the floor.
-- **controller.** `valueOf` (the rate term, and the pool term once the pool key and the module are set), the reference `max(cost, valueOf(rating))`, the anchor and its half life, the single rate linear ask falling from `startBps` to `saleFloorBps` over `decayHours` (12 at launch), and the credit window (`creditPrice`, `pastWindow`).
-- **balance module.** `unitPerPoint` is read at each use. A `moduleUnit` patch in a schedule changes it.
-
-Not modeled:
-
-- the pool price. `balancePoolMult` stands in for the pool price against the unit.
-- the coin supply effect of `swapCredit` beyond the `swapFeeCc` burn count; the swap is not driven in whole runs.
-- statement formats, `composerOf`, and the coin minimum `minCcToChoose`. Every composer passes the minimum.
-- the other adapters, migration, successors, rescues and ownership.
-- the `callerFee` and `callerMaxBaseFee` payments, which are zero at launch. The buyback and listing payments use the counted gas at `basefeeGwei`.
-- the hook skim, the coin market and the buyers are model inputs: the skim ramp (`sniperStartBps` to `sniperEndBps` over `sniperSeconds`), the daily volume, and the buyers.
-
-## how to run
-
-```
-node sim/engine.test.mjs     # prints "ok, N checks passed"
-node sim/run.mjs q1          # writes sim/results/q1.json, about two minutes
-node sim/build.mjs           # rebuilds sim/index.html from engine.js and the page files
-node sim/market.mjs          # the real board, six scenarios, the knob grid; writes sim/out/market.{json,md}, about 16 seconds
+```sh
+node sim/engine.test.mjs          # focused model checks and integer vectors
+node sim/build.mjs                # regenerate tracked index.html
+node sim/page.ui.test.js          # control mapping, validation and built script
+node sim/market.mjs --spendcap     # 12 bounded exposure scenarios, JSON to stdout
 ```
 
-**decision 128, the pot scaled climb.** two Core options drive it, both off at their defaults so the launch headline is unchanged. `multiplierCap` scales the eth bid's climb and idle loosening by `m = clamp(ethPot / (rate * 80), 1, multiplierCap)`, evaluated at each checkpoint; `multiplierCap` 1 holds `m` at 1 (today's rule), 4 is decision 128. `hourlyBound` holds the read `ethRate()` at or below `hourlyBound / 10000` of the highest fill rate of the past hour, or of the last fill when the hour has none; 0 is no bound, 15000 is decision 128's 150 percent. `sim/market.mjs` runs the engine against the real OpenSea and CreditStrategy board (`sim/data`) over 30 days under the six scenarios and the knob grid (climb 50/100/200 bps, idle loosen 200/600/1000 bps, multiplier cap 1/4 with the hourly bound tied to it) and writes the one-page finding to `sim/out/market.md`. the finding: the engine against this board is fee limited, the multiplier is low risk, and the hourly bound as specified strands the pot after a sharp bid drop (a whale dump or a pot pump cascades the bid down, fills stop, and the read is pinned at 150 percent of the collapsed fill so the bid cannot re-climb to clear the board). `node sim/market.mjs` reproduces the grid and the bound isolation.
+The browser source is `page.ui1.js` through `page.ui4.js`, `page.body.html`, and `page.css`. Open the generated `index.html` to explore the model. Changing a setting updates the inputs; the owner-change controls schedule one mid-run patch. Invalid economic settings are rejected instead of silently clipped to old slider ranges.
 
-`simulate(params)` in `sim/engine.js` returns `{ S, T, stats, at, core }`: `S` the hourly series, `T` the totals, `stats` the run statistics and accounting checks, `at(day)` one day's snapshot, and `core` the final Core state. `params` takes any key of `DEFAULTS`: every Core setting, the controller and credit settings, and the market inputs. `schedule: [{ day, patch }]` changes settings mid run through `setSettings`, with the same bounds. `stepSec` must divide 3600. The stepped rule depends on the step: an hourly step gives 16,782 credits in 30 days against 23,384 at 5 minutes (seed 1, the test's `LEGACY` config), so use 60 or 300 seconds.
+## Spend cap and timing
 
-## calibration
+At launch, `spendCapBps` is 100 and `bucketSeconds` is 60: ETH purchases, including listing keeper payment, share 1% of the opening buying pot per fixed bucket. The snapshot begins with the first successful purchase and excludes separate reserves. New deposits do not increase an active bucket's snapshot. The first purchase of a bucket always passes whatever its cost, and later purchases need spent plus cost at or below the budget. Exact equality is accepted. A failed purchase or ETH batch restores its previous state.
 
-The constants are in `sim/engine.js`. The sources below are the ones each constant was fit to.
+10,000 bps bypasses enforcement while purchases continue to count. Cap edits retain used spending and reprice against the original snapshot. Duration edits retain active spending and both bid instances' active drop floors; expired floors restart on the next fill. Balance purchases are outside this ETH budget.
 
-| piece | model value | source |
-|---|---|---|
-| credit price | flat median 0.0089 eth per credit (`priceP0`) | `sim/data/notes.md`, last 24 hours: median 0.0089 eth, p10 0.0069, p90 0.0138. the price is flat in score from 80 to 650 points |
-| score premium | 1.12 above 740 points, 2.0 from 790 | earlier calibration, source outside `sim/data` |
-| credit sellers | scores uniform 80 to 800 points, asks lognormal with sigma 0.27, 150 offers an hour, 5 percent of resting offers leave an hour, float 96,800 credits | 109,914 live credits less the 13,132 held by the strategy (96,782), `sim/data/notes.md`. score census: 122,154 credits |
-| CreditStrategy listings | 13,132 listings, counts and prices as `STRAT_LISTINGS`, score deciles as `STRAT_SCORE_Q` | `sim/data/notes.md`, strategy holds 13,132 |
-| coin volume | `122.6 * exp(-0.286 d)` eth a day from day one, floor 0.5 eth. day one 1,557 eth, 58.6 percent of it in the first hour | fit to the observed daily volume (`COMPARABLE`) |
-| buy share | 0.526 on day one, 0.46 after | earlier calibration |
-| anti sniper skim | 9,000 bps falling to the 1,000 bps (10 point) baseline over 1,800 seconds. `bountyBps` 9,000 of the baseline goes to the Core, the other 1,000 is the protocol leg (decision 120) | launch block of `script/config/mainnet.json` |
-| coin price | 4.51e-7 eth at the end of day one | model output. the earlier calibration observed 4.44e-7 |
-| market feedback | engine spend lifts the flat price by elasticity 0.12 per eth over `impactHalfLifeHours` 48, capped at 3 times | assumption |
-| statement buyers | 8 a day, decaying to 2 with a 21 day half life. willingness to pay as a multiple of the market cost of 80 credits: p10 0.48, p25 0.71, median 0.84, p75 1.07, 21 percent at 1.2 or more, max 1.32 | fixed price statement sales, earlier calibration |
-| credit buyers | 40 a day while `creditSaleOn` is true, willingness to pay around the market price times the ask spread | assumption, unmeasured |
-| balance side | the module returns rating times the per point value, the balance token bid pays score times that value less the margin | assumption, unmeasured |
+A cap whose budget is under one credit limits a bucket to its first purchase. The cap does not ensure the bid converges to market. Adjacent fixed buckets can each spend their budget near a boundary. The measured bounded study and frozen assumptions are in [REVIEW-129-spendcap.md](../docs/reviews/REVIEW-129-spendcap.md) (its table predates the first-purchase rule; `docs/reviews/EXPOSURE-129-spendcap.json` has the current runs): none of its twelve reference bids crossed below 0.005 ETH during the six-hour selling window, so market recovery was N/A.
 
-## headline
+The page defaults to 60-second steps from the first hour. Steps must be integer divisors of 3,600 seconds. The calibrated first-hour volume bins are prorated to the requested execution step. Coarse runs retain a 120-second first-hour warmup ceiling. A step longer than a bucket skips spending opportunities; even a 60-second step remains approximate for shorter or differently aligned buckets. Smaller steps increase runtime, especially over 90 or 180 days. The separate `--spendcap` study uses 12-second modeled blocks throughout, with bucket-opening and boundary-adjacent starts.
 
-`node sim/run.mjs q1` at the launch configuration with the launch rules, the credit sale on and the balance bid off (decision 119). Each cell is the mean of five seeds (1 to 5) over 90 days. The steady state is the last 30 days of each run, when the pot is spent.
+## Other current rules
 
-| | comparable | sustained 17 eth a day | sustained 50 eth a day | dead week one |
-|---|---|---|---|---|
-| credits acquired, day 30 | 33,010 | 34,900 | 42,260 | 32,510 |
-| credits acquired, day 90 | 40,440 | 56,720 | 83,030 | 39,690 |
-| statements created, day 90 | 469 | 675 | 1,007 | 461 |
-| statements sold, day 90 | 157 | 199 | 172 | 158 |
-| average sale price over cost, day 90 | 1.04 | 1.03 | 1.02 | 1.04 |
-| statements waiting for the balance side, day 90 | 312 | 476 | 835 | 303 |
-| eth to buy and burn, day 90 | 33.3 | 35.7 | 35.8 | 33.3 |
-| day the launch pot is spent | 20.5 | 20.2 | 26.3 | 20.1 |
-| steady state credits a day after the pot | 110 | 358 | 676 | 114 |
-| steady state statements sold a day after the pot | 1.1 | 1.8 | 1.5 | 1.2 |
+The bid climbs per 60 seconds with a separate recovery speed below the decayed peak. `idleStepSeconds` controls ceiling-loosening intervals without changing those climb units. The last fill rate determines the pages multiplier, capped by `climbMultiplierCapBps`; the multiplier scales ceiling loosening only. `hourlyBound` and `multiplierScalesClimb` are historical experiment switches and do not describe the shipped rule.
 
-The full run, with the daily series of seed 1, is in `sim/results/q1.json`.
+The balance bid uses the shared rate mechanics, a floor of `10000 - balanceBidMarginBps`, and the configurable `balanceBidCapBps`, which can exceed par. Its available clamp and pages multiplier preserve their separate caps. A zero opening floor stays zero unless a later reset gives it a positive floor.
 
-## files
+The controller uses `max(cost, valueOf(score))` for credit pricing and the corresponding rating reference for statements. `anchorMoveBps` determines the fraction of a qualifying sale gap that moves the anchor, rounded down; zero preserves the anchor clock. Artist and operator cuts come from sale payments. There is no additional royalty in this model.
 
-- `engine.js`: the model. `engine.test.mjs`: the checks.
-- `run.mjs`: the headline run. `build.mjs`: builds `index.html`. `market.mjs`: the real board run (decision 128), writes `out/market.{json,md}`.
-- `page.*`: the page source (`page.body.html`, `page.css`, `page.ui1.js` to `page.ui4.js`). `index.html`: the built page.
-- `data/`: the calibration pulls. `notes.md` describes them.
-- `results/`: written by `run.mjs`, ignored by git through `sim/.gitignore`.
+`sniperSeconds` controls when the Core payee latch can activate. `payeePpm` is zero at launch. The hook skim window is a separate launch input, `skimSeconds`; editing the payee latch does not change it. Market supply, fee volume, score mix and buyer behavior remain separate model assumptions.
+
+## Precision and coverage
+
+Bucket accounting and the standalone balance-conversion vectors use BigInt. Market prices, rate trajectories, page controls and totals use JavaScript Number. Inputs above 2^53 may lose integer precision, and converting a rounded Number to BigInt cannot restore it. Widened numeric controls allow the supported settings to be explored, but do not provide exact uint64 or uint128 endpoint evidence.
+
+`engine.test.mjs` exercises explicit model promises and shared integer inputs. These are not an executed EVM differential test. Solidity boundary, overflow and transaction tests remain necessary. The model does not replace release gates or deployment rehearsal.
+
+The pool price is represented by `balancePoolMult`; the balance module returns the configured per-point value. Every modeled composer passes the coin minimum. Migration, successors, rescues, ownership and real adapter execution are outside the economic simulation. Caller payments that are zero at launch are not modeled; listing and buyback gas payments use configured gas estimates.
+
+`sim/data/` contains historical calibration pulls. `run.mjs` and the default `market.mjs` command perform broader historical grids; they were not rerun for decision 129. Previous headline totals and historical `out/` or `results/` reports predate the cap and updated launch settings and must not be treated as measurements of the current configuration.
+
+## Decision 129 browser integration verification
+
+The focused engine file passed 1,960 checks after the execution-step and hook-window fixes. The browser integration check builds the controls with a minimal DOM, verifies every initial contract setting against model defaults, exercises all seven new numeric controls and scheduled changes, rejects invalid settings, runs one day of the economic model, and compiles the generated page script. It does not measure browser painting or 90-day interactive latency. One measured Node integration run took 105 ms for the one-day economic simulation; longer horizons and finer steps require more work.

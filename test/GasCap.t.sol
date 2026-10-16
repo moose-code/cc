@@ -142,11 +142,7 @@ contract GasCapTest is SeaportBase {
         uint256 g = gasleft();
         core.redeemStatement(sid);
         g -= gasleft();
-        _row(
-            "redeemStatement, eth lane (stand in balanceModule), cold",
-            g,
-            abi.encodeCall(core.redeemStatement, (sid))
-        );
+        _row("redeemStatement, eth lane (stand in balanceModule), cold", g, abi.encodeCall(core.redeemStatement, (sid)));
     }
 
     // ------------------------------------------------------------------ the sell doors, batch size
@@ -291,8 +287,7 @@ contract GasCapTest is SeaportBase {
     // promise: SPEC 1 swapCredit gas, a pile credit swapped for one of higher score with the fee burned, cold
     function test_gas_swapCredit() public {
         uint256[] memory two = _credits(taker, 2);
-        (uint256 outId, uint256 inId) =
-            _scoreOf(two[0]) <= _scoreOf(two[1]) ? (two[0], two[1]) : (two[1], two[0]);
+        (uint256 outId, uint256 inId) = _scoreOf(two[0]) <= _scoreOf(two[1]) ? (two[0], two[1]) : (two[1], two[0]);
         // the outgoing credit goes into the pile through a full rate sell
         _liftRateCap();
         _fundPot(5 ether);
@@ -365,7 +360,7 @@ contract GasCapTest is SeaportBase {
         Settings memory s = core.settings();
         s.payeePpm = 90_909;
         _setSettings(s);
-        vm.warp(block.timestamp + core.SNIPER_SECONDS() + 1);
+        vm.warp(block.timestamp + core.settings().sniperSeconds + 1);
         vm.deal(address(core), address(core).balance + 1 ether);
         core.book(); // the latch book past the window shares nothing
         vm.deal(address(core), address(core).balance + 1 ether);
@@ -394,5 +389,4 @@ contract GasCapTest is SeaportBase {
         console.log("READ nextPage share of the cap in percent", g * 100 / PAGE_GAS);
         assertLt(g, PAGE_GAS);
     }
-
 }

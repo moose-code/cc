@@ -2,7 +2,15 @@
 pragma solidity ^0.8.28;
 
 import {CommonBase} from "forge-std/Base.sol";
-import {Stack, Settings, Sale, Credit, Mainnet, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
+import {
+    Stack,
+    Settings,
+    Sale,
+    Credit,
+    Mainnet,
+    RATE_START_MIN_WEI,
+    RATE_START_MAX_WEI
+} from "../src/interfaces/Interfaces.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {CreditBounds} from "../src/lib/CreditBounds.sol";
 
@@ -212,6 +220,11 @@ abstract contract ConfigReader is CommonBase {
         // forge-lint: disable-next-line(unsafe-typecast)
         s.swapFeeCc = uint96(_uint(j, ".settings.swapFeeCc", type(uint96).max));
         s.climbMultiplierCapBps = _u16(j, ".settings.climbMultiplierCapBps");
+        s.spendCapBps = _u16(j, ".settings.spendCapBps");
+        s.bucketSeconds = _u32(j, ".settings.bucketSeconds");
+        s.balanceBidCapBps = _u32(j, ".settings.balanceBidCapBps");
+        s.idleStepSeconds = _u32(j, ".settings.idleStepSeconds");
+        s.sniperSeconds = _u32(j, ".settings.sniperSeconds");
     }
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {
@@ -220,7 +233,8 @@ abstract contract ConfigReader is CommonBase {
             startCapBps: _u32(j, ".sale.startCapBps"),
             decayHours: _u16(j, ".sale.decayHours"),
             anchorHalfLife: _u32(j, ".sale.anchorHalfLife"),
-            anchorMinCost: _u128(j, ".sale.anchorMinCost")
+            anchorMinCost: _u128(j, ".sale.anchorMinCost"),
+            anchorMoveBps: _u16(j, ".sale.anchorMoveBps")
         });
     }
 
@@ -325,11 +339,11 @@ abstract contract ConfigReader is CommonBase {
     /// @notice the name of the first launch sale setting outside the bounds the controller enforces, zero when all are inside
     function saleViolation(LaunchConfig memory c) internal pure returns (bytes32) {
         Sale memory k = c.sale;
-        if (k.markupBps < 10_000 || k.markupBps > 40_000) return "markupBps";
-        if (k.startCapBps < k.markupBps || k.startCapBps > 200_000) return "startCapBps";
-        if (k.decayHours < 1 || k.decayHours > 720) return "decayHours";
-        if (k.anchorHalfLife < 1 days || k.anchorHalfLife > 90 days) return "anchorHalfLife";
-        if (k.anchorMinCost > 10 ether) return "anchorMinCost";
+        if (k.markupBps < 10_000) return "markupBps";
+        if (k.startCapBps < k.markupBps) return "startCapBps";
+        if (k.decayHours < 1) return "decayHours";
+        if (k.anchorHalfLife < 1) return "anchorHalfLife";
+        if (k.anchorMoveBps > 10_000) return "anchorMoveBps";
         return bytes32(0);
     }
 
