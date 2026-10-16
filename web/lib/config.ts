@@ -32,9 +32,8 @@ export const localAccounts: { name: string; address: Address }[] = (() => {
 // The Core. The controller, the coin and the balance module are read from it.
 export const core = addr(process.env.NEXT_PUBLIC_CORE);
 
-// Fixed collections (docs/INTEGRATION.md section 1).
-export const credits: Address = "0x97630aA70AB14ed9883B41dAfccBc11349723043";
-export const statements: Address = "0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b";
+// Fixed collections (docs/INTEGRATION.md section 1, packages/engine/src/addresses.ts).
+export { CREDITS as credits, STATEMENTS as statements } from "@cc/engine/addresses";
 
 // The coin/eth v4 pool: the live skim hook, the dynamic-fee flag and the tick
 // spacing. The defaults are the mainnet launch params; the local record

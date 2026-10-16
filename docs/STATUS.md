@@ -43,7 +43,7 @@ runtime sizes at the tip (limit 24,576): Core 21,531, CoreLib 14,495, Controller
 
 - the launch config's `image` and `description` are empty owner inputs; the preflight metadata row fails until they are filled with the final content.
 - `coin.lockRecipients()` and `lockSuccessor()`: later owner decisions (RUNBOOK section 4, the lock table). `coin.lockAllowlist()`: the owner's.
-- the owner keeper: post launch, a bounty bot (decision 100).
+- the owner keeper: built in `keeper/` to ship before launch (decisions 128 to 131, docs/RUNBOOK.md section 8); its unit tests, the per door end to end on the local stack and the Seaport sweep on a chain id 1 fork pass. hosting, the alert webhook and the keeper wallet are the owner's to set up. compose and redeem pay their caller at launch (decision 130), a launch config change the preflight sign off and the freeze re-run must cover.
 - the local seed gives a1 no CC and under a page of credits, so the restyle and the composes are driven by the scenario stages, not the UI; a seed change (one coin and 80 credits to a1) would close that.
 - the flywheel presentation: a design brief for three directions was written on 2026-10-13; the current bar is the first draft.
 - the balance module: written when the redeem contract is final (decision 101).

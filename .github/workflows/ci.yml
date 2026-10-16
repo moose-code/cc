@@ -41,7 +41,7 @@ jobs:
           files=$(git diff --name-only "$BASE"...HEAD)
           printf '%s\n' "$files"
           has() { printf '%s\n' "$files" | grep -Eq "$1" && echo true || echo false; }
-          echo "web=$(has '^(web/|\.github/workflows/)')" >> "$GITHUB_OUTPUT"
+          echo "web=$(has '^(web/|keeper/|packages/|package\.json$|package-lock\.json$|\.github/workflows/)')" >> "$GITHUB_OUTPUT"
           echo "contracts=$(has '^(src/|test/|script/|lib/|foundry\.toml$|foundry\.lock$|remappings\.txt$|\.gitmodules$|\.github/workflows/)')" >> "$GITHUB_OUTPUT"
           tests=$(git diff --name-only --diff-filter=d "$BASE"...HEAD -- 'test/*.t.sol' 'test/**/*.t.sol' | sort -u | tr '\n' ' ')
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
