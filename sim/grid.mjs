@@ -10,8 +10,8 @@ export const A = { credits: 500, ask: 0.005, sellH: 6, totalH: 48, collapseSec: 
 
 const GRID = { drop: [50, 100, 200, 300, 500], climb: [50, 100, 200], recFloor: [200, 400], pot: [10, 100] };
 
-function makeCore(cell) {
-  const p = { ...DEFAULTS, dropPerCreditPct: cell.drop / 100, climbPerMin: cell.climb / 100, recoveryClimbPerMin: cell.rec / 100, spendCapBps: cell.cap ?? 100, ...(cell.floorBps != null && { dropToPct: cell.floorBps / 100 }) };
+export function makeCore(cell) {
+  const p = { ...DEFAULTS, dropPerCreditPct: cell.drop / 100, climbPerMin: cell.climb / 100, recoveryClimbPerMin: cell.rec / 100, spendCapBps: cell.cap ?? 100, ...(cell.floorBps != null && { dropToPct: cell.floorBps / 100 }), ...(cell.ceilBps != null && { ceilPct: cell.ceilBps / 100 }), ...(cell.idleLoosenBps != null && { idleLoosenPct: cell.idleLoosenBps / 100 }), ...(cell.idleStepSeconds != null && { idleStepSeconds: cell.idleStepSeconds }) };
   const core = new Core(p, 0);
   core.fund(cell.pot, 0);
   return core;
