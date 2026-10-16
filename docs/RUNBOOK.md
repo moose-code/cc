@@ -273,6 +273,7 @@ every value is an environment variable; nothing secret is written to a file by t
 | `BREAKER_THRESHOLD`, `BREAKER_PAUSE_SEC` | 3, 3600 | consecutive failures of a door (an on chain revert, a send no relay took, a receipt that never came) that pause it, and for how long |
 | `DOORS` | all | a comma list to run only some doors |
 | `STATE_DIR` | `keeper/.state` | the daily ledger files (amounts and hashes only) |
+| `RPC_TIMEOUT_MS` | 20000 | per request read timeout; a local fork with a cold upstream needs 120000 |
 
 ### start
 
