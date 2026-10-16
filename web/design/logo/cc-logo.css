@@ -1,0 +1,6 @@
+/* Blend mode follows theme. Matches existing [data-theme] switching. */
+.cc-logo-sq { mix-blend-mode: multiply; }
+[data-theme="dark"] .cc-logo-sq { mix-blend-mode: screen; }
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] .cc-logo-sq, :root:not([data-theme]) .cc-logo-sq { mix-blend-mode: screen; }
+}

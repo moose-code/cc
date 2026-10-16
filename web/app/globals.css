@@ -111,7 +111,7 @@ a:hover {
   color: var(--ink);
 }
 .brand b {
-  margin-left: 16px;
+  margin-left: 12px;
   font-size: 15px;
   font-weight: 600;
 }
@@ -126,41 +126,35 @@ a:hover {
   font-weight: 600;
 }
 
-/* three 16px plates, each offset 4px right and down; overlaps print as mixed inks */
-.logo {
+/* CC logo (components/CCLogo.tsx): three squares on a four-corner track; overlaps print as mixed inks */
+.cc-logo {
   position: relative;
-  display: block;
+  display: inline-block;
+  flex: none;
   align-self: center;
-  width: 24px;
-  height: 24px;
   isolation: isolate;
 }
-.logo i {
+.cc-logo i {
   position: absolute;
-  top: 0;
-  width: 16px;
-  height: 16px;
   mix-blend-mode: multiply;
 }
-.logo i:nth-child(1) {
-  left: 0;
+.cc-logo.moving i {
+  transition: left 0.7s cubic-bezier(0.6, 0, 0.3, 1), top 0.7s cubic-bezier(0.6, 0, 0.3, 1);
+}
+.cc-logo i.c {
   background: var(--c);
 }
-.logo i:nth-child(2) {
-  top: 4px;
-  left: 4px;
+.cc-logo i.m {
   background: var(--m);
 }
-.logo i:nth-child(3) {
-  top: 8px;
-  left: 8px;
+.cc-logo i.y {
   background: var(--y);
 }
-:root[data-theme="dark"] .logo i {
+:root[data-theme="dark"] .cc-logo i {
   mix-blend-mode: screen;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .logo i {
+  :root:not([data-theme="light"]) .cc-logo i {
     mix-blend-mode: screen;
   }
 }
@@ -226,26 +220,34 @@ a:hover {
 .hdr-acq {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--ink);
-  background: var(--ink);
-  color: var(--on-ink);
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--divider);
+  background: none;
+  color: var(--faint);
   font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 .hdr-acq i {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
+  background: var(--disabled);
+}
+/* a listing clears: the button reads as live, still quieter than the wallet button */
+.hdr-acq.on {
+  border-color: var(--ink);
+  color: var(--ink);
+  cursor: pointer;
+}
+.hdr-acq.on i {
   background: var(--m);
 }
-.hdr-acq:disabled {
+.hdr-acq.on:disabled {
   opacity: 0.6;
-  cursor: default;
+  cursor: progress;
 }
 .hdr-acq-err {
   color: var(--muted);
@@ -2936,5 +2938,96 @@ button.slot:disabled {
   }
   .cband-grid {
     grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+}
+
+/* ---- listings page ------------------------------------------------------- */
+
+.ltable-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 112px 56px 88px 88px 72px 136px 96px;
+  align-items: center;
+  column-gap: 12px;
+  min-height: 45px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+}
+.ltable-row.on {
+  background: var(--surface);
+}
+.ltable-head {
+  min-height: 32px;
+  border-bottom: 1px solid var(--structure);
+}
+.ltable-row .num {
+  text-align: right;
+  white-space: nowrap;
+}
+.lact {
+  display: flex;
+  justify-content: flex-end;
+}
+.lact .hdr-acq {
+  height: 28px;
+  padding: 0 10px;
+}
+.lnote {
+  margin: 12px 0 0;
+}
+.lhist {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 24px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--structure);
+  font-size: 12px;
+}
+.lhist-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lhist-bar {
+  display: flex;
+  align-items: flex-end;
+  height: 56px;
+}
+.lhist-bar i {
+  width: 100%;
+}
+.lhist-bar i {
+  display: block;
+  min-height: 1px;
+  background: var(--ink);
+}
+.lhist-col:first-child .lhist-bar i {
+  background: var(--m);
+}
+@media (max-width: 860px) {
+  .ltable-row {
+    grid-template-columns: 28px minmax(0, 1fr) 88px 64px 88px 80px;
+    column-gap: 8px;
+  }
+  .ltable-row .hide-sm {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .ltable-row {
+    grid-template-columns: 28px minmax(0, 1fr) 60px 48px 64px 64px;
+    column-gap: 6px;
+    font-size: 12px;
+  }
+  .lact .hdr-acq i {
+    display: none;
+  }
+  .lact .hdr-acq {
+    padding: 0 6px;
+    font-size: 11px;
+  }
+  .lhist {
+    gap: 6px;
   }
 }

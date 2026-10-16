@@ -13,13 +13,15 @@ const OS = "https://api.opensea.io/api/v2";
 const SLUG = "credits";
 const SEAPORT_1_6 = "0x0000000000000068f116a894984e2db1123eb395";
 const PAGE = 100; // OpenSea's maximum page size
-const MAX_LISTINGS = 200; // listings read from the collection per cache window (two pages)
+const MAX_LISTINGS = 200; // the cheapest listings kept per cache window (two pages); sent as `max` for the listings page caption
 const CACHE_MS = 20_000;
 const FULFILL_CACHE_MS = 10_000;
 
 interface Out {
   /** open ETH listings of the collection, cheapest first; `price` is the wei the buyer pays in total */
   listings: { id: string; price: string; orderHash: string; expiry: number }[];
+  /** the bound on `listings` */
+  max: number;
 }
 interface Fulfill {
   id?: string;
@@ -63,7 +65,7 @@ async function build(): Promise<Out> {
     if (!next) break;
   }
   rows.sort((a, b) => (BigInt(a.price) < BigInt(b.price) ? -1 : 1));
-  return { listings: rows.slice(0, MAX_LISTINGS) };
+  return { listings: rows.slice(0, MAX_LISTINGS), max: MAX_LISTINGS };
 }
 
 // BasicOrderParameters of one order, from OpenSea's fulfillment data, if the adapter accepts the order.
@@ -114,7 +116,7 @@ async function fulfill(orderHash: string): Promise<Fulfill> {
 }
 
 export async function GET(req: Request) {
-  const empty: Out = { listings: [] };
+  const empty: Out = { listings: [], max: MAX_LISTINGS };
   if (!process.env.OPENSEA_API_KEY || !seaportAdapter || !core) return Response.json(empty);
 
   const hash = new URL(req.url).searchParams.get("fulfill");

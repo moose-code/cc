@@ -20,8 +20,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            indexer/package-lock.json
       - run: npm ci
+      # web/lib/indexer-schema.ts type checks against indexer/ponder.schema.ts, which imports the ponder package
+      - run: npm ci
+        working-directory: indexer
       - run: npx tsc --noEmit
       - run: npm run check
       # next's build cache, keyed on the lockfile and the sources

@@ -328,9 +328,30 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | balance | $BALANCE price history (phase 2) | pool, quotes, module available |
 | keeper | `engine.lastBuybackBlock` (I; chain mode: Core view), `stats` payouts | pots, artist, payee, head |
 
+### 9.6a listings page
+
+| value | source |
+|---|---|
+| listed credits, both venues | as the header acquire button (9.1): I `strategy_listing` where `active` (chain mode: the strategy event scan) and the `web/app/api/listings` route (200 cheapest OpenSea listings, bound `MAX_LISTINGS`, sent as `max` for the caption); one row per credit at its cheapest price |
+| rating | I `credit.score`; chain mode `creditScores` |
+| bid | D `ethRate * score / refScore` from the L snapshot for every row; L `bidOf`, `ownerOf` and `nftForSale` for the 100 rows nearest the bid |
+| gap, counts, histogram | D price over bid |
+| clears in | D `web/lib/climb.ts` (mirror of `CoreLib._climb`) from L `rateAtCheckpoint`, `checkpointTime`, `lastFillTime`, anchor storage slots 27, 29, 30, the settings and the pot; assumes no fills and a constant pot |
+| acquire action | L `Core.buyListing`, simulated before sending, shared with the header button (`useAcquireTx`) |
+
 ### 9.7 swap panel
 
 Live only: slot0, quoter, hook fee, balances, allowances, receipts. Phase 2 adds I `price_hourly` for a 24 h change and a chart, replacing the archive `getSlot0` read.
+
+### 9.8 page metadata and share images
+
+Server side (`web/lib/meta.ts`), cached 60 s, each source under a 2.5 s timeout. The indexer is read first; the chain second.
+
+| field | source |
+|---|---|
+| credit and statement title, rating, state, format name | I `credit`, `statement` row (`score`, `rating`, `state`, `formatName`) |
+| token art of the share image | I `tokenUri`; L `tokenURI` when the row is absent |
+| held and composed counts on the index share images | I count of `credit` rows in `held`, count of `statement` rows |
 
 ## 10. deploy
 
