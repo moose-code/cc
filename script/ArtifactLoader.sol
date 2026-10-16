@@ -42,7 +42,7 @@ abstract contract ArtifactIdentity is CommonBase {
 /// @notice reads the artifact `name` from `out/` and keeps its masked runtime hash, length and slots in the process
 /// environment. `PostflightV2` creates one and calls `load` once per artifact: the json and the copies each cheatcode
 /// call makes of it are freed when the frame returns, so a run that loads six artifacts stays under a block's gas. a
-/// contract created by a script has cheatcode access; `forge script` refuses `address(this)` in the script itself
+/// contract created by a script has cheatcode access; `forge script` refuses a self call from the script contract itself
 contract ArtifactLoader is ArtifactIdentity {
     /// @dev json objects decode in key order: length, then start
     struct IdRef {
