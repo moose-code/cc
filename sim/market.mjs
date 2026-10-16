@@ -255,14 +255,14 @@ export function runSpendCapStudy() {
     const inventory = assumptions.scoreMix.flatMap(({ points, count }) => Array(count).fill(points));
     for (let i = inventory.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [inventory[i], inventory[j]] = [inventory[j], inventory[i]]; }
     const core = new Core({ ...DEFAULTS, spendCapBps: cap }, offset); core.fund(assumptions.initialPotEth, offset);
-    let bought = 0, spent = 0, crossing = null, stopped = null, recovery = null, initialRecovery = null, budgetStallBlocks = 0, unmarketableBlocks = 0;
+    let bought = 0, pointsBought = 0, spent = 0, crossing = null, stopped = null, recovery = null, initialRecovery = null, budgetStallBlocks = 0, unmarketableBlocks = 0;
     const askAt = (t) => scenario === 'flat' ? assumptions.flatAskEth : assumptions.initialReferenceBidEth * (1 - 0.8 * Math.min(t / assumptions.collapseSeconds, 1));
     const checkCrossing = (t) => {
-      if (crossing === null && (scenario === 'flat' || t >= assumptions.collapseSeconds) && core.ethRate(t + offset) / W < askAt(t)) crossing = { seconds: t, credits: bought, spentEth: spent, referenceBidEth: core.ethRate(t + offset) / W, askEth: askAt(t) };
+      if (crossing === null && (scenario === 'flat' || t >= assumptions.collapseSeconds) && core.ethRate(t + offset) / W < askAt(t)) crossing = { seconds: t, credits: bought, pointsBought, spentEth: spent, referenceBidEth: core.ethRate(t + offset) / W, askEth: askAt(t) };
     };
     for (let t = 0; t <= assumptions.totalHorizonSeconds; t += assumptions.blockSeconds) {
       checkCrossing(t);
-      if (stopped === null && (t >= assumptions.sellingHorizonSeconds || inventory.length === 0)) stopped = { seconds: t, credits: bought, spentEth: spent, potEth: core.ethPot, referenceBidEth: core.ethRate(t + offset) / W, reason: inventory.length === 0 ? 'inventory exhausted' : 'selling horizon' };
+      if (stopped === null && (t >= assumptions.sellingHorizonSeconds || inventory.length === 0)) stopped = { seconds: t, credits: bought, pointsBought, spentEth: spent, potEth: core.ethPot, referenceBidEth: core.ethRate(t + offset) / W, reason: inventory.length === 0 ? 'inventory exhausted' : 'selling horizon' };
       if (stopped !== null) {
         if (crossing !== null && recovery === null && core.ethRate(t + offset) / W >= assumptions.flatAskEth) recovery = t - stopped.seconds;
         if (initialRecovery === null && core.ethRate(t + offset) >= DEFAULTS.rateStart) initialRecovery = t - stopped.seconds;
@@ -275,15 +275,15 @@ export function runSpendCapStudy() {
         if (index < 0) { if (!filled) unmarketableBlocks++; break; }
         const paid = core.sellForEth(t + offset, inventory[index]);
         if (!(paid > 0)) { budgetStallBlocks++; break; }
-        inventory.splice(index, 1); bought++; spent += paid; filled++; checkCrossing(t);
+        pointsBought += inventory[index]; inventory.splice(index, 1); bought++; spent += paid; filled++; checkCrossing(t);
       }
       if (inventory.length === 0) {
-        stopped = { seconds: t, credits: bought, spentEth: spent, potEth: core.ethPot, referenceBidEth: core.ethRate(t + offset) / W, reason: 'inventory exhausted' };
+        stopped = { seconds: t, credits: bought, pointsBought, spentEth: spent, potEth: core.ethPot, referenceBidEth: core.ethRate(t + offset) / W, reason: 'inventory exhausted' };
         if (crossing !== null && core.ethRate(t + offset) / W >= assumptions.flatAskEth) recovery = 0;
         if (core.ethRate(t + offset) >= DEFAULTS.rateStart) initialRecovery = 0;
       }
     }
-    rows.push({ scenario, capBps: cap, startBucketOffsetSeconds: offset, crossing, stopped, recoverySecondsAfterStop: recovery, initialBidRecoverySecondsAfterStop: initialRecovery, remainingCredits: inventory.length, budgetStallBlocks, unmarketableBlocks, finalPotEth: core.ethPot, finalReferenceBidEth: core.ethRate(assumptions.totalHorizonSeconds + offset) / W });
+    rows.push({ scenario, capBps: cap, startBucketOffsetSeconds: offset, crossing, stopped, recoverySecondsAfterStop: recovery, initialBidRecoverySecondsAfterStop: initialRecovery, remainingCredits: inventory.length, pointsBought, remainingPoints: inventory.reduce((sum, score) => sum + score, 0), budgetStallBlocks, unmarketableBlocks, finalPotEth: core.ethPot, finalReferenceBidEth: core.ethRate(assumptions.totalHorizonSeconds + offset) / W });
   }
   return { assumptions, rows };
 }
