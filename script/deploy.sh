@@ -18,16 +18,25 @@ RPC_OVERRIDE="${RPC_URL:-}"
 set -a; . "script/env/$ENV.env"; set +a
 [ -n "$RPC_OVERRIDE" ] && RPC_URL="$RPC_OVERRIDE"
 
-# STACK=master repoints the launch at the master stack fork record (script/config/v2-master.json) and STACK is exported
-# so the forge scripts overlay the same record. the node stays chain id 31337 and the signer stays local.env's dev
-# wallet, which is the master stack owner on the fork, so one key owns the factory and the engine as on mainnet. the
-# default is the live stack in the config file.
+# STACK=master repoints the launch at the master stack fork record (script/config/v2-master.json). the factory and the
+# signer are the master stack owner, and STACK is exported so the forge scripts overlay the same record. the default is
+# the live stack in the config file.
 STACK="${STACK:-live}"
 export STACK
 if [ "$STACK" = master ]; then
   MASTER="script/config/v2-master.json"
   FACTORY="$(jq -r .factory "$MASTER")"
   HOOK="$(jq -r .hook "$MASTER")"
+  STACK_OWNER=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 # the dump's factory owner, anvil account 0
+  # local ui chain: the engine's deployer and Core owner is the dev wallet, as on mainnet; the fork's factory owner
+  # (anvil account 0 in the dump) hands the factory to it first, since the launch is owner only
+  if [ "$(cast call "$FACTORY" "owner()(address)" --rpc-url "$RPC_URL")" != "$DEPLOYER" ]; then
+    cast send "$FACTORY" "transferOwnership(address)" "$DEPLOYER" --from "$STACK_OWNER" --unlocked --rpc-url "$RPC_URL" >/dev/null
+    cast send "$FACTORY" "acceptOwnership()" --from "$DEPLOYER" --unlocked --rpc-url "$RPC_URL" >/dev/null
+    echo "deploy.sh: factory ownership moved to $DEPLOYER on the local chain"
+  fi
+  # the master stack dump was taken on a chain id 1 fork; the anvil loads it on chain 1
+  CHAIN_ID=31337 # local ui chain: the dump is loaded onto 31337 so the web and the wallet keep their local network
 else
   FACTORY="$(jq -r .stack.factory "$LAUNCH_CONFIG")"
   HOOK="$(jq -r .stack.hook "$LAUNCH_CONFIG")"
