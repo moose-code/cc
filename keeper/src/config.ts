@@ -50,6 +50,9 @@ export interface Config {
   dailyBudget: bigint;
   // a listing must be seen sweepable this long before the keeper sweeps it (decision 137)
   listingDelaySec: number;
+  // pending income above this, wei, and a last book older than bookMinSec, make the keeper book a latched Core
+  bookMinWei: bigint;
+  bookMinSec: number;
   tickMs: number;
   breakerThreshold: number;
   breakerPauseSec: number;
@@ -211,6 +214,8 @@ export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRe
     margin: ether(env, "MARGIN_ETH", "0.00005"),
     dailyBudget: ether(env, "DAILY_BUDGET_ETH", "0.2"),
     listingDelaySec: num(env, "LISTING_DELAY_SEC", 120),
+    bookMinWei: ether(env, "BOOK_MIN_ETH", "0.01"),
+    bookMinSec: num(env, "BOOK_MIN_SEC", 600),
     tickMs: num(env, "TICK_MS", 12_000),
     breakerThreshold: num(env, "BREAKER_THRESHOLD", 3),
     breakerPauseSec: num(env, "BREAKER_PAUSE_SEC", 3600),
@@ -249,6 +254,8 @@ export function describe(c: Config) {
     marginEth: Number(c.margin) / 1e18,
     dailyBudgetEth: Number(c.dailyBudget) / 1e18,
     listingDelaySec: c.listingDelaySec,
+    bookMinEth: Number(c.bookMinWei) / 1e18,
+    bookMinSec: c.bookMinSec,
     strategy: c.strategy.mode,
     strategyFullRead: c.strategyFullRead,
     indexer: Boolean(c.indexerUrl),
