@@ -97,6 +97,7 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
     coreEth,
     balanceRate,
     artist,
+    climbMultiplier,
   ] = await client.multicall({
     ...mc,
     blockNumber,
@@ -124,6 +125,7 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
       { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [coreAddr] },
       { ...c, functionName: "balanceRate" },
       { ...c, functionName: "artist" },
+      { ...c, functionName: "climbMultiplier" },
     ] as const,
   });
   // ethPot plus the share of the unbooked fee income that the next Core._book adds (Core._income, _split)
@@ -163,6 +165,7 @@ async function snapshotAt(client: Client, coreAddr: Address, blockNumber?: bigin
     ethRate,
     ethPrice,
     floorRate,
+    climbMultiplier,
     ethPot,
     potWithPending,
     ethToBuyback,

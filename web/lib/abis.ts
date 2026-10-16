@@ -16,6 +16,7 @@ export const coreAbi = parseAbi([
   "function balanceRate() view returns (uint256)",
   "function balanceBidOf(uint256 id) view returns (uint256)",
   "function floorRate() view returns (uint256)",
+  "function climbMultiplier() view returns (uint256)",
   "function ethPot() view returns (uint256)",
   "function ethToBuyback() view returns (uint256)",
   "function ethRedeemBurn() view returns (uint256)",

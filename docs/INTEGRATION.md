@@ -20,6 +20,7 @@ one multicall over these views answers everything a seller, a buyer or a keeper 
 | `core.ethRate()` | the bid for a credit of score `refScore` now, with the unbooked fees counted into the pot |
 | `core.bidOf(id)` | the bid for credit `id` now: `ethRate()` times its score over `refScore`, the number a seller or keeper uses |
 | `core.ethPrice()`, `core.floorRate()` | the price state before the pot clamp; the rate under every price floor |
+| `core.climbMultiplier()` | the pot scaled climb multiplier now, bps (10,000 is 1x, 40,000 is 4x): the pages of 80 credits the pot covers at the last fill rate, clamped to [1, 4]. the idle climb and the ceiling's idle loosening run this many times as fast. show it when above 1x ("bid climbing 3x") |
 | `core.ethPot()`, `core.ethToBuyback()`, `core.ethRedeemBurn()` | the eth pots |
 | `IBalanceModule(core.balanceModule()).available()` | the balance token the module commits to the bid (the Core holds none) |
 | `core.balanceRate()` | the balance token bid now, bps of par (par is a credit's `score * unitPerPoint`): the rising balance bid lowered to `available()` as bps of par, at most 10,000 |

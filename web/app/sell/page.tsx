@@ -28,6 +28,8 @@ export default function SellPage() {
   const bid = snap?.ethRate ?? 0n;
   const pot = snap?.ethPot ?? 0n;
   const buyableNow = bid > 0n ? Number(pot / bid) : 0;
+  // the pot scaled climb multiplier (10_000 is 1x): shown when the pot drives the idle climb above 1x
+  const climbX = Number(snap?.climbMultiplier ?? 10000n) / 10000;
   // the module reads can fail; the balance side is then unavailable and the eth side renders alone
   const balanceBid = Boolean(snap?.balanceOn && snap.settings.balanceBidOn && snap.balanceUnit !== undefined);
   const now = useNow(5000);
@@ -89,6 +91,9 @@ export default function SellPage() {
             <div className="buybox-price">
               <span className="muted">bid, reference credit</span>
               <span className="big">{eth(bid)} eth</span>
+              {climbX > 1 && (
+                <span className="muted">bid climbing {climbX.toFixed(1)}x (pot covers {Math.round(climbX)} {Math.round(climbX) === 1 ? "page" : "pages"})</span>
+              )}
             </div>
             <div className="quote">
               <div className="r">
