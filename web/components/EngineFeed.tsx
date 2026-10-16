@@ -1,10 +1,13 @@
 "use client";
 
-import { useFeed, useHistoryDown, type FeedFilter } from "@/lib/data";
+import { useFeed, useHistoryDown } from "@/lib/data";
 import { useBlockTs, useScan } from "@/lib/engine";
 import type { FeedEvent, FeedKind } from "@/lib/events";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
-import { potPoints, useCreditTraits, useNow, useScores, useSnapshot } from "@/lib/live";
+import { potPoints, useCreditTraits, useHead, useNow, useScores, useSnapshot } from "@/lib/live";
+import { useAcquireTx } from "@/lib/useAcquire";
+import { useListings } from "@/lib/useListings";
+import { ListingsTable } from "./ListingsTable";
 import { useStatementRating } from "./Cards";
 import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
@@ -24,7 +27,7 @@ const PLATES = ["C", "M", "Y", "K"]; // bit 0 to 3 of CreditTraits.mask; a set b
 
 const PAGE = 100; // rows per page of the feed
 
-const FILTERS: FeedFilter[] = ["all", "credits", "statements"];
+type FeedView = "ledger" | "listings";
 
 const TWEEN_MS = 1200;
 
@@ -93,8 +96,8 @@ export function EngineProgress() {
 export function EngineFeed() {
   const now = useNow();
   const [limit, setLimit] = useState(PAGE);
-  const [filter, setFilter] = useState<FeedFilter>("all");
-  const { events: shown, total } = useFeed(filter, limit);
+  const [view, setView] = useState<FeedView>("ledger");
+  const { events: shown, total } = useFeed("all", limit);
   const historyDown = useHistoryDown();
   // one batched read for the credits on screen
   const ids = [...new Set(shown.flatMap((e) => (e.tile?.kind === "credit" ? [BigInt(e.tile.id)] : [])))];
@@ -111,40 +114,70 @@ export function EngineFeed() {
   return (
     <section className="ledger">
       <div className="ledger-head">
-        <h2>engine ledger</h2>
+        <h2>{view === "listings" ? "listings" : "engine ledger"}</h2>
         <span className="live">
           <i className="mark c" />
           live
         </span>
-        <div className="seg" role="group" aria-label="filter the ledger">
-          {FILTERS.map((f) => (
-            <button key={f} className={f === filter ? "on" : undefined} onClick={() => setFilter(f)}>
-              {f}
+        <div className="seg" role="group" aria-label="feed view">
+          {(["ledger", "listings"] as FeedView[]).map((v) => (
+            <button key={v} className={v === view ? "on" : undefined} onClick={() => setView(v)}>
+              {v}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="ledger-table">
-        <div className="ledger-cols ledger-th">
-          <span>time</span>
-          <span>entry</span>
-          <span>ref</span>
-          <span className="plates">plates</span>
-          <span className="num rate">rating</span>
-          <span className="num">ETH</span>
-        </div>
-        {shown.map((e) => (
-          <Row key={e.key} e={e} now={now} score={e.tile?.kind === "credit" ? scores?.[String(e.tile.id)] : undefined} mask={e.tile?.kind === "credit" ? traits?.[String(e.tile.id)]?.mask : undefined} />
-        ))}
-      </div>
-      {historyDown && <p className="muted ix-down">history unavailable</p>}
-      {total > limit && (
-        <button className="action more" onClick={() => setLimit(limit + PAGE)}>
-          {`show more (${total - limit} older)`}
-        </button>
+      {view === "listings" ? (
+        <ListingsPanel />
+      ) : (
+        <>
+          <div className="ledger-table">
+            <div className="ledger-cols ledger-th">
+              <span>time</span>
+              <span>entry</span>
+              <span>ref</span>
+              <span className="plates">plates</span>
+              <span className="num rate">rating</span>
+              <span className="num">ETH</span>
+            </div>
+            {shown.map((e) => (
+              <Row key={e.key} e={e} now={now} score={e.tile?.kind === "credit" ? scores?.[String(e.tile.id)] : undefined} mask={e.tile?.kind === "credit" ? traits?.[String(e.tile.id)]?.mask : undefined} />
+            ))}
+          </div>
+          {historyDown && <p className="muted ix-down">history unavailable</p>}
+          {total > limit && (
+            <button className="action more" onClick={() => setLimit(limit + PAGE)}>
+              {`show more (${total - limit} older)`}
+            </button>
+          )}
+        </>
       )}
     </section>
+  );
+}
+
+const LISTINGS_PAGE = 50;
+
+// The listings table inside the feed tab: reads listings only while this tab is mounted, so the ledger view adds no
+// listings query. Same data and acquire path as the listings page, OpenSea included.
+function ListingsPanel() {
+  const { data, isLoading } = useListings();
+  const { data: head } = useHead();
+  const { buy, available, pending } = useAcquireTx(head?.n);
+  const [shown, setShown] = useState(LISTINGS_PAGE);
+  const rows = data?.rows ?? [];
+  return (
+    <>
+      <ListingsTable rows={rows.slice(0, shown)} acquire={{ buy, available, pending }} />
+      {isLoading && rows.length === 0 && <p className="muted">reading listings…</p>}
+      {data && rows.length === 0 && <p className="muted">no credits are listed.</p>}
+      {shown < rows.length && (
+        <button className="action more" onClick={() => setShown((n) => n + LISTINGS_PAGE)}>
+          {`show more (${rows.length - shown} more)`}
+        </button>
+      )}
+    </>
   );
 }
 
