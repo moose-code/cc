@@ -35,6 +35,14 @@ export const core = addr(process.env.NEXT_PUBLIC_CORE);
 // Fixed collections (docs/INTEGRATION.md section 1, packages/engine/src/addresses.ts).
 export { CREDITS as credits, STATEMENTS as statements } from "@cc/engine/addresses";
 
+// Listing venues (docs/INDEXER.md section 9.1, owner decision 134): the CreditStrategy proxy, and the two adapters the
+// Core allows for Core.buyListing (deployment record keys strategyAdapter, seaportAdapter).
+export const strategy: Address = "0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6";
+export const strategyAdapter = addr(process.env.NEXT_PUBLIC_STRATEGY_ADAPTER);
+export const seaportAdapter = addr(process.env.NEXT_PUBLIC_SEAPORT_ADAPTER);
+// First block of the browser scan of CreditStrategy events (chain mode); the proxy deploy block.
+export const strategyStartBlock = BigInt(process.env.NEXT_PUBLIC_STRATEGY_START_BLOCK || 26037623);
+
 // The coin/eth v4 pool: the live skim hook, the dynamic-fee flag and the tick
 // spacing. The defaults are the mainnet launch params; the local record
 // overrides them (scripts/local-env.mjs). Native ETH is currency0.
@@ -50,6 +58,12 @@ export const ethUsdFeed: Address = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
 export const deployBlock = process.env.NEXT_PUBLIC_DEPLOY_BLOCK
   ? BigInt(process.env.NEXT_PUBLIC_DEPLOY_BLOCK)
   : undefined;
+
+// The indexer (docs/INDEXER.md): history, lists and slow-moving state. Unset, the pages render live state only.
+export const indexerUrl = (process.env.NEXT_PUBLIC_INDEXER_URL || "").replace(/\/+$/, "") || undefined;
+
+// Credits composed into one statement (the length of Composed.ids).
+export const STATEMENT_SIZE = 80;
 
 // Every engine read and page needs the Core; without it the pages render "engine not deployed".
 export const engineDeployed = Boolean(core);

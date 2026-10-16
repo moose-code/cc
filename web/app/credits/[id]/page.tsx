@@ -1,219 +1,465 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { useAccount, usePublicClient, useReadContract } from "wagmi";
+import { useAccount, usePublicClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { CreditTile } from "@/components/Tiles";
+import { CreditTile, StatementTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { Addr } from "@/components/Addr";
-import { HistRow } from "@/components/History";
+import { Breadcrumb } from "@/components/Shell";
+import { Fact, HeroArt, HistLine, type Ink } from "@/components/Detail";
 import { NotDeployed } from "@/components/NotDeployed";
-import { core, credits, engineDeployed } from "@/lib/config";
+import { useComposeEta } from "@/components/ComposeEta";
+import { core, credits, engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { coreAbi, creditsAbi, erc20Abi } from "@/lib/abis";
-import { useBlockTs, useScan, type CreditEvt } from "@/lib/engine";
-import { countdown, useCredit, useNow, useScores, useSnapshot, type Snapshot } from "@/lib/live";
-import { agoLabel, eth, shortAddr } from "@/lib/format";
+import { useCreditDetail, useHistoryDown, useStatementView, type CreditSale } from "@/lib/data";
+import type { CreditEvt } from "@/lib/events";
+import {
+  countdown,
+  useCreditValues,
+  useNow,
+  usePile,
+  useSnapshot,
+  useStatements,
+  useWalletCredits,
+  type PileCredit,
+  type Snapshot,
+} from "@/lib/live";
+import { useTokenMeta } from "@/lib/art";
+import { buyCredits } from "@/lib/buy";
+import { etaLabel, windowLabel } from "@/lib/compose-eta";
+import { eth, evmNowTx, rating, shortAddr, tokens } from "@/lib/format";
 import type { Write } from "@/lib/tx";
 
-// A credit the engine bought. State comes from the multicall reads (creditInfo,
-// the controller's credit prices and pastWindow) and the logs: CreditBought,
-// ListingBought, CreditAdopted (how the engine got it), CreditSold (sold
-// through the credit sale) and Composed (composed into a statement). Buying a
-// credit is on /credits, selling one to the engine on /sell.
+const PLATES: { letter: string; bit: number }[] = [
+  { letter: "C", bit: 1 },
+  { letter: "M", bit: 2 },
+  { letter: "Y", bit: 4 },
+  { letter: "K", bit: 8 },
+];
+
+// A credit the engine bought. Facts (cost, time, score, plates, owner, sale split) are the indexer's credit row; the
+// price now comes from the live pile read. The history is the indexer's activity rows: how the engine got it,
+// swaps, the credit sale and the statement it composed into.
 export default function CreditDetail({ params }: { params: { id: string } }) {
   const id = Number(params.id);
   if (!Number.isInteger(id) || id < 0) notFound();
-  const { data: scan } = useScan();
   const { data: snap } = useSnapshot();
+  const { data: pile } = usePile();
   const now = useNow();
-  const { data: c } = useCredit(id);
-  const inPile = c?.inPile ?? false;
-
-  const evts = scan.credits[id] ?? [];
-  const last = evts[evts.length - 1];
-  const lastBought = [...evts].reverse().find((e): e is Extract<CreditEvt, { t: "bought" }> => e.t === "bought");
-  const { data: boughtTs } = useBlockTs(inPile ? undefined : lastBought?.block);
+  const d = useCreditDetail(id);
+  const { data: meta } = useTokenMeta("credit", id);
+  const historyDown = useHistoryDown();
   if (!engineDeployed) return <NotDeployed />;
 
-  const cost = inPile ? c?.cost : lastBought?.cost;
-  const acquiredAt = inPile ? c?.acquiredAt : boughtTs;
+  const { c, evts, last, inPile, known, cost, acquiredAt, how, score, mask, owner } = d;
   const window = snap?.creditWindow ?? 0;
   const left = acquiredAt != null ? acquiredAt + window - now : 0;
-  const known = inPile || evts.length > 0;
+  const saleOn = snap?.creditSaleOn ?? false;
+
+  // prev and next among the credits the engine holds, newest first
+  const held = [...pile].reverse();
+  const at = held.findIndex((p) => p.id === id);
+  const prevHref = at > 0 ? `/credits/${held[at - 1].id}` : undefined;
+  const nextHref = at >= 0 && at < held.length - 1 ? `/credits/${held[at + 1].id}` : undefined;
+
+  const state: "sale" | "floor" | "held" | "composed" | "sold" | "other" = inPile
+    ? !saleOn
+      ? "held"
+      : left > 0
+        ? "sale"
+        : "floor"
+    : d.state === "held"
+      ? "held"
+      : d.state;
+  const ink: Ink = { sale: "m", floor: "k", held: "k", composed: "y", sold: "c", other: "k" }[state] as Ink;
+
+  const holder: ReactNode = inPile ? (
+    "engine"
+  ) : last?.t === "composed" ? (
+    <Link href={`/statements/${last.sid}`}>statement {last.sid}</Link>
+  ) : owner ? (
+    owner.toLowerCase() === core?.toLowerCase() ? (
+      "engine"
+    ) : (
+      <Addr address={owner} />
+    )
+  ) : last?.t === "sold" ? (
+    <Addr address={last.buyer} />
+  ) : (
+    "—"
+  );
 
   return (
-    <main className="page detail">
-      <Link href="/credits" className="back">
-        {"← credits"}
-      </Link>
+    <div className="detail-page">
+      <Breadcrumb parent="credits" parentHref="/credits" id={id} prevHref={prevHref} nextHref={nextHref} />
 
-      <div className="detail-grid">
-        <div className="detail-art credit-art">
-          <CreditTile id={id} />
+      <div className="detail-split">
+        <div className="detail-body">
+          <HeroArt tile={<CreditTile id={id} />} image={meta?.image} file={`credit-${id}.svg`} address={credits} />
+
+          <div className="detail-right">
+            <div className="label">credit</div>
+            <h1 className="detail-id">#{id}</h1>
+
+            {known && (
+              <dl className="dfacts">
+                <Fact k="credit rating" v={score != null ? rating(score) : "—"} />
+                {mask != null && (
+                  <Fact
+                    k="plates"
+                    v={
+                      <span className="plate-letters">
+                        {PLATES.map((p) => (
+                          <b key={p.letter} className={mask & p.bit ? "on" : ""}>
+                            {p.letter}
+                          </b>
+                        ))}
+                      </span>
+                    }
+                  />
+                )}
+                <Fact k="holder" v={holder} />
+                <Fact k="paid by engine" v={cost != null ? `${eth(cost)} ETH` : "—"} />
+                <Fact k="got by" v={how ?? "—"} />
+                <Fact k="acquired" v={acquiredAt != null ? utc(acquiredAt) : "—"} />
+                <Fact
+                  k="transaction id"
+                  v={
+                    d.tx ? (
+                      <a href={evmNowTx(d.tx)} target="_blank" rel="noreferrer">
+                        {d.tx}
+                      </a>
+                    ) : (
+                      "—"
+                    )
+                  }
+                />
+              </dl>
+            )}
+
+            {historyDown && <p className="muted ix-down">history unavailable</p>}
+            {(evts.length > 0 || state === "sale" || state === "floor") && (
+              <section className="dhist">
+                <div className="label">history</div>
+                <div className="dhist-rows">
+                  {state === "sale" && c && (
+                    <HistLine mark="m" text="for sale, price falling" value={`${eth(c.price)} ETH`} when="now" />
+                  )}
+                  {state === "floor" && c && <HistLine mark="k" text="at floor" value={`${eth(c.price)} ETH`} when="now" />}
+                  {[...evts].reverse().map((e, i) => (
+                    <Step key={`${e.tx}-${i}`} e={e} />
+                  ))}
+                </div>
+              </section>
+            )}
+            {/* TODO(plate breakdown band): hidden. Per-plate 8x8 bitmaps (SHA-256 of the transaction id split into four
+                64-bit plates) are not derivable from the contract reads; only the printed plate mask is. */}
+          </div>
         </div>
 
-        <div className="detail-main">
-          <div className="detail-title">
-            <h1>credit #{id}</h1>
+        <aside className={`side ink-${ink}`}>
+          <section className="side-sec">
+            <div className="label">status</div>
+            <Status state={state} last={last} window={window} />
+          </section>
+          {inPile && snap && <ComposeBox id={id} pile={pile} snap={snap} />}
+          {inPile && snap && saleOn && c && (
+            <PriceBox id={id} c={c} snap={snap} left={left} now={now} acquiredAt={c.acquiredAt} />
+          )}
+          {state === "composed" && last?.t === "composed" && <StatementCard sid={last.sid} />}
+          {state === "sold" && d.sale && <SoldSplit sale={d.sale} />}
+          {inPile && snap && <SwapPanel outId={id} outScore={score} snap={snap} />}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+// "Oct 15, 2026 · 13:46 UTC"
+function utc(ts: number): string {
+  const d = new Date(ts * 1000);
+  const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+  return `${date} · ${time} UTC`;
+}
+
+function Status({
+  state,
+  last,
+  window,
+}: {
+  state: "sale" | "floor" | "held" | "composed" | "sold" | "other";
+  last?: CreditEvt;
+  window: number;
+}) {
+  const ink = { sale: "m", floor: "k", held: "k", composed: "y", sold: "c", other: "k" }[state];
+  const title = {
+    sale: "for sale",
+    floor: "at floor, waiting to compose",
+    held: "held by engine",
+    composed: "composed",
+    sold: "sold",
+    other: last?.t === "swapped" ? "swapped out" : "not held by engine",
+  }[state];
+  let text: ReactNode = null;
+  if (state === "sale") text = `listed by the engine. the price falls for ${windowLabel(window)} from purchase, then rests at its floor.`;
+  else if (state === "floor") text = "the price rests at its floor until the credit composes.";
+  else if (state === "held") text = "the credit sale is off.";
+  else if (last?.t === "composed")
+    text = (
+      <>
+        composed into <Link href={`/statements/${last.sid}`}>statement {last.sid}</Link>.
+      </>
+    );
+  else if (last?.t === "sold")
+    text = (
+      <>
+        bought out of the credit sale by <Addr address={last.buyer} />.
+      </>
+    );
+  else if (last?.t === "swapped" && last.dir === "out")
+    text = (
+      <>
+        swapped out by <Addr address={last.caller} /> for <Link href={`/credits/${last.other}`}>credit #{last.other}</Link>.
+      </>
+    );
+  return (
+    <>
+      <div className="status-line">
+        <span className={`mark ${ink}`} />
+        {title}
+      </div>
+      {text && <p className="side-copy">{text}</p>}
+    </>
+  );
+}
+
+// Compose estimate: statement id, countdown, queue position and an 8x10 map of the page.
+function ComposeBox({ id, pile, snap }: { id: number; pile: PileCredit[]; snap: Snapshot }) {
+  const eta = useComposeEta(pile);
+  const index = pile.findIndex((p) => p.id === id);
+  if (index < 0) return null;
+  const k = Math.floor(index / STATEMENT_SIZE);
+  const inPage = Math.min(STATEMENT_SIZE, Number(snap.pileSize) - k * STATEMENT_SIZE);
+  const e = eta.at(index);
+  return (
+    <section className="side-sec">
+      <div className="compose-box">
+        <div>
+          <div className="caption">composes into statement {snap.nextStatementId != null ? snap.nextStatementId + k : "next"} in</div>
+          <div className="compose-eta">{e ? (e.estimated ? etaLabel(e) : e.seconds > 0 ? countdown(e.seconds) : "now") : "—"}</div>
+          <div className="caption">
+            position {(index % STATEMENT_SIZE) + 1} of {STATEMENT_SIZE}
+            {e?.estimated && " · estimate"}
           </div>
-
-          <div className="statuspanel">
-            {inPile ? (
-              <p>
-                held by the engine in the pile.{" "}
-                {!snap ? null : !snap.creditSaleOn
-                  ? "the credit sale is off."
-                  : left > 0
-                    ? `in its sale window, ${countdown(left)} left, for sale at ${eth(c!.price)} eth and falling.`
-                    : `past its sale window, for sale at ${eth(c!.price)} eth${c!.past ? ", eligible for compose" : ""}.`}
-              </p>
-            ) : last?.t === "composed" ? (
-              <p>
-                composed into{" "}
-                <Link href={`/statements/${last.sid}`} className="xlink-inline">
-                  statement {last.sid}
-                </Link>
-                .
-              </p>
-            ) : last?.t === "sold" ? (
-              <p>
-                sold through the credit sale to <Addr address={last.buyer} /> for {eth(last.price)} eth.
-              </p>
-            ) : last?.t === "swapped" && last.dir === "out" ? (
-              <p>
-                swapped out of the pile by <Addr address={last.caller} /> for{" "}
-                <Link href={`/credits/${last.other}`} className="xlink-inline">
-                  credit {last.other}
-                </Link>
-                .
-              </p>
-            ) : c ? (
-              <p className="muted">no record of this credit on the engine.</p>
-            ) : null}
-          </div>
-
-          {inPile && snap && <SwapPanel outId={id} snap={snap} />}
-
-          {known && (
-            <div className="facts">
-              {inPile && <Fact k="owner" v="engine" />}
-              <Fact k="recorded cost" v={cost != null ? `${eth(cost)} eth` : "—"} />
-              <Fact k="got by" v={lastBought ? lastBought.how : "—"} />
-              <Fact k="acquired" v={acquiredAt != null ? agoLabel(now - acquiredAt) : "—"} />
-              {inPile && snap?.creditSaleOn && <Fact k="sale window" v={left > 0 ? `${countdown(left)} left` : "past window"} />}
-              {inPile && snap?.creditSaleOn && <Fact k="sale price" v={`${eth(c!.price)} eth`} />}
-            </div>
-          )}
-
-          {evts.length > 0 && (
-            <section className="section history-section">
-              <h2>history</h2>
-              <div className="history">
-                {evts.map((e, i) => (
-                  <Step key={`${e.tx}-${i}`} e={e} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {last?.t === "composed" && (
-            <Link href={`/statements/${last.sid}`} className="xlink">
-              {`view statement ${last.sid} →`}
-            </Link>
-          )}
+        </div>
+        <div className="mini-map" aria-hidden>
+          {Array.from({ length: STATEMENT_SIZE }, (_, j) => (
+            <i key={j} className={j === index % STATEMENT_SIZE ? "me" : j < inPage ? "on" : ""} />
+          ))}
         </div>
       </div>
-    </main>
+    </section>
+  );
+}
+
+// Price now, the falling curve and the buy button. Curve (see Snapshot): floor = max(cost, valueOf(score)) *
+// creditFloorBps / 10000, start = floor * creditStartBps / 10000, linear over the sale window, then flat.
+function PriceBox({
+  id,
+  c,
+  snap,
+  left,
+  now,
+  acquiredAt,
+}: {
+  id: number;
+  c: PileCredit;
+  snap: Snapshot;
+  left: number;
+  now: number;
+  acquiredAt: number;
+}) {
+  const { data: values } = useCreditValues([BigInt(id)]);
+  const value = values?.[id.toString()];
+  const floor = value != null && snap.creditFloorBps != null ? ((c.cost > value ? c.cost : value) * BigInt(snap.creditFloorBps)) / 10000n : undefined;
+  const start = floor != null && snap.creditStartBps != null ? (floor * BigInt(snap.creditStartBps)) / 10000n : undefined;
+  const W = 352;
+  const xEnd = 240;
+  const el = now - acquiredAt;
+  const frac = Math.min(1, Math.max(0, el / snap.creditWindow));
+  const marker = left > 0 ? frac * xEnd : 320;
+  const y0 = start != null && floor != null && start > floor ? 12 : 80;
+  const hh = (t: number) =>
+    new Date(t * 1000).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const yAt = (x: number) => (left > 0 ? y0 + ((80 - y0) * x) / xEnd : 80);
+  return (
+    <section className="side-sec">
+      <div className="price-head">
+        <div>
+          <div className="label">price</div>
+          <div className="big-price">
+            {eth(c.price)} <small>ETH</small>
+          </div>
+        </div>
+        <div className="price-note">{left > 0 ? <>falling<br />floor in {countdown(left)}</> : "at floor"}</div>
+      </div>
+      {start != null && (
+        <>
+          <svg className="curve" width="100%" viewBox={`0 0 ${W} 92`} role="img" aria-label="price curve">
+            <line x1="0" y1="80" x2={W} y2="80" className="curve-floor" />
+            <polyline points={`0,${y0} ${xEnd},80 ${W},80`} className="curve-line" />
+            <line x1={marker} y1="0" x2={marker} y2="92" className="curve-now" />
+            <rect x={marker - 4} y={yAt(marker) - 4} width="8" height="8" className="curve-dot" />
+            <line x1={xEnd} y1="76" x2={xEnd} y2="84" className="curve-tick" />
+          </svg>
+          <div className="curve-labels" suppressHydrationWarning>
+            <span>bought {hh(acquiredAt)}</span>
+            <span>floor {hh(acquiredAt + snap.creditWindow)}</span>
+            <span>composed</span>
+          </div>
+        </>
+      )}
+      <div className="side-act">
+        <Act label="buy credit" steps={(write) => buyCredits(write, snap, [id], c.price)} />
+      </div>
+    </section>
+  );
+}
+
+function StatementCard({ sid }: { sid: number }) {
+  const { data: held } = useStatements();
+  const { rec: r } = useStatementView(sid);
+  const h = held.find((s) => s.sid === sid);
+  const line = h
+    ? `${h.atFloor ? "at floor" : "for sale"} · ${eth(h.price)} ETH`
+    : r?.sold
+      ? `sold · ${eth(r.sold.price)} ETH`
+      : r?.redeemed
+        ? "redeemed"
+        : "";
+  return (
+    <section className="side-sec">
+      <div className="stmt-card">
+        <StatementTile id={sid} />
+        <div>
+          <b>statement {sid}</b>
+          <div className="muted">{line}</div>
+          <Link href={`/statements/${sid}`} className="ulink">
+            view statement →
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// Sale split of a credit bought out of the credit sale (Core.sellCreditTo): the artist and operator cuts come off the
+// price, then min(engine cost * creditCostToPotBps / 10000, rest) goes to the pot and the remainder to the buyback.
+// Indexer mode shows the split stored with the sale; chain mode computes it with creditCostToPotBps at the sale block
+// ("~" when that block cannot be read and the current value is used).
+function SoldSplit({ sale }: { sale: CreditSale }) {
+  const approx = sale.approx ? "~" : "";
+  const line = (k: string, v: bigint | undefined, always = false, mark = "") =>
+    v != null && (always || v > 0n) ? (
+      <div className="kv">
+        <span className="muted">{k}</span>
+        <span>{mark}{eth(v)} ETH</span>
+      </div>
+    ) : null;
+  return (
+    <section className="side-sec">
+      {line("sold for", sale.price, true)}
+      {line("engine paid", sale.paid, true)}
+      {line("to artist", sale.toArtist)}
+      {line("to operator", sale.toOperator)}
+      {line("to buyback", sale.toBuyback, true, approx)}
+      {line("to pot", sale.toPot, true, approx)}
+    </section>
   );
 }
 
 function Step({ e }: { e: CreditEvt }) {
   if (e.t === "composed")
     return (
-      <HistRow
-        label="composed"
-        value={
+      <HistLine
+        mark="y"
+        ts={e.ts}
+        block={e.block}
+        text={
           <>
-            into{" "}
-            <Link href={`/statements/${e.sid}`} className="xlink-inline">
-              statement {e.sid}
-            </Link>
+            composed into <Link href={`/statements/${e.sid}`}>statement {e.sid}</Link>
           </>
         }
-        block={e.block}
-        tx={e.tx}
+        value="—"
       />
     );
-  if (e.t === "sold") return <HistRow label="sold" value={`credit sale, ${eth(e.price)} eth`} block={e.block} tx={e.tx} addr={e.buyer} />;
+  if (e.t === "sold")
+    return (
+      <HistLine
+        mark="c"
+        ts={e.ts}
+        block={e.block}
+        text={
+          <>
+            bought in the credit sale by <Addr address={e.buyer} />
+          </>
+        }
+        value={`${eth(e.price)} ETH`}
+      />
+    );
   if (e.t === "swapped")
     return (
-      <HistRow
-        label={e.dir === "in" ? "swapped in" : "swapped out"}
-        value={
+      <HistLine
+        mark="hollow"
+        ts={e.ts}
+        block={e.block}
+        text={
           <>
-            {e.dir === "in" ? "for pile credit " : "replaced by "}
-            <Link href={`/credits/${e.other}`} className="xlink-inline">
-              credit {e.other}
-            </Link>
-            {` · fee ${eth(e.fee)} CC`}
+            {e.dir === "in" ? "swapped in for " : "swapped out for "}
+            <Link href={`/credits/${e.other}`}>credit #{e.other}</Link>
+            {` by `}
+            <Addr address={e.caller} />
           </>
         }
-        block={e.block}
-        tx={e.tx}
-        addr={e.caller}
+        value={`${tokens(e.fee)} CC`}
       />
     );
-  const note =
-    e.how === "eth bid"
-      ? `rate after ${e.rate != null ? eth(e.rate) : "—"} eth, pot ${e.pot != null ? eth(e.pot) : "—"} eth`
-      : e.how === "listing"
-        ? `adapter ${e.adapter ? shortAddr(e.adapter) : "—"}, keeper paid ${e.paid != null ? eth(e.paid) : "—"} eth`
-        : undefined;
   return (
-    <HistRow
-      label={e.how === "adopted" ? "adopted" : "bought"}
-      value={e.how === "adopted" ? `cost basis ${eth(e.cost)} eth` : `${e.how}, cost ${eth(e.cost)} eth`}
-      note={note}
+    <HistLine
+      mark="hollow"
+      ts={e.ts}
       block={e.block}
-      tx={e.tx}
-      addr={e.from}
+      text={
+        e.how === "adopted" ? (
+          "adopted"
+        ) : e.how === "listing" && e.adapter ? (
+          `bought from a listing via ${shortAddr(e.adapter)}`
+        ) : (
+          `bought at the ${e.how === "eth bid" ? "ETH bid" : e.how}`
+        )
+      }
+      value={`${eth(e.cost)} ETH`}
     />
   );
 }
 
-function Fact({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="fact">
-      <span className="muted">{k}</span>
-      <span>{v}</span>
-    </div>
-  );
-}
-
 // Swap this pile credit for one the connected wallet owns of equal or higher
-// score, for the swapFeeCc coin fee (Core.swapCredit). The wallet credits are
-// filtered to those scoring at least the pile credit; the caller approves the
+// rating, for the swapFeeCc coin fee (Core.swapCredit). The wallet credits are
+// filtered to those rated at least the pile credit; the caller approves the
 // coin for the fee and the Credits collection for the Core once, then one tx.
-function SwapPanel({ outId, snap }: { outId: number; snap: Snapshot }) {
+function SwapPanel({ outId, outScore, snap }: { outId: number; outScore?: bigint; snap: Snapshot }) {
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const client = usePublicClient();
   const [inId, setInId] = useState<number | null>(null);
   const fee = snap.settings.swapFeeCc;
 
-  const { data: held } = useReadContract({
-    address: credits,
-    abi: creditsAbi,
-    functionName: "tokensOf",
-    args: address ? [address] : undefined,
-    query: { enabled: Boolean(address && engineDeployed) },
-  });
-  const mine: number[] = (held ?? []).map(Number);
-  const { data: scores } = useScores([BigInt(outId), ...mine.map(BigInt)]);
-  const outScore = scores?.[outId.toString()];
-  const eligible = mine.filter((id) => scores && outScore != null && scores[id.toString()] >= outScore);
+  const { data: wallet, scores, ready } = useWalletCredits(address);
+  const eligible = wallet.filter((w) => outScore != null && w.score >= outScore).map((w) => w.id);
 
   async function swap(write: Write) {
     if (!address || !client || inId == null) return;
@@ -228,38 +474,40 @@ function SwapPanel({ outId, snap }: { outId: number; snap: Snapshot }) {
   }
 
   return (
-    <div className="section">
-      <h2>swap</h2>
-      <p className="muted">
-        swap this credit for one you own of equal or higher score, for a {eth(fee)} CC fee the engine burns.
-      </p>
+    <section className="side-sec">
+      <div className="swap-head">
+        <span className="label">swap</span>
+        {fee > 0n && <span className="caption">{tokens(fee)} CC burned</span>}
+      </div>
+      <p className="side-copy">trade one of your credits with an equal or higher rating for this one.</p>
       {!isConnected ? (
-        <button className="action" onClick={openConnectModal}>
+        <button className="action secondary" onClick={openConnectModal}>
           connect to swap
         </button>
       ) : eligible.length === 0 ? (
-        <p className="muted">
-          {scores == null ? "reading scores…" : "none of your credits scores at or above this one."}
-        </p>
+        <p className="side-copy">{!ready || outScore == null ? "reading ratings…" : "none of your credits rates at or above this one."}</p>
       ) : (
         <>
-          <div className="rowlist">
+          <div className="swap-list">
             {eligible.map((id) => (
-              <label key={id} className="rowline swap-pick">
-                <input type="radio" name="swap-in" checked={inId === id} onChange={() => setInId(id)} />
+              <label key={id} className="swap-row">
+                <input type="radio" name="swap-in" className="radio" checked={inId === id} onChange={() => setInId(id)} />
                 <CreditTile id={id} />
-                <span className="rl-id">credit #{id}</span>
-                <span className="rl-meta muted">score {scores![id.toString()].toString()}</span>
+                <span className="swap-id">credit #{id}</span>
+                <span className="muted">rating {rating(scores![id.toString()])}</span>
               </label>
             ))}
           </div>
-          <Act
-            label={inId == null ? "pick a credit" : `swap in credit #${inId}`}
-            disabled={inId == null}
-            steps={swap}
-          />
+          <div className="side-act">
+            <Act
+              secondary
+              label={inId == null ? "pick a credit" : `swap in credit #${inId}`}
+              disabled={inId == null}
+              steps={swap}
+            />
+          </div>
         </>
       )}
-    </div>
+    </section>
   );
 }

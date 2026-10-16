@@ -225,7 +225,7 @@ async function readyPage() {
   assert.equal(ready, true, "nextPage is ready");
 }
 
-test("compose: with a ready page the tick sends compose() and is paid the caller payment (decision 134)", () =>
+test("compose: with a ready page the tick sends compose() and is paid the caller payment (decision 138)", () =>
   isolated(async () => {
     await readyPage();
     const held = (await read<readonly bigint[]>(CORE, coreAbi, "heldStatements")).length;

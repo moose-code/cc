@@ -224,7 +224,7 @@ contract RedeemRepayTest is RedeemBase {
         _makeEligible(sid);
     }
 
-    // promise: SPEC 1 redeem pays its caller at launch, gas up to 3 gwei plus 0.0003 eth (decision 134)
+    // promise: SPEC 1 redeem pays its caller at launch, gas up to 3 gwei plus 0.0003 eth (decision 138)
     /// at the launch settings and a base fee above 3 gwei, a module that burns past the count is paid exactly
     /// REDEEM_GAS * 3 gwei + 0.0003 eth, from the pot
     function test_pay_launchSettingsPayCappedGasPlusFee() public {

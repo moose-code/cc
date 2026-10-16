@@ -16,12 +16,16 @@ export const coreAbi = parseAbi([
   "function balanceRate() view returns (uint256)",
   "function balanceBidOf(uint256 id) view returns (uint256)",
   "function floorRate() view returns (uint256)",
+  "function rateAtCheckpoint() view returns (uint256)",
+  "function checkpointTime() view returns (uint64)",
+  "function lastFillTime() view returns (uint64)",
   "function climbMultiplier() view returns (uint256)",
   "function ethPot() view returns (uint256)",
   "function ethToBuyback() view returns (uint256)",
   "function ethRedeemBurn() view returns (uint256)",
   "function payee() view returns (address)",
   "function artist() view returns (address)",
+  "function creditCostToPotBps() view returns (uint16)",
   "function payeeOn() view returns (bool)",
   "function pileSize() view returns (uint256)",
   "function pilePage(uint256 startAfter, uint256 n) view returns (uint256[] ids)",
@@ -128,6 +132,13 @@ export const controllerAbi = parseAbi([
   "function nextPage() view returns (bool ready, uint256[80] ids, uint8 format)",
   "function pointRate() view returns (uint256)",
   "function valueOf(uint256 points) view returns (uint256)",
+  "function markupBps() view returns (uint16)",
+  "function startCapBps() view returns (uint32)",
+  "function decayHours() view returns (uint16)",
+  "function anchorBps() view returns (uint32)",
+  "function startBps() view returns (uint256)",
+  "function creditFloorBps() view returns (uint16)",
+  "function creditStartBps() view returns (uint32)",
   // actions
   "function buy(uint256 sid) payable",
   "function buyCredit(uint256 id) payable",
@@ -141,6 +152,12 @@ export const creditsAbi = parseAbi([
   "function tokensOf(address owner) view returns (uint256[])",
   "function isApprovedForAll(address owner, address operator) view returns (bool)",
   "function setApprovalForAll(address operator, bool approved)",
+]);
+
+// Statements: the mint counter and the owner of a statement.
+export const statementsAbi = parseAbi([
+  "function supply() view returns (uint256)",
+  "function ownerOf(uint256 id) view returns (address)",
 ]);
 
 export const erc20Abi = parseAbi([
@@ -194,7 +211,7 @@ export const engineEventsAbi = parseAbi([
   "event Buyback(address indexed caller, uint256 amountIn, uint256 paid)",
   "event FeesAdded(uint256 amount, uint256 toPayee)",
   "event Funded(address indexed from, uint256 amount)",
-  "event SettingsSet((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 refScore, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps) settings)",
+  "event SettingsSet((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 refScore, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps, uint16 climbMultiplierCapBps) settings)",
   "event PausedSet(bool paused)",
   "event PayeeSet(address indexed payee)",
   "event ArtistSet(address indexed artist)",
@@ -222,7 +239,54 @@ export const escrowAbi = parseAbi(["function balances(address feeOwner, address 
 export const factoryAbi = parseAbi([
   "function deploymentInfo(address token) view returns ((address token, address hook, address locker, address mevModule, address escrow, bytes32 poolId, bytes32 configHash, uint16 version, uint40 launchedAt, bool restricted, address[] extensions))",
 ]);
-export const scoreAbi = parseAbi(["function scoreOf(bytes21 seed, uint64 paidAt) view returns (uint256)"]);
+// the traitsOf mask bit mapping (bit 0 C, 1 M, 2 Y, 3 K) was checked against the local fork: the decoded masks match
+// the Credits tokenURI "Colors" trait for ids 1 to 8.
+export const scoreAbi = parseAbi([
+  "function scoreOf(bytes21 seed, uint64 paidAt) view returns (uint256)",
+  "function traitsOf(bytes21 seed, uint64 paidAt) view returns (uint256 mask, uint256 active, uint256 occupied, uint256 eights, uint256 band)",
+]);
 export const seedAbi = parseAbi(["function seedOf(uint256 id) view returns (bytes21)", "function timestampOf(uint256 id) view returns (uint64)"]);
 export const multicallAbi = parseAbi(["function getEthBalance(address a) view returns (uint256)"]);
 export const moduleAbi = parseAbi(["function unitPerPoint() view returns (uint256)", "function available() view returns (uint256)"]);
+
+export const strategyAbi = parseAbi([
+  "event NFTBoughtByProtocol(uint256 indexed tokenId, uint256 purchasePrice, uint256 listPrice)",
+  "event NFTSoldByProtocol(uint256 indexed tokenId, uint256 price, address buyer)",
+  "function nftForSale(uint256 id) view returns (uint256)",
+]);
+
+export const seaportAdapterAbi = parseAbi(["function allowedRecipient(address recipient) view returns (bool)"]);
+
+// Seaport BasicOrderParameters (src/interfaces/ISeaport.sol), the `params` of SeaportBasicAdapter.
+export const basicOrderParameters = [
+  {
+    type: "tuple",
+    components: [
+      { name: "considerationToken", type: "address" },
+      { name: "considerationIdentifier", type: "uint256" },
+      { name: "considerationAmount", type: "uint256" },
+      { name: "offerer", type: "address" },
+      { name: "zone", type: "address" },
+      { name: "offerToken", type: "address" },
+      { name: "offerIdentifier", type: "uint256" },
+      { name: "offerAmount", type: "uint256" },
+      { name: "basicOrderType", type: "uint8" },
+      { name: "startTime", type: "uint256" },
+      { name: "endTime", type: "uint256" },
+      { name: "zoneHash", type: "bytes32" },
+      { name: "salt", type: "uint256" },
+      { name: "offererConduitKey", type: "bytes32" },
+      { name: "fulfillerConduitKey", type: "bytes32" },
+      { name: "totalOriginalAdditionalRecipients", type: "uint256" },
+      {
+        name: "additionalRecipients",
+        type: "tuple[]",
+        components: [
+          { name: "amount", type: "uint256" },
+          { name: "recipient", type: "address" },
+        ],
+      },
+      { name: "signature", type: "bytes" },
+    ],
+  },
+] as const;

@@ -23,7 +23,7 @@ import { DOORS, type Door } from "../src/config.ts";
 const CORE = "0x00000000000000000000000000000000000000c0" as Address;
 const SEAPORT_ADAPTER = "0x00000000000000000000000000000000000000a1" as Address;
 
-// launch values of script/config/mainnet.json (decisions 119 and 134)
+// launch values of script/config/mainnet.json (decisions 119 and 138)
 function state(over: Partial<State> = {}): State {
   return {
     core: CORE,
@@ -146,7 +146,7 @@ function listing(over: Partial<Listing> = {}): Listing {
   return { venue: "seaport", adapter: SEAPORT_ADAPTER, id: 7n, price: parseEther("0.01"), bid: parseEther("0.012"), params: "0x1234", valid: true, ...over };
 }
 
-test("listing: swept only after it has been sweepable for the listing delay (decision 133)", () => {
+test("listing: swept only after it has been sweepable for the listing delay (decision 137)", () => {
   const p = policy({}, 120);
   const l = listing();
   const t0 = decide(state({ timestamp: 1_000n }), [l], gas("1"), p, new Map());
@@ -199,7 +199,7 @@ test("listing: nothing is swept after migrate (Retired)", () => {
   assert.deepEqual(doorsOf(decide(state({ retired: true }), [listing()], gas("1"), policy({}, 0), new Map())), []);
 });
 
-// ------------------------------------------------------------------ compose and redeem (decision 134)
+// ------------------------------------------------------------------ compose and redeem (decision 138)
 
 test("compose: paid at the launch values under 3 gwei, skipped above, unpaid settings never compose", () => {
   const s = state({ pageReady: true });

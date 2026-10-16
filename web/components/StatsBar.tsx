@@ -1,45 +1,60 @@
 "use client";
 
-import { useStats } from "@/lib/engine";
-import { useSnapshot } from "@/lib/live";
+import type { ReactNode } from "react";
+import { formatUnits } from "viem";
+import { useStats } from "@/lib/data";
+import { useBalanceToken, useSnapshot } from "@/lib/live";
 import { engineDeployed } from "@/lib/config";
-import { BALANCE_SYMBOL } from "@/lib/events";
-import { commas, ethShort } from "@/lib/format";
+import { BALANCE_SYMBOL, commas } from "@/lib/format";
+import { Tween } from "./EngineFeed";
 
-// Subtle utility bar under the header: the engine's running totals.
+const LAUNCH_SUPPLY_CC = 1e9; // the coin's launch supply, 1e27 wei
+
+// Home stats row: credits and statements held by the engine over all ever taken in, the balance token
+// held by the engine, $CC burned and the pot. Cell edges: m, y, c, k; the pot is an ink fill.
 export function StatsBar() {
   const { data: s } = useStats();
   const { data: snap } = useSnapshot();
-  const on = engineDeployed;
-  const bought = s.creditsEth + s.creditsBalance + s.creditsListing;
+  const on = engineDeployed && !!snap;
+  const dec = useBalanceToken()?.decimals;
+  const balance =
+    snap?.balanceOn && snap.balanceAvailable != null && dec != null
+      ? commas(Number(formatUnits(snap.balanceAvailable, dec)))
+      : "—";
+  const burnedPct = s ? (s.ccBurned / LAUNCH_SUPPLY_CC) * 100 : 0;
   return (
-    <div className="statsbar">
-      <Stat
-        label="credits bought"
-        value={
-          on
-            ? `${commas(bought)} (${commas(s.creditsEth)} eth bid${snap?.balanceOn ? ` · ${commas(s.creditsBalance)} ${BALANCE_SYMBOL} bid` : ""} · ${commas(s.creditsListing)} listing)`
-            : "—"
-        }
-      />
-      <Stat label="credits adopted" value={on ? commas(s.creditsAdopted) : "—"} />
-      <Stat
-        label="statements"
-        value={on ? `${commas(s.composed)} composed · ${commas(s.sold)} sold${snap?.balanceOn ? ` · ${commas(s.redeemed)} redeemed` : ""}` : "—"}
-      />
-      <Stat label="eth into credits" value={on ? s.ethIntoCredits.toLocaleString("en-US", { maximumFractionDigits: 3 }) : "—"} />
-      <Stat label="buybacks" value={on ? commas(s.buybacks) : "—"} />
-      <Stat label="cc burned" value={on ? commas(s.ccBurned) : "—"} />
-      <Stat label="redeem burn pot" value={on && snap ? `${ethShort(snap.ethRedeemBurn, 4)} eth` : "—"} />
+    <div className="stats">
+      <Cell ink="m" label="credits held">
+        {on ? commas(Number(snap.pileSize)) : "—"}
+        {on && s && <small>/ {commas(s.creditsAcquired)}</small>}
+      </Cell>
+      <Cell ink="y" label="statements held">
+        {on ? commas(snap.held.length) : "—"}
+        {on && s && <small>/ {commas(s.composed)}</small>}
+      </Cell>
+      <Cell ink="c" label={BALANCE_SYMBOL}>
+        {on ? balance : "—"}
+      </Cell>
+      <Cell ink="k" label="$CC burned">
+        {engineDeployed && s ? commas(s.ccBurned) : "—"}
+        {engineDeployed && s && <small>{commas(burnedPct, 2)}%</small>}
+      </Cell>
+      <Cell ink="pot" label="pot">
+        {on ? <Tween wei={snap.potWithPending} /> : "—"}
+        {on && <small>ETH</small>}
+      </Cell>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Cell({ ink, label, children }: { ink: "c" | "m" | "y" | "k" | "pot"; label: string; children: ReactNode }) {
   return (
-    <div className="stat">
-      <span className="label">{label}</span>
-      <span className="value">{value}</span>
+    <div className={`stat-cell ink-${ink}`}>
+      <span className="label">
+        {ink !== "pot" && <i className="mark" />}
+        {label}
+      </span>
+      <span className="value">{children}</span>
     </div>
   );
 }

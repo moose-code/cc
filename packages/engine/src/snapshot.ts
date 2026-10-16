@@ -2,8 +2,8 @@
 // section 2. web/ polls it for every page, keeper/ reads it once per block.
 
 import { zeroAddress, type Address, type PublicClient } from "viem";
-import { controllerAbi, coreAbi, moduleAbi, multicallAbi, scoreAbi, seedAbi } from "./abis.ts";
-import { CREDIT_SCORE, CREDITS } from "./addresses.ts";
+import { controllerAbi, coreAbi, moduleAbi, multicallAbi, scoreAbi, seedAbi, statementsAbi } from "./abis.ts";
+import { CREDIT_SCORE, CREDITS, STATEMENTS } from "./addresses.ts";
 
 // the client surface the snapshot reads through; a wagmi public client and a viem public client both satisfy it
 export type ReadClient = Pick<PublicClient, "multicall" | "getBlockNumber">;
@@ -74,6 +74,7 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
     coreEth,
     balanceRate,
     artist,
+    creditCostToPotBps,
   ] = await client.multicall({
     ...mc,
     blockNumber,
@@ -101,6 +102,7 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
       { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [coreAddr] },
       { ...c, functionName: "balanceRate" },
       { ...c, functionName: "artist" },
+      { ...c, functionName: "creditCostToPotBps" },
     ] as const,
   });
   // the pot scaled climb multiplier (decision 128), a tolerant read so a pre-128 Core without the view does not blank
@@ -143,6 +145,29 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
       { ...k, functionName: "nextPage" },
     ] as const,
   });
+  // Price curve parameters and the statement supply. A failing read leaves the field undefined and the rest of the
+  // snapshot intact; consumers hide the figure that needs it.
+  const [markupRes, startCapRes, decayRes, anchorRes, startRes, floorRes, creditStartRes, supplyRes] = await client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: true,
+    contracts: [
+      { ...k, functionName: "markupBps" },
+      { ...k, functionName: "startCapBps" },
+      { ...k, functionName: "decayHours" },
+      { ...k, functionName: "anchorBps" },
+      { ...k, functionName: "startBps" },
+      { ...k, functionName: "creditFloorBps" },
+      { ...k, functionName: "creditStartBps" },
+      { address: STATEMENTS, abi: statementsAbi, functionName: "supply" },
+    ] as const,
+  });
+  const ok = <T,>(r: { status: string; result?: unknown }): T | undefined => (r.status === "success" ? (r.result as T) : undefined);
+  const num = (r: { status: string; result?: unknown }) => {
+    const v = ok<bigint | number>(r);
+    return v === undefined ? undefined : Number(v);
+  };
+  const statementSupply = ok<bigint>(supplyRes);
   return {
     ethRate,
     ethPrice,
@@ -178,6 +203,24 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
     creditWindow: Number(creditWindow),
     pointRate,
     page: { ready: page[0], ids: page[1].map(Number), format: page[2] },
+    // Credit sale proceeds (Core.sellCreditTo): after the artist and operator cuts, min(cost * creditCostToPotBps / 10000,
+    // rest) goes to the pot and the remainder to the buyback.
+    creditCostToPotBps,
+    // Statement price curve (ControllerV1._ask). The asking price is reference * bps / 10000. bps falls in a straight
+    // line from `statementStartBps` at age 0 to settings.saleFloorBps at `statementDecayHours` hours, then rests.
+    // `statementStartBps` = anchorBps * markupBps / 10000, at most statementStartCapBps; it moves with sales.
+    statementStartBps: num(startRes),
+    statementDecayHours: num(decayRes),
+    statementMarkupBps: num(markupRes),
+    statementStartCapBps: num(startCapRes),
+    anchorBps: num(anchorRes), // running sale level in bps of the reference (10000 = no premium)
+    // Credit price curve (ControllerV1.creditPrice). floor = max(cost, valueOf(score)) * creditFloorBps / 10000;
+    // start = floor * creditStartBps / 10000. The price falls linearly from start at acquisition to floor at
+    // creditWindow seconds, then rests at the floor.
+    creditFloorBps: num(floorRes),
+    creditStartBps: num(creditStartRes),
+    // Id the next compose mints: Statements.supply() + 1 (Core.compose asserts the new id equals supply()).
+    nextStatementId: statementSupply === undefined ? undefined : Number(statementSupply) + 1,
   };
 }
 

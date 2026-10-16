@@ -16,3 +16,7 @@ script/dev/.cache/
 # npm workspaces (web/, keeper/, packages/engine) and the keeper ledger
 node_modules/
 keeper/.state/
+
+# editor and OS files
+.DS_Store
+*.swp

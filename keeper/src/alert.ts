@@ -1,4 +1,4 @@
-// Alerts: a JSON POST to ALERT_WEBHOOK_URL (decision 135), also logged at error level. a failed post is logged and
+// Alerts: a JSON POST to ALERT_WEBHOOK_URL (decision 139), also logged at error level. a failed post is logged and
 // never stops the keeper. one alert per key per ALERT_REPEAT_SEC.
 
 import { log, type Fields } from "./log.ts";

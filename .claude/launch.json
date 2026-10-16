@@ -12,6 +12,18 @@
       ],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "indexer",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd indexer && npx ponder dev --port 42169"
+      ],
+      "env": {
+        "DATABASE_URL": "postgresql://localhost/cc_indexer_local"
+      },
+      "port": 42169
     }
   ]
 }

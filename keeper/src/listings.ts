@@ -9,7 +9,7 @@
 
 import { readFileSync } from "node:fs";
 import { encodeAbiParameters, getAddress, type Address, type Hex, type PublicClient } from "viem";
-import { coreAbi, creditStrategyAbi, creditsAbi, listingAdapterAbi, seaportAbi } from "@cc/engine/abis";
+import { basicOrderParameters, coreAbi, creditStrategyAbi, creditsAbi, listingAdapterAbi, seaportAbi } from "@cc/engine/abis";
 import { CREDIT_STRATEGY, CREDITS, SEAPORT } from "@cc/engine/addresses";
 import { creditScores, mc } from "@cc/engine/snapshot";
 import { fetchListings, type BasicParams, type SignedOrder } from "@cc/engine/opensea";
@@ -23,42 +23,9 @@ const CHUNK = 1500;
 // the most candidates per venue read in full each block, best ratio of bid to price first
 const MAX_CANDIDATES = 40;
 
-const BASIC_ORDER = [
-  {
-    type: "tuple",
-    components: [
-      { name: "considerationToken", type: "address" },
-      { name: "considerationIdentifier", type: "uint256" },
-      { name: "considerationAmount", type: "uint256" },
-      { name: "offerer", type: "address" },
-      { name: "zone", type: "address" },
-      { name: "offerToken", type: "address" },
-      { name: "offerIdentifier", type: "uint256" },
-      { name: "offerAmount", type: "uint256" },
-      { name: "basicOrderType", type: "uint8" },
-      { name: "startTime", type: "uint256" },
-      { name: "endTime", type: "uint256" },
-      { name: "zoneHash", type: "bytes32" },
-      { name: "salt", type: "uint256" },
-      { name: "offererConduitKey", type: "bytes32" },
-      { name: "fulfillerConduitKey", type: "bytes32" },
-      { name: "totalOriginalAdditionalRecipients", type: "uint256" },
-      {
-        name: "additionalRecipients",
-        type: "tuple[]",
-        components: [
-          { name: "amount", type: "uint256" },
-          { name: "recipient", type: "address" },
-        ],
-      },
-      { name: "signature", type: "bytes" },
-    ],
-  },
-] as const;
-
 // `abi.encode(BasicOrderParameters)`, the `params` of SeaportBasicAdapter
 export function encodeBasicOrder(p: BasicParams): Hex {
-  return encodeAbiParameters(BASIC_ORDER, [
+  return encodeAbiParameters(basicOrderParameters, [
     {
       considerationToken: getAddress(p.considerationToken),
       considerationIdentifier: BigInt(p.considerationIdentifier),
