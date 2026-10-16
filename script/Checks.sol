@@ -74,17 +74,17 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x3b9ba235a2786b36cac75bd9dffebdc088b82c40f612f0da07718e3f8aa7ecba;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x45510a1d4af84908c03f320cd22e8e0ac5ca5499f041353474687205a98f6052;
+    bytes32 internal constant BUILD_HASH_CORE = 0xaf9298c826f8637475bb78f972e370066580954f33b15d7f80c378a6245fcca5;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x4eb81deea42baa58b4e5d45e5b3bd4cf95488ad22a8fd190ca875caa38f1049b;
     bytes32 internal constant BUILD_HASH_CONTROLLER =
-        0x80057cad3d5f18bd0c9bf8f56136d730df2ae2c4f04eb03a86dea6c1c1e2e0d0;
+        0xfc88e789e86afc068aed7b393cb8b05cbb8fafc012debff2ad8381389f9afa4a;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER =
         0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER =
         0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_HASH_RENDERER = 0x21bc6e3d0b34d0e43e48bdc78e106393a18ba34e6cc9dc81a722844d60b12ce6;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0xeea322836f385f2d2bc97837e7c40439b9d7fd2b6569ba442c09a29148388a42;
+        0xe6282bcb727a6f4829e4207480088658bd9519802b25898fa4d4c4c125932ee8;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 1_000_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -773,9 +773,9 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat(
                 "rateStart ",
                 vm.toString(c.rateStart),
-                " wei for a credit of score refScore ",
-                vm.toString(c.settings.refScore),
-                " (launch day rule: the market price of a credit of the reference score)"
+                " wei per 100 points, pointsPerPage ",
+                vm.toString(c.settings.pointsPerPage),
+                " (launch day rule: the market price of 100 points)"
             )
         );
         _info(
@@ -827,8 +827,8 @@ abstract contract LaunchChecks is PostflightChecks {
         _info(
             "signoff: drop and climb",
             string.concat(
-                "drop per credit ",
-                vm.toString(c.settings.dropPerCreditBps),
+                "drop per 100 points ",
+                vm.toString(c.settings.dropPer100PointsBps),
                 " floor ",
                 vm.toString(c.settings.dropFloorBps),
                 " climb per minute ",
@@ -907,8 +907,8 @@ abstract contract LaunchChecks is PostflightChecks {
                 vm.toString(c.credit.startBps),
                 " bps, cost to pot ",
                 vm.toString(c.credit.costToPotBps),
-                " bps, refScore ",
-                vm.toString(c.settings.refScore)
+                " bps, pointsPerPage ",
+                vm.toString(c.settings.pointsPerPage)
             )
         );
         _info(

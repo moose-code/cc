@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 
 /// @notice the per-point eth bid: every eth door prices a credit at
-/// `ethRate() * score / refScore`, and a fill drops the rate by `dropPerCreditBps * score / refScore`. the balance side
+/// `ethRate() * score / refScore`, and a fill drops the rate by `dropPer100PointsBps * score / refScore`. the balance side
 /// and the statement reference already read the score; the eth doors scale the bid and the drop by `score / refScore`
 contract PerPointTest is Fixture {
     address internal user;
@@ -20,7 +21,7 @@ contract PerPointTest is Fixture {
         _fundPot(20 ether);
         uint256[] memory ids = _credits(user, 4);
         uint256 rate = core.ethRate();
-        uint256 ref = core.settings().refScore;
+        uint256 ref = RATE_SCORE;
         for (uint256 i; i < ids.length; ++i) {
             assertEq(core.bidOf(ids[i]), rate * _scoreOf(ids[i]) / ref, "bidOf is rate times score over refScore");
             assertGt(_scoreOf(ids[i]), 0, "the score is never zero");
@@ -40,12 +41,12 @@ contract PerPointTest is Fixture {
         if (_scoreOf(hi) > _scoreOf(lo)) assertGt(core.bidOf(hi), core.bidOf(lo), "the richer credit is bid more");
     }
 
-    // promise: SPEC 6 sellForEth pays the per-credit bid and drops the rate by dropPerCreditBps times score over refScore
+    // promise: SPEC 6 sellForEth pays the per-credit bid and drops the rate by dropPer100PointsBps times score over refScore
     function test_sellForEthPaysThePerCreditBidAndScalesTheDrop() public {
         _fundPot(20 ether);
         uint256 id = _credits(user, 1)[0];
         uint256 score = _scoreOf(id);
-        uint256 ref = core.settings().refScore;
+        uint256 ref = RATE_SCORE;
         uint256 rate = core.ethRate();
         uint256 want = rate * score / ref;
         assertEq(core.bidOf(id), want, "bidOf matches the door");
@@ -57,7 +58,7 @@ contract PerPointTest is Fixture {
         (, uint256 cost,) = core.creditInfo(id);
         assertEq(cost, want, "the cost basis is the per-credit bid");
 
-        uint256 fallNum = uint256(core.settings().dropPerCreditBps) * score;
+        uint256 fallNum = uint256(core.settings().dropPer100PointsBps) * score;
         uint256 denom = 10_000 * ref;
         uint256 dropped = fallNum >= denom ? 0 : rate * (denom - fallNum) / denom;
         uint256 floor = rate * core.settings().dropFloorBps / 10_000;
@@ -71,7 +72,7 @@ contract PerPointTest is Fixture {
         vm.prank(user);
         CREDITS.transferFrom(user, address(core), id);
         uint256 price = core.ethPrice();
-        uint256 ref = core.settings().refScore;
+        uint256 ref = RATE_SCORE;
         core.adopt(_one(id));
         (, uint256 cost,) = core.creditInfo(id);
         uint256 want = price * _scoreOf(id) / ref;

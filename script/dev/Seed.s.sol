@@ -25,10 +25,10 @@ import {TestLiquidityHelper} from "../../test/utils/TestLiquidityHelper.sol";
 /// controller at the pool, and switches the credit sale and chosen composition on.
 ///
 /// pool price: the balance token is currency1, so the pool price is balance token base units per wei and
-/// `sqrtPriceX96 = sqrt(price) * 2^96`. A credit of 433 points has `refScore` = 4,330,000 stored units, worth
-/// `refScore * dev.balanceUnitPerPoint` = 4.33e20 base units. At the opening bid `rateStart` = 25e15 wei,
-/// `price = 4.33e20 / 25e15` = 17,320 and `sqrtPriceX96` = 10426859645017636412935313936840, so `valueOf` of such a
-/// credit equals the bid.
+/// `sqrtPriceX96 = sqrt(price) * 2^96`. 100 points is 1,000,000 stored units, worth
+/// `1,000,000 * dev.balanceUnitPerPoint` = 1e20 base units. At the opening bid `rateStart` = 5.77e15 wei,
+/// `price = 1e20 / 5.77e15` = 17,331 and `sqrtPriceX96` = 10430176968832103465211561538277, so `valueOf` of a
+/// 100 point credit equals the bid.
 ///
 /// the dev wallet `dev.wallet` of the launch config also receives `dev.walletCredits` credits from the strategy in both
 /// phases and, in post, `dev.walletBalance` of the balance token. its eth (`dev.walletEth`) is set by
@@ -69,7 +69,8 @@ contract Seed is Script {
 
         vm.startBroadcast(owner);
         MockBalanceToken token = new MockBalanceToken("Balance", "BALANCE");
-        MockBalanceModule module = new MockBalanceModule(address(token), vm.parseJsonUint(cfg, ".dev.balanceUnitPerPoint"));
+        MockBalanceModule module =
+            new MockBalanceModule(address(token), vm.parseJsonUint(cfg, ".dev.balanceUnitPerPoint"));
         vm.stopBroadcast();
 
         PoolKey memory pool = PoolKey({
@@ -84,7 +85,8 @@ contract Seed is Script {
         token.mint(address(module), vm.parseJsonUint(cfg, ".dev.balanceMintToModule"));
         token.mint(trader, LP_TOKENS);
         if (hasWallet) token.mint(wallet, vm.parseJsonUint(cfg, ".dev.walletBalance"));
-        IPoolManager(Mainnet.POOL_MANAGER).initialize(pool, uint160(vm.parseJsonUint(cfg, ".dev.balancePoolSqrtPriceX96")));
+        IPoolManager(Mainnet.POOL_MANAGER)
+            .initialize(pool, uint160(vm.parseJsonUint(cfg, ".dev.balancePoolSqrtPriceX96")));
         TestLiquidityHelper lp = new TestLiquidityHelper();
         token.approve(address(lp), type(uint256).max);
         lp.modify{value: LP_ETH}(pool, -TICK_FULL, TICK_FULL, int256(LIQUIDITY));
@@ -108,10 +110,7 @@ contract Seed is Script {
         );
         ctl.setCredit(
             CreditSale({
-                saleOn: true,
-                window: ctl.creditWindow(),
-                floorBps: ctl.creditFloorBps(),
-                startBps: ctl.creditStartBps()
+                saleOn: true, window: ctl.creditWindow(), floorBps: ctl.creditFloorBps(), startBps: ctl.creditStartBps()
             })
         );
         core.setChosenComposeOn(true);

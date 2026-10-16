@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
@@ -234,25 +235,26 @@ contract FeeFlowTest is FeeBase {
         uint256 booked = _tracked();
         assertGt(address(core).balance, booked, "the fees are unbooked");
         // the payout by the hand formula, not bidOf: ethRate (the booked pot's rate) times the credit's score over refScore
-        uint256 quote = (core.ethRate() * _scoreOf(ids[0])) / core.settings().refScore;
-        assertTrue(_scoreOf(ids[0]) != core.settings().refScore, "the fork credit's score is not refScore");
+        uint256 quote = (core.ethRate() * _scoreOf(ids[0])) / RATE_SCORE;
+        assertTrue(_scoreOf(ids[0]) != RATE_SCORE, "the fork credit's score is not refScore");
         uint256 payeeBefore = core.payee().balance;
         uint256 before = seller.balance;
         vm.prank(seller);
         core.sellForEth(ids);
         assertEq(seller.balance - before, quote, "the door paid the quote");
         assertGt(core.payee().balance, payeeBefore, "the door pushed the payee share first");
-        assertEq(
-            address(core).balance,
-            _tracked(),
-            "every wei is booked"
-        );
+        assertEq(address(core).balance, _tracked(), "every wei is booked");
     }
 
     // promise: SPEC 1 an empty pot never raises the price: receive checkpoints first
     /// the rate is checkpointed when the fee arrives, before the pot grows
     function test_rateCheckpointsOnFeeReceipt() public {
         _stock();
+        // pin the pot multiplier to 1x so the fee inflow's pages pot does not move the ceiling loosening between the
+        // read and the fee book; this test is the fee checkpoint, not the pot scaled climb
+        Settings memory cfg = core.settings();
+        cfg.climbMultiplierCapBps = 10_000;
+        _setSettings(cfg);
         _fundPot(1 ether);
         vm.warp(block.timestamp + 6 hours);
         uint256 rateBefore = core.ethRate();
@@ -262,7 +264,6 @@ contract FeeFlowTest is FeeBase {
         assertEq(core.checkpointTime(), block.timestamp, "checkpoint time moved to the fee");
         assertEq(core.rateAtCheckpoint(), rateBefore, "the climbed rate was locked in before the pot grew");
     }
-
 }
 
 /// `receive()` is the hook's push target and the escrow's claim target. the hook pushes with 2,300 gas and a revert
@@ -277,8 +278,8 @@ contract ReceiveTest is FeeBase {
         _fundPot(1 ether);
         uint256 id = _credits(address(t), 1)[0];
         // the per-credit bid by the hand formula, not bidOf
-        uint256 ceiling = (core.ethRate() * _scoreOf(id)) / core.settings().refScore;
-        assertTrue(_scoreOf(id) != core.settings().refScore, "the fork credit's score is not refScore");
+        uint256 ceiling = (core.ethRate() * _scoreOf(id)) / RATE_SCORE;
+        assertTrue(_scoreOf(id) != RATE_SCORE, "the fork credit's score is not refScore");
         uint256 swapEth = ceiling * 5;
         vm.deal(address(t), swapEth);
         t.arm(id, swapEth);
@@ -377,7 +378,6 @@ contract ReceiveTest is FeeBase {
         assertEq(core.ethPot() - pot, 1 ether);
         assertEq(address(core).balance, _tracked());
     }
-
 }
 
 /// `receive()` under every setting the owner can reach, and in the middle of every call that measures
@@ -398,7 +398,7 @@ contract ReceiveSettingsTest is FeeBase {
     function _randomSettings(uint256 seed) internal view returns (Settings memory s) {
         s = core.settings();
         // forge-lint: disable-start(unsafe-typecast)
-        s.dropPerCreditBps = uint16(_pick(seed, 2, 1, 1_000));
+        s.dropPer100PointsBps = uint16(_pick(seed, 2, 1, 1_000));
         s.dropFloorBps = uint16(_pick(seed, 3, 5_000, 10_000));
         s.climbPerMinBps = uint16(_pick(seed, 4, 1, 1_000));
         s.recoveryClimbPerMinBps = uint16(_pick(seed, 12, s.climbPerMinBps, 1_000));
@@ -435,7 +435,9 @@ contract ReceiveSettingsTest is FeeBase {
             _book();
             booked += amounts[i];
             // the payee share is pushed out of the core, the rest stays in the pots (decision 123)
-            assertEq(_tracked() + (core.payee().balance - payeeStart), booked, "every push booked or pushed to the payee");
+            assertEq(
+                _tracked() + (core.payee().balance - payeeStart), booked, "every push booked or pushed to the payee"
+            );
             if (amounts[i] != 0) {
                 assertEq(core.checkpointTime(), block.timestamp, "checkpointed at the book");
                 assertGe(core.rateAtCheckpoint(), rate, "the price state was locked in first, the read is at most that");
@@ -443,7 +445,6 @@ contract ReceiveSettingsTest is FeeBase {
             assertEq(address(core).balance, _tracked());
         }
     }
-
 }
 
 /// the eth buyback of the core against the real pool: it buys coin and burns it on the token
@@ -486,11 +487,7 @@ contract BuybackTest is FeeBase {
         uint256 toBuyback = _fillEthBuyback();
         vm.fee(5 gwei);
         assertGt(toBuyback, 0);
-        assertEq(
-            address(core).balance,
-            _tracked(),
-            "clean books before"
-        );
+        assertEq(address(core).balance, _tracked(), "clean books before");
         Before memory b = _before();
 
         vm.recordLogs();
@@ -530,11 +527,7 @@ contract BuybackTest is FeeBase {
         );
         // the v2 hook reports the volume net of its own skim, so volume plus both legs is the eth spent
         assertApproxEqAbs(f.skimVolume + f.skimBounty + f.skimProtocol, budget, 2);
-        assertEq(
-            address(core).balance,
-            _tracked(),
-            "nothing left unbooked"
-        );
+        assertEq(address(core).balance, _tracked(), "nothing left unbooked");
     }
 
     // promise: INTEGRATION TooSoon
@@ -726,7 +719,6 @@ contract BuybackPaymentTest is FeeBase {
         assertGt(r.gasUsed, BUYBACK_GAS + 2_000_000, "the call used far more than the constant");
         assertEq(r.paid, BUYBACK_GAS * 4 gwei + core.settings().keeperFee, "the gas counted stops at the constant");
     }
-
 }
 
 /// the buyback reads its slice, its delay and the keeper fee from the settings, effective at once
@@ -758,7 +750,9 @@ contract BuybackSettingsTest is FeeBase {
         (spent, paid) = _buybackEvent(vm.getRecordedLogs());
         assertEq(keeper.balance - keeper0, paid, "the caller got the payment");
         uint256 maxPay = 600_000 * block.basefee.min(s.keeperMaxBaseFee) + s.keeperFee;
-        assertGe(paid, s.keeperFee * spent / (s.buybackSlice - maxPay), "the payment holds the scaled fee of the setting");
+        assertGe(
+            paid, s.keeperFee * spent / (s.buybackSlice - maxPay), "the payment holds the scaled fee of the setting"
+        );
         assertEq(core.ethToBuyback(), pool - spent - paid, "the pot fell by the spend and the payment");
         assertLe(spent + paid, slice, "the slice bounds both");
         assertLt(coin.totalSupply(), supply, "burned");
@@ -770,7 +764,6 @@ contract BuybackSettingsTest is FeeBase {
         assertEq(core.lastBuybackBlock(), block.number);
         assertEq(address(core).balance, _tracked(), "no surplus, no deficit");
     }
-
 }
 
 interface IUniversalRouter {
@@ -837,7 +830,6 @@ contract RestrictedCoinTest is FeeBase {
         core.rescueCoin(to, 1);
         vm.stopPrank();
     }
-
 }
 
 /// one buy and one sell through the real universal router, the way a wallet or aggregator would trade the coin

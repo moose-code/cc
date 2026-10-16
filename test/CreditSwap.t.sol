@@ -18,15 +18,6 @@ contract CreditSwapTest is Fixture {
         _setSwapFeeCc(0);
     }
 
-    /// @dev forces `scoreOf(seed, paidAt)` of credit `id` to `v`, the value every door and `swapCredit` read
-    function _mockScore(uint256 id, uint256 v) internal {
-        vm.mockCall(
-            Mainnet.CREDIT_SCORE,
-            abi.encodeWithSelector(ICreditScore.scoreOf.selector, CREDITS.seedOf(id), CREDITS.timestampOf(id)),
-            abi.encode(v)
-        );
-    }
-
     /// @dev a one credit pile and a fresh credit `who` owns and approved, with mocked scores `sOut` and `sIn`
     function _pair(uint256 sOut, uint256 sIn) internal returns (uint256 outId, uint256 inId) {
         outId = _fillEthPile(1)[0];
@@ -191,7 +182,9 @@ contract CreditSwapTest is Fixture {
 
         uint256[80] memory expected;
         expected[0] = inId;
-        for (uint256 i = 1; i < 80; ++i) expected[i] = page[i];
+        for (uint256 i = 1; i < 80; ++i) {
+            expected[i] = page[i];
+        }
 
         vm.fee(composeBasefee);
         vm.expectCall(

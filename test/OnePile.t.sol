@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
@@ -11,7 +12,7 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 
-/// one pile for every credit. the balance token bid records an eth cost basis of `floorRate * score / refScore`
+/// one pile for every credit. the balance token bid records an eth cost basis of `floorRate * score / RATE_SCORE`
 /// (decision 104), at least 1 wei, where the floor rate is the larger of the climbed price
 /// state and the decayed peak. the record reads no pool price, so a pushed up or pushed down pool cannot move it and
 /// the bid needs no pool key. every credit composes into the same statement. the three standalone settings have owner
@@ -58,10 +59,10 @@ contract OnePileTest is Fixture {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
-    /// the eth cost the sale records for `id`: `floorRate * score / refScore`, at least 1 wei. the floor rate is read at
-    /// the current block, which the sale does not move
+    /// the eth cost the sale records for `id`: `floorRate * score / RATE_SCORE`, at least 1 wei. the floor rate is read
+    /// at the current block, which the sale does not move
     function _backstop(uint256 id) internal view returns (uint256 b) {
-        b = FullMath.mulDiv(core.floorRate(), _score(id), ctl.refScore());
+        b = FullMath.mulDiv(core.floorRate(), _score(id), RATE_SCORE);
         if (b == 0) b = 1;
     }
 
@@ -72,10 +73,8 @@ contract OnePileTest is Fixture {
         assertFalse(ctl.balancePoolKeySet(), "no pool key");
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];
-        // a quarter of the score, at the 800,000 lower bound of `refScore` when that is higher
-        uint32 rs = uint32(_score(id) / 4);
-        if (rs < 800_000) rs = 800_000;
-        _setRefScore(rs);
+        // a score of 400 points, four times 100 points, so the backstop scales to four times the floor rate
+        _mockScore(id, 4 * RATE_SCORE);
         uint256 want = _backstop(id);
         vm.prank(seller);
         core.sellForBalance(ids);
@@ -88,19 +87,19 @@ contract OnePileTest is Fixture {
         assertLt(cost - pointValue, _score(id), "and above it by less than the rounding of the point rate");
     }
 
-    // promise: SPEC 1 the balance bid reads refScore from the Core setting, not the controller
-    /// the bid records the score-scaled cost from the Core setting `refScore` even when the controller's `refScore()`
-    /// read reverts, so a reverting or hostile controller cannot block or distort the bid
-    function test_sellForBalance_usesCoreRefScoreNotTheController() public {
+    // promise: SPEC 1 the balance bid prices on the fixed 100 point basis, not the controller
+    /// the bid records the score-scaled cost on the fixed 100 point basis even when every controller read reverts, so a
+    /// reverting or hostile controller cannot block or distort the bid
+    function test_sellForBalance_usesFixedBasisNotTheController() public {
         _ready();
         uint256[] memory ids = _credits(seller, 1);
         uint256 want = _backstop(ids[0]);
-        vm.mockCallRevert(address(ctl), abi.encodeWithSignature("refScore()"), "");
+        vm.mockCallRevert(address(ctl), bytes(""), bytes(""));
         vm.prank(seller);
         core.sellForBalance(ids);
         vm.clearMockedCalls();
         (, uint256 cost,) = core.creditInfo(ids[0]);
-        assertEq(cost, want, "the recorded cost uses the Core setting refScore");
+        assertEq(cost, want, "the recorded cost uses the fixed 100 point basis");
     }
 
     // promise: SPEC 1 the recorded cost reads no pool price (decision 96)

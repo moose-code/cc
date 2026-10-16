@@ -15,7 +15,8 @@ import {
     ICreditStrategy,
     IBalanceModule,
     Mainnet,
-    BUYBACK_GAS
+    BUYBACK_GAS,
+    RATE_SCORE
 } from "../../src/interfaces/Interfaces.sol";
 import {CreditIds} from "../../test/utils/CreditIds.sol";
 import {Scenario, IUniversalRouterR, IPermit2R, IERC20R} from "./Scenario.s.sol";
@@ -65,7 +66,6 @@ contract Activity is Scenario {
     address internal seaportAdapter;
     address internal bot;
     address internal composer;
-    uint256 internal refScore;
     /// @dev held statements the buyers leave in place, so a balance round has statements to redeem
     uint256 internal holdBack;
 
@@ -108,7 +108,6 @@ contract Activity is Scenario {
             tickSpacing: core.TICK_SPACING(),
             hooks: IHooks(core.HOOK())
         });
-        refScore = core.settings().refScore;
         bot = _actor("bot", 0);
         composer = _actor("composer", 0);
         rng = uint256(keccak256(abi.encode(vm.envOr("SEED", uint256(1)), vm.envOr("ROUND", uint256(0)), name)));
@@ -224,7 +223,7 @@ contract Activity is Scenario {
         uint256 bestGap;
         for (uint256 i; i < ls.length; ++i) {
             if (ls[i].done || ls[i].price > pot) continue;
-            uint256 bid = rate * ls[i].score / refScore;
+            uint256 bid = rate * ls[i].score / RATE_SCORE;
             if (bid < ls[i].price + margin) continue;
             uint256 gap = bid - ls[i].price;
             if (gap > bestGap) {
@@ -259,7 +258,9 @@ contract Activity is Scenario {
     }
 
     function _sweepSeaport(uint256 id, bytes memory params, uint256 margin) internal returns (bool valid, bool done) {
-        try IListingAdapter(seaportAdapter).price(id, params) returns (address target, uint256 value, bytes memory data) {
+        try IListingAdapter(seaportAdapter).price(id, params) returns (
+            address target, uint256 value, bytes memory data
+        ) {
             _topUp(bot, value + 1 ether, value + 100 ether);
             if (!_dry(bot, target, value, data)) return (false, false);
             uint256 bid = core.bidOf(id);
@@ -299,10 +300,9 @@ contract Activity is Scenario {
             if (!_heldByStrategy(id)) continue;
             uint256 price = ICreditStrategy(Mainnet.CREDIT_STRATEGY).nftForSale(id);
             if (price == 0) continue;
-            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(
-                ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id)
-            );
-            if (price * refScore / score > maxRate) continue;
+            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE)
+                .scoreOf(ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id));
+            if (price * RATE_SCORE / score > maxRate) continue;
             console.log("LISTING", id, price, score);
             ++n;
         }

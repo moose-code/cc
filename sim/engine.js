@@ -4,6 +4,10 @@
 
 export const W = 1e18;
 export const BPS = 10000;
+// stored score units the eth rate is quoted per: 100 points (100 * 10_000 units per point), the bidForScore divisor
+export const RATE_SCORE = 1_000_000;
+// score of the calibration credit the market model prices (points): a market price Pe is eth per credit of this score
+export const REF_PTS = 433;
 
 // the launch package. every launch number comes from script/config/mainnet.json, the single source. node reads the file
 // here; build.mjs strips the import and inlines the parsed object as LAUNCH_RAW for the browser, so neither path hand
@@ -18,7 +22,7 @@ const _cs = LAUNCH_RAW.settings, _sale = LAUNCH_RAW.sale, _cr = LAUNCH_RAW.credi
 // recoveryGapPct = recoveryGapBps / 100, peakHalfLifeHours = peakHalfLife / 3600. durations in seconds, buybackSlice and the fees in eth, swapFeeCc in whole coins.
 // every one can change mid run through `schedule`
 export const SETTINGS = {
-  dropPerCreditPct: _cs.dropPerCreditBps / 100, // fall of the bid per credit bought, percent of the bid before that credit
+  dropPerCreditPct: _cs.dropPer100PointsBps / 100, // fall of the bid for a 100 point credit, percent of the bid before that credit; a credit of score `s` falls dropPerCreditPct * s / RATE_SCORE
   dropToPct: _cs.dropFloorBps / 100, // within one minute the bid stays at or above this percent of the bid at the first fill of that minute
   climbPerMin: _cs.climbPerMinBps / 100, // climb of the bid per minute, percent, compounded
   ceilPct: _cs.ceilBps / 100, // the bid stays at or below this percent of the ceiling anchor, the larger of the last fill rate and the remembered peak
@@ -44,7 +48,7 @@ export const SETTINGS = {
   redeemSlippageBps: _cs.redeemSlippageBps, // a redemption must return at least rating * unit * (10000 - redeemSlippageBps) / 10000 (FLOW 84)
   balanceBidMarginBps: _cs.balanceBidMarginBps, // the balance bid floor is 10000 - balanceBidMarginBps bps of par, its opening rate (decision 122)
   redeemBurnBps: _cs.redeemBurnBps, // share of the redeem burn reserve moved to the coin buyback on each redemption (FLOW 86)
-  refScore: _cs.refScore, // the per-credit score the eth bid divides by: every eth door pays rate * score / refScore per credit, ten-thousandths of a point, 1 to uint32 max
+  pointsPerPage: _cs.pointsPerPage, // points in one page for the ceiling pot multiplier: one page costs rate * pointsPerPage / 100
   climbMultiplierCapBps: _cs.climbMultiplierCapBps,
   spendCapBps: _cs.spendCapBps,
   bucketSeconds: _cs.bucketSeconds,
@@ -138,7 +142,7 @@ export function firstViolation(s) {
     ['buybackDelay',16,1], ['redeemSlippageBps',16,1], ['balanceBidMarginBps',16,1], ['redeemBurnBps',16,1],
     ['buybackSlice',128,W], ['keeperFee',64,W], ['keeperMaxBaseFee',48,1e9], ['rateCap',64,1],
     ['callerFee',64,W], ['callerMaxBaseFee',48,1e9], ['feeToRedeemBurnBps',16,1], ['payeePpm',24,1],
-    ['refScore',32,1], ['swapFeeCc',96,W], ['climbMultiplierCapBps',16,1], ['spendCapBps',16,1],
+    ['pointsPerPage',32,1], ['swapFeeCc',96,W], ['climbMultiplierCapBps',16,1], ['spendCapBps',16,1],
     ['bucketSeconds',32,1], ['balanceBidCapBps',32,1], ['idleStepSeconds',32,1], ['sniperSeconds',32,1],
   ];
   for (const [k, bits, scale] of fields) if (!uint(s[k], bits, scale)) return k;
@@ -155,7 +159,7 @@ export function firstViolation(s) {
   if (!(s.peakHalfLifeHours > 0)) return 'peakHalfLifeHours';
   if (!(s.bucketSeconds > 0)) return 'bucketSeconds';
   if (!(s.idleStepSeconds > 0)) return 'idleStepSeconds';
-  if (!(s.refScore > 0)) return 'refScore';
+  if (!(s.pointsPerPage > 0)) return 'pointsPerPage';
   if (!(s.rateCap > 0)) return 'rateCap';
   if (s.climbMultiplierCapBps < BPS) return 'climbMultiplierCapBps';
   if (s.balanceBidCapBps < BPS) return 'balanceBidCapBps';
@@ -183,7 +187,7 @@ export const SIM_DEFAULTS = {
   seed: 7,
   days: 90,
   stepSec: 60, // time step after the first hour, seconds. a divisor of 3600. 60 matches the minute bucket of the contract's drop floor and climb; hourly steps distort the stepped rule (bid up to 3x market). rates quoted per hour or per day, the hourly cap and arrival counts scale with the step
-  rateStart: LAUNCH_RAW.rateStart, // launch opening rate (script/config/mainnet.json rateStart): 0.025e18 wei per credit
+  rateStart: LAUNCH_RAW.rateStart, // launch opening rate (script/config/mainnet.json rateStart): wei per 100 points
   // seller model toggle: one seller with an unlimited supply sells one credit per step whenever the bid has reached throttleFrac of the market price
   throttler: false,
   throttleFrac: 0.95,
@@ -283,10 +287,10 @@ export class SpendBucket {
   }
 }
 // Solidity-comparable integer vectors exercise the conversion independently of the market price model.
-export function balanceConversion(available, denom, balanceCap, multiplierCap, lastFill) {
+export function balanceConversion(available, denom, balanceCap, multiplierCap, lastFill, pointsPerPage) {
   const raw = denom === 0n ? 0n : available * 10000n / denom;
   const clamp = denom === 0n ? BigInt(balanceCap) : raw < BigInt(balanceCap) ? raw : BigInt(balanceCap);
-  const pages = lastFill === 0n ? 10000n : raw * 125n / lastFill;
+  const pages = lastFill === 0n ? 10000n : raw * 1000000n / (lastFill * BigInt(pointsPerPage));
   const multiplier = pages < 10000n ? 10000n : pages > BigInt(multiplierCap) ? BigInt(multiplierCap) : pages;
   return { clamp, multiplier };
 }
@@ -421,9 +425,9 @@ export class Core {
   bidMult() {
     const cap = this.p.multiplierCap ?? this.s.climbMultiplierCapBps / BPS;
     if (!(cap > 1)) return 1;
-    const cost = this.lastPaidRate * this.p.PAGE;
+    const cost = this.lastPaidRate; // positivity guard: a zero rate reads as 1x
     if (!(cost > 0)) return 1;
-    return Math.min(Math.max(Math.floor((this.ethPot * W) * 125 / this.lastPaidRate) / BPS, 1), cap);
+    return Math.min(Math.max(Math.floor((this.ethPot * W) * (BPS * 100) / (this.lastPaidRate * this.s.pointsPerPage)) / BPS, 1), cap);
   }
   // an earlier 128 draft bounded the read at hourlyBound / 10000 of the highest fill rate of the past hour (or the last
   // fill rate when the hour has none); it was rejected (REVIEW-128-potscaled.md) and kept here only for that comparison.
@@ -509,10 +513,10 @@ export class Core {
     if (this.s.balanceBidOn && (!wasOn || !wasUsable)) this.resetBalanceToFloor(now);
     else if (this.balRate < floor) this.resetBalanceToFloor(now);
   }
-  // the score of a credit of `pts` points over refScore: the eth doors scale the rate and the drop by it (CoreLib).
-  // refScore is in ten-thousandths of a point, points are whole points here, so score is pts * 1e4
+  // the score of a credit of `pts` points over 100 points: the eth doors scale the rate and the drop by it (CoreLib).
+  // RATE_SCORE is 100 points in score units (ten-thousandths of a point), points are whole points here, so score is pts * 1e4
   scoreRatio(pts) {
-    return (pts * 1e4) / this.s.refScore;
+    return (pts * 1e4) / RATE_SCORE;
   }
   // _spend: checkpoint, then the drop on fill for a credit of score ratio `ratio` (CoreLib.drop). the fall is
   // dropPerCreditPct * ratio, bounded at 100 percent. false means the Core would revert
@@ -559,7 +563,7 @@ export class Core {
     this.syncFunded();
   }
   // door one: sell into the bid. a credit of `pts` points is paid the rate times its score over refScore. returns the price paid or 0
-  sellForEth(now, pts = this.s.refScore / 1e4) {
+  sellForEth(now, pts = RATE_SCORE / 1e4) {
     const ratio = this.scoreRatio(pts);
     const price = (this.ethRate(now) / W) * ratio;
     return this.spend(price, now, ratio) ? price : 0;
@@ -583,7 +587,7 @@ export class Core {
   // door two: buy a listing of a credit of `pts` points at its ask. the ceiling is the rate times the credit's score
   // over refScore. the caller is paid the largest payment, at most the bid less the ask, booked as spend with the cost.
   // returns {cost, paid} or null
-  buyListing(ask, now, pts = this.s.refScore / 1e4) {
+  buyListing(ask, now, pts = RATE_SCORE / 1e4) {
     const ratio = this.scoreRatio(pts);
     const ceil = (this.ethRate(now) / W) * ratio;
     if (ask > this.ethPot || ask > ceil) return null;
@@ -600,7 +604,7 @@ export class Core {
   // the floor rate is the larger of the climbed price state and the decayed peak. points are in points here, refScore in ten-thousandths of a point, so refScore/1e4 is the
   // reference score in points and floorRate/W is the per-credit rate in eth. the pool term is 0 while the pool key or the module is unset or the unit reads 0
   valueOf(pts, now) {
-    const rateTerm = (this.floorRate(now) / W) * (pts / (this.s.refScore / 1e4));
+    const rateTerm = (this.floorRate(now) / W) * (pts / (RATE_SCORE / 1e4));
     return Math.max(rateTerm, this.poolTerm(pts));
   }
   poolTerm(pts) { return this.p.balancePoolSet && this.moduleSet && this.xpLive > 0 ? pts * this.xpLive * this.p.balancePoolMult : 0; }
@@ -687,7 +691,7 @@ export class Core {
   // the eth cost the Core records for a credit bought with the balance token: the floor rate times score / refScore (CoreLib.sellForBalance, at least 1 wei). the floor
   // rate is the larger of the climbed price state and the decayed peak. refScore is in ten-thousandths of a point, so refScore/1e4 is the reference score in points.
   // the cost basis reads the price state and the peak
-  balanceCostBasis(pts, now) { return (this.floorRate(now) / W) * (pts / (this.s.refScore / 1e4)); }
+  balanceCostBasis(pts, now) { return (this.floorRate(now) / W) * (pts / (RATE_SCORE / 1e4)); }
   // the credit sale floor: the larger of the credit's cost and valueOf(score), times creditFloorBps (decision 115)
   creditFloor(cr, now) { return (Math.max(cr.cost, this.valueOf(cr.pts, now)) * this.cr.creditFloorBps) / BPS; }
   // ControllerV1.creditPrice: falls linearly from floor * creditStartBps to the floor over creditWindow from the acquisition time and rests at the floor
@@ -750,7 +754,7 @@ export class Core {
   balPeakAt(now) { return this.balPeakRate * Math.pow(0.5, Math.max(0, now - this.balPeakTime) / (this.s.peakHalfLifeHours * 3600)); }
   // the module available as bps of par for a refScore credit (CoreLib._toBps). par of a refScore credit is (refScore/1e4) * unit, eth value; a zero denom reads as no clamp
   balAvailBps() {
-    const denom = (this.s.refScore / 1e4) * this.unit();
+    const denom = (RATE_SCORE / 1e4) * this.unit();
     if (!(denom > 0)) return this.s.balanceBidCapBps;
     return Math.min((this.balancePot * BPS) / denom, this.s.balanceBidCapBps);
   }
@@ -782,8 +786,8 @@ export class Core {
   // the balance ceiling in bps of par: ceilPct of the anchor loosened while idle, at most balanceBidCapBps
   _balCeil(now) {
     const s = this.s, p = this.p;
-    const denom = (s.refScore / 1e4) * this.unit();
-    const pages = denom > 0 && this.balLastFillRate > 0 ? (this.balancePot / denom * BPS) / (this.balLastFillRate * this.p.PAGE) : 1;
+    const denom = (RATE_SCORE / 1e4) * this.unit();
+    const pages = denom > 0 && this.balLastFillRate > 0 ? (this.balancePot / denom * BPS) * 100 / (this.balLastFillRate * s.pointsPerPage) : 1;
     const multiplier = Math.min(Math.max(pages, 1), this.p.multiplierCap ?? s.climbMultiplierCapBps / BPS);
     const loosen = 1 + (s.idleLoosenPct / 100) * multiplier * Math.floor((now - this.balLastFillTime) / s.idleStepSeconds);
     const anchor = Math.max(this.balLastFillRate, this.balPeakAt(now));
@@ -1062,6 +1066,8 @@ export function simulate(userParams = {}) {
     strat.sort((a, b) => b.need - a.need);
   }
   const peff = (t) => pathPrice(p, t) * Math.exp(lnM);
+  // the market price Pe is eth per credit of the REF_PTS reference score (the calibration credit); the rate is wei per 100 points, so the rate of the market price is Pe * 1e18 * 100 / REF_PTS
+  const mktRate = (Pe) => (Pe * W * 100) / REF_PTS;
   let stepW = 1; // weight of the current step in hours
   let idle = 0, idleMax = 0, forceDone = false;
   let stallRun = 0, stallTotal = 0, stallMax = 0, gapRun = 0, gapMax = 0, rateCapSec = 0;
@@ -1075,16 +1081,16 @@ export function simulate(userParams = {}) {
   // xPerPoint is the balance token bid per score point, eth value (0 while the bid is off): a credit of `pts` points is bid pts * xPerPoint, so the best price offered is at 800 points
   function pickFrom(arr, isStrat, r, xPerPoint, Pw, Pe, afford, xAfford) {
     const lim = Math.max(0, arr.length - 400);
-    const top = Math.max(r, xPerPoint * 800 * W);
+    const top = Math.max(r, (xPerPoint * 800 * W * 100) / REF_PTS);
     for (let i = arr.length - 1; i >= lim; i--) {
       const it = arr[i];
-      const need = isStrat ? it.need : it.key * Pw;
+      const need = isStrat ? (it.need * 100) / REF_PTS : it.key * Pw;
       if (need > top) return null;
       const listing = isStrat || it.listed;
       const ask = isStrat ? it.price : it.m * it.prem * Pe;
       const xPrice = isStrat ? 0 : it.pts * xPerPoint;
-      // the eth bid and the seller reservation both scale with the credit's score over refScore, so the buy decision is
-      // `need <= r` as under a flat bid; the eth the pot pays is the scaled per-credit cost `(r / W) * ratio`
+      // the eth bid and the seller reservation both scale with the credit's score, so the buy decision is
+      // `need <= r` as under a flat bid, with need and r both wei per 100 points; the eth the pot pays is `(r / W) * pts / 100`
       const ethCost = (r / W) * core.scoreRatio(it.pts);
       const ethOk = need <= r, xOk = xPrice > 0 && ask * W <= xPrice * W;
       const ethFits = ethOk && (listing ? Math.min(ask + core.listingPayMax(), ethCost) <= afford : ethCost <= afford);
@@ -1101,7 +1107,7 @@ export function simulate(userParams = {}) {
     let spentEth = 0, thrDone = !p.throttler;
     let forceNow = p.forceFillHour != null && !forceDone && now >= p.forceFillHour * 3600;
     if (forceNow) forceDone = true;
-    const Pw = Pe * W;
+    const Pw = mktRate(Pe);
     for (let guard = 0; guard < 200000; guard++) {
       const r = core.ethRate(now);
       const p2 = core.balanceBidActive();
@@ -1116,20 +1122,20 @@ export function simulate(userParams = {}) {
       if (!thrDone) {
         thrDone = true;
         const tp = 80 + 720 * rngThr();
-        if (r / W >= p.throttleFrac * Pe && r / W <= afford) {
+        if (r >= p.throttleFrac * mktRate(Pe) && (r / W) * core.scoreRatio(tp) <= afford) {
           c = { i: -1, need: r, ethFits: true, xFits: false, isStrat: false, it: { pts: tp, m: p.throttleFrac, prem: 1, listed: false }, ask: p.throttleFrac * Pe, listing: false, thr: true };
         }
       }
       let inj = null;
       if (forceNow) {
         forceNow = false;
-        core.checkpoint(now); core.rateAtCheckpoint = p.forceFillFrac * Pe * W; core.syncFunded();
+        core.checkpoint(now); core.rateAtCheckpoint = p.forceFillFrac * mktRate(Pe); core.syncFunded();
         inj = { forced: true };
       }
       if (inj) c = Object.assign(inj, { i: -1, need: r, ethFits: true, xFits: false, isStrat: false, it: { pts: 440, m: 1, prem: 1, listed: false }, ask: Pe, listing: false, thr: true });
       if (!c) { noteBind(); break; }
       const it = c.it, useS = c.isStrat;
-      // the eth bid for this credit is the rate times its score over refScore; the seller takes the door that pays more
+      // the eth bid for this credit is the rate times its score over 100 points; the seller takes the door that pays more
       const ethBid = (r / W) * core.scoreRatio(it.pts);
       let door = c.ethFits && c.xFits ? (ethBid >= it.pts * xPerPoint ? 'eth' : 'x') : c.ethFits ? 'eth' : 'x';
       let cost = 0, paid = 0, viaListing = false, ok = false, xCost = 0;
@@ -1309,7 +1315,7 @@ export function simulate(userParams = {}) {
     S.pot[h] = core.ethPot; S.toBuyback[h] = core.ethToBuyback;
     S.cumFees[h] = T.fees + T.feesBuyback;
     S.rate[h] = r; S.mktPerPoint[h] = (Pe * W) / 440;
-    S.bidRatio[h] = r / (Pe * W);
+    S.bidRatio[h] = r / mktRate(Pe);
     S.bought[h] = T.bought; S.cumPts[h] = T.pts; S.cumCost[h] = T.cost; S.cumMkt[h] = T.mkt;
     S.credits[h] = T.bought + T.boughtX;
     S.creditsDay[h] = S.credits[h] - S.credits[Math.max(0, h - 24)];
@@ -1364,8 +1370,8 @@ export function simulate(userParams = {}) {
     // credit market: the engine's own buying lifts the flat price, the lift decays
     lnM *= Math.pow(0.5, dt / (p.impactHalfLifeHours * 3600));
     const Pe = peff(t1), r0 = core.ethRate(t1);
-    const xPay = core.balanceBidActive() && core.balancePot > 0 ? core.balanceBidOf(440, t1) * W : 0; // the balance token bid for an average credit
-    const boost = Math.pow(Math.max(1, Math.max(r0, xPay) / (Pe * W)), p.supplyElast);
+    const xPay = core.balanceBidActive() && core.balancePot > 0 ? core.balanceBidOf(100, t1) * W : 0; // the balance token bid for 100 points, wei, the unit of the rate
+    const boost = Math.pow(Math.max(1, Math.max(r0, xPay) / mktRate(Pe)), p.supplyElast);
     const nOff = Math.min(poisson(rng, (p.offersPerHour * dt * boost) / 3600), 1500, Math.floor(Math.max(holdPool, 0) * 0.05));
     if (p.bookChurn > 0) {
       const keepP = Math.pow(1 - p.bookChurn, dt / 3600);

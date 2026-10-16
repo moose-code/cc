@@ -2,13 +2,14 @@
 import fs from 'node:fs';
 import { A, runExit, runMarket } from './grid.mjs';
 
+// drop is dropPer100PointsBps: 115 is the launch value (500 per 433 point credit), 70 is the same 300 per credit
 A.steadyAsk = 0.018; // steady and wave sellers ask 0.018
 const CONFIGS = {
-  A: { label: 'A today: floor 5000, cap 100', drop: 500, climb: 200, rec: 200, floorBps: 5000, cap: 100 },
-  B: { label: 'B no floor, no cap, rec 200', drop: 500, climb: 200, rec: 200, floorBps: 1, cap: 10000 },
-  C: { label: 'C no floor, no cap, rec 500', drop: 500, climb: 200, rec: 500, floorBps: 1, cap: 10000 },
-  D: { label: 'D no floor, no cap, rec 500, drop 300', drop: 300, climb: 200, rec: 500, floorBps: 1, cap: 10000 },
-  E: { label: 'E floor 5000, no cap', drop: 500, climb: 200, rec: 200, floorBps: 5000, cap: 10000 },
+  A: { label: 'A today: floor 5000, cap 100', drop: 115, climb: 200, rec: 200, floorBps: 5000, cap: 100 },
+  B: { label: 'B no floor, no cap, rec 200', drop: 115, climb: 200, rec: 200, floorBps: 1, cap: 10000 },
+  C: { label: 'C no floor, no cap, rec 500', drop: 115, climb: 200, rec: 500, floorBps: 1, cap: 10000 },
+  D: { label: 'D no floor, no cap, rec 500, drop 70', drop: 70, climb: 200, rec: 500, floorBps: 1, cap: 10000 },
+  E: { label: 'E floor 5000, no cap', drop: 115, climb: 200, rec: 200, floorBps: 5000, cap: 10000 },
 };
 const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
 const rows = [];

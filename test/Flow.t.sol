@@ -94,8 +94,8 @@ contract FlowTest is Fixture {
         expected.spendCapBps = 10_000; // The shared fixture bypasses the limiter; ConfigTest checks the launch cap.
         assertEq(_hash(core.settings()), _hash(expected), "fixture launch values");
         Settings memory s = core.settings();
-        assertEq(s.dropPerCreditBps, 500);
-        assertEq(s.dropFloorBps, 5_000);
+        assertEq(s.dropPer100PointsBps, 115);
+        assertEq(s.dropFloorBps, 1);
         assertEq(s.climbPerMinBps, 200);
         assertEq(s.ceilBps, 11_000);
         assertEq(s.idleLoosenBps, 600);
@@ -110,7 +110,7 @@ contract FlowTest is Fixture {
         assertEq(s.redeemSlippageBps, 200);
         assertEq(s.balanceBidMarginBps, 1_000);
         assertEq(s.redeemBurnBps, 2_000);
-        assertEq(s.rateCap, 75_000_000_000_000_000);
+        assertEq(s.rateCap, 17_310_000_000_000_000);
         assertEq(s.feeToRedeemBurnBps, 1_000);
         assertEq(s.callerFee, 0.0003 ether);
         assertEq(s.callerMaxBaseFee, 3 gwei);
@@ -465,8 +465,8 @@ contract FlowTest is Fixture {
     // promise: INTEGRATION BadSetting, BadStack on the constructor
     function test_constructor_refusesBadInputs() public {
         Settings memory s = Mainnet.defaultSettings();
-        s.dropPerCreditBps = 0;
-        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("dropPerCreditBps")));
+        s.dropPer100PointsBps = 0;
+        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("dropPer100PointsBps")));
         this.newCoreExternal(s, lc.stack.escrow);
         // the opening rate (OPEN_RATE) may not sit above the rate cap
         Settings memory capped = Mainnet.defaultSettings();

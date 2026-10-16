@@ -75,7 +75,7 @@ abstract contract InvariantsBase is InvariantFixture {
         _zero(g1);
     }
 
-    /// 2. no credit is bought above its bid, `bidOf(id)` = the read times the credit's score over refScore, taken just
+    /// 2. no credit is bought above its bid, `bidOf(id)` = the read times the credit's score over 100 points, taken just
     /// before the action. the sum paid by a batch is at most the sum of the per-credit bids.
     // promise: 02 no credit above the read
     function invariant_02_noCreditAboveTheRead() public view {
@@ -538,7 +538,7 @@ abstract contract InvariantsBase is InvariantFixture {
         uint256 anchor = _anchorNow(lastFillRate, peakRate, peakTime, st.peakHalfLife);
         uint256 idle = block.timestamp > core.lastFillTime() ? block.timestamp - core.lastFillTime() : 0;
         // decision 128 variant d: the loosening scales by m, counted at the last fill rate, capped by climbMultiplierCapBps
-        uint256 m = _climbMulBps(pagesPot, lastFillRate, st.climbMultiplierCapBps);
+        uint256 m = _climbMulBps(pagesPot, lastFillRate, st.pointsPerPage, st.climbMultiplierCapBps);
         uint256 ceiling =
             anchor * (10_000 + uint256(st.idleLoosenBps) * m / 10_000 * (idle / st.idleStepSeconds)) * st.ceilBps / 1e8;
         return ceiling < st.rateCap ? ceiling : st.rateCap;
@@ -546,9 +546,13 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// the pot scaled multiplier in bps, clamped to [1x, capBps]: the pages of 80 credits the pages pot covers at the
     /// last fill rate (decision 128 variant d, the loosening only)
-    function _climbMulBps(uint256 pagesPot, uint256 rate, uint256 capBps) internal pure returns (uint256) {
+    function _climbMulBps(uint256 pagesPot, uint256 rate, uint256 pointsPerPage, uint256 capBps)
+        internal
+        pure
+        returns (uint256)
+    {
         if (rate == 0) return 10_000;
-        uint256 mBps = pagesPot * 125 / rate;
+        uint256 mBps = pagesPot * 1_000_000 / (rate * pointsPerPage);
         return mBps < 10_000 ? 10_000 : (mBps > capBps ? capBps : mBps);
     }
 
@@ -785,9 +789,13 @@ abstract contract InvariantsBase is InvariantFixture {
         handler.setSettingsExact(wide);
         // a holder swaps a pile credit for one it owns of equal or higher score
         assertTrue(_try(9, 80), "no credit swap");
-        // the real listings need the ceiling to clear the price, so warp until one passes
-        for (uint256 i; i < 12 && !_try(3, 20); ++i) {
+        // fund the pot with fee income so the pot covers a real listing's ask (the per credit bid is paid from the pot,
+        // and a credit above 100 points bids more than the per-100-point rate)
+        for (uint256 k; k < 20; ++k) _try(0, 30);
+        // the real listings need the ceiling to clear the price, so warp until one passes, funding the pot each round
+        for (uint256 i; i < 40 && !_try(3, 20); ++i) {
             handler.warp(uint256(keccak256(abi.encode("w", i))) / 10 * 10 + 1);
+            for (uint256 k; k < 3; ++k) _try(0, 20);
         }
         assertTrue(handler.successes(3) > 0, "no real listing was bought");
         // each try draws a controller seed. under the hostile controller a try ends in a compose when the page the

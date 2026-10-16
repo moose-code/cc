@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {ProdDeployer} from "./utils/ProdDeployer.sol";
 import {Test, console} from "forge-std/Test.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -132,8 +133,14 @@ contract RehearsalTest is Test, ProdDeployer {
     /// @dev gas of the six creations (the library, the core, the controller, the two adapters and the renderer) with
     /// the calldata and the intrinsic gas of their transactions, each from a clean frame
     function _creationGas(Deployed memory first) internal returns (uint256[6] memory tx_) {
-        bytes32[6] memory salts =
-            [bytes32(uint256(1)), CORE_SALT, CONTROLLER_SALT, SEAPORT_ADAPTER_SALT, STRATEGY_ADAPTER_SALT, rendererSalt(c)];
+        bytes32[6] memory salts = [
+            bytes32(uint256(1)),
+            CORE_SALT,
+            CONTROLLER_SALT,
+            SEAPORT_ADAPTER_SALT,
+            STRATEGY_ADAPTER_SALT,
+            rendererSalt(c)
+        ];
         bytes[6] memory inits = [
             vm.getCode("CoreLib.sol:CoreLib"),
             coreInitCode(c, deployer),
@@ -181,9 +188,7 @@ contract RehearsalTest is Test, ProdDeployer {
         txGas[8] = used[7] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.seaportAdapter)));
         txGas[9] = used[8] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.strategyAdapter)));
         txGas[10] = used[9] + 21_000
-            + _calldataGas(
-                abi.encodeCall(IArtCoinsFactoryV2.deployToken, (buildConfig(c, c.owner, d.core)))
-            );
+            + _calldataGas(abi.encodeCall(IArtCoinsFactoryV2.deployToken, (buildConfig(c, c.owner, d.core))));
         string[11] memory names = [
             "1 library CoreLib (create2 deployer)",
             "2 core (create2 deployer)",
@@ -359,7 +364,7 @@ contract RehearsalTest is Test, ProdDeployer {
             if (who.code.length != 0 || core.ethRate() > cap) continue;
             // the per-point payout: the rate scaled by the credit's score over refScore (Core.bidOf, by hand)
             uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(credits.seedOf(id), credits.timestampOf(id));
-            uint256 pay = (core.ethRate() * score) / core.settings().refScore;
+            uint256 pay = (core.ethRate() * score) / RATE_SCORE;
             uint256 pot = core.ethPot();
             uint256 before = who.balance;
             vm.startPrank(who);

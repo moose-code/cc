@@ -19,7 +19,8 @@ import {
     Stack,
     Sale,
     CreditSale,
-    BUYLISTING_GAS
+    BUYLISTING_GAS,
+    RATE_SCORE
 } from "../../src/interfaces/Interfaces.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2, IArtCoinsFeeEscrowV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {V2Stack} from "./V2Stack.sol";
@@ -408,7 +409,9 @@ abstract contract Fixture is Test, ProdDeployer {
         }
         if (scanNext == 0) {
             scanNext = POOL_SCAN_START;
-            for (uint256 i = end; i < end + TAIL_RESERVE; ++i) isTailReserve[CreditIds.at(i)] = true;
+            for (uint256 i = end; i < end + TAIL_RESERVE; ++i) {
+                isTailReserve[CreditIds.at(i)] = true;
+            }
         }
         while (scanNext < POOL_SCAN_END) {
             id = scanNext++;
@@ -446,7 +449,7 @@ abstract contract Fixture is Test, ProdDeployer {
 
     /// @notice warps an hour at a time until the ceiling of credit `id` reaches `price`. the real listings cost more
     /// than the launch `rateCap` allows the bid to reach, so the owner lifts the cap to its bound first
-    /// warps until the eth bid for credit `id` (`bidOf`, the rate scaled by its score over refScore) covers `price`
+    /// warps until the eth bid for credit `id` (`bidOf`, the rate scaled by its score over 100 points) covers `price`
     function _warpUntilCeiling(uint256 id, uint256 price) internal {
         _liftRateCap();
         for (uint256 i; i < 400; ++i) {
@@ -463,9 +466,9 @@ abstract contract Fixture is Test, ProdDeployer {
     }
 
     /// @notice fills the eth pile with `n` fresh credits in the order returned, funding the pot first when needed. each
-    /// credit is sold with `refScore` set to its own score, so score / refScore is 1 and it is recorded at the full
-    /// rate; `refScore` is restored after. this gives the compose and sale tests a flat per-credit cost basis. the tests
-    /// of the per-point payout and the scaled drop are test/PerPoint.t.sol, test/PerPointExact.t.sol and the invariants
+    /// credit is recorded at its scaled bid `ethRate() * score / RATE_SCORE`. compose and sale tests read the recorded
+    /// per-credit cost through `creditInfo`; the per-point payout and the scaled drop are test/PerPoint.t.sol,
+    /// test/PerPointExact.t.sol and the invariants
     function _fillEthPile(uint256 n) internal returns (uint256[] memory ids) {
         ids = _credits(seller, n);
         // a price state that idle time loosened above the opening rate is restated to the opening rate
@@ -478,13 +481,10 @@ abstract contract Fixture is Test, ProdDeployer {
         if (core.ethPot() < room) _fundPot(room);
         uint256 total = core.ethRate() * n;
         if (core.ethPot() < total * 6) _fundPot(total * 6);
-        uint32 savedRef = core.settings().refScore;
         for (uint256 i; i < n; ++i) {
-            _refScoreToCredit(ids[i]);
             vm.prank(seller);
             core.sellForEth(_one(ids[i]));
         }
-        if (core.settings().refScore != savedRef) _setRefScore(savedRef);
     }
 
     /// @notice composes the eth pile through the real controller, once per state lineage. fills the pile to 80
@@ -608,13 +608,6 @@ abstract contract Fixture is Test, ProdDeployer {
         });
     }
 
-    /// @notice the owner sets the Core setting `refScore` through `setSettings`, the other settings unchanged
-    function _setRefScore(uint32 v) internal {
-        Settings memory s = core.settings();
-        s.refScore = v;
-        _setSettings(s);
-    }
-
     /// @notice the owner sets the Core setting `swapFeeCc` through `setSettings`, the other settings unchanged
     function _setSwapFeeCc(uint96 v) internal {
         Settings memory s = core.settings();
@@ -627,10 +620,20 @@ abstract contract Fixture is Test, ProdDeployer {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
-    /// @notice sets `refScore` to credit `id`'s score, so the eth bid pays the full rate for it (score / refScore is 1).
-    /// isolates the rate mechanics from the per-point scaling, which the invariants and the dedicated per-point tests cover
-    function _refScoreToCredit(uint256 id) internal {
-        _setRefScore(uint32(_scoreOf(id)));
+    /// @notice mocks credit `id`'s CreditScore reading to `score`, so every door and view reads that score for it
+    function _mockScore(uint256 id, uint256 score) internal {
+        vm.mockCall(
+            Mainnet.CREDIT_SCORE,
+            abi.encodeWithSelector(ICreditScore.scoreOf.selector, CREDITS.seedOf(id), CREDITS.timestampOf(id)),
+            abi.encode(score)
+        );
+    }
+
+    /// @notice mocks credit `id`'s score to `RATE_SCORE` (100 points), so its eth bid is the full rate (score over 100
+    /// points is 1). isolates the rate mechanics from the per-point scaling, which the per-point tests and the
+    /// invariants cover
+    function _unitScore(uint256 id) internal {
+        _mockScore(id, RATE_SCORE);
     }
 
     /// @notice the owner turns the credit sale window on or off through `setCredit`, the other credit settings unchanged

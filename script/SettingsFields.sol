@@ -12,7 +12,7 @@ library SettingsFields {
     /// @dev field i of the settings struct, in declaration order
     function get(Settings memory s, uint256 i) internal pure returns (uint256) {
         uint256[34] memory f = [
-            uint256(s.dropPerCreditBps),
+            uint256(s.dropPer100PointsBps),
             s.dropFloorBps,
             s.climbPerMinBps,
             s.ceilBps,
@@ -36,7 +36,7 @@ library SettingsFields {
             s.callerMaxBaseFee,
             s.feeToRedeemBurnBps,
             s.payeePpm,
-            s.refScore,
+            s.pointsPerPage,
             s.swapFeeCc,
             s.saleToArtistBps,
             s.saleToOperatorBps,
@@ -53,7 +53,7 @@ library SettingsFields {
     /// @dev sets field i, narrowing the value (callers stay inside the width of the field)
     function set(Settings memory s, uint256 i, uint256 v) internal pure {
         // forge-lint: disable-start(unsafe-typecast)
-        if (i == 0) s.dropPerCreditBps = uint16(v);
+        if (i == 0) s.dropPer100PointsBps = uint16(v);
         else if (i == 1) s.dropFloorBps = uint16(v);
         else if (i == 2) s.climbPerMinBps = uint16(v);
         else if (i == 3) s.ceilBps = uint16(v);
@@ -77,7 +77,7 @@ library SettingsFields {
         else if (i == 21) s.callerMaxBaseFee = uint48(v);
         else if (i == 22) s.feeToRedeemBurnBps = uint16(v);
         else if (i == 23) s.payeePpm = uint24(v);
-        else if (i == 24) s.refScore = uint32(v);
+        else if (i == 24) s.pointsPerPage = uint32(v);
         else if (i == 25) s.swapFeeCc = uint96(v);
         else if (i == 26) s.saleToArtistBps = uint16(v);
         else if (i == 27) s.saleToOperatorBps = uint16(v);
@@ -172,7 +172,7 @@ library SettingsFields {
 
     function names() internal pure returns (bytes32[34] memory) {
         return [
-            bytes32("dropPerCreditBps"),
+            bytes32("dropPer100PointsBps"),
             "dropFloorBps",
             "climbPerMinBps",
             "ceilBps",
@@ -196,7 +196,7 @@ library SettingsFields {
             "callerMaxBaseFee",
             "feeToRedeemBurnBps",
             "payeePpm",
-            "refScore",
+            "pointsPerPage",
             "swapFeeCc",
             "saleToArtistBps",
             "saleToOperatorBps",

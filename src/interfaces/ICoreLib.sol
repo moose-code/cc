@@ -22,11 +22,14 @@ interface ICoreLib {
     error NoCreditRescue();
     error NoSuccessor();
     error NotHolder();
+    error NotInPile(uint256 id);
     error NotOwner();
     error OnlyOwner();
+    error Paused();
     error PotTooSmall();
     error Retired();
     error SameBlockReturn(uint256 id);
+    error ScoreTooLow(uint256 inId, uint256 outId);
     error Slippage();
     error SpendCapReached(uint256 spent, uint256 cost, uint256 budget);
     error ZeroAddress();
@@ -38,6 +41,7 @@ interface ICoreLib {
     event CoinRescued(address indexed to, uint256 amount);
     event CreditAdopted(uint256 indexed id, uint256 cost);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
+    event CreditSwapped(uint256 indexed inId, uint256 indexed outId, address indexed caller, uint256 fee);
     event EngineRetired(address indexed successor);
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     event Migrated(address indexed successor, uint256 eth, uint256 credits);
@@ -46,6 +50,7 @@ interface ICoreLib {
     event SuccessorLocked();
     event SuccessorSet(address successor);
 
+    function balanceBidForScore(uint256 score) external view returns (uint256);
     function balanceBidOf(uint256 id) external view returns (uint256);
     function balanceRate() external view returns (uint256 rate);
     function climb(uint256 r, uint256 pot, uint256 anchorTime, uint256 t, uint256 nowTs)

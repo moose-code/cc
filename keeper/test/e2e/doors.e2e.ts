@@ -51,7 +51,7 @@ const ownerAbi = parseAbi([
   "function totalOwed(address token) view returns (uint256)",
 ]);
 const settingsAbi = parseAbi([
-  "function setSettings((uint16 dropPerCreditBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 refScore, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps, uint16 climbMultiplierCapBps, uint16 spendCapBps, uint32 bucketSeconds, uint32 balanceBidCapBps, uint32 idleStepSeconds, uint32 sniperSeconds) s)",
+  "function setSettings((uint16 dropPer100PointsBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 pointsPerPage, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps, uint16 climbMultiplierCapBps, uint16 spendCapBps, uint32 bucketSeconds, uint32 balanceBidCapBps, uint32 idleStepSeconds, uint32 sniperSeconds) s)",
 ]);
 
 // ------------------------------------------------------------------ anvil helpers
@@ -249,7 +249,7 @@ test("buyListing: a CreditStrategy listing under the bid is swept only after the
     const [score] = await creditScores(client, [id]);
     // the owner raises the bid so this listing sits under it: rate = 1.5 * price * refScore / score
     const s = await read<any>(CORE, coreAbi, "settings");
-    const rate = (price * 3n * BigInt(s.refScore)) / (2n * score);
+    const rate = (price * 3n * 1_000_000n) / (2n * score);
     await call(OWNER, CORE, settingsAbi, "setSettings", [{ ...s, rateCap: rate * 2n }]);
     await call(OWNER, CORE, ownerAbi, "setRate", [rate]);
     await call(A1, CORE, ownerAbi, "fund", [], parseEther("50"));
