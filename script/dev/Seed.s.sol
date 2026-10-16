@@ -26,8 +26,8 @@ import {TestLiquidityHelper} from "../../test/utils/TestLiquidityHelper.sol";
 ///
 /// pool price: the balance token is currency1, so the pool price is balance token base units per wei and
 /// `sqrtPriceX96 = sqrt(price) * 2^96`. A credit of 433 points has `refScore` = 4,330,000 stored units, worth
-/// `refScore * dev.balanceUnitPerPoint` = 4.33e20 base units. At the opening bid `rateStart` = 8.9e15 wei,
-/// `price = 4.33e20 / 8.9e15` = 48,651.7 and `sqrtPriceX96` = 17475456469331761571636063502336, so `valueOf` of such a
+/// `refScore * dev.balanceUnitPerPoint` = 4.33e20 base units. At the opening bid `rateStart` = 25e15 wei,
+/// `price = 4.33e20 / 25e15` = 17,320 and `sqrtPriceX96` = 10426859645017636412935313936840, so `valueOf` of such a
 /// credit equals the bid.
 ///
 /// the dev wallet `dev.wallet` of the launch config also receives `dev.walletCredits` credits from the strategy in both
