@@ -14,8 +14,8 @@ const MUTED = "#6e6c64";
 // Read from disk relative to the web/ root (the server runs with it as cwd).
 const font = (f: string) => readFile(join(process.cwd(), "app", "fonts", f));
 
-// The logo as an SVG data URI; the squares multiply where they overlap.
-const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><g style="isolation:isolate"><rect width="22" height="22" fill="#00a3e0" style="mix-blend-mode:multiply"/><rect x="5" y="5" width="22" height="22" fill="#e5007e" style="mix-blend-mode:multiply"/><rect x="10" y="10" width="22" height="22" fill="#ffd400" style="mix-blend-mode:multiply"/></g></svg>`;
+// The logo at rest (web/design/logo/README.md) as an SVG data URI; the squares multiply where they overlap.
+const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><g style="isolation:isolate"><rect x="6" y="6" width="58" height="58" fill="#00a3e0" style="mix-blend-mode:multiply"/><rect x="36" y="6" width="58" height="58" fill="#e5007e" style="mix-blend-mode:multiply"/><rect x="36" y="36" width="58" height="58" fill="#ffd400" style="mix-blend-mode:multiply"/></g></svg>`;
 export const logoUri = `data:image/svg+xml;base64,${Buffer.from(LOGO_SVG).toString("base64")}`;
 
 interface OgProps {

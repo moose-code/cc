@@ -111,7 +111,7 @@ a:hover {
   color: var(--ink);
 }
 .brand b {
-  margin-left: 16px;
+  margin-left: 12px;
   font-size: 15px;
   font-weight: 600;
 }
@@ -126,41 +126,35 @@ a:hover {
   font-weight: 600;
 }
 
-/* three 16px plates, each offset 4px right and down; overlaps print as mixed inks */
-.logo {
+/* CC logo (components/CCLogo.tsx): three squares on a four-corner track; overlaps print as mixed inks */
+.cc-logo {
   position: relative;
-  display: block;
+  display: inline-block;
+  flex: none;
   align-self: center;
-  width: 24px;
-  height: 24px;
   isolation: isolate;
 }
-.logo i {
+.cc-logo i {
   position: absolute;
-  top: 0;
-  width: 16px;
-  height: 16px;
   mix-blend-mode: multiply;
 }
-.logo i:nth-child(1) {
-  left: 0;
+.cc-logo.moving i {
+  transition: left 0.7s cubic-bezier(0.6, 0, 0.3, 1), top 0.7s cubic-bezier(0.6, 0, 0.3, 1);
+}
+.cc-logo i.c {
   background: var(--c);
 }
-.logo i:nth-child(2) {
-  top: 4px;
-  left: 4px;
+.cc-logo i.m {
   background: var(--m);
 }
-.logo i:nth-child(3) {
-  top: 8px;
-  left: 8px;
+.cc-logo i.y {
   background: var(--y);
 }
-:root[data-theme="dark"] .logo i {
+:root[data-theme="dark"] .cc-logo i {
   mix-blend-mode: screen;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .logo i {
+  :root:not([data-theme="light"]) .cc-logo i {
     mix-blend-mode: screen;
   }
 }
