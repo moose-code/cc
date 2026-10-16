@@ -12,6 +12,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
+| behavior | the production balance module retains statement proceeds, pays only on Core requests, advertises zero before upstream retirement/opening, and permits reserve migration after Core retirement only to a same-token module bound to the successor; no deployment or activation is authorized | 143 |
 | behavior | Owner setBalanceModule may replace the balance token until lockBalanceModule; each module keeps its original token custody, stale-token pool keys are ignored, and sellers may pin the payment token. Publish this change separately from the production module | 142 |
 | behavior | The Anvil dev scenario sells its seeded Credits at the launch 100 bps spend cap by mining separate 60-second buckets; local lifecycle and activity runs exercise the resulting chain without changing launch settings | 140 |
 | behavior | Publish the committed issue 23 implementation branch and open a pull request against main for review; release acceptance remains separate | 131 |
