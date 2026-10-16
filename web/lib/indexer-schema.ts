@@ -151,6 +151,8 @@ export const strategyListing = pgTable("strategy_listing", {
 
 const counters = {
   creditsBought: big("credits_bought").notNull(),
+  creditsEth: big("credits_eth").notNull(),
+  creditsBalance: big("credits_balance").notNull(),
   creditsAdopted: big("credits_adopted").notNull(),
   composed: big("composed").notNull(),
   toPayee: big("to_payee").notNull(),

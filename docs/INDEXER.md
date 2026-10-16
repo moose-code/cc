@@ -336,6 +336,8 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | listed credits, both venues | as the header acquire button (9.1): I `strategy_listing` where `active` (chain mode: the strategy event scan) and the `web/app/api/listings` route (200 cheapest OpenSea listings, bound `MAX_LISTINGS`, sent as `max` for the caption); one row per credit at its cheapest price |
 | rating | I `credit.score`; chain mode `creditScores` |
 | bid | D `ethRate * score / refScore` from the L snapshot for every row; L `bidOf`, `ownerOf` and `nftForSale` for the 100 rows nearest the bid |
+| balance bid column and header line | L `Core.balanceBidOf(id)` for the 100 rows nearest the bid, in the same multicall (allowFailure, read only with a module set and `balanceBidOn`); D `score * balanceUnit * balanceRate / 10,000` for the other rows (marked ~); header "balance bid R% of par" from L snapshot `balanceRate` |
+| fills today | I `stats_hourly.creditsEth` and `creditsBalance` summed over the hours since 00:00 UTC; hidden while the indexer is not serving |
 | gap, counts, histogram | D price over bid |
 | clears in | D `web/lib/climb.ts` (mirror of `CoreLib._climb`) from L `rateAtCheckpoint`, `checkpointTime`, `lastFillTime`, anchor storage slots 27, 29, 30, the settings and the pot; assumes no fills and a constant pot |
 | spend headroom ("pot covers N, this minute M", "next bucket" rows) | L `Core.spendState()` (bucket, budget, spent), the settings `spendCapBps`, `bucketSeconds`, `keeperFee`; D `fitsBucket` and `bucketCount` in `web/lib/acquire.ts`; the same read decides the header button |
