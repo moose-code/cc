@@ -14,7 +14,9 @@ const ok = (c, msg) => { n++; assert.ok(c, msg); };
 const H = 3600;
 // LEGACY: the checks below that hand compute a single bid (a 0.0067 eth opening rate, one percent a minute climb, feeToRedeemBurnBps 0) run on it. the launch floor (saleFloorBps 10000) and split (saleToBuybackBps 5000 with no artist or operator cut) are kept so the hand computed curves rest at cost; the launch values have their own checks against mainnet.json
 const LEGACY = { spendCapBps: 10000, multiplierCap: 1, stepSec: 3600, rateStart: 6.668e15, climbPerMin: 1, recoveryClimbPerMin: 1, dropPerCreditPct: 0.5, idleLoosenPct: 0.01, ceilPct: 300, rateCap: 53344000000000000, saleToBuybackBps: 5000, saleToArtistBps: 0, saleToOperatorBps: 0, feeToRedeemBurnBps: 0 };
-const simL = (o = {}) => simulate(Object.assign({}, LEGACY, o));
+// whole market runs price the rate per 100 points: the per credit rates above are per 433 point credit (the calibration credit), and so is the 0.5 percent drop, so simL rescales them by 100 / 433 (the drop to whole basis points)
+const PER_100 = 100 / 433;
+const simL = (o = {}) => simulate(Object.assign({}, LEGACY, { rateStart: LEGACY.rateStart * PER_100, rateCap: LEGACY.rateCap * PER_100, dropPerCreditPct: Math.round(LEGACY.dropPerCreditPct * PER_100 * 100) / 100 }, o));
 // the sale and stall runs use the launch ceiling (ceilPct 110): at 300 the bid sits far above the market and few statements sell
 const simC = (o = {}) => simL(Object.assign({ ceilPct: 110 }, o));
 const fresh = (over = {}, pot = 1000) => {
@@ -920,9 +922,11 @@ const R0 = 6.668e15;
   const paused = simulate(Object.assign({ creditSaleOn: true, schedule: [{ day: 1, patch: { paused: true } }] }, base)); ok(paused.T.creditMiss > 0 && paused.T.creditSold < on.T.creditSold, 'sales are paused, credit sales too'); n++;
   const mid = simulate(Object.assign({ creditSaleOn: false, schedule: [{ day: 10, patch: { creditSaleOn: true } }] }, base)); ok(mid.T.creditSold > 0 && mid.S.creditSold[10 * 24] === 0, 'the owner turns the sale on mid run'); n++;
   // chosen composition: a composer that names the richest ready credits builds richer statements than compose() does from the oldest
-  const win = { creditSaleOn: true, creditWindow: 24 * H, days: 30, seed: 4, stepSec: 300, stmtPerDay: 2 };
+  // the ready count stays near one page, so the choice ranks little: the richer-statement claim is checked on three seeds with a 72 hour window and 600 second steps
+  const win = { creditSaleOn: true, creditWindow: 72 * H, days: 30, seed: 4, stepSec: 600, stmtPerDay: 2 };
   const std = simulate(win), pick = simulate(Object.assign({ chosenComposeOn: true, composeChoice: 'richest' }, win));
-  ok(pick.T.composedChosen > 0 && std.T.composedChosen === 0, 'composeChosen runs only when the owner opens it'); ok(pick.T.stRating / pick.T.composed > std.T.stRating / std.T.composed, 'and the statements it builds are richer');
+  ok(pick.T.composedChosen > 0 && std.T.composedChosen === 0, 'composeChosen runs only when the owner opens it');
+  for (const seed of [4, 5, 6]) { const w2 = Object.assign({}, win, { seed }), s2 = seed === 4 ? std : simulate(w2), p2 = seed === 4 ? pick : simulate(Object.assign({ chosenComposeOn: true, composeChoice: 'richest' }, w2)); ok(p2.T.stRating / p2.T.composed > s2.T.stRating / s2.T.composed, 'and the statements it builds are richer, seed ' + seed); }
   const gated = simulate(Object.assign({ composeChoice: 'richest' }, win)); assert.equal(gated.T.composedChosen, 0); assert.deepEqual(gated.S.composed, std.S.composed); n += 4; // the composer needs chosenComposeOn
   ok(Math.abs(pick.stats.potCheck) < 1e-6 && Math.abs(pick.stats.creditCheck) < 1e-9, 'the books close with chosen composition'); n++;
 }
@@ -1006,7 +1010,7 @@ const R0 = 6.668e15;
     ok(g0.ethRate(MIN) > c.ethRate(MIN), 'with no gap the small drop climbs faster than under the gap');
   }
   // whole runs: books close, the stepped bid stays at or under its ceiling at the end of a run, the throttler sells at its fraction of the market
-  const rs = (share) => share * 0.0089e18;
+  const rs = (share) => (share * 0.0089e18 * 100) / 433;
   for (const o of [{ ceilPct: 110 }, { ceilPct: 150, climbPerMin: 2, recoveryClimbPerMin: 2 }]) {
     const r = simL(Object.assign({ days: 6, seed: 2, stepSec: 60, rateStart: rs(1), climbPerMin: 1 }, o));
     ok(Math.abs(r.stats.potCheck) < 1e-6 && Math.abs(r.stats.saleCheck) < 1e-6, 'accounting closes under ceilPct ' + o.ceilPct);
@@ -1044,7 +1048,7 @@ const R0 = 6.668e15;
   near(o.ethRate(10000 * MIN), R * 1.1 * (1 + 0.0001 * Math.floor(10000 * MIN / 600)), 1e-12, 'the contract minimum idleLoosenPct 0.01 loosens the ceiling by 0.01 percent per full 10 idle minutes');
   const q = (h, g) => pathPrice(Object.assign({}, DEFAULTS, { pricePath: 'gap', gapPct: g, gapHour: 6 }), h * 3600) / DEFAULTS.priceP0;
   near(q(5.9, 30), 1, 1e-12, 'gap path before the jump'); near(q(6, 30), 1.3, 1e-12, 'gap path after the jump'); near(q(80, 100), 2, 1e-12, 'gap path stays');
-  const rs = (share) => share * 0.0089e18;
+  const rs = (share) => (share * 0.0089e18 * 100) / 433;
   const base = { days: 2, seed: 2, stepSec: 60, rateStart: rs(1) };
   const ff = simC(Object.assign({ forceFillHour: 6, forceFillFrac: 0.5 }, base));
   ok(Math.abs(ff.stats.potCheck) < 1e-6, 'accounting closes with a forced fill'); ok(ff.T.throttled === 0, 'a forced fill is not counted as a throttler credit');
@@ -1155,9 +1159,9 @@ const R0 = 6.668e15;
 }
 // promise: balance conversion preserves both adjustable caps beyond the former 320-denominator saturation.
 {
-  const vector = balanceConversion(500n, 1n, 20000, 40000, 20000n, 35200);
+  const vector = balanceConversion(500n, 1n, 20000, 40000, 20000n, 8000);
   assert.deepEqual(vector, { clamp: 20000n, multiplier: 31250n });
-  assert.equal(balanceConversion(10n ** 77n, 1n, 2 ** 32 - 1, 65535, 1n, 35200).multiplier, 65535n);
+  assert.equal(balanceConversion(10n ** 77n, 1n, 2 ** 32 - 1, 65535, 1n, 8000).multiplier, 65535n);
   n += 2;
   const c = fresh({ balanceBidOn: true, balanceBidCapBps: 20000, climbMultiplierCapBps: 40000, multiplierCap: null, spendCapBps: 1, ceilPct: 200 }, 1);
   c.setBalanceModule(0, 0.001); c.balancePot = 100;
