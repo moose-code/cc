@@ -1,6 +1,6 @@
 # Compatibility of StatementBalanceModule with Jack's redemption contract
 
-Scope: engine main `a6441ea7eb2c05d3558b16f84bccf047965757d4`, token replacement PR 32 and the module in PR 33 (decisions 142 and 143).
+Scope: engine main `a6441ea7eb2c05d3558b16f84bccf047965757d4`, token replacement PR 32 and the module in PR 33 (decisions 142 and 144).
 
 Upstream: `jckbtchr-vv/credits` at `38cdb26cc80431d103221f729cdcf63c0b93b060`, `contracts/src/experimental/AuctionLineageWithdrawals.sol` and its base `LineageWithdrawals.sol`. Compiler solc 0.8.28 via IR, optimizer 200. Creation bytecode SHA-256 `980130b1bedb50d2f226fce4509ed80011780ff04d0641eafbdae4e6aeb89a08`. `script/prepare-upstream-balance.py` and `test/UpstreamBalance.t.sol` both enforce the revision and the hash. The private source and bytecode are not vendored.
 

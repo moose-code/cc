@@ -116,7 +116,7 @@ for raw ETH quote readers, the expanded Settings moves `State.anchor` to slot 28
 
 Decision 142: owner setBalanceModule may select another token until lockBalanceModule. Holdings stay with their original modules; no conversion occurs. A stored pool key for another token contributes no pool value. Clients should use sellForBalance(ids, minOut, expectedToken) to pin currency and quantity; a mismatch reverts BalanceTokenChanged before any Credit moves. The older overloads accept the token active at execution. The web seller uses the token-pinned form. Re-select an old module to access its reserve and handle old reserves before locking replacement.
 
-## Production balance module (decision 143)
+## Production balance module (decision 144)
 
 `StatementBalanceModule(core, balanceToken)` targets Jack's `AuctionLineageWithdrawals`, whose ERC20 and redemption entry point share one address. The constructor checks the fixed Statements source, 18 decimals and `SCORE_TO_TOKEN == 1e14`. `redeem(sid)` is callable by the Core: it reads the statement's rating, quotes, approves that statement, withdraws, and reverts `RedeemedBelowRating` when the module's balance rose by less than `rating * unitPerPoint`. The proceeds stay in the module. The upstream contract holds the surrendered Statement. Receipts, contributed ink and wallet history belong to the module.
 

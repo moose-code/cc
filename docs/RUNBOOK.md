@@ -319,7 +319,7 @@ the `/keeper` web page has `book`, `buyback` and the pots for any wallet; `compo
 
 Pause sales if they rely on the current redemption value floor and turn balanceBidOn off during setup. Verify the replacement module/token and current upstream launch gates, then call setBalanceModule and read back balanceModule, balanceToken and its unit/available. Old holdings stay in the old module, not in Core or the replacement; re-select the old module to use them, and handle them before locking replacement. The old pool key becomes inactive when its token differs; set the complete actual replacement pool key before relying on a price floor. Simulate redemption and a token-pinned sell, then restore the owner-selected switches and sales. lockBalanceModule closes both module and token replacement permanently. No mainnet action is authorized by this preparation.
 
-### Wiring the production balance module (decision 143)
+### Wiring the production balance module (decision 144)
 
 No deployment or activation is authorized by the implementation PR. Before activation: authenticate Jack's live contract against the reviewed source, and confirm its Statements address, score unit, registered renderer, exact creator retirement and opening block. `ready()` reports renderer registration only. Confirm the canonical ETH/BALANCE pool, fee, tick spacing and hook; a failed auction may leave no pool. The constructor validates interface metadata, not code identity.
 
