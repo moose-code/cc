@@ -174,21 +174,14 @@ contract CallerPayTest is Fixture {
 
     // ------------------------------------------------------------------ bounds and reentrancy
 
-    // promise: INTEGRATION BadSetting on callerFee and callerMaxBaseFee
+    // promise: SPEC 1 callerFee and callerMaxBaseFee accept every value of their types
     function test_callerPaymentBounds() public {
         Settings memory s = core.settings();
-        s.callerFee = 0.005 ether;
-        s.callerMaxBaseFee = 100 gwei;
+        s.callerFee = type(uint64).max;
+        s.callerMaxBaseFee = type(uint48).max;
         _setSettings(s);
-        s.callerFee = 0.005 ether + 1;
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("callerFee")));
-        core.setSettings(s);
-        s.callerFee = 0;
-        s.callerMaxBaseFee = 100 gwei + 1;
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("callerMaxBaseFee")));
-        core.setSettings(s);
+        assertEq(core.settings().callerFee, type(uint64).max);
+        assertEq(core.settings().callerMaxBaseFee, type(uint48).max);
     }
 
     // promise: INTEGRATION Reentrancy on the caller payment

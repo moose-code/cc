@@ -241,7 +241,7 @@ The record carries chain id 1, so the evm.now links of this node point at chain 
 
 | priority | door | when |
 |---|---|---|
-| 1 | `buyListing(adapter, id, params)` | a CreditStrategy or Seaport listing has sat under `bidOf(id)` and under the pot, net of the keeper's cost, for `LISTING_DELAY_SEC` (2 minutes, decision 137), the order is open and its offerer still holds the credit; best gap first |
+| 1 | `buyListing(adapter, id, params)` | a CreditStrategy or Seaport listing has sat under `bidOf(id)` and under the pot, net of the keeper's cost, for `LISTING_DELAY_SEC` (2 minutes, decision 137), the order is open and its offerer still holds the credit; best gap first. while `spendCapBps` is under 10,000 the keeper reads `spendState()` and skips a listing whose price plus keeper payment the bucket budget cannot take (the first purchase of a bucket always passes) until the next bucket; a `SpendCapReached` simulation is a wait |
 | 2 | `buyback()` | `ethToBuyback` above 0, `lastBuybackBlock + buybackDelay` reached, the slice at least `2 * maxPay` and the scaled fee covering the tip |
 | 3 | `compose()` | `nextPage()` ready; paid 3 gwei plus 0.0003 eth (decision 138), so it waits above about 3 gwei |
 | 4 | `collectEscrow()` | the fee escrow holds more for the Core than the gas of the claim |
