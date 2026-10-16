@@ -3047,3 +3047,11 @@ button.slot:disabled {
   font-size: 11px;
   color: var(--quiet);
 }
+/* the listings tab sits in the feed column, narrower than the listings page: tighter tracks so the credit id keeps
+   its width instead of collapsing under the page-width fixed columns */
+@media (min-width: 861px) {
+  .ledger .ltable-row {
+    grid-template-columns: 28px minmax(72px, 1fr) 96px 48px 72px 72px 120px 56px 108px 76px;
+    column-gap: 8px;
+  }
+}
