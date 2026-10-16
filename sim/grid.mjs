@@ -1,10 +1,10 @@
 // settings grid for the stale-bid exposure study (EXPOSURE-129-grid). usage: node sim/grid.mjs [out.json]
-// rules come from engine.js untouched; only dropPerCreditBps, climbPerMinBps, recoveryClimbPerMinBps and the pot vary.
+// rules come from engine.js untouched; only dropPer100PointsBps, climbPerMinBps, recoveryClimbPerMinBps and the pot vary.
 // cases: dump, collapse (exit sellers, 500 mixed-score credits), steady (flat 0.020 market plus organic sellers), wave (200 sellers at open).
 import fs from 'node:fs';
-import { Core, W, DEFAULTS, mulberry32, poisson } from './engine.js';
+import { Core, W, DEFAULTS, RATE_SCORE, mulberry32, poisson } from './engine.js';
 
-const BLOCK = 12, REF_PTS = 433, OPEN = DEFAULTS.rateStart / W; // opening bid, eth per credit at refScore
+const BLOCK = 12, REF_PTS = 433, OPEN = DEFAULTS.rateStart / W; // opening rate, eth per 100 points; REF_PTS is the dump credit in points
 const CENSUS = [152, 224, 296, 368, 440, 512, 584, 656, 728]; // decile points of the credit score census (sim/data/notes.md)
 const A = { credits: 500, ask: 0.005, sellH: 6, totalH: 48, collapseSec: 600, steadyAsk: 0.02, organicPerHour: 35, wave: 200, steadyH: 24, seed: 129 };
 
@@ -40,12 +40,12 @@ function runExit(cell, scenario) {
     }
     for (;;) {
       const bid = bidAt(core, t), ask = askAt(t);
-      const idx = inv.findIndex((pts) => bid * pts * 1e4 / core.s.refScore >= ask);
+      const idx = inv.findIndex((pts) => bid * pts * 1e4 / RATE_SCORE >= ask);
       if (idx < 0) break;
       const paid = core.sellForEth(t, inv[idx]);
       if (!(paid > 0)) { stalls++; break; }
       const h = Math.min(A.sellH - 1, Math.floor(t / 3600));
-      hourly[h] += paid; nByHour[h]++; ratioByHour[h] += inv[idx] * 1e4 / core.s.refScore;
+      hourly[h] += paid; nByHour[h]++; ratioByHour[h] += inv[idx] * 1e4 / RATE_SCORE;
       inv.splice(idx, 1); bought++; spent += paid; overpay += Math.max(0, paid - ask); check(t);
       if (!inv.length) break;
     }

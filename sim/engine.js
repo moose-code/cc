@@ -4,6 +4,8 @@
 
 export const W = 1e18;
 export const BPS = 10000;
+// stored score units the eth rate is quoted per: 100 points (100 * 10_000 units per point), the bidForScore divisor
+export const RATE_SCORE = 1_000_000;
 
 // the launch package. every launch number comes from script/config/mainnet.json, the single source. node reads the file
 // here; build.mjs strips the import and inlines the parsed object as LAUNCH_RAW for the browser, so neither path hand
@@ -18,7 +20,7 @@ const _cs = LAUNCH_RAW.settings, _sale = LAUNCH_RAW.sale, _cr = LAUNCH_RAW.credi
 // recoveryGapPct = recoveryGapBps / 100, peakHalfLifeHours = peakHalfLife / 3600. durations in seconds, buybackSlice and the fees in eth, swapFeeCc in whole coins.
 // every one can change mid run through `schedule`
 export const SETTINGS = {
-  dropPerCreditPct: _cs.dropPerCreditBps / 100, // fall of the bid per credit bought, percent of the bid before that credit
+  dropPerCreditPct: _cs.dropPer100PointsBps / 100, // fall of the bid for a 100 point credit, percent of the bid before that credit; a credit of score `s` falls dropPerCreditPct * s / RATE_SCORE
   dropToPct: _cs.dropFloorBps / 100, // within one minute the bid stays at or above this percent of the bid at the first fill of that minute
   climbPerMin: _cs.climbPerMinBps / 100, // climb of the bid per minute, percent, compounded
   ceilPct: _cs.ceilBps / 100, // the bid stays at or below this percent of the ceiling anchor, the larger of the last fill rate and the remembered peak
@@ -44,7 +46,7 @@ export const SETTINGS = {
   redeemSlippageBps: _cs.redeemSlippageBps, // a redemption must return at least rating * unit * (10000 - redeemSlippageBps) / 10000 (FLOW 84)
   balanceBidMarginBps: _cs.balanceBidMarginBps, // the balance bid floor is 10000 - balanceBidMarginBps bps of par, its opening rate (decision 122)
   redeemBurnBps: _cs.redeemBurnBps, // share of the redeem burn reserve moved to the coin buyback on each redemption (FLOW 86)
-  refScore: _cs.refScore, // the per-credit score the eth bid divides by: every eth door pays rate * score / refScore per credit, ten-thousandths of a point, 1 to uint32 max
+  pointsPerPage: _cs.pointsPerPage, // points in one page for the ceiling pot multiplier: one page costs rate * pointsPerPage / 100
   climbMultiplierCapBps: _cs.climbMultiplierCapBps,
   spendCapBps: _cs.spendCapBps,
   bucketSeconds: _cs.bucketSeconds,
@@ -138,7 +140,7 @@ export function firstViolation(s) {
     ['buybackDelay',16,1], ['redeemSlippageBps',16,1], ['balanceBidMarginBps',16,1], ['redeemBurnBps',16,1],
     ['buybackSlice',128,W], ['keeperFee',64,W], ['keeperMaxBaseFee',48,1e9], ['rateCap',64,1],
     ['callerFee',64,W], ['callerMaxBaseFee',48,1e9], ['feeToRedeemBurnBps',16,1], ['payeePpm',24,1],
-    ['refScore',32,1], ['swapFeeCc',96,W], ['climbMultiplierCapBps',16,1], ['spendCapBps',16,1],
+    ['pointsPerPage',32,1], ['swapFeeCc',96,W], ['climbMultiplierCapBps',16,1], ['spendCapBps',16,1],
     ['bucketSeconds',32,1], ['balanceBidCapBps',32,1], ['idleStepSeconds',32,1], ['sniperSeconds',32,1],
   ];
   for (const [k, bits, scale] of fields) if (!uint(s[k], bits, scale)) return k;
@@ -155,7 +157,7 @@ export function firstViolation(s) {
   if (!(s.peakHalfLifeHours > 0)) return 'peakHalfLifeHours';
   if (!(s.bucketSeconds > 0)) return 'bucketSeconds';
   if (!(s.idleStepSeconds > 0)) return 'idleStepSeconds';
-  if (!(s.refScore > 0)) return 'refScore';
+  if (!(s.pointsPerPage > 0)) return 'pointsPerPage';
   if (!(s.rateCap > 0)) return 'rateCap';
   if (s.climbMultiplierCapBps < BPS) return 'climbMultiplierCapBps';
   if (s.balanceBidCapBps < BPS) return 'balanceBidCapBps';
@@ -283,10 +285,10 @@ export class SpendBucket {
   }
 }
 // Solidity-comparable integer vectors exercise the conversion independently of the market price model.
-export function balanceConversion(available, denom, balanceCap, multiplierCap, lastFill) {
+export function balanceConversion(available, denom, balanceCap, multiplierCap, lastFill, pointsPerPage) {
   const raw = denom === 0n ? 0n : available * 10000n / denom;
   const clamp = denom === 0n ? BigInt(balanceCap) : raw < BigInt(balanceCap) ? raw : BigInt(balanceCap);
-  const pages = lastFill === 0n ? 10000n : raw * 125n / lastFill;
+  const pages = lastFill === 0n ? 10000n : raw * 1000000n / (lastFill * BigInt(pointsPerPage));
   const multiplier = pages < 10000n ? 10000n : pages > BigInt(multiplierCap) ? BigInt(multiplierCap) : pages;
   return { clamp, multiplier };
 }
@@ -421,9 +423,9 @@ export class Core {
   bidMult() {
     const cap = this.p.multiplierCap ?? this.s.climbMultiplierCapBps / BPS;
     if (!(cap > 1)) return 1;
-    const cost = this.lastPaidRate * this.p.PAGE;
+    const cost = this.lastPaidRate; // positivity guard: a zero rate reads as 1x
     if (!(cost > 0)) return 1;
-    return Math.min(Math.max(Math.floor((this.ethPot * W) * 125 / this.lastPaidRate) / BPS, 1), cap);
+    return Math.min(Math.max(Math.floor((this.ethPot * W) * (BPS * 100) / (this.lastPaidRate * this.s.pointsPerPage)) / BPS, 1), cap);
   }
   // an earlier 128 draft bounded the read at hourlyBound / 10000 of the highest fill rate of the past hour (or the last
   // fill rate when the hour has none); it was rejected (REVIEW-128-potscaled.md) and kept here only for that comparison.
@@ -509,10 +511,10 @@ export class Core {
     if (this.s.balanceBidOn && (!wasOn || !wasUsable)) this.resetBalanceToFloor(now);
     else if (this.balRate < floor) this.resetBalanceToFloor(now);
   }
-  // the score of a credit of `pts` points over refScore: the eth doors scale the rate and the drop by it (CoreLib).
-  // refScore is in ten-thousandths of a point, points are whole points here, so score is pts * 1e4
+  // the score of a credit of `pts` points over 100 points: the eth doors scale the rate and the drop by it (CoreLib).
+  // RATE_SCORE is 100 points in score units (ten-thousandths of a point), points are whole points here, so score is pts * 1e4
   scoreRatio(pts) {
-    return (pts * 1e4) / this.s.refScore;
+    return (pts * 1e4) / RATE_SCORE;
   }
   // _spend: checkpoint, then the drop on fill for a credit of score ratio `ratio` (CoreLib.drop). the fall is
   // dropPerCreditPct * ratio, bounded at 100 percent. false means the Core would revert
@@ -559,7 +561,7 @@ export class Core {
     this.syncFunded();
   }
   // door one: sell into the bid. a credit of `pts` points is paid the rate times its score over refScore. returns the price paid or 0
-  sellForEth(now, pts = this.s.refScore / 1e4) {
+  sellForEth(now, pts = RATE_SCORE / 1e4) {
     const ratio = this.scoreRatio(pts);
     const price = (this.ethRate(now) / W) * ratio;
     return this.spend(price, now, ratio) ? price : 0;
@@ -583,7 +585,7 @@ export class Core {
   // door two: buy a listing of a credit of `pts` points at its ask. the ceiling is the rate times the credit's score
   // over refScore. the caller is paid the largest payment, at most the bid less the ask, booked as spend with the cost.
   // returns {cost, paid} or null
-  buyListing(ask, now, pts = this.s.refScore / 1e4) {
+  buyListing(ask, now, pts = RATE_SCORE / 1e4) {
     const ratio = this.scoreRatio(pts);
     const ceil = (this.ethRate(now) / W) * ratio;
     if (ask > this.ethPot || ask > ceil) return null;
@@ -600,7 +602,7 @@ export class Core {
   // the floor rate is the larger of the climbed price state and the decayed peak. points are in points here, refScore in ten-thousandths of a point, so refScore/1e4 is the
   // reference score in points and floorRate/W is the per-credit rate in eth. the pool term is 0 while the pool key or the module is unset or the unit reads 0
   valueOf(pts, now) {
-    const rateTerm = (this.floorRate(now) / W) * (pts / (this.s.refScore / 1e4));
+    const rateTerm = (this.floorRate(now) / W) * (pts / (RATE_SCORE / 1e4));
     return Math.max(rateTerm, this.poolTerm(pts));
   }
   poolTerm(pts) { return this.p.balancePoolSet && this.moduleSet && this.xpLive > 0 ? pts * this.xpLive * this.p.balancePoolMult : 0; }
@@ -687,7 +689,7 @@ export class Core {
   // the eth cost the Core records for a credit bought with the balance token: the floor rate times score / refScore (CoreLib.sellForBalance, at least 1 wei). the floor
   // rate is the larger of the climbed price state and the decayed peak. refScore is in ten-thousandths of a point, so refScore/1e4 is the reference score in points.
   // the cost basis reads the price state and the peak
-  balanceCostBasis(pts, now) { return (this.floorRate(now) / W) * (pts / (this.s.refScore / 1e4)); }
+  balanceCostBasis(pts, now) { return (this.floorRate(now) / W) * (pts / (RATE_SCORE / 1e4)); }
   // the credit sale floor: the larger of the credit's cost and valueOf(score), times creditFloorBps (decision 115)
   creditFloor(cr, now) { return (Math.max(cr.cost, this.valueOf(cr.pts, now)) * this.cr.creditFloorBps) / BPS; }
   // ControllerV1.creditPrice: falls linearly from floor * creditStartBps to the floor over creditWindow from the acquisition time and rests at the floor
@@ -750,7 +752,7 @@ export class Core {
   balPeakAt(now) { return this.balPeakRate * Math.pow(0.5, Math.max(0, now - this.balPeakTime) / (this.s.peakHalfLifeHours * 3600)); }
   // the module available as bps of par for a refScore credit (CoreLib._toBps). par of a refScore credit is (refScore/1e4) * unit, eth value; a zero denom reads as no clamp
   balAvailBps() {
-    const denom = (this.s.refScore / 1e4) * this.unit();
+    const denom = (RATE_SCORE / 1e4) * this.unit();
     if (!(denom > 0)) return this.s.balanceBidCapBps;
     return Math.min((this.balancePot * BPS) / denom, this.s.balanceBidCapBps);
   }
@@ -782,8 +784,8 @@ export class Core {
   // the balance ceiling in bps of par: ceilPct of the anchor loosened while idle, at most balanceBidCapBps
   _balCeil(now) {
     const s = this.s, p = this.p;
-    const denom = (s.refScore / 1e4) * this.unit();
-    const pages = denom > 0 && this.balLastFillRate > 0 ? (this.balancePot / denom * BPS) / (this.balLastFillRate * this.p.PAGE) : 1;
+    const denom = (RATE_SCORE / 1e4) * this.unit();
+    const pages = denom > 0 && this.balLastFillRate > 0 ? (this.balancePot / denom * BPS) * 100 / (this.balLastFillRate * s.pointsPerPage) : 1;
     const multiplier = Math.min(Math.max(pages, 1), this.p.multiplierCap ?? s.climbMultiplierCapBps / BPS);
     const loosen = 1 + (s.idleLoosenPct / 100) * multiplier * Math.floor((now - this.balLastFillTime) / s.idleStepSeconds);
     const anchor = Math.max(this.balLastFillRate, this.balPeakAt(now));

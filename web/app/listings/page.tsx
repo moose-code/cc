@@ -189,7 +189,7 @@ export default function ListingsPage() {
           gap is price over bid. bids marked ~ are estimated from the current rate and the rating; the closest 100 rows are
           read from the chain. clears in assumes no sales into the bid and a constant pot.
           {data && data.osMax > 0 && osCount > 0 && ` showing the cheapest ${data.osMax} OpenSea listings.`}
-          {snap && ` bid ${eth(snap.ethRate)} ETH at rating ${rating(snap.settings.refScore)}.`}
+          {snap && ` bid ${eth(snap.ethRate)} ETH at rating ${rating(1_000_000n)}.`}
         </p>
       </div>
     </div>

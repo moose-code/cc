@@ -10,14 +10,14 @@ const a: EthReplay = {
   start: 0n,
   bucket: 0n,
   nowBucket: 7n,
-  dropPerCreditBps: 50n,
+  dropPer100PointsBps: 50n,
   dropFloorBps: 5000n,
   ceilBps: 10000n,
   rateCap: 10n ** 18n,
   refScore: 1000n,
 };
 
-// credits of score refScore (score / refScore is 1): each pays the full rate and drops the rate by dropPerCreditBps
+// credits of score refScore (score / refScore is 1): each pays the full rate and drops the rate by dropPer100PointsBps
 const ref = (k: number): bigint[] => Array<bigint>(k).fill(a.refScore);
 
 assert.equal(replayEth(ref(0), a), 0n);
@@ -37,9 +37,9 @@ assert.equal(replayEth(ref(2), { ...a, rateCap: 800n }), 1000n + 800n);
 // per point: a credit of score 2 * refScore pays twice the rate and drops it twice as far (1 percent)
 assert.equal(replayEth([2000n], a), 2000n);
 assert.equal(replayEth([2000n, 1000n], a), 2000n + 990n);
-// balance: score * unit * rate / 10000 per credit, the rate dropped per credit by dropPerCreditBps * score / refScore
+// balance: score * unit * rate / 10000 per credit, the rate dropped per credit by dropPer100PointsBps * score / refScore
 // in one rounding, never below the floor
-const b = { rate: 10000n, unit: 100n, refScore: 10n, dropPerCreditBps: 50n, dropFloorBps: 5000n, floorBps: 9000n };
+const b = { rate: 10000n, unit: 100n, refScore: 10n, dropPer100PointsBps: 50n, dropFloorBps: 5000n, floorBps: 9000n };
 // at par: 300, then the rate is 10000 * (100000 - 150) / 100000 = 9985 and the second credit pays 5 * 100 * 9985 / 10000
 assert.equal(replayBalance([3n, 5n], b), 300n + 499n);
 // at the floor the drop cannot lower the rate: 270 then 450
