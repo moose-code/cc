@@ -6,12 +6,13 @@ import { CreditTile } from "@/components/Tiles";
 import { PageHead } from "@/components/Shell";
 import { NotDeployed } from "@/components/NotDeployed";
 import { engineDeployed } from "@/lib/config";
-import { countdown, useHead, useNow, useSnapshot } from "@/lib/live";
+import { countdown, useBalanceToken, useHead, useNow, useSnapshot } from "@/lib/live";
 import { useAcquireTx } from "@/lib/useAcquire";
 import { useListings, type ListingRow, type ListingsData } from "@/lib/useListings";
 import { nextRise } from "@/lib/climb";
 import { etaLabel } from "@/lib/compose-eta";
-import { eth, evmNowTx, rating } from "@/lib/format";
+import { BALANCE_SYMBOL, eth, evmNowTx, formatBalance, rating } from "@/lib/format";
+import { useFillsTodayIx } from "@/lib/indexer";
 
 const PAGE = 50;
 const BUCKETS = [
@@ -64,6 +65,8 @@ export default function ListingsPage() {
   const { data: head } = useHead();
   const { buy, available, pending, err, done } = useAcquireTx(head?.n);
   const [shown, setShown] = useState(PAGE);
+  const bal = useBalanceToken();
+  const { data: fills } = useFillsTodayIx(head?.ts);
 
   const rows = data?.rows ?? [];
   const counts = useMemo(() => {
@@ -86,6 +89,14 @@ export default function ListingsPage() {
     <>
       {meta}
       {data && <RiseLine data={data} />}
+      {snap?.balanceOn && snap.settings.balanceBidOn && snap.balanceUnit !== undefined && (
+        <div className="rise-line">balance bid {(Number(snap.balanceRate) / 100).toFixed(1)}% of par</div>
+      )}
+      {fills && (
+        <div className="rise-line">
+          fills today: {fills.eth} eth · {fills.balance} {BALANCE_SYMBOL}
+        </div>
+      )}
     </>
   );
   const max = Math.max(1, ...counts);
@@ -126,6 +137,7 @@ export default function ListingsPage() {
             <span className="num hide-sm">rating</span>
             <span className="num">price ETH</span>
             <span className="num hide-sm">bid ETH</span>
+            <span className="num hide-sm">balance bid</span>
             <span className="num">gap</span>
             <span className="num">clears in</span>
             <span />
@@ -144,6 +156,9 @@ export default function ListingsPage() {
               <span className="num muted hide-sm">
                 {r.live ? "" : "~"}
                 {eth(r.bid)}
+              </span>
+              <span className="num muted hide-sm">
+                {r.balanceBid ? `${r.live ? "" : "~"}${formatBalance(r.balanceBid, bal)}` : "—"}
               </span>
               <span className={`num${r.clears ? " ctable-price" : ""}`}>{gapLabel(r)}</span>
               <span className="num">{etaText(r)}</span>

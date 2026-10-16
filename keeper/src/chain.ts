@@ -8,9 +8,15 @@ import type { Config } from "./config.ts";
 import type { State } from "./decide.ts";
 import { log } from "./log.ts";
 
+// RPC_TIMEOUT_MS: per request read timeout, default 20 s; a local fork with a cold upstream needs more
+function rpcTimeoutMs(): number {
+  const v = Number(process.env.RPC_TIMEOUT_MS ?? 20_000);
+  return Number.isFinite(v) && v > 0 ? v : 20_000;
+}
+
 export function readClient(cfg: Config): PublicClient {
   const transport = fallback(
-    cfg.rpcUrls.map((u) => http(u, { timeout: 20_000, retryCount: 1 })),
+    cfg.rpcUrls.map((u) => http(u, { timeout: rpcTimeoutMs(), retryCount: 1 })),
     { retryCount: 1 },
   );
   // cacheTime 0: every tick reads the head afresh. viem caches the block number for its polling interval by default,
