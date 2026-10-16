@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
-import {Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {Mainnet, Settings, ICreditStrategy} from "../src/interfaces/Interfaces.sol";
 import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
 import {
     LaunchConfig,
@@ -46,6 +46,17 @@ contract ConfigTest is Fixture {
     /// the json file is the default config plus the launch inputs the owner supplied (owner, creator, name, the creator
     /// payee, the artist) and the salt, keccak256 of "CC", and the live v2 stack of script/config/v2-mainnet.json
     // promise: json equals default config
+    // promise: TEST FIXTURE the three named listings are held and priced by the CreditStrategy at the fork block
+    /// the suites buy `LISTED_A`, `LISTED_B` and `LISTED_C` from the strategy by id; a listing that sold or left makes the
+    /// ids need a refresh
+    function test_namedListingsAreHeldAndPriced() public view {
+        uint256[3] memory listed = [LISTED_A, LISTED_B, LISTED_C];
+        for (uint256 i; i < 3; ++i) {
+            assertEq(CREDITS.ownerOf(listed[i]), STRATEGY, "a named listing left the strategy");
+            assertGt(ICreditStrategy(STRATEGY).nftForSale(listed[i]), 0, "a named listing is not for sale");
+        }
+    }
+
     function test_jsonEqualsDefaultConfig() public view {
         LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
         LaunchConfig memory d = defaultConfig();

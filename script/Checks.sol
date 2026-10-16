@@ -39,6 +39,7 @@ interface IKeyRegistry {
 
 interface IFeeControllerV2 {
     function burnRouter() external view returns (address);
+    function treasury() external view returns (address);
 }
 
 /// @notice the read only checks run before a launch (`preflight`) and after it (`postflight`). they only read state,
@@ -73,17 +74,17 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0xd46bea666794634f8c81e649d37fad08a7c8c7aae51dba66dce1436c65400f60;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x5b23d9604f9e1cc2b9655896ca76a2495dbc0655634cb445f2addb54d63c3c71;
+    bytes32 internal constant BUILD_HASH_CORE = 0x3b9ba235a2786b36cac75bd9dffebdc088b82c40f612f0da07718e3f8aa7ecba;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x45510a1d4af84908c03f320cd22e8e0ac5ca5499f041353474687205a98f6052;
     bytes32 internal constant BUILD_HASH_CONTROLLER =
-        0xd704ad3e73dbe2c2a9bd5307d5de7815fc4952f9a93d92e59f67ff3f2641f7fb;
+        0x80057cad3d5f18bd0c9bf8f56136d730df2ae2c4f04eb03a86dea6c1c1e2e0d0;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER =
         0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER =
         0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_HASH_RENDERER = 0x21bc6e3d0b34d0e43e48bdc78e106393a18ba34e6cc9dc81a722844d60b12ce6;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0xd19092d99060bda9ce6a49432539d3e33b028a7c73024f9c1ea60528d5d5d6c9;
+        0xeea322836f385f2d2bc97837e7c40439b9d7fd2b6569ba442c09a29148388a42;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 1_000_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -532,6 +533,11 @@ abstract contract LaunchChecks is PostflightChecks {
         _pin("token deployer", deployer_, V2_CODEHASH_TOKEN_DEPLOYER);
         _pin("extension allowlist", _hookGlobals(s.hook).extensionAllowlist, V2_CODEHASH_ALLOWLIST);
         _pin("protocol fee controller", controller, V2_CODEHASH_FEE_CONTROLLER);
+        // the treasury is owner settable on the controller; the record holds the value read at the pin
+        (, address treasury) = _addr(controller, abi.encodeCall(IFeeControllerV2.treasury, ()));
+        bool master = keccak256(bytes(vm.envOr("STACK", string("")))) == keccak256("master");
+        address want = master ? c.owner : vm.parseJsonAddress(vm.readFile("script/config/v2-mainnet.json"), ".treasury");
+        _eq("protocol fee controller: treasury is the recorded treasury", treasury, want);
         _pin("burn router", router, V2_CODEHASH_BURN_ROUTER);
     }
 

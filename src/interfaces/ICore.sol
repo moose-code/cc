@@ -201,6 +201,7 @@ interface ICore {
     function retired() external view returns (bool);
     function sellCreditTo(uint256 id, address buyer) external payable;
     function sellForBalance(uint256[] memory ids) external;
+    function sellForBalance(uint256[] memory, uint256, address) external;
     function sellForBalance(uint256[] memory ids, uint256 minOut) external;
     function sellForEth(uint256[] memory ids, uint256 minOut) external;
     function sellForEth(uint256[] memory ids) external;

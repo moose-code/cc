@@ -103,6 +103,7 @@ export const engineSnapshot = onchainTable("engine_snapshot", (t) => ({
   balanceRate: t.bigint().notNull(),
   coreEthBalance: t.bigint().notNull(),
   balanceAvailable: t.bigint(),
+  balanceToken: t.hex(), // the token balanceAvailable is denominated in at this block; changes at BalanceModuleSet
   pileSize: t.bigint().notNull(),
   payeeOn: t.boolean().notNull(),
   paused: t.boolean().notNull(),
@@ -174,7 +175,8 @@ export const credit = onchainTable(
     acquiredTx: t.hex(),
     acquiredHow: acquiredHow("acquired_how"),
     seller: t.hex(),
-    balancePaid: t.bigint(), // BalanceRateFill.spent, balance token units
+    balancePaid: t.bigint(), // BalanceRateFill.spent, in balancePaidToken's base units
+    balancePaidToken: t.hex(), // the balance token active at the sale; changes at BalanceModuleSet
     pileOrder: t.bigint(), // insertion sequence; a swap-in takes the out credit's value
     statementId: t.bigint(),
     pagePosition: t.integer(),
@@ -272,6 +274,7 @@ export const activity = onchainTable(
     account: t.hex(),
     amount: t.bigint(),
     amount2: t.bigint(),
+    balanceToken: t.hex(), // event-time currency for balance purchases and redemption
     blockNumber: t.bigint().notNull(),
     blockTimestamp: t.bigint().notNull(),
     txHash: t.hex().notNull(),
@@ -306,7 +309,7 @@ const counters = (t: PgColumnsBuilders) => ({
   toOperator: t.bigint().notNull().default(0n),
   ccBurned: t.bigint().notNull().default(0n), // Core buyback burns plus CreditSwapped.fee
   ethToBuybackSpent: t.bigint().notNull().default(0n), // sum of Buyback.amountIn
-  balancePaidTotal: t.bigint().notNull().default(0n), // sum of BalanceRateFill.spent
+  balancePaidByToken: t.json().$type<Record<string, string>>().notNull().default({}), // raw units keyed by token
 });
 
 /** Singleton per Core. */

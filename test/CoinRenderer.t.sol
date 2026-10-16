@@ -132,6 +132,7 @@ contract CoinRendererTest is Fixture {
         bytes21[80] memory seeds;
         uint64[80] memory paidAt;
         for (uint256 i; i < 80; ++i) {
+            // any existing credit serves: the page is compared over its seed and timestamp, the owner is not read
             uint256 id = CreditIds.at(i);
             seeds[i] = CREDITS.seedOf(id);
             paidAt[i] = CREDITS.timestampOf(id);

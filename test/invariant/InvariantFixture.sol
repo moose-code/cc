@@ -8,7 +8,6 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {ICreditStrategy, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Fixture} from "../utils/Fixture.sol";
-import {CreditIds} from "../utils/CreditIds.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {ProbeTarget} from "../attackers/ProbeTarget.sol";
@@ -40,11 +39,11 @@ abstract contract InvariantFixture is Fixture {
     uint256 internal constant LEFT_IN_PILE = 78;
     /// statements composed before the run
     uint256 internal constant COMPOSES = 4;
-    /// real listings are read from this index of the strategy list, after the credits that move
-    uint256 internal constant CANDIDATE_START = 600;
+    /// real listings are read from the reserved tail of the recorded ids, which `_credits` never takes from
+    uint256 internal constant CANDIDATES = 40;
 
-    /// @dev the credit budget (the first 600 of the 640 ids) is kept in the balance side suites, which also sell 80 credits
-    /// into the balance side, by giving the four actors 25 credits each
+    /// @dev the credit budget is kept in the balance side suites, which also sell 80 credits into the balance side, by
+    /// giving the four actors 25 credits each
     uint256 internal constant ACTOR_CREDITS = 25;
 
     FuzzController internal fuzz;
@@ -105,7 +104,6 @@ abstract contract InvariantFixture is Fixture {
         } else {
             assertLt(block.timestamp, launchTime + SNIPER_WINDOW / 2, "the window start state drifted");
         }
-        assertLt(creditCursor, CANDIDATE_START, "the moved credits reach the listing candidates");
         _targets(phase2);
     }
 
@@ -183,7 +181,7 @@ abstract contract InvariantFixture is Fixture {
     /// four actors with credits, eth and coin, all approved for the core and the router. every approval and every
     /// swap is real. a dedicated swapper for the swapCredit action takes `SWAPPER_CREDITS` of actor 0's allocation, so no
     /// other action ever spends them and the swap always has an incoming credit; it holds coin for the fuzzed fee. the
-    /// carve out keeps `creditCursor` where it was, clear of the listing candidates
+    /// carve out leaves the credits handed out as they were
     function _actors() internal {
         for (uint256 i; i < 4; ++i) {
             address a = _user(string.concat("inv.actor", vm.toString(i)));
@@ -304,11 +302,11 @@ abstract contract InvariantFixture is Fixture {
 
     /// the cheapest real listings, so the bid reaches them first
     function _candidates() internal {
-        uint256 n = 40;
+        uint256 n = CANDIDATES;
         uint256[] memory ids = new uint256[](n);
         uint256[] memory key = new uint256[](n);
         for (uint256 i; i < n; ++i) {
-            uint256 id = CreditIds.at(CANDIDATE_START + i);
+            uint256 id = _heldCredit(i);
             ids[i] = id;
             uint256 price = ICreditStrategy(Mainnet.CREDIT_STRATEGY).nftForSale(id);
             // the price, larger is worse. unlisted ids sort last

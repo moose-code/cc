@@ -6,15 +6,16 @@ import { NotDeployed } from "@/components/NotDeployed";
 import { PageHead } from "@/components/Shell";
 import { coreAbi } from "@/lib/abis";
 import { core, engineDeployed } from "@/lib/config";
-import { useHead, useSnapshot } from "@/lib/live";
+import { useBalanceToken, useHead, useSnapshot } from "@/lib/live";
 import { useStats } from "@/lib/data";
 import { useEngine, useIxMode } from "@/lib/indexer";
-import { BALANCE_SYMBOL, commas, eth, shortAddr } from "@/lib/format";
+import { BALANCE_SYMBOL, commas, eth, formatBalance, shortAddr } from "@/lib/format";
 
 // The permissionless engine actions: the pots, the book and the next buyback (anyone may call them), and the push
 // payouts. The artist and the payee are paid by push on every sale and book, so there is no claim here.
 export default function KeeperPage() {
   const { data: s } = useSnapshot();
+  const bal = useBalanceToken();
   const { data: stats } = useStats();
   const head = useHead().data?.n;
   // lastBuybackBlock from the indexer; the Core view in chain mode
@@ -55,7 +56,7 @@ export default function KeeperPage() {
               {row("pot", `${eth(s.ethPot)} eth`)}
               {row("to buyback", `${eth(s.ethToBuyback)} eth`)}
               {row("redeem burn pot", `${eth(s.ethRedeemBurn)} eth`)}
-              {s.balanceOn && row(`${BALANCE_SYMBOL} in the module`, s.balanceAvailable === undefined ? "unavailable" : eth(s.balanceAvailable))}
+              {s.balanceOn && row(`${BALANCE_SYMBOL} in the module`, s.balanceAvailable === undefined ? "unavailable" : formatBalance(s.balanceAvailable, bal))}
               {s.balanceOn && row(`${BALANCE_SYMBOL} bid, % of par`, s.balanceAvailable === undefined ? "unavailable" : `${(Number(s.balanceRate) / 100).toFixed(1)}%`)}
             </div>
           </section>

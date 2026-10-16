@@ -44,6 +44,7 @@ export const coreAbi = parseAbi([
   // actions
   "function sellForEth(uint256[] ids, uint256 minOut)",
   "function sellForBalance(uint256[] ids, uint256 minOut)",
+  "function sellForBalance(uint256[] ids, uint256 minOut, address expectedToken)",
   "function swapCredit(uint256 inId, uint256 outId)",
   "function compose()",
   "function compose(uint8 format)",
@@ -105,6 +106,7 @@ export const coreAbi = parseAbi([
   "error SameBlockReturn(uint256 id)",
   "error SliceTooSmall()",
   "error Slippage()",
+  "error BalanceTokenChanged()",
   "error TooSoon()",
   "error Underpaid()",
   "error UseFund()",

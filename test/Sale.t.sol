@@ -21,6 +21,13 @@ abstract contract SaleBase is Fixture {
         (, cost,) = core.statementInfo(sid);
     }
 
+    /// the price reference of statement `sid`: the larger of its cost and `valueOf(rating)`, computed from the parts
+    function _reference(uint256 sid) internal view returns (uint256 priceReference) {
+        priceReference = _cost(sid);
+        uint256 value = ctl.valueOf(core.ratingOf(sid));
+        if (value > priceReference) priceReference = value;
+    }
+
     function _composedAt(uint256 sid) internal view returns (uint64 at) {
         (,, at) = core.statementInfo(sid);
     }
@@ -220,23 +227,24 @@ contract SaleCurveTest is SaleShapeBase {
 
 contract SaleFloorTest is SaleBase {
     // promise: SPEC 1 a raise of saleFloorBps reaches every held statement at once (decision 124 raises the start with it)
-    /// the floor is read live: a floor raised to the start lifts the ask of a held statement at once, a lowered floor
-    /// gives way to the curve again, and the buy pays the lifted price
+    /// the ask is a bps share of the reference max(cost, valueOf(rating)). the floor is read live: a floor raised to the
+    /// start lifts the ask of a held statement at once, a lowered floor gives way to the curve again, and the buy pays
+    /// the lifted price
     function test_floor_followsTheSettingAtOnce() public {
         uint256 sid = _composeOnce().sid;
-        uint256 cost = _cost(sid);
-        assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000);
+        uint256 priceReference = _reference(sid);
+        assertEq(ctl.priceOf(sid), priceReference * 15_000 / 10_000);
         _markupThenFloor(20_000, 20_000);
-        assertEq(ctl.priceOf(sid), cost * 20_000 / 10_000, "a raised floor reaches the held statement");
+        assertEq(ctl.priceOf(sid), priceReference * 20_000 / 10_000, "a raised floor reaches the held statement");
         _markupThenFloor(15_000, 1_000);
-        assertEq(ctl.priceOf(sid), cost * 15_000 / 10_000, "a lowered floor gives way to the curve");
+        assertEq(ctl.priceOf(sid), priceReference * 15_000 / 10_000, "a lowered floor gives way to the curve");
         _markupThenFloor(20_000, 20_000);
         address buyer = address(0xB0B);
         vm.deal(buyer, 100 ether);
         vm.prank(buyer);
         vm.expectRevert(IControllerV1.Underpaid.selector);
-        ctl.buy{value: cost * 15_000 / 10_000}(sid);
-        assertEq(_buy(buyer, sid), cost * 20_000 / 10_000);
+        ctl.buy{value: priceReference * 15_000 / 10_000}(sid);
+        assertEq(_buy(buyer, sid), priceReference * 20_000 / 10_000);
         assertEq(STATEMENTS.ownerOf(sid), buyer);
     }
 }

@@ -21,8 +21,8 @@ import type { Snapshot } from "@cc/engine/snapshot";
 import { log, safeError } from "./log.ts";
 import { indexerSeed, StrategyBook, type BookChain, type Move } from "./inventory.ts";
 
-// the ids read per multicall when indexing the strategy
-const CHUNK = 1500;
+// the ids read per multicall when indexing the strategy scores
+const SCORE_READ = 1500;
 // the most candidates per venue read in full each block, best ratio of bid to price first
 const MAX_CANDIDATES = 40;
 
@@ -97,8 +97,8 @@ export class Sources {
 
   private async scoresOf(ids: bigint[]) {
     const missing = ids.filter((id) => !this.scores.has(id));
-    for (let i = 0; i < missing.length; i += CHUNK) {
-      const part = missing.slice(i, i + CHUNK);
+    for (let i = 0; i < missing.length; i += SCORE_READ) {
+      const part = missing.slice(i, i + SCORE_READ);
       const sc = await creditScores(this.client, part);
       part.forEach((id, j) => this.scores.set(id, sc[j]));
     }

@@ -7,7 +7,6 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
 import {Mainnet, Settings, ICreditScore} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
-import {CreditIds} from "./utils/CreditIds.sol";
 import {BidModel} from "./utils/BidModel.sol";
 import {ISeaport, ItemType, OrderType, BasicOrderType, OfferItem, ConsiderationItem, OrderComponents, AdditionalRecipient, BasicOrderParameters} from "./utils/SeaportTypes.sol";
 
@@ -411,6 +410,8 @@ contract SeaportColdTest is SeaportBase {
 contract SeaportCallerPayTest is SeaportBase {
     /// the opening bid of docs/DECISIONS.md section 2, wei per credit
     uint256 internal constant P0 = 8_900_000_000_000_000;
+    /// gas that two runs of one call differ by
+    uint256 internal constant GAS_NOISE = 10_000;
 
     function setUp() public override {
         super.setUp();
@@ -470,12 +471,24 @@ contract SeaportCallerPayTest is SeaportBase {
     }
 
     // promise: SPEC 1 outside bots fill listings below the bid: break even gap at 2 gwei
-    /// at the opening bid itself a 10 percent gap (0.00089 ether) equals the gas cost at 2 gwei: no profit and no loss
-    /// beyond a few thousand gwei
-    function test_listingTenPercentUnderTheOpeningBidIsBreakEvenAtTwoGwei() public {
-        (, int256 profit) = _run(P0, 1_000, 2 gwei);
-        assertLt(profit, 0.0001 ether);
-        assertGt(profit, -0.0001 ether);
-    }
+    /// the payment is the gap while the gap is under the keeper fee plus the metered gas at the base fee, and the caller's
+    /// cost is the transaction gas at the base fee, so the break even gap is that cost. at the opening bid and 2 gwei a
+    /// 10 percent gap pays the whole gap and loses the rest of the cost. the gap in bps derived from the measured cost
+    /// pays back the cost within one bps of the bid (the gap steps in bps) plus the gas noise between two runs of the
+    /// same call, which is a few thousand gas (GasCap.t.sol `_sellBatch`); `GAS_NOISE` bounds it at 10,000 gas
+    function test_breakEvenGapAtTwoGweiIsTheMeasuredGasCost() public {
+        uint256 snap = vm.snapshotState();
+        (uint256 paid, int256 profit) = _run(P0, 1_000, 2 gwei);
+        assertEq(paid, P0 * 1_000 / 10_000, "a 10 percent gap is paid whole");
+        assertLt(profit, 0, "a 10 percent gap is under the cost at 2 gwei");
+        uint256 cost = uint256(int256(paid) - profit);
+        uint256 breakEvenBps = (cost * 10_000 + P0 - 1) / P0;
+        assertGt(breakEvenBps, 1_000, "the break even gap is wider than 10 percent");
 
+        vm.revertToState(snap);
+        (paid, profit) = _run(P0, breakEvenBps, 2 gwei);
+        int256 tolerance = int256(P0 / 10_000) + int256(GAS_NOISE * 2 gwei);
+        assertGt(profit, -tolerance, "the derived gap covers the cost");
+        assertLt(profit, tolerance, "the derived gap is the narrowest in bps");
+    }
 }

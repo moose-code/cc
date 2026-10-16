@@ -9,8 +9,10 @@ import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../
 library SettingsBounds {
     /// @notice the name of the first field out of bounds, or zero when every field is inside its bounds
     function firstViolation(Settings memory s) internal pure returns (bytes32) {
-        if (s.dropPerCreditBps < 1 || s.dropPerCreditBps > 10_000) return "dropPerCreditBps";
-        if (s.dropFloorBps > 10_000) return "dropFloorBps";
+        // The climb raises the rate from its current value, so a rate driven to zero stays at zero. dropPerCreditBps at
+        // most 9,999 and dropFloorBps at least 1 keep the post-fill rate above zero (decision 143).
+        if (s.dropPerCreditBps < 1 || s.dropPerCreditBps > 9_999) return "dropPerCreditBps";
+        if (s.dropFloorBps < 1 || s.dropFloorBps > 10_000) return "dropFloorBps";
         if (s.climbPerMinBps < 1) return "climbPerMinBps";
         if (s.ceilBps < 10_000) return "ceilBps";
         if (s.idleLoosenBps < 1) return "idleLoosenBps";
@@ -26,7 +28,9 @@ library SettingsBounds {
         if (!rateInBounds(s.rateCap)) return "rateCap";
         if (s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
         if (s.redeemSlippageBps > 10_000) return "redeemSlippageBps";
-        if (s.balanceBidMarginBps > 10_000) return "balanceBidMarginBps";
+        // The balance bid opens at 10,000 minus this margin, so the cap of 9,999 keeps the opening value at or above
+        // 1 bps of par (decision 143).
+        if (s.balanceBidMarginBps > 9_999) return "balanceBidMarginBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         if (s.payeePpm > 1_000_000) return "payeePpm";
         if (s.refScore < 1) return "refScore";

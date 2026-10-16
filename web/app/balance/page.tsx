@@ -3,16 +3,16 @@
 import { TradePanel } from "@/components/TradePanel";
 import { NotDeployed } from "@/components/NotDeployed";
 import { engineDeployed } from "@/lib/config";
-import { BALANCE_SYMBOL } from "@/lib/format";
+import { BALANCE_SYMBOL, formatBalance } from "@/lib/format";
 import { useBalanceMarket } from "@/lib/market";
-import { useSnapshot } from "@/lib/live";
-import { eth } from "@/lib/format";
+import { useBalanceToken, useSnapshot } from "@/lib/live";
 
 // Swap page of the balance token: the panel on the controller's balance pool. the balance bid pot is the module's
 // holding (the Core holds none); the bid is paused while balanceBidOn is false.
 export default function BalancePage() {
   const { market, loading } = useBalanceMarket();
   const { data: snap } = useSnapshot();
+  const bal = useBalanceToken();
 
   if (!engineDeployed) return <NotDeployed />;
 
@@ -20,7 +20,7 @@ export default function BalancePage() {
     <main className="page balance">
       {snap?.balanceOn && (
         <p className="muted">
-          {BALANCE_SYMBOL} in the module: {snap.balanceAvailable === undefined ? "unavailable" : eth(snap.balanceAvailable)}
+          {BALANCE_SYMBOL} in the module: {snap.balanceAvailable === undefined ? "unavailable" : formatBalance(snap.balanceAvailable, bal)}
           {snap.balanceAvailable === undefined
             ? " · balance bid unavailable"
             : snap.settings.balanceBidOn

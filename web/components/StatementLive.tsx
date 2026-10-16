@@ -19,7 +19,7 @@ import { useTokenMeta } from "@/lib/art";
 import { controllerAbi, coreAbi, erc20Abi } from "@/lib/abis";
 import { countdown, useBalanceToken, useNow, useSnapshot, useStatements, type HeldStatement, type Snapshot } from "@/lib/live";
 import { etaLabel } from "@/lib/compose-eta";
-import { BALANCE_SYMBOL, agoLabel, commas, eth, formatBalance, signedPct, tokens } from "@/lib/format";
+import { BALANCE_SYMBOL, agoLabel, commas, eth, formatHistoricalBalance, signedPct, tokens } from "@/lib/format";
 
 const BUFFER_BPS = 100n; // value above the price; the controller refunds the excess
 // TODO(design README open item "Statement format names"): the picker shows format numbers; names come from the
@@ -209,7 +209,7 @@ function History({ s, rec }: { s?: HeldStatement; rec?: StatementRecord }) {
 
 function RedeemedLine({ r }: { r: NonNullable<StatementRecord["redeemed"]> }) {
   const balance = useBalanceToken();
-  return <HistLine mark="c" ts={r.ts} block={r.block} text={`redeemed for ${formatBalance(r.received, balance)}`} value="—" />;
+  return <HistLine mark="c" ts={r.ts} block={r.block} text={`redeemed for ${formatHistoricalBalance(r.received, r.token, balance)}`} value="—" />;
 }
 
 const pct = (bps: bigint | number) => `${(Number(bps) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
@@ -406,7 +406,7 @@ function ExitSection({ rec, known, cost }: { rec?: StatementRecord; known: boole
             bought by <Addr address={sale.buyer} />.
           </p>
         )}
-        {redeemed && <p className="side-copy">redeemed for {formatBalance(redeemed.received, balance)}.</p>}
+        {redeemed && <p className="side-copy">redeemed for {formatHistoricalBalance(redeemed.received, redeemed.token, balance)}.</p>}
         {!sale && !redeemed && known && <p className="side-copy">no sale or redemption is logged for this statement.</p>}
       </section>
       {sale && (

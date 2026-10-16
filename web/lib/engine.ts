@@ -72,7 +72,7 @@ async function modeOf(client: Client, hash: string): Promise<ComposeMode | null>
 // resumes where it stopped.
 const RESCAN = 12n; // blocks re-read behind the last scanned block (reorg window)
 const CHUNK = 10_000n; // blocks per getLogs call
-const SCAN_KEY = `${SCOPE}:scan`;
+const SCAN_KEY = `${SCOPE}:scan:token-history-v2`;
 
 interface ScanState {
   start: bigint; // first block scanned
@@ -158,19 +158,6 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
     x.blockNumber === y.blockNumber ? Number(x.logIndex - y.logIndex) : x.blockNumber < y.blockNumber ? -1 : 1
   );
 
-  // balance token paid by the core to a credit seller, per transaction and seller
-  if (st.balance?.address) {
-    const token = st.balance.address;
-    await readSource(st, `bpay:${token.toLowerCase()}`, head, (fromBlock, toBlock) =>
-      client.getLogs({ address: token, event: transferEventAbi[0], args: { from: coreAddr }, fromBlock, toBlock })
-    );
-  }
-  const balancePaid = new Map<string, bigint>();
-  for (const t of st.balance?.address ? st.logs[`bpay:${st.balance.address.toLowerCase()}`] ?? [] : []) {
-    const k = `${t.transactionHash}:${String(t.args.to).toLowerCase()}`;
-    balancePaid.set(k, (balancePaid.get(k) ?? 0n) + (t.args.value ?? 0n));
-  }
-
   // total coin burned by the core
   let burned = 0n;
   for (const b of st.logs.burn ?? []) burned += b.args.value ?? 0n;
@@ -196,7 +183,7 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
     saved = { total, head };
   }
 
-  const { stats, credits, statements, rows } = processLogs({ logs, head, burned, modes, balanceToken: st.balance, balancePaid });
+  const { stats, credits, statements, rows } = processLogs({ logs, head, burned, modes, balanceToken: st.balance });
   // logs arrive oldest first; the feed is newest first
   return (lastGood = { feed: rows.reverse(), stats, credits, statements, balanceToken: st.balance });
 }

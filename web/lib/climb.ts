@@ -13,6 +13,8 @@ export interface ClimbState {
   peakTime: number; // State.anchor.peakTime (slot 29, bits 64..127)
   ceilBps: number;
   idleLoosenBps: number;
+  idleStepSeconds: number; // settings.idleStepSeconds: the loosening step
+  climbMultiplierBps: number; // Core.climbMultiplier(): scales idleLoosenBps (10_000 is 1x); held at its current value
   rateCap: bigint;
   peakHalfLife: number; // seconds
   climbPerMinBps: number;
@@ -26,12 +28,18 @@ const N = (x: bigint) => Number(x);
 const halve = (start: number, elapsed: number, halfLife: number) => start * Math.pow(0.5, Math.max(0, elapsed) / halfLife);
 const climbTo = (base: number, lnRate: number, sec: number, target: number) => Math.min(target, base * Math.exp((lnRate * sec) / 60));
 
-/** The price state (before the pot read clamp) at chain time `now`, CoreLib._climb. */
-export function priceAt(c: ClimbState, now: number): number {
+/** The ceiling at chain time `now` (CoreLib._climb): ceilBps of max(last fill rate, peak now), grown by the scaled idle loosening, at most rateCap. */
+export function ceilingAt(c: ClimbState, now: number): number {
   const peakNow = halve(N(c.peakRate), now - c.peakTime, c.peakHalfLife);
   const anchor = Math.max(N(c.lastFillRate), peakNow);
-  const loosened = 10_000 + c.idleLoosenBps * Math.floor(Math.max(0, now - c.anchorTime) / 600);
-  const cap = Math.min((anchor * loosened * c.ceilBps) / 1e8, N(c.rateCap));
+  const step = Math.floor((c.idleLoosenBps * c.climbMultiplierBps) / 10_000); // integer division as in the contract
+  const loosened = 10_000 + step * Math.floor(Math.max(0, now - c.anchorTime) / c.idleStepSeconds);
+  return Math.min((anchor * loosened * c.ceilBps) / 1e8, N(c.rateCap));
+}
+
+/** The price state (before the pot read clamp) at chain time `now`, CoreLib._climb. */
+export function priceAt(c: ClimbState, now: number): number {
+  const cap = ceilingAt(c, now);
   const r = N(c.r);
   if (r >= cap) return cap;
   if (now <= c.t || r === 0) return r;
@@ -98,4 +106,36 @@ export function clearsIn(c: ClimbState, price: bigint, score: bigint, refScore: 
     else lo = mid;
   }
   return { kind: "in", seconds: hi };
+}
+
+export type NextRise =
+  | { kind: "climb"; rate: number; seconds: number } // below the ceiling: the rate 60 s ahead, seconds to the next minute boundary
+  | { kind: "ceiling"; rate: number; seconds: number; loosenBps: number; multiplier: number } // at the ceiling: the ceiling after the next idle step
+  | { kind: "cap"; rate: number } // at rateCap
+  | { kind: "pot"; rate: number }; // the pot bounds the rate, nothing rises until it grows
+
+/**
+ * The next event that moves the eth bid, wei per refScore credit. The contract climb is continuous
+ * (CoreLib._climbTo compounds exp(ln(1 + bps/1e4) * seconds / 60)), so below the ceiling there is no discrete step:
+ * the figure is the rate 60 s ahead (the per-minute climb, fast or slow as _recover applies it) and the countdown
+ * runs to the next whole minute of the chain clock. At the ceiling the next event is the idle step, which counts from
+ * anchorTime in idleStepSeconds and is the only discrete rise. The multiplier is held at its current value.
+ */
+export function nextRise(c: ClimbState, now: number): NextRise {
+  const rate = rateAt(c, now);
+  const cap = ceilingAt(c, now);
+  if (priceAt(c, now) >= cap) {
+    if (cap >= N(c.rateCap)) return { kind: "cap", rate: N(c.rateCap) };
+    const at = c.anchorTime + c.idleStepSeconds * (Math.floor(Math.max(0, now - c.anchorTime) / c.idleStepSeconds) + 1);
+    return {
+      kind: "ceiling",
+      rate: Math.min(ceilingAt(c, at), N(c.ethPot + c.pending)),
+      seconds: at - now,
+      loosenBps: c.idleLoosenBps,
+      multiplier: c.climbMultiplierBps / 10_000,
+    };
+  }
+  const ahead = rateAt(c, now + 60);
+  if (ahead <= rate) return { kind: "pot", rate };
+  return { kind: "climb", rate: ahead, seconds: (Math.floor(now / 60) + 1) * 60 - now };
 }
