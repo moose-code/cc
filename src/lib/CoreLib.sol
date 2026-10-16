@@ -88,7 +88,7 @@ struct State {
     /// (`sellForEth`, `sellForBalance`, `buyListing`, `swapCredit` as `inId`) refuses a credit the engine sold in the
     /// same block
     mapping(uint256 => uint256) creditSaleBlock;
-    /// ETH purchase outflow, independent of the balance bid and of non-purchase payments
+    /// the ETH purchase budget of the current bucket, charged by every ETH purchase door
     CoreLib.Spend spend;
 }
 
@@ -154,10 +154,15 @@ library CoreLib {
     }
 
     struct Spend {
+        /// `timestamp / bucketSeconds` of the bucket this record belongs to
         uint64 spendBucket;
+        /// whether a purchase has opened a bucket
         bool initialized;
+        /// `snapshotPot * spendCapBps / 10_000`, wei
         uint128 spendBudget;
+        /// wei spent in the bucket
         uint128 spentInBucket;
+        /// `ethPot` at the first purchase of the bucket
         uint256 snapshotPot;
     }
 
@@ -259,7 +264,8 @@ library CoreLib {
         emit SettingsSet(ns);
     }
 
-    /// Settings edits retain successful outflow and reprice the original snapshot, never the remaining pot.
+    /// a settings edit keeps the wei spent in the live bucket and recomputes its budget from `snapshotPot` at the new cap.
+    /// a bucket that already ended is cleared, a live one moves to its bucket id under the new `bucketSeconds`
     function _updateSpendSettings(State storage c, Settings calldata ns) private {
         uint256 oldSeconds = c.settings.bucketSeconds;
         Spend storage b = c.spend;
@@ -277,14 +283,16 @@ library CoreLib {
         }
     }
 
-    /// Preserve an active drop floor when translating its bucket; expired floors start again on the next fill.
+    /// moves the anchor of a live bucket to its bucket id under the new `bucketSeconds`. an anchor whose bucket ended
+    /// clears its opening rate, which the next fill sets
     function _rebaseBucket(Anchor storage a, uint64 oldBucket, uint256 seconds_) private {
         uint64 next = SafeCastLib.toUint64(block.timestamp / seconds_);
         if (a.minuteBucket != oldBucket) a.minuteStartRate = 0;
         a.minuteBucket = next;
     }
 
-    /// Books one ETH credit purchase after the Core checkpoints. Both direct and adapter doors use this path.
+    /// books an ETH credit purchase of `cost` after the Core checkpoints: charges the bucket budget, drops the rate and
+    /// debits the pot. `sellForEth` and `buyListing` call it per credit. reverts `SpendCapReached` above the budget
     function spend(uint256 cost, uint256 score, uint256 refScore) external {
         State storage c = state();
         uint256 pot = c.ethPot;
@@ -310,6 +318,15 @@ library CoreLib {
         c.lastFillTime = SafeCastLib.toUint64(block.timestamp);
         c.ethPot = pot - cost;
         emit EthRateFill(cost, rate, pot - cost);
+    }
+
+    /// the bucket id, budget and spent wei of the current bucket. the Core forwards its `spendState()`
+    function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent) {
+        State storage c = state();
+        bucket = SafeCastLib.toUint64(block.timestamp / c.settings.bucketSeconds);
+        Spend storage b = c.spend;
+        if (b.initialized && b.spendBucket == bucket) return (bucket, b.spendBudget, b.spentInBucket);
+        return (bucket, SafeCastLib.toUint128(c.ethPot.mulDiv(c.settings.spendCapBps, BPS)), 0);
     }
 
     /// restates the remembered peak of `a` at `oldHalf`: decays it to now under the old half life and marks now, so a
@@ -925,8 +942,8 @@ library CoreLib {
         return avail >= enough ? cap : avail.mulDiv(BPS, denom);
     }
 
-    /// The multiplier pages pot in bps of par. Saturate only once any allowed last-fill rate reaches the multiplier
-    /// cap: ceil(denom * multiplierCap * PAGE * balanceRateCap / BPS squared). The bounded product cannot overflow.
+    /// the multiplier pages pot in bps of par. `avail` saturates at ceil(denom * multiplierCap * PAGE * balanceRateCap /
+    /// BPS squared), where every allowed last-fill rate reaches the multiplier cap, so the product cannot overflow
     function _toBpsRaw(uint256 avail, uint256 denom) private view returns (uint256) {
         if (denom == 0) return 0;
         Settings storage cfg = state().settings;

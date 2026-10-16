@@ -82,6 +82,30 @@ contract SpendCapTest is Fixture {
         assertEq(_snapshot(), 99 ether);
     }
 
+    // promise: spendState reads the live bucket, and the next bucket reads zero spent with the projected budget
+    function test_spendStateReadsTheLiveBucket() public {
+        uint256[] memory ids = _credits(seller, 2);
+        _flat(ids[0], 1 ether, 100);
+        _fund(100 ether);
+        _sell(ids[0]);
+        (uint64 bucket, uint128 budget, uint128 spent) = core.spendState();
+        assertEq(bucket, block.timestamp / 60);
+        assertEq(budget, 1 ether);
+        assertEq(spent, 1 ether);
+        vm.warp((block.timestamp / 60 + 1) * 60);
+        uint256 pot = core.ethPot();
+        (uint64 next, uint128 nextBudget, uint128 nextSpent) = core.spendState();
+        assertEq(next, bucket + 1);
+        assertEq(nextBudget, pot / 100);
+        assertEq(nextSpent, 0);
+        _flat(ids[1], 0.5 ether, 100);
+        _sell(ids[1]);
+        (next, nextBudget, nextSpent) = core.spendState();
+        assertEq(next, bucket + 1);
+        assertEq(nextBudget, pot / 100);
+        assertEq(nextSpent, 0.5 ether);
+    }
+
     // promise: ordinary funding and spending never change the active opening-pot budget
     function test_snapshotFixedAndPotScaling() public {
         uint256[] memory ids = _credits(seller, 3);

@@ -63,6 +63,7 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 | what | how |
 |---|---|
 | a Core setting | `script/SetSettings.s.sol`: `SET_<field>=<value>` for each changed field, `SET_RATE=<wei>` for `setRate`; with `CONTROLLER=$CONTROLLER` it drives `setSale` and `setCredit`. the script preserves unnamed live fields; `SETTINGS_PATCH` accepts an inline JSON object or file of Core settings, then `SET_<field>` overrides it |
+| lowering the spend cap in an incident | `CORE=$CORE SET_spendCapBps=50 SEND=1 forge script script/SetSettings.s.sol --rpc-url $MAINNET_RPC_URL --broadcast --slow --account <keystore>`. a lower cap applies to the live bucket immediately, and a higher cap does too: the budget is recomputed from the bucket's snapshot and the spent amount is kept |
 | pause and resume | `cast send $CORE "setPaused(bool)" true` and `false` |
 | the payee | `cast send $CORE "setPayee(address)" <to>`; the payee fee share and the operator cut are pushed by the book and the sales, not claimed |
 | the artist | `cast send $CORE "setArtist(address)" <to>`; the artist cut of nft sales is pushed to it (the zero address is refused while `saleToArtistBps` is nonzero) |

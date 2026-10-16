@@ -266,7 +266,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     address public immutable FACTORY;
     address public immutable LOCKER;
     address public immutable ESCROW;
-    /// seconds from the launch to the start of the payee share, the window of the anti sniper skim
 
     /*//////////////////////////////////////////////////////////////
                                 STATE
@@ -520,6 +519,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return CoreLib.balanceBidOf(id);
     }
 
+    /// the ETH purchase budget of the current bucket: the bucket id, its budget and the wei spent in it. a bucket with no
+    /// purchase yet reads zero spent and the budget `ethPot * spendCapBps / 10_000` of the booked pot
+    function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent) {
+        return CoreLib.spendState();
+    }
+
     function _checkpoint() private {
         (s.rateAtCheckpoint,) = _climb();
         s.checkpointTime = uint64(block.timestamp);
@@ -622,13 +627,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// sell credits into the eth bid. each credit is paid `ethRate() * score / refScore`. caller must have approved the
-    /// core. A purchase exceeding the shared bucket budget reverts the whole batch, including every rate and ownership change.
-    /// reverts `Retired` after `migrate`
+    /// core. A credit above the bucket budget reverts the whole batch. reverts `Retired` after `migrate`
     function sellForEth(uint256[] calldata ids) external nonReentrant {
         _sellForEth(ids, 0);
     }
 
-    /// Same atomic batch as sellForEth, with a minimum total payout. Any budget or minimum failure rolls back every fill.
+    /// same as sellForEth with a floor `minOut` on the total paid, for protection against a rate drop in the same block.
     function sellForEth(uint256[] calldata ids, uint256 minOut) external nonReentrant {
         _sellForEth(ids, minOut);
     }

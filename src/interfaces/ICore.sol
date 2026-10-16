@@ -218,6 +218,7 @@ interface ICore {
     function setSettings(Settings memory) external;
     function setSuccessor(address) external;
     function settings() external view returns (Settings memory);
+    function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent);
     function statementAge(uint256 sid) external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     function successor() external view returns (address);

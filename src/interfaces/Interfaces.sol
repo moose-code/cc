@@ -134,7 +134,8 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into five storage slots
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
 /// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields, fee
-/// split and `refScore`, slot 3 `swapFeeCc` and the two sale cuts. docs/SPEC.md section 3 has the meaning of every field
+/// split and `refScore`, slot 3 `swapFeeCc`, the two sale cuts, `climbMultiplierCapBps`, `spendCapBps`, `bucketSeconds`,
+/// `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`. docs/SPEC.md section 3 has the meaning of every field
 struct Settings {
     // slot 0
     /// fall of a bid rate per credit of score `refScore`, bps of the rate before that credit, scaled by `score / refScore`; shared by the eth and balance bids

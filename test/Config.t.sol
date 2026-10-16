@@ -864,6 +864,21 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), string.concat(codeRow, ", ", keyRow));
     }
 
+    /// the Core payee window and the pool launch skim window are separate values that must start equal
+    // promise: preflight fails unless settings.sniperSeconds equals launch.sniperSeconds
+    function test_preflightSniperSecondsMatchTheCoreSetting() public {
+        string memory row = "rule: settings.sniperSeconds equals launch.sniperSeconds";
+        address d2 = _funded();
+        LaunchConfig memory c = lc;
+        c.salt = keccak256("preflight");
+        c.rateStart = c.settings.rateCap / 3;
+        preflight(c, d2);
+        assertTrue(_warnClean(row), "equal values pass the row");
+        c.settings.sniperSeconds = c.sniperSeconds + 1;
+        preflight(c, d2);
+        assertEq(_failedNames(), row);
+    }
+
     /// FLOW decisions 46 and 69: preflight fails unless `settings.rateCap` is 3 times `rateStart`. the Core and the deploy guard
     /// accept other ratios, so only this row stops a `rateStart` edit that leaves the old cap
     // promise: FLOW decisions 46 and 69: preflight fails unless `settings.rateCap` is 3 times `rateStart`

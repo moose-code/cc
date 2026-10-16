@@ -267,7 +267,7 @@ abstract contract PostflightChecks is PostflightPool {
         IControllerV1 k = IControllerV1(ctl);
         bool same = k.markupBps() == c.sale.markupBps && k.startCapBps() == c.sale.startCapBps
             && k.decayHours() == c.sale.decayHours && k.anchorHalfLife() == c.sale.anchorHalfLife
-            && k.anchorMinCost() == c.sale.anchorMinCost;
+            && k.anchorMinCost() == c.sale.anchorMinCost && k.anchorMoveBps() == c.sale.anchorMoveBps;
         if (_settingsChanged()) {
             _warn(
                 "warn: sale settings equal the config", same, "SETTINGS_CHANGED=1, the owner changed them since launch"
@@ -276,7 +276,7 @@ abstract contract PostflightChecks is PostflightPool {
             _check(
                 "controller: sale settings equal the config",
                 same,
-                "markupBps startCapBps decayHours anchorHalfLife anchorMinCost"
+                "markupBps startCapBps decayHours anchorHalfLife anchorMinCost anchorMoveBps"
             );
         }
         // a fresh launch has no sales and no owner change, so the running level of sale prices is at its lower bound
@@ -342,6 +342,13 @@ abstract contract PostflightChecks is PostflightPool {
                 "core: credit settings equal the config", creditSame, "creditCostToPotBps chosenComposeOn minCcToChoose"
             );
         }
+        _soft(
+            _settingsChanged(),
+            "core: settings.sniperSeconds equals the launch mev window",
+            live.sniperSeconds == c.sniperSeconds,
+            string.concat("settings ", vm.toString(live.sniperSeconds), " launch ", vm.toString(c.sniperSeconds)),
+            "SETTINGS_CHANGED=1"
+        );
         // sales are open until the owner pauses them
         if (_settingsChanged()) {
             _warn("warn: core is not paused", !core.paused(), "SETTINGS_CHANGED=1, the owner paused sales since launch");

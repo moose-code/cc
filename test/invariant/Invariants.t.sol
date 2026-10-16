@@ -70,11 +70,6 @@ abstract contract InvariantsBase is InvariantFixture {
     /// `sellTo` payments, `fund` and eth forced in. a plain send from anyone but the hook and the escrow reverts. any other
     /// movement is a violation. balance token flows too: it leaves the core only as a bid payment in
     /// sellForBalance.
-    // promise: every successful ETH purchase fits the independent opening-pot budget unless the cap is bypassed
-    function invariant_20_purchaseBudgetIsRespected() public view {
-        assertEq(handler.gCapViolations(), 0, "successful purchase exceeded the independently tracked bucket budget");
-    }
-
     // promise: 01 eth only leaves by allowed paths
     function invariant_01_ethOnlyLeavesByAllowedPaths() public view {
         _zero(g1);
@@ -524,6 +519,13 @@ abstract contract InvariantsBase is InvariantFixture {
         } else {
             assertGe(rate, price < pot ? price : pot, "the read is below the price state lowered to the booked pot");
         }
+    }
+
+    /// 20. every successful ETH purchase fits the opening-pot budget of its bucket, tracked by the handler apart from the
+    /// Core's bucket state. a cap of 10,000 bypasses the budget.
+    // promise: 20 the purchase budget is respected
+    function invariant_20_purchaseBudgetIsRespected() public view {
+        assertEq(handler.gCapViolations(), 0, "successful purchase exceeded the independently tracked bucket budget");
     }
 
     /// the eth price state ceiling now: `ceilBps` of the fill anchor grown by `idleLoosenBps` scaled by the pot

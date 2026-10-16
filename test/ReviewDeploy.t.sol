@@ -120,7 +120,7 @@ contract ReviewDeployTest is ReviewHarness {
         c = base;
         c.sniperSeconds = 3000;
         postflightAs(c, d.core, address(0));
-        assertEq(_failedNames(), row);
+        assertEq(_failedNames(), string.concat("core: settings.sniperSeconds equals the launch mev window, ", row));
         c = base;
         c.baselineSkimBps = 500;
         postflightAs(c, d.core, address(0));

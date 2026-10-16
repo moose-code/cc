@@ -131,6 +131,8 @@ Both `sellForEth` overloads and every adapter listing share one ledger. At the f
 
 Same-bucket deposits and fee income cannot enlarge this snapshot. `setRate` and unrelated settings preserve it and the used amount. Changing the cap immediately reprices the original snapshot, preserving spent. At 10,000 bps enforcement is bypassed, including against later deposits, but outflow still counts if enforcement is restored. A duration edit first expires the ledger under its old duration; an active ledger is translated to the new bucket with its snapshot and used amount retained. Both bid instances' active drop-floor anchors translate likewise; expired anchors clear. An ordinary new bucket resets lazily on its first successful purchase.
 
+`spendState()` returns `(bucket, budget, spent)` for the current bucket: the stored values while the bucket is open, otherwise zero spent and the budget `ethPot * spendCapBps / 10,000` of the booked pot that the next purchase would snapshot.
+
 `ethRate()` and `bidOf()` remain price quotes. A quoted purchase can revert because the remaining aggregate budget is insufficient. A bucket cap is not a rolling-window cap: adjacent buckets can both spend around their boundary. The counters and stored budget are checked uint128 values; theoretical outflow or budgets above uint128.max revert instead of truncating.
 
 The bounded synthetic market study in `docs/reviews/REVIEW-129-spendcap.md` found no reference bid crossing below the assumed 0.005 ETH market in twelve runs. With the 100 bps default, 157 of 500 credits remained after six hours in its flat scenario. Limiting fills can let the idle bid rise and prevent convergence; the cap limits exposure without guaranteeing market tracking.

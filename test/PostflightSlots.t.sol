@@ -87,15 +87,15 @@ contract PostflightSlotsTest is Fixture {
         }
     }
 
-    /// @dev the reviewer's probe: one of the ten `CoreLib` call sites of the Core points at a copy with one flipped
+    /// @dev the reviewer's probe: one of the eleven `CoreLib` call sites of the Core points at a copy with one flipped
     /// byte. the identity hash masks the slot and `findLibrary` finds the compiled library through the other sites, so
     /// only the slot row sees it. a library runs by DELEGATECALL in the Core storage
-    // promise: the reviewer's probe: one of the ten `CoreLib` call sites of the Core points at a copy with one flipped byte
+    // promise: the reviewer's probe: one of the eleven `CoreLib` call sites of the Core points at a copy with one flipped byte
     function test_oneForeignLibrarySiteFailsPostflight() public {
         address lib = findLibrary(address(core).code);
         assertTrue(lib != address(0));
         uint256[] memory sites = _librarySites(address(core).code, lib);
-        assertEq(sites.length, 10, "the Core calls CoreLib at ten sites");
+        assertEq(sites.length, 11, "the Core calls CoreLib at eleven sites");
         address evil = _foreignLibrary();
         for (uint256 s; s < sites.length; ++s) {
             bytes memory c = address(core).code;
