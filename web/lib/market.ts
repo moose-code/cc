@@ -6,7 +6,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
 import { formatUnits, parseAbi, zeroAddress, type Address } from "viem";
-import { ethUsdFeed } from "./config";
+import { core, ethUsdFeed } from "./config";
 import { chainlinkAbi, controllerAbi, erc20Abi, hookAbi, mevAbi, quoterAbi, stateViewAbi } from "./abis";
 import { useHead, useSnapshot } from "./live";
 import { SCOPE, lsGet, lsSet } from "./cache";
@@ -104,7 +104,31 @@ export function useQuote(market: Market | undefined, side: "buy" | "sell", amoun
 // fails). `baseBps` is the fee after the window: the higher of the schedule's end
 // skim and the baseline skim. Refetched every 12 s (the head poll) while the
 // window is active, every 60 s otherwise. null when a read fails.
-export type HookFee = { bps: number; baseBps: number; active: boolean; endsAt?: number; perMin?: number };
+//
+// Engine share (hook skimConfig.bountyBps, bountyRecipient): `bountyBps` is the part of the skim, in bps of the skim,
+// paid to the bounty recipient; the rest goes to the protocol. `bountyToEngine` is true when the recipient is the Core.
+// `engineBps` / `engineBaseBps` are that part in bps of trade volume at the current skim and after the window
+// (bps * bountyBps / 10000; 0 when the recipient is not the Core). Of the engine income the Core books
+// `feeToRedeemBurnBps` (snapshot settings) to the redeem burn pot and the rest to the pot, see potShareBps.
+export type HookFee = {
+  bps: number;
+  baseBps: number;
+  active: boolean;
+  endsAt?: number;
+  perMin?: number;
+  bountyBps: number;
+  bountyToEngine: boolean;
+  engineBps: number;
+  engineBaseBps: number;
+};
+
+// Share of trade volume, in bps of volume, that reaches the engine pot at fee `engineBps`: the engine income less the
+// payee share (settings.payeePpm, while payeeOn) and less the redeem burn share (settings.feeToRedeemBurnBps), per
+// Core._split. 900 bps of volume at the launch values (9% to the Core, 10% of that to the redeem burn pot).
+export function potShareBps(engineBps: number, s: { payeeOn: boolean; settings: { payeePpm: number; feeToRedeemBurnBps: number } }): number {
+  const afterPayee = engineBps * (1 - (s.payeeOn ? s.settings.payeePpm / 1_000_000 : 0));
+  return afterPayee * (1 - s.settings.feeToRedeemBurnBps / 10000);
+}
 
 const scheduleAbi = parseAbi([
   "function schedule(bytes32 poolId) view returns ((uint24 startingSkimBps, uint24 endSkimBps, uint32 windowSeconds, uint40 startTime))",
@@ -145,7 +169,10 @@ export function useHookFeeBps(market?: Market) {
             }
           }
         }
-        return { bps: skim, baseBps: end, active, endsAt, perMin };
+        const bountyBps = Number(cfg.bountyBps);
+        const bountyToEngine = cfg.bountyRecipient.toLowerCase() === core?.toLowerCase();
+        const engine = (b: number) => (bountyToEngine ? (b * bountyBps) / 10000 : 0);
+        return { bps: skim, baseBps: end, active, endsAt, perMin, bountyBps, bountyToEngine, engineBps: engine(skim), engineBaseBps: engine(end) };
       } catch {
         return null;
       }
@@ -209,5 +236,5 @@ export function useMarketStats(market?: Market) {
   const priceUsd = ethUsd != null && perEth ? ethUsd / perEth : undefined;
   const marketCap = priceUsd != null && supply != null && market ? priceUsd * Number(formatUnits(supply, market.decimals)) : undefined;
   const change = perEth && perEthThen != null ? (perEthThen / perEth - 1) * 100 : undefined;
-  return { priceUsd, marketCap, change };
+  return { priceUsd, ethUsd, marketCap, change };
 }

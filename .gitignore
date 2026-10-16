@@ -12,3 +12,7 @@ script/dev/.anvil-state.json
 script/dev/.cache/
 
 # tracked fixture: the master stack dump script/config/stack-master-26158000.hex (script/dev/.cache/ above stays ignored)
+
+# editor and OS files
+.DS_Store
+*.swp

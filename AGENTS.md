@@ -18,4 +18,5 @@ record each owner instruction in docs/DECISIONS.md and docs/SPEC.md section 1 in
 - after a forge run: `git checkout foundry.lock; git submodule update -- lib/solady`. after a change of a production contract's external surface: `script/tools/gen-interfaces.sh`, then re-pin the build hashes in script/Checks.sol and test/BuildIdentity.t.sol.
 - no mainnet broadcast, deploy, push to main, merge or private key without the owner's explicit instruction.
 - the vocabulary is "balance", never "exit" (decision 102). comments state rules, invariants and caveats in plain technical voice; no em or en dashes.
+- a change that adds data to the web names its source in docs/INDEXER.md section 9.
 - toolchain, timings and the fork env: docs/STATUS.md section 5.

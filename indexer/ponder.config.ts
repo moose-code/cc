@@ -1,0 +1,130 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { createConfig, factory } from "ponder";
+import { getAbiItem, zeroAddress } from "viem";
+
+import { controllerAbi } from "./abis/ControllerV1";
+import { coreAbi } from "./abis/Core";
+import { creditsAbi, erc20Abi, statementsAbi, strategyAbi } from "./abis/external";
+import { fallbackTransport, guardedHttp, type Endpoint } from "./src/lib/rpc";
+
+// Every address and start block comes from the deployment record (deployments/<chainId>.json) with an
+// environment variable of the same meaning taking precedence. A missing required value stops the start.
+
+const RECORD_PATH = resolve(process.cwd(), process.env.DEPLOYMENT_RECORD ?? "../deployments/31337.json");
+const record: Record<string, unknown> = existsSync(RECORD_PATH) ? JSON.parse(readFileSync(RECORD_PATH, "utf8")) : {};
+
+const str = (env: string, key: string): string | undefined => process.env[env] || (record[key] as string | undefined);
+
+function required(env: string, key: string): string {
+  const v = str(env, key);
+  if (!v) throw new Error(`${env} is not set and ${RECORD_PATH} has no "${key}". Refusing to start.`);
+  return v;
+}
+const address = (env: string, key: string) => required(env, key).toLowerCase() as `0x${string}`;
+const block = (env: string, key: string) => Number(required(env, key));
+
+const CHAIN_ID = Number(required("CHAIN_ID", "chainId"));
+if (record.chainId !== undefined && Number(record.chainId) !== CHAIN_ID) {
+  throw new Error(`CHAIN_ID ${CHAIN_ID} does not match chainId ${String(record.chainId)} in ${RECORD_PATH}. Refusing to start.`);
+}
+const IS_LOCAL = CHAIN_ID === 31337;
+
+const CORE = address("CORE_ADDRESS", "core");
+const COIN = address("COIN_ADDRESS", "coin");
+const CREDITS = address("CREDITS_ADDRESS", "credits");
+const STATEMENTS = address("STATEMENTS_ADDRESS", "statements");
+const DEPLOY_BLOCK = block("DEPLOY_BLOCK", "deployBlock");
+
+// Collections index from their own deploy block on a real chain, so every token has an owner and facts. A local
+// fork defaults to the Core deploy block; owners of older tokens are read with ownerOf when first seen.
+function collectionStart(env: string): number {
+  const v = process.env[env];
+  if (v) return Number(v);
+  if (CHAIN_ID === 1) throw new Error(`${env} is required on chain 1 (the collection deploy block). Refusing to start.`);
+  return DEPLOY_BLOCK;
+}
+const CREDITS_START = collectionStart("CREDITS_START_BLOCK");
+const STATEMENTS_START = collectionStart("STATEMENTS_START_BLOCK");
+
+// CreditStrategy listings. The proxy was deployed at block 26037623 and has emitted about 100k events since, so a local
+// fork reads a window of LOCAL_STRATEGY_WINDOW blocks before the Core deploy block (a fork proxies each historical
+// getLogs to its upstream at about one request per second). Chain 1 requires the start block.
+const LOCAL_STRATEGY_WINDOW = 60_000;
+const STRATEGY = (process.env.STRATEGY_ADDRESS || "0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6").toLowerCase() as `0x${string}`;
+function strategyStart(): number {
+  if (process.env.STRATEGY_START_BLOCK) return Number(process.env.STRATEGY_START_BLOCK);
+  if (CHAIN_ID === 1) throw new Error("STRATEGY_START_BLOCK is required on chain 1 (the CreditStrategy deploy block). Refusing to start.");
+  return Math.max(0, DEPLOY_BLOCK - LOCAL_STRATEGY_WINDOW);
+}
+const STRATEGY_START = strategyStart();
+
+// ---- RPC ---------------------------------------------------------------------------------------------------
+
+// Archive capable endpoints first (docs/INDEXER.md section 7.1). Caps are requests per second, overridable with
+// RPC_RPS as a comma separated list in the same order.
+const PUBLIC: Endpoint[] = [
+  { url: "https://gateway.tenderly.co/public/mainnet", rps: 8 },
+  { url: "https://eth-mainnet.public.blastapi.io", rps: 8 },
+  { url: "https://1rpc.io/eth", rps: 5 },
+  { url: "https://ethereum-rpc.publicnode.com", rps: 10 },
+  { url: "https://eth.drpc.org", rps: 5 },
+  { url: "https://rpc.mevblocker.io", rps: 5 },
+];
+const caps = (process.env.RPC_RPS ?? "").split(",").map((s) => Number(s.trim())).filter(Boolean);
+const endpoints: Endpoint[] = PUBLIC.map((e, i) => ({ ...e, rps: caps[i] ?? e.rps }));
+const reserve = process.env.PONDER_RPC_URL_1?.trim();
+if (reserve) endpoints.push({ url: reserve, rps: Number(process.env.RPC_RPS_RESERVE ?? 10) });
+
+const localUrl = str("RPC_URL", "rpcUrl");
+if (IS_LOCAL && !localUrl) throw new Error("RPC_URL is not set and the record has no rpcUrl. Refusing to start.");
+const rpc = IS_LOCAL ? guardedHttp(localUrl!) : fallbackTransport(endpoints);
+
+// PGlite serves local development only. A real chain needs Postgres so the RPC cache and schemas outlive the machine.
+if (!IS_LOCAL && !process.env.DATABASE_URL) throw new Error("DATABASE_URL is required on a real chain. Refusing to start.");
+const database = process.env.DATABASE_URL
+  ? ({ kind: "postgres", connectionString: process.env.DATABASE_URL } as const)
+  : ({ kind: "pglite", directory: process.env.PONDER_DATABASE_DIR ?? ".ponder/pglite" } as const);
+
+export const CORE_ADDRESS = CORE;
+export const CORE_DEPLOY_BLOCK = BigInt(DEPLOY_BLOCK);
+export const STRATEGY_ADDRESS = STRATEGY;
+export const COLLECTIONS = { credits: CREDITS, statements: STATEMENTS } as const;
+
+export default createConfig({
+  database,
+  chains: {
+    chain: {
+      id: CHAIN_ID,
+      rpc,
+      pollingInterval: Number(process.env.PONDER_POLL_INTERVAL_MS ?? (IS_LOCAL ? 1_000 : 12_000)),
+      ethGetLogsBlockRange: Number(process.env.PONDER_ETH_GETLOGS_BLOCK_RANGE ?? 5_000),
+      disableCache: IS_LOCAL,
+    },
+  },
+  contracts: {
+    Core: { abi: coreAbi, chain: "chain", address: CORE, startBlock: DEPLOY_BLOCK },
+    // Every controller named by ControllerSet, from the block of that event.
+    Controller: {
+      abi: controllerAbi,
+      chain: "chain",
+      address: factory({ address: CORE, event: getAbiItem({ abi: coreAbi, name: "ControllerSet" }), parameter: "controller" }),
+      startBlock: DEPLOY_BLOCK,
+    },
+    Coin: { abi: erc20Abi, chain: "chain", address: COIN, startBlock: DEPLOY_BLOCK, filter: { event: "Transfer", args: { to: zeroAddress } } },
+    // The balance token is known from the first BalanceModuleSet; no events until then.
+    BalanceToken: {
+      abi: erc20Abi,
+      chain: "chain",
+      address: factory({ address: CORE, event: getAbiItem({ abi: coreAbi, name: "BalanceModuleSet" }), parameter: "balanceToken" }),
+      startBlock: DEPLOY_BLOCK,
+      filter: { event: "Transfer", args: { from: CORE } },
+    },
+    Credits: { abi: creditsAbi, chain: "chain", address: CREDITS, startBlock: CREDITS_START },
+    Statements: { abi: statementsAbi, chain: "chain", address: STATEMENTS, startBlock: STATEMENTS_START },
+    Strategy: { abi: strategyAbi, chain: "chain", address: STRATEGY, startBlock: STRATEGY_START },
+  },
+  blocks: {
+    Tick: { chain: "chain", startBlock: DEPLOY_BLOCK, interval: Number(process.env.SNAPSHOT_INTERVAL_BLOCKS ?? 300) },
+  },
+});
