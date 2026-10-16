@@ -59,37 +59,20 @@ export function Tween({ wei }: { wei: bigint | undefined }) {
 }
 
 
-// Pot and next-statement progress at the top of the rail.
-// Pot: the points it buys at the rate, drawn as the share of one page (settings.pointsPerPage) in 8 segments.
-// Next statement: credits held toward the next STATEMENT_SIZE, one cell each.
-// `pts` is the points the pot (with pending income) buys at the rate; `ratio` that as a percent of one page, capped
-// at 100; `segs` the filled count of an 8 segment bar; `per100` the rate, eth per 100 points.
+// Pot figures for the header. `pts` is the points the pot (with pending income) buys at the rate; `per100` the rate,
+// eth per 100 points.
 export function usePotPage() {
   const { data: snap } = useSnapshot();
   const pts = snap ? potPoints(snap.potWithPending, snap.ethRate) : undefined;
-  const ratio = pts != null && snap ? Math.min(100, (Number(pts) * 100) / snap.settings.pointsPerPage) : undefined;
-  const segs = ratio == null ? 0 : Math.min(8, Math.floor(ratio / 12.5));
   const per100 = snap?.ethRate ? eth(snap.ethRate, 5) : undefined;
-  return { pts, ratio, segs, per100 };
+  return { pts, per100 };
 }
 
 export function EngineProgress() {
   const { data: snap } = useSnapshot();
   const ready = snap ? Number(snap.pileSize % BigInt(STATEMENT_SIZE)) : 0;
-  const { pts, segs } = usePotPage();
   return (
     <div className="progress">
-      <div className="progress-row">
-        <div className="progress-head">
-          <span>pot covers</span>
-          <b>{pts == null ? "—" : `${commas(pts)} pts`}</b>
-        </div>
-        <div className="progress-segs">
-          {Array.from({ length: 8 }, (_, i) => (
-            <i key={i} className={i < segs ? "on" : undefined} />
-          ))}
-        </div>
-      </div>
       <div className="progress-row">
         <div className="progress-head">
           <span>next statement</span>

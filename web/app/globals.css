@@ -110,6 +110,9 @@ a:hover {
   align-items: baseline;
   color: var(--ink);
 }
+.brand:hover {
+  text-decoration: none;
+}
 .brand b {
   margin-left: 12px;
   font-size: 15px;
@@ -180,8 +183,6 @@ a:hover {
   gap: 12px;
   height: 32px;
   margin-left: auto;
-  padding-right: 16px;
-  border-right: 1px solid var(--divider);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -236,10 +237,10 @@ a:hover {
   height: 5px;
   background: var(--disabled);
 }
-/* a listing clears: the button reads as live, still quieter than the wallet button */
+/* a listing clears: the magenta dot marks it live; the frame stays quiet */
 .hdr-acq.on {
-  border-color: var(--ink);
-  color: var(--ink);
+  border-color: var(--divider);
+  color: var(--muted);
   cursor: pointer;
 }
 .hdr-acq.on i {

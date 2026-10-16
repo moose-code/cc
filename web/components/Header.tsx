@@ -55,13 +55,7 @@ export function Header() {
         </nav>
       </div>
 
-      {path === "/" ? (
-        <div className="hdr-next">
-          <Acquire />
-        </div>
-      ) : (
-        <PotPage />
-      )}
+      <PotPage />
       <WalletButton />
     </header>
   );
@@ -104,18 +98,12 @@ function AccountName({ address }: { address: string }) {
   return <>{useEns(address) ?? shortAddr(address)}</>;
 }
 
-// The points the pot covers (segments: the share of one page), the bid per 100 points and the acquire button beside
-// the wallet. The home page shows the pot in the rail, so its header holds the acquire button alone.
+// The points the pot covers, the bid per 100 points and the acquire button beside the wallet, on every page.
 function PotPage() {
-  const { pts, segs, per100 } = usePotPage();
+  const { pts, per100 } = usePotPage();
   return (
     <div className="hdr-next">
       <span className="hdr-next-label">pot covers</span>
-      <div className="hdr-next-segs" aria-hidden>
-        {Array.from({ length: 8 }, (_, i) => (
-          <i key={i} className={i < segs ? "on" : undefined} />
-        ))}
-      </div>
       <b>{pts == null ? "—" : `${commas(pts)} pts`}</b>
       {per100 && <span className="hdr-next-bid">· bid {per100} ETH / 100 pts</span>}
       <Acquire />
