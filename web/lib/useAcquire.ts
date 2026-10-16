@@ -6,11 +6,11 @@
 // One query per chain head; the route caches OpenSea for 20 s on the server.
 
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { type Address } from "viem";
-import { core, credits, engineDeployed, seaportAdapter, strategy, strategyAdapter, strategyStartBlock } from "./config";
+import { core, credits, engineDeployed, SCORE_PER_100_POINTS, seaportAdapter, strategy, strategyAdapter, strategyStartBlock } from "./config";
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
 import { creditScores, MULTICALL3, readSnapshot, useHead, type Snapshot } from "./live";
 import { fetchScoresIx, fetchStrategyListings, getIxMode, useIxMode } from "./indexer";
@@ -174,6 +174,7 @@ export function useAcquireCandidate() {
     enabled: on,
     staleTime: 10_000,
     retry: 0,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       try {
       const c = client!;
@@ -185,9 +186,8 @@ export function useAcquireCandidate() {
       // 2. shortlist by estimated margin over every listing
       const ids = [...new Set(listings.map((l) => l.id))];
       const scores = await scoresFor(c, ids, known);
-      const refScore = 1_000_000n;
-      const est = (id: bigint) => (snap.ethRate * (scores.get(id) ?? 0n)) / refScore;
-      const picked = shortlist(listings, snap.ethRate, refScore, scores, SHORTLIST);
+      const est = (id: bigint) => (snap.ethRate * (scores.get(id) ?? 0n)) / SCORE_PER_100_POINTS;
+      const picked = shortlist(listings, snap.ethRate, SCORE_PER_100_POINTS, scores, SHORTLIST);
       if (!picked.length) return { cleared: [], top: [], waiting: 0, nextIn: 0 };
 
       // 3. live read of the shortlist

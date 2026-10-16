@@ -105,33 +105,48 @@ export function useStatsIx() {
   });
 }
 
-/**
- * Credits the engine bought per hour over the last 24 hourly buckets, from stats_hourly (adopted credits are not
- * buys). `headTs` is chain time; the window ends at the current bucket and starts at the earlier of 23 bucket
- * starts back and the first bucket, never shorter than one hour.
- */
+/** Credits bought an hour. Recent pace: the last RECENT_FILLS fills (eth bid, balance bid and listing buys, the
+ * acquisitions the hourly counters count as bought less adopted) over their time span, at least MIN_PACE_SECONDS.
+ * Under MIN_PACE_FILLS fills, the 24 hourly buckets' average. `recent` says which. Undefined unless the indexer serves. */
+const RECENT_FILLS = 20;
+const MIN_PACE_FILLS = 5;
+const MIN_PACE_SECONDS = 600;
+const FILL_KINDS: schema.ActivityKind[] = ["credit_bought", "listing_bought"];
 export function useBuyRateIx(headTs: number | undefined) {
   const hour = headTs == null ? undefined : Math.floor(headTs / 3600);
   const q = useIx(
     ["buy-rate", hour],
     async (db) => {
-      const rows = await db
-        .select({ bought: statsHourly.creditsBought, adopted: statsHourly.creditsAdopted })
-        .from(statsHourly)
-        .where(gte(statsHourly.hour, BigInt(hour! - 23)));
-      const first = (await db.select({ h: min(statsHourly.hour) }).from(statsHourly))[0]?.h;
-      return { count: rows.reduce((n, r) => n + Number(r.bought - r.adopted), 0), first: first == null ? undefined : Number(first) * 3600 };
+      const [rows, firstRow, fills] = await Promise.all([
+        db
+          .select({ bought: statsHourly.creditsBought, adopted: statsHourly.creditsAdopted })
+          .from(statsHourly)
+          .where(gte(statsHourly.hour, BigInt(hour! - 23))),
+        db.select({ h: min(statsHourly.hour) }).from(statsHourly),
+        db
+          .select({ ts: activity.blockTimestamp })
+          .from(activity)
+          .where(inArray(activity.kind, FILL_KINDS))
+          .orderBy(desc(activity.blockTimestamp), desc(activity.logIndex))
+          .limit(RECENT_FILLS),
+      ]);
+      const first = firstRow[0]?.h;
+      return {
+        count: rows.reduce((n, r) => n + Number(r.bought - r.adopted), 0),
+        first: first == null ? undefined : Number(first) * 3600,
+        fills: fills.map((r) => Number(r.ts)), // newest first
+      };
     },
     { enabled: hour != null },
   );
   const d = q.data;
-  const perHour =
-    d == null || headTs == null
-      ? undefined
-      : d.first == null
-        ? 0
-        : d.count / (Math.min(headTs - (hour! - 23) * 3600, Math.max(3600, headTs - d.first)) / 3600);
-  return { perHour };
+  if (d == null || headTs == null) return { perHour: undefined, recent: false };
+  if (d.fills.length >= MIN_PACE_FILLS) {
+    const span = Math.max(MIN_PACE_SECONDS, d.fills[0] - d.fills[d.fills.length - 1]);
+    return { perHour: (d.fills.length / span) * 3600, recent: true };
+  }
+  const perHour = d.first == null ? 0 : d.count / (Math.min(headTs - (hour! - 23) * 3600, Math.max(3600, headTs - d.first)) / 3600);
+  return { perHour, recent: false };
 }
 
 /** Eth-bid and balance-bid fills since 00:00 UTC of the chain day, from stats_hourly. Undefined unless the indexer serves. */

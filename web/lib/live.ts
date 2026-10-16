@@ -11,7 +11,7 @@ import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError
 import { atBlock, creditScores, mc, MULTICALL3, pendingIncome, readSnapshot, type Snapshot } from "@cc/engine/snapshot";
 import { CREDIT_SCORE } from "@cc/engine/addresses";
 import { multicallAbi, scoreAbi, seedAbi } from "@cc/engine/abis";
-import { core, credits, engineDeployed, statements } from "./config";
+import { core, credits, engineDeployed, SCORE_PER_100_POINTS, statements } from "./config";
 import { controllerAbi, coreAbi, creditsAbi, erc20Abi, statementsAbi } from "./abis";
 import { SCOPE, lsGet, lsSet } from "./cache";
 import { ETH_ANCHOR_SLOT, ethAnchorWords, replayEth, replayBalance } from "./sell";
@@ -357,7 +357,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
     dropFloorBps: BigInt(st.dropFloorBps),
     ceilBps: BigInt(st.ceilBps),
     rateCap: BigInt(st.rateCap),
-    refScore: 1_000_000n,
+    scorePer100Points: SCORE_PER_100_POINTS,
   });
 }
 
@@ -534,7 +534,7 @@ export function balanceQuote(snap: Snapshot, scores: bigint[]): bigint {
   return replayBalance(scores, {
     rate: snap.balanceRate,
     unit: snap.balanceUnit,
-    refScore: 1_000_000n,
+    scorePer100Points: SCORE_PER_100_POINTS,
     dropPer100PointsBps: BigInt(snap.settings.dropPer100PointsBps),
     dropFloorBps: BigInt(snap.settings.dropFloorBps),
     floorBps: 10000n - BigInt(snap.settings.balanceBidMarginBps),
@@ -542,6 +542,11 @@ export function balanceQuote(snap: Snapshot, scores: bigint[]): bigint {
 }
 
 // ---- helpers --------------------------------------------------------------------
+
+// Points the eth pot buys at `rate` (wei per 100 points): pot * 100 / rate. 0 at a zero rate.
+export function potPoints(pot: bigint, rate: bigint): bigint {
+  return rate > 0n ? (pot * 100n) / rate : 0n;
+}
 
 // "3h 12m", "4m 05s", "12s"
 export function countdown(s: number): string {

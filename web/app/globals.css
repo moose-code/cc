@@ -3031,3 +3031,8 @@ button.slot:disabled {
     gap: 6px;
   }
 }
+.ltable-row .sub {
+  display: block;
+  font-size: 11px;
+  color: var(--quiet);
+}

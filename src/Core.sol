@@ -415,9 +415,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         toRedeemBurn = income * cfg.feeToRedeemBurnBps / BPS;
     }
 
-    /// the share of the unbooked income that the next `_book` adds to the pot
+    /// the pot share of the unbooked fee income the next `_book` adds. pending income is the Core balance minus the
+    /// booked pots minus `msg.value` of the current call, so reads during a payable door match the pot the door books
     function _pendingPot() private view returns (uint256) {
-        uint256 income = _income(0);
+        uint256 income = _income(msg.value);
         (uint256 toPayee, uint256 toRedeemBurn) = _split(income);
         return income - toPayee - toRedeemBurn;
     }
@@ -497,8 +498,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         (, read) = _climb();
     }
 
+    /// the price state and the eth rate now. the pot clamp is `s.ethPot` plus the pot share of the unbooked fee income
+    /// (`_pendingPot`), so the stored price climbs on fee income that has arrived before a `_book` folds it into the pot
     function _climb() private view returns (uint256, uint256) {
-        return CoreLib.climb(s.rateAtCheckpoint, s.ethPot, s.lastFillTime, s.checkpointTime, block.timestamp);
+        return
+            CoreLib.climb(
+                s.rateAtCheckpoint, s.ethPot + _pendingPot(), s.lastFillTime, s.checkpointTime, block.timestamp
+            );
     }
 
     /// the price state now, wei per 100 points: `rateAtCheckpoint` climbed lazily and bounded by the ceiling and
@@ -513,7 +519,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// between fills, so the maximum follows the climb and holds against a sale within the block. the engine's price
     /// floors read it. the math is in `CoreLib.floorRate`
     function floorRate() external view returns (uint256) {
-        return CoreLib.floorRate(s.rateAtCheckpoint, s.ethPot, s.lastFillTime, s.checkpointTime, block.timestamp);
+        return CoreLib.floorRate(
+            s.rateAtCheckpoint, s.ethPot + _pendingPot(), s.lastFillTime, s.checkpointTime, block.timestamp
+        );
     }
 
     /// the pot scaled multiplier now, bps (10_000 is 1x): how many pages of `pointsPerPage` points the booked pot

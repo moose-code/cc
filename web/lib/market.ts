@@ -2,7 +2,7 @@
 
 // Reads of the swap panel: the markets it trades, pool spot price, exact-in quote, ETH/USD.
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
 import { formatUnits, parseAbi, zeroAddress, type Address } from "viem";
@@ -70,6 +70,22 @@ export function useTokensPerEth(market?: Market) {
       }
     },
   });
+}
+
+// Eth value, in wei, of a balance token amount at the balance pool's spot price (useTokensPerEth, the swap panel's
+// query). The returned function gives undefined while the market, its price or the Core's balance token is unknown,
+// or when the pool token differs from the Core's balance token.
+export function useBalanceInEth(): (amount: bigint) => bigint | undefined {
+  const balanceToken = useSnapshot().data?.balanceToken;
+  const { market } = useBalanceMarket();
+  const { data: perEth } = useTokensPerEth(market);
+  return useCallback(
+    (amount: bigint) => {
+      if (!market || !perEth || market.token.toLowerCase() !== balanceToken?.toLowerCase()) return undefined;
+      return BigInt(Math.round((Number(formatUnits(amount, market.decimals)) / perEth) * 1e18));
+    },
+    [market, perEth, balanceToken],
+  );
 }
 
 // Exact-in quote from the v4 Quoter: amountOut in wei, undefined when the quote reverts.
