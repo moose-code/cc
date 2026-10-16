@@ -53,7 +53,8 @@
     "idleStepSeconds": 600,
     "sniperSeconds": 1800,
     "reserveWei": 100000000000000000,
-    "returnLockSeconds": 86400
+    "returnLockSeconds": 86400,
+    "valueModeOn": false
   },
   "sale": {
     "markupBps": 15000,
@@ -62,6 +63,13 @@
     "anchorHalfLife": 604800,
     "anchorMinCost": 100000000000000000,
     "anchorMoveBps": 0
+  },
+  "quote": {
+    "rateBpsPerHour": 0,
+    "maxStepBps": 0,
+    "tolBps": 500,
+    "maxStale": 0,
+    "minLiquidity": 0
   },
   "credit": {
     "costToPotBps": 8000,

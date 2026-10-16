@@ -123,6 +123,12 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     pageReady: snap.page.ready,
     balanceModule: snap.balanceModule,
     atFloor: held.filter((_, i) => floors[i]?.status === "success" && floors[i].result === true),
+    controller: snap.controller,
+    valueModeOn: snap.value.on,
+    noQuote: snap.noQuote,
+    refPrice: snap.value.refPrice ?? 0n,
+    refTime: BigInt(snap.value.refTime ?? 0),
+    maxStale: BigInt(snap.value.quote?.maxStale ?? 0),
   };
   return { state, snap };
 }

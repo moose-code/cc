@@ -17,6 +17,13 @@ interface IController {
     /// the asking price of statement `sid` now. the core reads it once per compose for the `Composed` event, and a
     /// failed read is logged as 0
     function priceOf(uint256 sid) external view returns (uint256);
+    /// the wei value of one point (`POINT_UNIT` score units, `POINT_UNIT * unitPerPoint` balance token base units) at the
+    /// protected price of the balance token: the buy price `min(spot, reference * (10_000 + tolBps) / 10_000)` for
+    /// `forSale` false, rounded down, the sale price `max(spot, reference * (10_000 - tolBps) / 10_000)` for true, rounded
+    /// up. `ok` is false, and `value` 0, while the quote is unusable (no pool key or module, a stale reference, pool
+    /// liquidity under the minimum, a failed unit read). the core reads it in value mode, with a bounded call that fails
+    /// closed to `NoQuote`
+    function valuePerPoint(bool forSale) external view returns (uint256 value, bool ok);
 }
 
 interface IBalanceModule {
@@ -144,8 +151,8 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
 /// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields, fee
 /// split and `pointsPerPage`, slot 3 `swapFeeCc`, the two sale cuts, `climbMultiplierCapBps`, `spendCapBps`, `bucketSeconds`,
-/// `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`, `reserveWei` and `returnLockSeconds`. docs/SPEC.md section 3
-/// has the meaning of every field
+/// `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`, `reserveWei`, `returnLockSeconds` and `valueModeOn`.
+/// docs/SPEC.md section 3 has the meaning of every field
 struct Settings {
     // slot 0
     /// fall of a bid rate on a fill, bps of the rate before the credit, as `dropPer100PointsBps * score / (100 points in score units)`, bounded at 10_000; shared by the eth and balance bids
@@ -240,6 +247,10 @@ struct Settings {
     /// seconds every intake door refuses a credit the engine sold through `sellCreditTo`, from the sale. 0 refuses it in
     /// the second of the sale only
     uint32 returnLockSeconds;
+    /// the value switch: the eth bid is the shared balance instance times the controller's protected value per point,
+    /// every eth fill drops that instance, and the controller prices sales on the value with the floor rate and cost
+    /// terms dropped. turning it on resets the shared instance to its floor
+    bool valueModeOn;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -273,6 +284,23 @@ struct CreditSale {
     uint16 spreadBps;
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 startBps;
+}
+
+/// the protected price quote of the controller (decision 148), set at once by `setQuote`. the controller keeps a reference
+/// price of the balance token that `observe()` and its sale doors move toward the pool spot by at most
+/// `min(rateBpsPerHour * elapsed / 3600, maxStepBps)` bps of the reference per update
+struct Quote {
+    /// the most the reference moves toward the spot per hour, bps of the reference
+    uint32 rateBpsPerHour;
+    /// the most one update moves the reference, bps of the reference. 0 to 10_000
+    uint16 maxStepBps;
+    /// the band around the reference: buys price off `min(spot, reference * (10_000 + tolBps) / 10_000)`, sales off
+    /// `max(spot, reference * (10_000 - tolBps) / 10_000)`. 0 to 9_999
+    uint16 tolBps;
+    /// seconds after the last update the reference stays usable. 0 keeps the quote unusable
+    uint32 maxStale;
+    /// the least pool liquidity of a usable quote
+    uint128 minLiquidity;
 }
 
 /// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
@@ -374,7 +402,8 @@ library Mainnet {
             idleStepSeconds: 600,
             sniperSeconds: 1800,
             reserveWei: 0.1 ether,
-            returnLockSeconds: 86_400
+            returnLockSeconds: 86_400,
+            valueModeOn: false
         });
     }
 
@@ -406,6 +435,13 @@ library Mainnet {
             spreadBps: 200,
             startBps: 15_000
         });
+    }
+
+    /// the launch quote: the 5 percent band of decision 148 and the review. the rate, the step, the staleness and the
+    /// liquidity minimum are owner inputs set once the balance token pool exists and its depth is known; a `maxStale` of 0
+    /// keeps the quote unusable, so value mode fails closed to `NoQuote` until they are set
+    function defaultQuote() internal pure returns (Quote memory) {
+        return Quote({rateBpsPerHour: 0, maxStepBps: 0, tolBps: 500, maxStale: 0, minLiquidity: 0});
     }
 
     /// the default stack: the fixed parts of mainnet. the v2 members (hook, factory, locker, escrow) are zero and are

@@ -20,6 +20,7 @@ interface ICoreLib {
     error NoBalanceModule();
     error NoCode(address who);
     error NoCreditRescue();
+    error NoQuote();
     error NoSuccessor();
     error NotHolder();
     error NotInPile(uint256 id);
@@ -49,12 +50,13 @@ interface ICoreLib {
     event SettingsSet(Settings settings);
     event SuccessorLocked();
     event SuccessorSet(address successor);
+    event ValueRateFill(uint256 spent, uint256 rateBps, uint256 pot);
 
     function balanceBidForScore(uint256 score) external view returns (uint256);
     function balanceBidOf(uint256 id) external view returns (uint256);
     function balanceRate() external view returns (uint256 rate);
     function climbMultiplier() external view returns (uint256);
-    function ethPrice() external view returns (uint256 price);
+    function ethPrice() external view returns (uint256);
     function ethRate() external view returns (uint256 read);
     function floorRate() external view returns (uint256);
     function reserve() external view returns (uint256);

@@ -7,6 +7,7 @@ import {
     Sale,
     Credit,
     CreditSale,
+    Quote,
     IController,
     ICoreViews,
     ICoreSale,
@@ -14,7 +15,8 @@ import {
     ICredits,
     IBalanceModule,
     Mainnet,
-    RATE_SCORE
+    RATE_SCORE,
+    POINT_UNIT
 } from "./interfaces/Interfaces.sol";
 import {CreditBounds} from "./lib/CreditBounds.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -57,7 +59,15 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// once the owner sets the balance token pool (`setBalancePoolKey`), `valueOf` includes the pool term. the pool term is
 /// 0 with the pool key unset, with the stored pool key's `currency1` other than the Core's current `balanceToken()`
 /// (a stale key after an owner module replacement), with no balance module set, on a failed, zero or above
-/// `uint128.max` unit read, or on a zero pool read
+/// `uint128.max` unit read, or on a zero pool read.
+/// the protected price (decision 148): the controller keeps a reference price of the balance token, set to the pool spot
+/// by `setBalancePoolKey` and moved toward the spot by `observe()` and the sale doors by at most
+/// `min(rateBpsPerHour * elapsed / 3600, maxStepBps)` bps of the reference per update. buys price off
+/// `min(spot, reference * (10_000 + tolBps) / 10_000)`, sales off `max(spot, reference * (10_000 - tolBps) / 10_000)`;
+/// the quote is usable while the reference is at most `maxStale` old, the pool holds at least `minLiquidity` and the
+/// unit read succeeds. in value mode (the Core's `valueModeOn`) `valueOf` is the sale price value with the floor rate and
+/// cost terms dropped, a statement's reference is that value times `floorMultBps()` and its curve rests at 10_000 of it,
+/// and the price views and the sale doors revert `NoQuote` while the quote is unusable
 contract ControllerV1 is IController {
     using StateLibrary for IPoolManager;
 
@@ -73,6 +83,8 @@ contract ControllerV1 is IController {
     error Reentrant();
     /// a credit sale door was called while the credit sale window is off
     error CreditSaleOff();
+    /// a value mode price was read while the quote is unusable
+    error NoQuote();
 
     event SaleSet(Sale sale);
     event CreditSaleSet(CreditSale credit);
@@ -80,6 +92,9 @@ contract ControllerV1 is IController {
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
+    event QuoteSet(Quote quote);
+    /// an update of the reference: the reference after it and the spot it moved toward, wei per 1e18 base units
+    event Observed(uint256 refPrice, uint256 spot);
 
     ICoreViews public immutable CORE;
 
@@ -119,7 +134,14 @@ contract ControllerV1 is IController {
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 public creditStartBps;
 
-    constructor(address core, Sale memory sale, Credit memory credit) {
+    /// the protected price settings (decision 148)
+    Quote public quote;
+    /// the reference price of the balance token, wei per 1e18 base units, 0 until the pool key is set
+    uint256 public refPrice;
+    /// when `refPrice` was last updated
+    uint40 public refTime;
+
+    constructor(address core, Sale memory sale, Credit memory credit, Quote memory quote_) {
         CORE = ICoreViews(core);
         _setSale(sale);
         storedAnchorBps = uint32(BPS);
@@ -130,6 +152,7 @@ contract ControllerV1 is IController {
                 saleOn: credit.saleOn, window: credit.window, spreadBps: credit.spreadBps, startBps: credit.startBps
             })
         );
+        _setQuote(quote_);
     }
 
     modifier onlyOwner() {
@@ -188,6 +211,97 @@ contract ControllerV1 is IController {
         balancePoolKey = key;
         balancePoolKeySet = true;
         emit BalancePoolKeySet(c0, c1, key.fee, key.tickSpacing, address(key.hooks));
+        // the reference starts at the spot of the key the owner sets, in the owner's transaction
+        (uint256 spot,) = _spot();
+        _setRef(spot, spot);
+    }
+
+    /// sets the protected price settings at once. `maxStepBps` 0 to 10_000, `tolBps` 0 to 9_999
+    function setQuote(Quote calldata v) external onlyOwner {
+        _setQuote(v);
+    }
+
+    function _setQuote(Quote memory v) private {
+        if (v.maxStepBps > BPS) revert BadSetting("maxStepBps");
+        if (v.tolBps >= BPS) revert BadSetting("tolBps");
+        quote = v;
+        emit QuoteSet(v);
+    }
+
+    // ------------------------------------------------------------------ the protected price
+
+    /// moves the reference toward the pool spot by at most `min(rateBpsPerHour * elapsed / 3600, maxStepBps)` bps of the
+    /// reference and records the time. anyone may call; the sale doors call it first. no move with no pool key or a zero
+    /// spot. repeated calls gain nothing beyond the rate: each moves at most the rate times its own elapsed time
+    function observe() public {
+        if (refPrice == 0) return;
+        (uint256 spot, bool ok) = _spot();
+        if (!ok) return;
+        uint256 ref = refPrice;
+        Quote memory q = quote;
+        uint256 move = uint256(q.rateBpsPerHour) * (block.timestamp - refTime) / 1 hours;
+        if (move > q.maxStepBps) move = q.maxStepBps;
+        uint256 hi = ref * (BPS + move) / BPS;
+        uint256 lo = ref * (BPS - move) / BPS;
+        _setRef(spot > hi ? hi : spot < lo ? lo : spot, spot);
+    }
+
+    function _setRef(uint256 ref, uint256 spot) private {
+        refPrice = ref;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        refTime = uint40(block.timestamp);
+        emit Observed(ref, spot);
+    }
+
+    /// @notice the pool spot of the balance token, wei per 1e18 base units, the price `observe()` moves the reference
+    /// toward. the web shows it against `refPrice`. false as in `_spot`
+    function spotPrice() external view returns (uint256 spot, bool ok) {
+        return _spot();
+    }
+
+    /// the pool spot of the balance token, wei per 1e18 base units. false with no pool key, a key for another token than
+    /// the Core's, a zero sqrt price or a product above 256 bits
+    function _spot() private view returns (uint256 spot, bool ok) {
+        return _priceBaseUnits(1e18);
+    }
+
+    /// the buy price, the sale price and the unit, wei per 1e18 base units and base units per score unit, and whether the
+    /// quote is usable: a reference set, at most `maxStale` old with `maxStale` nonzero, pool liquidity at least
+    /// `minLiquidity`, a spot and a unit read
+    function _protected() private view returns (uint256 pBuy, uint256 pSell, uint256 unit, bool ok) {
+        uint256 ref = refPrice;
+        Quote memory q = quote;
+        if (ref == 0 || q.maxStale == 0 || block.timestamp - refTime > q.maxStale) return (0, 0, 0, false);
+        (uint256 spot, bool priced) = _spot();
+        if (!priced) return (0, 0, 0, false);
+        if (IPoolManager(Mainnet.POOL_MANAGER).getLiquidity(balancePoolKey.toId()) < q.minLiquidity) {
+            return (0, 0, 0, false);
+        }
+        address module = CORE.balanceModule();
+        if (module == address(0)) return (0, 0, 0, false);
+        (unit, ok) = _liveUnit(module);
+        if (!ok) return (0, 0, 0, false);
+        uint256 up = ref * (BPS + q.tolBps) / BPS;
+        uint256 down = ref * (BPS - q.tolBps) / BPS;
+        pBuy = spot < up ? spot : up;
+        pSell = spot > down ? spot : down;
+    }
+
+    /// the wei value of one point at the protected price, see `IController.valuePerPoint`
+    function valuePerPoint(bool forSale) external view returns (uint256 value, bool ok) {
+        uint256 pBuy;
+        uint256 pSell;
+        uint256 unit;
+        (pBuy, pSell, unit, ok) = _protected();
+        if (!ok) return (0, false);
+        value = forSale
+            ? FullMath.mulDivRoundingUp(POINT_UNIT * unit, pSell, 1e18)
+            : FullMath.mulDiv(POINT_UNIT * unit, pBuy, 1e18);
+    }
+
+    /// whether the Core's value switch is on
+    function _valueMode() private view returns (bool) {
+        return ICoreSale(address(CORE)).settings().valueModeOn;
     }
 
     // ------------------------------------------------------------------ credit sale settings, owner, at once
@@ -234,8 +348,15 @@ contract ControllerV1 is IController {
     /// the value in wei of `points` score units: the larger of `floorRate * points / RATE_SCORE` and the balance token
     /// pool value of `points * unitPerPoint` base units. `unitPerPoint` is read from the balance module in the call. the
     /// pool term is 0 when the pool key is unset, no balance module is set, the unit read fails, is zero or exceeds
-    /// `uint128.max`, the pool reads zero, or the pool pricing exceeds 256 bits
+    /// `uint128.max`, the pool reads zero, or the pool pricing exceeds 256 bits. in value mode it is `points * unitPerPoint`
+    /// base units at the protected sale price, rounded up, with the floor rate term dropped, and reverts `NoQuote` while
+    /// the quote is unusable
     function valueOf(uint256 points) public view returns (uint256) {
+        if (_valueMode()) {
+            (, uint256 pSell, uint256 unit, bool ok) = _protected();
+            if (!ok) revert NoQuote();
+            return FullMath.mulDivRoundingUp(points * unit, pSell, 1e18);
+        }
         uint256 rate = FullMath.mulDiv(CORE.floorRate(), points, RATE_SCORE);
         uint256 pool = _poolValue(points);
         return pool > rate ? pool : rate;
@@ -249,8 +370,11 @@ contract ControllerV1 is IController {
         return _reference(cost, CORE.ratingOf(sid));
     }
 
+    /// the reference of a statement of `cost` and `rating`: the larger of its cost and `valueOf(rating)`; in value mode
+    /// the protected floor `valueOf(rating) * floorMultBps() / 10_000`, the cost term dropped (decision 150)
     function _reference(uint256 cost, uint256 rating) private view returns (uint256) {
         uint256 value = valueOf(rating);
+        if (_valueMode()) return value * floorMultBps() / BPS;
         return value > cost ? value : cost;
     }
 
@@ -273,6 +397,7 @@ contract ControllerV1 is IController {
     function buy(uint256 sid) external payable {
         if (_busy) revert Reentrant();
         _busy = true;
+        observe();
         (uint256 price, uint256 cost, uint256 ref) = _quote(sid);
         if (msg.value < price) revert Underpaid();
         _moveAnchor(sid, price, cost, ref);
@@ -285,15 +410,15 @@ contract ControllerV1 is IController {
     // ------------------------------------------------------------------ credit sale window
 
     /// the sale price of pile credit `id` now, wei. the floor is the larger of the credit's cost and `valueOf` of its
-    /// score, times `floorMultBps()`, and at least `saleFloorBps` of the cost, the Core's floor. the start is the floor
-    /// times `creditStartBps`. the price falls in
+    /// score, times `floorMultBps()`; in value mode `valueOf` alone, the cost term dropped. the floor is at least
+    /// `saleFloorBps` of the cost, the Core's floor of `sellCreditTo`. the start is the floor times `creditStartBps`. the price falls in
     /// a straight line from the start at the acquisition time to the floor at the acquisition time plus `creditWindow`,
     /// and rests at the floor after. reverts `NotForSale` for a credit not in the pile. answers whether or not the sale is on
     function creditPrice(uint256 id) public view returns (uint256 price) {
         (bool inPile, uint256 cost, uint64 acquiredAt) = CORE.creditInfo(id);
         if (!inPile) revert NotForSale();
         uint256 hi = valueOf(_scoreOf(id));
-        if (cost > hi) hi = cost;
+        if (cost > hi && !_valueMode()) hi = cost;
         uint256 floor = hi * floorMultBps() / BPS;
         // never under the Core's floor of `sellCreditTo`, so the quote is always a price the Core takes
         uint256 coreFloor = cost * _saleFloorBps() / BPS;
@@ -333,6 +458,7 @@ contract ControllerV1 is IController {
         if (!creditSaleOn) revert CreditSaleOff();
         if (_busy) revert Reentrant();
         _busy = true;
+        observe();
         uint256 price = creditPrice(id);
         if (msg.value < price) revert Underpaid();
         ICoreSale(address(CORE)).sellCreditTo{value: price}(id, msg.sender);
@@ -348,6 +474,7 @@ contract ControllerV1 is IController {
         if (!creditSaleOn) revert CreditSaleOff();
         if (_busy) revert Reentrant();
         _busy = true;
+        observe();
         uint256 n = ids.length;
         uint256 spent;
         for (uint256 i; i < n; ++i) {
@@ -361,13 +488,13 @@ contract ControllerV1 is IController {
     }
 
     /// the curve price of statement `sid` in wei with its cost basis and its reference. the price is the age curve on the
-    /// reference, at least `saleFloorBps` of the reference
+    /// reference, at least `saleFloorBps` of the reference; in value mode at least the reference, the protected floor
     function _quote(uint256 sid) private view returns (uint256 price, uint256 cost, uint256 ref) {
         bool held;
         (held, cost,) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
         ref = _reference(cost, CORE.ratingOf(sid));
-        price = _ask(ref, CORE.statementAge(sid), _saleFloorBps());
+        price = _ask(ref, CORE.statementAge(sid), _valueMode() ? BPS : _saleFloorBps());
     }
 
     /// the core's `saleFloorBps`

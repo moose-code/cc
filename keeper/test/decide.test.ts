@@ -12,6 +12,7 @@ import {
   GAS_GUESS,
   listingKey,
   observe,
+  observeDue,
   recheck,
   worstBaseFee,
   type Listing,
@@ -58,6 +59,12 @@ function state(over: Partial<State> = {}): State {
     pageReady: false,
     balanceModule: zeroAddress,
     atFloor: [],
+    controller: "0x00000000000000000000000000000000000000c1" as Address,
+    valueModeOn: false,
+    noQuote: false,
+    refPrice: 0n,
+    refTime: 0n,
+    maxStale: 0n,
     ...over,
   };
 }
@@ -202,6 +209,36 @@ test("listing: the reserve bounds the sweep, not the processing", () => {
   assert.ok(doorsOf(atReserve).includes("compose"), "compose still pays from the whole pot");
   const covered = decide(state({ potWithPending: parseEther("0.11"), potRoom: parseEther("0.005") }), [listing()], gas("1"), p, new Map());
   assert.match(reason(covered, "buyListing"), /PotTooSmall: price above ethPot less the reserve/);
+});
+
+test("listing: in value mode an unusable quote skips the sweep with NoQuote, processing still runs", () => {
+  const p = policy({}, 0);
+  const halted = decide(state({ valueModeOn: true, noQuote: true, pageReady: true }), [listing()], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(halted).filter((d) => d === "buyListing"), []);
+  assert.match(reason(halted, "buyListing"), /NoQuote/);
+  assert.ok(doorsOf(halted).includes("compose"), "compose does not read the quote");
+  const live = decide(state({ valueModeOn: true, noQuote: false }), [listing()], gas("1"), p, new Map());
+  assert.ok(doorsOf(live).includes("buyListing"), "a usable quote sweeps as before");
+});
+
+// ------------------------------------------------------------------ observe
+
+test("observe: the tick is due at half of maxStale after the last update, never before the pool key or with maxStale 0", () => {
+  const p = policy();
+  const base = { refPrice: 49n * 10n ** 16n, refTime: 4_000n, maxStale: 7_200n };
+  assert.match(observeDue(state({ ...base, refPrice: 0n })).reason, /pool key is not set/);
+  assert.match(observeDue(state({ ...base, maxStale: 0n })).reason, /never usable/);
+  const early = decide(state({ ...base, timestamp: 4_000n + 3_599n }), [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(early), []);
+  assert.match(reason(early, "observe"), /next tick at 7600/);
+  const due = decide(state({ ...base, timestamp: 4_000n + 3_600n }), [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(due), ["observe"]);
+  const call = due.calls[0];
+  assert.equal(call.target, "controller");
+  assert.equal(call.payment, 0n);
+  assert.equal(recheck(call, state(base), undefined, GAS_GUESS.observe, gas("1"), p).ok, true, "an unpaid door clears the recheck");
+  const high = decide(state({ ...base, timestamp: 4_000n + 3_600n }), [], gas("4"), p, new Map());
+  assert.match(reason(high, "observe"), /above the door ceiling/);
 });
 
 test("listing: the best gap goes first (Activity.s.sol rule), and every sweep precedes the buyback", () => {

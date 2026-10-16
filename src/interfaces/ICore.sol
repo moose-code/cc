@@ -46,6 +46,7 @@ interface ICore {
     error NoCode(address who);
     error NoCredit();
     error NoCreditRescue();
+    error NoQuote();
     error NoSuccessor();
     error NotEligible();
     error NotForSale();
@@ -126,6 +127,7 @@ interface ICore {
     );
     event SuccessorLocked();
     event SuccessorSet(address successor);
+    event ValueRateFill(uint256 spent, uint256 rateBps, uint256 pot);
 
     receive() external payable;
 

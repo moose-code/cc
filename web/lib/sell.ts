@@ -91,3 +91,41 @@ export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
   }
   return total;
 }
+
+export interface ValueReplay {
+  rate: bigint; // balanceRate(): the shared instance now, bps of par
+  value: bigint; // controller.valuePerPoint(false): wei per point at the protected buy price
+  pot: bigint; // ethPot plus the unbooked share the first book adds, less the reserve (Core.room)
+  rateCap: bigint;
+  scorePer100Points: bigint;
+  dropPer100PointsBps: bigint;
+  dropFloorBps: bigint;
+  floorBps: bigint; // 10000 - balanceBidMarginBps
+}
+
+// Total eth sellForEth pays in value mode (decision 148) for the credits `scores` (in order) in one call. Each credit
+// pays min(rate * value * 100 / 10000, rateCap, pot left) * score / scorePer100Points (CoreLib._valueRate, Core.bidOf),
+// and the fill drops the shared instance as a balance fill does (replayBalance): one rounding, held at or above the
+// minute floor and the bid floor. The quote is the first fills of the minute, so the minute start is the starting rate.
+export function replayValue(scores: bigint[], a: ValueReplay): bigint {
+  let r = a.rate;
+  const start = a.rate;
+  let left = a.pot;
+  let total = 0n;
+  for (const score of scores) {
+    let rate = (r * a.value * 100n) / 10000n;
+    if (rate > a.rateCap) rate = a.rateCap;
+    const read = rate < left ? rate : left;
+    const x = (read * score) / a.scorePer100Points;
+    total += x;
+    left -= x;
+    const denom = 10000n * a.scorePer100Points;
+    const fallNum = a.dropPer100PointsBps * score;
+    let dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;
+    const mfloor = (start * a.dropFloorBps) / 10000n;
+    if (dropped < mfloor) dropped = mfloor;
+    if (dropped < a.floorBps) dropped = a.floorBps;
+    r = dropped;
+  }
+  return total;
+}

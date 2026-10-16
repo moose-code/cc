@@ -14,7 +14,7 @@ import { multicallAbi, scoreAbi, seedAbi } from "@cc/engine/abis";
 import { core, credits, engineDeployed, SCORE_PER_100_POINTS, statements } from "./config";
 import { controllerAbi, coreAbi, creditsAbi, erc20Abi, statementsAbi } from "./abis";
 import { SCOPE, lsGet, lsSet } from "./cache";
-import { ETH_ANCHOR_SLOT, ethAnchorWords, replayEth, replayBalance } from "./sell";
+import { ETH_ANCHOR_SLOT, ethAnchorWords, replayEth, replayBalance, replayValue } from "./sell";
 import { useCreditRow, useCreditTraitsIx, useHeldCredits, useIxMode, useStatementDetailIx, useWalletCreditsIx } from "./indexer";
 import type { AcquiredHow } from "./indexer-schema";
 import type { BalanceTokenInfo } from "./format";
@@ -327,11 +327,13 @@ export async function sellQuote(client: Client, ids: bigint[], now: number): Pro
 async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumber?: bigint): Promise<bigint> {
   const c = { address: core!, abi: coreAbi } as const;
   const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }), blockNumber });
-  const [[price, peak, ethPot, toBuyback, redeemBurn, payeeOn, st, held, reserve], startWord, bucketWord, scores] = await Promise.all([
+  // ethPrice reverts NoQuote in value mode while the quote is unusable, so the batch is tolerant and every other read
+  // must answer
+  const [res, startWord, bucketWord, scores] = await Promise.all([
     client.multicall({
       ...mc,
       blockNumber,
-      allowFailure: false,
+      allowFailure: true,
       contracts: [
         { ...c, functionName: "ethPrice" },
         { ...c, functionName: "floorRate" },
@@ -342,20 +344,45 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
         { ...c, functionName: "settings" },
         { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [core!] },
         { ...c, functionName: "reserve" },
+        { ...c, functionName: "balanceRate" },
+        { ...c, functionName: "controller" },
       ] as const,
     }),
     word(1n),
     word(2n),
     creditScores(client, ids, blockNumber),
   ]);
+  const need = <T,>(i: number): T => {
+    if (res[i].status !== "success") throw new Error("sell quote read failed");
+    return res[i].result as T;
+  };
+  const ethPot = need<bigint>(2), toBuyback = need<bigint>(3), redeemBurn = need<bigint>(4), payeeOn = need<boolean>(5);
+  const st = need<Snapshot["settings"]>(6), held = need<bigint>(7), reserve = need<bigint>(8);
   const { toPot } = pendingIncome(held, ethPot, toBuyback, redeemBurn, payeeOn, st.payeePpm, st.feeToRedeemBurnBps);
   // the bids read the pot less the reserve (Core.room); a batch that carries the pile across a page raises the reserve
   // by one queued compose, which this quote does not model
   const pot = ethPot + toPot;
+  const room = pot > reserve ? pot - reserve : 0n;
+  if (st.valueModeOn) {
+    // value mode: the shared instance times the protected buy value; an unusable quote quotes nothing (the door
+    // reverts NoQuote)
+    const [value, ok] = await client.readContract({ address: need<Address>(10), abi: controllerAbi, functionName: "valuePerPoint", args: [false], blockNumber });
+    if (!ok || value === 0n) throw new Error("the balance token price quote is unavailable");
+    return replayValue(scores, {
+      rate: need<bigint>(9),
+      value,
+      pot: room,
+      rateCap: BigInt(st.rateCap),
+      scorePer100Points: SCORE_PER_100_POINTS,
+      dropPer100PointsBps: BigInt(st.dropPer100PointsBps),
+      dropFloorBps: BigInt(st.dropFloorBps),
+      floorBps: 10000n - BigInt(st.balanceBidMarginBps),
+    });
+  }
   return replayEth(scores, {
-    price,
-    peak,
-    pot: pot > reserve ? pot - reserve : 0n,
+    price: need<bigint>(0),
+    peak: need<bigint>(1),
+    pot: room,
     ...ethAnchorWords(BigInt(startWord ?? "0x0"), BigInt(bucketWord ?? "0x0"), BigInt(Math.floor(now)), BigInt(st.bucketSeconds)),
     dropPer100PointsBps: BigInt(st.dropPer100PointsBps),
     dropFloorBps: BigInt(st.dropFloorBps),

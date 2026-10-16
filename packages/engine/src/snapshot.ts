@@ -52,8 +52,6 @@ export async function readSnapshot(client: ReadClient, coreAddr: Address) {
 async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: bigint) {
   const c = { address: coreAddr, abi: coreAbi } as const;
   const [
-    ethRate,
-    ethPrice,
     floorRate,
     ethPot,
     ethToBuyback,
@@ -80,8 +78,6 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
     blockNumber,
     allowFailure: false,
     contracts: [
-      { ...c, functionName: "ethRate" },
-      { ...c, functionName: "ethPrice" },
       { ...c, functionName: "floorRate" },
       { ...c, functionName: "ethPot" },
       { ...c, functionName: "ethToBuyback" },
@@ -108,14 +104,25 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
   // the pot scaled climb multiplier (decision 128), a tolerant read so a pre-128 Core without the view does not blank
   // the whole snapshot. defaults to 1x (10_000 bps) when the Core does not answer
   // and the reserve (the eth the pot keeps for processing), a tolerant read that defaults to 0 for a Core without it
-  const [climbMultiplierRes, reserveRes] = await client.multicall({
+  // the eth bid and price state, tolerant: in value mode they revert NoQuote while the controller's quote is unusable,
+  // which reads as no eth bid (0) with `noQuote` set, and leaves the rest of the snapshot intact
+  const [climbMultiplierRes, reserveRes, ethRateRes, ethPriceRes] = await client.multicall({
     ...mc,
     blockNumber,
     allowFailure: true,
-    contracts: [{ ...c, functionName: "climbMultiplier" }, { ...c, functionName: "reserve" }] as const,
+    contracts: [
+      { ...c, functionName: "climbMultiplier" },
+      { ...c, functionName: "reserve" },
+      { ...c, functionName: "ethRate" },
+      { ...c, functionName: "ethPrice" },
+    ] as const,
   });
   const climbMultiplier = climbMultiplierRes.status === "success" ? (climbMultiplierRes.result as bigint) : 10_000n;
   const reserve = reserveRes.status === "success" ? (reserveRes.result as bigint) : 0n;
+  const ethRate = ethRateRes.status === "success" ? (ethRateRes.result as bigint) : 0n;
+  const ethPrice = ethPriceRes.status === "success" ? (ethPriceRes.result as bigint) : 0n;
+  const valueModeOn = (settings as { valueModeOn?: boolean }).valueModeOn === true;
+  const noQuote = valueModeOn && (ethRateRes.status !== "success" || ethPriceRes.status !== "success");
   // ethPot plus the share of the unbooked fee income that the next Core._book adds (Core._income, _split)
   const pending = pendingIncome(coreEth, ethPot, ethToBuyback, ethRedeemBurn, payeeOn, settings.payeePpm, settings.feeToRedeemBurnBps);
   const potWithPending = ethPot + pending.toPot;
@@ -166,15 +173,50 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
       { address: STATEMENTS, abi: statementsAbi, functionName: "supply" },
     ] as const,
   });
+  // the protected price (decision 148): the controller's reference of the balance token against the pool spot, both
+  // wei per 1e18 base units, the reference's age and the quote settings, and the value of one point at the buy and sale
+  // prices. a controller without them leaves the fields undefined
+  const [refRes, refTimeRes, spotRes, quoteRes, buyRes, sellRes] = await client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: true,
+    contracts: [
+      { ...k, functionName: "refPrice" },
+      { ...k, functionName: "refTime" },
+      { ...k, functionName: "spotPrice" },
+      { ...k, functionName: "quote" },
+      { ...k, functionName: "valuePerPoint", args: [false] },
+      { ...k, functionName: "valuePerPoint", args: [true] },
+    ] as const,
+  });
   const ok = <T,>(r: { status: string; result?: unknown }): T | undefined => (r.status === "success" ? (r.result as T) : undefined);
+  const spot = ok<readonly [bigint, boolean]>(spotRes);
+  const q = ok<readonly [number, number, number, number, bigint]>(quoteRes);
+  const vBuy = ok<readonly [bigint, boolean]>(buyRes);
+  const vSell = ok<readonly [bigint, boolean]>(sellRes);
+  const value = {
+    on: valueModeOn,
+    refPrice: ok<bigint>(refRes),
+    refTime: ok<number>(refTimeRes),
+    spot: spot && spot[1] ? spot[0] : undefined,
+    quote: q && { rateBpsPerHour: q[0], maxStepBps: q[1], tolBps: q[2], maxStale: q[3], minLiquidity: q[4] },
+    // usable is the controller's own answer: the reference fresh, the pool deep enough, a spot and a unit read
+    usable: vBuy !== undefined && vBuy[1],
+    perPointBuy: vBuy && vBuy[1] ? vBuy[0] : undefined,
+    perPointSell: vSell && vSell[1] ? vSell[0] : undefined,
+  };
   const num = (r: { status: string; result?: unknown }) => {
     const v = ok<bigint | number>(r);
     return v === undefined ? undefined : Number(v);
   };
   const statementSupply = ok<bigint>(supplyRes);
   return {
+    // in value mode the eth bid is the shared balance instance times the protected buy value; 0 with noQuote set while
+    // the quote is unusable (the Core reverts NoQuote)
     ethRate,
     ethPrice,
+    noQuote,
+    value,
     floorRate,
     climbMultiplier,
     ethPot,

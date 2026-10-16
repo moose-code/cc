@@ -87,6 +87,38 @@ export const controllerAbi = [
             "internalType": "uint32"
           }
         ]
+      },
+      {
+        "name": "quote_",
+        "type": "tuple",
+        "internalType": "struct Quote",
+        "components": [
+          {
+            "name": "rateBpsPerHour",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxStepBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "tolBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxStale",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minLiquidity",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
       }
     ],
     "stateMutability": "nonpayable"
@@ -408,6 +440,13 @@ export const controllerAbi = [
   },
   {
     "type": "function",
+    "name": "observe",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "pastWindow",
     "inputs": [
       {
@@ -453,6 +492,65 @@ export const controllerAbi = [
         "name": "price",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "quote",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "rateBpsPerHour",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxStepBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tolBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxStale",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "minLiquidity",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "refPrice",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "refTime",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint40",
+        "internalType": "uint40"
       }
     ],
     "stateMutability": "view"
@@ -566,6 +664,46 @@ export const controllerAbi = [
   },
   {
     "type": "function",
+    "name": "setQuote",
+    "inputs": [
+      {
+        "name": "v",
+        "type": "tuple",
+        "internalType": "struct Quote",
+        "components": [
+          {
+            "name": "rateBpsPerHour",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxStepBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "tolBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxStale",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minLiquidity",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setSale",
     "inputs": [
       {
@@ -608,6 +746,24 @@ export const controllerAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "spotPrice",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "spot",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ok",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -663,6 +819,30 @@ export const controllerAbi = [
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "valuePerPoint",
+    "inputs": [
+      {
+        "name": "forSale",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ok",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -804,6 +984,65 @@ export const controllerAbi = [
   },
   {
     "type": "event",
+    "name": "Observed",
+    "inputs": [
+      {
+        "name": "refPrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "spot",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "QuoteSet",
+    "inputs": [
+      {
+        "name": "quote",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct Quote",
+        "components": [
+          {
+            "name": "rateBpsPerHour",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxStepBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "tolBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxStale",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minLiquidity",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SaleSet",
     "inputs": [
       {
@@ -861,6 +1100,11 @@ export const controllerAbi = [
   {
     "type": "error",
     "name": "CreditSaleOff",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoQuote",
     "inputs": []
   },
   {

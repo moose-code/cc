@@ -7,6 +7,7 @@ import {
     Settings,
     Sale,
     Credit,
+    Quote,
     Mainnet,
     RATE_START_MIN_WEI,
     RATE_START_MAX_WEI
@@ -64,6 +65,10 @@ struct LaunchConfig {
     Settings settings;
     /// the sale settings of the controller at launch (its constructor argument). owner adjustable afterwards
     Sale sale;
+    /// the protected price quote of the controller at launch (its constructor argument): `tolBps` 500 and the rate, the
+    /// step, the staleness and the liquidity minimum owner inputs at 0 until the balance token pool exists (decision 154).
+    /// owner adjustable afterwards with `setQuote`
+    Quote quote;
     /// the credit settings of the Core and the controller at launch (their constructor argument). owner adjustable
     /// afterwards
     Credit credit;
@@ -118,6 +123,7 @@ abstract contract ConfigReader is CommonBase {
         c.rateStart = 4_900_000_000_000_000;
         c.settings = Mainnet.defaultSettings();
         c.sale = Mainnet.defaultSale();
+        c.quote = Mainnet.defaultQuote();
         c.credit = Mainnet.defaultCredit();
         c.supply = 1_000_000_000e18;
         c.startTick = -175_000;
@@ -160,6 +166,7 @@ abstract contract ConfigReader is CommonBase {
         c.rateStart = vm.parseJsonUint(j, ".rateStart");
         _loadSettings(c, j);
         _loadSale(c, j);
+        _loadQuote(c, j);
         _loadCredit(c, j);
         _loadLaunch(c, j);
         // the overrides are optional, a missing key means false
@@ -228,6 +235,7 @@ abstract contract ConfigReader is CommonBase {
         // forge-lint: disable-next-line(unsafe-typecast)
         s.reserveWei = uint64(_uint(j, ".settings.reserveWei", type(uint64).max));
         s.returnLockSeconds = _u32(j, ".settings.returnLockSeconds");
+        s.valueModeOn = vm.parseJsonBool(j, ".settings.valueModeOn");
     }
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {
@@ -238,6 +246,16 @@ abstract contract ConfigReader is CommonBase {
             anchorHalfLife: _u32(j, ".sale.anchorHalfLife"),
             anchorMinCost: _u128(j, ".sale.anchorMinCost"),
             anchorMoveBps: _u16(j, ".sale.anchorMoveBps")
+        });
+    }
+
+    function _loadQuote(LaunchConfig memory c, string memory j) private pure {
+        c.quote = Quote({
+            rateBpsPerHour: _u32(j, ".quote.rateBpsPerHour"),
+            maxStepBps: _u16(j, ".quote.maxStepBps"),
+            tolBps: _u16(j, ".quote.tolBps"),
+            maxStale: _u32(j, ".quote.maxStale"),
+            minLiquidity: _u128(j, ".quote.minLiquidity")
         });
     }
 
@@ -347,6 +365,8 @@ abstract contract ConfigReader is CommonBase {
         if (k.decayHours < 1) return "decayHours";
         if (k.anchorHalfLife < 1) return "anchorHalfLife";
         if (k.anchorMoveBps > 10_000) return "anchorMoveBps";
+        if (c.quote.maxStepBps > 10_000) return "maxStepBps";
+        if (c.quote.tolBps >= 10_000) return "tolBps";
         return bytes32(0);
     }
 
