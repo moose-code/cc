@@ -65,9 +65,9 @@ one `Settings` struct in Core storage, `setSettings(Settings)` owner only and ef
 
 | setting | launch | bounds | meaning |
 |---|---|---|---|
-| `dropPerCreditBps` | 50 | 1 to 10,000 | fall of the rate per credit bought, bps of the rate before it |
+| `dropPerCreditBps` | 500 | 1 to 10,000 | fall of the rate per credit bought, bps of the rate before it |
 | `dropFloorBps` | 5,000 | 0 to 10,000 | within one `bucketSeconds` bucket the rate stays at or above this share of the price state at the bucket's first fill |
-| `climbPerMinBps` | 50 | 1 to 65,535 | climb per minute at or above the recovery level, compounded (unscaled; the pot multiplier `m` scales only the ceiling loosening, section 4) |
+| `climbPerMinBps` | 200 | 1 to 65,535 | climb per minute at or above the recovery level, compounded (unscaled; the pot multiplier `m` scales only the ceiling loosening, section 4) |
 | `ceilBps` | 11,000 | 10,000 to 65,535 | the rate stays at or below this share of the ceiling anchor |
 | `idleLoosenBps` | 600 | 1 to 65,535 | growth of the ceiling anchor per full `idleStepSeconds` interval since the last fill, scaled by the pot multiplier `m` (section 4) |
 | `saleFloorBps` | 10,000 | 0 to 65,535, at most controller markup | the one sale floor: the Core takes no statement payment below this share of its cost, and the controller's curve floors at this share of the reference |

@@ -94,9 +94,9 @@ contract FlowTest is Fixture {
         expected.spendCapBps = 10_000; // The shared fixture bypasses the limiter; ConfigTest checks the launch cap.
         assertEq(_hash(core.settings()), _hash(expected), "fixture launch values");
         Settings memory s = core.settings();
-        assertEq(s.dropPerCreditBps, 50);
+        assertEq(s.dropPerCreditBps, 500);
         assertEq(s.dropFloorBps, 5_000);
-        assertEq(s.climbPerMinBps, 50);
+        assertEq(s.climbPerMinBps, 200);
         assertEq(s.ceilBps, 11_000);
         assertEq(s.idleLoosenBps, 600);
         assertEq(s.saleFloorBps, 10_000);

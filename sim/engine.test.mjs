@@ -13,7 +13,7 @@ const near = (a, b, tol, msg) => {
 const ok = (c, msg) => { n++; assert.ok(c, msg); };
 const H = 3600;
 // LEGACY: the checks below that hand compute a single bid (a 0.0067 eth opening rate, one percent a minute climb, feeToRedeemBurnBps 0) run on it. the launch floor (saleFloorBps 10000) and split (saleToBuybackBps 5000 with no artist or operator cut) are kept so the hand computed curves rest at cost; the launch values have their own checks against mainnet.json
-const LEGACY = { spendCapBps: 10000, multiplierCap: 1, stepSec: 3600, rateStart: 6.668e15, climbPerMin: 1, recoveryClimbPerMin: 1, idleLoosenPct: 0.01, ceilPct: 300, rateCap: 53344000000000000, saleToBuybackBps: 5000, saleToArtistBps: 0, saleToOperatorBps: 0, feeToRedeemBurnBps: 0 };
+const LEGACY = { spendCapBps: 10000, multiplierCap: 1, stepSec: 3600, rateStart: 6.668e15, climbPerMin: 1, recoveryClimbPerMin: 1, dropPerCreditPct: 0.5, idleLoosenPct: 0.01, ceilPct: 300, rateCap: 53344000000000000, saleToBuybackBps: 5000, saleToArtistBps: 0, saleToOperatorBps: 0, feeToRedeemBurnBps: 0 };
 const simL = (o = {}) => simulate(Object.assign({}, LEGACY, o));
 // the sale and stall runs use the launch ceiling (ceilPct 110): at 300 the bid sits far above the market and few statements sell
 const simC = (o = {}) => simL(Object.assign({ ceilPct: 110 }, o));
@@ -33,7 +33,7 @@ const R0 = 6.668e15;
 {
   const cfg = JSON.parse(fs.readFileSync(new URL('../script/config/mainnet.json', import.meta.url), 'utf8'));
   // the stepped bid fields of the Core, config name to model name (percent and hours in the model)
-  const STEPPED = { dropPerCreditBps: 50, dropFloorBps: 5000, climbPerMinBps: 50, ceilBps: 11000, idleLoosenBps: 600, peakHalfLife: 21600, recoveryClimbPerMinBps: 200, recoveryGapBps: 1000 };
+  const STEPPED = { dropPerCreditBps: 500, dropFloorBps: 5000, climbPerMinBps: 200, ceilBps: 11000, idleLoosenBps: 600, peakHalfLife: 21600, recoveryClimbPerMinBps: 200, recoveryGapBps: 1000 };
   const STEPPED_SIM = { dropPerCreditPct: 'dropPerCreditBps', dropToPct: 'dropFloorBps', climbPerMin: 'climbPerMinBps', ceilPct: 'ceilBps', idleLoosenPct: 'idleLoosenBps', recoveryClimbPerMin: 'recoveryClimbPerMinBps', recoveryGapPct: 'recoveryGapBps', peakHalfLifeHours: 'peakHalfLife' };
   for (const [k, v] of Object.entries(STEPPED)) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
   // the sim defaults are the launch bid rule, field for field with the config (bps to percent). the model has one bid rule

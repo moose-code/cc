@@ -43,7 +43,7 @@ contract PerPointExactTest is Fixture {
     // promise: SPEC 4 CoreLib.drop scales the fall by score / refScore, at two ratios, by hand arithmetic
     function test_drop_scalesTheFallAtRatioTwoAndRatioHalf() public {
         uint256 R = 1e16;
-        // ratio 2: refScore is half the credit's score, so the fall is 2 * dropPerCreditBps (1 percent at launch)
+        // ratio 2: refScore is half the credit's score, so the fall is 2 * dropPerCreditBps (10 percent at launch)
         uint256 id2 = _credits(who, 1)[0];
         uint256 s2 = _scoreOf(id2);
         _setRefScore(uint32(s2 / 2));
@@ -52,16 +52,16 @@ contract PerPointExactTest is Fixture {
         assertEq(core.bidOf(id2), (R * s2) / (s2 / 2), "ratio 2 doubles the bid");
         vm.prank(who);
         core.sellForEth(_one(id2));
-        assertEq(core.rateAtCheckpoint(), (R * 9_900) / 10_000, "ratio 2: the fall is 2 * 50 bps = 100 bps, 1 percent");
+        assertEq(core.rateAtCheckpoint(), (R * 9_000) / 10_000, "ratio 2: the fall is 2 * 500 bps = 1000 bps, 10 percent");
 
-        // ratio 1/2: refScore is twice the credit's score, so the fall is 25 bps
+        // ratio 1/2: refScore is twice the credit's score, so the fall is 250 bps
         uint256 idH = _credits(who, 1)[0];
         uint256 sH = _scoreOf(idH);
         _setRefScore(uint32(sH * 2));
         _armRate(R);
         vm.prank(who);
         core.sellForEth(_one(idH));
-        assertEq(core.rateAtCheckpoint(), (R * 9_975) / 10_000, "ratio 1/2: the fall is 50 / 2 = 25 bps");
+        assertEq(core.rateAtCheckpoint(), (R * 9_750) / 10_000, "ratio 1/2: the fall is 500 / 2 = 250 bps");
     }
 
     // promise: SPEC 6 a batch of three differing scores pays each credit its scaled bid and drops the rate per credit
@@ -84,8 +84,8 @@ contract PerPointExactTest is Fixture {
         uint256 back = _expectBatch(rev, sr, R, ref);
 
         // the per-credit payouts and the rate after each fill depend on the order (asserted in `_expectBatch`); the
-        // batch total does not, since the one-rounding drop is symmetric in the scores
-        assertEq(fwd, back, "the batch total is order independent");
+        // batch total is order independent up to the one-wei rounding of each per-credit drop
+        assertApproxEqAbs(fwd, back, 1, "the batch total is order independent up to one wei");
     }
 
     // sells `ids` in order, asserts each payout, the rate after each fill and the cost basis, and returns the total paid
