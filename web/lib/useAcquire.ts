@@ -15,7 +15,7 @@ import { coreAbi, creditsAbi, strategyAbi } from "./abis";
 import { creditScores, MULTICALL3, readSnapshot, useHead, type Snapshot } from "./live";
 import { fetchScoresIx, fetchStrategyListings, getIxMode, useIxMode } from "./indexer";
 import { useTx } from "./tx";
-import { clearing, shortlist, type Listing, type Priced } from "./acquire";
+import { clearing, fitsBucket, shortlist, type Listing, type Priced, type SpendRoom } from "./acquire";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 const mc = { multicallAddress: MULTICALL3, batchSize: 16_384 } as const;
@@ -69,6 +69,36 @@ async function scoresOf(client: Client, ids: bigint[], known: Map<bigint, bigint
     });
   }
   return out;
+}
+
+// ---- spend cap ------------------------------------------------------------------------------------------------
+
+/**
+ * The current bucket of CoreLib.spend from a `spendState()` read. A failed read (a Core without the view) leaves the
+ * cap unchecked and the pre-send simulation decides. `now` is chain time in seconds.
+ */
+export function spendRoom(state: readonly [bigint, bigint, bigint] | undefined, s: { spendCapBps: number; bucketSeconds: number }, now: number): SpendRoom {
+  if (!state || s.spendCapBps >= 10_000) return { capped: false, budget: 0n, spent: 0n, nextIn: 0 };
+  const [bucket, budget, spent] = state;
+  return { capped: true, budget, spent, nextIn: Math.max(1, Number(bucket + 1n) * s.bucketSeconds - Math.floor(now)) };
+}
+
+/**
+ * What CoreLib.spend books for a purchase: the ask plus the keeper payment. The payment is at least `keeperFee` plus gas
+ * and at most the bid and the pot less the ask; the fixed fee within that bound is the part known before the call.
+ */
+export function spendCost(price: bigint, bid: bigint, pot: bigint, keeperFee: bigint | number | string): bigint {
+  const left = (bid < pot ? bid : pot) - price;
+  const fee = BigInt(keeperFee);
+  return price + (left < 0n ? 0n : left < fee ? left : fee);
+}
+
+/** Name of the contract error in a viem error, else its short message. */
+function revertReason(e: unknown): string {
+  for (let cur = e as { cause?: unknown; data?: { errorName?: string }; shortMessage?: string } | undefined, i = 0; cur && i < 6; cur = cur.cause as typeof cur, i++) {
+    if (cur.data?.errorName) return cur.data.errorName;
+  }
+  return (e as { shortMessage?: string })?.shortMessage ?? "reverted";
 }
 
 // ---- candidate gathering, shared with the /listings page --------------------------------------------------------
@@ -132,14 +162,15 @@ export interface Diag {
 }
 
 export function useAcquireCandidate() {
+  const { address } = useAccount();
   const client = usePublicClient();
   const qc = useQueryClient();
   const mode = useIxMode();
   const { data: head } = useHead();
   const on = engineDeployed && Boolean(client) && Boolean(strategyAdapter) && head != null && mode !== "checking";
 
-  const q = useQuery<{ cleared: Priced[]; top: Diag[] }>({
-    queryKey: ["acquire", mode, head?.n?.toString()],
+  const q = useQuery<{ cleared: Priced[]; top: Diag[]; waiting: number; nextIn: number; reverted?: string }>({
+    queryKey: ["acquire", mode, head?.n?.toString(), address],
     enabled: on,
     staleTime: 10_000,
     retry: 0,
@@ -157,7 +188,7 @@ export function useAcquireCandidate() {
       const refScore = BigInt(snap.settings.refScore);
       const est = (id: bigint) => (snap.ethRate * (scores.get(id) ?? 0n)) / refScore;
       const picked = shortlist(listings, snap.ethRate, refScore, scores, SHORTLIST);
-      if (!picked.length) return { cleared: [], top: [] };
+      if (!picked.length) return { cleared: [], top: [], waiting: 0, nextIn: 0 };
 
       // 3. live read of the shortlist
       const cc = { address: core!, abi: coreAbi } as const;
@@ -169,6 +200,7 @@ export function useAcquireCandidate() {
           { ...cc, functionName: "retired" },
           { ...cc, functionName: "allowedAdapter", args: [strategyAdapter!] },
           { ...cc, functionName: "allowedAdapter", args: [seaportAdapter ?? strategyAdapter!] },
+          { ...cc, functionName: "spendState" },
           ...picked.flatMap((l) => [
             { ...cc, functionName: "bidOf", args: [l.id] },
             { address: credits, abi: creditsAbi, functionName: "ownerOf", args: [l.id] },
@@ -181,11 +213,14 @@ export function useAcquireCandidate() {
       const retired = val<boolean>(1) ?? true;
       const allowed: Record<Listing["source"], boolean> = { strategy: val<boolean>(2) ?? false, opensea: Boolean(seaportAdapter) && (val<boolean>(3) ?? false) };
 
+      const room = spendRoom(val<readonly [bigint, bigint, bigint]>(4), snap.settings, head!.ts + (Date.now() - head!.at) / 1000);
+      const fee = snap.settings.keeperFee;
+
       const priced: Priced[] = [];
       picked.forEach((l, i) => {
-        const bid = val<bigint>(4 + 3 * i);
-        const owner = val<Address>(5 + 3 * i);
-        const live = val<bigint>(6 + 3 * i);
+        const bid = val<bigint>(5 + 3 * i);
+        const owner = val<Address>(6 + 3 * i);
+        const live = val<bigint>(7 + 3 * i);
         if (bid == null || owner == null || !allowed[l.source]) return;
         if (l.source === "strategy") {
           if (!live || owner.toLowerCase() !== strategy.toLowerCase()) return;
@@ -195,8 +230,13 @@ export function useAcquireCandidate() {
       // 4. fulfillment data for the best OpenSea candidates that clear; the price is re-checked against it
       const first = clearing(priced, pot, retired);
       let tries = 0;
+      let waiting = 0; // clears on bid and pot, over the bucket's spend cap
       const cleared: Priced[] = [];
       for (const l of first) {
+        if (!fitsBucket(room, spendCost(l.price, l.bid, pot, fee))) {
+          waiting++;
+          continue;
+        }
         if (l.source !== "opensea") {
           cleared.push(l);
           continue;
@@ -207,7 +247,8 @@ export function useAcquireCandidate() {
           if (!f.params || !f.price) continue;
           const p = { ...l, price: BigInt(f.price), params: f.params };
           if (clearing([p], pot, retired).length) {
-            cleared.push(p);
+            if (fitsBucket(room, spendCost(p.price, p.bid, pot, fee))) cleared.push(p);
+            else waiting++;
           }
         } catch {
           /* this order is skipped */
@@ -216,17 +257,29 @@ export function useAcquireCandidate() {
       const top = [...priced]
         .sort((a, b) => Number(b.bid - b.price - (a.bid - a.price)))
         .map((l) => ({ id: l.id.toString(), source: l.source, price: l.price.toString(), bid: l.bid.toString(), est: est(l.id).toString(), clears: first.includes(l) }));
+      // 5. the first candidate whose call simulates enables the button; a revert is reported instead of sent
+      let reverted: string | undefined;
+      let ready: Priced[] = [];
+      for (const l of cleared) {
+        try {
+          await c.simulateContract({ address: core!, abi: coreAbi, functionName: "buyListing", args: [adapterOf(l), l.id, l.params], account: address });
+          ready = [l];
+          break;
+        } catch (e) {
+          reverted ??= `#${l.id} ${revertReason(e)}`;
+        }
+      }
       // eslint-disable-next-line no-console
-      console.debug("[acquire] shortlist " + JSON.stringify({ pot: pot.toString(), retired, cleared: cleared.length, top }));
-      return { cleared, top };
+      console.debug("[acquire] shortlist " + JSON.stringify({ pot: pot.toString(), retired, cleared: cleared.length, waiting, reverted, top }));
+      return { cleared: ready, top, waiting, nextIn: room.nextIn, reverted: ready.length ? undefined : reverted };
 
       } catch (e) {
         console.warn("[acquire] listing read failed", e);
-        return { cleared: [], top: [] };
+        return { cleared: [], top: [], waiting: 0, nextIn: 0 };
       }
     },
   });
-  return { cleared: q.data?.cleared ?? [], top: q.data?.top ?? [], block: head?.n };
+  return { cleared: q.data?.cleared ?? [], top: q.data?.top ?? [], waiting: q.data?.waiting ?? 0, nextIn: q.data?.nextIn ?? 0, reverted: q.data?.reverted, block: head?.n };
 }
 
 /** `params` and adapter of a candidate for Core.buyListing. */

@@ -8,6 +8,7 @@ script/config/*.local.json
 # local anvil end to end: the fork deployment records and the state caches
 deployments/31337.json
 deployments/1.json
+deployments/rehearsal.json
 script/dev/.anvil-state.json
 script/dev/.cache/
 

@@ -224,7 +224,7 @@ contract ControllerV1 is IController {
     }
 
     /// the per-credit score the point rate and the statement reference divide by, in ten-thousandths of a point. the
-    /// Core setting `refScore`, read live so the eth doors and the controller share one source. 800_000 to 8_000_000
+    /// Core setting `refScore`, read live so the eth doors and the controller share one source. `SettingsBounds` bounds it
     function refScore() public view returns (uint32) {
         return ICoreSale(address(CORE)).settings().refScore;
     }

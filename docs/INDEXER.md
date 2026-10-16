@@ -268,6 +268,7 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | rating display | D `score / 10000` from I `credit.score` (chain mode: `CreditScore.scoreOf`) |
 | header bid at refScore | L snapshot `ethRate` |
 | header acquire button: strategy listings | I `strategy_listing` where `active`, with `credit.score`; chain mode: browser `getLogs` of the two strategy events from `NEXT_PUBLIC_STRATEGY_START_BLOCK`, replayed in log order; both re-read live at each head: `nftForSale`, Credits `ownerOf`, Core `bidOf`, `ethPot`, `retired`, `allowedAdapter` |
+| header acquire button: spend cap | L `Core.spendState()` in the shortlist multicall; a listing over the bucket's remaining budget waits for the next bucket; the first candidate whose `buyListing` call simulates enables the button |
 | header acquire button: OpenSea listings | server route `web/app/api/listings` (OpenSea API v2 best listings and fulfillment data of the `credits` collection, `OPENSEA_API_KEY` server only, 20 s cache), filtered by the adapter's `allowedRecipient` |
 
 ### 9.2 home
@@ -337,7 +338,8 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | bid | D `ethRate * score / refScore` from the L snapshot for every row; L `bidOf`, `ownerOf` and `nftForSale` for the 100 rows nearest the bid |
 | gap, counts, histogram | D price over bid |
 | clears in | D `web/lib/climb.ts` (mirror of `CoreLib._climb`) from L `rateAtCheckpoint`, `checkpointTime`, `lastFillTime`, anchor storage slots 27, 29, 30, the settings and the pot; assumes no fills and a constant pot |
-| acquire action | L `Core.buyListing`, simulated before sending, shared with the header button (`useAcquireTx`) |
+| spend headroom ("pot covers N, this minute M", "next bucket" rows) | L `Core.spendState()` (bucket, budget, spent), the settings `spendCapBps`, `bucketSeconds`, `keeperFee`; D `fitsBucket` and `bucketCount` in `web/lib/acquire.ts`; the same read decides the header button |
+| acquire action | L `Core.buyListing`, simulated before the header button enables and again before sending, shared with the header button (`useAcquireTx`) |
 
 ### 9.7 swap panel
 
