@@ -95,7 +95,7 @@ library SettingsFields {
     function lo() internal pure returns (uint256[34] memory) {
         return [
             uint256(1),
-            0,
+            1,
             1,
             10_000,
             1,
@@ -133,7 +133,7 @@ library SettingsFields {
 
     function hi() internal pure returns (uint256[34] memory) {
         return [
-            uint256(10_000),
+            uint256(9_999),
             10_000,
             type(uint16).max,
             type(uint16).max,
@@ -147,7 +147,7 @@ library SettingsFields {
             1,
             1,
             10_000,
-            10_000,
+            9_999,
             10_000,
             type(uint128).max,
             type(uint64).max,

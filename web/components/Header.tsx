@@ -140,10 +140,11 @@ function Acquire() {
   return useWide() ? <AcquireButton /> : null;
 }
 
-// Buys the listing that clears (price at or below its bid and the pot) through Core.buyListing. The call is
-// simulated right before sending; a revert drops that listing for the block and the next one is tried.
+// Buys the listing that clears (price at or below its bid, the pot and the bucket's spend cap) through
+// Core.buyListing. The call is simulated before the button enables and again right before sending; a revert drops
+// that listing for the block and the next one is tried.
 function AcquireButton() {
-  const { cleared, block } = useAcquireCandidate();
+  const { cleared, block, waiting, nextIn, reverted } = useAcquireCandidate();
   const { buy, available, pending, err, done } = useAcquireTx(block);
   const next = available(cleared)[0];
 
@@ -161,7 +162,15 @@ function AcquireButton() {
         className={next ? "hdr-acq on" : "hdr-acq"}
         onClick={() => buy(cleared)}
         disabled={!next || pending}
-        title={next ? `credit #${next.id} bids ${eth(next.bid)} ETH (${next.source})` : "no listed credit is at or under its bid"}
+        title={
+          next
+            ? `credit #${next.id} bids ${eth(next.bid)} ETH (${next.source})`
+            : reverted
+              ? `the purchase would revert: ${reverted}`
+              : waiting
+                ? `${waiting} at or under the bid; the spend cap resets in ${nextIn}s`
+                : "no listed credit is at or under its bid"
+        }
       >
         <i aria-hidden />
         {pending ? "acquiring…" : next ? `acquire · ${eth(next.price)} ETH` : "acquire"}

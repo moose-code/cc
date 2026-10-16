@@ -880,8 +880,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// pays the caller of `compose` and `redeemStatement` from `ethPot`, at most the pot, by the
     /// `callerFee` and `callerMaxBaseFee` settings. the last action of the door, after all state is final. the
     /// checkpoint runs before the payment is metered, so the caller is repaid for it and the overhead constant does not
-    /// track the climb's gas. both settings zero (the launch value) is the only case that pays nothing, and it skips the
-    /// checkpoint and the metering
+    /// track the climb's gas. when both settings are zero the function returns before the checkpoint and the metering
     function _payCaller(uint256 gasStart, uint256 overhead, uint256 gasCap) private {
         Settings storage cfg = s.settings;
         if (cfg.callerMaxBaseFee == 0 && cfg.callerFee == 0) return;

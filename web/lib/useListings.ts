@@ -11,8 +11,8 @@ import { core, credits, engineDeployed, seaportAdapter, strategy, strategyAdapte
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
 import { MULTICALL3, readSnapshot, useHead, type Snapshot } from "./live";
 import { useIxMode } from "./indexer";
-import { cheapestPerId, type Priced } from "./acquire";
-import { gatherListings, scoresFor } from "./useAcquire";
+import { bucketCount, cheapestPerId, fitsBucket, type Priced } from "./acquire";
+import { gatherListings, scoresFor, spendCost, spendRoom } from "./useAcquire";
 import { ETH_ANCHOR_SLOT } from "./sell";
 import { clearsIn, type ClearsIn, type ClimbState } from "./climb";
 
@@ -24,6 +24,7 @@ export interface ListingRow extends Priced {
   live: boolean; // bid and price are chain reads, else the bid is an estimate
   gap: number; // price / bid - 1, as a fraction; Infinity with no bid
   clears: boolean; // Core.buyListing would accept it now
+  wait?: number; // seconds until the next spend bucket, set on a row under bid and pot that this bucket's cap blocks
   eta: ClearsIn;
 }
 
@@ -32,6 +33,10 @@ export interface ListingsData {
   osMax: number;
   pot: bigint;
   now: number;
+  covers: number; // rows under their bid and the pot
+  fits: number; // of those, the purchases that fit the current spend bucket in sequence
+  capped: boolean;
+  bucketSeconds: number;
 }
 
 export function useListings() {
@@ -76,6 +81,7 @@ export function useListings() {
             { ...cc, functionName: "rateAtCheckpoint" },
             { ...cc, functionName: "checkpointTime" },
             { ...cc, functionName: "lastFillTime" },
+            { ...cc, functionName: "spendState" },
             ...top.flatMap((l) => [
               { ...cc, functionName: "bidOf", args: [l.id] },
               { address: credits, abi: creditsAbi, functionName: "ownerOf", args: [l.id] },
@@ -95,9 +101,9 @@ export function useListings() {
       const live = new Map<bigint, { bid: bigint; price: bigint }>();
       const stale = new Set<bigint>();
       top.forEach((l, i) => {
-        const bid = val<bigint>(7 + 3 * i);
-        const owner = val<Address>(8 + 3 * i);
-        const listed = val<bigint>(9 + 3 * i);
+        const bid = val<bigint>(8 + 3 * i);
+        const owner = val<Address>(9 + 3 * i);
+        const listed = val<bigint>(10 + 3 * i);
         if (bid == null || owner == null) return;
         if (l.source === "strategy") {
           if (!listed || owner.toLowerCase() !== strategy.toLowerCase()) {
@@ -134,15 +140,21 @@ export function useListings() {
         pending: snap.potWithPending > pot ? snap.potWithPending - pot : 0n,
       };
       const now = head!.ts;
+      const room = spendRoom(val<readonly [bigint, bigint, bigint]>(7), s, now + (Date.now() - head!.at) / 1000);
+      const under: bigint[] = []; // spend cost of every row under its bid and the pot
       const out: ListingRow[] = rows.map((r) => {
-        const clears = !retired && allowed[r.source] && r.price > 0n && r.price <= r.bid && r.price <= pot;
+        const covered = !retired && allowed[r.source] && r.price > 0n && r.price <= r.bid && r.price <= pot;
+        const cost = spendCost(r.price, r.bid, pot, s.keeperFee);
+        if (covered) under.push(cost);
+        const clears = covered && fitsBucket(room, cost);
+        const wait = covered && !clears ? room.nextIn : undefined;
         // at or under the bid yet not clearing: the venue's adapter is off or the Core is retired, no time applies
         const f = clearsIn(state, r.price, r.score, refScore, now);
         const eta: ClearsIn = clears ? { kind: "now" } : r.price > snap.potWithPending ? { kind: "pot" } : f.kind === "now" ? { kind: "far" } : f;
-        return { ...r, gap: gapOf(r.price, r.bid), clears, eta };
+        return { ...r, gap: gapOf(r.price, r.bid), clears, wait, eta };
       });
       out.sort((a, b) => a.gap - b.gap);
-      return { rows: out, osMax, pot, now };
+      return { rows: out, osMax, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds };
     },
   });
 }
