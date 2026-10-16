@@ -218,6 +218,23 @@ a:hover {
 .hdr-next-bid {
   color: var(--muted);
 }
+.hdr-nl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.hdr-nl-bar {
+  position: relative;
+  width: 44px;
+  height: 3px;
+  background: var(--hairline);
+}
+.hdr-nl-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--m);
+}
 .hdr-acq {
   display: inline-flex;
   align-items: center;

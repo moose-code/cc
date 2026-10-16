@@ -106,6 +106,7 @@ function PotPage() {
       <span className="hdr-next-label">pot covers</span>
       <b>{pts == null ? "—" : `${commas(pts)} pts`}</b>
       {per100 && <span className="hdr-next-bid">· bid {per100} ETH / 100 pts</span>}
+      <NextListing />
       <Acquire />
     </div>
   );
@@ -126,6 +127,32 @@ function useWide() {
 
 function Acquire() {
   return useWide() ? <AcquireButton /> : null;
+}
+
+// The listing nearest its bid: a thin bar of the engine bid against the listing price (full once it clears) and the
+// price. Reuses the acquire query, so it adds no reads, and runs on wide screens only like the acquire button.
+function NextListing() {
+  return useWide() ? <NextListingBar /> : null;
+}
+
+function NextListingBar() {
+  const { top } = useAcquireCandidate();
+  const n = top[0];
+  if (!n) return null;
+  const price = BigInt(n.price);
+  const fill = price > 0n ? Math.min(1, Number((BigInt(n.bid) * 1000n) / price) / 1000) : 0;
+  return (
+    <span
+      className="hdr-nl"
+      title={`credit #${n.id} · listed ${eth(price)} ETH · engine bids ${eth(BigInt(n.bid))} ETH (${n.source})`}
+    >
+      <span className="hdr-next-label">next credit</span>
+      <span className="hdr-nl-bar" aria-hidden>
+        <i style={{ width: `${Math.round(fill * 100)}%` }} />
+      </span>
+      <b>{eth(price)} ETH</b>
+    </span>
+  );
 }
 
 // Buys the listing that clears (price at or below its bid, the pot and the bucket's spend cap) through
