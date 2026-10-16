@@ -38,7 +38,10 @@ function state(over: Partial<State> = {}): State {
       callerFee: parseEther("0.0003"),
       callerMaxBaseFee: parseGwei("3"),
       redeemOn: true,
+      spendCapBps: 100,
+      bucketSeconds: 60,
     },
+    spend: { bucket: 166n, budget: parseEther("0.1"), spent: 0n },
     ethPot: parseEther("10"),
     potWithPending: parseEther("10"),
     pendingIncome: 0n,
@@ -261,4 +264,22 @@ test("recheck: a paid door that measured more gas than its guess is rechecked at
 test("doors off by config are never decided", () => {
   const p = { ...policy(), doorsOn: new Set<Door>(["book"]) };
   assert.deepEqual(doorsOf(decide(state({ ethToBuyback: parseEther("1"), pageReady: true }), [listing()], gas("1"), p, new Map())), []);
+});
+
+test("listing: a bucket whose budget cannot take the price plus the keeper payment waits for the next bucket", () => {
+  const p = policy({}, 0);
+  const l = listing();
+  // the first purchase of a bucket always passes, whatever the budget
+  const first = decide(state({ spend: { bucket: 166n, budget: 1n, spent: 0n } }), [l], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(first), ["buyListing"]);
+  // spent 0.095 + price 0.01 + payment is over the 0.1 budget: skipped with the time the bucket ends
+  const over = decide(state({ spend: { bucket: 166n, budget: parseEther("0.1"), spent: parseEther("0.095") } }), [l], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(over), []);
+  assert.match(reason(over, "buyListing"), /SpendCapReached: .* next bucket at 10020/);
+  // a budget that takes the price and the payment passes
+  const fits = decide(state({ spend: { bucket: 166n, budget: parseEther("0.2"), spent: parseEther("0.095") } }), [l], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(fits), ["buyListing"]);
+  // spendCapBps 10,000 disables the budget
+  const off = decide(state({ settings: { ...state().settings, spendCapBps: 10_000 }, spend: { bucket: 166n, budget: 1n, spent: parseEther("5") } }), [l], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(off), ["buyListing"]);
 });

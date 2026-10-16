@@ -29,7 +29,6 @@ export function readClient(cfg: Config): PublicClient {
 }
 
 export interface Fixed {
-  sniperSeconds: bigint;
   factory: Address;
   escrow: Address;
   owner: Address;
@@ -38,17 +37,16 @@ export interface Fixed {
 // the immutables and the owner, read once at start
 export async function readFixed(client: PublicClient, core: Address): Promise<Fixed> {
   const c = { address: core, abi: coreAbi } as const;
-  const [sniperSeconds, factory, escrow, owner] = await client.multicall({
+  const [factory, escrow, owner] = await client.multicall({
     ...mc,
     allowFailure: false,
     contracts: [
-      { ...c, functionName: "SNIPER_SECONDS" },
       { ...c, functionName: "FACTORY" },
       { ...c, functionName: "ESCROW" },
       { ...c, functionName: "owner" },
     ] as const,
   });
-  return { sniperSeconds, factory, escrow, owner };
+  return { factory, escrow, owner };
 }
 
 export interface Read {
@@ -70,10 +68,11 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
         { address: core, abi: coreAbi, functionName: "lastBuybackBlock" },
         { address: fixed.escrow, abi: escrowAbi, functionName: "balances", args: [core, zeroAddress] },
         { address: fixed.factory, abi: factoryAbi, functionName: "deploymentInfo", args: [snap.coin] },
+        { address: core, abi: coreAbi, functionName: "spendState" },
       ] as const,
     }),
   ]);
-  const [lastBuybackBlock, escrowBalance, info] = extra;
+  const [lastBuybackBlock, escrowBalance, info, spendState] = extra;
   // controller.atFloor per held statement, read only when a redemption could be decided
   const held = snap.held.map(BigInt);
   const floors = held.length
@@ -98,7 +97,10 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
       callerFee: st.callerFee,
       callerMaxBaseFee: BigInt(st.callerMaxBaseFee),
       redeemOn: st.redeemOn,
+      spendCapBps: st.spendCapBps,
+      bucketSeconds: st.bucketSeconds,
     },
+    spend: { bucket: spendState[0], budget: spendState[1], spent: spendState[2] },
     ethPot: snap.ethPot,
     potWithPending: snap.potWithPending,
     pendingIncome: snap.pendingIncome,
@@ -107,7 +109,7 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     paused: snap.paused,
     retired: snap.retired,
     lastBuybackBlock,
-    sniperSeconds: fixed.sniperSeconds,
+    sniperSeconds: BigInt(st.sniperSeconds),
     launchedAt: BigInt(info.launchedAt),
     escrowBalance,
     pageReady: snap.page.ready,

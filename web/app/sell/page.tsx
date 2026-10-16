@@ -27,11 +27,11 @@ export default function SellPage() {
 
   const bid = snap?.ethRate ?? 0n;
   const pot = snap?.ethPot ?? 0n;
-  const buyableNow = bid > 0n ? Number(pot / bid) : 0;
+  const buyableNow = bid > 0n ? pot / bid : 0n;
   // the pot scaled multiplier (10_000 is 1x) that scales the ceiling's idle loosening, and the pages the pot covers at
-  // the current bid, the same figure as "engine can buy now" (a page is 80 credits). the bid is flat at the rate cap
+  // the current bid, the same figure as "pot covers" (a page is 80 credits). the bid is flat at the rate cap
   const climbX = Number(snap?.climbMultiplier ?? 10000n) / 10000;
-  const potPages = buyableNow / 80;
+  const potPages = `${buyableNow / 80n}.${(buyableNow % 80n) * 10n / 80n}`;
   const atCap = snap ? bid >= snap.settings.rateCap : false;
   // the module reads can fail; the balance side is then unavailable and the eth side renders alone
   const balanceBid = Boolean(snap?.balanceOn && snap.settings.balanceBidOn && snap.balanceUnit !== undefined);
@@ -89,7 +89,7 @@ export default function SellPage() {
                 {atCap ? (
                   <span className="muted">bid at cap</span>
                 ) : climbX > 1 ? (
-                  <span className="muted">pot covers {potPages.toFixed(1)} pages, ceiling loosening {climbX.toFixed(1)}x</span>
+                  <span className="muted">pot covers {potPages} pages, ceiling loosening {climbX.toFixed(1)}x</span>
                 ) : null}
               </div>
               <div className="quote">
@@ -98,7 +98,7 @@ export default function SellPage() {
                   <span>{eth(bid)} eth</span>
                 </div>
                 <div className="r">
-                  <span>engine can buy now</span>
+                  <span>pot covers, before eth cap</span>
                   <span>~{commas(buyableNow)} credits</span>
                 </div>
                 <div className="r">
@@ -163,6 +163,11 @@ export default function SellPage() {
                   )}
                 </div>
 
+                {snap && snap.settings.spendCapBps < 10000 && (
+                  <p className="muted small">
+                    eth purchase cap: {snap.settings.spendCapBps / 100}% of the bucket&apos;s opening pot per {snap.settings.bucketSeconds} seconds.
+                  </p>
+                )}
                 <Act
                   label={`approve & sell ${n || ""} credits for eth`}
                   disabled={n === 0 || !snap}
@@ -195,6 +200,7 @@ export default function SellPage() {
                 <p className="muted small">
                   the first sale approves the collection to the engine. each credit is paid the rate times its score over the reference score, and the rate
                   drops with each credit sold in one call; the amount shown is the batch total at the current rates and the sale reverts if it pays under 99.5% of it.
+                  {snap && snap.settings.spendCapBps < 10000 && " the eth quote does not reserve purchase budget. an eth sale can be blocked until the next budget bucket, even when the pot has funds."}
                   {balanceBid && ` the ${BALANCE_SYMBOL} bid pays by credit score at the rate shown (bps of par), and drops with each credit sold.`}
                 </p>
               </>

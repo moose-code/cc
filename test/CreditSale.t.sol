@@ -81,26 +81,26 @@ contract CreditSaleTest is Fixture {
         assertTrue(ctl.creditSaleOn());
 
         vm.startPrank(owner);
-        c.window = 1 minutes;
+        c.window = 1;
         ctl.setCredit(c);
-        c.window = 30 days;
+        c.window = type(uint32).max;
         ctl.setCredit(c);
-        assertEq(ctl.creditWindow(), 30 days);
-        c.window = 1 minutes - 1;
+        assertEq(ctl.creditWindow(), type(uint32).max);
+        c.window = 0;
         _creditBad(c, "creditWindow");
-        c.window = 30 days;
+        c.window = type(uint32).max;
 
-        c.floorBps = 40_000;
+        c.floorBps = type(uint16).max;
         ctl.setCredit(c);
         c.floorBps = 9_999;
         _creditBad(c, "creditFloorBps");
-        c.floorBps = 40_000;
+        c.floorBps = type(uint16).max;
 
-        c.startBps = 200_000;
+        c.startBps = type(uint32).max;
         ctl.setCredit(c);
         c.startBps = 9_999;
         _creditBad(c, "creditStartBps");
-        c.startBps = 200_000;
+        c.startBps = type(uint32).max;
         vm.stopPrank();
 
         // refScore is a Core setting now, its bound is covered by test/SetSettings.t.sol
@@ -374,7 +374,11 @@ contract CreditSaleTest is Fixture {
         uint256 potBefore = core.ethPot();
         _buyAt(buyer, id, price);
         assertEq(CREDITS.ownerOf(id), buyer, "the balance token credit is sold");
-        assertEq(core.ethPot() - potBefore, cost * 8_000 / 10_000, "the pot books 80 percent of the recorded cost at the default split");
+        assertEq(
+            core.ethPot() - potBefore,
+            cost * 8_000 / 10_000,
+            "the pot books 80 percent of the recorded cost at the default split"
+        );
     }
 
     // ------------------------------------------------------------------ reentrancy
@@ -398,5 +402,4 @@ contract CreditSaleTest is Fixture {
     // ------------------------------------------------------------------ gas
 
     // ------------------------------------------------------------------ pile assertions
-
 }

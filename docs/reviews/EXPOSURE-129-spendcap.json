@@ -1,0 +1,352 @@
+{
+  "assumptions": {
+    "seed": 129,
+    "initialPotEth": 10,
+    "initialReferenceBidEth": 0.025,
+    "flatAskEth": 0.005,
+    "collapseEndFraction": 0.2,
+    "collapseSeconds": 600,
+    "credits": 500,
+    "scoreMix": [
+      {
+        "points": 150,
+        "count": 50
+      },
+      {
+        "points": 300,
+        "count": 100
+      },
+      {
+        "points": 433,
+        "count": 200
+      },
+      {
+        "points": 600,
+        "count": 100
+      },
+      {
+        "points": 750,
+        "count": 50
+      }
+    ],
+    "blockSeconds": 12,
+    "sellingHorizonSeconds": 21600,
+    "totalHorizonSeconds": 86400,
+    "capBps": [
+      50,
+      100,
+      200
+    ],
+    "startBucketOffsetsSeconds": [
+      0,
+      48
+    ],
+    "bucketSeconds": 60,
+    "feesDepositsSalesOrBalancePurchases": false,
+    "sellerRule": "Seeded inventory order; each block repeatedly sells the first credit whose score-scaled bid covers its flat per-credit ask. Purchases pay the direct bid, not the ask. Stops at inventory exhaustion or selling horizon.",
+    "crossingRule": "First modeled block or fill with the reference-score bid strictly below the flat ask. In the collapse case measure only at or after 600 seconds, below the final market ask; mixed-score credits can still clear after crossing.",
+    "recoveryRule": "After a downward crossing, first modeled block after selling stops with the reference-score bid at least the final market ask, 0.005 ETH. Null without a crossing means N/A; null after a crossing means recovery was not observed by the total horizon.",
+    "arithmetic": "Number price trajectory and integer-wei bucket accounting; synthetic economic model, not an EVM differential test.",
+    "settings": {
+      "climbBps": 50,
+      "recoveryClimbBps": 200,
+      "dropBps": 50,
+      "dropFloorBps": 5000,
+      "idleLoosenBps": 600,
+      "idleStepSeconds": 600,
+      "multiplierCapBps": 40000,
+      "rateCapEth": 0.075,
+      "peakHalfLifeSeconds": 21600
+    }
+  },
+  "rows": [
+    {
+      "scenario": "flat",
+      "capBps": 50,
+      "startBucketOffsetSeconds": 0,
+      "crossing": null,
+      "stopped": {
+        "seconds": 21600,
+        "credits": 396,
+        "pointsBought": 176465,
+        "spentEth": 8.651100306518986,
+        "potEth": 1.3488996934810076,
+        "referenceBidEth": 0.019505229873289863,
+        "reason": "selling horizon"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 2988,
+      "remainingCredits": 104,
+      "pointsBought": 176465,
+      "remainingPoints": 45135,
+      "budgetStallBlocks": 1800,
+      "unmarketableBlocks": 0,
+      "finalPotEth": 1.3488996934810076,
+      "finalReferenceBidEth": 0.075
+    },
+    {
+      "scenario": "flat",
+      "capBps": 50,
+      "startBucketOffsetSeconds": 48,
+      "crossing": null,
+      "stopped": {
+        "seconds": 21600,
+        "credits": 399,
+        "pointsBought": 178098,
+        "spentEth": 8.625240280088402,
+        "potEth": 1.3747597199115895,
+        "referenceBidEth": 0.01913970642839541,
+        "reason": "selling horizon"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 3216,
+      "remainingCredits": 101,
+      "pointsBought": 178098,
+      "remainingPoints": 43502,
+      "budgetStallBlocks": 1800,
+      "unmarketableBlocks": 0,
+      "finalPotEth": 1.3747597199115895,
+      "finalReferenceBidEth": 0.075
+    },
+    {
+      "scenario": "flat",
+      "capBps": 100,
+      "startBucketOffsetSeconds": 0,
+      "crossing": null,
+      "stopped": {
+        "seconds": 18300,
+        "credits": 500,
+        "pointsBought": 221600,
+        "spentEth": 9.68918450464582,
+        "potEth": 0.31081549535418046,
+        "referenceBidEth": 0.015990713944220695,
+        "reason": "inventory exhausted"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 5376,
+      "remainingCredits": 0,
+      "pointsBought": 221600,
+      "remainingPoints": 0,
+      "budgetStallBlocks": 1525,
+      "unmarketableBlocks": 0,
+      "finalPotEth": 0.31081549535418046,
+      "finalReferenceBidEth": 0.075
+    },
+    {
+      "scenario": "flat",
+      "capBps": 100,
+      "startBucketOffsetSeconds": 48,
+      "crossing": null,
+      "stopped": {
+        "seconds": 18312,
+        "credits": 500,
+        "pointsBought": 221600,
+        "spentEth": 9.690723247287506,
+        "potEth": 0.3092767527124888,
+        "referenceBidEth": 0.01598455739730289,
+        "reason": "inventory exhausted"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 5388,
+      "remainingCredits": 0,
+      "pointsBought": 221600,
+      "remainingPoints": 0,
+      "budgetStallBlocks": 1526,
+      "unmarketableBlocks": 0,
+      "finalPotEth": 0.3092767527124888,
+      "finalReferenceBidEth": 0.075
+    },
+    {
+      "scenario": "flat",
+      "capBps": 200,
+      "startBucketOffsetSeconds": 0,
+      "crossing": null,
+      "stopped": {
+        "seconds": 6252,
+        "credits": 500,
+        "pointsBought": 221600,
+        "spentEth": 6.7990404715188335,
+        "potEth": 3.2009595284811763,
+        "referenceBidEth": 0.014461660791039083,
+        "reason": "inventory exhausted"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 4608,
+      "remainingCredits": 0,
+      "pointsBought": 221600,
+      "remainingPoints": 0,
+      "budgetStallBlocks": 280,
+      "unmarketableBlocks": 215,
+      "finalPotEth": 3.2009595284811763,
+      "finalReferenceBidEth": 0.075
+    },
+    {
+      "scenario": "flat",
+      "capBps": 200,
+      "startBucketOffsetSeconds": 48,
+      "crossing": null,
+      "stopped": {
+        "seconds": 6204,
+        "credits": 500,
+        "pointsBought": 221600,
+        "spentEth": 6.79622006514291,
+        "potEth": 3.203779934857086,
+        "referenceBidEth": 0.014458491116925197,
+        "reason": "inventory exhausted"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 4596,
+      "remainingCredits": 0,
+      "pointsBought": 221600,
+      "remainingPoints": 0,
+      "budgetStallBlocks": 276,
+      "unmarketableBlocks": 215,
+      "finalPotEth": 3.203779934857086,
+      "finalReferenceBidEth": 0.075
+    },
+    {
+      "scenario": "collapse",
+      "capBps": 50,
+      "startBucketOffsetSeconds": 0,
+      "crossing": null,
+      "stopped": {
+        "seconds": 21600,
+        "credits": 399,
+        "pointsBought": 178098,
+        "spentEth": 8.617476891129725,
+        "potEth": 1.3825231088702736,
+        "referenceBidEth": 0.01913970642839545,
+        "reason": "selling horizon"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 3216,
+      "remainingCredits": 101,
+      "pointsBought": 178098,
+      "remainingPoints": 43502,
+      "budgetStallBlocks": 1800,
+      "unmarketableBlocks": 0,
+      "finalPotEth": 1.3825231088702736,
+      "finalReferenceBidEth": 0.075
+    },
+    {
+      "scenario": "collapse",
+      "capBps": 50,
+      "startBucketOffsetSeconds": 48,
+      "crossing": null,
+      "stopped": {
+        "seconds": 21600,
+        "credits": 402,
+        "pointsBought": 179431,
+        "spentEth": 8.606003864308779,
+        "potEth": 1.3939961356912118,
+        "referenceBidEth": 0.018846548038073417,
+        "reason": "selling horizon"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 3408,
+      "remainingCredits": 98,
+      "pointsBought": 179431,
+      "remainingPoints": 42169,
+      "budgetStallBlocks": 1800,
+      "unmarketableBlocks": 0,
+      "finalPotEth": 1.3939961356912118,
+      "finalReferenceBidEth": 0.075
+    },
+    {
+      "scenario": "collapse",
+      "capBps": 100,
+      "startBucketOffsetSeconds": 0,
+      "crossing": null,
+      "stopped": {
+        "seconds": 18300,
+        "credits": 500,
+        "pointsBought": 221600,
+        "spentEth": 9.68927882022549,
+        "potEth": 0.31072117977451424,
+        "referenceBidEth": 0.015990713944220695,
+        "reason": "inventory exhausted"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 5376,
+      "remainingCredits": 0,
+      "pointsBought": 221600,
+      "remainingPoints": 0,
+      "budgetStallBlocks": 1525,
+      "unmarketableBlocks": 0,
+      "finalPotEth": 0.31072117977451424,
+      "finalReferenceBidEth": 0.075
+    },
+    {
+      "scenario": "collapse",
+      "capBps": 100,
+      "startBucketOffsetSeconds": 48,
+      "crossing": null,
+      "stopped": {
+        "seconds": 18312,
+        "credits": 500,
+        "pointsBought": 221600,
+        "spentEth": 9.691088143636161,
+        "potEth": 0.30891185636383367,
+        "referenceBidEth": 0.01598455739730289,
+        "reason": "inventory exhausted"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 5388,
+      "remainingCredits": 0,
+      "pointsBought": 221600,
+      "remainingPoints": 0,
+      "budgetStallBlocks": 1526,
+      "unmarketableBlocks": 0,
+      "finalPotEth": 0.30891185636383367,
+      "finalReferenceBidEth": 0.075
+    },
+    {
+      "scenario": "collapse",
+      "capBps": 200,
+      "startBucketOffsetSeconds": 0,
+      "crossing": null,
+      "stopped": {
+        "seconds": 6252,
+        "credits": 500,
+        "pointsBought": 221600,
+        "spentEth": 6.7988627586345665,
+        "potEth": 3.201137241365438,
+        "referenceBidEth": 0.014461510971753338,
+        "reason": "inventory exhausted"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 4608,
+      "remainingCredits": 0,
+      "pointsBought": 221600,
+      "remainingPoints": 0,
+      "budgetStallBlocks": 280,
+      "unmarketableBlocks": 215,
+      "finalPotEth": 3.201137241365438,
+      "finalReferenceBidEth": 0.075
+    },
+    {
+      "scenario": "collapse",
+      "capBps": 200,
+      "startBucketOffsetSeconds": 48,
+      "crossing": null,
+      "stopped": {
+        "seconds": 6204,
+        "credits": 500,
+        "pointsBought": 221600,
+        "spentEth": 6.778904673227255,
+        "potEth": 3.2210953267727462,
+        "referenceBidEth": 0.014417688792394702,
+        "reason": "inventory exhausted"
+      },
+      "recoverySecondsAfterStop": null,
+      "initialBidRecoverySecondsAfterStop": 4608,
+      "remainingCredits": 0,
+      "pointsBought": 221600,
+      "remainingPoints": 0,
+      "budgetStallBlocks": 276,
+      "unmarketableBlocks": 215,
+      "finalPotEth": 3.2210953267727462,
+      "finalReferenceBidEth": 0.075
+    }
+  ]
+}

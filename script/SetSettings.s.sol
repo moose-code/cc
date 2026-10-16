@@ -26,7 +26,7 @@ interface ICoreOwner {
 /// * `SETTINGS_PATCH`, a json object as text or the path of a json file, for example `{"saleFloorBps":8000}`
 /// `SET_RATE=<wei per credit>` also prepares `setRate`.
 /// with `CONTROLLER=0x...` the same `SET_<field>` variables also change the controller: the fields of `Sale` (`markupBps`,
-/// `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`) go to `setSale`
+/// `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`, `anchorMoveBps`) go to `setSale`
 /// and the fields of `CreditSale` (`saleOn`, `window`, `floorBps`, `startBps`)
 /// to `setCredit`. each struct is read live, patched and checked by a simulated call as the owner, which reverts with
 /// the first field out of bounds.
@@ -45,7 +45,15 @@ contract SetSettings is Script {
     error NotOwner(address owner, address signer);
 
     string internal constant TUPLE =
-        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16)";
+        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32)";
+
+    struct ControllerChanges {
+        Sale sale;
+        CreditSale credit;
+        bool saleChanged;
+        bool creditChanged;
+        bool saleFirst;
+    }
 
     function run() external {
         ICoreOwner core = ICoreOwner(_core());
@@ -77,7 +85,8 @@ contract SetSettings is Script {
         }
 
         IControllerV1 ctl = IControllerV1(vm.envOr("CONTROLLER", address(0)));
-        if (address(ctl) != address(0)) _controllerPlan(ctl, core.owner());
+        ControllerChanges memory changes = _prepareController(ctl, next, before_.saleFloorBps);
+        _previewBatch(core, next, settingsChanged, rate, ctl, changes);
 
         if (!_send()) {
             console.log("nothing sent. add SEND=1 and --broadcast with the owner as signer to send");
@@ -86,13 +95,7 @@ contract SetSettings is Script {
         vm.startBroadcast();
         (, address signer,) = vm.readCallers();
         if (signer != core.owner()) revert NotOwner(core.owner(), signer);
-        if (settingsChanged) core.setSettings(next);
-        if (rate != 0) core.setRate(rate);
-        if (address(ctl) != address(0)) {
-            (Sale memory ns, CreditSale memory nk, bool saleChanged, bool creditChanged) = _controllerChanges(ctl);
-            if (saleChanged) ctl.setSale(ns);
-            if (creditChanged) ctl.setCredit(nk);
-        }
+        _applyBatch(core, next, settingsChanged, rate, ctl, changes);
         vm.stopBroadcast();
         console.log("sent. read it back with settings(), ethRate() and the SettingsSet event");
     }
@@ -109,7 +112,8 @@ contract SetSettings is Script {
             startCapBps: uint32(_field("startCapBps", c.startCapBps(), type(uint32).max)),
             decayHours: uint16(_field("decayHours", c.decayHours(), type(uint16).max)),
             anchorHalfLife: uint32(_field("anchorHalfLife", c.anchorHalfLife(), type(uint32).max)),
-            anchorMinCost: uint128(_field("anchorMinCost", c.anchorMinCost(), type(uint128).max))
+            anchorMinCost: uint128(_field("anchorMinCost", c.anchorMinCost(), type(uint128).max)),
+            anchorMoveBps: uint16(_field("anchorMoveBps", c.anchorMoveBps(), type(uint16).max))
         });
         nk = CreditSale({
             saleOn: _field("saleOn", c.creditSaleOn() ? 1 : 0, 1) == 1,
@@ -125,20 +129,14 @@ contract SetSettings is Script {
                         c.startCapBps(),
                         c.decayHours(),
                         c.anchorHalfLife(),
-                        c.anchorMinCost()
+                        c.anchorMinCost(),
+                        c.anchorMoveBps()
                     )
                 )
             );
         creditChanged = keccak256(abi.encode(nk))
             != keccak256(
-                abi.encode(
-                    CreditSale(
-                        c.creditSaleOn(),
-                        c.creditWindow(),
-                        c.creditFloorBps(),
-                        c.creditStartBps()
-                    )
-                )
+                abi.encode(CreditSale(c.creditSaleOn(), c.creditWindow(), c.creditFloorBps(), c.creditStartBps()))
             );
     }
 
@@ -150,32 +148,57 @@ contract SetSettings is Script {
         return v;
     }
 
-    /// @dev prints the changed controller structs with their calldata, after a simulated call as the owner has accepted
-    /// them. the controller's own `BadSetting` field is the revert
-    function _controllerPlan(IControllerV1 c, address owner_) internal {
-        (Sale memory ns, CreditSale memory nk, bool saleChanged, bool creditChanged) = _controllerChanges(c);
-        if (saleChanged) {
-            _simulate(c, owner_, abi.encodeCall(IControllerV1.setSale, (ns)));
-            console.log("setSale calldata");
-            console.logBytes(abi.encodeCall(IControllerV1.setSale, (ns)));
+    /// Prepare against live values once, before a preview can execute any setter.
+    function _prepareController(IControllerV1 c, Settings memory next, uint256 oldFloor)
+        internal
+        view
+        returns (ControllerChanges memory p)
+    {
+        if (address(c) == address(0)) return p;
+        (p.sale, p.credit, p.saleChanged, p.creditChanged) = _controllerChanges(c);
+        p.saleFirst = p.saleChanged && p.sale.markupBps >= oldFloor;
+        if (next.saleFloorBps > (p.saleChanged ? p.sale.markupBps : c.markupBps())) {
+            revert OutOfBounds("saleFloorBps");
         }
-        if (creditChanged) {
-            _simulate(c, owner_, abi.encodeCall(IControllerV1.setCredit, (nk)));
-            console.log("setCredit calldata");
-            console.logBytes(abi.encodeCall(IControllerV1.setCredit, (nk)));
-        }
-        if (!saleChanged && !creditChanged) console.log("the controller settings are unchanged");
     }
 
-    function _simulate(IControllerV1 c, address owner_, bytes memory data) internal {
-        vm.prank(owner_);
-        (bool ok, bytes memory why) = address(c).call(data);
-        if (ok) return;
-        bytes32 field;
-        assembly ("memory-safe") {
-            field := mload(add(why, 36))
+    function _applyBatch(
+        ICoreOwner core,
+        Settings memory next,
+        bool settingsChanged,
+        uint256 rate,
+        IControllerV1 c,
+        ControllerChanges memory p
+    ) internal {
+        if (p.saleFirst) c.setSale(p.sale);
+        if (settingsChanged) core.setSettings(next);
+        if (rate != 0) core.setRate(rate);
+        if (p.saleChanged && !p.saleFirst) c.setSale(p.sale);
+        if (p.creditChanged) c.setCredit(p.credit);
+    }
+
+    /// Validate the exact setter order as the owner, then restore every simulated write.
+    function _previewBatch(
+        ICoreOwner core,
+        Settings memory next,
+        bool settingsChanged,
+        uint256 rate,
+        IControllerV1 c,
+        ControllerChanges memory p
+    ) internal {
+        uint256 snap = vm.snapshotState();
+        vm.startPrank(core.owner());
+        _applyBatch(core, next, settingsChanged, rate, c, p);
+        vm.stopPrank();
+        vm.revertToState(snap);
+        if (p.saleChanged) {
+            console.log("setSale calldata");
+            console.logBytes(abi.encodeCall(IControllerV1.setSale, (p.sale)));
         }
-        revert OutOfBounds(field);
+        if (p.creditChanged) {
+            console.log("setCredit calldata");
+            console.logBytes(abi.encodeCall(IControllerV1.setCredit, (p.credit)));
+        }
     }
 
     /// @dev prints a warning row and returns true when `rateCap` is below the live bid read (`ethRate`) or the live price
@@ -231,7 +254,7 @@ contract SetSettings is Script {
                 _set(s, keys[k], vm.parseJsonUint(json, string.concat(".", keys[k])));
             }
         }
-        bytes32[29] memory names = SettingsFields.names();
+        bytes32[34] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             string memory name = _name(names[i]);
             (bool has, uint256 v) = _single(name);
@@ -240,7 +263,7 @@ contract SetSettings is Script {
     }
 
     function _set(Settings memory s, string memory name, uint256 v) internal pure {
-        bytes32[29] memory names = SettingsFields.names();
+        bytes32[34] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             if (keccak256(bytes(_name(names[i]))) != keccak256(bytes(name))) continue;
             SettingsFields.set(s, i, v);
@@ -263,10 +286,12 @@ contract SetSettings is Script {
 
     /// @dev one line per field: name, live value, new value, a mark when it changes, the bounds
     function _table(Settings memory a, Settings memory b) internal pure {
-        console.log("settings: field | live | new | bounds (a * marks a change; recoveryClimbPerMinBps >= climbPerMinBps, redeemSlippageBps <= balanceBidMarginBps, the two switches are 0 or 1)");
-        uint256[29] memory lo = SettingsFields.lo();
-        uint256[29] memory hi = SettingsFields.hi();
-        bytes32[29] memory names = SettingsFields.names();
+        console.log(
+            "settings: field | live | new | bounds (a * marks a change; recoveryClimbPerMinBps >= climbPerMinBps, the two switches are 0 or 1)"
+        );
+        uint256[34] memory lo = SettingsFields.lo();
+        uint256[34] memory hi = SettingsFields.hi();
+        bytes32[34] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             uint256 x = SettingsFields.get(a, i);
             uint256 y = SettingsFields.get(b, i);
@@ -292,7 +317,9 @@ contract SetSettings is Script {
         out = "(";
         for (uint256 i; i < SettingsFields.N; ++i) {
             uint256 v = SettingsFields.get(s, i);
-            out = string.concat(out, i == 0 ? "" : ",", i == 11 || i == 12 ? (v == 1 ? "true" : "false") : vm.toString(v));
+            out = string.concat(
+                out, i == 0 ? "" : ",", i == 11 || i == 12 ? (v == 1 ? "true" : "false") : vm.toString(v)
+            );
         }
         out = string.concat(out, ")");
     }

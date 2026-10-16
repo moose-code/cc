@@ -108,7 +108,7 @@ test("start: refuses the owner address and the Core owner; warns on an EIP-7702 
   const lines: string[] = [];
   setSink((l) => lines.push(l));
   const cfg = loadConfig({ RECORD: "x", RPC_URLS: "http://127.0.0.1:8545", IMPERSONATE: OWNER }, () => rec(31337));
-  const fixed = { sniperSeconds: 1800n, factory: OWNER, escrow: OWNER, owner: "0x00000000000000000000000000000000000000ee" as Address };
+  const fixed = { factory: OWNER, escrow: OWNER, owner: "0x00000000000000000000000000000000000000ee" as Address };
   await assert.rejects(startChecks(fakeClient(undefined), cfg, fixed, { address: OWNER }), /refusing to run as the owner/);
   await assert.rejects(startChecks(fakeClient(undefined), cfg, fixed, { address: fixed.owner }), /refusing to run as the owner/);
   const me = privateKeyToAccount(generatePrivateKey()).address;

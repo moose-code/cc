@@ -14,15 +14,15 @@ library CreditBounds {
     }
 
     function windowOk(uint32 v) internal pure returns (bool) {
-        return v >= 1 minutes && v <= 30 days;
+        return v >= 1;
     }
 
     function floorBpsOk(uint16 v) internal pure returns (bool) {
-        return v >= BPS && v <= 40_000;
+        return v >= BPS;
     }
 
     function startBpsOk(uint32 v) internal pure returns (bool) {
-        return v >= BPS && v <= 200_000;
+        return v >= BPS;
     }
 
     /// @notice the name of the first credit field out of bounds, or zero when every bounded field is inside its bounds.

@@ -13,6 +13,7 @@ export function txError(e: unknown): string {
   }
   const all = parts.filter(Boolean).join("\n");
   if (/user rejected|user denied|rejected the request/i.test(all)) return CANCELLED;
+  if (/SpendCapReached|0x3e085885/i.test(all)) return "eth purchase budget exhausted, try again in the next bucket";
   if (/V4TooLittleReceived|V4TooMuchRequested|slippage|0x8b063d73|0x12bacdd3/i.test(all)) return "price moved, try again";
   if (/TransactionDeadlinePassed|0x5bf6f916/.test(all)) return "deadline passed, try again";
   if (/insufficient funds/i.test(all)) return "not enough eth for gas";

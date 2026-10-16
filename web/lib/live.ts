@@ -14,7 +14,7 @@ import { multicallAbi, scoreAbi, seedAbi } from "@cc/engine/abis";
 import { core, credits, engineDeployed, statements } from "./config";
 import { controllerAbi, coreAbi, creditsAbi, erc20Abi, statementsAbi } from "./abis";
 import { SCOPE, lsGet, lsSet } from "./cache";
-import { replayEth, replayBalance } from "./sell";
+import { ETH_ANCHOR_SLOT, ethAnchorWords, replayEth, replayBalance } from "./sell";
 import { useCreditRow, useCreditTraitsIx, useHeldCredits, useIxMode, useStatementDetailIx, useWalletCreditsIx } from "./indexer";
 import type { AcquiredHow } from "./indexer-schema";
 import type { BalanceTokenInfo } from "./format";
@@ -308,9 +308,6 @@ export function useStatements() {
 
 // ---- sell quotes ----------------------------------------------------------------
 
-// State.anchor starts at slot 27 (test/CoreLayout.t.sol, src/lib/CoreLib.sol):
-// lastFillRate, minuteStartRate, minuteBucket (uint64) + peakTime, peakRate.
-const ANCHOR_SLOT = 27n;
 
 // Eth Core.sellForEth pays for n credits sold in one call at chain time `now`
 // (CoreLib.drop and CoreLib.climb replayed in sell.ts). Reads ethPrice,
@@ -329,7 +326,7 @@ export async function sellQuote(client: Client, ids: bigint[], now: number): Pro
 
 async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumber?: bigint): Promise<bigint> {
   const c = { address: core!, abi: coreAbi } as const;
-  const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ANCHOR_SLOT + i, { size: 32 }), blockNumber });
+  const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }), blockNumber });
   const [[price, peak, ethPot, toBuyback, redeemBurn, payeeOn, st, held], startWord, bucketWord, scores] = await Promise.all([
     client.multicall({
       ...mc,
@@ -355,9 +352,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
     price,
     peak,
     pot: ethPot + toPot,
-    start: BigInt(startWord ?? "0x0"),
-    bucket: BigInt(bucketWord ?? "0x0") & ((1n << 64n) - 1n),
-    nowBucket: BigInt(Math.floor(now / 60)),
+    ...ethAnchorWords(BigInt(startWord ?? "0x0"), BigInt(bucketWord ?? "0x0"), BigInt(Math.floor(now)), BigInt(st.bucketSeconds)),
     dropPerCreditBps: BigInt(st.dropPerCreditBps),
     dropFloorBps: BigInt(st.dropFloorBps),
     ceilBps: BigInt(st.ceilBps),
@@ -519,7 +514,7 @@ export function useBalanceToken(): BalanceTokenInfo | undefined {
   return token && decimals != null ? { address: token, decimals } : undefined;
 }
 
-// sellQuote for the selected credit ids, refreshed with the chain clock's minute.
+// sellQuote for the selected credit ids, refreshed with the chain clock.
 export function useSellQuote(ids: bigint[], now: number) {
   const client = usePublicClient();
   const minute = Math.floor(now / 60);

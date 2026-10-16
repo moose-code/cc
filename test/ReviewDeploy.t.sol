@@ -11,7 +11,12 @@ import {TestSwapRouter} from "./utils/TestSwapRouter.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Mainnet, Stack, Settings} from "../src/interfaces/Interfaces.sol";
-import {IArtCoinsFactoryV2, IArtCoinsHookV2, IArtCoinsMevSkimV2, IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
+import {
+    IArtCoinsFactoryV2,
+    IArtCoinsHookV2,
+    IArtCoinsMevSkimV2,
+    IArtCoinsTokenV2
+} from "../src/interfaces/ArtCoinsV2.sol";
 import {SystemDeployer, Deployed} from "../script/SystemDeployer.sol";
 import {LaunchConfig, ConfigReader} from "../script/LaunchConfig.sol";
 import {Report} from "../script/Report.sol";
@@ -75,7 +80,10 @@ contract ReviewDeployTest is ReviewHarness {
         LaunchConfig memory c = base;
         c.startTick = c.positionLower = -170_000;
         postflightAs(c, d.core, address(0));
-        assertEq(_failedNames(), "position: ticks equal the config (mirrored, the coin is currency1), pool: start tick equals the config while nothing was bought");
+        assertEq(
+            _failedNames(),
+            "position: ticks equal the config (mirrored, the coin is currency1), pool: start tick equals the config while nothing was bought"
+        );
         c = base;
         c.positionUpper = 600_000;
         postflightAs(c, d.core, address(0));
@@ -112,7 +120,7 @@ contract ReviewDeployTest is ReviewHarness {
         c = base;
         c.sniperSeconds = 3000;
         postflightAs(c, d.core, address(0));
-        assertEq(_failedNames(), string.concat(row, ", core: SNIPER_SECONDS equals the config"));
+        assertEq(_failedNames(), string.concat("core: settings.sniperSeconds equals the launch mev window, ", row));
         c = base;
         c.baselineSkimBps = 500;
         postflightAs(c, d.core, address(0));
@@ -156,7 +164,7 @@ contract ReviewDeployTest is ReviewHarness {
         IArtCoinsFactoryV2.DeploymentConfigV2 memory cfg = buildConfig(base, owner, address(0));
         ICore c = Prod.newCore(owner, cfg, owner, address(0), base.payee, base.stack, 4e13, s);
         assertEq(c.COIN(), predictCoin(base, owner, address(c)), "the coin is the prediction for the Core as recipient");
-        assertEq(c.SNIPER_SECONDS(), base.sniperSeconds);
+        assertEq(c.settings().sniperSeconds, base.sniperSeconds);
         assertEq(c.payee(), base.payee);
         // a coin the factory did not record is refused for a successor
         vm.expectRevert(ICore.BadStack.selector);
@@ -208,7 +216,7 @@ contract ReviewDeployTest is ReviewHarness {
             ".launch.bountyBps",
             ".settings.payeePpm",
             ".launch.baselineSkimBps",
-            ".launch.sniperSeconds",
+            ".settings.sniperSeconds",
             ".launch.startTick",
             ".launch.positionUpper",
             ".stack.poolFee",
@@ -292,7 +300,6 @@ contract ReviewDeployTest is ReviewHarness {
         LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
         assertEq(configHash(f), configHash(_shipped()));
     }
-
 }
 
 /// @notice the funded rule and the climb clamp, fuzzed on standalone cores with any rateStart in bounds, plus the
@@ -306,6 +313,7 @@ contract ReviewFundedTest is Fixture {
         Settings memory s = Mainnet.defaultSettings();
         // any opening rate in the bounds needs a rate cap at or above it
         s.rateCap = uint64(1e18);
+        s.spendCapBps = 10_000; // This fuzz case isolates the funded price rule.
         c = _make(rate, address(ctl2), s);
         assertEq(address(c), predicted);
     }
@@ -366,8 +374,7 @@ contract ReviewFundedTest is Fixture {
                 catch (bytes memory why) {
                     bytes4 sel = bytes4(why);
                     assertTrue(
-                        sel == ICore.PotTooSmall.selector || sel == ICore.ZeroAmount.selector,
-                        "unexpected revert"
+                        sel == ICore.PotTooSmall.selector || sel == ICore.ZeroAmount.selector, "unexpected revert"
                     );
                 }
                 vm.stopPrank();
@@ -384,26 +391,26 @@ contract ReviewFundedTest is Fixture {
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
         Stack memory st = lc.stack;
         vm.expectRevert(ICore.BadRate.selector);
-        _launchCore(predicted, st, 1e13 - 1, Mainnet.defaultSettings());
+        _launchCore(predicted, st, 0, Mainnet.defaultSettings());
         vm.expectRevert(ICore.BadRate.selector);
-        _launchCore(predicted, st, 1e18 + 1, Mainnet.defaultSettings());
-        // the opening rate may not sit above the rate cap (2.67e16 at the launch values)
+        _launchCore(predicted, st, uint256(type(uint64).max) + 1, Mainnet.defaultSettings());
+        // The opening rate may not sit above the configured rate cap.
         vm.expectRevert(ICore.BadRate.selector);
-        _launchCore(predicted, st, 2.67e16 + 1, Mainnet.defaultSettings());
+        _launchCore(predicted, st, uint256(Mainnet.defaultSettings().rateCap) + 1, Mainnet.defaultSettings());
         Settings memory top = Mainnet.defaultSettings();
-        top.rateCap = uint64(1e18);
-        ICore lo = _launchCore(predicted, st, 1e13, top);
-        ICore hi = _launchCore(address(1), st, 1e18, top);
-        assertEq(lo.rateAtCheckpoint(), 1e13);
-        assertEq(hi.rateAtCheckpoint(), 1e18);
+        top.rateCap = type(uint64).max;
+        ICore lo = _launchCore(predicted, st, 1, top);
+        ICore hi = _launchCore(address(1), st, type(uint64).max, top);
+        assertEq(lo.rateAtCheckpoint(), 1);
+        assertEq(hi.rateAtCheckpoint(), type(uint64).max);
         // the pot at which the clamp equals the rate: one credit at the rate
-        _fees(lo, 1e13 - 1);
-        assertEq(lo.ethRate(), 1e13 - 1);
+        _fees(lo, 0);
+        assertEq(lo.ethRate(), 0);
         _fees(lo, 1);
-        assertEq(lo.ethRate(), 1e13);
-        _fees(hi, 1e18 - 1);
-        assertEq(hi.ethRate(), 1e18 - 1);
+        assertEq(lo.ethRate(), 1);
+        _fees(hi, uint256(type(uint64).max) - 1);
+        assertEq(hi.ethRate(), uint256(type(uint64).max) - 1);
         _fees(hi, 1);
-        assertEq(hi.ethRate(), 1e18);
+        assertEq(hi.ethRate(), type(uint64).max);
     }
 }

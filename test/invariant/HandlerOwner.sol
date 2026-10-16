@@ -4,7 +4,13 @@ pragma solidity ^0.8.28;
 import {Vm} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {Settings, CreditSale, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../../src/interfaces/Interfaces.sol";
+import {
+    Settings,
+    CreditSale,
+    RATE_START_MIN_WEI,
+    RATE_START_MAX_WEI,
+    BUYBACK_GAS
+} from "../../src/interfaces/Interfaces.sol";
 import {BidModel} from "../utils/BidModel.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
@@ -12,7 +18,7 @@ import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {MigrationSink} from "../standins/MigrationSink.sol";
 
 /// @notice the owner as an adversarial actor. the owner calls `setSettings` with random valid settings across the
-/// whole allowed bounds, extreme corners included, `setRate` anywhere in its bounds, and invalid
+/// operating ranges, with selected boundary cases, `setRate` anywhere in its bounds, and invalid
 /// settings, rates and callers that must revert. the bounds are written out again here, independently of the
 /// library under test. after every owner call the settings are what was set, the rate is what it should be, and the
 /// core's eth, pots and balance token did not move: the owner has no path to the assets.
@@ -40,7 +46,7 @@ abstract contract HandlerOwner is HandlerBase {
         return uint256(keccak256(abi.encode(seed, i)));
     }
 
-    /// random valid settings over the whole bounds, from `seed`. `corner` picks an extreme to force on top
+    /// random valid settings over operating ranges, from `seed`. `corner` picks an extreme to force on top
     function _genSettings(uint256 seed, uint256 corner, Settings memory c) internal pure returns (Settings memory s) {
         // forge-lint: disable-start(unsafe-typecast)
         s.dropPerCreditBps = uint16(_f(_r(seed, 2), 1, 1_000, c.dropPerCreditBps));
@@ -67,6 +73,11 @@ abstract contract HandlerOwner is HandlerBase {
         s.climbMultiplierCapBps = uint16(_f(_r(seed, 43), 10_000, 40_000, c.climbMultiplierCapBps));
         s.callerFee = uint64(_f(_r(seed, 10), 0, 0.005 ether, c.callerFee));
         s.callerMaxBaseFee = uint48(_f(_r(seed, 11), 0, 100 gwei, c.callerMaxBaseFee));
+        s.spendCapBps = uint16(_f(_r(seed, 44), 1, 10_000, c.spendCapBps));
+        s.bucketSeconds = uint32(_f(_r(seed, 45), 1, 3600, c.bucketSeconds));
+        s.balanceBidCapBps = uint32(_f(_r(seed, 46), 10_000, 30_000, c.balanceBidCapBps));
+        s.idleStepSeconds = uint32(_f(_r(seed, 47), 1, 3600, c.idleStepSeconds));
+        s.sniperSeconds = uint32(_f(_r(seed, 48), 0, 3600, c.sniperSeconds));
         _corner(s, corner);
         // recoveryClimbPerMinBps is at least the final climbPerMinBps, set after the corners so it stays valid
         s.recoveryClimbPerMinBps = uint16(_f(_r(seed, 31), s.climbPerMinBps, 1_000, c.recoveryClimbPerMinBps));
@@ -175,9 +186,9 @@ abstract contract HandlerOwner is HandlerBase {
     function _opost(OPre memory p, string memory what) internal {
         _eth(p.bal, 0, 0, what);
         _x(p.xBal, 0, 0, what);
-        if (
-            core.ethPot() != p.pot || core.ethToBuyback() != p.toBuyback || core.ethRedeemBurn() != p.reserve
-        ) _flag(V_OWNER, "an owner call moved a pot");
+        if (core.ethPot() != p.pot || core.ethToBuyback() != p.toBuyback || core.ethRedeemBurn() != p.reserve) {
+            _flag(V_OWNER, "an owner call moved a pot");
+        }
         gOwnerCalls++;
     }
 
@@ -237,33 +248,32 @@ abstract contract HandlerOwner is HandlerBase {
 
     /// the bounds of docs/DECISIONS.md section 2, written out again. the name of the first field out of bounds, or zero
     function _firstViolation(Settings memory s) internal pure returns (bytes32) {
-        if (s.dropPerCreditBps < 1 || s.dropPerCreditBps > 1_000) return "dropPerCreditBps";
-        if (s.dropFloorBps < 5_000 || s.dropFloorBps > 10_000) return "dropFloorBps";
-        if (s.climbPerMinBps < 1 || s.climbPerMinBps > 1_000) return "climbPerMinBps";
-        if (s.ceilBps < 10_000 || s.ceilBps > 30_000) return "ceilBps";
-        if (s.idleLoosenBps < 1 || s.idleLoosenBps > 2_000) return "idleLoosenBps";
-        if (s.saleFloorBps < 1_000 || s.saleFloorBps > 40_000) return "saleFloorBps";
+        if (s.dropPerCreditBps < 1 || s.dropPerCreditBps > 10_000) return "dropPerCreditBps";
+        if (s.dropFloorBps > 10_000) return "dropFloorBps";
+        if (s.climbPerMinBps < 1) return "climbPerMinBps";
+        if (s.ceilBps < 10_000) return "ceilBps";
+        if (s.idleLoosenBps < 1) return "idleLoosenBps";
         if (s.saleToBuybackBps > 10_000) return "saleToBuybackBps";
-        if (s.peakHalfLife < 600 || s.peakHalfLife > 604_800) return "peakHalfLife";
-        if (s.recoveryClimbPerMinBps < s.climbPerMinBps || s.recoveryClimbPerMinBps > 1_000) {
-            return "recoveryClimbPerMinBps";
-        }
-        if (s.recoveryGapBps > 5_000) return "recoveryGapBps";
-        if (s.buybackSlice < 0.01 ether || s.buybackSlice > 1 ether) return "buybackSlice";
-        if (s.buybackDelay < 1 || s.buybackDelay > 7_200) return "buybackDelay";
-        if (s.keeperFee > 0.005 ether) return "keeperFee";
-        if (s.keeperMaxBaseFee < 1 gwei || s.keeperMaxBaseFee > 100 gwei) return "keeperMaxBaseFee";
-        if (s.buybackSlice < 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee)) return "buybackSlice";
+        if (uint256(s.saleToArtistBps) + s.saleToOperatorBps >= 10_000) return "saleToOperatorBps";
+        if (s.peakHalfLife < 1) return "peakHalfLife";
+        if (s.recoveryClimbPerMinBps < s.climbPerMinBps) return "recoveryClimbPerMinBps";
+        if (s.recoveryGapBps > 10_000) return "recoveryGapBps";
+        if (s.buybackSlice < 1) return "buybackSlice";
+        if (s.buybackDelay < 1) return "buybackDelay";
+        // A funded swap keeps at least half its slice after the largest keeper payment.
+        if (s.buybackSlice < 2 * (BUYBACK_GAS * uint256(s.keeperMaxBaseFee) + s.keeperFee)) return "buybackSlice";
         if (s.rateCap < RATE_START_MIN_WEI || s.rateCap > RATE_START_MAX_WEI) return "rateCap";
         if (s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
-        if (s.callerFee > 0.005 ether) return "callerFee";
-        if (s.callerMaxBaseFee > 100 gwei) return "callerMaxBaseFee";
-        if (s.redeemSlippageBps > 1_000) return "redeemSlippageBps";
-        if (s.balanceBidMarginBps > 9_000) return "balanceBidMarginBps";
+        if (s.redeemSlippageBps > 10_000) return "redeemSlippageBps";
+        if (s.balanceBidMarginBps > 10_000) return "balanceBidMarginBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
-        if (s.payeePpm > 200_000) return "payeePpm";
-        if (s.refScore < 800_000 || s.refScore > 8_000_000) return "refScore";
-        if (s.swapFeeCc > 1e24) return "swapFeeCc";
+        if (s.payeePpm > 1_000_000) return "payeePpm";
+        if (s.refScore < 1) return "refScore";
+        if (s.climbMultiplierCapBps < 10_000) return "climbMultiplierCapBps";
+        if (s.spendCapBps < 1 || s.spendCapBps > 10_000) return "spendCapBps";
+        if (s.bucketSeconds < 1) return "bucketSeconds";
+        if (s.balanceBidCapBps < 10_000) return "balanceBidCapBps";
+        if (s.idleStepSeconds < 1) return "idleStepSeconds";
         return bytes32(0);
     }
 
@@ -273,109 +283,80 @@ abstract contract HandlerOwner is HandlerBase {
 
     /// breaks exactly one field of valid settings, `which` picks it. returns the name the library must report
     function _break(Settings memory s, uint256 which) internal pure returns (bytes32 name) {
-        // forge-lint: disable-start(unsafe-typecast)
-        which = which % 49;
+        which %= 24;
         if (which == 0) {
-            (s.dropPerCreditBps, name) = (1_001, "dropPerCreditBps");
+            s.dropPerCreditBps = 10_001;
+            return "dropPerCreditBps";
         } else if (which == 1) {
-            (s.dropPerCreditBps, name) = (0, "dropPerCreditBps");
+            s.dropPerCreditBps = 0;
+            return "dropPerCreditBps";
         } else if (which == 2) {
-            (s.dropFloorBps, name) = (4_999, "dropFloorBps");
+            s.dropFloorBps = 10_001;
+            return "dropFloorBps";
         } else if (which == 3) {
-            (s.dropFloorBps, name) = (10_001, "dropFloorBps");
+            s.climbPerMinBps = 0;
+            return "climbPerMinBps";
         } else if (which == 4) {
-            (s.climbPerMinBps, name) = (0, "climbPerMinBps");
+            s.ceilBps = 9_999;
+            return "ceilBps";
         } else if (which == 5) {
-            (s.climbPerMinBps, name) = (1_001, "climbPerMinBps");
+            s.idleLoosenBps = 0;
+            return "idleLoosenBps";
         } else if (which == 6) {
-            (s.keeperFee, name) = (0.005 ether + 1, "keeperFee");
+            s.saleToBuybackBps = 10_001;
+            return "saleToBuybackBps";
         } else if (which == 7) {
-            (s.rateCap, name) = (0, "rateCap");
+            s.peakHalfLife = 0;
+            return "peakHalfLife";
         } else if (which == 8) {
-            (s.callerFee, name) = (0.005 ether + 1, "callerFee");
+            s.recoveryClimbPerMinBps = 0;
+            return "recoveryClimbPerMinBps";
         } else if (which == 9) {
-            (s.callerMaxBaseFee, name) = (100 gwei + 1, "callerMaxBaseFee");
+            s.recoveryGapBps = 10_001;
+            return "recoveryGapBps";
         } else if (which == 10) {
-            (s.saleFloorBps, name) = (999, "saleFloorBps");
+            s.buybackSlice = 0;
+            return "buybackSlice";
         } else if (which == 11) {
-            (s.saleFloorBps, name) = (40_001, "saleFloorBps");
+            s.buybackDelay = 0;
+            return "buybackDelay";
         } else if (which == 12) {
-            (s.redeemSlippageBps, name) = (1_001, "redeemSlippageBps");
+            s.rateCap = 0;
+            return "rateCap";
         } else if (which == 13) {
-            (s.saleFloorBps, name) = (0, "saleFloorBps");
+            s.feeToRedeemBurnBps = 10_001;
+            return "feeToRedeemBurnBps";
         } else if (which == 14) {
-            (s.balanceBidMarginBps, name) = (9_001, "balanceBidMarginBps");
+            s.redeemSlippageBps = 10_001;
+            return "redeemSlippageBps";
         } else if (which == 15) {
-            (s.saleToBuybackBps, name) = (10_001, "saleToBuybackBps");
+            s.balanceBidMarginBps = 10_001;
+            return "balanceBidMarginBps";
         } else if (which == 16) {
-            (s.redeemBurnBps, name) = (10_001, "redeemBurnBps");
+            s.redeemBurnBps = 10_001;
+            return "redeemBurnBps";
         } else if (which == 17) {
-            (s.buybackSlice, name) = (0.01 ether - 1, "buybackSlice");
+            s.payeePpm = 1_000_001;
+            return "payeePpm";
         } else if (which == 18) {
-            (s.buybackSlice, name) = (1 ether + 1, "buybackSlice");
+            s.refScore = 0;
+            return "refScore";
         } else if (which == 19) {
-            (s.buybackDelay, name) = (0, "buybackDelay");
+            s.climbMultiplierCapBps = 9_999;
+            return "climbMultiplierCapBps";
         } else if (which == 20) {
-            (s.buybackDelay, name) = (7_201, "buybackDelay");
+            s.spendCapBps = 0;
+            return "spendCapBps";
         } else if (which == 21) {
-            (s.keeperFee, name) = (0.005 ether + 1, "keeperFee");
+            s.bucketSeconds = 0;
+            return "bucketSeconds";
         } else if (which == 22) {
-            (s.feeToRedeemBurnBps, name) = (10_001, "feeToRedeemBurnBps");
+            s.balanceBidCapBps = 9_999;
+            return "balanceBidCapBps";
         } else if (which == 23) {
-            (s.feeToRedeemBurnBps, name) = (20_000, "feeToRedeemBurnBps");
-        } else if (which == 24) {
-            (s.peakHalfLife, name) = (604_801, "peakHalfLife");
-        } else if (which == 25) {
-            (s.redeemSlippageBps, name) = (2_000, "redeemSlippageBps");
-        } else if (which == 26) {
-            (s.balanceBidMarginBps, name) = (10_000, "balanceBidMarginBps");
-        } else if (which == 27) {
-            (s.redeemBurnBps, name) = (20_000, "redeemBurnBps");
-        } else if (which == 28) {
-            (s.buybackSlice, name) = (0, "buybackSlice");
-        } else if (which == 29) {
-            (s.recoveryGapBps, name) = (5_001, "recoveryGapBps");
-        } else if (which == 30) {
-            (s.ceilBps, name) = (9_999, "ceilBps");
-        } else if (which == 31) {
-            (s.redeemSlippageBps, name) = (5_000, "redeemSlippageBps");
-        } else if (which == 32) {
-            (s.rateCap, name) = (1e13 - 1, "rateCap");
-        } else if (which == 33) {
-            (s.rateCap, name) = (1e18 + 1, "rateCap");
-        } else if (which == 34) {
-            (s.callerFee, name) = (1 ether, "callerFee");
-        } else if (which == 35) {
-            (s.keeperFee, name) = (1 ether, "keeperFee");
-        } else if (which == 36) {
-            (s.ceilBps, name) = (30_001, "ceilBps");
-        } else if (which == 37) {
-            (s.idleLoosenBps, name) = (2_001, "idleLoosenBps");
-        } else if (which == 38) {
-            (s.idleLoosenBps, name) = (0, "idleLoosenBps");
-        } else if (which == 39) {
-            (s.keeperMaxBaseFee, name) = (1 gwei - 1, "keeperMaxBaseFee");
-        } else if (which == 40) {
-            (s.keeperMaxBaseFee, name) = (100 gwei + 1, "keeperMaxBaseFee");
-        } else if (which == 41) {
-            (s.peakHalfLife, name) = (599, "peakHalfLife");
-        } else if (which == 42) {
-            (s.peakHalfLife, name) = (604_801, "peakHalfLife");
-        } else if (which == 43) {
-            // below climbPerMinBps, which a valid struct keeps at least 1, so zero always violates
-            (s.recoveryClimbPerMinBps, name) = (0, "recoveryClimbPerMinBps");
-        } else if (which == 44) {
-            (s.payeePpm, name) = (200_001, "payeePpm");
-        } else if (which == 45) {
-            (s.recoveryGapBps, name) = (5_001, "recoveryGapBps");
-        } else if (which == 46) {
-            (s.refScore, name) = (0, "refScore");
-        } else if (which == 47) {
-            (s.refScore, name) = (8_000_001, "refScore");
-        } else {
-            (s.swapFeeCc, name) = (1e24 + 1, "swapFeeCc");
+            s.idleStepSeconds = 0;
+            return "idleStepSeconds";
         }
-        // forge-lint: disable-end(unsafe-typecast)
     }
 
     /// invalid settings from the owner must revert with BadSetting naming the field, and a valid or invalid set from
@@ -563,7 +544,10 @@ abstract contract HandlerOwner is HandlerBase {
     }
 
     /// the module the owner proposes and the selector the set must revert with, zero when it must go through
-    function _nextModule(uint256 seed, uint256 m, address token) internal returns (MockBalanceModule next, bytes4 want) {
+    function _nextModule(uint256 seed, uint256 m, address token)
+        internal
+        returns (MockBalanceModule next, bytes4 want)
+    {
         if (m <= 1) {
             next = new MockBalanceModule(token, _logBound(seed >> 8, 2e6, 5e7));
         } else if (m <= 3) {
@@ -629,7 +613,9 @@ abstract contract HandlerOwner is HandlerBase {
             if (stranger) _flag(V_OWNER, "a stranger released the reserve");
             if (move == 0) _flag(V_OWNER, "a zero release was accepted");
             if (core.ethRedeemBurn() != reserve - move) _flag(V_OWNER, "the reserve did not fall by the move");
-            if (core.ethToBuyback() != tb + move) _flag(V_OWNER, "the released reserve did not reach the coin buyback");
+            if (core.ethToBuyback() != tb + move) {
+                _flag(V_OWNER, "the released reserve did not reach the coin buyback");
+            }
             if (core.ethPot() != pot) _flag(V_OWNER, "a release moved the pot");
             if (address(core).balance != bal) _flag(V_ETH_OUT, "a release moved eth out of the core");
             _ok(a);
@@ -815,7 +801,9 @@ abstract contract HandlerOwner is HandlerBase {
             (bool ok, bytes memory out) = address(core).call(calls[i]);
             if (ok || bytes4(out) != ICore.OnlyOwner.selector) _flag(V_OWNER, "a stranger used a successor door");
         }
-        if (core.successor() != was || core.successorLocked() != wasLocked) _flag(V_OWNER, "a stranger moved the successor");
+        if (core.successor() != was || core.successorLocked() != wasLocked) {
+            _flag(V_OWNER, "a stranger moved the successor");
+        }
         _opost(p, "successorStranger");
         _ok(a);
     }
@@ -912,8 +900,9 @@ abstract contract HandlerOwner is HandlerBase {
         }
         // statements: the held list is as it was
         uint256[] memory held = core.heldStatements();
-        if (held.length != q.statements.length) _flag(V_OWNER, "the held list differs from the model after a migration");
-        else {
+        if (held.length != q.statements.length) {
+            _flag(V_OWNER, "the held list differs from the model after a migration");
+        } else {
             for (uint256 i; i < held.length; ++i) {
                 if (held[i] != q.statements[i]) _flag(V_OWNER, "the held list changed order after a migration");
             }
@@ -934,7 +923,9 @@ abstract contract HandlerOwner is HandlerBase {
             if (eth != q.eth || credits != q.credits.length) _flag(V_OWNER, "Migrated differs from the model");
         }
         if (!seen) _flag(V_OWNER, "migrate emitted no Migrated");
-        if (retiredLogs != (q.wasRetired ? 0 : 1)) _flag(V_RETIRED, "EngineRetired is not logged exactly by the first migrate");
+        if (retiredLogs != (q.wasRetired ? 0 : 1)) {
+            _flag(V_RETIRED, "EngineRetired is not logged exactly by the first migrate");
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1011,11 +1002,11 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 4) {
             target = v1;
             cur = c.creditWindow();
-            uint256 v = bad ? (seed % 2 == 0 ? 59 : 30 days + 1 + seed % 100) : _f(seed, 1 minutes, 30 days, cur);
+            uint256 v = bad ? (0) : _f(seed, 1 minutes, 30 days, cur);
             CreditSale memory cs = _creditSaleOf(c);
             cs.window = uint32(v);
             data = abi.encodeCall(IControllerV1.setCredit, (cs));
-            valid = v >= 1 minutes && v <= 30 days;
+            valid = v >= 1;
             want = v;
         } else if (which == 5) {
             target = v1;
@@ -1024,7 +1015,7 @@ abstract contract HandlerOwner is HandlerBase {
             CreditSale memory cs = _creditSaleOf(c);
             cs.floorBps = uint16(v);
             data = abi.encodeCall(IControllerV1.setCredit, (cs));
-            valid = v >= 10_000 && v <= 40_000;
+            valid = v >= 10_000;
             want = v;
         } else if (which == 6) {
             target = v1;
@@ -1033,7 +1024,7 @@ abstract contract HandlerOwner is HandlerBase {
             CreditSale memory cs = _creditSaleOf(c);
             cs.startBps = uint32(v);
             data = abi.encodeCall(IControllerV1.setCredit, (cs));
-            valid = v >= 10_000 && v <= 200_000;
+            valid = v >= 10_000;
             want = v;
         }
     }

@@ -339,7 +339,9 @@ contract Scenario is Script {
         vm.broadcast(TRADER);
         core.composeChosen(ids, 3);
 
-        require(IStatements(Mainnet.STATEMENTS).supply() == supplyBefore + 1, "compose-b: composeChosen minted no statement");
+        require(
+            IStatements(Mainnet.STATEMENTS).supply() == supplyBefore + 1, "compose-b: composeChosen minted no statement"
+        );
         require(core.pileSize() == pileBefore - 80, "compose-b: 80 credits did not leave the pile");
         uint256[] memory held = core.heldStatements();
         uint256 sid = held[held.length - 1];
@@ -368,7 +370,8 @@ contract Scenario is Script {
             startCapBps: ctl.startCapBps(),
             decayHours: ctl.decayHours(),
             anchorHalfLife: ctl.anchorHalfLife(),
-            anchorMinCost: ctl.anchorMinCost()
+            anchorMinCost: ctl.anchorMinCost(),
+            anchorMoveBps: ctl.anchorMoveBps()
         });
         sale.markupBps = 16_000;
         vm.broadcast(OWNER);
@@ -414,7 +417,10 @@ contract Scenario is Script {
         require(!okBuy && bytes4(buyErr) == ICore.Paused.selector, "pause: buy did not revert Paused while paused");
         (bool okCredit, bytes memory creditErr) =
             address(ctl).call{value: ctl.creditPrice(creditId)}(abi.encodeCall(IControllerV1.buyCredit, (creditId)));
-        require(!okCredit && bytes4(creditErr) == ICore.Paused.selector, "pause: buyCredit did not revert Paused while paused");
+        require(
+            !okCredit && bytes4(creditErr) == ICore.Paused.selector,
+            "pause: buyCredit did not revert Paused while paused"
+        );
 
         vm.broadcast(OWNER);
         core.setPaused(false);
@@ -465,7 +471,10 @@ contract Scenario is Script {
         core.redeemStatement(sid);
         (bool stillHeld,,) = core.statementInfo(sid);
         require(!stillHeld, "redeem: the statement is still held");
-        require(IBalanceModule(core.balanceModule()).available() >= potBefore + owed * 98 / 100, "redeem: the balance pot did not grow by the rating");
+        require(
+            IBalanceModule(core.balanceModule()).available() >= potBefore + owed * 98 / 100,
+            "redeem: the balance pot did not grow by the rating"
+        );
         require(core.heldStatements().length == held.length - 1, "redeem: held count did not fall by one");
 
         uint256 reserve = core.ethRedeemBurn();
@@ -506,11 +515,12 @@ contract Scenario is Script {
     function _requireBalanceCost(uint256 id) internal view {
         (bool inPile, uint256 cost,) = core.creditInfo(id);
         require(inPile, "balance-bid: the credit is not in the pile");
-        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(
-            ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id)
-        );
+        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE)
+            .scoreOf(ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id));
         uint256 expected = score * ctl.pointRate();
-        require(cost + score >= expected && cost <= expected + score, "balance-bid: the cost basis is not score * pointRate");
+        require(
+            cost + score >= expected && cost <= expected + score, "balance-bid: the cost basis is not score * pointRate"
+        );
         console.log("balance-bid: credit cost basis", id, cost);
     }
 

@@ -73,16 +73,19 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0xd7e0788cf292d74a0f3d363433620ca42fc34917da423479a899c652815307f0;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x44cd7926747dab52ed32c3804a4fcc3d8de14e5827119f27daa4e30756eadc29;
-    bytes32 internal constant BUILD_HASH_CONTROLLER = 0x6b7f8a653668ec7d5ef2451d2bbfd3c74eeb3edb939429daaa7615fdc597854f;
-    bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER = 0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
-    bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER = 0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
+    bytes32 internal constant BUILD_HASH_CORE = 0xd46bea666794634f8c81e649d37fad08a7c8c7aae51dba66dce1436c65400f60;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x5b23d9604f9e1cc2b9655896ca76a2495dbc0655634cb445f2addb54d63c3c71;
+    bytes32 internal constant BUILD_HASH_CONTROLLER =
+        0xd704ad3e73dbe2c2a9bd5307d5de7815fc4952f9a93d92e59f67ff3f2641f7fb;
+    bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER =
+        0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
+    bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER =
+        0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
     bytes32 internal constant BUILD_HASH_RENDERER = 0x21bc6e3d0b34d0e43e48bdc78e106393a18ba34e6cc9dc81a722844d60b12ce6;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x15406f8e7ba178f61cc2ea776e1842cf7ccfa8da33b819e8178ce62200c37a2e;
+        0xd19092d99060bda9ce6a49432539d3e33b028a7c73024f9c1ea60528d5d5d6c9;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
-    uint24 internal constant PAYEE_MAX_PPM = 200_000;
+    uint24 internal constant PAYEE_MAX_PPM = 1_000_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
     uint24 internal constant SNIPER_START_MAX = 9_000;
     uint32 internal constant SNIPER_SECONDS_MIN = 600;
@@ -176,13 +179,17 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "sale settings inside the bounds",
             badSale == 0,
-            badSale == 0 ? "markupBps startCapBps decayHours anchorHalfLife anchorMinCost" : string(abi.encodePacked("out of bounds: ", badSale))
+            badSale == 0
+                ? "markupBps startCapBps decayHours anchorHalfLife anchorMinCost"
+                : string(abi.encodePacked("out of bounds: ", badSale))
         );
         bytes32 badCredit = creditViolation(c);
         _check(
             "credit settings inside the bounds",
             badCredit == 0,
-            badCredit == 0 ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps" : string(abi.encodePacked("out of bounds: ", badCredit))
+            badCredit == 0
+                ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps"
+                : string(abi.encodePacked("out of bounds: ", badCredit))
         );
         _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);
     }
@@ -259,6 +266,11 @@ abstract contract LaunchChecks is PostflightChecks {
             c.sniperSeconds >= SNIPER_SECONDS_MIN && c.sniperSeconds <= SNIPER_SECONDS_MAX,
             vm.toString(c.sniperSeconds)
         );
+        _check(
+            "rule: settings.sniperSeconds equals launch.sniperSeconds",
+            c.settings.sniperSeconds == c.sniperSeconds,
+            string.concat("settings ", vm.toString(c.settings.sniperSeconds), " launch ", vm.toString(c.sniperSeconds))
+        );
     }
 
     function _rulePeople(LaunchConfig memory c, address deployer) private {
@@ -275,7 +287,11 @@ abstract contract LaunchChecks is PostflightChecks {
             "rule: image at most 2048 bytes, description at most 4096 bytes",
             bytes(c.image).length <= MAX_IMAGE_BYTES && bytes(c.description).length <= MAX_DESCRIPTION_BYTES,
             string.concat(
-                "image ", vm.toString(bytes(c.image).length), " bytes description ", vm.toString(bytes(c.description).length), " bytes"
+                "image ",
+                vm.toString(bytes(c.image).length),
+                " bytes description ",
+                vm.toString(bytes(c.description).length),
+                " bytes"
             )
         );
         (bool metaOk, string memory filledDetail) = _metadataRow(c.image, c.description);
@@ -302,7 +318,8 @@ abstract contract LaunchChecks is PostflightChecks {
         view
         returns (bool ok, string memory detail)
     {
-        bool blankValue = (bytes(image).length != 0 && _blank(image)) || (bytes(description).length != 0 && _blank(description));
+        bool blankValue =
+            (bytes(image).length != 0 && _blank(image)) || (bytes(description).length != 0 && _blank(description));
         bool marked = _marked(image) || _marked(description);
         bool scheme = bytes(image).length == 0 || _hasScheme(image);
         ok = !blankValue && !marked && scheme;
@@ -326,7 +343,8 @@ abstract contract LaunchChecks is PostflightChecks {
     /// markers match the whole value, so a real ipfs cid that holds the letters is accepted
     function _marked(string memory s) private view returns (bool) {
         string memory l = vm.trim(vm.toLowercase(s));
-        return vm.contains(l, "placeholder") || keccak256(bytes(l)) == keccak256("todo") || keccak256(bytes(l)) == keccak256("tbd");
+        return vm.contains(l, "placeholder") || keccak256(bytes(l)) == keccak256("todo")
+            || keccak256(bytes(l)) == keccak256("tbd");
     }
 
     /// @dev true when `s` starts with a lowercase `ipfs://`, `https://`, `ar://` or `data:` scheme, holds at least one
@@ -416,7 +434,10 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "library: CoreLib at its create2 address is the compiled code or absent",
             !deployed || isCompiledLibrary(lib.code),
-            string.concat(vm.toString(lib), deployed ? " on chain, the broadcast skips it" : " not deployed, the first transaction deploys it")
+            string.concat(
+                vm.toString(lib),
+                deployed ? " on chain, the broadcast skips it" : " not deployed, the first transaction deploys it"
+            )
         );
     }
 
@@ -441,21 +462,30 @@ abstract contract LaunchChecks is PostflightChecks {
     function _preSeaportRecipients(LaunchConfig memory c, address deployer) private {
         address coreAt = coreAddress(c, deployer);
         Stack memory s = c.stack;
-        address[9] memory system =
-            [coreAt, controllerAddress(coreAt, c), c.owner, c.payee, s.poolManager, s.hook, s.factory, s.locker, s.escrow];
+        address[9] memory system = [
+            coreAt, controllerAddress(coreAt, c), c.owner, c.payee, s.poolManager, s.hook, s.factory, s.locker, s.escrow
+        ];
         address[] memory r = c.seaportRecipients;
         bool zero;
         bool dup;
         bool sys;
         for (uint256 i; i < r.length; ++i) {
             zero = zero || r[i] == address(0);
-            for (uint256 j; j < i; ++j) dup = dup || r[i] == r[j];
-            for (uint256 k; k < system.length; ++k) sys = sys || r[i] == system[k];
+            for (uint256 j; j < i; ++j) {
+                dup = dup || r[i] == r[j];
+            }
+            for (uint256 k; k < system.length; ++k) {
+                sys = sys || r[i] == system[k];
+            }
         }
         _check("seaport recipients: at least one", r.length != 0, vm.toString(r.length));
         _check("seaport recipients: none is the zero address", !zero, "a zero entry pays nobody");
         _check("seaport recipients: no duplicates", !dup, "each entry once");
-        _check("seaport recipients: none is the Core, controller, owner, payee or a stack address", !sys, "see the signoff list");
+        _check(
+            "seaport recipients: none is the Core, controller, owner, payee or a stack address",
+            !sys,
+            "see the signoff list"
+        );
     }
 
     /// @dev the hook, locker, mev module and escrow checked against each other and against the stack of the config
@@ -533,7 +563,9 @@ abstract contract LaunchChecks is PostflightChecks {
             (bool okr, uint256 r) = _word(rest[i], q);
             same = same && okr && r == h;
         }
-        _check("v2: constantsHash is equal across hook, factory, locker, escrow and mev module", same, "constantsHash()");
+        _check(
+            "v2: constantsHash is equal across hook, factory, locker, escrow and mev module", same, "constantsHash()"
+        );
     }
 
     /// @dev the v2 factory: who may launch, what is enabled, the fees and floors the config meets, and a simulated launch
@@ -590,7 +622,11 @@ abstract contract LaunchChecks is PostflightChecks {
     function _preRecipients(LaunchConfig memory c) private {
         address fa = c.stack.factory;
         (bool ok, address p) = _addr(fa, abi.encodeCall(IArtCoinsFactoryV2.protocolRecipient, ()));
-        _check("factory: protocol recipient set (the launcher protocol, not the engine owner)", ok && p != address(0), vm.toString(p));
+        _check(
+            "factory: protocol recipient set (the launcher protocol, not the engine owner)",
+            ok && p != address(0),
+            vm.toString(p)
+        );
         (bool okf, uint256 fee) = _word(fa, abi.encodeCall(IArtCoinsFactoryV2.deployFee, ()));
         (ok, p) = _addr(fa, abi.encodeCall(IArtCoinsFactoryV2.teamFeeRecipient, ()));
         if (okf && fee != 0) {
@@ -696,15 +732,21 @@ abstract contract LaunchChecks is PostflightChecks {
     function _preSignoff(LaunchConfig memory c, address deployer) private {
         address coreAt = coreAddress(c, deployer);
         _info("signoff: owner (core owner, token admin, factory owner)", vm.toString(c.owner));
-        _info("signoff: creator (named for the launch record, not a pool recipient; the pool charges no lp fee)", vm.toString(c.creator));
+        _info(
+            "signoff: creator (named for the launch record, not a pool recipient; the pool charges no lp fee)",
+            vm.toString(c.creator)
+        );
         _info("signoff: deployer (sends the transactions, must be the factory owner)", vm.toString(deployer));
         _info("signoff: core address (the bounty recipient of the pool)", vm.toString(coreAt));
         _info(
             "signoff: other addresses",
             string.concat(
-                "controller ", vm.toString(controllerAddress(coreAt, c)),
-                " seaport adapter ", vm.toString(seaportAdapterAddress(coreAt, c.seaportRecipients)),
-                " strategy adapter ", vm.toString(strategyAdapterAddress())
+                "controller ",
+                vm.toString(controllerAddress(coreAt, c)),
+                " seaport adapter ",
+                vm.toString(seaportAdapterAddress(coreAt, c.seaportRecipients)),
+                " strategy adapter ",
+                vm.toString(strategyAdapterAddress())
             )
         );
         _info(
@@ -754,10 +796,20 @@ abstract contract LaunchChecks is PostflightChecks {
         _info(
             "signoff: build (runtime code hashes of out/, slots masked)",
             string.concat(
-                "Core ", vm.toString(BUILD_HASH_CORE), " CoreLib ", vm.toString(BUILD_HASH_CORELIB), " ControllerV1 ",
-                vm.toString(BUILD_HASH_CONTROLLER), " SeaportBasicAdapter ", vm.toString(BUILD_HASH_SEAPORT_ADAPTER),
-                " CreditStrategyAdapter ", vm.toString(BUILD_HASH_STRATEGY_ADAPTER), " CoinRenderer ",
-                vm.toString(BUILD_HASH_RENDERER), " CoreLib creation ", vm.toString(BUILD_CREATION_HASH_CORELIB)
+                "Core ",
+                vm.toString(BUILD_HASH_CORE),
+                " CoreLib ",
+                vm.toString(BUILD_HASH_CORELIB),
+                " ControllerV1 ",
+                vm.toString(BUILD_HASH_CONTROLLER),
+                " SeaportBasicAdapter ",
+                vm.toString(BUILD_HASH_SEAPORT_ADAPTER),
+                " CreditStrategyAdapter ",
+                vm.toString(BUILD_HASH_STRATEGY_ADAPTER),
+                " CoinRenderer ",
+                vm.toString(BUILD_HASH_RENDERER),
+                " CoreLib creation ",
+                vm.toString(BUILD_CREATION_HASH_CORELIB)
             )
         );
         _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));
@@ -765,13 +817,7 @@ abstract contract LaunchChecks is PostflightChecks {
 
     /// @dev the settings are adjustable by the owner after launch, so these rows print them for sign off
     function _preSettingsRows(LaunchConfig memory c) private {
-        _info(
-            "signoff: bid",
-            string.concat(
-                "rateCap ",
-                vm.toString(c.settings.rateCap)
-            )
-        );
+        _info("signoff: bid", string.concat("rateCap ", vm.toString(c.settings.rateCap)));
         _info(
             "signoff: drop and climb",
             string.concat(
@@ -788,10 +834,7 @@ abstract contract LaunchChecks is PostflightChecks {
                 " (bps)"
             )
         );
-        _info(
-            "signoff: statement sale",
-            string.concat("saleFloorBps ", vm.toString(c.settings.saleFloorBps))
-        );
+        _info("signoff: statement sale", string.concat("saleFloorBps ", vm.toString(c.settings.saleFloorBps)));
         _info(
             "signoff: credit swap",
             string.concat("swapFeeCc ", vm.toString(c.settings.swapFeeCc), " coin burned per swapCredit")

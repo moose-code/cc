@@ -31,6 +31,9 @@ export interface Settings {
   callerFee: bigint;
   callerMaxBaseFee: bigint;
   redeemOn: boolean;
+  // the ETH purchase budget: spendCapBps 10,000 disables it; a bucket lasts bucketSeconds
+  spendCapBps: number;
+  bucketSeconds: number;
 }
 
 // the state the decisions read, all from one block
@@ -40,6 +43,8 @@ export interface State {
   timestamp: bigint;
   baseFee: bigint;
   settings: Settings;
+  // Core.spendState() at the block: the bucket id, its budget and the wei spent in it
+  spend: { bucket: bigint; budget: bigint; spent: bigint };
   ethPot: bigint;
   // ethPot plus the pot share of the unbooked income that the door's own `_book` adds first
   potWithPending: bigint;
@@ -156,8 +161,16 @@ export function callerPayment(s: State, gasUsed: bigint, cap: bigint, b: bigint)
   return min(min(gasUsed, cap) * min(b, cfg.callerMaxBaseFee) + cfg.callerFee, s.potWithPending);
 }
 
+// Core.spend: the first purchase of a bucket always passes; a later one reverts SpendCapReached when the bucket's spent
+// total plus its cost (price plus keeper payment) exceeds the budget. returns the time the next bucket starts when blocked
+export function spendBlocked(s: State, cost: bigint): bigint | undefined {
+  const { budget, spent, bucket } = s.spend;
+  if (s.settings.spendCapBps === 10_000 || spent === 0n || spent + cost <= budget) return undefined;
+  return (bucket + 1n) * BigInt(s.settings.bucketSeconds);
+}
+
 // whether a book now latches the payee share: Core._book returns before the latch when the income is 0, and the latch
-// needs block.timestamp >= launchedAt + SNIPER_SECONDS
+// needs block.timestamp >= launchedAt + settings.sniperSeconds
 export function bookLatches(s: State): { ok: boolean; reason: string } {
   if (s.payeeOn) return { ok: false, reason: "payee share already latched" };
   if (s.launchedAt === 0n) return { ok: false, reason: "launch not recorded by the factory" };
@@ -217,6 +230,11 @@ export function decide(
       const cost = ownCost(GAS_GUESS.buyListing, gas, pol);
       if (!profitable(payment, cost, p.margin)) {
         skips.push({ door: "buyListing", key, reason: `unprofitable: payment ${payment} under cost ${cost} plus margin` });
+        continue;
+      }
+      const waitUntil = spendBlocked(s, l.price + payment);
+      if (waitUntil !== undefined) {
+        skips.push({ door: "buyListing", key, reason: `SpendCapReached: bucket budget ${s.spend.budget} has ${s.spend.spent} spent, next bucket at ${waitUntil}` });
         continue;
       }
       sweepable.push({ l, key, payment, cost });

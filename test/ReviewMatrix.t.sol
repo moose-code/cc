@@ -48,8 +48,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("supply 1e27 + 1", Class.Pre);
             m.c.supply = 1_000_000_000e18 + 1;
         } else if (i == 3) {
-            m = _m("payeePpm 300000 (above the bound)", Class.Pre);
-            m.c.settings.payeePpm = 300_000;
+            m = _m("payeePpm 1000001 (above the bound)", Class.Pre);
+            m.c.settings.payeePpm = 1_000_001;
         } else if (i == 4) {
             m = _m("baselineSkimBps 690 (the earlier value)", Class.Pre);
             m.c.baselineSkimBps = 690;
@@ -72,8 +72,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("name changed", Class.Hash);
             m.c.name = "Review Coin Two";
         } else if (i == 11) {
-            m = _m("payee ppm 200001 (above the limit)", Class.Pre);
-            m.c.settings.payeePpm = 200_001;
+            m = _m("payee ppm 1000001 (above the limit)", Class.Pre);
+            m.c.settings.payeePpm = 1_000_001;
         } else if (i == 12) {
             m = _m("payee = the escrow", Class.Pre);
             m.c.payee = m.c.stack.escrow;
@@ -81,11 +81,11 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("sale: markupBps 12000 (valid, wrong)", Class.Hash);
             m.c.sale.markupBps = 12_000;
         } else if (i == 14) {
-            m = _m("sale: markupBps 40001", Class.Pre);
-            m.c.sale.markupBps = 40_001;
+            m = _m("sale: markupBps 9999", Class.Pre);
+            m.c.sale.markupBps = 9_999;
         } else if (i == 15) {
-            m = _m("settings: saleToArtistBps 1001", Class.Pre);
-            m.c.settings.saleToArtistBps = 1_001;
+            m = _m("settings: total sale cuts reach 10000", Class.Pre);
+            m.c.settings.saleToArtistBps = 9_950;
         } else {
             m = _m("settings.dropPerCreditBps 100 (valid, wrong)", Class.Hash);
             m.c.settings.dropPerCreditBps = 100;

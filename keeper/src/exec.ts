@@ -70,6 +70,8 @@ export class Executor {
     try {
       gasUsed = await this.client.estimateGas({ account: this.signer.address, to, data });
     } catch (e) {
+      // the purchase budget refills with the next bucket: a wait, not a listing fault
+      if (revertName(e) === "SpendCapReached") return { kind: "skipped", reason: "SpendCapReached: waiting for the next bucket" };
       return { kind: "failed", reason: `simulation reverted: ${revertName(e) ?? txError(e)}` };
     }
 
