@@ -121,7 +121,9 @@ abstract contract HandlerBase is Test {
     uint8 internal constant A_CREDIT_SETTINGS = 40;
     // a coin holder restyles a statement the core holds
     uint8 internal constant A_SET_HELD_FORMAT = 41;
-    uint256 internal constant N_ACTIONS = 42;
+    // a buy whose hook bounty is left unbooked, so the next action runs over pending fee income (decision 147)
+    uint8 internal constant A_BUY_COIN_NOBOOK = 42;
+    uint256 internal constant N_ACTIONS = 43;
 
     // violation codes
     uint256 internal constant V_ETH_OUT = 1; // eth left the core beyond what the action explains
@@ -361,7 +363,8 @@ abstract contract HandlerBase is Test {
             "buyCredits",
             "composeChosen",
             "creditSettings",
-            "setHeldFormat"
+            "setHeldFormat",
+            "buyCoinNoBook"
         ];
         names = n;
         controllers.push(w.v1);
@@ -1191,6 +1194,65 @@ abstract contract HandlerBase is Test {
             _swapFailed(why);
         }
         _rsCheck(rs, 0);
+    }
+
+    /// buys coin through the launch pool and leaves the hook bounty unbooked, then lets time pass before any book: the
+    /// fee income waits above the pots while the clock advances (decision 147). over the warp the read must stay at or
+    /// below the pot plus the pending pot share, the clamp the climb counts for unbooked income, which the invariant
+    /// harness otherwise never runs because every action settles first. the drip is booked at the end, so the action
+    /// leaves booked books for the next one
+    function buyCoinNoBook(uint256 aSeed, uint256 amtSeed, uint256 dtSeed) external checked {
+        uint8 a = A_BUY_COIN_NOBOOK;
+        address who = _actor(aSeed);
+        uint256 eth = _logBound(amtSeed, 1e13, 25 ether);
+        SwapPre memory p;
+        p.exactIn = true;
+        p.buy = true;
+        p.bps = _skimBps();
+        p.bal = address(core).balance;
+        p.pot = core.ethPot();
+        p.tb = core.ethToBuyback();
+        p.rate = core.ethRate();
+        vm.deal(who, who.balance + eth);
+        vm.recordLogs();
+        _att(a);
+        vm.prank(who);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        try router.swap{value: eth}(launchKey, true, -int256(eth), who) {
+            _ok(a);
+            _afterSwapNoBook(p, vm.getRecordedLogs());
+            // time passes with the bounty still unbooked
+            uint256 dt = _logBound(dtSeed, 60, 6 hours);
+            vm.warp(block.timestamp + dt);
+            vm.roll(block.number + dt / 12 + 1);
+            // decision 147: the read rides the pot plus the pending pot share, never above it (the next fill's clamp)
+            if (core.ethRate() > core.ethPot() + _pendingPot(core.settings())) {
+                _flag(V_RATE_BOUND, "the read rose above the pot plus the pending pot share over the unbooked warp");
+            }
+            // book the drip, so the action ends with booked books for the next action
+            _bookNow(keeper, "buyCoinNoBook");
+        } catch (bytes memory why) {
+            _failed(p.bal, p.pot, p.rate, "buyCoinNoBook");
+            _swapFailed(why);
+        }
+    }
+
+    /// the books after a swap whose bounty is left unbooked: the core booked nothing inside the swap and the bounty leg
+    /// rose the balance above the pots, where it waits for a later book. the skim rules are checked the same as a booked
+    /// swap, but no `_bookNow` runs
+    function _afterSwapNoBook(SwapPre memory p, Vm.Log[] memory logs) internal {
+        (uint256 volume, uint256 bounty, uint256 protocol) = _skimOf(logs);
+        if (p.bps > 1000) windowSwaps++;
+        if (core.ethPot() != p.pot || core.ethToBuyback() != p.tb) _flag(V_POT, "the core booked inside the swap");
+        if (address(core).balance != p.bal + bounty) _flag(V_POT, "the core received other than the hook bounty leg");
+        if (volume != 0) {
+            (uint256 eb, uint256 ep) = _expectSkim(bounty + protocol, p.bps);
+            if (bounty != eb) _flag(V_POT, "skim bounty differs from the hook rules at the live rate");
+            if (protocol != ep) _flag(V_POT, "skim creator leg differs from the hook rules at the live rate");
+            if (!_skimTotalOk(volume, p.buy, p.bps, bounty + protocol)) {
+                _flag(V_POT, "skim total differs from the hook rules at the live rate");
+            }
+        }
     }
 
     /// tries to move coin between wallets and into a side pool. the coin is restricted: the pool is the only way to

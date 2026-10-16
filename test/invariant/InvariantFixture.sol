@@ -368,6 +368,7 @@ abstract contract InvariantFixture is Fixture {
         uint256 n;
         s[n++] = HandlerBase.buyCoin.selector;
         s[n++] = HandlerBase.buyCoin.selector;
+        s[n++] = HandlerBase.buyCoinNoBook.selector;
         s[n++] = HandlerBase.sellCoin.selector;
         s[n++] = HandlerBase.walletMove.selector;
         s[n++] = HandlerBase.sellForEth.selector;

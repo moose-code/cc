@@ -708,7 +708,8 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 38) handler.buyCredits(w, x, y);
         else if (a == 39) handler.composeChosen(w, x);
         else if (a == 40) handler.creditSettings(w, x);
-        else handler.setHeldFormat(w, x);
+        else if (a == 41) handler.setHeldFormat(w, x);
+        else handler.buyCoinNoBook(w, x, y);
     }
 
     uint256 internal _nonce;
@@ -778,6 +779,9 @@ abstract contract InvariantsBase is InvariantFixture {
         if (a == 34 || a == 39) return false;
         // slot 30 is reserved: the former standalone payee claim, folded into the book under the push model
         if (a == 30) return false;
+        // buyCoinNoBook (a buy left unbooked, then a warp over the pending income, then a book) is exercised by the
+        // random campaign, not the deterministic smoke
+        if (a == 42) return false;
         // changeUnit moves the module's unit, so it only lands in the balance side
         if (a == 35) return handler.phase2();
         // the sale and owner door actions run only in the suites that list them
