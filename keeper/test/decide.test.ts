@@ -290,3 +290,33 @@ test("paused: every door waits while the Core is paused", () => {
   assert.equal(r.skips.length, DOORS.length);
   assert.match(reason(r, "compose"), /Paused/);
 });
+
+// ------------------------------------------------------------------ cold-start gaps from the fixture audit
+
+// a stalled launch: the payee share latched on the first post-window book, the pot is 0 and fee income is pending. a
+// door's own `_book` would fold the pending income into the pot and lift the bid, but no paid door clears (the pot is 0
+// so every listing is PotTooSmall and the bid cannot rise), and `decide` books only while `!payeeOn`. so the keeper
+// sends nothing and the bid stays stalled. the audit asks the decision layer to book here; it does not today.
+// KEEPER FINDING: bookLatches returns "already latched" once payeeOn, so the latched/pot-0/pending state never books.
+test("book: payee latched, pot 0, income pending — the decision layer still books", { todo: "decide() books only while !payeeOn (bookLatches returns 'already latched'), so a latched Core with an empty pot and pending income never books and the bid cannot be lifted by the keeper. keeper finding, reported." }, () => {
+  const s = state({ payeeOn: true, ethPot: 0n, potWithPending: 0n, pendingIncome: parseEther("0.2"), launchedAt: 1_000n, sniperSeconds: 1_800n, timestamp: 3_000n });
+  assert.deepEqual(doorsOf(decide(s, [], gas("1"), policy(), new Map())), ["book"]);
+});
+
+// the keeper's listing bid is `core.bidOf(id)` read on chain (src/listings.ts), which the Core derives as
+// `ethRate * score / RATE_SCORE`. this takes the bid from that derivation rather than a literal, and shows the sweep
+// turns on exactly where the derived bid covers the price.
+test("listing: the bid comes from a bidOf derivation (ethRate scaled by score), not a literal", () => {
+  const p = policy({}, 0);
+  const RATE_SCORE = 1_000_000n; // the per-100-points scale core.bidOf and src/listings.ts divide by
+  const ethRate = parseEther("0.002"); // wei per 100 points
+  const score = 6_000_000n; // the credit's score, 600 points
+  const bidOf = (ethRate * score) / RATE_SCORE; // core.bidOf(id)
+  assert.equal(bidOf, parseEther("0.012"), "the derivation reproduces the on-chain bid");
+  // a listing under the derived bid sweeps, one above it does not
+  const under = decide(state(), [listing({ bid: bidOf, price: parseEther("0.01") })], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(under), ["buyListing"]);
+  assert.deepEqual(under.calls[0].args, [SEAPORT_ADAPTER, 7n, "0x1234"]);
+  const over = decide(state(), [listing({ bid: bidOf, price: bidOf + 1n })], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(over), []);
+});

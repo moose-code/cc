@@ -1263,4 +1263,34 @@ const R0 = 6.668e15;
   near(skimFraction(latch, 900), skimFraction(DEFAULTS, 900), 1e-12, 'the payee latch does not change the hook skim');
   near(stepVolume(latch, 0, 120), stepVolume(DEFAULTS, 0, 120), 1e-12, 'the payee latch does not change calibrated fee volume');
 }
+// promise: bookEveryHours leaves the hook drip unbooked, so the bid climbs between books on the pending pot share
+// (decision 147). a launch Core climbs the bid over the hour with no door and no book, and a book conserves the clamp.
+// the default (bookEveryHours 0) still books every step, and a simulate with an hourly book keeps the ledger closed
+{
+  // with no drip and an empty booked pot the bid is pinned to the clamp of 0
+  const empty = new Core(Object.assign({}, DEFAULTS), 0);
+  ok(empty.ethRate(30 * 60) === 0, 'bookEveryHours: an empty booked pot with no drip reads a bid of 0');
+
+  // the hook pushes fee income, left unbooked: the clamp counts its pot share, so the bid climbs between books
+  const c = new Core(Object.assign({}, DEFAULTS), 0);
+  c.accrue(1); // 1 eth of fee income, unbooked
+  ok(c.ethPot === 0, 'bookEveryHours: nothing booked, the drip waits above the pots');
+  const r0 = c.ethRate(0), r30 = c.ethRate(30 * 60), r60 = c.ethRate(60 * 60);
+  ok(r30 > r0 && r60 > r30, 'the bid climbs within the hour before any book, on the unbooked drip');
+  ok(c.ethPot === 0, 'still nothing booked while the bid climbed');
+  // a book at the hour conserves the clamp (ethPot + pending pot share), so the read does not jump across it
+  const before = c.ethRate(60 * 60);
+  c.book(60 * 60);
+  near(c.ethRate(60 * 60), before, 1e-12, 'the book conserves the clamp, the read does not jump across it');
+  ok(c.ethPot > 0 && c.unbooked === 0, 'the book folded the drip into the pot');
+  n += 5;
+
+  // a whole simulate run at launch settings with an hourly book keeps every eth identity closed
+  const hb = simulate({ days: 20, seed: 3, bookEveryHours: 1 });
+  ok(Math.abs(hb.stats.potCheck) < 1e-6, 'hourly book: pot accounting ' + hb.stats.potCheck);
+  ok(Math.abs(hb.stats.buybackCheck) < 1e-9 && Math.abs(hb.stats.redeemCheck) < 1e-9, 'hourly book: buyback and redeem accounting');
+  ok(hb.S.pot.every((x) => x >= -1e-12), 'hourly book: the pot never goes negative');
+  ok(hb.core.unbooked === 0, 'hourly book: the final flush left no unbooked drip');
+  n += 4;
+}
 console.log(`ok, ${n} checks passed`);
