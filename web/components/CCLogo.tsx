@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 // The CC logo: three C, M, Y squares on a four-corner track (web/design/logo/README.md). Square i sits in slot
 // (i + step) % 4, slots clockwise from top left; each step moves every square one corner clockwise.
@@ -24,8 +24,8 @@ type Props = {
 export function CCLogo({ size = 22, step, autoplay = false, interval = 1600 }: Props) {
   const reduced = useReducedMotion();
   const [extra, setExtra] = useState(0);
-  // the first defined step places the squares without a transition, so loading data or navigating never animates
-  const placed = useRef(false);
+  // the squares are placed without a transition first (and, with a controlled step, again once that step is known),
+  // so mounting, loading data or navigating never animates
   const [animate, setAnimate] = useState(false);
 
   useEffect(() => {
@@ -34,12 +34,13 @@ export function CCLogo({ size = 22, step, autoplay = false, interval = 1600 }: P
     return () => clearInterval(t);
   }, [autoplay, interval, reduced]);
 
+  const ready = step !== undefined || autoplay;
   useEffect(() => {
-    if (step === undefined || placed.current) return;
-    placed.current = true;
-    const t = requestAnimationFrame(() => setAnimate(true));
-    return () => cancelAnimationFrame(t);
-  }, [step]);
+    if (animate || !ready) return;
+    // a timer rather than requestAnimationFrame, which never fires in a background tab
+    const t = setTimeout(() => setAnimate(true), 50);
+    return () => clearTimeout(t);
+  }, [animate, ready]);
 
   const s = ((((step ?? 0) + extra) % 4) + 4) % 4;
   const k = size / 100;

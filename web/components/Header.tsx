@@ -9,7 +9,6 @@ import { useEns } from "@/lib/ens";
 import { commas, eth, evmNowTx, shortAddr } from "@/lib/format";
 import { useNextCredit } from "./EngineFeed";
 import { CCLogo } from "./CCLogo";
-import { useStats } from "@/lib/data";
 
 const NAV = [
   { href: "/credits", label: "credits" },
@@ -19,9 +18,6 @@ const NAV = [
 export function Header() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
-  // the logo steps once per credit the engine takes in and cycles while a header acquire is pending
-  const acquired = useStats().data?.creditsAcquired;
-  const [acquiring, setAcquiring] = useState(false);
   const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
 
   // close the mobile menu on navigation
@@ -30,7 +26,7 @@ export function Header() {
   return (
     <header className="header">
       <Link href="/" className="brand">
-        <CCLogo size={22} step={acquired} autoplay={acquiring} />
+        <CCLogo size={22} autoplay />
         <b>CC</b>
         <span className={path === "/" ? "brand-sub on" : "brand-sub"}>engine</span>
       </Link>
@@ -61,10 +57,10 @@ export function Header() {
 
       {path === "/" ? (
         <div className="hdr-next">
-          <Acquire onPending={setAcquiring} />
+          <Acquire />
         </div>
       ) : (
-        <NextCredit onPending={setAcquiring} />
+        <NextCredit />
       )}
       <WalletButton />
     </header>
@@ -110,7 +106,7 @@ function AccountName({ address }: { address: string }) {
 
 // Next credit progress, the bid at refScore and the acquire button beside the wallet. The home page shows the
 // progress in the rail, so its header holds the acquire button alone.
-function NextCredit({ onPending }: { onPending: (p: boolean) => void }) {
+function NextCredit() {
   const { ratio, segs, bid } = useNextCredit();
   return (
     <div className="hdr-next">
@@ -125,7 +121,7 @@ function NextCredit({ onPending }: { onPending: (p: boolean) => void }) {
       <Link href="/listings" className="hdr-next-bid">
         listings →
       </Link>
-      <Acquire onPending={onPending} />
+      <Acquire />
     </div>
   );
 }
@@ -143,19 +139,15 @@ function useWide() {
   return wide;
 }
 
-function Acquire({ onPending }: { onPending: (p: boolean) => void }) {
-  return useWide() ? <AcquireButton onPending={onPending} /> : null;
+function Acquire() {
+  return useWide() ? <AcquireButton /> : null;
 }
 
 // Buys the listing that clears (price at or below its bid and the pot) through Core.buyListing. The call is
 // simulated right before sending; a revert drops that listing for the block and the next one is tried.
-function AcquireButton({ onPending }: { onPending: (p: boolean) => void }) {
+function AcquireButton() {
   const { cleared, block } = useAcquireCandidate();
   const { buy, available, pending, err, done } = useAcquireTx(block);
-  useEffect(() => {
-    onPending(pending);
-    return () => onPending(false);
-  }, [pending, onPending]);
   const next = available(cleared)[0];
 
   if (done)
