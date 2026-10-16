@@ -41,6 +41,13 @@ export function eth(wei: bigint, dp = 4): string {
   });
 }
 
+// The rate quoted per 100 points: rate * 1,000,000 / refScore (scores are ten-thousandths of a point), five decimals.
+// The contract rate is the bid of a refScore credit; pages show this figure instead.
+export function bidPer100(rate: bigint, refScore: bigint | number): string {
+  const ref = BigInt(refScore);
+  return eth(ref > 0n ? (rate * 1_000_000n) / ref : 0n, 5);
+}
+
 export function ethShort(wei: bigint, dp = 2): string {
   return Number(formatUnits(wei, 18)).toLocaleString("en-US", {
     maximumFractionDigits: dp,

@@ -9,7 +9,7 @@ import { core, engineDeployed } from "@/lib/config";
 import { useBalanceToken, useHead, useSnapshot } from "@/lib/live";
 import { useStats } from "@/lib/data";
 import { useEngine, useIxMode } from "@/lib/indexer";
-import { BALANCE_SYMBOL, commas, eth, formatBalance, shortAddr } from "@/lib/format";
+import { BALANCE_SYMBOL, bidPer100, commas, eth, formatBalance, shortAddr } from "@/lib/format";
 
 // The permissionless engine actions: the pots, the book and the next buyback (anyone may call them), and the push
 // payouts. The artist and the payee are paid by push on every sale and book, so there is no claim here.
@@ -52,7 +52,7 @@ export default function KeeperPage() {
           <section>
             <h2>pots</h2>
             <div className="quote">
-              {row("bid, reference credit", `${eth(s.ethRate)} eth`)}
+              {row("bid / 100 pts", `${bidPer100(s.ethRate, s.settings.refScore)} eth`)}
               {row("pot", `${eth(s.ethPot)} eth`)}
               {row("to buyback", `${eth(s.ethToBuyback)} eth`)}
               {row("redeem burn pot", `${eth(s.ethRedeemBurn)} eth`)}

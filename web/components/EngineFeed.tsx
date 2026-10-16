@@ -9,7 +9,7 @@ import { useStatementRating } from "./Cards";
 import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
 import Link from "next/link";
-import { relTime, eth, evmNowTx, rating, commas } from "@/lib/format";
+import { relTime, eth, evmNowTx, rating, commas, bidPer100 } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
 import { Addr } from "./Addr";
 
@@ -69,7 +69,8 @@ export function useNextCredit() {
   const bid = snap?.ethRate;
   const ratio = pot != null && bid ? Number((pot * 10000n) / bid) / 100 : undefined;
   const segs = ratio == null ? 0 : Math.min(8, Math.floor(ratio / 12.5));
-  return { ratio, segs, bid };
+  const per100 = bid && snap ? bidPer100(bid, snap.settings.refScore) : undefined;
+  return { ratio, segs, per100 };
 }
 
 export function EngineProgress() {

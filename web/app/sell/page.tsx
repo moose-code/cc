@@ -10,7 +10,7 @@ import { PageHead } from "@/components/Shell";
 import { core, credits, engineDeployed } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
 import { balanceQuote, sellQuote, useBalanceToken, useBidsOf, useNow, useSellQuote, useSnapshot, useWalletCredits } from "@/lib/live";
-import { BALANCE_SYMBOL, commas, eth, formatBalance } from "@/lib/format";
+import { BALANCE_SYMBOL, bidPer100, commas, eth, formatBalance } from "@/lib/format";
 import type { Write } from "@/lib/tx";
 
 const MIN_OUT_BPS = 9950n; // 0.5% under the batch total quoted at click time
@@ -34,6 +34,7 @@ export default function SellPage() {
   const climbX = Number(snap?.climbMultiplier ?? 10000n) / 10000;
   const potPages = `${buyableNow / 80n}.${(buyableNow % 80n) * 10n / 80n}`;
   const atCap = snap ? bid >= snap.settings.rateCap : false;
+  const per100 = snap ? bidPer100(bid, snap.settings.refScore) : eth(0n, 5);
   // the module reads can fail; the balance side is then unavailable and the eth side renders alone
   const balanceBid = Boolean(snap?.balanceOn && snap.settings.balanceBidOn && snap.balanceUnit !== undefined);
   const now = useNow(5000);
@@ -85,8 +86,8 @@ export default function SellPage() {
           <div>
             <div className="bidcard">
               <div className="buybox-price">
-                <span className="muted">bid, reference credit</span>
-                <span className="big">{eth(bid)} eth</span>
+                <span className="muted">bid / 100 pts</span>
+                <span className="big">{per100} eth</span>
                 {atCap ? (
                   <span className="muted">bid at cap</span>
                 ) : climbX > 1 ? (
@@ -95,8 +96,8 @@ export default function SellPage() {
               </div>
               <div className="quote">
                 <div className="r">
-                  <span>reference credit</span>
-                  <span>{eth(bid)} eth</span>
+                  <span>bid / 100 pts</span>
+                  <span>{per100} eth</span>
                 </div>
                 <div className="r">
                   <span>pot covers, before eth cap</span>
@@ -199,7 +200,7 @@ export default function SellPage() {
                   </>
                 )}
                 <p className="muted small">
-                  the first sale approves the collection to the engine. each credit is paid the rate times its score over the reference score, and the rate
+                  the first sale approves the collection to the engine. each credit is paid the rate (quoted per 100 points) times its score, and the rate
                   drops with each credit sold in one call; the amount shown is the batch total at the current rates and the sale reverts if it pays under 99.5% of it.
                   {snap && snap.settings.spendCapBps < 10000 && " the eth quote does not reserve purchase budget. an eth sale can be blocked until the next budget bucket, even when the pot has funds."}
                   {balanceBid && ` the ${BALANCE_SYMBOL} bid pays by credit score at the rate shown (bps of par), and drops with each credit sold.`}

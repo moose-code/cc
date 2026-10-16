@@ -104,10 +104,10 @@ function AccountName({ address }: { address: string }) {
   return <>{useEns(address) ?? shortAddr(address)}</>;
 }
 
-// Next credit progress, the bid at refScore and the acquire button beside the wallet. The home page shows the
+// Next credit progress, the bid per 100 points and the acquire button beside the wallet. The home page shows the
 // progress in the rail, so its header holds the acquire button alone.
 function NextCredit() {
-  const { ratio, segs, bid } = useNextCredit();
+  const { ratio, segs, per100 } = useNextCredit();
   return (
     <div className="hdr-next">
       <span className="hdr-next-label">next credit</span>
@@ -117,7 +117,7 @@ function NextCredit() {
         ))}
       </div>
       <b>{ratio == null ? "—" : `${commas(ratio)}%`}</b>
-      {bid != null && <span className="hdr-next-bid">· bid {eth(bid)} ETH</span>}
+      {per100 && <span className="hdr-next-bid">· bid {per100} ETH / 100 pts</span>}
       <Acquire />
     </div>
   );

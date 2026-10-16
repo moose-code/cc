@@ -11,7 +11,7 @@ import { useAcquireTx } from "@/lib/useAcquire";
 import { useListings, type ListingRow, type ListingsData } from "@/lib/useListings";
 import { nextRise } from "@/lib/climb";
 import { etaLabel } from "@/lib/compose-eta";
-import { BALANCE_SYMBOL, eth, evmNowTx, formatBalance, rating } from "@/lib/format";
+import { BALANCE_SYMBOL, bidPer100, eth, evmNowTx, formatBalance, rating } from "@/lib/format";
 import { useFillsTodayIx } from "@/lib/indexer";
 
 const PAGE = 50;
@@ -46,14 +46,15 @@ function RiseLine({ data }: { data: ListingsData }) {
   const e = nextRise(data.climb, now);
   const first = data.rows[0];
   const after = first && first.score > 0n ? ` · #${first.id} bid ${eth((w(e.rate) * first.score) / data.refScore)} ETH after` : "";
+  const per100 = `${bidPer100(w(e.rate), data.refScore)} ETH / 100 pts`;
   const text =
     e.kind === "climb"
-      ? `bid rises to ${eth(w(e.rate))} ETH in ${countdown(e.seconds)}${after}`
+      ? `bid rises to ${per100} in ${countdown(e.seconds)}${after}`
       : e.kind === "ceiling"
-        ? `ceiling loosens to ${eth(w(e.rate))} ETH in ${countdown(e.seconds)} (+${(e.loosenBps / 100).toFixed(1)}% x ${e.multiplier.toFixed(1)})${after}`
+        ? `ceiling loosens to ${per100} in ${countdown(e.seconds)} (+${(e.loosenBps / 100).toFixed(1)}% x ${e.multiplier.toFixed(1)})${after}`
         : e.kind === "cap"
-          ? `bid at cap ${eth(w(e.rate))} ETH`
-          : `bid held at the pot ${eth(w(e.rate))} ETH`;
+          ? `bid at cap ${per100}`
+          : `bid held at the pot ${per100}`;
   return <div className="rise-line">{text}</div>;
 }
 
@@ -85,9 +86,19 @@ export default function ListingsPage() {
     : isLoading
       ? "reading listings…"
       : "listings unavailable";
+  // the bid range of the listed credits: the rate at the lowest and the highest listed score
+  const scores = rows.map((r) => r.score).filter((s) => s > 0n);
+  const lo = scores.length ? scores.reduce((a, b) => (b < a ? b : a)) : undefined;
+  const hi = scores.length ? scores.reduce((a, b) => (b > a ? b : a)) : undefined;
+  const pts = (s: bigint) => Math.round(Number(s) / 10_000);
+  const offers =
+    data && snap && lo != null && hi != null
+      ? `offers ${eth((snap.ethRate * lo) / data.refScore)} to ${eth((snap.ethRate * hi) / data.refScore)} ETH for ${pts(lo)} to ${pts(hi)} pts`
+      : undefined;
   const metaFull = (
     <>
       {meta}
+      {offers && <div className="rise-line">{offers}</div>}
       {data && <RiseLine data={data} />}
       {snap?.balanceOn && snap.settings.balanceBidOn && snap.balanceUnit !== undefined && (
         <div className="rise-line">balance bid {(Number(snap.balanceRate) / 100).toFixed(1)}% of par</div>
@@ -189,7 +200,7 @@ export default function ListingsPage() {
           gap is price over bid. bids marked ~ are estimated from the current rate and the rating; the closest 100 rows are
           read from the chain. clears in assumes no sales into the bid and a constant pot.
           {data && data.osMax > 0 && osCount > 0 && ` showing the cheapest ${data.osMax} OpenSea listings.`}
-          {snap && ` bid ${eth(snap.ethRate)} ETH at rating ${rating(snap.settings.refScore)}.`}
+          {snap && ` bid ${bidPer100(snap.ethRate, snap.settings.refScore)} ETH / 100 pts.`}
         </p>
       </div>
     </div>
