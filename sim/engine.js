@@ -175,7 +175,6 @@ export const CORE_PARAMS = {
   BUYBACK_GAS: 600000, // Core.sol: the gas that sizes the swap budget reserve of a buyback (reserve = BUYBACK_GAS * capped base fee + keeperFee)
   BUYBACK_GAS_USED: 270000, // counted gas of one buyback (measured 270,237 in docs/INTEGRATION.md): what the caller is paid at the capped base fee
   BUYLISTING_GAS: 1500000, // Interfaces.sol: the most gas of a buyListing the caller payment counts
-  LOOSEN_MINUTES: 10, // CoreLib.climb: the ceiling anchor grows by idleLoosenBps per full 10 minutes since the last fill
   BUYLISTING_GAS_USED: 470000, // counted gas of one buyListing through the CreditStrategy (466,714 in test/CoreUnit.t.sol): gas used 418,000 plus the 250,000 overhead less the work after the count
 };
 
@@ -184,7 +183,7 @@ export const SIM_DEFAULTS = {
   seed: 7,
   days: 90,
   stepSec: 60, // time step after the first hour, seconds. a divisor of 3600. 60 matches the minute bucket of the contract's drop floor and climb; hourly steps distort the stepped rule (bid up to 3x market). rates quoted per hour or per day, the hourly cap and arrival counts scale with the step
-  rateStart: LAUNCH_RAW.rateStart, // launch opening rate (script/config/mainnet.json rateStart): 100 percent of the market price of one credit, 0.0089e18
+  rateStart: LAUNCH_RAW.rateStart, // launch opening rate (script/config/mainnet.json rateStart): 0.025e18 wei per credit
   // seller model toggle: one seller with an unlimited supply sells one credit per step whenever the bid has reached throttleFrac of the market price
   throttler: false,
   throttleFrac: 0.95,
@@ -382,7 +381,7 @@ export class Core {
   // the ceiling in rate terms: ceilPct of the anchor, the anchor loosened while idle. the anchor is max(last rate paid, peak now)
   stepCeil(now) {
     const s = this.s, p = this.p;
-    // idleLoosenPct: the anchor grows linearly, by that percent of the anchor for every full LOOSEN_MINUTES since the last fill (CoreLib.climb).
+    // idleLoosenPct: the anchor grows linearly, by that percent of the anchor for every full idleStepSeconds since the last fill (CoreLib.climb).
     // decision 128: the loosening scales with the checkpoint multiplier m
     const loosen = 1 + ((s.idleLoosenPct / 100) * this.bidMult()) * Math.floor((now - this.lastFillTime) / s.idleStepSeconds);
     const anchor = Math.max(this.lastPaidRate, this.peakAt(now));
