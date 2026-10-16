@@ -210,6 +210,9 @@ struct Settings {
     /// share of a statement or credit sale's proceeds pushed to the payee as the operator cut, taken off the payment
     /// before the other splits, bps. 0 to 1,000
     uint16 saleToOperatorBps;
+    /// the cap of the pot scaled climb multiplier, bps (10,000 is 1x). the ceiling's idle loosening scales by
+    /// `clamp(pot / (rate * 80), 1, this / 10,000)`. 10,000 to 40,000, packs into slot 3 beside the sale cut shares
+    uint16 climbMultiplierCapBps;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -310,7 +313,7 @@ library Mainnet {
             dropFloorBps: 5_000,
             climbPerMinBps: 50,
             ceilBps: 11_000,
-            idleLoosenBps: 200,
+            idleLoosenBps: 600,
             saleFloorBps: 10_000,
             saleToBuybackBps: 2_500,
             recoveryClimbPerMinBps: 200,
@@ -325,7 +328,7 @@ library Mainnet {
             buybackSlice: 0.5 ether,
             keeperFee: 0.0003 ether,
             keeperMaxBaseFee: 5 gwei,
-            rateCap: 26_700_000_000_000_000,
+            rateCap: 75_000_000_000_000_000,
             callerFee: 0,
             callerMaxBaseFee: 0,
             feeToRedeemBurnBps: 1_000,
@@ -333,7 +336,8 @@ library Mainnet {
             refScore: 4_330_000,
             swapFeeCc: 10_000e18,
             saleToArtistBps: 250,
-            saleToOperatorBps: 50
+            saleToOperatorBps: 50,
+            climbMultiplierCapBps: 40_000
         });
     }
 

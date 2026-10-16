@@ -14,17 +14,29 @@ import {Halving} from "../../src/lib/Halving.sol";
 library BidModel {
     using FixedPointMathLib for uint256;
 
-    /// @dev the checkpoint state the price state is read from: the stored rate, the pot, the last fill rate, the
-    /// remembered peak and the three times the Core keeps (checkpoint, last fill, peak), and the evaluation time
+    /// @dev the checkpoint state the price state is read from: the stored rate, the pot (the climb clamp), the pages
+    /// pot (the pot the multiplier reads: eth is the booked `ethPot`, balance is available as bps of par, saturated at
+    /// the 4x cap), the last fill rate, the remembered peak and the three times the Core keeps (checkpoint, last fill,
+    /// peak), and the evaluation time
     struct Bid {
         uint256 r;
         uint256 pot;
+        uint256 pagesPot;
         uint256 lastFillRate;
         uint256 peakRate;
         uint256 peakTime;
         uint256 lastFillTime;
         uint256 checkpointTime;
         uint256 nowTs;
+    }
+
+    /// @dev the pot scaled multiplier, bps in [10_000, capBps]: the pages of 80 refScore credits the pages pot buys at
+    /// the current rate, clamped to [1x, capBps]. one page costs `rate * 80`, so pages in bps is `pagesPot * 125 / rate`.
+    /// only the ceiling's idle loosening scales by it (decision 128, variant d)
+    function climbMul(uint256 pagesPot, uint256 rate, uint256 capBps) internal pure returns (uint256) {
+        if (rate == 0) return 10_000;
+        uint256 mBps = pagesPot * 125 / rate;
+        return mBps < 10_000 ? 10_000 : (mBps > capBps ? capBps : mBps);
     }
 
     /// @dev the price state at the first fill of the minute after a fill at `fillState`: `minuteStart`, or `fillState` when
@@ -83,10 +95,10 @@ library BidModel {
         return Halving.halve(peakRate, nowTs > peakTime ? nowTs - peakTime : 0, s.peakHalfLife);
     }
 
-    /// @dev the ceiling: `ceilBps` of the anchor grown by `idleLoosenBps` per full 10 minutes idle. the anchor is
-    /// `max(last fill rate, peak now)`, which the callers pass in
-    function ceiling(Settings memory s, uint256 anchor, uint256 idle) internal pure returns (uint256) {
-        return anchor * (10_000 + uint256(s.idleLoosenBps) * (idle / 10 minutes)) * s.ceilBps / 1e8;
+    /// @dev the ceiling: `ceilBps` of the anchor grown by `idleLoosenBps * m` per full 10 minutes idle, where `m` is
+    /// the pot scaled multiplier in bps. the anchor is `max(last fill rate, peak now)`, which the callers pass in
+    function ceiling(Settings memory s, uint256 anchor, uint256 idle, uint256 m) internal pure returns (uint256) {
+        return anchor * (10_000 + uint256(s.idleLoosenBps) * m / 10_000 * (idle / 10 minutes)) * s.ceilBps / 1e8;
     }
 
     /// @dev the price state now from the checkpoint state `b`: at most `rateCap` and the ceiling, below the recovery
@@ -97,11 +109,13 @@ library BidModel {
         return priceNow(s, b, s.rateCap);
     }
 
-    /// @dev priceNow with an explicit cap (eth: `rateCap`; balance: 10_000). reproduces `CoreLib._climb`
+    /// @dev priceNow with an explicit cap (eth: `rateCap`; balance: 10_000). reproduces `CoreLib._climb`: the idle climb
+    /// is unscaled and the ceiling's loosening scales by the pot multiplier `m` at the current rate (decision 128, variant d)
     function priceNow(Settings memory s, Bid memory b, uint256 cap) internal pure returns (uint256) {
         uint256 anchor = b.lastFillRate.max(peakNow(s, b.peakRate, b.peakTime, b.nowTs));
         uint256 idle = b.nowTs > b.lastFillTime ? b.nowTs - b.lastFillTime : 0;
-        uint256 capV = ceiling(s, anchor, idle).min(cap);
+        uint256 m = climbMul(b.pagesPot, b.lastFillRate, s.climbMultiplierCapBps);
+        uint256 capV = ceiling(s, anchor, idle, m).min(cap);
         if (b.r >= capV) return capV;
         if (b.nowTs <= b.checkpointTime || b.r == 0) return b.r;
         uint256 target = capV.min(b.pot);

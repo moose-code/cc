@@ -4,7 +4,7 @@
 // tables of ./indexer-schema. Every hook is a react-query query under the "ix" key; IndexerSync invalidates that key
 // when the indexer reports a new engine block.
 //
-// One app-wide mode decides the source of every indexer read (owner decision 129): "ix" while the indexer is
+// One app-wide mode decides the source of every indexer read (owner decision 133): "ix" while the indexer is
 // configured, reachable, within IX_MAX_BEHIND blocks of the chain head and consistent with the Core, "chain" otherwise
 // (each hook's on-chain path then runs), "checking" until the first health result. The queries here run only in "ix"
 // mode and the on-chain paths only in "chain" mode, so a healthy indexer means no log scan or per-row block read.

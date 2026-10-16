@@ -478,27 +478,50 @@ abstract contract InvariantsBase is InvariantFixture {
     /// where the peak is `peakRate` halved over the time since `peakTime`. the read is the price state lowered to the pot.
     // promise: 19 bid bounds
     function invariant_19_bidBounds() public view {
-        Settings memory st = core.settings();
         uint256 rate = core.ethRate();
         uint256 price = core.ethPrice();
         assertLe(rate, price, "the read is above the price state");
-        uint256 lastFill = core.lastFillTime();
-        uint256 idle = block.timestamp > lastFill ? block.timestamp - lastFill : 0;
-        (uint256 lastFillRate,,) = _anchor();
-        (uint256 peakRate, uint256 peakTime) = _peak();
-        uint256 peakNow = Halving.halve(peakRate, block.timestamp > peakTime ? block.timestamp - peakTime : 0, st.peakHalfLife);
-        uint256 anchor = lastFillRate > peakNow ? lastFillRate : peakNow;
-        uint256 ceiling = anchor * (10_000 + uint256(st.idleLoosenBps) * (idle / 600)) * st.ceilBps / 1e8;
-        uint256 cap = ceiling < st.rateCap ? ceiling : st.rateCap;
-        assertLe(price, cap, "the price state is above the rate cap and the ceiling");
         uint256 pot = core.ethPot();
         uint256 pending = address(core).balance - pot - core.ethToBuyback() - core.ethRedeemBurn();
+        assertLe(price, _ethCap(pot + pending), "the price state is above the rate cap and the ceiling");
         assertLe(rate, pot + pending, "the read is above the pot and the pending income");
         if (pending == 0) {
             assertEq(rate, price < pot ? price : pot, "the read is not the price state lowered to the pot");
         } else {
             assertGe(rate, price < pot ? price : pot, "the read is below the price state lowered to the booked pot");
         }
+    }
+
+    /// the eth price state ceiling now: `ceilBps` of the fill anchor grown by `idleLoosenBps` scaled by the pot
+    /// multiplier `m` per 10 idle minutes, capped by `rateCap` (decision 128)
+    function _ethCap(uint256 pagesPot) internal view returns (uint256) {
+        Settings memory st = core.settings();
+        (uint256 lastFillRate,,) = _anchor();
+        (uint256 peakRate, uint256 peakTime) = _peak();
+        uint256 anchor = _anchorNow(lastFillRate, peakRate, peakTime, st.peakHalfLife);
+        uint256 idle = block.timestamp > core.lastFillTime() ? block.timestamp - core.lastFillTime() : 0;
+        // decision 128 variant d: the loosening scales by m, counted at the last fill rate, capped by climbMultiplierCapBps
+        uint256 m = _climbMulBps(pagesPot, lastFillRate, st.climbMultiplierCapBps);
+        uint256 ceiling = anchor * (10_000 + uint256(st.idleLoosenBps) * m / 10_000 * (idle / 600)) * st.ceilBps / 1e8;
+        return ceiling < st.rateCap ? ceiling : st.rateCap;
+    }
+
+    /// the pot scaled multiplier in bps, clamped to [1x, capBps]: the pages of 80 credits the pages pot covers at the
+    /// last fill rate (decision 128 variant d, the loosening only)
+    function _climbMulBps(uint256 pagesPot, uint256 rate, uint256 capBps) internal pure returns (uint256) {
+        if (rate == 0) return 10_000;
+        uint256 mBps = pagesPot * 125 / rate;
+        return mBps < 10_000 ? 10_000 : (mBps > capBps ? capBps : mBps);
+    }
+
+    /// the larger of the fill rate and the remembered peak decayed to now
+    function _anchorNow(uint256 fillRate, uint256 peakRate, uint256 peakTime, uint256 halfLife)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 peakNow = Halving.halve(peakRate, block.timestamp > peakTime ? block.timestamp - peakTime : 0, halfLife);
+        return fillRate > peakNow ? fillRate : peakNow;
     }
 
     /// logs how often each action ran, succeeded and was skipped in this run, and over all runs so far.

@@ -19,6 +19,7 @@ export const coreAbi = parseAbi([
   "function rateAtCheckpoint() view returns (uint256)",
   "function checkpointTime() view returns (uint64)",
   "function lastFillTime() view returns (uint64)",
+  "function climbMultiplier() view returns (uint256)",
   "function ethPot() view returns (uint256)",
   "function ethToBuyback() view returns (uint256)",
   "function ethRedeemBurn() view returns (uint256)",

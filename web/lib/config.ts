@@ -36,7 +36,7 @@ export const core = addr(process.env.NEXT_PUBLIC_CORE);
 export const credits: Address = "0x97630aA70AB14ed9883B41dAfccBc11349723043";
 export const statements: Address = "0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b";
 
-// Listing venues (docs/INDEXER.md section 9.1, owner decision 130): the CreditStrategy proxy, and the two adapters the
+// Listing venues (docs/INDEXER.md section 9.1, owner decision 134): the CreditStrategy proxy, and the two adapters the
 // Core allows for Core.buyListing (deployment record keys strategyAdapter, seaportAdapter).
 export const strategy: Address = "0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6";
 export const strategyAdapter = addr(process.env.NEXT_PUBLIC_STRATEGY_ADAPTER);
