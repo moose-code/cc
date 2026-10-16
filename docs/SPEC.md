@@ -12,6 +12,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
+| behavior | ETH purchases share a 1% opening-pot budget per 60-second bucket; 10,000 bps bypasses enforcement. Settings changes preserve successful outflow and the active pot snapshot; cap edits reprice that snapshot. Implement issue 23 across contracts, consumers and simulation | 129, 130 |
 | guarantee | while the engine has not migrated and the market price is at or below `rateCap`, a credit whose bid (`ethRate() * score / refScore`) the pot covers can always be sold to it | 42, 48, 116 |
 | guarantee | eth and credits leave the Core only through its doors at their rules or through `migrate` to the successor; the balance token is held by the module, not the Core, and the Core moves it only at a seller's call bounded by `score * unit` (par) and the module's `available()`; coin leaves through `rescueCoin`, untracked NFTs other than Credits through `rescueNft`; no function sends them to the owner | 8, 28, 32, 33, 117 |
 | guarantee | a statement leaves the Core by a `sellTo` sale at or above `saleFloorBps` of its cost, read at the sale, or by a redemption that returns at least its rating times the module's unit less `redeemSlippageBps` | 56, 68, 84, 105 |
