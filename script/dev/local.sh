@@ -17,16 +17,26 @@ PORT="${PORT:-8545}"
 RPC="http://127.0.0.1:$PORT"
 FORK_BLOCK="${FORK_BLOCK:-26158000}"
 CACHE_DIR="script/dev/.cache"
-PID_FILE="$CACHE_DIR/anvil-$PORT.pid"
+PID_FILE="$CACHE_DIR/anvil-$PORT.pid"                   # the script/dev/anvil.sh wrapper
+ANVIL_PID_FILE="$CACHE_DIR/anvil-$PORT.listener.pid"    # the anvil process that owns PORT
 LOG_FILE="$CACHE_DIR/anvil-$PORT.log"
 mkdir -p "$CACHE_DIR"
 
+# the recorded wrapper pid is script/dev/anvil.sh, which on STACK=master backgrounds the real anvil as a child and does
+# not forward its own termination to it, so the child keeps the port. kill both the wrapper and the recorded listener.
+# both pids are ones this script started (start already refuses a port another process holds), so no foreign process on
+# PORT is ever signalled.
 stop_anvil() {
-  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-    kill "$(cat "$PID_FILE")"
-    echo "stopped anvil $(cat "$PID_FILE") on $PORT"
-  fi
-  rm -f "$PID_FILE"
+  local pf pid
+  for pf in "$ANVIL_PID_FILE" "$PID_FILE"; do
+    [ -f "$pf" ] || continue
+    pid="$(cat "$pf")"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid"
+      echo "stopped $pid on $PORT"
+    fi
+    rm -f "$pf"
+  done
 }
 
 if [ "${1:-}" = "stop" ]; then stop_anvil; exit 0; fi
@@ -51,6 +61,8 @@ echo $! > "$PID_FILE"
 disown
 for _ in $(seq 1 60); do cast chain-id --rpc-url "$RPC" >/dev/null 2>&1 && break; sleep 1; done
 [ "$(cast chain-id --rpc-url "$RPC")" = "31337" ] || { echo "anvil did not start, see $LOG_FILE" >&2; exit 1; }
+# record the anvil that owns PORT now that it is up; on STACK=master this is the wrapper's child, not the recorded pid
+lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1 > "$ANVIL_PID_FILE" || true
 
 if [ "${FRESH:-0}" != "1" ] && [ -f "$STATE" ] && [ -f "$RECORD" ]; then
   echo "cache hit: phase $PHASE key $KEY"

@@ -62,9 +62,9 @@ one `Settings` struct in Core storage, `setSettings(Settings)` owner only and ef
 |---|---|---|---|
 | `dropPerCreditBps` | 50 | 1 to 1,000 | fall of the rate per credit bought, bps of the rate before it |
 | `dropFloorBps` | 5,000 | 5,000 to 10,000 | within one minute the rate stays at or above this share of the price state at the minute's first fill |
-| `climbPerMinBps` | 50 | 1 to 1,000 | climb per minute at or above the recovery level, compounded |
+| `climbPerMinBps` | 50 | 1 to 1,000 | climb per minute at or above the recovery level, compounded (unscaled; the pot multiplier `m` scales only the ceiling loosening, section 4) |
 | `ceilBps` | 11,000 | 10,000 to 30,000 | the rate stays at or below this share of the ceiling anchor |
-| `idleLoosenBps` | 200 | 1 to 2,000 | growth of the ceiling anchor per full 10 minutes since the last fill |
+| `idleLoosenBps` | 600 | 1 to 2,000 | growth of the ceiling anchor per full 10 minutes since the last fill, scaled by the pot multiplier `m` (section 4) |
 | `saleFloorBps` | 10,000 | 1,000 to 40,000 | the one sale floor: the Core takes no statement payment below this share of its cost, and the controller's curve floors at this share of the reference |
 | `saleToBuybackBps` | 2,500 | 0 to 10,000 | share of the statement sale rest to the coin buyback, the rest to the pot |
 | `saleToArtistBps` | 250 | 0 to 1,000 | share of a statement or credit sale payment pushed to the artist, taken off the top before the other splits |
@@ -81,13 +81,14 @@ one `Settings` struct in Core storage, `setSettings(Settings)` owner only and ef
 | `buybackSlice` | 0.5 ether | 0.01 to 1 ether, at least twice the largest buyback payment | eth per buyback |
 | `keeperFee` | 0.0003 ether | 0 to 0.005 ether | fee to the caller of `buyback` and `buyListing` on top of the gas |
 | `keeperMaxBaseFee` | 5 gwei | 1 to 100 gwei | base fee ceiling of those gas refunds |
-| `rateCap` | 2.67e16 (3 times `rateStart`) | 1e13 to 1e18 | the most the bid can be, wei per credit |
+| `rateCap` | 7.5e16 (3 times `rateStart`) | 1e13 to 1e18 | the most the bid can be, wei per credit |
 | `callerFee` | 0 | 0 to 0.005 ether | fee to the caller of `compose`, `composeChosen` and `redeemStatement`, from the pot |
 | `callerMaxBaseFee` | 0 | 0 to 100 gwei | base fee ceiling of those refunds; 0 pays no gas |
 | `feeToRedeemBurnBps` | 1,000 | 0 to 10,000 | share of fee income to the redeem burn pot, the rest to the pot |
 | `payeePpm` | 0 | 0 to 200,000 | share of fee income pushed to the payee, parts per million |
 | `refScore` | 4,330,000 | 800,000 to 8,000,000 | the per-credit score the eth bid divides by: a credit of score `s` is paid `ethRate() * s / refScore`. the controller reads it for the point rate and the statement reference |
 | `swapFeeCc` | 10,000e18 | 0 to 1e24 | coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, ten thousand coins at launch |
+| `climbMultiplierCapBps` | 40,000 | 10,000 to 40,000 | the cap of the pot multiplier `m` (section 4), bps. 10,000 is 1x (no scaling), 40,000 is the 4x launch cap. scales the ceiling's idle loosening only |
 
 four standalone Core settings, each with its own setter and event: `creditCostToPotBps` (8,000; 0 to 10,000; share of a sold credit's cost booked to the pot, the rest of the sale rest to the buyback), `chosenComposeOn` (false), `minCcToChoose` (1e18 base units, one coin; the least CC balance of a caller of `composeChosen` and `setHeldFormat`, read at the call), `artist` (the address the artist cut of nft sales is pushed to, `setArtist`, owner only, event `ArtistSet`; the zero address is refused while `saleToArtistBps` is nonzero and a forbidden target is always refused).
 
@@ -101,17 +102,18 @@ the rate is wei for a credit of score `refScore`. `ethRate()` is the read: the p
 
 | rule | as built |
 |---|---|
-| opening | `rateStart`, the market price on launch day of a credit of score `refScore` in wei (8.9e15 at the pin), in [1e13, 1e18] and at most `rateCap` |
+| opening | `rateStart`, the market price on launch day of a credit of score `refScore` in wei (25e15 at the pin), in [1e13, 1e18] and at most `rateCap` |
 | per credit | a credit of score `s` is paid `ethRate() * s / refScore` (`bidOf(id)`); `buyListing` caps the quote at it; `adopt` records `ethPrice() * s / refScore`, at least 1 wei |
-| price state | the stored rate climbed per minute since its checkpoint: `recoveryClimbPerMinBps` below the recovery level, `climbPerMinBps` at or above it, compounded, continuous at the crossing, up to `min(ceiling, rateCap, pot)`; a price state above that bound holds its value |
+| price state | the stored rate climbed per minute since its checkpoint: `recoveryClimbPerMinBps` below the recovery level, `climbPerMinBps` at or above it, compounded, continuous at the crossing, up to `min(ceiling, rateCap, pot)`; a price state above that bound holds its value. the climb is not scaled by the pot multiplier |
+| pot multiplier | `m = clamp(pages, 1, climbMultiplierCapBps / 10,000)`, the pages of 80 credits of score `refScore` the pot covers at the last fill rate: `pages = pot / (lastFillRate * 80)`. the last fill rate is the rate credits last cleared at; it changes only on a fill, so `m` is fixed between fills and a checkpoint never moves the read (the displayed bid matches the paid bid). the pot is `ethPot` plus the pending fee share for the eth instance and the module `available()` as bps of par for the balance instance. `m` scales the ceiling's idle loosening only; the per minute climb is unscaled. `climbMultiplierCapBps` is the owner cap, 10,000 to 40,000, launch 40,000 (4x). `climbMultiplier()` returns `m` for the eth instance |
 | peak | the highest recent fill rate, halved every `peakHalfLife` since the last fill or `setRate`; every fill sets it to `max(fill rate, peak now)` |
-| ceiling | `ceilBps` of `max(last fill rate, peak now)` grown by `idleLoosenBps` per full 10 minutes since the last fill |
+| ceiling | `ceilBps` of `max(last fill rate, peak now)` grown by `idleLoosenBps * m` per full 10 minutes since the last fill |
 | clamp | the read is at most the pot. a sale whose running total passes the pot reverts whole |
 | drop | a credit of score `s` bought at price state `p` sets it to `p * (10,000 - dropPerCreditBps * s / refScore) / 10,000` (the fall bounded at 10,000), at least `dropFloorBps` of the price state at the minute's first fill. the drop tracks the eth spent |
 | floor rate | `max(price state, peak now)`: the rate under every price floor of the engine (`floorRate()`) |
 | reset | `setRate(rate)` restates the stored rate, the last fill rate and the peak |
 
-the same price state machine runs as two instances, sharing every climb and drop setting above (`climbPerMinBps`, `recoveryClimbPerMinBps`, `recoveryGapBps`, `dropPerCreditBps`, `dropFloorBps`, `ceilBps`, `idleLoosenBps`, `peakHalfLife`). the eth bid is the instance above: the unit is wei, the cap is `rateCap`, the clamp is the pot, the opening value is `rateStart`, and `setRate` resets it. the balance bid is the second instance (section 9): the unit is the module's `unitPerPoint`, the rate is bps of par where par for a credit is `score * unitPerPoint`, the cap is 10,000 so the payout never exceeds par, the floor and opening value is `10,000 - balanceBidMarginBps`, and the clamp is the module's `available()` expressed as bps of par for a credit of score `refScore`, `available() * 10,000 / (refScore * unitPerPoint)`. `balanceRate()` is the read, the balance price state lowered to that clamp, and `balanceBidOf(id)` is `score * unitPerPoint * balanceRate() / 10,000`. a change of `balanceBidMarginBps` that raises the floor above the stored rate resets the instance to the new floor.
+the same price state machine runs as two instances, sharing every climb and drop setting above (`climbPerMinBps`, `recoveryClimbPerMinBps`, `recoveryGapBps`, `dropPerCreditBps`, `dropFloorBps`, `ceilBps`, `idleLoosenBps`, `peakHalfLife`) and the pot multiplier `m`, each instance reading its own clamp as the multiplier's pot. the eth bid is the instance above: the unit is wei, the cap is `rateCap`, the clamp is the pot, the opening value is `rateStart`, and `setRate` resets it. the balance bid is the second instance (section 9): the unit is the module's `unitPerPoint`, the rate is bps of par where par for a credit is `score * unitPerPoint`, the cap is 10,000 so the payout never exceeds par, the floor and opening value is `10,000 - balanceBidMarginBps`, and the clamp is the module's `available()` expressed as bps of par for a credit of score `refScore`, `available() * 10,000 / (refScore * unitPerPoint)`. `balanceRate()` is the read, the balance price state lowered to that clamp, and `balanceBidOf(id)` is `score * unitPerPoint * balanceRate() / 10,000`. a change of `balanceBidMarginBps` that raises the floor above the stored rate resets the instance to the new floor.
 
 the pile: one insertion ordered doubly linked list of credit ids, oldest first, with cost basis and acquisition time per credit. every credit enters the pile through `sellForEth` (cost the per-credit bid paid), `buyListing` (cost the quote plus the keeper payment, at most the per-credit bid), `sellForBalance` (cost `floorRate * score / refScore`) or `adopt` (cost `ethPrice * score / refScore`).
 

@@ -1,4 +1,4 @@
-// OpenSea listings of the Credits collection that the Core can fill through SeaportBasicAdapter (owner decision 130).
+// OpenSea listings of the Credits collection that the Core can fill through SeaportBasicAdapter (owner decision 134).
 // Server only: OPENSEA_API_KEY never reaches the browser. The response is the cheapest listings that pass the
 // adapter's checks. The list (no fulfillment data) is cached for CACHE_MS so every browser shares one OpenSea round of
 // requests; `?fulfill=<orderHash>` returns the encoded `params` for Core.buyListing of one order, cached per order.

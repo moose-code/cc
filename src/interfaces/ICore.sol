@@ -155,6 +155,7 @@ interface ICore {
     function buyback() external;
     function checkpointTime() external view returns (uint64);
     function chosenComposeOn() external view returns (bool);
+    function climbMultiplier() external view returns (uint256);
     function collectEscrow() external;
     function compose() external;
     function compose(uint8 format) external;
