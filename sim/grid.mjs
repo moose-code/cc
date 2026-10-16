@@ -2,16 +2,16 @@
 // rules come from engine.js untouched; only dropPerCreditBps, climbPerMinBps, recoveryClimbPerMinBps and the pot vary.
 // cases: dump, collapse (exit sellers, 500 mixed-score credits), steady (flat 0.020 market plus organic sellers), wave (200 sellers at open).
 import fs from 'node:fs';
-import { Core, W, DEFAULTS, mulberry32, poisson } from './engine.js';
+import { Core, W, DEFAULTS, mulberry32, poisson, SpendBucket } from './engine.js';
 
-const BLOCK = 12, REF_PTS = 433, OPEN = DEFAULTS.rateStart / W; // opening bid, eth per credit at refScore
+export const BLOCK = 12, REF_PTS = 433, OPEN = DEFAULTS.rateStart / W; // opening bid, eth per credit at refScore
 const CENSUS = [152, 224, 296, 368, 440, 512, 584, 656, 728]; // decile points of the credit score census (sim/data/notes.md)
-const A = { credits: 500, ask: 0.005, sellH: 6, totalH: 48, collapseSec: 600, steadyAsk: 0.02, organicPerHour: 35, wave: 200, steadyH: 24, seed: 129 };
+export const A = { credits: 500, ask: 0.005, sellH: 6, totalH: 48, collapseSec: 600, steadyAsk: 0.02, organicPerHour: 35, wave: 200, steadyH: 24, seed: 129 };
 
 const GRID = { drop: [50, 100, 200, 300, 500], climb: [50, 100, 200], recFloor: [200, 400], pot: [10, 100] };
 
 function makeCore(cell) {
-  const p = { ...DEFAULTS, dropPerCreditPct: cell.drop / 100, climbPerMin: cell.climb / 100, recoveryClimbPerMin: cell.rec / 100, spendCapBps: 100 };
+  const p = { ...DEFAULTS, dropPerCreditPct: cell.drop / 100, climbPerMin: cell.climb / 100, recoveryClimbPerMin: cell.rec / 100, spendCapBps: cell.cap ?? 100, ...(cell.floorBps != null && { dropToPct: cell.floorBps / 100 }) };
   const core = new Core(p, 0);
   core.fund(cell.pot, 0);
   return core;
@@ -19,13 +19,19 @@ function makeCore(cell) {
 const bidAt = (core, t) => core.ethRate(t) / W;
 
 // exit sellers: credits sold in seeded inventory order whenever the score-scaled bid covers the per-credit ask; the payment is the bid
-function runExit(cell, scenario) {
+export function runExit(cell, scenario) {
   const rng = mulberry32(A.seed);
   const inv = Array.from({ length: A.credits }, (_, i) => CENSUS[i % CENSUS.length]);
   for (let i = inv.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [inv[i], inv[j]] = [inv[j], inv[i]]; }
   const core = makeCore(cell);
   const askAt = (t) => scenario === 'dump' ? A.ask : OPEN * (1 - 0.8 * Math.min(t / A.collapseSec, 1));
   const finalAsk = A.ask;
+  const minOut = new Map(); let pointsBought = 0, probes = 0, refused = 0;
+  const probeSell = (core, t) => { // non-mutating: would one 440-point credit sell now (pot holds it and the minute bucket admits it)
+    probes++; const price = bidAt(core, t) * 440 * 1e4 / core.s.refScore;
+    const b = Object.assign(new SpendBucket(), core.spendBucket);
+    if (!(price > 0) || price > core.ethPot || !b.charge(BigInt(Math.round(price * 1e18)), BigInt(Math.round(core.ethPot * 1e18)), t, core.s.bucketSeconds, core.s.spendCapBps)) refused++;
+  };
   let bought = 0, spent = 0, overpay = 0, crossing = null, stop = null, recovery = null, stalls = 0;
   const hourly = Array(A.sellH).fill(0), nByHour = Array(A.sellH).fill(0), ratioByHour = Array(A.sellH).fill(0);
   const check = (t) => {
@@ -46,22 +52,25 @@ function runExit(cell, scenario) {
       if (!(paid > 0)) { stalls++; break; }
       const h = Math.min(A.sellH - 1, Math.floor(t / 3600));
       hourly[h] += paid; nByHour[h]++; ratioByHour[h] += inv[idx] * 1e4 / core.s.refScore;
+      minOut.set(Math.floor(t / 60), (minOut.get(Math.floor(t / 60)) ?? 0) + paid); pointsBought += inv[idx];
       inv.splice(idx, 1); bought++; spent += paid; overpay += Math.max(0, paid - ask); check(t);
       if (!inv.length) break;
     }
+    if (t % 60 === 48) probeSell(core, t); // last block of the minute, after the dumper has acted
   }
   const end = bidAt(core, A.totalH * 3600);
   return {
     spent, credits: bought, crossingMin: crossing && crossing.sec / 60, spentAfterCrossing: crossing ? spent - crossing.spent : null, potAtCrossing: crossing && crossing.potEth,
     creditsAfterCrossing: crossing ? bought - crossing.credits : null, overpay, stopMin: stop && stop.sec / 60,
     recoveryMin: recovery === null ? null : recovery / 60, bidAtStop: stop && stop.bid, finalBid: end, remaining: inv.length, potEnd: core.ethPot,
+    pointsBought, worstMinuteEth: Math.max(0, ...minOut.values()), probes, refusedProbes: refused,
     stalls, ethByHour: hourly, creditsByHour: nByHour, scoreRatioSumByHour: ratioByHour,
   };
 }
 
 // market sellers at refScore: unlimited sellers at steadyAsk, organic sellers at the bid (35 an hour), optional launch wave at the bid.
 // holdPot refills the pot at each block so the run measures the rule rather than the pot running dry.
-function runMarket(cell, withWave, background = true, organicPerHour = A.organicPerHour) {
+export function runMarket(cell, withWave, background = true, organicPerHour = A.organicPerHour) {
   const rng = mulberry32(A.seed + 1);
   const core = makeCore(cell);
   const hours = A.steadyH;
