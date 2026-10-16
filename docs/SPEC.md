@@ -12,6 +12,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
+| behavior | The Anvil dev scenario sells its seeded Credits at the launch 100 bps spend cap by mining separate 60-second buckets; local lifecycle and activity runs exercise the resulting chain without changing launch settings | 140 |
 | behavior | Publish the committed issue 23 implementation branch and open a pull request against main for review; release acceptance remains separate | 131 |
 | behavior | ETH purchases share a 1% opening-pot budget per 60-second bucket; 10,000 bps bypasses enforcement. Settings changes preserve successful outflow and the active pot snapshot; cap edits reprice that snapshot. Implement issue 23 across contracts, consumers and simulation | 129, 130 |
 | guarantee | while the engine has not migrated and the market price is at or below `rateCap`, a credit whose positive bid (`ethRate() * score / refScore`) the pot covers, and which is the first purchase of its bucket or fits the remaining purchase budget, can be sold to it, subject to the same-block return guard | 42, 48, 116 |
