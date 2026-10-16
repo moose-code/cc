@@ -20,9 +20,9 @@
   "settings": {
     "dropPerCreditBps": 50,
     "dropFloorBps": 5000,
-    "climbPerMinBps": 50,
+    "climbPerMinBps": 100,
     "ceilBps": 11000,
-    "idleLoosenBps": 200,
+    "idleLoosenBps": 600,
     "saleFloorBps": 10000,
     "saleToBuybackBps": 2500,
     "saleToArtistBps": 250,

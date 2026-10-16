@@ -308,9 +308,9 @@ library Mainnet {
         return Settings({
             dropPerCreditBps: 50,
             dropFloorBps: 5_000,
-            climbPerMinBps: 50,
+            climbPerMinBps: 100,
             ceilBps: 11_000,
-            idleLoosenBps: 200,
+            idleLoosenBps: 600,
             saleFloorBps: 10_000,
             saleToBuybackBps: 2_500,
             recoveryClimbPerMinBps: 200,

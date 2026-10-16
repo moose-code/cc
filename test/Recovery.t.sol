@@ -54,8 +54,9 @@ contract RecoveryTest is Fixture {
 
     // promise: SPEC 1 after a large sale the bid recovers fast (peak anchor)
     /// a one minute dump of 140 credits halves the bid; the recovery climb brings it back to the pre dump price in about
-    /// 59 minutes at the launch gap (fast from the 50 percent floor up to the recovery level, then the slow climb over
-    /// the last `recoveryGapBps` to the peak). the exact minute is asserted and logged
+    /// 11 minutes at the launch gap (fast from the 50 percent floor up to the recovery level, then the slow climb over
+    /// the last `recoveryGapBps` to the peak). the 1 eth pot covers more than four pages, so both climbs run at the 4x
+    /// cap (decision 128). the exact minute is asserted and logged
     function test_oneMinuteDumpRecovers() public {
         vm.prank(owner);
         core.setRate(OPEN_RATE);
@@ -67,12 +68,12 @@ contract RecoveryTest is Fixture {
         assertGe(dropped, pre * 45 / 100, "the dump did not fall below the minute floor");
         uint256 m = _minutesToRecover(pre);
         emit log_named_uint("one minute dump: minutes to recover to the pre dump price", m);
-        assertEq(m, 59, "one minute dump: minutes to recover at the launch gap");
+        assertEq(m, 11, "one minute dump: minutes to recover at the launch gap and the 4x cap");
     }
 
     // promise: SPEC 1 after a large sale the bid recovers fast (peak anchor)
     /// a three minute dump of about 420 credits walks the bid down by half each minute, to about an eighth of the pre
-    /// dump price; the recovery climb brings it back in 146 minutes at the launch gap
+    /// dump price; the recovery climb brings it back in 27 minutes at the launch gap and the 4x cap (the 1 eth pot)
     function test_threeMinuteDumpRecovers() public {
         vm.prank(owner);
         core.setRate(OPEN_RATE);
@@ -85,7 +86,7 @@ contract RecoveryTest is Fixture {
         assertLt(dropped, pre * 20 / 100, "three minutes of dumping cut the bid to about an eighth");
         uint256 m = _minutesToRecover(pre);
         emit log_named_uint("three minute dump: minutes to recover to the pre dump price", m);
-        assertEq(m, 146, "three minute dump: minutes to recover at the launch gap");
+        assertEq(m, 27, "three minute dump: minutes to recover at the launch gap and the 4x cap");
     }
 
     // promise: SPEC 1 setRate restates the remembered peak
@@ -126,13 +127,16 @@ contract RecoveryTest is Fixture {
     /// the lazy climb is monotone in time between fills. the raw climb trajectory never falls: with a high ceiling, the
     /// longest peak half life (so the ceiling anchor barely decays over the window) and a large pot, neither the ceiling
     /// nor the clamp binds, so the price state is the raw climb and a later read is never below an earlier one, whatever
-    /// the dump that preceded it. the clamped price following a decaying peak down is the intended behaviour and is not
+    /// the dump that preceded it. the per minute climb is set to its minimum so that at the 4x pot multiplier the slow
+    /// climb above the recovery level stays below the peak over the window, keeping the ceiling and the 150 percent
+    /// hourly bound off the read. the clamped price following a decaying cap down is the intended behaviour and is not
     /// tested here
     /// forge-config: default.fuzz.runs = 40
     function testFuzz_priceStateMonotoneBetweenFills(uint256 dumpSeed, uint256 recovSeed) public {
         Settings memory s = core.settings();
         s.ceilBps = 30_000;
         s.rateCap = uint64(1e18);
+        s.climbPerMinBps = 1;
         s.recoveryClimbPerMinBps = uint16(bound(recovSeed, s.climbPerMinBps, 1_000));
         s.peakHalfLife = 604_800;
         _setSettings(s);

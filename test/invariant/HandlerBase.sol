@@ -725,6 +725,7 @@ abstract contract HandlerBase is Test {
         return BidModel.Bid({
             r: core.rateAtCheckpoint(),
             pot: core.ethPot(),
+            pagesPot: core.ethPot(),
             lastFillRate: anchor,
             peakRate: peakRate,
             peakTime: peakTime,
@@ -760,6 +761,7 @@ abstract contract HandlerBase is Test {
             BidModel.Bid({
                 r: s.stored,
                 pot: s.pot,
+                pagesPot: s.pot,
                 lastFillRate: s.anchor,
                 peakRate: s.peakRate,
                 peakTime: s.peakTime,
@@ -2478,12 +2480,20 @@ abstract contract HandlerBase is Test {
         return (denom == 0 || avail >= denom) ? 10_000 : avail * 10_000 / denom;
     }
 
-    /// @dev the balance instance price state as a BidModel.Bid, the clamp set to `availBps` and the cap 10_000
-    function _balanceBidState(uint256 availBps) internal view returns (BidModel.Bid memory b) {
+    /// @dev available as bps of par for a refScore credit, uncapped: the pages pot of the balance instance
+    function _availBpsRaw(uint256 unit) internal view returns (uint256) {
+        uint256 denom = uint256(core.settings().refScore) * unit;
+        return denom == 0 ? 0 : module.available() * 10_000 / denom;
+    }
+
+    /// @dev the balance instance price state as a BidModel.Bid, the clamp set to `availBps`, the pages pot to the
+    /// uncapped available as bps of par, and the cap 10_000
+    function _balanceBidState(uint256 availBps, uint256 unit) internal view returns (BidModel.Bid memory b) {
         uint256 cp = uint256(vm.load(address(core), BAL_CP_SLOT));
         b = BidModel.Bid({
             r: uint256(vm.load(address(core), BAL_RATE_SLOT)),
             pot: availBps,
+            pagesPot: _availBpsRaw(unit),
             lastFillRate: uint256(vm.load(address(core), BAL_ANCHOR_SLOT)),
             peakRate: uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 3))),
             peakTime: uint64(uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 2))) >> 64),
@@ -2499,7 +2509,7 @@ abstract contract HandlerBase is Test {
     function _balanceExpected(uint256[] memory ids, uint256 n, uint256 unit) internal view returns (uint256 total) {
         Settings memory st = core.settings();
         uint256 availBps = _availBps(unit);
-        uint256 price = BidModel.priceNow(st, _balanceBidState(availBps), 10_000);
+        uint256 price = BidModel.priceNow(st, _balanceBidState(availBps, unit), 10_000);
         uint256 floorBps = 10_000 - st.balanceBidMarginBps;
         uint256 bucket = uint64(uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 2))));
         uint256 minuteStart = bucket == block.timestamp / 60
@@ -2527,7 +2537,7 @@ abstract contract HandlerBase is Test {
         uint256 used;
         Settings memory st = core.settings();
         uint256 availBps = _availBps(unit);
-        uint256 rate = BidModel.read(st, availBps, BidModel.priceNow(st, _balanceBidState(availBps), 10_000), 10_000);
+        uint256 rate = BidModel.read(st, availBps, BidModel.priceNow(st, _balanceBidState(availBps, unit), 10_000), 10_000);
         // the floor rule of CoreLib._fillBalance (review ac8da10 M1): a clamped rate below the floor
         // `10_000 - balanceBidMarginBps` closes the bid with PotTooSmall. an available too short to pay the floor
         // makes no batch payable, so offer none

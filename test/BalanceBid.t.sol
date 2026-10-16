@@ -86,6 +86,27 @@ contract BalanceBidTest is Fixture {
         assertGe(now_, _floorBps(), "never below the floor");
     }
 
+    /// @dev the balance rate after one idle minute at a module `available` sized to `pages` pages of par, starting from
+    /// the floor. snapshots so each measurement climbs from the same floored state
+    function _balanceClimbAfterMinute(uint256 available) internal returns (uint256 r) {
+        uint256 snap = vm.snapshotState();
+        mod.setAvailable(available);
+        _warp(60);
+        r = core.balanceRate();
+        vm.revertToState(snap);
+    }
+
+    // promise: SPEC 4 decision 128: the balance instance climb scales with the module's available
+    /// one page of available (80 credits of score refScore at par) climbs at 1x, four pages at the 4x cap. the
+    /// available as bps of par is the multiplier's pot; the par clamp (10_000) does not bind the one minute climb
+    function test_balanceClimbScalesWithAvailable() public {
+        uint256 floor = _floorBps();
+        // one page at par is 80 * refScore * UNIT; available sized so availBpsRaw / (80 * floor) is 1 and 4 pages
+        uint256 onePage = 80 * uint256(core.settings().refScore) * UNIT * floor / 10_000;
+        assertApproxEqAbs(_balanceClimbAfterMinute(onePage), floor * 10_100 / 10_000, 1, "one page climbs at 1x");
+        assertApproxEqAbs(_balanceClimbAfterMinute(onePage * 4), floor * 10_400 / 10_000, 1, "four pages climb at the 4x cap");
+    }
+
     // promise: SPEC 4 the payout never exceeds par: score * unit at the 10_000 cap
     function test_payoutNeverAbovePar() public {
         _warp(3650 days); // the rate is at the 10_000 cap
