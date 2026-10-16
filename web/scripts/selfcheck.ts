@@ -48,7 +48,7 @@ assert.equal(replayBalance([3n, 5n], { ...b, rate: 9000n }), 270n + 450n);
 console.log("selfcheck ok");
 
 // ---- header acquire selection (lib/acquire.ts) ----
-import { cheapestPerId, clearing, shortlist, type Listing, type Priced } from "../lib/acquire.ts";
+import { bucketCount, cheapestPerId, clearing, fitsBucket, shortlist, type Listing, type Priced, type SpendRoom } from "../lib/acquire.ts";
 
 const L = (id: number, price: bigint, source: "strategy" | "opensea" = "strategy"): Listing => ({ id: BigInt(id), price, source, params: "0x" });
 const P = (id: number, price: bigint, bid: bigint): Priced => ({ ...L(id, price), bid });
@@ -63,6 +63,16 @@ assert.deepEqual(clearing([P(1, 90n, 100n), P(2, 50n, 100n), P(3, 150n, 200n), P
 // a retired Core clears nothing; a zero price is not a listing
 assert.equal(clearing([P(1, 50n, 100n)], 1000n, true).length, 0);
 assert.equal(clearing([P(1, 0n, 100n)], 1000n, false).length, 0);
+// spend cap: the first purchase of a bucket passes; later ones need spent + cost <= budget; uncapped always passes
+const room = (spent: bigint): SpendRoom => ({ capped: true, budget: 100n, spent, nextIn: 30 });
+assert.equal(fitsBucket(room(0n), 500n), true);
+assert.equal(fitsBucket(room(60n), 40n), true);
+assert.equal(fitsBucket(room(60n), 41n), false);
+assert.equal(fitsBucket({ ...room(60n), capped: false }, 500n), true);
+// greedy cheapest first: 20, 30 and 40 total 90
+assert.equal(bucketCount(room(0n), [40n, 30n, 20n]), 3);
+assert.equal(bucketCount(room(0n), [60n, 50n, 20n]), 2);
+assert.equal(bucketCount(room(90n), [20n]), 0);
 // a credit listed twice keeps its lower price
 assert.deepEqual(cheapestPerId([L(1, 90n), L(1, 80n, "opensea"), L(2, 5n)]).map((l) => [Number(l.id), l.price, l.source]), [[1, 80n, "opensea"], [2, 5n, "strategy"]]);
 // shortlist: estimated bid = rate * score / refScore; ids without a score are skipped; n bounds the result
