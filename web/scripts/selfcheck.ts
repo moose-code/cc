@@ -85,7 +85,7 @@ const cheapLow = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => L(i, BigInt(10 * i)));
 assert.deepEqual(shortlist([...cheapLow, L(9, 500n, "opensea")], 100n, 1000n, many, 1).map((l) => Number(l.id)), [9]);
 
 // ---- eth bid forecast (lib/climb.ts, mirror of CoreLib._climb / _recover) ----
-import { bidAt, clearsIn, priceAt, rateAt, type ClimbState } from "../lib/climb.ts";
+import { bidAt, clearsIn, nextRise, priceAt, rateAt, type ClimbState } from "../lib/climb.ts";
 
 const E = 10n ** 18n;
 const cs: ClimbState = {
@@ -97,6 +97,8 @@ const cs: ClimbState = {
   peakTime: 1000,
   ceilBps: 11000,
   idleLoosenBps: 100,
+  idleStepSeconds: 600,
+  climbMultiplierBps: 10_000,
   rateCap: 100n * E,
   peakHalfLife: 3600,
   climbPerMinBps: 100,
@@ -135,4 +137,18 @@ assert.deepEqual(clearsIn({ ...cs, ethPot: 500n * E }, 200n * E, 1000n, 1000n, 1
 const slow = clearsIn(cs, 3n * E, 1000n, 1000n, 1000);
 const fast = clearsIn(cs, 3n * E, 2000n, 1000n, 1000);
 assert.ok(slow.kind === "in" && fast.kind === "in" && fast.seconds < slow.seconds);
+// the multiplier scales the loosening step and idleStepSeconds sets its length: 2.5x of 1% per 300 s is 2.5% a step (integer division as in the contract)
+close(priceAt({ ...cs, climbMultiplierBps: 25_000, idleStepSeconds: 300 }, 1000 + 86_400), Math.min(100e18, 50e18, 1e18 * 1.1 * (1 + 0.025 * 288)));
+// nextRise: below the ceiling the rate 60 s ahead and the seconds to the next minute of the chain clock
+const up = nextRise(cs, 1010);
+assert.ok(up.kind === "climb" && up.seconds === 10);
+if (up.kind === "climb") close(up.rate, rateAt(cs, 1070));
+// at the ceiling: the next idle step counted from anchorTime, the ceiling after it, the multiplier carried
+const top = { ...cs, r: 100n * E, climbMultiplierBps: 24_000 };
+const ev = nextRise(top, 1000 + 86_400 + 5);
+assert.ok(ev.kind === "ceiling" && ev.seconds === 595 && ev.multiplier === 2.4);
+if (ev.kind === "ceiling") close(ev.rate, Math.min(100e18, 50e18, 1e18 * 1.1 * (1 + 0.024 * 145)), 1e-9);
+// at rateCap and at the pot
+assert.equal(nextRise({ ...top, rateCap: 11n * E / 10n }, 1000 + 86_400).kind, "cap");
+assert.equal(nextRise({ ...cs, ethPot: E / 2n }, 1000).kind, "pot");
 console.log("climb selfcheck ok");

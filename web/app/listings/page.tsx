@@ -6,9 +6,10 @@ import { CreditTile } from "@/components/Tiles";
 import { PageHead } from "@/components/Shell";
 import { NotDeployed } from "@/components/NotDeployed";
 import { engineDeployed } from "@/lib/config";
-import { useHead, useSnapshot } from "@/lib/live";
+import { countdown, useHead, useNow, useSnapshot } from "@/lib/live";
 import { useAcquireTx } from "@/lib/useAcquire";
-import { useListings, type ListingRow } from "@/lib/useListings";
+import { useListings, type ListingRow, type ListingsData } from "@/lib/useListings";
+import { nextRise } from "@/lib/climb";
 import { etaLabel } from "@/lib/compose-eta";
 import { eth, evmNowTx, rating } from "@/lib/format";
 
@@ -34,6 +35,25 @@ function etaText(r: ListingRow): string {
   if (e.kind === "cap") return "above rate cap";
   if (e.kind === "far") return "over 30d";
   return e.seconds >= 72 * 3600 ? `~${Math.round(e.seconds / 86400)}d` : etaLabel({ seconds: e.seconds, estimated: true });
+}
+
+// The next move of the eth bid (lib/climb.ts nextRise) from the chain clock, ticking each second. Only this line
+// re-renders on the tick; the figures come from the listings query, which refetches on every new head block.
+function RiseLine({ data }: { data: ListingsData }) {
+  const now = useNow(1000);
+  const w = (x: number) => BigInt(Math.floor(x));
+  const e = nextRise(data.climb, now);
+  const first = data.rows[0];
+  const after = first && first.score > 0n ? ` · #${first.id} bid ${eth((w(e.rate) * first.score) / data.refScore)} ETH after` : "";
+  const text =
+    e.kind === "climb"
+      ? `bid rises to ${eth(w(e.rate))} ETH in ${countdown(e.seconds)}${after}`
+      : e.kind === "ceiling"
+        ? `ceiling loosens to ${eth(w(e.rate))} ETH in ${countdown(e.seconds)} (+${(e.loosenBps / 100).toFixed(1)}% x ${e.multiplier.toFixed(1)})${after}`
+        : e.kind === "cap"
+          ? `bid at cap ${eth(w(e.rate))} ETH`
+          : `bid held at the pot ${eth(w(e.rate))} ETH`;
+  return <div className="rise-line">{text}</div>;
 }
 
 // Every Credit listed on the CreditStrategy or OpenSea, closest to the engine's bid first. A row whose price is at or
@@ -62,12 +82,18 @@ export default function ListingsPage() {
     : isLoading
       ? "reading listings…"
       : "listings unavailable";
+  const metaFull = (
+    <>
+      {meta}
+      {data && <RiseLine data={data} />}
+    </>
+  );
   const max = Math.max(1, ...counts);
   const osCount = rows.filter((r) => r.source === "opensea").length;
 
   return (
     <div>
-      <PageHead title="listings" ink="m" meta={meta}>
+      <PageHead title="listings" ink="m" meta={metaFull}>
         {done ? (
           <a className="hdr-acq-done" href={evmNowTx(done.hash)} target="_blank" rel="noreferrer">
             acquired #{done.id.toString()} ↗
