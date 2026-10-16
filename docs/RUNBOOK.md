@@ -325,3 +325,19 @@ For a replacement that keeps the current redemption value floor, pause sales and
 Call setBalanceModule first and setBalancePoolKey second: the setter requires currency1 to equal balanceToken(), so the key follows the token. Set the replacement's complete pool key before resuming sales that rely on its value floor. Simulate a redemption and a token-pinned sell, then restore the owner-selected switches and sales.
 
 Before lockBalanceModule, read the old module's available(), run the old module's owner migrate or confirm its reserve is spent, then lock. lockBalanceModule freezes the module and the token. This preparation authorizes a mainnet action only on the owner's explicit instruction.
+
+### Wiring the production balance module (decision 144)
+
+No deployment or activation is authorized by the implementation PR. Before activation: authenticate Jack's live contract against the reviewed source, and confirm its Statements address, score unit, registered renderer, exact creator retirement and opening block. `ready()` reports renderer registration only. Confirm the canonical ETH/BALANCE pool, fee, tick spacing and hook; a failed auction may leave no pool. The constructor validates interface metadata, not code identity.
+
+The owner deploys `StatementBalanceModule(core, balanceToken)` and wires it in this order, one transaction each:
+
+1. `setBalanceModule(module)` on the Core. Read back `balanceModule`, `balanceToken` and `unitPerPoint`.
+2. `setBalancePoolKey((address,address,uint24,int24,address))` on the controller, with native eth as currency0, the balance token as currency1 and the confirmed pool parameters. Read back the key.
+3. `setSettings` with `balanceBidOn` once `available()` reads the module's token balance.
+
+`script/deploy.sh` (PR 35) ends at the postflight and the record, whose `balanceModule` and `balancePool` fields are null. Its post-launch step for this module is a wrapper change in a separate PR; until it lands the three calls above are the wiring.
+
+For successor migration, deploy a module bound to the successor Core and the same token and set it on the successor before retiring the old Core. After `Core.migrate`, anyone calls the old module's `migrateReserve()`; verify old and new holdings and the `ReserveMigrated` event. Repeat for statements redeemed by the old Core afterwards. The transfer succeeds once upstream retirement is complete and the opening block is reached. Resolve old-token reserves before locking the successor to a different currency. Binding getters do not authenticate code: verify the successor and its module before selecting them. This procedure is separate from the ETH and Credits migration.
+
+`test/UpstreamBalance.t.sol` runs Jack's contract from a locally prepared artifact (`python3 script/prepare-upstream-balance.py <credits checkout>`). The candidate workflow prepares it and sets `REQUIRE_UPSTREAM_BALANCE=true` when the repository secret `UPSTREAM_CREDITS_TOKEN` (read access to the upstream repository) is set. Without the secret the frozen-candidate run executes it locally with `REQUIRE_UPSTREAM_BALANCE=true`. Either way the result is recorded as an `upstream balance` row of the freeze table (docs/STATUS.md section 4). Every other run skips it when the artifact is absent.
